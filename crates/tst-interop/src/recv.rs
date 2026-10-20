@@ -157,7 +157,8 @@ fn poll_corruption_log(
 /// coordinate to stamp the event that is about to be fed.
 ///
 /// PCR bases first (they are what resolve a logged coordinate to a
-/// receiver position at all), then any new sync recoveries. Both are
+/// receiver position at all), then any new sync recoveries, then PES
+/// prefix mismatches (judged against the windows those two positioned). Both are
 /// DRAINED, so each event reaches the attribution exactly once and the
 /// reader never accumulates a history; `std::mem::take` on an empty
 /// `Vec` does not allocate, so polling per event is as cheap as the
@@ -166,6 +167,7 @@ fn drain_wire_evidence(tally: &mut Tally, tap: &Arc<Mutex<transport::TeeState>>)
     let coord = transport::tee_coord(tap);
     tally.note_pcrs(&transport::tee_drain_pcrs(tap));
     tally.note_resyncs(&transport::tee_take_resyncs(tap));
+    tally.note_prefix_mismatches(&transport::tee_take_prefix_mismatches(tap));
     coord.packets
 }
 

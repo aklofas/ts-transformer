@@ -661,6 +661,9 @@ pub struct Tally {
     /// accumulates nothing here.
     discontinuities_by_pid: BTreeMap<u16, u64>,
     nonconformant_by_pid: BTreeMap<u16, u64>,
+    /// Later-PES payload prefix mismatches per PID that an attributed
+    /// corruption window explains (`Tally::note_prefix_mismatches`).
+    prefix_excused_by_pid: BTreeMap<u16, u64>,
     /// `Debug`-formatted `DiscontinuityKind` of the first `Discontinuity`
     /// event fed, if any.
     first_discontinuity: Option<String>,
@@ -745,6 +748,7 @@ impl Tally {
             nonconformant: 0,
             discontinuities_by_pid: BTreeMap::new(),
             nonconformant_by_pid: BTreeMap::new(),
+            prefix_excused_by_pid: BTreeMap::new(),
             first_discontinuity: None,
             first_nonconformant: None,
             attribution: None,
@@ -1167,6 +1171,24 @@ impl Tally {
         }
     }
 
+    /// Hand a DRAINED batch of the raw reader's PES prefix mismatches
+    /// (`rawts::Reader::take_prefix_mismatches`) to the attribution: one
+    /// whose PES start lies inside an attributed corruption window is the
+    /// tap's deliberate damage and is excused per PID (see
+    /// `Attribution::explains_damage`); the rest stay charged by the
+    /// prefix oracles. Call once per batch, after the same chunk's PCRs
+    /// and resyncs.
+    pub fn note_prefix_mismatches(&mut self, batch: &[(u16, u64)]) {
+        let Some(a) = self.attribution.as_mut() else {
+            return;
+        };
+        for &(pid, at) in batch {
+            if a.explains_damage(at, pid) {
+                *self.prefix_excused_by_pid.entry(pid).or_insert(0) += 1;
+            }
+        }
+    }
+
     /// Hand the raw reader's FINAL recovery — the trailing partial packet
     /// `rawts::Reader::trailing_resync` describes — to the attribution.
     /// Separate from [`Tally::note_resyncs`] because the reader's own
@@ -1342,6 +1364,7 @@ impl Tally {
         Explained {
             by_pid,
             multiplex_wide: attribution.map_or(0, |rep| rep.attributed_events_unpinned),
+            prefix_excused: self.prefix_excused_by_pid.clone(),
         }
     }
 
@@ -1410,6 +1433,25 @@ impl Tally {
             .attribution
             .take()
             .map(|a| a.finish(wire.packets))
+            .map(|mut rep| {
+                // Reported beside the other attribution counts: the audio
+                // PIDs' prefix mismatches the corruption log explains.
+                rep.adts_prefix_excused = inv
+                    .programs
+                    .iter()
+                    .filter_map(|ep| ep.audio_pid)
+                    .map(|pid| {
+                        let pid = &pid;
+                        let seen = wire.pes.get(pid).map_or(0, |s| s.prefix_mismatches);
+                        self.prefix_excused_by_pid
+                            .get(pid)
+                            .copied()
+                            .unwrap_or(0)
+                            .min(seen)
+                    })
+                    .sum();
+                rep
+            })
             .inspect(|rep| {
                 // Every count here is the UNCAPPED one. The lists beside
                 // them are bounded samples, so gating on a list's length
@@ -1868,6 +1910,7 @@ pub fn verify_bytes_placed(
         // the time it surfaced rather than the position at end-of-file.
         tally.note_pcrs(&wire_reader.take_pcr_events());
         tally.note_resyncs(&wire_reader.take_resyncs());
+        tally.note_prefix_mismatches(&wire_reader.take_prefix_mismatches());
         while let Some(ev) = demux.next_event() {
             tally.feed_at(&ev, wire_reader.packets());
         }
@@ -3642,6 +3685,38 @@ mod tests {
         let none_lossy = t.explained(VerifyMode::Lossy, None);
         assert_eq!(none_lossy.for_pid(VIDEO_PID), 1, "{none_lossy:?}");
         assert_eq!(none_lossy.for_pid(KLV_PID), 1, "{none_lossy:?}");
+    }
+
+    /// A later-PES prefix mismatch is excused per PID only when its PES
+    /// start lies inside an attributed corruption window on that PID; one
+    /// outside any window stays charged, and no attribution excuses
+    /// nothing.
+    #[test]
+    fn a_prefix_mismatch_is_excused_only_inside_an_attributed_window() {
+        use crate::corrupt::Class;
+        let hdr = corruption_header();
+        let inj = injection_at(Class::Header, VIDEO_PID, 3);
+
+        let mut t = Tally::new();
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
+        // Inside the window, on the damaged PID: excused.
+        t.note_prefix_mismatches(&[(VIDEO_PID, 10)]);
+        // Same PID, far outside any window: not excused.
+        t.note_prefix_mismatches(&[(VIDEO_PID, 9_000)]);
+        // Inside the window but on a PID the injection never touched.
+        t.note_prefix_mismatches(&[(KLV_PID, 11)]);
+        let rep = t.attribution.take().expect("attached above").finish(10_000);
+        let ex = t.explained(VerifyMode::Lossy, Some(&rep));
+        assert_eq!(ex.prefix_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
+        assert_eq!(ex.prefix_excused.get(&KLV_PID), None, "{ex:?}");
+
+        let mut bare = Tally::new();
+        bare.note_prefix_mismatches(&[(VIDEO_PID, 10)]);
+        assert!(
+            bare.explained(VerifyMode::Lossy, None)
+                .prefix_excused
+                .is_empty()
+        );
     }
 
     // ---- Negative controls for the transport-loss excusals ----

@@ -863,6 +863,17 @@ pub(crate) fn tee_take_resyncs(tap: &Arc<Mutex<TeeState>>) -> Vec<tst_test_helpe
         .take_resyncs()
 }
 
+/// The tap reader's PES prefix mismatches since the last call, each with
+/// the packet ordinal of its PES start — see
+/// [`tst_test_helpers::rawts::Reader::take_prefix_mismatches`]. Drained,
+/// like [`tee_drain_pcrs`].
+pub(crate) fn tee_take_prefix_mismatches(tap: &Arc<Mutex<TeeState>>) -> Vec<(u16, u64)> {
+    tap.lock()
+        .expect("tee mutex poisoned")
+        .reader
+        .take_prefix_mismatches()
+}
+
 /// The tap reader's trailing-partial-packet recovery, if any — see
 /// [`tst_test_helpers::rawts::Reader::trailing_resync`]. Must be read BEFORE
 /// [`tee_tally`], which consumes the reader.

@@ -875,3 +875,45 @@ fn trailing_resync_includes_garbage_already_discarded() {
     assert_eq!(t.skipped_bytes, 1416);
     assert!(r.carry().len() < PKT);
 }
+
+/// A later audio PES whose first payload bytes were rewritten is counted
+/// in the summary always, and reported with its packet ordinal only in
+/// resync mode (the mode a corruption-judged capture runs in).
+#[test]
+fn a_later_pes_prefix_mismatch_is_reported_with_its_packet_ordinal_in_resync_mode() {
+    let mut bytes = bytes_of("audio", 2.0, "prefix-events");
+    let inv = crate::profiles::invariants(crate::profiles::by_name("audio").unwrap());
+    let pid = inv.programs[0]
+        .audio_pid
+        .expect("audio profile has an audio PID");
+    let starts: Vec<usize> = bytes
+        .chunks_exact(PKT)
+        .enumerate()
+        .filter_map(|(i, c)| {
+            let pkt: [u8; PKT] = c.try_into().expect("PKT bytes");
+            let info = classify_packet(&pkt).expect("generated packets classify");
+            (info.pid == pid && info.pusi).then_some(i)
+        })
+        .collect();
+    assert!(starts.len() >= 3, "the capture holds several audio PES");
+    let victim = starts[2];
+    let off = victim * PKT;
+    let info = classify_packet(bytes[off..off + PKT].try_into().unwrap()).unwrap();
+    let hdr_len = usize::from(bytes[off + info.payload_off + 8]);
+    let at = off + info.payload_off + 9 + hdr_len;
+    bytes[at] = 0x00;
+    bytes[at + 1] = 0x00;
+
+    let mut plain = Reader::new();
+    plain.feed(&bytes).unwrap();
+    assert!(plain.take_prefix_mismatches().is_empty());
+    assert_eq!(plain.finish().unwrap().pes[&pid].prefix_mismatches, 1);
+
+    let mut r = Reader::new();
+    r.set_resync_mode(true);
+    for chunk in bytes.chunks(101) {
+        r.feed(chunk).unwrap();
+    }
+    assert_eq!(r.take_prefix_mismatches(), vec![(pid, victim as u64)]);
+    assert!(r.take_prefix_mismatches().is_empty(), "drained");
+}

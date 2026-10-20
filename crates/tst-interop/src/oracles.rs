@@ -42,6 +42,11 @@ pub struct Explained {
     /// did — it is not a `DemuxEvent`, so the capture's own tallies do
     /// not hold it either.
     pub multiplex_wide: u64,
+    /// Later-PES payload prefix mismatches per PID that fell inside an
+    /// attributed corruption window and so are the tap's doing, not the
+    /// producer's (`verify::Tally::note_prefix_mismatches`). Only the
+    /// ADTS prefix check reads it.
+    pub prefix_excused: BTreeMap<u16, u64>,
 }
 
 impl Explained {
@@ -95,7 +100,7 @@ pub fn check(
     f.extend(pcr_interval(inv, wire, mode));
     f.extend(pmt_streams(p, inv, wire, layout));
     if layout == WireLayout::Generator {
-        f.extend(audio(inv, wire, seconds));
+        f.extend(audio(inv, wire, seconds, explained));
         f.extend(av1_carriage(inv, wire));
         f.extend(pts_wrap(p, inv, wire, seconds));
         f.extend(wire_vs_demux(p, inv, wire, per_program, mode, explained));
@@ -149,7 +154,7 @@ fn program_accounting(
 /// Oracle 2: on the audio PID, the raw PES payload starts with an ADTS
 /// AAC frame at the expected sample rate; the frame count and median
 /// PTS step match that rate's real cadence (1024 samples/frame).
-fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
+fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64, explained: &Explained) -> Vec<String> {
     // `audio_sample_rate_hz` and `programs[0].audio_pid` are both
     // `p.audio.then_some(..)` in `profiles::invariants` — always Some
     // together or None together — so one combined gate covers both
@@ -186,10 +191,15 @@ fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64) -> Vec<String> {
     // …and the same check over every LATER PES on the PID: an ADTS
     // syncword is constant, so one that stops looking like the first is
     // damage the first-PES check alone would sail past.
+    // A mismatch whose PES start lies inside an attributed corruption
+    // window is the sender-side tap's deliberate damage; it is excused
+    // (and reported as `adts_prefix_excused`), never charged to the
+    // producer. An unattributed one still fails.
+    let excused = explained.prefix_excused.get(&pid).copied().unwrap_or(0);
     if let Some(n) = wire
         .pes
         .get(&pid)
-        .map(|s| s.prefix_mismatches)
+        .map(|s| s.prefix_mismatches.saturating_sub(excused))
         .filter(|&n| n > 0)
     {
         f.push(format!(
@@ -622,6 +632,7 @@ mod tests {
         Explained {
             by_pid: BTreeMap::from([(BASELINE_KLV_PID, n)]),
             multiplex_wide: 0,
+            ..Default::default()
         }
     }
 
@@ -730,25 +741,86 @@ mod tests {
         let good_prefix = [0xFF, 0xF9, 0x0C, 0x00];
         let good_pts: Vec<u64> = (0..141).map(|i| i as u64 * 1920).collect();
 
-        assert!(audio(&inv, &audio_wire(good_prefix, good_pts.clone()), 3.0).is_empty());
+        assert!(
+            audio(
+                &inv,
+                &audio_wire(good_prefix, good_pts.clone()),
+                3.0,
+                &Explained::default()
+            )
+            .is_empty()
+        );
 
-        let one_frame = audio(&inv, &audio_wire(good_prefix, vec![0]), 3.0);
+        let one_frame = audio(
+            &inv,
+            &audio_wire(good_prefix, vec![0]),
+            3.0,
+            &Explained::default(),
+        );
         assert!(
             one_frame.iter().any(|f| f.starts_with("audio_cadence")),
             "{one_frame:?}"
         );
 
-        let bad_codec = audio(&inv, &audio_wire([0x00, 0, 0, 0], good_pts.clone()), 3.0);
+        let bad_codec = audio(
+            &inv,
+            &audio_wire([0x00, 0, 0, 0], good_pts.clone()),
+            3.0,
+            &Explained::default(),
+        );
         assert!(
             bad_codec.iter().any(|f| f.starts_with("audio_codec_adts")),
             "{bad_codec:?}"
         );
 
         let bad_step_pts: Vec<u64> = (0..141).map(|i| i as u64 * 3000).collect();
-        let bad_step = audio(&inv, &audio_wire(good_prefix, bad_step_pts), 3.0);
+        let bad_step = audio(
+            &inv,
+            &audio_wire(good_prefix, bad_step_pts),
+            3.0,
+            &Explained::default(),
+        );
         assert!(
             bad_step.iter().any(|f| f.starts_with("audio_pts_step")),
             "{bad_step:?}"
+        );
+    }
+
+    /// A later PES whose prefix stopped matching is the producer's
+    /// defect unless an attributed corruption window explains it.
+    #[test]
+    fn a_later_adts_prefix_mismatch_is_excused_only_when_attributed() {
+        let inv = profiles::invariants(profiles::by_name("audio").unwrap());
+        let pid = inv.programs[0]
+            .audio_pid
+            .expect("audio profile has an audio PID");
+        let good_pts: Vec<u64> = (0..141).map(|i| i as u64 * 1920).collect();
+        let mut wire = audio_wire([0xFF, 0xF9, 0x0C, 0x00], good_pts);
+        wire.pes
+            .get_mut(&pid)
+            .expect("audio PES shape")
+            .prefix_mismatches = 1;
+
+        let unattributed = audio(&inv, &wire, 3.0, &Explained::default());
+        assert!(
+            unattributed
+                .iter()
+                .any(|f| f.contains("1 later PES payload(s)")),
+            "{unattributed:?}"
+        );
+
+        let attributed = Explained {
+            prefix_excused: BTreeMap::from([(pid, 1)]),
+            ..Default::default()
+        };
+        assert!(audio(&inv, &wire, 3.0, &attributed).is_empty());
+
+        // One excused of two leaves the other charged.
+        wire.pes.get_mut(&pid).unwrap().prefix_mismatches = 2;
+        let partly = audio(&inv, &wire, 3.0, &attributed);
+        assert!(
+            partly.iter().any(|f| f.contains("1 later PES payload(s)")),
+            "{partly:?}"
         );
     }
 
@@ -763,6 +835,7 @@ mod tests {
             &inv,
             &audio_wire([0xFF, 0xF9, 0x10, 0x80], good_pts.clone()),
             3.0,
+            &Explained::default(),
         );
         assert!(
             wrong_rate
@@ -778,6 +851,7 @@ mod tests {
             &inv,
             &audio_wire([0xFF, 0xFD, 0x50, 0x80], good_pts.clone()),
             3.0,
+            &Explained::default(),
         );
         assert!(
             mpeg1_layer2
@@ -787,7 +861,12 @@ mod tests {
         );
 
         // A real ADTS header (layer 00) at the correct rate must pass.
-        let real_adts = audio(&inv, &audio_wire([0xFF, 0xF9, 0x4C, 0x80], good_pts), 3.0);
+        let real_adts = audio(
+            &inv,
+            &audio_wire([0xFF, 0xF9, 0x4C, 0x80], good_pts),
+            3.0,
+            &Explained::default(),
+        );
         assert!(
             !real_adts.iter().any(|f| f.starts_with("audio_codec_adts")),
             "{real_adts:?}"
@@ -1260,6 +1339,7 @@ mod tests {
             &Explained {
                 by_pid: BTreeMap::from([(BASELINE_VIDEO_PID, 7)]),
                 multiplex_wide: 0,
+                ..Default::default()
             },
         );
         assert!(
@@ -1307,6 +1387,7 @@ mod tests {
                 &Explained {
                     by_pid: BTreeMap::new(),
                     multiplex_wide: 7,
+                    ..Default::default()
                 },
             )
             .is_empty(),

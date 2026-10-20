@@ -1254,6 +1254,7 @@ echo "soak: running until $(date -u -d "@$DEADLINE" +%Y-%m-%dT%H:%M:%SZ) (${HOUR
 # rss.csv + proc.csv row per worker and one host.csv row per tick; the
 # sampler's own pidfile is excluded. Every worker's pidfile is written
 # above, before this launch.
+SAMPLE_EVENTS_LOG="$EVENTS_LOG"
 sample_loop "$SAMPLER_DEADLINE" "$START_EPOCH" "$RSS_CSV" "$PROC_CSV" "$HOST_CSV" \
   "$OUTDIR/pids" "$RSS_CADENCE_S" sampler &
 record_pid sampler $!

@@ -627,7 +627,10 @@ write_provenance() {
 # A missing PID (process already gone) writes an empty rss_kb field,
 # which is exactly report/soak.rs's `soak::RssSample` crash signal — never
 # fails this loop itself, so one dead process doesn't stop sampling the
-# others.
+# others. A VmRSS read that yields nothing while /proc/<pid> still exists
+# is a missed read, not an exit: that tick writes NO rss.csv row for the
+# pid, and when SAMPLE_EVENTS_LOG names a file a
+# `SAMPLE-MISS leg=… process=… pid=… tick=…` line goes there.
 #
 # proc.csv and host.csv are written on the SAME tick with the same
 # elapsed_s so the three series join on (elapsed_s, pid). Every field
@@ -703,7 +706,13 @@ sample_loop() {
         # (every real entry is, even a socket's dangling one).
         if [[ $# -eq 1 && ! -L "$1" ]]; then fds=0; else fds=$#; fi
       fi
-      printf '%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$rss_kb" >>"$out"
+      if [[ -z "$rss_kb" && -d "/proc/$pid" ]]; then
+        if [[ -n "${SAMPLE_EVENTS_LOG:-}" ]]; then
+          event_to "$SAMPLE_EVENTS_LOG" "SAMPLE-MISS leg=$leg process=$process pid=$pid tick=$elapsed" || true
+        fi
+      else
+        printf '%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$rss_kb" >>"$out"
+      fi
       printf '%s,%s,%s,%s,%s,%s,%s,%s\n' "$elapsed" "$leg" "$process" "$pid" "$utime" "$stime" "$threads" "$fds" >>"$proc_out"
     done
     # /proc/loadavg: "load1 load5 load15 running/total lastpid".
