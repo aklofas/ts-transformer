@@ -1037,6 +1037,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-tag checklist requires every rerun on the candidate and every weekly
   `ci-health` `ALERT` to match a row.
 
+### Testing — soak and release qualification
+
+- `tst-interop recv`/`verify --klv-placement N`: a KLV placement oracle for synchronous-KLV captures holds every record to the video access unit it was generated with, within 91 ticks, and counts `N` expected source generations; a profile without synchronous KLV exits 2. The `rtsp-publish/gst-push-es-klv` interop cell runs it.
+- Under `--klv-placement N` with `N` of 2 or more, the receiver's invariants excuse one backward PTS step per PID at each generation boundary the oracle counts, at most `N − 1`, and the timing anomalies that coincide with it; any other backward step still fails. The report's `klv_placement` block and the `klv_placement_<leg>` soak verdict give the excused counts.
+- `soak.sh` gains the `rtsp-publish-es` leg (H.264 and KLV as separate RTP tracks through the publisher mount, re-muxed, judged for KLV completeness and placement; `--no-rtsp-publish-es` turns it off, and it shares `PUBLISHER_DROP_PERIOD_S` with the `rtsp-publish` leg), a declared pre-launch memory gate (`SOAK_MEM_BUDGET`, `SOAK_MEM_HEADROOM`; recorded as `memory_gate` in `soak-config.json`), and `report soak --publish-leg NAME=REPORT`.
+- The qualification record has a release mode (`release-qualify.yml` input `release`, or a `v*` tag): GO then requires a passing 72-hour soak archive and a passing corpus archive for the soaked tree, with no change under `crates/` or `bindings/` between the soaked commit and the qualified one. The gate prefers the newest 72-hour soak archive that stands for the qualified commit. Soak archives declare `expected_duration_s`.
+- The releasing checklist runs the corpus phase and the soak on a release VM between the release-prep merge and the date commit.
+
 ---
 
 ## [0.8.0] — 2026-10-14

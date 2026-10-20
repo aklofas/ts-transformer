@@ -54,6 +54,11 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 
 ## Pre-tag checklist
 
+The steps run in this order. From step 3 until the tag, nothing that ships
+changes: the soak and the real-capture corpus run judge the release-prep
+merge commit, and the qualification run checks that nothing under
+`crates/` or `bindings/` changed after it.
+
 1. **Version consistency (release preflight).** The rail checks six sources —
    workspace `Cargo.toml`, `bindings/python/pyproject.toml`, the tst-py
    `bindings/python/Cargo.toml`, the C `TST_VERSION_*` constants in
@@ -94,63 +99,118 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
    - Re-pin `rust-toolchain.toml` and `rust-version` to stable minus six
      releases (check `rustup check` for current stable); update the sites
      `msrv-consistency.sh` lists.
-2. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
-   the commit you intend to tag. Every rerun on that commit matches a row of
+2. **The release-prep PR.** One PR carries the version sweep from step 1 and
+   the CHANGELOG: the `[Unreleased]` section is retitled `[X.Y.Z]` with a
+   date placeholder, and a fresh `[Unreleased]` stub opens above it. The
+   "Release highlights" block is the seed for the GitHub Release notes.
+3. **Freeze.** The release-prep merge commit is the soaked commit. Nothing
+   under `crates/` or `bindings/` changes after it until the tag. A fix that
+   must land there restarts the checklist at step 2, because the
+   qualification run refuses a soak whose tree differs from the qualified
+   one under those two directories.
+4. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
+   the frozen commit. Every rerun on that commit matches a row of
    the [CI flake ledger](/docs/project/ci-flakes.md), and the latest
    `ci-health` run's `ALERT` lines all have a row there; one that does not is
-   a finding to settle before the tag.
-3. **Dry-run the wheels** (recommended):
+   a finding to settle before the soak starts.
+5. **Dry-run the wheels:**
    `gh workflow run python-wheels.yml` builds every wheel + sdist and skips
    publish (publish is tag-gated). Confirm all legs are green, and watch for a
    leg sitting *queued* — that is the v0.1.0 failure mode.
-4. **Qualify the candidate.** Once `ci` is green on the commit you intend to
-   tag, dispatch the qualification run on that exact commit:
-   ```bash
-   gh workflow run release-qualify.yml -f sha=<the full 40-hex commit sha>
-   ```
-   The commit must be on `main` or be a `v*` tag; the run's `resolve` job refuses anything else.
-   One run calls the wheels, JVM, interop, sanitizer, fuzz, ABI and semver
-   legs in rehearsal mode (nothing is published) and writes a record. The run
-   must end **GO**: every leg succeeded on that commit, the tree was clean, and
-   the interop census matches `expectations.toml`. A **NO-GO** record lists
-   its reasons (a failed or missing leg, a stale `ci` result, a dirty tree, an
-   unexpected interop failure). A real leg failure is a finding to fix, not a
-   rerun; rerun only a failure that belongs to a ledgered flake class.
+6. **The release VM.** One dedicated cloud VM runs the corpus phase and then
+   the soak, both on the frozen commit:
+   - Provision the VM. Its instance role reads the corpus bucket, which holds
+     the real captures and the previous release's corpus baseline.
+   - Check out the frozen commit, clean, with its submodules, and build
+     `tst-interop` with `--release`; the corpus phase runs that binary and
+     the soak rebuilds the same tree.
+   - Run the corpus phase: `tst-interop corpus inventory` lists the
+     captures, `corpus sweep` digests each one and compares it with the
+     previous release's baseline, `corpus replay` sends each capture through
+     the transports and judges what arrives, and `corpus report` writes the
+     result and its archive row. A failure stops the checklist here; it is a
+     finding to fix, and the fix restarts at step 2.
+   - Launch the soak detached, so no session limit can end it:
+     ```bash
+     SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh \
+       --outdir ~/soak-X.Y.Z --hours 72 &
+     ```
+     The script refuses to start when its declared memory gate does not fit
+     the VM.
+   - Check the run at 24 and 48 hours without touching it: every process is
+     alive, there is no fail-fast marker, and the SRT receiver's
+     `reconnects` reads 4 and then 8.
+   - When the run ends, harvest the corpus run directory and the soak
+     directory. Write a checksum list for each on the VM and check the
+     copies against it.
+   - The `tst-interop report soak` that closes the run must print
+     `overall_pass=true`, and the script exits 0. Any other verdict is a
+     finding, not a rerun.
+7. **The archive-entry PR.** A docs-only PR adds two rows to
+   `tests/coverage/evidence-archives.toml`: the soak, with
+   `expected_duration_s = 259200`, and the corpus run, each with the frozen
+   commit as its `tree`. The same PR adds the soak to the runs table on the
+   [validation evidence page](/docs/project/validation-evidence.md).
+8. **Destroy the VM** once both archives are harvested and checked.
+9. **The date commit.** Replace the CHANGELOG date placeholder with the
+   release date. The commit touches the CHANGELOG only, so the frozen tree
+   still stands for it.
+10. **Qualify the candidate.** Once `ci` is green on the date commit, dispatch
+    the qualification run on that exact commit, in release mode:
+    ```bash
+    gh workflow run release-qualify.yml -f sha=<the full 40-hex commit sha> -f release=true
+    ```
+    The commit must be on `main` or be a `v*` tag; the run's `resolve` job
+    refuses anything else. One run calls the wheels, JVM, interop,
+    sanitizer, fuzz, ABI and semver legs in rehearsal mode (nothing is
+    published) and writes a record. The run must end **GO**: every leg
+    succeeded on that commit, the tree was clean, and the interop census
+    matches `expectations.toml`. `release=true` adds the release gate: GO
+    also needs a passing soak archive that declares 259 200 seconds and a
+    passing corpus archive for the soaked tree, with no change under
+    `crates/` or `bindings/` between the soaked tree and this commit. A `v*`
+    tag push applies the same gate. Without the input the record is a
+    mid-cycle one and states that the gate was not applied.
 
-   The run's bundle holds `qualification.json`, the rendered
-   `qualification.md`, the SBOMs, `SHA256SUMS`, the build attestations and the
-   C package. Download it from the run's artefacts.
-5. **Commit the record.** In a docs-only PR, add the run's `qualification.json`
-   as `docs/project/qualification.json` (CI's `check-qualification` step verifies the page matches it) and render the evidence page's
-   generated block:
-   ```bash
-   bash scripts/gen/qualification.sh --write
-   ```
-6. **Maintainer-local checks.** Some validation needs inputs that are not on a
-   CI runner, so the record lists them as `maintainer_local` and they stay
-   with you. Run each and note the result before tagging:
-   - the real-capture corpus cross-check,
-     `cargo test -p tst-core --test mpegts mux_local`;
-   - long fuzz runs, 10 minutes per target;
-   - the benchmark regression check;
-   - the one-hour synthetic soak.
+    A **NO-GO** record lists its reasons (a failed or missing leg, a stale
+    `ci` result, a dirty tree, an unexpected interop failure, a missing,
+    failed, short or superseded soak archive, a missing or failed corpus
+    archive). A real leg failure is a finding to fix, not a rerun; rerun
+    only a failure that belongs to a ledgered flake class.
 
-   The separate pre-release validation battery is retired. Its other steps
-   are covered as follows:
+    The run's bundle holds `qualification.json`, the rendered
+    `qualification.md`, the SBOMs, `SHA256SUMS`, the build attestations and
+    the C package. Download it from the run's artefacts.
+11. **Commit the record.** In a docs-only PR, add the run's
+    `qualification.json` as `docs/project/qualification.json` (CI's
+    `check-qualification` step verifies the page matches it) and render the
+    evidence page's generated block:
+    ```bash
+    bash scripts/gen/qualification.sh --write
+    ```
+12. **Maintainer-local checks.** Some validation needs inputs that are not on a
+    CI runner, so the record lists them as `maintainer_local` and they stay
+    with you. Run each and note the result before tagging:
+    - long fuzz runs, 10 minutes per target;
+    - the benchmark regression check;
+    - the one-hour synthetic soak.
 
-   | Former step | Now covered by |
-   |---|---|
-   | Regression tier | `ci` |
-   | Baseline mux | the interop matrix's generated input |
-   | `tsanalyze` / `tspsi` / `ffprobe` goldens | the `analyze/{tsanalyze,tsp-analyze,ffprobe}/*` cells |
-   | FFmpeg muxer differential | retired; the `srt-live/*` and `decode/*` cells use FFmpeg as a peer |
-   | Player decode matrix | the `decode/*` cells |
-   | C demux round trip | `bindings/c/tests/receiving/demux_receiver_loopback.rs` |
-   | HLS segment probe | the `hls/{ffmpeg,tsp}-pull` cells and `crates/tst-hls/tests/net_hls_e2e.rs` |
-   | PTS-rollover and PCR-jitter checks | removed; they never ran |
-7. **CHANGELOG:** retitle the `[Unreleased]` section to `[X.Y.Z] — <date>`
-   and open a fresh `[Unreleased]` stub. The "Release highlights" block is
-   the seed for the GitHub Release notes.
+    The real-capture corpus check runs on the release VM in step 6.
+
+    The separate pre-release validation battery is retired. Its other steps
+    are covered as follows:
+
+    | Former step | Now covered by |
+    |---|---|
+    | Regression tier | `ci` |
+    | Baseline mux | the interop matrix's generated input |
+    | `tsanalyze` / `tspsi` / `ffprobe` goldens | the `analyze/{tsanalyze,tsp-analyze,ffprobe}/*` cells |
+    | FFmpeg muxer differential | retired; the `srt-live/*` and `decode/*` cells use FFmpeg as a peer |
+    | Player decode matrix | the `decode/*` cells |
+    | C demux round trip | `bindings/c/tests/receiving/demux_receiver_loopback.rs` |
+    | HLS segment probe | the `hls/{ffmpeg,tsp}-pull` cells and `crates/tst-hls/tests/net_hls_e2e.rs` |
+    | PTS-rollover and PCR-jitter checks | removed; they never ran |
+13. **Tag** the qualified date commit, following the release procedure below.
 
 ## Release procedure
 
@@ -183,7 +243,7 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 5. **GitHub Release.** The tag push also runs `release-qualify.yml` again.
    The publish workflows above do not wait for it: `jvm-jar.yml` and
    `python-wheels.yml` publish on their own tag triggers, in parallel,
-   whatever that run's verdict. The pre-tag dispatch in step 4 of the
+   whatever that run's verdict. The pre-tag dispatch in step 10 of the
    checklist is the real gate. On a GO the tag run attaches the bundle and
    the C package to a **draft** Release for the tag. Edit that draft's notes
    from the CHANGELOG highlights block and publish it; do not create a second
