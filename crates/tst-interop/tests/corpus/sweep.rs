@@ -261,3 +261,24 @@ fn an_invariant_failure_fails_the_sweep_until_annotated() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(json(&run.join("sweep.json"))["invariant_failures"], 0);
 }
+
+#[test]
+fn a_missing_annotations_directory_or_a_bad_annotation_stops_before_digesting() {
+    let (dir, shas) = two_files("sw-badann");
+    let missing = temp_dir_named("sw-badann-none").join("absent");
+    let run = temp_dir_named("sw-badann-run1");
+    let out = sweep(&dir, &run, &["--annotations", missing.to_str().unwrap()]);
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("--annotations"), "{text}");
+    assert!(!text.contains(missing.to_str().unwrap()), "{text}");
+
+    let ann = temp_dir_named("sw-badann-dir");
+    std::fs::write(ann.join(format!("{}.toml", shas[1])), "oops = 1\n").unwrap();
+    let run = temp_dir_named("sw-badann-run2");
+    let out = sweep(&dir, &run, &["--annotations", ann.to_str().unwrap()]);
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains(&shas[1]) && text.contains("line 1"), "{text}");
+    assert!(!run.join("digests").exists(), "no file was digested");
+}

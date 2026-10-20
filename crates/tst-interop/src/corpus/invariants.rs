@@ -2,10 +2,11 @@
 //! no feed error, KLV payloads decode, the demuxer's discontinuity count
 //! agrees with an independent walk of the wire, and PTS never jumps back.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use tst_core::mpegts::demux::low_level::{parse_pat, parse_pmt};
 
 use super::FEED_CHUNK;
 use super::annotations::Annotations;
@@ -38,12 +39,84 @@ struct PidCc {
     raw: [u8; 188],
 }
 
+/// The demuxer's PSI section assembler: one section at a time per PID,
+/// capped at 4096 bytes.
+#[derive(Default)]
+struct Assembler {
+    buf: Vec<u8>,
+    total: Option<usize>,
+}
+
+impl Assembler {
+    fn append(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
+        if self.buf.len() + bytes.len() > 4096 {
+            self.reset();
+            return None;
+        }
+        self.buf.extend_from_slice(bytes);
+        if self.total.is_none() && self.buf.len() >= 3 {
+            let total = 3 + ((usize::from(self.buf[1] & 0x0F) << 8) | usize::from(self.buf[2]));
+            if total > 4096 {
+                self.reset();
+                return None;
+            }
+            self.total = Some(total);
+        }
+        let total = self.total?;
+        if self.buf.len() < total {
+            return None;
+        }
+        let rest = self.buf.split_off(total);
+        self.total = None;
+        Some(std::mem::replace(&mut self.buf, rest))
+    }
+
+    fn start(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
+        self.reset();
+        self.append(bytes)
+    }
+
+    fn cont(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
+        if self.buf.is_empty() {
+            return None;
+        }
+        self.append(bytes)
+    }
+
+    /// Another complete section already buffered, if any.
+    fn next(&mut self) -> Option<Vec<u8>> {
+        if self.buf.first() == Some(&0xFF) {
+            self.reset();
+            return None;
+        }
+        if self.buf.is_empty() {
+            return None;
+        }
+        self.append(&[])
+    }
+
+    fn reset(&mut self) {
+        self.buf.clear();
+        self.total = None;
+    }
+}
+
+/// One program the PAT announced and what its PMT declared.
+struct Program {
+    number: u16,
+    version: Option<u8>,
+    /// Elementary PIDs with the kind signature the PMT gave them.
+    streams: Vec<(u16, Vec<u8>)>,
+}
+
 /// The incremental form of [`walk`]. Feed it bytes in any chunking.
 #[derive(Default)]
 pub struct Walker {
     carry: Vec<u8>,
     state: HashMap<u16, PidCc>,
-    pmt_pids: BTreeSet<u16>,
+    assemblers: HashMap<u16, Assembler>,
+    pat_version: Option<u8>,
+    programs: BTreeMap<u16, Program>,
     declared: BTreeSet<u16>,
     out: WireWalk,
 }
@@ -66,8 +139,15 @@ impl Walker {
     pub fn feed(&mut self, bytes: &[u8]) {
         self.carry.extend_from_slice(bytes);
         let mut at = 0;
+        // A byte is a packet start when 0x47 repeats at the next strides
+        // that are already buffered.
+        let locked = |c: &[u8], at: usize| {
+            [at, at + 188, at + 376]
+                .iter()
+                .all(|&i| c.get(i).is_none_or(|&b| b == 0x47))
+        };
         while self.carry.len() - at >= 188 {
-            if self.carry[at] != 0x47 {
+            if !locked(&self.carry, at) {
                 at += 1;
                 continue;
             }
@@ -83,40 +163,131 @@ impl Walker {
         self.out
     }
 
-    /// Records the programs of a PAT or the streams of a PMT carried whole
-    /// in one packet.
-    fn psi(&mut self, pid: u16, pkt: &[u8; 188], payload_off: usize) {
-        if pkt[1] & 0x40 == 0 || payload_off >= 188 {
+    fn rebuild_declared(&mut self) {
+        self.declared = self
+            .programs
+            .values()
+            .flat_map(|p| p.streams.iter().map(|(pid, _)| *pid))
+            .collect();
+    }
+
+    /// Forgets the continuity state of PIDs a topology change retired.
+    fn retire(&mut self, pids: &[u16]) {
+        for pid in pids {
+            self.state.remove(pid);
+        }
+    }
+
+    fn pat(&mut self, section: &[u8]) {
+        let Ok(pat) = parse_pat(section) else { return };
+        if Some(pat.version) == self.pat_version {
             return;
         }
-        let start = payload_off + 1 + usize::from(pkt[payload_off]);
-        if start + 3 > 188 {
+        self.pat_version = Some(pat.version);
+        let announced: BTreeMap<u16, u16> = pat
+            .programs
+            .iter()
+            .filter(|e| e.program_number != 0)
+            .map(|e| (e.pid, e.program_number))
+            .collect();
+        let gone: Vec<u16> = self
+            .programs
+            .iter()
+            .filter(|(pid, p)| announced.get(pid) != Some(&p.number))
+            .map(|(pid, _)| *pid)
+            .collect();
+        for pmt_pid in gone {
+            if let Some(p) = self.programs.remove(&pmt_pid) {
+                let pids: Vec<u16> = p.streams.iter().map(|(pid, _)| *pid).collect();
+                self.retire(&pids);
+            }
+            self.assemblers.remove(&pmt_pid);
+            self.state.remove(&pmt_pid);
+        }
+        for (pid, number) in announced {
+            self.programs.entry(pid).or_insert(Program {
+                number,
+                version: None,
+                streams: Vec::new(),
+            });
+            self.assemblers.entry(pid).or_default();
+        }
+        self.rebuild_declared();
+    }
+
+    fn pmt(&mut self, pmt_pid: u16, section: &[u8]) {
+        let Ok(pmt) = parse_pmt(section) else { return };
+        let Some(program) = self.programs.get(&pmt_pid) else {
+            return;
+        };
+        if pmt.program_number != program.number || Some(pmt.version) == program.version {
             return;
         }
-        let table = pkt[start];
-        let len = (usize::from(pkt[start + 1] & 0x0F) << 8) | usize::from(pkt[start + 2]);
-        let body = start + 3;
-        let end = (body + len).min(188);
-        if pid == 0 && table == 0 {
-            // Programs run to the 4-byte CRC; the first 5 bytes are the header.
-            let mut i = body + 5;
-            while i + 4 <= end.saturating_sub(4) {
-                let program = (u16::from(pkt[i]) << 8) | u16::from(pkt[i + 1]);
-                let p = (u16::from(pkt[i + 2] & 0x1F) << 8) | u16::from(pkt[i + 3]);
-                if program != 0 {
-                    self.pmt_pids.insert(p);
-                }
-                i += 4;
+        // First program to declare a PID owns it.
+        let mut streams: Vec<(u16, Vec<u8>)> = Vec::new();
+        for s in &pmt.streams {
+            let taken = self.programs.iter().any(|(p, other)| {
+                *p != pmt_pid && other.streams.iter().any(|(e, _)| *e == s.elementary_pid)
+            });
+            if !taken {
+                let mut sig = vec![s.stream_type];
+                sig.extend(s.descriptors.iter().map(|d| d.tag));
+                streams.push((s.elementary_pid, sig));
             }
-        } else if table == 2 && self.pmt_pids.contains(&pid) && body + 9 <= end {
-            let info = (usize::from(pkt[body + 7] & 0x0F) << 8) | usize::from(pkt[body + 8]);
-            let mut i = body + 9 + info;
-            while i + 5 <= end.saturating_sub(4) {
-                let es = (u16::from(pkt[i + 1] & 0x1F) << 8) | u16::from(pkt[i + 2]);
-                let es_info = (usize::from(pkt[i + 3] & 0x0F) << 8) | usize::from(pkt[i + 4]);
-                self.declared.insert(es);
-                i += 5 + es_info;
+        }
+        // A PID the old version owned that is gone, or kept under another
+        // kind, loses its continuity state.
+        let mut reset = Vec::new();
+        for (pid, sig) in &program.streams {
+            match streams.iter().find(|(p, _)| p == pid) {
+                None => reset.push(*pid),
+                Some((_, new)) if new != sig => reset.push(*pid),
+                Some(_) => {}
             }
+        }
+        let program = self.programs.get_mut(&pmt_pid).expect("checked above");
+        program.version = Some(pmt.version);
+        program.streams = streams;
+        self.retire(&reset);
+        self.rebuild_declared();
+    }
+
+    fn section(&mut self, pid: u16, section: &[u8]) {
+        if pid == 0 {
+            self.pat(section);
+        } else {
+            self.pmt(pid, section);
+        }
+    }
+
+    /// Routes one PSI packet the way the demuxer's section assembler does.
+    fn psi(&mut self, pid: u16, payload: &[u8], pusi: bool, jumped: bool) {
+        let asm = self.assemblers.entry(pid).or_default();
+        if !pusi && jumped {
+            asm.reset();
+            return;
+        }
+        let mut done = Vec::new();
+        if pusi {
+            let Some(&pointer) = payload.first() else {
+                return;
+            };
+            let pointer = usize::from(pointer);
+            if 1 + pointer > payload.len() {
+                return;
+            }
+            if pointer > 0 {
+                done.extend(asm.cont(&payload[1..1 + pointer]));
+            }
+            done.extend(asm.start(&payload[1 + pointer..]));
+        } else {
+            done.extend(asm.cont(payload));
+        }
+        while let Some(more) = self.assemblers.get_mut(&pid).and_then(Assembler::next) {
+            done.push(more);
+        }
+        for s in done {
+            self.section(pid, &s);
         }
     }
 
@@ -133,59 +304,82 @@ impl Walker {
         if p[1] & 0x80 != 0 || p[3] >> 6 != 0 || (afc & 2 != 0 && 5 + usize::from(p[4]) > 188) {
             return;
         }
+        // Packets without payload neither advance nor judge the counter.
+        if afc & 1 == 0 {
+            return;
+        }
         let payload_off = if afc & 2 != 0 {
             5 + usize::from(p[4])
         } else {
             4
         };
-        if afc & 1 != 0 && (pid == 0 || self.pmt_pids.contains(&pid)) {
-            self.psi(pid, p, payload_off);
-        }
-        // Packets without payload neither advance nor judge the counter.
-        if afc & 1 == 0 {
-            return;
-        }
         let cc = p[3] & 0x0F;
         let indicator = afc & 2 != 0 && p[4] >= 1 && p[5] & 0x80 != 0;
         let counted = self.declared.contains(&pid);
-        let Some(prev) = self.state.get_mut(&pid) else {
-            self.state.insert(
-                pid,
-                PidCc {
-                    cc,
-                    dup: false,
-                    raw: *p,
-                },
-            );
-            if indicator && counted {
-                self.out.cc_errors += 1;
-            }
-            return;
-        };
-        if cc == prev.cc && !indicator && same_but_pcr(&prev.raw, p) {
-            if prev.dup {
-                // A third identical packet is a jump; the stored state stays.
-                if counted {
+        let mut jumped = false;
+        match self.state.get_mut(&pid) {
+            None => {
+                self.state.insert(
+                    pid,
+                    PidCc {
+                        cc,
+                        dup: false,
+                        raw: *p,
+                    },
+                );
+                if indicator && counted {
                     self.out.cc_errors += 1;
                 }
-            } else {
-                prev.dup = true;
             }
-            return;
+            Some(prev) => {
+                if cc == prev.cc && !indicator && same_but_pcr(&prev.raw, p) {
+                    if prev.dup {
+                        // A third identical packet is a jump; the stored
+                        // state stays.
+                        jumped = true;
+                        if counted {
+                            self.out.cc_errors += 1;
+                        }
+                    } else {
+                        // A tolerated duplicate is not routed anywhere.
+                        prev.dup = true;
+                        return;
+                    }
+                } else {
+                    prev.dup = false;
+                    if cc != (prev.cc + 1) & 0x0F && !indicator {
+                        jumped = true;
+                        if counted {
+                            self.out.cc_errors += 1;
+                        }
+                    }
+                    if indicator && counted {
+                        self.out.cc_errors += 1;
+                    }
+                    prev.cc = cc;
+                    prev.raw = *p;
+                }
+            }
         }
-        prev.dup = false;
-        if cc != (prev.cc + 1) & 0x0F && !indicator && counted {
-            self.out.cc_errors += 1;
+        if pid == 0 || self.programs.contains_key(&pid) {
+            let payload = if payload_off < 188 {
+                &p[payload_off..]
+            } else {
+                &[][..]
+            };
+            self.psi(pid, payload, p[1] & 0x40 != 0, jumped);
         }
-        if indicator && counted {
-            self.out.cc_errors += 1;
-        }
-        prev.cc = cc;
-        prev.raw = *p;
     }
 }
 
-/// Walks `bytes` packet by packet.
+/// Walks `bytes` packet by packet, following the demuxer's own rules for
+/// which PIDs count: PAT and PMT sections are reassembled across packets
+/// and adopted only as the demuxer adopts them (checksum, current/next,
+/// program number against the PAT, version change, a retired or re-typed
+/// PID losing its counter state). The one thing the wire cannot show is the
+/// demuxer's PES oversize discontinuity (4 MiB per PID by default); a
+/// capture that trips it reports one more discontinuity than this walk.
+/// Multi-section PATs are not followed.
 pub fn walk(bytes: &[u8]) -> WireWalk {
     let mut w = Walker::new();
     w.feed(bytes);
@@ -229,11 +423,20 @@ pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<
     }
     for (pid, d) in &default.pids {
         let klv = d.kind == "klv-sync" || d.kind == "klv-async";
-        if klv && d.klv_unknown > 0 && !ann.non_misb_private_pids.contains(pid) {
+        if !klv || ann.non_misb_private_pids.contains(pid) {
+            continue;
+        }
+        if d.klv_unknown > 0 {
             fail(
                 "klv-unknown",
                 Some(*pid),
                 d.klv_unknown_reason.clone().unwrap_or_default(),
+            );
+        } else if d.unknown_samples > 0 {
+            fail(
+                "klv-unknown",
+                Some(*pid),
+                format!("{} unknown sample(s)", d.unknown_samples),
             );
         }
     }

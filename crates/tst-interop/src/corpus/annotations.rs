@@ -31,7 +31,8 @@ fn text(value: &str) -> Option<String> {
 
 /// Reads the annotations for `sha` from `dir`; an absent file is the
 /// default. Flat `key = value` lines and `#` comments only; any other line
-/// is an error naming its number.
+/// is an error naming its number. A key given twice takes its last value;
+/// a comment after a value is part of the value and so is rejected.
 pub fn load(dir: &Path, sha: &Sha256Hex) -> Result<Annotations, String> {
     let path = dir.join(format!("{sha}.toml"));
     let body = match std::fs::read_to_string(&path) {

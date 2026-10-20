@@ -60,6 +60,10 @@ pub struct PidDigest {
     pub klv_unknown: u64,
     /// Why the first of them did not.
     pub klv_unknown_reason: Option<String>,
+    /// Payloads the demuxer handed out as unclassified samples; on a KLV
+    /// PID these are payloads that carry neither an AU-cell header nor a
+    /// SMPTE label.
+    pub unknown_samples: u64,
     /// Running SHA-256 over every sample and metadata payload, in order.
     pub payload_sha256: Sha256Hex,
 }
@@ -262,6 +266,7 @@ impl Pass {
                 pts_backward_breaks: 0,
                 klv_unknown: 0,
                 klv_unknown_reason: None,
+                unknown_samples: 0,
                 payload_sha256: Sha256Hex(String::new()),
             },
             hasher: Sha256::new(),
@@ -293,6 +298,9 @@ impl Pass {
                     };
                     acc.hasher.update(bytes);
                     acc.digest.samples += 1;
+                    if matches!(payload, SamplePayload::Unknown { .. }) {
+                        acc.digest.unknown_samples += 1;
+                    }
                     acc.digest.pts_first.get_or_insert(pts.as_ticks());
                     acc.digest.pts_last = Some(pts.as_ticks());
                     acc.note_pts(pts.as_ticks());
