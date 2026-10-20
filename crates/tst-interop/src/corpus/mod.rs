@@ -11,6 +11,7 @@ pub mod annotations;
 pub mod digest;
 pub mod cli;
 pub mod invariants;
+pub mod judge;
 pub mod inventory;
 pub mod pace;
 pub mod pcr;

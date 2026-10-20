@@ -11,6 +11,8 @@ use tst_interop::fixtures::{AuSizeMode, KlvSet};
 mod annotations;
 #[path = "corpus/digest.rs"]
 mod digest;
+#[path = "corpus/judge.rs"]
+mod judge;
 #[path = "corpus/inventory.rs"]
 mod inventory;
 #[path = "corpus/invariants.rs"]
