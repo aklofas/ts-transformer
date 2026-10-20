@@ -1,6 +1,8 @@
 //! Pure (socket-free) integration tests. Tests that open a socket live in
 //! the `net_whep` binary.
 
+#[path = "whep/audio.rs"]
+mod audio;
 #[path = "whep/binding.rs"]
 mod binding;
 #[path = "whep/clock.rs"]

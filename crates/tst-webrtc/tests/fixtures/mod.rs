@@ -30,9 +30,13 @@ pub struct TestViewer {
     pub rtc: Rtc,
     pub sock: UdpSocket,
     pub mid: Option<Mid>,
+    /// The audio section's mid, when the offer had one.
+    pub audio_mid: Option<Mid>,
     pending: Option<SdpPendingOffer>,
     /// (RTP timestamp, Annex-B access unit) per frame received.
     pub frames: Vec<(u32, Vec<u8>)>,
+    /// (RTP timestamp, payload) per audio packet received.
+    pub audio_frames: Vec<(u64, Vec<u8>)>,
     /// Data-channel messages received, in order.
     pub dc_msgs: Vec<Vec<u8>>,
     /// DTLS is up.
@@ -72,8 +76,10 @@ impl TestViewer {
             rtc,
             sock,
             mid: None,
+            audio_mid: None,
             pending: None,
             frames: Vec::new(),
+            audio_frames: Vec::new(),
             dc_msgs: Vec::new(),
             connected: false,
             dc_open: false,
@@ -88,8 +94,22 @@ impl TestViewer {
     /// The SDP offer: a receive-only video section and, with `with_dc`,
     /// the negotiated `klv` channel.
     pub fn offer(&mut self, with_dc: bool) -> String {
+        self.build_offer(with_dc, false)
+    }
+
+    /// The offer of [`offer`](Self::offer) plus a receive-only audio
+    /// section (Opus among str0m's default codecs).
+    pub fn offer_with_audio(&mut self, with_dc: bool) -> String {
+        self.build_offer(with_dc, true)
+    }
+
+    fn build_offer(&mut self, with_dc: bool, with_audio: bool) -> String {
         let mut api = self.rtc.sdp_api();
         let mid = api.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+        if with_audio {
+            self.audio_mid =
+                Some(api.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None));
+        }
         if with_dc {
             api.add_channel_with_config(ChannelConfig {
                 label: "klv".into(),
@@ -188,6 +208,9 @@ impl TestViewer {
             Event::IceConnectionStateChange(s) => self.ice_log.push(format!("{s:?}")),
             Event::ChannelOpen(_, label) if label == "klv" => self.dc_open = true,
             Event::ChannelData(d) => self.dc_msgs.push(d.data),
+            Event::MediaData(d) if Some(d.mid) == self.audio_mid => {
+                self.audio_frames.push((d.time.numer(), d.data.to_vec()));
+            }
             Event::MediaData(d) => self.frames.push((d.time.numer() as u32, d.data.to_vec())),
             _ => {}
         }
@@ -211,10 +234,11 @@ impl TestViewer {
     /// A short description for a failed assertion.
     pub fn trace(&self) -> String {
         format!(
-            "connected={} dc_open={} frames={} dc_msgs={} ice={:?} error={:?}",
+            "connected={} dc_open={} frames={} audio={} dc_msgs={} ice={:?} error={:?}",
             self.connected,
             self.dc_open,
             self.frames.len(),
+            self.audio_frames.len(),
             self.dc_msgs.len(),
             self.ice_log,
             self.error
@@ -309,6 +333,16 @@ pub fn join(addr: SocketAddr, mount: &str, v: &mut TestViewer, with_dc: bool) ->
     assert_eq!(status, 201, "offer refused: {answer}");
     v.accept_answer(&answer);
     headers["location"].clone()
+}
+
+/// [`join`] with an offer that also asks for audio; returns the answer SDP
+/// too.
+pub fn join_with_audio(addr: SocketAddr, mount: &str, v: &mut TestViewer) -> (String, String) {
+    let offer = v.offer_with_audio(false);
+    let (status, headers, answer) = whep_post(addr, mount, &offer, None);
+    assert_eq!(status, 201, "offer refused: {answer}");
+    v.accept_answer(&answer);
+    (headers["location"].clone(), answer)
 }
 
 /// The GOP fixture as (Annex-B access unit, is keyframe) pairs.

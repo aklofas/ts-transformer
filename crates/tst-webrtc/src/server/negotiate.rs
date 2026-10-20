@@ -1,4 +1,4 @@
-//! Video payload selection after str0m has accepted a browser's offer.
+//! Payload selection after str0m has accepted a browser's offer.
 //!
 //! str0m intersects the offer with its own codec list; this module picks
 //! the one payload type a mount sends on. H.264 needs
@@ -71,7 +71,7 @@ pub fn select_video(
         }
     };
     let mut saw_video = false;
-    for section in video_sections(offer) {
+    for section in media_sections(offer, "video") {
         let Some(mid) = section.mid else {
             continue;
         };
@@ -193,32 +193,35 @@ fn profile_idc_of(profile_level_id: Option<u32>) -> Option<u8> {
     profile_level_id.map(|v| (v >> 16) as u8)
 }
 
-/// One payload type declared in an offer's video section.
+/// One payload type declared in an offer's media section.
 struct OfferedPayload {
     pt: Pt,
     /// The encoding name from `a=rtpmap`.
     name: String,
+    /// The clock rate from `a=rtpmap`.
+    clock_rate: Option<u32>,
     /// `packetization-mode` from `a=fmtp` (RFC 6184 default 0).
     packetization_mode: u8,
     /// The first byte of `profile-level-id` from `a=fmtp`.
     profile_idc: Option<u8>,
 }
 
-/// An offer's `m=video` section: its mid and payload types, in `m=` order.
-struct VideoSection {
+/// An offer's `m=` section: its mid and payload types, in `m=` order.
+struct MediaSection {
     mid: Option<Mid>,
     payloads: Vec<OfferedPayload>,
 }
 
-/// The `m=video` sections of an SDP.
-fn video_sections(sdp: &str) -> Vec<VideoSection> {
-    let mut sections: Vec<VideoSection> = Vec::new();
-    let mut in_video = false;
+/// The `m=<kind>` sections of an SDP.
+fn media_sections(sdp: &str, kind: &str) -> Vec<MediaSection> {
+    let prefix = format!("{kind} ");
+    let mut sections: Vec<MediaSection> = Vec::new();
+    let mut in_section = false;
     for line in sdp.lines() {
         let line = line.trim_end();
         if let Some(media) = line.strip_prefix("m=") {
-            in_video = media.starts_with("video ");
-            if in_video {
+            in_section = media.starts_with(&prefix);
+            if in_section {
                 let payloads = media
                     .split(' ')
                     .skip(3)
@@ -227,25 +230,28 @@ fn video_sections(sdp: &str) -> Vec<VideoSection> {
                     .map(|pt| OfferedPayload {
                         pt: Pt::from(pt),
                         name: String::new(),
+                        clock_rate: None,
                         packetization_mode: 0,
                         profile_idc: None,
                     })
                     .collect();
-                sections.push(VideoSection {
+                sections.push(MediaSection {
                     mid: None,
                     payloads,
                 });
             }
             continue;
         }
-        let Some(section) = sections.last_mut().filter(|_| in_video) else {
+        let Some(section) = sections.last_mut().filter(|_| in_section) else {
             continue;
         };
         if let Some(mid) = line.strip_prefix("a=mid:") {
             section.mid = Some(Mid::from(mid.trim()));
         } else if let Some(rest) = line.strip_prefix("a=rtpmap:") {
             if let Some((p, value)) = payload_line(section, rest) {
-                p.name = value.split('/').next().unwrap_or_default().to_string();
+                let mut parts = value.split('/');
+                p.name = parts.next().unwrap_or_default().to_string();
+                p.clock_rate = parts.next().and_then(|r| r.trim().parse().ok());
             }
         } else if let Some(rest) = line.strip_prefix("a=fmtp:")
             && let Some((p, value)) = payload_line(section, rest)
@@ -270,13 +276,74 @@ fn video_sections(sdp: &str) -> Vec<VideoSection> {
 
 /// Splits `<pt> <value>` and finds that payload in the section.
 fn payload_line<'a, 'b>(
-    section: &'a mut VideoSection,
+    section: &'a mut MediaSection,
     rest: &'b str,
 ) -> Option<(&'a mut OfferedPayload, &'b str)> {
     let (pt, value) = rest.split_once(' ')?;
     let pt: u8 = pt.parse().ok()?;
     let p = section.payloads.iter_mut().find(|p| *p.pt == pt)?;
     Some((p, value.trim()))
+}
+
+/// Finds the Opus payload type the browser offered, when there is one.
+///
+/// Call after `rtc` has accepted `offer` (the SDP text). The first audio
+/// section with a payload the offer declares as `opus/48000` (the RTP
+/// clock is 48 kHz whatever the sampling rate, RFC 7587 §4.1), that str0m
+/// lists among the media's remote payload types and whose number str0m's
+/// codec list holds for Opus, qualifies; the first such payload in the
+/// offer's order wins. `None` when the offer has no audio section or no
+/// Opus in it: audio never decides whether an offer is served.
+pub fn select_audio(rtc: &Rtc, offer: &str) -> Option<(Mid, Pt)> {
+    for section in media_sections(offer, "audio") {
+        let Some(mid) = section.mid else {
+            continue;
+        };
+        let Some(media) = rtc.media(mid) else {
+            continue;
+        };
+        if media.kind() != MediaKind::Audio {
+            continue;
+        }
+        let qualifies = |p: &&OfferedPayload| {
+            p.name.eq_ignore_ascii_case("opus")
+                && p.clock_rate == Some(48_000)
+                && media.remote_pts().contains(&p.pt)
+                && rtc
+                    .codec_config()
+                    .params()
+                    .iter()
+                    .any(|c| c.pt() == p.pt && c.spec().codec == Codec::Opus)
+        };
+        if let Some(p) = section.payloads.iter().find(qualifies) {
+            return Some((mid, p.pt));
+        }
+    }
+    None
+}
+
+/// Gives a rejected `m=` line of `answer` the format list RFC 8866 §5.14
+/// requires.
+///
+/// str0m rejects an offered section it has no codec for with port 0 and an
+/// empty format list (`m=audio 0 UDP/TLS/RTP/SAVPF `), which a browser's
+/// SDP parser refuses. The line gets the static payload type `0`, the
+/// placeholder RFC 3264 §6 allows on a rejected stream (the format is
+/// never used, and a static number needs no `a=rtpmap`, so no stray codec
+/// description is added). Every other line is returned as it was.
+pub fn repair_rejected_media(answer: &str) -> String {
+    let mut out = String::with_capacity(answer.len() + 8);
+    for raw in answer.split_inclusive('\n') {
+        let line = raw.trim_end_matches(['\r', '\n']);
+        let ending = &raw[line.len()..];
+        let fields: Vec<&str> = line.split(' ').filter(|f| !f.is_empty()).collect();
+        if line.starts_with("m=") && fields.len() == 3 {
+            out.push_str(&format!("{} 0{ending}", fields.join(" ")));
+        } else {
+            out.push_str(raw);
+        }
+    }
+    out
 }
 
 /// The `profile-level-id` bytes of an H.264 SPS NAL unit (header byte

@@ -10,7 +10,7 @@ use str0m::Rtc;
 use str0m::channel::ChannelId;
 use str0m::media::{Mid, Pt};
 
-use crate::mount::{FramePacket, KlvMessage, MountId, MountState};
+use crate::mount::{AudioPacket, FramePacket, KlvMessage, MountId, MountState};
 use crate::server::media::MediaConfig;
 use crate::stats::{IceState, SessionStats};
 
@@ -41,6 +41,8 @@ pub(crate) enum Queued {
     Rtp(Arc<FramePacket>, usize),
     /// A KLV message for the data channel.
     Dc(Arc<KlvMessage>),
+    /// An Opus packet for the audio stream.
+    Audio(Arc<AudioPacket>),
 }
 
 /// Why a session is closed by the media thread.
@@ -81,6 +83,11 @@ pub(crate) struct Viewer {
     pub(crate) mid: Option<Mid>,
     /// The video payload type, once negotiated.
     pub(crate) pt: Option<Pt>,
+    /// The audio media's mid and the Opus payload type, when the viewer's
+    /// offer carried Opus and the mount passes it through.
+    pub(crate) audio: Option<(Mid, Pt)>,
+    /// The next audio RTP sequence number (extended, 64 bits).
+    pub(crate) audio_seq: u64,
     /// The next RTP sequence number (extended, 64 bits).
     pub(crate) seq: u64,
     /// `true` once the send stream exists, so its SSRC is known.
@@ -134,6 +141,8 @@ impl Viewer {
             rtc,
             mid: None,
             pt: None,
+            audio: None,
+            audio_seq: 0,
             seq,
             ssrc_known: false,
             connected: false,
@@ -191,6 +200,23 @@ impl Viewer {
             return Enqueued::Dropped(1);
         }
         self.queue.push_back(Queued::Dc(Arc::clone(msg)));
+        Enqueued::Queued
+    }
+
+    /// Queues an Opus packet. Skipped when the viewer has no audio stream;
+    /// dropped and counted in `packets_dropped_queue_full` when the queue
+    /// is full. Audio does not wait for a keyframe: every Opus packet
+    /// decodes on its own.
+    pub(crate) fn enqueue_audio(&mut self, packet: &Arc<AudioPacket>, now: Instant) -> Enqueued {
+        if self.audio.is_none() {
+            return Enqueued::Skipped;
+        }
+        if self.queue.len() >= self.queue_cap {
+            self.queue_full_since.get_or_insert(now);
+            self.stats.packets_dropped_queue_full += 1;
+            return Enqueued::Dropped(1);
+        }
+        self.queue.push_back(Queued::Audio(Arc::clone(packet)));
         Enqueued::Queued
     }
 
@@ -263,7 +289,7 @@ mod tests {
     use crate::mount::MountHandle;
     use crate::packetize::{DEFAULT_MTU_PAYLOAD, H264Packetizer, Packetizer};
     use crate::server::media::server_rtc;
-    use crate::{MountConfig, VideoCodec};
+    use crate::{AudioPolicy, MountConfig, VideoCodec};
 
     fn cfg() -> MediaConfig {
         MediaConfig {
@@ -281,7 +307,7 @@ mod tests {
         let mut v = Viewer::new(
             "0".repeat(32),
             Arc::clone(&handle.state),
-            server_rtc(clock.now()),
+            server_rtc(clock.now(), AudioPolicy::Drop),
             0,
             clock.now(),
         );
@@ -446,7 +472,7 @@ mod tests {
             .iter()
             .map(|q| match q {
                 Queued::Rtp(_, i) => *i,
-                Queued::Dc(_) => usize::MAX,
+                Queued::Dc(_) | Queued::Audio(_) => usize::MAX,
             })
             .collect();
         assert_eq!(indices, [0, 1, 2, 3, 0, 1, 2, 3]);
