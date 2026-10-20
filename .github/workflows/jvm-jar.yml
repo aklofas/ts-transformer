@@ -143,10 +143,11 @@ jobs:
         shell: bash
         run: |
           LIB=upload/native/linux-x86_64/libtstjni.so
-          if nm -D "$LIB" | grep -q 'PanicProbe'; then
-            echo "FAIL: test-only PanicProbe symbol present in shipped lib ($LIB)"; exit 1
+          # Every jni-test-hooks native backs a class in org.tstrans.internal.
+          if nm -D "$LIB" | grep -q 'Java_org_tstrans_internal_'; then
+            echo "FAIL: test-only org.tstrans.internal symbol present in shipped lib ($LIB)"; exit 1
           fi
-          echo "OK: no PanicProbe symbol in shipped native lib"
+          echo "OK: no org.tstrans.internal symbol in shipped native lib"
 
       - uses: actions/upload-artifact@v7
         with:
