@@ -269,15 +269,14 @@ jni_native! {
 }
 
 // ---------------------------------------------------------------------------
-// Test-only viewer probe (feature = "jni-test-hooks"): tst-webrtc's own test
-// viewer (str0m in frame mode) plays a mount that Java feeds, so the JVM test
-// proves media reaches a real WebRTC peer. Never compiled into the shipped JAR.
+// Test-only viewer probe (feature = "jni-test-hooks"): the str0m test viewer
+// of tst-test-helpers' `whep-viewer` feature, which tst-webrtc's own tests
+// use too, plays a mount that Java feeds, so the JVM test proves media
+// reaches a real WebRTC peer. Never compiled into the shipped JAR.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "jni-test-hooks")]
-#[path = "../../../../crates/tst-webrtc/tests/fixtures/mod.rs"]
-#[allow(dead_code, unexpected_cfgs, clippy::expect_used, clippy::unreachable)]
-mod whep_fixtures;
+use tst_test_helpers::whep_viewer;
 
 jni_native! {
     /// `org.tstrans.internal.WebrtcProbe.nLoopbackViewerProbe(serverHandle, mount)`
@@ -298,8 +297,8 @@ jni_native! {
         let Some(mount) = read_string(env, &mount) else {
             return 0;
         };
-        let mut v = whep_fixtures::TestViewer::new();
-        whep_fixtures::join(srv.local_addr(), &mount, &mut v, false);
+        let mut v = whep_viewer::TestViewer::new();
+        whep_viewer::join(srv.local_addr(), &mount, &mut v, false);
         let connected = v.pump(|v| v.connected, Duration::from_secs(5));
         assert!(connected, "the viewer did not connect: {}", v.trace());
         v.pump(|v| !v.frames.is_empty(), Duration::from_secs(5));

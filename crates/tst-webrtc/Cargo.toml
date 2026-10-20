@@ -46,6 +46,8 @@ features         = ["std", "ring"]
 # PEM files under std::env::temp_dir() that are removed on drop.
 rcgen = "0.14"
 tempfile = "3"
+# The str0m test viewer and HTTP client of the socket-opening tests.
+tst-test-helpers = { path = "../tst-test-helpers", features = ["whep-viewer"] }
 
 [lints]
 workspace = true

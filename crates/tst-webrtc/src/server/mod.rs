@@ -166,8 +166,8 @@ struct Threads {
 /// | Language | Idiom |
 /// |----------|-------|
 /// | Rust | `server.stop();` or let the server drop |
-/// | Java | Not exposed by the JVM binding in this release |
-/// | Kotlin | Not exposed by the JVM binding in this release |
+/// | Java | `server.stop()`, or `close()` (try-with-resources) to also free the native server |
+/// | Kotlin | `server.use { … }`, or `server.stop()` |
 /// | Swift | Not exposed in this release |
 /// | Python | Not exposed by the Python binding in this release |
 /// | C | Not exposed by the C binding in this release |
