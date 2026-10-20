@@ -1,5 +1,8 @@
 # The soak, stress and corpus archives the evidence page cites, with the verdict each
 # recorded. `note` summarises what the page says; a false overall_pass is stated as it is.
+# A corpus row may also carry eight integer counts (files, identical, changed_explained,
+# invariant_failures, parse_failures, replay_files, replay_paths, replay_failed); they are
+# all-or-none and belong to corpus rows only.
 # Rendered into the qualification block by scripts/gen/qualification.sh.
 schema_version = 0
 

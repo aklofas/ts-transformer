@@ -87,6 +87,10 @@ def read_json(path):
 
 # ---- archives --------------------------------------------------------------
 
+CORPUS_COUNTS = ("files", "identical", "changed_explained", "invariant_failures",
+                 "parse_failures", "replay_files", "replay_paths", "replay_failed")
+
+
 def parse_archives(text):
     return tomllib.loads(text).get("archive", [])
 
@@ -112,6 +116,16 @@ def validate_archives(rows):
                 problems.append("%s: a soak row needs expected_duration_s, an integer above 0" % i)
         elif "expected_duration_s" in r:
             problems.append("%s: expected_duration_s belongs to soak rows only" % i)
+        present = [k for k in CORPUS_COUNTS if k in r]
+        if present and r.get("kind") != "corpus":
+            problems.append("%s: %s: belongs to corpus rows only" % (i, ", ".join(present)))
+        elif present:
+            missing = [k for k in CORPUS_COUNTS if k not in r]
+            if missing:
+                problems.append("%s: corpus counts are all-or-none; missing %s" % (i, ", ".join(missing)))
+            for k in present:
+                if isinstance(r[k], bool) or not isinstance(r[k], int) or r[k] < 0:
+                    problems.append("%s: %s must be an integer, 0 or more" % (i, k))
     return problems
 
 
@@ -126,6 +140,7 @@ def load_archives(root):
     for r in rows:
         row = {k: r[k] for k in ("id", "kind", "tree", "overall_pass", "note", "date")}
         row["expected_duration_s"] = r.get("expected_duration_s")
+        row.update({k: r[k] for k in CORPUS_COUNTS if k in r})
         out.append(row)
     return out
 
@@ -220,7 +235,9 @@ def release_vm(root, sha, archives, release):
             if c is None:
                 reasons.append("corpus: no corpus archive for the soaked tree %s" % soak["tree"][:12])
             else:
-                corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"]}
+                corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"],
+                          "note": c["note"]}
+                corpus.update({k: c[k] for k in CORPUS_COUNTS if k in c})
                 if not c["overall_pass"]:
                     reasons.append("corpus: archive %s recorded overall_pass=false" % c["id"])
     return {"release_mode": bool(release), "soak": soak, "corpus": corpus,
@@ -425,6 +442,19 @@ def _release_line(gate):
     return "Release gate: soak %s, corpus %s." % ("none" if s is None else soak, corpus)
 
 
+def _release_only(gate):
+    """The checks only a release qualification runs; nothing outside release mode."""
+    if not (gate or {}).get("release_mode") or not gate.get("corpus"):
+        return []
+    c = gate["corpus"]
+    line = "real-capture corpus: %s" % c["note"]
+    if all(k in c for k in CORPUS_COUNTS):
+        line += (" (files %(files)d, identical %(identical)d, changed+explained %(changed_explained)d, "
+                 "invariant failures %(invariant_failures)d, parse failures %(parse_failures)d; "
+                 "replay %(replay_files)d files \u00d7 %(replay_paths)d paths, %(replay_failed)d failed)" % c)
+    return ["", "Release-only checks", "", line]
+
+
 def render_block(rec):
     src = rec["source"]
     out = ["## Evidence for the %s tree" % rec["label"], ""]
@@ -450,6 +480,7 @@ def render_block(rec):
         out.append("")
         out.extend("- %s" % r for r in rec["verdict_reasons"])
     out += ["", _release_line(rec.get("release_vm"))]
+    out += _release_only(rec.get("release_vm"))
     out += ["", "Test legs on this commit:", ""]
     out.extend(_leg_line(l) for l in rec["legs"])
     out.append("")
