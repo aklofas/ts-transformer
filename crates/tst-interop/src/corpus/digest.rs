@@ -13,7 +13,7 @@ use tst_core::mpegts::demux::{
 };
 
 use super::inventory::kind_name;
-use super::pcr::{prefix_end, prefix_end_read};
+use super::pcr::PrefixCutter;
 use super::{FEED_CHUNK, RunDir, Sha256Hex};
 
 /// The configurations every capture is digested under, in the order run.
@@ -355,64 +355,140 @@ impl Pass {
     }
 }
 
-/// One full pass over a capture: calls the sink with each chunk in order.
-type Source<'a> = &'a mut dyn FnMut(&mut dyn FnMut(&[u8])) -> Result<(), String>;
+/// One demuxer configuration fed piece by piece: the single per-configuration
+/// core every digest entry runs.
+struct ConfigRun {
+    demuxer: Demuxer,
+    pass: Pass,
+}
 
-/// The digest of one configuration over whatever `source` delivers. Both
-/// the in-memory and the file-streaming entries run this code.
-fn digest_pass(key: &str, source: Source<'_>) -> Result<ConfigDigest, String> {
-    let mut demuxer = Demuxer::with_config(config_for(key));
-    let mut pass = Pass::new();
-    source(&mut |piece: &[u8]| {
+impl ConfigRun {
+    fn new(key: &str) -> Self {
+        Self {
+            demuxer: Demuxer::with_config(config_for(key)),
+            pass: Pass::new(),
+        }
+    }
+
+    fn feed(&mut self, piece: &[u8]) {
         // A rejection returns at once with the rest of the input still
         // buffered and the issue queued. Empty feeds resume it, one
         // rejection per call, so every one is counted exactly once whatever
         // the chunking; each consumes a packet, so the loop ends.
         let mut input = piece;
-        while let Err(e) = demuxer.feed(input) {
-            pass.feed_errors += 1;
-            *pass.feed_error_kinds.entry(e.to_string()).or_default() += 1;
+        while let Err(e) = self.demuxer.feed(input) {
+            self.pass.feed_errors += 1;
+            *self.pass.feed_error_kinds.entry(e.to_string()).or_default() += 1;
             input = &[];
         }
-        pass.drain(&mut demuxer);
-    })?;
-    demuxer.flush();
-    pass.drain(&mut demuxer);
-    let stats = demuxer.stats();
-    Ok(ConfigDigest {
-        feed_errors: pass.feed_errors,
-        feed_error_kinds: pass.feed_error_kinds,
-        pids: pass
-            .pids
-            .into_iter()
-            .map(|(pid, mut acc)| {
-                acc.digest.payload_sha256 = Sha256Hex(hex(&acc.hasher.finalize()));
-                (pid, acc.digest)
-            })
-            .collect(),
-        klv_records: pass.klv_records,
-        klv_decoded: pass.klv_decoded,
-        klv_unknown: pass.klv_unknown,
-        klv_records_sha256: Sha256Hex(hex(&pass.klv_hasher.finalize())),
-        stats: StatsDigest {
-            program_maps_seen: stats.program_maps_seen,
-            pmt_versions_seen: stats.pmt_versions_seen,
-            discontinuities: stats.discontinuities,
-            nonconformant: stats.nonconformant,
-            programs_seen: stats.programs_seen,
-            unwrap_reanchors: stats.unwrap_reanchors,
-        },
-    })
+        self.pass.drain(&mut self.demuxer);
+    }
+
+    fn finish(mut self) -> ConfigDigest {
+        self.demuxer.flush();
+        self.pass.drain(&mut self.demuxer);
+        let stats = self.demuxer.stats();
+        let pass = self.pass;
+        ConfigDigest {
+            feed_errors: pass.feed_errors,
+            feed_error_kinds: pass.feed_error_kinds,
+            pids: pass
+                .pids
+                .into_iter()
+                .map(|(pid, mut acc)| {
+                    acc.digest.payload_sha256 = Sha256Hex(hex(&acc.hasher.finalize()));
+                    (pid, acc.digest)
+                })
+                .collect(),
+            klv_records: pass.klv_records,
+            klv_decoded: pass.klv_decoded,
+            klv_unknown: pass.klv_unknown,
+            klv_records_sha256: Sha256Hex(hex(&pass.klv_hasher.finalize())),
+            stats: StatsDigest {
+                program_maps_seen: stats.program_maps_seen,
+                pmt_versions_seen: stats.pmt_versions_seen,
+                discontinuities: stats.discontinuities,
+                nonconformant: stats.nonconformant,
+                programs_seen: stats.programs_seen,
+                unwrap_reanchors: stats.unwrap_reanchors,
+            },
+        }
+    }
 }
 
 /// The digest of `bytes` under one configuration, fed `chunk` bytes at a
 /// time. The result does not depend on `chunk`.
 pub fn digest_config(key: &str, bytes: &[u8], chunk: usize) -> ConfigDigest {
-    digest_pass(key, &mut |sink| {
-        bytes.chunks(chunk).for_each(&mut *sink);
-        Ok(())
-    })
-    .expect("an in-memory pass cannot fail")
+    let mut run = ConfigRun::new(key);
+    bytes.chunks(chunk).for_each(|piece| run.feed(piece));
+    run.finish()
+}
+
+/// A capture digested as its bytes arrive, under every configuration at
+/// once, without holding the capture: the SHA-256, the byte count, the
+/// prefix cut and the three demuxers advance in lockstep per chunk.
+/// [`digest_bytes`] and [`digest_file`] run this same code, and so does a
+/// receiver that digests what a replay delivered.
+///
+/// With `prefix_seconds`, bytes are fed to the demuxers only up to the
+/// packet whose PCR span first exceeds that many seconds (the packet itself
+/// excluded), the cut [`super::pcr::prefix_end`] makes over a whole file: both read the
+/// PCR PID from the first [`super::pcr::PMT_PREFIX`] bytes and cut where the span is
+/// strictly greater than `seconds` x 90 000 ticks. The SHA-256 and the byte
+/// count still cover every byte fed in, as for a file whose prefix is
+/// digested. At most about [`super::pcr::PMT_PREFIX`] bytes are held back to find the PMT.
+pub struct Incremental {
+    prefix_seconds: Option<u32>,
+    sha: Sha256,
+    total: u64,
+    runs: Vec<ConfigRun>,
+    cutter: Option<PrefixCutter>,
+}
+
+impl Incremental {
+    pub fn new(prefix_seconds: Option<u32>) -> Self {
+        Self {
+            prefix_seconds,
+            sha: Sha256::new(),
+            total: 0,
+            runs: CONFIG_KEYS.iter().map(|k| ConfigRun::new(k)).collect(),
+            cutter: prefix_seconds.map(PrefixCutter::new),
+        }
+    }
+
+    /// Bytes fed in so far, cut or not.
+    pub fn bytes_fed(&self) -> u64 {
+        self.total
+    }
+
+    pub fn feed(&mut self, chunk: &[u8]) {
+        self.sha.update(chunk);
+        self.total += chunk.len() as u64;
+        let runs = &mut self.runs;
+        let mut to_runs = |piece: &[u8]| runs.iter_mut().for_each(|r| r.feed(piece));
+        match &mut self.cutter {
+            Some(c) => c.push(chunk, &mut to_runs),
+            None => to_runs(chunk),
+        }
+    }
+
+    pub fn finish(mut self) -> Result<FileDigest, String> {
+        let runs = &mut self.runs;
+        if let Some(c) = &mut self.cutter {
+            c.finish(&mut |piece: &[u8]| runs.iter_mut().for_each(|r| r.feed(piece)));
+        }
+        let configs: BTreeMap<String, ConfigDigest> = CONFIG_KEYS
+            .iter()
+            .zip(self.runs)
+            .map(|(key, run)| (key.to_string(), run.finish()))
+            .collect();
+        Ok(finish(
+            Sha256Hex(hex(&self.sha.finalize())),
+            self.total,
+            self.prefix_seconds,
+            configs,
+        ))
+    }
 }
 
 fn finish(
@@ -439,20 +515,11 @@ pub fn digest_bytes(
     bytes: &[u8],
     prefix_seconds: Option<u32>,
 ) -> Result<FileDigest, String> {
-    let fed = match prefix_seconds {
-        Some(s) => &bytes[..prefix_end(bytes, s)],
-        None => bytes,
-    };
-    let configs: BTreeMap<String, ConfigDigest> = CONFIG_KEYS
-        .iter()
-        .map(|key| (key.to_string(), digest_config(key, fed, FEED_CHUNK)))
-        .collect();
-    Ok(finish(
-        sha.clone(),
-        bytes.len() as u64,
-        prefix_seconds,
-        configs,
-    ))
+    let mut inc = Incremental::new(prefix_seconds);
+    bytes.chunks(FEED_CHUNK).for_each(|piece| inc.feed(piece));
+    let mut d = inc.finish()?;
+    d.sha256 = sha.clone();
+    Ok(d)
 }
 
 /// Fills `buf` from `f`; fewer bytes only at end of file.
@@ -471,76 +538,31 @@ fn fill(f: &mut std::fs::File, buf: &mut [u8]) -> Result<usize, String> {
     Ok(filled)
 }
 
-/// Reads the file in [`FEED_CHUNK`] pieces, hands the first `feed_limit`
-/// bytes to `sink`, and, with a hasher, reads on to the end hashing every
-/// byte. Returns the bytes read. Errors name no path.
-fn stream_file(
-    path: &std::path::Path,
-    feed_limit: u64,
-    mut hasher: Option<&mut Sha256>,
-    sink: &mut dyn FnMut(&[u8]),
-) -> Result<u64, String> {
-    let mut f = std::fs::File::open(path).map_err(|e| format!("open failed: {}", e.kind()))?;
-    let mut buf = vec![0u8; FEED_CHUNK];
-    let mut pos = 0u64;
-    loop {
-        let n = fill(&mut f, &mut buf)?;
-        if n == 0 {
-            break;
-        }
-        if let Some(h) = hasher.as_deref_mut() {
-            h.update(&buf[..n]);
-        }
-        if pos < feed_limit {
-            let take = (feed_limit - pos).min(n as u64) as usize;
-            sink(&buf[..take]);
-        }
-        pos += n as u64;
-        if hasher.is_none() && pos >= feed_limit {
-            break;
-        }
-    }
-    Ok(pos)
-}
-
-/// The streaming twin of [`digest_bytes`]: reads the file chunk by chunk,
-/// once per configuration, never holding it in memory. The first pass also
-/// computes the file's SHA-256; a known `sha` must match it. Errors name no
-/// path.
+/// The streaming twin of [`digest_bytes`]: reads the file chunk by chunk
+/// into an [`Incremental`], never holding it in memory. A known `sha` must
+/// match the file's SHA-256. Errors name no path.
 pub fn digest_file(
     sha: Option<&Sha256Hex>,
     path: &std::path::Path,
     prefix_seconds: Option<u32>,
 ) -> Result<FileDigest, String> {
-    let limit = match prefix_seconds {
-        Some(s) => {
-            let mut f =
-                std::fs::File::open(path).map_err(|e| format!("open failed: {}", e.kind()))?;
-            prefix_end_read(&mut f, s).map_err(|e| format!("read failed: {}", e.kind()))?
+    let mut f = std::fs::File::open(path).map_err(|e| format!("open failed: {}", e.kind()))?;
+    let mut inc = Incremental::new(prefix_seconds);
+    let mut buf = vec![0u8; FEED_CHUNK];
+    loop {
+        let n = fill(&mut f, &mut buf)?;
+        if n == 0 {
+            break;
         }
-        None => u64::MAX,
-    };
-    let mut hasher = Sha256::new();
-    let mut total = 0u64;
-    let mut configs = BTreeMap::new();
-    for (i, key) in CONFIG_KEYS.iter().enumerate() {
-        let d = digest_pass(key, &mut |sink| {
-            let h = (i == 0).then_some(&mut hasher);
-            let n = stream_file(path, limit, h, sink)?;
-            if i == 0 {
-                total = n;
-            }
-            Ok(())
-        })?;
-        configs.insert(key.to_string(), d);
+        inc.feed(&buf[..n]);
     }
-    let actual = Sha256Hex(hex(&hasher.finalize()));
+    let d = inc.finish()?;
     if let Some(expected) = sha
-        && *expected != actual
+        && *expected != d.sha256
     {
         return Err("content changed since the inventory".to_string());
     }
-    Ok(finish(actual, total, prefix_seconds, configs))
+    Ok(d)
 }
 
 /// SHA-256 over what a capture carries independent of how it is packetised.
