@@ -145,6 +145,28 @@ tasks.test {
     // doesn't restrict deep reflection.
 }
 
+// --- Examples: runnable programs under src/examples/java, compiled against
+//     the library (never packaged into the JAR). `test` depends on their
+//     compilation so every CI leg proves they still build; docs/languages/jvm.md
+//     carries their text and JvmGuideExamplesTest keeps it identical.
+//     Run one with: ./gradlew runServeWhep --args='input.ts'
+val examples = sourceSets.create("examples") {
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
+}
+
+tasks.register<JavaExec>("runServeWhep") {
+    group = "examples"
+    description = "Serve an MPEG-TS file over WebRTC (WHEP): --args='<input.ts> [whep-url]'"
+    dependsOn(copyNative, tasks.named("processResources"))
+    classpath = examples.runtimeClasspath
+    mainClass.set("ServeWhep")
+    // Relative input paths resolve against the directory gradlew ran from.
+    workingDir = gradle.startParameter.currentDir
+}
+
+tasks.named("test") { dependsOn(tasks.named(examples.compileJavaTaskName)) }
+
 // javac (like javadoc below) defaults to the platform charset, which is
 // windows-1252 on the Windows CI runner and rejects the UTF-8 arrows / § /
 // em-dashes that appear in source comments. Force UTF-8 so main + test

@@ -978,6 +978,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `org.tstrans.WebrtcException` with `Kind` {`URL`, `IO`, `TLS`, `MOUNT`,
   `SERVER`, `PUSH`, `INTERNAL`, `CLOSED`}, from the same kind table as
   Python's `WebrtcError`; a call after `stop()` is `CLOSED`.
+- The `ServeWhep` example (`bindings/jvm/src/examples/java`, also in the JVM
+  guide) plays a `.ts` file to browsers through an MP2T mount, paced by its
+  PTS; run it with `./gradlew runServeWhep --args='input.ts'`.
 
 ### Added — release tooling
 
