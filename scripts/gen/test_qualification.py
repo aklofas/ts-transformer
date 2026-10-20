@@ -1,14 +1,16 @@
 """Unit tests for scripts/gen/qualification.py.
 
-Run:  python3 -I -m unittest scripts/gen/test_qualification.py
+Run:  python3 -m unittest scripts/gen/test_qualification.py
 """
 import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 if sys.version_info < (3, 11):
     raise unittest.SkipTest("qualification needs Python >= 3.11 (tomllib)")
@@ -80,7 +82,7 @@ def put(path, obj):
             json.dump(obj, f)
 
 
-def build(tmp, mutate=None):
+def build(tmp, mutate=None, archives=ARCHIVES):
     """A complete artefact directory + repo root; `mutate(files)` edits the dict first."""
     files = {
         "context.json": dict(CONTEXT),
@@ -102,14 +104,14 @@ def build(tmp, mutate=None):
             put(os.path.join(art, rel), obj)
     root = os.path.join(tmp, "root")
     put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
-    put(os.path.join(root, "tests/coverage/evidence-archives.toml"), ARCHIVES)
+    put(os.path.join(root, "tests/coverage/evidence-archives.toml"), archives)
     return art, root
 
 
-def collect(mutate=None):
+def collect(mutate=None, release=False, archives=ARCHIVES):
     tmp = tempfile.mkdtemp()
-    art, root = build(tmp, mutate)
-    return q.collect(art, root)
+    art, root = build(tmp, mutate, archives)
+    return q.collect(art, root, release=release)
 
 
 def leg(rec, name):
@@ -348,6 +350,147 @@ class ArchiveTests(unittest.TestCase):
         rec = collect()
         line = [l for l in q.render_block(rec).splitlines() if "`soak-x`" in l][0]
         self.assertIn("259200 s declared", line)
+
+
+def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=259200):
+    row = ('\n[[archive]]\nid = "%s"\nkind = "%s"\ntree = "%s"\noverall_pass = %s\n'
+           'note = "n"\ndate = "%s"\n' % (id, kind, tree, "true" if overall_pass else "false", date))
+    if kind == "soak":
+        row += "expected_duration_s = %d\n" % duration
+    return row
+
+
+def archives_toml(*rows):
+    return "schema_version = 0\n" + "".join(rows)
+
+
+NO_SOAK = archives_toml(archive_row("corpus-rel", "corpus", SHA))
+# The older soak row comes LAST in the file: the newest archive is chosen by date.
+RELEASE_OK = archives_toml(archive_row("soak-rel", "soak", SHA),
+                           archive_row("corpus-rel", "corpus", SHA),
+                           archive_row("soak-old", "soak", "d" * 40, False, "2026-10-04", 3600))
+OLD_TREE = "e" * 40
+SOAKED_EARLIER = archives_toml(archive_row("soak-rel", "soak", OLD_TREE),
+                               archive_row("corpus-rel", "corpus", OLD_TREE))
+
+
+def git(cwd, *args):
+    env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.test",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.test")
+    out = subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"]
+                         + list(args), cwd=cwd, env=env, check=True, capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+class ReleaseModeTests(unittest.TestCase):
+    def test_mid_cycle_record_is_go_without_a_soak(self):
+        rec = collect()
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertIs(rec["release_vm"]["release_mode"], False)
+        self.assertEqual(rec["release_vm"]["reasons"], [])
+        with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
+            rec = collect(archives=NO_SOAK)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertIsNone(rec["release_vm"]["soak"])
+
+    def test_release_mode_requires_a_soak_archive_for_the_tree(self):
+        rec = collect(release=True, archives=NO_SOAK)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: no 72-hour soak archive for this tree", rec["verdict_reasons"])
+
+    def test_release_mode_passes_with_matching_soak_and_corpus(self):
+        with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
+            rec = collect(release=True, archives=RELEASE_OK)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertIs(rec["release_vm"]["release_mode"], True)
+        self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-rel")
+        self.assertEqual(rec["release_vm"]["corpus"]["id"], "corpus-rel")
+        self.assertEqual(rec["release_vm"]["reasons"], [])
+
+    def test_release_mode_accepts_a_soaked_tree_with_only_doc_changes_since(self):
+        with mock.patch.object(q, "changed_paths", return_value=[]) as cp:
+            rec = collect(release=True, archives=SOAKED_EARLIER)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(cp.call_args.args[1:], (OLD_TREE, SHA))
+        self.assertEqual(rec["release_vm"]["soak"]["changed_paths"], 0)
+
+    def test_release_mode_rejects_a_soaked_tree_with_code_changes_since(self):
+        with mock.patch.object(q, "changed_paths", return_value=["crates/tst-core/src/lib.rs"]):
+            rec = collect(release=True, archives=SOAKED_EARLIER)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: archive soak-rel is superseded by code changes "
+                      "(1 paths under crates/ or bindings/)", rec["verdict_reasons"])
+
+    def test_release_mode_rejects_a_failed_or_short_soak(self):
+        failed = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False),
+                               archive_row("corpus-rel", "corpus", SHA))
+        rec = collect(release=True, archives=failed)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: archive soak-rel recorded overall_pass=false", rec["verdict_reasons"])
+        short = archives_toml(archive_row("soak-rel", "soak", SHA, duration=3600),
+                              archive_row("corpus-rel", "corpus", SHA))
+        rec = collect(release=True, archives=short)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: archive soak-rel declares 3600 s, not 259200", rec["verdict_reasons"])
+
+    def test_release_mode_requires_the_corpus_archive(self):
+        rec = collect(release=True, archives=archives_toml(archive_row("soak-rel", "soak", SHA)))
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("corpus: no corpus archive for the soaked tree %s" % SHA[:12], rec["verdict_reasons"])
+        failed = archives_toml(archive_row("soak-rel", "soak", SHA),
+                               archive_row("corpus-rel", "corpus", SHA, overall_pass=False))
+        rec = collect(release=True, archives=failed)
+        self.assertIn("corpus: archive corpus-rel recorded overall_pass=false", rec["verdict_reasons"])
+
+    def test_unresolvable_soak_tree_is_no_go(self):
+        with mock.patch.object(q, "changed_paths", side_effect=q.QualificationError("fatal: bad object")):
+            rec = collect(release=True, archives=SOAKED_EARLIER)
+            self.assertEqual(rec["verdict"], "NO-GO")
+            self.assertIn("soak: git could not resolve %s: fatal: bad object" % OLD_TREE, rec["verdict_reasons"])
+            mid = collect(archives=SOAKED_EARLIER)
+        self.assertEqual(mid["verdict"], "GO", mid["verdict_reasons"])
+        self.assertEqual(mid["release_vm"]["reasons"], [])
+
+    def test_changed_paths_runs_git(self):
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q", "-b", "main")
+            spit(os.path.join(d, "README"), "a\n")
+            git(d, "add", "README")
+            git(d, "commit", "-q", "-m", "A")
+            a = git(d, "rev-parse", "HEAD")
+            os.makedirs(os.path.join(d, "crates"))
+            spit(os.path.join(d, "crates/x.rs"), "fn x() {}\n")
+            git(d, "add", "crates/x.rs")
+            git(d, "commit", "-q", "-m", "B")
+            b = git(d, "rev-parse", "HEAD")
+            git(d, "checkout", "-q", a)
+            os.makedirs(os.path.join(d, "docs"))
+            spit(os.path.join(d, "docs/y.md"), "y\n")
+            git(d, "add", "docs/y.md")
+            git(d, "commit", "-q", "-m", "C")
+            c = git(d, "rev-parse", "HEAD")
+            self.assertEqual(q.changed_paths(d, a, b), ["crates/x.rs"])
+            self.assertEqual(q.changed_paths(d, a, c), [])
+            with self.assertRaises(q.QualificationError) as e:
+                q.changed_paths(d, "f" * 40, b)
+            self.assertIn("bad object", str(e.exception))
+
+    def test_render_release_gate_lines(self):
+        with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
+            rel = q.render_block(collect(release=True, archives=RELEASE_OK))
+            mid = q.render_block(collect(archives=NO_SOAK))
+        self.assertIn("Release gate: soak soak-rel (tree %s, 259200 s, PASS), corpus corpus-rel (PASS)."
+                      % SHA[:12], rel)
+        self.assertIn("Release gate: not applied (not a release qualification); "
+                      "newest soak archive for this tree: none.", mid)
+        with mock.patch.object(q, "changed_paths", return_value=["crates/a.rs", "bindings/b.rs"]):
+            sup = q.render_block(collect(archives=SOAKED_EARLIER))
+        self.assertIn("newest soak archive for this tree: soak-rel (superseded by 2 code changes).", sup)
+        old = collect(archives=NO_SOAK)
+        del old["release_vm"]
+        self.assertIn("Release gate: not applied (not a release qualification); "
+                      "newest soak archive for this tree: none.", q.render_block(old))
 
 
 class ChecksumTests(unittest.TestCase):

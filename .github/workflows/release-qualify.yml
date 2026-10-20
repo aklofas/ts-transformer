@@ -20,6 +20,10 @@ on:
         description: Commit to qualify (must be reachable from main or a v* tag)
         type: string
         required: true
+      release:
+        description: "qualify as a release: require the 72-hour soak and corpus archives for this tree"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
   # Rehearsal path: a change to this workflow or to the collector runs the
@@ -539,9 +543,17 @@ jobs:
       - name: Collect the qualification record
         # No continue-on-error: an empty or malformed artefact makes the
         # collector exit 2 with no record, and that must fail this job.
+        # A v* tag push, or a dispatch with `release: true`, qualifies a
+        # release: the record is GO only with a passing 72-hour soak archive
+        # and a passing corpus archive for this tree (fetch-depth 0 above lets
+        # the collector diff an earlier soaked tree against this one).
+        env:
+          RELEASE: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.release == true }}
         run: |
           mkdir -p "$RUNNER_TEMP/bundle"
-          bash scripts/gen/qualification.sh collect --artifacts "$RUNNER_TEMP/artifacts" --out "$RUNNER_TEMP/bundle/qualification.json"
+          flags=()
+          [ "$RELEASE" = "true" ] && flags+=(--release)
+          bash scripts/gen/qualification.sh collect --artifacts "$RUNNER_TEMP/artifacts" --out "$RUNNER_TEMP/bundle/qualification.json" "${flags[@]}"
 
       - name: Render the record, add the natives to the SBOMs, write the bundle
         run: |

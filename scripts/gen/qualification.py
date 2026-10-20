@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The qualification record: one JSON file per qualified tree, rendered into the evidence page.
 
-  collect   --artifacts DIR --out FILE [--root DIR]   read a release-qualify run's artefacts
+  collect   --artifacts DIR --out FILE [--root DIR] [--release]
+            read a release-qualify run's artefacts; --release also requires the
+            72-hour soak and the corpus archives for the qualified tree
   render    --json FILE (--write | --check) [--root DIR]   the generated block in
             docs/project/validation-evidence.md
   checksums --dir DIR                                  write DIR/SHA256SUMS
@@ -26,6 +28,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 
 try:
@@ -52,12 +55,20 @@ SANITIZER_JOBS = ["asan", "asan-native", "tsan", "tsan-native"]
 REQUIRED_LEGS = (["interop"] + ["sanitizers/" + j for j in SANITIZER_JOBS]
                  + ["fuzz", "jvm-jar", "python-wheels", "c-abi", "ci (on this sha)"])
 KINDS = ("soak", "stress", "corpus")
+# A soak archive still stands for a later tree when no path under these
+# directories changed between the two commits.
+SOAK_PATHS = ("crates", "bindings")
+RELEASE_SOAK_S = 259200
 MAINTAINER_LOCAL = [
     "real-capture corpus cross-check (cargo test -p tst-core --test mpegts mux_local)",
     "long fuzz runs (10 min per target)",
     "bench regression",
     "one-hour synthetic soak",
 ]
+
+
+class QualificationError(Exception):
+    pass
 
 
 def die(msg, rc=2):
@@ -120,6 +131,71 @@ def load_archives(root):
     return out
 
 
+# ---- release mode ----------------------------------------------------------
+
+def changed_paths(root, tree, sha):
+    """The paths under SOAK_PATHS that differ between commits `tree` and `sha`."""
+    cmd = ["git", "-C", root, "diff", "--name-only", tree, sha, "--"] + list(SOAK_PATHS)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError as e:
+        raise QualificationError(str(e))
+    if p.returncode != 0:
+        raise QualificationError(p.stderr.strip() or "git exited %d" % p.returncode)
+    return [l for l in p.stdout.splitlines() if l]
+
+
+def _newest(rows):
+    """The row with the latest date; on equal dates the later row in the file."""
+    best = None
+    for r in rows:
+        if best is None or r["date"] >= best["date"]:
+            best = r
+    return best
+
+
+def release_vm(root, sha, archives, release):
+    """The release gate: the newest soak archive must stand for `sha` (same tree,
+    or no change under SOAK_PATHS since), have passed and declared 72 hours, and
+    a passing corpus archive must exist for the soaked tree. Outside release mode
+    the same entries are recorded for information and `reasons` stays empty."""
+    reasons = []
+    soak, corpus = None, None
+    s = _newest([a for a in archives if a["kind"] == "soak"])
+    if s is None:
+        reasons.append("soak: no 72-hour soak archive for this tree")
+    else:
+        soak = {"id": s["id"], "tree": s["tree"], "date": s["date"],
+                "overall_pass": s["overall_pass"], "expected_duration_s": s.get("expected_duration_s"),
+                "changed_paths": 0, "git_error": None}
+        if s["tree"] != sha:
+            try:
+                soak["changed_paths"] = len(changed_paths(root, s["tree"], sha))
+            except QualificationError as e:
+                soak["changed_paths"] = None
+                soak["git_error"] = str(e)
+        if soak["git_error"] is not None:
+            reasons.append("soak: git could not resolve %s: %s" % (s["tree"], soak["git_error"]))
+        else:
+            if soak["changed_paths"]:
+                reasons.append("soak: archive %s is superseded by code changes (%d paths under crates/ or bindings/)"
+                               % (s["id"], soak["changed_paths"]))
+            if not s["overall_pass"]:
+                reasons.append("soak: archive %s recorded overall_pass=false" % s["id"])
+            if s.get("expected_duration_s") != RELEASE_SOAK_S:
+                reasons.append("soak: archive %s declares %s s, not %d"
+                               % (s["id"], s.get("expected_duration_s"), RELEASE_SOAK_S))
+            c = _newest([a for a in archives if a["kind"] == "corpus" and a["tree"] == s["tree"]])
+            if c is None:
+                reasons.append("corpus: no corpus archive for the soaked tree %s" % s["tree"][:12])
+            else:
+                corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"]}
+                if not c["overall_pass"]:
+                    reasons.append("corpus: archive %s recorded overall_pass=false" % c["id"])
+    return {"release_mode": bool(release), "soak": soak, "corpus": corpus,
+            "reasons": reasons if release else []}
+
+
 # ---- collect ---------------------------------------------------------------
 
 def _strip(describe, *prefixes):
@@ -158,7 +234,7 @@ def _interop(art):
     return rec, dict(inv.get("tools", {}))
 
 
-def verdict(legs, interop, fuzz, dirty=False, abi=None):
+def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None):
     reasons = []
     if abi is not None and abi.get("verdict") != "compatible":
         reasons.append("c-abi: abi.json verdict is %r, not 'compatible'" % abi.get("verdict"))
@@ -189,10 +265,12 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None):
         if fuzz["targets_run"] != fuzz["targets_declared"]:
             reasons.append("fuzz: ran %d of %d declared targets"
                            % (fuzz["targets_run"], fuzz["targets_declared"]))
+    if release_vm is not None and release_vm["release_mode"]:
+        reasons.extend(release_vm["reasons"])
     return ("GO" if not reasons else "NO-GO"), reasons
 
 
-def collect(art, root):
+def collect(art, root, release=False):
     ctx = read_json(os.path.join(art, "context.json"))
     if ctx is None:
         die("context.json is missing from " + art)
@@ -254,7 +332,9 @@ def collect(art, root):
     for r in read_json(os.path.join(art, "semver-checks.json")) or []:
         sc.append({"crate": r["crate"], "breaking": r.get("failed_checks", 0),
                    "exit": r["exit"], "analysed": r.get("analysed", False)})
-    v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in)
+    archives = load_archives(root)
+    gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release)
+    v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate)
     return {
         "schema_version": 0,
         "label": ctx.get("label", "unlabelled"),
@@ -268,7 +348,8 @@ def collect(art, root):
         "fuzz": fuzz,
         "abi": abi_in,
         "semver_checks": sc,
-        "archives": load_archives(root),
+        "archives": archives,
+        "release_vm": gate,
         "maintainer_local": list(MAINTAINER_LOCAL),
         "verdict": v,
         "verdict_reasons": reasons,
@@ -284,6 +365,26 @@ def _leg_line(l):
     if not l["required"]:
         s += ", informational"
     return s + "."
+
+
+def _release_line(gate):
+    """One line naming what the release gate saw. A record written before release
+    mode existed has no `release_vm` and reads as not applied."""
+    s = (gate or {}).get("soak")
+    if s is None:
+        soak = "none"
+    elif s.get("git_error") is not None:
+        soak = "%s (tree %s unresolved)" % (s["id"], s["tree"][:12])
+    elif s.get("changed_paths"):
+        soak = "%s (superseded by %d code changes)" % (s["id"], s["changed_paths"])
+    else:
+        soak = "%s (tree %s, %s s, %s)" % (s["id"], s["tree"][:12], s.get("expected_duration_s"),
+                                          "PASS" if s["overall_pass"] else "FAIL")
+    if not (gate or {}).get("release_mode"):
+        return "Release gate: not applied (not a release qualification); newest soak archive for this tree: %s." % soak
+    c = gate.get("corpus")
+    corpus = "none" if c is None else "%s (%s)" % (c["id"], "PASS" if c["overall_pass"] else "FAIL")
+    return "Release gate: soak %s, corpus %s." % ("none" if s is None else soak, corpus)
 
 
 def render_block(rec):
@@ -310,6 +411,7 @@ def render_block(rec):
         out.append("Verdict: **NO-GO**.")
         out.append("")
         out.extend("- %s" % r for r in rec["verdict_reasons"])
+    out += ["", _release_line(rec.get("release_vm"))]
     out += ["", "Test legs on this commit:", ""]
     out.extend(_leg_line(l) for l in rec["legs"])
     out.append("")
@@ -426,6 +528,8 @@ def main(argv=None):
     c.add_argument("--artifacts", required=True)
     c.add_argument("--out", required=True)
     c.add_argument("--root", default=".")
+    c.add_argument("--release", action="store_true",
+                   help="qualify as a release: require the 72-hour soak and corpus archives for this tree")
     r = sub.add_parser("render")
     r.add_argument("--json", required=True)
     r.add_argument("--root", default=".")
@@ -438,7 +542,7 @@ def main(argv=None):
     v.add_argument("--root", default=".")
     args = ap.parse_args(argv)
     if args.cmd == "collect":
-        rec = collect(args.artifacts, args.root)
+        rec = collect(args.artifacts, args.root, release=args.release)
         with open(args.out, "w") as f:
             json.dump(rec, f, indent=2)
             f.write("\n")

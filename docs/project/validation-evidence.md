@@ -965,6 +965,8 @@ Qualified commit `7ee7db98b5dc` (`refs/heads/main`, a clean tree). Bundled nativ
 
 Verdict: **GO**. Every required leg succeeded on this commit.
 
+Release gate: not applied (not a release qualification); newest soak archive for this tree: none.
+
 Test legs on this commit:
 
 - `interop`: success ([run](https://github.com/aklofas/ts-transformer/actions/runs/39174163933)).
