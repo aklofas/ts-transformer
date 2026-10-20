@@ -162,3 +162,39 @@ fn sps_profile_level_id() {
     assert_eq!(profile_level_id_from_sps(VideoCodec::H264, &[0x67]), None);
     assert_eq!(profile_level_id_from_sps(VideoCodec::H264, &[]), None);
 }
+
+#[test]
+fn a_payload_str0m_holds_under_another_profile_is_not_chosen() {
+    // A second Constrained Baseline mode-1 payload, 105, listed first.
+    // str0m's Constrained Baseline entry is taken by 108, and 105 is the
+    // number str0m's own (unmatched) High entry, 64001f, sits on: str0m
+    // lists 105 as a remote payload with a mode-1 H.264 entry, but not
+    // the profile the offer names.
+    let offer = CHROME
+        .replace("UDP/TLS/RTP/SAVPF 96 97", "UDP/TLS/RTP/SAVPF 105 96 97")
+        .replace(
+            "a=rtpmap:102 H264/90000",
+            "a=rtpmap:105 H264/90000\r\n\
+             a=fmtp:105 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n\
+             a=rtpmap:102 H264/90000",
+        );
+    let rtc = accept(&offer);
+    let entry = rtc
+        .codec_config()
+        .params()
+        .iter()
+        .find(|p| *p.pt() == 105)
+        .expect("str0m holds an entry under 105");
+    assert_eq!(entry.spec().codec, Codec::H264);
+    assert_eq!(entry.spec().format.packetization_mode, Some(1));
+    assert_eq!(entry.spec().format.profile_level_id, Some(0x64001f));
+    let media = rtc
+        .media(str0m::media::Mid::from("0"))
+        .expect("video media");
+    assert!(media.remote_pts().iter().any(|pt| **pt == 105));
+
+    let Negotiated::Video { pt, .. } = select_video(&rtc, &offer, VideoCodec::H264, None) else {
+        panic!("no H.264 payload chosen")
+    };
+    assert_eq!(*pt, 102);
+}

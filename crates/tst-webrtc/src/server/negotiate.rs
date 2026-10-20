@@ -43,7 +43,8 @@ pub enum Negotiated {
 /// qualifies when the offer's video section declares it with the mount's
 /// codec, str0m lists it among the media's remote payload types, and
 /// str0m's codec list holds the same codec under that number. For H.264
-/// both sides must also say `packetization-mode=1`; the first such payload
+/// both sides must also say `packetization-mode=1` with the same profile
+/// idc (the first byte of `profile-level-id`); the first such payload
 /// in the offer's order whose profile idc equals `sps_profile_level_id[0]`
 /// wins, else the first such payload. For H.265 the first qualifying
 /// payload wins (str0m matches the profile, tier and level itself).
@@ -60,7 +61,7 @@ pub fn select_video(
             "no packetization-mode=1 H.264 payload in the offer",
         ),
         VideoCodec::H265 => ("H265", Codec::H265, "no H.265 payload in the offer"),
-        _ => {
+        VideoCodec::H266 | VideoCodec::Av1 => {
             return Negotiated::Rejected {
                 reason: "the mount's codec is not carried over WebRTC",
             };
@@ -85,7 +86,10 @@ pub fn select_video(
                 && rtc.codec_config().params().iter().any(|c| {
                     c.pt() == p.pt
                         && c.spec().codec == codec
-                        && (codec != Codec::H264 || c.spec().format.packetization_mode == Some(1))
+                        && (codec != Codec::H264
+                            || (c.spec().format.packetization_mode == Some(1)
+                                && profile_idc_of(c.spec().format.profile_level_id)
+                                    == p.profile_idc))
                 })
         };
         let preferred = match (want, sps_profile_level_id) {
@@ -111,6 +115,11 @@ pub fn select_video(
             "the offer has no video media"
         },
     }
+}
+
+/// The profile idc (first byte) of a str0m `profile-level-id` value.
+fn profile_idc_of(profile_level_id: Option<u32>) -> Option<u8> {
+    profile_level_id.map(|v| (v >> 16) as u8)
 }
 
 /// One payload type declared in an offer's video section.

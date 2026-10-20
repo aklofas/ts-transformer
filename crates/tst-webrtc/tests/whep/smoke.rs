@@ -1,4 +1,4 @@
-use tst_webrtc::{MountConfig, VideoCodec, WhepServerError};
+use tst_webrtc::{AudioPolicy, MountConfig, MountKind, VideoCodec, WhepServerError};
 
 fn is_invalid_config(cfg: &MountConfig) -> bool {
     matches!(cfg.validate(), Err(WhepServerError::InvalidConfig { .. }))
@@ -48,4 +48,30 @@ fn viewer_queue_bounds() {
     assert!(is_invalid_config(&cfg));
     cfg.viewer_queue_packets = 16;
     assert!(cfg.validate().is_ok());
+}
+
+/// The refusal's text, for a configuration `validate` refuses.
+fn refusal(cfg: &MountConfig) -> String {
+    match cfg.validate() {
+        Err(WhepServerError::InvalidConfig { detail }) => detail,
+        other => panic!("expected InvalidConfig, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_mp2t_mount_is_refused_until_it_is_served() {
+    let mut cfg = MountConfig::default();
+    cfg.kind = MountKind::Mp2t;
+    let detail = refusal(&cfg);
+    assert!(detail.contains("Mp2t"), "{detail}");
+    assert!(detail.contains("not served in this release"), "{detail}");
+}
+
+#[test]
+fn opus_passthrough_is_refused_until_it_is_served() {
+    let mut cfg = MountConfig::default();
+    cfg.audio = AudioPolicy::PassthroughOpus;
+    let detail = refusal(&cfg);
+    assert!(detail.contains("PassthroughOpus"), "{detail}");
+    assert!(detail.contains("not served in this release"), "{detail}");
 }

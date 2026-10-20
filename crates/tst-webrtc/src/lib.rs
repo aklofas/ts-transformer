@@ -4,11 +4,12 @@
 //! heading of [`WhepServer`].
 //!
 //! A KLV record travels on the data channel when it is at most
-//! [`KLV_DC_LIMIT`] bytes (131 059, what the WebRTC stack can send in one
-//! message); a larger one is refused by `push_klv`. Browsers state the
-//! largest message they accept (`max-message-size`, 64 KiB when unstated):
-//! a record between that size and the limit depends on the browser, and
-//! when a viewer's data channel drops it the drop is counted in
+//! [`KLV_DC_LIMIT`] bytes (256 KiB); a larger one is refused by
+//! `push_klv`. The server's SCTP send buffer is sized for a record at the
+//! limit. A record is dropped for a viewer whose send buffer has no room
+//! for it, and browsers state the largest message they accept
+//! (`max-message-size`, 64 KiB when unstated), so a record above that size
+//! is browser-dependent. Every such drop is counted in
 //! [`MountStats::klv_dc_dropped_viewer`] and
 //! [`SessionStats::dc_messages_dropped`]. The video is never held back for
 //! the data channel.

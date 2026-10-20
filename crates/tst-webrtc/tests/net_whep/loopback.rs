@@ -269,9 +269,9 @@ fn a_full_data_channel_drops_klv_and_keeps_the_video() {
     );
 
     // The viewer stops reading, so nothing acknowledges the data channel.
-    // Four 30 000-byte records fill the 128 KiB send buffer; the rest are
+    // Five 100 000-byte records fill the 512 KiB send buffer; the rest are
     // refused and dropped, while the frames carrying them still go out.
-    let record = vec![0x5a; 30_000];
+    let record = vec![0x5a; 100_000];
     let aus = h264_gop();
     for (i, (au, key)) in aus.iter().take(8).enumerate() {
         m.push_klv(&record, pts(i), 0).unwrap();
@@ -286,7 +286,7 @@ fn a_full_data_channel_drops_klv_and_keeps_the_video() {
     );
     let ms = m.stats();
     assert!(dropped, "{ms:?}");
-    assert!(ms.klv_dc_dropped_viewer >= 4, "{ms:?}");
+    assert!(ms.klv_dc_dropped_viewer >= 3, "{ms:?}");
     let session = m.sessions().pop().expect("the session");
     assert_eq!(session.dc_messages_dropped, ms.klv_dc_dropped_viewer);
 
@@ -591,4 +591,44 @@ fn wheps_bind_without_the_tls_feature_is_refused() {
         Err(WhepServerError::Tls(detail)) => assert!(detail.contains("`tls` feature"), "{detail}"),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn records_above_64_kib_arrive_whole_on_the_data_channel() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let mut cfg = MountConfig::default();
+    cfg.klv = KlvCarriage::DataChannelOnly;
+    let m = srv.add_mount("/cam", cfg).unwrap();
+    let mut v = TestViewer::new();
+    join(srv.local_addr(), "/cam", &mut v, true);
+    assert!(
+        v.pump(|v| v.connected && v.dc_open, CONNECT),
+        "{}",
+        v.trace()
+    );
+
+    // str0m's viewer advertises a 256 KiB max-message-size, as Chrome and
+    // Safari do: both records, with their 13-byte header, are within it.
+    let records: Vec<Vec<u8>> = [100 * 1024, 250 * 1024]
+        .iter()
+        .enumerate()
+        .map(|(i, &len)| (0..len).map(|b| (b * 7 + i) as u8).collect())
+        .collect();
+    for (i, (au, key)) in h264_gop().iter().take(2).enumerate() {
+        m.push_klv(&records[i], pts(i), 0).unwrap();
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    let done = v.pump(|v| v.frames.len() >= 2 && v.dc_msgs.len() >= 2, DELIVER);
+    assert!(done, "{} {:?}", v.trace(), m.stats());
+    for (i, record) in records.iter().enumerate() {
+        let dc = &v.dc_msgs[i];
+        assert_eq!(dc.len(), 13 + record.len(), "message {i}");
+        assert_eq!(
+            u32::from_be_bytes(dc[1..5].try_into().unwrap()),
+            v.frames[i].0
+        );
+        assert_eq!(&dc[13..], &record[..], "message {i}");
+    }
+    let ms = m.stats();
+    assert_eq!((ms.klv_dc_messages_sent, ms.klv_dc_dropped_viewer), (2, 0));
 }

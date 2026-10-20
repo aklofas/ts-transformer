@@ -50,7 +50,7 @@ pub fn packetizer_for(codec: VideoCodec) -> Option<Box<dyn Packetizer>> {
     match codec {
         VideoCodec::H264 => Some(Box::new(H264Packetizer)),
         VideoCodec::H265 => Some(Box::new(H265Packetizer)),
-        _ => None,
+        VideoCodec::H266 | VideoCodec::Av1 => None,
     }
 }
 

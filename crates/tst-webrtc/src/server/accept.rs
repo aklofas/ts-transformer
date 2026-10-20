@@ -75,15 +75,54 @@ impl AcceptThread {
     }
 }
 
+/// The first wait after a failed `accept()`.
+const ACCEPT_BACKOFF_MIN: Duration = Duration::from_millis(50);
+
+/// The longest wait after repeated `accept()` failures.
+const ACCEPT_BACKOFF_MAX: Duration = Duration::from_secs(1);
+
+/// The wait after an `accept()` failure, given the previous one: 50 ms
+/// first, doubling to at most 1 s.
+fn next_backoff(previous: Option<Duration>) -> Duration {
+    previous.map_or(ACCEPT_BACKOFF_MIN, |d| {
+        d.saturating_mul(2).min(ACCEPT_BACKOFF_MAX)
+    })
+}
+
+/// Accepts connections until the shutdown flag is set.
+///
+/// A failed `accept()` (out of descriptors, an aborted connection) never
+/// stops the server, and never makes the loop spin: each failure waits
+/// [`next_backoff`] before the next attempt, checking the shutdown flag
+/// every 50 ms, and a successful accept resets the wait.
 fn run(listener: &TcpListener, shared: &Shared) {
+    let mut backoff = None;
     loop {
         let accepted = listener.accept();
         if shared.shutdown.load(Ordering::Acquire) {
             return;
         }
         match accepted {
-            Ok((stream, peer)) => serve(stream, peer, shared),
-            Err(e) => debug!(error = %e, "WHEP accept failed"),
+            Ok((stream, peer)) => {
+                backoff = None;
+                serve(stream, peer, shared);
+            }
+            Err(e) => {
+                let wait = next_backoff(backoff);
+                backoff = Some(wait);
+                debug!(error = %e, ?wait, "WHEP accept failed");
+                let end = Instant::now() + wait;
+                loop {
+                    if shared.shutdown.load(Ordering::Acquire) {
+                        return;
+                    }
+                    let left = end.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    thread::sleep(left.min(ACCEPT_BACKOFF_MIN));
+                }
+            }
         }
     }
 }
@@ -281,4 +320,23 @@ fn create_session(mount: &str, body: &[u8], peer: SocketAddr, shared: &Shared) -
 fn with_header(mut r: Response, name: &'static str, value: &str) -> Response {
     r.headers.push((name, value.to_string()));
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accept_failures_back_off_from_50_ms_to_at_most_1_s() {
+        let mut waits = Vec::new();
+        let mut backoff = None;
+        for _ in 0..8 {
+            let wait = next_backoff(backoff);
+            waits.push(wait.as_millis());
+            backoff = Some(wait);
+        }
+        assert_eq!(waits, [50, 100, 200, 400, 800, 1000, 1000, 1000]);
+        // Every failure waits at least the minimum, so the loop never spins.
+        assert!(waits.iter().all(|&w| w >= 50));
+    }
 }

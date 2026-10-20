@@ -36,18 +36,28 @@ use crate::stats::{MountCounters, MountStats, SessionStats, bump};
 /// (8).
 pub(crate) const KLV_DC_HEADER_BYTES: usize = 13;
 
-/// The largest KLV record a mount accepts: 128 KiB less the 13-byte
-/// data-channel message header, 131 059 bytes.
+/// The largest KLV record a mount accepts on the data channel: 256 KiB
+/// (262 144 bytes).
 ///
-/// 128 KiB is the most str0m (the WebRTC stack) buffers for a session's
-/// data channels, and it refuses a message larger than its free buffer,
-/// so a larger record could never be sent. Browsers advertise how large a
-/// message they accept (`max-message-size`, 64 KiB when unstated, more in
-/// current browsers); a record between that size and this limit is
-/// accepted here but may be dropped for that viewer, and the drop is
+/// The server sizes each session's SCTP send buffer (512 KiB) to hold a
+/// record at this limit with room for others still in flight. A record is
+/// written only when the viewer's buffer has room for it; otherwise it is
+/// dropped for that viewer and counted, never queued behind the video.
+/// Browsers state the largest message they accept (`max-message-size`,
+/// 64 KiB when unstated, 256 KiB in current Chrome and Safari), so a record
+/// above a viewer's stated size, less the 13-byte message header, is
+/// browser-dependent: it is dropped for that viewer and counted. Drops are
 /// counted in [`MountStats::klv_dc_dropped_viewer`] and
 /// [`SessionStats::dc_messages_dropped`](crate::SessionStats::dc_messages_dropped).
-pub const KLV_DC_LIMIT: u64 = 128 * 1024 - KLV_DC_HEADER_BYTES as u64;
+pub const KLV_DC_LIMIT: u64 = 256 * 1024;
+
+/// The SCTP send buffer of each viewer session (512 KiB): a record at
+/// [`KLV_DC_LIMIT`] plus its header fits with room for others still
+/// unacknowledged. Accepted data stays in memory until the viewer
+/// acknowledges it, so 64 viewers hold at most 32 MiB.
+pub(crate) const SCTP_SEND_BUFFER_BYTES: usize = 512 * 1024;
+
+const _: () = assert!(KLV_DC_LIMIT as usize + KLV_DC_HEADER_BYTES <= SCTP_SEND_BUFFER_BYTES);
 
 /// KLV records waiting for a frame; when full the oldest is dropped.
 const PENDING_KLV_CAP: usize = 1024;
@@ -248,19 +258,22 @@ impl MountState {
     /// Queue `msgs` for the media thread, in order, without blocking.
     ///
     /// When the frame (the first message) is dropped, the KLV messages
-    /// bound to it are dropped too, as they name its RTP timestamp.
+    /// bound to it are dropped too, as they name its RTP timestamp. A
+    /// dropped frame counts its RTP payloads in
+    /// `viewer_packets_dropped_queue_full`, a dropped KLV message counts
+    /// one in `klv_dc_dropped_viewer`.
     fn send(&self, msgs: Vec<MediaMsg>) -> Result<(), PushError> {
         let mut sent = false;
         let mut dropping = false;
         for msg in msgs {
             if dropping {
-                bump(&self.stats.viewer_packets_dropped_queue_full);
+                self.count_dropped(&msg);
                 continue;
             }
             match self.tx.try_send(msg) {
                 Ok(()) => sent = true,
-                Err(TrySendError::Full(_)) => {
-                    bump(&self.stats.viewer_packets_dropped_queue_full);
+                Err(TrySendError::Full(msg)) => {
+                    self.count_dropped(&msg);
                     dropping = !sent;
                 }
                 Err(TrySendError::Disconnected(_)) => return Err(PushError::Closed),
@@ -273,6 +286,21 @@ impl MountState {
     }
 }
 
+impl MountState {
+    /// Counts a message the full media queue did not take.
+    fn count_dropped(&self, msg: &MediaMsg) {
+        match msg {
+            MediaMsg::Frame { packet, .. } => {
+                self.stats
+                    .viewer_packets_dropped_queue_full
+                    .fetch_add(packet.payloads.len() as u64, Ordering::Relaxed);
+            }
+            MediaMsg::Klv { .. } => bump(&self.stats.klv_dc_dropped_viewer),
+            MediaMsg::Audio { .. } | MediaMsg::MountRemoved(_) | MediaMsg::Stop => {}
+        }
+    }
+}
+
 /// `true` for a picture a viewer can start decoding at: an H.264 IDR
 /// (type 5) or an H.265 IRAP picture (BLA, IDR or CRA, types 16-21,
 /// H.265 §7.4.2.2). Local because tst-core's `is_idr` leaves out CRA and
@@ -281,7 +309,7 @@ fn is_random_access(codec: VideoCodec, nal_type: u8) -> bool {
     match codec {
         VideoCodec::H264 => nal_type == 5,
         VideoCodec::H265 => matches!(nal_type, 16..=21),
-        _ => false,
+        VideoCodec::H266 | VideoCodec::Av1 => false,
     }
 }
 
@@ -290,7 +318,7 @@ fn is_parameter_set(codec: VideoCodec, nal_type: u8) -> bool {
     match codec {
         VideoCodec::H264 => matches!(nal_type, 7 | 8),
         VideoCodec::H265 => matches!(nal_type, 32..=34),
-        _ => false,
+        VideoCodec::H266 | VideoCodec::Av1 => false,
     }
 }
 
@@ -299,7 +327,7 @@ fn is_aud(codec: VideoCodec, nal_type: u8) -> bool {
     match codec {
         VideoCodec::H264 => nal_type == 9,
         VideoCodec::H265 => nal_type == 35,
-        _ => false,
+        VideoCodec::H266 | VideoCodec::Av1 => false,
     }
 }
 
@@ -595,12 +623,14 @@ impl MountHandle {
     /// [`PushError::Closed`] after the mount closed,
     /// [`PushError::WrongMountKind`] on an MP2T mount, and
     /// [`PushError::KlvTooLarge`] for a record over [`KLV_DC_LIMIT`]
-    /// (131 059 bytes).
+    /// (256 KiB).
     ///
-    /// A record above the viewer's advertised `max-message-size` (64 KiB
-    /// when the browser states none) depends on the browser: it may be
-    /// dropped for that viewer, and is then counted in
-    /// [`MountStats::klv_dc_dropped_viewer`].
+    /// The server's SCTP send buffer is sized for a record at the limit. A
+    /// record is dropped for a viewer, and counted in
+    /// [`MountStats::klv_dc_dropped_viewer`], when that viewer's buffer has
+    /// no room for it; a record above the viewer's advertised
+    /// `max-message-size` (64 KiB when the browser states none) depends on
+    /// the browser and may be dropped the same way.
     pub fn push_klv(
         &self,
         record: &[u8],
@@ -633,10 +663,10 @@ impl MountHandle {
 
     /// Push audio frames with their 90 kHz PTS.
     ///
-    /// No audio track is negotiated with viewers in this build, so every
-    /// frame is discarded and counted in
-    /// [`MountStats::audio_frames_dropped`], whatever the mount's
-    /// [`AudioPolicy`].
+    /// No audio track is negotiated with viewers in this release (a mount's
+    /// [`AudioPolicy`] is [`AudioPolicy::Drop`]; `validate` refuses
+    /// [`AudioPolicy::PassthroughOpus`]), so every frame is discarded and
+    /// counted in [`MountStats::audio_frames_dropped`].
     ///
     /// # Errors
     ///
@@ -656,8 +686,9 @@ impl MountHandle {
 
     /// Push MPEG-TS bytes into an MP2T mount.
     ///
-    /// This build has no demuxer behind an MP2T mount, so the call is
-    /// refused on both mount kinds.
+    /// MP2T mounts are not served in this release
+    /// ([`MountConfig::validate`] refuses [`MountKind::Mp2t`]), so the call
+    /// is refused on every mount.
     ///
     /// # Errors
     ///
@@ -691,5 +722,41 @@ impl MountHandle {
             .into_iter()
             .filter(|session| session.mount_path == s.path)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SPS: &[u8] = &[0, 0, 0, 1, 0x67, 0x42, 0xC0, 0x1E, 0xD9, 0x00];
+    const PPS: &[u8] = &[0, 0, 0, 1, 0x68, 0xCE, 0x38, 0x80];
+    const IDR: &[u8] = &[0, 0, 1, 0x65, 0x88, 0x84, 0x00];
+    const P: &[u8] = &[0, 0, 1, 0x41, 0x9A, 0x01];
+
+    #[test]
+    fn a_full_media_queue_counts_frames_in_payloads_and_klv_apart() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        // Data channel only, so the P-frame stays one payload (no SEI).
+        let cfg = MountConfig {
+            klv: KlvCarriage::DataChannelOnly,
+            ..MountConfig::default()
+        };
+        let state =
+            MountState::new(MountId(0), "test".into(), cfg, tx, Waker::for_test(), None).unwrap();
+        let m = MountHandle {
+            state: Arc::new(state),
+        };
+        m.push_video(&[SPS, PPS, IDR].concat(), Pts90khz::new(0), true)
+            .unwrap();
+        // The queue holds the keyframe: the next frame (one payload) and
+        // the two KLV messages bound to it are dropped.
+        m.push_klv(b"a", Pts90khz::new(3000), 0).unwrap();
+        m.push_klv(b"b", Pts90khz::new(3000), 0).unwrap();
+        m.push_video(P, Pts90khz::new(3000), false).unwrap();
+        let s = m.stats();
+        assert_eq!(s.viewer_packets_dropped_queue_full, 1);
+        assert_eq!(s.klv_dc_dropped_viewer, 2);
+        drop(rx);
     }
 }
