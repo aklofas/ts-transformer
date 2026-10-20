@@ -352,11 +352,17 @@ class ArchiveTests(unittest.TestCase):
         self.assertIn("259200 s declared", line)
 
 
-def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=259200):
+COUNTS = dict(files=260, identical=258, changed_explained=2, invariant_failures=0,
+              parse_failures=0, replay_files=12, replay_paths=5, replay_failed=0)
+
+
+def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=259200, counts=None):
     row = ('\n[[archive]]\nid = "%s"\nkind = "%s"\ntree = "%s"\noverall_pass = %s\n'
            'note = "n"\ndate = "%s"\n' % (id, kind, tree, "true" if overall_pass else "false", date))
     if kind == "soak":
         row += "expected_duration_s = %d\n" % duration
+    for k, v in (counts or {}).items():
+        row += "%s = %s\n" % (k, str(v).lower() if isinstance(v, bool) else v)
     return row
 
 
@@ -381,6 +387,41 @@ def git(cwd, *args):
     out = subprocess.run(["git", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"]
                          + list(args), cwd=cwd, env=env, check=True, capture_output=True, text=True)
     return out.stdout.strip()
+
+
+class CorpusCountTests(unittest.TestCase):
+    def rows(self, kind="corpus", **counts):
+        return q.parse_archives(archives_toml(archive_row("c", kind, SHA, counts=counts)))
+
+    def test_all_eight_validate(self):
+        self.assertEqual(q.validate_archives(self.rows(**COUNTS)), [])
+
+    def test_partial_counts_name_the_missing_fields(self):
+        probs = q.validate_archives(self.rows(files=3))
+        self.assertTrue(any("replay_failed" in p and "identical" in p for p in probs), probs)
+
+    def test_counts_belong_to_corpus_rows(self):
+        probs = q.validate_archives(self.rows(kind="stress", replay_failed=0))
+        self.assertTrue(any("belongs to corpus rows only" in p for p in probs), probs)
+
+    def test_a_bool_or_negative_count_is_rejected(self):
+        self.assertTrue(q.validate_archives(self.rows(**dict(COUNTS, files=True))))
+        self.assertTrue(q.validate_archives(self.rows(**dict(COUNTS, files=-1))))
+
+    def test_release_vm_exposes_note_and_render_prints_the_corpus_line(self):
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["release_vm"]["corpus"]["note"], "n")
+        text = q.render_block(rec)
+        self.assertIn("Release-only checks", text)
+        self.assertIn("real-capture corpus: n (files 260, identical 258, changed+explained 2, "
+                      "invariant failures 0, parse failures 0; replay 12 files \u00d7 5 paths, 0 failed)", text)
+
+    def test_non_release_record_prints_neither(self):
+        text = q.render_block(collect())
+        self.assertNotIn("Release-only checks", text)
+        self.assertNotIn("real-capture corpus:", text)
 
 
 class ReleaseModeTests(unittest.TestCase):
