@@ -238,6 +238,10 @@ def release_vm(root, sha, archives, release):
                 corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"],
                           "note": c["note"]}
                 corpus.update({k: c[k] for k in CORPUS_COUNTS if k in c})
+                # The release cites the counts; a row without them is hand-typed.
+                if any(k not in c for k in CORPUS_COUNTS):
+                    reasons.append("corpus: archive %s records no counts; the release gate needs the "
+                                   "eight the corpus tool's archive row carries" % c["id"])
                 if not c["overall_pass"]:
                     reasons.append("corpus: archive %s recorded overall_pass=false" % c["id"])
     return {"release_mode": bool(release), "soak": soak, "corpus": corpus,

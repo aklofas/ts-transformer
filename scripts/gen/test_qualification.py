@@ -373,11 +373,11 @@ def archives_toml(*rows):
 NO_SOAK = archives_toml(archive_row("corpus-rel", "corpus", SHA))
 # The older soak row comes LAST in the file: the newest archive is chosen by date.
 RELEASE_OK = archives_toml(archive_row("soak-rel", "soak", SHA),
-                           archive_row("corpus-rel", "corpus", SHA),
+                           archive_row("corpus-rel", "corpus", SHA, counts=COUNTS),
                            archive_row("soak-old", "soak", "d" * 40, False, "2026-10-04", 3600))
 OLD_TREE = "e" * 40
 SOAKED_EARLIER = archives_toml(archive_row("soak-rel", "soak", OLD_TREE),
-                               archive_row("corpus-rel", "corpus", OLD_TREE))
+                               archive_row("corpus-rel", "corpus", OLD_TREE, counts=COUNTS))
 
 
 def git(cwd, *args):
@@ -465,12 +465,12 @@ class ReleaseModeTests(unittest.TestCase):
 
     def test_release_mode_rejects_a_failed_or_short_soak(self):
         failed = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False),
-                               archive_row("corpus-rel", "corpus", SHA))
+                               archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = collect(release=True, archives=failed)
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIn("soak: archive soak-rel recorded overall_pass=false", rec["verdict_reasons"])
         short = archives_toml(archive_row("soak-rel", "soak", SHA, duration=3600),
-                              archive_row("corpus-rel", "corpus", SHA))
+                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = collect(release=True, archives=short)
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIn("soak: archive soak-rel declares 3600 s, not 259200", rec["verdict_reasons"])
@@ -483,6 +483,18 @@ class ReleaseModeTests(unittest.TestCase):
                                archive_row("corpus-rel", "corpus", SHA, overall_pass=False))
         rec = collect(release=True, archives=failed)
         self.assertIn("corpus: archive corpus-rel recorded overall_pass=false", rec["verdict_reasons"])
+
+    def test_release_mode_requires_the_counts_on_the_cited_corpus_row(self):
+        bare = archives_toml(archive_row("soak-rel", "soak", SHA),
+                             archive_row("corpus-rel", "corpus", SHA))
+        rec = collect(release=True, archives=bare)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("corpus: archive corpus-rel records no counts; the release gate needs the "
+                      "eight the corpus tool's archive row carries", rec["verdict_reasons"])
+        # A legacy row without counts stays valid for a tree no release cites.
+        self.assertEqual(q.validate_archives(q.parse_archives(bare)), [])
+        mid = collect(archives=bare)
+        self.assertEqual(mid["verdict"], "GO", mid["verdict_reasons"])
 
     def test_unresolvable_soak_tree_is_no_go(self):
         with mock.patch.object(q, "changed_paths", side_effect=q.QualificationError("fatal: bad object")):
@@ -520,7 +532,7 @@ class ReleaseModeTests(unittest.TestCase):
     def test_a_newer_short_soak_does_not_hide_the_72_hour_one(self):
         rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17"),
                              archive_row("soak-1h", "soak", SHA, date="2026-10-18", duration=3600),
-                             archive_row("corpus-rel", "corpus", SHA))
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = collect(release=True, archives=rows)
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-72")
@@ -529,7 +541,7 @@ class ReleaseModeTests(unittest.TestCase):
         newer, older = "a" * 40, "b" * 40
         rows = archives_toml(archive_row("soak-new", "soak", newer, date="2026-10-18"),
                              archive_row("soak-old", "soak", older, date="2026-10-10"),
-                             archive_row("corpus-old", "corpus", older))
+                             archive_row("corpus-old", "corpus", older, counts=COUNTS))
         diffs = {newer: ["crates/tst-core/src/lib.rs"], older: []}
         with mock.patch.object(q, "changed_paths", side_effect=lambda root, tree, sha: diffs[tree]):
             rec = collect(release=True, archives=rows)
@@ -540,7 +552,7 @@ class ReleaseModeTests(unittest.TestCase):
     def test_only_short_soaks_name_the_declared_duration(self):
         rows = archives_toml(archive_row("soak-1h", "soak", SHA, duration=3600),
                              archive_row("soak-2h", "soak", SHA, date="2026-10-10", duration=7200),
-                             archive_row("corpus-rel", "corpus", SHA))
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = collect(release=True, archives=rows)
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIn("soak: archive soak-1h declares 3600 s, not 259200", rec["verdict_reasons"])
