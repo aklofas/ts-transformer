@@ -1058,6 +1058,12 @@ pub struct ParsedStream {
 /// reported is the one the PAT lists first. Any other malformed input
 /// panics; this is a test helper.
 pub fn parsed(buf: &[u8]) -> ParsedStream {
+    try_parsed(buf).expect("raw-TS reader accepts the buffer")
+}
+
+/// [`parsed`] that reports a buffer the reader rejects as an `Err` instead
+/// of panicking, for callers fed captures they did not generate.
+pub fn try_parsed(buf: &[u8]) -> Result<ParsedStream, String> {
     let mut buf = buf[..buf.len() - buf.len() % PKT].to_vec();
     for pkt in buf.chunks_exact_mut(PKT) {
         // PCR flag without room for the 6 PCR bytes: clear the flag.
@@ -1080,8 +1086,8 @@ pub fn parsed(buf: &[u8]) -> ParsedStream {
             .map(|e| (u16::from(e[2] & 0x1F) << 8) | u16::from(e[3]))
     });
     let mut reader = Reader::new();
-    reader.feed(buf).expect("raw-TS reader accepts the buffer");
-    let summary = reader.finish().expect("buffer ends on a packet boundary");
+    reader.feed(buf)?;
+    let summary = reader.finish()?;
     let mut out = ParsedStream::default();
     if let Some(prog) = summary
         .programs
@@ -1104,7 +1110,7 @@ pub fn parsed(buf: &[u8]) -> ParsedStream {
     let mut open: BTreeMap<u16, (Option<u64>, Vec<u8>)> = BTreeMap::new();
     for pkt in buf.chunks_exact(PKT) {
         let pkt: &[u8; PKT] = pkt.try_into().expect("chunk is one packet");
-        let info = classify_packet(pkt).expect("reader accepted the packet");
+        let info = classify_packet(pkt)?;
         if info.pcr_base.is_some() {
             let ext = (u64::from(pkt[10] & 1) << 8) | u64::from(pkt[11]);
             out.pcr_samples
@@ -1137,7 +1143,7 @@ pub fn parsed(buf: &[u8]) -> ParsedStream {
     for (pid, done) in open {
         out.pes_by_pid.entry(pid).or_default().push(done);
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
