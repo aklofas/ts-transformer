@@ -117,13 +117,40 @@ fn selection_is_deterministic_across_input_order() {
         entry("03", "c", 30.0, 7, &["h264"], &["unknown"]),
         entry("04", "other", 40.0, 8, &["h264"], &[]),
         entry("05", "a", 50.0, 9, &["h264"], &[]),
+        entry("06", "a", 50.0, 9, &["h264"], &[]),
     ];
     let mut rev = files.clone();
     rev.reverse();
     let a = select(&inv(files), &[], 7200);
     let b = select(&inv(rev), &[], 7200);
-    assert_eq!(a.picks, b.picks);
-    assert_eq!(a.trimmed, b.trimmed);
+    assert_eq!(a, b);
+    // two equal-duration files in one shape: the smallest sha wins
+    assert!(whys(&a).contains(&("05".into(), "shape:a".into())));
+}
+
+#[test]
+fn trimming_drops_group_three_first_then_shape_picks_from_the_end() {
+    let i = inv(vec![
+        entry("01", "a", 50.0, 1, &["h264"], &[]),
+        entry("02", "b", 100.0, 1, &["h264"], &[]),
+        entry("03", "c", 100.0, 1, &["h264"], &[]),
+        entry("04", "other", 100.0, 1, &["h264"], &[]),
+        entry("06", "a", 150.0, 1000, &["h264"], &[]),
+        entry("07", "a", 300.0, 1, &["h264"], &[]),
+    ]);
+    let full = select(&i, &[], 7200);
+    let order: Vec<_> = full.picks.iter().map(|k| k.why.as_str()).collect();
+    assert_eq!(
+        order,
+        vec!["shape:a", "shape:b", "shape:c", "shape:other", "largest"]
+    );
+    // 750 s planned; 400 s needs three pops: largest, shape:other, shape:c
+    let p = select(&i, &[], 400);
+    let shas: Vec<_> = p.picks.iter().map(|k| k.sha256.0.as_str()).collect();
+    assert_eq!(shas, vec!["07", "02"]);
+    let dropped: Vec<_> = p.trimmed.iter().map(|k| k.0.as_str()).collect();
+    assert_eq!(dropped, vec!["03", "04", "06"]);
+    assert_eq!(p.total_seconds, 400.0);
 }
 
 #[test]

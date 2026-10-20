@@ -50,7 +50,7 @@ fn make_pick(f: &FileEntry, why: String) -> Pick {
     }
 }
 
-/// The best of `files` under `better` (a strictly-greater key), ties to the smallest sha.
+/// The best of `files` under `key` (the greatest value), ties to the smallest sha.
 fn best<'a>(
     files: impl Iterator<Item = &'a FileEntry>,
     key: impl Fn(&FileEntry) -> f64,
@@ -71,6 +71,9 @@ fn best<'a>(
 /// whatever the order of its files. A file that qualifies for several
 /// reasons keeps the first, in the order rare codec, rare KLV set, shape,
 /// largest, longest.
+///
+/// Rare picks alone may exceed the budget and are never trimmed; the plan
+/// then overruns, and `total_seconds` says so.
 pub fn select(inv: &Inventory, paths: &[String], budget_seconds: u32) -> ReplayPlan {
     let mut files: Vec<&FileEntry> = inv
         .files
@@ -126,10 +129,10 @@ pub fn select(inv: &Inventory, paths: &[String], budget_seconds: u32) -> ReplayP
 
     // Budget: drop from the end, never a rare pick.
     let mut trimmed = Vec::new();
-    let mut total: f64 = picks.iter().map(|p| p.seconds).sum();
-    while total > f64::from(budget_seconds) && picks.len() > rare_count {
+    while picks.iter().map(|p| p.seconds).sum::<f64>() > f64::from(budget_seconds)
+        && picks.len() > rare_count
+    {
         let p = picks.pop().expect("length checked");
-        total -= p.seconds;
         trimmed.push(p.sha256);
     }
     trimmed.sort();
