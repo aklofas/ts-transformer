@@ -271,8 +271,8 @@ impl core::marker::Send for tst_webrtc::server::WhepServer
 impl core::marker::Sync for tst_webrtc::server::WhepServer
 impl core::marker::Unpin for tst_webrtc::server::WhepServer
 impl core::marker::UnsafeUnpin for tst_webrtc::server::WhepServer
-impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::server::WhepServer
-impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::server::WhepServer
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::server::WhepServer
+impl !core::panic::unwind_safe::UnwindSafe for tst_webrtc::server::WhepServer
 pub mod tst_webrtc::stats
 #[non_exhaustive] pub enum tst_webrtc::stats::IceState
 pub tst_webrtc::stats::IceState::Checking
@@ -728,8 +728,8 @@ impl core::marker::Send for tst_webrtc::server::WhepServer
 impl core::marker::Sync for tst_webrtc::server::WhepServer
 impl core::marker::Unpin for tst_webrtc::server::WhepServer
 impl core::marker::UnsafeUnpin for tst_webrtc::server::WhepServer
-impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::server::WhepServer
-impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::server::WhepServer
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::server::WhepServer
+impl !core::panic::unwind_safe::UnwindSafe for tst_webrtc::server::WhepServer
 pub const tst_webrtc::KLV_DC_LIMIT: u64
 pub trait tst_webrtc::Clock: core::marker::Send + core::marker::Sync + 'static
 pub fn tst_webrtc::Clock::now(&self) -> std::time::Instant
