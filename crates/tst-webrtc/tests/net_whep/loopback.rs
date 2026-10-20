@@ -203,6 +203,11 @@ fn viewer_without_data_channel_still_gets_sei() {
     assert!(!v.dc_open);
     assert_eq!(v.error, None);
     assert_eq!(srv.stats().active_sessions, 1);
+    // A viewer that never opened the channel is not a refused write.
+    assert_eq!(m.stats().klv_dc_dropped_viewer, 0);
+    let sessions = m.sessions();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].dc_messages_dropped, 0);
 }
 
 #[test]
@@ -378,6 +383,30 @@ fn delete_ends_the_session() {
         b"",
     );
     assert_eq!(other, 404);
+}
+
+#[test]
+fn delete_on_another_mount_is_404() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    srv.add_mount("/other", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    let location = join(srv.local_addr(), "/cam", &mut v, true);
+    let id = location.rsplit('/').next().unwrap();
+    // The other mount exists, but the session is not one of its own.
+    let (status, _, _) = http(
+        srv.local_addr(),
+        "DELETE",
+        &format!("/other/sessions/{id}"),
+        &[],
+        b"",
+    );
+    assert_eq!(status, 404);
+    assert_eq!(srv.stats().active_sessions, 1);
+    assert_eq!(srv.mount_stats("/cam").unwrap().viewers, 1);
+    let (own, _, _) = http(srv.local_addr(), "DELETE", &location, &[], b"");
+    assert_eq!(own, 200);
+    assert_eq!(srv.stats().active_sessions, 0);
 }
 
 #[test]
