@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub mod inventory;
 pub mod shape;
 
 /// A SHA-256 digest as 64 lowercase hex characters. `Display` prints the hex.
