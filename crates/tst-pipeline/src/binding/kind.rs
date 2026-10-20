@@ -519,7 +519,7 @@ pub enum Domain {
     KlvEncode,
     /// Host classes: `CodecError` / `CodecErrorKind`, `CodecParseException`.
     Codec,
-    /// Host classes: `WebrtcError` / `WebrtcErrorKind` (Python only).
+    /// Host classes: `WebrtcError` / `WebrtcErrorKind`, `WebrtcException`.
     Webrtc,
 }
 
@@ -776,7 +776,7 @@ impl Domain {
             Domain::Udp => Some("org/tstrans/UdpException"),
             Domain::Tcp => Some("org/tstrans/TcpException"),
             Domain::Rist => Some("org/tstrans/RistException"),
-            Domain::Webrtc => None,
+            Domain::Webrtc => Some("org/tstrans/WebrtcException"),
         }
     }
 }
@@ -1599,6 +1599,10 @@ mod tests {
         assert_eq!(
             Domain::Codec.java_exception_class(),
             Some("org/tstrans/CodecParseException")
+        );
+        assert_eq!(
+            Domain::Webrtc.java_exception_class(),
+            Some("org/tstrans/WebrtcException")
         );
         assert_eq!(Domain::KlvDecode.python_kind_enum(), "KlvErrorKind");
     }

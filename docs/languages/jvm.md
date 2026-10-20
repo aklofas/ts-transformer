@@ -2018,6 +2018,66 @@ builder. Errors are `HlsException` with `Kind` {`IO`, `INVALID_CONFIG`,
 `FINISHED`, `TLS`, `URL`, `BIND_FAILED`, `UNALIGNED_PUSH_TS`, `TLS_DISABLED`,
 `CLOSED`, `INTERNAL`}; a muxer rejection from `MuxPublisher` is a `MuxException`.
 
+## WebRTC playback (`org.tstrans.webrtc`)
+
+`WhepServer` lets browsers play a mount over WebRTC: a viewer POSTs an SDP
+offer to the mount's path (WHEP) and gets H.264 or H.265 video with the KLV
+frame-locked to it, in an SEI message inside each access unit and on a `klv`
+data channel. Mirrors the Rust `tst_webrtc::WhepServer`.
+
+```java
+import org.tstrans.WebrtcException;
+import org.tstrans.webrtc.*;
+
+// advertise= is the address viewers send media to (see the gotcha below).
+try (WhepServer server = WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.10");
+     MountHandle mount = server.addMount("/cam", MountConfig.defaults())) {
+    // A browser POSTs its offer to http://192.0.2.10:8889/cam. pts is in 90 kHz ticks; a KLV
+    // record rides the first frame pushed at or after its PTS.
+    mount.pushKlv(st0601Record, pts, /*metadataServiceId=*/ 0);
+    mount.pushVideo(annexBAccessUnit, pts, /*keyFrame=*/ true);
+    System.out.println(server.localAddr() + " viewers=" + mount.stats().viewers());
+}
+```
+
+- **The URL carries every setting.** `WhepServer.bind(String)` is
+  `bind(new WhepServerConfig(url))`; the host is a literal IP and the query
+  keys are `media_port`, `advertise`, `max_viewers` (1 to 64, default 10),
+  `token`, `cors_origin`, `cert` and `key` (the
+  [URL key table](/docs/reference/conventions.md)).
+- **`wheps://` for HTTPS pages.** A page served over HTTPS may only POST its
+  offer to an HTTPS endpoint: bind
+  `wheps://0.0.0.0:8443?cert=server.crt&key=server.key` (PEM file paths). A
+  missing or unreadable file throws `WebrtcException(TLS)` from `bind`, and no
+  port is bound.
+- **`advertise=` behind NAT.** Viewers send media to the addresses the
+  answer offers: the bind address, plus `advertise` when set. A bind on
+  `0.0.0.0` or `::` offers only loopback unless `advertise=` names the
+  address viewers reach, which behind NAT is the public IP. One UDP port
+  (`media_port`, default the signalling port) carries every viewer.
+- **Mounts.** `MountConfig.defaults()` is an elementary H.264 mount with
+  audio dropped and KLV in both carriages; build a `MountConfig` record to
+  choose `MountKind.MP2T` (feed MPEG-TS with `pushTs`), H.265,
+  `AudioPolicy.PASSTHROUGH_OPUS` (elementary mounts only),
+  `KlvCarriage.SEI_ONLY` / `DATA_CHANNEL_ONLY`, the per-frame SEI budget or
+  the per-viewer queue. Pushes never block: a full queue drops the frame and
+  counts it in `MountHandle.stats()`.
+- **Close semantics.** `stop()` closes the server, and is idempotent: every
+  mount's pushes then throw `WebrtcException(CLOSED)` and the sessions end.
+  `close()` is `stop()` plus freeing the native server, after which every
+  method throws `IllegalStateException`. `MountHandle.close()` frees only
+  the handle object; the mount keeps serving until `removeMount(path)`,
+  `stop()` or `close()`.
+- **Errors** are `WebrtcException` with `Kind` {`URL`, `IO`, `TLS`, `MOUNT`,
+  `SERVER`, `PUSH`, `INTERNAL`, `CLOSED`}: `URL` for an unparsable bind URL,
+  `IO` for a port that cannot be bound, `MOUNT` for a refused path or
+  configuration, `PUSH` for a refused input (the other push family, an
+  access unit without a NAL unit, a KLV record over 256 KiB), `CLOSED` after
+  the mount or server closed.
+- **Stats.** `WhepServer.stats()`, `MountHandle.stats()` and
+  `MountHandle.sessions()` (one `SessionStats` per viewer) are snapshots;
+  every counter is the bit pattern of an unsigned 64-bit value.
+
 ## Pipeline pairing (`org.tstrans.pipeline.Pairer`)
 
 MPEG-TS programs that carry synchronized KLV metadata (e.g. MISB ST 0601 UAS
@@ -2241,6 +2301,8 @@ Removed in 0.9.0 with no deprecated alias: the per-package `CancelHandle`,
   `H264Receiver`.
 - **hls** — `HlsPublisher` + `MuxPublisher` HLS segmenter/server under
   `org.tstrans.hls`.
+- **webrtc** — `WhepServer` + `MountHandle` WebRTC (WHEP) playback under
+  `org.tstrans.webrtc`.
 - **pipeline** — `org.tstrans.pipeline.Pairer` pairing shell.
 - **Packaging** — one fat JAR bundling the
   linux-x86_64 / linux-aarch64 / macos-arm64 / windows-x86_64

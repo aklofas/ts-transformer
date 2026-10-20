@@ -2,7 +2,7 @@
 # kind-equivalence: the binding kind tables are generated from
 # crates/tst-pipeline/src/binding/kind.rs (the `kinds!` rows and
 # `Domain::kinds`): scripts/ratchets/kind-equivalence.tsv, the kind-enum
-# blocks in bindings/python/python/tstrans/exceptions.py and in the nine
+# blocks in bindings/python/python/tstrans/exceptions.py and in the thirteen
 # bindings/jvm/src/main/java/org/tstrans/*Exception.java. This rail fails
 # when a committed copy differs from a fresh render. The import-time
 # check_error_kinds (Python) and verify_kind_tables (JVM) stay as the

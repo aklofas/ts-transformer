@@ -2895,6 +2895,7 @@ version = "0.8.0"
 dependencies = [
  "jni",
  "secrecy",
+ "str0m",
  "tracing",
  "tracing-subscriber",
  "tst-core",
@@ -2905,6 +2906,7 @@ dependencies = [
  "tst-srt",
  "tst-tcp",
  "tst-udp",
+ "tst-webrtc",
 ]
 
 [[package]]

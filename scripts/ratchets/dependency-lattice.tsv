@@ -19,4 +19,4 @@ tst-c	--no-default-features --features tcp,tls	tst-tcp,rustls,rustls-native-cert
 tst-c	--no-default-features --features rtp,tls	tst-rtp,rustls,tokio-rustls	-
 tst-c	--no-default-features --features hls	tst-hls	tokio-rustls
 tst-c	--no-default-features --features hls,tls	tst-hls,tokio-rustls	-
-tst-jni	(default)	tstrans-rist-sys,tst-udp,tst-tcp	-
+tst-jni	(default)	tstrans-rist-sys,tst-udp,tst-tcp,tst-webrtc	-

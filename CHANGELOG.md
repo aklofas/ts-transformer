@@ -966,6 +966,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   optional durations as `-1`, `org.tstrans.rtp.RtspStats` and
   `org.tstrans.shells.TransportStats` stay hand-written.
 
+### Added — tst-jni: WebRTC playback
+
+- `org.tstrans.webrtc`: `WhepServer.bind("whep://…" | "wheps://…")` (or a
+  `WhepServerConfig`), `addMount(path, MountConfig)`, `removeMount`,
+  `stats()`, `localAddr()`, `mediaAddr()`, `stop()` and `close()`;
+  `MountHandle.pushVideo` / `pushKlv` / `pushAudio` / `pushTs`, `stats()`,
+  `sessions()` and `mountPath()`; the records `MountConfig`, `ServerStats`,
+  `MountStats` and `SessionStats` and the enums `MountKind`, `AudioPolicy`
+  and `KlvCarriage`. The mount's video codec is `org.tstrans.mpegts.VideoCodec`.
+- `org.tstrans.WebrtcException` with `Kind` {`URL`, `IO`, `TLS`, `MOUNT`,
+  `SERVER`, `PUSH`, `INTERNAL`, `CLOSED`}, from the same kind table as
+  Python's `WebrtcError`; a call after `stop()` is `CLOSED`.
+
 ### Added — release tooling
 
 - Each release tag carries `qualification.json` (source and submodule commits,

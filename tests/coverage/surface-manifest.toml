@@ -4166,7 +4166,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::config::MountConfig::validate"
 owning_tests = ["crates/tst-webrtc/tests/whep/smoke.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.addMount", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4175,7 +4175,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::url::WhepUrl"
 owning_tests = ["crates/tst-webrtc/tests/whep/url.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServerConfig", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4184,7 +4184,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::url::WhepUrl::parse"
 owning_tests = ["crates/tst-webrtc/tests/whep/url.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.bind", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4193,7 +4193,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::sei::KlvSei"
 owning_tests = ["crates/tst-webrtc/tests/whep/sei.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the JVM binding serves; the mount builds the SEI)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4202,7 +4202,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::sei::SEI_VERSION"
 owning_tests = ["crates/tst-webrtc/tests/whep/sei.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the JVM binding serves; the mount builds the SEI)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4211,7 +4211,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::sei::TST_KLV_SEI_UUID"
 owning_tests = ["crates/tst-webrtc/tests/whep/sei.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the JVM binding serves; the mount builds the SEI)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4220,7 +4220,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::sei::build_klv_sei_nal"
 owning_tests = ["crates/tst-webrtc/tests/whep/sei.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the JVM binding serves; the mount builds the SEI)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4229,7 +4229,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::sei::extract_klv_seis"
 owning_tests = ["crates/tst-webrtc/tests/whep/sei.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the JVM binding serves; the mount builds the SEI)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4238,7 +4238,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::sei::parse_klv_sei_rbsp"
 owning_tests = ["crates/tst-webrtc/tests/whep/sei.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the JVM binding serves; the mount builds the SEI)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4247,7 +4247,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::DEFAULT_MTU_PAYLOAD"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4256,7 +4256,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::H264Packetizer"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4265,7 +4265,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::H264Packetizer::packetize"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4274,7 +4274,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::MIN_MTU_PAYLOAD"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4283,7 +4283,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::Packetizer"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4292,7 +4292,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::Packetizer::packetize"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4301,7 +4301,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::packetizer_for"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h264.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4310,7 +4310,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::H265Packetizer"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h265.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4319,7 +4319,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::packetize::H265Packetizer::packetize"
 owning_tests = ["crates/tst-webrtc/tests/whep/packetize_h265.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the server packetizes inside the mount)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4336,7 +4336,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::MountHandle"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4345,7 +4345,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4354,7 +4354,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle::config"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM MountHandle has no config getter)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4363,7 +4363,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle::mount_path"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle.mountPath", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4372,7 +4372,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle::push_audio"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle.pushAudio", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4381,7 +4381,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle::push_klv"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle.pushKlv", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4390,7 +4390,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle::push_ts"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle.pushTs", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4399,7 +4399,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle::push_video"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle.pushVideo", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4408,7 +4408,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle::sessions"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle.sessions", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4417,7 +4417,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::MountHandle::stats"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4426,7 +4426,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::stats::MountStats"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4435,7 +4435,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::stats::ServerStats"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.ServerStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4444,7 +4444,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::stats::SessionStats"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.SessionStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4453,7 +4453,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::stats::IceState"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.SessionStats.iceState", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4462,7 +4462,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::Clock"
 owning_tests = ["crates/tst-webrtc/tests/whep/clock.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(a test seam for the server clock)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4471,7 +4471,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::Clock::now"
 owning_tests = ["crates/tst-webrtc/tests/whep/clock.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(a test seam for the server clock)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4480,7 +4480,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::SystemClock"
 owning_tests = ["crates/tst-webrtc/tests/whep/clock.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(a test seam for the server clock)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4489,7 +4489,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::clock::Clock"
 owning_tests = ["crates/tst-webrtc/tests/whep/clock.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(a test seam for the server clock)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4498,7 +4498,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::clock::Clock::now"
 owning_tests = ["crates/tst-webrtc/tests/whep/clock.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(a test seam for the server clock)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4507,7 +4507,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::clock::SystemClock"
 owning_tests = ["crates/tst-webrtc/tests/whep/clock.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(a test seam for the server clock)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4516,7 +4516,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::clock::SystemClock::now"
 owning_tests = ["crates/tst-webrtc/tests/whep/clock.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(a test seam for the server clock)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4525,7 +4525,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::KLV_DC_LIMIT"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the limit is documented on MountHandle.pushKlv)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4534,7 +4534,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::mount::KLV_DC_LIMIT"
 owning_tests = ["crates/tst-webrtc/tests/whep/binding.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:n/a(the limit is documented on MountHandle.pushKlv)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4559,7 +4559,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::WhepServer"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4568,7 +4568,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4577,7 +4577,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::add_mount"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.addMount", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4586,7 +4586,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::bind"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.bind", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4595,7 +4595,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::bind_with"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.bind", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4604,7 +4604,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::local_addr"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.localAddr", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4613,7 +4613,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::media_addr"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.mediaAddr", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4622,7 +4622,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::mount_stats"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.MountHandle.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4631,7 +4631,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::remove_mount"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.removeMount", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4640,7 +4640,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::stats"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/loopback.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4649,7 +4649,7 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::drop"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/shutdown.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.close", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4658,6 +4658,6 @@ kind = "rust"
 crate = "tst-webrtc"
 item = "tst_webrtc::server::WhepServer::stop"
 owning_tests = ["crates/tst-webrtc/tests/net_whep/shutdown.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:deferred(the JVM WebRTC package is not written yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(the Python WebRTC module is not written yet)", "java:org.tstrans.webrtc.WhepServer.stop", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
