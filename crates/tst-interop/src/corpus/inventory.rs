@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tst_core::codec::VideoCodec;
 use tst_core::klv::st0601;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, SamplePayload, StreamKind};
-use tst_test_helpers::rawts::{self, Reader, Retention};
+use tst_test_helpers::rawts::{self, classify_packet};
 
 use super::shape::classify;
 use super::{FEED_CHUNK, RunDir, Sha256Hex};
@@ -95,10 +95,13 @@ fn hex(bytes: &[u8]) -> String {
 fn collect_ts(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let rd = std::fs::read_dir(dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
     for entry in rd {
-        let path = entry
-            .map_err(|e| format!("read_dir {}: {e}", dir.display()))?
-            .path();
-        if path.is_dir() {
+        let entry = entry.map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("stat {}: {e}", path.display()))?;
+        // A symlinked directory is skipped so a link loop cannot recurse forever.
+        if file_type.is_dir() {
             collect_ts(&path, out)?;
         } else if path
             .extension()
@@ -110,20 +113,81 @@ fn collect_ts(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+/// First and last PCR base of one PID, and whether its clock stepped back.
+///
+/// A single backwards step counts as one 33-bit wrap. That is right for a
+/// capture that crosses the wrap and over-counts a glitch, which is fine
+/// for a duration estimate.
+#[derive(Default)]
+struct PcrSpan {
+    first: u64,
+    last: u64,
+    wrapped: bool,
+}
+
+/// Per-PID PCR spans read packet by packet, carrying a partial packet
+/// across chunks. PIDs are never combined.
+#[derive(Default)]
+struct PcrScan {
+    carry: Vec<u8>,
+    spans: BTreeMap<u16, PcrSpan>,
+    first_pid: Option<u16>,
+}
+
+impl PcrScan {
+    fn feed(&mut self, chunk: &[u8]) -> Result<(), String> {
+        self.carry.extend_from_slice(chunk);
+        let whole = self.carry.len() - self.carry.len() % 188;
+        for pkt in self.carry[..whole].chunks_exact(188) {
+            let pkt: &[u8; 188] = pkt.try_into().expect("chunk is one packet");
+            let info = classify_packet(pkt)?;
+            let Some(base) = info.pcr_base else { continue };
+            self.first_pid.get_or_insert(info.pid);
+            let span = self.spans.entry(info.pid).or_insert(PcrSpan {
+                first: base,
+                last: base,
+                wrapped: false,
+            });
+            if base < span.last {
+                span.wrapped = true;
+            }
+            span.last = base;
+        }
+        self.carry.drain(..whole);
+        Ok(())
+    }
+
+    /// Seconds spanned by the declared PCR PID, else the first PID seen
+    /// carrying a PCR; 0.0 with fewer than two PCRs.
+    fn duration_s(&self, declared: Option<u16>) -> f64 {
+        let span = declared
+            .and_then(|pid| self.spans.get(&pid))
+            .or_else(|| self.first_pid.and_then(|pid| self.spans.get(&pid)));
+        match span {
+            Some(s) if s.first != s.last || s.wrapped => {
+                let ticks = if s.wrapped {
+                    s.last + PCR_BASE_WRAP - s.first
+                } else {
+                    s.last - s.first
+                };
+                ticks as f64 / PCR_BASE_HZ
+            }
+            _ => 0.0,
+        }
+    }
+}
+
 /// Hash and probe one file in a single read.
 fn probe(path: &Path) -> Result<FileEntry, String> {
     let mut file =
         std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut demuxer = Demuxer::with_config(DemuxerConfig::default());
-    let mut reader = Reader::with_retention(Retention::Bounded);
+    let mut pcr = PcrScan::default();
     let mut prefix: Vec<u8> = Vec::new();
     let mut buf = vec![0u8; FEED_CHUNK];
     let mut total: u64 = 0;
     let mut probe_error: Option<String> = None;
-    let mut pcr_first: Option<u64> = None;
-    let mut pcr_last: Option<u64> = None;
-    let mut pcr_wrapped = false;
     let mut kinds: BTreeMap<u16, &'static str> = BTreeMap::new();
     let mut programs: BTreeSet<u16> = BTreeSet::new();
     let mut codecs: BTreeSet<String> = BTreeSet::new();
@@ -148,19 +212,10 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
         if !feeding {
             continue;
         }
-        if let Err(e) = reader.feed(chunk) {
+        if let Err(e) = pcr.feed(chunk) {
             probe_error.get_or_insert(format!("wire reader: {e}"));
             feeding = false;
             continue;
-        }
-        for (base, _) in reader.take_pcr_events() {
-            if pcr_first.is_none() {
-                pcr_first = Some(base);
-            }
-            if pcr_last.is_some_and(|l| base < l) {
-                pcr_wrapped = true;
-            }
-            pcr_last = Some(base);
         }
         if let Err(e) = demuxer.feed(chunk) {
             probe_error.get_or_insert(format!("demuxer: {e}"));
@@ -195,25 +250,20 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
         }
     }
 
-    // `parsed` panics on malformed input; a capture must not take the sweep down.
-    let parsed = std::panic::catch_unwind(|| rawts::parsed(&prefix)).unwrap_or_default();
+    let parsed = match rawts::try_parsed(&prefix) {
+        Ok(p) => p,
+        Err(e) => {
+            probe_error.get_or_insert(format!("wire reader: {e}"));
+            Default::default()
+        }
+    };
     if parsed.pmt_pid.is_none() || parsed.streams.is_empty() {
         probe_error = Some(match probe_error {
             Some(e) => format!("no PMT found; {e}"),
             None => "no PMT found".to_string(),
         });
     }
-    let duration_s = match (pcr_first, pcr_last) {
-        (Some(first), Some(last)) if first != last || pcr_wrapped => {
-            let ticks = if last < first || pcr_wrapped {
-                last + PCR_BASE_WRAP - first
-            } else {
-                last - first
-            };
-            ticks as f64 / PCR_BASE_HZ
-        }
-        _ => 0.0,
-    };
+    let duration_s = pcr.duration_s(parsed.pcr_pid);
     let sha = Sha256Hex(hex(&hasher.finalize()));
     Ok(FileEntry {
         sha256: sha,
