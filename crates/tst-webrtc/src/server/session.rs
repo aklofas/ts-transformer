@@ -10,7 +10,6 @@ use str0m::Rtc;
 use str0m::channel::ChannelId;
 use str0m::media::{Mid, Pt};
 
-use crate::VideoCodec;
 use crate::mount::{FramePacket, KlvMessage, MountId, MountState};
 use crate::server::media::MediaConfig;
 use crate::stats::{IceState, SessionStats};
@@ -82,8 +81,6 @@ pub(crate) struct Viewer {
     pub(crate) mid: Option<Mid>,
     /// The video payload type, once negotiated.
     pub(crate) pt: Option<Pt>,
-    /// The video codec sent.
-    pub(crate) codec: VideoCodec,
     /// The next RTP sequence number (extended, 64 bits).
     pub(crate) seq: u64,
     /// `true` once the send stream exists, so its SSRC is known.
@@ -132,7 +129,6 @@ impl Viewer {
         Self {
             id,
             mount: mount_state.id,
-            codec: mount_state.cfg.video,
             queue_cap: usize::try_from(mount_state.cfg.viewer_queue_packets).unwrap_or(usize::MAX),
             mount_state,
             rtc,
@@ -260,11 +256,11 @@ fn elapsed(since: Instant, now: Instant) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MountConfig;
     use crate::clock::{Clock, ManualClock};
     use crate::mount::MountHandle;
     use crate::packetize::{DEFAULT_MTU_PAYLOAD, H264Packetizer, Packetizer};
     use crate::server::media::server_rtc;
+    use crate::{MountConfig, VideoCodec};
 
     fn cfg() -> MediaConfig {
         MediaConfig {

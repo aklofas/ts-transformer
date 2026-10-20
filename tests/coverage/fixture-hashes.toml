@@ -447,12 +447,20 @@ path = "crates/tst-integration/tests/fixtures/scenarios/webvtt-in-ts/input.ts"
 sha256 = "f301c06541cddfd763700ba9962c89331b80b5f6494ddbd14792ec760d97a72c"
 
 [[file]]
+path = "crates/tst-webrtc/tests/fixtures/h264/gop.h264"
+sha256 = "b6a4e17cf1dc05638cbe244334863ac468105c8ea5d24e06bfbb645328122c7d"
+
+[[file]]
 path = "crates/tst-webrtc/tests/fixtures/h264/idr_with_sps_pps.h264"
 sha256 = "8934b1672b96957ac018a5c6a8219ee21cfc8c34376d479a74505430e7231237"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/h265/idr_with_vps_sps_pps.h265"
 sha256 = "b9a81ea4c0218d1bea728bf41bf71beb1430443c1e52e5f7b5141e2038aec4ab"
+
+[[file]]
+path = "crates/tst-webrtc/tests/fixtures/mod.rs"
+sha256 = "28120ccf92749ea48482a72644e0de4f4ab300287336801769f622a573053489"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/offers/README.md"
@@ -472,7 +480,7 @@ sha256 = "dae1927f1180dfe4e4878160be7029747bd2010e79a8674cba840a4fa7233f0e"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/regen.sh"
-sha256 = "6efb58451405c6cba053b49e356456412e5c4daee41f4fac5e992d020510206a"
+sha256 = "6dbb245312fa0b891013a723cdcd3ef325b72f90aae3e7cea8d0a627e07a4889"
 
 [[file]]
 path = "tests/coverage/fuzz-targets.toml"

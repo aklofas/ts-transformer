@@ -27,6 +27,7 @@ use tst_core::mpegts::common::Pts90khz;
 use crate::config::{AudioPolicy, KlvCarriage, MountConfig, MountKind, VideoCodec};
 use crate::error::{PushError, WhepServerError};
 use crate::packetize::{DEFAULT_MTU_PAYLOAD, Packetizer, RtpPayload, packetizer_for};
+use crate::server::ControlLink;
 use crate::server::media::Waker;
 use crate::stats::{MountCounters, MountStats, SessionStats, bump};
 
@@ -166,6 +167,9 @@ pub(crate) struct MountState {
     pub(crate) tx: SyncSender<MediaMsg>,
     pub(crate) wake: Waker,
     pub(crate) stats: MountCounters,
+    /// The server's control path, for the session table; `None` for a
+    /// mount driven without a server.
+    control: Option<ControlLink>,
 }
 
 /// The state a push call changes.
@@ -189,6 +193,7 @@ impl MountState {
         cfg: MountConfig,
         tx: SyncSender<MediaMsg>,
         wake: Waker,
+        control: Option<ControlLink>,
     ) -> Result<Self, WhepServerError> {
         cfg.validate()?;
         let packetizer =
@@ -210,6 +215,7 @@ impl MountState {
             tx,
             wake,
             stats: MountCounters::default(),
+            control,
         })
     }
 
@@ -393,7 +399,7 @@ impl MountHandle {
     #[doc(hidden)]
     pub fn for_test(cfg: MountConfig) -> (MountHandle, Receiver<MediaMsg>) {
         let (tx, rx) = std::sync::mpsc::sync_channel(4096);
-        let state = MountState::new(MountId(0), "test".into(), cfg, tx, Waker::for_test())
+        let state = MountState::new(MountId(0), "test".into(), cfg, tx, Waker::for_test(), None)
             .expect("for_test takes a valid MountConfig");
         (
             MountHandle {
@@ -670,10 +676,20 @@ impl MountHandle {
         self.state.stats.snapshot()
     }
 
-    /// Statistics of each viewer session on this mount. The session table
-    /// belongs to the server's media thread; a mount without one has no
-    /// sessions.
+    /// Statistics of each viewer session on this mount, read from the
+    /// server's media thread (a bounded wait of at most 2 seconds). Empty
+    /// once the mount is closed, and for a mount driven without a server.
     pub fn sessions(&self) -> Vec<SessionStats> {
-        Vec::new()
+        let s = &*self.state;
+        if s.closed.load(Ordering::Acquire) {
+            return Vec::new();
+        }
+        let Some((_, sessions)) = s.control.as_ref().and_then(ControlLink::sessions) else {
+            return Vec::new();
+        };
+        sessions
+            .into_iter()
+            .filter(|session| session.mount_path == s.path)
+            .collect()
     }
 }

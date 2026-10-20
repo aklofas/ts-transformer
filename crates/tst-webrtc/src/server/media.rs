@@ -731,6 +731,11 @@ impl Media {
         let counters = &mut self.counters;
         let before = self.viewers.len();
         self.viewers.retain(|v| {
+            // A removed mount's sessions close even when its
+            // MountRemoved message was dropped at a full queue.
+            if v.mount_state.closed.load(Ordering::Acquire) {
+                return false;
+            }
             let Some(cause) = reap_decision(v, now, cfg) else {
                 return true;
             };

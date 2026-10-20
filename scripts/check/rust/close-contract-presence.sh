@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify the 11 long-lived public types each have a `# Closing` rustdoc heading
+# Verify the 12 long-lived public types each have a `# Closing` rustdoc heading
 # + per-language idiom table.
 
 set -euo pipefail
@@ -17,6 +17,7 @@ TYPES=(
     "crates/tst-srt/src/listener.rs:SrtListener"
     "crates/tst-core/src/mpegts/mux/mod.rs:Muxer"
     "crates/tst-core/src/mpegts/demux/demuxer.rs:Demuxer"
+    "crates/tst-webrtc/src/server/mod.rs:WhepServer"
 )
 
 missing=0
@@ -52,4 +53,4 @@ if [[ $missing -gt 0 ]]; then
     exit 1
 fi
 
-echo "OK: all 11 long-lived types have close-contract rustdoc"
+echo "OK: all 12 long-lived types have close-contract rustdoc"

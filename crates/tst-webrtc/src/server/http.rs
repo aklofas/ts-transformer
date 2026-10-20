@@ -281,6 +281,7 @@ pub fn resp(status: u16, body: impl Into<Vec<u8>>) -> Response {
         408 => "Request Timeout",
         413 => "Content Too Large",
         431 => "Request Header Fields Too Large",
+        500 => "Internal Server Error",
         503 => "Service Unavailable",
         _ => "Unknown",
     };

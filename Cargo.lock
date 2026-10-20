@@ -3039,8 +3039,10 @@ name = "tst-webrtc"
 version = "0.8.0"
 dependencies = [
  "getrandom 0.4.3",
+ "rcgen",
  "rustls",
  "str0m",
+ "tempfile",
  "thiserror",
  "tracing",
  "tst-core",
