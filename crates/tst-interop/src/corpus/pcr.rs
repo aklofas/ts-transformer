@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 
 use tst_test_helpers::rawts::{self, ParsedStream, classify_packet};
 
+use super::FEED_CHUNK;
+
 const PKT: usize = 188;
 const SYNC: u8 = 0x47;
 /// Bytes read from the start of a capture for the PMT shape. A PMT repeats
@@ -16,18 +18,26 @@ pub const PCR_BASE_WRAP: u64 = 1 << 33;
 /// PCR bases count at this rate.
 pub const PCR_BASE_HZ: u64 = 90_000;
 
-/// Offset of the first byte that starts a packet: a sync byte with another
-/// sync byte one packet later (or the last whole packet). 0 for a capture
-/// that starts on a packet; the length of `bytes` when none is found.
-pub fn align_offset(bytes: &[u8]) -> usize {
-    let mut k = 0;
-    while k + PKT <= bytes.len() {
-        if bytes[k] == SYNC && (k + PKT == bytes.len() || bytes[k + PKT] == SYNC) {
-            return k;
-        }
-        k += 1;
+/// Whether a packet starts at `k`: a sync byte, confirmed by sync bytes at
+/// +188 and +376 (the demuxer's own rule needs several strides). With fewer
+/// than three whole packets left in `buf`, the strides that exist must hold.
+fn starts_packet(buf: &[u8], k: usize) -> bool {
+    if buf.get(k) != Some(&SYNC) {
+        return false;
     }
-    bytes.len()
+    [k + PKT, k + 2 * PKT]
+        .iter()
+        .all(|&next| next >= buf.len() || buf[next] == SYNC)
+}
+
+/// Offset of the first byte that starts a packet (see `starts_packet`). 0
+/// for a capture that starts on a packet; the length of `bytes` when none is
+/// found.
+pub fn align_offset(bytes: &[u8]) -> usize {
+    (0..)
+        .take_while(|k| k + PKT <= bytes.len())
+        .find(|&k| starts_packet(bytes, k))
+        .unwrap_or(bytes.len())
 }
 
 /// The PMT facts of a capture, read from its first [`PMT_PREFIX`] bytes
@@ -38,25 +48,30 @@ pub fn parse_prefix(buf: &[u8]) -> Result<ParsedStream, String> {
     rawts::try_parsed(&buf[..buf.len().min(PMT_PREFIX)])
 }
 
-/// First and last PCR base of one PID, and whether its clock stepped back.
+/// How far one PID's clock has advanced, in 90 kHz ticks.
 ///
-/// A single backwards step counts as one 33-bit wrap. That is right for a
-/// capture that crosses the wrap and over-counts a glitch, which is fine
-/// for a duration estimate and for where a prefix ends.
+/// A backwards step of at least 2^32 base ticks is a 33-bit wrap and the
+/// span keeps counting through it. A smaller backwards step is a PCR
+/// discontinuity: it adds nothing and the span continues from the new value.
+/// The inventory's duration and the prefix cut both read it this way, so a
+/// capture with a PCR reset reports the time of its continuous parts.
 #[derive(Default)]
 struct PcrSpan {
-    first: u64,
     last: u64,
-    wrapped: bool,
+    ticks: u64,
 }
 
 impl PcrSpan {
-    fn ticks(&self) -> u64 {
-        if self.wrapped {
-            self.last + PCR_BASE_WRAP - self.first
+    fn advance(&mut self, base: u64) {
+        let step = if base >= self.last {
+            base - self.last
+        } else if self.last - base >= PCR_BASE_WRAP / 2 {
+            base + PCR_BASE_WRAP - self.last
         } else {
-            self.last - self.first
-        }
+            0
+        };
+        self.ticks += step;
+        self.last = base;
     }
 }
 
@@ -101,8 +116,7 @@ impl PcrScan {
         self.carry.extend_from_slice(chunk);
         let mut off = 0;
         while off + PKT <= self.carry.len() {
-            let confirmed = off + PKT == self.carry.len() || self.carry[off + PKT] == SYNC;
-            if self.carry[off] != SYNC || !confirmed {
+            if !starts_packet(&self.carry, off) {
                 off += 1;
                 continue;
             }
@@ -117,18 +131,14 @@ impl PcrScan {
             let Some(base) = info.pcr_base else { continue };
             self.first_pid.get_or_insert(info.pid);
             let span = self.spans.entry(info.pid).or_insert(PcrSpan {
-                first: base,
                 last: base,
-                wrapped: false,
+                ticks: 0,
             });
-            if base < span.last {
-                span.wrapped = true;
-            }
-            span.last = base;
+            span.advance(base);
             if self.cut_at.is_none()
                 && let Some(cut) = &self.cut
                 && cut.pid.or(self.first_pid) == Some(info.pid)
-                && span.ticks() > cut.limit_ticks
+                && span.ticks > cut.limit_ticks
             {
                 self.cut_at = Some(at);
             }
@@ -143,9 +153,26 @@ impl PcrScan {
         let span = declared
             .and_then(|pid| self.spans.get(&pid))
             .or_else(|| self.first_pid.and_then(|pid| self.spans.get(&pid)));
-        match span {
-            Some(s) if s.first != s.last || s.wrapped => s.ticks() as f64 / PCR_BASE_HZ as f64,
-            _ => 0.0,
+        span.map_or(0.0, |s| s.ticks as f64 / PCR_BASE_HZ as f64)
+    }
+}
+
+/// Absolute offset in `bytes` where a prefix of `seconds` ends: the start of
+/// the first packet whose PCR, on the PMT's PCR PID (else the first PID seen
+/// carrying a PCR), takes that PID's span past `seconds` x 90 000 ticks
+/// (strictly greater; see [`PcrSpan`] for wraps and discontinuities).
+/// `bytes[..offset]` excludes that packet. `bytes.len()` when the capture
+/// is shorter. The digest and the replay pacer cut at this same point.
+pub fn prefix_end(bytes: &[u8], seconds: u32) -> usize {
+    let pcr_pid = parse_prefix(&bytes[align_offset(bytes)..])
+        .ok()
+        .and_then(|p| p.pcr_pid);
+    let mut scan = PcrScan::with_cut(pcr_pid, u64::from(seconds) * PCR_BASE_HZ);
+    for chunk in bytes.chunks(FEED_CHUNK) {
+        scan.feed(chunk);
+        if let Some(at) = scan.cut_at() {
+            return at as usize;
         }
     }
+    bytes.len()
 }

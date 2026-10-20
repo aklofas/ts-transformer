@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tst_core::klv::st0601;
 use tst_core::mpegts::demux::{
-    DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, SamplePayload, StrictMode,
+    DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, NonConformantIssue, SamplePayload, StrictMode,
 };
 
 use super::inventory::kind_name;
-use super::pcr::{PCR_BASE_HZ, PcrScan, align_offset, parse_prefix};
+use super::pcr::prefix_end;
 use super::{FEED_CHUNK, RunDir, Sha256Hex};
 
 /// The configurations every capture is digested under, in the order run.
@@ -48,7 +48,7 @@ pub struct PidDigest {
     pub samples: u64,
     pub metadata: u64,
     pub discontinuities: u64,
-    /// `NonConformantIssue` display text to count.
+    /// `NonConformantIssue` variant name to count.
     pub nonconformant: BTreeMap<String, u64>,
     pub pts_first: Option<i64>,
     pub pts_last: Option<i64>,
@@ -127,6 +127,52 @@ pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest 
             Err(e) => undecoded(format!("re-encode: {e}")),
         },
         Err(e) => undecoded(e.to_string()),
+    }
+}
+
+/// The variant name of an issue, without the values its text embeds: a
+/// jittery PCR would otherwise give one key per delta.
+fn issue_key(issue: &NonConformantIssue) -> &'static str {
+    use NonConformantIssue as I;
+    match issue {
+        I::StreamTypeMismatchSyncOnAsyncPid => "StreamTypeMismatchSyncOnAsyncPid",
+        I::StreamTypeMismatchAsyncOnSyncPid => "StreamTypeMismatchAsyncOnSyncPid",
+        I::MissingMetadataDescriptor => "MissingMetadataDescriptor",
+        I::PcrAnomaly { .. } => "PcrAnomaly",
+        I::PsiChecksumMismatch { .. } => "PsiChecksumMismatch",
+        I::PusiMidPes => "PusiMidPes",
+        I::MalformedPes { .. } => "MalformedPes",
+        I::PidReusedAcrossPrograms { .. } => "PidReusedAcrossPrograms",
+        I::SubtitleMissingDescriptor { .. } => "SubtitleMissingDescriptor",
+        I::SubtitleDescriptorAmbiguous { .. } => "SubtitleDescriptorAmbiguous",
+        I::SubtitleDescriptorMalformed { .. } => "SubtitleDescriptorMalformed",
+        I::Av1RegistrationMalformed { .. } => "Av1RegistrationMalformed",
+        I::Av1ObuMissingSizeField { .. } => "Av1ObuMissingSizeField",
+        I::Av1TileListNotAllowed { .. } => "Av1TileListNotAllowed",
+        I::PsiOverlongSection { .. } => "PsiOverlongSection",
+        I::TransportErrorPacket { .. } => "TransportErrorPacket",
+        I::DvbSubDataIdentifier { .. } => "DvbSubDataIdentifier",
+        I::PtsAnomaly { .. } => "PtsAnomaly",
+        I::MissingRequiredPts { .. } => "MissingRequiredPts",
+        I::PesHeaderMalformed { .. } => "PesHeaderMalformed",
+        I::SubtitleAlignmentMissing { .. } => "SubtitleAlignmentMissing",
+        I::PcrMalformed { .. } => "PcrMalformed",
+        I::NalHeader { .. } => "NalHeader",
+        I::Av1ObuHeader { .. } => "Av1ObuHeader",
+        I::LatmFraming { .. } => "LatmFraming",
+        I::PsiCcDiscontinuity { .. } => "PsiCcDiscontinuity",
+        I::MultiCellAu { .. } => "MultiCellAu",
+        I::CfiTolerated { .. } => "CfiTolerated",
+        I::PsiMultiSectionUnsupported { .. } => "PsiMultiSectionUnsupported",
+        I::Ac3SyncMissing { .. } => "Ac3SyncMissing",
+        I::Av1WrongStreamId { .. } => "Av1WrongStreamId",
+        I::Av1MissingTsObuFraming { .. } => "Av1MissingTsObuFraming",
+        I::PmtProgramNumberMismatch { .. } => "PmtProgramNumberMismatch",
+        I::UnsupportedScrambling { .. } => "UnsupportedScrambling",
+        I::AdaptationFieldMalformed { .. } => "AdaptationFieldMalformed",
+        I::ZeroLengthPesNonVideo { .. } => "ZeroLengthPesNonVideo",
+        I::PsiSyntax { .. } => "PsiSyntax",
+        I::Other(_) => "Other",
     }
 }
 
@@ -236,7 +282,7 @@ impl Pass {
                         .pid(stream.pid, kind_name(&stream.kind))
                         .digest
                         .nonconformant
-                        .entry(issue.to_string())
+                        .entry(issue_key(&issue).to_string())
                         .or_default() += 1;
                 }
                 _ => {}
@@ -245,15 +291,21 @@ impl Pass {
     }
 }
 
-fn digest_config(key: &str, bytes: &[u8]) -> ConfigDigest {
+/// The digest of `bytes` under one configuration, fed `chunk` bytes at a
+/// time. The result does not depend on `chunk`.
+pub fn digest_config(key: &str, bytes: &[u8], chunk: usize) -> ConfigDigest {
     let mut demuxer = Demuxer::with_config(config_for(key));
     let mut pass = Pass::new();
-    for chunk in bytes.chunks(FEED_CHUNK) {
-        // A rejection leaves the demuxer usable and its issue queued: count
-        // it, drain, and carry on with the next chunk.
-        if let Err(e) = demuxer.feed(chunk) {
+    for piece in bytes.chunks(chunk) {
+        // A rejection returns at once with the rest of the input still
+        // buffered and the issue queued. Empty feeds resume it, one
+        // rejection per call, so every one is counted exactly once whatever
+        // the chunking; each consumes a packet, so the loop ends.
+        let mut input = piece;
+        while let Err(e) = demuxer.feed(input) {
             pass.feed_errors += 1;
             *pass.feed_error_kinds.entry(e.to_string()).or_default() += 1;
+            input = &[];
         }
         pass.drain(&mut demuxer);
     }
@@ -286,24 +338,6 @@ fn digest_config(key: &str, bytes: &[u8]) -> ConfigDigest {
     }
 }
 
-/// Offset in `bytes` where a prefix of `seconds` ends: the first packet
-/// whose PCR, on the PMT's PCR PID (else the first PID carrying one), lies
-/// more than `seconds` after that PID's first PCR. `bytes.len()` when the
-/// capture is shorter.
-fn prefix_end(bytes: &[u8], seconds: u32) -> usize {
-    let pcr_pid = parse_prefix(&bytes[align_offset(bytes)..])
-        .ok()
-        .and_then(|p| p.pcr_pid);
-    let mut scan = PcrScan::with_cut(pcr_pid, u64::from(seconds) * PCR_BASE_HZ);
-    for chunk in bytes.chunks(FEED_CHUNK) {
-        scan.feed(chunk);
-        if let Some(at) = scan.cut_at() {
-            return at as usize;
-        }
-    }
-    bytes.len()
-}
-
 /// Digests `bytes` (whose SHA-256 is `sha`) under every configuration. With
 /// `prefix_seconds`, only the capture's first that many seconds are fed.
 pub fn digest_bytes(
@@ -317,7 +351,7 @@ pub fn digest_bytes(
     };
     let configs: BTreeMap<String, ConfigDigest> = CONFIG_KEYS
         .iter()
-        .map(|key| (key.to_string(), digest_config(key, fed)))
+        .map(|key| (key.to_string(), digest_config(key, fed, FEED_CHUNK)))
         .collect();
     let elementary_sha256 = elementary_sha256(&configs["default"]);
     Ok(FileDigest {
@@ -330,13 +364,28 @@ pub fn digest_bytes(
     })
 }
 
-/// SHA-256 over what a capture carries independent of how it is packetised:
-/// per PID in PID order the kind, sample count, metadata count and payload
-/// hash, then the KLV records hash. PIDs, timestamps and timing issues are
-/// left out, so a re-mux of the same elementary streams hashes the same.
+/// SHA-256 over what a capture carries independent of how it is packetised.
+/// Only PIDs that delivered a sample or a metadata payload count, ordered by
+/// `(kind, payload hash)`, each contributing its kind, sample count,
+/// metadata count and payload hash; then the KLV records hash. PID numbers,
+/// timestamps and timing issues are left out, so a re-mux of the same
+/// elementary streams onto other PIDs hashes the same.
 pub fn elementary_sha256(default: &ConfigDigest) -> Sha256Hex {
+    let mut carrying: Vec<&PidDigest> = default
+        .pids
+        .values()
+        .filter(|p| p.samples > 0 || p.metadata > 0)
+        .collect();
+    carrying.sort_by(|a, b| {
+        (&a.kind, &a.payload_sha256.0, a.samples, a.metadata).cmp(&(
+            &b.kind,
+            &b.payload_sha256.0,
+            b.samples,
+            b.metadata,
+        ))
+    });
     let mut h = Sha256::new();
-    for pid in default.pids.values() {
+    for pid in carrying {
         h.update(pid.kind.as_bytes());
         h.update([0]);
         h.update(pid.samples.to_le_bytes());
