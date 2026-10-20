@@ -37,7 +37,8 @@
 //!
 //! With `udp` among the paths, the replay refuses to start when
 //! `net.core.rmem_max` would clamp the receive buffer the largest pick's
-//! access units need ([`super::receive::udp_rcvbuf_for`]).
+//! access units need ([`super::receive::udp_rcvbuf_need`]; the floor the
+//! child adds on top may be clamped, the need may not).
 //!
 //! Output, files and errors name captures by SHA-256 only.
 
@@ -61,7 +62,7 @@ use super::inventory::{self, FileEntry};
 use super::judge::{FileVerdict, ReceiverOutcome, outcome_failure};
 use super::pace::{PcrPacer, send_paced};
 use super::pcr::prefix_end_read;
-use super::receive::{STALL_ENV, net_core, udp_rcvbuf_for};
+use super::receive::{STALL_ENV, net_core, udp_rcvbuf_need};
 use super::subset::{self, Pick, ReplayPlan};
 use super::{PATHS, REPLAY_PICK_MAX_BYTES, RunDir, STALL_SECONDS, Sha256Hex};
 use crate::report::csv::RSS_HEADER;
@@ -357,10 +358,8 @@ impl PathRun {
         // The pre-flight saw only the access units; the pacer's chunk is
         // known now, and a buffer the kernel would clamp fails this pick.
         if path == "udp"
-            && let (Some(max), Some(n)) = (
-                net_core("rmem_max"),
-                udp_rcvbuf_for(largest_au_bytes, largest_chunk, net_core("rmem_default")),
-            )
+            && let Some(max) = net_core("rmem_max")
+            && let n = udp_rcvbuf_need(largest_au_bytes, largest_chunk)
             && n > max
         {
             return failed(
@@ -641,12 +640,11 @@ fn check_rmem_max(
     let Some(max) = net_core("rmem_max") else {
         return Ok(());
     };
-    let default = net_core("rmem_default");
     let needed = plan
         .picks
         .iter()
         .filter_map(|p| entries.get(&p.sha256))
-        .filter_map(|e| udp_rcvbuf_for(e.largest_au_bytes, 0, default))
+        .map(|e| udp_rcvbuf_need(e.largest_au_bytes, 0))
         .max();
     match needed {
         Some(n) if n > max => Err(format!(

@@ -753,6 +753,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`Cancelled`, `CleanTeardown` on a tcp peer close, `TransportFailed`), so
   `end_reason()` answers on every Rust, Python and JVM shell, not only rtp. srt records no
   `CleanTeardown`: libsrt reports a peer's close as a broken link.
+- `tst_udp::UdpRecvTransport::recv_buffer_size` reads back the receive
+  buffer the kernel granted (`SO_RCVBUF`), so a caller can tell a buffer
+  the platform capped from the one it asked for.
 
 ### Added — tst-rtp
 

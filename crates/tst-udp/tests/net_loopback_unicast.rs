@@ -155,3 +155,12 @@ fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
         "got {r:?}"
     );
 }
+
+#[test]
+fn the_receive_buffer_read_back_covers_the_rcvbuf_request() {
+    // 64 KiB is under every default cap; Linux reads back twice the value
+    // set, macOS and Windows the value itself.
+    let rx = UdpRecvTransport::listen("udp://127.0.0.1:0?rcvbuf=65536").unwrap();
+    let granted = rx.recv_buffer_size().unwrap();
+    assert!(granted >= 65_536, "{granted}");
+}

@@ -283,3 +283,46 @@ fn every_path_records_whether_its_rss_was_gated() {
         );
     }
 }
+
+/// A udp socket given far less than the replay asks for loses datagrams in
+/// each keyframe burst, and the failed verdict names the buffer the kernel
+/// granted beside the one requested. Linux only: the tiny buffer is a
+/// stand-in for a kernel that caps the request, and its loss is certain
+/// only where the bookkeeping is known.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_udp_receive_buffer_below_the_request_is_named_on_a_short_delivery() {
+    let dir = two_realistic_files("rp-rcvbuf");
+    let run = dir.join("run");
+    sweep(&dir, &run);
+    let out = replay_over(&dir, &run, "udp", &[("TST_CORPUS_TEST_RCVBUF", "2048")]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let summary = json(&run.join("replay.json"));
+    let verdicts = summary["verdicts"].as_array().unwrap();
+    assert_eq!(verdicts.len(), 2, "{summary}");
+    for v in verdicts {
+        assert_eq!(v["pass"], false, "{summary}");
+        let failures: Vec<&str> = v["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f.as_str().unwrap())
+            .collect();
+        assert!(
+            failures
+                .iter()
+                .any(|f| f.starts_with("delivery incomplete: ")),
+            "{summary}"
+        );
+        let named = failures
+            .iter()
+            .find_map(|f| f.strip_prefix("receive buffer "))
+            .unwrap_or_else(|| panic!("no buffer attribution: {summary}"));
+        let (granted, requested) = named
+            .split_once(" < requested ")
+            .expect("the attribution's shape");
+        let (granted, requested): (u64, u64) =
+            (granted.parse().unwrap(), requested.parse().unwrap());
+        assert!(granted < requested, "{named}");
+    }
+}

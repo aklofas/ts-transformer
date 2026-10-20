@@ -198,6 +198,8 @@ pub fn make_recv_probed(
 pub struct BoundRecv {
     addr: SocketAddr,
     probe: Option<PublishMountProbe>,
+    /// `udp://` only: the receive buffer the kernel granted at bind.
+    recv_buffer: Option<u64>,
     stage: BoundStage,
 }
 
@@ -216,6 +218,13 @@ impl BoundRecv {
 
     pub fn probe(&self) -> Option<PublishMountProbe> {
         self.probe.clone()
+    }
+
+    /// The receive buffer the kernel granted (`SO_RCVBUF` read back at
+    /// bind); `None` for every scheme but `udp://`, or when it could not be
+    /// read.
+    pub fn recv_buffer_size(&self) -> Option<u64> {
+        self.recv_buffer
     }
 
     /// A handle that ends [`Self::into_transport`]'s wait: the listener's
@@ -264,9 +273,11 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
             let t = tst_udp::UdpRecvTransport::listen(url)
                 .map_err(|e| format!("udp listen {url}: {e}"))?;
             let addr = t.local_addr();
+            let recv_buffer = t.recv_buffer_size().ok().map(|n| n as u64);
             Ok(BoundRecv {
                 addr,
                 probe: None,
+                recv_buffer,
                 stage: BoundStage::Ready(Box::new(BoundedUdpRecv { inner: t })),
             })
         }
@@ -279,6 +290,7 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
             Ok(BoundRecv {
                 addr,
                 probe: None,
+                recv_buffer: None,
                 stage: BoundStage::Tcp(l),
             })
         }
@@ -294,6 +306,7 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
             Ok(BoundRecv {
                 addr,
                 probe: None,
+                recv_buffer: None,
                 stage: BoundStage::Srt(l, timeout),
             })
         }
@@ -308,6 +321,7 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
                         return Ok(BoundRecv {
                             addr,
                             probe: None,
+                            recv_buffer: None,
                             stage: BoundStage::Ready(Box::new(t)),
                         });
                     }
@@ -325,6 +339,7 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
             Ok(BoundRecv {
                 addr,
                 probe: Some(probe),
+                recv_buffer: None,
                 stage: BoundStage::Ready(Box::new(l)),
             })
         }
