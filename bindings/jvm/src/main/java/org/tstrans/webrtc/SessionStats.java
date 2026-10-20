@@ -11,7 +11,8 @@ package org.tstrans.webrtc;
  * @param remoteAddr the viewer's address as {@code "ip:port"} once ICE has selected one,
  *     else {@code null}
  * @param iceState {@code "new"}, {@code "checking"}, {@code "connected"},
- *     {@code "disconnected"}, {@code "failed"} or {@code "closed"}
+ *     {@code "disconnected"}, {@code "failed"} or {@code "closed"}; {@code "unknown"}
+ *     for a state the Rust library adds before this binding names it
  * @param connectedForMillis how long the session has been connected, or {@code -1}
  *     before it connected
  * @param rtpPackets RTP packets sent to the viewer

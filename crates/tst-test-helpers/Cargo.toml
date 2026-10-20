@@ -8,8 +8,18 @@ description = "Internal test helpers shared across tst-core, tst-pipeline, tst-s
 license     = "MIT OR Apache-2.0"
 repository.workspace = true
 
+[features]
+# The WebRTC (WHEP) test viewer in `whep_viewer`: str0m as the client, a
+# plain and a TLS HTTP client for signalling. Used by tst-webrtc's tests and
+# tst-jni's jni-test-hooks probe. Off by default, so a `-p` test build of
+# another crate compiles neither str0m nor rustls.
+whep-viewer = ["dep:str0m", "dep:rustls", "tst-core/tls"]
+
 [dependencies]
 tst-core = { path = "../tst-core", default-features = false }
+# The same version and features tst-webrtc builds.
+str0m = { version = "0.24", default-features = false, features = ["rust-crypto"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"], optional = true }
 
 [lints]
 workspace = true

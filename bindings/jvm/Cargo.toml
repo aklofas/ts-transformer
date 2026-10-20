@@ -24,8 +24,9 @@ doctest    = false
 # Compiles the test-only panic probes (bindings/jvm/src/test_hooks.rs + the RTSP
 # probes in src/rtp/server.rs) used by PanicIsolationTest + RtspPanicPoisoningTest.
 # Default-OFF; never enabled for the published cdylib.
-# It also builds the WebRTC viewer probe, which needs str0m as a WHEP client.
-jni-test-hooks = ["dep:str0m"]
+# It also builds the WebRTC viewer probe, which plays a mount with the str0m
+# test viewer of tst-test-helpers' `whep-viewer` feature.
+jni-test-hooks = ["dep:tst-test-helpers"]
 
 [dependencies]
 # jni-rs: self-contained JNI bindings. Compiling the cdylib needs no JDK/JVM;
@@ -75,9 +76,8 @@ tst-rist = { path = "../../crates/tst-rist", features = ["mbedtls"] }
 # wheps:// (rustls ring, already linked for RTSPS).
 tst-webrtc = { path = "../../crates/tst-webrtc", default-features = false, features = ["tls"] }
 
-# Test-only: the WHEP client of the jni-test-hooks viewer probe, the same
-# version and features tst-webrtc builds.
-str0m = { version = "0.24", default-features = false, features = ["rust-crypto"], optional = true }
+# Test-only: the WHEP test viewer of the jni-test-hooks viewer probe.
+tst-test-helpers = { path = "../../crates/tst-test-helpers", features = ["whep-viewer"], optional = true }
 
 # secrecy wraps RTSP auth passwords at the RtspClientBuilder::auth boundary
 # (mirrors tst-py's rtp feature: dep:secrecy). Workspace-pinned (0.10).

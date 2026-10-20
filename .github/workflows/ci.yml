@@ -476,6 +476,12 @@ jobs:
         if: matrix.phase != 'features'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The workspace clippy above builds tst-jni without its test-only
+      # jni-test-hooks feature (the probes jvm-jar.yml's test step builds).
+      - name: cargo clippy (tst-jni, jni-test-hooks)
+        if: matrix.name == 'linux-x86_64'
+        run: cargo clippy -p tst-jni --all-targets --features jni-test-hooks -- -D warnings
+
       - name: Lint fixtures (clippy rejects each planted violation)
         # The binding rules once kept by grep rails are clippy lints now;
         # this proves each one still fires. One platform is enough.
