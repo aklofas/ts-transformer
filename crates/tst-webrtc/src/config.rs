@@ -72,7 +72,15 @@ pub struct MountConfig {
     pub klv: KlvCarriage,
     /// The most KLV bytes carried in SEI per access unit (1 to 1 MiB).
     pub sei_budget_bytes: u32,
-    /// Packets queued per viewer before the slowest viewer drops (at least 16).
+    /// The RTP payloads one viewer's queue holds (at least 16).
+    ///
+    /// The server writes each viewer's queue out on every pass of its media
+    /// thread, so this is a budget per pass: a frame that does not fit what
+    /// is left is dropped whole for that viewer, and the viewer waits for the
+    /// next keyframe. A keyframe larger than the whole budget is admitted
+    /// into an empty queue, so the queue can exceed it by one keyframe. A
+    /// viewer whose queue stays full, with nothing written, for 30 s is
+    /// closed as disconnected.
     pub viewer_queue_packets: u32,
 }
 

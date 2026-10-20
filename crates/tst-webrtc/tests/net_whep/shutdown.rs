@@ -157,8 +157,8 @@ fn a_mount_added_while_stop_runs_is_refused_or_closed() {
                 })
                 .collect();
             start.wait();
-            // Stop while every adder is inside its loop, so some add_mount
-            // calls straddle the moment stop begins.
+            // Stop once at least ADDERS mounts were added, so the adders are
+            // running and some add_mount calls straddle the moment stop begins.
             while added.load(Ordering::Acquire) < ADDERS {
                 thread::yield_now();
             }
