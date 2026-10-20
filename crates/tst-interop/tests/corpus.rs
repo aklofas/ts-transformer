@@ -17,6 +17,8 @@ mod inventory;
 mod invariants;
 #[path = "corpus/shape.rs"]
 mod shape;
+#[path = "corpus/subset.rs"]
+mod subset;
 #[path = "corpus/sweep.rs"]
 mod sweep;
 
