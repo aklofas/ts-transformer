@@ -11,10 +11,13 @@
 //! ```
 //!
 //! The prefix on a `file` line is the sender's business (it cuts the replay
-//! there); the child digests every byte that arrives, so a replay that
-//! overshoots the prefix fails against the sweep's digest.
+//! there) and names the digest to judge by; the child digests every byte
+//! that arrives, so a replay that overshoots the prefix fails against the
+//! prefix digest.
 //!
-//! The expected digest is read from `<digests>/<sha256>.json`. A `file`
+//! The expected digest is read from `<digests>/<sha256>.json`, or from
+//! `<digests>/<sha256>.prefix<seconds>.json` for a `file` with a prefix
+//! (the name [`digest::file_name`] gives; the parent writes it). A `file`
 //! that cannot be prepared (no digest, a listener that will not bind)
 //! answers with a FAIL verdict in place of `ready`. Each verdict is also
 //! appended, as the same JSON, to the `--out` file. A protocol error exits 2
@@ -59,7 +62,7 @@ use std::time::{Duration, Instant};
 
 use tst_core::transport::{TransportCancel, TransportError};
 
-use super::digest::{FileDigest, Incremental};
+use super::digest::{self, FileDigest, Incremental};
 use super::judge::{FileVerdict, ReceiverOutcome, judge};
 use super::{STALL_SECONDS, Sha256Hex};
 use crate::transport::{BoundRecv, make_recv_bound};
@@ -68,9 +71,21 @@ use crate::transport::{BoundRecv, make_recv_bound};
 /// before the replay is over.
 pub const QUIET_SECONDS: u64 = 2;
 
-/// Test hook: with this variable set to `1` the child exits 0 straight
-/// after its first verdict line. Never set outside tests.
+/// Test hook: `<n>` makes the child exit 0 straight after its `n`-th
+/// verdict line; `<path>:<n>` does so only in the child for that path, so a
+/// whole replay can carry the variable and lose one receiver. Never set
+/// outside tests.
 pub const DIE_AFTER_ENV: &str = "TST_CORPUS_TEST_RECEIVE_DIE_AFTER";
+
+/// The verdict count [`DIE_AFTER_ENV`] sets for the child of `path`.
+fn die_after(path: &str, value: &str) -> Option<u64> {
+    let n = match value.split_once(':') {
+        Some((p, n)) if p == path => n,
+        Some(_) => return None,
+        None => value,
+    };
+    n.parse().ok().filter(|&n| n > 0)
+}
 
 /// Test hook: whole seconds that replace [`STALL_SECONDS`] (and cap
 /// [`QUIET_SECONDS`], so the quiet window never outlasts the stall rule),
@@ -237,8 +252,12 @@ fn receive(bound: BoundRecv, progress: &Progress) -> Result<FileDigest, String> 
     inc.finish()
 }
 
-fn load_expected(digests: &Path, sha: &Sha256Hex) -> Result<FileDigest, String> {
-    let text = std::fs::read_to_string(digests.join(format!("{sha}.json")))
+fn load_expected(
+    digests: &Path,
+    sha: &Sha256Hex,
+    prefix: Option<u32>,
+) -> Result<FileDigest, String> {
+    let text = std::fs::read_to_string(digests.join(digest::file_name(sha, prefix)))
         .map_err(|e| format!("cannot read the sweep digest: {}", e.kind()))?;
     serde_json::from_str(&text).map_err(|e| format!("cannot parse the sweep digest: {e}"))
 }
@@ -256,7 +275,9 @@ struct Child<'a> {
     path: &'a str,
     digests: &'a Path,
     out: std::fs::File,
-    die_after_first: bool,
+    /// Exit after this many verdicts ([`DIE_AFTER_ENV`]).
+    die_after: Option<u64>,
+    verdicts: u64,
     rx: mpsc::Receiver<Event>,
     tx: Sender<Event>,
     last_verdict: Option<Sha256Hex>,
@@ -278,15 +299,16 @@ impl Child<'_> {
         let _ = writeln!(self.out, "{json}");
         let _ = self.out.flush();
         self.last_verdict = Some(v.sha256.clone());
-        if self.die_after_first {
+        self.verdicts += 1;
+        if self.die_after == Some(self.verdicts) {
             std::process::exit(0);
         }
     }
 
     /// One `file`: bind, announce, receive, judge.
-    fn replay(&mut self, sha: Sha256Hex) {
+    fn replay(&mut self, sha: Sha256Hex, prefix: Option<u32>) {
         let path = self.path;
-        let expected = match load_expected(self.digests, &sha) {
+        let expected = match load_expected(self.digests, &sha, prefix) {
             Ok(d) => d,
             Err(e) => return self.verdict(&failed(&sha, path, e)),
         };
@@ -428,7 +450,10 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
         path,
         digests,
         out,
-        die_after_first: std::env::var(DIE_AFTER_ENV).is_ok_and(|v| v == "1"),
+        die_after: std::env::var(DIE_AFTER_ENV)
+            .ok()
+            .and_then(|v| die_after(path, &v)),
+        verdicts: 0,
         rx,
         tx,
         last_verdict: None,
@@ -443,7 +468,7 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
             None => child.rx.recv(),
         };
         match next {
-            Ok(Event::Cmd(Cmd::File(sha, _prefix))) => child.replay(sha),
+            Ok(Event::Cmd(Cmd::File(sha, prefix))) => child.replay(sha, prefix),
             // The sender's close can be seen, and judged, before `sent` is read.
             Ok(Event::Cmd(Cmd::Sent(s))) if child.last_verdict.as_ref() == Some(&s) => {}
             Ok(Event::Cmd(Cmd::Sent(_))) => protocol_error("sent before file"),

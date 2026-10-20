@@ -84,17 +84,25 @@ pub fn judge(
     }
 }
 
+/// The one failure a receiver that did not complete is judged by; `None`
+/// for [`ReceiverOutcome::Completed`].
+pub fn outcome_failure(outcome: &ReceiverOutcome) -> Option<String> {
+    match outcome {
+        ReceiverOutcome::Completed => None,
+        ReceiverOutcome::Stalled => Some("receiver stalled".into()),
+        ReceiverOutcome::Exited => Some("receiver exited".into()),
+        ReceiverOutcome::Error(e) => Some(format!("receiver error: {e}")),
+    }
+}
+
 fn failures(
     path: &str,
     expected: &FileDigest,
     received: Option<&FileDigest>,
     outcome: &ReceiverOutcome,
 ) -> Vec<String> {
-    match outcome {
-        ReceiverOutcome::Completed => {}
-        ReceiverOutcome::Stalled => return vec!["receiver stalled".into()],
-        ReceiverOutcome::Exited => return vec!["receiver exited".into()],
-        ReceiverOutcome::Error(e) => return vec![format!("receiver error: {e}")],
+    if let Some(f) = outcome_failure(outcome) {
+        return vec![f];
     }
     let Some(got) = received else {
         return vec!["no received digest".into()];

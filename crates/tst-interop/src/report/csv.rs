@@ -4,7 +4,7 @@
 //! fields.
 
 /// Header of `rss.csv`, shared by the soak and stress parsers.
-pub(super) const RSS_HEADER: &str = "elapsed_s,leg,process,pid,rss_kb";
+pub(crate) const RSS_HEADER: &str = "elapsed_s,leg,process,pid,rss_kb";
 
 /// Split `text` into `(1-based line number, fields)` rows after checking
 /// the header line and that every non-blank row has exactly `columns`
