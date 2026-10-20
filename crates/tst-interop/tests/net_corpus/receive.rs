@@ -1,23 +1,24 @@
 //! `tst-interop corpus receive`: the line protocol over a real child
 //! process, with the sender replaying a generated capture through loopback.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::Instant;
 
 use tst_core::transport::Transport;
 use tst_interop::corpus::Sha256Hex;
-use tst_interop::corpus::digest::{FileDigest, digest_file};
+use tst_interop::corpus::digest::{FileDigest, digest_file, file_name};
 use tst_interop::corpus::pace::{PcrPacer, send_paced};
 use tst_interop::transport::make_send;
 
-use crate::{gen_profile_bytes, sha_of, temp_dir_named};
+use crate::{Lines, gen_profile_bytes, sha_of, temp_dir_named};
 
 struct Receiver {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    stdout: Lines,
+    stderr: Lines,
     seen: String,
     out_file: PathBuf,
 }
@@ -41,11 +42,13 @@ impl Receiver {
             .spawn()
             .expect("spawn tst-interop corpus receive");
         let stdin = child.stdin.take().unwrap();
-        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let stdout = Lines::new(child.stdout.take().unwrap());
+        let stderr = Lines::new(child.stderr.take().unwrap());
         Self {
             child,
             stdin,
             stdout,
+            stderr,
             seen: String::new(),
             out_file,
         }
@@ -57,27 +60,27 @@ impl Receiver {
     }
 
     fn line(&mut self) -> String {
-        let mut l = String::new();
-        let n = self.stdout.read_line(&mut l).unwrap();
-        assert!(n > 0, "the child closed stdout early; saw: {}", self.seen);
+        let Some(l) = self.stdout.next() else {
+            panic!("the child closed stdout early; saw: {}", self.seen);
+        };
         self.seen.push_str(&l);
-        l.trim_end().to_string()
+        self.seen.push('\n');
+        l
     }
 
     fn finish(mut self) -> (std::process::ExitStatus, String, String) {
         drop(self.stdin);
-        let mut rest = String::new();
-        std::io::Read::read_to_string(&mut self.stdout, &mut rest).unwrap();
+        let rest = self.stdout.rest();
         self.seen.push_str(&rest);
-        let mut err = String::new();
-        std::io::Read::read_to_string(&mut self.child.stderr.take().unwrap(), &mut err).unwrap();
+        let err = self.stderr.rest();
         (self.child.wait().unwrap(), self.seen, err)
     }
 }
 
 /// A generated capture of `seconds`, its sweep digest (of the first
 /// `prefix` seconds, from the file as the sweep reads it) stored in a fresh
-/// directory under the name the child looks for.
+/// directory under the name the child looks for (the prefix digest's own
+/// name with a prefix).
 fn capture(
     name: &str,
     seconds: f64,
@@ -91,7 +94,7 @@ fn capture(
     let digest = digest_file(Some(&sha), &file, prefix).unwrap();
     std::fs::remove_file(&file).unwrap();
     std::fs::write(
-        dir.join(format!("{sha}.json")),
+        dir.join(file_name(&sha, prefix)),
         serde_json::to_string(&digest).unwrap(),
     )
     .unwrap();
@@ -264,10 +267,9 @@ fn the_die_after_hook_exits_0_after_the_first_verdict() {
         .spawn()
         .unwrap();
     writeln!(child.stdin.as_mut().unwrap(), "file {sha} none").unwrap();
-    let mut first = String::new();
-    BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut first)
-        .unwrap();
+    let first = Lines::new(child.stdout.take().unwrap())
+        .next()
+        .expect("a verdict line");
     assert!(
         first.starts_with(&format!("verdict {sha} FAIL ")),
         "{first}"

@@ -172,7 +172,7 @@ pub struct InventorySummary {
 // `report merge` / `report render` — the interop-matrix half
 // ---------------------------------------------------------------------
 
-mod csv;
+pub(crate) mod csv;
 mod matrix;
 pub use matrix::{
     ExpectVerdict, Expectation, Inventory, InventoryCell, SHAPE_FULL, SHAPE_SUBSET,

@@ -16,6 +16,7 @@ pub mod inventory;
 pub mod pace;
 pub mod pcr;
 pub mod receive;
+pub mod replay;
 pub mod shape;
 pub mod subset;
 pub mod sweep;

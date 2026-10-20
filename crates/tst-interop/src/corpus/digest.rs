@@ -597,8 +597,18 @@ pub fn elementary_sha256(default: &ConfigDigest) -> Sha256Hex {
     Sha256Hex(hex(&h.finalize()))
 }
 
+/// The file name a digest is stored under in a `digests/` directory:
+/// `<sha256>.json` for a whole capture, `<sha256>.prefix<seconds>.json` for
+/// the digest of its first `seconds`.
+pub fn file_name(sha: &Sha256Hex, prefix_seconds: Option<u32>) -> String {
+    match prefix_seconds {
+        None => format!("{sha}.json"),
+        Some(s) => format!("{sha}.prefix{s}.json"),
+    }
+}
+
 fn digest_path(run: &RunDir, sha: &Sha256Hex) -> PathBuf {
-    run.root.join("digests").join(format!("{sha}.json"))
+    run.root.join("digests").join(file_name(sha, None))
 }
 
 pub fn load(run: &RunDir, sha: &Sha256Hex) -> Result<FileDigest, String> {
@@ -607,15 +617,16 @@ pub fn load(run: &RunDir, sha: &Sha256Hex) -> Result<FileDigest, String> {
     serde_json::from_str(&text).map_err(|e| format!("cannot parse digest {sha}.json: {e}"))
 }
 
+/// Writes `d` under [`file_name`] of its sha and prefix.
 pub fn store(run: &RunDir, d: &FileDigest) -> Result<(), String> {
     let dir = run.root.join("digests");
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("cannot create digests in the run directory: {}", e.kind()))?;
     let text = serde_json::to_string_pretty(d).map_err(|e| format!("digest json: {e}"))?;
-    std::fs::write(digest_path(run, &d.sha256), text).map_err(|e| {
+    let name = file_name(&d.sha256, d.prefix_seconds);
+    std::fs::write(dir.join(&name), text).map_err(|e| {
         format!(
-            "cannot write digest {}.json in the run directory: {}",
-            d.sha256,
+            "cannot write digest {name} in the run directory: {}",
             e.kind()
         )
     })

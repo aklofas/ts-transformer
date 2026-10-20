@@ -3,8 +3,10 @@
 
 use std::path::PathBuf;
 
+use super::judge::FileVerdict;
+use super::replay::{self, ReplayArgs, ReplaySummary};
 use super::sweep::{self, FileOutcome, SweepArgs, SweepSummary};
-use super::{RunDir, Sha256Hex, inventory};
+use super::{PATHS, REPLAY_BUDGET_SECONDS, RunDir, Sha256Hex, inventory};
 
 fn fail(msg: &str) -> ! {
     eprintln!("corpus: {msg}");
@@ -19,15 +21,16 @@ fn value(args: &[String], i: usize, flag: &str) -> String {
 }
 
 /// Entry point for `corpus <subcommand> ...`; exits 0 on success, 1 when a
-/// sweep does not pass, 2 on a usage or I/O error.
+/// sweep or a replay does not pass, 2 on a usage or I/O error.
 pub fn run(args: &[String]) -> ! {
     let Some(sub) = args.first() else {
-        fail("a subcommand is required: inventory | sweep");
+        fail("a subcommand is required: inventory | sweep | replay");
     };
     let rest = &args[1..];
     match sub.as_str() {
         "inventory" => run_inventory(rest),
         "sweep" => run_sweep(rest),
+        "replay" => run_replay(rest),
         // Internal: the replay stage's child process, not in the usage text.
         "receive" => run_receive(rest),
         other => fail(&format!("unknown subcommand '{other}'")),
@@ -154,6 +157,86 @@ fn run_sweep(args: &[String]) -> ! {
     match sweep::run(&sweep_args) {
         Ok(s) => {
             print_summary(&s);
+            std::process::exit(if s.pass { 0 } else { 1 });
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+fn verdict_line(v: &FileVerdict) -> String {
+    let mut line = format!(
+        "{} {} {}",
+        v.sha256,
+        v.path,
+        if v.pass { "PASS" } else { "FAIL" }
+    );
+    if let Some(first) = v.failures.first() {
+        line.push(' ');
+        line.push_str(first);
+    }
+    line
+}
+
+fn print_replay_summary(s: &ReplaySummary) {
+    println!("files: {}", s.files);
+    println!("paths: {}", s.paths.join(","));
+    println!("verdicts: {}", s.verdicts.len());
+    println!("failed: {}", s.failed);
+    for (path, max) in &s.rss_max_kb_by_path {
+        let slope = s
+            .rss_slope_kb_per_hour_by_path
+            .get(path)
+            .copied()
+            .unwrap_or(0.0);
+        println!("rss {path}: max {max} kB, slope {slope:.1} kB/h");
+    }
+    println!("{}", if s.pass { "pass" } else { "fail" });
+}
+
+fn run_replay(args: &[String]) -> ! {
+    let (mut dir, mut out) = (None, None);
+    let mut paths: Vec<String> = PATHS.iter().map(|p| p.to_string()).collect();
+    let mut budget_seconds = REPLAY_BUDGET_SECONDS;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out" => out = Some(PathBuf::from(value(args, i, "--out"))),
+            "--paths" => {
+                paths = value(args, i, "--paths")
+                    .split(',')
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
+            "--budget-seconds" => {
+                budget_seconds = value(args, i, "--budget-seconds")
+                    .parse()
+                    .unwrap_or_else(|_| fail("--budget-seconds must be a whole number of seconds"));
+            }
+            a if a.starts_with("--") => fail("unknown option"),
+            _ => {
+                if dir.is_some() {
+                    fail("only one directory is accepted");
+                }
+                dir = Some(PathBuf::from(&args[i]));
+                i += 1;
+                continue;
+            }
+        }
+        i += 2;
+    }
+    let replay_args = ReplayArgs {
+        dir: dir.unwrap_or_else(|| fail("a directory is required")),
+        run: RunDir {
+            root: out.unwrap_or_else(|| fail("--out is required")),
+        },
+        paths,
+        budget_seconds,
+        rss_sample_seconds: 10,
+    };
+    match replay::run_with(&replay_args, &mut |v| println!("{}", verdict_line(v))) {
+        Ok(s) => {
+            print_replay_summary(&s);
             std::process::exit(if s.pass { 0 } else { 1 });
         }
         Err(e) => fail(&e),
