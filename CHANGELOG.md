@@ -638,6 +638,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — dependencies
 
+- rustls-webpki 0.103.16 (RUSTSEC-2026-0382): certificate paths through the distrusted emSign intermediates, whose private keys are now public, are rejected.
 - rustls-native-certs 0.8 (was 0.7): it reports the certificates that loaded
   beside the errors, which the two TLS clients now use (see tst-rtp and
   tst-tcp).
