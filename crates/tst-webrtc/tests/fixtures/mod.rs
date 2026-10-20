@@ -16,9 +16,13 @@ use str0m::media::{Direction, MediaKind, Mid};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc, RtcConfig, RtcError};
 use tst_core::klv::st0601::{UasDatalinkLs, encode_to_vec};
+use tst_webrtc::MountHandle;
 
 #[cfg(feature = "tls")]
 pub mod tls_certs;
+
+/// How long the viewers get to connect.
+const CONNECT_WAIT: Duration = Duration::from_secs(5);
 
 /// The 30-frame GOP: IDR first, then 29 P frames, each opened by an AUD.
 const GOP: &[u8] = include_bytes!("h264/gop.h264");
@@ -402,6 +406,26 @@ pub fn whep_post_tls(
         headers.push(("Authorization", a.as_str()));
     }
     https(addr, root_pem, "POST", mount, &headers, offer.as_bytes())
+}
+
+/// Pumps the viewers until each is connected and the server reports every
+/// session on `m` connected.
+pub fn connect_all(m: &MountHandle, viewers: &mut [TestViewer]) {
+    let n = viewers.len();
+    let ok = pump_all(
+        viewers,
+        |vs| {
+            vs.iter().all(|v| v.connected)
+                && m.sessions()
+                    .iter()
+                    .filter(|s| s.connected_for.is_some())
+                    .count()
+                    == n
+        },
+        CONNECT_WAIT,
+    );
+    let traces: Vec<String> = viewers.iter().map(TestViewer::trace).collect();
+    assert!(ok, "viewers did not connect: {traces:?}");
 }
 
 /// POSTs the viewer's offer, applies the answer, and returns the session
