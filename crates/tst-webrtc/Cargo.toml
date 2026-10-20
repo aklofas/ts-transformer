@@ -39,5 +39,11 @@ optional         = true
 default-features = false
 features         = ["std", "ring"]
 
+[dev-dependencies]
+# A self-signed certificate and key for the wheps:// bind test, written to
+# PEM files under std::env::temp_dir() that are removed on drop.
+rcgen = "0.14"
+tempfile = "3"
+
 [lints]
 workspace = true

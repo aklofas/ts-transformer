@@ -1,0 +1,565 @@
+//! A server on loopback played by str0m viewers: media and KLV delivery,
+//! one shared media port, keyframe gating, the reaper, and every answer
+//! the WHEP endpoint gives.
+
+use std::collections::HashSet;
+use std::io::Write;
+use std::net::TcpStream;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tst_core::mpegts::common::Pts90khz;
+use tst_webrtc::url::WhepUrl;
+use tst_webrtc::{
+    KlvCarriage, ManualClock, MountConfig, MountHandle, PushError, VideoCodec, WhepServer,
+    WhepServerError,
+};
+
+use crate::fixtures::{
+    TestViewer, eventually, h264_gop, http, join, klv_record, pump_all, read_response, whep_post,
+};
+
+const CONNECT: Duration = Duration::from_secs(5);
+const DELIVER: Duration = Duration::from_secs(10);
+
+fn pts(i: usize) -> Pts90khz {
+    Pts90khz::new(i as i64 * 3000)
+}
+
+/// `true` when the access unit (4-byte start codes, as str0m and the
+/// fixture frame it) holds an IDR slice.
+fn has_idr(au: &[u8]) -> bool {
+    au.windows(5)
+        .any(|w| w[..4] == [0, 0, 0, 1] && w[4] & 0x1f == 5)
+}
+
+/// Pumps the viewers until each is connected and the server reports every
+/// session on `m` connected.
+fn connect_all(m: &MountHandle, viewers: &mut [TestViewer]) {
+    let n = viewers.len();
+    let ok = pump_all(
+        viewers,
+        |vs| {
+            vs.iter().all(|v| v.connected)
+                && m.sessions()
+                    .iter()
+                    .filter(|s| s.connected_for.is_some())
+                    .count()
+                    == n
+        },
+        CONNECT,
+    );
+    let traces: Vec<String> = viewers.iter().map(TestViewer::trace).collect();
+    assert!(ok, "viewers did not connect: {traces:?}");
+}
+
+#[test]
+fn one_viewer_gets_sei_and_data_channel_klv_frame_locked() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    let offer = v.offer(true);
+    let (status, headers, answer) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    assert_eq!(headers["content-type"], "application/sdp");
+    assert!(headers["location"].starts_with("/cam/sessions/"));
+    v.accept_answer(&answer);
+    // The viewer's channel opens after the server's (the server answers
+    // its COOKIE ECHO), so this is the server's channel open too.
+    assert!(
+        v.pump(|v| v.connected && v.dc_open, CONNECT),
+        "{}",
+        v.trace()
+    );
+
+    let aus = h264_gop();
+    assert_eq!(aus.len(), 30);
+    for (i, (au, key)) in aus.iter().enumerate() {
+        m.push_klv(&klv_record(i as u8), pts(i), 0).unwrap();
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    let done = v.pump(|v| v.frames.len() >= 30 && v.dc_msgs.len() >= 30, DELIVER);
+    assert!(done, "{}", v.trace());
+    assert_eq!(v.frames.len(), 30);
+    assert_eq!(v.dc_msgs.len(), 30);
+    for (i, (rtp_ts, au)) in v.frames.iter().enumerate() {
+        let seis = tst_webrtc::sei::extract_klv_seis(au, VideoCodec::H264);
+        assert_eq!(seis.len(), 1, "frame {i}");
+        assert_eq!(seis[0].klv, klv_record(i as u8));
+        assert_eq!(seis[0].klv_pts_90k, i as u64 * 3000);
+        let dc = &v.dc_msgs[i];
+        assert_eq!(dc[0], 1, "message {i}: format version");
+        assert_eq!(u32::from_be_bytes(dc[1..5].try_into().unwrap()), *rtp_ts);
+        assert_eq!(
+            u64::from_be_bytes(dc[5..13].try_into().unwrap()),
+            i as u64 * 3000
+        );
+        assert_eq!(&dc[13..], &klv_record(i as u8)[..]);
+    }
+    assert!(has_idr(&v.frames[0].1));
+    let s = srv.stats();
+    assert_eq!((s.mounts, s.active_sessions, s.sessions_total), (1, 1, 1));
+    assert!(s.rtp_packets_sent >= 30);
+    let ms = srv.mount_stats("/cam").unwrap();
+    assert_eq!(ms.klv_sei_inserted, 30);
+    assert_eq!(ms.klv_dc_messages_sent, 30);
+    assert_eq!(ms.klv_dc_dropped_viewer, 0);
+    assert_eq!(ms.viewers, 1);
+}
+
+#[test]
+fn ten_viewers_on_one_socket_share_payload_bytes_with_distinct_ssrcs() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut viewers: Vec<TestViewer> = (0..10).map(|_| TestViewer::new()).collect();
+    for v in &mut viewers {
+        join(srv.local_addr(), "/cam", v, false);
+    }
+    connect_all(&m, &mut viewers);
+
+    let aus = h264_gop();
+    for (i, (au, key)) in aus.iter().take(10).enumerate() {
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    let ok = pump_all(
+        &mut viewers,
+        |vs| vs.iter().all(|v| v.frames.len() >= 10),
+        DELIVER,
+    );
+    let traces: Vec<String> = viewers.iter().map(TestViewer::trace).collect();
+    assert!(ok, "{traces:?}");
+
+    let first = viewers[0].frames.clone();
+    let mut ssrcs = HashSet::new();
+    for v in &mut viewers {
+        assert_eq!(v.frames.len(), 10);
+        // Each viewer gets the same access units and RTP timestamps.
+        assert_eq!(v.frames, first);
+        // Every datagram came from the one media socket.
+        assert_eq!(v.sources, HashSet::from([srv.media_addr()]));
+        ssrcs.insert(v.video_ssrc().expect("a receive stream"));
+    }
+    assert_eq!(ssrcs.len(), 10, "one SSRC per viewer: {ssrcs:?}");
+    assert_eq!(srv.stats().active_sessions, 10);
+}
+
+#[test]
+fn mid_gop_joiner_waits_for_the_next_keyframe() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let aus = h264_gop();
+    let mut a = TestViewer::new();
+    join(srv.local_addr(), "/cam", &mut a, false);
+    connect_all(&m, std::slice::from_mut(&mut a));
+
+    // IDR + 5 P frames reach A alone.
+    for (i, (au, key)) in aus.iter().take(6).enumerate() {
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    assert!(a.pump(|a| a.frames.len() >= 6, DELIVER), "{}", a.trace());
+
+    let mut b = TestViewer::new();
+    join(srv.local_addr(), "/cam", &mut b, false);
+    let mut both = [a, b];
+    connect_all(&m, &mut both);
+    // 4 more P frames, then an IDR and 2 P frames.
+    let rest = aus[6..10].iter().chain([&aus[0], &aus[1], &aus[2]]);
+    for (k, (au, key)) in rest.enumerate() {
+        m.push_video(au, pts(6 + k), *key).unwrap();
+    }
+    let ok = pump_all(
+        &mut both,
+        |vs| vs[0].frames.len() >= 13 && vs[1].frames.len() >= 3,
+        DELIVER,
+    );
+    let [a, b] = &both;
+    assert!(ok, "{} / {}", a.trace(), b.trace());
+    assert_eq!(a.frames.len(), 13);
+    assert_eq!(b.frames.len(), 3);
+    assert!(has_idr(&b.frames[0].1), "B starts at the second IDR");
+    assert_eq!(b.frames[0], a.frames[10]);
+    assert_eq!(m.stats().viewers_waiting_keyframe, 0);
+}
+
+#[test]
+fn viewer_without_data_channel_still_gets_sei() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    join(srv.local_addr(), "/cam", &mut v, false);
+    connect_all(&m, std::slice::from_mut(&mut v));
+
+    for (i, (au, key)) in h264_gop().iter().take(5).enumerate() {
+        m.push_klv(&klv_record(i as u8), pts(i), 0).unwrap();
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    assert!(v.pump(|v| v.frames.len() >= 5, DELIVER), "{}", v.trace());
+    for (i, (_, au)) in v.frames.iter().enumerate() {
+        let seis = tst_webrtc::sei::extract_klv_seis(au, VideoCodec::H264);
+        assert_eq!(seis.len(), 1, "frame {i}");
+        assert_eq!(seis[0].klv, klv_record(i as u8));
+    }
+    assert!(v.dc_msgs.is_empty());
+    assert!(!v.dc_open);
+    assert_eq!(v.error, None);
+    assert_eq!(srv.stats().active_sessions, 1);
+}
+
+#[test]
+fn stalled_viewer_is_dropped_and_others_continue() {
+    let clock = Arc::new(ManualClock::new());
+    let url = WhepUrl::parse("whep://127.0.0.1:0").unwrap();
+    let srv = WhepServer::bind_with_clock(url, clock.clone()).unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut viewers = [TestViewer::new(), TestViewer::new()];
+    for v in &mut viewers {
+        join(srv.local_addr(), "/cam", v, false);
+    }
+    connect_all(&m, &mut viewers);
+    let [a, _b] = &mut viewers;
+
+    // B stops: no consent checks reach the server any more. A keeps
+    // answering. Each 10 s step is followed by two consent responses to A,
+    // so at least one of A's checks reached the server after the clock
+    // moved and A's consent stays fresh (an ice-lite server keeps a pair
+    // 15 s after its last check). B's pair lapses, B is disconnected, and
+    // 30 s later the reaper closes it.
+    let mut steps = 0;
+    while srv.stats().sessions_reaped_disconnected == 0 {
+        steps += 1;
+        assert!(steps <= 8, "B was never reaped: {:?}", m.sessions());
+        clock.advance(Duration::from_secs(10));
+        let seen = a.stun_responses;
+        assert!(
+            a.pump(|a| a.stun_responses >= seen + 2, CONNECT),
+            "A's consent checks went unanswered: {}",
+            a.trace()
+        );
+    }
+    let s = srv.stats();
+    assert_eq!(s.sessions_reaped_disconnected, 1);
+    assert_eq!(s.sessions_reaped_ice_timeout, 0);
+    assert_eq!(s.active_sessions, 1);
+
+    for (i, (au, key)) in h264_gop().iter().take(3).enumerate() {
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    assert!(a.pump(|a| a.frames.len() >= 3, DELIVER), "{}", a.trace());
+}
+
+#[test]
+fn a_full_data_channel_drops_klv_and_keeps_the_video() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    // Data channel only: the frames stay small, so a viewer that stops
+    // reading does not overflow its own socket buffer with video.
+    let mut cfg = MountConfig::default();
+    cfg.klv = KlvCarriage::DataChannelOnly;
+    let m = srv.add_mount("/cam", cfg).unwrap();
+    let mut v = TestViewer::new();
+    join(srv.local_addr(), "/cam", &mut v, true);
+    assert!(
+        v.pump(|v| v.connected && v.dc_open, CONNECT),
+        "{}",
+        v.trace()
+    );
+
+    // The viewer stops reading, so nothing acknowledges the data channel.
+    // Four 30 000-byte records fill the 128 KiB send buffer; the rest are
+    // refused and dropped, while the frames carrying them still go out.
+    let record = vec![0x5a; 30_000];
+    let aus = h264_gop();
+    for (i, (au, key)) in aus.iter().take(8).enumerate() {
+        m.push_klv(&record, pts(i), 0).unwrap();
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    let dropped = eventually(
+        || {
+            let ms = m.stats();
+            ms.klv_dc_messages_sent + ms.klv_dc_dropped_viewer == 8
+        },
+        DELIVER,
+    );
+    let ms = m.stats();
+    assert!(dropped, "{ms:?}");
+    assert!(ms.klv_dc_dropped_viewer >= 4, "{ms:?}");
+    let session = m.sessions().pop().expect("the session");
+    assert_eq!(session.dc_messages_dropped, ms.klv_dc_dropped_viewer);
+
+    // Reading again, the viewer gets every frame and every message the
+    // channel took.
+    let sent = ms.klv_dc_messages_sent as usize;
+    let caught_up = v.pump(|v| v.frames.len() >= 8 && v.dc_msgs.len() >= sent, DELIVER);
+    assert!(caught_up, "{}", v.trace());
+    assert_eq!(v.frames.len(), 8);
+    assert_eq!(v.dc_msgs.len(), sent);
+}
+
+#[test]
+fn codec_mismatch_is_406_and_leaks_nothing() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let mut cfg = MountConfig::default();
+    cfg.video = VideoCodec::H265;
+    srv.add_mount("/cam", cfg).unwrap();
+    let mut v = TestViewer::h264_only();
+    let offer = v.offer(true);
+    let (status, _, _) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 406);
+    let s = srv.stats();
+    assert_eq!((s.sessions_total, s.active_sessions), (0, 0));
+    assert_eq!(s.sessions_rejected_codec, 1);
+}
+
+#[test]
+fn viewer_cap_is_503_with_retry_after() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0?max_viewers=1").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let (first, _, _) = whep_post(
+        srv.local_addr(),
+        "/cam",
+        &TestViewer::new().offer(true),
+        None,
+    );
+    assert_eq!(first, 201);
+    let (second, headers, _) = whep_post(
+        srv.local_addr(),
+        "/cam",
+        &TestViewer::new().offer(true),
+        None,
+    );
+    assert_eq!(second, 503);
+    assert_eq!(headers["retry-after"], "5");
+    let s = srv.stats();
+    assert_eq!((s.active_sessions, s.sessions_rejected_cap), (1, 1));
+}
+
+#[test]
+fn bearer_token_is_enforced() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0?token=abc").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let offer = TestViewer::new().offer(true);
+    let (none, headers, _) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(none, 401);
+    assert_eq!(headers["www-authenticate"], "Bearer");
+    let (wrong, _, _) = whep_post(srv.local_addr(), "/cam", &offer, Some("abd"));
+    assert_eq!(wrong, 401);
+    let (right, headers, _) = whep_post(srv.local_addr(), "/cam", &offer, Some("abc"));
+    assert_eq!(right, 201);
+    // Ending the session needs the token too.
+    let location = &headers["location"];
+    let (delete, _, _) = http(srv.local_addr(), "DELETE", location, &[], b"");
+    assert_eq!(delete, 401);
+    let auth = [("Authorization", "Bearer abc")];
+    let (delete, _, _) = http(srv.local_addr(), "DELETE", location, &auth, b"");
+    assert_eq!(delete, 200);
+    assert_eq!(srv.stats().sessions_rejected_auth, 3);
+}
+
+#[test]
+fn delete_ends_the_session() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    let location = join(srv.local_addr(), "/cam", &mut v, true);
+    assert_eq!(srv.stats().active_sessions, 1);
+    let (status, _, _) = http(srv.local_addr(), "DELETE", &location, &[], b"");
+    assert_eq!(status, 200);
+    // The delete is answered by the media thread after the session is
+    // gone, so the next read sees it.
+    assert_eq!(srv.stats().active_sessions, 0);
+    assert_eq!(srv.mount_stats("/cam").unwrap().viewers, 0);
+    let (again, _, _) = http(srv.local_addr(), "DELETE", &location, &[], b"");
+    assert_eq!(again, 404);
+    let id = location.rsplit('/').next().unwrap();
+    let (other, _, _) = http(
+        srv.local_addr(),
+        "DELETE",
+        &format!("/nope/sessions/{id}"),
+        &[],
+        b"",
+    );
+    assert_eq!(other, 404);
+}
+
+#[test]
+fn preflight_patch_and_unknown_mount() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0?cors_origin=https://ops.example").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let addr = srv.local_addr();
+
+    let (status, headers, _) = http(addr, "OPTIONS", "/cam", &[], b"");
+    assert_eq!(status, 204);
+    assert_eq!(
+        headers["access-control-allow-origin"],
+        "https://ops.example"
+    );
+    assert_eq!(
+        headers["access-control-allow-methods"],
+        "POST, DELETE, OPTIONS"
+    );
+    assert_eq!(headers["access-control-expose-headers"], "Location");
+
+    for method in ["PATCH", "GET"] {
+        let (status, headers, _) = http(addr, method, "/cam", &[], b"");
+        assert_eq!(status, 405, "{method}");
+        assert_eq!(headers["allow"], "POST, DELETE, OPTIONS");
+    }
+    let offer = TestViewer::new().offer(true);
+    let (status, _, _) = whep_post(addr, "/nope", &offer, None);
+    assert_eq!(status, 404);
+    let (status, _, _) = whep_post(addr, "/", &offer, None);
+    assert_eq!(status, 404);
+    let (status, _, _) = whep_post(addr, "/cam", "v=0 this is no offer", None);
+    assert_eq!(status, 400);
+    assert_eq!(srv.stats().sessions_total, 0);
+}
+
+#[test]
+fn malformed_and_oversized_requests_are_refused() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let addr = srv.local_addr();
+    let mut s = TcpStream::connect(addr).unwrap();
+    s.write_all(b"POST /cam HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n")
+        .unwrap();
+    assert_eq!(read_response(&mut s).0, 400);
+
+    let mut s = TcpStream::connect(addr).unwrap();
+    let long = format!("POST /cam HTTP/1.1\r\nX-Pad: {}\r\n", "a".repeat(17 * 1024));
+    // The server answers once the head passes its limit; it may close
+    // before the client has written everything.
+    let _ = s.write_all(long.as_bytes());
+    assert_eq!(read_response(&mut s).0, 431);
+}
+
+#[test]
+fn a_request_that_never_completes_is_408() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let mut s = TcpStream::connect(srv.local_addr()).unwrap();
+    s.write_all(b"POST /cam HTTP/1.1\r\nContent-Length: 10\r\n")
+        .unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    assert_eq!(read_response(&mut s).0, 408);
+}
+
+#[test]
+fn mount_paths_are_checked_and_removal_closes_the_mount() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    for bad in [
+        "",
+        "cam",
+        "/a?b",
+        "/a#b",
+        "/",
+        "/a//b",
+        "/a/",
+        "/a b",
+        "/caf\u{e9}",
+    ] {
+        assert!(
+            matches!(
+                srv.add_mount(bad, MountConfig::default()),
+                Err(WhepServerError::InvalidMountPath { .. })
+            ),
+            "{bad:?}"
+        );
+    }
+    for control in ["/a\u{7f}", "/a\nb", "/a\0"] {
+        match srv.add_mount(control, MountConfig::default()) {
+            Err(WhepServerError::InvalidMountPath { detail }) => {
+                assert_eq!(detail, "path contains a control byte");
+            }
+            other => panic!("{control:?}: {other:?}"),
+        }
+    }
+    let mut cfg = MountConfig::default();
+    cfg.video = VideoCodec::Av1;
+    assert!(matches!(
+        srv.add_mount("/av1", cfg),
+        Err(WhepServerError::InvalidConfig { .. })
+    ));
+
+    let m = srv
+        .add_mount("/site/cam-1", MountConfig::default())
+        .unwrap();
+    assert_eq!(m.mount_path(), "/site/cam-1");
+    assert!(matches!(
+        srv.add_mount("/site/cam-1", MountConfig::default()),
+        Err(WhepServerError::MountExists { .. })
+    ));
+    assert_eq!(srv.stats().mounts, 1);
+    srv.remove_mount("/site/cam-1").unwrap();
+    assert!(matches!(
+        m.push_video(&h264_gop()[0].0, pts(0), true),
+        Err(PushError::Closed)
+    ));
+    assert!(srv.mount_stats("/site/cam-1").is_none());
+    assert!(matches!(
+        srv.remove_mount("/site/cam-1"),
+        Err(WhepServerError::MountNotFound { .. })
+    ));
+    let (status, _, _) = whep_post(
+        srv.local_addr(),
+        "/site/cam-1",
+        &TestViewer::new().offer(false),
+        None,
+    );
+    assert_eq!(status, 404);
+    // The path is free again.
+    srv.add_mount("/site/cam-1", MountConfig::default())
+        .unwrap();
+}
+
+#[test]
+fn removing_a_mount_closes_its_sessions() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    join(srv.local_addr(), "/cam", &mut v, false);
+    connect_all(&m, std::slice::from_mut(&mut v));
+    srv.remove_mount("/cam").unwrap();
+    assert!(
+        eventually(|| srv.stats().active_sessions == 0, DELIVER),
+        "{:?}",
+        srv.stats()
+    );
+    assert!(m.sessions().is_empty());
+}
+
+#[cfg(feature = "tls")]
+#[test]
+fn wheps_bind_loads_the_certificate_then_is_refused() {
+    let missing = std::env::temp_dir().join("tst-webrtc-no-such-cert.pem");
+    let url = format!("wheps://127.0.0.1:0?cert={0}&key={0}", missing.display());
+    match WhepServer::bind(&url) {
+        Err(WhepServerError::Tls(detail)) => {
+            assert!(
+                !detail.contains("not served"),
+                "the load failure is reported: {detail}"
+            )
+        }
+        other => panic!("{other:?}"),
+    }
+
+    let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let cert = tempfile::Builder::new().suffix(".pem").tempfile().unwrap();
+    let key = tempfile::Builder::new().suffix(".pem").tempfile().unwrap();
+    std::fs::write(cert.path(), generated.cert.pem()).unwrap();
+    std::fs::write(key.path(), generated.signing_key.serialize_pem()).unwrap();
+    let url = format!(
+        "wheps://127.0.0.1:0?cert={}&key={}",
+        cert.path().display(),
+        key.path().display()
+    );
+    match WhepServer::bind(&url) {
+        Err(WhepServerError::Tls(detail)) => assert!(detail.contains("not served"), "{detail}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[cfg(not(feature = "tls"))]
+#[test]
+fn wheps_bind_without_the_tls_feature_is_refused() {
+    match WhepServer::bind("wheps://127.0.0.1:0?cert=c.pem&key=k.pem") {
+        Err(WhepServerError::Tls(detail)) => assert!(detail.contains("`tls` feature"), "{detail}"),
+        other => panic!("{other:?}"),
+    }
+}

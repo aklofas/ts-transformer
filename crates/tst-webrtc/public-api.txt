@@ -246,6 +246,29 @@ pub const tst_webrtc::sei::TST_KLV_SEI_UUID: [u8; 16]
 pub fn tst_webrtc::sei::build_klv_sei_nal(tst_core::codec::vocabulary::VideoCodec, u64, &[u8]) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::codec::misp_time::MispTimeError>
 pub fn tst_webrtc::sei::extract_klv_seis(&[u8], tst_core::codec::vocabulary::VideoCodec) -> alloc::vec::Vec<tst_webrtc::sei::KlvSei>
 pub fn tst_webrtc::sei::parse_klv_sei_rbsp(&[u8]) -> core::option::Option<tst_webrtc::sei::KlvSei>
+pub mod tst_webrtc::server
+pub struct tst_webrtc::server::WhepServer
+impl tst_webrtc::server::WhepServer
+pub fn tst_webrtc::server::WhepServer::add_mount(&self, &str, tst_webrtc::config::MountConfig) -> core::result::Result<tst_webrtc::mount::MountHandle, tst_webrtc::error::WhepServerError>
+pub fn tst_webrtc::server::WhepServer::bind(&str) -> core::result::Result<Self, tst_webrtc::error::WhepServerError>
+pub fn tst_webrtc::server::WhepServer::bind_with(tst_webrtc::url::WhepUrl) -> core::result::Result<Self, tst_webrtc::error::WhepServerError>
+pub fn tst_webrtc::server::WhepServer::local_addr(&self) -> core::net::socket_addr::SocketAddr
+pub fn tst_webrtc::server::WhepServer::media_addr(&self) -> core::net::socket_addr::SocketAddr
+pub fn tst_webrtc::server::WhepServer::mount_stats(&self, &str) -> core::option::Option<tst_webrtc::stats::MountStats>
+pub fn tst_webrtc::server::WhepServer::remove_mount(&self, &str) -> core::result::Result<(), tst_webrtc::error::WhepServerError>
+pub fn tst_webrtc::server::WhepServer::stats(&self) -> tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::server::WhepServer::stop(&self)
+impl core::fmt::Debug for tst_webrtc::server::WhepServer
+pub fn tst_webrtc::server::WhepServer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::drop::Drop for tst_webrtc::server::WhepServer
+pub fn tst_webrtc::server::WhepServer::drop(&mut self)
+impl !core::marker::Freeze for tst_webrtc::server::WhepServer
+impl core::marker::Send for tst_webrtc::server::WhepServer
+impl core::marker::Sync for tst_webrtc::server::WhepServer
+impl core::marker::Unpin for tst_webrtc::server::WhepServer
+impl core::marker::UnsafeUnpin for tst_webrtc::server::WhepServer
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::server::WhepServer
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::server::WhepServer
 pub mod tst_webrtc::stats
 #[non_exhaustive] pub enum tst_webrtc::stats::IceState
 pub tst_webrtc::stats::IceState::Checking
@@ -677,6 +700,28 @@ impl core::marker::Unpin for tst_webrtc::clock::SystemClock
 impl core::marker::UnsafeUnpin for tst_webrtc::clock::SystemClock
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::clock::SystemClock
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::clock::SystemClock
+pub struct tst_webrtc::WhepServer
+impl tst_webrtc::server::WhepServer
+pub fn tst_webrtc::server::WhepServer::add_mount(&self, &str, tst_webrtc::config::MountConfig) -> core::result::Result<tst_webrtc::mount::MountHandle, tst_webrtc::error::WhepServerError>
+pub fn tst_webrtc::server::WhepServer::bind(&str) -> core::result::Result<Self, tst_webrtc::error::WhepServerError>
+pub fn tst_webrtc::server::WhepServer::bind_with(tst_webrtc::url::WhepUrl) -> core::result::Result<Self, tst_webrtc::error::WhepServerError>
+pub fn tst_webrtc::server::WhepServer::local_addr(&self) -> core::net::socket_addr::SocketAddr
+pub fn tst_webrtc::server::WhepServer::media_addr(&self) -> core::net::socket_addr::SocketAddr
+pub fn tst_webrtc::server::WhepServer::mount_stats(&self, &str) -> core::option::Option<tst_webrtc::stats::MountStats>
+pub fn tst_webrtc::server::WhepServer::remove_mount(&self, &str) -> core::result::Result<(), tst_webrtc::error::WhepServerError>
+pub fn tst_webrtc::server::WhepServer::stats(&self) -> tst_webrtc::stats::ServerStats
+pub fn tst_webrtc::server::WhepServer::stop(&self)
+impl core::fmt::Debug for tst_webrtc::server::WhepServer
+pub fn tst_webrtc::server::WhepServer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::drop::Drop for tst_webrtc::server::WhepServer
+pub fn tst_webrtc::server::WhepServer::drop(&mut self)
+impl !core::marker::Freeze for tst_webrtc::server::WhepServer
+impl core::marker::Send for tst_webrtc::server::WhepServer
+impl core::marker::Sync for tst_webrtc::server::WhepServer
+impl core::marker::Unpin for tst_webrtc::server::WhepServer
+impl core::marker::UnsafeUnpin for tst_webrtc::server::WhepServer
+impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::server::WhepServer
+impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::server::WhepServer
 pub const tst_webrtc::KLV_DC_LIMIT: u64
 pub trait tst_webrtc::Clock: core::marker::Send + core::marker::Sync + 'static
 pub fn tst_webrtc::Clock::now(&self) -> std::time::Instant

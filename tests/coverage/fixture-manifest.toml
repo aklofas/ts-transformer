@@ -53,7 +53,7 @@ no_private_corpus = true
 [[group]]
 root = "crates/tst-webrtc/tests/fixtures"
 origin = "synthetic"
-generator = "crates/tst-webrtc/tests/fixtures/regen.sh (one ffmpeg-synthesized test-pattern IDR access unit per codec)"
+generator = "crates/tst-webrtc/tests/fixtures/regen.sh (ffmpeg-synthesized test patterns: one IDR access unit per codec and a 30-frame H.264 GOP); mod.rs holds the test viewer and HTTP helpers that read them"
 no_private_corpus = true
 
 [[group]]
