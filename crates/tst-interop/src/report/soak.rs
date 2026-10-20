@@ -599,6 +599,12 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
                      without remuxed: true; the count is judged only on a remuxed leg"
                 ));
             }
+            if leg == "rtsp-publish-es" && decl.klv_placement != Some(true) {
+                return Err(format!(
+                    "soak-config.json: legs.{leg} must declare klv_placement: true; the \
+                     placement oracle is what the elementary leg exists to judge"
+                ));
+            }
             if decl.remuxed == Some(true) {
                 if decl.source_sha256.is_some() {
                     return Err(format!(
@@ -5875,6 +5881,14 @@ pub(crate) mod tests {
         let err = parse_soak_config(&config_with_publish_leg("rtsp-publish-es", with_digest))
             .expect_err("a remuxed leg with a source digest must be rejected");
         assert!(err.contains("source_sha256"), "{err}");
+
+        for placement in [None, Some(false)] {
+            let mut no_placement = ok.clone();
+            no_placement.klv_placement = placement;
+            let err = parse_soak_config(&config_with_publish_leg("rtsp-publish-es", no_placement))
+                .expect_err("the elementary leg must declare the placement oracle");
+            assert!(err.contains("klv_placement"), "{err}");
+        }
 
         for count in [None, Some(0)] {
             let mut no_count = ok.clone();

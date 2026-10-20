@@ -60,7 +60,6 @@ KINDS = ("soak", "stress", "corpus")
 SOAK_PATHS = ("crates", "bindings")
 RELEASE_SOAK_S = 259200
 MAINTAINER_LOCAL = [
-    "real-capture corpus cross-check (cargo test -p tst-core --test mpegts mux_local)",
     "long fuzz runs (10 min per target)",
     "bench regression",
     "one-hour synthetic soak",
@@ -188,6 +187,11 @@ def _pick_soak(root, sha, soaks):
     return _soak_entry(root, sha, _by_date(soaks)[0])
 
 
+def _check_sha(sha):
+    if not re.fullmatch(r"[0-9a-f]{40}", str(sha)):
+        raise QualificationError("context.json source.sha is not a 40-hex commit: %r" % (sha,))
+
+
 def release_vm(root, sha, archives, release):
     """The release gate: the chosen soak archive (see _pick_soak) must stand for
     `sha`, have passed and declared 72 hours, and a passing corpus archive must
@@ -196,10 +200,9 @@ def release_vm(root, sha, archives, release):
     reasons = []
     soak, corpus = None, None
     soaks = [a for a in archives if a["kind"] == "soak"]
-    if soaks and not re.fullmatch(r"[0-9a-f]{40}", str(sha)):
-        raise QualificationError("context.json source.sha is not a 40-hex commit: %r" % (sha,))
+    _check_sha(sha)
     if not soaks:
-        reasons.append("soak: no 72-hour soak archive for this tree")
+        reasons.append("soak: no 72-hour soak archive for this tree (%s)" % str(sha)[:12])
     else:
         soak = _pick_soak(root, sha, soaks)
         if soak["git_error"] is not None:
@@ -302,6 +305,10 @@ def collect(art, root, release=False):
     ctx = read_json(os.path.join(art, "context.json"))
     if ctx is None:
         die("context.json is missing from " + art)
+    try:
+        _check_sha(ctx.get("source", {}).get("sha", ""))
+    except QualificationError as e:
+        die(str(e))
     legs_in = read_json(os.path.join(art, "legs.json")) or {}
 
     def entry(name):

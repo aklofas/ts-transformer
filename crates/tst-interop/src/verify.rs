@@ -4384,6 +4384,18 @@ mod tests {
     /// then on each of the video and KLV PIDs a `PtsAnomaly` whose delta
     /// is that PID's backward step, queued just before the sample.
     fn feed_replayed_generations(t: &mut Tally, generations: usize, frames: i64) {
+        feed_replayed_generations_ordered(t, generations, frames, false);
+    }
+
+    /// [`feed_replayed_generations`], with `klv_first` putting each
+    /// boundary's first KLV record (and its anomaly) ahead of the new
+    /// generation's first video, the order the demuxer usually surfaces.
+    fn feed_replayed_generations_ordered(
+        t: &mut Tally,
+        generations: usize,
+        frames: i64,
+        klv_first: bool,
+    ) {
         let last_video = (frames - 1) * FPS_STEP_TICKS;
         let last_klv = (frames - 1) / 3 * 3 * FPS_STEP_TICKS;
         t.feed(&program_map_event());
@@ -4398,6 +4410,21 @@ mod tests {
                         },
                     ));
                 }
+                let klv = |t: &mut Tally| {
+                    if f % 3 == 0 {
+                        if g > 0 && f == 0 {
+                            t.feed(&timing_issue_on(
+                                KLV_PID,
+                                NonConformantIssue::PtsAnomaly { delta: -last_klv },
+                            ));
+                        }
+                        t.feed(&klv_sync_event(pts, (f / 3) as u32));
+                    }
+                };
+                let klv_ahead = klv_first && g > 0 && f == 0;
+                if klv_ahead {
+                    klv(t);
+                }
                 if g > 0 && f == 0 {
                     t.feed(&timing_issue_on(
                         VIDEO_PID,
@@ -4405,14 +4432,8 @@ mod tests {
                     ));
                 }
                 t.feed(&video_event(pts, f == 0));
-                if f % 3 == 0 {
-                    if g > 0 && f == 0 {
-                        t.feed(&timing_issue_on(
-                            KLV_PID,
-                            NonConformantIssue::PtsAnomaly { delta: -last_klv },
-                        ));
-                    }
-                    t.feed(&klv_sync_event(pts, (f / 3) as u32));
+                if !klv_ahead {
+                    klv(t);
                 }
             }
         }
@@ -4441,6 +4462,29 @@ mod tests {
         assert_eq!(
             (m.generation_resets_excused, m.timing_anomalies_excused),
             (2, 3)
+        );
+    }
+
+    /// The same three-generation run with each boundary's first KLV
+    /// record arriving ahead of that generation's first video: the KLV
+    /// PID spends the boundary's credit, the video step after it does not
+    /// consume a second one. Two boundaries, each a video and a KLV
+    /// backward step (4) and a PCR jump plus two PTS anomalies (6).
+    #[test]
+    fn a_klv_first_boundary_is_excused_over_three_generations() {
+        let mut t = Tally::new();
+        t.set_klv_placement(placement_expect(3));
+        feed_replayed_generations_ordered(&mut t, 3, 60, true);
+        let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
+        assert!(r.metrics.pts_monotonic, "{:?}", r.failures);
+        assert_eq!(nonconformant_failure(&r), None, "{:?}", r.failures);
+        assert_eq!(r.metrics.nonconformant, 6);
+        let m = r.metrics.klv_placement.expect("placement block");
+        assert_eq!(m.out_of_tolerance, 0, "{:?}", r.failures);
+        assert_eq!((m.generations, m.unexpected_resets), (3, 0));
+        assert_eq!(
+            (m.generation_resets_excused, m.timing_anomalies_excused),
+            (4, 6)
         );
     }
 
