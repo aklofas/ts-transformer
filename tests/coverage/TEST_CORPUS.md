@@ -40,6 +40,8 @@ Recommended fixture naming:
 | `field-error-*.klv` | tags with truncated lengths or out-of-range values |
 | `corrupt-pcr-*.ts` | structurally valid TS with damaged PCR/PTS timing |
 
+The PMT shapes above are keyed for tools in `corpus-shapes.toml`; a new shape is added there and here together.
+
 Each fixture's filename should be self-descriptive and free of any
 operationally identifying tokens (no callsigns, no incidents).
 
