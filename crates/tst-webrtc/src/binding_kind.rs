@@ -108,8 +108,8 @@ mod tests {
         check(PushError::InvalidAudioFrame, K::WebrtcPush, -35);
         check(
             PushError::KlvTooLarge {
-                len: 200_000,
-                limit: 131_059,
+                len: 300_000,
+                limit: 262_144,
             },
             K::WebrtcPush,
             -35,

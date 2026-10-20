@@ -91,3 +91,22 @@ fn a_mount_path_in_the_bind_url_is_refused() {
     ));
     assert!(WhepUrl::parse("whep://192.0.2.10:1/").is_ok());
 }
+
+#[test]
+fn debug_output_redacts_the_token() {
+    let u = WhepUrl::parse("whep://0.0.0.0:8889?token=s3cret").unwrap();
+    let shown = format!("{u:?}");
+    assert!(!shown.contains("s3cret"), "{shown}");
+    assert!(shown.contains("token: Some(\"<redacted>\")"), "{shown}");
+    let none = format!("{:?}", WhepUrl::parse("whep://0.0.0.0:8889").unwrap());
+    assert!(none.contains("token: None"), "{none}");
+}
+
+#[test]
+fn an_empty_token_is_refused() {
+    let err = WhepUrl::parse("whep://0.0.0.0:8889?token=").unwrap_err();
+    assert!(
+        matches!(&err, UrlError::BadQueryValue { key, value, .. } if key == "token" && value.is_empty()),
+        "{err:?}"
+    );
+}

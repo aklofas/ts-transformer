@@ -22,7 +22,9 @@ const DEFAULT_MAX_VIEWERS: u64 = 10;
 const MAX_MAX_VIEWERS: u64 = 64;
 
 /// A parsed WHEP server URL: where the server binds and how it admits viewers.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Its `Debug` output shows `token` as `<redacted>`.
+#[derive(Clone, PartialEq, Eq)]
 pub struct WhepUrl {
     /// The literal IP address the signalling endpoint binds on.
     pub addr: IpAddr,
@@ -47,6 +49,23 @@ pub struct WhepUrl {
     pub cert: Option<String>,
     /// The server private key's PEM file path. Required by `wheps://`.
     pub key: Option<String>,
+}
+
+impl std::fmt::Debug for WhepUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WhepUrl")
+            .field("addr", &self.addr)
+            .field("port", &self.port)
+            .field("tls", &self.tls)
+            .field("media_port", &self.media_port)
+            .field("advertise", &self.advertise)
+            .field("max_viewers", &self.max_viewers)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("cors_origin", &self.cors_origin)
+            .field("cert", &self.cert)
+            .field("key", &self.key)
+            .finish()
+    }
 }
 
 type Applied = Result<(), UrlError>;
@@ -79,7 +98,14 @@ fn set_max_viewers(u: &mut WhepUrl, key: &str, value: &str) -> Applied {
     Ok(())
 }
 
-fn set_token(u: &mut WhepUrl, _key: &str, value: &str) -> Applied {
+fn set_token(u: &mut WhepUrl, key: &str, value: &str) -> Applied {
+    if value.is_empty() {
+        return Err(UrlError::BadQueryValue {
+            key: key.to_string(),
+            value: String::new(),
+            detail: "an empty token would refuse every request; omit token= to admit any".into(),
+        });
+    }
     u.token = Some(value.to_string());
     Ok(())
 }
@@ -183,7 +209,8 @@ impl WhepUrl {
     /// - [`UrlError::BadScheme`] for a scheme other than `whep` or `wheps`.
     /// - [`UrlError::MissingPort`] when the URL names no port.
     /// - [`UrlError::BadHost`] when the host is not a literal IP address.
-    /// - [`UrlError::BadQueryValue`] for a value its key cannot use, with key
+    /// - [`UrlError::BadQueryValue`] for a value its key cannot use (an empty
+    ///   `token` among them), with key
     ///   `path` for a path other than empty or `/`, and with key `cert` for a
     ///   `wheps://` URL that lacks `cert` or `key`.
     /// - [`UrlError::UnknownQueryKey`] for a key [`URL_KEYS`] does not list.

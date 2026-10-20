@@ -96,7 +96,8 @@ pub(crate) struct Shared {
     /// Also read by the media thread (offer lookup, viewer gauges).
     pub(crate) mounts: Arc<Mutex<HashMap<MountId, Arc<MountState>>>>,
     next_mount: AtomicU32,
-    /// Offers refused for a missing or wrong bearer token.
+    /// Requests (offers and DELETEs) refused for a missing or wrong
+    /// bearer token.
     pub(crate) rejected_auth: AtomicU64,
     /// The media thread's counters as `stats` last read them, returned
     /// after stop.
@@ -151,7 +152,10 @@ struct Threads {
 /// only then does it wait, at most 2 seconds for each thread. A request
 /// being read when the server stops is answered with 503 or its connection
 /// is closed; an offer waiting for the media thread is answered with 503.
-/// [`Drop`] calls `stop`, so dropping the server frees both ports.
+/// [`Drop`] calls `stop`, so dropping the server frees both ports once
+/// both threads have exited within that bound. A thread that has not (the
+/// accept thread still writing a response to a slow client, up to its
+/// 5-second write timeout) keeps its socket until it finishes.
 ///
 /// ## Per-language idiom
 ///
@@ -345,24 +349,31 @@ impl WhepServer {
     /// The server's counters. After [`stop`](Self::stop), the counters as
     /// a `stats` call last read them before it.
     pub fn stats(&self) -> ServerStats {
-        let mut last = self
-            .shared
-            .last_counters
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if !self.shared.shutdown.load(Ordering::Acquire)
-            && let Some((counters, _)) = self.shared.control.sessions()
-        {
-            *last = counters;
-        }
+        // Ask the media thread first, holding no lock: the wait is bounded
+        // but long, and concurrent callers must not queue behind it.
+        let fresh = if self.shared.shutdown.load(Ordering::Acquire) {
+            None
+        } else {
+            self.shared.control.sessions().map(|(counters, _)| counters)
+        };
+        let counters = {
+            let mut last = self
+                .shared
+                .last_counters
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(counters) = fresh {
+                *last = counters;
+            }
+            last.clone()
+        };
         let mounts = self
             .shared
             .mounts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .len() as u64;
-        last.clone()
-            .into_stats(mounts, self.shared.rejected_auth.load(Ordering::Relaxed))
+        counters.into_stats(mounts, self.shared.rejected_auth.load(Ordering::Relaxed))
     }
 
     /// The counters of the mount at `path`, or `None` when nothing is

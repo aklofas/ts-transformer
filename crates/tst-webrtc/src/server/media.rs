@@ -30,7 +30,10 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 use tracing::debug;
 
 use crate::clock::Clock;
-use crate::mount::{FramePacket, KLV_DC_HEADER_BYTES, KlvMessage, MediaMsg, MountId, MountState};
+use crate::mount::{
+    FramePacket, KLV_DC_HEADER_BYTES, KlvMessage, MediaMsg, MountId, MountState,
+    SCTP_SEND_BUFFER_BYTES,
+};
 use crate::server::negotiate::{Negotiated, select_video};
 use crate::server::session::{Enqueued, Queued, ReapCause, Viewer, reap_decision};
 use crate::stats::{IceState, ServerStats, SessionStats, bump};
@@ -325,13 +328,15 @@ impl MediaThread {
 }
 
 /// The server's `Rtc` for one session: ice-lite, RTP mode, egress
-/// statistics every second (for the NACK count), str0m's default codecs
-/// plus a mode-1 Constrained High H.264 payload.
+/// statistics every second (for the NACK count), an SCTP send buffer
+/// sized for the largest KLV record ([`SCTP_SEND_BUFFER_BYTES`]), str0m's
+/// default codecs plus a mode-1 Constrained High H.264 payload.
 pub(crate) fn server_rtc(now: Instant) -> Rtc {
     let mut builder = Rtc::builder()
         .set_ice_lite(true)
         .set_rtp_mode(true)
-        .set_stats_interval(Some(Duration::from_secs(1)));
+        .set_stats_interval(Some(Duration::from_secs(1)))
+        .set_sctp_max_buffered_amount(SCTP_SEND_BUFFER_BYTES);
     let codecs = builder.codec_config();
     let used: Vec<u8> = codecs
         .params()
@@ -696,6 +701,7 @@ impl Media {
                                 .stats
                                 .viewer_packets_dropped_queue_full
                                 .fetch_add(n, Ordering::Relaxed);
+                            self.gauges_dirty |= !was_waiting;
                         }
                         Enqueued::Queued => self.gauges_dirty |= was_waiting,
                         Enqueued::Skipped => {}
@@ -941,8 +947,9 @@ fn write_rtp(
 
 /// Writes one KLV message. A message str0m does not take is dropped and
 /// counted, never re-queued: the video queued behind it must not wait on
-/// the data channel. str0m refuses a body larger than its free SCTP send
-/// buffer and fails one above the browser's `max-message-size`.
+/// the data channel. str0m refuses a body larger than the free part of the
+/// session's SCTP send buffer and fails one above the browser's
+/// `max-message-size`.
 fn write_dc(v: &mut Viewer, msg: &KlvMessage) -> Write {
     let outcome = match v.dc.and_then(|cid| v.rtc.channel(cid)) {
         None => Err("the data channel is not open".to_string()),

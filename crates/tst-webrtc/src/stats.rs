@@ -44,10 +44,12 @@ pub struct MountStats {
     /// KLV records refused because they exceed the data-channel message
     /// limit ([`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT)).
     pub klv_dc_dropped_oversize: u64,
-    /// KLV messages dropped for one viewer: its queue was full, or its data
-    /// channel refused or failed the write (a full send buffer, a message
-    /// above the browser's `max-message-size`, a closed channel). The video
-    /// behind such a message is sent regardless.
+    /// KLV data-channel messages dropped on the way to viewers: once per
+    /// message when the server's media queue was full, and once per viewer
+    /// when that viewer's queue was full or its data channel refused or
+    /// failed the write (no room in the send buffer, a message above the
+    /// browser's `max-message-size`, a closed channel). The video behind
+    /// such a message is sent regardless.
     pub klv_dc_dropped_viewer: u64,
     /// Audio frames forwarded to viewers.
     pub audio_frames_pushed: u64,
@@ -57,8 +59,11 @@ pub struct MountStats {
     pub plis_received: u64,
     /// NACKs received from viewers.
     pub nacks_received: u64,
-    /// Frames and KLV messages dropped because the server's media queue
-    /// or a viewer's packet queue was full.
+    /// Video RTP payloads dropped because a queue was full: every payload
+    /// of a frame the server's media queue did not take (counted once),
+    /// and every payload of a frame a viewer's queue did not take (counted
+    /// per viewer). KLV messages dropped the same way are counted in
+    /// `klv_dc_dropped_viewer`.
     pub viewer_packets_dropped_queue_full: u64,
     /// Times the RTP clock was rebased after a PTS jump.
     pub rtp_clock_rebases: u64,
@@ -80,7 +85,8 @@ pub struct ServerStats {
     pub sessions_rejected_cap: u64,
     /// Session offers refused because no offered codec matched the mount.
     pub sessions_rejected_codec: u64,
-    /// Session offers refused by authentication.
+    /// Requests refused by authentication: offers and session DELETEs
+    /// without the server's bearer token.
     pub sessions_rejected_auth: u64,
     /// Sessions closed because ICE did not connect in time.
     pub sessions_reaped_ice_timeout: u64,
@@ -160,7 +166,8 @@ pub(crate) struct MountCounters {
     /// Written by the media thread.
     pub(crate) klv_dc_messages_sent: AtomicU64,
     pub(crate) klv_dc_dropped_oversize: AtomicU64,
-    /// Written by the media thread.
+    /// Written by the push calls (media queue full) and by the media
+    /// thread.
     pub(crate) klv_dc_dropped_viewer: AtomicU64,
     /// Written once audio passthrough forwards frames.
     pub(crate) audio_frames_pushed: AtomicU64,
@@ -170,7 +177,7 @@ pub(crate) struct MountCounters {
     /// Written by the media thread.
     pub(crate) nacks_received: AtomicU64,
     /// Written by the push calls (media queue full) and by the media
-    /// thread (a viewer's queue full).
+    /// thread (a viewer's queue full), in RTP payloads.
     pub(crate) viewer_packets_dropped_queue_full: AtomicU64,
     pub(crate) rtp_clock_rebases: AtomicU64,
     /// Written by an MP2T mount's demuxer.

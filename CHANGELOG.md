@@ -764,20 +764,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-webrtc: WebRTC playback (WHEP server with mounts)
 
-- New crate `tst-webrtc`: `WhepServer::bind("whep://…")` + `add_mount` with the
-  RTSP mount push family; browsers pull a mount over WebRTC (WHEP). Video is
+- New crate `tst-webrtc`: `WhepServer::bind("whep://…")` + `add_mount`;
+  browsers pull a mount over WebRTC (WHEP). This release serves elementary
+  mounts: `push_video` and `push_klv` carry video and KLV to viewers, and
+  `push_audio` (policy `AudioPolicy::Drop`) counts and discards audio.
+  `MountConfig::validate` refuses `MountKind::Mp2t` (`push_ts`) and
+  `AudioPolicy::PassthroughOpus` with `InvalidConfig` until MP2T mounts and
+  audio pass-through are served in a later change. Video is
   passed through (H.264 RFC 6184, H.265 RFC 7798); KLV rides frame-locked
   as a user-data SEI inside the frame's access unit and as a `klv` data
   channel message (the `sei` module and `KLV_DC_LIMIT` document both
   layouts). ICE-lite, one UDP port for every viewer, RTX on, no TURN/STUN.
   Builds `aws-lc-sys` (str0m's DTLS certificate path), the first aws-lc in
   the tree.
-- A data-channel KLV record is at most `KLV_DC_LIMIT` = 131 059 bytes:
-  str0m's 128 KiB SCTP buffer minus the 13-byte message header; `push_klv`
-  refuses a larger one. Browsers accept messages up to their
-  `max-message-size` (64 KiB when unstated), so a record between that size
-  and the limit depends on the browser; a viewer's dropped record is counted
-  in `MountStats::klv_dc_dropped_viewer` and
+- A data-channel KLV record is at most `KLV_DC_LIMIT` = 256 KiB; `push_klv`
+  refuses a larger one. The server's SCTP send buffer (512 KiB per viewer
+  session) is sized for a record at the limit. A record is dropped for a
+  viewer whose send buffer has no room for it, and browsers accept messages
+  up to their `max-message-size` (64 KiB when unstated), so a record above
+  that size is browser-dependent. Each drop is counted in
+  `MountStats::klv_dc_dropped_viewer` and
   `SessionStats::dc_messages_dropped`. The video never waits for the data
   channel.
 - An H.265 keyframe is an IRAP picture (BLA, IDR or CRA); an H.264 keyframe

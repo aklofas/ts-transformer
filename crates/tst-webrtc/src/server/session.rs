@@ -157,7 +157,9 @@ impl Viewer {
     /// clears the wait. A frame that does not fit the remaining capacity is
     /// dropped whole (a partial frame cannot be decoded) and its payloads
     /// are counted in `packets_dropped_queue_full`; the first such drop
-    /// starts the queue-stuck clock.
+    /// starts the queue-stuck clock. A dropped frame returns the viewer to
+    /// waiting for a keyframe: later frames may reference the dropped one,
+    /// and the viewer sees no sequence gap to recover from.
     pub(crate) fn enqueue_frame(&mut self, packet: &Arc<FramePacket>, now: Instant) -> Enqueued {
         if self.waiting_keyframe && !packet.keyframe {
             return Enqueued::Skipped;
@@ -165,6 +167,7 @@ impl Viewer {
         let n = packet.payloads.len();
         if self.queue.len() + n > self.queue_cap {
             self.queue_full_since.get_or_insert(now);
+            self.waiting_keyframe = true;
             let dropped = n as u64;
             self.stats.packets_dropped_queue_full += dropped;
             return Enqueued::Dropped(dropped);
@@ -447,6 +450,36 @@ mod tests {
             })
             .collect();
         assert_eq!(indices, [0, 1, 2, 3, 0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn a_dropped_frame_returns_the_viewer_to_waiting_for_a_keyframe() {
+        let clock = ManualClock::new();
+        let mut v = viewer(&clock, 8);
+        connect(&mut v, clock.now());
+        assert_eq!(
+            v.enqueue_frame(&frame(6, true), clock.now()),
+            Enqueued::Queued
+        );
+        assert!(!v.waiting_keyframe);
+        // The queue holds 6 of 8: a 3-payload P-frame does not fit.
+        assert_eq!(
+            v.enqueue_frame(&frame(3, false), clock.now()),
+            Enqueued::Dropped(3)
+        );
+        assert!(v.waiting_keyframe);
+        // A P-frame that would fit is skipped: its reference is gone.
+        assert_eq!(
+            v.enqueue_frame(&frame(1, false), clock.now()),
+            Enqueued::Skipped
+        );
+        assert_eq!(v.queue.len(), 6);
+        assert_eq!(
+            v.enqueue_frame(&frame(2, true), clock.now()),
+            Enqueued::Queued
+        );
+        assert!(!v.waiting_keyframe);
+        assert_eq!(v.queue.len(), 8);
     }
 
     #[test]

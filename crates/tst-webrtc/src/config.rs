@@ -10,7 +10,8 @@ use crate::error::WhepServerError;
 pub enum MountKind {
     /// Encoded access units, KLV records and audio frames pushed one by one.
     Elementary,
-    /// A complete MPEG-TS byte stream, demultiplexed by the mount.
+    /// A complete MPEG-TS byte stream, demultiplexed by the mount. Not
+    /// served in this release: [`MountConfig::validate`] refuses it.
     Mp2t,
 }
 
@@ -20,7 +21,8 @@ pub enum MountKind {
 pub enum AudioPolicy {
     /// Audio is discarded; viewers get video and KLV only.
     Drop,
-    /// Opus frames are forwarded to viewers unchanged.
+    /// Opus frames are forwarded to viewers unchanged. Not served in this
+    /// release: [`MountConfig::validate`] refuses it.
     PassthroughOpus,
 }
 
@@ -56,10 +58,11 @@ pub struct MountConfig {
     /// Where KLV records travel.
     ///
     /// A data-channel record is at most
-    /// [`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT) bytes (131 059). A record
-    /// above the viewer's advertised `max-message-size` (64 KiB when the
-    /// browser states none) is browser-dependent: it may be dropped for
-    /// that viewer, and the drop is counted.
+    /// [`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT) bytes (256 KiB), and the
+    /// server's SCTP send buffer is sized for it. A record is dropped for a
+    /// viewer whose send buffer has no room for it, and one above the
+    /// viewer's advertised `max-message-size` (64 KiB when the browser
+    /// states none) is browser-dependent; each drop is counted.
     pub klv: KlvCarriage,
     /// The most KLV bytes carried in SEI per access unit (1 to 1 MiB).
     pub sei_budget_bytes: u32,
@@ -87,9 +90,26 @@ impl MountConfig {
     ///
     /// [`WhepServerError::InvalidConfig`] for an H.266 or AV1 video codec, a
     /// `sei_budget_bytes` of 0 or above 1 MiB, or a `viewer_queue_packets`
-    /// below 16.
+    /// below 16. Also for [`MountKind::Mp2t`] and
+    /// [`AudioPolicy::PassthroughOpus`], which this release does not serve
+    /// yet: an MP2T mount has no demuxer behind it and no audio track is
+    /// negotiated with viewers.
     pub fn validate(&self) -> Result<(), WhepServerError> {
         let invalid = |detail: String| Err(WhepServerError::InvalidConfig { detail });
+        match self.kind {
+            MountKind::Elementary => {}
+            MountKind::Mp2t => {
+                return invalid("MountKind::Mp2t is not served in this release".into());
+            }
+        }
+        match self.audio {
+            AudioPolicy::Drop => {}
+            AudioPolicy::PassthroughOpus => {
+                return invalid(
+                    "AudioPolicy::PassthroughOpus is not served in this release".into(),
+                );
+            }
+        }
         match self.video {
             VideoCodec::H264 | VideoCodec::H265 => {}
             VideoCodec::H266 | VideoCodec::Av1 => {
