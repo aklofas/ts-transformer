@@ -13,17 +13,10 @@ use sha2::{Digest, Sha256};
 use tst_core::codec::VideoCodec;
 use tst_core::klv::st0601;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, SamplePayload, StreamKind};
-use tst_test_helpers::rawts::{self, classify_packet};
 
+use super::pcr::{PMT_PREFIX, PcrScan, parse_prefix};
 use super::shape::classify;
 use super::{FEED_CHUNK, RunDir, Sha256Hex};
-
-/// Bytes read from the start of a capture for the PMT shape. A PMT repeats
-/// within a fraction of a second, so the prefix always holds one.
-const PMT_PREFIX: usize = 4 * 1024 * 1024;
-/// A 33-bit PCR base wraps after this many 90 kHz ticks.
-const PCR_BASE_WRAP: u64 = 1 << 33;
-const PCR_BASE_HZ: f64 = 90_000.0;
 
 /// One elementary stream of the capture's first program.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,7 +24,7 @@ pub struct StreamEntry {
     pub pid: u16,
     pub stream_type: u8,
     pub klva: bool,
-    /// `"video"`, `"audio"`, `"klv-sync"`, `"klv-async"` or `"unknown"`,
+    /// `"video"`, `"audio"`, `"subtitle"`, `"klv-sync"`, `"klv-async"` or `"unknown"`,
     /// from the stream kind the demuxer declares for the PID.
     pub kind: String,
 }
@@ -69,10 +62,11 @@ pub struct Inventory {
     pub files: Vec<FileEntry>,
 }
 
-fn kind_name(kind: &StreamKind) -> &'static str {
+pub(super) fn kind_name(kind: &StreamKind) -> &'static str {
     match kind {
         StreamKind::Video(_) => "video",
         StreamKind::Audio(_) => "audio",
+        StreamKind::Subtitle(_) => "subtitle",
         StreamKind::KlvSync { .. } => "klv-sync",
         StreamKind::KlvAsync => "klv-async",
         _ => "unknown",
@@ -113,70 +107,6 @@ fn collect_ts(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-/// First and last PCR base of one PID, and whether its clock stepped back.
-///
-/// A single backwards step counts as one 33-bit wrap. That is right for a
-/// capture that crosses the wrap and over-counts a glitch, which is fine
-/// for a duration estimate.
-#[derive(Default)]
-struct PcrSpan {
-    first: u64,
-    last: u64,
-    wrapped: bool,
-}
-
-/// Per-PID PCR spans read packet by packet, carrying a partial packet
-/// across chunks. PIDs are never combined.
-#[derive(Default)]
-struct PcrScan {
-    carry: Vec<u8>,
-    spans: BTreeMap<u16, PcrSpan>,
-    first_pid: Option<u16>,
-}
-
-impl PcrScan {
-    fn feed(&mut self, chunk: &[u8]) -> Result<(), String> {
-        self.carry.extend_from_slice(chunk);
-        let whole = self.carry.len() - self.carry.len() % 188;
-        for pkt in self.carry[..whole].chunks_exact(188) {
-            let pkt: &[u8; 188] = pkt.try_into().expect("chunk is one packet");
-            let info = classify_packet(pkt)?;
-            let Some(base) = info.pcr_base else { continue };
-            self.first_pid.get_or_insert(info.pid);
-            let span = self.spans.entry(info.pid).or_insert(PcrSpan {
-                first: base,
-                last: base,
-                wrapped: false,
-            });
-            if base < span.last {
-                span.wrapped = true;
-            }
-            span.last = base;
-        }
-        self.carry.drain(..whole);
-        Ok(())
-    }
-
-    /// Seconds spanned by the declared PCR PID, else the first PID seen
-    /// carrying a PCR; 0.0 with fewer than two PCRs.
-    fn duration_s(&self, declared: Option<u16>) -> f64 {
-        let span = declared
-            .and_then(|pid| self.spans.get(&pid))
-            .or_else(|| self.first_pid.and_then(|pid| self.spans.get(&pid)));
-        match span {
-            Some(s) if s.first != s.last || s.wrapped => {
-                let ticks = if s.wrapped {
-                    s.last + PCR_BASE_WRAP - s.first
-                } else {
-                    s.last - s.first
-                };
-                ticks as f64 / PCR_BASE_HZ
-            }
-            _ => 0.0,
-        }
-    }
-}
-
 /// Hash and probe one file in a single read.
 fn probe(path: &Path) -> Result<FileEntry, String> {
     let mut file =
@@ -212,11 +142,7 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
         if !feeding {
             continue;
         }
-        if let Err(e) = pcr.feed(chunk) {
-            probe_error.get_or_insert(format!("wire reader: {e}"));
-            feeding = false;
-            continue;
-        }
+        pcr.feed(chunk);
         if let Err(e) = demuxer.feed(chunk) {
             probe_error.get_or_insert(format!("demuxer: {e}"));
             feeding = false;
@@ -250,7 +176,7 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
         }
     }
 
-    let parsed = match rawts::try_parsed(&prefix) {
+    let parsed = match parse_prefix(&prefix) {
         Ok(p) => p,
         Err(e) => {
             probe_error.get_or_insert(format!("wire reader: {e}"));
