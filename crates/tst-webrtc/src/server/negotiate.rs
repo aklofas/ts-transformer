@@ -288,12 +288,13 @@ fn payload_line<'a, 'b>(
 /// Finds the Opus payload type the browser offered, when there is one.
 ///
 /// Call after `rtc` has accepted `offer` (the SDP text). The first audio
-/// section with a payload the offer declares as `opus/48000` (the RTP
-/// clock is 48 kHz whatever the sampling rate, RFC 7587 §4.1), that str0m
-/// lists among the media's remote payload types and whose number str0m's
-/// codec list holds for Opus, qualifies; the first such payload in the
-/// offer's order wins. `None` when the offer has no audio section or no
-/// Opus in it: audio never decides whether an offer is served.
+/// section we send on (the viewer offered `recvonly` or `sendrecv`) with a
+/// payload the offer declares as `opus/48000` (the RTP clock is 48 kHz
+/// whatever the sampling rate, RFC 7587 §4.1), that str0m lists among the
+/// media's remote payload types and whose number str0m's codec list holds
+/// for Opus, qualifies; the first such payload in the offer's order wins.
+/// `None` when the offer has no such section: the viewer is then
+/// video-only, since audio never decides whether an offer is served.
 pub fn select_audio(rtc: &Rtc, offer: &str) -> Option<(Mid, Pt)> {
     for section in media_sections(offer, "audio") {
         let Some(mid) = section.mid else {
@@ -302,7 +303,8 @@ pub fn select_audio(rtc: &Rtc, offer: &str) -> Option<(Mid, Pt)> {
         let Some(media) = rtc.media(mid) else {
             continue;
         };
-        if media.kind() != MediaKind::Audio {
+        // str0m opens no send stream for a `sendonly` or `inactive` offer.
+        if media.kind() != MediaKind::Audio || !media.direction().is_sending() {
             continue;
         }
         let qualifies = |p: &&OfferedPayload| {

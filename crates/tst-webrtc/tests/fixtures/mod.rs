@@ -107,21 +107,26 @@ impl TestViewer {
     /// The SDP offer: a receive-only video section and, with `with_dc`,
     /// the negotiated `klv` channel.
     pub fn offer(&mut self, with_dc: bool) -> String {
-        self.build_offer(with_dc, false)
+        self.build_offer(with_dc, None)
     }
 
     /// The offer of [`offer`](Self::offer) plus a receive-only audio
     /// section (Opus among str0m's default codecs).
     pub fn offer_with_audio(&mut self, with_dc: bool) -> String {
-        self.build_offer(with_dc, true)
+        self.build_offer(with_dc, Some(Direction::RecvOnly))
     }
 
-    fn build_offer(&mut self, with_dc: bool, with_audio: bool) -> String {
+    /// The offer of [`offer`](Self::offer) plus an audio section in the
+    /// viewer's direction `audio`.
+    pub fn offer_with_audio_direction(&mut self, with_dc: bool, audio: Direction) -> String {
+        self.build_offer(with_dc, Some(audio))
+    }
+
+    fn build_offer(&mut self, with_dc: bool, audio: Option<Direction>) -> String {
         let mut api = self.rtc.sdp_api();
         let mid = api.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
-        if with_audio {
-            self.audio_mid =
-                Some(api.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None));
+        if let Some(dir) = audio {
+            self.audio_mid = Some(api.add_media(MediaKind::Audio, dir, None, None, None));
         }
         if with_dc {
             api.add_channel_with_config(ChannelConfig {

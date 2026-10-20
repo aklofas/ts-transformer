@@ -84,7 +84,7 @@ pub(crate) struct Viewer {
     /// The video payload type, once negotiated.
     pub(crate) pt: Option<Pt>,
     /// The audio media's mid and the Opus payload type, when the viewer's
-    /// offer carried Opus and the mount passes it through.
+    /// offer asks to receive Opus and the mount passes it through.
     pub(crate) audio: Option<(Mid, Pt)>,
     /// The next audio RTP sequence number (extended, 64 bits).
     pub(crate) audio_seq: u64,

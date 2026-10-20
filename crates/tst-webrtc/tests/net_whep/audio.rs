@@ -4,10 +4,11 @@
 
 use std::time::Duration;
 
+use str0m::media::Direction;
 use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::{AudioPolicy, MountConfig, MountHandle, WhepServer};
 
-use crate::fixtures::{TestViewer, connect_all, h264_gop, join, join_with_audio};
+use crate::fixtures::{TestViewer, connect_all, h264_gop, join, join_with_audio, whep_post};
 
 const DELIVER: Duration = Duration::from_secs(10);
 
@@ -107,4 +108,31 @@ fn a_dropping_mount_rejects_the_audio_section_and_still_serves_video() {
     assert!(v.pump(|v| v.frames.len() >= 5, DELIVER), "{}", v.trace());
     assert!(v.audio_frames.is_empty());
     assert_eq!(m.stats().audio_frames_dropped, 10);
+}
+
+#[test]
+fn a_viewer_that_only_sends_audio_keeps_receiving_video_across_audio_pushes() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", opus_config()).unwrap();
+    let mut v = TestViewer::new();
+    let offer = v.offer_with_audio_direction(false, Direction::SendOnly);
+    let (status, _, answer) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    v.accept_answer(&answer);
+    connect_all(&m, std::slice::from_mut(&mut v));
+
+    // Audio before, between and after the frames: none of it may hold the
+    // video queued behind it.
+    let gop = h264_gop();
+    for (i, (au, key)) in gop.iter().take(5).enumerate() {
+        let pts = i as i64 * 3000;
+        m.push_audio(&opus_packet(i as u8), Pts90khz::new(pts))
+            .unwrap();
+        m.push_video(au, Pts90khz::new(pts), *key).unwrap();
+        m.push_audio(&opus_packet(i as u8), Pts90khz::new(pts + TICKS_20_MS))
+            .unwrap();
+    }
+    assert!(v.pump(|v| v.frames.len() >= 5, DELIVER), "{}", v.trace());
+    assert!(v.audio_frames.is_empty());
+    assert!(v.error.is_none(), "{}", v.trace());
 }
