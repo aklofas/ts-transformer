@@ -185,3 +185,47 @@ fn a_run_without_a_sweep_is_an_error_that_names_no_path() {
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
+
+fn verdict(path: &str, pass: bool) -> tst_interop::corpus::judge::FileVerdict {
+    tst_interop::corpus::judge::FileVerdict {
+        sha256: sha('a'),
+        path: path.into(),
+        pass,
+        failures: if pass { vec![] } else { vec!["short".into()] },
+    }
+}
+
+#[test]
+fn the_markdown_table_carries_the_per_path_counts_rss_and_the_dash_fallback() {
+    let mut r = replay(false);
+    r.verdicts = vec![
+        verdict("srt", true),
+        verdict("srt", false),
+        verdict("udp", true),
+    ];
+    r.rss_max_kb_by_path.remove("rist");
+    r.rss_slope_kb_per_hour_by_path.remove("rist");
+    r.rss_max_kb_by_path.insert("srt".into(), 123_456);
+    let md = report::markdown(&sweep(true), Some(&r));
+    assert!(md.contains("| srt | 2 | 1 | 123456 | 1.5 |"), "{md}");
+    assert!(md.contains("| udp | 1 | 0 | 120000 | 1.5 |"), "{md}");
+    assert!(md.contains("| rist | 0 | 0 | - | - |"), "{md}");
+    assert!(md.contains("Predicted peak 4096 bytes."), "{md}");
+}
+
+#[test]
+fn a_corrupt_sweep_or_replay_json_exits_two_and_names_no_path() {
+    for bad in ["sweep.json", "replay.json"] {
+        let run = write_run("rep-corrupt", true);
+        std::fs::write(run.join(bad), "{ not json").unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+            .args(["corpus", "report"])
+            .arg(&run)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{bad}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(bad), "{err}");
+        assert!(!err.contains(run.to_str().unwrap()), "{err}");
+    }
+}
