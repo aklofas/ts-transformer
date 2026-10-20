@@ -705,6 +705,16 @@ sudo apt install -y jq python3 build-essential cmake meson ninja-build clang lib
 SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
 ```
 
+Before it launches anything, `soak.sh` checks the host's memory. It sums
+the expected resident size of every process the run will start, using the
+plateau figures of earlier runs, multiplies by `SOAK_MEM_HEADROOM`
+(default 1.5) and requires the result to fit `SOAK_MEM_BUDGET` (default
+0.70) of `MemTotal`. A host that cannot hold the run exits 2 and the
+message names the predicted and budget sizes and the `--no-rtsp-publish*`
+flags that would fit. The sum, the budget, the headroom and `MemTotal`
+are written to `soak-config.json` as `memory_gate`, and `report soak`
+repeats the inequality and lists it among its limitations.
+
 Launch a real run genuinely detached and never through a session tool that
 enforces its own lifetime cap (one killed a 1-hour smoke at about 60
 minutes); then poll for `soak-results.json`, or `pids/*.pid` plus `ps`:
