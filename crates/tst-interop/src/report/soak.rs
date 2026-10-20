@@ -18,7 +18,44 @@ use crate::report_types::{
 /// floor) — whichever is smaller. Derived from the declared config
 /// rather than the observed sample span so a truncated run doesn't
 /// also shrink its own warmup exclusion.
-const MAX_WARMUP_S: f64 = 30.0 * 60.0;
+pub(crate) const MAX_WARMUP_S: f64 = 30.0 * 60.0;
+
+/// The RSS slope, in KiB per hour, above which `soak.sh` fails a
+/// full-length run: its default `--rss-slope-threshold-kb-per-hour`
+/// (the derivation is in the interop README's "Outputs and the
+/// supervisor"). Other gates that judge memory the soak's way use it.
+pub(crate) const RSS_SLOPE_THRESHOLD_KB_PER_HOUR: f64 = 200.0;
+
+/// The warmup fraction `soak.sh` declares in `soak-config.json`.
+pub(crate) const WARMUP_FRACTION: f64 = 0.1667;
+
+/// The RSS warmup excluded from a run declared `expected_duration_s` long.
+pub(crate) fn rss_warmup_s(expected_duration_s: f64, warmup_fraction: f64) -> f64 {
+    MAX_WARMUP_S.min(expected_duration_s * warmup_fraction)
+}
+
+/// The soak's sampling-density rule over one process's post-warmup
+/// `(elapsed_s, kb)` points, sorted by time: at least two distinct
+/// timestamps, at least `min_samples` points, and no gap of `max_gap_s` or
+/// more. Returns whether it holds, the largest gap and the distinct
+/// timestamp count.
+pub(crate) fn rss_coverage(
+    points: &[(f64, f64)],
+    min_samples: u64,
+    max_gap_s: f64,
+) -> (bool, f64, usize) {
+    let mut largest_gap_s = 0.0f64;
+    for w in points.windows(2) {
+        largest_gap_s = largest_gap_s.max(w[1].0 - w[0].0);
+    }
+    let distinct_ts = points
+        .iter()
+        .map(|(t, _)| t.to_bits())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let pass = distinct_ts >= 2 && points.len() as u64 >= min_samples && largest_gap_s < max_gap_s;
+    (pass, largest_gap_s, distinct_ts)
+}
 
 const KNOWN_LEGS: [&str; 4] = ["srt", "rist", "rtsp-publish", "rtsp-publish-es"];
 
@@ -179,9 +216,9 @@ const WORKER_ROLES: [&str; 10] = [
 ];
 /// Fraction of the cadence-implied post-warmup sample count a
 /// process must actually have.
-const MIN_SAMPLE_COVERAGE: f64 = 0.9;
+pub(crate) const MIN_SAMPLE_COVERAGE: f64 = 0.9;
 /// Largest tolerated gap between consecutive samples, in cadences.
-const MAX_GAP_CADENCES: f64 = 3.0;
+pub(crate) const MAX_GAP_CADENCES: f64 = 3.0;
 
 /// One `elapsed_s,leg,process,pid,rss_kb` row from `soak.sh`'s RSS
 /// sampler. `rss_kb: None` means `/proc/<pid>/status` couldn't be
@@ -503,7 +540,7 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
     // itself possibly 0 or 1) can never meaningfully gate anything, so
     // reject a config whose OWN implied expected-sample count already
     // can't reach 2.
-    let warmup_s = MAX_WARMUP_S.min(cfg.expected_duration_s * cfg.warmup_fraction);
+    let warmup_s = rss_warmup_s(cfg.expected_duration_s, cfg.warmup_fraction);
     let expected_samples = ((cfg.expected_duration_s - cfg.sampler_end_slack_s - warmup_s)
         / cfg.rss_cadence_s)
         .floor();
@@ -1152,7 +1189,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         }
         (max_t - min_t).max(0.0)
     };
-    let warmup_s = MAX_WARMUP_S.min(config.expected_duration_s * config.warmup_fraction);
+    let warmup_s = rss_warmup_s(config.expected_duration_s, config.warmup_fraction);
 
     // The run's own declared achievable window: `soak.sh`'s sampler
     // deliberately stops `sampler_end_slack_s` before the nominal
@@ -1250,17 +1287,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
     let max_gap_s = MAX_GAP_CADENCES * config.rss_cadence_s;
     let mut coverage: Vec<RssCoverage> = Vec::new();
     for ((leg, process), points) in &groups {
-        let mut largest_gap_s = 0.0f64;
-        for w in points.windows(2) {
-            largest_gap_s = largest_gap_s.max(w[1].0 - w[0].0);
-        }
-        let distinct_ts = points
-            .iter()
-            .map(|(t, _)| t.to_bits())
-            .collect::<std::collections::BTreeSet<_>>()
-            .len();
-        let pass =
-            distinct_ts >= 2 && points.len() as u64 >= min_samples && largest_gap_s < max_gap_s;
+        let (pass, largest_gap_s, distinct_ts) = rss_coverage(points, min_samples, max_gap_s);
         coverage.push(RssCoverage {
             leg: leg.clone(),
             process: process.clone(),

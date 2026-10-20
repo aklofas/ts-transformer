@@ -367,3 +367,25 @@ fn a_pes_header_that_overruns_its_packet_never_crashes_the_sweep() {
     assert_eq!(s["per_file"][0]["sha256"], sha_of(&bytes).0.as_str());
     assert_eq!(s["parse_failures"], 0, "{s}");
 }
+
+#[test]
+fn a_test_knob_in_the_environment_is_named_on_stderr() {
+    let (dir, _) = two_files("sw-knob");
+    let run = temp_dir_named("sw-knob-run");
+    let out = bin()
+        .arg("corpus")
+        .arg("sweep")
+        .arg(&dir)
+        .arg("--out")
+        .arg(&run)
+        .env("TST_CORPUS_TEST_STALL_SECONDS", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("test knob TST_CORPUS_TEST_STALL_SECONDS is set"),
+        "{err}"
+    );
+    assert!(!err.contains("=1"), "{err}");
+}

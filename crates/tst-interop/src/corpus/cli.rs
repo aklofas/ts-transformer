@@ -23,6 +23,7 @@ fn value(args: &[String], i: usize, flag: &str) -> String {
 /// Entry point for `corpus <subcommand> ...`; exits 0 on success, 1 when a
 /// sweep or a replay does not pass, 2 on a usage or I/O error.
 pub fn run(args: &[String]) -> ! {
+    note_test_knobs();
     let Some(sub) = args.first() else {
         fail("a subcommand is required: inventory | sweep | replay | report");
     };
@@ -35,6 +36,23 @@ pub fn run(args: &[String]) -> ! {
         // Internal: the replay stage's child process, not in the usage text.
         "receive" => run_receive(rest),
         other => fail(&format!("unknown subcommand '{other}'")),
+    }
+}
+
+/// The prefix of the variables that change the replay's rules for tests.
+const TEST_KNOB_PREFIX: &str = "TST_CORPUS_TEST_";
+
+/// One stderr line per test knob set in the environment, naming it (never
+/// its value), so a stray knob on a release machine is visible.
+fn note_test_knobs() {
+    for (name, _) in std::env::vars_os() {
+        if let Some(name) = name.to_str()
+            && name.starts_with(TEST_KNOB_PREFIX)
+        {
+            eprintln!(
+                "corpus: test knob {name} is set; the replay's rules are not the release ones"
+            );
+        }
     }
 }
 
@@ -193,6 +211,9 @@ fn print_replay_summary(s: &ReplaySummary) {
             .copied()
             .unwrap_or(0.0);
         println!("rss {path}: max {max} kB, slope {slope:.1} kB/h");
+    }
+    for (path, gate) in &s.rss_gate_by_path {
+        println!("rss slope {path} {gate}");
     }
     println!("{}", if s.pass { "pass" } else { "fail" });
 }

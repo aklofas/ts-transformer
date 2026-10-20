@@ -211,3 +211,75 @@ fn a_receiver_that_stops_reading_trips_the_send_deadline() {
     assert_eq!(tcp[1]["failures"][0], "receiver exited", "{summary}");
     assert_eq!(verdicts.len(), 2, "{summary}");
 }
+
+#[test]
+fn a_short_delivery_after_framing_damage_names_the_senders_resyncs() {
+    let dir = temp_dir_named("rp-resync");
+    // Realistic access units, so a PCR interval holds more than one
+    // seven-packet bundle and the sender checks the framing it sends.
+    let src = dir.join("src.tmp");
+    let p = tst_interop::profiles::by_name("baseline").unwrap();
+    tst_interop::r#gen::run(
+        p,
+        2.0,
+        &src,
+        KlvSet::Compact,
+        0,
+        AuSizeMode::Realistic { scale: 1 },
+    )
+    .unwrap();
+    let mut bytes = std::fs::read(&src).unwrap();
+    std::fs::remove_file(&src).unwrap();
+    // One byte gone from the middle of a packet halfway in: every packet
+    // after it is off its 188-byte grid until the sender resyncs.
+    let at = bytes.len() / 188 / 2 * 188 + 100;
+    bytes.remove(at);
+    std::fs::write(dir.join("damaged.ts"), &bytes).unwrap();
+    let run = dir.join("run");
+    // The sweep may fail its invariants on this capture; the replay only
+    // needs its digests.
+    run_bounded(
+        bin()
+            .args(["corpus", "sweep"])
+            .arg(&dir)
+            .arg("--out")
+            .arg(&run),
+        LIMIT,
+    );
+    let out = replay_over(&dir, &run, "tcp", &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let summary = json(&run.join("replay.json"));
+    let v = &summary["verdicts"][0];
+    assert_eq!(v["pass"], false, "{summary}");
+    let failures: Vec<&str> = v["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap())
+        .collect();
+    assert!(
+        failures.iter().any(|f| f.starts_with("sender resynced ")),
+        "{summary}"
+    );
+}
+
+#[test]
+fn every_path_records_whether_its_rss_was_gated() {
+    let (dir, _) = two_files("rp-rssgate");
+    let run = dir.join("run");
+    sweep(&dir, &run);
+    let out = replay(&dir, &run, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let summary = json(&run.join("replay.json"));
+    for path in ["udp", "tcp"] {
+        // A run of seconds is far too short for the soak's slope rule.
+        assert_eq!(summary["rss_gated_by_path"][path], false, "{summary}");
+        let gate = summary["rss_gate_by_path"][path].as_str().unwrap();
+        assert!(gate.starts_with("not gated: "), "{gate}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(&format!("rss slope {path} not gated")),
+            "{}",
+            text(&out)
+        );
+    }
+}

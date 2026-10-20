@@ -2,7 +2,7 @@
 //! driven over stdin and stdout, one UTF-8 line per message.
 //!
 //! ```text
-//! parent: file <sha256> <prefix_seconds|none>
+//! parent: file <sha256> <prefix_seconds|none> <largest_au_bytes>
 //! child : ready <sha256> <url the sender uses>
 //! parent: sent <sha256>                (the sender finished and closed)
 //! child : verdict <sha256> PASS|FAIL <FileVerdict as one line of JSON>
@@ -13,7 +13,9 @@
 //! The prefix on a `file` line is the sender's business (it cuts the replay
 //! there) and names the digest to judge by; the child digests every byte
 //! that arrives, so a replay that overshoots the prefix fails against the
-//! prefix digest.
+//! prefix digest. `largest_au_bytes` is the inventory's largest video
+//! access unit (0 when unknown); the `udp` child sizes its socket buffer
+//! from it ([`udp_rcvbuf_for`]).
 //!
 //! The expected digest is read from `<digests>/<sha256>.json`, or from
 //! `<digests>/<sha256>.prefix<seconds>.json` for a `file` with a prefix
@@ -31,7 +33,7 @@
 //!
 //! | path | the child binds | `ready` prints |
 //! |---|---|---|
-//! | `udp` | `udp://127.0.0.1:0` | `udp://127.0.0.1:<port>` |
+//! | `udp` | `udp://127.0.0.1:0`, with `?rcvbuf=` per [`udp_rcvbuf_for`] | `udp://127.0.0.1:<port>` |
 //! | `tcp` | `tcp://127.0.0.1:0?listen=1` | `tcp://127.0.0.1:<port>` (the sender is the caller) |
 //! | `srt` | `srt://127.0.0.1:0?mode=listener` | `srt://127.0.0.1:<port>` (the sender is the caller) |
 //! | `rist` | `rist://@127.0.0.1:<even port>` | `rist://127.0.0.1:<port>` |
@@ -103,13 +105,43 @@ fn die_after(path: &str, value: &str) -> Option<u64> {
 /// outside tests.
 pub const STALL_ENV: &str = "TST_CORPUS_TEST_STALL_SECONDS";
 
+/// A UDP receiver's socket buffer holds this many keyframe bursts when the
+/// kernel default cannot hold two: the stress harness's rule.
+pub const UDP_RCVBUF_BURST_FACTOR: u64 = 2;
+
+/// The receive buffer, in bytes, a `udp` receiver asks for (`?rcvbuf=`) to
+/// absorb an access unit of `largest_au_bytes` sent at line rate: the
+/// stress harness's rule. The burst is the access unit as 188-byte packets
+/// of 184 payload bytes; `None` when the kernel default (`rmem_default`,
+/// of which about half holds payload) already holds two bursts, or the
+/// size is unknown (0). An unreadable default still sets the buffer.
+pub fn udp_rcvbuf_for(largest_au_bytes: u64, rmem_default: Option<u64>) -> Option<u64> {
+    if largest_au_bytes == 0 {
+        return None;
+    }
+    let burst = largest_au_bytes.div_ceil(184) * 188;
+    if rmem_default.is_some_and(|d| burst * 2 <= d) {
+        return None;
+    }
+    Some(burst * UDP_RCVBUF_BURST_FACTOR)
+}
+
+/// A `net.core` sysctl in bytes; `None` where it cannot be read (not Linux).
+pub fn net_core(name: &str) -> Option<u64> {
+    std::fs::read_to_string(format!("/proc/sys/net/core/{name}"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
 const TICK: Duration = Duration::from_millis(100);
 /// How long a cancelled receiver gets to wind down before it is left behind.
 const WIND_DOWN: Duration = Duration::from_secs(5);
 const READ_BUF: usize = 64 * 1024;
 
 enum Cmd {
-    File(Sha256Hex, Option<u32>),
+    File(Sha256Hex, Option<u32>, u64),
     Sent(Sha256Hex),
     Quit,
     /// The parent closed stdin.
@@ -134,21 +166,22 @@ fn parse_sha(s: &str) -> Option<Sha256Hex> {
 
 fn parse_line(line: &str) -> Cmd {
     let mut it = line.split_whitespace();
-    match (it.next(), it.next(), it.next(), it.next()) {
-        (Some("file"), Some(sha), Some(prefix), None) => {
+    match (it.next(), it.next(), it.next(), it.next(), it.next()) {
+        (Some("file"), Some(sha), Some(prefix), Some(au), None) => {
             let prefix = match prefix {
                 "none" => Some(None),
                 n => n.parse::<u32>().ok().map(Some),
             };
-            match (parse_sha(sha), prefix) {
-                (Some(sha), Some(p)) => Cmd::File(sha, p),
+            match (parse_sha(sha), prefix, au.parse::<u64>()) {
+                (Some(sha), Some(p), Ok(au)) => Cmd::File(sha, p, au),
                 _ => Cmd::Bad("malformed file line"),
             }
         }
-        (Some("sent"), Some(sha), None, None) => {
+        (Some("file"), ..) => Cmd::Bad("malformed file line"),
+        (Some("sent"), Some(sha), None, None, None) => {
             parse_sha(sha).map_or(Cmd::Bad("malformed sent line"), Cmd::Sent)
         }
-        (Some("quit"), None, None, None) => Cmd::Quit,
+        (Some("quit"), None, None, None, None) => Cmd::Quit,
         _ => Cmd::Bad("unrecognised line"),
     }
 }
@@ -328,7 +361,7 @@ impl Child<'_> {
     }
 
     /// One `file`: bind, announce, receive, judge.
-    fn replay(&mut self, sha: Sha256Hex, prefix: Option<u32>) {
+    fn replay(&mut self, sha: Sha256Hex, prefix: Option<u32>, largest_au: u64) {
         let path = self.path;
         let expected = match load_expected(self.digests, &sha, prefix) {
             Ok(d) => d,
@@ -338,6 +371,10 @@ impl Child<'_> {
         let small_tcp = self.stop_reading && path == "tcp";
         let bind_url = if small_tcp {
             format!("{bind_url}&rcvbuf={STOP_READING_BUF}")
+        } else if path == "udp"
+            && let Some(n) = udp_rcvbuf_for(largest_au, net_core("rmem_default"))
+        {
+            format!("{bind_url}?rcvbuf={n}")
         } else {
             bind_url.to_string()
         };
@@ -501,7 +538,7 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
             None => child.rx.recv(),
         };
         match next {
-            Ok(Event::Cmd(Cmd::File(sha, prefix))) => child.replay(sha, prefix),
+            Ok(Event::Cmd(Cmd::File(sha, prefix, au))) => child.replay(sha, prefix, au),
             // The sender's close can be seen, and judged, before `sent` is read.
             Ok(Event::Cmd(Cmd::Sent(s))) if child.last_verdict.as_ref() == Some(&s) => {}
             Ok(Event::Cmd(Cmd::Sent(_))) => protocol_error("sent before file"),
