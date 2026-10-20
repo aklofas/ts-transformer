@@ -447,12 +447,19 @@ fn push<'a>(
 pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<InvariantFailure> {
     let mut out = Vec::new();
     if default.feed_errors > 0 {
-        push(
-            &mut out,
-            "feed-error",
-            None,
-            format!("{} feed errors", default.feed_errors),
-        );
+        let detail = format!("{} feed errors", default.feed_errors);
+        if ann.known_feed_errors {
+            let why = ann.reason.as_deref().unwrap_or("");
+            push(
+                &mut out,
+                "feed-error",
+                None,
+                format!("excused: {why}; {detail}"),
+            )
+            .excused = true;
+        } else {
+            push(&mut out, "feed-error", None, detail);
+        }
     }
     for (pid, d) in &default.pids {
         let klv = d.kind == "klv-sync" || d.kind == "klv-async";

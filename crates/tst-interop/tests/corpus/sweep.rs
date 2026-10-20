@@ -360,9 +360,20 @@ fn a_pes_header_that_overruns_its_packet_never_crashes_the_sweep() {
     std::fs::write(dir.join("damaged.ts"), &bytes).unwrap();
     let run = temp_dir_named("sw-peshead-run");
     let out = sweep(&dir, &run, &[]);
-    let code = out.status.code();
-    assert!(matches!(code, Some(0 | 1)), "{out:?}");
+    // The default pass reports the header on the video PID and goes on;
+    // strict mode rejects it once. Judged, not swallowed, and no NO-GO.
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
     let s = json(&run.join("sweep.json"));
+    let d = json(&run.join("digests").join(format!("{}.json", sha_of(&bytes))));
+    assert_eq!(
+        d["configs"]["default"]["pids"][video.to_string()]["nonconformant"]["MalformedPes"],
+        1,
+        "{d}"
+    );
+    assert_eq!(
+        d["configs"]["strict_full"]["feed_error_kinds"]["MalformedPes"], 1,
+        "{d}"
+    );
     assert_eq!(s["files"], 1);
     assert_eq!(s["per_file"][0]["sha256"], sha_of(&bytes).0.as_str());
     assert_eq!(s["parse_failures"], 0, "{s}");
@@ -388,4 +399,47 @@ fn a_test_knob_in_the_environment_is_named_on_stderr() {
         "{err}"
     );
     assert!(!err.contains("=1"), "{err}");
+}
+
+#[test]
+fn a_zero_filled_dropout_fails_feed_error_until_marked_never_a_parse_failure() {
+    let mut bytes = gen_profile_bytes("baseline", 4.0);
+    // 8 KiB of zeros spliced in on a packet boundary halfway in: more than
+    // the demuxer's sync-search window, so its feed rejects.
+    let at = bytes.len() / 188 / 2 * 188;
+    bytes.splice(at..at, std::iter::repeat_n(0u8, 8192));
+    let dir = temp_dir_named("sw-dropout");
+    std::fs::write(dir.join("dropout.ts"), &bytes).unwrap();
+    let run = temp_dir_named("sw-dropout-run");
+    let out = sweep(&dir, &run, &[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let s = json(&run.join("sweep.json"));
+    assert_eq!(s["parse_failures"], 0, "{s}");
+    let failures = s["per_file"][0]["invariant_failures"].as_array().unwrap();
+    let rules: Vec<&str> = failures
+        .iter()
+        .map(|f| f["rule"].as_str().unwrap())
+        .collect();
+    assert_eq!(rules, ["feed-error"], "{s}");
+
+    let ann = temp_dir_named("sw-dropout-ann");
+    std::fs::write(
+        ann.join(format!("{}.toml", sha_of(&bytes))),
+        "known_feed_errors = true\nreason = \"recorder dropout, reviewed\"\n",
+    )
+    .unwrap();
+    let run = temp_dir_named("sw-dropout-run2");
+    let out = sweep(&dir, &run, &["--annotations", ann.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let s = json(&run.join("sweep.json"));
+    assert_eq!(s["invariant_failures"], 0, "{s}");
+    let f = &s["per_file"][0]["invariant_failures"][0];
+    assert_eq!(f["excused"], true, "{s}");
+    assert!(
+        f["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("excused: recorder dropout, reviewed;"),
+        "{s}"
+    );
 }

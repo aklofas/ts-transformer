@@ -54,8 +54,12 @@ pub struct FileEntry {
     pub klv_sets: Vec<String>,
     /// Largest video sample payload seen.
     pub largest_au_bytes: u64,
-    /// Set when no PMT was found or the demuxer returned an error; the
-    /// file still has an entry.
+    /// Times the default demuxer rejected input while probing (damage such
+    /// as a zero-filled dropout); counted, not a probe error.
+    #[serde(default)]
+    pub feed_errors: u64,
+    /// Set when no PMT was found or the probe panicked; the file still has
+    /// an entry.
     pub probe_error: Option<String>,
 }
 
@@ -127,7 +131,7 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
     let mut codecs: BTreeSet<String> = BTreeSet::new();
     let mut klv_sets: BTreeSet<String> = BTreeSet::new();
     let mut largest_au: u64 = 0;
-    let mut feeding = true;
+    let mut feed_errors: u64 = 0;
 
     loop {
         let n = file
@@ -143,14 +147,16 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
             let take = (PMT_PREFIX - prefix.len()).min(n);
             prefix.extend_from_slice(&chunk[..take]);
         }
-        if !feeding {
-            continue;
-        }
         pcr.feed(chunk);
-        if let Err(e) = demuxer.feed(chunk) {
-            probe_error.get_or_insert(format!("demuxer: {e}"));
-            feeding = false;
-            continue;
+        // The digest's drain loop: a rejection keeps the rest of the chunk
+        // buffered and empty feeds resume it. A feed error is counted (the
+        // sweep's `feed-error` rule judges it), never a probe error.
+        let mut input = chunk;
+        let mut rejections = 0;
+        while demuxer.feed(input).is_err() && rejections <= chunk.len() {
+            rejections += 1;
+            feed_errors += 1;
+            input = &[];
         }
         while let Some(ev) = demuxer.next_event() {
             match ev {
@@ -182,10 +188,7 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
 
     let parsed = parse_prefix(&prefix);
     if parsed.pmt_pid.is_none() || parsed.streams.is_empty() {
-        probe_error = Some(match probe_error {
-            Some(e) => format!("no PMT found; {e}"),
-            None => "no PMT found".to_string(),
-        });
+        probe_error = Some("no PMT found".to_string());
     }
     let duration_s = pcr.duration_s(parsed.pcr_pid);
     let pcr_discontinuities = pcr.discontinuities(parsed.pcr_pid);
@@ -212,6 +215,7 @@ fn probe(path: &Path) -> Result<FileEntry, String> {
         codecs: codecs.into_iter().collect(),
         klv_sets: klv_sets.into_iter().collect(),
         largest_au_bytes: largest_au,
+        feed_errors,
         probe_error,
     })
 }
@@ -247,6 +251,7 @@ fn panicked_entry(path: &Path) -> Result<FileEntry, String> {
         codecs: Vec::new(),
         klv_sets: Vec::new(),
         largest_au_bytes: 0,
+        feed_errors: 0,
         probe_error: Some("the probe panicked".to_string()),
     })
 }
