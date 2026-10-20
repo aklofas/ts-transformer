@@ -101,6 +101,9 @@ fn hand_built(pcr_marks: &[(u16, u64)]) -> (Vec<u8>, u16) {
     let pcr_pid = probe.pcr_pid.unwrap();
     let mut out = Vec::new();
     // The generator opens with the PAT then the PMT.
+    let pid_of = |k: usize| (u16::from(src[k * 188 + 1] & 0x1F) << 8) | u16::from(src[k * 188 + 2]);
+    assert_eq!(pid_of(0), 0, "first packet is the PAT");
+    assert_eq!(probe.pmt_pid, Some(pid_of(1)), "second packet is the PMT");
     out.extend_from_slice(&src[..188 * 2]);
     for (i, (pid, base)) in pcr_marks.iter().enumerate() {
         let mut p = [0xFFu8; 188];
@@ -137,15 +140,17 @@ fn a_pcr_reset_and_a_33_bit_wrap_still_cover_the_stream_once() {
     assert!(bytes.len() > probe.len());
     let pacer = PcrPacer::new(&bytes, None).unwrap();
     assert_eq!(joined(&pacer), bytes);
+    // Steps: 3 x 90 000, a reset (0), the wrap-bound step, then 90 000 across the wrap.
+    let ticks = (1u64 << 33) + 80_000;
+    assert!((pacer.total_seconds() - ticks as f64 / 90_000.0).abs() < 1e-3);
 }
 
 #[test]
-fn a_misaligned_start_paces_and_keeps_the_leading_bytes_in_the_first_chunk() {
+fn a_misaligned_start_paces_and_starts_at_the_first_full_packet() {
     let bytes = gen_profile_bytes("baseline", 2.0);
     let pacer = PcrPacer::new(&bytes[100..], None).unwrap();
-    // The 88 bytes before the first full packet ride with the first chunk,
-    // so the chunks still concatenate to the whole slice.
-    assert_eq!(joined(&pacer), bytes[100..]);
+    // The 88 bytes before the first full packet are never sent.
+    assert_eq!(joined(&pacer), bytes[188..]);
     assert!(pacer.total_seconds() > 1.0);
 }
 
@@ -154,6 +159,7 @@ fn pcrs_on_two_pids_pace_on_the_declared_one() {
     let (_, pid) = hand_built(&[]);
     let other = 0x1FF0;
     let marks = [
+        (other, 1_000_000),
         (pid, 0),
         (other, 5_000_000),
         (pid, 90_000),
