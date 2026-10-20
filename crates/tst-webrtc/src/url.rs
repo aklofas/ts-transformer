@@ -168,14 +168,14 @@ pub const URL_KEYS: &[QueryKey<WhepUrl>] = &[
         "cert",
         &[],
         "Server certificate",
-        "PEM file path; required by `wheps`",
+        "PEM file path; a `wheps` server",
         set_cert,
     ),
     QueryKey::new(
         "key",
         &[],
         "Server private key",
-        "PEM file path; required by `wheps`",
+        "PEM file path; a `wheps` server",
         set_key,
     ),
 ];

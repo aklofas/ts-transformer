@@ -3042,6 +3042,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "str0m",
+ "subtle",
  "tempfile",
  "thiserror",
  "tracing",

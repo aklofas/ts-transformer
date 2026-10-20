@@ -32,6 +32,8 @@ tracing = { workspace = true }
 # AWS_LC_SYS_PREBUILT_NASM=1 in the CI environment is the fallback.
 str0m = { version = "0.24", default-features = false, features = ["rust-crypto"] }
 getrandom = "0.4"
+# Constant-time comparison of the bearer token.
+subtle = "2"
 
 [dependencies.rustls]
 version          = "0.23"

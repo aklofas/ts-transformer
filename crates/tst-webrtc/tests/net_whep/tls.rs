@@ -131,3 +131,41 @@ fn the_bearer_token_is_enforced_over_tls() {
     assert_eq!(delete, 200);
     assert_eq!(srv.stats().sessions_rejected_auth, 3);
 }
+
+/// A good TLS post is answered 201 and its viewer connects while `held`
+/// is still open.
+fn good_post_succeeds_while_open(srv: &WhepServer, certs: &SelfSignedCert, held: &TcpStream) {
+    let _ = held;
+    let mut v = TestViewer::new();
+    let offer = v.offer(true);
+    let (status, _, answer) =
+        whep_post_tls(srv.local_addr(), &certs.root_pem, "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    v.accept_answer(&answer);
+    assert!(
+        v.pump(|v| v.connected && v.dc_open, CONNECT),
+        "{}",
+        v.trace()
+    );
+}
+
+#[test]
+fn a_client_that_connects_and_never_writes_does_not_block_the_next_post() {
+    let certs = SelfSignedCert::generate();
+    let srv = WhepServer::bind(&certs.url("")).unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let idle = TcpStream::connect(srv.local_addr()).unwrap();
+    good_post_succeeds_while_open(&srv, &certs, &idle);
+}
+
+#[test]
+fn a_client_that_stalls_inside_the_client_hello_does_not_block_the_next_post() {
+    let certs = SelfSignedCert::generate();
+    let srv = WhepServer::bind(&certs.url("")).unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    // The first five bytes of a TLS record: handshake type, version, a
+    // length that promises more than is sent.
+    let mut stalled = TcpStream::connect(srv.local_addr()).unwrap();
+    stalled.write_all(&[0x16, 0x03, 0x01, 0x02, 0x00]).unwrap();
+    good_post_succeeds_while_open(&srv, &certs, &stalled);
+}
