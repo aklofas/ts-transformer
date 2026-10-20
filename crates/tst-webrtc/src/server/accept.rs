@@ -50,16 +50,72 @@ const RETRY_AFTER_CAP_SECS: &str = "5";
 enum Conn {
     Plain(TcpStream),
     #[cfg(feature = "tls")]
-    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, TcpStream>>),
+    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, BoundedSock>>),
+}
+
+/// The TCP socket under a rustls session, which enforces the read deadline
+/// and the shutdown flag itself.
+///
+/// One `StreamOwned::read` can loop over many socket reads: through the
+/// whole handshake, and after it until a full record decrypts. A client
+/// that sends one byte at a time keeps that loop going, so the checks
+/// between reads in [`read_some`] alone would never run. Here every socket
+/// read waits at most [`READ_SLICE`], and fails with
+/// [`ErrorKind::TimedOut`] once `deadline` has passed or the server is
+/// stopping, which ends rustls's loop with an error.
+#[cfg(feature = "tls")]
+struct BoundedSock {
+    tcp: TcpStream,
+    /// When reading must stop: the request deadline, or the end of the
+    /// linger. Set by the reader before each phase.
+    deadline: Instant,
+    shared: Arc<Shared>,
+}
+
+#[cfg(feature = "tls")]
+impl Read for BoundedSock {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.shared.shutdown.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                ErrorKind::TimedOut,
+                "the server is stopping",
+            ));
+        }
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(
+                ErrorKind::TimedOut,
+                "the read deadline passed",
+            ));
+        }
+        self.tcp.set_read_timeout(Some(left.min(READ_SLICE)))?;
+        self.tcp.read(buf)
+    }
+}
+
+#[cfg(feature = "tls")]
+impl Write for BoundedSock {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.tcp.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.tcp.flush()
+    }
 }
 
 impl Conn {
-    fn new(stream: TcpStream, shared: &Shared) -> io::Result<Self> {
+    fn new(stream: TcpStream, shared: &Arc<Shared>) -> io::Result<Self> {
         #[cfg(feature = "tls")]
         if let Some(config) = &shared.tls {
             let conn = rustls::ServerConnection::new(Arc::clone(config))
                 .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e))?;
-            return Ok(Self::Tls(Box::new(rustls::StreamOwned::new(conn, stream))));
+            let sock = BoundedSock {
+                tcp: stream,
+                deadline: Instant::now() + REQUEST_DEADLINE,
+                shared: Arc::clone(shared),
+            };
+            return Ok(Self::Tls(Box::new(rustls::StreamOwned::new(conn, sock))));
         }
         let _ = shared;
         Ok(Self::Plain(stream))
@@ -69,8 +125,18 @@ impl Conn {
         match self {
             Self::Plain(s) => s,
             #[cfg(feature = "tls")]
-            Self::Tls(s) => &s.sock,
+            Self::Tls(s) => &s.sock.tcp,
         }
+    }
+
+    /// Sets when reads must stop. A plain socket is bounded by
+    /// [`read_some`]'s own checks; this bounds the reads rustls makes.
+    fn set_deadline(&mut self, deadline: Instant) {
+        #[cfg(feature = "tls")]
+        if let Self::Tls(s) = self {
+            s.sock.deadline = deadline;
+        }
+        let _ = deadline;
     }
 
     /// Tells a TLS peer the response is complete, so it does not take the
@@ -165,7 +231,7 @@ fn next_backoff(previous: Option<Duration>) -> Duration {
 /// stops the server, and never makes the loop spin: each failure waits
 /// [`next_backoff`] before the next attempt, checking the shutdown flag
 /// every 50 ms, and a successful accept resets the wait.
-fn run(listener: &TcpListener, shared: &Shared) {
+fn run(listener: &TcpListener, shared: &Arc<Shared>) {
     let mut backoff = None;
     loop {
         let accepted = listener.accept();
@@ -198,7 +264,7 @@ fn run(listener: &TcpListener, shared: &Shared) {
 }
 
 /// Serves one connection: reads the request, answers it, closes.
-fn serve(stream: TcpStream, peer: SocketAddr, shared: &Shared) {
+fn serve(stream: TcpStream, peer: SocketAddr, shared: &Arc<Shared>) {
     if let Err(e) = stream.set_write_timeout(Some(WRITE_TIMEOUT)) {
         debug!(%peer, error = %e, "WHEP connection: set_write_timeout failed");
     }
@@ -231,6 +297,7 @@ fn serve(stream: TcpStream, peer: SocketAddr, shared: &Shared) {
 fn linger(stream: &mut Conn) {
     let _ = stream.sock().shutdown(Shutdown::Write);
     let end = Instant::now() + LINGER;
+    stream.set_deadline(end);
     let mut sink = [0u8; 4096];
     let mut left = LINGER_BYTES;
     while left > 0 {
@@ -239,8 +306,12 @@ fn linger(stream: &mut Conn) {
             return;
         }
         match stream.read(&mut sink) {
-            Ok(0) | Err(_) => return,
+            Ok(0) => return,
             Ok(n) => left = left.saturating_sub(n),
+            // A TLS read gives up after one slice; the loop waits out the
+            // rest of the linger.
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(_) => return,
         }
     }
 }
@@ -256,6 +327,7 @@ enum ReadFailure {
 /// Reads a request head and its body within [`REQUEST_DEADLINE`].
 fn read_request(stream: &mut Conn, shared: &Shared) -> Result<(Request, Vec<u8>), ReadFailure> {
     let deadline = Instant::now() + REQUEST_DEADLINE;
+    stream.set_deadline(deadline);
     let mut buf = Vec::with_capacity(4096);
     let (request, head_len) = loop {
         match http::parse_head(&buf) {
