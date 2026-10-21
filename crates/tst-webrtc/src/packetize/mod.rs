@@ -20,10 +20,10 @@ use crate::VideoCodec;
 
 /// The RTP payload size to use when nothing else is known: 1180 bytes.
 /// With the 12-byte RTP header, str0m's header extensions (up to 16 bytes:
-/// mid, abs-send-time, transport-cc) and the SRTP tag (up to 16 bytes) the
-/// RTP packet is at most 1226 bytes, which fits the 1280-byte IPv6 minimum
-/// MTU with the IP and UDP headers; 1200 bytes of payload did not leave
-/// that room.
+/// mid, abs-send-time, transport-cc), the 2-byte original sequence number
+/// of a retransmission and the SRTP tag (up to 16 bytes) the RTP packet is
+/// at most 1226 bytes, which fits the 1280-byte IPv6 minimum MTU with the
+/// IP and UDP headers; 1200 bytes of payload did not leave that room.
 pub const DEFAULT_MTU_PAYLOAD: usize = 1180;
 
 /// The smallest RTP payload size a [`Packetizer`] uses. A smaller
