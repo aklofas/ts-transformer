@@ -32,6 +32,9 @@ google-chrome --headless=new --disable-gpu --no-sandbox \
 
 and the SDP was taken verbatim from the `CONSOLE` line on stderr. The ICE
 credentials and DTLS fingerprint belong to a throwaway peer connection.
+A re-capture creates a plain data channel with a label other than `klv`
+(`pc.createDataChannel('viewer')`): the server opens the `klv` channel
+itself, and the offer only needs the `m=application` section.
 Headless Chrome on Linux offers no H.265 payload.
 
 ## Reconstructed offers
