@@ -75,8 +75,9 @@ merge commit, and the qualification run checks that nothing under
    - **every internal path-dependency's pinned `version = "X.Y.Z"` key** —
      `crates/{srt-sys,rist-sys,tst-pipeline,tst-srt,tst-rist,tst-udp,tst-tcp,
      tst-hls,tst-rtp,tst-webrtc}/Cargo.toml` (21 keys at 0.9.0,
-     dev-dependencies included; the rail's OK line prints the number it compared). Miss one of
-     these and the crates.io ordered publish below fails at layer 2 — after
+     dev-dependencies included; the rail's OK line prints the number it
+     compared). Miss one of these and the crates.io ordered publish below
+     fails at layer 2 — after
      the irreversible layer-1 publish already landed. `release-version-
      consistency.sh` now asserts these match the workspace version (see
      `RVC_DEP_TOMLS` in the script), so this step is CI-enforced, not just
