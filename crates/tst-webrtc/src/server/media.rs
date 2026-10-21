@@ -691,7 +691,7 @@ impl Media {
         // offer's data-channel section brings up, so any viewer receives
         // it by label and apply() has no offer to return.
         let mut api = rtc.sdp_api();
-        api.add_channel(KLV_LABEL.into());
+        let klv_channel = api.add_channel(KLV_LABEL.into());
         if let Some((renegotiation, _)) = api.apply() {
             // str0m offering a data-channel section means the offer had
             // none: the session has no SCTP transport, so the channel never
@@ -702,6 +702,7 @@ impl Media {
         let mut v = Viewer::new(id.clone(), state, rtc, random_seq(), now);
         v.mid = Some(mid);
         v.pt = Some(pt);
+        v.klv_channel = Some(klv_channel);
         v.audio = audio;
         v.audio_seq = random_seq();
         drain_rtc(&mut v, &self.socket, now);
@@ -914,8 +915,10 @@ fn handle_event(v: &mut Viewer, ev: Event, now: Instant) {
             }
         }
         Event::IceConnectionStateChange(s) => v.set_ice(ice_state(s), now),
-        Event::ChannelOpen(id, label) if label == KLV_LABEL => v.dc = Some(id),
-        Event::ChannelClose(id) if v.dc == Some(id) => v.dc = None,
+        // The viewer's own channels open here too, whatever their labels:
+        // only the channel the server added is the klv channel.
+        Event::ChannelOpen(id, _) if Some(id) == v.klv_channel => v.dc = Some(id),
+        Event::ChannelClose(id) if Some(id) == v.klv_channel => v.dc = None,
         Event::KeyframeRequest(_) => {
             v.stats.plis += 1;
             bump(&v.mount_state.stats.plis_received);

@@ -97,6 +97,10 @@ pub(crate) struct Viewer {
     /// `true` until the first keyframe is queued; frames before it are
     /// skipped, as the viewer could not decode them.
     pub(crate) waiting_keyframe: bool,
+    /// The `klv` data channel the server added to the session; it is the
+    /// one gated on when a channel opens, so a channel the viewer labels
+    /// `klv` is never taken for it.
+    pub(crate) klv_channel: Option<ChannelId>,
     /// The `klv` data channel, once open.
     pub(crate) dc: Option<ChannelId>,
     /// When the session was created.
@@ -148,6 +152,7 @@ impl Viewer {
             ssrc_known: false,
             connected: false,
             waiting_keyframe: true,
+            klv_channel: None,
             dc: None,
             created: now,
             connected_at: None,
