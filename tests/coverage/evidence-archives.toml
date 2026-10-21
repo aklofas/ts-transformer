@@ -25,6 +25,15 @@ date = "2026-10-09"
 expected_duration_s = 3600
 
 [[archive]]
+id = "soak-whep-2026-10-21"
+kind = "soak"
+tree = "a5c0e9d7a6afe70cd79351dca7604d322150382e"
+overall_pass = true
+note = "The first one-hour run with the whep leg: six browser connections, every verdict on every leg passed, and no KLV record was seen on one carriage only; the RSS slopes are provisional below 72 hours."
+date = "2026-10-21"
+expected_duration_s = 3600
+
+[[archive]]
 id = "stress-2026-10-02"
 kind = "stress"
 tree = "a647024592990feb9a74e1cb26d72339e498b417"

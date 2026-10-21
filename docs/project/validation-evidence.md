@@ -334,7 +334,9 @@ runs beside them: an external RTSP publisher pushing into the RTSP server's
 publish mount, ending and re-ANNOUNCEing on a schedule. It is described
 under "Publisher role" below, with the rest of that role's evidence. A
 fourth leg, `rtsp-publish-es`, publishes elementary streams into a second
-mount; it is described after the runs table below.
+mount; it is described after the runs table below. Since 2026-10-21 a fifth
+leg, `whep`, serves a WebRTC mount to a headless browser that reconnects on
+a schedule; it is described under "WebRTC playback" below.
 
 The impairment itself changed shape on 2026-09-14 (see "The current soak
 shape" below), and the 0.7.0 release soak below runs it. The earlier
@@ -435,6 +437,7 @@ the release qualification accepts no shorter run.
 | `soak-run2-2026-08-05` | 2026-08-05 → 2026-08-08 | not recorded | none (it predates `soak-config.json`); ran 72 h | PASS | Fixed-impairment shape, Blocking mode; no source commit was recorded. Described under "The previous run" below. |
 | `soak-rc070-2026-10-04` | 2026-10-01 → 2026-10-04 | `e86dd9ea6d1a` | 259 200 s | `overall_pass=false` | The 0.7.0 release soak. The SRT leg passed every gating verdict; the RIST leg failed corruption attribution on harness defects. |
 | `soak-rtsp-publish-2026-10-08` | 2026-10-09 | `b6545e6004ae` | 3 600 s | `overall_pass=false` | The first one-hour run with the `rtsp-publish` leg, which passed every verdict it owns; the three failures were harness defects on the SRT leg's receiver. |
+| `soak-whep-2026-10-21` | 2026-10-21 | `a5c0e9d7a6af` | 3 600 s | `overall_pass=true` | The first one-hour run with the `whep` leg (WebRTC playback to a reconnecting headless browser); every verdict on every leg passed. Described under "WebRTC playback" below. |
 
 The release qualification reads the same runs from
 `tests/coverage/evidence-archives.toml`, except `soak-run2-2026-08-05`, which
@@ -1008,6 +1011,80 @@ the declared digest. `publisher_generations_rtsp-publish` passes at 6 of
 supplied.
 
 The run's full artifact set is retained offline by the maintainer.
+
+## WebRTC playback
+
+The WebRTC playback server (`tst-webrtc`: a WHEP endpoint serving mounts
+fed with MPEG-TS or elementary streams, KLV carried both in H.264 SEI and
+on a data channel) is evidenced by the interop matrix's two `whep/*`
+browser cells (see "The transport + format interop matrix" above) and by
+the soak leg below.
+
+### Soak leg (`whep`)
+
+`soak.sh` runs a fifth leg beside SRT, RIST and the two publish legs.
+`tst-interop serve-whep` binds a WHEP server with one MP2T mount and serves
+the leg's profile for the whole run the way the `whep/chromium-sei-dc-klv`
+cell is served: the profile's KLV schedule muxed in-process and fed through
+`push_ts`, with a real H.264 GOP as the video. A viewer loop plays it with
+headless Chrome on the matrix's page, the reference player under
+`docs/webrtc/` loaded unmodified, one browser per `WHEP_RECONNECT_S` slot
+(600 s by default), each ended by its own timeout 3 s before the slot ends.
+The server is never told: a browser leaving is a session it reaps, a browser
+arriving a session it starts at the next keyframe. The leg is designed as
+follows:
+
+- **Reconnects counted on both sides.** The run declares the number of
+  browser connections before launch (`run / WHEP_RECONNECT_S`, at least
+  two). The `whep_reconnects_observed_whep` verdict requires the viewer
+  loop's report to list exactly that many connections on the declared slot
+  AND the server's own `sessions_total` to equal it.
+- **Playback continuous.** The page prints the decoded frame count once a
+  second. `whep_frames_continuous_whep` requires every connection to have
+  been ended by its own timeout, to have reported no error, to decode its
+  first frame within 5 samples and never to go more than 2 samples without
+  the count rising: no gap over 2 s except at a reconnect.
+- **Both KLV carriages agree.** With the player's de-duplication off, every
+  record arrives from the SEI and from the data channel. The page prints one
+  digest per record and carriage; `whep_klv_sei_equals_dc_whep` requires
+  the two sets to be equal in every connection and neither to be empty. A
+  record on one carriage only is allowed among the first 3 records of its
+  carriage (the data channel opens a moment after the session is
+  connected) or the last 2 (the browser is ended while the server pushes),
+  and such records are counted; a record missing anywhere else fails.
+- **Declared like the other legs.** `soak-config.json` declares the leg's
+  profile, mount kind, viewer command, slot and connection count before
+  any worker launches; `profile_declared_whep` holds the server's counters
+  to the profile and mount kind. The leg has no proxy and no corruption
+  tap, so those verdicts read "not applicable" with the reason. RSS is
+  sampled for `serve-whep` and for the viewer loop's shell; the browser's
+  own memory is not sampled, as a publish leg's tool is not.
+
+The first one-hour run, on 2026-10-21 from 06:20:40Z to 07:21Z UTC, used
+the default 600-second slot: six connections, five reconnects. The SRT and
+RIST legs drew `audio` and `av1-klv-b` from seed 1 and both publish legs
+ran as in their own one-hour run. It was built from the tree
+`v0.8.0-458-ga5c0e9d7` with every verdict this section describes in place.
+
+**The run's harness verdict is `overall_pass=true`: every leg passed every
+gating verdict.** Of its 93 verdicts, 79 are gating PASS, 0 are FAIL and
+14 are provisional PASS (the RSS slopes and the two reconnect counts,
+provisional by design below 72 h). The whep leg's figures, from the run's
+`soak-results.json`:
+
+| Measure | Result |
+| --- | --- |
+| Browser connections | 6 on the viewer's side, 6 sessions on the server's, 6 declared; every browser ended by its own timeout |
+| Frames decoded | 107 206 over 6 connections of 597 s; first frame on the first sample of every connection; longest stall 0 s |
+| KLV records seen | 35 788 via SEI, 35 788 via the data channel, equal sets in every connection; 0 records on one carriage only; 0 copies disagreeing on (PTS, RTP timestamp) |
+| Served | 107 999 frames (3600 keyframes), 36 000 records, 36 000 SEI insertions, 0 data-channel messages dropped, 0 packets dropped for a full queue, 0 PLIs, 0 NACKs |
+| Errors | 0 page errors, 0 browser console errors, 0 malformed or unrouted datagrams |
+| RSS slope, `serve-whep` | 417.7 KiB/h over 98 samples (provisional below 72 h; 18.3 MB at the end of the warm-up, 18.9 MB at the end) |
+| RSS slope, viewer loop | 16.2 KiB/h over 98 samples (provisional below 72 h) |
+
+The 212 records the viewer did not see fell in the five 3-second relaunch
+gaps and each browser's connect time, when no browser was connected. The
+run's full artifact set is retained offline by the maintainer.
 
 <!-- BEGIN GENERATED by scripts/gen/qualification.sh (evidence); do not edit -->
 ## Evidence for the main at 7ee7db98 tree
