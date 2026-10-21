@@ -95,14 +95,14 @@ Expected output (versions will match your build):
 ```text
 Package version (matches Cargo.toml):
   TST_VERSION_MAJOR          runtime=0  header=0  [OK]
-  TST_VERSION_MINOR          runtime=7  header=7  [OK]
+  TST_VERSION_MINOR          runtime=9  header=9  [OK]
   TST_VERSION_PATCH          runtime=0  header=0  [OK]
-  packed (M<<16|m<<8|p)      runtime=1792  header=1792  [OK]
+  packed (M<<16|m<<8|p)      runtime=2304  header=2304  [OK]
   version string             runtime="0.9.0"
 
 ABI contract version (breaking-change cadence):
   TST_ABI_VERSION_MAJOR      runtime=0  header=0  [OK]
-  TST_ABI_VERSION_MINOR      runtime=23  header=23  [OK]
+  TST_ABI_VERSION_MINOR      runtime=25  header=25  [OK]
 
 After tst_clear_last_error():
   tst_get_last_error()     = 0  (expect 0 = TST_E_SUCCESS)

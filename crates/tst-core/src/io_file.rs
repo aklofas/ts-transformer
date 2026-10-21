@@ -21,11 +21,10 @@
 //!
 //! 2. **Fallible streaming helpers** ([`TryDemuxFromFile`]) — iterate
 //!    `Item = io::Result<DemuxEvent>`. On any read or demux-feed
-//!    error, the iterator yields `Some(Err(_))` once and then `None`
-//!    forever. Trailing events already buffered before the error are
-//!    NOT drained — the iterator terminates immediately after the
-//!    error so the caller can act on it without confusing it with
-//!    later events.
+//!    error, the iterator first yields the events already queued
+//!    before the error, then yields `Some(Err(_))` once and then
+//!    `None` forever, so the caller sees every event that preceded
+//!    the failure and then the failure itself.
 //!
 //! The matching Python entry point
 //! [`tstrans.io.parse_file`](https://github.com/aklofas/ts-transformer/blob/main/bindings/python/python/tstrans/io.py)

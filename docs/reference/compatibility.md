@@ -809,8 +809,8 @@ channel.
 `tst-webrtc` adds the first aws-lc build to the tree on all four Tier 1
 platforms (every Rust build with `tst-webrtc`), to the JVM JAR and to the
 Python wheels, whose `webrtc` feature is on by default; the C library does
-not link it. The Windows MSVC build uses
-the crate's prebuilt NASM objects, so no NASM install is needed. TLS for
+not link it. The Windows MSVC build uses the crate's prebuilt NASM
+objects, so no NASM install is needed. TLS for
 `wheps://`, like every other `tls` feature in the workspace, stays on
 rustls with the `ring` provider; aws-lc backs only str0m's DTLS certificate
 generation.

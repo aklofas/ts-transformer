@@ -115,7 +115,7 @@ SKIPPED — measured at realistic access-unit sizes**
 `workflow_dispatch`, 2026-10-21 at `907adb30`, shape
 `full-161`, empty allowed-skip list, no stale expectation). The count is `[census] full_cells` in `scripts/interop/expectations.toml`; it moved from 159 to 161 when the two `whep/*` browser cells (headless Chrome playing a WHEP mount with the reference player, see `scripts/interop/README.md`) were declared; the 159-cell figures below are the earlier runs. The two cells
 added on 2026-10-08 both pass, as they did on their first CI run
-([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566), 2026-10-08 at `945911d4`, the same census). Each has a GStreamer `rtspclientsink`
+([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566), 2026-10-08 at `945911d4`, the 159-cell census of that date). Each has a GStreamer `rtspclientsink`
 publishing into `tst-interop recv`'s RTSP publish mount:
 `rtsp-publish/gst-push-mp2t` (MPEG-TS over RTP, byte-identical end to
 end) and `rtsp-publish/gst-push-es-klv` (H.264 + KLV as two RTP tracks,
@@ -177,17 +177,22 @@ local dev-box state, no vendored corpus) via
 weekly on a schedule (Mondays 05:00 UTC), on every `workflow_dispatch`, and
 on any PR touching `crates/tst-interop/`, `scripts/interop/`,
 `crates/tst-core/src/mpegts/`, the RTSP client and server
-(`crates/tst-rtp/src/rtsp/`), or the workflow file itself. The verified
-run cited above is
+(`crates/tst-rtp/src/rtsp/`), or the workflow file itself. The current
+census run cited above is
+[run 39687057760](https://github.com/aklofas/ts-transformer/actions/runs/39687057760)
+(the 2026-10-21 `workflow_dispatch` at `907adb30`), which completed
+`success` with the census-completeness assert, the 161 / 96 / 0 / 65 / 0
+census, and 161 per-cell result records with zero `FAIL` and no expectation
+drift: all 65 documented-gap rows reproduced. The previous verified run, at
+159 cells, was
 [run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134)
-(the 2026-10-09 `workflow_dispatch` at `41ed12e4`), which completed
-`success` with the census-completeness assert, the 159 / 94 / 0 / 65 / 0
-census of that date, and 159 per-cell result records with zero `FAIL` and no
+(the 2026-10-09 `workflow_dispatch` at `41ed12e4`), with the 159 / 94 / 0 /
+65 / 0 census and 159 per-cell result records with zero `FAIL` and no
 expectation drift: all 65 documented-gap rows reproduced. The first run
 with the RTSP publisher cells,
 [run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)
-(2026-10-08 at `945911d4`), reached the same census. The first public run at realistic
-access-unit sizes,
+(2026-10-08 at `945911d4`), reached the 159-cell census. The first public
+run at realistic access-unit sizes,
 [run 34830892357](https://github.com/aklofas/ts-transformer/actions/runs/34830892357)
 (2026-09-14 at `dc912eea`, the 157 / 92 / 0 / 65 / 0 census), the last
 compact-size run,
@@ -1270,10 +1275,11 @@ read margin and the version numbers. Evidence on `c9cd8163`:
 The last library commit before the 0.9.0 version sweep is `9947bc28`, the
 merge of the WebRTC playback work. After it the tree changed only in
 `Cargo.lock` (tokio 1.54.1), the CI flake ledger, the version numbers, the
-CHANGELOG, and the removal of `DemuxFromFile` from `tst-core`. Evidence on
+CHANGELOG, the documentation, and the removal of `DemuxFromFile` from
+`tst-core`. Evidence on
 `907adb30`, the tree directly before that sweep:
 
-- the 161-cell interop census at 161 / 96 / 0 / 65 / 0 at realistic
+- the interop census at 161 / 96 / 0 / 65 / 0 at realistic
   access-unit sizes, including the two `whep/*` browser cells
   ([run 39687057760](https://github.com/aklofas/ts-transformer/actions/runs/39687057760),
   `workflow_dispatch`, 2026-10-21): `full-161` declared and produced, 0
@@ -1285,9 +1291,10 @@ CHANGELOG, and the removal of `DemuxFromFile` from `tst-core`. Evidence on
 - ClusterFuzzLite's scheduled batch of 2026-10-21 under AddressSanitizer,
   with its corpus prune and coverage report
   ([run 39543668790](https://github.com/aklofas/ts-transformer/actions/runs/39543668790)):
-  no crash. It ran on `c7d9cf52`, the merge of the third WebRTC change,
-  before the fourth and fifth WebRTC changes landed, so it does not cover
-  the final WebRTC code;
+  no crash. It ran on `c7d9cf52`, the merge of the WebRTC code
+  that precedes the browser-evidence, interop and soak-leg work and the
+  Python binding of WebRTC playback, so it does not cover the final WebRTC
+  code;
 - the one-hour WHEP soak, archive `soak-whep-2026-10-21`, listed in the
   runs table above.
 
