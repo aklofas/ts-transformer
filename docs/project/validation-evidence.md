@@ -1014,11 +1014,86 @@ The run's full artifact set is retained offline by the maintainer.
 
 ## WebRTC playback
 
-The WebRTC playback server (`tst-webrtc`: a WHEP endpoint serving mounts
-fed with MPEG-TS or elementary streams, KLV carried both in H.264 SEI and
-on a data channel) is evidenced by the interop matrix's two `whep/*`
-browser cells (see "The transport + format interop matrix" above) and by
-the soak leg below.
+`tst-webrtc`'s WHEP server serves mounts fed with MPEG-TS or elementary
+streams to browsers over WebRTC, with every KLV record carried both in the
+H.264 SEI of the frame it binds to and on a data channel (see the
+[WebRTC guide](/docs/guides/webrtc.md) and the
+[browser playback recipe](/docs/cookbook/sending/whep-browser-playback.md)).
+Three instruments cover it: two interop matrix cells that play a mount in
+a real headless browser with the reference player, three fuzz targets on
+the server's peer-facing parsers, and a soak leg in which the browser
+reconnects on a schedule for the whole run. Each is described below, with
+what it found.
+
+### Interop cells
+
+Both cells run Google Chrome headless (155.0.8059.39 on the dev box, the
+`ubuntu-latest` runner's Chrome 155) on `scripts/interop/whep-page.html`,
+which loads the reference player under `docs/webrtc/` unmodified by
+relative path with its de-duplication off, so every record arrives from
+both carriages and each carriage is proved on its own. The mount is served
+by `tst-interop serve-whep`: the profile's KLV schedule, which is the
+generator's exact record set, and a real 320x240 Constrained Baseline
+H.264 GOP as the video, because the generator's synthetic slices decode in
+no browser (Chrome logs "Failed to parse SPS NAL unit" and renders
+nothing, so a "video plays" oracle could never pass on them). The cells
+are declared in the census, which is 161 cells since they were added; the
+first runner census with them read 161 declared, 0 FAIL, 0 skipped
+([run 39547857032](https://github.com/aklofas/ts-transformer/actions/runs/39547857032)).
+
+- **`whep/chromium-sei-dc-klv`** serves an MP2T mount (the `push_ts` path a
+  muxed source takes) under `AudioPolicy::Drop`, so the browser's audio
+  section is answered with port 0. The cell's tier is `remux` (WebRTC is
+  not byte-transparent TS). Oracles: the set of KLV records seen in the SEI
+  equals the generator's set digest (`verify --file`'s `klv_set_sha256`),
+  the set seen on the data channel equals it too, each record's two copies
+  name the same (PTS, RTP timestamp) so the data-channel copy is bound to
+  the frame its SEI copy rides in, the decoded frame count (`FRAMES`,
+  `totalVideoFrames`) is above 0 within the first five seconds and rises
+  every second after that (the video is not black), no `AUDIO` line is
+  printed, and the page reports no error. Locally at `--seconds 10`: 100
+  of 100 records on each carriage, 239 of 240 frames decoded (the last
+  access unit stays in the mount's demuxer, documented on `push_ts`).
+- **`whep/chromium-opus-audio`** serves an elementary mount under
+  `AudioPolicy::PassthroughOpus`, pushed directly with one synthesized
+  20 ms Opus silence packet every 20 ms (the CELT silence frame libopus
+  emits, three bytes). The same oracles, plus the inbound audio packet
+  count (`AUDIO`, `packetsReceived`) rising (400 of 400 at 8 s, 0 audio
+  frames dropped on the mount) and the KLV PTS multiset equal to the
+  schedule's.
+
+**The cells found a player defect, fixed.** On their first run Chrome
+delivered every record on the data channel and none via SEI: an
+`RTCRtpScriptTransform` assigned inside `ontrack` on a plain
+`RTCPeerConnection` never receives a frame, although the worker starts.
+Six probe pages isolated it; the transform must be attached to the video
+receiver right after `addTransceiver`, before the offer is created, and
+that is what the shipped player now does. Before the fix both cells failed
+on exactly the SEI oracle (0 records); after it both pass. The cells also
+pin a library behaviour this release keeps: an MP2T mount carries PTS 0 on
+every async private-data KLV record, because the demuxer reports no PTS
+for a KLV PES without one; the data-channel copy names the bound frame's
+RTP timestamp, so playback is unaffected, and the deferred row "Async KLV
+PTS on MP2T mounts" names the change that would re-pin the cell.
+
+### Fuzz targets
+
+Three `cargo-fuzz` targets in `tst-webrtc` cover the server's peer-facing
+parsers. `tests/coverage/fuzz-targets.toml` lists all 40 targets in the
+workspace.
+
+| Target | Drives |
+| --- | --- |
+| `whep_http_request` | the signalling request: request line, headers, body framing and the request deadline's bounded read |
+| `whep_sdp_select` | SDP offer parsing and payload selection, seeded with the browser offers under `crates/tst-webrtc/tests/fixtures/offers/` |
+| `klv_sei_parse` | the KLV SEI payload (UUID, version, PTS, record) the reference player extracts from a frame |
+
+**A browser offer that gives one payload type two formats crashed the
+server, fixed.** The CI fuzz leg found that str0m asserts on an
+offer whose `rtx` payload names two codecs through `apt`, or that maps one
+payload number to different formats in two media sections, which ended the
+server's media thread. Such an offer is now answered with 400 before str0m
+sees it, with regression tests for both shapes.
 
 ### Soak leg (`whep`)
 
