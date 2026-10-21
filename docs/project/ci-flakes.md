@@ -56,6 +56,7 @@ the release that shipped the fix before touching the test.
 | Linux thread-count probe right after `join()` | unreleased (0.9.0) | the probe polls the task directory for up to 2 s |
 | ASan leg hangs with a thread parked in libsrt's receive | unreleased (0.9.0) | the exit test's child runs with `detect_leaks=0`; LeakSanitizer's stop-the-world does not return past a parked receive |
 | Windows prerequisites through the Chocolatey feed (`503`/`504` on ripgrep, sourceforge `522` through pkgconfiglite) | unreleased (0.9.0) | the Windows legs take ninja, meson and pkgconf from PyPI and ripgrep from its pinned GitHub release with a checksum; no workflow calls Chocolatey |
+| WebRTC `net_whep reaper::a_keyframe_larger_than_the_viewer_queue_still_starts_the_viewer` ends with `frames=1` after its 10 s pump (2026-10-21 run 39528332379, macOS no-default-features, and once locally) | unreleased (0.9.0) | the test pushed two oversize keyframes back to back; when both land in one media-thread pass the second meets a queue still holding the first and is dropped, which is the documented rule. The test now delivers the first before pushing the second, and a second test pins the one-pass outcome either way |
 
 A sanitizer-job red whose tree has not changed is compared against the
 nightly toolchain hash of the last green run before any code bisect; the
