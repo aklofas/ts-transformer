@@ -22,9 +22,10 @@
 //! `docs/cookbook/sending/whep-browser-playback.md`).
 //!
 //! `--advertise <ip>` is the address viewers send their media to: the one
-//! they can reach, which behind NAT is the public address. Without it a
-//! wildcard bind (`0.0.0.0`) offers viewers only the loopback address, so
-//! the stream plays on this host alone; every other deployment sets it.
+//! they can reach, which behind NAT is the public address. With a wildcard
+//! bind (the default `0.0.0.0`) and no `--advertise`, viewers are offered
+//! only the loopback address, so the stream plays on this host alone. A
+//! `--whep` URL that binds one specific address offers that address.
 //!
 //! # Feed it
 //!
@@ -61,6 +62,7 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use tst_core::CancelSlot;
 use tst_core::transport::{RecvTransport, TransportError};
 use tst_pipeline::{FactoryCancel, Receiver, ReceiverConfig, ReconnectPolicy, ShellErrorKind};
 use tst_srt::shells::managed_recv_transport_from_url;
@@ -87,7 +89,8 @@ fn usage() -> &'static str {
      \x20                  for the encoder (default srt://:9000?mode=listener)\n\
      --whep <url>       whep:// or wheps:// bind URL (default whep://0.0.0.0:8889)\n\
      --advertise <ip>   the address viewers send media to, added to the WHEP URL\n\
-     \x20                  as ?advertise=<ip>; without it only this host can play\n\
+     \x20                  as ?advertise=<ip>; with the default wildcard bind and\n\
+     \x20                  no --advertise, only this host can play\n\
      --h265             the stream's video is H.265 (default H.264)\n\
      \n\
      Viewers POST their WHEP offer to http://<host>:8889/live. Press Enter to stop."
@@ -153,9 +156,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // other defaults (audio dropped, KLV in SEI and on the data channel, a
     // 64 KiB SEI budget, a 2048-packet viewer queue) and swaps the kind:
     // an MP2T mount demultiplexes the stream itself. The video codec must
-    // match the stream's: an offer finds no payload for a mount whose codec
-    // the stream does not carry, and a stream of the other codec is counted
-    // in `demux_nonconformant` and dropped.
+    // match the stream's: a stream of the other codec is counted in
+    // `demux_nonconformant` and dropped, so viewers connect but never see
+    // a frame. A browser that cannot decode the mount's codec is refused
+    // with 406 (`sessions_rejected_codec`); the stream plays no part in
+    // that negotiation.
     let mut cfg = MountConfig::default();
     cfg.kind = MountKind::Mp2t;
     cfg.video = args.video;
@@ -171,21 +176,36 @@ fn main() -> Result<(), Box<dyn Error>> {
     //
     // A `CancelSlot` is a latched cancel target: whatever handle is
     // installed in it is fired by `cancel()`, and a handle installed after
-    // the cancel is fired at once. That latch is what lets one slot stop
-    // the receiver at every stage below: during the first accept (the SRT
-    // open installs the listener's wake handle itself), and once the
-    // transport is live (its cancel handle is installed by hand in (3)).
+    // the cancel is fired at once. Two slots are needed, because they have
+    // different owners:
     //
-    // A line on stdin fires the slot. EOF (stdin closed or `/dev/null`)
-    // does NOT: a backgrounded run then keeps going until it is killed.
-    let stop = Arc::new(FactoryCancel::new());
+    //   - `factory_slot` belongs to the managed receiver's factory. Every
+    //     accept (the first one and each re-accept after the encoder drops)
+    //     installs the listener's wake handle in it and clears it when the
+    //     accept returns. A handle this program put there would be
+    //     replaced by the next re-accept, so nothing else goes in it.
+    //   - `stop` belongs to this program. It receives the managed
+    //     transport's cancel handle once the open has returned (3), and
+    //     keeps it for the life of the receiver.
+    //
+    // Enter fires both. Before the first accept returns, `factory_slot`
+    // wakes it and the open reports `ExplicitClose`. Afterwards `stop`
+    // fires the managed cancel, which latches the receive loop, wakes a
+    // parked recv or re-accept and closes the live socket; its latch
+    // covers an Enter that lands between the open returning and the
+    // install. EOF on stdin (closed or `/dev/null`) fires nothing: a
+    // backgrounded run then keeps going until it is killed.
+    let factory_slot = Arc::new(FactoryCancel::new());
+    let stop = Arc::new(CancelSlot::new());
     {
+        let factory_slot = Arc::clone(&factory_slot);
         let stop = Arc::clone(&stop);
         thread::spawn(move || {
             let mut line = String::new();
             if let Ok(n) = std::io::stdin().lock().read_line(&mut line)
                 && n > 0
             {
+                factory_slot.cancel();
                 stop.cancel();
             }
         });
@@ -208,9 +228,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // for a listener, a failed re-open means the bind failed, and waiting
     // for a peer is not an attempt.
     //
-    // `stop` is handed in as the factory's cancel slot, which makes the
-    // first accept reachable from the stdin thread: Enter before any
-    // encoder arrives returns `ExplicitClose` here instead of parking
+    // `factory_slot` is handed in as the factory's cancel slot, which
+    // makes the first accept reachable from the stdin thread: Enter before
+    // any encoder arrives returns `ExplicitClose` here instead of parking
     // forever.
     let url = SrtUrl::parse(&args.srt_url)?;
     println!(
@@ -220,7 +240,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let managed = match managed_recv_transport_from_url(
         &url,
         ReconnectPolicy::default(),
-        Arc::clone(&stop),
+        Arc::clone(&factory_slot),
     ) {
         Ok(t) => t,
         Err(SrtError::Transport(TransportError::ExplicitClose)) => {
@@ -234,8 +254,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // The observers are taken BEFORE the transport moves into the shell,
     // the way the bindings do it. The cancel handle latches the close,
     // wakes a parked re-accept and closes the live socket, all from any
-    // thread; installing it in the slot routes a later Enter to it (or
-    // fires it now if Enter already happened during the accept). The
+    // thread; installing it in `stop` routes a later Enter to it, or
+    // fires it now if Enter already happened during the accept. The
     // reconnect counter tells the loop when the socket was replaced.
     let cancel = managed
         .cancel_handle()
@@ -269,10 +289,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let outcome = loop {
         match rx.next_packet() {
             Ok(pkt) => {
-                // A replaced socket means the bytes buffered from the old
-                // one are from before the gap; drop them so the syncer
-                // re-locks on the new connection's own bytes. The mount's
-                // demuxer handles the continuity gap it then sees.
+                // The socket was replaced during this call. The syncer
+                // now holds the old connection's tail and the new one's
+                // first message (this packet among them); `reset_sync`
+                // drops both, by choice, so the old tail never enters the
+                // new stream's demux. The mount recovers at the next
+                // PAT/PMT and keyframe, which it waits for anyway. The
+                // pending batch is old-connection bytes and goes too.
                 let n = reconnects.load(Ordering::Acquire);
                 if n != seen_reconnects {
                     seen_reconnects = n;
@@ -306,8 +329,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Whatever was batched is still worth pushing: the demuxer may be able
     // to complete an access unit from it.
     if !batch.is_empty() {
-        // The mount is only ever closed by `stop()` below, so a `Closed`
-        // here cannot happen; the one other error is a wrong mount kind.
+        // `Closed` should not happen before `stop()` below runs; if it
+        // does, `?` returns and `Drop` still stops the server.
         mount.push_ts(&batch)?;
     }
 
