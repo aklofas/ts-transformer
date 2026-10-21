@@ -6,7 +6,7 @@
 // timestamp, the record's 90 kHz PTS as a BigInt, the KLV bytes, and
 // "sei" or "dc".
 
-export const PENDING_FRAMES_MAX = 64; // backstop for frames never painted
+export const PENDING_FRAMES_MAX = 64; // backstop: record-bearing frames never painted (about 6 s at 10 Hz KLV on 30 fps video)
 const SEEN_KEYS_MAX = 4096; // dedupe memory
 
 /**
@@ -42,7 +42,8 @@ export function fnv1a(bytes) {
  * waiting record up to that frame is emitted, oldest frame first. The
  * server sends frames in presentation order, so a record whose own frame
  * is never painted goes out when a later frame is. As a backstop, when
- * more than `pendingMax` frames wait, the oldest is emitted. On-arrival
+ * more than `pendingMax` record-bearing frames wait, the oldest is emitted
+ * (about 6 s at 10 Hz KLV on 30 fps video). On-arrival
  * (`paintLocked: false`, or after `flushAll()`): a record is emitted as it
  * is pushed.
  *
@@ -97,7 +98,11 @@ export class KlvQueue {
 
   emit(rec) {
     if (this.dedupe) {
-      const k = `${rec.pts}:${rec.bytes.length}:${fnv1a(rec.bytes)}`;
+      // The bound frame is part of the key: on an MP2T mount every
+      // asynchronous record carries PTS 0, so without it a repeated set
+      // (a static security set, a producer's unchanged record) would be
+      // dropped on every later frame.
+      const k = `${rec.rtpTimestamp}:${rec.pts}:${rec.bytes.length}:${fnv1a(rec.bytes)}`;
       if (this.seen.has(k)) return;
       this.seen.add(k);
       if (this.seen.size > SEEN_KEYS_MAX) this.seen.delete(this.seen.values().next().value);

@@ -4,7 +4,7 @@
 
 > **Related:**
 > - [WebRTC playback guide](/docs/guides/webrtc.md): mounts, KLV carriage, the endpoint, timeouts, browser support
-> - [Reference player](/docs/webrtc/README.md): the three files the page loads
+> - [Reference player](/docs/webrtc/README.md): the four files the page loads
 > - [Send KLV over HLS to a browser (hls.js)](/docs/cookbook/sending/hls-klv-to-web.md): the segmented alternative
 
 The server side is a `WhepServer` with one mount; the page side is the
@@ -67,7 +67,7 @@ paces a `.ts` file instead of reading a socket.
 
 ## Page
 
-Serve the three files under [`/docs/webrtc/`](/docs/webrtc/README.md) next
+Serve the four files under [`/docs/webrtc/`](/docs/webrtc/README.md) next
 to your page and load the player as a module:
 
 ```html

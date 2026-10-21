@@ -33,7 +33,7 @@ The crate is `tst-webrtc` (feature `tls`, on by default, for `wheps://`).
 The JVM binding exposes it as `org.tstrans.webrtc`
 ([JVM guide](/docs/languages/jvm.md#webrtc-playback-orgtstranswebrtc)). The
 Python and C bindings do not expose it in this release. The browser side
-is a reference player, three plain ES modules under
+is a reference player, four plain ES modules under
 [`/docs/webrtc/`](/docs/webrtc/README.md).
 
 ## Quickstart (Rust)
@@ -123,9 +123,9 @@ record to a callback:
 PTS as a BigInt (0 for a record an MP2T mount took from a KLV PES without
 a PTS, see "KLV carriage"), the KLV bytes as pushed, `"sei"` or `"dc"` for
 the carriage, and the RTP timestamp of the frame the record is bound to. The
-three files under [`/docs/webrtc/`](/docs/webrtc/README.md) are served as
-static files from any web server; the player imports its worker and the
-SEI extractor by relative URL, so they stay in one directory. The KLV guide
+four files under [`/docs/webrtc/`](/docs/webrtc/README.md) are served as
+static files from any web server; the player imports its worker, the SEI
+extractor and `whep-klv.js` by relative URL, so they stay in one directory. The KLV guide
 covers what to do with the bytes ([decoding ST 0601](/docs/guides/klv.md)).
 
 Two rules follow from the browser, not from the server:
@@ -286,10 +286,14 @@ order, so when a frame
 is painted every record bound to it or to an earlier frame is emitted: a
 record whose own frame is not painted (dropped by the decoder, or a paint
 callback the browser skipped) goes out with the next painted frame, or at
-most 64 pending frames later.
+most 64 record-bearing frames later (about 6 s at 10 Hz KLV on 30 fps
+video).
 
 When both carriages deliver one record, the player emits it once: the key
-is the KLV PTS plus a hash of the record bytes, and the SEI copy is
+is the bound frame's RTP timestamp, the KLV PTS, the record length and a
+hash of the record bytes (on an MP2T mount every asynchronous record
+carries PTS 0, so the frame is what keeps a repeated record on a later
+frame from being dropped), and the SEI copy is
 preferred (in the paint-locked path the SEI copy is emitted first; on
 arrival the first copy wins). Pass `dedupe: false` to receive both copies,
 each with its `via`.

@@ -809,7 +809,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `crates/tst-interop`'s synthetic profile set with `scripts/interop/
   run-matrix.sh` cells (ffmpeg `-c:s webvtt` extraction, hls.js /
   mediamtx playback; `ccextractor` / ffmpeg closed-caption decode) — the
-  matrix has 12 profiles and 159 cells, none carrying a subtitle or
+  matrix has 12 profiles and 161 cells, none carrying a subtitle or
   caption stream; a consumer emits WebVTT-in-TS to a third-party player;
   an ATSC-ecosystem consumer asks (also the trigger for the ST 334-2 CDP
   variant); or a consumer reports a real-world bug the synthetic suite

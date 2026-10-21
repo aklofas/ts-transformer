@@ -257,6 +257,14 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/api-stability-coverage.sh
 
+      - name: Reference WHEP player unit tests (node)
+        # docs/webrtc/whep-klv.js and whep-sei-extract.js are pure modules.
+        # The browser cells (interop.yml) load the player only with its
+        # de-duplication off, so the default path is covered here alone.
+        # Node ships on the ubuntu-latest image; no setup step.
+        if: matrix.name == 'linux-x86_64'
+        run: node --version && node --test 'docs/webrtc/test/*.test.js'
+
       - name: check-close-contract-presence
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/close-contract-presence.sh
