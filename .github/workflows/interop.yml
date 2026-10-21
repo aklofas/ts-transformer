@@ -307,5 +307,6 @@ jobs:
             ${{ runner.temp }}/interop/work/*-recv.json
             ${{ runner.temp }}/interop/work/*-whep.json
             ${{ runner.temp }}/interop/work/*-console.txt
+            ${{ runner.temp }}/interop/work/*-chrome.stderr.gz
           retention-days: 90
           if-no-files-found: warn
