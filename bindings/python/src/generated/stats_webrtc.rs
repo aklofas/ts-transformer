@@ -122,8 +122,8 @@ pub struct MountStats {
     /// without a DELETE keeps its session, and these sends, until the
     /// disconnect grace closes it (`sessions_reaped_disconnected`).
     pub klv_dc_messages_sent: u64,
-    /// KLV records refused because they exceed the data-channel message
-    /// limit (`KLV_DC_LIMIT`).
+    /// KLV records refused because they exceed the 256 KiB data-channel
+    /// message limit.
     pub klv_dc_dropped_oversize: u64,
     /// KLV data-channel messages dropped on the way to viewers: once per
     /// message when the server's media queue was full or the frame it is

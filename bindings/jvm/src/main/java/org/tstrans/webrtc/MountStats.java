@@ -27,8 +27,8 @@ package org.tstrans.webrtc;
  * @param klvDcMessagesSent KLV messages sent on viewers' data channels. A viewer that went away
  *     without a DELETE keeps its session, and these sends, until the disconnect grace closes it
  *     ({@code sessions_reaped_disconnected}).
- * @param klvDcDroppedOversize KLV records refused because they exceed the data-channel message
- *     limit ({@code KLV_DC_LIMIT}).
+ * @param klvDcDroppedOversize KLV records refused because they exceed the 256 KiB data-channel
+ *     message limit.
  * @param klvDcDroppedViewer KLV data-channel messages dropped on the way to viewers: once per
  *     message when the server's media queue was full or the frame it is bound to was dropped
  *     waiting for a keyframe, and once per viewer when that viewer's queue was full or its data
