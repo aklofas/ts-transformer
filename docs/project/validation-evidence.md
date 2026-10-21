@@ -1077,13 +1077,19 @@ The first one-hour run, on 2026-10-21 from 06:20:40Z to 07:21Z, used
 the default 600-second slot: six connections, five reconnects. The SRT and
 RIST legs drew `audio` and `av1-klv-b` from seed 1 and both publish legs
 ran as in their own one-hour run. It was built from the tree
-`v0.8.0-458-ga5c0e9d7` with every verdict this section describes in place.
+`v0.8.0-458-ga5c0e9d7` and judged at the end of the run by that tree's
+`report soak`. The volume floors, the server drop-counter gates and the
+copy-agreement rule described above were added afterwards, in the tree
+`v0.8.0-460-g136ec408`; that tree's `report soak` re-judged the run from its archived
+inputs with the same `overall_pass=true`, 93 verdicts and 0 failing, and
+the floor figures below are that re-judgment's (its `soak-results.json`
+sits beside the archive under `rejudged-136ec408/`, with its own md5).
 
 **The run's harness verdict is `overall_pass=true`: every leg passed every
 gating verdict.** Of its 93 verdicts, 79 are gating PASS, 0 are FAIL and
 14 are provisional PASS (the RSS slopes and the two reconnect counts,
 provisional by design below 72 h). The whep leg's figures, from the run's
-`soak-results.json`:
+`soak-results.json` and, for the floors, from the re-judgment's:
 
 | Measure | Result |
 | --- | --- |
