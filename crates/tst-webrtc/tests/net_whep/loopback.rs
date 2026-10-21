@@ -486,6 +486,12 @@ fn preflight_patch_and_unknown_mount() {
         headers["access-control-allow-methods"],
         "POST, PATCH, DELETE, OPTIONS"
     );
+    // mediamtx-style players send the trickle PATCH with `If-Match`, so a
+    // cross-origin preflight must allow it.
+    assert_eq!(
+        headers["access-control-allow-headers"],
+        "Authorization, Content-Type, If-Match"
+    );
     assert_eq!(headers["access-control-expose-headers"], "Location");
 
     // PATCH on anything but a session resource is still 405.

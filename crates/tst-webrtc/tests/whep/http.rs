@@ -46,6 +46,7 @@ fn render_adds_cors_and_length() {
         "HTTP/1.1 201 Created\r\n",
         "Access-Control-Allow-Origin: *\r\n",
         "Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n",
+        "Access-Control-Allow-Headers: Authorization, Content-Type, If-Match\r\n",
         "Access-Control-Expose-Headers: Location\r\n",
         "Content-Length: 3\r\n",
         "Connection: close\r\n",
