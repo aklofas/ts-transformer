@@ -1,0 +1,95 @@
+<!doctype html>
+<!--
+  The interop matrix's browser page (run-matrix.sh's whep/* cells).
+
+  Opened by headless Chrome as
+    file://.../whep-page.html?url=http://127.0.0.1:PORT/mount
+  it plays the mount with the reference player under docs/webrtc/
+  (loaded unmodified, by relative path, so the cells exercise the files
+  the guide ships) and prints what the harness judges to the console,
+  which Chrome's `--enable-logging=stderr --log-level=0` copies to stderr
+  as `CONSOLE(...)` lines:
+
+    KLV <pts> <sha256 hex of the record bytes> <sei|dc>   per record and carriage
+    FRAMES <totalVideoFrames>                             once a second
+    AUDIO <inbound audio packetsReceived>                 once a second, when audio is negotiated
+    STATE <peer connection state>                         on each change
+    CAPS scriptTransform=.. encodedStreams=.. rvfc=..     once, which player paths the browser has
+    PLAYER <url>                                          once, the player module loaded
+    STATS video packets=.. framesDecoded=.. ...           once a second, diagnostics only
+    ERROR <text>                                          on any failure
+
+  `dedupe: false` makes the player deliver a record from BOTH carriages,
+  which is how a cell proves each one on its own.
+
+  `&player=<url>` loads another copy of whep-player.js instead of the
+  shipped one (its siblings resolve relative to it): how a player change
+  is run through the cells before it lands. run-matrix.sh passes
+  $WHEP_PLAYER_URL through as this parameter.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>tst-interop WHEP cell</title>
+</head>
+<body>
+  <video id="v" width="320" height="240" autoplay playsinline muted></video>
+  <script type="module">
+    const log = (line) => console.log(line);
+    const params = new URLSearchParams(location.search);
+    const url = params.get("url");
+    if (!url) log("ERROR no ?url= query parameter");
+    const playerUrl = params.get("player") || "../../docs/webrtc/whep-player.js";
+    log(`PLAYER ${new URL(playerUrl, location.href).href}`);
+    const { playWhep } = await import(playerUrl);
+
+    const hex = (buf) =>
+      Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+
+    // The player can deliver records faster than the digests resolve;
+    // chaining the digest promises keeps the KLV lines in delivery order.
+    let chain = Promise.resolve();
+    const onKlv = ({ pts, bytes, via }) => {
+      chain = chain.then(async () => {
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        log(`KLV ${pts} ${hex(digest)} ${via}`);
+      });
+    };
+
+    const video = document.getElementById("v");
+    log(`CAPS scriptTransform=${typeof RTCRtpScriptTransform === "function"} ` +
+        `encodedStreams=${typeof RTCRtpReceiver.prototype.createEncodedStreams === "function"} ` +
+        `rvfc=${typeof video.requestVideoFrameCallback === "function"} secure=${isSecureContext}`);
+    let pc = null;
+    try {
+      if (!crypto.subtle) throw new Error("crypto.subtle unavailable (not a secure context)");
+      const session = await playWhep({ video, url, onKlv, dedupe: false });
+      pc = session.pc;
+      log(`STATE ${pc.connectionState}`);
+      pc.onconnectionstatechange = () => log(`STATE ${pc.connectionState}`);
+    } catch (e) {
+      log(`ERROR ${e && e.message ? e.message : e}`);
+    }
+
+    const sample = async () => {
+      log(`FRAMES ${video.getVideoPlaybackQuality().totalVideoFrames}`);
+      if (!pc) return;
+      try {
+        const stats = await pc.getStats();
+        for (const s of stats.values()) {
+          if (s.type !== "inbound-rtp") continue;
+          if (s.kind === "audio") log(`AUDIO ${s.packetsReceived}`);
+          if (s.kind === "video") {
+            log(`STATS video packets=${s.packetsReceived} framesReceived=${s.framesReceived} ` +
+                `framesDecoded=${s.framesDecoded} keyFramesDecoded=${s.keyFramesDecoded} ` +
+                `framesDropped=${s.framesDropped} pli=${s.pliCount} nack=${s.nackCount}`);
+          }
+        }
+      } catch (e) {
+        log(`ERROR getStats: ${e && e.message ? e.message : e}`);
+      }
+    };
+    setInterval(sample, 1000);
+  </script>
+</body>
+</html>
