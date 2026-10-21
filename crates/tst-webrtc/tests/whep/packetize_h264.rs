@@ -66,8 +66,11 @@ fn empty_input_yields_nothing() {
 }
 
 #[test]
-fn default_mtu_payload_keeps_the_rtp_packet_at_1200_bytes() {
+fn default_mtu_payload_keeps_the_srtp_packet_inside_the_ipv6_minimum_mtu() {
     assert_eq!(DEFAULT_MTU_PAYLOAD, 1180);
+    // RTP header 12, str0m's extensions up to 16, SRTP tag up to 16: the
+    // packet is at most 1226 bytes, inside 1280 with 48 bytes of IP + UDP.
+    assert!(12 + 16 + DEFAULT_MTU_PAYLOAD + 16 + 48 <= 1280);
     let nal = vec![0x41u8; 3000];
     let out = h264(&[&nal], DEFAULT_MTU_PAYLOAD);
     assert!(out.iter().all(|p| p.payload.len() <= DEFAULT_MTU_PAYLOAD));
