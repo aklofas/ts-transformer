@@ -106,6 +106,31 @@ pub struct Options {
     pub wait_viewer: Duration,
 }
 
+/// The profiles `serve-whep` can serve: one program whose video is
+/// H.264, the codec of the GOP fixture it pushes. An MP2T mount built from
+/// any other profile would mux the H.264 units under the profile's own
+/// video stream type, and the mount's demuxer would count every one of
+/// them as non-conformant while the server exits 0 having served nothing;
+/// a second program has no second GOP to feed.
+pub fn check_profile(p: &Profile) -> Result<(), String> {
+    // The profile's codec enum, not tst-webrtc's `VideoCodec` imported above.
+    if p.video != crate::profiles::VideoCodec::H264 {
+        return Err(format!(
+            "profile {} carries {:?} video; serve-whep pushes an H.264 GOP and serves \
+             H.264 profiles only",
+            p.name, p.video
+        ));
+    }
+    if p.programs != 1 {
+        return Err(format!(
+            "profile {} has {} programs; serve-whep serves one mount from a one-program \
+             profile",
+            p.name, p.programs
+        ));
+    }
+    Ok(())
+}
+
 /// One scheduled push.
 #[derive(Debug, Clone, Copy)]
 enum Push {
@@ -464,6 +489,20 @@ mod tests {
         assert_eq!(first_tick, [0, 1, 2]);
         let (_, without) = build_pushes(p, 1.0, false);
         assert!(without.iter().all(|(_, push)| !matches!(push, Push::Opus)));
+    }
+
+    #[test]
+    fn check_profile_accepts_h264_one_program_profiles_only() {
+        for name in ["baseline", "klv-sync"] {
+            let p = profiles::by_name(name).expect("profile exists");
+            assert_eq!(check_profile(p), Ok(()), "{name}");
+        }
+        let e = check_profile(profiles::by_name("h265-klv").unwrap()).unwrap_err();
+        assert!(e.contains("carries H265 video"), "{e}");
+        let e = check_profile(profiles::by_name("av1-klv-a").unwrap()).unwrap_err();
+        assert!(e.contains("carries Av1 video"), "{e}");
+        let e = check_profile(profiles::by_name("two-program").unwrap()).unwrap_err();
+        assert!(e.contains("has 2 programs"), "{e}");
     }
 
     #[test]
