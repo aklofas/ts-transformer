@@ -774,18 +774,19 @@ the Python and C bindings do not expose it in this release.
 | H.265 pass-through | ✅ | RFC 7798 (single NAL + FU); VPS/SPS/PPS cached the same way. |
 | H.266, AV1 | ❌ | Refused by `MountConfig::validate`. |
 | KLV in SEI | ✅ | One SEI per record, UUID `tstKLV…`, version 1, 8-byte PTS, record bytes; per-access-unit budget (default 64 KiB). |
-| KLV data channel | ✅ | Label `klv`, opened by the server (DCEP), reliable and ordered; version, 4-byte RTP timestamp, 8-byte PTS, record; records up to 256 KiB. |
+| KLV data channel | ✅ | Label `klv`, opened by the server (DCEP), reliable and unordered; version, 4-byte RTP timestamp, 8-byte PTS, record; records up to 256 KiB. |
 | MPEG-TS mounts | ✅ | `MountKind::Mp2t` + `push_ts`: one video stream of the mount's codec and its program's KLV; runs one frame behind. |
 | Audio | ⚠️ | `AudioPolicy::Drop` (default; the browser's audio section is rejected) or `PassthroughOpus` on elementary mounts (RFC 7587). No transcoding; Opus in TS not demuxed. |
 | B-frames | ❌ | Counted in `MountStats::frames_pts_reordered`; sources must deliver decode order = presentation order. |
 | Trickle ICE | ⚠️ | `PATCH` answered 204 and ignored (ICE-lite needs no remote candidates); no ICE restart. |
 | TURN / STUN / ICE over TCP | ❌ | Viewers must reach `advertise=` on `media_port` over UDP. |
-| Simulcast, WHIP ingest | ❌ | Out of scope. |
+| WHIP ingest | ❌ | Deferred (see [deferred features](/docs/project/deferred-features.md)). |
+| Simulcast | ❌ | Out of scope. |
 
 The server's test suite answers an offer captured from Chrome and offers
 reconstructed for Firefox and Safari, and plays to a WebRTC client in the
-same process; the interop matrix adds GStreamer `whepsrc` and the reference
-player in headless Chromium.
+same process; the interop matrix adds the reference player in headless
+Chromium.
 
 **Browser support (reference player).** The player reads the KLV SEI from
 each encoded frame where the browser gives it the frame, and emits records
@@ -806,7 +807,8 @@ channel.
 **Native dependency.** `str0m`'s DTLS certificate path builds `aws-lc-sys`
 (a BoringSSL fork, C and assembly) under every crypto backend, so
 `tst-webrtc` adds the first aws-lc build to the tree on all four Tier 1
-platforms, the Python wheels and the JVM JAR; the Windows MSVC build uses
+platforms (every Rust build with `tst-webrtc`) and to the JVM JAR; the
+Python wheels and the C library do not link it. The Windows MSVC build uses
 the crate's prebuilt NASM objects, so no NASM install is needed. TLS for
 `wheps://`, like every other `tls` feature in the workspace, stays on
 rustls with the `ring` provider; aws-lc backs only str0m's DTLS certificate

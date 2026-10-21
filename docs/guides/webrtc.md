@@ -182,7 +182,7 @@ What the video path does with a frame:
 
 An MP2T mount runs one frame behind the bytes pushed: its demuxer emits an
 access unit when the next one starts, so a file's last access unit is never
-played. Demuxed audio is discarded whatever the policy (the demuxer has no
+played unless more bytes follow. Demuxed audio is discarded whatever the policy (the demuxer has no
 Opus mapping), and damaged units, units of another codec and the streams
 the mount does not play are counted in `MountStats::demux_nonconformant`,
 never failing the push.
@@ -233,7 +233,9 @@ offer must carry a data-channel section (create any data channel before
 `createOffer`), and the channel arrives in `ondatachannel` with the label
 `klv`. A viewer whose offer has no data-channel section gets video with KLV
 in SEI, and no channel, and no drop is counted for it. The channel is
-reliable and ordered.
+reliable and unordered: a record never waits behind an earlier one, and
+each message names its frame's RTP timestamp, so the page orders records
+by frame itself (the reference player does).
 
 One binary message per record:
 
@@ -244,8 +246,9 @@ One binary message per record:
 | KLV PTS | 8 | the record's 90 kHz PTS, big-endian |
 | record | rest | the KLV bytes exactly as pushed |
 
-The body after the RTP timestamp is byte-identical to the SEI body after
-the UUID, so a page can use either carriage or cross-check both.
+Without its 4-byte RTP timestamp, the message is byte-identical to the
+SEI payload after the UUID (version, PTS, record), so a page can use either
+carriage or cross-check both.
 
 A record is at most `KLV_DC_LIMIT` (256 KiB) on the data channel;
 `push_klv` refuses a larger one with `PushError::KlvTooLarge`. The server
@@ -267,8 +270,11 @@ it is decoded (an `RTCRtpScriptTransform` worker, or Chrome's
 they arrive. Where the browser exposes the painted frame's RTP timestamp
 in `requestVideoFrameCallback` metadata, a record is emitted when its
 frame is painted; elsewhere it is emitted on arrival, which is a few frames
-ahead of the picture. A record whose frame is never painted (dropped by the
-decoder) is emitted when 64 later frames have queued behind it.
+ahead of the picture. Frames arrive in presentation order, so when a frame
+is painted every record bound to it or to an earlier frame is emitted: a
+record whose own frame is not painted (dropped by the decoder, or a paint
+callback the browser skipped) goes out with the next painted frame, or at
+most 64 pending frames later.
 
 When both carriages deliver one record, the player emits it once: the key
 is the KLV PTS plus a hash of the record bytes, and the SEI copy is
@@ -317,8 +323,8 @@ Timeouts, all on the server's media thread:
   must arrive whole within 5 s (else 408), so a client that holds a
   connection open delays every other POST and DELETE by up to 5 s.
 
-`max_viewers` (1 to 64, default 10) caps the sessions; a POST over the cap
-is answered 503 with `Retry-After: 5`. The mount-to-media queue holds 4096
+`max_viewers` (1 to 64, default 10) caps the sessions across all mounts; a
+POST over the cap is answered 503 with `Retry-After: 5`. The mount-to-media queue holds 4096
 messages; a push that finds it full drops its frame and, until the next
 keyframe, the frames that would reference it.
 
@@ -340,11 +346,11 @@ ask the media thread and can wait up to 2 s for its reply; a mount's
 | `OPTIONS` on any target | `204` with the CORS headers |
 | other methods | `405` with `Allow: POST, PATCH, DELETE, OPTIONS` |
 | unknown mount | `404` |
-| mount at `max_viewers` | `503`, `Retry-After: 5` |
+| server at `max_viewers` (all mounts together) | `503`, `Retry-After: 5` |
 | body not an SDP offer, or one payload type mapped to two formats | `400` with a plain-text reason |
 | no offered video payload matches the mount | `406` with a plain-text reason |
 | missing or wrong bearer token when `token=` is set | `401`, `WWW-Authenticate: Bearer` |
-| request head over 16 KiB, body over 64 KiB, no complete request within 5 s | `431`, `413`, `408` |
+| request head over 16 KiB, body over 64 KiB, no complete request within 5 s | `431`, `400`, `408` |
 | the server stopping | `503` |
 
 Every response carries `Access-Control-Allow-Origin` (`cors_origin=`,

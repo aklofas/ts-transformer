@@ -128,7 +128,7 @@ needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 | tst-rist | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
 | tst-webrtc | (crate) | Provisional | new in 0.9.0: WebRTC (WHEP) playback server; the mount, push and statistics surface is still settling | the WHEP endpoint, mount configuration and push calls unchanged for one minor, with browser playback proven by the interop and soak evidence |
 | tst-webrtc | server | Provisional | `WhepServer`: bind, mounts, stats, stop; `server::http` and `server::negotiate` are `#[doc(hidden)]` test seams, not API | the WHEP endpoint and the bind URL keys unchanged for one minor |
-| tst-webrtc | mount | Provisional | `MountHandle` push family mirrors the RTSP mount's; `KLV_DC_LIMIT` and the data-channel message layout documented here | the push signatures and the data-channel layout unchanged for one minor |
+| tst-webrtc | mount | Provisional | `MountHandle` push family mirrors the RTSP mount's; `KLV_DC_LIMIT` and the data-channel message layout documented in the module | the push signatures and the data-channel layout unchanged for one minor |
 | tst-webrtc | config | Provisional | `MountConfig` and its kind, audio and KLV-carriage enums, all `#[non_exhaustive]` | the defaults and `validate` rules unchanged for one minor |
 | tst-webrtc | stats | Provisional | `MountStats`, `ServerStats`, `SessionStats`, `IceState`; counters are still being added as evidence names them | one minor with no counter renamed or removed |
 | tst-webrtc | error | Provisional | `WhepServerError` and `PushError`, mapped to the `WEBRTC_*` binding kinds | the variant set unchanged for one minor |

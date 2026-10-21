@@ -57,7 +57,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 A browser POSTs its offer to `http://203.0.113.5:8889/live`. Set
 `cfg.video = VideoCodec::H265` for an HEVC feed; an offer with no usable
 payload for the mount's codec is answered 406, so a page can fall back to
-HLS. The complete program is the `serve_whep` example:
+HLS. A complete program is the `serve_whep` example, which reads the SRT
+side through a managed receiver and stops on Enter:
 `cargo run -p tst-examples --example serve_whep -- --help`.
 
 The same loop on the JVM is the `ServeWhep` example
