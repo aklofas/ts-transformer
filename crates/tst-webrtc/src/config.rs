@@ -30,6 +30,12 @@ pub enum AudioPolicy {
 }
 
 /// Where KLV records travel to the viewer.
+///
+/// The `klv` data channel is opened by the server (DCEP). The viewer's
+/// offer must carry a data-channel section (create any data channel before
+/// `createOffer`), and the channel arrives in `ondatachannel` with the
+/// label `klv`. Without such a section the viewer gets no channel, and no
+/// drop is counted for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum KlvCarriage {

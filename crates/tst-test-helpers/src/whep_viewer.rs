@@ -11,7 +11,7 @@ use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::time::{Duration, Instant};
 
 use str0m::change::{SdpAnswer, SdpPendingOffer};
-use str0m::channel::ChannelConfig;
+use str0m::channel::ChannelId;
 use str0m::media::{Direction, MediaKind, Mid};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc, RtcConfig, RtcError};
@@ -20,8 +20,8 @@ use str0m::{Candidate, Event, Input, Output, Rtc, RtcConfig, RtcError};
 /// refreshes its consent often enough for the reaper tests.
 const CLIENT_MAX_STUN_RTO: Duration = Duration::from_millis(300);
 
-/// A WebRTC viewer: the offerer, receive-only video, optionally the
-/// negotiated `klv` data channel (id 0).
+/// A WebRTC viewer: the offerer, receive-only video and, optionally, a
+/// data-channel section the server opens its `klv` channel on.
 pub struct TestViewer {
     pub rtc: Rtc,
     pub sock: UdpSocket,
@@ -33,12 +33,14 @@ pub struct TestViewer {
     pub frames: Vec<(u32, Vec<u8>)>,
     /// (RTP timestamp, payload) per audio packet received.
     pub audio_frames: Vec<(u64, Vec<u8>)>,
-    /// Data-channel messages received, in order.
+    /// Messages received on the `klv` data channel, in order.
     pub dc_msgs: Vec<Vec<u8>>,
     /// DTLS is up.
     pub connected: bool,
-    /// The `klv` data channel is open.
+    /// The server opened the `klv` data channel.
     pub dc_open: bool,
+    /// The `klv` channel's id, once the server opened it.
+    dc_id: Option<ChannelId>,
     /// Every address a datagram came from.
     pub sources: HashSet<SocketAddr>,
     /// STUN binding responses received: one per consent check the server
@@ -85,6 +87,7 @@ impl TestViewer {
             dc_msgs: Vec::new(),
             connected: false,
             dc_open: false,
+            dc_id: None,
             sources: HashSet::new(),
             stun_responses: 0,
             ice_log: Vec::new(),
@@ -93,8 +96,11 @@ impl TestViewer {
         }
     }
 
-    /// The SDP offer: a receive-only video section and, with `with_dc`,
-    /// the negotiated `klv` channel.
+    /// The SDP offer: a receive-only video section and, with `with_dc`, a
+    /// data-channel section (`m=application`), brought up by a channel of
+    /// the viewer's own as a browser page does before `createOffer`. The
+    /// server opens its `klv` channel on that section; without one the
+    /// viewer gets no data channel.
     pub fn offer(&mut self, with_dc: bool) -> String {
         self.build_offer(with_dc, None)
     }
@@ -118,11 +124,9 @@ impl TestViewer {
             self.audio_mid = Some(api.add_media(MediaKind::Audio, dir, None, None, None));
         }
         if with_dc {
-            api.add_channel_with_config(ChannelConfig {
-                label: "klv".into(),
-                negotiated: Some(0),
-                ..Default::default()
-            });
+            // Any channel brings the SCTP association into the offer; the
+            // server's `klv` channel arrives by label, not through this one.
+            api.add_channel("viewer".into());
         }
         let (offer, pending) = api.apply().expect("an offer");
         self.mid = Some(mid);
@@ -213,8 +217,11 @@ impl TestViewer {
         match ev {
             Event::Connected => self.connected = true,
             Event::IceConnectionStateChange(s) => self.ice_log.push(format!("{s:?}")),
-            Event::ChannelOpen(_, label) if label == "klv" => self.dc_open = true,
-            Event::ChannelData(d) => self.dc_msgs.push(d.data),
+            Event::ChannelOpen(id, label) if label == "klv" => {
+                self.dc_open = true;
+                self.dc_id = Some(id);
+            }
+            Event::ChannelData(d) if Some(d.id) == self.dc_id => self.dc_msgs.push(d.data),
             Event::MediaData(d) if Some(d.mid) == self.audio_mid => {
                 self.audio_frames.push((d.time.numer(), d.data.to_vec()));
             }

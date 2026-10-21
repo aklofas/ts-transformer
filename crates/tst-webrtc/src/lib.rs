@@ -3,6 +3,12 @@
 //! The server's closing contract is documented under the `# Closing`
 //! heading of [`WhepServer`].
 //!
+//! The `klv` data channel is opened by the server (DCEP, in-band on the
+//! SCTP association). The viewer's offer must carry a data-channel section
+//! (create any data channel before `createOffer`), and the channel arrives
+//! in `ondatachannel` with the label `klv`. A viewer whose offer has no
+//! data-channel section gets video, with KLV in SEI, and no channel.
+//!
 //! A KLV record travels on the data channel when it is at most
 //! [`KLV_DC_LIMIT`] bytes (256 KiB); a larger one is refused by
 //! `push_klv`. The server's SCTP send buffer is sized for a record at the
