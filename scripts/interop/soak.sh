@@ -633,6 +633,17 @@ else
 fi
 echo "soak: profiles — srt=$SRT_PROFILE rist=$RIST_PROFILE rtsp-publish=$PUBLISH_PROFILE \
 rtsp-publish-es=$PUBLISH_ES_PROFILE whep=$WHEP_PROFILE (--profile $PROFILE, seed $SEED)" >&2
+# serve-whep pushes an H.264 GOP as the video, from a one-program
+# profile: any other named --profile would give a leg that serves nothing
+# from launch and fails only at report time, hours later. Refused here,
+# before any worker launches, by the same check serve-whep itself runs.
+if [[ "$WHEP" -eq 1 ]]; then
+  "$BIN" serve-whep --profile "$WHEP_PROFILE" --validate-profile || {
+    echo "soak.sh: the whep leg cannot serve profile '$WHEP_PROFILE' (see above) — pass --no-whep, or \
+name an H.264 one-program profile" >&2
+    exit 2
+  }
+fi
 
 # rtsp-publish leg geometry (see that leg's block below). The publisher
 # pushes PUBLISH_CONTENT_S seconds of generated stream, cut into

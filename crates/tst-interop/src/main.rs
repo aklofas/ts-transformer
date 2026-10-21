@@ -34,7 +34,7 @@ Subcommands:
             placement against the video)
   serve-whep --url whep://HOST:PORT --mount /PATH --seconds N [--json OUT]
             [--profile NAME] [--mount-kind mp2t|elementary] [--opus]
-            [--wait-viewer SECS]
+            [--wait-viewer SECS] | serve-whep --profile NAME --validate-profile
             Bind a WHEP server and serve the profile's KLV schedule on one
             mount for a browser (the interop whep/* cells); the video is a
             real H.264 GOP, --opus adds a 20 ms Opus silence stream on an
@@ -236,7 +236,7 @@ fn main() {
 
 /// `serve-whep --url whep://HOST:PORT --mount /PATH --seconds N [--json OUT]
 /// [--profile NAME] [--mount-kind mp2t|elementary] [--opus]
-/// [--wait-viewer SECS]`
+/// [--wait-viewer SECS]`, or `serve-whep --profile NAME --validate-profile`
 ///
 /// Binds a `WhepServer` and serves `N` seconds of profile `NAME`'s KLV
 /// schedule (default `baseline`) on `/PATH`, wall-clock paced, with a real
@@ -246,7 +246,11 @@ fn main() {
 /// (elementary only) adds one Opus silence packet every 20 ms.
 /// `--wait-viewer SECS` (default 0) waits that long for a connected
 /// viewer before the first push. `--json OUT` writes the counters after
-/// the window. Exits 0 on success, 2 on a usage error or a server error.
+/// the window. A profile whose video is not H.264, or with more than one
+/// program, is refused with exit 2 before anything is bound
+/// (`whep_serve::check_profile`); `--validate-profile` runs only that
+/// check and exits 0 or 2, binding nothing (`soak.sh`'s pre-flight).
+/// Exits 0 on success, 2 on a usage error or a server error.
 fn run_serve_whep(args: &[String]) -> ! {
     let mut url: Option<String> = None;
     let mut mount: Option<String> = None;
@@ -256,10 +260,15 @@ fn run_serve_whep(args: &[String]) -> ! {
     let mut mp2t = true;
     let mut opus = false;
     let mut wait_viewer = std::time::Duration::ZERO;
+    let mut validate_profile = false;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--validate-profile" => {
+                validate_profile = true;
+                i += 1;
+            }
             "--url" => {
                 url = Some(require_value(args, i, "serve-whep: --url"));
                 i += 2;
@@ -317,6 +326,18 @@ fn run_serve_whep(args: &[String]) -> ! {
         }
     }
 
+    let p = profiles::by_name(&profile).unwrap_or_else(|| {
+        eprintln!("serve-whep: unknown profile: {profile}");
+        std::process::exit(2);
+    });
+    if let Err(e) = whep_serve::check_profile(p) {
+        eprintln!("serve-whep: {e}");
+        std::process::exit(2);
+    }
+    if validate_profile {
+        eprintln!("serve-whep: --validate-profile: {profile} is servable");
+        std::process::exit(0);
+    }
     let url = url.unwrap_or_else(|| {
         eprintln!("serve-whep: --url is required");
         std::process::exit(2);
@@ -327,10 +348,6 @@ fn run_serve_whep(args: &[String]) -> ! {
     });
     let seconds = seconds.unwrap_or_else(|| {
         eprintln!("serve-whep: --seconds is required and must be a finite, positive number");
-        std::process::exit(2);
-    });
-    let p = profiles::by_name(&profile).unwrap_or_else(|| {
-        eprintln!("serve-whep: unknown profile: {profile}");
         std::process::exit(2);
     });
     if opus && mp2t {
