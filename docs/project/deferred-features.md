@@ -1836,8 +1836,9 @@ and the two below.
 
 - **Status:** Deferred. `tst-webrtc` ships in Rust, in Python
   (`tstrans.webrtc`) and in the JVM binding (`org.tstrans.webrtc`);
-  `tstrans.h` has no `tst_whep_*` surface and no `TST_HAS_WEBRTC` feature. The error-kind table already carries the
-  `WEBRTC_*` rows with C projections, so adding the surface changes no kind.
+  `tstrans.h` has no `tst_whep_*` surface and no `TST_HAS_WEBRTC` feature.
+  The error-kind table already carries the `WEBRTC_*` rows with C
+  projections, so adding the surface changes no kind.
 - **Why deferred:** No C consumer has asked for it, and the C binding's
   transport features are opt-in by design; a WHEP server in C would also be
   the first C surface to pull str0m and aws-lc into a C link.
