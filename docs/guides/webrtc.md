@@ -267,7 +267,9 @@ for the data channel.
 The reference player takes the SEI records from each encoded frame before
 it is decoded (an `RTCRtpScriptTransform` worker, or Chrome's
 `createEncodedStreams` on the main thread) and the data-channel records as
-they arrive. Where the browser exposes the painted frame's RTP timestamp
+they arrive. The worker transform is set on the video receiver before the
+offer is made: it must exist before the remote description is applied, or
+Chrome never routes frames to it. Where the browser exposes the painted frame's RTP timestamp
 in `requestVideoFrameCallback` metadata, a record is emitted when its
 frame is painted; elsewhere it is emitted on arrival, which is a few frames
 ahead of the picture. Frames arrive in presentation order, so when a frame
