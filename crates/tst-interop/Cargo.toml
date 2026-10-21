@@ -15,6 +15,7 @@ tst-tcp = { path = "../tst-tcp" }
 tst-rist = { path = "../tst-rist" }
 tst-rtp = { path = "../tst-rtp" }
 tst-hls = { path = "../tst-hls" }
+tst-webrtc = { path = "../tst-webrtc" }
 socket2 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }

@@ -2887,6 +2887,7 @@ dependencies = [
  "tst-tcp",
  "tst-test-helpers",
  "tst-udp",
+ "tst-webrtc",
 ]
 
 [[package]]

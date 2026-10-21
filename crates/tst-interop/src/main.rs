@@ -13,6 +13,7 @@ use tst_interop::report;
 use tst_interop::send;
 use tst_interop::serve;
 use tst_interop::verify::{self, KlvExpect, WireLayout};
+use tst_interop::whep_serve;
 
 fn usage() -> String {
     "usage: tst-interop <subcommand> [options...]
@@ -31,6 +32,13 @@ Subcommands:
             --klv-placement N judges KLV placement against the video)
   verify    Verify interop test results (--klv-placement N judges KLV
             placement against the video)
+  serve-whep --url whep://HOST:PORT --mount /PATH --seconds N [--json OUT]
+            [--profile NAME] [--mount-kind mp2t|elementary] [--opus]
+            [--wait-viewer SECS]
+            Bind a WHEP server and serve the profile's KLV schedule on one
+            mount for a browser (the interop whep/* cells); the video is a
+            real H.264 GOP, --opus adds a 20 ms Opus silence stream on an
+            elementary mount; --json writes the server/mount/session counters
   proxy     UDP impairment relay (loss/dup/reorder/jitter/scheduled outage;
             --schedule seed=N,phases=K,phase_s=DUR walks a seeded phase
             table instead of one fixed impairment level)
@@ -214,6 +222,7 @@ fn main() {
         "recv" => run_recv(&args[2..]),
         "verify" => run_verify(&args[2..]),
         "proxy" => run_proxy(&args[2..]),
+        "serve-whep" => run_serve_whep(&args[2..]),
         "report" => run_report(&args[2..]),
         "corpus" => tst_interop::corpus::cli::run(&args[2..]),
         "pick-profiles" => run_pick_profiles(&args[2..]),
@@ -223,6 +232,129 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+/// `serve-whep --url whep://HOST:PORT --mount /PATH --seconds N [--json OUT]
+/// [--profile NAME] [--mount-kind mp2t|elementary] [--opus]
+/// [--wait-viewer SECS]`
+///
+/// Binds a `WhepServer` and serves `N` seconds of profile `NAME`'s KLV
+/// schedule (default `baseline`) on `/PATH`, wall-clock paced, with a real
+/// H.264 GOP as the video — see `whep_serve`'s module doc for why not the
+/// generator's. `--mount-kind mp2t` (the default) muxes in-process and
+/// feeds `push_ts`; `elementary` pushes units directly, and `--opus`
+/// (elementary only) adds one Opus silence packet every 20 ms.
+/// `--wait-viewer SECS` (default 0) waits that long for a connected
+/// viewer before the first push. `--json OUT` writes the counters after
+/// the window. Exits 0 on success, 2 on a usage error or a server error.
+fn run_serve_whep(args: &[String]) -> ! {
+    let mut url: Option<String> = None;
+    let mut mount: Option<String> = None;
+    let mut seconds: Option<f64> = None;
+    let mut json: Option<String> = None;
+    let mut profile = "baseline".to_string();
+    let mut mp2t = true;
+    let mut opus = false;
+    let mut wait_viewer = std::time::Duration::ZERO;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--url" => {
+                url = Some(require_value(args, i, "serve-whep: --url"));
+                i += 2;
+            }
+            "--mount" => {
+                mount = Some(require_value(args, i, "serve-whep: --mount"));
+                i += 2;
+            }
+            "--seconds" => {
+                seconds = cli::parse_seconds(&require_value(args, i, "serve-whep: --seconds"));
+                i += 2;
+            }
+            "--json" => {
+                json = Some(require_value(args, i, "serve-whep: --json"));
+                i += 2;
+            }
+            "--profile" => {
+                profile = require_value(args, i, "serve-whep: --profile");
+                i += 2;
+            }
+            "--mount-kind" => {
+                mp2t = match require_value(args, i, "serve-whep: --mount-kind").as_str() {
+                    "mp2t" => true,
+                    "elementary" => false,
+                    other => {
+                        eprintln!(
+                            "serve-whep: --mount-kind must be 'mp2t' or 'elementary', got '{other}'"
+                        );
+                        std::process::exit(2);
+                    }
+                };
+                i += 2;
+            }
+            "--opus" => {
+                opus = true;
+                i += 1;
+            }
+            "--wait-viewer" => {
+                let raw = require_value(args, i, "serve-whep: --wait-viewer");
+                wait_viewer = match raw.parse::<u64>() {
+                    Ok(s) => std::time::Duration::from_secs(s),
+                    Err(_) => {
+                        eprintln!(
+                            "serve-whep: --wait-viewer must be a non-negative integer, got '{raw}'"
+                        );
+                        std::process::exit(2);
+                    }
+                };
+                i += 2;
+            }
+            other => {
+                eprintln!("serve-whep: unknown argument: {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    let url = url.unwrap_or_else(|| {
+        eprintln!("serve-whep: --url is required");
+        std::process::exit(2);
+    });
+    let mount = mount.unwrap_or_else(|| {
+        eprintln!("serve-whep: --mount is required");
+        std::process::exit(2);
+    });
+    let seconds = seconds.unwrap_or_else(|| {
+        eprintln!("serve-whep: --seconds is required and must be a finite, positive number");
+        std::process::exit(2);
+    });
+    let p = profiles::by_name(&profile).unwrap_or_else(|| {
+        eprintln!("serve-whep: unknown profile: {profile}");
+        std::process::exit(2);
+    });
+    if opus && mp2t {
+        eprintln!("serve-whep: --opus needs --mount-kind elementary (an MP2T mount drops audio)");
+        std::process::exit(2);
+    }
+    let feed = if mp2t {
+        whep_serve::MountFeed::Mp2t
+    } else {
+        whep_serve::MountFeed::Elementary { opus }
+    };
+    let opts = whep_serve::Options {
+        url,
+        mount,
+        profile: p,
+        seconds,
+        feed,
+        wait_viewer,
+    };
+    if let Err(e) = whep_serve::run(&opts, json.as_deref()) {
+        eprintln!("serve-whep: {e}");
+        std::process::exit(2);
+    }
+    std::process::exit(0);
 }
 
 /// `gen --profile NAME --seconds N --out PATH
