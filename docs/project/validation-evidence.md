@@ -1074,7 +1074,8 @@ pin a library behaviour this release keeps: an MP2T mount carries PTS 0 on
 every async private-data KLV record, because the demuxer reports no PTS
 for a KLV PES without one; the data-channel copy names the bound frame's
 RTP timestamp, so playback is unaffected, and the deferred row "Async KLV
-PTS on MP2T mounts" names the change that would re-pin the cell.
+PTS on MP2T mounts = the bound frame's PTS" names the change that would
+re-pin the cell.
 
 ### Fuzz targets
 
