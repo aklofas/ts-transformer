@@ -164,6 +164,45 @@ fn mid_gop_joiner_waits_for_the_next_keyframe() {
 }
 
 #[test]
+fn klv_goes_to_the_server_opened_channel_whatever_the_viewer_calls_its_own() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    // The viewer's own channel in the offer is called `klv` too.
+    let offer = v.offer_with_channel_label("klv");
+    let (status, _, answer) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    v.accept_answer(&answer);
+    assert!(
+        v.pump(|v| v.connected && v.dc_open, CONNECT),
+        "{}",
+        v.trace()
+    );
+    // And a second one, opened after the server's: the server must not
+    // take it for its own.
+    v.open_channel("klv");
+    let srv_sessions = || m.sessions().into_iter().next().expect("one session");
+    assert!(
+        eventually(|| srv_sessions().remote_addr.is_some(), CONNECT),
+        "{}",
+        v.trace()
+    );
+    // Let the second open reach the server before the first frame.
+    v.pump(|_| false, Duration::from_millis(200));
+
+    for (i, (au, key)) in h264_gop().iter().take(5).enumerate() {
+        m.push_klv(&klv_record(i as u8), pts(i), 0).unwrap();
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    let done = v.pump(|v| v.frames.len() >= 5 && v.dc_msgs.len() >= 5, DELIVER);
+    assert!(done, "{}", v.trace());
+    assert_eq!(v.dc_msgs.len(), 5);
+    assert_eq!(v.own_channel_msgs, 0, "{}", v.trace());
+    assert_eq!(m.stats().klv_dc_dropped_viewer, 0);
+    assert_eq!(srv_sessions().dc_messages, 5);
+}
+
+#[test]
 fn viewer_without_data_channel_still_gets_sei() {
     let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
     let m = srv.add_mount("/cam", MountConfig::default()).unwrap();

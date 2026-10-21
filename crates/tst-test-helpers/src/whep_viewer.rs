@@ -41,6 +41,12 @@ pub struct TestViewer {
     pub dc_open: bool,
     /// The `klv` channel's id, once the server opened it.
     dc_id: Option<ChannelId>,
+    /// The channels the viewer opened itself; the server's `klv` channel
+    /// is never one of them, whatever their labels.
+    own_channels: Vec<ChannelId>,
+    /// Messages received on the viewer's own channels: the server writes
+    /// KLV only to the channel it opened, so this stays 0.
+    pub own_channel_msgs: u64,
     /// Every address a datagram came from.
     pub sources: HashSet<SocketAddr>,
     /// STUN binding responses received: one per consent check the server
@@ -88,6 +94,8 @@ impl TestViewer {
             connected: false,
             dc_open: false,
             dc_id: None,
+            own_channels: Vec::new(),
+            own_channel_msgs: 0,
             sources: HashSet::new(),
             stun_responses: 0,
             ice_log: Vec::new(),
@@ -102,36 +110,54 @@ impl TestViewer {
     /// server opens its `klv` channel on that section; without one the
     /// viewer gets no data channel.
     pub fn offer(&mut self, with_dc: bool) -> String {
-        self.build_offer(with_dc, None)
+        self.build_offer(with_dc.then_some("viewer"), None)
+    }
+
+    /// The offer of [`offer`](Self::offer) with the viewer's own channel
+    /// labelled `label` (a page may name it `klv` too).
+    pub fn offer_with_channel_label(&mut self, label: &str) -> String {
+        self.build_offer(Some(label), None)
     }
 
     /// The offer of [`offer`](Self::offer) plus a receive-only audio
     /// section (Opus among str0m's default codecs).
     pub fn offer_with_audio(&mut self, with_dc: bool) -> String {
-        self.build_offer(with_dc, Some(Direction::RecvOnly))
+        self.build_offer(with_dc.then_some("viewer"), Some(Direction::RecvOnly))
     }
 
     /// The offer of [`offer`](Self::offer) plus an audio section in the
     /// viewer's direction `audio`.
     pub fn offer_with_audio_direction(&mut self, with_dc: bool, audio: Direction) -> String {
-        self.build_offer(with_dc, Some(audio))
+        self.build_offer(with_dc.then_some("viewer"), Some(audio))
     }
 
-    fn build_offer(&mut self, with_dc: bool, audio: Option<Direction>) -> String {
+    fn build_offer(&mut self, channel: Option<&str>, audio: Option<Direction>) -> String {
         let mut api = self.rtc.sdp_api();
         let mid = api.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
         if let Some(dir) = audio {
             self.audio_mid = Some(api.add_media(MediaKind::Audio, dir, None, None, None));
         }
-        if with_dc {
+        if let Some(label) = channel {
             // Any channel brings the SCTP association into the offer; the
-            // server's `klv` channel arrives by label, not through this one.
-            api.add_channel("viewer".into());
+            // server's `klv` channel is a different one, whatever this
+            // one is called.
+            self.own_channels.push(api.add_channel(label.into()));
         }
         let (offer, pending) = api.apply().expect("an offer");
         self.mid = Some(mid);
         self.pending = Some(pending);
         offer.to_sdp_string()
+    }
+
+    /// Opens one more channel of the viewer's own, in-band (DCEP) on the
+    /// connected session; no renegotiation follows.
+    pub fn open_channel(&mut self, label: &str) {
+        let mut api = self.rtc.sdp_api();
+        self.own_channels.push(api.add_channel(label.into()));
+        assert!(
+            api.apply().is_none(),
+            "a channel on a live session needs no offer"
+        );
     }
 
     /// Applies the server's answer.
@@ -217,11 +243,15 @@ impl TestViewer {
         match ev {
             Event::Connected => self.connected = true,
             Event::IceConnectionStateChange(s) => self.ice_log.push(format!("{s:?}")),
+            Event::ChannelOpen(id, _) if self.own_channels.contains(&id) => {}
             Event::ChannelOpen(id, label) if label == "klv" => {
                 self.dc_open = true;
                 self.dc_id = Some(id);
             }
             Event::ChannelData(d) if Some(d.id) == self.dc_id => self.dc_msgs.push(d.data),
+            Event::ChannelData(d) if self.own_channels.contains(&d.id) => {
+                self.own_channel_msgs += 1;
+            }
             Event::MediaData(d) if Some(d.mid) == self.audio_mid => {
                 self.audio_frames.push((d.time.numer(), d.data.to_vec()));
             }
@@ -248,12 +278,13 @@ impl TestViewer {
     /// A short description for a failed assertion.
     pub fn trace(&self) -> String {
         format!(
-            "connected={} dc_open={} frames={} audio={} dc_msgs={} ice={:?} error={:?}",
+            "connected={} dc_open={} frames={} audio={} dc_msgs={} own_channel_msgs={} ice={:?} error={:?}",
             self.connected,
             self.dc_open,
             self.frames.len(),
             self.audio_frames.len(),
             self.dc_msgs.len(),
+            self.own_channel_msgs,
             self.ice_log,
             self.error
         )
