@@ -2035,20 +2035,6 @@ impl core::marker::UnsafeUnpin for tst_core::error::MuxErrorKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::error::MuxErrorKind
 impl core::panic::unwind_safe::UnwindSafe for tst_core::error::MuxErrorKind
 pub mod tst_core::io_file
-pub struct tst_core::io_file::DemuxFromFile
-impl tst_core::io_file::DemuxFromFile
-pub fn tst_core::io_file::DemuxFromFile::open(impl core::convert::AsRef<std::path::Path>) -> core::io::error::Result<Self>
-pub fn tst_core::io_file::DemuxFromFile::open_with_config(impl core::convert::AsRef<std::path::Path>, tst_core::mpegts::demux::DemuxerConfig) -> core::io::error::Result<Self>
-impl core::iter::traits::iterator::Iterator for tst_core::io_file::DemuxFromFile
-pub type tst_core::io_file::DemuxFromFile::Item = tst_core::mpegts::demux::event::DemuxEvent
-pub fn tst_core::io_file::DemuxFromFile::next(&mut self) -> core::option::Option<tst_core::mpegts::demux::event::DemuxEvent>
-impl core::marker::Freeze for tst_core::io_file::DemuxFromFile
-impl core::marker::Send for tst_core::io_file::DemuxFromFile
-impl core::marker::Sync for tst_core::io_file::DemuxFromFile
-impl core::marker::Unpin for tst_core::io_file::DemuxFromFile
-impl core::marker::UnsafeUnpin for tst_core::io_file::DemuxFromFile
-impl core::panic::unwind_safe::RefUnwindSafe for tst_core::io_file::DemuxFromFile
-impl core::panic::unwind_safe::UnwindSafe for tst_core::io_file::DemuxFromFile
 pub struct tst_core::io_file::TryDemuxFromFile
 impl tst_core::io_file::TryDemuxFromFile
 pub fn tst_core::io_file::TryDemuxFromFile::open(impl core::convert::AsRef<std::path::Path>) -> core::io::error::Result<Self>

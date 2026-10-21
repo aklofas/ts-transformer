@@ -4,9 +4,8 @@
 
 use std::io::Write;
 
-#[allow(deprecated)] // DemuxFromFile is deprecated in favor of TryDemuxFromFile; still tested
 use tst_core::io_file::{
-    DemuxFromFile, TryDemuxFromFile, demux_file, try_demux_from_file_with_config, write_mux_to_file,
+    TryDemuxFromFile, demux_file, try_demux_from_file_with_config, write_mux_to_file,
 };
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::DemuxerConfig;
@@ -43,55 +42,37 @@ fn demux_file_round_trip() {
 }
 
 #[test]
-#[allow(deprecated)] // DemuxFromFile is deprecated in favor of TryDemuxFromFile; still tested
-fn demux_from_file_streaming() {
+fn try_demux_from_file_matches_demux_file_on_clean_input() {
+    // On a clean valid file the streaming iterator must yield the same
+    // event sequence as the full-file helper, wrapped in `Ok`.
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
 
     let mut mux = minimal_muxer();
     push_one_keyframe(&mut mux);
     write_mux_to_file(&mut mux, tmp.path()).expect("write_mux_to_file");
 
-    let count = DemuxFromFile::open(tmp.path())
-        .expect("DemuxFromFile::open")
-        .count();
-    assert!(count > 0, "expected at least one event from DemuxFromFile");
-}
-
-#[test]
-#[allow(deprecated)] // DemuxFromFile is deprecated in favor of TryDemuxFromFile; still tested
-fn try_demux_from_file_matches_lossy_on_clean_input() {
-    // Same setup as `demux_from_file_streaming`, but compare event counts
-    // across both iterator flavors. On a clean valid file the fallible
-    // iterator must yield the same sequence as the lossy one, just
-    // wrapped in `Ok`.
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-
-    let mut mux = minimal_muxer();
-    push_one_keyframe(&mut mux);
-    write_mux_to_file(&mut mux, tmp.path()).expect("write_mux_to_file");
-
-    let lossy_count = DemuxFromFile::open(tmp.path())
-        .expect("DemuxFromFile::open")
-        .count();
-
-    let fallible: Vec<_> = TryDemuxFromFile::open(tmp.path())
+    let whole = demux_file(tmp.path()).expect("demux_file");
+    let streamed: Vec<_> = TryDemuxFromFile::open(tmp.path())
         .expect("TryDemuxFromFile::open")
         .collect();
 
     assert!(
-        lossy_count > 0,
-        "precondition: lossy iterator must yield events"
+        !whole.is_empty(),
+        "precondition: demux_file must yield events"
     );
     assert_eq!(
-        fallible.len(),
-        lossy_count,
-        "fallible iterator must yield the same number of items as the lossy one on clean input"
+        streamed.len(),
+        whole.len(),
+        "streaming iterator must yield as many items as demux_file on clean input"
     );
-    for r in &fallible {
-        assert!(
-            r.is_ok(),
-            "clean file must not produce errors, got {:?}",
-            r.as_ref().err()
+    for (i, (r, expected)) in streamed.iter().zip(&whole).enumerate() {
+        let got = r
+            .as_ref()
+            .unwrap_or_else(|e| panic!("clean file must not produce errors, got {e:?}"));
+        assert_eq!(
+            format!("{got:?}"),
+            format!("{expected:?}"),
+            "event {i} differs"
         );
     }
 }
@@ -146,8 +127,8 @@ fn try_demux_from_file_surfaces_truncated_pes() {
 fn try_demux_from_file_surfaces_feed_error_on_garbage() {
     // Write > 4 MiB of non-sync-byte garbage (no 0x47) to a file. The
     // demuxer's `SyncBufExhausted` cap fires at MAX_SYNC_BUF_BYTES
-    // (4 MiB). The lossy `DemuxFromFile` would silently set eof=true and
-    // return None; `TryDemuxFromFile` must surface `Err(InvalidData)`.
+    // (4 MiB). `TryDemuxFromFile` must surface `Err(InvalidData)` rather
+    // than ending the stream early.
     let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
     // Use 0x00 (definitely not 0x47) to force the sync-search window to
     // walk the whole buffer without finding a packet boundary.
