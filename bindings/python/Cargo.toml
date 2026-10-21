@@ -49,6 +49,11 @@ rist    = ["dep:tst-rist", "tst-rist/mbedtls", "dep:secrecy"]
 # `webrtc` (default-on, ships in wheels) pulls tst-webrtc for the WHEP
 # browser-playback server, with its `tls` feature so `wheps://` binds work.
 webrtc  = ["dep:tst-webrtc"]
+# Test-only: the WebRTC loopback viewer probe
+# (`tstrans._native.webrtc._loopback_viewer_probe`), the str0m test viewer
+# of tst-test-helpers. Off by default and never enabled for the wheels; CI's
+# python-core job builds with it.
+py-test-hooks = ["webrtc", "dep:tst-test-helpers"]
 # `pipeline` gates the ext::pairing PairingDemuxer composite. tst-pipeline
 # itself is an UNCONDITIONAL dependency: `src/raise.rs`
 # (the one Rust->Python raise path) and the mux / demux / klv / codec error
@@ -81,6 +86,7 @@ tst-tcp      = { path = "../../crates/tst-tcp", default-features = false, option
 tst-hls      = { path = "../../crates/tst-hls", default-features = false, optional = true }
 tst-rist     = { path = "../../crates/tst-rist", default-features = false, optional = true }
 tst-webrtc   = { path = "../../crates/tst-webrtc", default-features = false, features = ["tls"], optional = true }
+tst-test-helpers = { path = "../../crates/tst-test-helpers", features = ["whep-viewer"], optional = true }
 pyo3         = { version = "0.30", features = ["extension-module", "abi3-py311"] }
 # Used by the `rtp` feature path — both RtspClientBuilder::auth and
 # server-side auth wrap user-passed passwords in `SecretString`

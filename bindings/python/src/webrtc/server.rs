@@ -200,3 +200,46 @@ fn mount_config(obj: &Bound<'_, PyAny>) -> PyResult<MountConfig> {
         u32::try_from(int(intern!(py, "viewer_queue_packets"))?).unwrap_or(0);
     Ok(cfg)
 }
+
+// ---------------------------------------------------------------------------
+// Test-only viewer probe (feature = "py-test-hooks"): the str0m test viewer
+// of tst-test-helpers' `whep-viewer` feature, which tst-webrtc's own tests
+// use too, plays a mount that Python feeds, so the pytest suite proves media
+// reaches a real WebRTC peer. Never compiled into the wheels.
+// ---------------------------------------------------------------------------
+
+/// `_loopback_viewer_probe(server, mount)` → the frames one viewer received:
+/// it joins `mount`, waits up to 5 s to connect and up to 5 s for a first
+/// frame, then returns. A viewer that does not connect, or a refused join,
+/// raises `RuntimeError` with the viewer's trace.
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+#[pyo3(name = "_loopback_viewer_probe")]
+pub(super) fn loopback_viewer_probe(
+    py: Python<'_>,
+    server: PyRef<'_, PyWhepServer>,
+    mount: &str,
+) -> PyResult<usize> {
+    use std::time::Duration;
+    use tst_test_helpers::whep_viewer;
+
+    let addr = server.server(py)?.local_addr();
+    let joined = crate::util::allow_threads_parking(py, || {
+        tst_pipeline::binding::panic::catch(|| {
+            let mut v = whep_viewer::TestViewer::new();
+            whep_viewer::join(addr, mount, &mut v, false);
+            if !v.pump(|v| v.connected, Duration::from_secs(5)) {
+                return Err(format!("the viewer did not connect: {}", v.trace()));
+            }
+            v.pump(|v| !v.frames.is_empty(), Duration::from_secs(5));
+            Ok(v.frames.len())
+        })
+    });
+    match joined {
+        Ok(Ok(frames)) => Ok(frames),
+        Ok(Err(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(msg)),
+        Err(panic) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "the viewer could not join: {panic}"
+        ))),
+    }
+}
