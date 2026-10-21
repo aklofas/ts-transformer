@@ -9,6 +9,7 @@ module, organized into topic-focused submodules:
 - `tstrans.io` — convenience helpers for reading and writing .ts files
 - `tstrans.exceptions` — exception hierarchy raised by the above
 - `tstrans.pipeline` — KLV ↔ video PTS pairing (byte-feeding `Pairer`)
+- `tstrans.webrtc` — WebRTC (WHEP) browser playback (`WhepServer`)
 
 See the per-submodule docstrings for usage.
 """
@@ -61,6 +62,14 @@ try:
 except ImportError:
     _RIST_AVAILABLE = False
 
+# `webrtc` import is conditional on the `webrtc` cargo feature (default-on;
+# published wheels always include it). Same shape as the transports above.
+try:
+    from tstrans import webrtc  # noqa: F401
+    _WEBRTC_AVAILABLE = True
+except ImportError:
+    _WEBRTC_AVAILABLE = False
+
 # `pipeline` import is conditional on the `pipeline` cargo feature
 # (default-on; published wheels always include it). Same shape as rtp/srt.
 try:
@@ -100,6 +109,8 @@ if _HLS_AVAILABLE:
     __all__.append("hls")
 if _RIST_AVAILABLE:
     __all__.append("rist")
+if _WEBRTC_AVAILABLE:
+    __all__.append("webrtc")
 if _PIPELINE_AVAILABLE:
     __all__.append("pipeline")
 if _SHELLS_AVAILABLE:

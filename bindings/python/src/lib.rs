@@ -38,6 +38,8 @@ mod tcp;
 mod hls;
 #[cfg(feature = "rist")]
 mod rist;
+#[cfg(feature = "webrtc")]
+mod webrtc;
 #[cfg(feature = "pipeline")]
 mod pipeline;
 #[cfg(any(
@@ -119,6 +121,10 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     {
         m.add_function(wrap_pyfunction!(errors::raise_rist_error_for_test, m)?)?;
     }
+    #[cfg(feature = "webrtc")]
+    {
+        m.add_function(wrap_pyfunction!(errors::raise_webrtc_error_for_test, m)?)?;
+    }
     mpegts::register(m)?;
     klv::register(m)?;
     // Lazy `.raw` holder backing DemuxEvent.Video/.Audio.
@@ -159,6 +165,9 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     hls::register(m)?;
     #[cfg(feature = "rist")]
     rist::register(m)?;
+    // webrtc submodule — the WHEP browser-playback server.
+    #[cfg(feature = "webrtc")]
+    webrtc::register(m)?;
     // shells submodule — one Sender/Receiver/MuxSender/DemuxReceiver over
     // every transport's URL.
     #[cfg(any(

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Verifies EVERY tst-py .pyi stub (the four core modules io/codec/klv/mpegts
-# plus the six transport modules srt/rtp/udp/tcp/hls/rist and the shells
-# module) matches the live
+# plus the six transport modules srt/rtp/udp/tcp/hls/rist, the shells
+# module and the webrtc module) matches the live
 # runtime surface via `mypy stubtest`. Build-dependent (needs a maturin-built
 # tstrans + mypy in bindings/python/.venv), so it is EXCLUDED from the bare
 # `find scripts/check` pre-push sweep's hard-fail contract: when no venv with
 # mypy exists it prints SKIP and exits 0. CI runs it for real in the
 # `python-core` job right after `maturin develop --release` (tst-py's
-# transport features are default-on, so all eleven modules import).
+# transport features are default-on, so all twelve modules import).
 #
 # Worktree-aware. A linked `git worktree` has no
 # bindings/python/.venv, so this rail used to print SKIP there and the
@@ -29,7 +29,7 @@ ALLOWLIST="$ROOT/scripts/ratchets/stubtest-allowlist.txt"
 MODULES=(
   tstrans.io tstrans.codec tstrans.klv tstrans.mpegts
   tstrans.srt tstrans.rtp tstrans.udp tstrans.tcp tstrans.hls tstrans.rist
-  tstrans.shells
+  tstrans.shells tstrans.webrtc
 )
 
 # Interpreter: this tree's venv, else the main checkout's (linked worktree).

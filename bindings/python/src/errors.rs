@@ -101,7 +101,8 @@ pub(crate) fn make_kinded_error(
     feature = "udp",
     feature = "tcp",
     feature = "hls",
-    feature = "rist"
+    feature = "rist",
+    feature = "webrtc"
 ))]
 fn raise_for_test(py: Python<'_>, d: &crate::raise::Domain, member: &str, message: &str) -> PyErr {
     match crate::raise::kind_by_name(d, member) {
@@ -182,6 +183,17 @@ pub fn raise_hls_error_for_test(py: Python<'_>, kind: &str, message: &str) -> Py
 #[pyo3(name = "_raise_rist_error_for_test")]
 pub fn raise_rist_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
     Err(raise_for_test(py, &crate::raise::RIST, kind, message))
+}
+
+/// Test helper: raises `tstrans.exceptions.WebrtcError`. Exposed as
+/// `_native._raise_webrtc_error_for_test` so `test_webrtc.py` can confirm
+/// end-to-end wiring for a caller-supplied kind (a
+/// `BindingErrorKind::name()` member string; see the `srt` helper above).
+#[cfg(feature = "webrtc")]
+#[pyfunction]
+#[pyo3(name = "_raise_webrtc_error_for_test")]
+pub fn raise_webrtc_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
+    Err(raise_for_test(py, &crate::raise::WEBRTC, kind, message))
 }
 
 // ---------------------------------------------------------------------------

@@ -33,3 +33,5 @@ pub(crate) mod stats_srt;
 pub(crate) mod stats_tcp;
 #[cfg(feature = "udp")]
 pub(crate) mod stats_udp;
+#[cfg(feature = "webrtc")]
+pub(crate) mod stats_webrtc;

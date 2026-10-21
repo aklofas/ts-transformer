@@ -1,6 +1,6 @@
 [package]
 name        = "tst-py"
-description = "MPEG-TS video + MISB KLV streaming via PyO3 — mux/demux, typed KLV, codec parsers, and live SRT/RTP/UDP/TCP/RIST transports"
+description = "MPEG-TS video + MISB KLV streaming via PyO3 — mux/demux, typed KLV, codec parsers, live SRT/RTP/UDP/TCP/RIST transports and WebRTC (WHEP) browser playback"
 publish     = false
 # tst-py versions independently from the rest of the workspace.
 # Keep this in sync with pyproject.toml's `[project] version`.
@@ -21,7 +21,7 @@ doctest    = false
 # transports. A `--no-default-features` source build (or explicit feature
 # selection without `hls`) is the only way to omit it. See
 # docs/project/deferred-features.md.
-default = ["rtp", "srt", "udp", "tcp", "rist", "pipeline", "hls", "tls"]
+default = ["rtp", "srt", "udp", "tcp", "rist", "pipeline", "hls", "tls", "webrtc"]
 # `rtp` pulls tst-rtp + secrecy (for RtspClientBuilder::auth + server-side
 # auth password wrapping). The `MuxSender<RtpTransport>` /
 # `DemuxReceiver<RtpRecvTransport>` convenience wrappers come from
@@ -46,6 +46,9 @@ udp     = ["dep:tst-udp"]
 tcp     = ["dep:tst-tcp"]
 hls     = ["dep:tst-hls", "tst-hls?/serve"]
 rist    = ["dep:tst-rist", "tst-rist/mbedtls", "dep:secrecy"]
+# `webrtc` (default-on, ships in wheels) pulls tst-webrtc for the WHEP
+# browser-playback server, with its `tls` feature so `wheps://` binds work.
+webrtc  = ["dep:tst-webrtc"]
 # `pipeline` gates the ext::pairing PairingDemuxer composite. tst-pipeline
 # itself is an UNCONDITIONAL dependency: `src/raise.rs`
 # (the one Rust->Python raise path) and the mux / demux / klv / codec error
@@ -77,6 +80,7 @@ tst-udp      = { path = "../../crates/tst-udp", default-features = false, option
 tst-tcp      = { path = "../../crates/tst-tcp", default-features = false, optional = true }
 tst-hls      = { path = "../../crates/tst-hls", default-features = false, optional = true }
 tst-rist     = { path = "../../crates/tst-rist", default-features = false, optional = true }
+tst-webrtc   = { path = "../../crates/tst-webrtc", default-features = false, features = ["tls"], optional = true }
 pyo3         = { version = "0.30", features = ["extension-module", "abi3-py311"] }
 # Used by the `rtp` feature path — both RtspClientBuilder::auth and
 # server-side auth wrap user-passed passwords in `SecretString`
