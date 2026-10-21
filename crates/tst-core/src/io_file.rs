@@ -8,7 +8,7 @@
 //!
 //! # Error policy for file helpers (cross-binding)
 //!
-//! File helpers come in three shapes, each with consistent error
+//! File helpers come in two shapes, each with consistent error
 //! semantics so callers across Rust + Python + C can reason about
 //! failure the same way:
 //!
@@ -19,14 +19,7 @@
 //!    rejection) are mapped to [`io::ErrorKind::InvalidData`] with the
 //!    [`DemuxError`] formatted into the message.
 //!
-//! 2. **Lossy streaming helpers** ([`DemuxFromFile`]) — iterate
-//!    `Item = DemuxEvent`. Read failures and demux-feed failures are
-//!    silently coerced to early EOF. Kept for backward compatibility
-//!    with existing demos; **new code should prefer
-//!    [`TryDemuxFromFile`]**, which surfaces the same errors via
-//!    `Iterator<Item = io::Result<DemuxEvent>>`.
-//!
-//! 3. **Fallible streaming helpers** ([`TryDemuxFromFile`]) — iterate
+//! 2. **Fallible streaming helpers** ([`TryDemuxFromFile`]) — iterate
 //!    `Item = io::Result<DemuxEvent>`. On any read or demux-feed
 //!    error, the iterator yields `Some(Err(_))` once and then `None`
 //!    forever. Trailing events already buffered before the error are
@@ -85,115 +78,14 @@ pub fn demux_file_with_config(
     Ok(out)
 }
 
-/// Streaming iterator over demuxer events from a file. Reads the file
-/// in 64 KiB chunks, feeding the demuxer incrementally.
+/// Fallible streaming iterator over demuxer events from a file.
+///
+/// Reads the file in 64 KiB chunks, feeding the demuxer incrementally.
+/// Read failures and demux-feed failures are reported through
+/// `Iterator::Item = io::Result<DemuxEvent>`.
 ///
 /// Bounded memory: at most 64 KiB of raw TS bytes are held at a time,
 /// plus whatever the demuxer buffers for in-progress PES reassembly.
-///
-/// # Lossy on errors — prefer [`TryDemuxFromFile`] for new code
-///
-/// This iterator's `Item` is `DemuxEvent`, so it has no channel to
-/// surface read or demux failures: both silently coerce to early
-/// EOF. That makes it impossible for a Rust consumer to distinguish
-/// a clean end-of-file from a truncated read or a malformed
-/// transport stream. It is kept for backward compatibility; new code
-/// should use
-/// [`TryDemuxFromFile`] instead, which iterates
-/// `io::Result<DemuxEvent>` and emits an `Err` on the same
-/// conditions. See the module-level docs for the full file-helper
-/// error policy.
-///
-/// ```no_run
-/// # #[allow(deprecated)]
-/// # {
-/// use tst_core::io_file::DemuxFromFile;
-///
-/// let iter = DemuxFromFile::open("input.ts").unwrap();
-/// for event in iter {
-///     println!("{:?}", event);
-/// }
-/// # }
-/// ```
-#[deprecated(
-    since = "0.6.0",
-    note = "lossy on read/demux-feed errors (silently coerces to early EOF) \
-            — use `TryDemuxFromFile` instead, which surfaces the same \
-            failures via `Iterator<Item = io::Result<DemuxEvent>>`; \
-            removal no earlier than 1.0"
-)]
-pub struct DemuxFromFile {
-    file: File,
-    buf: Box<[u8; 65536]>,
-    demuxer: Demuxer,
-    pending: std::collections::VecDeque<DemuxEvent>,
-    eof: bool,
-}
-
-#[allow(deprecated)] // the impl block for a deprecated type warns on every field touch
-impl DemuxFromFile {
-    /// Open `path` with default [`DemuxerConfig`].
-    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-        Self::open_with_config(path, DemuxerConfig::default())
-    }
-
-    /// Open `path` with caller-supplied [`DemuxerConfig`].
-    pub fn open_with_config(path: impl AsRef<Path>, config: DemuxerConfig) -> io::Result<Self> {
-        Ok(Self {
-            file: File::open(path)?,
-            buf: Box::new([0u8; 65536]),
-            demuxer: Demuxer::with_config(config),
-            pending: std::collections::VecDeque::new(),
-            eof: false,
-        })
-    }
-}
-
-#[allow(deprecated)] // the impl block for a deprecated type warns on every field touch
-impl Iterator for DemuxFromFile {
-    type Item = DemuxEvent;
-
-    fn next(&mut self) -> Option<DemuxEvent> {
-        loop {
-            if let Some(ev) = self.pending.pop_front() {
-                return Some(ev);
-            }
-            if self.eof {
-                return None;
-            }
-            let n = match self.file.read(self.buf.as_mut()) {
-                Ok(0) => {
-                    // EOF: flush the demuxer and collect any trailing events.
-                    self.eof = true;
-                    self.demuxer.flush();
-                    while let Some(ev) = self.demuxer.next_event() {
-                        self.pending.push_back(ev);
-                    }
-                    continue;
-                }
-                Ok(n) => n,
-                Err(_) => {
-                    self.eof = true;
-                    return None;
-                }
-            };
-            // Feed this chunk; silently stop on unrecoverable demux errors.
-            if self.demuxer.feed(&self.buf[..n]).is_err() {
-                self.eof = true;
-            }
-            while let Some(ev) = self.demuxer.next_event() {
-                self.pending.push_back(ev);
-            }
-        }
-    }
-}
-
-/// Fallible streaming iterator over demuxer events from a file.
-///
-/// Like [`DemuxFromFile`] but exposes read failures and demux-feed
-/// failures via `Iterator::Item = io::Result<DemuxEvent>` instead of
-/// silently coercing them to early EOF. Reads the file in 64 KiB
-/// chunks; bounded memory same as the lossy variant.
 ///
 /// # Error reporting contract
 ///
@@ -207,8 +99,8 @@ impl Iterator for DemuxFromFile {
 ///   `Some(Err(io::Error::new(InvalidData, demux_err)))` and then
 ///   `None` forever. As with read errors, already-queued events
 ///   from before the bad chunk are drained first.
-/// - **Clean EOF**: matches [`DemuxFromFile`] — the demuxer is
-///   flushed, any trailing events are drained as `Ok`, then `None`.
+/// - **Clean EOF**: the demuxer is flushed, any trailing events are
+///   drained as `Ok`, then `None`.
 ///
 /// After the iterator yields an `Err`, it is exhausted; calling
 /// `next()` again returns `None`. Callers wanting partial progress

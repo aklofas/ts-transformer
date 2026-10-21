@@ -71,6 +71,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Removed — tst-core (BREAKING)
 
+- `io_file::DemuxFromFile` is removed. Its deprecation note promised removal no
+  earlier than 1.0; it goes in 0.9.0 instead, ahead of that promise, so that 1.0
+  does not carry a helper that hides read and demux errors. Use
+  `TryDemuxFromFile` (`Iterator<Item = io::Result<DemuxEvent>>`): the clean-EOF
+  behaviour is the same, and a read or feed error arrives as one `Err` item.
 - `TransportError::is_connection_refused` — nothing called it. Classify the
   `errno_code` with `std::io::Error::from_raw_os_error(code).kind()`.
 - `UasDatalinkLs::active_payload_ids` — read `active_payloads` (Item 139):
