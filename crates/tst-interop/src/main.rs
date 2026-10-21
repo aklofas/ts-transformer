@@ -1624,6 +1624,7 @@ fn run_report_render(args: &[String]) -> ! {
 /// --recv-report FILE --send-report FILE --outage-period-s N
 /// [--rist-proxy-stats FILE --rist-recv-report FILE --rist-send-report FILE]
 /// [--publish-leg NAME=FILE ...] [--rtsp-publish-recv-report FILE]
+/// [--whep-viewer-report FILE --whep-serve-report FILE]
 /// [--rss-slope-threshold-kb-per-hour F] --out FILE`
 ///
 /// Turns `soak.sh`'s raw artifacts into `soak-results.json` — see
@@ -1646,6 +1647,11 @@ fn run_report_render(args: &[String]) -> ! {
 /// the report's `publish_mount` block. Omit it for a run without that
 /// leg. `--rtsp-publish-recv-report FILE` is the older spelling of
 /// `--publish-leg rtsp-publish=FILE`.
+///
+/// `--whep-viewer-report FILE --whep-serve-report FILE` describe the
+/// WebRTC playback leg (`report::soak::WHEP_LEGS`): the viewer loop's
+/// per-connection report and `serve-whep --json`'s counters. Given
+/// together or not at all; omit both for a run without that leg.
 ///
 /// `report soak --config FILE --validate-only` (no other flag accepted)
 /// parses and validates `soak-config.json` alone — `soak.sh` calls this
@@ -1685,6 +1691,8 @@ fn run_report_soak(args: &[String]) -> ! {
         }
         legs.push((name.to_string(), PathBuf::from(path)));
     };
+    let mut whep_viewer_report: Option<PathBuf> = None;
+    let mut whep_serve_report: Option<PathBuf> = None;
     let mut rss_slope_threshold: Option<f64> = None;
     let mut out: Option<PathBuf> = None;
     let mut validate_only = false;
@@ -1784,6 +1792,22 @@ fn run_report_soak(args: &[String]) -> ! {
                 add_publish_leg(&mut publish_legs, "rtsp-publish", &v);
                 i += 2;
             }
+            "--whep-viewer-report" => {
+                whep_viewer_report = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "report soak: --whep-viewer-report",
+                )));
+                i += 2;
+            }
+            "--whep-serve-report" => {
+                whep_serve_report = Some(PathBuf::from(require_value(
+                    args,
+                    i,
+                    "report soak: --whep-serve-report",
+                )));
+                i += 2;
+            }
             "--rss-slope-threshold-kb-per-hour" => {
                 let v = require_value(args, i, "report soak: --rss-slope-threshold-kb-per-hour");
                 rss_slope_threshold = Some(v.parse().unwrap_or_else(|_| {
@@ -1820,6 +1844,8 @@ fn run_report_soak(args: &[String]) -> ! {
             || rist_recv_report.is_some()
             || rist_send_report.is_some()
             || !publish_legs.is_empty()
+            || whep_viewer_report.is_some()
+            || whep_serve_report.is_some()
             || rss_slope_threshold.is_some()
             || out.is_some();
         if other_flag_given {
@@ -1903,6 +1929,18 @@ fn run_report_soak(args: &[String]) -> ! {
         None
     };
 
+    let whep = match (&whep_viewer_report, &whep_serve_report) {
+        (Some(viewer), Some(serve)) => Some((viewer.as_path(), serve.as_path())),
+        (None, None) => None,
+        _ => {
+            eprintln!(
+                "report soak: --whep-viewer-report and --whep-serve-report must be given \
+                 together or not at all"
+            );
+            std::process::exit(2);
+        }
+    };
+
     let results = report::soak::run(
         &rss,
         &config,
@@ -1913,6 +1951,7 @@ fn run_report_soak(args: &[String]) -> ! {
         outage_period_s,
         rist,
         &publish_legs,
+        whep,
         rss_slope_threshold,
         &out,
     )

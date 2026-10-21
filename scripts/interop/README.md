@@ -683,7 +683,8 @@ a third, `rtsp-publish`, has an external RTSP publisher push into the
 receiver's publish mount and drop on a schedule (see "Publish leg" below);
 a fourth, `rtsp-publish-es`, does the same with H.264 and KLV as two
 separate RTP tracks, which the mount re-muxes (see "Elementary publish leg"
-below).
+below); a fifth, `whep`, serves a WebRTC mount to a headless browser that
+reconnects on a schedule (see "WebRTC playback leg" below).
 `bash scripts/interop/soak.sh --help` lists the flags, env knobs and exit
 codes; the topology, prerequisites and launch recipe follow below.
 
@@ -710,8 +711,9 @@ thread or descriptor leak is visible before anyone writes a verdict for it.
 - **`exits.json`** — one reaped exit status per worker role (`srt-send`,
   `srt-proxy`, `srt-recv`, `rist-send`, `rist-proxy`, `rist-recv`, plus
   `rtsp-publish-recv` and `rtsp-publish-publisher` unless the run passed
-  `--no-rtsp-publish`, and `rtsp-publish-es-recv` and
-  `rtsp-publish-es-publisher` unless it passed `--no-rtsp-publish-es`; the
+  `--no-rtsp-publish`, `rtsp-publish-es-recv` and
+  `rtsp-publish-es-publisher` unless it passed `--no-rtsp-publish-es`, and
+  `whep-serve` and `whep-viewer` unless it passed `--no-whep`; the
   RSS sampler is killed by `soak.sh` itself on schedule and is never
   recorded here), written at teardown, including any worker that died
   inside the supervisor's end-of-run grace window. `report soak
@@ -753,6 +755,12 @@ Those two files feed three new verdicts in `soak-results.json`:
   `h264parse`) and pushes H.264 (RFC 6184) and KLV (RFC 6597) as two RTP
   tracks into `recv --url rtsp-publish://.../soak-es`, which re-muxes them.
   See "Elementary publish leg" below.
+- **`whep` leg:** `tst-interop serve-whep` serves one MP2T WebRTC mount
+  (the profile's KLV schedule muxed in-process, a real H.264 GOP as the
+  video) for the whole run, and headless Chrome plays it with the
+  reference player on the matrix's `whep-page.html`, one browser per
+  `WHEP_RECONNECT_S` slot; no proxy, no tst-interop sender or receiver.
+  See "WebRTC playback leg" below.
 
 ### Running a soak on a fresh host
 
@@ -762,7 +770,9 @@ dependencies' toolchains — cmake for libsrt and mbedTLS, meson + ninja for
 librist, clang / libclang for bindgen — and the rtsp-publish leg needs
 `gst-launch-1.0` with `rtspclientsink` (`--no-rtsp-publish` runs without it);
 the rtsp-publish-es leg also needs `tsdemux` and `h264parse`, both in
-gstreamer1.0-plugins-bad (`--no-rtsp-publish-es` runs without it):
+gstreamer1.0-plugins-bad (`--no-rtsp-publish-es` runs without it); the whep
+leg needs `google-chrome` or `chromium` on PATH, run headless (`--no-whep`
+runs without it):
 
 ```bash
 git clone --recurse-submodules https://github.com/aklofas/ts-transformer.git
@@ -813,14 +823,17 @@ so about 140 MB at the default (exit 2 below 1.2 × that).
 ### Outputs and the supervisor
 
 Under `--outdir`: `rss.csv` (`elapsed_s,leg,process,pid,rss_kb` for every
-worker: 10 PIDs, 2 fewer for each of `--no-rtsp-publish` and
-`--no-rtsp-publish-es`; on both publish legs the `publisher` row is the
-restart loop's shell, not gst-launch-1.0, whose own memory is not
-sampled), `proc.csv`, `host.csv` and `provenance.json` (above),
-`soak-config.json` and `exits.json` (below), per leg
-`{srt,rist}/{proxy-stats,recv-report,send-report}.json` and
+worker: 12 PIDs, 2 fewer for each of `--no-rtsp-publish`,
+`--no-rtsp-publish-es` and `--no-whep`; on both publish legs the
+`publisher` row is the restart loop's shell, not gst-launch-1.0, and on the
+whep leg the `viewer` row is the viewer loop's shell, not Chrome; the
+tools' own memory is not sampled), `proc.csv`, `host.csv` and
+`provenance.json` (above), `soak-config.json` and `exits.json` (below), per
+leg `{srt,rist}/{proxy-stats,recv-report,send-report}.json` and
 `corruption.jsonl`, `rtsp-publish/recv-report.json` and `source.sha256`,
 `rtsp-publish-es/{source.ts,source-verify.json,recv-report.json}`,
+`whep/{serve-counters.json,viewer-report.json}` and per browser connection
+`whep/viewer/conn-N.{console.txt,stderr}`,
 `logs/*.log` (each send / recv writes a one-line heartbeat every 60 s),
 `pids/*.pid`, `soak-events.log`, `soak-results.json` and `summary.txt`.
 `klv_set_sha256` is `null` in every report (`--no-klv-digest`).
@@ -832,7 +845,9 @@ and, once the source stream exists, `source_sha256`, which the receiver's
 `stream_sha256` must equal (`delivery_complete_rtsp-publish`). The
 rtsp-publish-es leg declares the same period and generation count plus
 `remuxed`, `klv_records_per_generation` and `klv_placement` (see
-"Elementary publish leg").
+"Elementary publish leg"); the whep leg declares `mount_kind`, the viewer
+command, `viewer_reconnect_s` and `viewer_connections` (see "WebRTC
+playback leg").
 
 The supervisor polls every worker every 30 s. A death more than
 `SUPERVISOR_GRACE_S` (120 s) before the deadline kills the run at once,
@@ -859,14 +874,16 @@ it said it would.
 
 | flag | default | what it does |
 |---|---|---|
-| `--profile auto\|NAME` | `auto` | `auto` draws two DISTINCT profiles from the seed, one per transport leg, and runs the `rtsp-publish` leg on `baseline` (it is not part of the draw, so a seed's srt and rist profiles are unchanged). `NAME` pins every leg to one profile, except `rtsp-publish-es`, which always runs `klv-sync`. |
+| `--profile auto\|NAME` | `auto` | `auto` draws two DISTINCT profiles from the seed, one per transport leg, and runs the `rtsp-publish` and `whep` legs on `baseline` (neither is part of the draw, so a seed's srt and rist profiles are unchanged). `NAME` pins every leg to one profile, except `rtsp-publish-es`, which always runs `klv-sync`. |
 | `--schedule-phases K` | `12` | Phases in the seeded impairment schedule both proxies walk. |
 | `--schedule-phase-s S` | `TOTAL_SECONDS / K` (floor 1) | Seconds each phase stays in force. |
 | `--fixed-impairment` | off | Reverts both proxies to the old single fixed level (`--loss`/`--jitter`/`--delay`/`--reorder`). |
 | `--no-corrupt` | tap on | Turns off the per-leg sender corruption tap. |
 | `--no-rtsp-publish` | leg on | Runs without the `rtsp-publish` leg (no pre-generated segments on disk). |
 | `--no-rtsp-publish-es` | leg on | Runs without the `rtsp-publish-es` leg. With both publish flags, no GStreamer is needed. |
+| `--no-whep` | leg on | Runs without the `whep` leg (no browser needed). |
 | `PUBLISHER_DROP_PERIOD_S` | `600` | How often each publish leg's publisher session ends and a new one ANNOUNCEs. Both legs share it, so their publisher schedules coincide. The run must span at least two periods. |
+| `WHEP_RECONNECT_S` | `600` | How often the whep leg's viewer ends its browser and starts a new one. The run must span at least two slots. |
 
 Corruption and rich ST 0601 KLV are **on by default** on both transport
 legs. The tap runs at `rate=5,min_gap=1000` with per-leg seed offsets
@@ -1086,7 +1103,8 @@ free.
   `summary.txt` prints the publisher count and the delivery verdict.
 - **Every declared leg is judged** — a leg in `soak-config.json`'s `legs`
   whose artefacts were not passed to `report soak` (a hand-run report that
-  forgets `--rtsp-publish-recv-report`, `--publish-leg rtsp-publish-es=…`, or
+  forgets `--rtsp-publish-recv-report`, `--publish-leg rtsp-publish-es=…`,
+  `--whep-viewer-report … --whep-serve-report …`, or
   the rist reports) gets a failing
   `leg_evidence_<leg>` verdict, so `overall_pass` can never be true for a leg
   nobody looked at.
@@ -1157,6 +1175,84 @@ The receiver runs `--remuxed --expect klv-sync --klv-placement <generations>
   applicable": the publisher replays a pristine file with no tap).
   `report soak` takes the leg's report with `--publish-leg
   rtsp-publish-es=<path>`.
+
+#### WebRTC playback leg (`whep`)
+
+`tst-interop serve-whep --url whep://127.0.0.1:<port>?media_port=<port>
+--mount /soak --profile <profile> --mount-kind mp2t --seconds <run>
+--wait-viewer 15 --json whep/serve-counters.json` (the `whep-serve`
+worker) binds a WHEP server with one MP2T mount and serves the whole run
+of the leg's profile the way the matrix's `whep/chromium-sei-dc-klv` cell
+is served: the profile's KLV schedule (compact records) muxed in-process
+and fed through `push_ts`, with the real 320x240 H.264 GOP as the video
+(the generator's synthetic slices decode in no browser; see "Transport
+axis: the WHEP browser cells"). The viewer loop (the `whep-viewer`
+worker) runs headless Chrome on `whep-page.html` — the reference player
+under `docs/webrtc/` loaded unmodified, `dedupe: false` so every record
+arrives from BOTH carriages — one browser per `WHEP_RECONNECT_S` slot
+counted from the loop's start, each ended by `timeout` 3 s before its
+slot ends so the next starts on its own slot. The server is never told: a
+browser leaving is a session it reaps on ICE timeout, a browser arriving a
+session it starts at the next keyframe, with the data channel opening a
+moment later. `WHEP_CONNECTIONS = run / WHEP_RECONNECT_S` connections,
+at least two, so at least one reconnect; a browser that exits other than
+by its timeout makes the loop exit 1, which fails `worker_exits`. The
+loop idles to the end of the run after its last connection, and
+`serve-whep`, which starts its push once the first browser is connected
+(up to 15 s) and lingers 3 s after it, outlives the last connection.
+
+Each connection's console is parsed the way the cells parse theirs into
+one entry of `whep/viewer-report.json`: the once-a-second `FRAMES` (and
+`AUDIO`) samples in order, the records per carriage with their set
+digests (sha256 over the sorted per-record digests, `verify.rs`'s
+`klv_set_hash`), every record seen on one carriage only with its position
+on that carriage, the copies disagreeing on (PTS, RTP timestamp), the
+page's `ERROR` lines and the browser's `ERROR:CONSOLE` lines. The raw
+console and stderr of every connection stay under `whep/viewer/` (about
+3.5 MB of stderr per 10-minute connection).
+
+- **Declared** — `legs.whep` carries the profile (`baseline` under
+  `--profile auto`, not part of the seeded draw), `klv_set: "compact"`,
+  `schedule: null`, `reconnect_mode: null`, `mount_kind`, the viewer
+  command line, `viewer_reconnect_s` and `viewer_connections`.
+  `parse_soak_config` rejects a whep leg without a known mount kind, a
+  positive slot or at least two connections, and any other leg that
+  declares a viewer field.
+- **Observed** — the viewer report above, and `serve-whep --json`'s
+  counters (`whep/serve-counters.json`: the profile and mount kind served,
+  the mount's `MountStats`, the server's `ServerStats` with
+  `sessions_total`, and each session still present at the end). `report
+  soak` takes both with `--whep-viewer-report <path> --whep-serve-report
+  <path>`, given together.
+- **Checked** — **`whep_reconnects_observed_whep`**, non-provisional: the
+  viewer report lists exactly `viewer_connections` connections on the
+  declared slot AND the server's `sessions_total` equals it — two
+  independent counts of the same reconnects, one per side.
+  **`whep_frames_continuous_whep`**: every connection was ended by its
+  own timeout (browser exit 124), reported no error, decoded its first
+  frame within 5 samples and, from then on, never went more than 2
+  samples without `FRAMES` rising — no gap over 2 s except at a
+  reconnect — with at most 3 samples fewer than its planned seconds.
+  **`whep_klv_sei_equals_dc_whep`**: in every connection the SEI record
+  set equals the data-channel set and neither is empty. A record on one
+  carriage only is allowed among the first 3 of its carriage (the data
+  channel opens a moment after the session is connected, so a record
+  bound to a frame sent in that moment reaches the viewer in the SEI
+  only; the server counts it in `klv_dc_dropped_viewer`) or the last 2
+  (the kill lands between a record's two copies); the report counts
+  those as `klv_unpaired_at_edges`. The copies disagreeing on (PTS, RTP
+  timestamp) are recorded, not gated here: the matrix cells gate the
+  frame binding and the KLV content against the generator, and a soak
+  connection's window is wherever its slot fell in the schedule.
+  **`profile_declared_whep`**: the server's counters name the declared
+  profile and mount kind. `schedule_declared_`, `reconnect_mode_declared_`
+  and the six `corruption_*_` verdicts read "not applicable" with the
+  reason, and fail on a declared schedule or mode as on a publish leg.
+  RSS is sampled for `serve` and for the viewer loop; the `viewer` rows
+  are the loop's shell, not Chrome. `soak-results.json` lists the leg
+  under `whep_legs` (connections, server sessions, frames decoded, records
+  per carriage, the mount and server counters), and `summary.txt` prints
+  one line of it with the three verdicts.
 
 #### Lossy-mode transport loss
 

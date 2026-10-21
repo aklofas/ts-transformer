@@ -576,23 +576,25 @@ record_pid_to() {
   event_to "$events_log" "LAUNCHED role=$role pid=$pid"
 }
 
-# wait_for_bound_addr <stdout_file> <timeout_s> <who> -- polls
+# wait_for_bound_addr <stdout_file> <timeout_s> <who> [<key>] -- polls
 # (sanctioned `until ...; do sleep N; done` shape — see this file's
 # header on why a bare loop+sleep is avoided) for `proxy::run`'s
 # `{"listening": "host:port"}` stdout line and echoes the address, or
-# exits 1 after <timeout_s> with an error prefixed `<who>:`.
+# exits 1 after <timeout_s> with an error prefixed `<who>:`. <key>
+# (default `listening`) names the JSON key: `serving` for `serve-whep`'s
+# `{"serving": "http://host:port/mount"}` line.
 wait_for_bound_addr() {
-  local stdout_file=$1 timeout_s=$2 who=$3 deadline addr
+  local stdout_file=$1 timeout_s=$2 who=$3 key=${4:-listening} deadline addr
   deadline=$(($(date +%s) + timeout_s))
   addr=""
   until [[ -n "$addr" || $(date +%s) -ge $deadline ]]; do
     if [[ -s "$stdout_file" ]]; then
-      addr=$(jq -r '.listening // empty' "$stdout_file" 2>/dev/null) || addr=""
+      addr=$(jq -r --arg key "$key" '.[$key] // empty' "$stdout_file" 2>/dev/null) || addr=""
     fi
     [[ -n "$addr" ]] || sleep 0.2
   done
   if [[ -z "$addr" ]]; then
-    echo "$who: proxy never reported its bound address within ${timeout_s}s (see $stdout_file)" >&2
+    echo "$who: no {\"$key\": ...} line within ${timeout_s}s (see $stdout_file)" >&2
     exit 1
   fi
   printf '%s' "$addr"
