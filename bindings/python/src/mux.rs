@@ -326,7 +326,7 @@ impl PyDataStreamHandle {
 // `tstrans.mpegts` and the `py_subtitle_codec` converter below.
 
 /// Translate a Python `VideoCodec` enum to the mux-side Rust variant.
-fn py_video_codec(v: &Bound<'_, PyAny>) -> PyResult<RustVideoCodec> {
+pub(crate) fn py_video_codec(v: &Bound<'_, PyAny>) -> PyResult<RustVideoCodec> {
     let s: String = v.getattr("value")?.extract()?;
     match s.as_str() {
         "h264" => Ok(RustVideoCodec::H264),

@@ -1,0 +1,289 @@
+"""tstrans.webrtc — the WHEP playback server.
+
+Covers bind / add_mount / push / stats / close semantics and the error
+model.
+"""
+
+from __future__ import annotations
+
+
+import pytest
+
+from tstrans import _native
+from tstrans.exceptions import WebrtcError, WebrtcErrorKind
+from tstrans.klv import UasDatalinkLs, encode_uas_datalink
+from tstrans.mpegts import Pts90khz, VideoCodec
+from tstrans.webrtc import (
+    AudioPolicy,
+    KlvCarriage,
+    MountConfig,
+    MountHandle,
+    MountKind,
+    MountStats,
+    ServerStats,
+    SessionStats,
+    WhepServer,
+)
+
+# A minimal Annex-B access unit: SPS, PPS and an IDR slice header.
+_TINY_IDR_AU = bytes(
+    [
+        0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1F, 0xE9, 0x40,
+        0, 0, 0, 1, 0x68, 0xCE, 0x38, 0x80,
+        0, 0, 0, 1, 0x65, 0x88, 0x84, 0x00, 0x33,
+    ]
+)
+
+def _klv_record(heading: float) -> bytes:
+    return encode_uas_datalink(UasDatalinkLs(platform_heading_deg=heading))
+
+
+@pytest.fixture
+def server():
+    s = WhepServer.bind("whep://127.0.0.1:0")
+    yield s
+    s.close()
+
+
+# ---------------------------------------------------------------------------
+# Bind, mounts, pushes, stats
+# ---------------------------------------------------------------------------
+
+
+def test_bind_reports_kernel_picked_addresses(server):
+    addr = server.local_addr()
+    host, port = addr.rsplit(":", 1)
+    assert host == "127.0.0.1"
+    assert int(port) > 0
+    media_host, media_port = server.media_addr().rsplit(":", 1)
+    assert media_host == "127.0.0.1"
+    assert int(media_port) > 0
+
+
+def test_add_mount_push_and_stats(server):
+    stats = server.stats()
+    assert isinstance(stats, ServerStats)
+    assert stats.mounts == 0
+
+    m = server.add_mount("/cam")
+    assert isinstance(m, MountHandle)
+    assert m.mount_path() == "/cam"
+    m.push_video(_TINY_IDR_AU, pts=Pts90khz(0), key_frame=True)
+    m.push_video(bytearray(_TINY_IDR_AU), pts=Pts90khz(3000), key_frame=True)
+    m.push_video(memoryview(_TINY_IDR_AU), pts=Pts90khz(6000), key_frame=True)
+    m.push_klv(_klv_record(10.0), pts=Pts90khz(6000))
+    m.push_klv(_klv_record(20.0), pts=Pts90khz(6000), metadata_service_id=255)
+
+    assert server.stats().mounts == 1
+    ms = m.stats()
+    assert isinstance(ms, MountStats)
+    assert ms.frames_pushed == 3
+    assert ms.keyframes_pushed == 3
+    assert ms.keyframe_flag_mismatch == 0
+    assert ms.klv_records_pushed == 2
+    assert ms.viewers == 0
+    assert ms.audio_frames_pushed == 0
+    assert m.sessions() == []
+
+    server.remove_mount("/cam")
+    assert server.stats().mounts == 0
+
+
+def test_add_mount_with_explicit_config(server):
+    cfg = MountConfig(
+        kind=MountKind.ELEMENTARY,
+        video=VideoCodec.H265,
+        audio=AudioPolicy.PASSTHROUGH_OPUS,
+        klv=KlvCarriage.DATA_CHANNEL_ONLY,
+        sei_budget_bytes=1024,
+        viewer_queue_packets=512,
+    )
+    m = server.add_mount("/h265", cfg)
+    assert m.mount_path() == "/h265"
+    m.push_audio(b"\xfc\xff\xfe", pts=Pts90khz(0))
+    assert m.stats().audio_frames_pushed == 1
+    mp2t = server.add_mount("/ts", MountConfig(kind=MountKind.MP2T))
+    mp2t.push_ts(b"\x47\x1f\xff\x10" + b"\xff" * 184)
+    assert server.stats().mounts == 2
+
+
+def test_mount_config_defaults_mirror_rust():
+    d = MountConfig()
+    assert d.kind is MountKind.ELEMENTARY
+    assert d.video is VideoCodec.H264
+    assert d.audio is AudioPolicy.DROP
+    assert d.klv is KlvCarriage.SEI_AND_DATA_CHANNEL
+    assert d.sei_budget_bytes == 64 * 1024
+    assert d.viewer_queue_packets == 2048
+    assert [m.name for m in MountKind] == ["ELEMENTARY", "MP2T"]
+    assert [m.name for m in AudioPolicy] == ["DROP", "PASSTHROUGH_OPUS"]
+    assert [m.name for m in KlvCarriage] == [
+        "SEI_AND_DATA_CHANNEL",
+        "SEI_ONLY",
+        "DATA_CHANNEL_ONLY",
+    ]
+
+
+def test_stats_records_carry_every_counter(server):
+    m = server.add_mount("/cam")
+    assert len(_fields(m.stats())) == 20
+    assert len(_fields(server.stats())) == 11
+    assert "MountStats(" in repr(m.stats())
+    assert "ServerStats(" in repr(server.stats())
+
+
+def _fields(record: object) -> list[str]:
+    return [n for n in dir(record) if not n.startswith("_")]
+
+
+def test_session_stats_class_is_exported():
+    assert SessionStats.__module__ == "tstrans.webrtc"
+
+
+def test_repr_names_the_addresses_and_path(server):
+    m = server.add_mount("/cam")
+    assert server.local_addr() in repr(server)
+    assert "/cam" in repr(m)
+
+
+# ---------------------------------------------------------------------------
+# Close semantics
+# ---------------------------------------------------------------------------
+
+
+def test_stop_is_idempotent_and_close_after_stop_is_fine():
+    s = WhepServer.bind("whep://127.0.0.1:0")
+    s.stop()
+    s.stop()
+    s.close()
+    s.close()
+
+
+def test_push_after_stop_is_closed(server):
+    m = server.add_mount("/cam")
+    server.stop()
+    with pytest.raises(WebrtcError) as exc:
+        m.push_video(_TINY_IDR_AU, pts=Pts90khz(0), key_frame=True)
+    assert exc.value.kind == WebrtcErrorKind.CLOSED
+
+
+def test_use_after_close_raises_closed():
+    s = WhepServer.bind("whep://127.0.0.1:0")
+    m = s.add_mount("/cam")
+    s.close()
+    calls = [
+        s.stats,
+        s.local_addr,
+        s.media_addr,
+        s.stop,
+        lambda: s.add_mount("/other"),
+        lambda: s.remove_mount("/cam"),
+    ]
+    for call in calls:
+        with pytest.raises(WebrtcError) as exc:
+            call()
+        assert exc.value.kind == WebrtcErrorKind.CLOSED
+    m.close()
+    m.close()
+    mount_calls = [
+        m.stats,
+        m.sessions,
+        m.mount_path,
+        lambda: m.push_video(_TINY_IDR_AU, pts=Pts90khz(0), key_frame=True),
+        lambda: m.push_klv(_klv_record(1.0), pts=Pts90khz(0)),
+        lambda: m.push_audio(b"\x00", pts=Pts90khz(0)),
+        lambda: m.push_ts(b"\x47" + b"\xff" * 187),
+    ]
+    for call in mount_calls:
+        with pytest.raises(WebrtcError) as exc:
+            call()
+        assert exc.value.kind == WebrtcErrorKind.CLOSED
+    assert "closed" in repr(s)
+    assert "closed" in repr(m)
+
+
+def test_context_manager_closes():
+    with WhepServer.bind("whep://127.0.0.1:0") as s:
+        s.add_mount("/cam")
+        assert s.stats().mounts == 1
+    with pytest.raises(WebrtcError) as exc:
+        s.stats()
+    assert exc.value.kind == WebrtcErrorKind.CLOSED
+
+
+# ---------------------------------------------------------------------------
+# Error model
+# ---------------------------------------------------------------------------
+
+
+def _kind_of(call) -> WebrtcErrorKind:
+    with pytest.raises(WebrtcError) as exc:
+        call()
+    return exc.value.kind
+
+
+def test_hostname_bind_is_url():
+    assert _kind_of(lambda: WhepServer.bind("whep://localhost:1")) == WebrtcErrorKind.URL
+
+
+def test_refused_bind_is_io(server):
+    taken = server.local_addr()
+    assert _kind_of(lambda: WhepServer.bind(f"whep://{taken}")) == WebrtcErrorKind.IO
+
+
+def test_mount_errors(server):
+    assert _kind_of(lambda: server.add_mount("nope")) == WebrtcErrorKind.MOUNT
+    server.add_mount("/cam")
+    assert _kind_of(lambda: server.add_mount("/cam")) == WebrtcErrorKind.MOUNT
+    server.remove_mount("/cam")
+    assert _kind_of(lambda: server.remove_mount("/cam")) == WebrtcErrorKind.MOUNT
+
+
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        MountConfig(sei_budget_bytes=0),
+        MountConfig(kind=MountKind.MP2T, audio=AudioPolicy.PASSTHROUGH_OPUS),
+        MountConfig(video=VideoCodec.AV1),
+        MountConfig(viewer_queue_packets=1),
+    ],
+)
+def test_invalid_mount_config_is_mount(server, cfg):
+    assert _kind_of(lambda: server.add_mount("/cam", cfg)) == WebrtcErrorKind.MOUNT
+    assert server.stats().mounts == 0
+
+
+def test_out_of_range_counts_are_mount(server):
+    for cfg in (MountConfig(sei_budget_bytes=-1), MountConfig(viewer_queue_packets=2**32)):
+        assert _kind_of(lambda: server.add_mount("/cam", cfg)) == WebrtcErrorKind.MOUNT
+
+
+def test_push_errors(server):
+    m = server.add_mount("/cam")
+    assert _kind_of(lambda: m.push_ts(b"\x47" + b"\xff" * 187)) == WebrtcErrorKind.PUSH
+    assert (
+        _kind_of(lambda: m.push_video(b"", pts=Pts90khz(0), key_frame=True))
+        == WebrtcErrorKind.PUSH
+    )
+    with pytest.raises(ValueError):
+        m.push_klv(_klv_record(1.0), pts=Pts90khz(0), metadata_service_id=256)
+    with pytest.raises(ValueError):
+        m.push_klv(_klv_record(1.0), pts=Pts90khz(0), metadata_service_id=-1)
+    oversize = b"\x00" * (256 * 1024 + 1)
+    assert _kind_of(lambda: m.push_klv(oversize, pts=Pts90khz(0))) == WebrtcErrorKind.PUSH
+    assert m.stats().klv_records_pushed == 0
+    assert m.stats().klv_dc_dropped_oversize == 1
+    mp2t = server.add_mount("/ts", MountConfig(kind=MountKind.MP2T))
+    assert (
+        _kind_of(lambda: mp2t.push_video(_TINY_IDR_AU, pts=Pts90khz(0), key_frame=True))
+        == WebrtcErrorKind.PUSH
+    )
+
+
+def test_raise_for_test_reaches_every_kind():
+    for member in WebrtcErrorKind:
+        with pytest.raises(WebrtcError) as exc:
+            _native._raise_webrtc_error_for_test(member.name, f"test {member.name}")
+        assert exc.value.kind == member
+        assert f"test {member.name}" in str(exc.value)
+    assert len(WebrtcErrorKind) == 8

@@ -48,6 +48,8 @@ pub(crate) const TCP: Domain = Domain::Tcp;
 pub(crate) const HLS: Domain = Domain::Hls;
 #[cfg(feature = "rist")]
 pub(crate) const RIST: Domain = Domain::Rist;
+#[cfg(feature = "webrtc")]
+pub(crate) const WEBRTC: Domain = Domain::Webrtc;
 pub(crate) const MUX: Domain = Domain::Mux;
 pub(crate) const DEMUX: Domain = Domain::Demux;
 pub(crate) const KLV_DECODE: Domain = Domain::KlvDecode;
@@ -69,6 +71,8 @@ pub(crate) static DOMAINS: &[Domain] = &[
     HLS,
     #[cfg(feature = "rist")]
     RIST,
+    #[cfg(feature = "webrtc")]
+    WEBRTC,
     MUX,
     DEMUX,
     KLV_DECODE,
