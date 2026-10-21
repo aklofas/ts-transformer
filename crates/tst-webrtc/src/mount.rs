@@ -932,7 +932,14 @@ impl MountHandle {
     /// live mount runs one frame behind the bytes pushed, and the last
     /// access unit waits until more bytes arrive. A KLV record binds to the
     /// first frame whose PTS is at or after its own, so a record that
-    /// arrives after its frame was emitted binds to the next frame.
+    /// arrives after its frame was emitted binds to the next frame. A record
+    /// whose PES carries no PTS (asynchronous private-data KLV, the common
+    /// MPEG-TS shape) is delivered by the demuxer with PTS 0: it binds to the
+    /// next frame on arrival and travels with PTS 0 on both carriages. A
+    /// viewer binds records to frames by the data-channel message's RTP
+    /// timestamp or by the frame the SEI rides in, never by that PTS, so
+    /// playback is unaffected; the record's own ST 0601 timestamp (tag 2) is
+    /// the producer time.
     ///
     /// Stream damage never fails the call: a demuxer error, a
     /// non-conformance report, a video access unit of another codec or one

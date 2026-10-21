@@ -60,7 +60,7 @@ export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
     // Set on the receiver before signalling: the transform must exist before
     // the remote description is applied, or Chrome never routes frames to
     // it (one set in ontrack starts its worker and then sees no frame).
-    // Firefox and Safari take it here as well.
+    // The spec allows it here in every browser.
     worker = new Worker(new URL("./whep-sei-worker.js", import.meta.url), { type: "module" });
     worker.onmessage = (m) => onRecord(m.data);
     videoTransceiver.receiver.transform = new RTCRtpScriptTransform(worker, {});

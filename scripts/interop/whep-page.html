@@ -10,7 +10,7 @@
   which Chrome's `--enable-logging=stderr --log-level=0` copies to stderr
   as `CONSOLE(...)` lines:
 
-    KLV <pts> <sha256 hex of the record bytes> <sei|dc>   per record and carriage
+    KLV <pts> <sha256 hex of the record bytes> <sei|dc> <rtp timestamp of the bound frame>
     FRAMES <totalVideoFrames>                             once a second
     AUDIO <inbound audio packetsReceived>                 once a second, when audio is negotiated
     STATE <peer connection state>                         on each change
@@ -49,10 +49,10 @@
     // The player can deliver records faster than the digests resolve;
     // chaining the digest promises keeps the KLV lines in delivery order.
     let chain = Promise.resolve();
-    const onKlv = ({ pts, bytes, via }) => {
+    const onKlv = ({ pts, bytes, via, rtpTimestamp }) => {
       chain = chain.then(async () => {
         const digest = await crypto.subtle.digest("SHA-256", bytes);
-        log(`KLV ${pts} ${hex(digest)} ${via}`);
+        log(`KLV ${pts} ${hex(digest)} ${via} ${rtpTimestamp}`);
       });
     };
 

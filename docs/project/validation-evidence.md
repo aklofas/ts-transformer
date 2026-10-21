@@ -362,7 +362,7 @@ and did the stream produce media again afterwards
 (`corruption_recovered`). The tap is **on by default on both soak legs**,
 and the 0.7.0 release soak below carried these verdicts end to end over
 72 hours. None of the
-159 interop-matrix cells inject corruption — the census above is a pristine
+161 interop-matrix cells inject corruption — the census above is a pristine
 stream throughout.
 
 **One-hour smoke run (2026-08-03, seed 1, `recv --managed` now on the SRT

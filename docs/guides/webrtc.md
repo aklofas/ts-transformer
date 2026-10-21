@@ -120,8 +120,9 @@ record to a callback:
 ```
 
 `onKlv` receives `{ pts, bytes, via, rtpTimestamp }`: the record's 90 kHz
-PTS as a BigInt, the KLV bytes as pushed, `"sei"` or `"dc"` for the
-carriage, and the RTP timestamp of the frame the record is bound to. The
+PTS as a BigInt (0 for a record an MP2T mount took from a KLV PES without
+a PTS, see "KLV carriage"), the KLV bytes as pushed, `"sei"` or `"dc"` for
+the carriage, and the RTP timestamp of the frame the record is bound to. The
 three files under [`/docs/webrtc/`](/docs/webrtc/README.md) are served as
 static files from any web server; the player imports its worker and the
 SEI extractor by relative URL, so they stay in one directory. The KLV guide
@@ -198,6 +199,14 @@ rebase binds every waiting record to the rebasing frame. The record's own
 PTS always travels with it, so the page recovers the producer's timing
 exactly.
 
+On an MP2T mount, a record whose PES carries no PTS (asynchronous
+private-data KLV, the common MPEG-TS shape) arrives with PTS 0, binds to
+the next frame on arrival, and travels with PTS 0 on both carriages. A
+page binds records to frames by the data-channel message's RTP timestamp
+or by the frame the SEI rides in, never by that PTS, so playback is
+unaffected; the record's own ST 0601 timestamp (tag 2) is the producer
+time.
+
 ### In the frame: the SEI message
 
 One SEI NAL unit per record, inserted after the parameter sets and before
@@ -269,10 +278,11 @@ it is decoded (an `RTCRtpScriptTransform` worker, or Chrome's
 `createEncodedStreams` on the main thread) and the data-channel records as
 they arrive. The worker transform is set on the video receiver before the
 offer is made: it must exist before the remote description is applied, or
-Chrome never routes frames to it. Where the browser exposes the painted frame's RTP timestamp
-in `requestVideoFrameCallback` metadata, a record is emitted when its
-frame is painted; elsewhere it is emitted on arrival, which is a few frames
-ahead of the picture. Frames arrive in presentation order, so when a frame
+Chrome never routes frames to it. Where the browser exposes the painted
+frame's RTP timestamp in `requestVideoFrameCallback` metadata, a record is
+emitted when its frame is painted; elsewhere it is emitted on arrival,
+which is a few frames ahead of the picture. Frames arrive in presentation
+order, so when a frame
 is painted every record bound to it or to an earlier frame is emitted: a
 record whose own frame is not painted (dropped by the decoder, or a paint
 callback the browser skipped) goes out with the next painted frame, or at
