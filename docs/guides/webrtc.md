@@ -425,7 +425,7 @@ receives KLV on the data channel.
 Checked by hand against this server (the `tst-interop serve-whep` mounts
 behind the reference player), one minute per cell:
 
-| Hand check (2026-10-21) | Chrome 155 (Linux) | Firefox (Linux) | Safari 26.2 (macOS 26.2) |
+| Hand check (2026-10-21) | Chrome 155 (Linux) | Firefox 158 (Linux) | Safari 26.2 (macOS 26.2) |
 |---|---|---|---|
 | Default mount, audio answered with port 0: video plays | yes | yes | yes |
 | Opus pass-through mount: video and audio play | yes | yes | yes |
