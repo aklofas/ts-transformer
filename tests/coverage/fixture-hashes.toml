@@ -464,7 +464,7 @@ sha256 = "feb9ddefdddf77ee5812832be848cc204d6c3815b497b02b820807369621f73a"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/offers/README.md"
-sha256 = "a360ae8472d5cee2f16ed6bf9c04ccd8e759b4c159c6e8c1cec18fd64aad6c88"
+sha256 = "7a55876c0cb9ae898fadd574d34d4babf7966a8eaa62fcc1c0fd0ece0dc4c687"
 
 [[file]]
 path = "crates/tst-webrtc/tests/fixtures/offers/chrome-155.sdp"
