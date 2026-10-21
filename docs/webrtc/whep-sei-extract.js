@@ -26,8 +26,8 @@ const PREFIX_LEN = 16 + 1 + 8; // UUID + version + PTS
  * Every tst KLV record in one encoded frame, in NAL-unit order.
  *
  * `data` is the frame as WebRTC hands it (ArrayBuffer or Uint8Array):
- * Annex B when it starts with a start code, else 4-byte length-prefixed
- * NAL units. `codec` is "h264" or "h265"; when omitted both SEI NAL types
+ * Annex B, or 4-byte length-prefixed NAL units when the buffer parses as
+ * exactly that (see nalUnits). `codec` is "h264" or "h265"; when omitted both SEI NAL types
  * are accepted (H.264 type 6, H.265 PREFIX_SEI type 39), which is safe
  * because neither header byte is an SEI under the other codec.
  *
@@ -56,19 +56,31 @@ function seiHeaderLen(nal, codec) {
   return h264 ? 1 : h265 ? 2 : 0;
 }
 
-/** Splits a frame into NAL units (header first, no start code or length). */
+/**
+ * Splits a frame into NAL units (header first, no start code or length).
+ *
+ * Annex B is the normal form. The 4-byte length-prefixed reading is taken
+ * only when a length walk consumes the buffer exactly and every NAL header
+ * has its forbidden bit clear, since a length of 256 to 511 starts with the
+ * bytes of a start code.
+ */
 export function nalUnits(buf) {
-  if (startCodeAt(buf, 0) > 0) return annexBNalUnits(buf);
+  return lengthPrefixedNalUnits(buf) ?? annexBNalUnits(buf);
+}
+
+/** The NAL units of an exact 4-byte-length-prefixed buffer, else null. */
+function lengthPrefixedNalUnits(buf) {
   const out = [];
   let i = 0;
-  while (i + 4 <= buf.length) {
+  while (i < buf.length) {
+    if (i + 4 > buf.length) return null;
     const len = ((buf[i] << 24) | (buf[i + 1] << 16) | (buf[i + 2] << 8) | buf[i + 3]) >>> 0;
     i += 4;
-    if (len === 0 || i + len > buf.length) break;
+    if (len === 0 || i + len > buf.length || (buf[i] & 0x80) !== 0) return null;
     out.push(buf.subarray(i, i + len));
     i += len;
   }
-  return out;
+  return out.length > 0 ? out : null;
 }
 
 /** 3 or 4 for a start code at `i`, else 0. */

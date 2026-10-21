@@ -18,11 +18,10 @@
 // ES2020 module, no dependencies, no bundler: serve this directory as-is.
 
 import { extractKlvSeis } from "./whep-sei-extract.js";
-
-const PENDING_FRAMES_MAX = 64; // frames never painted still get their KLV
-const SEEN_KEYS_MAX = 4096; // dedupe memory
+import { KlvQueue, parseKlvMessage } from "./whep-klv.js";
 
 export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
+  const endpoint = new URL(url, document.baseURI);
   const scriptTransform = typeof RTCRtpScriptTransform === "function";
   // Chrome's createEncodedStreams needs the option; other browsers ignore it.
   const pc = new RTCPeerConnection(scriptTransform ? {} : { encodedInsertableStreams: true });
@@ -31,46 +30,12 @@ export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
   let worker = null;
 
   // --- KLV emission -------------------------------------------------------
-  const pending = new Map(); // rtpTimestamp -> [record]
-  const seen = new Set();
-  let paintLocked = typeof video.requestVideoFrameCallback === "function";
-
-  const key = (rec) => `${rec.pts}:${fnv1a(rec.bytes)}`;
-  function emit(rec) {
-    if (dedupe) {
-      const k = key(rec);
-      if (seen.has(k)) return;
-      seen.add(k);
-      if (seen.size > SEEN_KEYS_MAX) seen.delete(seen.values().next().value);
-    }
-    onKlv(rec);
-  }
-  function emitFrame(list) {
-    // The SEI copy first, so with dedupe on it is the one that wins.
-    for (const rec of list) if (rec.via === "sei") emit(rec);
-    for (const rec of list) if (rec.via !== "sei") emit(rec);
-  }
-  function queue(rec) {
-    if (!paintLocked || rec.rtpTimestamp === undefined) { emit(rec); return; }
-    let list = pending.get(rec.rtpTimestamp);
-    if (!list) pending.set(rec.rtpTimestamp, (list = []));
-    list.push(rec);
-    while (pending.size > PENDING_FRAMES_MAX) { // a frame the decoder dropped
-      const [ts, old] = pending.entries().next().value;
-      pending.delete(ts);
-      emitFrame(old);
-    }
-  }
+  const paintLocked = typeof video.requestVideoFrameCallback === "function";
+  const queue = new KlvQueue({ onKlv, dedupe, paintLocked });
   if (paintLocked) {
     const tick = (_now, meta) => {
-      if (meta.rtpTimestamp === undefined) { // this browser does not expose it
-        paintLocked = false;
-        for (const list of pending.values()) emitFrame(list);
-        pending.clear();
-        return;
-      }
-      const list = pending.get(meta.rtpTimestamp);
-      if (list) { pending.delete(meta.rtpTimestamp); emitFrame(list); }
+      if (meta.rtpTimestamp === undefined) { queue.flushAll(); return; } // not exposed here
+      queue.painted(meta.rtpTimestamp);
       video.requestVideoFrameCallback(tick);
     };
     video.requestVideoFrameCallback(tick);
@@ -82,10 +47,8 @@ export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
     if (channel.label !== "klv") return;
     channel.binaryType = "arraybuffer";
     channel.onmessage = ({ data }) => {
-      const b = new Uint8Array(data);
-      if (b.length < 13 || b[0] !== 1) return; // version 1 only
-      const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-      queue({ rtpTimestamp: dv.getUint32(1), pts: dv.getBigUint64(5), bytes: b.slice(13), via: "dc" });
+      const rec = parseKlvMessage(data);
+      if (rec) queue.push(rec);
     };
   };
 
@@ -94,19 +57,23 @@ export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
   pc.addTransceiver("audio", { direction: "recvonly" });
   pc.ontrack = ({ track, receiver }) => {
     stream.addTrack(track);
-    if (track.kind !== "video") return;
-    const onRecord = ({ rtpTimestamp, pts, bytes }) => queue({ rtpTimestamp, pts, bytes, via: "sei" });
+    const onRecord = (rec) => queue.push({ ...rec, via: "sei" });
     if (scriptTransform) {
+      if (track.kind !== "video") return;
       worker = new Worker(new URL("./whep-sei-worker.js", import.meta.url), { type: "module" });
       worker.onmessage = (m) => onRecord(m.data);
       receiver.transform = new RTCRtpScriptTransform(worker, {});
     } else if (typeof receiver.createEncodedStreams === "function") {
+      // Legacy Chrome: every receiver's streams must be piped or its frames stall.
       const { readable, writable } = receiver.createEncodedStreams();
+      if (track.kind !== "video") { readable.pipeTo(writable); return; }
       readable.pipeThrough(new TransformStream({
         transform(frame, controller) {
-          const meta = typeof frame.getMetadata === "function" ? frame.getMetadata() : {};
-          const rtpTimestamp = meta.rtpTimestamp ?? frame.timestamp;
-          for (const rec of extractKlvSeis(frame.data)) onRecord({ rtpTimestamp, ...rec });
+          try {
+            const meta = typeof frame.getMetadata === "function" ? frame.getMetadata() : {};
+            const rtpTimestamp = meta.rtpTimestamp ?? frame.timestamp;
+            for (const rec of extractKlvSeis(frame.data)) onRecord({ rtpTimestamp, ...rec });
+          } catch { /* a parse failure must not stop the video */ }
           controller.enqueue(frame);
         },
       })).pipeTo(writable);
@@ -114,31 +81,30 @@ export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
   };
 
   // --- WHEP signalling ---------------------------------------------------
-  await pc.setLocalDescription(await pc.createOffer());
-  const headers = { "Content-Type": "application/sdp" };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(url, { method: "POST", headers, body: pc.localDescription.sdp });
-  if (res.status !== 201) {
+  let location;
+  try {
+    await pc.setLocalDescription(await pc.createOffer());
+    const headers = { "Content-Type": "application/sdp" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(endpoint, { method: "POST", headers, body: pc.localDescription.sdp });
+    if (res.status !== 201) throw new Error(`WHEP ${res.status}: ${await res.text()}`);
+    location = new URL(res.headers.get("Location"), endpoint);
+    await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
+  } catch (e) {
     pc.close();
-    throw new Error(`WHEP ${res.status}: ${await res.text()}`);
+    if (worker) worker.terminate();
+    video.srcObject = null;
+    throw e;
   }
-  const location = new URL(res.headers.get("Location"), url);
-  await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
 
   return {
     pc,
     async stop() {
-      try { await fetch(location, { method: "DELETE", headers: token ? { Authorization: `Bearer ${token}` } : {} }); } catch { /* best effort */ }
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      try { await fetch(location, { method: "DELETE", headers }); } catch { /* best effort */ }
       pc.close();
       if (worker) worker.terminate();
       video.srcObject = null;
     },
   };
-}
-
-/** FNV-1a (32-bit) over the record bytes, for the dedupe key. */
-function fnv1a(bytes) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i], 0x01000193);
-  return h >>> 0;
 }
