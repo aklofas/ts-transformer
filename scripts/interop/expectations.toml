@@ -83,7 +83,7 @@
 # (cell, profile) FAIL first.
 
 [census]
-full_cells = 159
+full_cells = 161
 
 [[expect]]
 cell = "hls/ffmpeg-pull"

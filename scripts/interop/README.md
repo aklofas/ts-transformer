@@ -585,6 +585,60 @@ The elementary cell judges KLV content (count floor and set digest) and KLV timi
 these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
 (see "Publish leg" below).
 
+### Transport axis: the WHEP browser cells
+
+The two `whep/*` cells are the matrix's real-browser check of the WebRTC
+playback server (`crates/tst-webrtc`): `tst-interop serve-whep` binds a
+`WhepServer` with one mount and serves `baseline`'s KLV schedule on it,
+and headless Google Chrome plays the mount with the reference player
+under `docs/webrtc/` (`whep-page.html` in this directory loads
+`whep-player.js` unmodified, by relative path, with `dedupe: false` so a
+record is reported once per carriage). The page prints what the harness
+judges to the browser console, which Chrome's `--enable-logging=stderr
+--log-level=0` copies to stderr; the cell parses those `CONSOLE` lines.
+
+| Cell | Mount | Tier | Oracles |
+|---|---|---|---|
+| `whep/chromium-sei-dc-klv` | MP2T (`push_ts` of an in-process mux), audio dropped | remux | KLV set via SEI = generator's; KLV set via data channel = generator's; `FRAMES` rises (video plays although the audio section is answered with port 0); no page error |
+| `whep/chromium-opus-audio` | elementary, `PassthroughOpus` with a synthesized 20 ms Opus silence stream | remux | the same, plus `AUDIO` (inbound audio `packetsReceived`) rises |
+
+The KLV records are the profile's own schedule, the exact set `gen`
+writes for the same window, so the source digest is `verify --file` of
+the run's generator file, as `--klv-digest-of` computes it elsewhere; the
+page hashes each record's bytes with `crypto.subtle` and the cell sorts
+the digests per carriage and hashes the concatenation
+(`verify.rs`'s `klv_set_hash`). The video is NOT the generator's: its
+synthetic slices decode nowhere (gap item 10 below), and in Chrome the
+depacketizer logs `Failed to parse SPS NAL unit`, decodes nothing, and
+the player's paint-locked queue then delivers no record at all (measured:
+`FRAMES 0` throughout, 50 PLIs, 0 records on either carriage). Each video
+event instead pushes one access unit of `tst-webrtc`'s real 320x240
+Constrained Baseline 30-frame GOP fixture, cycled. `FRAMES` is
+`video.getVideoPlaybackQuality().totalVideoFrames` once a second: some
+sample in the first five must be above 0 and the count must rise every
+second through the stream window; `AUDIO` is judged the same way.
+`serve-whep` waits up to 15 s for the browser's session to be ICE
+connected before its first push, so the browser sees the first keyframe
+and the records bound to it; the push happens regardless after that, and
+the cell then fails on its oracles rather than hanging.
+
+Tool presence: `lib.sh`'s `whep_browser` takes `google-chrome` (the
+`ubuntu-latest` runner image and the dev box) or `chromium`; a box with
+neither skips both cells locally, never on the runner. The cell log
+records the browser's version line. Per-cell files uploaded with the
+evidence: `work/<cell>-whep.json` (the server, mount and session
+counters) and `work/<cell>-console.txt` (every console line). The cell
+record carries no `metrics`: nothing here is a TS capture.
+
+`WHEP_PLAYER_URL=<url of a whep-player.js>` runs the cells against
+another copy of the player (its siblings resolve relative to it) instead
+of `docs/webrtc/`: how a player change is checked against a real browser
+before it lands. Never set by `interop.yml`.
+
+First local run (Google Chrome 155.0.8059.39, `--seconds 8`): see
+`docs/project/validation-evidence.md`'s WebRTC section for the census
+these cells first appeared in.
+
 10. **No ffmpeg publisher cell: ffmpeg cannot publish this harness's
     stream, and cannot publish KLV over RTSP at all.** ffmpeg's RTP/RTSP
     muxer reads the picture size from the H.264 SPS and refuses a stream

@@ -1978,7 +1978,7 @@ failure_contains = \"stream_sha256 mismatch\"
             "/../../scripts/interop/expectations.toml"
         ));
         let parsed = parse_expectations(text).expect("the live expectations table must parse");
-        assert_eq!(parse_census(text).unwrap(), Some(159));
+        assert_eq!(parse_census(text).unwrap(), Some(161));
         assert!(
             parsed.len() >= 65,
             "expected at least 65 rows, got {}",

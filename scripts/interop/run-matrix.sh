@@ -4,8 +4,8 @@
 # `tsp`, GStreamer, VLC, mpv) over live SRT/RIST/UDP/TCP/HLS/RTSP
 # sessions AND local per-profile analyzer/decode probes on this box,
 # and write one evidence JSON file per cell, across two axes:
-#   - transport axis: 27 cells, pinned to the "baseline" profile
-#     (srt/udp/rist/tcp/hls/rtsp/rtsp-publish — the transport-axis
+#   - transport axis: 29 cells, pinned to the "baseline" profile
+#     (srt/udp/rist/tcp/hls/rtsp/rtsp-publish/whep — the transport-axis
 #     inventory).
 #   - format axis: analyze/{ffprobe,tsanalyze,tsp-analyze}/<profile>,
 #     decode/{ffplay,vlc,mpv,gst-play}/<profile>, and
@@ -34,7 +34,7 @@
 #                      scales off this (see lib.sh's cell_timeout).
 #   --cells GLOB       bash-glob filter over cell ids (default "*", i.e.
 #                      every cell). Cell ids look like
-#                      "<transport>/<direction>-<peer>[-encrypted]" (27
+#                      "<transport>/<direction>-<peer>[-encrypted]" (29
 #                      transport-axis cells, e.g. "srt/us-to-ffmpeg") or
 #                      "<axis>/<peer>/<profile>" (format-axis cells, e.g.
 #                      "decode/mpv/h266-klv") — pass 'srt/*' to run just
@@ -46,7 +46,7 @@
 #                      Only the format axis scales with this list — the
 #                      transport axis always runs against "baseline"
 #                      regardless of what's listed (see the per-profile
-#                      loop below for why: the 27-cell transport-axis
+#                      loop below for why: the 29-cell transport-axis
 #                      inventory was designed and evidenced against "baseline"
 #                      only; scaling it by profile too would multiply
 #                      that count for no new signal the format axis
@@ -231,6 +231,13 @@ rm -f "$CELLS_DIR"/*.json
 # while developing this script), so a short fixed sleep is enough; no
 # scheme needs the port to be independently probed as "ready".
 SETTLE=2
+
+# whep/* cells: how long `serve-whep` waits for the browser's session to
+# connect before it starts pushing (a browser that joins late would miss
+# the first keyframe and the records bound to it), and how long past the
+# stream window the browser runs so its last samples land in the log.
+WHEP_VIEWER_WAIT=15
+WHEP_BROWSER_MARGIN=8
 
 # AES passphrase shared by every "encrypted" cell below. Length must
 # clear SRT's 10-byte floor (RFC/libsrt: 10..79 chars); arbitrary
@@ -1181,6 +1188,166 @@ rtsp_publish_cells() {
     rtspclientsink name=s "location=rtsp://127.0.0.1:$port/mount" protocols=tcp
 }
 
+# run_whep_browser <id> <mp2t|opus>
+#
+# We BIND a WHEP server (`tst-interop serve-whep`) and serve $SECONDS_ARG
+# of $PROFILE's KLV schedule on one mount; headless Chrome plays it with
+# the reference player (docs/webrtc/, loaded unmodified by whep-page.html)
+# and prints what it saw to its console, which `--enable-logging=stderr
+# --log-level=0` copies to stderr as CONSOLE lines. Verdict, from those
+# lines: the set of KLV records seen in the SEI equals the generator's
+# KLV set digest (`verify --file $GEN_FILE`), the set seen on the data
+# channel equals it too, the decoded frame count (`FRAMES`) rises from the
+# first seconds on (video plays, not black), for `opus` the inbound audio
+# packet count (`AUDIO`) rises as well, and the page reported no error.
+# Tier `remux`: WebRTC is not byte-transparent TS. The video is a real
+# H.264 GOP, not the generator's synthetic slices, which no decoder
+# accepts (README.md gap item 10; Chrome logs "Failed to parse SPS NAL
+# unit" and decodes nothing) — see whep_serve.rs's module doc.
+run_whep_browser() {
+  local id=$1 feed=$2
+
+  cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
+  local browser
+  if ! browser=$(whep_browser); then
+    emit_skipped "$id" google-chrome send remux "neither google-chrome nor chromium is installed on this box"
+    return 0
+  fi
+
+  local log="$LOGS_DIR/$(slug "$id").log"
+  : >"$log"
+  local slugged
+  slugged=$(slug "$id")
+  local port mport
+  port=$(free_port tcp)
+  mport=$(free_port udp)
+  local -a feed_args=(--mount-kind mp2t)
+  [[ "$feed" == opus ]] && feed_args=(--mount-kind elementary --opus)
+  local url="whep://127.0.0.1:$port?media_port=$mport"
+
+  {
+    echo "=== cell: $id (tier=remux, profile=$PROFILE) ==="
+    echo "--- browser: $browser ($("$browser" --version 2>/dev/null | head -1)) ---"
+    echo "--- us: serve-whep ($url, mount /m, ${feed_args[*]}, --wait-viewer $WHEP_VIEWER_WAIT) ---"
+  } >>"$log"
+
+  local serve_json="$WORK/$slugged-whep.json" serve_out="$WORK/$slugged-serve.out"
+  timeout --kill-after=5 "$(serve_timeout "$SECONDS_ARG")s" \
+    "$BIN" serve-whep --url "$url" --mount /m --profile "$PROFILE" --seconds "$SECONDS_ARG" \
+    --wait-viewer "$WHEP_VIEWER_WAIT" "${feed_args[@]}" --json "$serve_json" \
+    >"$serve_out" 2>>"$log" &
+  local serve_pid=$!
+  # The server prints {"serving": ...} once bound; the browser is started
+  # against it, not against a fixed settle.
+  local deadline serving=""
+  deadline=$(($(date +%s) + 10))
+  until [[ -n "$serving" || $(date +%s) -ge $deadline ]]; do
+    serving=$(jq -r '.serving // empty' "$serve_out" 2>/dev/null) || serving=""
+    [[ -n "$serving" ]] || sleep 0.2
+  done
+  if [[ -z "$serving" ]]; then
+    wait "$serve_pid" || true
+    emit_fail "$id" "$browser" send remux "$log" - "serve-whep never reported its endpoint — see log"
+    return 0
+  fi
+
+  # WHEP_PLAYER_URL (a local escape hatch, like --allowed-skips; never
+  # set by interop.yml): run the cells against another copy of the
+  # reference player, e.g. a fix under review, instead of docs/webrtc/.
+  local page="file://$SCRIPT_DIR/whep-page.html?url=$serving${WHEP_PLAYER_URL:+&player=$WHEP_PLAYER_URL}"
+  local chrome_err="$WORK/$slugged-browser.err" profile_dir="$WORK/$slugged-browser-profile"
+  rm -rf "$profile_dir"
+  local -a browser_cmd=("$browser" --headless=new --no-sandbox --disable-gpu
+    --autoplay-policy=no-user-gesture-required --enable-logging=stderr --log-level=0
+    --no-first-run --disable-background-networking --allow-file-access-from-files
+    "--user-data-dir=$profile_dir" "$page")
+  {
+    echo "--- browser, playing $serving for $((SECONDS_ARG + WHEP_BROWSER_MARGIN))s ---"
+    printf '+ '
+    printf '%q ' "${browser_cmd[@]}"
+    echo
+  } >>"$log"
+  local browser_rc=0
+  timeout --kill-after=5 "$((SECONDS_ARG + WHEP_BROWSER_MARGIN))s" "${browser_cmd[@]}" \
+    >/dev/null 2>"$chrome_err" || browser_rc=$?
+  local serve_rc=0
+  wait "$serve_pid" || serve_rc=$?
+
+  # Chrome 155 writes `[...:INFO:CONSOLE:33] "text", source: ...` (older
+  # builds `CONSOLE(33)`); keep the text of every console line.
+  local console="$WORK/$slugged-console.txt"
+  sed -n 's/.*:CONSOLE[^]]*\] "\(.*\)", source: .*/\1/p' "$chrome_err" >"$console"
+  {
+    echo "--- browser console ($(grep -c '' "$console") lines; KLV lines summarised) ---"
+    grep -v '^KLV ' "$console"
+    awk '$1 == "KLV" { n[$4]++ } END { for (via in n) printf "KLV via %s: %d record(s)\n", via, n[via] }' "$console"
+    echo "--- exit codes: serve=$serve_rc browser=$browser_rc (124 = ran to its deadline, as intended) ---"
+  } >>"$log"
+
+  local -a reasons=()
+  if [[ $serve_rc -ne 0 ]]; then
+    reasons+=("our serve-whep failed (exit $serve_rc) — see log")
+  fi
+  local page_errors
+  page_errors=$(grep -c '^ERROR' "$console") || page_errors=0
+  if [[ $page_errors -gt 0 ]]; then
+    reasons+=("the page reported $page_errors error(s): $(grep -m1 '^ERROR' "$console")")
+  fi
+  if grep -q 'ERROR:CONSOLE' "$chrome_err"; then
+    reasons+=("the browser logged a console error: $(grep -m1 'ERROR:CONSOLE' "$chrome_err" | sed 's/.*:CONSOLE[^]]*\] //')")
+  fi
+
+  # The generator's KLV set digest, the way run_peer_send_recv's
+  # --klv-digest-of computes it; the page prints one sha256 per record
+  # and carriage, and the set digest is sha256 over the sorted digests
+  # (crates/tst-interop/src/verify.rs's klv_set_hash).
+  local src_vjson="$WORK/$slugged-klv-src-verify.json" src_klv src_rc=0
+  "$BIN" verify --file "$GEN_FILE" --expect "$PROFILE" --seconds "$SECONDS_ARG" \
+    --json "$src_vjson" >>"$log" 2>&1 || src_rc=$?
+  src_klv=$(jq -r '.metrics.klv_set_sha256 // ""' "$src_vjson" 2>/dev/null) || src_klv=""
+  local via got count
+  for via in sei dc; do
+    count=$(awk -v v="$via" '$1 == "KLV" && $4 == v' "$console" | wc -l)
+    got=$(awk -v v="$via" '$1 == "KLV" && $4 == v { print $3 }' "$console" | sort | tr -d '\n' | sha256sum | cut -d' ' -f1)
+    echo "--- KLV set digest via $via: $got over $count record(s); source ${src_klv:-<none>} (verify exit $src_rc) ---" >>"$log"
+    if [[ -z "$src_klv" || "$got" != "$src_klv" ]]; then
+      reasons+=("KLV set digest mismatch via $via (source ${src_klv:-<unparseable>}, browser saw $count record(s) hashing to $got)")
+    fi
+  done
+
+  local within=5 reason
+  [[ $SECONDS_ARG -lt 5 ]] && within=$SECONDS_ARG
+  reason=$(counter_rises FRAMES "$console" "$within" "$SECONDS_ARG")
+  [[ -z "$reason" ]] || reasons+=("video not playing: $reason")
+  if [[ "$feed" == opus ]]; then
+    reason=$(counter_rises AUDIO "$console" "$within" "$SECONDS_ARG")
+    [[ -z "$reason" ]] || reasons+=("audio not flowing: $reason")
+  fi
+
+  # The cell record carries no CellMetrics: nothing here is a TS capture.
+  # The server/mount/session counters are in $serve_json and the console
+  # in $console, both uploaded with the evidence.
+  if [[ ${#reasons[@]} -eq 0 ]]; then
+    emit_pass "$id" "$browser" send remux "$log" -
+  else
+    emit_fail "$id" "$browser" send remux "$log" - "${reasons[@]}"
+  fi
+}
+
+# The browser cells: headless Chrome plays a WHEP mount with the reference
+# player. `chromium-sei-dc-klv` serves an MP2T mount (the muxed-source
+# path, `push_ts`) whose audio policy drops audio, so the browser's audio
+# section is answered with port 0 — the FRAMES oracle proves the video
+# still plays. `chromium-opus-audio` serves an elementary mount passing a
+# synthesized Opus silence stream through, and adds the AUDIO oracle.
+# Both prove the in-band `klv` data channel (opened by the server, read by
+# the page through ondatachannel) and the SEI carriage on a real browser.
+whep_cells() {
+  run_whep_browser "whep/chromium-sei-dc-klv" mp2t
+  run_whep_browser "whep/chromium-opus-audio" opus
+}
+
 # ---------------------------------------------------------------------
 # Format-axis per-profile groups
 # ---------------------------------------------------------------------
@@ -1281,15 +1448,16 @@ srt_live_cells_for_profile() {
 # different one.
 run_axes_for_profile() {
   # Transport axis stays pinned to "baseline" regardless of how many
-  # profiles --profiles lists — matches the 27-cell transport-axis
+  # profiles --profiles lists — matches the 29-cell transport-axis
   # inventory (the original 25 built and verified at 8 PASS/17 FAIL/0
-  # SKIPPED, plus the two rtsp-publish cells);
+  # SKIPPED, plus the two rtsp-publish cells and the two whep cells);
   # scaling it by profile too would multiply that count by up to 12x
   # for no new signal the format axis below doesn't already cover more
   # precisely (analyze/decode/srt-live are the per-profile probes).
   if [[ "$PROFILE" == "baseline" ]]; then
     srt_cells; udp_cells; rist_cells; tcp_cells; hls_cells; rtsp_cells
     rtsp_publish_cells
+    whep_cells
   fi
 
   # Format axis: every listed profile.

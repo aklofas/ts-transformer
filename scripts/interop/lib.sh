@@ -44,7 +44,7 @@ _tool_version_line() {
 tool_versions_json() {
   local json='{}'
   local spec name flag v
-  for spec in ffmpeg:-version tsp:--version gst-launch-1.0:--version vlc:--version mpv:--version; do
+  for spec in ffmpeg:-version tsp:--version gst-launch-1.0:--version vlc:--version mpv:--version google-chrome:--version chromium:--version; do
     name=${spec%%:*}
     flag=${spec##*:}
     if have "$name"; then
@@ -53,6 +53,21 @@ tool_versions_json() {
     fi
   done
   printf '%s' "$json"
+}
+
+# The headless browser the whep/* cells drive: Google Chrome where it is
+# installed under its own name (the ubuntu-latest runner image and the
+# dev box), else Chromium. Echoes the binary name; fails when neither is
+# on PATH, which the cells report as SKIPPED_TOOL_MISSING locally (never
+# on the runner: interop.yml asserts zero skips).
+whep_browser() {
+  if have google-chrome; then
+    echo google-chrome
+  elif have chromium; then
+    echo chromium
+  else
+    return 1
+  fi
 }
 
 # ---------------------------------------------------------------------
@@ -467,6 +482,39 @@ emit_skipped() {
   local logfile="$LOGS_DIR/$(slug "$id").log"
   printf 'SKIPPED_TOOL_MISSING: %s\n' "$reason" >"$logfile"
   emit_cell "$id" "$peer" "$direction" "$tier" SKIPPED_TOOL_MISSING "$logfile" - "$reason"
+}
+
+# counter_rises <label> <console_file> <within> <through>
+#
+# Judges a once-a-second counter the browser page prints as
+# `<label> <n>` lines (the whep/* cells' `FRAMES` and `AUDIO`): some
+# sample among the first <within> must be above 0, and from that sample
+# through sample <through> every sample must exceed the one before it.
+# Echoes nothing when the counter passes, else one reason line. Samples
+# after <through> are not judged: the stream ends about then, and the
+# counter stops rising with it.
+counter_rises() {
+  local label=$1 file=$2 within=$3 through=$4
+  awk -v label="$label" -v within="$within" -v through="$through" '
+    $1 == label { n++; v[n] = $2 + 0 }
+    END {
+      if (n < through) {
+        printf "%s: only %d sample(s) printed, %d needed\n", label, n, through
+        exit
+      }
+      first = 0
+      for (i = 1; i <= within && i <= n; i++) if (v[i] > 0) { first = i; break }
+      if (!first) {
+        printf "%s: no sample above 0 within the first %d (values:", label, within
+        for (i = 1; i <= within && i <= n; i++) printf " %d", v[i]
+        printf ")\n"
+        exit
+      }
+      for (i = first + 1; i <= through; i++) if (v[i] <= v[i - 1]) {
+        printf "%s: sample %d (%d) does not exceed sample %d (%d)\n", label, i, v[i], i - 1, v[i - 1]
+        exit
+      }
+    }' "$file"
 }
 
 # declare_cell <id> — inventory pass (run-matrix.sh sets DECLARE_ONLY=1
