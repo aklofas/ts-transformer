@@ -280,7 +280,7 @@ pub fn render(resp: &Response, cors_origin: &str) -> Vec<u8> {
         head,
         "Access-Control-Allow-Origin: {cors_origin}\r\n\
          Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n\
-         Access-Control-Allow-Headers: Authorization, Content-Type\r\n\
+         Access-Control-Allow-Headers: Authorization, Content-Type, If-Match\r\n\
          Access-Control-Expose-Headers: Location\r\n\
          Content-Length: {}\r\n\
          Connection: close\r\n\r\n",
