@@ -6,7 +6,9 @@
 //! The `klv` data channel is opened by the server (DCEP, in-band on the
 //! SCTP association). The viewer's offer must carry a data-channel section
 //! (create any data channel before `createOffer`), and the channel arrives
-//! in `ondatachannel` with the label `klv`. A viewer whose offer has no
+//! in `ondatachannel` with the label `klv`. The channel is reliable and
+//! unordered: a record never waits behind an earlier one, and each
+//! message names its frame's RTP timestamp. A viewer whose offer has no
 //! data-channel section gets video, with KLV in SEI, and no channel.
 //!
 //! A KLV record travels on the data channel when it is at most
