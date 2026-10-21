@@ -22,7 +22,6 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use str0m::change::SdpOffer;
-use str0m::channel::ChannelConfig;
 use str0m::media::Pt;
 use str0m::net::{Protocol, Receive};
 use str0m::rtp::{RtpWrite, SeqNo};
@@ -56,7 +55,7 @@ const MEDIA_BATCH: usize = 1024;
 /// The largest datagram read.
 const DATAGRAM_MAX: usize = 65_535;
 
-/// The label of the negotiated KLV data channel.
+/// The label of the KLV data channel the server opens on each session.
 const KLV_LABEL: &str = "klv";
 
 /// The data-channel message format version (the body's first byte).
@@ -675,19 +674,16 @@ impl Media {
             AudioPolicy::PassthroughOpus => select_audio(&rtc, &offer_sdp),
             AudioPolicy::Drop => None,
         };
-        // Both sides open the channel as id 0, so no renegotiation follows
-        // and apply() has no offer to return.
+        // The channel is opened in-band (DCEP) on the SCTP association the
+        // offer's data-channel section brings up, so any viewer receives
+        // it by label and apply() has no offer to return.
         let mut api = rtc.sdp_api();
-        api.add_channel_with_config(ChannelConfig {
-            label: KLV_LABEL.into(),
-            negotiated: Some(0),
-            ..Default::default()
-        });
+        api.add_channel(KLV_LABEL.into());
         if let Some((renegotiation, _)) = api.apply() {
-            // A pre-negotiated channel needs no SDP change; str0m offering
-            // one means the session has no SCTP transport (the browser
-            // offered no data channel), so the channel never opens.
-            debug!(offer = %renegotiation.to_sdp_string(), "unexpected renegotiation for the klv channel; ignored");
+            // str0m offering a data-channel section means the offer had
+            // none: the session has no SCTP transport, so the channel never
+            // opens and the viewer gets video (and KLV in SEI) only.
+            debug!(offer = %renegotiation.to_sdp_string(), "the offer has no data-channel section; the klv channel is not opened");
         }
         let id = session_id().ok_or(RejectReason::Internal)?;
         let mut v = Viewer::new(id.clone(), state, rtc, random_seq(), now);
@@ -1140,11 +1136,7 @@ mod tests {
             panic!("no H.264 payload");
         };
         let mut api = rtc.sdp_api();
-        let cid = api.add_channel_with_config(ChannelConfig {
-            label: KLV_LABEL.into(),
-            negotiated: Some(0),
-            ..Default::default()
-        });
+        let cid = api.add_channel(KLV_LABEL.into());
         let _ = api.apply();
         let (handle, _rx) = MountHandle::for_test(MountConfig::default());
         let mut v = Viewer::new("0".repeat(32), Arc::clone(&handle.state), rtc, 0, now);

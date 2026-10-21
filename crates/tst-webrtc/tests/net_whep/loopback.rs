@@ -46,8 +46,8 @@ fn one_viewer_gets_sei_and_data_channel_klv_frame_locked() {
     assert_eq!(headers["content-type"], "application/sdp");
     assert!(headers["location"].starts_with("/cam/sessions/"));
     v.accept_answer(&answer);
-    // The viewer's channel opens after the server's (the server answers
-    // its COOKIE ECHO), so this is the server's channel open too.
+    // The viewer created no `klv` channel of its own: `dc_open` is the
+    // server's DCEP open, received by label.
     assert!(
         v.pump(|v| v.connected && v.dc_open, CONNECT),
         "{}",
@@ -168,7 +168,14 @@ fn viewer_without_data_channel_still_gets_sei() {
     let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
     let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
     let mut v = TestViewer::new();
-    join(srv.local_addr(), "/cam", &mut v, false);
+    // No data-channel section in the offer: the server has no SCTP
+    // association to open its channel on.
+    let offer = v.offer(false);
+    assert!(!offer.contains("m=application"), "{offer}");
+    let (status, _, answer) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    assert!(!answer.contains("m=application"), "{answer}");
+    v.accept_answer(&answer);
     connect_all(&m, std::slice::from_mut(&mut v));
 
     for (i, (au, key)) in h264_gop().iter().take(5).enumerate() {
