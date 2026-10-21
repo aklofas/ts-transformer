@@ -195,12 +195,17 @@ fn wait_for_viewer(mount: &MountHandle, limit: Duration) -> bool {
 /// The counters as one JSON document: the mount's, the server's and each
 /// session's. Written with `--json`.
 fn counters_json(
+    opts: &Options,
     server: &WhepServer,
     mount: &MountHandle,
     viewer_connected: bool,
 ) -> serde_json::Value {
     let m = mount.stats();
     let s = server.stats();
+    let mount_kind = match opts.feed {
+        MountFeed::Mp2t => "mp2t",
+        MountFeed::Elementary { .. } => "elementary",
+    };
     let sessions: Vec<serde_json::Value> = mount
         .sessions()
         .iter()
@@ -221,6 +226,11 @@ fn counters_json(
         })
         .collect();
     json!({
+        // What was served, so `report soak` can hold the leg to its
+        // declaration the way the transport legs' recv reports are.
+        "profile": opts.profile.name,
+        "mount_kind": mount_kind,
+        "seconds": opts.seconds,
         "viewer_connected_before_push": viewer_connected,
         "mount": {
             "frames_pushed": m.frames_pushed,
@@ -371,7 +381,10 @@ pub fn run(opts: &Options, json: Option<&str>) -> Result<(), String> {
 
     thread::sleep(LINGER);
     if let Some(target) = json {
-        cli::write_json(target, &counters_json(&server, &mount, viewer_connected))?;
+        cli::write_json(
+            target,
+            &counters_json(opts, &server, &mount, viewer_connected),
+        )?;
     }
     server.stop();
     Ok(())

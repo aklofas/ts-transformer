@@ -57,7 +57,7 @@ pub(crate) fn rss_coverage(
     (pass, largest_gap_s, distinct_ts)
 }
 
-const KNOWN_LEGS: [&str; 4] = ["srt", "rist", "rtsp-publish", "rtsp-publish-es"];
+const KNOWN_LEGS: [&str; 5] = ["srt", "rist", "rtsp-publish", "rtsp-publish-es", "whep"];
 
 /// Legs fed by an external publisher RECORDing into `recv`'s publish
 /// mount instead of by a `tst-interop send` through an impairment
@@ -72,6 +72,47 @@ const KNOWN_LEGS: [&str; 4] = ["srt", "rist", "rtsp-publish", "rtsp-publish-es"]
 /// mount re-muxes, so its bytes change in flight and it declares
 /// [`LegDeclaration::remuxed`].
 pub const PUBLISH_LEGS: [&str; 2] = ["rtsp-publish", "rtsp-publish-es"];
+
+/// The WebRTC playback leg: `tst-interop serve-whep` serves one mount
+/// for the whole run and a headless browser plays it, relaunched on
+/// `scripts/interop/whep-page.html` every `viewer_reconnect_s` by the
+/// viewer loop. Its processes are `serve` and `viewer` (the loop's
+/// shell; the browser's own memory is not sampled, as a publish leg's
+/// tool is not). It has no proxy, no sender and no recv report: it is
+/// judged by [`build_soak_results`]'s `whep_*` verdicts from the
+/// viewer's per-connection report ([`WhepViewerReport`]) and the
+/// server's own counters ([`WhepServeReport`]).
+pub const WHEP_LEGS: [&str; 1] = ["whep"];
+
+/// Samples, one per second, within which a whep connection must show
+/// its first decoded frame: the server sends the next keyframe (one per
+/// second of the served GOP) once the session is connected.
+const WHEP_FIRST_FRAME_SAMPLES: usize = 5;
+
+/// The longest run of consecutive `FRAMES` samples that may fail to rise
+/// after the first frame: two one-second samples. A third is a gap of
+/// over 2 s, `whep_frames_continuous`'s failing bound.
+const WHEP_MAX_STALL_SAMPLES: usize = 2;
+
+/// How many samples a connection may fall short of its planned length:
+/// the page samples once a second from 1 s, the loop's `timeout` lands
+/// inside the last second, and a busy host can slip one more.
+const WHEP_SAMPLE_SHORTFALL: u64 = 3;
+
+/// `timeout`'s exit status when it ended the browser on schedule — the
+/// only browser exit a connection may end with.
+const WHEP_BROWSER_TIMED_OUT: i32 = 124;
+
+/// Records at a connection's head whose two copies may be unpaired: the
+/// data channel opens a moment after the session is connected, and a
+/// record bound to a frame sent in that moment reaches the viewer in
+/// the SEI only (the server counts it in `klv_dc_dropped_viewer`).
+const WHEP_KLV_EDGE_HEAD: u64 = 3;
+
+/// Records at a connection's tail whose two copies may be unpaired: the
+/// loop ends the browser while the server keeps pushing, and the kill
+/// can land between a record's two copies.
+const WHEP_KLV_EDGE_TAIL: u64 = 2;
 
 /// The per-leg corruption verdict family, in the order it is
 /// emitted. Named once so the tap-disabled and no-attribution arms
@@ -189,6 +230,8 @@ fn media_pids(profile: Option<&str>) -> u64 {
 fn leg_processes(leg: &str) -> &'static [&'static str] {
     if PUBLISH_LEGS.contains(&leg) {
         &["recv", "publisher"]
+    } else if WHEP_LEGS.contains(&leg) {
+        &["serve", "viewer"]
     } else {
         &["send", "proxy", "recv"]
     }
@@ -202,7 +245,7 @@ fn leg_processes(leg: &str) -> &'static [&'static str] {
 /// local smoke test, never launches the `rist-*` three) — but a key
 /// outside this whole set, for ANY run, is always an unconditional
 /// failure, never silently ignored.
-const WORKER_ROLES: [&str; 10] = [
+const WORKER_ROLES: [&str; 12] = [
     "srt-send",
     "srt-proxy",
     "srt-recv",
@@ -213,6 +256,8 @@ const WORKER_ROLES: [&str; 10] = [
     "rtsp-publish-publisher",
     "rtsp-publish-es-recv",
     "rtsp-publish-es-publisher",
+    "whep-serve",
+    "whep-viewer",
 ];
 /// Fraction of the cadence-implied post-warmup sample count a
 /// process must actually have.
@@ -457,6 +502,30 @@ pub struct LegDeclaration {
     /// The leg's receiver ran `--klv-placement`; `klv_placement_<leg>` is required to pass.
     #[serde(default)]
     pub klv_placement: Option<bool>,
+    /// The whep leg's mount kind (`"mp2t"` / `"elementary"`), the
+    /// `serve-whep --mount-kind` it was launched with; checked against
+    /// the kind the server's counters name. Required on the whep leg
+    /// ([`WHEP_LEGS`]), rejected on every other leg.
+    #[serde(default)]
+    pub mount_kind: Option<String>,
+    /// The whep leg's viewer command line (headless Chrome on the
+    /// harness page). Recorded for provenance, not checked. Rejected on
+    /// every other leg.
+    #[serde(default)]
+    pub viewer: Option<String>,
+    /// How often the whep leg's viewer loop ends its browser and starts
+    /// a new one, in seconds. Required on the whep leg (> 0) and checked
+    /// against the slot the viewer report says it ran; rejected on
+    /// every other leg.
+    #[serde(default)]
+    pub viewer_reconnect_s: Option<u64>,
+    /// How many browser connections the whep leg's viewer loop makes
+    /// over the run, one per reconnect slot. Required on the whep leg,
+    /// at least two (one connection reconnects nothing);
+    /// `whep_reconnects_observed` holds both the viewer's own count and
+    /// the server's session total to it. Rejected on every other leg.
+    #[serde(default)]
+    pub viewer_connections: Option<u64>,
 }
 
 /// The declared half of the corruption tap's configuration, compared
@@ -669,6 +738,42 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
             return Err(format!(
                 "soak-config.json: legs.{leg} declares a publisher, but only a publish leg \
                  ({PUBLISH_LEGS:?}) has one"
+            ));
+        }
+        // The whep leg's own three fields, for the same reason as the
+        // publish fields above: a viewer with no reconnect slot or a
+        // single connection could only pass `whep_reconnects_observed`
+        // vacuously, and the fields mean nothing on any other leg.
+        if WHEP_LEGS.contains(&leg.as_str()) {
+            match decl.mount_kind.as_deref() {
+                Some("mp2t") | Some("elementary") => {}
+                other => {
+                    return Err(format!(
+                        "soak-config.json: legs.{leg} is the WebRTC playback leg and must \
+                         declare mount_kind \"mp2t\" or \"elementary\", got {other:?}"
+                    ));
+                }
+            }
+            if decl.viewer_reconnect_s.is_none_or(|p| p == 0) {
+                return Err(format!(
+                    "soak-config.json: legs.{leg} is the WebRTC playback leg and must declare \
+                     viewer_reconnect_s > 0"
+                ));
+            }
+            if decl.viewer_connections.is_none_or(|n| n < 2) {
+                return Err(format!(
+                    "soak-config.json: legs.{leg} is the WebRTC playback leg and must declare \
+                     viewer_connections >= 2 — one connection reconnects nothing"
+                ));
+            }
+        } else if decl.mount_kind.is_some()
+            || decl.viewer.is_some()
+            || decl.viewer_reconnect_s.is_some()
+            || decl.viewer_connections.is_some()
+        {
+            return Err(format!(
+                "soak-config.json: legs.{leg} declares a viewer, but only the WebRTC playback \
+                 leg ({WHEP_LEGS:?}) has one"
             ));
         }
     }
@@ -1070,6 +1175,11 @@ pub struct SoakResults {
     /// loads.
     #[serde(default)]
     pub publish_legs: Vec<PublishLegResult>,
+    /// The WebRTC playback leg ([`WHEP_LEGS`]), when the run had it.
+    /// `#[serde(default)]` so a results file written before the leg
+    /// existed still loads.
+    #[serde(default)]
+    pub whep_legs: Vec<WhepLegResult>,
     pub verdicts: Vec<SoakVerdict>,
     /// `true` iff every non-[`SoakVerdict::provisional`] verdict
     /// passed.
@@ -1109,6 +1219,155 @@ pub struct PublishLegArtifacts {
     pub source_sha256_file: Option<String>,
 }
 
+/// The whep leg's result: what the viewer saw over every connection
+/// and the server's own counters, beside the declaration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhepLegResult {
+    pub leg: String,
+    pub mount_kind: Option<String>,
+    pub viewer_reconnect_s: Option<u64>,
+    /// The declared connection count `whep_reconnects_observed` judged
+    /// against, or `None` without one.
+    pub viewer_connections_declared: Option<u64>,
+    pub connections_observed: u64,
+    pub server_sessions_total: u64,
+    /// The last `FRAMES` sample of every connection, summed: frames the
+    /// browser decoded over the run.
+    pub frames_decoded: u64,
+    pub klv_sei_records: u64,
+    pub klv_dc_records: u64,
+    /// Records whose two copies named different (PTS, RTP timestamp)
+    /// pairs, summed over connections. Recorded, not gated: the matrix's
+    /// `whep/*` cells gate the frame binding.
+    pub klv_copies_disagreeing: u64,
+    /// Records seen on one carriage only, all of them within a
+    /// connection's head or tail allowance (see `whep_klv_sei_equals_dc`).
+    pub klv_unpaired_at_edges: u64,
+    pub mount: WhepMountCounters,
+    pub server: WhepServerCounters,
+}
+
+/// The viewer loop's report (`whep/viewer-report.json`): one entry per
+/// browser connection, parsed by `soak.sh` from that connection's
+/// console (`scripts/interop/whep-page.html`'s `FRAMES`, `AUDIO`, `KLV`
+/// and `ERROR` lines).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhepViewerReport {
+    /// The reconnect slot the loop ran on (`WHEP_RECONNECT_S`), in seconds.
+    pub reconnect_s: u64,
+    /// How long each browser was given before the loop ended it.
+    pub connection_s: u64,
+    pub connections: Vec<WhepConnection>,
+}
+
+/// One browser connection of the whep leg's viewer loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhepConnection {
+    pub index: u64,
+    #[serde(default)]
+    pub started_utc: String,
+    /// The browser's exit status: [`WHEP_BROWSER_TIMED_OUT`] when the
+    /// loop's `timeout` ended it on schedule.
+    pub browser_rc: i32,
+    /// The page's once-a-second `FRAMES` samples (frames decoded so
+    /// far), in order.
+    pub frames: Vec<u64>,
+    /// The page's `AUDIO` samples, when audio was negotiated.
+    #[serde(default)]
+    pub audio: Vec<u64>,
+    /// Records seen via the SEI and via the data channel.
+    pub klv_sei: u64,
+    pub klv_dc: u64,
+    /// The set digest of each carriage's records (sha256 over the sorted
+    /// per-record digests, `verify::klv_set_hash`'s shape).
+    pub klv_sei_set_sha256: String,
+    pub klv_dc_set_sha256: String,
+    /// Records seen on one carriage only, with their position from that
+    /// carriage's head and tail.
+    #[serde(default)]
+    pub klv_unpaired: Vec<WhepUnpairedRecord>,
+    /// Records whose two copies named different (PTS, RTP timestamp) pairs.
+    #[serde(default)]
+    pub klv_copies_disagreeing: u64,
+    /// The page's `ERROR` lines and the browser's own `ERROR:CONSOLE` lines.
+    pub page_errors: u64,
+    pub console_errors: u64,
+    #[serde(default)]
+    pub first_error: Option<String>,
+}
+
+/// A record one carriage delivered and the other did not, located on
+/// the carriage that has it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhepUnpairedRecord {
+    /// `"sei"` or `"dc"`: the carriage that has it.
+    pub via: String,
+    /// Records before it on that carriage.
+    pub from_head: u64,
+    /// Records after it on that carriage.
+    pub from_tail: u64,
+}
+
+/// `serve-whep --json`'s counters, the leg's server-side evidence.
+/// Every field defaults so a counter added later never fails an
+/// older report.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WhepServeReport {
+    pub profile: Option<String>,
+    pub mount_kind: Option<String>,
+    pub viewer_connected_before_push: bool,
+    pub mount: WhepMountCounters,
+    pub server: WhepServerCounters,
+}
+
+/// The mount counters `serve-whep` writes (`tst_webrtc::MountStats`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WhepMountCounters {
+    pub frames_pushed: u64,
+    pub keyframes_pushed: u64,
+    pub klv_records_pushed: u64,
+    pub klv_records_dropped_unbound: u64,
+    pub klv_sei_inserted: u64,
+    pub klv_sei_dropped_oversize: u64,
+    pub klv_dc_messages_sent: u64,
+    pub klv_dc_dropped_oversize: u64,
+    pub klv_dc_dropped_viewer: u64,
+    pub audio_frames_pushed: u64,
+    pub audio_frames_dropped: u64,
+    pub plis_received: u64,
+    pub nacks_received: u64,
+    pub viewer_packets_dropped_queue_full: u64,
+    pub rtp_clock_rebases: u64,
+    pub frames_pts_reordered: u64,
+    pub demux_nonconformant: u64,
+}
+
+/// The server counters `serve-whep` writes (`tst_webrtc::ServerStats`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WhepServerCounters {
+    pub active_sessions: u64,
+    pub sessions_total: u64,
+    pub sessions_rejected_cap: u64,
+    pub sessions_rejected_codec: u64,
+    pub sessions_rejected_auth: u64,
+    pub sessions_reaped_ice_timeout: u64,
+    pub sessions_reaped_disconnected: u64,
+    pub rtp_packets_sent: u64,
+    pub rtp_bytes_sent: u64,
+    pub datagrams_unrouted: u64,
+}
+
+/// The whep leg's raw evidence: the viewer loop's report and the
+/// server's counters.
+#[derive(Debug, Clone)]
+pub struct WhepLegArtifacts {
+    pub viewer: WhepViewerReport,
+    pub serve: WhepServeReport,
+}
+
 /// One leg's raw evidence artifacts — `soak.sh` writes these as
 /// `proxy --stats-json`'s output, `recv --json`'s output, and
 /// `send --json`'s output respectively.
@@ -1132,6 +1391,9 @@ pub struct SoakInputs {
     /// `(leg name, artifacts)` for each publish leg (`PUBLISH_LEGS`)
     /// the run had — empty when it had none.
     pub publish_legs: Vec<(String, PublishLegArtifacts)>,
+    /// `(leg name, artifacts)` for the WebRTC playback leg ([`WHEP_LEGS`])
+    /// when the run had it — empty otherwise.
+    pub whep_legs: Vec<(String, WhepLegArtifacts)>,
     pub rss_slope_threshold_kb_per_hour: Option<f64>,
     /// The run's declared parameters (`soak-config.json`) — judged
     /// against, never derived from, the artifacts on disk.
@@ -1164,6 +1426,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         rss_samples,
         legs,
         publish_legs,
+        whep_legs,
         rss_slope_threshold_kb_per_hour,
         config,
         worker_exits,
@@ -1271,6 +1534,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         .iter()
         .map(|(n, _)| n.as_str())
         .chain(publish_legs.iter().map(|(n, _)| n.as_str()))
+        .chain(whep_legs.iter().map(|(n, _)| n.as_str()))
         .collect();
     // Every `(leg, process)` combination this run is SUPPOSED to
     // have RSS evidence for — one entry per `leg_processes` value
@@ -2321,6 +2585,91 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         });
     }
 
+    let mut whep_leg_results = Vec::new();
+    for (leg_name, artifacts) in &whep_legs {
+        let declared = config.legs.get(leg_name.as_str());
+        let viewer = &artifacts.viewer;
+        let serve = &artifacts.serve;
+
+        verdicts.push(whep_profile_declared_verdict(leg_name, declared, serve));
+
+        // The same not-applicable family a publish leg gets, so the
+        // verdict set reads the same for every leg: a declared schedule
+        // or reconnect mode is a declaration nothing here could run.
+        let schedule = declared.and_then(|d| d.schedule.as_ref());
+        verdicts.push(SoakVerdict {
+            name: format!("schedule_declared_{leg_name}"),
+            pass: schedule.is_none(),
+            provisional: false,
+            detail: match schedule {
+                None => format!(
+                    "{leg_name}: not applicable — this leg has no impairment proxy (the \
+                     browser plays the mount over loopback) and declares no schedule"
+                ),
+                Some(d) => format!(
+                    "{leg_name}: config declared schedule seed {} / {} phase(s) / {}s, but \
+                     this leg has no proxy to run it",
+                    d.seed, d.phases, d.phase_s
+                ),
+            },
+        });
+        let mode = declared.and_then(|d| d.reconnect_mode.as_deref());
+        verdicts.push(SoakVerdict {
+            name: format!("reconnect_mode_declared_{leg_name}"),
+            pass: mode.is_none(),
+            provisional: false,
+            detail: match mode {
+                None => format!(
+                    "{leg_name}: not applicable — the server is fed in-process and the \
+                     browser reconnects on the viewer loop's schedule, which \
+                     whep_reconnects_observed judges"
+                ),
+                Some(m) => format!(
+                    "{leg_name}: config declared reconnect mode {m:?}, but this leg has no \
+                     managed sender to run it"
+                ),
+            },
+        });
+        for n in CORRUPTION_VERDICTS {
+            verdicts.push(SoakVerdict {
+                name: format!("{n}_{leg_name}"),
+                pass: true,
+                provisional: false,
+                detail: format!(
+                    "{leg_name}: not applicable — the server is fed the generator's schedule \
+                     in-process with no corruption tap, so there is no injection log to \
+                     judge against"
+                ),
+            });
+        }
+
+        verdicts.push(whep_reconnects_verdict(leg_name, declared, viewer, serve));
+        let (frames_verdict, frames_decoded) = whep_frames_verdict(leg_name, viewer);
+        verdicts.push(frames_verdict);
+        let (klv_verdict, unpaired_at_edges) = whep_klv_verdict(leg_name, viewer);
+        verdicts.push(klv_verdict);
+
+        whep_leg_results.push(WhepLegResult {
+            leg: leg_name.clone(),
+            mount_kind: declared.and_then(|d| d.mount_kind.clone()),
+            viewer_reconnect_s: declared.and_then(|d| d.viewer_reconnect_s),
+            viewer_connections_declared: declared.and_then(|d| d.viewer_connections),
+            connections_observed: viewer.connections.len() as u64,
+            server_sessions_total: serve.server.sessions_total,
+            frames_decoded,
+            klv_sei_records: viewer.connections.iter().map(|c| c.klv_sei).sum(),
+            klv_dc_records: viewer.connections.iter().map(|c| c.klv_dc).sum(),
+            klv_copies_disagreeing: viewer
+                .connections
+                .iter()
+                .map(|c| c.klv_copies_disagreeing)
+                .sum(),
+            klv_unpaired_at_edges: unpaired_at_edges,
+            mount: serve.mount.clone(),
+            server: serve.server.clone(),
+        });
+    }
+
     // A declared leg must be judged. Without this, a `report soak`
     // run by hand that omits a leg's artefacts drops every one of its
     // verdicts and its roles from `required_roles`, and the run can
@@ -2352,6 +2701,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         worker_exits,
         legs: leg_results,
         publish_legs: publish_leg_results,
+        whep_legs: whep_leg_results,
         verdicts,
         overall_pass,
         limitations: sample_miss_limitations(&sample_misses)
@@ -2559,6 +2909,268 @@ fn klv_placement_verdict(
     }
 }
 
+/// `profile_declared_whep`: the server's counters name the profile and
+/// the mount kind `soak-config.json` declared for the leg. The server
+/// writes both from its own options, the way a recv report carries the
+/// profile it judged against.
+fn whep_profile_declared_verdict(
+    leg_name: &str,
+    declared: Option<&LegDeclaration>,
+    serve: &WhepServeReport,
+) -> SoakVerdict {
+    let name = format!("profile_declared_{leg_name}");
+    let Some(d) = declared else {
+        return SoakVerdict {
+            name,
+            pass: true,
+            provisional: false,
+            detail: format!(
+                "{leg_name}: no legs.{leg_name} declaration in soak-config.json (config \
+                 predates the declaration) — nothing to check against"
+            ),
+        };
+    };
+    let (Some(profile), Some(kind)) = (serve.profile.as_deref(), serve.mount_kind.as_deref())
+    else {
+        return SoakVerdict {
+            name,
+            pass: false,
+            provisional: false,
+            detail: format!(
+                "{leg_name}: config declared profile {:?} / mount kind {:?}, but the server's \
+                 counters name no profile or mount kind (written before serve-whep recorded \
+                 them), so nothing says what was served",
+                d.profile, d.mount_kind
+            ),
+        };
+    };
+    let pass = profile == d.profile && Some(kind) == d.mount_kind.as_deref();
+    SoakVerdict {
+        name,
+        pass,
+        provisional: false,
+        detail: format!(
+            "{leg_name}: config declared profile {:?} / mount kind {:?}; the server served \
+             {profile:?} / {kind:?}",
+            d.profile, d.mount_kind
+        ),
+    }
+}
+
+/// `whep_reconnects_observed`: the viewer loop made exactly the declared
+/// number of connections, on the declared slot, and the server saw
+/// exactly that many sessions — two independent counts of the same
+/// reconnects, one per side.
+fn whep_reconnects_verdict(
+    leg_name: &str,
+    declared: Option<&LegDeclaration>,
+    viewer: &WhepViewerReport,
+    serve: &WhepServeReport,
+) -> SoakVerdict {
+    let name = format!("whep_reconnects_observed_{leg_name}");
+    let observed = viewer.connections.len() as u64;
+    let sessions = serve.server.sessions_total;
+    let (Some(expected), Some(slot)) = declared
+        .map(|d| (d.viewer_connections, d.viewer_reconnect_s))
+        .unwrap_or((None, None))
+    else {
+        return SoakVerdict {
+            name,
+            pass: false,
+            provisional: false,
+            detail: format!(
+                "{leg_name}: no viewer_connections / viewer_reconnect_s declared for this \
+                 leg, so there is no reconnect count to judge the {observed} connection(s) \
+                 against"
+            ),
+        };
+    };
+    let pass = observed == expected && sessions == expected && viewer.reconnect_s == slot;
+    SoakVerdict {
+        name,
+        pass,
+        provisional: false,
+        detail: format!(
+            "{leg_name}: {observed} browser connection(s) = {} reconnect(s) against {} \
+             expected ({expected} declared connections); the server counted {sessions} \
+             session(s); the viewer loop ran a {}s slot against the declared {slot}s",
+            observed.saturating_sub(1),
+            expected.saturating_sub(1),
+            viewer.reconnect_s
+        ),
+    }
+}
+
+/// `whep_frames_continuous`: every connection was ended by the loop's
+/// own timeout, reported no error, decoded its first frame within
+/// [`WHEP_FIRST_FRAME_SAMPLES`] samples and from then on never went
+/// more than [`WHEP_MAX_STALL_SAMPLES`] samples without the decoded
+/// frame count rising — no gap over 2 s except at a reconnect. Returns
+/// the verdict and the frames decoded over the run.
+fn whep_frames_verdict(leg_name: &str, viewer: &WhepViewerReport) -> (SoakVerdict, u64) {
+    let mut problems: Vec<String> = Vec::new();
+    let mut longest_stall = 0usize;
+    let mut frames_decoded = 0u64;
+    for c in &viewer.connections {
+        let k = c.index;
+        frames_decoded += c.frames.last().copied().unwrap_or(0);
+        if c.browser_rc != WHEP_BROWSER_TIMED_OUT {
+            problems.push(format!(
+                "connection {k}: browser exit {}, not ended by the loop's timeout \
+                 ({WHEP_BROWSER_TIMED_OUT})",
+                c.browser_rc
+            ));
+        }
+        if c.page_errors > 0 || c.console_errors > 0 {
+            problems.push(format!(
+                "connection {k}: {} page error(s), {} browser console error(s){}",
+                c.page_errors,
+                c.console_errors,
+                c.first_error
+                    .as_deref()
+                    .map(|e| format!(" — first: {e}"))
+                    .unwrap_or_default()
+            ));
+        }
+        if (c.frames.len() as u64) + WHEP_SAMPLE_SHORTFALL < viewer.connection_s {
+            problems.push(format!(
+                "connection {k}: only {} FRAMES sample(s) over a planned {} s",
+                c.frames.len(),
+                viewer.connection_s
+            ));
+        }
+        let Some(first) = c
+            .frames
+            .iter()
+            .take(WHEP_FIRST_FRAME_SAMPLES)
+            .position(|&f| f > 0)
+        else {
+            problems.push(format!(
+                "connection {k}: no decoded frame within the first {WHEP_FIRST_FRAME_SAMPLES} \
+                 sample(s) (values {:?})",
+                c.frames
+                    .iter()
+                    .take(WHEP_FIRST_FRAME_SAMPLES)
+                    .collect::<Vec<_>>()
+            ));
+            continue;
+        };
+        let mut stall = 0usize;
+        for i in first + 1..c.frames.len() {
+            if c.frames[i] > c.frames[i - 1] {
+                stall = 0;
+                continue;
+            }
+            stall += 1;
+            longest_stall = longest_stall.max(stall);
+            if stall == WHEP_MAX_STALL_SAMPLES + 1 {
+                problems.push(format!(
+                    "connection {k}: FRAMES stalled at {} for over {WHEP_MAX_STALL_SAMPLES} s \
+                     from sample {}",
+                    c.frames[i],
+                    i + 2 - stall
+                ));
+            }
+        }
+    }
+    let verdict = SoakVerdict {
+        name: format!("whep_frames_continuous_{leg_name}"),
+        pass: problems.is_empty(),
+        provisional: false,
+        detail: if problems.is_empty() {
+            format!(
+                "{leg_name}: {} connection(s) of {} s: each decoded its first frame within \
+                 {WHEP_FIRST_FRAME_SAMPLES} samples and never stalled over \
+                 {WHEP_MAX_STALL_SAMPLES} s (longest stall {longest_stall} s); {frames_decoded} \
+                 frames decoded in all",
+                viewer.connections.len(),
+                viewer.connection_s
+            )
+        } else {
+            format!(
+                "{leg_name}: {} problem(s): {}",
+                problems.len(),
+                problems.join("; ")
+            )
+        },
+    };
+    (verdict, frames_decoded)
+}
+
+/// `whep_klv_sei_equals_dc`: in every connection the browser saw the
+/// same set of KLV records in the SEI as on the data channel, and at
+/// least one record. A record on one carriage only is allowed within
+/// [`WHEP_KLV_EDGE_HEAD`] of its carriage's head or
+/// [`WHEP_KLV_EDGE_TAIL`] of its tail, the two moments a connection's
+/// two carriages are not yet, or no longer, both delivering. Returns the
+/// verdict and the number of such edge records.
+fn whep_klv_verdict(leg_name: &str, viewer: &WhepViewerReport) -> (SoakVerdict, u64) {
+    let mut problems: Vec<String> = Vec::new();
+    let mut at_edges = 0u64;
+    let mut sei_total = 0u64;
+    let mut dc_total = 0u64;
+    let mut disagreeing = 0u64;
+    for c in &viewer.connections {
+        let k = c.index;
+        sei_total += c.klv_sei;
+        dc_total += c.klv_dc;
+        disagreeing += c.klv_copies_disagreeing;
+        if c.klv_sei == 0 || c.klv_dc == 0 {
+            problems.push(format!(
+                "connection {k}: {} record(s) via SEI, {} via the data channel — a carriage \
+                 delivered nothing",
+                c.klv_sei, c.klv_dc
+            ));
+            continue;
+        }
+        if c.klv_sei_set_sha256 == c.klv_dc_set_sha256 {
+            continue;
+        }
+        if c.klv_unpaired.is_empty() {
+            problems.push(format!(
+                "connection {k}: the SEI set ({} record(s)) and the data-channel set ({}) \
+                 differ, and the report lists no unpaired record to locate the difference",
+                c.klv_sei, c.klv_dc
+            ));
+            continue;
+        }
+        for u in &c.klv_unpaired {
+            if u.from_head < WHEP_KLV_EDGE_HEAD || u.from_tail < WHEP_KLV_EDGE_TAIL {
+                at_edges += 1;
+            } else {
+                problems.push(format!(
+                    "connection {k}: a record via {} ({} record(s) before it, {} after) has \
+                     no copy on the other carriage",
+                    u.via, u.from_head, u.from_tail
+                ));
+            }
+        }
+    }
+    let verdict = SoakVerdict {
+        name: format!("whep_klv_sei_equals_dc_{leg_name}"),
+        pass: problems.is_empty(),
+        provisional: false,
+        detail: if problems.is_empty() {
+            format!(
+                "{leg_name}: {} connection(s): the SEI record set equals the data-channel set \
+                 in each ({sei_total} record(s) via SEI, {dc_total} via the data channel; \
+                 {at_edges} unpaired only at a connection's edges — the first \
+                 {WHEP_KLV_EDGE_HEAD} records before the data channel opened or the last \
+                 {WHEP_KLV_EDGE_TAIL} as the browser was ended); copies disagreeing on \
+                 (PTS, RTP timestamp): {disagreeing} (recorded, gated by the matrix cells)",
+                viewer.connections.len()
+            )
+        } else {
+            format!(
+                "{leg_name}: {} problem(s): {}",
+                problems.len(),
+                problems.join("; ")
+            )
+        },
+    };
+    (verdict, at_edges)
+}
+
 fn read_to_string(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
 }
@@ -2588,7 +3200,8 @@ fn read_leg_artifacts(
 /// output to `out_path`. The `rist` leg is entirely optional — pass
 /// `None` to omit it (the `srt` leg alone is enough for a local
 /// smoke run; the full 72h run supplies both). So are the publish
-/// legs: `publish_legs` maps each one run (a [`PUBLISH_LEGS`] name,
+/// legs: `whep` is the whep leg's `(viewer report, serve counters)`
+/// pair when the run had that leg; `publish_legs` maps each one run (a [`PUBLISH_LEGS`] name,
 /// at most once) to its recv report, the only artifact it has.
 ///
 /// # Errors
@@ -2606,6 +3219,7 @@ pub fn run(
     srt_outage_period_s: u64,
     rist: Option<(&Path, &Path, &Path)>,
     publish_legs: &[(String, PathBuf)],
+    whep: Option<(&Path, &Path)>,
     rss_slope_threshold_kb_per_hour: Option<f64>,
     out_path: &Path,
 ) -> Result<SoakResults, String> {
@@ -2659,10 +3273,20 @@ pub fn run(
         ));
     }
 
+    let mut whep_legs: Vec<(String, WhepLegArtifacts)> = Vec::new();
+    if let Some((viewer_path, serve_path)) = whep {
+        let viewer: WhepViewerReport = serde_json::from_str(&read_to_string(viewer_path)?)
+            .map_err(|e| format!("parse {}: {e}", viewer_path.display()))?;
+        let serve: WhepServeReport = serde_json::from_str(&read_to_string(serve_path)?)
+            .map_err(|e| format!("parse {}: {e}", serve_path.display()))?;
+        whep_legs.push((WHEP_LEGS[0].to_string(), WhepLegArtifacts { viewer, serve }));
+    }
+
     let results = build_soak_results(SoakInputs {
         rss_samples,
         legs,
         publish_legs,
+        whep_legs,
         rss_slope_threshold_kb_per_hour,
         config,
         worker_exits,
@@ -2874,6 +3498,7 @@ pub(crate) mod tests {
     ) -> SoakInputs {
         SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -3053,6 +3678,7 @@ pub(crate) mod tests {
         }
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -3104,6 +3730,7 @@ pub(crate) mod tests {
         }
         let base_inputs = || SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples.clone(),
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -3162,6 +3789,7 @@ pub(crate) mod tests {
         let samples = vec![rss_row("srt", "send", 0.0, Some(1000))];
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 // No outage configured, loss_pct=0 -> expected drop
@@ -3216,6 +3844,7 @@ pub(crate) mod tests {
         }
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(total - dropped, dropped, 2.0, Some(3600), 360),
@@ -3262,6 +3891,7 @@ pub(crate) mod tests {
         ];
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(98_000, 2_000, 2.0, Some(21600), 90),
@@ -3297,6 +3927,7 @@ pub(crate) mod tests {
         ];
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(98_000, 2_000, 2.0, Some(21600), 90),
@@ -3336,6 +3967,7 @@ pub(crate) mod tests {
         ];
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(total - dropped, dropped, 2.0, None, 0),
@@ -3565,6 +4197,7 @@ pub(crate) mod tests {
         }
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(total - dropped, dropped, 2.0, None, 0),
@@ -3750,6 +4383,7 @@ pub(crate) mod tests {
         ];
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(0, 0, 2.0, None, 0),
@@ -3801,6 +4435,7 @@ pub(crate) mod tests {
         ];
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: Vec::new(),
             rss_slope_threshold_kb_per_hour: None,
@@ -3825,6 +4460,7 @@ pub(crate) mod tests {
         ];
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: Vec::new(),
             rss_slope_threshold_kb_per_hour: None,
@@ -3854,6 +4490,7 @@ pub(crate) mod tests {
         ];
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: Vec::new(),
             rss_slope_threshold_kb_per_hour: None,
@@ -3895,6 +4532,7 @@ pub(crate) mod tests {
         restarted.pid = 8;
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: vec![before, gone, restarted],
             legs: Vec::new(),
             rss_slope_threshold_kb_per_hour: None,
@@ -3971,6 +4609,7 @@ pub(crate) mod tests {
             0,
             None,
             &[],
+            None,
             None,
             &out_path,
         )
@@ -4051,6 +4690,7 @@ pub(crate) mod tests {
             None,
             &[],
             None,
+            None,
             &out_path,
         )
         .expect_err("a header-only rss.csv must be a hard error, not a clean pass");
@@ -4127,6 +4767,7 @@ pub(crate) mod tests {
             None,
             &[],
             None,
+            None,
             &out_path,
         )
         .unwrap_err();
@@ -4201,6 +4842,7 @@ pub(crate) mod tests {
             None,
             &[],
             None,
+            None,
             &out_path,
         )
         .unwrap_err();
@@ -4221,6 +4863,7 @@ pub(crate) mod tests {
     fn empty_rss_samples_is_a_hard_error() {
         let err = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: Vec::new(),
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -4255,6 +4898,7 @@ pub(crate) mod tests {
         }
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -4321,6 +4965,7 @@ pub(crate) mod tests {
         }
         let results = build_soak_results(SoakInputs {
             publish_legs: Vec::new(),
+            whep_legs: Vec::new(),
             rss_samples: samples,
             legs: one_leg(LegArtifacts {
                 proxy_stats: proxy_stats(1000, 0, 0.0, None, 0),
@@ -5276,6 +5921,10 @@ pub(crate) mod tests {
                 remuxed: None,
                 klv_records_per_generation: None,
                 klv_placement: None,
+                mount_kind: None,
+                viewer: None,
+                viewer_reconnect_s: None,
+                viewer_connections: None,
             },
         );
     }
@@ -5727,6 +6376,10 @@ pub(crate) mod tests {
             remuxed: es.then_some(true),
             klv_records_per_generation: es.then_some(ES_RECORDS_PER_GENERATION),
             klv_placement: es.then_some(true),
+            mount_kind: None,
+            viewer: None,
+            viewer_reconnect_s: None,
+            viewer_connections: None,
         }
     }
 
@@ -6194,6 +6847,435 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn worker_roles_cover_the_whep_leg() {
+        assert!(WORKER_ROLES.contains(&"whep-serve"));
+        assert!(WORKER_ROLES.contains(&"whep-viewer"));
+        assert!(KNOWN_LEGS.contains(&"whep"));
+        assert!(WHEP_LEGS.contains(&"whep"));
+        assert_eq!(leg_processes("whep"), &["serve", "viewer"]);
+    }
+
+    /// The whep leg's declaration as `soak.sh` writes it.
+    fn whep_declaration(connections: Option<u64>) -> LegDeclaration {
+        LegDeclaration {
+            profile: "baseline".to_string(),
+            schedule: None,
+            klv_set: Some("compact".to_string()),
+            klv_seed: None,
+            reconnect_mode: None,
+            publisher: None,
+            publisher_drop_period_s: None,
+            publisher_generations: None,
+            source_sha256: None,
+            remuxed: None,
+            klv_records_per_generation: None,
+            klv_placement: None,
+            mount_kind: Some("mp2t".to_string()),
+            viewer: Some("google-chrome --headless=new ...".to_string()),
+            viewer_reconnect_s: Some(600),
+            viewer_connections: connections,
+        }
+    }
+
+    /// One healthy connection of `seconds` samples: frames rise 30 a
+    /// second from the first sample, both carriages saw the same 10 Hz
+    /// record set, ended by the loop's timeout.
+    fn whep_connection(index: u64, seconds: u64) -> WhepConnection {
+        WhepConnection {
+            index,
+            started_utc: String::new(),
+            browser_rc: WHEP_BROWSER_TIMED_OUT,
+            frames: (1..=seconds).map(|i| i * 30).collect(),
+            audio: Vec::new(),
+            klv_sei: seconds * 10,
+            klv_dc: seconds * 10,
+            klv_sei_set_sha256: "a".repeat(64),
+            klv_dc_set_sha256: "a".repeat(64),
+            klv_unpaired: Vec::new(),
+            klv_copies_disagreeing: 0,
+            page_errors: 0,
+            console_errors: 0,
+            first_error: None,
+        }
+    }
+
+    /// [`healthy_inputs`] plus a healthy whep leg: RSS for its two
+    /// processes, clean exits for its two roles, a declaration of
+    /// `declared` connections and a viewer report of `connections`
+    /// connections the server also counted.
+    fn whep_inputs(connections: u64, declared: Option<u64>) -> SoakInputs {
+        let mut inputs = healthy_inputs();
+        for i in 0..121 {
+            let t = i as f64 * 30.0;
+            inputs
+                .rss_samples
+                .push(rss_row("whep", "serve", t, Some(60_000)));
+            inputs
+                .rss_samples
+                .push(rss_row("whep", "viewer", t, Some(4_000)));
+        }
+        for process in ["serve", "viewer"] {
+            inputs.worker_exits.insert(format!("whep-{process}"), 0);
+        }
+        inputs
+            .config
+            .legs
+            .insert("whep".to_string(), whep_declaration(declared));
+        let viewer = WhepViewerReport {
+            reconnect_s: 600,
+            connection_s: 597,
+            connections: (1..=connections).map(|k| whep_connection(k, 596)).collect(),
+        };
+        let serve = WhepServeReport {
+            profile: Some("baseline".to_string()),
+            mount_kind: Some("mp2t".to_string()),
+            viewer_connected_before_push: true,
+            server: WhepServerCounters {
+                sessions_total: connections,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        inputs
+            .whep_legs
+            .push(("whep".to_string(), WhepLegArtifacts { viewer, serve }));
+        inputs
+    }
+
+    #[test]
+    fn whep_leg_passes_when_every_connection_plays_and_the_counts_agree() {
+        let r = build_soak_results(whep_inputs(6, Some(6))).unwrap();
+        for name in [
+            "whep_frames_continuous_whep",
+            "whep_klv_sei_equals_dc_whep",
+            "whep_reconnects_observed_whep",
+            "profile_declared_whep",
+            "rss_sample_coverage_whep_serve",
+            "rss_sample_coverage_whep_viewer",
+        ] {
+            let v = verdict(&r, name);
+            assert!(v.pass && !v.provisional, "{name}: {}", v.detail);
+        }
+        let v = verdict(&r, "whep_reconnects_observed_whep");
+        assert!(
+            v.detail.contains("5 reconnect(s) against 5"),
+            "{}",
+            v.detail
+        );
+        for name in [
+            "schedule_declared_whep",
+            "reconnect_mode_declared_whep",
+            "corruption_attributed_whep",
+        ] {
+            let v = verdict(&r, name);
+            assert!(
+                v.pass && v.detail.contains("not applicable"),
+                "{name}: {}",
+                v.detail
+            );
+        }
+        assert_eq!(r.whep_legs.len(), 1);
+        assert_eq!(r.whep_legs[0].connections_observed, 6);
+        assert_eq!(r.whep_legs[0].frames_decoded, 6 * 596 * 30);
+        assert_eq!(r.whep_legs[0].klv_sei_records, 6 * 5960);
+        assert!(verdict(&r, "worker_exits").pass);
+        assert!(r.overall_pass, "{:?}", r.verdicts);
+    }
+
+    #[test]
+    fn whep_frames_continuous_fails_on_a_stall_over_two_seconds() {
+        let mut inputs = whep_inputs(3, Some(3));
+        // Two samples without a rise are a 2 s gap and pass.
+        let frames = &mut inputs.whep_legs[0].1.viewer.connections[1].frames;
+        frames[100] = frames[99];
+        frames[101] = frames[99];
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_frames_continuous_whep");
+        assert!(v.pass, "{}", v.detail);
+        assert!(v.detail.contains("longest stall 2 s"), "{}", v.detail);
+
+        // A third is over 2 s and fails, naming the connection.
+        let mut inputs = whep_inputs(3, Some(3));
+        let frames = &mut inputs.whep_legs[0].1.viewer.connections[1].frames;
+        frames[100] = frames[99];
+        frames[101] = frames[99];
+        frames[102] = frames[99];
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_frames_continuous_whep");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(
+            v.detail
+                .contains("connection 2: FRAMES stalled at 3000 for over 2 s from sample 101"),
+            "{}",
+            v.detail
+        );
+        assert!(!r.overall_pass);
+    }
+
+    #[test]
+    fn whep_frames_continuous_fails_a_late_first_frame_a_crash_or_an_error() {
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[0];
+        for f in c.frames.iter_mut().take(WHEP_FIRST_FRAME_SAMPLES) {
+            *f = 0;
+        }
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_frames_continuous_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail
+                .contains("connection 1: no decoded frame within the first 5"),
+            "{}",
+            v.detail
+        );
+
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[1];
+        c.browser_rc = 1;
+        c.frames.truncate(100);
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_frames_continuous_whep");
+        assert!(
+            v.detail.contains("connection 2: browser exit 1"),
+            "{}",
+            v.detail
+        );
+        assert!(
+            v.detail
+                .contains("connection 2: only 100 FRAMES sample(s) over a planned 597 s"),
+            "{}",
+            v.detail
+        );
+
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[0];
+        c.page_errors = 1;
+        c.first_error = Some("ERROR whep: 503".to_string());
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_frames_continuous_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("first: ERROR whep: 503"), "{}", v.detail);
+    }
+
+    #[test]
+    fn whep_klv_sei_equals_dc_allows_unpaired_records_at_the_edges_only() {
+        let unpaired = |via: &str, from_head: u64, from_tail: u64| WhepUnpairedRecord {
+            via: via.to_string(),
+            from_head,
+            from_tail,
+        };
+        // Two SEI-only records right after the data channel opened and
+        // one data-channel-only record at the kill: all at the edges.
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[1];
+        c.klv_dc = c.klv_sei - 1;
+        c.klv_dc_set_sha256 = "b".repeat(64);
+        c.klv_unpaired = vec![
+            unpaired("sei", 0, 5959),
+            unpaired("sei", 2, 5957),
+            unpaired("dc", 5958, 0),
+        ];
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(v.pass, "{}", v.detail);
+        assert!(v.detail.contains("3 unpaired only at"), "{}", v.detail);
+        assert_eq!(r.whep_legs[0].klv_unpaired_at_edges, 3);
+
+        // One mid-connection record on the SEI only: a real loss.
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[1];
+        c.klv_dc = c.klv_sei - 1;
+        c.klv_dc_set_sha256 = "b".repeat(64);
+        c.klv_unpaired = vec![unpaired("sei", 3, 5956)];
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(
+            v.detail
+                .contains("connection 2: a record via sei (3 record(s) before it, 5956 after)"),
+            "{}",
+            v.detail
+        );
+        assert!(!r.overall_pass);
+
+        // Differing sets with nothing to locate the difference fail too.
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[0];
+        c.klv_dc_set_sha256 = "b".repeat(64);
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail.contains("lists no unpaired record"),
+            "{}",
+            v.detail
+        );
+    }
+
+    #[test]
+    fn whep_klv_sei_equals_dc_fails_when_a_carriage_delivered_nothing() {
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[0];
+        c.klv_sei = 0;
+        c.klv_sei_set_sha256 = c.klv_dc_set_sha256.clone();
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail.contains("connection 1: 0 record(s) via SEI"),
+            "{}",
+            v.detail
+        );
+    }
+
+    #[test]
+    fn whep_reconnects_observed_holds_both_sides_to_the_declaration() {
+        // The viewer made one connection too few.
+        let r = build_soak_results(whep_inputs(5, Some(6))).unwrap();
+        let v = verdict(&r, "whep_reconnects_observed_whep");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(
+            v.detail
+                .contains("5 browser connection(s) = 4 reconnect(s) against 5 expected"),
+            "{}",
+            v.detail
+        );
+
+        // The server saw a session the viewer loop did not make.
+        let mut inputs = whep_inputs(6, Some(6));
+        inputs.whep_legs[0].1.serve.server.sessions_total = 7;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_reconnects_observed_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("counted 7 session(s)"), "{}", v.detail);
+
+        // The loop ran a different slot than declared.
+        let mut inputs = whep_inputs(6, Some(6));
+        inputs.whep_legs[0].1.viewer.reconnect_s = 300;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_reconnects_observed_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail.contains("300s slot against the declared 600s"),
+            "{}",
+            v.detail
+        );
+
+        // No declaration: nothing to judge against.
+        let r = build_soak_results(whep_inputs(6, None)).unwrap();
+        let v = verdict(&r, "whep_reconnects_observed_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("no viewer_connections"), "{}", v.detail);
+    }
+
+    #[test]
+    fn profile_declared_whep_reads_the_servers_counters() {
+        let mut inputs = whep_inputs(2, Some(2));
+        inputs.whep_legs[0].1.serve.profile = Some("klv-sync".to_string());
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "profile_declared_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail.contains("served \"klv-sync\" / \"mp2t\""),
+            "{}",
+            v.detail
+        );
+
+        let mut inputs = whep_inputs(2, Some(2));
+        inputs.whep_legs[0].1.serve.profile = None;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "profile_declared_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(v.detail.contains("name no profile"), "{}", v.detail);
+    }
+
+    /// The whep leg's roles are `serve` and the viewer LOOP: a run
+    /// missing either fails `worker_exits` by name, and one missing the
+    /// loop's RSS fails its data-present verdict.
+    #[test]
+    fn whep_leg_requires_its_serve_and_viewer_roles() {
+        let mut inputs = whep_inputs(2, Some(2));
+        inputs.worker_exits.remove("whep-viewer");
+        inputs
+            .rss_samples
+            .retain(|s| !(s.leg == "whep" && s.process == "viewer"));
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "worker_exits");
+        assert!(!v.pass && v.detail.contains("whep-viewer"), "{}", v.detail);
+        assert!(!verdict(&r, "rss_data_present_whep_viewer").pass);
+    }
+
+    /// A declared whep leg whose reports were not supplied fails
+    /// `leg_evidence_whep`, like any other declared leg.
+    #[test]
+    fn a_declared_whep_leg_without_reports_fails_leg_evidence() {
+        let mut inputs = whep_inputs(2, Some(2));
+        inputs.whep_legs.clear();
+        let r = build_soak_results(inputs).unwrap();
+        assert!(!verdict(&r, "leg_evidence_whep").pass);
+        assert!(
+            !r.verdicts.iter().any(|v| v.name.starts_with("whep_")),
+            "{:?}",
+            r.verdicts
+        );
+    }
+
+    #[test]
+    fn parse_soak_config_validates_the_whep_declaration() {
+        let base = |legs: &str| {
+            format!(
+                r#"{{"expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                     "sampler_end_slack_s": 35, "legs": {{{legs}}}}}"#
+            )
+        };
+        // The three whep fields come from `extra`, so each case names
+        // its own values.
+        let whep = |extra: &str| {
+            base(&format!(
+                r#""whep": {{"profile": "baseline", "schedule": null, "klv_set": "compact",
+                    "reconnect_mode": null, "viewer": "google-chrome" {extra}}}"#
+            ))
+        };
+        let good = r#", "mount_kind": "mp2t", "viewer_reconnect_s": 600, "viewer_connections": 6"#;
+        assert!(parse_soak_config(&whep(good)).is_ok());
+        let e = parse_soak_config(&whep(
+            r#", "mount_kind": "mp2t", "viewer_reconnect_s": 600, "viewer_connections": 1"#,
+        ))
+        .unwrap_err();
+        assert!(e.contains("viewer_connections >= 2"), "{e}");
+        let e = parse_soak_config(&whep(
+            r#", "mount_kind": "mp2t", "viewer_reconnect_s": 600"#,
+        ))
+        .unwrap_err();
+        assert!(e.contains("viewer_connections >= 2"), "{e}");
+        let e = parse_soak_config(&whep(
+            r#", "mount_kind": "mp2t", "viewer_reconnect_s": 0, "viewer_connections": 6"#,
+        ))
+        .unwrap_err();
+        assert!(e.contains("viewer_reconnect_s > 0"), "{e}");
+        let e = parse_soak_config(&whep(
+            r#", "mount_kind": "hls", "viewer_reconnect_s": 600, "viewer_connections": 6"#,
+        ))
+        .unwrap_err();
+        assert!(e.contains("mount_kind"), "{e}");
+        let e = parse_soak_config(&whep(
+            r#", "viewer_reconnect_s": 600, "viewer_connections": 6"#,
+        ))
+        .unwrap_err();
+        assert!(e.contains("mount_kind"), "{e}");
+        // The viewer fields on a transport leg are a typo.
+        let e = parse_soak_config(&base(
+            r#""srt": {"profile": "baseline", "viewer_reconnect_s": 600}"#,
+        ))
+        .unwrap_err();
+        assert!(e.contains("declares a viewer"), "{e}");
+        // A publisher field on the whep leg is one too.
+        let e =
+            parse_soak_config(&whep(&format!("{good}, \"publisher_generations\": 6"))).unwrap_err();
+        assert!(e.contains("declares a publisher"), "{e}");
+    }
+
+    #[test]
     fn publisher_generations_fails_one_below_the_floor() {
         let r = build_soak_results(publish_inputs(Some(5), Some(6))).unwrap();
         let v = verdict(&r, "publisher_generations_rtsp-publish");
@@ -6493,6 +7575,10 @@ pub(crate) mod tests {
                 remuxed: None,
                 klv_records_per_generation: None,
                 klv_placement: None,
+                mount_kind: None,
+                viewer: None,
+                viewer_reconnect_s: None,
+                viewer_connections: None,
             },
         );
         let r = build_soak_results(inputs).unwrap();
