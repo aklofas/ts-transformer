@@ -10,6 +10,7 @@ together: the player imports its two siblings by relative URL).
 | `whep-player.js` | `playWhep({ video, url, token, onKlv, dedupe })`: WHEP signalling, one `MediaStream`, the `klv` data channel, KLV emission |
 | `whep-sei-worker.js` | the `RTCRtpScriptTransform` worker that reads each encoded frame's KLV SEI before decode |
 | `whep-sei-extract.js` | the SEI parser both of the above share (also usable on its own) |
+| `whep-klv.js` | the data-channel message parser and the emission queue (paint-locked delivery, dedupe), with no browser in it |
 
 ```html
 <video id="v" autoplay playsinline muted></video>
@@ -34,4 +35,4 @@ browser support table.
 These are the files the interop matrix's browser page loads, so they are
 exercised in CI, not only documented. `test/` holds the `node --test` unit
 tests of the extractor: `node --test 'docs/webrtc/test/*.test.js'` from the repository
-root.
+root; they cover the SEI extractor, the message parser and the queue.

@@ -1,4 +1,4 @@
-// Unit tests of the shared SEI extractor: node --test docs/webrtc/test/
+// Unit tests of the shared SEI extractor: node --test 'docs/webrtc/test/*.test.js'
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -149,9 +149,30 @@ test("unescape drops only the 0x03 after two zeros", () => {
   assert.deepEqual([...unescape(Uint8Array.from([0, 3, 3, 0, 0, 3, 3]))], [0, 3, 3, 0, 0, 3]);
 });
 
-test("nalUnits: start codes of both lengths, trailing zeros trimmed, bad lengths stop", () => {
+test("nalUnits: start codes of both lengths, trailing zeros trimmed", () => {
   const nals = nalUnits(Uint8Array.from([0, 0, 0, 1, 0x67, 0xaa, 0, 0, 0, 1, 0x68, 0xbb, 0, 0, 1, 0x65]));
   assert.deepEqual(nals.map((n) => [...n]), [[0x67, 0xaa], [0x68, 0xbb], [0x65]]);
-  assert.deepEqual(nalUnits(Uint8Array.from([0, 0, 0, 2, 0x67, 0xaa, 0, 0, 0, 9, 0x68])).map((n) => [...n]), [[0x67, 0xaa]]);
+  // Two zero bytes before a 3-byte start code: the second one is not the
+  // code's, and still does not belong to the NAL unit.
+  const trimmed = nalUnits(Uint8Array.from([0, 0, 1, 0x67, 0xaa, 0, 0, 0, 0, 1, 0x65]));
+  assert.deepEqual(trimmed.map((n) => [...n]), [[0x67, 0xaa], [0x65]]);
   assert.equal(parseKlvSeiRbsp(Uint8Array.from([5])), null);
+});
+
+test("nalUnits: length-prefixed only when the length walk is exact", () => {
+  // A length of 300 starts 00 00 01 2C, the bytes of a start code: the walk
+  // consumes the buffer exactly, so it is read as lengths, not Annex B.
+  const sei = seiNal({ klv: new Uint8Array(270).fill(0x55), pts: 5n });
+  assert.ok(sei.length >= 256 && sei.length <= 511);
+  const frame = lengthPrefixed([sei, SLICE]);
+  assert.deepEqual([...frame.subarray(0, 3)], [0, 0, 1]);
+  assert.equal(nalUnits(frame).length, 2);
+  assert.equal(extractKlvSeis(frame)[0].pts, 5n);
+  // A length past the end means Annex B, which finds nothing here; a
+  // "length" of 1 followed by a header with the forbidden bit set is read
+  // as a 4-byte start code and the NAL unit after it.
+  assert.deepEqual(nalUnits(Uint8Array.from([0, 0, 0, 9, 0x68])), []);
+  assert.deepEqual(nalUnits(Uint8Array.from([0, 0, 0, 1, 0xe5])).map((n) => [...n]), [[0xe5]]);
+  // Annex B with 3-byte start codes is never mistaken for lengths.
+  assert.equal(extractKlvSeis(Uint8Array.from([0, 0, 1, ...SPS, 0, 0, 1, ...seiNal({ klv: KLV }), 0, 0, 1, ...SLICE])).length, 1);
 });

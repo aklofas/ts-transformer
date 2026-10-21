@@ -20,13 +20,15 @@ export function frameRtpTimestamp(frame) {
 export function seiTransform(post) {
   return new TransformStream({
     transform(frame, controller) {
-      const records = extractKlvSeis(frame.data);
-      if (records.length > 0) {
-        const rtpTimestamp = frameRtpTimestamp(frame);
-        for (const { pts, bytes } of records) {
-          post({ rtpTimestamp, pts, bytes }, [bytes.buffer]);
+      try {
+        const records = extractKlvSeis(frame.data);
+        if (records.length > 0) {
+          const rtpTimestamp = frameRtpTimestamp(frame);
+          for (const { pts, bytes } of records) {
+            post({ rtpTimestamp, pts, bytes }, [bytes.buffer]);
+          }
         }
-      }
+      } catch { /* a parse failure must not stop the video */ }
       controller.enqueue(frame);
     },
   });
