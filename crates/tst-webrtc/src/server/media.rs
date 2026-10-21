@@ -73,6 +73,27 @@ fn klv_channel_config() -> ChannelConfig {
 /// The data-channel message format version (the body's first byte).
 const KLV_DC_VERSION: u8 = 1;
 
+#[cfg(test)]
+mod klv_channel_tests {
+    use super::klv_channel_config;
+    use str0m::channel::Reliability;
+
+    /// The spec's channel: in-band DCEP (no negotiated id), reliable and
+    /// unordered. str0m's `add_channel` default is ordered, so a revert to
+    /// it fails here rather than passing every browser cell.
+    #[test]
+    fn the_klv_channel_is_in_band_reliable_and_unordered() {
+        let c = klv_channel_config();
+        assert_eq!(c.label, "klv");
+        assert!(!c.ordered, "the klv channel is unordered");
+        assert_eq!(c.reliability, Reliability::Reliable);
+        assert_eq!(
+            c.negotiated, None,
+            "opened in-band by DCEP, not pre-negotiated"
+        );
+    }
+}
+
 const _: () = assert!(
     KLV_DC_HEADER_BYTES == 1 + 4 + 8,
     "the header is the version, the RTP timestamp and the PTS"
