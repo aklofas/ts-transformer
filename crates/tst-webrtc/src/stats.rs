@@ -73,6 +73,12 @@ pub struct MountStats {
     pub viewer_packets_dropped_queue_full: u64,
     /// Times the RTP clock was rebased after a PTS jump.
     pub rtp_clock_rebases: u64,
+    /// Video frames whose PTS was below the previous frame's, within the
+    /// rebase window (a jump of more than 10 s back is a rebase instead).
+    /// WebRTC carries frames in decode order with the RTP timestamp as
+    /// the presentation time, so a source with B-frames is counted here
+    /// and plays badly; feed I/P-only streams. Audio is not counted.
+    pub frames_pts_reordered: u64,
     /// Non-conformances reported by an MP2T mount's demuxer, and the units
     /// it skips: damaged ones, those of another video codec, and the
     /// access units and KLV records of streams the mount does not play.
@@ -188,6 +194,7 @@ pub(crate) struct MountCounters {
     /// thread (a viewer's queue full), in RTP payloads.
     pub(crate) viewer_packets_dropped_queue_full: AtomicU64,
     pub(crate) rtp_clock_rebases: AtomicU64,
+    pub(crate) frames_pts_reordered: AtomicU64,
     /// Written by an MP2T mount's demuxer.
     pub(crate) demux_nonconformant: AtomicU64,
 }
@@ -220,6 +227,7 @@ impl MountCounters {
             nacks_received: r(&self.nacks_received),
             viewer_packets_dropped_queue_full: r(&self.viewer_packets_dropped_queue_full),
             rtp_clock_rebases: r(&self.rtp_clock_rebases),
+            frames_pts_reordered: r(&self.frames_pts_reordered),
             demux_nonconformant: r(&self.demux_nonconformant),
         }
     }

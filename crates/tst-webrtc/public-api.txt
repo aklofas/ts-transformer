@@ -301,6 +301,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::IceState
 pub tst_webrtc::stats::MountStats::audio_frames_dropped: u64
 pub tst_webrtc::stats::MountStats::audio_frames_pushed: u64
 pub tst_webrtc::stats::MountStats::demux_nonconformant: u64
+pub tst_webrtc::stats::MountStats::frames_pts_reordered: u64
 pub tst_webrtc::stats::MountStats::frames_pushed: u64
 pub tst_webrtc::stats::MountStats::keyframe_flag_mismatch: u64
 pub tst_webrtc::stats::MountStats::keyframes_pushed: u64
@@ -601,6 +602,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::mount::MountHandle
 pub tst_webrtc::MountStats::audio_frames_dropped: u64
 pub tst_webrtc::MountStats::audio_frames_pushed: u64
 pub tst_webrtc::MountStats::demux_nonconformant: u64
+pub tst_webrtc::MountStats::frames_pts_reordered: u64
 pub tst_webrtc::MountStats::frames_pushed: u64
 pub tst_webrtc::MountStats::keyframe_flag_mismatch: u64
 pub tst_webrtc::MountStats::keyframes_pushed: u64

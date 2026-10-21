@@ -283,13 +283,24 @@ struct RtpClock {
     last: Option<(i64, u32)>,
 }
 
+/// One frame's place on an [`RtpClock`].
+struct ClockStep {
+    /// The frame's RTP timestamp.
+    rtp: u32,
+    /// The PTS jumped out of the window and the clock was rebased.
+    rebased: bool,
+    /// The PTS is below the previous frame's, within the window.
+    reordered: bool,
+}
+
 impl RtpClock {
     /// The RTP timestamp of a frame at `pts`, whose tick count on this
     /// stream's clock is `ticks`. A PTS jump of more than 10 s back or 1 h
     /// ahead rebases the clock so the RTP timestamp moves on by `step`
-    /// ticks; returns whether it rebased.
-    fn ts(&mut self, pts: i64, ticks: u32, step: u32) -> (u32, bool) {
+    /// ticks; a smaller step backwards is reported as reordered.
+    fn ts(&mut self, pts: i64, ticks: u32, step: u32) -> ClockStep {
         let mut rebased = false;
+        let mut reordered = false;
         match self.last {
             None => self.base = random_u32().wrapping_sub(ticks),
             Some((last_pts, last_rtp)) => {
@@ -298,12 +309,18 @@ impl RtpClock {
                 {
                     self.base = last_rtp.wrapping_add(step).wrapping_sub(ticks);
                     rebased = true;
+                } else if pts < last_pts {
+                    reordered = true;
                 }
             }
         }
         let rtp = ticks.wrapping_add(self.base);
         self.last = Some((pts, rtp));
-        (rtp, rebased)
+        ClockStep {
+            rtp,
+            rebased,
+            reordered,
+        }
     }
 }
 
@@ -595,6 +612,11 @@ impl MountHandle {
     /// reference the lost one); the call never
     /// blocks.
     ///
+    /// WebRTC carries frames in decode order with the RTP timestamp as the
+    /// presentation time. A source with B-frames (a PTS below the previous
+    /// frame's) is counted in [`MountStats::frames_pts_reordered`] and
+    /// plays badly; feed I/P-only streams.
+    ///
     /// # Errors
     ///
     /// [`PushError::Closed`] after the mount closed, and
@@ -665,9 +687,16 @@ impl MountHandle {
                 bump(&s.stats.keyframes_pushed);
             }
 
-            let (rtp_ts, rebased) = inner.video_clock.ts(pts, pts as u32, REBASE_STEP_TICKS);
+            let ClockStep {
+                rtp: rtp_ts,
+                rebased,
+                reordered,
+            } = inner.video_clock.ts(pts, pts as u32, REBASE_STEP_TICKS);
             if rebased {
                 bump(&s.stats.rtp_clock_rebases);
+            }
+            if reordered {
+                bump(&s.stats.frames_pts_reordered);
             }
             let bound = inner.take_klv(pts, rebased);
 
@@ -857,10 +886,14 @@ impl MountHandle {
                 // cast keeps the low 32 bits, as RTP does.
                 let pts = pts.as_ticks();
                 let ticks = pts.saturating_mul(8).div_euclid(15);
-                let (rtp_ts, rebased) =
-                    s.lock()
-                        .audio_clock
-                        .ts(pts, ticks as u32, AUDIO_REBASE_STEP_TICKS);
+                let ClockStep {
+                    rtp: rtp_ts,
+                    rebased,
+                    ..
+                } = s
+                    .lock()
+                    .audio_clock
+                    .ts(pts, ticks as u32, AUDIO_REBASE_STEP_TICKS);
                 if rebased {
                     bump(&s.stats.rtp_clock_rebases);
                 }

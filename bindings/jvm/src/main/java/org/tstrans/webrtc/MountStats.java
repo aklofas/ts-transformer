@@ -28,6 +28,9 @@ package org.tstrans.webrtc;
  * @param viewerPacketsDroppedQueueFull video RTP payloads and Opus packets dropped because a
  *     queue was full
  * @param rtpClockRebases times the RTP clock was rebased after a PTS jump
+ * @param framesPtsReordered video frames whose PTS was below the previous frame's within the
+ *     rebase window: WebRTC plays frames in decode order, so a source with B-frames is counted
+ *     here and plays badly; feed I/P-only streams
  * @param demuxNonconformant non-conformances reported by an MP2T mount's demuxer, and the
  *     units it skips
  */
@@ -36,4 +39,5 @@ public record MountStats(long framesPushed, long keyframesPushed, long keyframeF
         long klvRecordsDroppedUnbound, long klvSeiInserted, long klvSeiDroppedOversize,
         long klvDcMessagesSent, long klvDcDroppedOversize, long klvDcDroppedViewer,
         long audioFramesPushed, long audioFramesDropped, long plisReceived, long nacksReceived,
-        long viewerPacketsDroppedQueueFull, long rtpClockRebases, long demuxNonconformant) {}
+        long viewerPacketsDroppedQueueFull, long rtpClockRebases, long framesPtsReordered,
+        long demuxNonconformant) {}
