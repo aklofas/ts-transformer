@@ -79,6 +79,15 @@ test("paint-locked: the backstop emits the oldest frame past the cap", () => {
   assert.equal(out.at(-1), 700);
 });
 
+test("dedupe: equal bytes at PTS 0 on two frames are two records (MP2T mounts)", () => {
+  const out = [];
+  const q = new KlvQueue({ onKlv: (r) => out.push(`${r.rtpTimestamp}/${r.via}`) });
+  q.push(rec("sei", 1000, 0n)); q.push(rec("dc", 1000, 0n));
+  q.push(rec("sei", 4000, 0n)); q.push(rec("dc", 4000, 0n));
+  q.painted(4000);
+  assert.deepEqual(out, ["1000/sei", "4000/sei"]);
+});
+
 test("dedupe: one record on both carriages is emitted once, SEI preferred", () => {
   const out = [];
   const q = new KlvQueue({ onKlv: (r) => out.push(r.via) });

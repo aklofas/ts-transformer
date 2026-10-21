@@ -1,9 +1,9 @@
 # Reference WHEP player
 
-The browser side of `tst-webrtc`: three plain ES modules, no bundler, no
+The browser side of `tst-webrtc`: four plain ES modules, no bundler, no
 dependencies. A page loads them with `<script type="module">` from any web
 server that serves this directory as static files (file paths must stay
-together: the player imports its two siblings by relative URL).
+together: the player imports its three siblings by relative URL).
 
 | File | Role |
 |---|---|
@@ -32,7 +32,10 @@ what the interop page uses to prove each carriage. The guide
 (`/docs/guides/webrtc.md`) explains the carriages, the timing rules and the
 browser support table.
 
-These are the files the interop matrix's browser page loads, so they are
-exercised in CI, not only documented. `test/` holds the `node --test` unit
-tests of the extractor: `node --test 'docs/webrtc/test/*.test.js'` from the repository
-root; they cover the SEI extractor, the message parser and the queue.
+These files are exercised in CI, not only documented, in two ways: the
+interop matrix's browser cells load them in headless Chrome (with the
+player's de-duplication off, so each carriage is proved on its own), and the
+`node --test` unit tests under `test/` run in the `ci` workflow and cover
+the default path the cells do not: the SEI extractor, the message parser,
+the queue and the de-duplication. Run them from the repository root with
+`node --test 'docs/webrtc/test/*.test.js'`.
