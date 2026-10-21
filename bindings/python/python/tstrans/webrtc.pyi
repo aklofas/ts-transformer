@@ -190,7 +190,8 @@ class MountHandle:
 
     Pushes never block: a full queue drops the frame and counts it.
     ``close()`` frees only this handle; the mount keeps serving until
-    ``WhepServer.remove_mount``, ``stop()`` or ``close()``.
+    ``WhepServer.remove_mount``, ``stop()``, ``close()`` or the server's last
+    reference goes. A mount handle does not keep its server alive.
     """
 
     def push_video(self, au: _BytesLike, *, pts: Pts90khz, key_frame: bool) -> None:
@@ -218,9 +219,12 @@ class WhepServer:
     """A WHEP server: browsers POST an SDP offer to a mount's path and play
     it over WebRTC. Construct with ``WhepServer.bind(url)``.
 
-    ``stop()`` is idempotent and bounded; ``close()`` is ``stop()`` plus
-    releasing the server, after which every method raises
-    ``WebrtcError(CLOSED)``. Usable as a context manager (exit = close).
+    ``stop()`` is idempotent and bounded. ``close()`` stops the server and
+    closes this object, after which every method raises
+    ``WebrtcError(CLOSED)``; the native server is freed when the last
+    reference goes. Dropping the last reference also stops the server
+    (bounded, the GIL held), so use ``with`` (exit = close) or call
+    ``close()``. A ``MountHandle`` does not keep its server alive.
     """
 
     @staticmethod
@@ -231,7 +235,8 @@ class WhepServer:
     def local_addr(self) -> str: ...
     def media_addr(self) -> str: ...
     def stop(self) -> None: ...
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Stop the server and close this object; idempotent."""
     def __enter__(self) -> WhepServer: ...
     def __exit__(
         self,

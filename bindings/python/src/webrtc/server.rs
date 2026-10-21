@@ -3,6 +3,9 @@
 //! The server is an `Arc` plus a closed latch (see the module doc in
 //! `mod.rs`). `close()` sets the latch and stops the server; a call already
 //! in flight keeps its clone of the `Arc` and finishes on the stopped server.
+//! The native server is freed, and stopped if it was not, when the Python
+//! object is collected (`WhepServer`'s `Drop`), as `tstrans.rtp.RtspServer`
+//! is; a `MountHandle` does not keep it alive.
 //!
 //! GIL release: `bind`, `add_mount`, `remove_mount`, `stats` and `stop`
 //! run with the GIL released through `allow_threads_parking` (`stats` asks
@@ -14,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::types::PyString;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 use tst_webrtc::{AudioPolicy, KlvCarriage, MountConfig, MountKind, WhepServer};
 
@@ -21,10 +25,15 @@ use crate::generated::stats_webrtc::ServerStats;
 use crate::mux::py_video_codec;
 
 use super::mount::PyMountHandle;
-use super::{closed, webrtc_err};
+use super::{closed, int_in_range, webrtc_err};
 
 /// A WHEP server: browsers POST an SDP offer to a mount's path and play it
 /// over WebRTC. Construct with `WhepServer.bind(url)`.
+///
+/// `close()` stops the server and closes this object. The native server is
+/// freed when the last reference goes, and dropping the last reference
+/// also stops it (bounded, the GIL held), so use `with` or call `close()`.
+/// A `MountHandle` does not keep its server alive.
 #[pyclass(name = "WhepServer", module = "tstrans.webrtc", frozen)]
 pub struct PyWhepServer {
     inner: Arc<WhepServer>,
@@ -119,8 +128,9 @@ impl PyWhepServer {
         Ok(())
     }
 
-    /// `stop()`, then releases the server: every later call raises
-    /// `WebrtcError(CLOSED)`. Idempotent.
+    /// Stops the server and closes this object: every later call raises
+    /// `WebrtcError(CLOSED)`. The native server is freed when the last
+    /// reference to this object goes. Idempotent.
     pub fn close(&self, py: Python<'_>) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
@@ -162,42 +172,47 @@ impl PyWhepServer {
 /// Reads a `tstrans.webrtc.MountConfig` by attribute name. The enums are
 /// `IntEnum`s whose values follow the Rust declaration order; a value
 /// outside an enum, or a count outside `u32`, is refused as `MOUNT`, the
-/// invalid-configuration kind (an out-of-range count becomes 0, which
-/// `MountConfig::validate` refuses with the range in its message).
+/// invalid-configuration kind.
 fn mount_config(obj: &Bound<'_, PyAny>) -> PyResult<MountConfig> {
     let py = obj.py();
-    let refuse = |what: &str, v: i64| {
+    let refuse = |what: &str, v: &Bound<'_, PyAny>| {
         webrtc_err(
             py,
             BindingError::new(
                 BindingErrorKind::WebrtcMount,
-                format!("unknown {what} value {v}"),
+                format!("{what} {v} is out of range"),
             ),
         )
     };
-    let int =
-        |name: &Bound<'_, pyo3::types::PyString>| -> PyResult<i64> { obj.getattr(name)?.extract() };
+    // The attribute's value when it is an int in `i64`, else the refusal.
+    let enum_value = |name: &Bound<'_, PyString>, what: &str| -> PyResult<i64> {
+        let v = obj.getattr(name)?;
+        int_in_range(&v, |v| v.extract::<i64>())?.ok_or_else(|| refuse(what, &v))
+    };
+    let count = |name: &Bound<'_, PyString>| -> PyResult<u32> {
+        let v = obj.getattr(name)?;
+        int_in_range(&v, |v| v.extract::<u32>())?.ok_or_else(|| refuse(&name.to_string(), &v))
+    };
     let mut cfg = MountConfig::default();
-    cfg.kind = match int(intern!(py, "kind"))? {
+    cfg.kind = match enum_value(intern!(py, "kind"), "MountKind")? {
         0 => MountKind::Elementary,
         1 => MountKind::Mp2t,
-        v => return Err(refuse("MountKind", v)),
+        v => return Err(refuse("MountKind", &v.into_pyobject(py)?.into_any())),
     };
     cfg.video = py_video_codec(&obj.getattr(intern!(py, "video"))?)?;
-    cfg.audio = match int(intern!(py, "audio"))? {
+    cfg.audio = match enum_value(intern!(py, "audio"), "AudioPolicy")? {
         0 => AudioPolicy::Drop,
         1 => AudioPolicy::PassthroughOpus,
-        v => return Err(refuse("AudioPolicy", v)),
+        v => return Err(refuse("AudioPolicy", &v.into_pyobject(py)?.into_any())),
     };
-    cfg.klv = match int(intern!(py, "klv"))? {
+    cfg.klv = match enum_value(intern!(py, "klv"), "KlvCarriage")? {
         0 => KlvCarriage::SeiAndDataChannel,
         1 => KlvCarriage::SeiOnly,
         2 => KlvCarriage::DataChannelOnly,
-        v => return Err(refuse("KlvCarriage", v)),
+        v => return Err(refuse("KlvCarriage", &v.into_pyobject(py)?.into_any())),
     };
-    cfg.sei_budget_bytes = u32::try_from(int(intern!(py, "sei_budget_bytes"))?).unwrap_or(0);
-    cfg.viewer_queue_packets =
-        u32::try_from(int(intern!(py, "viewer_queue_packets"))?).unwrap_or(0);
+    cfg.sei_budget_bytes = count(intern!(py, "sei_budget_bytes"))?;
+    cfg.viewer_queue_packets = count(intern!(py, "viewer_queue_packets"))?;
     Ok(cfg)
 }
 
