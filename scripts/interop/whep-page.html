@@ -11,7 +11,7 @@
   as `CONSOLE(...)` lines:
 
     KLV <pts> <sha256 hex of the record bytes> <sei|dc> <rtp timestamp of the bound frame>
-    FRAMES <totalVideoFrames>                             once a second
+    FRAMES <totalVideoFrames>                             once a second (Chrome only: Firefox and Safari report 0 for a WebRTC source; judge video by STATS framesDecoded there)
     AUDIO <inbound audio packetsReceived>                 once a second, when audio is negotiated
     STATE <peer connection state>                         on each change
     CAPS scriptTransform=.. encodedStreams=.. rvfc=..     once, which player paths the browser has

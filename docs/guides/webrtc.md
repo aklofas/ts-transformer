@@ -422,6 +422,29 @@ The player picks its path from what the browser offers:
 A browser without either encoded-frame API still plays the video and
 receives KLV on the data channel.
 
+Checked by hand against this server (the `tst-interop serve-whep` mounts
+behind the reference player), one minute per cell:
+
+| Hand check (2026-10-21) | Chrome 155 (Linux) | Firefox (Linux) | Safari 26.2 (macOS 26.2) |
+|---|---|---|---|
+| Default mount, audio answered with port 0: video plays | yes | yes | yes |
+| Opus pass-through mount: video and audio play | yes | yes | yes |
+| KLV arrives in the SEI | yes (worker) | yes (worker) | yes (worker) |
+| KLV arrives on the data channel | yes | yes | yes |
+
+Two things to know when testing against other browsers:
+
+- **Firefox needs a non-loopback candidate.** An answer whose only
+  candidate is `127.0.0.1` never reaches `connected` in Firefox (its ICE
+  agent does not pair loopback addresses, even with
+  `media.peerconnection.ice.loopback` set), so bind or `advertise=` a LAN
+  address when a Firefox viewer is on the same machine. Chrome and Safari
+  connect over loopback.
+- **`getVideoPlaybackQuality().totalVideoFrames` stays 0** for a WebRTC
+  `srcObject` in Firefox and Safari while the picture plays; read
+  `framesDecoded` from the `inbound-rtp` entry of `pc.getStats()` instead.
+  The interop page's `FRAMES` line is Chrome-only evidence for that reason.
+
 The server's test suite answers an offer captured from Chrome and offers
 reconstructed for Firefox and Safari, and plays to a WebRTC client in the
 same process; the interop matrix's browser cell loads this player in
