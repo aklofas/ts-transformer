@@ -1188,6 +1188,30 @@ rtsp_publish_cells() {
     rtspclientsink name=s "location=rtsp://127.0.0.1:$port/mount" protocols=tcp
 }
 
+# whep_stderr_span <chrome_err> — one line placing the page's FRAMES
+# lines on the browser's own clock: "FRAMES lines from A s to B s of a
+# C s browser log". Chrome prefixes every stderr line with
+# `[pid:tid:MMDD/HHMMSS.micro:LEVEL:...]`, so the first and last FRAMES
+# console lines and the last line of any kind give the stall a shape
+# ("stopped after 4 s of 18") that the console alone cannot.
+whep_stderr_span() {
+  awk '
+    function secs(f,   t) { t = substr(f, 6); return substr(t, 1, 2) * 3600 + substr(t, 3, 2) * 60 + substr(t, 5) }
+    match($0, /^\[[0-9]+:[0-9]+:[0-9]{4}\/[0-9]{6}\.[0-9]+:/) {
+      split(substr($0, 2, RLENGTH - 2), a, ":")
+      s = secs(a[3])
+      if (first == "") first = s
+      if (s < first) s += 86400
+      last = s
+      if ($0 ~ /:INFO:CONSOLE:[0-9]+\] "FRAMES /) { if (ff == "") ff = s; lf = s }
+    }
+    END {
+      if (first == "") { print "no timestamped browser stderr line"; exit }
+      if (ff == "") printf "no FRAMES line in a %.1f s browser log\n", last - first
+      else printf "FRAMES lines from %.1f s to %.1f s of a %.1f s browser log\n", ff - first, lf - first, last - first
+    }' "$1"
+}
+
 # run_whep_browser <id> <mp2t|opus>
 #
 # We BIND a WHEP server (`tst-interop serve-whep`) and serve $SECONDS_ARG
@@ -1261,7 +1285,11 @@ run_whep_browser() {
   # set by interop.yml): run the cells against another copy of the
   # reference player, e.g. a fix under review, instead of docs/webrtc/.
   local page="file://$SCRIPT_DIR/whep-page.html?url=$serving${WHEP_PLAYER_URL:+&player=$WHEP_PLAYER_URL}"
-  local chrome_err="$WORK/$slugged-browser.err" profile_dir="$WORK/$slugged-browser-profile"
+  # The raw stderr is kept beside the console (gzipped below, uploaded
+  # with the evidence as work/*-chrome.stderr.gz): a page that goes
+  # silent mid-cell while the server's counters stay healthy is a renderer
+  # that died or hung, and the console alone cannot show which.
+  local chrome_err="$WORK/$slugged-chrome.stderr" profile_dir="$WORK/$slugged-browser-profile"
   rm -rf "$profile_dir"
   local -a browser_cmd=("$browser" --headless=new --no-sandbox --disable-gpu
     --autoplay-policy=no-user-gesture-required --enable-logging=stderr --log-level=0
@@ -1302,6 +1330,23 @@ run_whep_browser() {
   if grep -q 'ERROR:CONSOLE' "$chrome_err"; then
     reasons+=("the browser logged a console error: $(grep -m1 'ERROR:CONSOLE' "$chrome_err" | sed 's/.*:CONSOLE[^]]*\] //')")
   fi
+  # A renderer death, in the words Chrome 155 uses: the browser logs a
+  # renderer the kernel killed as `Tab Killed: <origin>` and an OOM kill
+  # as `Tab OOM-Killed Memory details: ...` (chrome/browser/ui/sad_tab.cc,
+  # the first measured locally with kill -KILL on the renderer), and a
+  # process that catches its own fatal signal prints `Received signal N`
+  # (base/debug/stack_trace_posix.cc). A renderer that segfaults under the
+  # official build's crash handler prints nothing at all (measured locally
+  # with kill -SEGV: the page's ticker stops and no line follows), so the
+  # FRAMES span below is the only trace of that case.
+  local crash_sig
+  crash_sig=$(grep -m1 -E 'Tab Killed: |Tab OOM-Killed|Received signal [0-9]+' "$chrome_err" | sed 's/^\[[^]]*\] //') || crash_sig=""
+  if [[ -n "$crash_sig" ]]; then
+    reasons+=("the browser logged a renderer death: $crash_sig")
+  fi
+  local span
+  span=$(whep_stderr_span "$chrome_err")
+  echo "--- browser clock: $span ---" >>"$log"
 
   # The generator's KLV set digest, the way run_peer_send_recv's
   # --klv-digest-of computes it; the page prints one sha256 per record
@@ -1364,15 +1409,20 @@ run_whep_browser() {
   local within=5 reason
   [[ $SECONDS_ARG -lt 5 ]] && within=$SECONDS_ARG
   reason=$(counter_rises FRAMES "$console" "$within" "$SECONDS_ARG")
-  [[ -z "$reason" ]] || reasons+=("video not playing: $reason")
+  [[ -z "$reason" ]] || reasons+=("video not playing: $reason ($span)")
   if [[ "$feed" == opus ]]; then
     reason=$(counter_rises AUDIO "$console" "$within" "$SECONDS_ARG")
     [[ -z "$reason" ]] || reasons+=("audio not flowing: $reason")
   fi
 
+  # Nothing reads the raw stderr again: about 300 KB per 10 s cell at
+  # --log-level=0, kept gzipped for the evidence upload.
+  gzip -f "$chrome_err"
+
   # The cell record carries no CellMetrics: nothing here is a TS capture.
-  # The server/mount/session counters are in $serve_json and the console
-  # in $console, both uploaded with the evidence.
+  # The server/mount/session counters are in $serve_json, the console in
+  # $console and the browser's stderr in $chrome_err.gz, all uploaded with
+  # the evidence.
   if [[ ${#reasons[@]} -eq 0 ]]; then
     emit_pass "$id" "$browser" send remux "$log" -
   else
