@@ -1037,6 +1037,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-interop
 
+- The browser deadline of the `whep/*` cells grows from 8 s to 15 s past the
+  stream window: headless Chrome on a runner has taken up to 6 s to reach the
+  page script, and at 8 s two runs lost the window's last records.
 - `tst-interop corpus`, a tool for directories of real captures, named by
   SHA-256 in every output:
   - `inventory` catalogues each distinct file (codecs, KLV sets, PMT shape,

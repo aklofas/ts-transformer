@@ -236,8 +236,12 @@ SETTLE=2
 # connect before it starts pushing (a browser that joins late would miss
 # the first keyframe and the records bound to it), and how long past the
 # stream window the browser runs so its last samples land in the log.
+# The browser's deadline counts from its launch, and headless Chrome on a
+# runner has taken up to 6 s to reach the page script before the session
+# even starts, so the margin must cover that start-up on top of the
+# stream window: at 8 s two runs lost the window's last records.
 WHEP_VIEWER_WAIT=15
-WHEP_BROWSER_MARGIN=8
+WHEP_BROWSER_MARGIN=15
 
 # AES passphrase shared by every "encrypted" cell below. Length must
 # clear SRT's 10-byte floor (RFC/libsrt: 10..79 chars); arbitrary
