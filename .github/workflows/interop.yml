@@ -40,7 +40,7 @@ on:
       - 'rust-toolchain.toml'
       # A demux/mux change used to reach main before ffmpeg/tsduck/GStreamer
       # saw it (Monday cron). ~25 min warm; the
-      # census assert (159/94/0/65/0) now gates those PRs too.
+      # census assert (161 declared cells, 0 skips) now gates those PRs too.
       - 'crates/tst-core/src/mpegts/**'
       # The rtsp-publish/* cells are the only real-tool check of the RTSP
       # server's publish path (ANNOUNCE/RECORD, the re-muxer, SDP parsing,
@@ -50,8 +50,10 @@ on:
       - 'crates/tst-rtp/src/sdp/**'
       - 'crates/tst-rtp/src/h264/**'
       - 'crates/tst-rtp/src/rtcp/**'
-      # The WebRTC server runs the interop matrix on its changes too.
+      # The WebRTC server runs the interop matrix on its changes too, and so
+      # does the reference player the whep/* cells load in headless Chrome.
       - 'crates/tst-webrtc/**'
+      - 'docs/webrtc/**'
 
 permissions:
   contents: read
@@ -63,7 +65,7 @@ jobs:
   interop-matrix:
     name: interop matrix (linux-x86_64)
     runs-on: ubuntu-latest
-    # Worst-case budget: 159 cells at the run-matrix.sh default of 10s
+    # Worst-case budget: 161 cells at the run-matrix.sh default of 10s
     # each, plus per-cell settle/timeout margin (lib.sh's cell_timeout)
     # and a --release build of tst-interop's native-linking dependency
     # chain (tst-srt + tst-rist, i.e. vendored libsrt/librist/mbedTLS).
@@ -138,6 +140,11 @@ jobs:
         #     so `have()` does not skip, and the pipeline fails to build.
         #   - jq: required by run-matrix.sh/lib.sh's own JSON handling
         #     (README.md).
+        #   - google-chrome (not installed here): the headless browser the
+        #     whep/* cells drive is on the ubuntu-latest image already
+        #     (Google Chrome 155 at the time of writing); lib.sh's
+        #     `whep_browser` also accepts a `chromium` binary. Each whep cell
+        #     log records the version it ran.
         run: |
           sudo apt-get -o Acquire::Retries=5 install -y ffmpeg vlc mpv gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-plugins-base-apps gstreamer1.0-libav gstreamer1.0-rtsp jq
 
@@ -182,7 +189,7 @@ jobs:
 
       - name: cargo build --release -p tst-interop
         # --release: run-matrix.sh's $BIN points at target/release/tst-interop
-        # (a live 159-cell matrix needs the muxer/demuxer at real speed, not
+        # (a live 161-cell matrix needs the muxer/demuxer at real speed, not
         # a debug build). SRT/RIST_FORCE_VENDORED: this runner has no
         # system libsrt/librist, so pkg-config would already fall through
         # to vendored — set explicitly anyway, matching every other
@@ -298,5 +305,7 @@ jobs:
             ${{ runner.temp }}/interop/cells
             ${{ runner.temp }}/interop/logs
             ${{ runner.temp }}/interop/work/*-recv.json
+            ${{ runner.temp }}/interop/work/*-whep.json
+            ${{ runner.temp }}/interop/work/*-console.txt
           retention-days: 90
           if-no-files-found: warn
