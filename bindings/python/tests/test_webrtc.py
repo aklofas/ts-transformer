@@ -1,11 +1,17 @@
 """tstrans.webrtc — the WHEP playback server.
 
 Covers bind / add_mount / push / stats / close semantics and the error
-model.
+model. A real WebRTC viewer is the Rust test viewer of tst-webrtc's own
+loopback tests, reached through the `py-test-hooks` probe: a WHEP client
+written in Python would be a second implementation.
 """
 
 from __future__ import annotations
 
+import os
+import threading
+import time
+from pathlib import Path
 
 import pytest
 
@@ -33,6 +39,28 @@ _TINY_IDR_AU = bytes(
         0, 0, 0, 1, 0x65, 0x88, 0x84, 0x00, 0x33,
     ]
 )
+
+_GOP = (
+    Path(__file__).resolve().parents[3]
+    / "crates"
+    / "tst-webrtc"
+    / "tests"
+    / "fixtures"
+    / "h264"
+    / "gop.h264"
+)
+
+
+def _gop_access_units() -> list[bytes]:
+    """The 30-frame H.264 GOP of tst-webrtc's fixtures, split at each AUD."""
+    data = _GOP.read_bytes()
+    starts = [
+        i
+        for i in range(len(data) - 4)
+        if data[i : i + 4] == b"\x00\x00\x00\x01" and data[i + 4] & 0x1F == 9
+    ]
+    return [data[s:e] for s, e in zip(starts, starts[1:] + [len(data)])]
+
 
 def _klv_record(heading: float) -> bytes:
     return encode_uas_datalink(UasDatalinkLs(platform_heading_deg=heading))
@@ -287,3 +315,57 @@ def test_raise_for_test_reaches_every_kind():
         assert exc.value.kind == member
         assert f"test {member.name}" in str(exc.value)
     assert len(WebrtcErrorKind) == 8
+
+
+# ---------------------------------------------------------------------------
+# A real viewer (py-test-hooks probe)
+# ---------------------------------------------------------------------------
+
+
+def _probe():
+    probe = getattr(_native.webrtc, "_loopback_viewer_probe", None)
+    if probe is None:
+        if os.environ.get("TSTRANS_EXPECT_TEST_HOOKS") == "1":
+            pytest.fail(
+                "TSTRANS_EXPECT_TEST_HOOKS=1 but the extension was built without "
+                "the py-test-hooks feature"
+            )
+        pytest.skip("the extension was built without the py-test-hooks feature")
+    return probe
+
+
+def test_a_viewer_receives_frames_pushed_from_python(server):
+    probe = _probe()
+    aus = _gop_access_units()
+    assert len(aus) == 30
+    m = server.add_mount("/cam")
+    done = threading.Event()
+    failures: list[BaseException] = []
+
+    # A viewer joins at a keyframe, so the pusher loops the GOP until the
+    # probe returns; a viewer that connects late still gets the next IDR.
+    def push() -> None:
+        pts = 0
+        try:
+            while not done.is_set():
+                for i, au in enumerate(aus):
+                    if done.is_set():
+                        break
+                    m.push_video(au, pts=Pts90khz(pts), key_frame=i == 0)
+                    pts += 3000
+                    time.sleep(0.033)
+        except BaseException as e:  # noqa: BLE001 - reported below
+            failures.append(e)
+
+    pusher = threading.Thread(target=push, name="whep-pusher", daemon=True)
+    pusher.start()
+    try:
+        frames = probe(server, "/cam")
+    finally:
+        done.set()
+        pusher.join(5)
+    assert failures == []
+    assert frames > 0
+    assert m.stats().frames_pushed > 0
+    assert server.stats().rtp_packets_sent > 0
+    assert server.stats().sessions_total == 1

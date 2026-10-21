@@ -2940,6 +2940,7 @@ dependencies = [
  "tst-rtp",
  "tst-srt",
  "tst-tcp",
+ "tst-test-helpers",
  "tst-udp",
  "tst-webrtc",
 ]

@@ -40,6 +40,8 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<mount::PyMountHandle>()?;
     m.add_class::<mount::PySessionStats>()?;
     crate::generated::stats_webrtc::register(&m)?;
+    #[cfg(feature = "py-test-hooks")]
+    m.add_function(wrap_pyfunction!(server::loopback_viewer_probe, &m)?)?;
     parent.add_submodule(&m)?;
     Ok(())
 }

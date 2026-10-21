@@ -1205,10 +1205,12 @@ jobs:
           .venv/bin/pip install maturin pytest pytest-timeout mypy
 
       - name: Build tst-py (maturin develop --release)
+        # `py-test-hooks` adds the WebRTC loopback viewer probe that
+        # test_webrtc.py drives; the wheels never enable it.
         run: |
           cd bindings/python
           source .venv/bin/activate
-          maturin develop --release
+          maturin develop --release --features py-test-hooks
 
       - name: check-py-stubtest
         # Verifies every .pyi stub (core io/codec/klv/mpegts + the six
@@ -1232,7 +1234,11 @@ jobs:
         # `python-pandas-extra` job; missing-extra ImportError smoke also
         # lives there (patches sys.modules to be extra-agnostic).
         # `ulimit` is per-shell, so it is set again here.
+        # TSTRANS_EXPECT_TEST_HOOKS makes the WebRTC loopback test fail,
+        # not skip, when the build above lacks the probe.
         shell: bash -e {0}
+        env:
+          TSTRANS_EXPECT_TEST_HOOKS: "1"
         run: |
           ulimit -c unlimited
           cd bindings/python
