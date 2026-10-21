@@ -129,6 +129,14 @@ fn a_viewer_whose_socket_closes_is_reaped_as_disconnected() {
     assert_eq!(s.sessions_reaped_ice_timeout, 0);
 }
 
+/// The RTP payloads one [`big_keyframe`] becomes: every NAL unit is far
+/// below the payload size, so one payload each.
+fn big_keyframe_payloads() -> u64 {
+    tst_core::codec::annexb::nals(&big_keyframe())
+        .filter(|nal| !nal.is_empty())
+        .count() as u64
+}
+
 #[test]
 fn a_keyframe_larger_than_the_viewer_queue_still_starts_the_viewer() {
     let (srv, _clock) = manual_server();
@@ -137,13 +145,77 @@ fn a_keyframe_larger_than_the_viewer_queue_still_starts_the_viewer() {
     join(srv.local_addr(), "/cam", &mut viewers[0], false);
     connect_all(&m, &mut viewers);
     let [v] = &mut viewers;
+    assert!(big_keyframe_payloads() > 16);
 
     m.push_video(&big_keyframe(), pts(0), true).unwrap();
+    // The first keyframe is delivered before the second is pushed: an
+    // oversize keyframe is admitted into an empty queue only, and the
+    // media thread reads every queued push before it writes the queues
+    // out, so two oversize keyframes in one pass cannot both be admitted.
+    assert!(v.pump(|v| !v.frames.is_empty(), DELIVER), "{}", v.trace());
     m.push_video(&big_keyframe(), pts(1), true).unwrap();
     assert!(v.pump(|v| v.frames.len() >= 2, DELIVER), "{}", v.trace());
     let session = m.sessions().pop().expect("the session");
     assert!(session.rtp_packets > 32, "{session:?}");
     assert_eq!(session.packets_dropped_queue_full, 0, "{session:?}");
+    assert_eq!(m.stats().viewers_waiting_keyframe, 0);
+}
+
+#[test]
+fn two_oversize_keyframes_pushed_together_admit_the_second_only_in_a_later_pass() {
+    let (srv, _clock) = manual_server();
+    let m = srv.add_mount("/cam", queue_of(16)).unwrap();
+    let mut viewers = [TestViewer::new()];
+    join(srv.local_addr(), "/cam", &mut viewers[0], false);
+    connect_all(&m, &mut viewers);
+    let [v] = &mut viewers;
+
+    // Nothing holds the media thread off, so whether both pushes land in
+    // one of its passes is the scheduler's choice. Either the pass reads
+    // one and the second keyframe finds an empty queue in the next pass,
+    // or it reads both and the second meets the first one's payloads and
+    // is dropped whole. Both outcomes are the documented rule.
+    m.push_video(&big_keyframe(), pts(0), true).unwrap();
+    m.push_video(&big_keyframe(), pts(1), true).unwrap();
+    assert!(v.pump(|v| !v.frames.is_empty(), DELIVER), "{}", v.trace());
+    // One full pass after the pushes were read, so the drop (if any) is
+    // counted before the stats are read.
+    assert!(srv.wake_for_test());
+    let session = m.sessions().pop().expect("the session");
+    let delivered = match session.packets_dropped_queue_full {
+        0 => {
+            // Both passes admitted a keyframe into an empty queue.
+            assert!(v.pump(|v| v.frames.len() >= 2, DELIVER), "{}", v.trace());
+            assert_eq!(m.stats().viewers_waiting_keyframe, 0);
+            2
+        }
+        dropped => {
+            // One pass read both: the second keyframe met the first's
+            // payloads and was dropped whole (more than the 16-entry
+            // queue), leaving the viewer waiting for the next keyframe.
+            assert!(dropped > 16, "{session:?}");
+            assert_eq!(m.stats().viewers_waiting_keyframe, 1);
+            1
+        }
+    };
+    assert_eq!(v.frames.len(), delivered, "{}", v.trace());
+
+    // Whichever it was, a keyframe pushed once the queue has drained
+    // starts (or continues) the viewer with no further drop.
+    let before = session.rtp_packets;
+    m.push_video(&big_keyframe(), pts(2), true).unwrap();
+    assert!(
+        v.pump(|v| v.frames.len() > delivered, DELIVER),
+        "{}",
+        v.trace()
+    );
+    let after = m.sessions().pop().expect("the session");
+    assert_eq!(
+        after.packets_dropped_queue_full, session.packets_dropped_queue_full,
+        "{after:?}"
+    );
+    assert!(after.rtp_packets > before, "{after:?}");
+    assert_eq!(m.stats().viewers_waiting_keyframe, 0);
 }
 
 #[test]
