@@ -23,7 +23,8 @@ pub enum Method {
     Delete,
     /// `OPTIONS`: a CORS preflight.
     Options,
-    /// `PATCH`: a trickle-ICE update, which this server does not take.
+    /// `PATCH`: a trickle-ICE update, accepted and ignored (ICE-lite needs
+    /// no remote candidates).
     Patch,
     /// Any other method token.
     Other,
@@ -188,6 +189,14 @@ pub enum Route {
         /// The session id from the resource URL.
         id: String,
     },
+    /// `PATCH /<mount>/sessions/<id>`: a trickle-ICE update for a session,
+    /// answered with 204 and ignored.
+    Patch {
+        /// The mount path, with its leading `/`.
+        mount: String,
+        /// The session id from the resource URL.
+        id: String,
+    },
     /// `OPTIONS` on any target: a CORS preflight.
     Preflight,
     /// A method this server does not take (answered with 405).
@@ -198,32 +207,48 @@ pub enum Route {
 
 /// Routes a parsed request. A trailing `/` is ignored and empty path
 /// segments name nothing; whether the mount or session exists is the
-/// server's question, not the router's.
+/// server's question, not the router's. A `PATCH` on anything but a
+/// session resource is a method the target does not take.
 pub fn route(req: &Request) -> Route {
     match req.method {
         Method::Options => return Route::Preflight,
-        Method::Patch | Method::Other => return Route::MethodNotAllowed,
-        Method::Post | Method::Delete => {}
+        Method::Other => return Route::MethodNotAllowed,
+        Method::Post | Method::Delete | Method::Patch => {}
     }
     let Some(rest) = req.path.strip_prefix('/') else {
-        return Route::NotFound;
+        return not_found(req.method);
     };
     let rest = rest.strip_suffix('/').unwrap_or(rest);
     let segments: Vec<&str> = rest.split('/').collect();
     if segments.iter().any(|s| s.is_empty()) {
-        return Route::NotFound;
+        return not_found(req.method);
     }
     match req.method {
         Method::Post => Route::CreateSession {
             mount: format!("/{rest}"),
         },
         _ => match segments.as_slice() {
-            [mount @ .., "sessions", id] if !mount.is_empty() => Route::DeleteSession {
-                mount: format!("/{}", mount.join("/")),
-                id: (*id).to_string(),
-            },
-            _ => Route::NotFound,
+            [mount @ .., "sessions", id] if !mount.is_empty() => {
+                let mount = format!("/{}", mount.join("/"));
+                let id = (*id).to_string();
+                if req.method == Method::Patch {
+                    Route::Patch { mount, id }
+                } else {
+                    Route::DeleteSession { mount, id }
+                }
+            }
+            _ => not_found(req.method),
         },
+    }
+}
+
+/// Where a target that names no resource goes: 405 for `PATCH`, 404
+/// otherwise.
+fn not_found(method: Method) -> Route {
+    if method == Method::Patch {
+        Route::MethodNotAllowed
+    } else {
+        Route::NotFound
     }
 }
 
@@ -254,7 +279,7 @@ pub fn render(resp: &Response, cors_origin: &str) -> Vec<u8> {
     let _ = write!(
         head,
         "Access-Control-Allow-Origin: {cors_origin}\r\n\
-         Access-Control-Allow-Methods: POST, DELETE, OPTIONS\r\n\
+         Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n\
          Access-Control-Allow-Headers: Authorization, Content-Type\r\n\
          Access-Control-Expose-Headers: Location\r\n\
          Content-Length: {}\r\n\

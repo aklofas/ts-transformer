@@ -374,6 +374,78 @@ fn delete_ends_the_session() {
     assert_eq!(other, 404);
 }
 
+/// A trickle-ICE fragment as a WHEP player sends it.
+const SDP_FRAG: &[u8] = b"a=ice-ufrag:0000\r\na=ice-pwd:00000000000000000000000000\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n\
+a=candidate:1 1 UDP 2122252543 192.0.2.1 50000 typ host\r\n";
+
+#[test]
+fn patch_on_a_live_session_is_204_and_ignored() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    srv.add_mount("/other", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    let location = join(srv.local_addr(), "/cam", &mut v, true);
+    let headers = [("Content-Type", "application/trickle-ice-sdpfrag")];
+    let (status, _, body) = http(srv.local_addr(), "PATCH", &location, &headers, SDP_FRAG);
+    assert_eq!(status, 204);
+    assert!(body.is_empty());
+    // The candidates went nowhere: the session is as it was and connects.
+    assert_eq!(srv.stats().active_sessions, 1);
+    connect_all(&m, std::slice::from_mut(&mut v));
+    for (i, (au, key)) in h264_gop().iter().take(3).enumerate() {
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    assert!(v.pump(|v| v.frames.len() >= 3, DELIVER), "{}", v.trace());
+
+    let id = location.rsplit('/').next().unwrap();
+    let (unknown, _, _) = http(
+        srv.local_addr(),
+        "PATCH",
+        "/cam/sessions/0000",
+        &headers,
+        SDP_FRAG,
+    );
+    assert_eq!(unknown, 404);
+    let (other_mount, _, _) = http(
+        srv.local_addr(),
+        "PATCH",
+        &format!("/other/sessions/{id}"),
+        &headers,
+        SDP_FRAG,
+    );
+    assert_eq!(other_mount, 404);
+    let (no_mount, _, _) = http(
+        srv.local_addr(),
+        "PATCH",
+        &format!("/nope/sessions/{id}"),
+        &headers,
+        SDP_FRAG,
+    );
+    assert_eq!(no_mount, 404);
+    let (ended, _, _) = http(srv.local_addr(), "DELETE", &location, &[], b"");
+    assert_eq!(ended, 200);
+    let (gone, _, _) = http(srv.local_addr(), "PATCH", &location, &headers, SDP_FRAG);
+    assert_eq!(gone, 404);
+}
+
+#[test]
+fn patch_needs_the_bearer_token() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0?token=abc").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let offer = TestViewer::new().offer(true);
+    let (status, headers, _) = whep_post(srv.local_addr(), "/cam", &offer, Some("abc"));
+    assert_eq!(status, 201);
+    let location = &headers["location"];
+    let (none, headers, _) = http(srv.local_addr(), "PATCH", location, &[], SDP_FRAG);
+    assert_eq!(none, 401);
+    assert_eq!(headers["www-authenticate"], "Bearer");
+    let auth = [("Authorization", "Bearer abc")];
+    let (right, _, _) = http(srv.local_addr(), "PATCH", location, &auth, SDP_FRAG);
+    assert_eq!(right, 204);
+    assert_eq!(srv.stats().sessions_rejected_auth, 1);
+}
+
 #[test]
 fn delete_on_another_mount_is_404() {
     let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
@@ -412,14 +484,15 @@ fn preflight_patch_and_unknown_mount() {
     );
     assert_eq!(
         headers["access-control-allow-methods"],
-        "POST, DELETE, OPTIONS"
+        "POST, PATCH, DELETE, OPTIONS"
     );
     assert_eq!(headers["access-control-expose-headers"], "Location");
 
+    // PATCH on anything but a session resource is still 405.
     for method in ["PATCH", "GET"] {
         let (status, headers, _) = http(addr, method, "/cam", &[], b"");
         assert_eq!(status, 405, "{method}");
-        assert_eq!(headers["allow"], "POST, DELETE, OPTIONS");
+        assert_eq!(headers["allow"], "POST, PATCH, DELETE, OPTIONS");
     }
     let offer = TestViewer::new().offer(true);
     let (status, _, _) = whep_post(addr, "/nope", &offer, None);
