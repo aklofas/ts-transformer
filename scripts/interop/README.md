@@ -585,6 +585,27 @@ The elementary cell judges KLV content (count floor and set digest) and KLV timi
 these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
 (see "Publish leg" below).
 
+10. **No ffmpeg publisher cell: ffmpeg cannot publish this harness's
+    stream, and cannot publish KLV over RTSP at all.** ffmpeg's RTP/RTSP
+    muxer reads the picture size from the H.264 SPS and refuses a stream
+    whose SPS yields none: with the generator's minimal SPS it stops
+    with `[rtsp] dimensions not set` / `Could not write header` before
+    OPTIONS (ffmpeg version 6.1.1-3ubuntu5). Swapping in a real x264
+    Baseline 1280x720 SPS does let ffmpeg publish (240 of 240 AUs, 0
+    non-conformant, over TCP-interleaved and over UDP, judged
+    `--remuxed`), but it also makes every H.264 `decode/*` probe start
+    decoding the synthetic slice payloads, and 25 decode cells fail on
+    it (ffplay and mpv `error while decoding MB 0 0`, gst-play's display
+    sink, VLC's video output). The generator keeps its SPS. Separately,
+    ffmpeg's RTSP muxer has no KLV payloader: given a KLV stream it
+    aborts before SETUP with `[rtp] Unsupported codec klv`. ffmpeg
+    publisher evidence is therefore manual: hand-run ffmpeg pushes from a
+    libx264 source (the commands in
+    `examples/receiving/recv_rtsp_publish.rs` and the publisher-ingest
+    cookbook recipe), and ffmpeg's captured ANNOUNCE SDP, which the
+    `tst-rtp` publisher tests replay (`SDP_H264` in
+    `crates/tst-rtp/tests/fixtures/raw_rtsp_publisher.rs`).
+
 ### Transport axis: the WHEP browser cells
 
 The two `whep/*` cells are the matrix's real-browser check of the WebRTC
@@ -599,8 +620,8 @@ judges to the browser console, which Chrome's `--enable-logging=stderr
 
 | Cell | Mount | Tier | Oracles |
 |---|---|---|---|
-| `whep/chromium-sei-dc-klv` | MP2T (`push_ts` of an in-process mux), audio dropped | remux | KLV set via SEI = generator's; KLV set via data channel = generator's; `FRAMES` rises (video plays although the audio section is answered with port 0); no page error |
-| `whep/chromium-opus-audio` | elementary, `PassthroughOpus` with a synthesized 20 ms Opus silence stream | remux | the same, plus `AUDIO` (inbound audio `packetsReceived`) rises |
+| `whep/chromium-sei-dc-klv` | MP2T (`push_ts` of an in-process mux), audio dropped | remux | KLV set via SEI = generator's; KLV set via data channel = generator's; each record's SEI and data-channel copies carry the same (PTS, RTP timestamp); every PTS is 0 (the pinned MP2T behaviour below); `FRAMES` rises and no `AUDIO` line is printed (video plays although the audio section is answered with port 0); no page error |
+| `whep/chromium-opus-audio` | elementary, `PassthroughOpus` with a synthesized 20 ms Opus silence stream | remux | the same digest, copy-agreement and `FRAMES` oracles; the PTS multiset equals the schedule's (`k × 9000` from 0); `AUDIO` (inbound audio `packetsReceived`) rises |
 
 The KLV records are the profile's own schedule, the exact set `gen`
 writes for the same window, so the source digest is `verify --file` of
@@ -635,30 +656,23 @@ another copy of the player (its siblings resolve relative to it) instead
 of `docs/webrtc/`: how a player change is checked against a real browser
 before it lands. Never set by `interop.yml`.
 
-First local run (Google Chrome 155.0.8059.39, `--seconds 8`): see
-`docs/project/validation-evidence.md`'s WebRTC section for the census
-these cells first appeared in.
+The page prints each record as `KLV <pts> <sha256> <sei|dc> <rtp timestamp>`.
+The copy-agreement oracle holds the data-channel copy to the SEI copy's
+(PTS, RTP timestamp): the SEI copy sits inside its frame, so it is the
+ground truth for which frame the data-channel copy was bound to. The PTS
+oracles differ by mount on purpose. `baseline` muxes KLV as asynchronous
+private data without a PES PTS, so on the MP2T mount every record arrives
+with PTS 0, binds to the next frame on arrival, and travels with PTS 0 on
+both carriages (the guide's "KLV carriage" and
+`docs/project/deferred-features.md`'s "Async KLV PTS on MP2T mounts" say
+why, and why playback is unaffected); the cell pins that 0 so a change to
+the bound frame's PTS fails loudly and is re-pinned on purpose. The
+elementary mount is pushed with the schedule's own PTS, so that cell holds
+the PTS multiset to `k × 9000`.
 
-10. **No ffmpeg publisher cell: ffmpeg cannot publish this harness's
-    stream, and cannot publish KLV over RTSP at all.** ffmpeg's RTP/RTSP
-    muxer reads the picture size from the H.264 SPS and refuses a stream
-    whose SPS yields none: with the generator's minimal SPS it stops
-    with `[rtsp] dimensions not set` / `Could not write header` before
-    OPTIONS (ffmpeg version 6.1.1-3ubuntu5). Swapping in a real x264
-    Baseline 1280x720 SPS does let ffmpeg publish (240 of 240 AUs, 0
-    non-conformant, over TCP-interleaved and over UDP, judged
-    `--remuxed`), but it also makes every H.264 `decode/*` probe start
-    decoding the synthetic slice payloads, and 25 decode cells fail on
-    it (ffplay and mpv `error while decoding MB 0 0`, gst-play's display
-    sink, VLC's video output). The generator keeps its SPS. Separately,
-    ffmpeg's RTSP muxer has no KLV payloader: given a KLV stream it
-    aborts before SETUP with `[rtp] Unsupported codec klv`. ffmpeg
-    publisher evidence is therefore manual: hand-run ffmpeg pushes from a
-    libx264 source (the commands in
-    `examples/receiving/recv_rtsp_publish.rs` and the publisher-ingest
-    cookbook recipe), and ffmpeg's captured ANNOUNCE SDP, which the
-    `tst-rtp` publisher tests replay (`SDP_H264` in
-    `crates/tst-rtp/tests/fixtures/raw_rtsp_publisher.rs`).
+First local runs: Google Chrome 155.0.8059.39, `--seconds 8` and `10`, both
+cells PASS; `docs/project/validation-evidence.md`'s current-census paragraph
+records the declared count rising to 161 with them.
 
 ## Multi-day soak (`soak.sh`)
 
@@ -1444,7 +1458,7 @@ offline from an archived capture plus its log
 (`verify::verify_bytes_with_corruption`).
 
 **Corruption is a soak and offline-test feature: no matrix cell injects.**
-`run-matrix.sh` never passes `--corrupt`, so all 159 cells run a pristine
+`run-matrix.sh` never passes `--corrupt`, so all 161 cells run a pristine
 stream and the census is unaffected by anything in this section.
 
 ### Grammar
@@ -1728,7 +1742,7 @@ configuration nuisance: it means the records on the wire are not the ones the
 sender was supposed to emit.
 
 **The matrix stays compact: no cell sends rich records.** `--klv-set` defaults
-to `compact` everywhere and `run-matrix.sh` never passes it, so all 159 cells
+to `compact` everywhere and `run-matrix.sh` never passes it, so all 161 cells
 carry the byte-identical 4-tag, 50-byte record their expectations were
 validated against. That matters most for the `KLV records: got 0` expectation
 rows above: they document third-party peers dropping or mangling KLV carriage

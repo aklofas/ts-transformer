@@ -1197,9 +1197,14 @@ rtsp_publish_cells() {
 # --log-level=0` copies to stderr as CONSOLE lines. Verdict, from those
 # lines: the set of KLV records seen in the SEI equals the generator's
 # KLV set digest (`verify --file $GEN_FILE`), the set seen on the data
-# channel equals it too, the decoded frame count (`FRAMES`) rises from the
-# first seconds on (video plays, not black), for `opus` the inbound audio
-# packet count (`AUDIO`) rises as well, and the page reported no error.
+# channel equals it too, each record's two copies carry the same (PTS, RTP
+# timestamp) — the SEI copy sits inside its frame, so it is the ground
+# truth for the frame the data-channel copy was bound to — the decoded
+# frame count (`FRAMES`) rises from the first seconds on (video plays, not
+# black), for `opus` the inbound audio packet count (`AUDIO`) rises as
+# well and the PTS multiset is the schedule's, for `mp2t` no `AUDIO` line
+# is printed (the audio section was answered with port 0) and every PTS is
+# 0 (see the oracle's comment), and the page reported no error.
 # Tier `remux`: WebRTC is not byte-transparent TS. The video is a real
 # H.264 GOP, not the generator's synthetic slices, which no decoder
 # accepts (README.md gap item 10; Chrome logs "Failed to parse SPS NAL
@@ -1215,10 +1220,10 @@ run_whep_browser() {
     return 0
   fi
 
-  local log="$LOGS_DIR/$(slug "$id").log"
-  : >"$log"
   local slugged
   slugged=$(slug "$id")
+  local log="$LOGS_DIR/$slugged.log"
+  : >"$log"
   local port mport
   port=$(free_port tcp)
   mport=$(free_port udp)
@@ -1309,12 +1314,52 @@ run_whep_browser() {
   local via got count
   for via in sei dc; do
     count=$(awk -v v="$via" '$1 == "KLV" && $4 == v' "$console" | wc -l)
-    got=$(awk -v v="$via" '$1 == "KLV" && $4 == v { print $3 }' "$console" | sort | tr -d '\n' | sha256sum | cut -d' ' -f1)
+    # LC_ALL=C: byte order, the order klv_set_hash sorts in.
+    got=$(awk -v v="$via" '$1 == "KLV" && $4 == v { print $3 }' "$console" | LC_ALL=C sort | tr -d '\n' | sha256sum | cut -d' ' -f1)
     echo "--- KLV set digest via $via: $got over $count record(s); source ${src_klv:-<none>} (verify exit $src_rc) ---" >>"$log"
     if [[ -z "$src_klv" || "$got" != "$src_klv" ]]; then
       reasons+=("KLV set digest mismatch via $via (source ${src_klv:-<unparseable>}, browser saw $count record(s) hashing to $got)")
     fi
   done
+
+  # Frame binding: a record's data-channel copy must name the frame its
+  # SEI copy rides in (the same RTP timestamp) and carry the same PTS. A
+  # record missing from one carriage is already a digest mismatch above.
+  local disagree
+  disagree=$(awk '
+    $1 == "KLV" { key = $3; val = $2 " " $5; if ($4 == "sei") sei[key] = val; else if ($4 == "dc") dc[key] = val }
+    END { for (k in sei) if ((k in dc) && sei[k] != dc[k]) printf "%s: sei (pts rtp) %s, dc %s\n", substr(k, 1, 12), sei[k], dc[k] }' "$console")
+  echo "--- KLV copies disagreeing on (pts, rtp timestamp): $(printf '%s' "$disagree" | grep -c .) ---" >>"$log"
+  if [[ -n "$disagree" ]]; then
+    reasons+=("KLV record bound to different frames by carriage: $(printf '%s' "$disagree" | head -1)")
+  fi
+
+  local pts_seen="$WORK/$slugged-klv-pts.txt" pts_want="$WORK/$slugged-klv-pts-want.txt"
+  awk '$1 == "KLV" && $4 == "sei" { print $2 }' "$console" | sort -n >"$pts_seen"
+  if [[ "$feed" == opus ]]; then
+    # The elementary mount is pushed with the schedule's PTS: 10 Hz from 0.
+    seq 0 9000 $(( (SECONDS_ARG * 10 - 1) * 9000 )) >"$pts_want"
+    if ! cmp -s "$pts_seen" "$pts_want"; then
+      reasons+=("KLV PTS multiset is not the schedule's k x 9000 (first difference: $(diff "$pts_want" "$pts_seen" | grep -m1 '^[<>]'))")
+    fi
+  else
+    # Pinned behaviour (deferred-features.md, "Async KLV PTS on MP2T
+    # mounts"): baseline's KLV PES carries no PTS, the demuxer reports it
+    # as 0, the mount binds the record to the next frame on arrival and
+    # both carriages travel with PTS 0. A record with any other PTS here
+    # means the bound frame's PTS (or something else) is now used: fail,
+    # read the entry, and re-pin on purpose.
+    local nonzero
+    nonzero=$(awk '$1 != 0' "$pts_seen" | wc -l)
+    if [[ "$nonzero" -ne 0 ]]; then
+      reasons+=("MP2T async KLV PTS no longer 0: $nonzero record(s) carry another PTS (first: $(awk '$1 != 0' "$pts_seen" | head -1)); the pinned behaviour changed, re-pin on purpose")
+    fi
+    # The mount drops audio, so the browser's audio section is answered
+    # with port 0 and the page has no inbound audio to report.
+    if grep -q '^AUDIO' "$console"; then
+      reasons+=("an AUDIO line was printed on the audio-dropping mount: the audio section was not answered with port 0")
+    fi
+  fi
 
   local within=5 reason
   [[ $SECONDS_ARG -lt 5 ]] && within=$SECONDS_ARG

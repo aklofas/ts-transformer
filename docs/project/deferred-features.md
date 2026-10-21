@@ -1909,6 +1909,22 @@ and the two below.
   of the frame duration, visible as audio that drifts or clicks in the
   browser.
 
+## Async KLV PTS on MP2T mounts = the bound frame's PTS
+
+- **Status:** Deferred. A KLV record whose PES carries no PTS (asynchronous
+  private-data KLV, the common MPEG-TS shape) reaches an MP2T WebRTC mount
+  with PTS 0, binds to the next frame on arrival, and travels with PTS 0 on
+  both carriages (the SEI and the `klv` data channel). A page binds records
+  to frames by the data-channel message's RTP timestamp or by the frame the
+  SEI rides in, never by that PTS, so playback is unaffected; the record's
+  own ST 0601 timestamp (tag 2) is the producer time. The interop cell
+  `whep/chromium-sei-dc-klv` pins the 0, so a change to the bound frame's
+  PTS fails that cell and is re-pinned on purpose.
+- **Why deferred:** the demuxer reports a PTS-less PES as 0 and nothing
+  downstream can tell it from a real 0.
+- **Trigger to revisit:** the demuxer reporting PTS absence, or a consumer
+  needing a producer-side PTS on asynchronous records.
+
 ## Resolved (historical)
 
 Entries whose feature shipped, one line each: the release it landed in and
