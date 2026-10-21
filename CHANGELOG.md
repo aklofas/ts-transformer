@@ -19,9 +19,9 @@ Nothing yet.
 Post-v0.8.0: the refactor arc and WebRTC playback. The refactor rebuilds the
 binding layer on one error-kind table and on records generated from their Rust
 declarations, so a Rust error has one kind on C, Python and the JVM and a KLV,
-codec or stats record one shape on Python and the JVM; it gives every transport one set of TS shells
-(`tstrans.shells`, `org.tstrans.shells`) opened from a URL, one `EndReason` and
-one URL error type; it removes dead and duplicated surface across the crates
+codec or stats record one shape on Python and the JVM; it gives every
+transport one set of TS shells (`tstrans.shells`, `org.tstrans.shells`)
+opened from a URL, one `EndReason` and one URL error type; it removes dead and duplicated surface across the crates
 and bindings; and it consolidates the test plane and tightens the rails. WebRTC
 playback is the new `tst-webrtc` crate: a WHEP server with mounts that browsers
 pull over WebRTC, elementary and MP2T mounts, KLV carried frame-locked in SEI
@@ -50,9 +50,13 @@ The integrator-facing changes at a glance (full detail in the sections below):
   codec vocabulary in `tst_core::codec`, `tst_core::transport::EndReason`
   for every receiver, and builders whose setters take `&mut self`.
   `MuxPublisher::send_*` is `push_*` in Rust, Python and the JVM (the C
-  names are unchanged). `io_file::DemuxFromFile`
-  is removed ahead of the 1.0 its deprecation note promised; use
-  `TryDemuxFromFile`. Python and the JVM move the shells to their `shells`
+  names are unchanged). `io_file::DemuxFromFile` is removed ahead of the
+  1.0 its deprecation note promised; use `TryDemuxFromFile`. The MSRV
+  rises from 1.85 to 1.93; the sys crates' opaque structs no longer derive
+  `Clone` or `Copy`; tst-pipeline's `binding` API (`BindingError` gains a
+  third field, `with_ref` is `with_ref_blocking`, one `ShellErrorKind`
+  value changes) and tst-core's conformance kit (now behind a feature,
+  with the st0102 `from_wire` rename) change shape. Python and the JVM move the shells to their `shells`
   module, rename the raw RTP `rtp.Sender` / `Receiver` to `rtp.Transport` /
   `RecvTransport` (the TS shells over `rtp://` are the `shells` classes),
   merge the end-reason enums (Python members change value) and reorder some
@@ -72,8 +76,8 @@ The integrator-facing changes at a glance (full detail in the sections below):
   timestamp (at most `KLV_DC_LIMIT` = 256 KiB). `AudioPolicy::PassthroughOpus`
   forwards Opus on elementary mounts. ICE-lite on one UDP port, RTX on, no
   TURN/STUN; `wheps://` serves the signalling over HTTPS, and an optional
-  bearer token guards it on either scheme. Feed I/P-only video (`MountStats::frames_pts_reordered`
-  counts B-frames). The crate builds `aws-lc-sys` for str0m's DTLS
+  bearer token guards it on either scheme. Feed I/P-only video
+  (`MountStats::frames_pts_reordered` counts B-frames). The crate builds `aws-lc-sys` for str0m's DTLS
   certificates, the first aws-lc in the tree; it is linked into the Python
   wheels and the JVM JAR, not the C library. Python `tstrans.webrtc` and
   JVM `org.tstrans.webrtc` bind it, with a reference browser player under
@@ -89,12 +93,13 @@ The integrator-facing changes at a glance (full detail in the sections below):
 - **Generated records (Python, JVM):** the ST 0601 records, most other KLV
   records (the JVM `CoreId` stays hand-written), the codec records and most
   stats records (`PublisherStats`, `RtspStats` and the JVM `TransportStats`
-  stay hand-written) are generated from their Rust declarations, so their docstrings and Javadoc are the Rust documentation
-  and both hosts share one field order. JVM records of more than eight
+  stay hand-written) are generated from their Rust declarations, so their
+  docstrings and Javadoc are the Rust documentation and both hosts share
+  one field order. JVM records of more than eight
   components gain a `Builder`; a null required string throws
   `IllegalArgumentException`; unsigned 64-bit components follow one
   bit-pattern contract. SRT `rtt_us` no longer saturates at 32 bits.
-- **C ABI 0.23 → 0.25 (additive):** a `tls` cargo feature reaches
+- **C ABI 0.23 → 0.25 (additive symbols):** a `tls` cargo feature reaches
   `tcps://`, HTTPS for the HLS publisher and `rtsps://` trust anchors and
   in-memory server certificates; `tst_has_feature(name)` reports the build's
   features at run time; `tstrans_config.h` (included by `tstrans.h`) and
@@ -119,7 +124,7 @@ The integrator-facing changes at a glance (full detail in the sections below):
   TCP-interleaved PLAY and closes TLS sessions cleanly on `stop()`; a SETUP
   on a playing connection is `455`; the C HLS publisher handles take their
   lock on every call.
-- **Toolchain and dependencies:** the MSRV is Rust 1.93, re-pinned each
+- **Toolchain and dependencies:** the MSRV is Rust 1.93 (was 1.85), re-pinned each
   minor release to the stable six behind current. Python needs 3.11; the
   wheels are `cp311-abi3` built with PyO3 0.30. The JVM binding is on jni
   0.22 with every exception type and message unchanged. rustls-webpki
@@ -133,8 +138,8 @@ The integrator-facing changes at a glance (full detail in the sections below):
   checks directories of real captures; the soak gains `whep` and
   `rtsp-publish-es` legs.
 - **Validation:** the interop census is 161 declared cells, 0 FAIL and 0
-  skipped on the first runner census
-  ([run 39547857032](https://github.com/aklofas/ts-transformer/actions/runs/39547857032)),
+  skipped on the tree the release-prep branched from
+  ([run 39687057760](https://github.com/aklofas/ts-transformer/actions/runs/39687057760)),
   including two headless-Chrome WHEP cells that check the KLV on both
   carriages; the workspace has 40 fuzz targets, three of them on the WHEP
   server's parsers. Full figures in
