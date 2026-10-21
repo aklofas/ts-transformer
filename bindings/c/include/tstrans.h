@@ -145,7 +145,7 @@
 /**
  * Minor version.
  */
-#define TST_VERSION_MINOR 8
+#define TST_VERSION_MINOR 9
 
 /**
  * Patch version.

@@ -66,15 +66,15 @@ Add these crates under the existing `[dependencies]` heading in `Cargo.toml`:
 
 ```toml
 [dependencies]
-tst-core = "0.8"      # MPEG-TS and KLV
-tst-pipeline = "0.8"  # Combines the muxer with a transport
-tst-srt = "0.8"       # SRT sockets
+tst-core = "0.9"      # MPEG-TS and KLV
+tst-pipeline = "0.9"  # Combines the muxer with a transport
+tst-srt = "0.9"       # SRT sockets
 ```
 
 The raw socket examples use `tst-srt`; the video example also uses
 `tst-core` and `tst-pipeline`. A first build can take several minutes while
 the native SRT dependencies compile. Declaring
-`tst-srt = { version = "0.8", default-features = false }` skips the mbedTLS
+`tst-srt = { version = "0.9", default-features = false }` skips the mbedTLS
 build for faster iteration; it also disables encryption, so use it only for
 testing (inside this repository, `--no-default-features` on `tst-srt` does
 the same). For offline MPEG-TS or KLV processing, `tst-core` alone is enough
