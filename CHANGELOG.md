@@ -1165,6 +1165,62 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pre-tag checklist requires every rerun on the candidate and every weekly
   `ci-health` `ALERT` to match a row.
 
+### Testing — WebRTC playback
+
+- **Validation:** two interop-matrix cells play a WHEP mount in headless
+  Chrome with the reference player under `docs/webrtc/` loaded unmodified
+  (`scripts/interop/whep-page.html`, player de-duplication off so each
+  carriage is proved on its own), served by the new `tst-interop
+  serve-whep` (the profile's KLV schedule muxed in-process, a real 320x240
+  H.264 GOP as the video, since the generator's synthetic slices decode in
+  no browser). The declared census is 161 cells (`[census] full_cells`),
+  and the first runner census read 161 declared, 0 FAIL, 0 skipped
+  ([run 39547857032](https://github.com/aklofas/ts-transformer/actions/runs/39547857032)).
+  - `whep/chromium-sei-dc-klv`: an MP2T mount under `AudioPolicy::Drop`, so
+    the browser's audio section is answered with port 0. Oracles: the KLV
+    set seen in the SEI equals the generator's set digest, the set seen on
+    the data channel equals it too, each record's two copies name the same
+    (PTS, RTP timestamp), the decoded frame count rises from the first
+    seconds on (the video is not black), no `AUDIO` line is printed, and
+    the page reports no error. Locally 100 of 100 records on each carriage
+    at `--seconds 10`, 239 of 240 frames decoded (the last access unit
+    stays in the mount's demuxer).
+  - `whep/chromium-opus-audio`: an elementary mount under
+    `AudioPolicy::PassthroughOpus` fed one synthesized 20 ms Opus silence
+    packet every 20 ms; the same oracles plus the inbound audio packet
+    count rising (400 of 400 at 8 s) and the KLV PTS multiset equal to the
+    schedule's.
+  - The cells found one player defect before they passed: Chrome never
+    routes frames to an `RTCRtpScriptTransform` attached inside `ontrack`
+    on a plain peer connection, so the shipped player delivered KLV via
+    the data channel only. The transform is now attached to the video
+    receiver before the offer is created, and the cells' SEI oracle is the
+    proof. They also pin that an MP2T mount carries PTS 0 on async
+    private-data KLV (the demuxer reports no PTS for it); the deferred
+    row "Async KLV PTS on MP2T mounts = the bound frame's PTS" says when that changes.
+- Three `cargo-fuzz` targets in `tst-webrtc` drive the WHEP server's
+  peer-facing parsers: `whep_http_request` (the signalling request line,
+  headers and body framing), `whep_sdp_select` (offer parsing and payload
+  selection, seeded with the browser offers below) and `klv_sei_parse`
+  (the SEI KLV payload the player extracts). The workspace holds 40
+  targets after this series (`tests/coverage/fuzz-targets.toml`); the
+  CI fuzz leg found the str0m assertion on an offer that gives
+  one payload type two formats, fixed above under "Added — tst-webrtc".
+- The soak harness gains a WebRTC leg, described under "Testing — soak and
+  release qualification" below (`soak.sh`'s `whep` leg: headless Chrome
+  reconnecting every 10 minutes for the run; the first one-hour run passed
+  every verdict).
+- Browsers: the Chrome offer fixture (`crates/tst-webrtc/tests/fixtures/offers/chrome-155.sdp`)
+  was captured from Google Chrome 155.0.8059.39 (headless, Linux x86_64);
+  the Firefox 144 and Safari 26 offers are reconstructed from each
+  browser's documented default shape, to be replaced by captures before
+  1.0. The cells and the soak leg ran on Google Chrome 155.0.8059.39 on
+  the dev box and on the `ubuntu-latest` runner's Chrome 155. The
+  reference player's pure modules have a Node test suite
+  (`node --test 'docs/webrtc/test/*.test.js'`, 17 tests: SEI extraction
+  with emulation prevention at every alignment, foreign SEIs skipped, the
+  data-channel message parse, de-duplication and the paint-locked queue).
+
 ### Testing — soak and release qualification
 
 - `tst-interop recv`/`verify --klv-placement N`: a KLV placement oracle for synchronous-KLV captures holds every record to the video access unit it was generated with, within 91 ticks, and counts `N` expected source generations; a profile without synchronous KLV exits 2. The `rtsp-publish/gst-push-es-klv` interop cell runs it.
