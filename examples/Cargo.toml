@@ -211,5 +211,9 @@ path = "operations/tee_disk_and_demux.rs"
 name = "managed_reconnect_background"
 path = "operations/managed_reconnect_background.rs"
 
+[[example]]
+name = "serve_whep"
+path = "sending/serve_whep.rs"
+
 [lints]
 workspace = true

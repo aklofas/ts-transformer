@@ -1,7 +1,7 @@
 # Sending
 
 Senders that push pre-muxed TS bytes (or muxed-on-the-fly TS) over a
-transport. Eleven examples, in read-order:
+transport. Twelve examples, in read-order:
 
 ## 1. `send_pipeline_to_socket.rs` — basic SRT sender
 
@@ -139,3 +139,18 @@ an internal HTTP server. KLV passes through transparently. Verify with
 `ffplay`/`vlc`/`mpv` against `http://localhost:8080/playlist.m3u8`.
 
 Cookbook: [Serve MPEG-TS as HLS](../../docs/cookbook/sending/hls.md), [HLS + KLV to a web player](../../docs/cookbook/sending/hls-klv-to-web.md).
+
+## 12. `serve_whep.rs` — TS over SRT in, WebRTC (WHEP) out
+
+```sh
+cargo run -p tst-examples --example serve_whep -- --advertise 203.0.113.5
+```
+
+Accepts an encoder's MPEG-TS over an SRT listener (a managed receiver, so
+the encoder may restart while viewers keep their sessions), pushes the
+bytes into a `WhepServer` MP2T mount at `/live`, and prints server + mount
+stats every 2 s. Browsers play it with the reference player under
+`docs/webrtc/`, each KLV record frame-locked in an SEI message and on the
+`klv` data channel. Press Enter to stop.
+
+Cookbook: [Serve a live stream to a browser over WebRTC (WHEP)](../../docs/cookbook/sending/whep-browser-playback.md).
