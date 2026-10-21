@@ -18,10 +18,11 @@ pub use tst_rtp::packet::Chunk as RtpPayload;
 
 use crate::VideoCodec;
 
-/// The RTP payload size to use when nothing else is known: 1200 bytes
-/// leaves room for the IP, UDP, RTP and SRTP overhead inside a 1280-byte
-/// IPv6 minimum MTU.
-pub const DEFAULT_MTU_PAYLOAD: usize = 1200;
+/// The RTP payload size to use when nothing else is known: 1180 bytes, so
+/// the RTP packet with str0m's header extensions and the SRTP tag stays at
+/// or under the 1200-byte packet every other WebRTC sender emits, inside
+/// the 1280-byte IPv6 minimum MTU with the IP and UDP headers.
+pub const DEFAULT_MTU_PAYLOAD: usize = 1180;
 
 /// The smallest RTP payload size a [`Packetizer`] uses. A smaller
 /// `mtu_payload` is raised to this value.

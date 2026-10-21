@@ -66,8 +66,8 @@ fn empty_input_yields_nothing() {
 }
 
 #[test]
-fn default_mtu_payload_fits_a_1280_byte_ipv6_mtu() {
-    assert_eq!(DEFAULT_MTU_PAYLOAD, 1200);
+fn default_mtu_payload_keeps_the_rtp_packet_at_1200_bytes() {
+    assert_eq!(DEFAULT_MTU_PAYLOAD, 1180);
     let nal = vec![0x41u8; 3000];
     let out = h264(&[&nal], DEFAULT_MTU_PAYLOAD);
     assert!(out.iter().all(|p| p.payload.len() <= DEFAULT_MTU_PAYLOAD));
