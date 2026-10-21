@@ -53,18 +53,26 @@ export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
   };
 
   // --- media: video (and audio, when the mount passes Opus through) ------
-  pc.addTransceiver("video", { direction: "recvonly" });
+  const videoTransceiver = pc.addTransceiver("video", { direction: "recvonly" });
   pc.addTransceiver("audio", { direction: "recvonly" });
+  const onRecord = (rec) => queue.push({ ...rec, via: "sei" });
+  if (scriptTransform) {
+    // Set on the receiver before signalling: the transform must exist before
+    // the remote description is applied, or Chrome never routes frames to
+    // it (one set in ontrack starts its worker and then sees no frame).
+    // Firefox and Safari take it here as well.
+    worker = new Worker(new URL("./whep-sei-worker.js", import.meta.url), { type: "module" });
+    worker.onmessage = (m) => onRecord(m.data);
+    videoTransceiver.receiver.transform = new RTCRtpScriptTransform(worker, {});
+  }
   pc.ontrack = ({ track, receiver }) => {
     stream.addTrack(track);
-    const onRecord = (rec) => queue.push({ ...rec, via: "sei" });
-    if (scriptTransform) {
-      if (track.kind !== "video") return;
-      worker = new Worker(new URL("./whep-sei-worker.js", import.meta.url), { type: "module" });
-      worker.onmessage = (m) => onRecord(m.data);
-      receiver.transform = new RTCRtpScriptTransform(worker, {});
-    } else if (typeof receiver.createEncodedStreams === "function") {
-      // Legacy Chrome: every receiver's streams must be piped or its frames stall.
+    if (scriptTransform) return;
+    if (typeof receiver.createEncodedStreams === "function") {
+      // Legacy Chrome: createEncodedStreams is called here, in ontrack, before
+      // any frame arrives (where that browser documents it, and where it
+      // receives every frame), and every receiver's streams must be piped or
+      // its frames stall.
       const { readable, writable } = receiver.createEncodedStreams();
       if (track.kind !== "video") { readable.pipeTo(writable); return; }
       readable.pipeThrough(new TransformStream({
