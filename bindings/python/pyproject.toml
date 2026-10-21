@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name            = "tstrans"
 version         = "0.8.0"
-description     = "MPEG-TS video + MISB KLV streaming — mux/demux, typed KLV (ST 0601/0102/0605/0903), codec parsers, and live SRT/RTP/UDP/TCP/RIST transports"
+description     = "MPEG-TS video + MISB KLV streaming — mux/demux, typed KLV (ST 0601/0102/0605/0903), codec parsers, live SRT/RTP/UDP/TCP/RIST transports, and WebRTC (WHEP) browser playback"
 requires-python = ">=3.11"
 license         = { text = "MIT OR Apache-2.0" }
 authors         = [{ name = "Andrew Klofas", email = "aklofas@gmail.com" }]

@@ -11,6 +11,7 @@
 > - How to encode and decode all 4 MISB KLV sets (ST 0601 / 0102 / 0605 / 0903), plus ST 0806 RVT, ST 1010 SDCC error covariance, and the ST 0805 KLV → CoT conversion layer
 > - How to send and receive live MPEG-TS over UDP, TCP, RTP/RTSP, SRT, and RIST
 > - How to pair video with synchronized KLV via `tstrans.pipeline.Pairer`
+> - How to serve a stream to browsers over WebRTC (WHEP) with `tstrans.webrtc`
 > - How to drive bulk KLV → pandas DataFrame ETL with the optional `[pandas]` extra
 > - The Python-specific gotchas: GIL release, dataclass strictness, optional extras
 > - How this binding differs from the Rust core
@@ -23,6 +24,7 @@ task, jump to:
 - [Send or receive over SRT](#srt-transport-tstranssrt),
   [RTP/RTSP](#rtp-transport-tstransrtp), or [UDP, TCP, and RIST](#udp--tcp--rist-transports).
 - [Publish HLS](#hls-publisher-tstranshls).
+- [Play a stream in a browser over WebRTC](#webrtc-playback-tstranswebrtc).
 - [Pair video with metadata](#pipeline-pairing-tstranspipelinepairer).
 - [Analyze data with pandas and NumPy](#pandas--numpy-adapters).
 
@@ -1400,6 +1402,74 @@ The full `Publisher` ABC surface exposed through `tstrans.hls`:
 | `cut_segment_with_duration(media_duration_us: int) -> None` | `HlsPublisher` | Media-presentation-time-derived cut; `media_duration_us` is the PTS span of the completed segment in µs (same unit as `PublisherStats.*_us`); used by `MuxPublisher` internally |
 | `finish() -> None` | `HlsPublisher` | Flush pending segment + write `#EXT-X-ENDLIST`; terminal |
 | `stats() -> PublisherStats` | `HlsPublisher` / `MuxPublisher` | Cross-publisher stats snapshot |
+
+## WebRTC playback (`tstrans.webrtc`)
+
+`WhepServer` lets browsers play a mount over WebRTC: a viewer POSTs an SDP
+offer to the mount's path (WHEP) and gets H.264 or H.265 video with the KLV
+frame-locked to it, in an SEI message inside each access unit and on a `klv`
+data channel. Mirrors the Rust `tst_webrtc::WhepServer`; ships in the wheels
+(the `webrtc` feature is default-on).
+
+```python
+from tstrans.mpegts import Pts90khz
+from tstrans.webrtc import MountConfig, WhepServer
+
+# advertise= is the address viewers send media to (see the bullet below).
+with WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.10") as server:
+    mount = server.add_mount("/cam", MountConfig())
+    # A browser POSTs its offer to http://192.0.2.10:8889/cam. pts is in
+    # 90 kHz ticks; a KLV record rides the first frame pushed at or after it.
+    mount.push_klv(st0601_record, pts=Pts90khz(pts))
+    mount.push_video(annexb_access_unit, pts=Pts90khz(pts), key_frame=True)
+    print(server.local_addr(), "viewers =", mount.stats().viewers)
+```
+
+- **The URL carries every setting.** `WhepServer.bind(url)` takes a
+  `whep://` URL whose host is a literal IP; the query keys are `media_port`,
+  `advertise`, `max_viewers` (1 to 64, default 10), `token`, `cors_origin`,
+  `cert` and `key` (the [URL key table](/docs/reference/conventions.md)).
+- **`wheps://` for HTTPS pages.** A page served over HTTPS may only POST its
+  offer to an HTTPS endpoint: bind
+  `wheps://0.0.0.0:8443?cert=server.crt&key=server.key` (PEM file paths). A
+  missing or unreadable file raises `WebrtcError(TLS)` from `bind`, and no
+  port is bound.
+- **`advertise=` behind NAT.** Viewers send media to the addresses the
+  answer offers: the bind address, plus `advertise` when set. A bind on
+  `0.0.0.0` or `::` offers only loopback unless `advertise=` names the
+  address viewers reach, which behind NAT is the public IP. One UDP port
+  (`media_port`, default the signalling port) carries every viewer.
+- **Mounts.** `add_mount(path)` (or `add_mount(path, MountConfig())`) is an
+  elementary H.264 mount with audio dropped and KLV in both carriages; set
+  `MountConfig` fields to choose `MountKind.MP2T` (feed MPEG-TS with
+  `push_ts`), `VideoCodec.H265`, `AudioPolicy.PASSTHROUGH_OPUS` (elementary
+  mounts only), `KlvCarriage.SEI_ONLY` / `DATA_CHANNEL_ONLY`, the per-frame
+  SEI budget or the per-viewer queue. Pushes never block: a full queue drops
+  the frame and counts it in `MountHandle.stats()`. The pushes take any
+  bytes-like input and release the GIL.
+- **An MP2T mount runs one frame behind.** Its demuxer emits an access
+  unit when the next one starts, so the last access unit of the bytes
+  pushed waits for more, and a file's last access unit is never played.
+- **Close semantics.** `stop()` closes the server, and is idempotent: every
+  mount's pushes then raise `WebrtcError(CLOSED)` and the sessions end.
+  `close()` (and leaving a `with` block) is `stop()` plus releasing the
+  server, after which every method raises `WebrtcError(CLOSED)`.
+  `MountHandle.close()` frees only the handle object; the mount keeps
+  serving until `remove_mount(path)`, `stop()` or `close()`.
+- **Errors** are `WebrtcError` with `kind` a `WebrtcErrorKind` {`URL`, `IO`,
+  `TLS`, `MOUNT`, `SERVER`, `PUSH`, `INTERNAL`, `CLOSED`}: `URL` for an
+  unparsable bind URL, `IO` for a port that cannot be bound, `MOUNT` for a
+  refused path or configuration, `PUSH` for a refused input (the other push
+  family, an access unit without a NAL unit, a KLV record over 256 KiB),
+  `CLOSED` after the mount or server closed. A `metadata_service_id` outside
+  0..=255 raises `ValueError`.
+- **Stats.** `WhepServer.stats()`, `MountHandle.stats()` and
+  `MountHandle.sessions()` (one `SessionStats` per viewer, with
+  `connected_for_ms` `None` until the session connects) are snapshots.
+  `WhepServer.stats()` and `MountHandle.sessions()` ask the media thread and
+  can wait up to 2 s for its reply when it is busy, so call them from a
+  monitoring thread, not the thread that paces pushes; they release the GIL
+  while they wait. `MountHandle.stats()` never waits.
 
 ## Pipeline pairing (`tstrans.pipeline.Pairer`)
 

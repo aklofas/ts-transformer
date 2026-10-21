@@ -998,12 +998,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `sessions()` and `mountPath()`; the records `MountConfig`, `ServerStats`,
   `MountStats` and `SessionStats` and the enums `MountKind`, `AudioPolicy`
   and `KlvCarriage`. The mount's video codec is `org.tstrans.mpegts.VideoCodec`.
+- `ServerStats` and `MountStats` are generated from the Rust declarations, as
+  the other stats records are: their Javadoc is the Rust documentation and,
+  with more than eight components, each has a `Builder`.
 - `org.tstrans.WebrtcException` with `Kind` {`URL`, `IO`, `TLS`, `MOUNT`,
   `SERVER`, `PUSH`, `INTERNAL`, `CLOSED`}, from the same kind table as
   Python's `WebrtcError`; a call after `stop()` is `CLOSED`.
 - The `ServeWhep` example (`bindings/jvm/src/examples/java`, also in the JVM
   guide) plays a `.ts` file to browsers through an MP2T mount, paced by its
   PTS; run it with `./gradlew runServeWhep --args='input.ts'`.
+
+### Added — tst-py: WebRTC playback
+
+- `tstrans.webrtc` (the `webrtc` feature, default-on, in the wheels):
+  `WhepServer.bind("whep://…" | "wheps://…")`, `add_mount(path, config=None)`,
+  `remove_mount`, `stats()`, `local_addr()`, `media_addr()`, `stop()`,
+  `close()` and use as a context manager; `MountHandle.push_video` /
+  `push_klv` / `push_audio` / `push_ts` (bytes-like input, keyword-only
+  `pts`, the GIL released), `stats()`, `sessions()`, `mount_path()` and
+  `close()`; the frozen `MountConfig` dataclass with the `MountKind`,
+  `AudioPolicy` and `KlvCarriage` enums; the records `ServerStats`,
+  `MountStats` and `SessionStats`. The mount's video codec is
+  `tstrans.mpegts.VideoCodec`.
+- `WebrtcError` / `WebrtcErrorKind` are raised by it: `MOUNT` for a refused
+  path or `MountConfig`, `PUSH` for a refused input, `CLOSED` after `stop()`
+  or `close()`, and after `close()` on every method of the closed object.
 
 ### Added — release tooling
 
