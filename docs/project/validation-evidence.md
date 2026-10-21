@@ -1037,21 +1037,34 @@ follows:
 - **Reconnects counted on both sides.** The run declares the number of
   browser connections before launch (`run / WHEP_RECONNECT_S`, at least
   two). The `whep_reconnects_observed_whep` verdict requires the viewer
-  loop's report to list exactly that many connections on the declared slot
-  AND the server's own `sessions_total` to equal it.
-- **Playback continuous.** The page prints the decoded frame count once a
-  second. `whep_frames_continuous_whep` requires every connection to have
-  been ended by its own timeout, to have reported no error, to decode its
-  first frame within 5 samples and never to go more than 2 samples without
-  the count rising: no gap over 2 s except at a reconnect.
-- **Both KLV carriages agree.** With the player's de-duplication off, every
-  record arrives from the SEI and from the data channel. The page prints one
-  digest per record and carriage; `whep_klv_sei_equals_dc_whep` requires
-  the two sets to be equal in every connection and neither to be empty. A
-  record on one carriage only is allowed among the first 3 records of its
-  carriage (the data channel opens a moment after the session is
-  connected) or the last 2 (the browser is ended while the server pushes),
-  and such records are counted; a record missing anywhere else fails.
+  loop's report to list exactly that many connections on the declared slot,
+  each browser's window to be that slot less the 3 s relaunch gap, AND the
+  server's own `sessions_total` to equal the declared count.
+- **Playback continuous, at the served rate.** The page prints the decoded
+  frame count once a second. `whep_frames_continuous_whep` requires every
+  connection to have been ended by its own timeout, to have reported no
+  error, to decode its first frame within 5 samples, never to go more than
+  2 samples without the count rising (no gap over 2 s except at a
+  reconnect), and to end with at least 0.9 of the served frame rate (the
+  server's `frames_pushed` over its window) times its samples after the
+  first-frame window, so a decode that only ticks fails. The server must
+  have dropped no packet for a full queue and demuxed nothing
+  non-conformant.
+- **Both KLV carriages agree, at the served rate, on the same frame.** With
+  the player's de-duplication off, every record arrives from the SEI and
+  from the data channel. The page prints one digest and the bound frame's
+  (PTS, RTP timestamp) per record and carriage; `whep_klv_sei_equals_dc_whep`
+  requires the two sets to be equal in every connection, each carriage to
+  hold at least 0.9 of the served record rate (`klv_records_pushed` over
+  the window) times the samples after the first-frame window, and every
+  record's two copies to name the same (PTS, RTP timestamp): both come
+  from one server-side binding, and only a run long enough to cross a PTS
+  wrap or a clock rebase can see them differ. A record on one carriage
+  only is allowed among the first 3 records of its carriage (the data
+  channel opens a moment after the session is connected) or the last 2
+  (the browser is ended while the server pushes), and such records are
+  counted; a record missing anywhere else fails. The server must have
+  dropped no record unbound or oversize.
 - **Declared like the other legs.** `soak-config.json` declares the leg's
   profile, mount kind, viewer command, slot and connection count before
   any worker launches; `profile_declared_whep` holds the server's counters
@@ -1060,7 +1073,7 @@ follows:
   sampled for `serve-whep` and for the viewer loop's shell; the browser's
   own memory is not sampled, as a publish leg's tool is not.
 
-The first one-hour run, on 2026-10-21 from 06:20:40Z to 07:21Z UTC, used
+The first one-hour run, on 2026-10-21 from 06:20:40Z to 07:21Z, used
 the default 600-second slot: six connections, five reconnects. The SRT and
 RIST legs drew `audio` and `av1-klv-b` from seed 1 and both publish legs
 ran as in their own one-hour run. It was built from the tree
@@ -1075,10 +1088,10 @@ provisional by design below 72 h). The whep leg's figures, from the run's
 | Measure | Result |
 | --- | --- |
 | Browser connections | 6 on the viewer's side, 6 sessions on the server's, 6 declared; every browser ended by its own timeout |
-| Frames decoded | 107 206 over 6 connections of 597 s; first frame on the first sample of every connection; longest stall 0 s |
-| KLV records seen | 35 788 via SEI, 35 788 via the data channel, equal sets in every connection; 0 records on one carriage only; 0 copies disagreeing on (PTS, RTP timestamp) |
+| Frames decoded | 107 206 over 6 connections of 597 s; first frame on the first sample of every connection; longest stall 0 s; every connection's final count at least 17 857 against a floor of 15 957 (0.9 × 30 frames/s × 591 samples) |
+| KLV records seen | 35 788 via SEI, 35 788 via the data channel, equal sets in every connection; at least 5961 per carriage and connection against a floor of 5319 (0.9 × 10 records/s × 591); 0 records on one carriage only; 0 copies disagreeing on (PTS, RTP timestamp) |
 | Served | 107 999 frames (3600 keyframes), 36 000 records, 36 000 SEI insertions, 0 data-channel messages dropped, 0 packets dropped for a full queue, 0 PLIs, 0 NACKs |
-| Errors | 0 page errors, 0 browser console errors, 0 malformed or unrouted datagrams |
+| Errors | 0 page errors, 0 browser console errors, 0 unrouted datagrams |
 | RSS slope, `serve-whep` | 417.7 KiB/h over 98 samples (provisional below 72 h; 18.3 MB at the end of the warm-up, 18.9 MB at the end) |
 | RSS slope, viewer loop | 16.2 KiB/h over 98 samples (provisional below 72 h) |
 

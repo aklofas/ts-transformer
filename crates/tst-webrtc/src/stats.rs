@@ -39,7 +39,10 @@ pub struct MountStats {
     /// KLV records left out of the SEI because they did not fit the
     /// access unit's SEI budget.
     pub klv_sei_dropped_oversize: u64,
-    /// KLV messages sent on viewers' data channels.
+    /// KLV messages sent on viewers' data channels. A viewer that went
+    /// away without a DELETE keeps its session, and these sends, until
+    /// the disconnect grace closes it
+    /// ([`ServerStats::sessions_reaped_disconnected`]).
     pub klv_dc_messages_sent: u64,
     /// KLV records refused because they exceed the data-channel message
     /// limit ([`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT)).
