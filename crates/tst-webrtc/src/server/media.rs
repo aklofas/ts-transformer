@@ -155,6 +155,15 @@ pub(crate) enum ControlMsg {
         /// `true` when the session existed.
         reply: SyncSender<bool>,
     },
+    /// Whether a session exists on a mount (a `PATCH` on its resource).
+    Exists {
+        /// The mount the request named.
+        mount: MountId,
+        /// The session id.
+        id: String,
+        /// `true` when the session exists.
+        reply: SyncSender<bool>,
+    },
     /// A statistics snapshot.
     Stats {
         /// The thread's counters and every session's statistics.
@@ -594,6 +603,10 @@ impl Media {
                     self.gauges_dirty |= found;
                     let _ = reply.try_send(found);
                 }
+                ControlMsg::Exists { mount, id, reply } => {
+                    let found = self.viewers.iter().any(|v| v.id == id && v.mount == mount);
+                    let _ = reply.try_send(found);
+                }
                 ControlMsg::Stats { reply } => {
                     let _ = reply.try_send(self.snapshot());
                 }
@@ -834,7 +847,7 @@ impl Media {
                 ControlMsg::Offer(req) => {
                     let _ = req.reply.try_send(Err(RejectReason::Shutdown));
                 }
-                ControlMsg::Delete { reply, .. } => {
+                ControlMsg::Delete { reply, .. } | ControlMsg::Exists { reply, .. } => {
                     let _ = reply.try_send(false);
                 }
                 ControlMsg::Stats { reply } => {

@@ -45,6 +45,7 @@ fn render_adds_cors_and_length() {
     for h in [
         "HTTP/1.1 201 Created\r\n",
         "Access-Control-Allow-Origin: *\r\n",
+        "Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n",
         "Access-Control-Expose-Headers: Location\r\n",
         "Content-Length: 3\r\n",
         "Connection: close\r\n",
@@ -63,7 +64,23 @@ fn preflight_and_unknown_methods() {
     else {
         panic!()
     };
-    assert!(matches!(route(&request), Route::MethodNotAllowed));
+    assert!(matches!(route(&request), Route::Patch { mount, id } if mount == "/cam1" && id == "1"));
+    // PATCH names a session resource or nothing.
+    for raw in [
+        &b"PATCH /cam1 HTTP/1.1\r\n\r\n"[..],
+        b"PATCH /cam1/sessions HTTP/1.1\r\n\r\n",
+        b"PATCH /sessions/1 HTTP/1.1\r\n\r\n",
+        b"PATCH * HTTP/1.1\r\n\r\n",
+    ] {
+        let HeadParse::Done { request, .. } = parse_head(raw) else {
+            panic!("{}", String::from_utf8_lossy(raw))
+        };
+        assert!(
+            matches!(route(&request), Route::MethodNotAllowed),
+            "{}",
+            String::from_utf8_lossy(raw)
+        );
+    }
 }
 
 #[test]
