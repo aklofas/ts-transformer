@@ -47,10 +47,11 @@ tst_core::binding_record! {
         /// the disconnect grace closes it
         /// ([`ServerStats::sessions_reaped_disconnected`]).
         pub klv_dc_messages_sent: u64,
-        /// KLV records refused because they exceed the data-channel message
-        /// limit ([`KLV_DC_LIMIT`]).
+        /// KLV records refused because they exceed the 256 KiB data-channel
+        /// message limit.
         ///
-        /// [`KLV_DC_LIMIT`]: crate::KLV_DC_LIMIT
+        /// <!-- rust-only -->
+        /// The limit is [`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT).
         pub klv_dc_dropped_oversize: u64,
         /// KLV data-channel messages dropped on the way to viewers: once per
         /// message when the server's media queue was full or the frame it is
