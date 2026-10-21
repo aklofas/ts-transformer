@@ -28,10 +28,15 @@ LL-HLS remain deferred (`deferred-features.md`).
 The JVM binding exposes it as `org.tstrans.hls` (`HlsPublisher` +
 `MuxPublisher`).
 WebRTC playback ships as `tst-webrtc` (Rust, and the JVM binding as
-`org.tstrans.webrtc`): a WHEP server whose mounts browsers pull over WebRTC. `wheps://` serves the signalling over rustls
-under the `tls` feature (without it, bind returns `Tls("built without the tls
-feature")`), and the signalling endpoint serves one connection at a time with a
-5 s request deadline, so an idle client delays other requests by up to 5 s.
+`org.tstrans.webrtc`): a WHEP server whose mounts browsers pull over WebRTC,
+H.264 and H.265 passed through with KLV frame-locked in an SEI message and
+on a data channel, plus a reference player under `docs/webrtc/`. `wheps://`
+serves the signalling over rustls under the `tls` feature (without it, bind
+returns `Tls("built without the tls feature")`), and the signalling endpoint
+serves one connection at a time with a 5 s request deadline, so an idle
+client delays other requests by up to 5 s. See the
+[WebRTC guide](/docs/guides/webrtc.md) and the
+[WebRTC playback section](#webrtc-playback-tst-webrtc) below.
 Other containers (MP4 / CMAF), other transports (RTMP, WebRTC ingest), and raw
 elementary streams remain out of scope until a consumer asks. See
 `tests/coverage/TEST_CORPUS.md` for the parsing-side compliance ledger
@@ -745,6 +750,67 @@ or sanitizer from that toolchain. The enrollment PR to the hosted
 `google/oss-fuzz` fleet (2026-10-01) was declined on 2026-10-06 for the
 project's user base, not for the bundle, which passed every check; the
 bundle under `oss-fuzz/` stays current (see `oss-fuzz/README.md`).
+
+---
+
+## WebRTC playback (`tst-webrtc`)
+
+A WHEP (WebRTC-HTTP Egress Protocol) server: browsers POST an SDP offer to a
+mount's path and pull H.264 or H.265 over WebRTC with the KLV frame-locked
+to each access unit, in a `user_data_unregistered` SEI message and on a
+`klv` data channel the server opens. ICE-lite on one UDP port for every
+viewer, DTLS-SRTP and RTX from str0m, no TURN or STUN, no ingest. The
+[WebRTC guide](/docs/guides/webrtc.md) has the endpoint table, the wire
+layouts and the mount rules; the JVM binding is `org.tstrans.webrtc`, and
+the Python and C bindings do not expose it in this release.
+
+| Feature | Default | Enables |
+| --- | --- | --- |
+| `tls` | ✅ on | `wheps://` signalling via rustls (feature `tst-core/tls` for the PEM loader). Media is DTLS-SRTP on UDP with or without it. |
+
+| Feature / Type | Status | Notes |
+| --- | --- | --- |
+| H.264 pass-through | ✅ | RFC 6184, packetization mode 1 (single NAL + FU-A); SPS/PPS cached and prepended to every keyframe; Constrained High listed for Safari. |
+| H.265 pass-through | ✅ | RFC 7798 (single NAL + FU); VPS/SPS/PPS cached the same way. |
+| H.266, AV1 | ❌ | Refused by `MountConfig::validate`. |
+| KLV in SEI | ✅ | One SEI per record, UUID `tstKLV…`, version 1, 8-byte PTS, record bytes; per-access-unit budget (default 64 KiB). |
+| KLV data channel | ✅ | Label `klv`, opened by the server (DCEP), reliable and ordered; version, 4-byte RTP timestamp, 8-byte PTS, record; records up to 256 KiB. |
+| MPEG-TS mounts | ✅ | `MountKind::Mp2t` + `push_ts`: one video stream of the mount's codec and its program's KLV; runs one frame behind. |
+| Audio | ⚠️ | `AudioPolicy::Drop` (default; the browser's audio section is rejected) or `PassthroughOpus` on elementary mounts (RFC 7587). No transcoding; Opus in TS not demuxed. |
+| B-frames | ❌ | Counted in `MountStats::frames_pts_reordered`; sources must deliver decode order = presentation order. |
+| Trickle ICE | ⚠️ | `PATCH` answered 204 and ignored (ICE-lite needs no remote candidates); no ICE restart. |
+| TURN / STUN / ICE over TCP | ❌ | Viewers must reach `advertise=` on `media_port` over UDP. |
+| Simulcast, WHIP ingest | ❌ | Out of scope. |
+
+The server's test suite answers an offer captured from Chrome and offers
+reconstructed for Firefox and Safari, and plays to a WebRTC client in the
+same process; the interop matrix adds GStreamer `whepsrc` and the reference
+player in headless Chromium.
+
+**Browser support (reference player).** The player reads the KLV SEI from
+each encoded frame where the browser gives it the frame, and emits records
+when their frame is painted where the browser exposes the painted frame's
+RTP timestamp; elsewhere it emits on arrival. A browser with neither
+encoded-frame API still plays the video and receives KLV on the data
+channel.
+
+| Capability | Chrome / Edge | Firefox | Safari |
+| --- | --- | --- | --- |
+| `RTCRtpScriptTransform` (SEI read in a worker) | 141 | 117 | 15.4 |
+| `createEncodedStreams` (SEI read on the main thread) | 86 | no | no |
+| `RTCEncodedVideoFrame.getMetadata().rtpTimestamp` | 127 | no (`timestamp` attribute used) | 26 |
+| `requestVideoFrameCallback` | 83 | 132 | 15.4 |
+| `rtpTimestamp` in the paint callback's metadata (paint-locked KLV) | yes | no | no |
+| data channel `max-message-size` | 256 KiB | any | 256 KiB |
+
+**Native dependency.** `str0m`'s DTLS certificate path builds `aws-lc-sys`
+(a BoringSSL fork, C and assembly) under every crypto backend, so
+`tst-webrtc` adds the first aws-lc build to the tree on all four Tier 1
+platforms, the Python wheels and the JVM JAR; the Windows MSVC build uses
+the crate's prebuilt NASM objects, so no NASM install is needed. TLS for
+`wheps://`, like every other `tls` feature in the workspace, stays on
+rustls with the `ring` provider; aws-lc backs only str0m's DTLS certificate
+generation.
 
 ---
 

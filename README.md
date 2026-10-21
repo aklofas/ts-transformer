@@ -86,11 +86,13 @@ ts-transformer does the wire format; pair it with the tools you already use:
   encoded NAL units / OBUs you push into the muxer (there is no encoder or
   decoder inside).
 - **Players** — VLC, mpv, ffplay, or any MPEG-TS-capable viewer plays the
-  output directly; hls.js consumes the HLS publisher in a browser.
+  output directly; hls.js consumes the HLS publisher in a browser, and any
+  WHEP player (the reference player under `docs/webrtc/` included) plays a
+  WebRTC mount.
 - **Repackagers** — MPEG-TS is the native container; hand the stream to FFmpeg
   or GStreamer downstream when delivery needs MP4 / fMP4 / DASH.
 - **Servers** — it's a library, so it embeds in your own service; front it
-  with a media server (e.g. MediaMTX) where you need RTMP / WebRTC endpoints.
+  with a media server (e.g. MediaMTX) where you need RTMP or WebRTC ingest.
 
 ## Install
 

@@ -1832,6 +1832,83 @@ and the two below.
   registration descriptor mapping), or a consumer needing audio from a TS
   feed in the browser.
 
+## WebRTC playback in the C ABI
+
+- **Status:** Deferred. `tst-webrtc` ships in Rust and in the JVM binding
+  (`org.tstrans.webrtc`); `tstrans.h` has no `tst_whep_*` surface and no
+  `TST_HAS_WEBRTC` feature. The error-kind table already carries the
+  `WEBRTC_*` rows with C projections, so adding the surface changes no kind.
+- **Why deferred:** No C consumer has asked for it, and the C binding's
+  transport features are opt-in by design; a WHEP server in C would also be
+  the first C surface to pull str0m and aws-lc into a C link.
+- **Trigger to revisit:** A C consumer asks, or the C-ABI manifest pass
+  before 1.0 decides every transport gets a C twin.
+
+## WebRTC ingest (WHIP) and WHIP egress
+
+- **Status:** Deferred. The WebRTC crate is playback only: browsers pull a
+  mount over WHEP. There is no WHIP endpoint for a browser or device to
+  publish into a mount, and no WHIP client to push a mount out to an SFU or
+  a media server.
+- **Why deferred:** Ingest needs the receive side of everything the server
+  does on the send side (depacketizing, SEI and data-channel KLV
+  extraction, an MPEG-TS re-mux), and the RTSP publisher role already
+  covers encoder ingest for the STANAG 4609 pipeline.
+- **Trigger to revisit:** A consumer needs browser or device publishing, or
+  distribution through an SFU.
+
+## WebRTC audio transcoding (AAC to Opus)
+
+- **Status:** Deferred. A mount's audio is dropped (`AudioPolicy::Drop`,
+  the default) or passed through as Opus packets the caller already has
+  (`AudioPolicy::PassthroughOpus`). The AAC and MPEG audio most MPEG-TS
+  feeds carry never reaches a browser.
+- **Why deferred:** Transcoding means an AAC decoder and an Opus encoder in
+  the tree, native or pure-Rust, with their licences and build matrix; the
+  policy enum is `#[non_exhaustive]` so a `Transcode` variant is additive.
+- **Trigger to revisit:** A consumer needs audio in the browser from a feed
+  that is not already Opus.
+
+## TURN / STUN discovery for WebRTC
+
+- **Status:** Deferred. The server runs ICE-lite and offers host
+  candidates only: the bind address, or loopback on a wildcard bind, plus
+  `advertise=`. It neither discovers its public address through STUN nor
+  relays through TURN, and offers no ICE over TCP.
+- **Why deferred:** A server with a reachable UDP port and a known public
+  address needs neither; discovery and relay add a client to the media
+  thread's loop and a second network dependency for a deployment class no
+  consumer has.
+- **Trigger to revisit:** A deployment that cannot set `advertise=` (a
+  changing public address, or a NAT that no port mapping reaches).
+
+## WebRTC `advertise=` as a list of IPs or names
+
+- **Status:** Deferred. `advertise=` takes one literal IP address. A server
+  reachable on two addresses (dual-homed, or a split-horizon deployment
+  with an inside and an outside address) offers only one of them, and a
+  host name is refused at parse time.
+- **Why deferred:** One address serves the common NAT case, and every
+  candidate the answer carries is checked by every viewer; names would add
+  resolution to the bind path.
+- **Trigger to revisit:** A dual-homed or split-horizon deployment whose
+  viewers reach the server on different addresses.
+
+## WebRTC Opus RTP timestamps derived from the packet's TOC byte
+
+- **Status:** Deferred. Under `AudioPolicy::PassthroughOpus` the RTP
+  timestamp of an Opus packet is its pushed PTS on the 48 kHz clock,
+  computed from each PTS on its own. The packet's TOC byte (its frame
+  duration) is not read, and no drift between the PTS and the packet
+  cadence is corrected.
+- **Why deferred:** A source whose PTS is an exact multiple of the frame
+  duration (every encoder's normal output) gives the same timestamps
+  either way; deriving them from the TOC byte with a resync on drift is a
+  second clock to keep right.
+- **Trigger to revisit:** An Opus source whose PTS is not an exact multiple
+  of the frame duration, visible as audio that drifts or clicks in the
+  browser.
+
 ## Resolved (historical)
 
 Entries whose feature shipped, one line each: the release it landed in and

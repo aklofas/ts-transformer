@@ -59,10 +59,12 @@ well-worn companion tool:
   segments MPEG-TS natively. For MP4 / MKV / fMP4 / DASH delivery, repackage
   downstream with FFmpeg or GStreamer.
 - **Transports: UDP, raw TCP / TLS, RTP (incl. RTSP client + server), SRT 1.5
-  (Haivision libsrt, vendored), RIST (VideoLAN librist), and the HLS publisher**
+  (Haivision libsrt, vendored), RIST (VideoLAN librist), the HLS publisher**
   (segmenter + optional built-in HTTP server — see the
-  [HLS guide](/docs/guides/hls.md)). RTMP and WebRTC aren't planned — front
-  with a media server (e.g. MediaMTX) where you need those endpoints.
+  [HLS guide](/docs/guides/hls.md)) **and WebRTC playback** (a WHEP server
+  browsers pull from, KLV frame-locked — see the
+  [WebRTC guide](/docs/guides/webrtc.md)). RTMP and WebRTC ingest aren't
+  planned — front with a media server (e.g. MediaMTX) where you need those.
 - **Metadata: MISB KLV** (ST 0601 / 0102 / 0605 / 0903 / 1204 / 0806 / 1010),
   plus a ST 0805 KLV→CoT conversion layer. Other schemas
   ride as opaque private data; see
