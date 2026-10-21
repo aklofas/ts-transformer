@@ -30,7 +30,7 @@
 //! connected before the first event, so a browser that joins after bind
 //! still sees the first keyframe and every record bound to it; without a
 //! viewer in time it pushes anyway and the cell fails on its oracles. Once
-//! the schedule is done the server stays up for [`LINGER`] so the browser
+//! the schedule is done the server stays up for `LINGER` so the browser
 //! decodes what is in flight, the counters are written as JSON, and the
 //! server stops.
 

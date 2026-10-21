@@ -1279,7 +1279,7 @@ pub struct WhepConnection {
     pub index: u64,
     #[serde(default)]
     pub started_utc: String,
-    /// The browser's exit status: [`WHEP_BROWSER_TIMED_OUT`] when the
+    /// The browser's exit status: `WHEP_BROWSER_TIMED_OUT` (124) when the
     /// loop's `timeout` ended it on schedule.
     pub browser_rc: i32,
     /// The page's once-a-second `FRAMES` samples (frames decoded so
