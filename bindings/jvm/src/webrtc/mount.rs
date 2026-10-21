@@ -157,7 +157,7 @@ jni_native! {
         // Every u64 crosses as its bit pattern in a Java long.
         env.new_object(
             FindClass(jni_str!("org/tstrans/webrtc/MountStats")),
-            jni_sig!("(JJJJJJJJJJJJJJJJJJJ)V"),
+            jni_sig!("(JJJJJJJJJJJJJJJJJJJJ)V"),
             &[
                 JValue::Long(s.frames_pushed as i64),
                 JValue::Long(s.keyframes_pushed as i64),
@@ -177,6 +177,7 @@ jni_native! {
                 JValue::Long(s.nacks_received as i64),
                 JValue::Long(s.viewer_packets_dropped_queue_full as i64),
                 JValue::Long(s.rtp_clock_rebases as i64),
+                JValue::Long(s.frames_pts_reordered as i64),
                 JValue::Long(s.demux_nonconformant as i64),
             ],
         )

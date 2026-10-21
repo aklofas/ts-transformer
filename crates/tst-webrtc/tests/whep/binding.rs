@@ -148,6 +148,28 @@ fn cached_parameter_sets_are_prepended_to_a_bare_idr() {
 }
 
 #[test]
+fn a_pts_step_backwards_within_the_rebase_window_is_counted_not_rebased() {
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
+        .unwrap();
+    let a = next_frame(&rx);
+    m.push_video(&au(&[P]), Pts90khz::new(6000), false).unwrap();
+    let b = next_frame(&rx);
+    // A B-frame: presented before the frame pushed before it.
+    m.push_video(&au(&[P]), Pts90khz::new(3000), false).unwrap();
+    let c = next_frame(&rx);
+    assert_eq!(b.rtp_ts.wrapping_sub(a.rtp_ts), 6000);
+    assert_eq!(c.rtp_ts.wrapping_sub(a.rtp_ts), 3000);
+    let s = m.stats();
+    assert_eq!(s.frames_pts_reordered, 1);
+    assert_eq!(s.rtp_clock_rebases, 0);
+    // The same PTS again is not a step backwards.
+    m.push_video(&au(&[P]), Pts90khz::new(3000), false).unwrap();
+    let _ = next_frame(&rx);
+    assert_eq!(m.stats().frames_pts_reordered, 1);
+}
+
+#[test]
 fn idr_nal_with_false_flag_counts_as_keyframe_and_mismatch() {
     let (m, rx) = MountHandle::for_test(MountConfig::default());
     m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), false)

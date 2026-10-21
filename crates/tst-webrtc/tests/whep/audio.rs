@@ -249,6 +249,22 @@ fn a_push_the_media_queue_refuses_is_not_counted_as_forwarded() {
 const P_FRAME: &[u8] = &[0, 0, 0, 1, 0x41, 0x9A, 0x00, 0x01];
 
 #[test]
+fn an_audio_pts_step_backwards_is_not_counted_as_a_reordered_frame() {
+    let (m, rx) = MountHandle::for_test(opus_config());
+    m.push_audio(&packet(1), Pts90khz::new(0)).unwrap();
+    m.push_audio(&packet(2), Pts90khz::new(1800)).unwrap();
+    m.push_audio(&packet(3), Pts90khz::new(900)).unwrap();
+    let audio = rx
+        .try_iter()
+        .filter(|msg| matches!(msg, MediaMsg::Audio { .. }))
+        .count();
+    assert_eq!(audio, 3);
+    let s = m.stats();
+    assert_eq!(s.frames_pts_reordered, 0);
+    assert_eq!(s.rtp_clock_rebases, 0);
+}
+
+#[test]
 fn a_pts_jump_rebases_the_audio_clock_and_leaves_the_video_clock_alone() {
     let (m, rx) = MountHandle::for_test(opus_config());
     let video = |pts: i64| m.push_video(P_FRAME, Pts90khz::new(pts), false).unwrap();
