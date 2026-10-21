@@ -154,34 +154,7 @@ jni_native! {
         let Some(s) = with_mount(env, handle, MountHandle::stats) else {
             return JObject::null();
         };
-        // Every u64 crosses as its bit pattern in a Java long.
-        env.new_object(
-            FindClass(jni_str!("org/tstrans/webrtc/MountStats")),
-            jni_sig!("(JJJJJJJJJJJJJJJJJJJJ)V"),
-            &[
-                JValue::Long(s.frames_pushed as i64),
-                JValue::Long(s.keyframes_pushed as i64),
-                JValue::Long(s.keyframe_flag_mismatch as i64),
-                JValue::Long(s.viewers as i64),
-                JValue::Long(s.viewers_waiting_keyframe as i64),
-                JValue::Long(s.klv_records_pushed as i64),
-                JValue::Long(s.klv_records_dropped_unbound as i64),
-                JValue::Long(s.klv_sei_inserted as i64),
-                JValue::Long(s.klv_sei_dropped_oversize as i64),
-                JValue::Long(s.klv_dc_messages_sent as i64),
-                JValue::Long(s.klv_dc_dropped_oversize as i64),
-                JValue::Long(s.klv_dc_dropped_viewer as i64),
-                JValue::Long(s.audio_frames_pushed as i64),
-                JValue::Long(s.audio_frames_dropped as i64),
-                JValue::Long(s.plis_received as i64),
-                JValue::Long(s.nacks_received as i64),
-                JValue::Long(s.viewer_packets_dropped_queue_full as i64),
-                JValue::Long(s.rtp_clock_rebases as i64),
-                JValue::Long(s.frames_pts_reordered as i64),
-                JValue::Long(s.demux_nonconformant as i64),
-            ],
-        )
-        .unwrap_or_else(|_| JObject::null())
+        crate::generated::stats_webrtc::build_mount_stats(env, &s).unwrap_or_else(|_| JObject::null())
     }
 }
 

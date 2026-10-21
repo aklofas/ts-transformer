@@ -51,6 +51,7 @@ pub fn stats_records() -> Vec<Entry> {
     use tst_srt::SrtStats;
     use tst_tcp::TcpStats;
     use tst_udp::UdpStats;
+    use tst_webrtc::{MountStats as WhepMountStats, ServerStats as WhepServerStats};
 
     // The hand-written counters printed a few of their fields; so do these.
     let mut socket = stats(
@@ -317,6 +318,62 @@ pub fn stats_records() -> Vec<Entry> {
         ],
     ));
 
+    let mut whep_server = stats(
+        "stats_webrtc",
+        "tstrans.webrtc",
+        "org/tstrans/webrtc",
+        "tst_webrtc::ServerStats",
+        WhepServerStats::BINDING_SCHEMA,
+    );
+    whep_server.py_repr = Some((
+        "ServerStats(mounts={}, active_sessions={}, sessions_total={}, sessions_rejected_cap={}, sessions_rejected_codec={}, sessions_rejected_auth={}, sessions_reaped_ice_timeout={}, sessions_reaped_disconnected={}, rtp_packets_sent={}, rtp_bytes_sent={}, datagrams_unrouted={})",
+        &[
+            "self.mounts",
+            "self.active_sessions",
+            "self.sessions_total",
+            "self.sessions_rejected_cap",
+            "self.sessions_rejected_codec",
+            "self.sessions_rejected_auth",
+            "self.sessions_reaped_ice_timeout",
+            "self.sessions_reaped_disconnected",
+            "self.rtp_packets_sent",
+            "self.rtp_bytes_sent",
+            "self.datagrams_unrouted",
+        ],
+    ));
+    let mut whep_mount = stats(
+        "stats_webrtc",
+        "tstrans.webrtc",
+        "org/tstrans/webrtc",
+        "tst_webrtc::MountStats",
+        WhepMountStats::BINDING_SCHEMA,
+    );
+    whep_mount.py_repr = Some((
+        "MountStats(frames_pushed={}, keyframes_pushed={}, keyframe_flag_mismatch={}, viewers={}, viewers_waiting_keyframe={}, klv_records_pushed={}, klv_records_dropped_unbound={}, klv_sei_inserted={}, klv_sei_dropped_oversize={}, klv_dc_messages_sent={}, klv_dc_dropped_oversize={}, klv_dc_dropped_viewer={}, audio_frames_pushed={}, audio_frames_dropped={}, plis_received={}, nacks_received={}, viewer_packets_dropped_queue_full={}, rtp_clock_rebases={}, frames_pts_reordered={}, demux_nonconformant={})",
+        &[
+            "self.frames_pushed",
+            "self.keyframes_pushed",
+            "self.keyframe_flag_mismatch",
+            "self.viewers",
+            "self.viewers_waiting_keyframe",
+            "self.klv_records_pushed",
+            "self.klv_records_dropped_unbound",
+            "self.klv_sei_inserted",
+            "self.klv_sei_dropped_oversize",
+            "self.klv_dc_messages_sent",
+            "self.klv_dc_dropped_oversize",
+            "self.klv_dc_dropped_viewer",
+            "self.audio_frames_pushed",
+            "self.audio_frames_dropped",
+            "self.plis_received",
+            "self.nacks_received",
+            "self.viewer_packets_dropped_queue_full",
+            "self.rtp_clock_rebases",
+            "self.frames_pts_reordered",
+            "self.demux_nonconformant",
+        ],
+    ));
+
     vec![
         socket,
         muxer,
@@ -334,5 +391,7 @@ pub fn stats_records() -> Vec<Entry> {
         server,
         mount,
         publish,
+        whep_server,
+        whep_mount,
     ]
 }
