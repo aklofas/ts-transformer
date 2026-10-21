@@ -1217,9 +1217,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   1.0. The cells and the soak leg ran on Google Chrome 155.0.8059.39 on
   the dev box and on the `ubuntu-latest` runner's Chrome 155. The
   reference player's pure modules have a Node test suite
-  (`node --test 'docs/webrtc/test/*.test.js'`, 17 tests: SEI extraction
+  (`node --test 'docs/webrtc/test/*.test.js'`, 18 tests: SEI extraction
   with emulation prevention at every alignment, foreign SEIs skipped, the
-  data-channel message parse, de-duplication and the paint-locked queue).
+  data-channel message parse, de-duplication including a repeated record
+  on a later frame, and the paint-locked queue).
 
 ### Testing — soak and release qualification
 

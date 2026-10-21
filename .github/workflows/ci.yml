@@ -263,7 +263,9 @@ jobs:
         # de-duplication off, so the default path is covered here alone.
         # Node ships on the ubuntu-latest image; no setup step.
         if: matrix.name == 'linux-x86_64'
-        run: node --version && node --test 'docs/webrtc/test/*.test.js'
+        # `ls` first: a glob that matches nothing makes node report 0
+        # tests and exit 0.
+        run: ls docs/webrtc/test/*.test.js >/dev/null && node --version && node --test 'docs/webrtc/test/*.test.js'
 
       - name: check-close-contract-presence
         if: matrix.name == 'linux-x86_64'

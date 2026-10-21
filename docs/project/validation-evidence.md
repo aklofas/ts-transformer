@@ -1085,7 +1085,7 @@ workspace.
 
 | Target | Drives |
 | --- | --- |
-| `whep_http_request` | the signalling request: request line, headers, body framing and the request deadline's bounded read |
+| `whep_http_request` | the signalling request: the request line, headers and body-length framing within the head and body limits, and routing |
 | `whep_sdp_select` | SDP offer parsing and payload selection, seeded with the browser offers under `crates/tst-webrtc/tests/fixtures/offers/` |
 | `klv_sei_parse` | the KLV SEI payload (UUID, version, PTS, record) the reference player extracts from a frame |
 
