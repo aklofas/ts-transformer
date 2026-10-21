@@ -45,9 +45,10 @@ on:
       - "crates/tst-pipeline/**"
       - "crates/tst-srt/**"
       - "crates/srt-sys/**"
-      # The wheel builds --features rtp,srt,udp,tcp,hls,rist,tls, so every native
-      # crate on that path affects it. rist-sys (+ tst-rist/tst-tcp/tst-udp)
+      # The wheel builds --features rtp,srt,udp,tcp,hls,rist,tls,webrtc, so
+      # every native crate on that path affects it. rist-sys (+ tst-rist/tst-tcp/tst-udp)
       # were missing — a change to them must rebuild + re-test the wheels.
+      # tst-webrtc brings aws-lc, built on every wheel leg.
       - "crates/tst-hls/**"
       - "crates/rist-sys/**"
       - "crates/tst-rist/**"
@@ -120,7 +121,7 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           working-directory: bindings/python
-          args: --release --out dist --features rtp,srt,udp,tcp,hls,rist,tls
+          args: --release --out dist --features rtp,srt,udp,tcp,hls,rist,tls,webrtc
           # The container runs as root by design; without this every pip
           # call inside it — ours below AND the action's own (it pip-installs
           # cffi in the rust-cross aarch64 image) — prints pip's "Running pip
@@ -265,7 +266,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           working-directory: bindings/python
-          args: --release --out dist --features rtp,srt,udp,tcp,hls,rist,tls
+          args: --release --out dist --features rtp,srt,udp,tcp,hls,rist,tls,webrtc
         env:
           SRT_FORCE_VENDORED: "1"
           RIST_FORCE_VENDORED: "1"
@@ -317,14 +318,16 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
-          args: --release --out dist --features rtp,srt,udp,tcp,hls,rist,tls
+          args: --release --out dist --features rtp,srt,udp,tcp,hls,rist,tls,webrtc
         env:
           SRT_FORCE_VENDORED: "1"
           RIST_FORCE_VENDORED: "1"
 
       # Import smoke: install the wheel just built into the setup-python
-      # interpreter and import the native transports, so a wheel that builds
-      # but cannot load (e.g. a missing librist / libsrt DLL) is caught here.
+      # interpreter and import the native transports and WebRTC, so a wheel
+      # that builds but cannot load (e.g. a missing librist / libsrt DLL) or
+      # that lost a module (`tstrans/__init__.py` skips an absent submodule)
+      # is caught here.
       # Runs from the repo root, where no `tstrans` source dir shadows the
       # installed package. Best-effort like the rest of this job.
       - name: Import smoke (installed wheel)
@@ -333,7 +336,7 @@ jobs:
           set -euo pipefail
           python -c "import sys; assert sys.version_info >= (3, 11)"
           python -m pip install --no-index --find-links bindings/python/dist tstrans
-          python -c "import tstrans, tstrans.rist, tstrans.srt; print(tstrans.__version__)"
+          python -c "import tstrans, tstrans.rist, tstrans.srt, tstrans.webrtc; print(tstrans.__version__)"
 
       - uses: actions/upload-artifact@v7
         with:
