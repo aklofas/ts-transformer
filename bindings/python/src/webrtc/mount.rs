@@ -2,7 +2,9 @@
 //!
 //! The handle is a clone of the mount's `tst_webrtc::MountHandle` (one
 //! `Arc`) plus a closed latch. `close()` frees only this wrapper; the mount
-//! stays on the server. A push that panics closes the wrapper, so a later
+//! stays on the server. The handle does not keep the server alive: once the
+//! last `WhepServer` reference goes the server stops and pushes raise
+//! `WebrtcError(CLOSED)`. A push that panics closes the wrapper, so a later
 //! call raises `WebrtcError(CLOSED)` instead of using a mount whose push
 //! state may be torn.
 //!
@@ -21,7 +23,7 @@ use tst_webrtc::{IceState, MountHandle, PushError, SessionStats};
 use crate::generated::stats_webrtc::MountStats;
 use crate::mux::py_pts90khz;
 
-use super::{closed, webrtc_err};
+use super::{closed, int_in_range, webrtc_err};
 
 /// The push side of one mount, returned by `WhepServer.add_mount`.
 #[pyclass(name = "MountHandle", module = "tstrans.webrtc", frozen)]
@@ -89,19 +91,15 @@ impl PyMountHandle {
     /// `WebrtcError(PUSH)`. `metadata_service_id` (0..=255, else
     /// `ValueError`) is accepted for parity with the RTSP mount and ignored:
     /// a WebRTC mount carries one KLV stream.
-    #[pyo3(signature = (record, *, pts, metadata_service_id = 0))]
+    #[pyo3(signature = (record, *, pts, metadata_service_id = ServiceId(0)))]
     pub fn push_klv(
         &self,
         py: Python<'_>,
         record: &Bound<'_, PyAny>,
         pts: &Bound<'_, PyAny>,
-        metadata_service_id: i64,
+        metadata_service_id: ServiceId,
     ) -> PyResult<()> {
-        let service_id = u8::try_from(metadata_service_id).map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "metadata_service_id must be in 0..=255; got {metadata_service_id}"
-            ))
-        })?;
+        let service_id = metadata_service_id.0;
         let pts = py_pts90khz(pts)?;
         let bytes = crate::util::coerce_bytes_like(py, record)?;
         let record = bytes.as_bytes();
@@ -150,7 +148,9 @@ impl PyMountHandle {
     }
 
     /// Frees this handle; the mount keeps serving until
-    /// `WhepServer.remove_mount`, `stop()` or `close()`. Idempotent.
+    /// `WhepServer.remove_mount`, `stop()`, `close()` or the server's last
+    /// reference goes: a mount handle does not keep its server alive.
+    /// Idempotent.
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
     }
@@ -162,6 +162,26 @@ impl PyMountHandle {
             ""
         };
         format!("MountHandle(path={:?}{closed})", self.inner.mount_path())
+    }
+}
+
+/// A KLV `metadata_service_id` argument: an int in 0..=255. Extracted
+/// fallibly, so an int of any size outside that range is the documented
+/// `ValueError`, never PyO3's `OverflowError`; a non-int is `TypeError`.
+pub struct ServiceId(u8);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for ServiceId {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let v = obj.to_owned();
+        int_in_range(&v, |v| v.extract::<u8>())?
+            .map(ServiceId)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "metadata_service_id must be in 0..=255; got {v}"
+                ))
+            })
     }
 }
 

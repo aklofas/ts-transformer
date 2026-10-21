@@ -1452,10 +1452,18 @@ with WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.10") as server:
   pushed waits for more, and a file's last access unit is never played.
 - **Close semantics.** `stop()` closes the server, and is idempotent: every
   mount's pushes then raise `WebrtcError(CLOSED)` and the sessions end.
-  `close()` (and leaving a `with` block) is `stop()` plus releasing the
-  server, after which every method raises `WebrtcError(CLOSED)`.
+  `close()` (and leaving a `with` block) stops the server and closes the
+  `WhepServer` object, after which every method raises
+  `WebrtcError(CLOSED)`; the native server is freed when the last reference
+  goes. Dropping the last reference to an unclosed `WhepServer` also stops
+  it (bounded, with the GIL held), as with `tstrans.rtp.RtspServer`, so use
+  `with` or call `close()`. A `MountHandle` does not keep its server alive:
+  hold the server while you push, since
+  `WhepServer.bind(url).add_mount(path)` returns a mount whose pushes raise
+  `CLOSED` once the unreferenced server is collected.
   `MountHandle.close()` frees only the handle object; the mount keeps
-  serving until `remove_mount(path)`, `stop()` or `close()`.
+  serving until `remove_mount(path)`, `stop()`, `close()` or the server's
+  last reference goes.
 - **Errors** are `WebrtcError` with `kind` a `WebrtcErrorKind` {`URL`, `IO`,
   `TLS`, `MOUNT`, `SERVER`, `PUSH`, `INTERNAL`, `CLOSED`}: `URL` for an
   unparsable bind URL, `IO` for a port that cannot be bound, `MOUNT` for a

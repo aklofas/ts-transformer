@@ -34,6 +34,20 @@ fn closed(py: Python<'_>) -> PyErr {
     webrtc_err(py, HandleState::Closed)
 }
 
+/// `extract(v)`, with an int outside the target type's range as `None`
+/// instead of PyO3's `OverflowError`, so the caller raises its own
+/// documented error. Any other failure (`v` is not an int) is raised as is.
+fn int_in_range<'py, T>(
+    v: &Bound<'py, PyAny>,
+    extract: impl FnOnce(&Bound<'py, PyAny>) -> PyResult<T>,
+) -> PyResult<Option<T>> {
+    match extract(v) {
+        Ok(x) => Ok(Some(x)),
+        Err(_) if v.is_instance_of::<pyo3::types::PyInt>() => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "webrtc")?;
     m.add_class::<server::PyWhepServer>()?;

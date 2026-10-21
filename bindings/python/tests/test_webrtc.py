@@ -230,6 +230,16 @@ def test_use_after_close_raises_closed():
     assert "closed" in repr(m)
 
 
+def test_dropping_the_server_stops_its_mounts():
+    # A mount handle does not keep its server alive: the unreferenced
+    # server is collected at once and stops.
+    m = WhepServer.bind("whep://127.0.0.1:0").add_mount("/cam")
+    with pytest.raises(WebrtcError) as exc:
+        m.push_video(_TINY_IDR_AU, pts=Pts90khz(0), key_frame=True)
+    assert exc.value.kind == WebrtcErrorKind.CLOSED
+    assert m.stats().frames_pushed == 0
+
+
 def test_context_manager_closes():
     with WhepServer.bind("whep://127.0.0.1:0") as s:
         s.add_mount("/cam")
@@ -282,8 +292,18 @@ def test_invalid_mount_config_is_mount(server, cfg):
 
 
 def test_out_of_range_counts_are_mount(server):
-    for cfg in (MountConfig(sei_budget_bytes=-1), MountConfig(viewer_queue_packets=2**32)):
-        assert _kind_of(lambda: server.add_mount("/cam", cfg)) == WebrtcErrorKind.MOUNT
+    cfgs = [
+        MountConfig(sei_budget_bytes=-1),
+        MountConfig(viewer_queue_packets=2**32),
+        MountConfig(sei_budget_bytes=2**70),
+        MountConfig(viewer_queue_packets=-(2**70)),
+        MountConfig(kind=2**70),
+        MountConfig(audio=-(2**70)),
+        MountConfig(klv=2**70),
+    ]
+    kinds = [_kind_of(lambda: server.add_mount("/cam", cfg)) for cfg in cfgs]
+    assert kinds == [WebrtcErrorKind.MOUNT] * 7
+    assert server.stats().mounts == 0
 
 
 def test_push_errors(server):
@@ -295,8 +315,11 @@ def test_push_errors(server):
     )
     with pytest.raises(ValueError):
         m.push_klv(_klv_record(1.0), pts=Pts90khz(0), metadata_service_id=256)
-    with pytest.raises(ValueError):
-        m.push_klv(_klv_record(1.0), pts=Pts90khz(0), metadata_service_id=-1)
+    for bad in (-1, 2**70, -(2**70)):
+        with pytest.raises(ValueError):
+            m.push_klv(_klv_record(1.0), pts=Pts90khz(0), metadata_service_id=bad)
+    with pytest.raises(TypeError):
+        m.push_klv(_klv_record(1.0), pts=Pts90khz(0), metadata_service_id="0")
     oversize = b"\x00" * (256 * 1024 + 1)
     assert _kind_of(lambda: m.push_klv(oversize, pts=Pts90khz(0))) == WebrtcErrorKind.PUSH
     assert m.stats().klv_records_pushed == 0
