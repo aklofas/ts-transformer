@@ -410,27 +410,34 @@ fi
 # (see that leg's block below). The run holds WHEP_CONNECTIONS =
 # TOTAL_SECONDS / WHEP_RECONNECT_S browser connections, one per slot,
 # which must be at least two — one connection reconnects nothing.
+# The knob of a leg that will not run is not checked under --no-whep.
 WHEP_RECONNECT_S="${WHEP_RECONNECT_S:-600}"
-[[ "$WHEP_RECONNECT_S" =~ ^[0-9]+$ ]] || {
-  echo "soak.sh: WHEP_RECONNECT_S must be a positive integer (seconds), got: $WHEP_RECONNECT_S" >&2
-  exit 2
-}
-WHEP_RECONNECT_S=$(canon_int "$WHEP_RECONNECT_S" 9223372036854775807 WHEP_RECONNECT_S)
 # Each browser is ended WHEP_RELAUNCH_GAP_S before its slot ends, so the
 # next one starts on its own slot rather than late by a browser's
 # teardown and launch; the slots themselves are absolute, counted from
-# the loop's start, so the gaps never accumulate.
+# the loop's start, so the gaps never accumulate. `report soak` holds the
+# viewer report's own window to the slot less this gap
+# (`WHEP_RELAUNCH_GAP_S` in report/soak.rs).
 WHEP_RELAUNCH_GAP_S=3
-[[ "$WHEP_RECONNECT_S" -gt "$WHEP_RELAUNCH_GAP_S" ]] || {
-  echo "soak.sh: WHEP_RECONNECT_S must exceed the ${WHEP_RELAUNCH_GAP_S}s browser relaunch gap, got: $WHEP_RECONNECT_S" >&2
-  exit 2
-}
-WHEP_CONNECTION_S=$((WHEP_RECONNECT_S - WHEP_RELAUNCH_GAP_S))
-WHEP_CONNECTIONS=$((TOTAL_SECONDS / WHEP_RECONNECT_S))
-if [[ "$WHEP" -eq 1 && "$WHEP_CONNECTIONS" -lt 2 ]]; then
-  echo "soak.sh: WHEP_RECONNECT_S ($WHEP_RECONNECT_S) leaves fewer than two browser connections \
+WHEP_CONNECTION_S=0
+WHEP_CONNECTIONS=0
+if [[ "$WHEP" -eq 1 ]]; then
+  [[ "$WHEP_RECONNECT_S" =~ ^[0-9]+$ ]] || {
+    echo "soak.sh: WHEP_RECONNECT_S must be a positive integer (seconds), got: $WHEP_RECONNECT_S" >&2
+    exit 2
+  }
+  WHEP_RECONNECT_S=$(canon_int "$WHEP_RECONNECT_S" 9223372036854775807 WHEP_RECONNECT_S)
+  [[ "$WHEP_RECONNECT_S" -gt "$WHEP_RELAUNCH_GAP_S" ]] || {
+    echo "soak.sh: WHEP_RECONNECT_S must exceed the ${WHEP_RELAUNCH_GAP_S}s browser relaunch gap, got: $WHEP_RECONNECT_S" >&2
+    exit 2
+  }
+  WHEP_CONNECTION_S=$((WHEP_RECONNECT_S - WHEP_RELAUNCH_GAP_S))
+  WHEP_CONNECTIONS=$((TOTAL_SECONDS / WHEP_RECONNECT_S))
+  [[ "$WHEP_CONNECTIONS" -ge 2 ]] || {
+    echo "soak.sh: WHEP_RECONNECT_S ($WHEP_RECONNECT_S) leaves fewer than two browser connections \
 in a ${TOTAL_SECONDS}s run — lower it, or pass --no-whep" >&2
-  exit 2
+    exit 2
+  }
 fi
 # The four FIXED-impairment knobs. Used only under --fixed-impairment:
 # the default run drives both proxies from a seeded --schedule instead,
@@ -1344,9 +1351,10 @@ fi
 # each is ended by `timeout` WHEP_RELAUNCH_GAP_S before its slot ends,
 # and the next starts on its own slot — the reconnect this leg exists to
 # exercise, WHEP_CONNECTIONS - 1 times. The server is never told: a
-# viewer leaving is a session the server reaps, a viewer arriving a
-# session it starts at the next keyframe, with the data channel opening
-# a moment later.
+# viewer leaving is a session the server closes about 40 s later, after
+# ICE reports it disconnected (`sessions_reaped_disconnected`, the 30 s
+# disconnect grace), a viewer arriving a session it starts at the next
+# keyframe, with the data channel opening a moment later.
 #
 # The console of every connection is parsed into `whep/viewer-report.json`
 # (one object per connection: the once-a-second FRAMES and AUDIO samples,
@@ -1356,15 +1364,19 @@ fi
 # beside the server's own counters (`serve-whep --json`,
 # `--whep-serve-report`): `whep_frames_continuous` (every browser was
 # ended by its own timeout, reported no error, decoded its first frame
-# within 5 samples and never stalled over 2 s), `whep_klv_sei_equals_dc`
-# (per connection the SEI set equals the data-channel set, a record on
-# one carriage only allowed in the first 3 or last 2 of its carriage —
-# the data channel opens after the session is connected, and the kill
-# lands between two copies), `whep_reconnects_observed` (the viewer made
+# within 5 samples, never stalled over 2 s and decoded at least 0.9 of
+# the served frame rate over its remaining samples; the server dropped
+# no packet for a full queue), `whep_klv_sei_equals_dc` (per connection
+# the SEI set equals the data-channel set, each carriage at least 0.9 of
+# the served record rate, every record's two copies on the same (pts,
+# rtp timestamp); a record on one carriage only allowed in the first 3
+# or last 2 of its carriage — the data channel opens after the session
+# is connected, and the kill lands between two copies; the server
+# dropped no record), `whep_reconnects_observed` (the viewer made
 # exactly the declared connections on the declared slot, and the server
 # saw exactly that many sessions). The matrix cells, not this leg, gate
-# the KLV content against the generator and the frame binding: here a
-# connection's window is wherever its slot fell in the schedule.
+# the KLV content against the generator: here a connection's window is
+# wherever its slot fell in the schedule.
 #
 # Worker roles: `whep-serve`, and `whep-viewer` = the loop below, a
 # long-lived subshell; each Chrome it starts exits by design at the end
@@ -1475,9 +1487,14 @@ if [[ "$WHEP" -eq 1 ]]; then
       # Chrome 155 writes `[...:INFO:CONSOLE:33] "text", source: ...`
       # (older builds `CONSOLE(33)`); keep the text of every console line.
       sed -n 's/.*:CONSOLE[^]]*\] "\(.*\)", source: .*/\1/p' "$err" >"$console"
+      # Nothing reads the raw stderr again once the console is extracted
+      # (whep_connection_json greps it for ERROR:CONSOLE, so the gzip
+      # comes after): about 3.5 MB per 10-minute connection, 2 GB over a
+      # 72-hour run uncompressed, ~0.3 MB each gzipped.
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) viewer: connection $k ended rc=$rc: $(grep -c '' "$console") console line(s), $(awk '$1 == "FRAMES" { v = $2 } END { print v + 0 }' "$console") frames, KLV via sei $(awk '$1 == "KLV" && $4 == "sei"' "$console" | wc -l) / dc $(awk '$1 == "KLV" && $4 == "dc"' "$console" | wc -l)"
       [[ "$rc" -eq 124 ]] || failed=$((failed + 1))
       whep_connection_json "$k" "$started" "$rc" "$console" "$err" >>"$connections"
+      gzip -f "$err"
     done
     rm -rf "$profile_dir"
     jq -s --argjson reconnect_s "$WHEP_RECONNECT_S" --argjson connection_s "$WHEP_CONNECTION_S" \

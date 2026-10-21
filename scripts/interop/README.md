@@ -1192,9 +1192,11 @@ under `docs/webrtc/` loaded unmodified, `dedupe: false` so every record
 arrives from BOTH carriages — one browser per `WHEP_RECONNECT_S` slot
 counted from the loop's start, each ended by `timeout` 3 s before its
 slot ends so the next starts on its own slot. The server is never told: a
-browser leaving is a session it reaps on ICE timeout, a browser arriving a
-session it starts at the next keyframe, with the data channel opening a
-moment later. `WHEP_CONNECTIONS = run / WHEP_RECONNECT_S` connections,
+browser leaving is a session the server closes about 40 s later, after ICE
+reports it disconnected (`sessions_reaped_disconnected`, the 30 s
+disconnect grace; until then its data-channel sends still count in
+`klv_dc_messages_sent`), a browser arriving a session it starts at the next
+keyframe, with the data channel opening a moment later. `WHEP_CONNECTIONS = run / WHEP_RECONNECT_S` connections,
 at least two, so at least one reconnect; a browser that exits other than
 by its timeout makes the loop exit 1, which fails `worker_exits`. The
 loop idles to the end of the run after its last connection, and
@@ -1208,8 +1210,10 @@ digests (sha256 over the sorted per-record digests, `verify.rs`'s
 `klv_set_hash`), every record seen on one carriage only with its position
 on that carriage, the copies disagreeing on (PTS, RTP timestamp), the
 page's `ERROR` lines and the browser's `ERROR:CONSOLE` lines. The raw
-console and stderr of every connection stay under `whep/viewer/` (about
-3.5 MB of stderr per 10-minute connection).
+console of every connection stays under `whep/viewer/`, and its stderr is
+gzipped once the console is extracted (about 3.5 MB per 10-minute
+connection at `--log-level=0`, which must stay because the console lines
+arrive at INFO; about 0.3 MB gzipped).
 
 - **Declared** — `legs.whep` carries the profile (`baseline` under
   `--profile auto`, not part of the seeded draw), `klv_set: "compact"`,
@@ -1221,29 +1225,42 @@ console and stderr of every connection stay under `whep/viewer/` (about
 - **Observed** — the viewer report above, and `serve-whep --json`'s
   counters (`whep/serve-counters.json`: the profile and mount kind served,
   the mount's `MountStats`, the server's `ServerStats` with
-  `sessions_total`, and each session still present at the end). `report
-  soak` takes both with `--whep-viewer-report <path> --whep-serve-report
-  <path>`, given together.
+  `sessions_total`, the window served in `seconds`, and each session
+  still present at the end). `report soak` takes both with
+  `--whep-viewer-report <path> --whep-serve-report <path>`, given together.
 - **Checked** — **`whep_reconnects_observed_whep`**, non-provisional: the
   viewer report lists exactly `viewer_connections` connections on the
-  declared slot AND the server's `sessions_total` equals it — two
-  independent counts of the same reconnects, one per side.
+  declared slot, its own per-browser window is that slot less the 3 s
+  relaunch gap, AND the server's `sessions_total` equals the declared
+  count — two independent counts of the same reconnects, one per side.
   **`whep_frames_continuous_whep`**: every connection was ended by its
   own timeout (browser exit 124), reported no error, decoded its first
   frame within 5 samples and, from then on, never went more than 2
   samples without `FRAMES` rising — no gap over 2 s except at a
-  reconnect — with at most 3 samples fewer than its planned seconds.
+  reconnect — with at most 3 samples fewer than its planned seconds, and
+  its last `FRAMES` sample is at least 0.9 × the served frame rate
+  (`frames_pushed / seconds` from the serve report) × (samples − 5), so a
+  decode that only ticks fails on volume (on the one-hour run the floor
+  is 15 957 frames against at least 17 857 decoded). The mount's
+  `viewer_packets_dropped_queue_full` and `demux_nonconformant` must be 0.
   **`whep_klv_sei_equals_dc_whep`**: in every connection the SEI record
-  set equals the data-channel set and neither is empty. A record on one
-  carriage only is allowed among the first 3 of its carriage (the data
-  channel opens a moment after the session is connected, so a record
-  bound to a frame sent in that moment reaches the viewer in the SEI
-  only; the server counts it in `klv_dc_dropped_viewer`) or the last 2
-  (the kill lands between a record's two copies); the report counts
-  those as `klv_unpaired_at_edges`. The copies disagreeing on (PTS, RTP
-  timestamp) are recorded, not gated here: the matrix cells gate the
-  frame binding and the KLV content against the generator, and a soak
-  connection's window is wherever its slot fell in the schedule.
+  set equals the data-channel set, each carriage holds at least 0.9 × the
+  served record rate (`klv_records_pushed / seconds`) × (samples − 5)
+  records (on the one-hour run 5319 against at least 5961), and no
+  record's two copies disagree on (PTS, RTP timestamp) — both come from
+  one server-side binding, and only a run long enough to cross a PTS
+  wrap or a clock rebase can see them differ, so the soak gates it. A
+  record on one carriage only is allowed among the first 3 of its
+  carriage (the data channel opens a moment after the session is
+  connected, so a record bound to a frame sent in that moment reaches
+  the viewer in the SEI only; the server counts it in
+  `klv_dc_dropped_viewer`) or the last 2 (the kill lands between a
+  record's two copies); the report counts those as
+  `klv_unpaired_at_edges`. The mount's `klv_records_dropped_unbound`,
+  `klv_sei_dropped_oversize` and `klv_dc_dropped_oversize` must be 0.
+  The matrix cells, not this leg, gate the KLV content against the
+  generator: a soak connection's window is wherever its slot fell in the
+  schedule.
   **`profile_declared_whep`**: the server's counters name the declared
   profile and mount kind. `schedule_declared_`, `reconnect_mode_declared_`
   and the six `corruption_*_` verdicts read "not applicable" with the

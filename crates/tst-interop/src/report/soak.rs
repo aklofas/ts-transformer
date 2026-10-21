@@ -114,6 +114,19 @@ const WHEP_KLV_EDGE_HEAD: u64 = 3;
 /// can land between a record's two copies.
 const WHEP_KLV_EDGE_TAIL: u64 = 2;
 
+/// The fraction of the served rate a connection must reach over its
+/// samples after the first-frame window: records per carriage against
+/// `klv_records_pushed / seconds`, the last `FRAMES` sample against
+/// `frames_pushed / seconds`. A connection that only ticks, or that
+/// saw a handful of records on both carriages, fails on volume.
+const WHEP_VOLUME_FLOOR: f64 = 0.9;
+
+/// `soak.sh`'s `WHEP_RELAUNCH_GAP_S`: each browser is ended this many
+/// seconds before its slot ends, so a connection's window is the slot
+/// minus this. `whep_reconnects_observed` holds the viewer report's
+/// own `connection_s` to it, so the report cannot state its window.
+const WHEP_RELAUNCH_GAP_S: u64 = 3;
+
 /// The per-leg corruption verdict family, in the order it is
 /// emitted. Named once so the tap-disabled and no-attribution arms
 /// cannot drift from the judged arm — a verdict missing from one of
@@ -1316,6 +1329,9 @@ pub struct WhepUnpairedRecord {
 pub struct WhepServeReport {
     pub profile: Option<String>,
     pub mount_kind: Option<String>,
+    /// The window served (`serve-whep --seconds`): the served rates the
+    /// volume floors use are the mount's push counters over it.
+    pub seconds: f64,
     pub viewer_connected_before_push: bool,
     pub mount: WhepMountCounters,
     pub server: WhepServerCounters,
@@ -2644,9 +2660,9 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         }
 
         verdicts.push(whep_reconnects_verdict(leg_name, declared, viewer, serve));
-        let (frames_verdict, frames_decoded) = whep_frames_verdict(leg_name, viewer);
+        let (frames_verdict, frames_decoded) = whep_frames_verdict(leg_name, viewer, serve);
         verdicts.push(frames_verdict);
-        let (klv_verdict, unpaired_at_edges) = whep_klv_verdict(leg_name, viewer);
+        let (klv_verdict, unpaired_at_edges) = whep_klv_verdict(leg_name, viewer, serve);
         verdicts.push(klv_verdict);
 
         whep_leg_results.push(WhepLegResult {
@@ -2985,7 +3001,9 @@ fn whep_reconnects_verdict(
             ),
         };
     };
-    let pass = observed == expected && sessions == expected && viewer.reconnect_s == slot;
+    let window_ok = viewer.connection_s.saturating_add(WHEP_RELAUNCH_GAP_S) == slot;
+    let pass =
+        observed == expected && sessions == expected && viewer.reconnect_s == slot && window_ok;
     SoakVerdict {
         name,
         pass,
@@ -2993,27 +3011,89 @@ fn whep_reconnects_verdict(
         detail: format!(
             "{leg_name}: {observed} browser connection(s) = {} reconnect(s) against {} \
              expected ({expected} declared connections); the server counted {sessions} \
-             session(s); the viewer loop ran a {}s slot against the declared {slot}s",
+             session(s); the viewer loop ran a {}s slot against the declared {slot}s, each \
+             browser given {} s ({} = the slot less the {WHEP_RELAUNCH_GAP_S} s relaunch gap)",
             observed.saturating_sub(1),
             expected.saturating_sub(1),
-            viewer.reconnect_s
+            viewer.reconnect_s,
+            viewer.connection_s,
+            if window_ok { "as expected" } else { "NOT" }
         ),
     }
 }
 
+/// The served rate per second of `count` over the serve report's
+/// window, or `None` when the report names no window.
+fn whep_served_rate(serve: &WhepServeReport, count: u64) -> Option<f64> {
+    (serve.seconds.is_finite() && serve.seconds > 0.0).then(|| count as f64 / serve.seconds)
+}
+
+/// The volume floor for one connection: [`WHEP_VOLUME_FLOOR`] of the
+/// served rate over the samples after the first-frame window.
+fn whep_volume_floor(rate: f64, samples: usize) -> f64 {
+    WHEP_VOLUME_FLOOR * rate * samples.saturating_sub(WHEP_FIRST_FRAME_SAMPLES) as f64
+}
+
 /// `whep_frames_continuous`: every connection was ended by the loop's
 /// own timeout, reported no error, decoded its first frame within
-/// [`WHEP_FIRST_FRAME_SAMPLES`] samples and from then on never went
-/// more than [`WHEP_MAX_STALL_SAMPLES`] samples without the decoded
-/// frame count rising — no gap over 2 s except at a reconnect. Returns
-/// the verdict and the frames decoded over the run.
-fn whep_frames_verdict(leg_name: &str, viewer: &WhepViewerReport) -> (SoakVerdict, u64) {
+/// [`WHEP_FIRST_FRAME_SAMPLES`] samples, from then on never went more
+/// than [`WHEP_MAX_STALL_SAMPLES`] samples without the decoded frame
+/// count rising — no gap over 2 s except at a reconnect — and decoded at
+/// least [`WHEP_VOLUME_FLOOR`] of the served frame rate over its
+/// remaining samples; and the server dropped no video packet for a
+/// full queue and demuxed nothing non-conformant. Returns the verdict
+/// and the frames decoded over the run.
+fn whep_frames_verdict(
+    leg_name: &str,
+    viewer: &WhepViewerReport,
+    serve: &WhepServeReport,
+) -> (SoakVerdict, u64) {
     let mut problems: Vec<String> = Vec::new();
     let mut longest_stall = 0usize;
     let mut frames_decoded = 0u64;
+    let mut lowest_margin: Option<(u64, f64, u64)> = None;
+    if viewer.connections.is_empty() {
+        problems.push("the viewer report lists no connection".to_string());
+    }
+    let frame_rate = whep_served_rate(serve, serve.mount.frames_pushed);
+    if frame_rate.is_none() {
+        problems.push(format!(
+            "the serve report names no window (seconds {}), so there is no served frame \
+             rate to hold the connections to",
+            serve.seconds
+        ));
+    }
+    for (counter, value) in [
+        (
+            "viewer_packets_dropped_queue_full",
+            serve.mount.viewer_packets_dropped_queue_full,
+        ),
+        ("demux_nonconformant", serve.mount.demux_nonconformant),
+    ] {
+        if value > 0 {
+            problems.push(format!(
+                "the server's mount counter {counter} is {value}, not 0"
+            ));
+        }
+    }
     for c in &viewer.connections {
         let k = c.index;
-        frames_decoded += c.frames.last().copied().unwrap_or(0);
+        let last = c.frames.last().copied().unwrap_or(0);
+        frames_decoded += last;
+        if let Some(rate) = frame_rate {
+            let floor = whep_volume_floor(rate, c.frames.len());
+            if (last as f64) < floor {
+                problems.push(format!(
+                    "connection {k}: {last} frames decoded over {} sample(s), below the \
+                     floor of {floor:.0} ({WHEP_VOLUME_FLOOR} x {rate:.1} frames/s served x \
+                     (samples - {WHEP_FIRST_FRAME_SAMPLES}))",
+                    c.frames.len()
+                ));
+            }
+            if lowest_margin.is_none_or(|(_, f, l)| (last as f64) - floor < l as f64 - f) {
+                lowest_margin = Some((k, floor, last));
+            }
+        }
         if c.browser_rc != WHEP_BROWSER_TIMED_OUT {
             problems.push(format!(
                 "connection {k}: browser exit {}, not ended by the loop's timeout \
@@ -3078,13 +3158,18 @@ fn whep_frames_verdict(leg_name: &str, viewer: &WhepViewerReport) -> (SoakVerdic
         pass: problems.is_empty(),
         provisional: false,
         detail: if problems.is_empty() {
+            let (k, floor, last) = lowest_margin.unwrap_or((0, 0.0, 0));
             format!(
                 "{leg_name}: {} connection(s) of {} s: each decoded its first frame within \
-                 {WHEP_FIRST_FRAME_SAMPLES} samples and never stalled over \
-                 {WHEP_MAX_STALL_SAMPLES} s (longest stall {longest_stall} s); {frames_decoded} \
-                 frames decoded in all",
+                 {WHEP_FIRST_FRAME_SAMPLES} samples, never stalled over \
+                 {WHEP_MAX_STALL_SAMPLES} s (longest stall {longest_stall} s) and decoded at \
+                 least {WHEP_VOLUME_FLOOR} of the served {:.1} frames/s (tightest: connection \
+                 {k}, {last} frames against a floor of {floor:.0}); {frames_decoded} frames \
+                 decoded in all; the server dropped no packet for a full queue and demuxed \
+                 nothing non-conformant",
                 viewer.connections.len(),
-                viewer.connection_s
+                viewer.connection_s,
+                frame_rate.unwrap_or(0.0)
             )
         } else {
             format!(
@@ -3098,23 +3183,68 @@ fn whep_frames_verdict(leg_name: &str, viewer: &WhepViewerReport) -> (SoakVerdic
 }
 
 /// `whep_klv_sei_equals_dc`: in every connection the browser saw the
-/// same set of KLV records in the SEI as on the data channel, and at
-/// least one record. A record on one carriage only is allowed within
-/// [`WHEP_KLV_EDGE_HEAD`] of its carriage's head or
+/// same set of KLV records in the SEI as on the data channel, each
+/// carriage at least [`WHEP_VOLUME_FLOOR`] of the served record rate
+/// over the samples after the first-frame window, and every record's
+/// two copies named the same (PTS, RTP timestamp); and the server
+/// dropped no record unbound or oversize. A record on one carriage only
+/// is allowed within [`WHEP_KLV_EDGE_HEAD`] of its carriage's head or
 /// [`WHEP_KLV_EDGE_TAIL`] of its tail, the two moments a connection's
 /// two carriages are not yet, or no longer, both delivering. Returns the
 /// verdict and the number of such edge records.
-fn whep_klv_verdict(leg_name: &str, viewer: &WhepViewerReport) -> (SoakVerdict, u64) {
+fn whep_klv_verdict(
+    leg_name: &str,
+    viewer: &WhepViewerReport,
+    serve: &WhepServeReport,
+) -> (SoakVerdict, u64) {
     let mut problems: Vec<String> = Vec::new();
     let mut at_edges = 0u64;
     let mut sei_total = 0u64;
     let mut dc_total = 0u64;
-    let mut disagreeing = 0u64;
+    let mut lowest_margin: Option<(u64, f64, u64)> = None;
+    if viewer.connections.is_empty() {
+        problems.push("the viewer report lists no connection".to_string());
+    }
+    let klv_rate = whep_served_rate(serve, serve.mount.klv_records_pushed);
+    if klv_rate.is_none() {
+        problems.push(format!(
+            "the serve report names no window (seconds {}), so there is no served record \
+             rate to hold the connections to",
+            serve.seconds
+        ));
+    }
+    for (counter, value) in [
+        (
+            "klv_records_dropped_unbound",
+            serve.mount.klv_records_dropped_unbound,
+        ),
+        (
+            "klv_sei_dropped_oversize",
+            serve.mount.klv_sei_dropped_oversize,
+        ),
+        (
+            "klv_dc_dropped_oversize",
+            serve.mount.klv_dc_dropped_oversize,
+        ),
+    ] {
+        if value > 0 {
+            problems.push(format!(
+                "the server's mount counter {counter} is {value}, not 0"
+            ));
+        }
+    }
     for c in &viewer.connections {
         let k = c.index;
         sei_total += c.klv_sei;
         dc_total += c.klv_dc;
-        disagreeing += c.klv_copies_disagreeing;
+        if c.klv_copies_disagreeing > 0 {
+            problems.push(format!(
+                "connection {k}: {} record(s) whose SEI and data-channel copies name \
+                 different (PTS, RTP timestamp) pairs — the two copies come from one \
+                 server-side binding and never legitimately disagree",
+                c.klv_copies_disagreeing
+            ));
+        }
         if c.klv_sei == 0 || c.klv_dc == 0 {
             problems.push(format!(
                 "connection {k}: {} record(s) via SEI, {} via the data channel — a carriage \
@@ -3122,6 +3252,23 @@ fn whep_klv_verdict(leg_name: &str, viewer: &WhepViewerReport) -> (SoakVerdict, 
                 c.klv_sei, c.klv_dc
             ));
             continue;
+        }
+        if let Some(rate) = klv_rate {
+            let floor = whep_volume_floor(rate, c.frames.len());
+            let fewest = c.klv_sei.min(c.klv_dc);
+            if (fewest as f64) < floor {
+                problems.push(format!(
+                    "connection {k}: {} record(s) via SEI, {} via the data channel over {} \
+                     sample(s), below the floor of {floor:.0} ({WHEP_VOLUME_FLOOR} x \
+                     {rate:.1} records/s served x (samples - {WHEP_FIRST_FRAME_SAMPLES}))",
+                    c.klv_sei,
+                    c.klv_dc,
+                    c.frames.len()
+                ));
+            }
+            if lowest_margin.is_none_or(|(_, f, l)| (fewest as f64) - floor < l as f64 - f) {
+                lowest_margin = Some((k, floor, fewest));
+            }
         }
         if c.klv_sei_set_sha256 == c.klv_dc_set_sha256 {
             continue;
@@ -3151,14 +3298,18 @@ fn whep_klv_verdict(leg_name: &str, viewer: &WhepViewerReport) -> (SoakVerdict, 
         pass: problems.is_empty(),
         provisional: false,
         detail: if problems.is_empty() {
+            let (k, floor, fewest) = lowest_margin.unwrap_or((0, 0.0, 0));
             format!(
                 "{leg_name}: {} connection(s): the SEI record set equals the data-channel set \
                  in each ({sei_total} record(s) via SEI, {dc_total} via the data channel; \
                  {at_edges} unpaired only at a connection's edges — the first \
                  {WHEP_KLV_EDGE_HEAD} records before the data channel opened or the last \
-                 {WHEP_KLV_EDGE_TAIL} as the browser was ended); copies disagreeing on \
-                 (PTS, RTP timestamp): {disagreeing} (recorded, gated by the matrix cells)",
-                viewer.connections.len()
+                 {WHEP_KLV_EDGE_TAIL} as the browser was ended), each carriage at least \
+                 {WHEP_VOLUME_FLOOR} of the served {:.1} records/s (tightest: connection {k}, \
+                 {fewest} records against a floor of {floor:.0}), and no copy pair disagreed \
+                 on (PTS, RTP timestamp); the server dropped no record unbound or oversize",
+                viewer.connections.len(),
+                klv_rate.unwrap_or(0.0)
             )
         } else {
             format!(
@@ -6926,15 +7077,22 @@ pub(crate) mod tests {
             connection_s: 597,
             connections: (1..=connections).map(|k| whep_connection(k, 596)).collect(),
         };
+        // An hour served at 30 frames/s and 10 records/s: the rates the
+        // volume floors hold each connection to.
         let serve = WhepServeReport {
             profile: Some("baseline".to_string()),
             mount_kind: Some("mp2t".to_string()),
+            seconds: 3600.0,
             viewer_connected_before_push: true,
+            mount: WhepMountCounters {
+                frames_pushed: 108_000,
+                klv_records_pushed: 36_000,
+                ..Default::default()
+            },
             server: WhepServerCounters {
                 sessions_total: connections,
                 ..Default::default()
             },
-            ..Default::default()
         };
         inputs
             .whep_legs
@@ -6959,6 +7117,20 @@ pub(crate) mod tests {
         let v = verdict(&r, "whep_reconnects_observed_whep");
         assert!(
             v.detail.contains("5 reconnect(s) against 5"),
+            "{}",
+            v.detail
+        );
+        // The floors show their arithmetic: 0.9 x 30 x (596 - 5) = 15957
+        // frames and 0.9 x 10 x 591 = 5319 records.
+        let v = verdict(&r, "whep_frames_continuous_whep");
+        assert!(
+            v.detail.contains("17880 frames against a floor of 15957"),
+            "{}",
+            v.detail
+        );
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(
+            v.detail.contains("5960 records against a floor of 5319"),
             "{}",
             v.detail
         );
@@ -7098,6 +7270,31 @@ pub(crate) mod tests {
         );
         assert!(!r.overall_pass);
 
+        // The tail allowance is exactly WHEP_KLV_EDGE_TAIL records: the
+        // second-to-last record passes, the one before it fails.
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[1];
+        c.klv_sei = c.klv_dc - 1;
+        c.klv_sei_set_sha256 = "b".repeat(64);
+        c.klv_unpaired = vec![unpaired("dc", 5958, 1)];
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(v.pass, "{}", v.detail);
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[1];
+        c.klv_sei = c.klv_dc - 1;
+        c.klv_sei_set_sha256 = "b".repeat(64);
+        c.klv_unpaired = vec![unpaired("dc", 5957, 2)];
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail
+                .contains("a record via dc (5957 record(s) before it, 2 after)"),
+            "{}",
+            v.detail
+        );
+
         // Differing sets with nothing to locate the difference fail too.
         let mut inputs = whep_inputs(2, Some(2));
         let c = &mut inputs.whep_legs[0].1.viewer.connections[0];
@@ -7107,6 +7304,139 @@ pub(crate) mod tests {
         assert!(!v.pass, "{}", v.detail);
         assert!(
             v.detail.contains("lists no unpaired record"),
+            "{}",
+            v.detail
+        );
+    }
+
+    /// A connection that ticks at 1 frame/s, or that saw a tenth of the
+    /// served records on both carriages, fails on volume; the floor is
+    /// read from the serve report, so a report with no window fails too.
+    #[test]
+    fn whep_content_verdicts_hold_each_connection_to_the_served_rate() {
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[1];
+        c.frames = (1..=596).collect();
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_frames_continuous_whep");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(
+            v.detail.contains(
+                "connection 2: 596 frames decoded over 596 sample(s), below the floor of 15957"
+            ),
+            "{}",
+            v.detail
+        );
+        assert!(!r.overall_pass);
+
+        let mut inputs = whep_inputs(2, Some(2));
+        let c = &mut inputs.whep_legs[0].1.viewer.connections[0];
+        c.klv_sei = 596;
+        c.klv_dc = 596;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(
+            v.detail.contains(
+                "connection 1: 596 record(s) via SEI, 596 via the data channel over 596 \
+                 sample(s), below the floor of 5319"
+            ),
+            "{}",
+            v.detail
+        );
+
+        let mut inputs = whep_inputs(2, Some(2));
+        inputs.whep_legs[0].1.serve.seconds = 0.0;
+        let r = build_soak_results(inputs).unwrap();
+        for name in ["whep_frames_continuous_whep", "whep_klv_sei_equals_dc_whep"] {
+            let v = verdict(&r, name);
+            assert!(!v.pass, "{name}: {}", v.detail);
+            assert!(v.detail.contains("names no window"), "{name}: {}", v.detail);
+        }
+    }
+
+    /// Every server-side drop counter is gated at 0, each named in the
+    /// verdict it belongs to.
+    #[test]
+    fn whep_server_drop_counters_fail_the_leg_by_name() {
+        for (counter, verdict_name) in [
+            ("klv_records_dropped_unbound", "whep_klv_sei_equals_dc_whep"),
+            ("klv_sei_dropped_oversize", "whep_klv_sei_equals_dc_whep"),
+            ("klv_dc_dropped_oversize", "whep_klv_sei_equals_dc_whep"),
+            (
+                "viewer_packets_dropped_queue_full",
+                "whep_frames_continuous_whep",
+            ),
+            ("demux_nonconformant", "whep_frames_continuous_whep"),
+        ] {
+            let mut inputs = whep_inputs(2, Some(2));
+            let m = &mut inputs.whep_legs[0].1.serve.mount;
+            match counter {
+                "klv_records_dropped_unbound" => m.klv_records_dropped_unbound = 1,
+                "klv_sei_dropped_oversize" => m.klv_sei_dropped_oversize = 1,
+                "klv_dc_dropped_oversize" => m.klv_dc_dropped_oversize = 1,
+                "viewer_packets_dropped_queue_full" => m.viewer_packets_dropped_queue_full = 1,
+                "demux_nonconformant" => m.demux_nonconformant = 1,
+                _ => unreachable!(),
+            }
+            let r = build_soak_results(inputs).unwrap();
+            let v = verdict(&r, verdict_name);
+            assert!(!v.pass && !v.provisional, "{counter}: {}", v.detail);
+            assert!(
+                v.detail
+                    .contains(&format!("mount counter {counter} is 1, not 0")),
+                "{counter}: {}",
+                v.detail
+            );
+            assert!(!r.overall_pass);
+        }
+    }
+
+    /// A copy pair disagreeing on (PTS, RTP timestamp) fails the
+    /// connection it was seen in: both copies come from one binding.
+    #[test]
+    fn whep_klv_sei_equals_dc_fails_on_a_disagreeing_copy_pair() {
+        let mut inputs = whep_inputs(3, Some(3));
+        inputs.whep_legs[0].1.viewer.connections[1].klv_copies_disagreeing = 1;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(!v.pass && !v.provisional, "{}", v.detail);
+        assert!(
+            v.detail
+                .contains("connection 2: 1 record(s) whose SEI and data-channel copies"),
+            "{}",
+            v.detail
+        );
+        assert_eq!(r.whep_legs[0].klv_copies_disagreeing, 1);
+        assert!(!r.overall_pass);
+    }
+
+    /// An empty connection list is a failure of both content verdicts,
+    /// not a vacuous pass, and the viewer report's own window must be
+    /// the slot less the relaunch gap.
+    #[test]
+    fn whep_verdicts_refuse_an_empty_report_and_a_self_stated_window() {
+        let mut inputs = whep_inputs(2, Some(2));
+        inputs.whep_legs[0].1.viewer.connections.clear();
+        let r = build_soak_results(inputs).unwrap();
+        for name in ["whep_frames_continuous_whep", "whep_klv_sei_equals_dc_whep"] {
+            let v = verdict(&r, name);
+            assert!(!v.pass, "{name}: {}", v.detail);
+            assert!(
+                v.detail.contains("lists no connection"),
+                "{name}: {}",
+                v.detail
+            );
+        }
+
+        let mut inputs = whep_inputs(2, Some(2));
+        inputs.whep_legs[0].1.viewer.connection_s = 0;
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "whep_reconnects_observed_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail
+                .contains("each browser given 0 s (NOT = the slot less the 3 s"),
             "{}",
             v.detail
         );
