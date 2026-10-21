@@ -810,6 +810,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   channel.
 - An H.265 keyframe is an IRAP picture (BLA, IDR or CRA); an H.264 keyframe
   is an IDR picture.
+- The `klv` data channel is opened by the server through DCEP, so any WHEP
+  client whose offer carries a data-channel section (create any data channel
+  before `createOffer`) receives it in `ondatachannel` with the label `klv`;
+  a pre-negotiated channel (id 0) was visible only to a page that created
+  id 0 itself. A viewer whose offer has no data-channel section gets video,
+  with KLV in SEI, and no channel.
+- `PATCH /<mount>/sessions/<id>` is answered with 204: the trickle-ICE
+  fragment is read and ignored (ICE-lite needs no remote candidates), 404
+  for an unknown session, 401 without the bearer token; a `PATCH` elsewhere
+  is still 405. Common WHEP players treat any other PATCH status as fatal.
+- `packetize::DEFAULT_MTU_PAYLOAD` is 1180 bytes (was 1200), so the RTP
+  packet with str0m's header extensions and the SRTP tag stays at or under
+  the 1200-byte packet every other WebRTC sender emits.
+- `MountStats::frames_pts_reordered` (JVM `framesPtsReordered`) counts
+  video frames whose PTS is below the previous frame's within the rebase
+  window. WebRTC carries frames in decode order with the RTP timestamp as
+  the presentation time, so a B-frame source is counted and plays badly;
+  feed I/P-only streams.
 - An offer that gives one payload type two formats (an `rtx` payload whose
   `apt` names two codecs, or one number mapped to different formats in two
   media sections) is answered with 400 before str0m sees it; str0m asserts
