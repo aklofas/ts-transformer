@@ -38,6 +38,7 @@ Start here if your job is producing MPEG-TS bytes: files, fixtures, multi-stream
 - **[Send MPEG-TS over RIST](/docs/cookbook/sending/rist.md)** — ARQ-recovered UDP; Simple + Main profiles; AES PSK encryption.
 - **[Publish MPEG-TS as an HLS stream](/docs/cookbook/sending/hls.md)** — `.ts` segments + rolling `.m3u8`; LIVE/EVENT/VOD + `finish_serving`; optional built-in HTTP server.
 - **[Send KLV over HLS to a browser (hls.js)](/docs/cookbook/sending/hls-klv-to-web.md)** — MISB KLV inside HLS segments; hls.js pulls it via the native `misbklv` path or a UL-anchored fallback.
+- **[Serve a live stream to a browser over WebRTC (WHEP)](/docs/cookbook/sending/whep-browser-playback.md)** — A `WhepServer` mount fed with MPEG-TS; the reference player shows the video with each KLV record locked to its frame.
 - **[Relay a captured `.ts` file over SRT](/docs/cookbook/sending/relay-file-to-srt.md)** — Replay a capture: regression-testing receivers, rebroadcasting an archive.
 - **[Use a custom (non-SRT) transport](/docs/cookbook/sending/custom-transport.md)** — The sender shells fit but the wire is your own protocol or an in-memory harness.
 
@@ -103,3 +104,4 @@ Only examples explicitly invoked via `cargo run -p tst-examples --example <name>
 | `recv_rtsp_h264` | [Ingest H.264 from an RTSP camera](/docs/cookbook/receiving/recv-rtsp-h264-to-ts.md) |
 | `recv_rtsp_publish` | [Accept RTSP publishers](/docs/cookbook/receiving/rtsp-publish-ingest.md) |
 | `send_tcp` | [Send MPEG-TS over TCP](/docs/cookbook/sending/tcp.md) |
+| `serve_whep` | [Serve a live stream to a browser over WebRTC (WHEP)](/docs/cookbook/sending/whep-browser-playback.md) |
