@@ -109,11 +109,11 @@ the raw-byte parser also checks PCR cadence, AV1 carriage mode, media
 counts per program, and an observed PTS wrap. See "What each profile's
 oracle proves" below for the individual checks.
 
-**Current census: 159 cells — 94 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0
+**Current census: 161 cells — 96 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0
 SKIPPED — measured at realistic access-unit sizes**
-([run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134),
-`workflow_dispatch`, 2026-10-09 at `41ed12e4`, `--seconds 10`, shape
-`full-159`, empty allowed-skip list, no stale expectation). The count is `[census] full_cells` in `scripts/interop/expectations.toml`; it is 161 since the two `whep/*` browser cells (headless Chrome playing a WHEP mount with the reference player, see `scripts/interop/README.md`) were declared, and the next full run reads `full-161`. The two cells
+([run 39687057760](https://github.com/aklofas/ts-transformer/actions/runs/39687057760),
+`workflow_dispatch`, 2026-10-21 at `907adb30`, shape
+`full-161`, empty allowed-skip list, no stale expectation). The count is `[census] full_cells` in `scripts/interop/expectations.toml`; it moved from 159 to 161 when the two `whep/*` browser cells (headless Chrome playing a WHEP mount with the reference player, see `scripts/interop/README.md`) were declared; the 159-cell figures below are the earlier runs. The two cells
 added on 2026-10-08 both pass, as they did on their first CI run
 ([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566), 2026-10-08 at `945911d4`, the same census). Each has a GStreamer `rtspclientsink`
 publishing into `tst-interop recv`'s RTSP publish mount:
@@ -182,7 +182,7 @@ run cited above is
 [run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134)
 (the 2026-10-09 `workflow_dispatch` at `41ed12e4`), which completed
 `success` with the census-completeness assert, the 159 / 94 / 0 / 65 / 0
-census, and 159 per-cell result records with zero `FAIL` and no
+census of that date, and 159 per-cell result records with zero `FAIL` and no
 expectation drift: all 65 documented-gap rows reproduced. The first run
 with the RTSP publisher cells,
 [run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)
@@ -808,9 +808,9 @@ found.
 Both cells run GStreamer 1.24.2's `rtspclientsink` against `tst-interop
 recv --url rtsp-publish://127.0.0.1:<port>/mount`, a harness-only scheme
 that binds an `RtspServer` with one publish mount and judges what the mount
-delivers. They are part of the 159-cell census above
-([run 37875160134](https://github.com/aklofas/ts-transformer/actions/runs/37875160134):
-94 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0 SKIPPED), and both passed on
+delivers. They are part of the 161-cell census above
+([run 39687057760](https://github.com/aklofas/ts-transformer/actions/runs/39687057760):
+96 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0 SKIPPED), and both passed on
 their first CI run ([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566)) as well.
 
 - **`rtsp-publish/gst-push-mp2t`** proves byte identity. The publisher
@@ -1264,6 +1264,32 @@ read margin and the version numbers. Evidence on `c9cd8163`:
   defect, `klv_st0601_patch` comparing records whose `field_errors` carried
   a NaN, fixed before the batch ran. See "Fuzz targets" above for the
   bundle.
+
+## Evidence for the 0.9.0 tree
+
+The last library commit before the 0.9.0 version sweep is `9947bc28`, the
+merge of the WebRTC playback work. After it the tree changed only in
+`Cargo.lock` (tokio 1.54.1), the CI flake ledger, the version numbers, the
+CHANGELOG, and the removal of `DemuxFromFile` from `tst-core`. Evidence on
+`907adb30`, the tree directly before that sweep:
+
+- the 161-cell interop census at 161 / 96 / 0 / 65 / 0 at realistic
+  access-unit sizes, including the two `whep/*` browser cells
+  ([run 39687057760](https://github.com/aklofas/ts-transformer/actions/runs/39687057760),
+  `workflow_dispatch`, 2026-10-21): `full-161` declared and produced, 0
+  skips, 0 stale rows;
+- all four sanitizer jobs, ASan and TSan over the pure-Rust and the
+  native-linking crates
+  ([run 39687054921](https://github.com/aklofas/ts-transformer/actions/runs/39687054921),
+  2026-10-21);
+- ClusterFuzzLite's scheduled batch of 2026-10-21 under AddressSanitizer,
+  with its corpus prune and coverage report
+  ([run 39543668790](https://github.com/aklofas/ts-transformer/actions/runs/39543668790)):
+  no crash. It ran on `c7d9cf52`, the merge of the third WebRTC change,
+  before the fourth and fifth WebRTC changes landed, so it does not cover
+  the final WebRTC code;
+- the one-hour WHEP soak, archive `soak-whep-2026-10-21`, listed in the
+  runs table above.
 
 ## Stress and ceilings
 
