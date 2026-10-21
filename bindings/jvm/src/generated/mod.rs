@@ -16,3 +16,4 @@ pub(crate) mod stats_pipeline;
 pub(crate) mod stats_rtp;
 pub(crate) mod stats_shells;
 pub(crate) mod stats_srt;
+pub(crate) mod stats_webrtc;

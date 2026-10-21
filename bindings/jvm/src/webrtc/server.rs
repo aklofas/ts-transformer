@@ -11,14 +11,13 @@
 
 use std::sync::{Arc, LazyLock};
 
-use jni::objects::{JObject, JString, JValue};
+use jni::Env;
+use jni::objects::{JObject, JString};
 use jni::sys::{jint, jlong};
-use jni::{Env, jni_sig, jni_str};
 use tst_pipeline::binding::BindingErrorKind;
 use tst_webrtc::{AudioPolicy, KlvCarriage, MountConfig, MountKind, VideoCodec, WhepServer};
 
 use crate::handle::HandleRegistry;
-use crate::jutil::FindClass;
 use crate::panic::jni_native;
 
 use super::errors::{server_error, throw_webrtc};
@@ -197,25 +196,7 @@ jni_native! {
             return JObject::null();
         };
         let s = srv.stats();
-        // Every u64 crosses as its bit pattern in a Java long.
-        env.new_object(
-            FindClass(jni_str!("org/tstrans/webrtc/ServerStats")),
-            jni_sig!("(JJJJJJJJJJJ)V"),
-            &[
-                JValue::Long(s.mounts as i64),
-                JValue::Long(s.active_sessions as i64),
-                JValue::Long(s.sessions_total as i64),
-                JValue::Long(s.sessions_rejected_cap as i64),
-                JValue::Long(s.sessions_rejected_codec as i64),
-                JValue::Long(s.sessions_rejected_auth as i64),
-                JValue::Long(s.sessions_reaped_ice_timeout as i64),
-                JValue::Long(s.sessions_reaped_disconnected as i64),
-                JValue::Long(s.rtp_packets_sent as i64),
-                JValue::Long(s.rtp_bytes_sent as i64),
-                JValue::Long(s.datagrams_unrouted as i64),
-            ],
-        )
-        .unwrap_or_else(|_| JObject::null())
+        crate::generated::stats_webrtc::build_server_stats(env, &s).unwrap_or_else(|_| JObject::null())
     }
 }
 

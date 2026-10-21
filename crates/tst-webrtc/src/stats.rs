@@ -4,117 +4,125 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-/// Counters of one mount, read with
-/// [`MountHandle::stats`](crate::MountHandle::stats).
-///
-/// The push calls write the frame, KLV, audio and RTP-clock counters. The
-/// viewer counts and the PLI, NACK, data-channel and per-viewer queue
-/// counters are written by the server's media thread, and the demuxer
-/// counter by an MP2T mount's demuxer; a mount without those writers
-/// reports them as 0.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct MountStats {
-    /// Access units accepted by `push_video`.
-    pub frames_pushed: u64,
-    /// Accepted access units forwarded as keyframes: an IDR/CRA/BLA (IRAP)
-    /// picture with parameter sets in the access unit or cached from an
-    /// earlier one.
-    pub keyframes_pushed: u64,
-    /// Access units whose `key_frame` flag disagreed with the presence of
-    /// an IDR/CRA/BLA (IRAP) NAL unit. The NAL units decide; the flag is
-    /// advisory.
-    pub keyframe_flag_mismatch: u64,
-    /// Viewer sessions currently attached to the mount.
-    pub viewers: u64,
-    /// Attached viewers that have not received a keyframe yet.
-    pub viewers_waiting_keyframe: u64,
-    /// KLV records accepted by `push_klv`.
-    pub klv_records_pushed: u64,
-    /// KLV records dropped before any frame carried them, because the
-    /// queue of records waiting for a frame was full.
-    pub klv_records_dropped_unbound: u64,
-    /// KLV records carried in an SEI message.
-    pub klv_sei_inserted: u64,
-    /// KLV records left out of the SEI because they did not fit the
-    /// access unit's SEI budget.
-    pub klv_sei_dropped_oversize: u64,
-    /// KLV messages sent on viewers' data channels. A viewer that went
-    /// away without a DELETE keeps its session, and these sends, until
-    /// the disconnect grace closes it
-    /// ([`ServerStats::sessions_reaped_disconnected`]).
-    pub klv_dc_messages_sent: u64,
-    /// KLV records refused because they exceed the data-channel message
-    /// limit ([`KLV_DC_LIMIT`](crate::KLV_DC_LIMIT)).
-    pub klv_dc_dropped_oversize: u64,
-    /// KLV data-channel messages dropped on the way to viewers: once per
-    /// message when the server's media queue was full or the frame it is
-    /// bound to was dropped waiting for a keyframe, and once per viewer
-    /// when that viewer's queue was full or its data channel refused or
-    /// failed the write (no room in the send buffer, a message above the
-    /// browser's `max-message-size`, a closed channel). The video behind
-    /// such a message is sent regardless.
-    pub klv_dc_dropped_viewer: u64,
-    /// Audio packets accepted by `push_audio` for the viewers.
-    pub audio_frames_pushed: u64,
-    /// Audio pushes discarded: `push_audio` calls under `AudioPolicy::Drop`
-    /// and demuxed TS audio events (each may hold several frames), plus,
-    /// once per viewer, an Opus packet for a viewer that has no audio send
-    /// stream to carry it.
-    pub audio_frames_dropped: u64,
-    /// Picture loss indications received from viewers.
-    pub plis_received: u64,
-    /// NACKs received from viewers.
-    pub nacks_received: u64,
-    /// Video RTP payloads and Opus packets dropped because a queue was
-    /// full: every payload of a frame the server's media queue did not
-    /// take, and of each later frame the mount then drops until the next
-    /// keyframe (counted once), every Opus packet the media queue did not
-    /// take (counted once), and every payload or Opus packet a viewer's
-    /// queue did not take (counted per viewer). KLV messages dropped the
-    /// same way are counted in `klv_dc_dropped_viewer`.
-    pub viewer_packets_dropped_queue_full: u64,
-    /// Times the RTP clock was rebased after a PTS jump.
-    pub rtp_clock_rebases: u64,
-    /// Video frames whose PTS was below the previous frame's, within the
-    /// rebase window (a jump of more than 10 s back is a rebase instead).
-    /// WebRTC carries frames in decode order with the RTP timestamp as
-    /// the presentation time, so a source with B-frames is counted here
-    /// and plays badly; feed I/P-only streams. Audio is not counted.
-    pub frames_pts_reordered: u64,
-    /// Non-conformances reported by an MP2T mount's demuxer, and the units
-    /// it skips: damaged ones, those of another video codec, and the
-    /// access units and KLV records of streams the mount does not play.
-    pub demux_nonconformant: u64,
+tst_core::binding_record! {
+    /// Counters of one mount.
+    ///
+    /// The push calls write the frame, KLV, audio and RTP-clock counters. The
+    /// viewer counts and the PLI, NACK, data-channel and per-viewer queue
+    /// counters are written by the server's media thread, and the demuxer
+    /// counter by an MP2T mount's demuxer; a mount without those writers
+    /// reports them as 0.
+    ///
+    /// <!-- rust-only -->
+    /// Read with [`MountHandle::stats`](crate::MountHandle::stats).
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct MountStats {
+        /// Access units accepted by `push_video`.
+        pub frames_pushed: u64,
+        /// Accepted access units forwarded as keyframes: an IDR/CRA/BLA (IRAP)
+        /// picture with parameter sets in the access unit or cached from an
+        /// earlier one.
+        pub keyframes_pushed: u64,
+        /// Access units whose `key_frame` flag disagreed with the presence of
+        /// an IDR/CRA/BLA (IRAP) NAL unit. The NAL units decide; the flag is
+        /// advisory.
+        pub keyframe_flag_mismatch: u64,
+        /// Viewer sessions currently attached to the mount.
+        pub viewers: u64,
+        /// Attached viewers that have not received a keyframe yet.
+        pub viewers_waiting_keyframe: u64,
+        /// KLV records accepted by `push_klv`.
+        pub klv_records_pushed: u64,
+        /// KLV records dropped before any frame carried them, because the
+        /// queue of records waiting for a frame was full.
+        pub klv_records_dropped_unbound: u64,
+        /// KLV records carried in an SEI message.
+        pub klv_sei_inserted: u64,
+        /// KLV records left out of the SEI because they did not fit the
+        /// access unit's SEI budget.
+        pub klv_sei_dropped_oversize: u64,
+        /// KLV messages sent on viewers' data channels. A viewer that went
+        /// away without a DELETE keeps its session, and these sends, until
+        /// the disconnect grace closes it
+        /// ([`ServerStats::sessions_reaped_disconnected`]).
+        pub klv_dc_messages_sent: u64,
+        /// KLV records refused because they exceed the data-channel message
+        /// limit ([`KLV_DC_LIMIT`]).
+        ///
+        /// [`KLV_DC_LIMIT`]: crate::KLV_DC_LIMIT
+        pub klv_dc_dropped_oversize: u64,
+        /// KLV data-channel messages dropped on the way to viewers: once per
+        /// message when the server's media queue was full or the frame it is
+        /// bound to was dropped waiting for a keyframe, and once per viewer
+        /// when that viewer's queue was full or its data channel refused or
+        /// failed the write (no room in the send buffer, a message above the
+        /// browser's `max-message-size`, a closed channel). The video behind
+        /// such a message is sent regardless.
+        pub klv_dc_dropped_viewer: u64,
+        /// Audio packets accepted by `push_audio` for the viewers.
+        pub audio_frames_pushed: u64,
+        /// Audio pushes discarded: `push_audio` calls under `AudioPolicy::Drop`
+        /// and demuxed TS audio events (each may hold several frames), plus,
+        /// once per viewer, an Opus packet for a viewer that has no audio send
+        /// stream to carry it.
+        pub audio_frames_dropped: u64,
+        /// Picture loss indications received from viewers.
+        pub plis_received: u64,
+        /// NACKs received from viewers.
+        pub nacks_received: u64,
+        /// Video RTP payloads and Opus packets dropped because a queue was
+        /// full: every payload of a frame the server's media queue did not
+        /// take, and of each later frame the mount then drops until the next
+        /// keyframe (counted once), every Opus packet the media queue did not
+        /// take (counted once), and every payload or Opus packet a viewer's
+        /// queue did not take (counted per viewer). KLV messages dropped the
+        /// same way are counted in `klv_dc_dropped_viewer`.
+        pub viewer_packets_dropped_queue_full: u64,
+        /// Times the RTP clock was rebased after a PTS jump.
+        pub rtp_clock_rebases: u64,
+        /// Video frames whose PTS was below the previous frame's, within the
+        /// rebase window (a jump of more than 10 s back is a rebase instead).
+        /// WebRTC carries frames in decode order with the RTP timestamp as
+        /// the presentation time, so a source with B-frames is counted here
+        /// and plays badly; feed I/P-only streams. Audio is not counted.
+        pub frames_pts_reordered: u64,
+        /// Non-conformances reported by an MP2T mount's demuxer, and the units
+        /// it skips: damaged ones, those of another video codec, and the
+        /// access units and KLV records of streams the mount does not play.
+        pub demux_nonconformant: u64,
+    }
 }
 
-/// Counters of the whole server.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ServerStats {
-    /// Mounts currently registered.
-    pub mounts: u64,
-    /// Viewer sessions currently open.
-    pub active_sessions: u64,
-    /// Viewer sessions opened since the server started.
-    pub sessions_total: u64,
-    /// Session offers refused because a viewer cap was reached.
-    pub sessions_rejected_cap: u64,
-    /// Session offers refused because no offered codec matched the mount.
-    pub sessions_rejected_codec: u64,
-    /// Requests refused by authentication: offers and session DELETEs
-    /// without the server's bearer token.
-    pub sessions_rejected_auth: u64,
-    /// Sessions closed because ICE did not connect in time.
-    pub sessions_reaped_ice_timeout: u64,
-    /// Sessions closed after the viewer disconnected.
-    pub sessions_reaped_disconnected: u64,
-    /// RTP packets sent to all viewers.
-    pub rtp_packets_sent: u64,
-    /// RTP bytes sent to all viewers.
-    pub rtp_bytes_sent: u64,
-    /// Datagrams that matched no session.
-    pub datagrams_unrouted: u64,
+tst_core::binding_record! {
+    /// Counters of the whole server.
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct ServerStats {
+        /// Mounts currently registered.
+        pub mounts: u64,
+        /// Viewer sessions currently open.
+        pub active_sessions: u64,
+        /// Viewer sessions opened since the server started.
+        pub sessions_total: u64,
+        /// Session offers refused because a viewer cap was reached.
+        pub sessions_rejected_cap: u64,
+        /// Session offers refused because no offered codec matched the mount.
+        pub sessions_rejected_codec: u64,
+        /// Requests refused by authentication: offers and session DELETEs
+        /// without the server's bearer token.
+        pub sessions_rejected_auth: u64,
+        /// Sessions closed because ICE did not connect in time.
+        pub sessions_reaped_ice_timeout: u64,
+        /// Sessions closed after the viewer disconnected.
+        pub sessions_reaped_disconnected: u64,
+        /// RTP packets sent to all viewers.
+        pub rtp_packets_sent: u64,
+        /// RTP bytes sent to all viewers.
+        pub rtp_bytes_sent: u64,
+        /// Datagrams that matched no session.
+        pub datagrams_unrouted: u64,
+    }
 }
 
 /// Statistics of one viewer session.
