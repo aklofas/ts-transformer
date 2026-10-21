@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "tst-binding-gen"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "secrecy",
  "tst-core",
@@ -2763,7 +2763,7 @@ dependencies = [
 
 [[package]]
 name = "tst-c"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "cbindgen",
  "libc",
@@ -2778,7 +2778,7 @@ dependencies = [
 
 [[package]]
 name = "tst-c-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "critical-section",
  "libc",
@@ -2797,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "tst-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "criterion",
  "hashbrown",
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "tst-hls"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64",
  "bytes",
@@ -2856,7 +2856,7 @@ dependencies = [
 
 [[package]]
 name = "tst-integration"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "tst-interop"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "proptest",
  "serde",
@@ -2892,7 +2892,7 @@ dependencies = [
 
 [[package]]
 name = "tst-jni"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "jni",
  "secrecy",
@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "tst-pipeline"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -2926,7 +2926,7 @@ dependencies = [
 
 [[package]]
 name = "tst-py"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "pyo3",
  "pyo3-build-config",
@@ -2947,7 +2947,7 @@ dependencies = [
 
 [[package]]
 name = "tst-rist"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "libc",
  "secrecy",
@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "tst-rtp"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64",
  "bytes",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "tst-srt"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "libc",
  "os_socketaddr",
@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "tst-tcp"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "libc",
  "rcgen",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "tst-udp"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "libc",
  "socket2",
@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "tst-webrtc"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "getrandom 0.4.3",
  "rcgen",
@@ -3061,11 +3061,11 @@ dependencies = [
 
 [[package]]
 name = "tstrans-mbedtls-src"
-version = "0.8.0+3.6.7"
+version = "0.9.0+3.6.7"
 
 [[package]]
 name = "tstrans-rist-sys"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bindgen",
  "cc",
@@ -3079,7 +3079,7 @@ dependencies = [
 
 [[package]]
 name = "tstrans-srt-sys"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bindgen",
  "cmake",
