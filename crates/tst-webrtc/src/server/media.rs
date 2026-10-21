@@ -22,6 +22,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use str0m::change::SdpOffer;
+use str0m::channel::ChannelConfig;
 use str0m::media::Pt;
 use str0m::net::{Protocol, Receive};
 use str0m::rtp::{RtpWrite, SeqNo};
@@ -57,6 +58,17 @@ const DATAGRAM_MAX: usize = 65_535;
 
 /// The label of the KLV data channel the server opens on each session.
 const KLV_LABEL: &str = "klv";
+
+/// The `klv` channel: in-band (DCEP), reliable and unordered. A record
+/// never waits behind an earlier one; each message names its frame's RTP
+/// timestamp.
+fn klv_channel_config() -> ChannelConfig {
+    ChannelConfig {
+        label: KLV_LABEL.into(),
+        ordered: false,
+        ..Default::default()
+    }
+}
 
 /// The data-channel message format version (the body's first byte).
 const KLV_DC_VERSION: u8 = 1;
@@ -689,9 +701,11 @@ impl Media {
         };
         // The channel is opened in-band (DCEP) on the SCTP association the
         // offer's data-channel section brings up, so any viewer receives
-        // it by label and apply() has no offer to return.
+        // it by label and apply() has no offer to return. Unordered: a
+        // record never waits behind an earlier one; each message names its
+        // frame's RTP timestamp, so the page orders them itself.
         let mut api = rtc.sdp_api();
-        let klv_channel = api.add_channel(KLV_LABEL.into());
+        let klv_channel = api.add_channel_with_config(klv_channel_config());
         if let Some((renegotiation, _)) = api.apply() {
             // str0m offering a data-channel section means the offer had
             // none: the session has no SCTP transport, so the channel never
@@ -1152,7 +1166,7 @@ mod tests {
             panic!("no H.264 payload");
         };
         let mut api = rtc.sdp_api();
-        let cid = api.add_channel(KLV_LABEL.into());
+        let cid = api.add_channel_with_config(klv_channel_config());
         let _ = api.apply();
         let (handle, _rx) = MountHandle::for_test(MountConfig::default());
         let mut v = Viewer::new("0".repeat(32), Arc::clone(&handle.state), rtc, 0, now);

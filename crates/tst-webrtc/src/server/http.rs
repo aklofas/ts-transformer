@@ -55,7 +55,7 @@ pub enum HeadParse {
     /// The head is longer than [`MAX_HEAD`] (answered with 431 upstream).
     TooLarge,
     /// The head is not a request this server reads, or declares a body
-    /// longer than [`MAX_BODY`] (answered with 400 or 413 upstream).
+    /// longer than [`MAX_BODY`] (answered with 400 upstream).
     Malformed,
     /// A complete head. The body starts at `head_len`.
     Done {

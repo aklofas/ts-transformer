@@ -814,8 +814,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whose offer carries a data-channel section (create any data channel
   before `createOffer`) receives it in `ondatachannel` with the label
   `klv`, on the channel the server opened, whatever the viewer's own
-  channels are called. A viewer whose offer has no data-channel section
-  gets video, with KLV in SEI, and no channel.
+  channels are called. The channel is reliable and unordered: a record
+  never waits behind an earlier one, and each message names its frame's
+  RTP timestamp. A viewer whose offer has no data-channel section gets
+  video, with KLV in SEI, and no channel.
 - `PATCH /<mount>/sessions/<id>` is answered with 204: the trickle-ICE
   fragment is read and ignored (ICE-lite needs no remote candidates); 404
   for an unknown session, 401 without the bearer token, 405 for a `PATCH`
