@@ -188,7 +188,10 @@ fn pts_jump_backwards_rebases_the_rtp_clock_continuously() {
     m.push_video(&au(&[P]), Pts90khz::new(0), false).unwrap();
     let b = next_frame(&rx);
     assert_eq!(b.rtp_ts.wrapping_sub(a.rtp_ts), 3000);
-    assert_eq!(m.stats().rtp_clock_rebases, 1);
+    let s = m.stats();
+    assert_eq!(s.rtp_clock_rebases, 1);
+    // A rebase is a restart, not a reordered frame.
+    assert_eq!(s.frames_pts_reordered, 0);
 }
 
 #[test]
