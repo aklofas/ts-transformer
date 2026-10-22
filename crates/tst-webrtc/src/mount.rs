@@ -194,7 +194,8 @@ pub(crate) struct MountState {
     /// lost one, so they are dropped too.
     video_gap: AtomicBool,
     /// Held from the clock step through the queue send (`try_send`, which
-    /// never blocks and never takes this lock), so queue order is clock order.
+    /// never blocks and never takes this lock), so queue order is clock
+    /// order.
     inner: Mutex<MountInner>,
     /// The demuxer behind `push_ts`; `Some` on an MP2T mount. Held while
     /// its events are dispatched, which takes `inner` and never blocks.

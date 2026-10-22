@@ -625,8 +625,10 @@ impl Media {
             return;
         }
         // RFC 7983: a first byte in 20..=63 is DTLS. The handshake is bound
-        // to the first source that sent a record, so the pin is the address
-        // that received the server's flights.
+        // to the first source that sent a record: records are accepted from
+        // it only, and the server's flights are sent to it only (see
+        // `drain_rtc`), so the pin is an address that both sent and
+        // received the exchange.
         if v.pinned.is_none() && (20..=63).contains(&self.buf[0]) {
             match v.dtls_source {
                 None => v.dtls_source = Some(source),
@@ -972,6 +974,16 @@ fn drain_rtc(v: &mut Viewer, socket: &dyn DatagramSink, now: Instant) {
                 return;
             }
             Ok(Output::Transmit(t)) => {
+                // Before the pin, handshake flights go only to the source
+                // that sent the first DTLS record, whatever pair ICE has
+                // nominated since; STUN is not filtered, so ICE still works.
+                if v.pinned.is_none()
+                    && v.dtls_source.is_some_and(|d| d != t.destination)
+                    && t.contents.first().is_some_and(|b| (20..=63).contains(b))
+                {
+                    debug!(session = %v.id, to = %t.destination, "handshake flight for another address than the DTLS source dropped");
+                    continue;
+                }
                 // ICE may still have nominated another admitted source;
                 // nothing leaves for an address other than the pinned one.
                 if v.pinned.is_some_and(|p| p != t.destination) {
@@ -998,7 +1010,8 @@ fn handle_event(v: &mut Viewer, ev: Event, now: Instant) {
         Event::Connected => {
             v.connected = true;
             v.connected_at.get_or_insert(now);
-            // The handshake ran with the source of its first DTLS record.
+            // The handshake ran with the source of its first DTLS record, and
+            // the server's flights went only there.
             if v.pinned.is_none() {
                 v.pinned = v.dtls_source.or(v.last_source);
             }

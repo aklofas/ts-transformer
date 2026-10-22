@@ -27,8 +27,8 @@
 //!
 //! A session's media goes only to the address that carried its DTLS
 //! handshake: the source of the first DTLS record is fixed, a later DTLS
-//! record from another address is dropped, and once the handshake completes
-//! that address is pinned. Nothing is sent to any other address, and
+//! record from another address is dropped, the server's handshake flights
+//! go only to that address, and once the handshake completes it is pinned. Nothing is sent to any other address, and
 //! datagrams from any other address are dropped and counted in
 //! [`ServerStats::datagrams_unrouted`].
 //! A NAT rebinding or a move to another network interface therefore needs
