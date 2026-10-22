@@ -4234,12 +4234,14 @@ mod tests {
     /// `klv_late[k]` ticks for record `k` (0 when the slice is short).
     fn feed_placement_generation(t: &mut Tally, start: i64, frames: i64, klv_late: &[i64]) {
         for f in 0..frames {
-            let pts = start + f * FPS_STEP_TICKS;
+            // Raw 33-bit values, as the demuxer reports them.
+            let wrap = 1i64 << 33;
+            let pts = (start + f * FPS_STEP_TICKS).rem_euclid(wrap);
             t.feed(&video_event(pts, f == 0));
             if f % 3 == 0 {
                 let k = (f / 3) as usize;
                 let late = klv_late.get(k).copied().unwrap_or(0);
-                t.feed(&klv_sync_event(pts + late, k as u32));
+                t.feed(&klv_sync_event((pts + late).rem_euclid(wrap), k as u32));
             }
         }
     }
