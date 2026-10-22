@@ -55,9 +55,10 @@ SANITIZER_JOBS = ["asan", "asan-native", "tsan", "tsan-native"]
 REQUIRED_LEGS = (["interop"] + ["sanitizers/" + j for j in SANITIZER_JOBS]
                  + ["fuzz", "jvm-jar", "python-wheels", "c-abi", "ci (on this sha)"])
 KINDS = ("soak", "stress", "corpus")
-# A soak archive still stands for a later tree when no path under these
-# directories changed between the two commits.
-SOAK_PATHS = ("crates", "bindings")
+# A soak archive still stands for a later tree when nothing outside these
+# release documents changed between the two commits: CHANGELOG.md, anything
+# under docs/, and the archive table itself.
+RELEASE_DOCUMENT_PATHS = ("CHANGELOG.md", "docs/", "tests/coverage/evidence-archives.toml")
 RELEASE_SOAK_S = 259200
 MAINTAINER_LOCAL = [
     "long fuzz runs (10 min per target)",
@@ -148,15 +149,17 @@ def load_archives(root):
 # ---- release mode ----------------------------------------------------------
 
 def changed_paths(root, tree, sha):
-    """The paths under SOAK_PATHS that differ between commits `tree` and `sha`."""
-    cmd = ["git", "-C", root, "diff", "--name-only", tree, sha, "--"] + list(SOAK_PATHS)
+    """The paths outside RELEASE_DOCUMENT_PATHS that differ between commits `tree` and `sha`."""
+    cmd = ["git", "-C", root, "diff", "--name-only", tree, sha]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True)
     except OSError as e:
         raise QualificationError(str(e))
     if p.returncode != 0:
         raise QualificationError(p.stderr.strip() or "git exited %d" % p.returncode)
-    return [l for l in p.stdout.splitlines() if l]
+    return [l for l in p.stdout.splitlines()
+            if l and not any(l == d or (d.endswith("/") and l.startswith(d))
+                             for d in RELEASE_DOCUMENT_PATHS)]
 
 
 def _newest(rows):
@@ -188,7 +191,7 @@ def _soak_entry(root, sha, s):
 
 def _pick_soak(root, sha, soaks):
     """The newest 72-hour soak that stands for `sha` (same tree, or no change under
-    SOAK_PATHS since); else the newest 72-hour soak; else the newest of any
+    release documents since); else the newest 72-hour soak; else the newest of any
     duration. Git runs at most once per 72-hour archive."""
     long = [s for s in _by_date(soaks) if s.get("expected_duration_s") == RELEASE_SOAK_S]
     first = None
@@ -224,10 +227,20 @@ def release_vm(root, sha, archives, release):
             reasons.append("soak: git could not resolve %s: %s" % (soak["tree"], soak["git_error"]))
         else:
             if soak["changed_paths"]:
-                reasons.append("soak: archive %s is superseded by code changes (%d paths under crates/ or bindings/)"
+                reasons.append("soak: archive %s is superseded by %d changed path(s) outside the release documents"
                                % (soak["id"], soak["changed_paths"]))
             if not soak["overall_pass"]:
                 reasons.append("soak: archive %s recorded overall_pass=false" % soak["id"])
+            # A failed run on the same tree after the chosen one, of any declared
+            # duration, is evidence against it; a newer pass never replaces it.
+            order = {id(a): i for i, a in enumerate(soaks)}
+            chosen = next(a for a in soaks if a["id"] == soak["id"])
+            key = lambda a: (a["date"], order[id(a)])
+            for a in _by_date(soaks):
+                if a["tree"] == soak["tree"] and not a["overall_pass"] and key(a) > key(chosen) \
+                        and a["id"] != soak["id"]:
+                    reasons.append("soak: archive %s, a newer run on the same tree, recorded overall_pass=false"
+                                   % a["id"])
             if soak["expected_duration_s"] != RELEASE_SOAK_S:
                 reasons.append("soak: archive %s declares %s s, not %d"
                                % (soak["id"], soak["expected_duration_s"], RELEASE_SOAK_S))
@@ -244,6 +257,15 @@ def release_vm(root, sha, archives, release):
                                    "eight the corpus tool's archive row carries" % c["id"])
                 if not c["overall_pass"]:
                     reasons.append("corpus: archive %s recorded overall_pass=false" % c["id"])
+                if all(k in c for k in CORPUS_COUNTS):
+                    if c["replay_paths"] != 5:
+                        reasons.append("corpus: archive %s replayed %s path(s), not 5"
+                                       % (c["id"], c["replay_paths"]))
+                    if not c["replay_files"] > 0:
+                        reasons.append("corpus: archive %s replayed no files" % c["id"])
+                    if c["replay_failed"] != 0:
+                        reasons.append("corpus: archive %s has %s failed replay(s)"
+                                       % (c["id"], c["replay_failed"]))
     return {"release_mode": bool(release), "soak": soak, "corpus": corpus,
             "reasons": reasons if release else []}
 

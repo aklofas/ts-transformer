@@ -460,8 +460,7 @@ class ReleaseModeTests(unittest.TestCase):
         with mock.patch.object(q, "changed_paths", return_value=["crates/tst-core/src/lib.rs"]):
             rec = collect(release=True, archives=SOAKED_EARLIER)
         self.assertEqual(rec["verdict"], "NO-GO")
-        self.assertIn("soak: archive soak-rel is superseded by code changes "
-                      "(1 paths under crates/ or bindings/)", rec["verdict_reasons"])
+        self.assertIn("soak: archive soak-rel is superseded by 1 changed path(s) outside the release documents", rec["verdict_reasons"])
 
     def test_release_mode_rejects_a_failed_or_short_soak(self):
         failed = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False),
@@ -528,6 +527,57 @@ class ReleaseModeTests(unittest.TestCase):
             with self.assertRaises(q.QualificationError) as e:
                 q.changed_paths(d, "f" * 40, b)
             self.assertIn("bad object", str(e.exception))
+
+    def test_changed_paths_compares_the_whole_tree(self):
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q", "-b", "main")
+            for f in ("Cargo.lock", "rust-toolchain.toml", "CHANGELOG.md"):
+                spit(os.path.join(d, f), "1\n")
+            os.makedirs(os.path.join(d, "docs"))
+            spit(os.path.join(d, "docs/p.md"), "1\n")
+            git(d, "add", ".")
+            git(d, "commit", "-q", "-m", "A")
+            a = git(d, "rev-parse", "HEAD")
+
+            def commit_change(f, text="2\n"):
+                git(d, "checkout", "-q", a)
+                os.makedirs(os.path.dirname(os.path.join(d, f)) or d, exist_ok=True)
+                spit(os.path.join(d, f), text)
+                git(d, "add", f)
+                git(d, "commit", "-q", "-m", "x")
+                return git(d, "rev-parse", "HEAD")
+            self.assertEqual(q.changed_paths(d, a, commit_change("Cargo.lock")), ["Cargo.lock"])
+            self.assertEqual(q.changed_paths(d, a, commit_change("rust-toolchain.toml")),
+                             ["rust-toolchain.toml"])
+            self.assertEqual(q.changed_paths(d, a, commit_change("CHANGELOG.md")), [])
+            self.assertEqual(q.changed_paths(d, a, commit_change("docs/p.md")), [])
+            self.assertEqual(q.changed_paths(d, a, commit_change("tests/coverage/evidence-archives.toml")), [])
+            git(d, "checkout", "-q", a)
+            git(d, "update-index", "--add", "--cacheinfo", "160000,%s,vendor/sub" % a)
+            git(d, "commit", "-q", "-m", "gitlink")
+            self.assertEqual(q.changed_paths(d, a, git(d, "rev-parse", "HEAD")), ["vendor/sub"])
+
+    def test_release_mode_rejects_a_one_path_corpus_row(self):
+        for bad in (dict(COUNTS, replay_paths=1), dict(COUNTS, replay_files=0),
+                    dict(COUNTS, replay_failed=1)):
+            rows = archives_toml(archive_row("soak-rel", "soak", SHA),
+                                 archive_row("corpus-rel", "corpus", SHA, counts=bad))
+            rec = collect(release=True, archives=rows)
+            self.assertEqual(rec["verdict"], "NO-GO", bad)
+            self.assertTrue(any(r.startswith("corpus: archive corpus-rel") for r in rec["verdict_reasons"]), bad)
+
+    def test_a_newer_failed_soak_on_the_same_tree_is_a_reason(self):
+        for dur in (3600, 259200):
+            rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17"),
+                                 archive_row("soak-bad", "soak", SHA, date="2026-10-18",
+                                             duration=dur, overall_pass=False),
+                                 archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+            rec = collect(release=True, archives=rows)
+            self.assertEqual(rec["verdict"], "NO-GO", dur)
+            # A newer failed 72-hour row is itself the chosen archive.
+            want = ("soak: archive soak-bad, a newer run on the same tree, recorded overall_pass=false"
+                    if dur == 3600 else "soak: archive soak-bad recorded overall_pass=false")
+            self.assertIn(want, rec["verdict_reasons"])
 
     def test_a_newer_short_soak_does_not_hide_the_72_hour_one(self):
         rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17"),

@@ -774,6 +774,11 @@ The integrator-facing changes at a glance (full detail in the sections below):
 
 ### Changed — release process
 
+- The release gate compares the whole tree between the soaked commit and the
+  qualified one, ignoring only `CHANGELOG.md`, `docs/` and
+  `tests/coverage/evidence-archives.toml`. It also requires the corpus row to
+  show all five paths replayed with no failures, and treats a newer failed soak
+  of any duration on the same tree as a reason for NO-GO.
 - The real-capture corpus cross-check no longer runs on the maintainer's
   machine through `release-validation.sh`; it runs on the release VM as
   `tst-interop corpus`, and `release-validation.sh` has three steps.
