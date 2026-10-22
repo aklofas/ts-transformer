@@ -443,3 +443,19 @@ fn a_zero_filled_dropout_fails_feed_error_until_marked_never_a_parse_failure() {
         "{s}"
     );
 }
+
+#[test]
+fn a_new_sweep_removes_the_replay_results_of_the_old_one() {
+    let (dir, _) = two_files("sw-stale");
+    let run = dir.join("run");
+    assert!(sweep(&dir, &run, &[]).status.code().is_some());
+    let stale = ["replay.json", "replay-rss.csv", "replay-plan.json"];
+    for name in stale {
+        std::fs::write(run.join(name), "old").unwrap();
+    }
+    assert!(sweep(&dir, &run, &[]).status.code().is_some());
+    for name in stale {
+        assert!(!run.join(name).exists(), "{name} survived a new sweep");
+    }
+    assert!(run.join("sweep.json").is_file());
+}

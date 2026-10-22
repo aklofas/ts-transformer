@@ -32,7 +32,7 @@ fn pid_failure(pid: u16, want: &PidDigest, got: &PidDigest) -> Option<String> {
             want.samples - got.samples
         ));
     }
-    let fields: [(&str, bool); 12] = [
+    let fields: [(&str, bool); 14] = [
         ("kind", want.kind != got.kind),
         ("samples", want.samples != got.samples),
         ("metadata", want.metadata != got.metadata),
@@ -43,6 +43,8 @@ fn pid_failure(pid: u16, want: &PidDigest, got: &PidDigest) -> Option<String> {
         ("nonconformant", want.nonconformant != got.nonconformant),
         ("pts_first", want.pts_first != got.pts_first),
         ("pts_last", want.pts_last != got.pts_last),
+        ("pes_oversize", want.pes_oversize != got.pes_oversize),
+        ("pts_absent", want.pts_absent != got.pts_absent),
         (
             "pts_backward_breaks",
             want.pts_backward_breaks != got.pts_backward_breaks,
@@ -62,6 +64,8 @@ fn pid_failure(pid: u16, want: &PidDigest, got: &PidDigest) -> Option<String> {
         .iter()
         .find(|(_, differs)| *differs)
         .map(|(name, _)| format!("pid {pid}: {name} differs"))
+        // Any field added to the digest and not listed above still fails.
+        .or_else(|| (want != got).then(|| format!("pid {pid}: digest differs")))
 }
 
 /// Judge one replay of `expected` over transport `path`. A receiver that did

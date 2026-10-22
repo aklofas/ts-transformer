@@ -32,6 +32,19 @@ fn sweep(pass: bool) -> SweepSummary {
     }
 }
 
+/// The fingerprint of the digest file `write_run` lays down.
+fn fingerprint_of_digest_files() -> Sha256Hex {
+    use sha2::{Digest, Sha256};
+    Sha256Hex(
+        Sha256::digest(DIGEST_FILE)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    )
+}
+
+const DIGEST_FILE: &[u8] = b"{\"digest\":1}";
+
 fn replay(pass: bool) -> ReplaySummary {
     let mut max = BTreeMap::new();
     let mut slope = BTreeMap::new();
@@ -41,6 +54,8 @@ fn replay(pass: bool) -> ReplaySummary {
     }
     ReplaySummary {
         schema_version: 1,
+        sweep_tree: "0123abcd".into(),
+        sweep_digests_sha256: fingerprint_of_digest_files(),
         plan: ReplayPlan {
             schema_version: 1,
             budget_seconds: 7200,
@@ -137,6 +152,12 @@ fn write_run(name: &str, with_replay: bool) -> std::path::PathBuf {
         serde_json::to_string_pretty(&sweep(true)).unwrap(),
     )
     .unwrap();
+    std::fs::create_dir_all(dir.join("digests")).unwrap();
+    std::fs::write(
+        dir.join("digests").join(format!("{}.json", sha('a'))),
+        DIGEST_FILE,
+    )
+    .unwrap();
     if with_replay {
         std::fs::write(
             dir.join("replay.json"),
@@ -231,4 +252,57 @@ fn a_corrupt_sweep_or_replay_json_exits_two_and_names_no_path() {
         assert!(err.contains(bad), "{err}");
         assert!(!err.contains(run.to_str().unwrap()), "{err}");
     }
+}
+
+fn report_of(run: &std::path::Path) -> ArchiveRow {
+    report::run(
+        &RunDir {
+            root: run.to_path_buf(),
+        },
+        None,
+        None,
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_replay_of_another_tree_or_other_digests_is_no_replay() {
+    let run = write_run("rep-stale", true);
+    assert!(report_of(&run).overall_pass);
+
+    let mut r = replay(true);
+    r.sweep_tree = "ffff".into();
+    std::fs::write(run.join("replay.json"), serde_json::to_string(&r).unwrap()).unwrap();
+    let row = report_of(&run);
+    assert!(!row.overall_pass);
+    assert!(row.note.contains("earlier sweep"), "{}", row.note);
+    assert_eq!(row.replay_files, 0);
+
+    std::fs::write(
+        run.join("replay.json"),
+        serde_json::to_string(&replay(true)).unwrap(),
+    )
+    .unwrap();
+    assert!(report_of(&run).overall_pass);
+    std::fs::write(
+        run.join("digests").join(format!("{}.json", sha('b'))),
+        b"{}",
+    )
+    .unwrap();
+    let row = report_of(&run);
+    assert!(!row.overall_pass);
+    assert!(row.note.contains("earlier sweep"), "{}", row.note);
+}
+
+#[test]
+fn a_replay_without_the_sweep_fields_is_no_replay() {
+    let run = write_run("rep-oldfields", true);
+    let mut v = serde_json::to_value(replay(true)).unwrap();
+    let o = v.as_object_mut().unwrap();
+    o.remove("sweep_tree");
+    o.remove("sweep_digests_sha256");
+    std::fs::write(run.join("replay.json"), v.to_string()).unwrap();
+    let row = report_of(&run);
+    assert!(!row.overall_pass);
+    assert!(row.note.contains("earlier sweep"), "{}", row.note);
 }

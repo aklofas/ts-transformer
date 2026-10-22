@@ -1199,6 +1199,11 @@ The integrator-facing changes at a glance (full detail in the sections below):
 
 ### Added — tst-interop
 
+- `tst-interop corpus`: a new `sweep` removes the previous `replay.json`,
+  `replay-rss.csv` and `replay-plan.json`, `replay.json` records the sweep it
+  ran against, and `report` treats a replay of an earlier sweep as no replay,
+  so a stale pass can no longer be combined with a fresh sweep. The replay
+  judge also compares the PES-oversize and absent-PTS counts of every PID.
 - The browser deadline of the `whep/*` cells grows from 8 s to 15 s past the
   stream window: headless Chrome on a runner has taken up to 6 s to reach the
   page script, and at 8 s two runs lost the window's last records.

@@ -326,3 +326,33 @@ fn a_udp_receive_buffer_below_the_request_is_named_on_a_short_delivery() {
         assert!(granted < requested, "{named}");
     }
 }
+
+fn report_row(run: &Path) -> Value {
+    let row = run.join("row.json");
+    let out = bin()
+        .args(["corpus", "report"])
+        .arg(run)
+        .arg("--archive-row")
+        .arg(&row)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    json(&row)
+}
+
+#[test]
+fn a_replay_does_not_survive_a_new_sweep_into_a_passing_report() {
+    let (dir, _) = two_files("rp-stale");
+    let run = dir.join("run");
+    sweep(&dir, &run);
+    let out = replay(&dir, &run, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert_eq!(report_row(&run)["overall_pass"], true);
+
+    sweep(&dir, &run);
+    assert!(!run.join("replay.json").exists());
+    // A replay that fails its preflight writes nothing.
+    let out = replay_over(&dir, &run, "nonesuch", &[]);
+    assert_ne!(out.status.code(), Some(0), "{}", text(&out));
+    assert_eq!(report_row(&run)["overall_pass"], false);
+}

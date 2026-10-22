@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::annotations;
 use super::digest::{self, CONFIG_KEYS, FileDigest};
@@ -96,6 +97,32 @@ fn same_but_version(a: &FileDigest, b: &FileDigest) -> bool {
     a == *b
 }
 
+/// Files a sweep invalidates: the replay's results and its subset plan.
+const DOWNSTREAM_OUTPUTS: [&str; 3] = ["replay.json", "replay-rss.csv", "replay-plan.json"];
+
+/// SHA-256 over the bytes of every `digests/*.json` file of the run, in
+/// sorted file-name order. A replay records it when it starts, and the
+/// report recomputes it, so a replay of one sweep never stands for another.
+pub fn digests_fingerprint(run: &RunDir) -> Result<Sha256Hex, String> {
+    let dir = run.root.join("digests");
+    let mut names: Vec<std::ffi::OsString> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("read digests directory: {}", e.kind()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name())
+        .filter(|n| n.to_str().is_some_and(|n| n.ends_with(".json")))
+        .collect();
+    names.sort();
+    let mut h = Sha256::new();
+    for n in names {
+        let bytes =
+            std::fs::read(dir.join(&n)).map_err(|e| format!("read a digest file: {}", e.kind()))?;
+        h.update(&bytes);
+    }
+    Ok(Sha256Hex(
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect(),
+    ))
+}
+
 pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
     if let Some(b) = &args.baseline {
         let own = args.run.root.join("digests");
@@ -133,6 +160,14 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                 entry.sha256.0.clone(),
                 annotations::load(dir, &entry.sha256)?,
             );
+        }
+    }
+    // A new sweep invalidates what was replayed from the old one.
+    for name in DOWNSTREAM_OUTPUTS {
+        match std::fs::remove_file(args.run.root.join(name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot remove a stale {name}: {}", e.kind())),
         }
     }
     let next = AtomicUsize::new(0);
