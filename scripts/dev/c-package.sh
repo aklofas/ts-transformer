@@ -84,8 +84,8 @@ fi
 mkdir -p "$OUT/include" "$OUT/lib/pkgconfig"
 cp "$OUT_DIR/include/tstrans.h" "$OUT_DIR/include/tstrans_config.h" "$OUT/include/"
 while IFS= read -r lib; do cp "$lib" "$OUT/lib/"; done <<<"$LIBS"
-OUT_ABS="$(cd "$OUT" && pwd)"
-sed "s|^prefix=.*|prefix=$OUT_ABS|" "$OUT_DIR/tstrans.pc" >"$OUT/lib/pkgconfig/tstrans.pc"
+# ${pcfiledir} keeps the package relocatable once it is archived and extracted.
+sed 's|^prefix=.*|prefix=${pcfiledir}/../..|' "$OUT_DIR/tstrans.pc" >"$OUT/lib/pkgconfig/tstrans.pc"
 
 # What the build enabled is what its config header says.
 FEATURES_JSON="$(sed -n 's/^#define TST_HAS_\([A-Z0-9_]*\) 1$/\1/p' "$OUT/include/tstrans_config.h" \
