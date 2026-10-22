@@ -1327,6 +1327,11 @@ The integrator-facing changes at a glance (full detail in the sections below):
   two runs over the same bytes could emit the last samples of two streams in
   different orders (found by a 260-capture corpus comparison).
 
+### Fixed — tst-hls
+
+- An evicted HLS segment stays available for its duration plus the longest
+  playlist that listed it, measured, not estimated from the window.
+
 ### Fixed — tst-py
 
 - `RtspClientConfig(transport_pref=…, rtsp_version=…)` now take effect at

@@ -56,6 +56,11 @@ pub(crate) struct Segmenter {
     /// Count of segments cut by the hard-cap fallback (a keyframe was overdue).
     /// Surfaced via `HlsStats::forced_cuts`.
     forced_cuts: u64,
+    /// Largest total duration of any live playlist published so far. RFC 8216
+    /// §6.2.2 sizes a removed segment's availability by the longest playlist
+    /// that contained it, and rounded EXTINF values may sum past the slot
+    /// count times the target.
+    longest_published: Duration,
 }
 
 struct OpenSegment {
@@ -98,6 +103,7 @@ impl Segmenter {
             next_seq: 0,
             history: VecDeque::new(),
             grace: VecDeque::new(),
+            longest_published: Duration::ZERO,
             current: None,
             has_explicit_cuts: false,
             forced_cuts: 0,
@@ -346,11 +352,12 @@ impl Segmenter {
         // neither truncate the retention window (early grace deletion → 404)
         // nor overflow `Duration` (debug panic).
         let min_duration = target.checked_mul(3).unwrap_or(Duration::MAX);
-        // Conservative bound on "the longest Playlist file" that referenced a
-        // segment: the full window at target duration.
+        // The longest playlist that referenced an evicted segment: measured,
+        // floored at the full window at target duration.
         let window_u32 = u32::try_from(self.config.playlist_window).unwrap_or(u32::MAX);
-        let longest_playlist = target.checked_mul(window_u32).unwrap_or(Duration::MAX);
+        let window_floor = target.checked_mul(window_u32).unwrap_or(Duration::MAX);
 
+        let longest_playlist = self.longest_published.max(window_floor);
         let mut total: Duration = self.history.iter().map(|s| s.duration).sum();
         while self.history.len() > self.config.playlist_window {
             let front_dur = self.history.front().map(|s| s.duration).unwrap_or_default();
@@ -369,6 +376,9 @@ impl Segmenter {
                 });
             }
         }
+        // `total` is the playlist about to be published (history after
+        // eviction); later evictions must outlive it.
+        self.longest_published = self.longest_published.max(total);
         self.purge_grace(now);
         Ok(())
     }
@@ -537,6 +547,31 @@ mod tests {
             );
         }
         assert!(dir.join("segment_00005.ts").exists());
+    }
+
+    #[test]
+    fn grace_outlives_the_longest_playlist_that_referenced_a_segment() {
+        let dir = tmpdir();
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            mode: HlsMode::Live,
+            segment_duration: Duration::from_secs(4),
+            playlist_window: 6,
+            ..HlsConfig::default()
+        };
+        let mut s = Segmenter::new(cfg).unwrap();
+        for _ in 0..7 {
+            s.push_ts(&[0x47u8; 188]).unwrap();
+            s.cut_with_duration(Some(Duration::from_millis(4400)))
+                .unwrap();
+        }
+        let seg0 = dir.join("segment_00000.ts");
+        let removed_at = s.grace.front().expect("segment 0 in grace").removed_at;
+        // Six 4.4 s segments list for 26.4 s, past the 24 s window estimate.
+        s.purge_grace(removed_at + Duration::from_millis(28_500));
+        assert!(seg0.exists(), "must outlive its duration + 24 s estimate");
+        s.purge_grace(removed_at + Duration::from_millis(30_800));
+        assert!(!seg0.exists(), "removed once 4.4 s + 26.4 s elapsed");
     }
 
     #[test]
