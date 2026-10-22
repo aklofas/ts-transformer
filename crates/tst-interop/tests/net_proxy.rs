@@ -76,13 +76,10 @@ use tst_interop::{profiles, proxy, recv, send};
 ///
 /// These tests assert loss-free loopback UDP, which no OS guarantees: a
 /// datagram is dropped the moment the receiving socket's buffer is full
-/// and the reading thread has not been scheduled. On windows-msvc that
-/// happened once in CI on 2026-10-05 — 499/500 through the transparent
-/// relay, order intact, exactly `packet-0255` missing mid-stream — the
-/// same class as stress run 2's finding R2-F2 (a burst
-/// overflowing a default-sized receive buffer), on a runner whose
-/// default UDP buffer is 64 KiB and where a descheduled reader loses a
-/// paced 500-datagram stream's worth of headroom in one timeslice. 1 MiB
+/// and the reading thread has not been scheduled. A descheduled reader
+/// overflowing a default-sized receive buffer loses a datagram mid-stream;
+/// windows-msvc runners default to a 64 KiB UDP buffer, which a
+/// paced 500-datagram stream can fill within one timeslice. 1 MiB
 /// is far above any burst here (500 datagrams of a dozen bytes, with
 /// per-datagram kernel accounting) and costs nothing; Linux silently
 /// clamps a request above `net.core.rmem_max`, so the applied size is

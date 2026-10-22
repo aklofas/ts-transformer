@@ -173,7 +173,7 @@ impl PyMuxPublisher {
     // ── Push family ─────────────────────────────────────────────────────────
 
     /// Push one video access unit (Annex-B framing). When `key_frame` is
-    /// true the shell auto-cuts a segment after the push.
+    /// true the preceding segment is closed before this access unit is pushed.
     #[pyo3(signature = (nal, *, pts, key_frame = false))]
     fn push_video(
         &self,

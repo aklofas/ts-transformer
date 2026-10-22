@@ -223,7 +223,7 @@ fn parse_parameter_sets_all_param_sets_fail_returns_err() {
     assert!(parse_parameter_sets(&nals).is_err());
 }
 
-// --- H264-01 regression test (chroma_format_idc Invalid arm) ---
+// --- Regression test: invalid chroma_format_idc is rejected ---
 
 /// Hand-crafted minimal High-profile SPS for exercising the
 /// `chroma_format_idc` validation path. Returns the raw RBSP body (no

@@ -83,8 +83,8 @@ pub(super) fn parse_h266_vui(br: &mut BitReader<'_>) -> Result<Option<ColorInfo>
             let top = br.read_ue_max("vui_chroma_sample_loc_type_top_field", 6)?;
             // ColorInfo::chroma_loc surfaces the top-field value (per the
             // type's single-byte design); bottom_field is consumed for
-            // bit-stream correctness but currently not surfaced. See
-            // H264-04 / H274-04 for the data-model gap.
+            // bit-stream correctness but not surfaced, because the model
+            // holds one byte.
             let _bottom = br.read_ue_max("vui_chroma_sample_loc_type_bottom_field", 6)?;
             chroma_loc = Some(top as u8);
         }

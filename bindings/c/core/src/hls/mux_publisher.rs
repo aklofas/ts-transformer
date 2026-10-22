@@ -17,8 +17,9 @@
 //!
 //! The C handle is a `CHandle<MuxPublisher<HlsPublisher>>`: every entry
 //! point takes the handle lock, and `finish_into_publisher` moves the
-//! publisher out with `CHandle::take` so a second call (or a send after it)
-//! reports a finished handle instead of touching freed state.
+//! publisher out with `CHandle::take` and frees the outer allocation on
+//! both its success and its failure path, so the pointer must not be used
+//! again after the call.
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_hls::HlsPublisher;
@@ -38,8 +39,9 @@ use crate::stats::{TstMuxPublisherStats, TstPublisherStats};
 /// Opaque handle for an HLS-backed `MuxPublisher`.
 ///
 /// Returned by [`tst_mux_publisher_with_config_hls`]. Freed with
-/// [`tst_mux_publisher_free`]. The inner is `None` only after
-/// [`tst_mux_publisher_finish_into_publisher`] moves the publisher out.
+/// [`tst_mux_publisher_free`]. The inner is `None` only while
+/// [`tst_mux_publisher_finish_into_publisher`] runs, which then frees the
+/// handle.
 pub struct TstMuxPublisher {
     inner: CHandle<MuxPublisher<HlsPublisher>>,
 }
