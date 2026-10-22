@@ -1358,6 +1358,9 @@ The integrator-facing changes at a glance (full detail in the sections below):
 - A change to the WebRTC reference player under `docs/webrtc/` after the soak
   now supersedes the soak. Only Markdown under that directory counts as a
   release document.
+- A soak archive row may declare `legs`; the release gate requires the chosen
+  72-hour soak to have run srt, rist, rtsp-publish, rtsp-publish-es and whep.
+  `tst-interop report soak` prints the legs on its final line.
 
 ### Fixed — release tooling
 

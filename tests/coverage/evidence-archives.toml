@@ -3,6 +3,10 @@
 # A corpus row may also carry eight integer counts (files, identical, changed_explained,
 # invariant_failures, parse_failures, replay_files, replay_paths, replay_failed); they are
 # all-or-none and belong to corpus rows only.
+# A soak row may also carry `legs`, the legs the run declared (`report soak` prints them on
+# its last line): a list of distinct names from srt, rist, rtsp-publish, rtsp-publish-es,
+# whep. The judge validates only the declared legs, so the release gate requires the chosen
+# 72-hour soak to name all five. Soak rows only.
 # Rendered into the qualification block by scripts/gen/qualification.sh.
 schema_version = 0
 

@@ -1977,9 +1977,17 @@ fn run_report_soak(args: &[String]) -> ! {
         std::process::exit(2);
     });
 
+    // The judge validates only the legs the run declared, so the final line
+    // names them for the maintainer to copy into the archive row.
+    let legs = std::fs::read_to_string(&config)
+        .ok()
+        .and_then(|text| report::soak::parse_soak_config(&text).ok())
+        .map(|cfg| cfg.legs.keys().cloned().collect::<Vec<_>>().join(", "))
+        .unwrap_or_default();
     eprintln!(
-        "report soak: overall_pass={} ({} verdict(s), {} provisional)",
+        "report soak: overall_pass={} legs={} ({} verdict(s), {} provisional)",
         results.overall_pass,
+        legs,
         results.verdicts.len(),
         results.verdicts.iter().filter(|v| v.provisional).count()
     );
