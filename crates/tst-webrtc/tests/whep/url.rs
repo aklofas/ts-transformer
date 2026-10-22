@@ -127,3 +127,28 @@ fn cert_and_key_on_a_plaintext_whep_url_are_refused() {
         }
     }
 }
+
+#[test]
+fn validate_accepts_a_parsed_url_and_refuses_edited_ones() {
+    let ok = WhepUrl::parse("whep://0.0.0.0:8889").unwrap();
+    assert_eq!(ok.validate(), Ok(()));
+    let mut edited = ok.clone();
+    edited.max_viewers = 0;
+    assert!(
+        matches!(edited.validate(), Err(UrlError::BadQueryValue { key, .. }) if key == "max_viewers")
+    );
+    edited.max_viewers = 65;
+    assert!(edited.validate().is_err());
+    let mut edited = ok.clone();
+    edited.token = Some(String::new());
+    assert!(
+        matches!(edited.validate(), Err(UrlError::BadQueryValue { key, .. }) if key == "token")
+    );
+    let mut edited = ok.clone();
+    edited.tls = true;
+    assert!(edited.validate().is_err());
+    edited.cert = Some("c.pem".into());
+    assert!(edited.validate().is_err());
+    edited.key = Some("k.pem".into());
+    assert_eq!(edited.validate(), Ok(()));
+}

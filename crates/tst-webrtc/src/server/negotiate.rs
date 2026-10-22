@@ -71,6 +71,7 @@ pub fn select_video(
         }
     };
     let mut saw_video = false;
+    let mut saw_receivable = false;
     for section in media_sections(offer, "video") {
         let Some(mid) = section.mid else {
             continue;
@@ -82,6 +83,11 @@ pub fn select_video(
             continue;
         }
         saw_video = true;
+        // A `sendonly` or `inactive` section opens no send stream.
+        if !media.direction().is_sending() {
+            continue;
+        }
+        saw_receivable = true;
         let qualifies = |p: &&OfferedPayload| {
             p.name.eq_ignore_ascii_case(name)
                 && (codec != Codec::H264 || p.packetization_mode == 1)
@@ -112,8 +118,10 @@ pub fn select_video(
         }
     }
     Negotiated::Rejected {
-        reason: if saw_video {
+        reason: if saw_receivable {
             no_payload
+        } else if saw_video {
+            "no video section in the offer can receive (recvonly or sendrecv)"
         } else {
             "the offer has no video media"
         },

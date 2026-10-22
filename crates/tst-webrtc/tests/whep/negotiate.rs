@@ -369,3 +369,48 @@ fn a_section_repeating_or_stray_payload_lines_is_refused() {
     assert!(consistent(&offer));
     accept(&offer);
 }
+
+const H264_LINES: &str = "a=rtpmap:96 H264/90000\r\n\
+                          a=fmtp:96 packetization-mode=1;profile-level-id=42001f\r\n";
+
+/// A one-video-section offer whose section has `direction`.
+fn directed(direction: &str) -> String {
+    offer_with(&[("video", "0", "96", H264_LINES)]).replace("a=recvonly", &format!("a={direction}"))
+}
+
+#[test]
+fn only_a_section_that_can_receive_is_selected() {
+    for (direction, selected) in [
+        ("recvonly", true),
+        ("sendrecv", true),
+        ("sendonly", false),
+        ("inactive", false),
+    ] {
+        let got = select(&directed(direction), VideoCodec::H264, None);
+        if selected {
+            assert!(
+                matches!(got, Negotiated::Video { .. }),
+                "{direction}: {got:?}"
+            );
+        } else {
+            let Negotiated::Rejected { reason } = got else {
+                panic!("{direction}: {got:?}")
+            };
+            assert!(reason.contains("can receive"), "{direction}: {reason}");
+        }
+    }
+}
+
+#[test]
+fn a_later_video_section_is_selected_when_the_first_cannot_receive() {
+    let offer = offer_with(&[
+        ("video", "0", "96", H264_LINES),
+        ("video", "1", "96", H264_LINES),
+    ])
+    .replacen("a=recvonly", "a=inactive", 1);
+    let rtc = accept(&offer);
+    let Negotiated::Video { mid, .. } = select_video(&rtc, &offer, VideoCodec::H264, None) else {
+        panic!("no section selected")
+    };
+    assert_eq!(&*mid, "1");
+}

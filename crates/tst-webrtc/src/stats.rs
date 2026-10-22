@@ -110,8 +110,8 @@ tst_core::binding_record! {
         pub sessions_rejected_cap: u64,
         /// Session offers refused because no offered codec matched the mount.
         pub sessions_rejected_codec: u64,
-        /// Requests refused by authentication: offers and session DELETEs
-        /// without the server's bearer token.
+        /// Requests refused by authentication: offers, session PATCHes and
+        /// session DELETEs without the server's bearer token.
         pub sessions_rejected_auth: u64,
         /// Sessions closed because ICE did not connect in time.
         pub sessions_reaped_ice_timeout: u64,

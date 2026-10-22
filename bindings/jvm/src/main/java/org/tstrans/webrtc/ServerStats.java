@@ -12,8 +12,8 @@ package org.tstrans.webrtc;
  * @param sessionsTotal Viewer sessions opened since the server started.
  * @param sessionsRejectedCap Session offers refused because a viewer cap was reached.
  * @param sessionsRejectedCodec Session offers refused because no offered codec matched the mount.
- * @param sessionsRejectedAuth Requests refused by authentication: offers and session DELETEs
- *     without the server's bearer token.
+ * @param sessionsRejectedAuth Requests refused by authentication: offers, session PATCHes and
+ *     session DELETEs without the server's bearer token.
  * @param sessionsReapedIceTimeout Sessions closed because ICE did not connect in time.
  * @param sessionsReapedDisconnected Sessions closed after the viewer disconnected.
  * @param rtpPacketsSent RTP packets sent to all viewers.

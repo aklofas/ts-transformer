@@ -3,6 +3,9 @@
 //! The submodules [`http`] and [`negotiate`] are public only for the
 //! crate's integration tests and fuzz targets; they are not a supported
 //! API.
+//!
+//! Each viewer session builds its own `Rtc`, so its DTLS certificate is
+//! generated per session; no certificate is shared between viewers.
 
 pub(crate) mod accept;
 #[doc(hidden)]
@@ -206,6 +209,8 @@ impl WhepServer {
     ///
     /// # Errors
     ///
+    /// - [`WhepServerError::InvalidUrl`] when `url` fails
+    ///   [`WhepUrl::validate`] (a hand-edited value). No port is bound.
     /// - [`WhepServerError::Tls`] for a `wheps://` URL whose certificate or
     ///   key cannot be loaded, or when the crate is built without the `tls`
     ///   feature. No port is bound in either case.
@@ -219,7 +224,8 @@ impl WhepServer {
     /// supplied. A test seam; not a supported API.
     #[doc(hidden)]
     pub fn bind_with_clock(url: WhepUrl, clock: Arc<dyn Clock>) -> Result<Self, WhepServerError> {
-        // Loaded before any socket is bound, so a refused bind holds no port.
+        // Refused before any socket is bound, so a refused bind holds no port.
+        url.validate()?;
         #[cfg(feature = "tls")]
         let tls = if url.tls { Some(load_tls(&url)?) } else { None };
         #[cfg(not(feature = "tls"))]
@@ -352,6 +358,13 @@ impl WhepServer {
             });
         };
         state.closed.store(true, Ordering::Release);
+        // The mount is out of the map the media thread's gauge pass walks,
+        // so a retained handle must not keep the last counts.
+        state.stats.viewers.store(0, Ordering::Relaxed);
+        state
+            .stats
+            .viewers_waiting_keyframe
+            .store(0, Ordering::Relaxed);
         // The media thread also closes the sessions of a closed mount on
         // its own, so a full queue cannot keep them open.
         let _ = self

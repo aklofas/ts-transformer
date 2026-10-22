@@ -40,7 +40,9 @@ pub struct WhepUrl {
     pub advertise: Option<IpAddr>,
     /// The most viewers connected at once (1 to 64, default 10).
     pub max_viewers: u64,
-    /// A bearer token every WHEP request must carry. `None` admits any request.
+    /// A bearer token every POST, PATCH and DELETE must carry; the OPTIONS
+    /// preflight and the 404 and 405 answers need none. `None` admits any
+    /// request.
     pub token: Option<String>,
     /// The `Access-Control-Allow-Origin` value the endpoint answers with
     /// (default `*`).
@@ -67,6 +69,8 @@ impl std::fmt::Debug for WhepUrl {
             .finish()
     }
 }
+
+const EMPTY_TOKEN: &str = "an empty token would refuse every request; omit token= to admit any";
 
 type Applied = Result<(), UrlError>;
 
@@ -103,7 +107,7 @@ fn set_token(u: &mut WhepUrl, key: &str, value: &str) -> Applied {
         return Err(UrlError::BadQueryValue {
             key: key.to_string(),
             value: String::new(),
-            detail: "an empty token would refuse every request; omit token= to admit any".into(),
+            detail: EMPTY_TOKEN.into(),
         });
     }
     u.token = Some(value.to_string());
@@ -153,7 +157,7 @@ pub const URL_KEYS: &[QueryKey<WhepUrl>] = &[
     QueryKey::new(
         "token",
         &[],
-        "Bearer token every WHEP request must carry",
+        "Bearer token every POST, PATCH and DELETE must carry",
         "text",
         set_token,
     ),
@@ -256,33 +260,59 @@ impl WhepUrl {
         };
         apply_query(URL_KEYS, &mut url, &parsed.query, UnknownKeys::Reject)?;
 
-        if !tls && (url.cert.is_some() || url.key.is_some()) {
+        url.validate()?;
+        Ok(url)
+    }
+
+    /// Checks the invariants [`parse`](Self::parse) enforces, for a value
+    /// built or edited by hand: `max_viewers` in 1 to 64, a non-empty
+    /// `token`, and `cert` with `key` exactly when `tls` is set.
+    ///
+    /// # Errors
+    ///
+    /// [`UrlError::BadQueryValue`] naming the offending key.
+    pub fn validate(&self) -> Result<(), UrlError> {
+        if !(1..=MAX_MAX_VIEWERS).contains(&self.max_viewers) {
+            return Err(UrlError::BadQueryValue {
+                key: "max_viewers".into(),
+                value: self.max_viewers.to_string(),
+                detail: format!("expected 1..={MAX_MAX_VIEWERS}"),
+            });
+        }
+        if self.token.as_deref() == Some("") {
+            return Err(UrlError::BadQueryValue {
+                key: "token".into(),
+                value: String::new(),
+                detail: EMPTY_TOKEN.into(),
+            });
+        }
+        if !self.tls && (self.cert.is_some() || self.key.is_some()) {
             // Refuse rather than come up unencrypted when TLS was asked for.
-            let key = if url.cert.is_some() { "cert" } else { "key" };
+            let key = if self.cert.is_some() { "cert" } else { "key" };
             return Err(UrlError::BadQueryValue {
                 key: key.into(),
-                value: url
+                value: self
                     .cert
                     .clone()
-                    .or_else(|| url.key.clone())
+                    .or_else(|| self.key.clone())
                     .unwrap_or_default(),
                 detail: "cert= and key= need a wheps:// URL; this plaintext whep:// URL \
-                         would serve unencrypted"
+                     would serve unencrypted"
                     .into(),
             });
         }
-        if tls && (url.cert.is_none() || url.key.is_none()) {
-            let missing = match (&url.cert, &url.key) {
+        if self.tls && (self.cert.is_none() || self.key.is_none()) {
+            let missing = match (&self.cert, &self.key) {
                 (None, None) => "cert= and key= are",
                 (None, Some(_)) => "cert= is",
                 _ => "key= is",
             };
             return Err(UrlError::BadQueryValue {
                 key: "cert".into(),
-                value: url.cert.clone().unwrap_or_default(),
+                value: self.cert.clone().unwrap_or_default(),
                 detail: format!("wheps:// requires both cert= and key=; {missing} missing"),
             });
         }
-        Ok(url)
+        Ok(())
     }
 }
