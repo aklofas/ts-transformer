@@ -242,17 +242,26 @@ the full producer + JavaScript client contract for both hls.js paths.
   GOP does not produce 1-second segments, so the playlist is not rewritten
   more often than RFC 8216 §6.2.1 allows (half the target duration).
 - **A GOP longer than `segment_duration` is cut before the rounding
-  boundary.** When the next access unit would carry the open segment to
-  `segment_duration + 0.5 s`, the segment is cut before it, PAT and PMT are
+  boundary.** When the next access unit, expected after the same gap as the
+  last one, would carry the open segment to `segment_duration + 0.499 s`,
+  the segment is cut before the current access unit, PAT and PMT are
   re-emitted, and the next segment starts on that non-keyframe access unit.
+  The bound holds for a steady frame cadence: a gap longer than the one
+  before it can still overshoot by the difference.
   The SHOULD of RFC 8216 §3 (a segment starts on a keyframe) is traded for
   the MUST of §4.3.3.1. A player joining on such a segment waits for the
   next keyframe. **Keep the GOP at or under `segment_duration`** and every
   segment opens PAT → PMT → IDR, decodable from its first byte.
-- **Segment 0 follows the same rule.** `MuxPublisher` tells the publisher
-  at construction that keyframes drive segmentation, so segment 0 is never
-  cut on the wall clock at `segment_duration`, however the producer is
-  paced.
+- **Segment 0 follows the same rule.** On the first video access unit,
+  before any bytes, `MuxPublisher` tells the publisher that keyframes drive
+  segmentation, so segment 0 is never cut on the wall clock at
+  `segment_duration`, however the producer is paced. A stream without
+  video keeps the wall-clock rule, and so does segment 0 of a stream that
+  pushes metadata before its first video access unit.
+- **A restarted timeline cuts.** A video access unit more than 1 s before
+  the open segment's start (an encoder restart or a PTS wrap) closes the
+  segment at the previous access unit, and the next segment starts on the
+  new timeline.
 - **`max_segment_duration` guards a stalled producer.** In the
   keyframe-driven flow the media-time bound above is enforced as access
   units arrive; if they stop arriving, the publisher cuts on the wall clock

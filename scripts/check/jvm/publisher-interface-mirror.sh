@@ -12,6 +12,10 @@ RUST_FILE="$ROOT/crates/tst-core/src/publisher/mod.rs"
 JAVA_FILE="$ROOT/bindings/jvm/src/main/java/org/tstrans/hls/Publisher.java"
 
 # Rust trait methods, converted to camelCase.
+# Rust-only trait methods, left out of the comparison: `segment_duration` is
+# read inside the Rust mux publisher shell from the Rust publisher it wraps;
+# no Java object implements the trait for that shell, and the HLS builder
+# already sets the duration.
 rust_methods=$(awk '
   /^pub trait Publisher/ { in_trait = 1; next }
   in_trait && /^}/ { in_trait = 0 }
@@ -25,10 +29,6 @@ rust_methods=$(awk '
     print out
   }
 ' "$RUST_FILE" | grep -vx -e segmentDuration | sort -u)
-# Rust-only trait methods, left out of the comparison: `segment_duration` is
-# read inside the Rust mux publisher shell from the Rust publisher it wraps;
-# no Java object implements the trait for that shell, and the HLS builder
-# already sets the duration.
 
 # Java interface methods: `<Type> <name>(` lines inside the interface body,
 # skipping `close` (AutoCloseable, not a trait method) and comments.

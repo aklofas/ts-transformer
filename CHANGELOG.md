@@ -522,17 +522,21 @@ The integrator-facing changes at a glance (full detail in the sections below):
 - `segment_duration` is the maximum a segment may reach. `MuxPublisher`
   cuts on the first keyframe at or after the publisher's `segment_duration`
   and force-cuts, re-emitting PAT and PMT, before an access unit would carry
-  a segment past the target's rounding boundary; `Publisher::segment_duration()`
+  a segment past the target's rounding boundary at a steady frame cadence (a
+  gap longer than the one before it can still overshoot by the difference);
+  a video PTS more than 1 s before the segment's start (an encoder restart)
+  also cuts; `Publisher::segment_duration()`
   (default `None`, every keyframe cuts) tells the shell the bound. It used to
   cut on every keyframe, so a GOP longer than the target published an
   `#EXTINF` above `#EXT-X-TARGETDURATION` (RFC 8216 §4.3.3.1) and a short GOP
   rewrote the playlist more often than every half target (§6.2.1). Segments
   now hold whole GOPs up to the target; keep the GOP at or under
   `segment_duration` so every segment starts on a keyframe. When the
-  publisher reports a bound, the shell calls `cut_segment()` once at
-  construction, before any bytes, so the HLS segmenter treats segment 0 as
-  keyframe-driven too and never cuts it on the wall clock at
-  `segment_duration`.
+  publisher reports a bound, the shell calls `cut_segment()` once on the
+  first video access unit if no bytes have flowed yet, so the HLS segmenter
+  treats segment 0 as keyframe-driven too and never cuts it on the wall
+  clock at `segment_duration`; streams without video keep the wall-clock
+  rule.
 
 ### Changed — tst-py (BREAKING)
 

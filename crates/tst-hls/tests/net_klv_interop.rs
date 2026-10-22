@@ -101,8 +101,11 @@ fn segments_are_self_contained_and_carry_klv() {
     // Event mode + a segment_duration of one GOP (2.002 s, below): every
     // keyframe after the first reaches it, so the ONLY cuts are
     // keyframe-driven (one segment per GOP), which is what makes the
-    // per-segment PAT→PMT→IDR contract deterministic. The feed is pushed in
-    // milliseconds, far inside the 2 s the wall clock would need to cut.
+    // per-segment PAT→PMT→IDR contract deterministic. Each GOP's KLV is
+    // pushed before its keyframe, so segment 0 opens before the first video
+    // AU and stays on the segmenter's wall-clock rule (a cut 2 s after it
+    // opened) until the first keyframe cut; the whole feed is pushed in
+    // milliseconds, so that cut never fires.
     let publisher = HlsPublisherBuilder::new()
         .bind("127.0.0.1:0".parse().unwrap())
         .output_dir(&dir)

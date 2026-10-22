@@ -316,6 +316,62 @@ mod tests {
         p.finish().unwrap();
     }
 
+    /// An audio-only mux publisher stream never calls the video hook, so
+    /// no intent signal reaches the segmenter: its segments are cut on the
+    /// wall clock at `segment_duration`, not by the stall guard, and are not
+    /// counted as forced.
+    #[test]
+    fn a_stream_without_video_keeps_the_wall_clock_cut() {
+        use tst_core::codec::AudioCodec;
+        use tst_core::mpegts::common::Pts90khz;
+        use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder};
+        let dir = tmpdir("no-video");
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            ..HlsConfig::default()
+        };
+        let mux_cfg = {
+            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+            prog.add_audio(0x101, AudioCodec::Aac);
+            let mut b = MuxerConfig::builder();
+            b.add_program(prog.build());
+            b.build().unwrap()
+        };
+        let shell = tst_pipeline::MuxPublisher::with_config(
+            HlsPublisher::with_config(cfg).unwrap(),
+            mux_cfg,
+        )
+        .unwrap();
+        for i in 0..10 {
+            shell
+                .push_audio(&[0xA5; 200], Pts90khz::new(i * 1920))
+                .unwrap();
+        }
+        let p = shell.finish().unwrap();
+        let d = p.segment_duration().unwrap();
+        {
+            let mut s = p.state.lock().unwrap();
+            assert!(s.segmenter.open_segment_bytes() > 0, "segment 0 is open");
+            let now = std::time::Instant::now();
+            s.segmenter
+                .tick_at(now + d + Duration::from_millis(1))
+                .unwrap();
+            assert_eq!(
+                s.segmenter.open_segment_bytes(),
+                0,
+                "cut at segment_duration"
+            );
+            assert_eq!(
+                s.segmenter.forced_cuts(),
+                0,
+                "a wall-clock cut is not forced"
+            );
+        }
+        assert_eq!(p.hls_stats().forced_cuts, 0);
+        Publisher::finish(p).unwrap();
+    }
+
     #[test]
     fn cut_writes_a_live_playlist_before_finish() {
         let dir = tmpdir("live-pl");

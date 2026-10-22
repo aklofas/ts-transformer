@@ -136,7 +136,7 @@ mpv    'http://localhost:8080/playlist.m3u8'
 | Parameter | Default | Meaning |
 |---|---|---|
 | `output_dir` | `<temp_dir>/tstrans-hls` | Filesystem dir for `.ts` + `.m3u8` (portable temp dir) |
-| `segment_duration` | `4` (seconds) | Maximum segment duration: segments close on the first keyframe at or after it and never round above it; `max_segment_duration` only guards a stalled producer |
+| `segment_duration` | `4` (seconds) | Maximum segment duration: segments close on the first keyframe at or after it and, at a steady frame cadence, never round above it; `max_segment_duration` only guards a stalled producer |
 | `playlist_window` | `6` | Rolling window size (LIVE mode only) |
 | `mode` | `live` | One of `live`/`event`/`vod` |
 | `auth_user`/`auth_pass` | none | Basic auth credentials |
