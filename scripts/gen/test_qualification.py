@@ -144,6 +144,13 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertTrue(any("sanitizers/tsan" in r and "cancelled" in r for r in rec["verdict_reasons"]))
 
+    def test_cancelled_sanitizers_workflow_is_no_go(self):
+        def m(f):
+            f["legs.json"]["sanitizers"]["conclusion"] = "cancelled"
+        rec = collect(m)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(leg(rec, "sanitizers")["conclusion"], "cancelled")
+
     def test_missing_interop_artefact_is_missing_and_no_go(self):
         def m(f):
             f["interop-evidence/results.json"] = None

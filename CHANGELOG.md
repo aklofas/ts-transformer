@@ -1353,6 +1353,11 @@ The integrator-facing changes at a glance (full detail in the sections below):
   such a replay the replay of an earlier sweep.
 - `tst-interop corpus sweep --because` refuses a blank reason.
 
+### Fixed — release tooling
+
+- The qualification record requires the sanitizers workflow's own conclusion,
+  not only its four jobs' reports.
+
 ### Docs — project pages
 
 - `docs/project/1.0-exit-criteria.md` records the maintainer's answers to its
