@@ -849,6 +849,14 @@ rtsp-publish-es leg declares the same period and generation count plus
 command, `viewer_reconnect_s` and `viewer_connections` (see "WebRTC
 playback leg").
 
+The judge validates only the legs `soak-config.json` declares, so a run
+launched with `--no-whep`, `--no-rtsp-publish` or `--no-rtsp-publish-es`
+still passes. The last stderr line of `report soak` prints
+`legs=srt, rist, ...`; copy those names into the run's row in
+`tests/coverage/evidence-archives.toml` as `legs = ["srt", "rist", ...]`.
+The release gate accepts a 72-hour soak only when its row lists all five:
+srt, rist, rtsp-publish, rtsp-publish-es and whep.
+
 The supervisor polls every worker every 30 s. A death more than
 `SUPERVISOR_GRACE_S` (120 s) before the deadline kills the run at once,
 writes `soak-FAILED` naming the role and log, records it in

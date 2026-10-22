@@ -54,6 +54,9 @@ EMPTY_BLOCK = (
 
 SANITIZER_JOBS = ["asan", "asan-native", "tsan", "tsan-native"]
 KINDS = ("soak", "stress", "corpus")
+# The legs the 72-hour release soak must have run. The soak judge validates only
+# the legs a run declared, so a reduced run passes; the archive row names them.
+RELEASE_SOAK_LEGS = ("srt", "rist", "rtsp-publish", "rtsp-publish-es", "whep")
 # A soak archive still stands for a later tree when nothing outside these
 # release documents changed between the two commits: CHANGELOG.md, anything
 # under docs/, and the archive table itself.
@@ -119,6 +122,14 @@ def validate_archives(rows):
                 problems.append("%s: a soak row needs expected_duration_s, an integer above 0" % i)
         elif "expected_duration_s" in r:
             problems.append("%s: expected_duration_s belongs to soak rows only" % i)
+        if "legs" in r:
+            legs = r["legs"]
+            if r.get("kind") != "soak":
+                problems.append("%s: legs belongs to soak rows only" % i)
+            elif (not isinstance(legs, list) or not all(isinstance(l, str) for l in legs)
+                  or len(set(legs)) != len(legs) or not set(legs) <= set(RELEASE_SOAK_LEGS)):
+                problems.append("%s: legs must be a list of distinct names from %s"
+                                % (i, ", ".join(RELEASE_SOAK_LEGS)))
         present = [k for k in CORPUS_COUNTS if k in r]
         if present and r.get("kind") != "corpus":
             problems.append("%s: %s: belongs to corpus rows only" % (i, ", ".join(present)))
@@ -143,6 +154,8 @@ def load_archives(root):
     for r in rows:
         row = {k: r[k] for k in ("id", "kind", "tree", "overall_pass", "note", "date")}
         row["expected_duration_s"] = r.get("expected_duration_s")
+        if "legs" in r:
+            row["legs"] = r["legs"]
         row.update({k: r[k] for k in CORPUS_COUNTS if k in r})
         out.append(row)
     return out
@@ -184,7 +197,7 @@ def _by_date(rows):
 def _soak_entry(root, sha, s):
     e = {"id": s["id"], "tree": s["tree"], "date": s["date"],
          "overall_pass": s["overall_pass"], "expected_duration_s": s.get("expected_duration_s"),
-         "changed_paths": 0, "git_error": None}
+         "legs": s.get("legs"), "changed_paths": 0, "git_error": None}
     if s["tree"] != sha:
         try:
             e["changed_paths"] = len(changed_paths(root, s["tree"], sha))
@@ -248,6 +261,10 @@ def release_vm(root, sha, archives, release):
             if soak["expected_duration_s"] != RELEASE_SOAK_S:
                 reasons.append("soak: archive %s declares %s s, not %d"
                                % (soak["id"], soak["expected_duration_s"], RELEASE_SOAK_S))
+            elif set(soak.get("legs") or ()) != set(RELEASE_SOAK_LEGS):
+                reasons.append("soak: archive %s ran legs %s; the release soak needs %s"
+                               % (soak["id"], ", ".join(soak.get("legs") or ()) or "none (undeclared)",
+                                  ", ".join(RELEASE_SOAK_LEGS)))
             c = _newest([a for a in archives if a["kind"] == "corpus" and a["tree"] == soak["tree"]])
             if c is None:
                 reasons.append("corpus: no corpus archive for the soaked tree %s" % soak["tree"][:12])
@@ -465,8 +482,9 @@ def _release_line(gate):
     elif s.get("changed_paths"):
         soak = "%s (superseded by %d code changes)" % (s["id"], s["changed_paths"])
     else:
-        soak = "%s (tree %s, %s s, %s)" % (s["id"], s["tree"][:12], s.get("expected_duration_s"),
-                                          "PASS" if s["overall_pass"] else "FAIL")
+        legs = (", legs " + ", ".join(s["legs"])) if s.get("legs") else ""
+        soak = "%s (tree %s, %s s%s, %s)" % (s["id"], s["tree"][:12], s.get("expected_duration_s"), legs,
+                                            "PASS" if s["overall_pass"] else "FAIL")
     if not (gate or {}).get("release_mode"):
         return "Release gate: not applied (not a release qualification); newest soak archive for this tree: %s." % soak
     c = gate.get("corpus")
