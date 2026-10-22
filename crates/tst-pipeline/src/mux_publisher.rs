@@ -470,6 +470,9 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     /// (possibly in partial state if the panic interrupted a push) is
     /// handed back for caller disposal.
     pub fn finish(self) -> Result<P, MuxPublisherError<P::Error>> {
+        // Queued tail bytes belong to the segment about to close, so they
+        // go out before the cut.
+        self.0.drain_queued();
         let cut = self
             .0
             .with_parts(|_, seg| match (seg.segment_start_pts, seg.last_video_pts) {
@@ -479,6 +482,8 @@ impl<P: Publisher + Send> MuxPublisher<P> {
         match cut {
             Ok(r) => r.map_err(MuxPublisherError::Publisher)?,
             Err(PartsError::Poisoned) => {}
+            // Unreachable: only `MuxSender::close` and `finish` mark the
+            // sender closed, and this shell calls neither.
             Err(PartsError::Closed) => return Err(MuxPublisherError::Closed),
         }
         Ok(self.0.into_inner().into_publisher())
@@ -1168,6 +1173,60 @@ mod tests {
         fn stats(&self) -> PublisherStats {
             PublisherStats::default()
         }
+    }
+
+    /// Fails the first `push_ts` and records every offer and cut in order.
+    struct FailOnceOpLog {
+        ops: Vec<Op>,
+        has_failed: bool,
+    }
+
+    impl Publisher for FailOnceOpLog {
+        type Error = MemErr;
+        fn push_ts(&mut self, ts: &[u8]) -> Result<(), MemErr> {
+            self.ops.push(Op::Push(ts.len()));
+            if self.has_failed {
+                Ok(())
+            } else {
+                self.has_failed = true;
+                Err(MemErr)
+            }
+        }
+        fn cut_segment(&mut self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn cut_segment_with_duration(&mut self, d: Duration) -> Result<(), MemErr> {
+            self.ops.push(Op::Cut(d));
+            Ok(())
+        }
+        fn finish(self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn stats(&self) -> PublisherStats {
+            PublisherStats::default()
+        }
+    }
+
+    /// Bytes a failed push left queued are offered before the closing cut,
+    /// so they land in the segment it closes and no segment opens after it.
+    #[test]
+    fn finish_drains_queued_bytes_before_the_closing_cut() {
+        let p = FailOnceOpLog {
+            ops: vec![],
+            has_failed: false,
+        };
+        let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+        mp.push_video(&h264_au(), Pts90khz::new(0), true)
+            .unwrap_err();
+        let ops = mp.finish().unwrap().ops;
+        assert!(
+            matches!(ops.last(), Some(Op::Cut(_))),
+            "the closing cut comes last: {ops:?}"
+        );
+        assert!(
+            ops.iter().filter(|o| matches!(o, Op::Push(_))).count() >= 2,
+            "the failed bytes are offered again: {ops:?}"
+        );
     }
 
     /// A failed `push_ts` keeps its bytes queued, and the next call offers
