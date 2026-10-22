@@ -42,12 +42,16 @@ tst_core::binding_record! {
 /// 1. **`min` is `None`**: every keyframe cuts.
 /// 2. **A keyframe with `span >= min`** cuts: segments hold whole GOPs and
 ///    close on the first keyframe at or after the target.
-/// 3. **Any AU** cuts when the segment would otherwise reach `min + 500 ms`
-///    by the next AU, predicted from the gap to the previous AU. Every
-///    `#EXTINF` then stays below the point where it would round above
-///    `ceil(min)`, the advertised target (RFC 8216 §4.3.3.1), even when the
-///    GOP is longer than the target. The new segment starts on that AU, a
-///    non-keyframe when the GOP is too long.
+/// 3. **Any AU** cuts when the segment would otherwise reach `min + 499 ms`
+///    by the next AU, predicted from the gap to the previous AU. With a
+///    steady frame cadence every `#EXTINF` then stays below the point where
+///    it would round above `ceil(min)`, the advertised target (RFC 8216
+///    §4.3.3.1), even when the GOP is longer than the target; a gap longer
+///    than the one before it can still overshoot by the difference. The new
+///    segment starts on this AU, a non-keyframe when the GOP is too long.
+/// 4. **An AU more than 1 s before the segment's start** (an encoder
+///    restart or a PTS wrap) cuts with the span up to the previous AU, and
+///    the new segment starts on the new timeline.
 ///
 /// A cut closes the segment with EXTINF = the exact PTS span
 /// `segment_start..this AU` and asks the caller to re-emit PAT/PMT, so the
@@ -55,9 +59,12 @@ tst_core::binding_record! {
 /// independently decodable (RFC 8216 §3). The stream-head AU, with no open
 /// segment yet, opens the first segment without a zero-duration cut.
 ///
-/// When `min` is `Some`, [`Segmented::new`] calls [`Publisher::cut_segment`]
-/// once before any bytes: nothing is closed, and the publisher learns that
-/// explicit cuts drive segmentation from the first segment on.
+/// When `min` is `Some` and the first video AU arrives before any bytes, the
+/// shell first calls [`Publisher::cut_segment`] once: nothing is closed, and
+/// the publisher learns that explicit cuts drive segmentation from the first
+/// segment on. A stream without video, or one whose first bytes precede its
+/// first video AU, sends no such signal and keeps the publisher's own rule
+/// for the segment already open.
 ///
 /// `last_video_pts` and the open segment's start are recorded when the hook
 /// runs, before the muxer push. A push the muxer then rejects (a full
@@ -75,6 +82,8 @@ pub struct Segmented<P: Publisher> {
     /// The publisher's [`Publisher::segment_duration`], read once: the
     /// media-time bound a segment may reach. `None` cuts on every keyframe.
     min_segment: Option<Duration>,
+    /// Whether a media-time forced cut has been logged at warn level yet.
+    warned_forced_cut: bool,
     cut_calls: u64,
     bytes_pushed: u64,
     drain_calls: u64,
@@ -87,23 +96,14 @@ pub struct Segmented<P: Publisher> {
 
 impl<P: Publisher> Segmented<P> {
     /// Wrap a publisher.
-    pub fn new(mut publisher: P) -> Self {
+    pub fn new(publisher: P) -> Self {
         let min_segment = publisher.segment_duration();
-        if min_segment.is_some() {
-            // A cut before any bytes flow closes nothing; it tells the
-            // publisher that explicit cuts drive segmentation from the start,
-            // so segment 0 belongs to this shell's media-time bound and a
-            // wall-clock fallback (HLS: the raw-relay cut at
-            // `segment_duration`) only guards a stalled producer. Not routed
-            // through `cut`: no segment was closed. A failure here (a
-            // finished publisher) resurfaces on the first push.
-            let _ = publisher.cut_segment();
-        }
         Self {
             publisher,
             segment_start_pts: None,
             last_video_pts: None,
             min_segment,
+            warned_forced_cut: false,
             cut_calls: 0,
             bytes_pushed: 0,
             drain_calls: 0,
@@ -136,19 +136,24 @@ impl<P: Publisher> Segmented<P> {
         Some(self.last_error.swap_remove(i).1)
     }
 
-    /// Whether the access unit at `pts`, `span` past the open segment's
-    /// `start`, begins a new segment. Without a bound every keyframe does.
-    /// With one, a keyframe does once the segment has reached the bound, and
-    /// any access unit does when, assuming the next one follows after the
-    /// same gap as this one, closing the segment later would reach
-    /// `bound + 500 ms`: past that an `#EXTINF` rounds above the advertised
-    /// target duration.
-    fn should_cut(&self, start: Pts90khz, pts: Pts90khz, span: Duration, key_frame: bool) -> bool {
+    /// Why the access unit at `pts`, `span` past the open segment's
+    /// `start`, begins a new segment, or `None` if it does not, per the
+    /// rules on [`Segmented`].
+    fn cut_reason(
+        &self,
+        start: Pts90khz,
+        pts: Pts90khz,
+        span: Duration,
+        key_frame: bool,
+    ) -> Option<Cut> {
         let Some(min) = self.min_segment else {
-            return key_frame;
+            return key_frame.then_some(Cut::Keyframe);
         };
+        if pts.as_ticks() < start.as_ticks().saturating_sub(REORDER_TOLERANCE_TICKS) {
+            return Some(Cut::Discontinuity);
+        }
         if key_frame && span >= min {
-            return true;
+            return Some(Cut::Keyframe);
         }
         // Extrapolate in ticks, not in rounded-down `Duration`s, so the
         // prediction lands exactly on the boundary when the gaps are even.
@@ -156,15 +161,7 @@ impl<P: Publisher> Segmented<P> {
             .last_video_pts
             .map_or(0, |p| pts.as_ticks().saturating_sub(p.as_ticks()).max(0));
         let next = Pts90khz::new(pts.as_ticks().saturating_add(gap));
-        if media_span(start, next) >= min.saturating_add(FORCED_CUT_MARGIN) {
-            tracing::debug!(
-                span_ms = span.as_millis() as u64,
-                key_frame,
-                "forced segment cut: the next access unit would pass the target duration"
-            );
-            return true;
-        }
-        false
+        (media_span(start, next) >= min.saturating_add(FORCED_CUT_MARGIN)).then_some(Cut::Forced)
     }
 
     /// Cut the open segment with its media duration and start a new one.
@@ -199,11 +196,34 @@ impl<P: Publisher + Send> Transport for Segmented<P> {
     fn close(&mut self) {}
 
     fn on_video_au(&mut self, pts: Pts90khz, key_frame: bool) -> Result<bool, TransportError> {
+        if self.last_video_pts.is_none() && self.min_segment.is_some() && self.bytes_pushed == 0 {
+            // A cut before any bytes flow closes nothing; it tells the
+            // publisher that explicit cuts drive segmentation from the start,
+            // so segment 0 belongs to this shell's media-time bound and a
+            // wall-clock fallback (HLS: the raw-relay cut at
+            // `segment_duration`) only guards a stalled producer. Sent on the
+            // first video AU, not at construction, so a stream without video
+            // keeps the publisher's own rule; and only before any bytes, so
+            // it never closes a segment that PSI or metadata already opened.
+            // Not routed through `cut`: no segment is closed.
+            if let Err(e) = self.publisher.cut_segment() {
+                return Err(self.fail(e));
+            }
+        }
         let mut cut = false;
         if let Some(start) = self.segment_start_pts {
             let span = media_span(start, pts);
-            if self.should_cut(start, pts, span, key_frame) {
-                if let Err(e) = self.cut(span) {
+            if let Some(reason) = self.cut_reason(start, pts, span, key_frame) {
+                // A discontinuity closes the segment at the last AU of the
+                // old timeline; `span` would saturate to zero.
+                let closed = match reason {
+                    Cut::Discontinuity => {
+                        self.last_video_pts.map_or(span, |p| media_span(start, p))
+                    }
+                    _ => span,
+                };
+                self.log_cut(reason, closed, key_frame);
+                if let Err(e) = self.cut(closed) {
                     return Err(self.fail(e));
                 }
                 cut = true;
@@ -215,6 +235,43 @@ impl<P: Publisher + Send> Transport for Segmented<P> {
         self.last_video_pts = Some(pts);
         Ok(cut)
     }
+}
+
+impl<P: Publisher> Segmented<P> {
+    /// Log a cut the shell decided on its own: a forced cut means the GOP
+    /// exceeds the target, so the first one is a warning.
+    fn log_cut(&mut self, reason: Cut, span: Duration, key_frame: bool) {
+        let span_ms = span.as_millis() as u64;
+        match reason {
+            Cut::Keyframe => {}
+            Cut::Forced if !self.warned_forced_cut => {
+                self.warned_forced_cut = true;
+                tracing::warn!(
+                    span_ms,
+                    key_frame,
+                    "segment cut before a keyframe to hold the target duration: the GOP is \
+                     longer than segment_duration (further such cuts log at debug)"
+                );
+            }
+            Cut::Forced => tracing::debug!(
+                span_ms,
+                key_frame,
+                "forced segment cut: the next access unit would pass the target duration"
+            ),
+            Cut::Discontinuity => tracing::debug!(
+                span_ms,
+                "segment cut on a backward PTS step: the stream restarted its timeline"
+            ),
+        }
+    }
+}
+
+/// Why [`Segmented`] cuts before a video access unit.
+#[derive(Clone, Copy)]
+enum Cut {
+    Keyframe,
+    Forced,
+    Discontinuity,
 }
 
 /// Shell that owns a muxer and pushes its output to a [`Publisher`].
@@ -280,9 +337,11 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     /// AU's bytes land at the head of a fresh segment that opens with PSI.
     /// With the publisher's [`Publisher::segment_duration`] `min`, a keyframe
     /// begins a segment once the open one has reached `min`, and any AU does
-    /// when the segment would otherwise reach `min + 500 ms` by the next AU
-    /// (so no `#EXTINF` rounds above the target); without one, every keyframe
-    /// does. Keep the GOP at or under `min` and every segment opens
+    /// when the segment would otherwise reach `min + 499 ms` by the next AU
+    /// (so, at a steady frame cadence, no `#EXTINF` rounds above the
+    /// target); without one, every keyframe does. An AU more than 1 s before
+    /// the segment's start (a restarted timeline) also begins one. See
+    /// [`Segmented`] for the full rules. Keep the GOP at or under `min` and every segment opens
     /// PAT → PMT → IDR (RFC 8216 §3). The stream-head AU (no open segment
     /// yet) opens the first segment without a spurious zero-duration cut.
     pub fn push_video(
@@ -445,9 +504,16 @@ impl<E: std::error::Error + Send + Sync + 'static> MuxPublisherError<E> {
     }
 }
 
-/// Half a second: an `#EXTINF` below `segment_duration + FORCED_CUT_MARGIN`
-/// rounds to at most `ceil(segment_duration)`, the advertised target.
-const FORCED_CUT_MARGIN: Duration = Duration::from_millis(500);
+/// Just under half a second: an `#EXTINF` below
+/// `segment_duration + FORCED_CUT_MARGIN` rounds to at most
+/// `ceil(segment_duration)`, the advertised target. Not a full 500 ms: a
+/// span of 4.4999 s prints as `4.500` (`#EXTINF` carries three decimals),
+/// which a client rounding half up reads as 5.
+const FORCED_CUT_MARGIN: Duration = Duration::from_millis(499);
+
+/// How far a video AU's PTS may fall before its segment's start and still
+/// count as frame reordering rather than a restarted timeline: 1 s.
+const REORDER_TOLERANCE_TICKS: i64 = 90_000;
 
 /// Media-presentation duration spanned from `start` to `end` PTS (90 kHz).
 ///
@@ -1116,30 +1182,24 @@ mod tests {
         Duration::from_nanos(t as u64 * 1_000_000_000 / 90_000)
     }
 
-    /// Push frames `0..=last_frame`, `frame_ticks` apart, marking `keys` as
-    /// keyframes, through a publisher that reports `segment_duration`, and
-    /// return the cut durations it received.
-    fn cuts_for(
-        segment_duration: Option<Duration>,
-        frame_ticks: i64,
-        last_frame: i64,
-        keys: &[i64],
-    ) -> Vec<Duration> {
+    /// Push `feed` as `(pts ticks, key_frame)` video AUs through a publisher
+    /// that reports `segment_duration`, and return the cut durations it
+    /// received after the construction of the shell.
+    fn cuts_for_feed(segment_duration: Option<Duration>, feed: &[(i64, bool)]) -> Vec<Duration> {
         let p = RecordingPublisher {
             cuts: vec![],
             segment_duration,
         };
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
         let au = h264_au();
-        for f in 0..=last_frame {
-            mp.push_video(&au, Pts90khz::new(f * frame_ticks), keys.contains(&f))
-                .unwrap();
+        for &(t, key) in feed {
+            mp.push_video(&au, Pts90khz::new(t), key).unwrap();
         }
         let cut_calls = mp.stats().cut_calls;
         let mut cuts = mp.finish().unwrap().cuts;
         if segment_duration.is_some() {
-            // The construction-time intent signal: a plain `cut_segment`
-            // (recorded as zero) before any access unit, not a closed segment.
+            // The intent signal on the first video AU: a plain `cut_segment`
+            // (recorded as zero), not a closed segment.
             assert_eq!(cuts.first(), Some(&Duration::ZERO), "cuts: {cuts:?}");
             cuts.remove(0);
         }
@@ -1147,35 +1207,57 @@ mod tests {
         cuts
     }
 
-    /// A publisher that reports a bound gets one `cut_segment` before any
-    /// bytes, and one that reports none gets nothing.
-    #[test]
-    fn a_bounded_publisher_is_told_before_any_bytes_that_cuts_drive_segments() {
-        struct Bounded(OpLogPublisher, Option<Duration>);
-        impl Publisher for Bounded {
-            type Error = MemErr;
-            fn push_ts(&mut self, ts: &[u8]) -> Result<(), MemErr> {
-                self.0.push_ts(ts)
-            }
-            fn cut_segment(&mut self) -> Result<(), MemErr> {
-                self.0.cut_segment()
-            }
-            fn cut_segment_with_duration(&mut self, d: Duration) -> Result<(), MemErr> {
-                self.0.cut_segment_with_duration(d)
-            }
-            fn segment_duration(&self) -> Option<Duration> {
-                self.1
-            }
-            fn finish(self) -> Result<(), MemErr> {
-                Ok(())
-            }
-            fn stats(&self) -> PublisherStats {
-                PublisherStats::default()
-            }
+    /// Frames `0..=last_frame`, `frame_ticks` apart, with `keys` marked as
+    /// keyframes, through [`cuts_for_feed`].
+    fn cuts_for(
+        segment_duration: Option<Duration>,
+        frame_ticks: i64,
+        last_frame: i64,
+        keys: &[i64],
+    ) -> Vec<Duration> {
+        let feed: Vec<(i64, bool)> = (0..=last_frame)
+            .map(|f| (f * frame_ticks, keys.contains(&f)))
+            .collect();
+        cuts_for_feed(segment_duration, &feed)
+    }
+
+    /// Wraps an [`OpLogPublisher`] and reports `.1` as its bound.
+    struct Bounded(OpLogPublisher, Option<Duration>);
+
+    impl Publisher for Bounded {
+        type Error = MemErr;
+        fn push_ts(&mut self, ts: &[u8]) -> Result<(), MemErr> {
+            self.0.push_ts(ts)
         }
+        fn cut_segment(&mut self) -> Result<(), MemErr> {
+            self.0.cut_segment()
+        }
+        fn cut_segment_with_duration(&mut self, d: Duration) -> Result<(), MemErr> {
+            self.0.cut_segment_with_duration(d)
+        }
+        fn segment_duration(&self) -> Option<Duration> {
+            self.1
+        }
+        fn finish(self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn stats(&self) -> PublisherStats {
+            PublisherStats::default()
+        }
+    }
+
+    /// A publisher that reports a bound gets one `cut_segment` on the first
+    /// video AU, before any bytes, and none at construction; one that
+    /// reports no bound gets nothing.
+    #[test]
+    fn a_bounded_publisher_is_told_on_the_first_video_au_that_cuts_drive_segments() {
         for bound in [TARGET, None] {
             let p = Bounded(OpLogPublisher { ops: vec![] }, bound);
             let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+            assert!(
+                mp.0.with_transport(|t| t.publisher.0.ops.is_empty()),
+                "nothing reaches the publisher at construction"
+            );
             mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
             assert_eq!(mp.stats().cut_calls, 0, "no segment was closed");
             let ops = mp.finish().unwrap().0.ops;
@@ -1187,6 +1269,27 @@ mod tests {
                 None => assert!(ops.iter().all(|o| matches!(o, Op::Push(_))), "{ops:?}"),
             }
         }
+    }
+
+    /// Bytes that reach the publisher before the first video AU (metadata
+    /// pushed first) open a segment; the intent cut would close it, so none
+    /// is sent.
+    #[test]
+    fn no_intent_cut_once_bytes_precede_the_first_video_au() {
+        use tst_core::mpegts::mux::{MuxerProgramConfigBuilder, VideoCodec};
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_data(0x101, 0xF0, /*carries_pts=*/ true);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        let cfg = b.build().unwrap();
+        let mp = MuxPublisher::with_config(Bounded(OpLogPublisher { ops: vec![] }, TARGET), cfg)
+            .unwrap();
+        mp.push_data(&[0x42; 64], Pts90khz::new(0)).unwrap();
+        mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
+        let ops = mp.finish().unwrap().0.ops;
+        assert!(matches!(ops[0], Op::Push(_)), "ops: {ops:?}");
+        assert!(ops.iter().all(|o| matches!(o, Op::Push(_))), "ops: {ops:?}");
     }
 
     const TARGET: Option<Duration> = Some(Duration::from_secs(4));
@@ -1251,5 +1354,73 @@ mod tests {
         // opens the next segment; the keyframe at 5 s is 1 s into that one.
         let cuts = cuts_for(TARGET, 90_000, 6, &[0, 5]);
         assert_eq!(cuts, [Duration::from_secs(4)]);
+    }
+
+    #[test]
+    fn a_backward_pts_step_cuts_and_restarts_the_timeline() {
+        // 1 s GOPs at 30 fps from 20 s to 25 s: one cut at 24 s (4.000).
+        // Then the timeline restarts 10 s earlier, at 15 s: the open segment
+        // (24 s .. 25 s) closes at the last AU of the old timeline, 1.000 s,
+        // and the new timeline cuts again 4 s in, at 19 s.
+        let base = 20 * 90_000;
+        let mut feed: Vec<(i64, bool)> = (0..=150)
+            .map(|f| (base + f * FRAME_30FPS, f % 30 == 0))
+            .collect();
+        let restart = 15 * 90_000;
+        feed.extend((0..=150).map(|f| (restart + f * FRAME_30FPS, f % 30 == 0)));
+        let cuts = cuts_for_feed(TARGET, &feed);
+        assert_eq!(
+            cuts,
+            [
+                Duration::from_secs(4),
+                Duration::from_secs(1),
+                Duration::from_secs(4)
+            ],
+            "cuts: {cuts:?}"
+        );
+    }
+
+    #[test]
+    fn a_gap_longer_than_the_last_can_overshoot_the_target() {
+        // The forced-cut prediction assumes the next gap equals the last.
+        // Under a 1 s target, AUs at 0, 1.0 s and a keyframe at 2.9 s: the
+        // AU at 1.0 s is cut before (its successor would end the segment at
+        // 2.0 s), and the 1.9 s gap that follows closes a 1.900 s segment,
+        // which rounds above the target. This pins the documented limit.
+        let cuts = cuts_for_feed(
+            Some(Duration::from_secs(1)),
+            &[(0, true), (90_000, false), (261_000, true)],
+        );
+        assert_eq!(cuts, [Duration::from_secs(1), ticks(171_000)]);
+    }
+
+    #[test]
+    fn a_forced_cut_rounds_below_the_target_even_when_printed() {
+        // 9-tick (0.1 ms) frames, one keyframe. A 500 ms margin would cut
+        // before the AU whose successor ends at exactly 4.5 s, closing a
+        // 4.4999 s segment that `#EXTINF` prints as `4.500`. The 499 ms
+        // margin cuts at 404 901 ticks (4.4989 s), printed `4.499`.
+        let cuts = cuts_for(TARGET, 9, 45_010, &[0]);
+        assert_eq!(cuts, [ticks(404_901)], "cuts: {cuts:?}");
+        assert_eq!(format!("{:.3}", cuts[0].as_secs_f64()), "4.499");
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn the_first_media_time_forced_cut_warns_once() {
+        // A 20 s GOP under a 4 s target: four forced cuts, one warning.
+        let cuts = cuts_for(TARGET, FRAME_30FPS, 20 * 30, &[0]);
+        assert_eq!(cuts.len(), 4, "cuts: {cuts:?}");
+        logs_assert(|lines: &[&str]| {
+            let warns = lines
+                .iter()
+                .filter(|l| l.contains("WARN") && l.contains("hold the target duration"))
+                .count();
+            if warns == 1 {
+                Ok(())
+            } else {
+                Err(format!("expected one warning, saw {warns}"))
+            }
+        });
     }
 }
