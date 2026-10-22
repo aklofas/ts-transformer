@@ -1208,10 +1208,10 @@ declare -A LAST_PASS
 # per-stream RSS x STEP_MEM_HEADROOM; true (and the figures in
 # STEP_MEM_PREDICTED_KB / STEP_MEM_BUDGET_KB) when it exceeds
 # HOLD_MEM_BUDGET x MemTotal. Per-stream RSS was flat across 1..128 streams
-# in run 2 (SRT 27.0 MB at every count), so the previous step predicts the
+# as measured (SRT 27.0 MB at every count), so the previous step predicts the
 # next one closely; the headroom covers launch-time peaks. Without this a
 # step past the box's memory is OOM-killed mid-sweep, which the fail-fast
-# rule turns into the END OF THE RUN (run 2's hold, 2026-10-03) instead of
+# rule turns into the END OF THE RUN instead of
 # the axis's ceiling.
 STEP_MEM_PREDICTED_KB=0
 STEP_MEM_BUDGET_KB=0

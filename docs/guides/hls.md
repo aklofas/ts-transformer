@@ -43,7 +43,7 @@ Drive the publisher through `MuxPublisher`, pushing elementary streams:
 ```rust
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::mux::MuxerConfig;
+use tst_core::mpegts::mux::{KlvStreamType, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_core::publisher::Publisher;
 use tst_hls::{HlsMode, HlsPublisherBuilder};
 use tst_pipeline::MuxPublisher;
@@ -61,8 +61,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("serving http://{addr}/playlist.m3u8");
     }
 
-    // Default program: H.264 video + PrivateData KLV (the web-friendly carriage).
-    let shell = MuxPublisher::with_config(publisher, MuxerConfig::default())?;
+    // One program: H.264 video + PrivateData KLV. `carries_pts: true` puts a
+    // PTS in every KLV PES; hls.js discards a KLV PES that has none.
+    let mut program = MuxerProgramConfigBuilder::new(1, 0x1000);
+    program.add_video(0x1011, VideoCodec::H264);
+    program.add_klv(0x1031, KlvStreamType::PrivateData, true);
+    let mut config = MuxerConfig::builder();
+    config.add_program(program.build());
+    let shell = MuxPublisher::with_config(publisher, config.build()?)?;
 
     // Your encoder's output: one Annex-B access unit and one KLV local set per tick.
     let (nal_bytes, klv_bytes, pts): (Vec<u8>, Vec<u8>, i64) = (vec![0, 0, 0, 1, 0x65, 0xA5], vec![], 0);
@@ -186,8 +192,10 @@ In Python, `HlsPublisher.finish_serving()` returns the same
 
 ## Serving in production
 
-The built-in HTTP server is the only place a live playlist is served from,
-so it is not meant to face clients directly. It binds loopback
+A live stream can be served two ways. The built-in HTTP server renders the
+live playlist from memory, and `playlist.m3u8` is also rewritten atomically
+in `output_dir` at every cut, so a static origin serves it too. The built-in
+server is not meant to face clients directly. It binds loopback
 (`127.0.0.1:8080`) by default; binding all interfaces (`0.0.0.0`) is an
 explicit choice you have to make, and even then the recommended production
 shapes are:
@@ -209,6 +217,11 @@ Concurrent publishers must each use a **distinct `output_dir`** (and a
 distinct bind port if each runs its own server) — two publishers writing the
 same directory will clobber each other's segment numbering and playlist.
 
+One publisher instance is one presentation. A new instance at the same
+output directory deletes the previous files and restarts
+`#EXT-X-MEDIA-SEQUENCE` at 0, so allocate a new output directory or URL for
+each instance.
+
 ## KLV ride-along
 
 KLV telemetry travels **inside the segments** as a normal MPEG-TS
@@ -217,14 +230,21 @@ carriage mode when you configure the program's KLV stream:
 
 - **`KlvStreamType::PrivateData`** — PMT `stream_type = 0x06` plus a `KLVA`
   registration descriptor. This is the **web-friendly** path: hls.js ≥ 1.7
-  with `enableEmsgKLVMetadata: true` surfaces these as `misbklv` samples,
-  and older hls.js can slice the KLV out of the sample bytes by anchoring on
-  the 16-byte SMPTE UL. Pass raw KLV LS bytes to `push_klv`.
+  with `enableEmsgKLVMetadata: true` surfaces these as `misbklv` samples.
+  Configure the stream with `carries_pts: true`: hls.js discards a KLV PES
+  that has no PTS. Pass raw KLV LS bytes to `push_klv`.
 - **`KlvStreamType::SynchronousMetadata`** — PMT `stream_type = 0x15`, the
   STANAG-strict carriage. The muxer prepends the 5-byte
   `Metadata_AU_cell` header (ITU-T H.222.0 §2.12.4.2) automatically — you
   still pass raw KLV LS bytes, not a pre-wrapped cell. Use this for STANAG
   4609 / MISB toolchains that expect 0x15.
+
+**hls.js limitation.** hls.js 1.7.0-rc.1 parses a KLV PES only when the
+next KLV payload-unit start arrives in the same demux call, and it never
+flushes the pending one. The last KLV PES of every fragment is therefore
+dropped, and a fragment holding a single KLV PES delivers none. Until that
+is fixed upstream, push KLV at a rate that puts several records in every
+segment and expect the last record of each fragment to be missing.
 
 For a browser client, use `PrivateData`. For a downstream STANAG toolchain,
 use `SynchronousMetadata`. The recipe

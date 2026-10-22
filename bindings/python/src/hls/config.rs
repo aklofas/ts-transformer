@@ -5,8 +5,8 @@
 //! can do `mode == HlsMode.LIVE` and `IntEnum`-style ordering.
 //!
 //! `HlsStats` mirrors `tst_hls::HlsStats` — the richer per-impl
-//! snapshot (3 u64 fields: `segments_written` / `bytes_pushed_total` /
-//! `open_segment_bytes`). The
+//! snapshot (4 u64 fields: `segments_written` / `bytes_pushed_total` /
+//! `open_segment_bytes` / `forced_cuts`). The
 //! duration-style fields live on the universal `PublisherStats`
 //! (`HlsPublisher.stats()`), not on `HlsStats` (`HlsPublisher.hls_stats()`).
 

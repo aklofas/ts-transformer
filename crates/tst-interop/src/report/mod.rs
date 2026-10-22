@@ -1,7 +1,7 @@
 //! `report merge` / `report render`: turn per-cell interop results into
 //! the published evidence artifact.
 //!
-//! The orchestrator (a later task's `run-matrix.sh`) writes one JSON file
+//! The orchestrator (`run-matrix.sh`) writes one JSON file
 //! per cell into a directory. [`merge`] reads all of them, checks each
 //! `FAIL` against a hand-parsed expectations file, and writes a single
 //! `results.json` ([`Results`]). [`render`] turns that `results.json`
@@ -45,7 +45,7 @@ pub enum RawVerdict {
 
 /// One per-cell JSON file as written by the orchestrator into
 /// `--cells-dir`. Field shapes mirror the orchestrator's contract
-/// verbatim (see the task brief's Interfaces block) — `metrics` is
+/// verbatim — `metrics` is
 /// `null` for a `SkippedToolMissing` cell and for any cell whose peer
 /// tool produced no parseable capture.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,7 +199,11 @@ pub mod stress;
 /// session ended and re-ANNOUNCEd on a declared period, judged by
 /// `publisher_generations_<leg>` from the mount's own count of ended
 /// publishers; no proxy, no tst-interop sender, so the proxy, reconnect
-/// and corruption verdicts are reported not applicable for it).
+/// and corruption verdicts are reported not applicable for it),
+/// `rtsp-publish-es` (the same publish leg pushing elementary H.264 +
+/// KLV tracks that the mount re-muxes) and `whep` (a headless browser
+/// playing a WebRTC mount served for the whole run, judged from the
+/// viewer's per-connection report and the server's counters).
 /// [`soak::build_soak_results`] is the
 /// pure verdict engine; [`soak::run`] is the file-driven CLI wrapper
 /// `main.rs`'s `report soak` calls.
@@ -237,7 +241,7 @@ pub mod stress;
 ///   what was observed on a given run.
 /// - **Delivery-gap timing.** For the same reason, "gaps only inside
 ///   outage windows, ±30s" can't be checked at per-event resolution.
-///   `soak`'s internal `expected_drop_fraction` helper instead models
+///   `soak`'s internal `renewal_model` helper instead models
 ///   the drop rate the proxy's CONTINUOUS impairment (`loss_pct`)
 ///   predicts, deliberately
 ///   EXCLUDING the outage windows from that expectation — verified

@@ -153,7 +153,7 @@ const CORRUPTION_RESOLVED_FLOOR: f64 = 0.9;
 /// one missed tail read at teardown must not fail a 72-hour run.
 const CORRUPTION_INGESTED_FLOOR: f64 = 0.99;
 
-/// Q12: constant term of the lossy excusal budget
+/// Constant term of the lossy excusal budget
 /// `K x expected_outage_windows + C + ceil(R x hours)` — the strictly
 /// ONE-OFF excusals, the ones that happen once per run however long
 /// it is: a stranded anchor at start-up, a teardown gap. Everything
@@ -165,9 +165,8 @@ const EXCUSAL_BUDGET_BASE: u64 = 8;
 /// one-off [`EXCUSAL_BUDGET_BASE`] and the per-outage `K x windows`
 /// term.
 ///
-/// Pinned from a retained 1-hour smoke run (`report soak`
-/// over `/tmp/soak-resmoke`, 2026-09-14 — the newest run with all six
-/// workers healthy): the `srt`/baseline leg excused 0, the
+/// Pinned from a measured one-hour run with all six workers healthy:
+/// the `srt`/baseline leg excused 0, the
 /// `rist`/pcr-sparse leg excused 9 (9 transport-loss events, 9
 /// unexplained discontinuities) in 3541 s, with ZERO outage windows,
 /// while every other corruption verdict on that leg passed (1284
@@ -185,7 +184,7 @@ const EXCUSAL_BUDGET_BASE: u64 = 8;
 /// that healthy run; one sized for 72 h would be meaningless at 1 h.
 const EXCUSAL_PER_HOUR: u64 = 16;
 
-/// The lossy excusal budget (Q12):
+/// The lossy excusal budget:
 /// `K x expected_outage_windows + EXCUSAL_BUDGET_BASE + ceil(EXCUSAL_PER_HOUR x hours)`.
 ///
 /// `duration_s` is the run's MEASURED length — the RSS-sample span
@@ -1004,7 +1003,7 @@ fn expected_outage_windows(
 }
 
 /// What one phase of the impairment engine realises, from its
-/// renewal process (Q11) — see `impair::Engine::decide`: outside a
+/// renewal process — see `impair::Engine::decide`: outside a
 /// burst every packet first rolls duplication (`dup_pct`), then
 /// loss (`draw_pct`); a hit drops a run of `R ~ U[lo, hi]` packets
 /// (`burst_run` when `burst`, otherwise `(1, 1)`), the rest of the run
@@ -1742,9 +1741,9 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         let outage_windows =
             expected_outage_windows(run_duration_s, artifacts.outage_period_s, outage_dur_s);
 
-        // Phase-integrated expectation (spec §6.2), each phase's
+        // Phase-integrated expectation, each phase's
         // rate taken from the engine's own renewal process rather
-        // than its configured `loss_pct` (Q11). Fixed mode is the
+        // than its configured `loss_pct`. Fixed mode is the
         // one-phase case: the schedule echo is absent, the model is
         // built from the config's `loss_pct` as a NON-burst phase
         // (fixed mode never bursts, and there the renewal rate IS
@@ -1925,8 +1924,8 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                      counts every successful factory rebuild, not outage windows directly — \
                      a single outage window CAN drive more than one rebuild if the \
                      freshly-reconnected transport breaks again before the outage fully \
-                     clears (observed empirically during this fix wave's own short-outage \
-                     dry-run testing at an 8s outage duration; not yet confirmed either way \
+                     clears (observed during a short-outage run \
+                     at an 8s outage duration; not yet confirmed either way \
                      at the 90s outage duration this run schedule actually uses). Recorded \
                      for comparison, still provisional until enough real runs establish the \
                      actual rebuild-to-window ratio at production outage duration.",
@@ -2339,7 +2338,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                     };
                     verdicts.push(mk("corruption_declared", spec_pass, spec_detail));
 
-                    // Q12: under lossy judgement the three finding
+                    // Under lossy judgement the three finding
                     // verdicts EXCUSE — undetected/unrecovered
                     // injections with a foreign jump in their window,
                     // and every unexplained discontinuity — so a leg
@@ -5090,16 +5089,14 @@ pub(crate) mod tests {
         );
     }
 
-    /// (Folds Minor 6; contract updated by the completeness-verdicts
-    /// wave) Exactly one post-warmup sample per process — distinct
-    /// from the entirely-missing case above: this data IS present,
-    /// just too thin for a real regression. Under the OLD contract
-    /// this regressed to a 0.0 slope; under the NEW one, a single
+    /// One post-warmup sample is present but cannot establish a slope:
+    /// distinct from the entirely-missing case above, this data IS
+    /// present, just too thin for a real regression. A single
     /// post-warmup sample can't clear `rss_sample_coverage_*`
     /// (fewer than 2 distinct timestamps), so it's reported as
     /// missing evidence — no `rss_slope_*` verdict at all — rather
     /// than a (misleadingly confident-looking) flat 0.0 slope. A
-    /// single present sample must still NOT trip the OLDER,
+    /// single present sample must still NOT trip the
     /// separate `rss_data_present_*` missing-data check (that one
     /// is about zero samples, not "not enough for a confident
     /// slope").
@@ -5794,8 +5791,8 @@ pub(crate) mod tests {
     }
 
     /// The excusals an ARQ leg legitimately accrues are per HOUR of
-    /// run, not per outage window (measured: `/tmp/soak-resmoke`'s
-    /// rist leg excused 9 in one hour with ZERO outage windows), so
+    /// run, not per outage window (measured: a one-hour rist run excused 9
+    /// events with no outage windows), so
     /// the budget has to grow with the run. The same excusal count
     /// that blows a short run's budget is inside a long one's.
     #[test]

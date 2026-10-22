@@ -267,9 +267,9 @@ impl PyHlsPublisher {
 #[pyclass(name = "HlsPublisherBuilder", module = "tstrans.hls")]
 #[derive(Default)]
 pub(crate) struct PyHlsPublisherBuilder {
-    /// Stored as `Option` so each move-style setter can `take()` the inner
-    /// Rust builder, apply the consuming method, and replace it (the Rust
-    /// builder uses move-style `self -> Self` chaining).
+    /// Stored as `Option` because `build` consumes the Rust builder, so it
+    /// `take()`s the value and a second `build` finds `None`. The setters
+    /// mutate the builder in place.
     inner: Option<HlsPublisherBuilder>,
 }
 
