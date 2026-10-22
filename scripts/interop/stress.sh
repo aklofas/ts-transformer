@@ -198,8 +198,8 @@ keyframe_burst_bytes() {
 # emits a whole AU per push — a real encoder does the same — so each hop's
 # socket buffer must absorb one keyframe burst (~165 datagrams at scale 4)
 # between two reads; the default (rmem_default, ~208 KiB) holds about half
-# its own value in payload (skb overhead), which run 2 overran at scale 4
-# (R2-F2: 509 lost datagrams, verdict failed).
+# its own value in payload (skb overhead), so the default buffer lost
+# datagrams under a scale-4 keyframe burst.
 udp_rcvbuf_for() {
   local burst
   burst=$(keyframe_burst_bytes "$1")

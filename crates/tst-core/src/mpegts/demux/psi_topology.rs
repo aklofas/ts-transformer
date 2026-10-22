@@ -502,7 +502,6 @@ impl super::demuxer::Demuxer {
         // Build StreamInfo list + check cross-program PID collisions.
         // Collect work to do before mutating self — satisfies borrow checker.
         let mut stream_infos: Vec<StreamInfo> = Vec::with_capacity(pmt.streams.len());
-        let mut kind_inserts: Vec<(u16, StreamKind)> = Vec::new();
         let mut collision_issues: Vec<(StreamId, NonConformantIssue)> = Vec::new();
         let mut subtitle_missing: Vec<(u16, StreamKind)> = Vec::new();
         let mut av1_malformed: Vec<(u16, StreamKind)> = Vec::new();
@@ -583,7 +582,6 @@ impl super::demuxer::Demuxer {
                 program_number,
                 raw_descriptors: s.descriptors.clone(),
             });
-            kind_inserts.push((s.elementary_pid, kind));
         }
 
         // Emit collision NonConformant events.

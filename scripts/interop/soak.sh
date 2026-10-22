@@ -1063,10 +1063,9 @@ KLV_ARGS=(--klv-set "$KLV_SET" --klv-seed "$SEED")
 # seconds dropping every packet — including that handshake — and both
 # `recv`'s accept (15s default timeout) and `send`'s connect (2s
 # default timeout) would time out well before a 90s outage window ever
-# clears. Discovered empirically running this exact script during Task
-# 14's own smoke validation (srt-recv/srt-send both failed with
-# accept/connect timeouts on the very first attempt) — see this task's
-# own report for the full diagnosis. Starting the proxy
+# clears. Window zero includes connection/handshake warm-up and is
+# omitted from the rate floor; without the head start srt-recv/srt-send
+# both fail with accept/connect timeouts on the first attempt. Starting the proxy
 # `SRT_PROXY_WARMUP_S` seconds ahead of recv/send sidesteps it
 # entirely: only window 0 is affected by this launch-order artifact,
 # and every later window (starting at `OUTAGE_PERIOD_S`, `2 *
@@ -1083,7 +1082,7 @@ KLV_ARGS=(--klv-set "$KLV_SET" --klv-seed "$SEED")
 # of retransmission rounds over an RTT that the same base delay inflates
 # to ~200ms. 1200ms covers both with margin.
 #
-# Found empirically on this task's own 10-minute validation run: with the
+# Observed: with the
 # default budget the srt leg logged 43 `RCV-DROPPED` warnings and its
 # receiver reported 38 unattributable `ContinuityJump` events — gaps the
 # corruption tap could not explain because nothing in the corruption log

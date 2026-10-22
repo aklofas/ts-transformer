@@ -741,8 +741,7 @@ pub fn run(
 /// `--reorder`), rejecting anything that isn't finite and in
 /// `0.0..=100.0` — mirrors `cli::parse_seconds`'s reject-degenerate-
 /// shapes style (this module doesn't reuse that function directly: it
-/// validates a different range and `cli.rs` isn't otherwise touched by
-/// this task).
+/// validates a different range).
 pub fn parse_percent(s: &str) -> Option<f64> {
     let v: f64 = s.parse().ok()?;
     if v.is_finite() && (0.0..=100.0).contains(&v) {

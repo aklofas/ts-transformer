@@ -11,7 +11,8 @@
 //! - `nClose` takes + tears down via `REGISTRY.close`.
 //!
 //! Error mapping keeps each KIND literal on the same line as `throw_srt` so the
-//! T4 grep ratchet can verify coverage.
+//! error-kind coverage rail (`scripts/check/jvm/kind-equivalence.sh`) can
+//! verify coverage.
 
 #![allow(clippy::too_many_arguments)]
 

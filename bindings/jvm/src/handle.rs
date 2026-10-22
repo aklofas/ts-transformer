@@ -13,7 +13,7 @@
 //! 2. **Double-free** — `close()`'s check-then-`from_raw` is not atomic, so two
 //!    `close()` calls can both reach the free.
 //!
-//! # The fix (decision D1)
+//! # The fix Registry ownership
 //!
 //! The Java `long` becomes an **opaque integer key into a process-global registry**,
 //! never a pointer. A native method:

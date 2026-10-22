@@ -177,8 +177,9 @@ serve_timeout() {
 # Budget for operations that aren't tied to a cell's --seconds duration at
 # all (the bootstrap `gen`/`verify` of the per-profile source file, and the
 # final `report merge`/`report render`) but still must never hang the whole
-# matrix unattended (CI/soak runs — Tasks 13/14 — depend on that). Every
-# one of these operates on data this task's own findings show can arrive
+# matrix unattended (CI and soak runs require bounded setup, and malformed
+# third-party input must fail promptly). Every
+# one of these operates on data that can arrive
 # malformed from a third-party remuxer (`verify`) or, for `report
 # merge`/`render`, on N small already-written JSON files — none of them
 # have a legitimate reason to run long, so one generous flat floor covers
