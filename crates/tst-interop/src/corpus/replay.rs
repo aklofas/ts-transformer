@@ -64,6 +64,7 @@ use super::pace::{PcrPacer, send_paced};
 use super::pcr::prefix_end_read;
 use super::receive::{STALL_ENV, net_core, udp_rcvbuf_need};
 use super::subset::{self, Pick, ReplayPlan};
+use super::sweep::{SweepSummary, digests_fingerprint};
 use super::{PATHS, REPLAY_PICK_MAX_BYTES, RunDir, STALL_SECONDS, Sha256Hex};
 use crate::report::csv::RSS_HEADER;
 use crate::report::soak::{
@@ -87,6 +88,14 @@ pub struct ReplayArgs {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReplaySummary {
     pub schema_version: u32,
+    /// The `tree` of the `sweep.json` this replay ran against; empty when
+    /// the sweep ran outside a repository, and absent from older files.
+    #[serde(default)]
+    pub sweep_tree: String,
+    /// [`sweep::digests_fingerprint`] of the run directory when the replay
+    /// started; absent from older files.
+    #[serde(default = "no_fingerprint")]
+    pub sweep_digests_sha256: Sha256Hex,
     pub plan: ReplayPlan,
     /// Pick by pick in plan order, each pick's verdicts in path order.
     pub verdicts: Vec<FileVerdict>,
@@ -111,6 +120,10 @@ pub struct ReplaySummary {
     /// No verdict failed, no path's RSS gate failed, and every path
     /// produced a verdict.
     pub pass: bool,
+}
+
+fn no_fingerprint() -> Sha256Hex {
+    Sha256Hex(String::new())
 }
 
 /// What [`judge_rss`] made of each path's RSS samples.
@@ -832,6 +845,11 @@ pub fn run_with(
     if !args.run.root.join("digests").is_dir() {
         return Err("the run directory holds no digests: run the sweep first".into());
     }
+    let sweep_text = std::fs::read_to_string(args.run.root.join("sweep.json"))
+        .map_err(|_| "the run directory holds no sweep.json: run the sweep first".to_string())?;
+    let sweep: SweepSummary =
+        serde_json::from_str(&sweep_text).map_err(|e| format!("parse sweep.json: {e}"))?;
+    let sweep_digests_sha256 = digests_fingerprint(&args.run)?;
     let inv = inventory::read(&args.run)?;
     check_dir(&args.dir, &inv)?;
     if args.paths.iter().any(|p| p == "rtsp-publish") {
@@ -917,6 +935,8 @@ pub fn run_with(
         .all(|p| verdicts.iter().any(|v| &v.path == p));
     let summary = ReplaySummary {
         schema_version: 1,
+        sweep_tree: sweep.tree.unwrap_or_default(),
+        sweep_digests_sha256,
         files: plan.picks.len() as u64,
         paths: args.paths.clone(),
         failed,

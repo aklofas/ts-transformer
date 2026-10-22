@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::PATHS;
 use super::RunDir;
 use super::replay::ReplaySummary;
-use super::sweep::SweepSummary;
+use super::sweep::{SweepSummary, digests_fingerprint};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArchiveRow {
@@ -146,10 +146,27 @@ pub fn run(
     } else {
         None
     };
-    let row = archive_row(&sweep, replay.as_ref());
+    // A replay of another sweep is no replay of this one.
+    let (replay, stale) = match replay {
+        Some(r)
+            if r.sweep_tree != sweep.tree.clone().unwrap_or_default()
+                || r.sweep_digests_sha256 != digests_fingerprint(run)? =>
+        {
+            (None, true)
+        }
+        r => (r, false),
+    };
+    let mut row = archive_row(&sweep, replay.as_ref());
+    if stale {
+        row.note
+            .push_str(" The replay belongs to an earlier sweep.");
+    }
     if let Some(p) = markdown_out {
-        std::fs::write(p, markdown(&sweep, replay.as_ref()))
-            .map_err(|e| format!("write markdown: {}", e.kind()))?;
+        let mut md = markdown(&sweep, replay.as_ref());
+        if stale {
+            md.push_str("The replay recorded in this run belongs to an earlier sweep.\n");
+        }
+        std::fs::write(p, md).map_err(|e| format!("write markdown: {}", e.kind()))?;
     }
     if let Some(p) = archive_out {
         let text = serde_json::to_string_pretty(&row).map_err(|e| format!("row json: {e}"))?;

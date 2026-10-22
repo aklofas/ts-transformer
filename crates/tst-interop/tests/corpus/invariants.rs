@@ -359,7 +359,7 @@ fn a_pid_retired_by_a_new_pmt_starts_over_when_it_returns() {
 
 /// Thirty async KLV records on 0x101, one per 0.1 s (3 s in all), beside
 /// a video AU each on 0x100.
-fn klv_every_tenth_of_a_second() -> Vec<u8> {
+pub(crate) fn klv_every_tenth_of_a_second() -> Vec<u8> {
     let p = tst_interop::profiles::by_name("baseline").unwrap();
     let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
     prog.add_video(0x100, VideoCodec::H264);
@@ -395,8 +395,9 @@ fn payload_at(bytes: &[u8], o: usize) -> usize {
     }
 }
 
-#[test]
-fn a_klv_pes_without_a_pts_takes_no_part_in_pts_order() {
+/// The ten-per-second KLV stream with every other PES from the twentieth
+/// on stripped of its PTS, and how many were stripped.
+pub(crate) fn klv_with_stripped_pts() -> (Vec<u8>, u64) {
     let mut bytes = klv_every_tenth_of_a_second();
     let starts: Vec<usize> = (0..bytes.len())
         .step_by(188)
@@ -413,6 +414,12 @@ fn a_klv_pes_without_a_pts_takes_no_part_in_pts_order() {
         bytes[pl + 9..pl + 14].fill(0xFF);
         stripped += 1;
     }
+    (bytes, stripped)
+}
+
+#[test]
+fn a_klv_pes_without_a_pts_takes_no_part_in_pts_order() {
+    let (bytes, stripped) = klv_with_stripped_pts();
     let d = digest_config("default", &bytes, FEED_CHUNK);
     let klv = &d.pids[&KLV_PID];
     assert_eq!(klv.metadata, 30, "{klv:?}");

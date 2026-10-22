@@ -159,7 +159,10 @@ describe it.
 
 The archive row holds eight counts: files, identical, changed and explained,
 invariant failures, parse failures, replayed files, transport paths and failed
-replays. A run without a replay is not a pass. The row is added to the archive
+replays. A run without a replay is not a pass, and neither is a run whose
+replay belongs to an earlier sweep: a new sweep removes the old replay's
+results, and the report accepts a replay only when it recorded the sweep's
+tree and the digests it ran against. The row is added to the archive
 list that the release qualification reads.
 
 A release qualification run requires a passing corpus archive for the exact
