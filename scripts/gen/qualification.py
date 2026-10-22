@@ -103,8 +103,7 @@ def parse_archives(text):
 
 def parse_corpus_expectation(text):
     """The declared size of the release corpus, or None when the file has no [corpus] table."""
-    n = tomllib.loads(text).get("corpus", {}).get("expected_files")
-    return n
+    return tomllib.loads(text).get("corpus", {}).get("expected_files")
 
 
 def validate_archives(rows):
