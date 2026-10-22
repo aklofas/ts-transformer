@@ -63,7 +63,7 @@ fn fifty_opus_packets_arrive_on_the_audio_mid_at_48_khz() {
         assert_eq!(data, &opus_packet(i as u8), "packet {i}");
         if i > 0 {
             // 20 ms at 48 kHz.
-            assert_eq!(ts - v.audio_frames[i - 1].0, 960, "packet {i}");
+            assert_eq!(ts.wrapping_sub(v.audio_frames[i - 1].0), 960, "packet {i}");
         }
     }
     let ms = m.stats();
