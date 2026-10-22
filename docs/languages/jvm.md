@@ -2000,7 +2000,7 @@ MuxerConfig program = MuxerConfig.builder()
     .build();
 
 MuxPublisher shell = MuxPublisher.withConfigHls(publisher, program); // consumes `publisher`
-shell.pushVideo(annexBNal, pts, /*keyFrame=*/ true);   // a key frame cuts a segment
+shell.pushVideo(annexBNal, pts, /*keyFrame=*/ true);   // past segmentDuration, a key frame begins a segment
 shell.pushKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
 
 HlsPublisher back = shell.finishIntoPublisher();        // consumes the shell

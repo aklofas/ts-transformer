@@ -314,7 +314,8 @@ impl PyHlsPublisherBuilder {
         Ok(slf)
     }
 
-    /// Target segment duration in milliseconds.
+    /// The maximum a segment may reach, in milliseconds; the playlist
+    /// advertises `ceil` of it as `#EXT-X-TARGETDURATION`.
     fn segment_duration_ms(mut slf: PyRefMut<'_, Self>, ms: u64) -> PyResult<PyRefMut<'_, Self>> {
         let d = Duration::from_millis(ms);
         slf.apply(|b| {
@@ -323,9 +324,11 @@ impl PyHlsPublisherBuilder {
         Ok(slf)
     }
 
-    /// Hard upper bound on an open segment's wall-clock age in the
-    /// keyframe-driven flow (force-cuts when a keyframe is overdue). Defaults
-    /// to `2 × segment_duration`; must be `≥ segment_duration` at `build()`.
+    /// Wall-clock stall guard of the keyframe-driven flow: an open segment
+    /// this old is force-cut when no cut has arrived. A raw relay or a
+    /// stream without video is cut on the wall clock at `segment_duration`
+    /// instead. Defaults to `2 × segment_duration`; must be
+    /// `≥ segment_duration` at `build()`.
     ///
     /// `ms == 0` leaves the library default in place (matching the C ABI): a
     /// fresh builder is already seeded with the default, and `tst-hls`

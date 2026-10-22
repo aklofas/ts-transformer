@@ -153,13 +153,16 @@ merge commit, and the qualification run checks that nothing under
      `overall_pass=true`, and the script exits 0. Any other verdict is a
      finding, not a rerun.
 7. **The archive-entry PR.** A docs-only PR adds two rows to
-   `tests/coverage/evidence-archives.toml`: the soak, with
-   `expected_duration_s = 259200`, and the corpus run, each with the frozen
-   commit as its `tree`. The same PR adds the soak to the runs table on the
-   [validation evidence page](/docs/project/validation-evidence.md). When the
-   corpus has changed, the same PR updates `expected_files` in the file's
-   `[corpus]` table; the release gate refuses a corpus run that swept a
-   different number of files.
+   `tests/coverage/evidence-archives.toml`, each with the frozen commit as
+   its `tree`:
+   - the soak, with `expected_duration_s = 259200` and `legs = [...]`
+     copied from the `legs=…` list on the last line `report soak` printed;
+   - the corpus run, with the counts its archive row carries. Its `files`
+     must equal `expected_files` in the file's `[corpus]` table. When the
+     corpus has changed, the same PR updates `expected_files`.
+
+   The same PR adds the soak to the runs table on the
+   [validation evidence page](/docs/project/validation-evidence.md).
 8. **Destroy the VM** once both archives are harvested and checked.
 9. **The date commit.** Replace the CHANGELOG date placeholder with the
    release date. The commit touches the CHANGELOG only, so the frozen tree
@@ -175,9 +178,11 @@ merge commit, and the qualification run checks that nothing under
     published) and writes a record. The run must end **GO**: every leg
     succeeded on that commit, the tree was clean, and the interop census
     matches `expectations.toml`. `release=true` adds the release gate: GO
-    also needs a passing soak archive that declares 259 200 seconds and a
-    passing corpus archive for the soaked tree that replayed all five paths
-    (at least one file, none failed), with no change outside `CHANGELOG.md`,
+    also needs a passing soak archive that declares 259 200 seconds and all
+    five legs (srt, rist, rtsp-publish, rtsp-publish-es, whep), and a
+    passing corpus archive for the soaked tree that swept the declared
+    `expected_files` count and replayed all five paths (at least one file,
+    none failed), with no change outside `CHANGELOG.md`,
     `docs/` and `tests/coverage/evidence-archives.toml` between the soaked
     tree and this commit. The JavaScript under `docs/webrtc/` is not a
     document, because the soak's browser leg runs it. A `v*` tag push
@@ -190,8 +195,9 @@ merge commit, and the qualification run checks that nothing under
 
     A **NO-GO** record lists its reasons (a failed or missing leg, a stale
     `ci` result, a dirty tree, an unexpected interop failure, a missing,
-    failed, short or superseded soak archive, a missing or failed corpus
-    archive). A real leg failure is a finding to fix, not a rerun; rerun
+    failed, short, superseded or leg-short soak archive, a missing or
+    failed corpus archive, a corpus run that swept a different file
+    count). A real leg failure is a finding to fix, not a rerun; rerun
     only a failure that belongs to a ledgered flake class.
 
     The run's bundle holds `qualification.json`, the rendered

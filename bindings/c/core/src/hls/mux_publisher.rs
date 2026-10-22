@@ -187,8 +187,9 @@ unsafe fn with_mux_publisher(
 /// Push one Annex-B NAL through the muxer's single video stream.
 ///
 /// `pts` is the presentation timestamp in 90 kHz ticks. `key_frame` is
-/// `true` for IDR / key frames; on a key frame the publisher auto-cuts a
-/// new HLS segment so each segment is decodable from its first byte.
+/// `true` for IDR / key frames; a key frame begins a new HLS segment once
+/// the open one has reached the segment duration (the maximum), so each
+/// segment is decodable from its first byte.
 ///
 /// Returns 0 on success, a negative `TST_E_*` code on failure.
 ///

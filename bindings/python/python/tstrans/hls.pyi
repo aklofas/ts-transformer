@@ -319,12 +319,15 @@ class HlsPublisherBuilder:
         ...
 
     def segment_duration_ms(self, ms: int) -> HlsPublisherBuilder:
-        """Target segment duration in milliseconds."""
+        """The maximum a segment may reach, in milliseconds; the playlist
+        advertises ``ceil`` of it as ``#EXT-X-TARGETDURATION``."""
         ...
 
     def max_segment_duration_ms(self, ms: int) -> HlsPublisherBuilder:
-        """Hard cap (ms) on an open segment's wall-clock age in the
-        keyframe-driven flow (force-cuts when a keyframe is overdue).
+        """Wall-clock stall guard (ms) of the keyframe-driven flow: an open
+        segment this old is force-cut when no cut has arrived. A raw relay or
+        a stream without video is cut on the wall clock at
+        ``segment_duration`` instead.
 
         Defaults to ``2 × segment_duration``; must be ``>= segment_duration``
         at ``build()``. ``ms == 0`` leaves the library default in place (no
@@ -417,7 +420,9 @@ class MuxPublisher:
     def push_video(
         self, nal: _BytesLike, *, pts: Any, key_frame: bool = ...
     ) -> None:
-        """Push one video access unit (Annex-B). Auto-cuts on ``key_frame``."""
+        """Push one video access unit (Annex-B). A ``key_frame`` begins a new
+        segment once the open one has reached ``segment_duration`` (the
+        maximum)."""
         ...
 
     def push_klv(self, klv: _BytesLike, *, pts: Any, stream_index: int = ...) -> None:
