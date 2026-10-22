@@ -170,8 +170,11 @@ int main(void) {
      * One video NAL + one KLV unit per frame, sharing the same PTS so a
      * downstream consumer can correlate each KLV record with its video
      * frame. PTS advances by 3000 ticks per frame (90 kHz / 30 fps = 3000).
-     * Every frame here is flagged key_frame=true so the publisher cuts a
-     * fresh, independently-decodable HLS segment each time.
+     * Every frame here is flagged key_frame=true, so each segment closes on
+     * the first frame at or after SEGMENT_MS of media time and the next one
+     * opens independently decodable. segment_duration is the maximum: a
+     * real encoder's GOP longer than it is cut mid-GOP so the playlist's
+     * target duration holds.
      */
     for (int i = 0; i < FRAME_COUNT && exit_code == 0; i++) {
         int64_t pts = (int64_t) i * 3000;

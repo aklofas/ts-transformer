@@ -133,6 +133,13 @@ impl Publisher for HlsPublisher {
         s.segmenter.cut_with_duration(Some(media_duration))
     }
 
+    /// The configured segment duration: `#EXT-X-TARGETDURATION` is its
+    /// ceiling, so no segment may run past it.
+    fn segment_duration(&self) -> Option<Duration> {
+        let s = self.state.lock().expect("HlsPublisher poisoned");
+        Some(s.segmenter.segment_duration())
+    }
+
     fn finish(mut self) -> Result<(), HlsError> {
         if self.finished {
             return Err(HlsError::Finished);

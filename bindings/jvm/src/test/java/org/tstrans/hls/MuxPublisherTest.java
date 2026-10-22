@@ -89,12 +89,12 @@ class MuxPublisherTest {
     void extinfIsMediaDerived(@TempDir Path dir) throws Exception {
         MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.EVENT), video());
         mp.pushVideo(syntheticH264Idr(), 0L, true);
-        mp.pushVideo(syntheticH264Idr(), 90_000L, false);
-        mp.pushVideo(syntheticH264Idr(), 261_000L, true); // cuts 0..261000 = 2.900 s
+        mp.pushVideo(syntheticH264Idr(), 45_000L, false);
+        mp.pushVideo(syntheticH264Idr(), 108_000L, true); // past the 1 s target: cuts 0..108000 = 1.200 s
         HlsPublisher hls = mp.finishIntoPublisher();
         String pl = hls.renderPlaylist(false);
         hls.finish();
-        assertTrue(pl.contains("#EXTINF:2.900,"), pl);
+        assertTrue(pl.contains("#EXTINF:1.200,"), pl);
     }
 
     @Test

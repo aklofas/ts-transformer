@@ -105,29 +105,23 @@ fn hls_extinf_is_media_derived_and_target_is_immutable() {
 
     let pub_shell = MuxPublisher::with_config(publisher, mux_cfg).unwrap();
     let au = synthetic_h264_au();
-    // GOP cadence: IDR@0, P@60000, P@120000, IDR@180000, P@240000, P@300000, IDR@360000.
-    //
-    // Keyframes BEGIN segments (cut-before-push): the closing segment is
-    // cut when the NEXT keyframe arrives, with EXTINF = the full PTS span of
-    // that segment (its own opening keyframe through the AU before the next).
+    // 2 s GOPs (IDR every 180000 ticks, P frames 60000 ticks apart) under a
+    // 4 s target. A segment closes on the first keyframe at or after 4 s of
+    // media time, so each holds two GOPs:
     //   IDR@0:       stream head — opens seg0 at start 0, NO cut.
-    //   P@60000, P@120000: extend seg0 (start stays 0).
-    //   IDR@180000:  cut seg0 = span(0,180000) = 180000 ticks
-    //                = 180000×1e9/90000 = 2_000_000_000 ns = 2.000 s; opens seg1 at 180000.
-    //   P@240000, P@300000: extend seg1 (start stays 180000).
-    //   IDR@360000:  cut seg1 = span(180000,360000) = 180000 ticks = 2.000 s; opens seg2 at 360000.
-    //   finish():    finalize cuts seg2 (single AU) → wall-clock fallback (tiny).
-    let idr_ticks = [0i64, 180_000, 360_000];
-    for (gop, &idr) in idr_ticks.iter().enumerate() {
+    //   IDR@180000:  span 2 s < 4 s — no cut, seg0 continues.
+    //   IDR@360000:  span 4 s — cut seg0 = 360000 ticks = 4.000 s; opens seg1.
+    //   IDR@540000:  span 2 s — no cut.
+    //   IDR@720000:  span 4 s — cut seg1 = 4.000 s; opens seg2.
+    //   seg2 (IDR@720000 + two P) is still open when the playlist renders.
+    for idr in (0..=4).map(|g| g * 180_000i64) {
         pub_shell.push_video(&au, Pts90khz::new(idr), true).unwrap();
-        if gop + 1 < idr_ticks.len() {
-            pub_shell
-                .push_video(&au, Pts90khz::new(idr + 60_000), false)
-                .unwrap();
-            pub_shell
-                .push_video(&au, Pts90khz::new(idr + 120_000), false)
-                .unwrap();
-        }
+        pub_shell
+            .push_video(&au, Pts90khz::new(idr + 60_000), false)
+            .unwrap();
+        pub_shell
+            .push_video(&au, Pts90khz::new(idr + 120_000), false)
+            .unwrap();
     }
 
     let _ = pub_shell.publisher_stats(); // touch stats path
@@ -142,13 +136,33 @@ fn hls_extinf_is_media_derived_and_target_is_immutable() {
         rendered.contains("#EXT-X-TARGETDURATION:4"),
         "playlist:\n{rendered}"
     );
-    // Each non-degenerate segment carries a media-derived EXTINF of 2.000 s
-    // (180000-tick PTS span — keyframe-to-keyframe, keyframe included since
-    // segments begin with the IDR). A wall-clock EXTINF would read ~0.000
-    // for fast ingestion.
-    assert!(
-        rendered.contains("#EXTINF:2.000,"),
-        "expected a media-derived 2.000 s EXTINF, got:\n{rendered}"
+    // Every #EXTINF, rounded to the nearest integer, is at most
+    // #EXT-X-TARGETDURATION (RFC 8216 §4.3.3.1).
+    let target: f64 = rendered
+        .lines()
+        .find_map(|l| l.strip_prefix("#EXT-X-TARGETDURATION:"))
+        .expect("TARGETDURATION")
+        .parse()
+        .unwrap();
+    let extinfs: Vec<f64> = rendered
+        .lines()
+        .filter_map(|l| l.strip_prefix("#EXTINF:"))
+        .map(|v| v.trim_end_matches(',').parse().unwrap())
+        .collect();
+    assert_eq!(extinfs.len(), 2, "playlist:\n{rendered}");
+    for d in &extinfs {
+        assert!(
+            d.round() <= target,
+            "EXTINF {d} > target {target}:\n{rendered}"
+        );
+    }
+    // The two closed segments carry a media-derived EXTINF of 4.000 s (two
+    // 2 s GOPs each, keyframe to keyframe). A wall-clock EXTINF would read
+    // ~0.000 for fast ingestion, and a cut on every keyframe 2.000.
+    assert_eq!(
+        rendered.matches("#EXTINF:4.000,").count(),
+        2,
+        "expected two media-derived 4.000 s EXTINFs, got:\n{rendered}"
     );
 }
 

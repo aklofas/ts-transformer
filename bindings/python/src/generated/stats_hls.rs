@@ -19,7 +19,8 @@ pub struct MuxPublisherStats {
     pub bytes_pushed: u64,
     /// Total muxer drain calls that produced at least one chunk.
     pub drain_calls: u64,
-    /// Total explicit segment cuts, plus the automatic cuts on keyframes.
+    /// Total explicit segment cuts, plus the automatic cuts made before a
+    /// video access unit (on a keyframe, or forced to hold the target).
     pub cut_calls: u64,
 }
 
@@ -60,9 +61,10 @@ pub struct HlsStats {
     pub bytes_pushed_total: u64,
     /// Bytes in the currently-open segment (0 between cuts).
     pub open_segment_bytes: u64,
-    /// Segments cut by the wall-clock hard-cap fallback because a keyframe
-    /// was overdue (keyframe-driven flow only). A persistently non-zero
-    /// value means the upstream GOP length exceeds the configured cap.
+    /// Segments cut by the wall-clock hard-cap fallback (keyframe-driven
+    /// flow only): the open segment outlived the cap because the producer
+    /// stalled. A GOP longer than the target does not count; the mux
+    /// publisher shell cuts it in media time.
     pub forced_cuts: u64,
 }
 

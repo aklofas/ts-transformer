@@ -233,32 +233,44 @@ the full producer + JavaScript client contract for both hls.js paths.
 
 ## Segment guarantees
 
-- **Segments open on a decodable boundary.** Each segment begins with the
-  PAT, the PMT, and an IDR (keyframe) access unit — in that order — so a
-  player joining the stream can decode the first segment it fetches without
-  waiting for a later keyframe. **One bounded exception:** the segmenter
-  learns the stream is keyframe-driven at the first keyframe *cut* (i.e. the
-  second keyframe it sees), so if the **first GOP is longer than
-  `segment_duration`**, segment 0 alone can be wall-clock-cut mid-GOP — and
-  that initial cut is not counted in `forced_cuts`. This is only reachable
-  when the encoder's keyframe interval exceeds `segment_duration` (the
-  inverse of normal HLS configuration); keep the GOP at or below the segment
-  target and segment 0 opens on the IDR like every other segment. A
-  keyframe-intent signal that closes this window is tracked in
+- **`segment_duration` is the maximum.** `#EXT-X-TARGETDURATION` advertises
+  `ceil(segment_duration)`, and RFC 8216 §4.3.3.1 requires every `#EXTINF`,
+  rounded to the nearest integer, to be at most that. When you push through
+  `MuxPublisher`, a segment closes on the first keyframe at or after
+  `segment_duration` of media (PTS) time, so it holds whole GOPs: with a
+  2-second GOP and a 4-second target, every segment is 4.000 s. A 1-second
+  GOP does not produce 1-second segments, so the playlist is not rewritten
+  more often than RFC 8216 §6.2.1 allows (half the target duration).
+- **A GOP longer than `segment_duration` is cut before the rounding
+  boundary.** When the next access unit would carry the open segment to
+  `segment_duration + 0.5 s`, the segment is cut before it, PAT and PMT are
+  re-emitted, and the next segment starts on that non-keyframe access unit.
+  The SHOULD of RFC 8216 §3 (a segment starts on a keyframe) is traded for
+  the MUST of §4.3.3.1. A player joining on such a segment waits for the
+  next keyframe. **Keep the GOP at or under `segment_duration`** and every
+  segment opens PAT → PMT → IDR, decodable from its first byte.
+- **Segment 0 under real-time ingestion.** Until the first keyframe cut, the
+  segmenter cannot tell a `MuxPublisher` from a raw relay and cuts on the
+  wall clock at `segment_duration`. A producer pushing in real time reaches
+  that moment together with the first keyframe cut; one running behind the
+  media clock can have segment 0 cut there first, mid-GOP, and that cut is
+  not counted in `forced_cuts`. Faster-than-real-time ingestion (files,
+  transcodes) is not affected. A keyframe-intent signal that closes this
+  window is tracked in
   [deferred-features](/docs/project/deferred-features.md).
-- **Per-GOP duration.** When you push through `MuxPublisher`, a
-  `push_video(..., key_frame=true)` cuts a segment at that keyframe, so
-  segment length follows your GOP structure. `segment_duration` is the
-  *target* — segments cut on the keyframe at or after that duration.
-- **`max_segment_duration` force-cut.** In the keyframe-driven flow, if a
-  keyframe is overdue (a stalled encoder or a very long GOP), the publisher
-  force-cuts once the open segment exceeds `max_segment_duration` so
-  segments never grow unbounded. It defaults to `2 × segment_duration` and
-  must be `≥ segment_duration`. Each force-cut increments the
-  `forced_cuts` stats counter — a persistently non-zero `forced_cuts` means
-  your GOP cadence and `segment_duration` are mismatched.
+- **`max_segment_duration` guards a stalled producer.** In the
+  keyframe-driven flow the media-time bound above is enforced as access
+  units arrive; if they stop arriving, the publisher cuts on the wall clock
+  once the open segment is older than `max_segment_duration`, so a segment
+  never grows unbounded. It defaults to `2 × segment_duration` and must be
+  `≥ segment_duration`. Each such cut increments the `forced_cuts` stats
+  counter; a non-zero `forced_cuts` means the producer stalled.
 - **`#EXTINF` reflects media (PTS) duration** when driven through
   `MuxPublisher`; the raw `push_ts` relay path falls back to wall-clock.
+- **Raw `push_ts` relays** cut on the wall clock at `segment_duration`. They
+  inherit the upstream stream's PSI cadence and keyframe placement: a
+  segment starts with PAT, PMT and a keyframe only if the upstream happens
+  to put them there.
 - **`#EXT-X-TARGETDURATION`** is fixed at `ceil(segment_duration)` and never
   changes after the playlist opens (RFC 8216 requires it immutable).
 - **LIVE window floor.** RFC 8216 §6.2.2 requires a live playlist to hold at
@@ -273,14 +285,14 @@ many segments a player buffers before it starts:
 
 - **`segment_duration` vs GOP.** A player typically needs a few segments in
   the playlist before it begins, so shorter segments lower startup latency.
-  Because a segment cuts on a keyframe, `segment_duration` can only be as
-  fine as your **GOP length** — a 2-second GOP cannot produce 1-second
-  segments. To cut latency, shorten the encoder's GOP first, then
-  `segment_duration` to match.
-- **Player buffering.** With hls.js, `liveSyncDurationCount` controls how far
-  from the live edge playback starts (in segment counts). Lowering it (e.g.
-  to `2`–`3`) trims latency at the cost of less rebuffer headroom on a lossy
-  link.
+  Segments close on a keyframe, so a keyframe-aligned segment can only be as
+  fine as your **GOP length**: a 2-second GOP cannot produce 1-second
+  segments (a shorter target cuts mid-GOP instead). To cut latency, shorten
+  the encoder's GOP first, then `segment_duration` to match.
+- **Player buffering.** With hls.js, `liveSyncDurationCount` sets how far
+  from the live edge playback starts, as a multiple of the target duration
+  (default `3`). Lowering it to `2` trims latency at the cost of less
+  rebuffer headroom on a lossy link.
 - For sub-two-second latency you want LL-HLS (partial segments), which is
   deferred and couples to a CMAF/fMP4 packaging path — see
   [deferred-features.md](/docs/project/deferred-features.md).

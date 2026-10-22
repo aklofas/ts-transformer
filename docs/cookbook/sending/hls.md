@@ -77,7 +77,7 @@ MuxerConfig program = MuxerConfig.builder()
 // finish declare HlsException — catch both in real code.
 MuxPublisher shell = MuxPublisher.withConfigHls(pub, program); // consumes `pub`
 
-shell.pushVideo(nalBytes, pts, keyFrame);  // keyFrame=true cuts a new segment
+shell.pushVideo(nalBytes, pts, keyFrame);  // a keyframe at or after segment_duration cuts
 shell.pushKlv(klvBytes, pts, 0);
 
 HlsPublisher back = shell.finishIntoPublisher();
@@ -110,8 +110,10 @@ handle.shutdown();
 ```
 
 `HlsStats.forced_cuts` (from `publisher.hls_stats()`) counts how often
-`max_segment_duration` force-cut an overdue keyframe — a persistently non-zero
-value means your GOP cadence and `segment_duration` are mismatched.
+`max_segment_duration` cut a segment because the producer stalled. A GOP
+longer than `segment_duration` does not count: `MuxPublisher` cuts it before
+it would round above the target, and the next segment then starts without a
+keyframe, so keep the GOP at or under `segment_duration`.
 
 ## Verify with ffmpeg / VLC / mpv
 
@@ -134,7 +136,7 @@ mpv    'http://localhost:8080/playlist.m3u8'
 | Parameter | Default | Meaning |
 |---|---|---|
 | `output_dir` | `<temp_dir>/tstrans-hls` | Filesystem dir for `.ts` + `.m3u8` (portable temp dir) |
-| `segment_duration` | `4` (seconds) | Target segment duration (keyframe-aligned cuts aim for this; `max_segment_duration` is the hard force-cut cap) |
+| `segment_duration` | `4` (seconds) | Maximum segment duration: segments close on the first keyframe at or after it and never round above it; `max_segment_duration` only guards a stalled producer |
 | `playlist_window` | `6` | Rolling window size (LIVE mode only) |
 | `mode` | `live` | One of `live`/`event`/`vod` |
 | `auth_user`/`auth_pass` | none | Basic auth credentials |

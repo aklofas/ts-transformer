@@ -56,6 +56,9 @@ expected_sym() { # <trait method> -> required C symbol, or "SKIP:<reason>"
         # tst_mux_publisher_* path; a raw-C entry point would need an ABI bump
         # and is deferred until there is a consumer for the raw-push path.
         cut_segment_with_duration)  echo "SKIP:media-derived cut is MuxPublisher-internal; no raw-C symbol (deferred, needs ABI bump)" ;;
+        # The bound is read by the MuxPublisher shell; a C caller configures it
+        # with tst_hls_publisher_builder_segment_duration_ms.
+        segment_duration)           echo "SKIP:read by the MuxPublisher shell; the C builder already sets it" ;;
         *)                          echo "" ;;
     esac
 }

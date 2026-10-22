@@ -277,8 +277,9 @@ def test_mux_publisher_video_then_finish_into_publisher() -> None:
             pub.push_ts(TS_TWO_PACKETS)
         assert ei.value.kind == HlsErrorKind.FINISHED
 
+        # Keyframes 4 s apart: each reaches the default 4 s segment_duration.
         for i in range(3):
-            mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(i * 90_000), key_frame=True)
+            mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(i * 360_000), key_frame=True)
 
         mstats = mp.stats()
         assert isinstance(mstats, MuxPublisherStats)
@@ -443,18 +444,18 @@ def test_extinf_is_media_derived() -> None:
         # PTS 0: stream-head keyframe — opens segment 0 (no spurious cut),
         #   baselining its start PTS at 0.
         mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(0), key_frame=True)
-        # PTS 90000: non-keyframe — appended to segment 0.
-        mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(90000), key_frame=False)
-        # PTS 261000: keyframe — cuts segment 0 (span 0..261000 = 261000 ticks
-        #   = 2.9 s at 90 kHz), then opens segment 1. 2.900 s is well past the
-        #   1.0 s target, so it can only be the media-derived (PTS-span) EXTINF.
-        mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(261000), key_frame=True)
+        # PTS 45000: non-keyframe — appended to segment 0.
+        mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(45000), key_frame=False)
+        # PTS 108000: keyframe past the 1.0 s target — cuts segment 0 (span
+        #   0..108000 = 1.2 s at 90 kHz), then opens segment 1. The feed takes
+        #   milliseconds, so 1.200 s can only be the media-derived EXTINF.
+        mp.push_video(NAL_IDR, pts=Pts90khz.from_raw(108000), key_frame=True)
 
         hls = mp.finish_into_publisher()
         pl = hls.render_playlist(False)
         hls.finish()
 
-        assert "#EXTINF:2.900," in pl, pl
+        assert "#EXTINF:1.200," in pl, pl
 
 
 def test_hls_publisher_cut_with_duration() -> None:

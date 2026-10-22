@@ -24,7 +24,11 @@ rust_methods=$(awk '
     for (i = 2; i <= n; i++) out = out toupper(substr(parts[i], 1, 1)) substr(parts[i], 2)
     print out
   }
-' "$RUST_FILE" | sort -u)
+' "$RUST_FILE" | grep -vx -e segmentDuration | sort -u)
+# Rust-only trait methods, left out of the comparison: `segment_duration` is
+# read inside the Rust mux publisher shell from the Rust publisher it wraps;
+# no Java object implements the trait for that shell, and the HLS builder
+# already sets the duration.
 
 # Java interface methods: `<Type> <name>(` lines inside the interface body,
 # skipping `close` (AutoCloseable, not a trait method) and comments.

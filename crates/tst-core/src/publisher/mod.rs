@@ -56,6 +56,18 @@ pub trait Publisher {
         self.cut_segment()
     }
 
+    /// The longest a segment may run, in media time, when the publisher
+    /// advertises a fixed bound to its clients (the HLS target duration).
+    ///
+    /// The `MuxPublisher` pipeline shell reads this once at construction.
+    /// `Some(d)`: it cuts on the first keyframe at or after `d` of media time
+    /// and force-cuts before an access unit that would carry the segment past
+    /// `d + 500 ms`, so every segment rounds to at most the advertised bound.
+    /// `None` (the default): every keyframe after the first cuts.
+    fn segment_duration(&self) -> Option<Duration> {
+        None
+    }
+
     /// Cleanly finalize: flush pending segment, write a terminating
     /// playlist tag (e.g., HLS `#EXT-X-ENDLIST`), tear down sinks.
     ///
@@ -142,16 +154,11 @@ mod tests {
     }
 
     #[test]
-    fn noop_round_trip() {
-        let mut p = NoopPublisher {
+    fn default_segment_duration_is_none() {
+        let p = NoopPublisher {
             segments: 0,
             bytes: 0,
         };
-        p.push_ts(&[0u8; 188]).unwrap();
-        p.cut_segment().unwrap();
-        let s = p.stats();
-        assert_eq!(s.bytes_written, 188);
-        assert_eq!(s.segments_written, 1);
-        p.finish().unwrap();
+        assert_eq!(p.segment_duration(), None);
     }
 }

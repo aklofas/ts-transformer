@@ -55,7 +55,8 @@ fn hls_segments_match_the_committed_golden() {
     let publisher = HlsPublisherBuilder::new()
         .bind("127.0.0.1:0".parse().unwrap())
         .output_dir(&out)
-        .segment_duration(Duration::from_secs(10))
+        // The keyframe at 3 s reaches the target, so it opens segment 1.
+        .segment_duration(Duration::from_secs(3))
         .playlist_window(6)
         .mode(HlsMode::Vod)
         .build()

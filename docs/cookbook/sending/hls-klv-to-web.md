@@ -45,7 +45,7 @@ program = (
 mp = MuxPublisher.with_config_hls(publisher, program)
 
 # Push one keyframe-aligned AU + its KLV record at a shared PTS.
-# key_frame=True auto-cuts a segment at the keyframe.
+# A key_frame=True AU at or after segment_duration begins a new segment.
 mp.push_video(nal, pts=Pts90khz.from_raw(pts), key_frame=True)
 mp.push_klv(klv_ls_bytes, pts=Pts90khz.from_raw(pts))
 
