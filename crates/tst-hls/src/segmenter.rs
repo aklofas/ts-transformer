@@ -180,12 +180,13 @@ impl Segmenter {
             // Raw push_ts flow (pre-muxed TS relay): no keyframe signal exists,
             // wall-clock segmenting is all we have — unchanged v0.2.0 behavior.
             //
-            // NOTE: a `MuxPublisher` makes an explicit cut at construction,
-            // before any bytes, when the publisher reports a
-            // `segment_duration`, so its stream never reaches this branch:
-            // segment 0 is cut by the shell's media-time bound like every
-            // other segment. Only a raw relay (or a caller that never cuts
-            // before pushing) lands here. Such a cut is deliberately NOT
+            // NOTE: a `MuxPublisher` sends an explicit cut on its first video
+            // access unit when no bytes have flowed yet, so such a stream
+            // never reaches this branch: segment 0 is cut by the shell's
+            // media-time bound like every other segment. A raw relay, a
+            // stream without video, and a stream that pushed metadata before
+            // its first video access unit take this branch until their first
+            // explicit cut, if any. Such a cut is deliberately NOT
             // counted in `forced_cuts` (pinned by
             // raw_mode_tick_cuts_at_segment_duration_and_forced_cuts_stays_zero).
             self.cut()?;

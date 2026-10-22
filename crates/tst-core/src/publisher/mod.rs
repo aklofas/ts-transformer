@@ -61,9 +61,10 @@ pub trait Publisher {
     ///
     /// The `MuxPublisher` pipeline shell reads this once at construction.
     /// `Some(d)`: it cuts on the first keyframe at or after `d` of media time
-    /// and force-cuts before an access unit that would carry the segment past
-    /// `d + 500 ms`, so every segment rounds to at most the advertised bound.
-    /// `None` (the default): every keyframe after the first cuts.
+    /// and force-cuts early enough that, at a steady frame cadence, every
+    /// segment rounds to at most the advertised bound; the shell's
+    /// `Segmented` transport documents the exact rules. `None` (the
+    /// default): every keyframe after the first cuts.
     fn segment_duration(&self) -> Option<Duration> {
         None
     }

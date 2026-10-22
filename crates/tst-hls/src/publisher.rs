@@ -277,8 +277,8 @@ mod tests {
         assert!(pl.contains("segment_00000.ts"));
     }
 
-    /// The mux publisher shell's construction-time `cut_segment` is a pure
-    /// intent signal: nothing is written or counted, and the first segment
+    /// The `cut_segment` the mux publisher shell sends on its first video
+    /// access unit, before any bytes, is a pure intent signal: nothing is written or counted, and the first segment
     /// is then cut only by the stall guard, not by the wall clock at
     /// `segment_duration`.
     #[test]
