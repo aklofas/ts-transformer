@@ -1361,6 +1361,8 @@ The integrator-facing changes at a glance (full detail in the sections below):
 - A soak archive row may declare `legs`; the release gate requires the chosen
   72-hour soak to have run srt, rist, rtsp-publish, rtsp-publish-es and whep.
   `tst-interop report soak` prints the legs on its final line.
+- The release gate requires the corpus archive to have swept the declared
+  number of captures (`[corpus] expected_files` in the evidence archive list).
 
 ### Fixed — release tooling
 

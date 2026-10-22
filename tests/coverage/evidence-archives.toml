@@ -10,6 +10,12 @@
 # Rendered into the qualification block by scripts/gen/qualification.sh.
 schema_version = 0
 
+# The number of distinct `.ts` captures the release VM must sweep (the maintainer's corpus;
+# derived re-encodes beside the notebooks excluded). A release-mode corpus row must have
+# swept exactly this many files.
+[corpus]
+expected_files = 253
+
 [[archive]]
 id = "soak-rc070-2026-10-04"
 kind = "soak"

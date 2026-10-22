@@ -52,6 +52,9 @@ FUZZ_TOML = "schema_version = 0\n" + "".join(
 ARCHIVES = """\
 schema_version = 0
 
+[corpus]
+expected_files = 260
+
 [[archive]]
 id = "soak-x"
 kind = "soak"
@@ -336,7 +339,7 @@ class ArchiveTests(unittest.TestCase):
     def test_validate_archives(self):
         good = q.parse_archives(ARCHIVES)
         self.assertEqual(q.validate_archives(good), [])
-        bad = q.parse_archives(ARCHIVES + ARCHIVES.split("\n", 2)[2].replace("soak-x", "soak-x"))
+        bad = q.parse_archives(ARCHIVES + ARCHIVES.split("\n", 5)[5].replace("soak-x", "soak-x"))
         self.assertTrue(any("duplicate" in p for p in q.validate_archives(bad)))
         bad_kind = q.parse_archives(ARCHIVES.replace('"soak"', '"drill"'))
         self.assertTrue(any("kind" in p for p in q.validate_archives(bad_kind)))
@@ -391,7 +394,7 @@ FIVE = q.RELEASE_SOAK_LEGS
 
 
 def archives_toml(*rows):
-    return "schema_version = 0\n" + "".join(rows)
+    return "schema_version = 0\n\n[corpus]\nexpected_files = %d\n" % COUNTS["files"] + "".join(rows)
 
 
 NO_SOAK = archives_toml(archive_row("corpus-rel", "corpus", SHA))
@@ -697,12 +700,31 @@ class ReleaseModeTests(unittest.TestCase):
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIn("soak: archive soak-1h declares 3600 s, not 259200", rec["verdict_reasons"])
 
+    def test_release_mode_rejects_a_corpus_row_with_fewer_files_than_declared(self):
+        small = dict(COUNTS, files=3)
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, counts=small))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("corpus: archive corpus-rel swept 3 files; the release corpus has %d" % COUNTS["files"],
+                      rec["verdict_reasons"])
+
+    def test_archives_requires_the_corpus_expectation(self):
+        text = RELEASE_OK.replace("[corpus]\nexpected_files = %d\n" % COUNTS["files"], "")
+        self.assertIsNone(q.parse_corpus_expectation(text))
+        self.assertEqual(q.parse_corpus_expectation(RELEASE_OK), COUNTS["files"])
+        with tempfile.TemporaryDirectory() as d:
+            put(os.path.join(d, "tests/coverage/evidence-archives.toml"), text)
+            with self.assertRaises(SystemExit) as e:
+                q.load_archives(d)
+            self.assertEqual(e.exception.code, 1)
+
     def test_a_malformed_sha_never_reaches_git(self):
         rows = q.parse_archives(SOAKED_EARLIER)
         with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
             for bad in ("HEAD", "--output=/tmp/x", SHA.upper()):
                 with self.assertRaises(q.QualificationError) as e:
-                    q.release_vm("/nonexistent", bad, rows, True)
+                    q.release_vm("/nonexistent", bad, rows, True, COUNTS["files"])
                 self.assertIn("source.sha", str(e.exception))
             with self.assertRaises(SystemExit) as e:
                 collect(mutate=lambda f: f["context.json"].update(
