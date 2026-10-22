@@ -4191,6 +4191,15 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-webrtc"
+item = "tst_webrtc::url::WhepUrl::validate"
+owning_tests = ["crates/tst-webrtc/tests/whep/url.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:n/a(the binding takes a URL string; bind validates it)", "java:n/a(the binding takes a URL string; bind validates it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-webrtc"
 item = "tst_webrtc::sei::KlvSei"
 owning_tests = ["crates/tst-webrtc/tests/whep/sei.rs"]
 bindings = ["c:deferred(no C consumer yet)", "python:n/a(the Python binding serves; the mount builds the SEI)", "java:n/a(the JVM binding serves; the mount builds the SEI)", "swift:deferred", "kotlin:deferred"]

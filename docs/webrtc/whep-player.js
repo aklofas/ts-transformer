@@ -125,13 +125,15 @@ export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
       } // else: no encoded-frame access; KLV arrives on the data channel only
     };
 
-  // --- WHEP signalling ---------------------------------------------------
+    // --- WHEP signalling -------------------------------------------------
     await pc.setLocalDescription(await pc.createOffer());
     const headers = { "Content-Type": "application/sdp" };
     if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(endpoint, { method: "POST", headers, body: pc.localDescription.sdp });
     if (res.status !== 201) throw new Error(`WHEP ${res.status}: ${await res.text()}`);
-    location = new URL(res.headers.get("Location"), endpoint);
+    const created = res.headers.get("Location");
+    if (!created) throw new Error("WHEP 201 without a Location header");
+    location = new URL(created, endpoint);
     await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
   } catch (e) {
     teardown();

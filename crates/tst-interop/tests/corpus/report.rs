@@ -32,15 +32,15 @@ fn sweep(pass: bool) -> SweepSummary {
     }
 }
 
-/// The fingerprint of the digest file `write_run` lays down.
+/// The fingerprint of the digest file `write_run` lays down: its name, its
+/// length as u64 little-endian, then its bytes.
 fn fingerprint_of_digest_files() -> Sha256Hex {
     use sha2::{Digest, Sha256};
-    Sha256Hex(
-        Sha256::digest(DIGEST_FILE)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect(),
-    )
+    let mut h = Sha256::new();
+    h.update(format!("{}.json", sha('a')).as_bytes());
+    h.update((DIGEST_FILE.len() as u64).to_le_bytes());
+    h.update(DIGEST_FILE);
+    Sha256Hex(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 const DIGEST_FILE: &[u8] = b"{\"digest\":1}";

@@ -761,8 +761,9 @@ to each access unit, in a `user_data_unregistered` SEI message and on a
 `klv` data channel the server opens. ICE-lite on one UDP port for every
 viewer, DTLS-SRTP and RTX from str0m, no TURN or STUN, no ingest. The
 [WebRTC guide](/docs/guides/webrtc.md) has the endpoint table, the wire
-layouts and the mount rules; the JVM binding is `org.tstrans.webrtc`, the Python
-binding is `tstrans.webrtc` ([Python guide](/docs/languages/python.md#webrtc-playback-tstranswebrtc)),
+layouts and the mount rules; the JVM binding is `org.tstrans.webrtc`, the
+Python binding is `tstrans.webrtc`
+([Python guide](/docs/languages/python.md#webrtc-playback-tstranswebrtc)),
 and the C binding does not expose it in this release.
 
 | Feature | Default | Enables |

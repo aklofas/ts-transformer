@@ -150,7 +150,7 @@ def load_archives(root):
 
 def changed_paths(root, tree, sha):
     """The paths outside RELEASE_DOCUMENT_PATHS that differ between commits `tree` and `sha`."""
-    cmd = ["git", "-C", root, "diff", "--name-only", tree, sha]
+    cmd = ["git", "-C", root, "diff", "--name-only", "--no-renames", tree, sha]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True)
     except OSError as e:
@@ -237,8 +237,7 @@ def release_vm(root, sha, archives, release):
             chosen = next(a for a in soaks if a["id"] == soak["id"])
             key = lambda a: (a["date"], order[id(a)])
             for a in _by_date(soaks):
-                if a["tree"] == soak["tree"] and not a["overall_pass"] and key(a) > key(chosen) \
-                        and a["id"] != soak["id"]:
+                if a["tree"] == soak["tree"] and not a["overall_pass"] and key(a) > key(chosen):
                     reasons.append("soak: archive %s, a newer run on the same tree, recorded overall_pass=false"
                                    % a["id"])
             if soak["expected_duration_s"] != RELEASE_SOAK_S:

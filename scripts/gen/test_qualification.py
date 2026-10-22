@@ -460,7 +460,9 @@ class ReleaseModeTests(unittest.TestCase):
         with mock.patch.object(q, "changed_paths", return_value=["crates/tst-core/src/lib.rs"]):
             rec = collect(release=True, archives=SOAKED_EARLIER)
         self.assertEqual(rec["verdict"], "NO-GO")
-        self.assertIn("soak: archive soak-rel is superseded by 1 changed path(s) outside the release documents", rec["verdict_reasons"])
+        self.assertIn(
+            "soak: archive soak-rel is superseded by 1 changed path(s) outside the release documents",
+            rec["verdict_reasons"])
 
     def test_release_mode_rejects_a_failed_or_short_soak(self):
         failed = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False),
@@ -556,6 +558,22 @@ class ReleaseModeTests(unittest.TestCase):
             git(d, "update-index", "--add", "--cacheinfo", "160000,%s,vendor/sub" % a)
             git(d, "commit", "-q", "-m", "gitlink")
             self.assertEqual(q.changed_paths(d, a, git(d, "rev-parse", "HEAD")), ["vendor/sub"])
+
+    def test_changed_paths_sees_a_rename_into_docs(self):
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q", "-b", "main")
+            os.makedirs(os.path.join(d, "crates"))
+            os.makedirs(os.path.join(d, "docs"))
+            spit(os.path.join(d, "crates/x.rs"), "fn x() {}\n" * 20)
+            git(d, "add", ".")
+            git(d, "commit", "-q", "-m", "A")
+            a = git(d, "rev-parse", "HEAD")
+            git(d, "mv", "crates/x.rs", "docs/x.rs")
+            git(d, "commit", "-q", "-m", "move")
+            self.assertEqual(q.changed_paths(d, a, git(d, "rev-parse", "HEAD")), ["crates/x.rs"])
+        with mock.patch.object(q, "changed_paths", return_value=["crates/x.rs"]):
+            rec = collect(release=True, archives=SOAKED_EARLIER)
+        self.assertEqual(rec["verdict"], "NO-GO")
 
     def test_release_mode_rejects_a_one_path_corpus_row(self):
         for bad in (dict(COUNTS, replay_paths=1), dict(COUNTS, replay_files=0),

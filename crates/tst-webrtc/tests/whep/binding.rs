@@ -408,11 +408,12 @@ fn records_bound_after_a_rebase_share_one_splice() {
 /// queue in the order the clock stamped them. Each frame the clock saw
 /// below its predecessor counts in `frames_pts_reordered`, so the number of
 /// timestamp steps backwards in the queue equals that counter exactly when
-/// queue order is clock order. A drainer keeps the bounded queue from
-/// filling, so no frame is dropped.
+/// queue order is clock order. The producers push fewer frames than the
+/// queue holds and the queue is drained after they finish, so no frame is
+/// dropped and nothing depends on scheduling.
 #[test]
 fn concurrent_pushes_are_queued_in_clock_order() {
-    const PER_THREAD: u64 = 20_000;
+    const PER_THREAD: u64 = 2_000;
     let (m, rx) = MountHandle::for_test(MountConfig::default());
     m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
         .unwrap();
@@ -430,32 +431,32 @@ fn concurrent_pushes_are_queued_in_clock_order() {
             })
         })
         .collect();
-    let drainer = std::thread::spawn(move || {
-        let mut prev = next_frame(&rx).rtp_ts;
-        let mut backwards = 0u64;
-        for _ in 0..2 * PER_THREAD {
-            let ts = next_frame_blocking(&rx).rtp_ts;
-            if (ts.wrapping_sub(prev) as i32) < 0 {
-                backwards += 1;
-            }
-            prev = ts;
-        }
-        backwards
-    });
     for t in producers {
         t.join().unwrap();
     }
-    let backwards = drainer.join().unwrap();
     assert_eq!(m.stats().viewer_packets_dropped_queue_full, 0);
-    assert_eq!(backwards, m.stats().frames_pts_reordered);
-}
-
-fn next_frame_blocking(
-    rx: &std::sync::mpsc::Receiver<MediaMsg>,
-) -> std::sync::Arc<tst_webrtc::mount::FramePacket> {
-    loop {
-        if let MediaMsg::Frame { packet, .. } = rx.recv().expect("message") {
-            return packet;
+    let mut stamps = Vec::new();
+    while let Ok(msg) = rx.try_recv() {
+        if let MediaMsg::Frame { packet, .. } = msg {
+            stamps.push(packet.rtp_ts);
         }
+    }
+    assert_eq!(stamps.len() as u64, 1 + 2 * PER_THREAD);
+    let backwards = stamps
+        .windows(2)
+        .filter(|w| (w[1].wrapping_sub(w[0]) as i32) < 0)
+        .count() as u64;
+    assert_eq!(backwards, m.stats().frames_pts_reordered);
+    // Each producer's own frames keep their push order. The clock's origin
+    // is random, so stamps are read relative to the keyframe's (PTS 0),
+    // which also keeps a 32-bit wrap inside the run from reordering them.
+    let origin = stamps[0];
+    for lane in 0..2u32 {
+        let own: Vec<u32> = stamps
+            .iter()
+            .map(|ts| ts.wrapping_sub(origin))
+            .filter(|rel| (rel / 3000) % 2 == 1 - lane)
+            .collect();
+        assert!(own.windows(2).all(|w| w[0] < w[1]), "lane {lane}");
     }
 }
