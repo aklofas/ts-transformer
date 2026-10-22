@@ -20,77 +20,112 @@
 import { extractKlvSeis } from "./whep-sei-extract.js";
 import { KlvQueue, parseKlvMessage } from "./whep-klv.js";
 
+const DELETE_TIMEOUT_MS = 2000;
+
 export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
-  const endpoint = new URL(url, document.baseURI);
-  const scriptTransform = typeof RTCRtpScriptTransform === "function";
-  // Chrome's createEncodedStreams needs the option; other browsers ignore it.
-  const pc = new RTCPeerConnection(scriptTransform ? {} : { encodedInsertableStreams: true });
-  const stream = new MediaStream(); // one stream: the answer gives each media its own msid
-  video.srcObject = stream;
+  let pc = null;
+  let stream = null;
   let worker = null;
+  let location = null; // the server resource, once created
+  let stopped = false;
+  let frameCallback = null;
+  let queue = null;
 
-  // --- KLV emission -------------------------------------------------------
-  const paintLocked = typeof video.requestVideoFrameCallback === "function";
-  const queue = new KlvQueue({ onKlv, dedupe, paintLocked });
-  if (paintLocked) {
-    const tick = (_now, meta) => {
-      if (meta.rtpTimestamp === undefined) { queue.flushAll(); return; } // not exposed here
-      queue.painted(meta.rtpTimestamp);
-      video.requestVideoFrameCallback(tick);
-    };
-    video.requestVideoFrameCallback(tick);
-  }
-
-  // --- data channel: opened by the server, arrives by label -------------
-  pc.createDataChannel("viewer"); // any label but "klv": brings up SCTP in the offer
-  pc.ondatachannel = ({ channel }) => {
-    if (channel.label !== "klv") return;
-    channel.binaryType = "arraybuffer";
-    channel.onmessage = ({ data }) => {
-      const rec = parseKlvMessage(data);
-      if (rec) queue.push(rec);
-    };
+  // Idempotent local cleanup; never touches the network.
+  const teardown = () => {
+    stopped = true;
+    if (frameCallback !== null && typeof video.cancelVideoFrameCallback === "function") {
+      try { video.cancelVideoFrameCallback(frameCallback); } catch { /* already gone */ }
+    }
+    frameCallback = null;
+    if (queue) queue.clear();
+    if (worker) { worker.onmessage = null; worker.terminate(); worker = null; }
+    if (pc) { try { pc.close(); } catch { /* already closed */ } }
+    // A later session may own the element by now; leave its stream alone.
+    if (stream && video.srcObject === stream) video.srcObject = null;
   };
 
-  // --- media: video (and audio, when the mount passes Opus through) ------
-  const videoTransceiver = pc.addTransceiver("video", { direction: "recvonly" });
-  pc.addTransceiver("audio", { direction: "recvonly" });
-  const onRecord = (rec) => queue.push({ ...rec, via: "sei" });
-  if (scriptTransform) {
-    // Set on the receiver before signalling: the transform must exist before
-    // the remote description is applied, or Chrome never routes frames to
-    // it (one set in ontrack starts its worker and then sees no frame).
-    // The spec allows it here in every browser.
-    worker = new Worker(new URL("./whep-sei-worker.js", import.meta.url), { type: "module" });
-    worker.onmessage = (m) => onRecord(m.data);
-    videoTransceiver.receiver.transform = new RTCRtpScriptTransform(worker, {});
-  }
-  pc.ontrack = ({ track, receiver }) => {
-    stream.addTrack(track);
-    if (scriptTransform) return;
-    if (typeof receiver.createEncodedStreams === "function") {
-      // Legacy Chrome: createEncodedStreams is called here, in ontrack, before
-      // any frame arrives (where that browser documents it, and where it
-      // receives every frame), and every receiver's streams must be piped or
-      // its frames stall.
-      const { readable, writable } = receiver.createEncodedStreams();
-      if (track.kind !== "video") { readable.pipeTo(writable); return; }
-      readable.pipeThrough(new TransformStream({
-        transform(frame, controller) {
-          try {
-            const meta = typeof frame.getMetadata === "function" ? frame.getMetadata() : {};
-            const rtpTimestamp = meta.rtpTimestamp ?? frame.timestamp;
-            for (const rec of extractKlvSeis(frame.data)) onRecord({ rtpTimestamp, ...rec });
-          } catch { /* a parse failure must not stop the video */ }
-          controller.enqueue(frame);
-        },
-      })).pipeTo(writable);
-    } // else: no encoded-frame access; KLV arrives on the data channel only
+  // Best-effort DELETE of the server resource, bounded so an unreachable
+  // endpoint cannot hang the caller.
+  const deleteResource = async () => {
+    if (!location) return;
+    const target = location;
+    location = null;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), DELETE_TIMEOUT_MS);
+    try { await fetch(target, { method: "DELETE", headers, signal: ctl.signal }); } catch { /* best effort */ } finally { clearTimeout(timer); }
   };
+
+  try {
+    const endpoint = new URL(url, document.baseURI);
+    const scriptTransform = typeof RTCRtpScriptTransform === "function";
+    // Chrome's createEncodedStreams needs the option; other browsers ignore it.
+    pc = new RTCPeerConnection(scriptTransform ? {} : { encodedInsertableStreams: true });
+    stream = new MediaStream(); // one stream: the answer gives each media its own msid
+    video.srcObject = stream;
+
+    // --- KLV emission -------------------------------------------------------
+    const paintLocked = typeof video.requestVideoFrameCallback === "function";
+    queue = new KlvQueue({ onKlv, dedupe, paintLocked });
+    if (paintLocked) {
+      const tick = (_now, meta) => {
+        if (stopped) return;
+        if (meta.rtpTimestamp === undefined) { queue.flushAll(); return; } // not exposed here
+        queue.painted(meta.rtpTimestamp);
+        if (!stopped) frameCallback = video.requestVideoFrameCallback(tick);
+      };
+      frameCallback = video.requestVideoFrameCallback(tick);
+    }
+
+    // --- data channel: opened by the server, arrives by label -------------
+    pc.createDataChannel("viewer"); // any label but "klv": brings up SCTP in the offer
+    pc.ondatachannel = ({ channel }) => {
+      if (channel.label !== "klv") return;
+      channel.binaryType = "arraybuffer";
+      channel.onmessage = ({ data }) => {
+        const rec = parseKlvMessage(data);
+        if (rec && !stopped) queue.push(rec);
+      };
+    };
+
+    // --- media: video (and audio, when the mount passes Opus through) ------
+    const videoTransceiver = pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("audio", { direction: "recvonly" });
+    const onRecord = (rec) => !stopped && queue.push({ ...rec, via: "sei" });
+    if (scriptTransform) {
+      // Set on the receiver before signalling: the transform must exist before
+      // the remote description is applied, or Chrome never routes frames to
+      // it (one set in ontrack starts its worker and then sees no frame).
+      // The spec allows it here in every browser.
+      worker = new Worker(new URL("./whep-sei-worker.js", import.meta.url), { type: "module" });
+      worker.onmessage = (m) => onRecord(m.data);
+      videoTransceiver.receiver.transform = new RTCRtpScriptTransform(worker, {});
+    }
+    pc.ontrack = ({ track, receiver }) => {
+      stream.addTrack(track);
+      if (scriptTransform) return;
+      if (typeof receiver.createEncodedStreams === "function") {
+        // Legacy Chrome: createEncodedStreams is called here, in ontrack, before
+        // any frame arrives (where that browser documents it, and where it
+        // receives every frame), and every receiver's streams must be piped or
+        // its frames stall.
+        const { readable, writable } = receiver.createEncodedStreams();
+        if (track.kind !== "video") { readable.pipeTo(writable); return; }
+        readable.pipeThrough(new TransformStream({
+          transform(frame, controller) {
+            try {
+              const meta = typeof frame.getMetadata === "function" ? frame.getMetadata() : {};
+              const rtpTimestamp = meta.rtpTimestamp ?? frame.timestamp;
+              for (const rec of extractKlvSeis(frame.data)) onRecord({ rtpTimestamp, ...rec });
+            } catch { /* a parse failure must not stop the video */ }
+            controller.enqueue(frame);
+          },
+        })).pipeTo(writable);
+      } // else: no encoded-frame access; KLV arrives on the data channel only
+    };
 
   // --- WHEP signalling ---------------------------------------------------
-  let location;
-  try {
     await pc.setLocalDescription(await pc.createOffer());
     const headers = { "Content-Type": "application/sdp" };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -99,20 +134,16 @@ export async function playWhep({ video, url, token, onKlv, dedupe = true }) {
     location = new URL(res.headers.get("Location"), endpoint);
     await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
   } catch (e) {
-    pc.close();
-    if (worker) worker.terminate();
-    video.srcObject = null;
+    teardown();
+    await deleteResource();
     throw e;
   }
 
   return {
     pc,
     async stop() {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      try { await fetch(location, { method: "DELETE", headers }); } catch { /* best effort */ }
-      pc.close();
-      if (worker) worker.terminate();
-      video.srcObject = null;
+      teardown();
+      await deleteResource();
     },
   };
 }

@@ -47,8 +47,8 @@ export function fnv1a(bytes) {
  * (`paintLocked: false`, or after `flushAll()`): a record is emitted as it
  * is pushed.
  *
- * With `dedupe` a record delivered by both carriages (same PTS and bytes)
- * is emitted once. Within a frame the SEI copies go first, so the SEI copy
+ * With `dedupe` a record delivered by both carriages (same bound frame
+ * RTP timestamp, PTS and bytes) is emitted once. Within a frame the SEI copies go first, so the SEI copy
  * wins; on arrival the first copy wins.
  */
 export class KlvQueue {
@@ -88,6 +88,11 @@ export class KlvQueue {
   flushAll() {
     this.paintLocked = false;
     for (const list of this.pending.values()) this.emitFrame(list);
+    this.pending.clear();
+  }
+
+  /** Drops every waiting record without emitting it. */
+  clear() {
     this.pending.clear();
   }
 
