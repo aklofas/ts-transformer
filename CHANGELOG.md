@@ -1344,6 +1344,12 @@ The integrator-facing changes at a glance (full detail in the sections below):
   streaming the old one, which left that fanout orphaned: the session and the
   shutdown registry named a mount the stream was not serving.
 
+### Fixed — tst-webrtc
+
+- A WHEP session's address is the one that carried its DTLS handshake, fixed
+  from the first DTLS record. A handshake continued from another address is
+  ignored and counted in `datagrams_unrouted`.
+
 ### Fixed — tst-interop
 
 - `tst-interop corpus report` no longer rejects a replay that produced

@@ -142,6 +142,10 @@ pub(crate) struct Viewer {
     /// The source of the datagram str0m was last handed; the pin is taken
     /// from it when str0m reports the session connected.
     pub(crate) last_source: Option<SocketAddr>,
+    /// The source of the first DTLS record the session received. Later DTLS
+    /// records from another source are dropped, and the pin is this address:
+    /// the handshake proves who holds the keys, not where it was sent from.
+    pub(crate) dtls_source: Option<SocketAddr>,
     /// The address the session connected from. Once set, only datagrams
     /// from it reach the session and only it is sent to: a NAT rebinding
     /// or an interface change needs a new session.
@@ -184,6 +188,7 @@ impl Viewer {
             remote: None,
             sources: Vec::new(),
             last_source: None,
+            dtls_source: None,
             pinned: None,
             timeout: now,
         }

@@ -99,7 +99,7 @@ pub(crate) struct Shared {
     /// Also read by the media thread (offer lookup, viewer gauges).
     pub(crate) mounts: Arc<Mutex<HashMap<MountId, Arc<MountState>>>>,
     next_mount: AtomicU32,
-    /// Requests (offers and DELETEs) refused for a missing or wrong
+    /// Requests (POST, PATCH and DELETE) refused for a missing or wrong
     /// bearer token.
     pub(crate) rejected_auth: AtomicU64,
     /// The server session config of a `wheps://` server.

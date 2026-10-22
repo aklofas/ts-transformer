@@ -624,6 +624,19 @@ impl Media {
             self.counters.datagrams_unrouted += 1;
             return;
         }
+        // RFC 7983: a first byte in 20..=63 is DTLS. The handshake is bound
+        // to the first source that sent a record, so the pin is the address
+        // that received the server's flights.
+        if v.pinned.is_none() && (20..=63).contains(&self.buf[0]) {
+            match v.dtls_source {
+                None => v.dtls_source = Some(source),
+                Some(d) if d != source => {
+                    self.counters.datagrams_unrouted += 1;
+                    return;
+                }
+                Some(_) => {}
+            }
+        }
         v.last_source = Some(source);
         if let Err(e) = v.rtc.handle_input(input) {
             debug!(session = %v.id, error = %e, "datagram input failed");
@@ -933,7 +946,8 @@ impl DatagramSink for UdpSocket {
 /// when it is new.
 ///
 /// Once the session is pinned only the pinned address is admitted; before
-/// that, at most [`MAX_PRECONNECT_SOURCES`] distinct sources are.
+/// that, at most [`MAX_PRECONNECT_SOURCES`] distinct sources are. The caller
+/// further limits DTLS records to the source of the first one.
 fn admit_source(v: &mut Viewer, source: SocketAddr) -> bool {
     if let Some(p) = v.pinned {
         return source == p;
@@ -984,10 +998,9 @@ fn handle_event(v: &mut Viewer, ev: Event, now: Instant) {
         Event::Connected => {
             v.connected = true;
             v.connected_at.get_or_insert(now);
-            // The datagram that completed the handshake came from the peer
-            // holding the DTLS keys.
+            // The handshake ran with the source of its first DTLS record.
             if v.pinned.is_none() {
-                v.pinned = v.last_source;
+                v.pinned = v.dtls_source.or(v.last_source);
             }
         }
         Event::IceConnectionStateChange(s) => v.set_ice(ice_state(s), now),
