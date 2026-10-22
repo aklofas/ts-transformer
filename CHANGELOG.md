@@ -1331,6 +1331,8 @@ The integrator-facing changes at a glance (full detail in the sections below):
 
 - An evicted HLS segment stays available for its duration plus the longest
   playlist that listed it, measured, not estimated from the window.
+- `MuxPublisher::finish` closes the open segment with its media duration; the
+  final `#EXTINF` no longer measures ingestion time.
 
 ### Fixed — tst-py
 

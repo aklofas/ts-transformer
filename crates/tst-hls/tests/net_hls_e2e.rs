@@ -149,7 +149,9 @@ fn hls_extinf_is_media_derived_and_target_is_immutable() {
         .filter_map(|l| l.strip_prefix("#EXTINF:"))
         .map(|v| v.trim_end_matches(',').parse().unwrap())
         .collect();
-    assert_eq!(extinfs.len(), 2, "playlist:\n{rendered}");
+    // Two cut segments plus the one `finish` closes (IDR@720000 + two P
+    // frames = 120000 ticks).
+    assert_eq!(extinfs.len(), 3, "playlist:\n{rendered}");
     for d in &extinfs {
         assert!(
             d.round() <= target,
@@ -164,6 +166,49 @@ fn hls_extinf_is_media_derived_and_target_is_immutable() {
         2,
         "expected two media-derived 4.000 s EXTINFs, got:\n{rendered}"
     );
+}
+
+#[test]
+fn the_last_segment_duration_is_media_time() {
+    let _serial = SERVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tmpdir("last-extinf");
+    let publisher = HlsPublisherBuilder::new()
+        .bind("127.0.0.1:0".parse().unwrap())
+        .output_dir(&dir)
+        .segment_duration(Duration::from_secs(4))
+        .playlist_window(6)
+        .mode(HlsMode::Event)
+        .build()
+        .unwrap();
+    let mux_cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.psi_interval_ms(10);
+        b.build().unwrap()
+    };
+    let pub_shell = MuxPublisher::with_config(publisher, mux_cfg).unwrap();
+    let au = synthetic_h264_au();
+    // IDR@0, IDR@4 s (cuts a 4 s segment), then frames up to 7 s pushed
+    // instantly: the open segment spans 3 s of media time.
+    pub_shell.push_video(&au, Pts90khz::new(0), true).unwrap();
+    pub_shell
+        .push_video(&au, Pts90khz::new(360_000), true)
+        .unwrap();
+    for t in [450_000i64, 540_000, 630_000] {
+        pub_shell.push_video(&au, Pts90khz::new(t), false).unwrap();
+    }
+    let publisher = pub_shell.finish().unwrap();
+    publisher.finish().unwrap();
+
+    let playlist = std::fs::read_to_string(dir.join("playlist.m3u8")).unwrap();
+    let last = playlist
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("#EXTINF:"))
+        .expect("EXTINF");
+    assert_eq!(last, "#EXTINF:3.000,", "playlist:\n{playlist}");
 }
 
 #[test]
