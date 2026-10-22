@@ -36,7 +36,9 @@ use crate::mount::{
     SCTP_SEND_BUFFER_BYTES,
 };
 use crate::server::negotiate::{Negotiated, repair_rejected_media, select_audio, select_video};
-use crate::server::session::{Enqueued, Queued, ReapCause, Viewer, reap_decision};
+use crate::server::session::{
+    Enqueued, MAX_PRECONNECT_SOURCES, Queued, ReapCause, Viewer, reap_decision,
+};
 use crate::stats::{IceState, ServerStats, SessionStats, bump};
 
 /// The longest the thread waits for a datagram before it re-checks its
@@ -618,10 +620,19 @@ impl Media {
             self.counters.datagrams_unrouted += 1;
             return;
         };
+        if !admit_source(v, source) {
+            self.counters.datagrams_unrouted += 1;
+            return;
+        }
         if let Err(e) = v.rtc.handle_input(input) {
             debug!(session = %v.id, error = %e, "datagram input failed");
         }
         drain_rtc(v, &self.socket, now);
+        // The datagram that completed the handshake came from the peer
+        // holding the DTLS keys.
+        if v.connected && v.pinned.is_none() {
+            v.pinned = Some(source);
+        }
     }
 
     fn drain_control(&mut self) {
@@ -727,11 +738,11 @@ impl Media {
         // frame's RTP timestamp, so the page orders them itself.
         let mut api = rtc.sdp_api();
         let klv_channel = api.add_channel_with_config(klv_channel_config());
-        if let Some((renegotiation, _)) = api.apply() {
+        if api.apply().is_some() {
             // str0m offering a data-channel section means the offer had
             // none: the session has no SCTP transport, so the channel never
             // opens and the viewer gets video (and KLV in SEI) only.
-            debug!(offer = %renegotiation.to_sdp_string(), "the offer has no data-channel section; the klv channel is not opened");
+            debug!("the offer has no data-channel section; the klv channel is not opened");
         }
         let id = session_id().ok_or(RejectReason::Internal)?;
         let mut v = Viewer::new(id.clone(), state, rtc, random_seq(), now);
@@ -915,6 +926,25 @@ impl DatagramSink for UdpSocket {
     }
 }
 
+/// Whether a datagram from `source` may reach `v`, recording the source
+/// when it is new.
+///
+/// Once the session is pinned only the pinned address is admitted; before
+/// that, at most [`MAX_PRECONNECT_SOURCES`] distinct sources are.
+fn admit_source(v: &mut Viewer, source: SocketAddr) -> bool {
+    if let Some(p) = v.pinned {
+        return source == p;
+    }
+    if v.sources.contains(&source) {
+        return true;
+    }
+    if v.sources.len() >= MAX_PRECONNECT_SOURCES {
+        return false;
+    }
+    v.sources.push(source);
+    true
+}
+
 /// Polls `v` until str0m reports its next timeout, sending every datagram
 /// it emits and applying every event.
 fn drain_rtc(v: &mut Viewer, socket: &dyn DatagramSink, now: Instant) {
@@ -945,9 +975,6 @@ fn handle_event(v: &mut Viewer, ev: Event, now: Instant) {
         Event::Connected => {
             v.connected = true;
             v.connected_at.get_or_insert(now);
-            if let Some(mid) = v.mid {
-                v.ssrc_known = v.rtc.direct_api().stream_tx_by_mid(mid, None).is_some();
-            }
         }
         Event::IceConnectionStateChange(s) => v.set_ice(ice_state(s), now),
         // The viewer's own channels open here too, whatever their labels:
@@ -1039,7 +1066,6 @@ fn write_rtp(
         .marker(chunk.marker)
         .nackable(true),
     );
-    v.ssrc_known = true;
     v.seq += 1;
     let len = chunk.payload.len() as u64;
     v.stats.rtp_packets += 1;

@@ -9,6 +9,8 @@ mod audio;
 mod loopback;
 #[path = "net_whep/reaper.rs"]
 mod reaper;
+#[path = "net_whep/sources.rs"]
+mod sources;
 #[path = "net_whep/shutdown.rs"]
 mod shutdown;
 #[cfg(feature = "tls")]

@@ -983,6 +983,16 @@ The integrator-facing changes at a glance (full detail in the sections below):
   `apt` names two codecs, or one number mapped to different formats in two
   media sections) is answered with 400 before str0m sees it; str0m asserts
   on such an offer, which would end the server's media thread.
+- An offer whose media section repeats an `a=rtpmap` or `a=fmtp` line for
+  one payload number, or carries either line for a number its `m=` line does
+  not list, is answered with 400 the same way: str0m reads every
+  `a=rtpmap` in a section, not only those for the numbers in `m=`.
+- A session's media goes only to the address it connected from: the source
+  of the datagram that completes the DTLS handshake is pinned, and datagrams
+  from any other address are dropped and counted in
+  `ServerStats::datagrams_unrouted`. Before the handshake completes a session
+  admits at most four distinct source addresses. A NAT rebinding or a move to
+  another network interface needs a new session.
 - `wheps://127.0.0.1:8443?cert=…&key=…` serves the signalling over HTTPS
   (rustls, feature `tls`, on by default); the bearer token (`token=`) is
   enforced the same way. A certificate or key that cannot be loaded, or a
