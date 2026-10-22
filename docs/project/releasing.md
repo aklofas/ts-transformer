@@ -156,7 +156,10 @@ merge commit, and the qualification run checks that nothing under
    `tests/coverage/evidence-archives.toml`: the soak, with
    `expected_duration_s = 259200`, and the corpus run, each with the frozen
    commit as its `tree`. The same PR adds the soak to the runs table on the
-   [validation evidence page](/docs/project/validation-evidence.md).
+   [validation evidence page](/docs/project/validation-evidence.md). When the
+   corpus has changed, the same PR updates `expected_files` in the file's
+   `[corpus]` table; the release gate refuses a corpus run that swept a
+   different number of files.
 8. **Destroy the VM** once both archives are harvested and checked.
 9. **The date commit.** Replace the CHANGELOG date placeholder with the
    release date. The commit touches the CHANGELOG only, so the frozen tree

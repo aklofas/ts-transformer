@@ -101,6 +101,12 @@ def parse_archives(text):
     return tomllib.loads(text).get("archive", [])
 
 
+def parse_corpus_expectation(text):
+    """The declared size of the release corpus, or None when the file has no [corpus] table."""
+    n = tomllib.loads(text).get("corpus", {}).get("expected_files")
+    return n
+
+
 def validate_archives(rows):
     problems, seen = [], set()
     for r in rows:
@@ -146,8 +152,12 @@ def validate_archives(rows):
 def load_archives(root):
     path = os.path.join(root, "tests/coverage/evidence-archives.toml")
     with open(path) as f:
-        rows = parse_archives(f.read())
+        text = f.read()
+    rows = parse_archives(text)
+    expected = parse_corpus_expectation(text)
     probs = validate_archives(rows)
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected <= 0:
+        probs.append("[corpus] expected_files is required, an integer above 0")
     if probs:
         die("evidence-archives.toml: " + "; ".join(probs), 1)
     out = []
@@ -158,7 +168,7 @@ def load_archives(root):
             row["legs"] = r["legs"]
         row.update({k: r[k] for k in CORPUS_COUNTS if k in r})
         out.append(row)
-    return out
+    return out, expected
 
 
 # ---- release mode ----------------------------------------------------------
@@ -228,7 +238,7 @@ def _check_sha(sha):
         raise QualificationError("context.json source.sha is not a 40-hex commit: %r" % (sha,))
 
 
-def release_vm(root, sha, archives, release):
+def release_vm(root, sha, archives, release, expected_files):
     """The release gate: the chosen soak archive (see _pick_soak) must stand for
     `sha`, have passed and declared 72 hours, and a passing corpus archive must
     exist for the soaked tree. Outside release mode the same entries are recorded
@@ -282,6 +292,9 @@ def release_vm(root, sha, archives, release):
                     if c["replay_paths"] != 5:
                         reasons.append("corpus: archive %s replayed %s path(s), not 5"
                                        % (c["id"], c["replay_paths"]))
+                    if c["files"] != expected_files:
+                        reasons.append("corpus: archive %s swept %d files; the release corpus has %d"
+                                       % (c["id"], c["files"], expected_files))
                     if not c["replay_files"] > 0:
                         reasons.append("corpus: archive %s replayed no files" % c["id"])
                     if c["replay_failed"] != 0:
@@ -433,9 +446,10 @@ def collect(art, root, release=False):
     for r in read_json(os.path.join(art, "semver-checks.json")) or []:
         sc.append({"crate": r["crate"], "breaking": r.get("failed_checks", 0),
                    "exit": r["exit"], "analysed": r.get("analysed", False)})
-    archives = load_archives(root)
+    archives, expected_files = load_archives(root)
     try:
-        gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release)
+        gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release,
+                          expected_files)
     except QualificationError as e:
         die(str(e))
     v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate)
