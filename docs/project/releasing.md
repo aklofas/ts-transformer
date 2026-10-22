@@ -105,10 +105,12 @@ merge commit, and the qualification run checks that nothing under
    date placeholder, and a fresh `[Unreleased]` stub opens above it. The
    "Release highlights" block is the seed for the GitHub Release notes.
 3. **Freeze.** The release-prep merge commit is the soaked commit. Nothing
-   under `crates/` or `bindings/` changes after it until the tag. A fix that
-   must land there restarts the checklist at step 2, because the
-   qualification run refuses a soak whose tree differs from the qualified
-   one under those two directories.
+   outside `CHANGELOG.md`, `docs/` and
+   `tests/coverage/evidence-archives.toml` changes after it until the tag,
+   so a lockfile, toolchain pin or submodule change counts as much as source
+   code. A fix that must land elsewhere restarts the checklist at step 2,
+   because the qualification run refuses a soak whose tree differs from the
+   qualified one anywhere outside those three paths.
 4. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
    the frozen commit. Every rerun on that commit matches a row of
    the [CI flake ledger](/docs/project/ci-flakes.md), and the latest
@@ -168,11 +170,13 @@ merge commit, and the qualification run checks that nothing under
     succeeded on that commit, the tree was clean, and the interop census
     matches `expectations.toml`. `release=true` adds the release gate: GO
     also needs a passing soak archive that declares 259 200 seconds and a
-    passing corpus archive for the soaked tree, with no change under
-    `crates/` or `bindings/` between the soaked tree and this commit. A `v*`
-    tag push applies the same gate. The gate judges the newest 72-hour soak
-    that stands for the commit, so a newer failed run on the same tree
-    shadows an older pass. Without the input the record is a
+    passing corpus archive for the soaked tree that replayed all five paths
+    (at least one file, none failed), with no change outside `CHANGELOG.md`,
+    `docs/` and `tests/coverage/evidence-archives.toml` between the soaked
+    tree and this commit. A `v*` tag push applies the same gate. The gate
+    judges the newest 72-hour soak that stands for the commit. A newer failed
+    soak of any declared duration on the same tree is a reason for NO-GO,
+    while a newer passing short run never replaces the 72-hour pass. Without the input the record is a
     mid-cycle one and states that the gate was not applied.
 
     A **NO-GO** record lists its reasons (a failed or missing leg, a stale
