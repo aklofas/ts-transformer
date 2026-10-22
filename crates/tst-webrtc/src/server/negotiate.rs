@@ -124,19 +124,35 @@ pub fn select_video(
 ///
 /// str0m 0.24 panics on an offer that dictates its payload types
 /// (`recvonly` or `sendrecv`) when two formats claim one payload number:
-/// an `rtx` payload whose `apt` names two formats, or one number mapped to
+/// an `rtx` payload whose `apt` names two formats, one number mapped to
 /// different formats in two media sections (a BUNDLE shares one
-/// payload-type space, RFC 8843 §9.1). Call this before `accept_offer` and
-/// refuse the offer when it returns `false`. Pass str0m's rendering of the
-/// parsed offer (`SdpOffer::to_sdp_string`), which writes each attribute
-/// it parsed as one canonical line.
+/// payload-type space, RFC 8843 §9.1), or one number given two `a=rtpmap`
+/// lines in a section. str0m checks only the numbers in a section's `m=`
+/// line, but reads every `a=rtpmap`, so a section is also refused when it
+/// repeats an `a=rtpmap` or `a=fmtp` for one number, or carries either
+/// line for a number its `m=` line does not list. Call this before
+/// `accept_offer` and refuse the offer when it returns `false`. Pass
+/// str0m's rendering of the parsed offer (`SdpOffer::to_sdp_string`),
+/// which writes each attribute it parsed as one canonical line.
 pub fn payload_types_are_consistent(offer: &str) -> bool {
     // Payload number -> (rtpmap value, fmtp parameters), offer-wide.
     let mut offer_formats: HashMap<u8, Format> = HashMap::new();
     let mut section: HashMap<u8, Format> = HashMap::new();
+    // The current section's `m=` payload numbers, and the numbers it has
+    // given an `a=rtpmap` and an `a=fmtp`.
+    let mut listed: BTreeSet<u8> = BTreeSet::new();
+    let mut mapped: BTreeSet<u8> = BTreeSet::new();
+    let mut with_fmtp: BTreeSet<u8> = BTreeSet::new();
     for line in offer.lines().chain(["m="]) {
         let line = line.trim_end();
-        if line.starts_with("m=") {
+        if let Some(media) = line.strip_prefix("m=") {
+            listed = media
+                .split(' ')
+                .skip(3)
+                .filter_map(|pt| pt.parse::<u8>().ok())
+                .collect();
+            mapped.clear();
+            with_fmtp.clear();
             for (pt, format) in section.drain() {
                 let is_rtx = format.0.starts_with("rtx/");
                 if is_rtx && format.1.iter().filter(|p| p.starts_with("apt=")).count() > 1 {
@@ -166,6 +182,14 @@ pub fn payload_types_are_consistent(offer: &str) -> bool {
         let Ok(pt) = pt.parse::<u8>() else {
             continue;
         };
+        let first = if is_rtpmap {
+            mapped.insert(pt)
+        } else {
+            with_fmtp.insert(pt)
+        };
+        if !first || !listed.contains(&pt) {
+            return false;
+        }
         let format = section.entry(pt).or_default();
         if is_rtpmap {
             format.0 = value.trim().to_ascii_lowercase();

@@ -309,3 +309,63 @@ fn offers_that_give_one_payload_type_two_formats_are_refused() {
         assert!(!consistent(offer), "{name}");
     }
 }
+
+/// A section whose `m=` line lists only 120 and that maps 121 twice. str0m
+/// checks only the numbers in `m=`, but claims every `a=rtpmap`, so
+/// `accept_offer` panics on the second claim of 121.
+fn unlisted_number_mapped_twice() -> String {
+    offer_with(&[(
+        "video",
+        "0",
+        "120",
+        "a=rtpmap:120 H264/90000\r\n\
+         a=fmtp:120 packetization-mode=1;profile-level-id=42001f\r\n\
+         a=rtpmap:121 VP8/90000\r\n\
+         a=rtpmap:121 VP9/90000\r\n",
+    )])
+}
+
+#[test]
+fn a_number_outside_the_m_line_mapped_twice_is_refused() {
+    let offer = unlisted_number_mapped_twice();
+    assert!(!consistent(&offer));
+    // The guard is what stands between this offer and the panic.
+    let panicked = std::panic::catch_unwind(|| accept(&offer)).is_err();
+    assert!(panicked, "str0m accepted the offer without the guard");
+}
+
+#[test]
+fn a_section_repeating_or_stray_payload_lines_is_refused() {
+    let h264 = "a=rtpmap:120 H264/90000\r\n\
+                a=fmtp:120 packetization-mode=1;profile-level-id=42001f\r\n";
+    // str0m's parser refuses this one itself; the guard does too.
+    let mapped_twice = offer_with(&[(
+        "video",
+        "0",
+        "120",
+        &format!("{h264}a=rtpmap:120 H264/90000\r\n"),
+    )]);
+    assert!(!payload_types_are_consistent(&mapped_twice));
+    let cases = [
+        (
+            "one number with two fmtp lines",
+            format!("{h264}a=fmtp:120 packetization-mode=1\r\n"),
+        ),
+        (
+            "an rtpmap for a number not in m=",
+            format!("{h264}a=rtpmap:121 VP8/90000\r\n"),
+        ),
+        (
+            "an fmtp for a number not in m=",
+            format!("{h264}a=fmtp:121 apt=120\r\n"),
+        ),
+    ];
+    for (name, lines) in &cases {
+        let offer = offer_with(&[("video", "0", "120", lines)]);
+        assert!(!consistent(&offer), "{name}");
+    }
+    // The same section without the extra line is consistent.
+    let offer = offer_with(&[("video", "0", "120", h264)]);
+    assert!(consistent(&offer));
+    accept(&offer);
+}

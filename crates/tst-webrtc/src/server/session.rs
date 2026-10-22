@@ -14,6 +14,11 @@ use crate::mount::{AudioPacket, FramePacket, KlvMessage, MountId, MountState};
 use crate::server::media::MediaConfig;
 use crate::stats::{IceState, SessionStats};
 
+/// How many distinct source addresses a session admits before ICE and
+/// DTLS complete. A browser checks from a handful of candidates; the cap
+/// bounds the peer-reflexive candidates the ICE agent adds.
+pub(crate) const MAX_PRECONNECT_SOURCES: usize = 4;
+
 /// A viewer session's own counters.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct SessionCounters {
@@ -70,6 +75,11 @@ pub(crate) enum Enqueued {
 }
 
 /// A viewer session.
+///
+/// A session's media goes only to the address it connected from: the
+/// source of the datagram that completed DTLS is pinned, and datagrams
+/// from any other address are dropped. Before that, at most
+/// [`MAX_PRECONNECT_SOURCES`] distinct sources are admitted.
 pub(crate) struct Viewer {
     /// The session id, 32 hex characters.
     pub(crate) id: String,
@@ -90,8 +100,6 @@ pub(crate) struct Viewer {
     pub(crate) audio_seq: u64,
     /// The next RTP sequence number (extended, 64 bits).
     pub(crate) seq: u64,
-    /// `true` once the send stream exists, so its SSRC is known.
-    pub(crate) ssrc_known: bool,
     /// `true` once ICE and DTLS completed (str0m's `Event::Connected`).
     pub(crate) connected: bool,
     /// `true` until the first keyframe is queued; frames before it are
@@ -125,6 +133,14 @@ pub(crate) struct Viewer {
     pub(crate) stats: SessionCounters,
     /// Where str0m last sent this session's datagrams.
     pub(crate) remote: Option<SocketAddr>,
+    /// The distinct source addresses seen before the handshake completed,
+    /// at most [`MAX_PRECONNECT_SOURCES`]; a datagram from a further
+    /// source is dropped.
+    pub(crate) sources: Vec<SocketAddr>,
+    /// The address the session connected from. Once set, only datagrams
+    /// from it reach the session, so its media goes only there: a NAT
+    /// rebinding or an interface change needs a new session.
+    pub(crate) pinned: Option<SocketAddr>,
     /// str0m's next deadline for this session.
     pub(crate) timeout: Instant,
 }
@@ -149,7 +165,6 @@ impl Viewer {
             audio: None,
             audio_seq: 0,
             seq,
-            ssrc_known: false,
             connected: false,
             waiting_keyframe: true,
             klv_channel: None,
@@ -162,6 +177,8 @@ impl Viewer {
             queue_full_since: None,
             stats: SessionCounters::default(),
             remote: None,
+            sources: Vec::new(),
+            pinned: None,
             timeout: now,
         }
     }
