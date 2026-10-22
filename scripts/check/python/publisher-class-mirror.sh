@@ -30,7 +30,11 @@ rust_methods=$(awk '
     sub(/[^a-z_].*$/, "", line)
     print line
   }
-' "$RUST_FILE" | sort -u)
+' "$RUST_FILE" | grep -vx -e segment_duration | sort -u)
+# Rust-only trait methods, left out of the comparison: `segment_duration` is
+# read inside the Rust mux publisher shell from the Rust publisher it wraps;
+# no Python object implements the trait for that shell, and the HLS builder
+# already sets the duration.
 
 # Python ABC methods: `def <name>(` lines inside the `class Publisher(abc.ABC):`
 # block (terminated by the next top-level `class `). Dunders are skipped.

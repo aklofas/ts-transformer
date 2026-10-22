@@ -7128,6 +7128,7 @@ pub fn tst_core::publisher::Publisher::cut_segment(&mut self) -> core::result::R
 pub fn tst_core::publisher::Publisher::cut_segment_with_duration(&mut self, core::time::Duration) -> core::result::Result<(), Self::Error>
 pub fn tst_core::publisher::Publisher::finish(self) -> core::result::Result<(), Self::Error> where Self: core::marker::Sized
 pub fn tst_core::publisher::Publisher::push_ts(&mut self, &[u8]) -> core::result::Result<(), Self::Error>
+pub fn tst_core::publisher::Publisher::segment_duration(&self) -> core::option::Option<core::time::Duration>
 pub fn tst_core::publisher::Publisher::stats(&self) -> tst_core::publisher::PublisherStats
 pub mod tst_core::shared
 pub struct tst_core::shared::SharedBytes

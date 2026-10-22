@@ -68,8 +68,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pub_shell = MuxPublisher::with_config(publisher, mux_cfg)?;
 
     // Read input in 64 KiB chunks; each chunk is treated as a video AU with
-    // key_frame=true so a segment cuts per chunk. Production code would parse
-    // real H.264 NALs and IDR-align.
+    // key_frame=true, 0.1 s apart, so a segment cuts on the first chunk at or
+    // after the 4 s segment_duration. Production code would parse real H.264
+    // NALs and pass the encoder's keyframe flag; keep its GOP at or under
+    // segment_duration so every segment starts on a keyframe.
     let mut f = BufReader::new(File::open(&input)?);
     let mut buf = vec![0u8; 64 * 1024];
     let mut pts_ticks: i64 = 0;

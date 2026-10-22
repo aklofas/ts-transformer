@@ -118,6 +118,7 @@ pub fn tst_hls::publisher::HlsPublisher::cut_segment(&mut self) -> core::result:
 pub fn tst_hls::publisher::HlsPublisher::cut_segment_with_duration(&mut self, core::time::Duration) -> core::result::Result<(), tst_hls::error::HlsError>
 pub fn tst_hls::publisher::HlsPublisher::finish(self) -> core::result::Result<(), tst_hls::error::HlsError>
 pub fn tst_hls::publisher::HlsPublisher::push_ts(&mut self, &[u8]) -> core::result::Result<(), tst_hls::error::HlsError>
+pub fn tst_hls::publisher::HlsPublisher::segment_duration(&self) -> core::option::Option<core::time::Duration>
 pub fn tst_hls::publisher::HlsPublisher::stats(&self) -> tst_core::publisher::PublisherStats
 impl !core::marker::Freeze for tst_hls::publisher::HlsPublisher
 impl core::marker::Send for tst_hls::publisher::HlsPublisher
@@ -262,6 +263,7 @@ pub fn tst_hls::publisher::HlsPublisher::cut_segment(&mut self) -> core::result:
 pub fn tst_hls::publisher::HlsPublisher::cut_segment_with_duration(&mut self, core::time::Duration) -> core::result::Result<(), tst_hls::error::HlsError>
 pub fn tst_hls::publisher::HlsPublisher::finish(self) -> core::result::Result<(), tst_hls::error::HlsError>
 pub fn tst_hls::publisher::HlsPublisher::push_ts(&mut self, &[u8]) -> core::result::Result<(), tst_hls::error::HlsError>
+pub fn tst_hls::publisher::HlsPublisher::segment_duration(&self) -> core::option::Option<core::time::Duration>
 pub fn tst_hls::publisher::HlsPublisher::stats(&self) -> tst_core::publisher::PublisherStats
 impl !core::marker::Freeze for tst_hls::publisher::HlsPublisher
 impl core::marker::Send for tst_hls::publisher::HlsPublisher

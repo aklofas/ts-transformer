@@ -519,6 +519,16 @@ The integrator-facing changes at a glance (full detail in the sections below):
   publisher now cancels and detaches the server instead of waiting up to
   2 s for it, so a drop never blocks the dropping thread, and `shutdown()`
   keeps the 2 s bound.
+- `segment_duration` is the maximum a segment may reach. `MuxPublisher`
+  cuts on the first keyframe at or after the publisher's `segment_duration`
+  and force-cuts, re-emitting PAT and PMT, before an access unit would carry
+  a segment past the target's rounding boundary; `Publisher::segment_duration()`
+  (default `None`, every keyframe cuts) tells the shell the bound. It used to
+  cut on every keyframe, so a GOP longer than the target published an
+  `#EXTINF` above `#EXT-X-TARGETDURATION` (RFC 8216 §4.3.3.1) and a short GOP
+  rewrote the playlist more often than every half target (§6.2.1). Segments
+  now hold whole GOPs up to the target; keep the GOP at or under
+  `segment_duration` so every segment starts on a keyframe.
 
 ### Changed — tst-py (BREAKING)
 

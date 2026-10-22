@@ -18,7 +18,8 @@ import org.tstrans.mpegts.MuxerConfig;
  * {@link #finishIntoPublisher()} consumes this shell and hands back a fresh
  * {@link HlsPublisher} to {@code finish()} or {@code finishServing()}.
  * {@link #close()} finishes both quietly. A {@code pushVideo} with
- * {@code keyFrame=true} cuts a segment first.
+ * {@code keyFrame=true} cuts a segment first once the open one has reached the
+ * publisher's segment duration.
  *
  * <p>Errors: a muxer rejection is a {@link MuxException}; everything else is an
  * {@link HlsException} (the inner publisher's kind, {@code CLOSED} for a

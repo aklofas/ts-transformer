@@ -98,13 +98,15 @@ fn demux_segment(bytes: &[u8]) -> Vec<DemuxEvent> {
 fn segments_are_self_contained_and_carry_klv() {
     let dir = tmpdir("interop");
 
-    // Event mode + a long segment_duration so wall-clock cutting never fires:
-    // the ONLY cuts are keyframe-driven (one segment per GOP), which is what
-    // makes the per-segment PAT→PMT→IDR contract deterministic.
+    // Event mode + a segment_duration of one GOP (2.002 s, below): every
+    // keyframe after the first reaches it, so the ONLY cuts are
+    // keyframe-driven (one segment per GOP), which is what makes the
+    // per-segment PAT→PMT→IDR contract deterministic. The feed is pushed in
+    // milliseconds, far inside the 2 s the wall clock would need to cut.
     let publisher = HlsPublisherBuilder::new()
         .bind("127.0.0.1:0".parse().unwrap())
         .output_dir(&dir)
-        .segment_duration(Duration::from_secs(3600))
+        .segment_duration(Duration::from_secs(2))
         .playlist_window(16)
         .mode(HlsMode::Event)
         .build()
@@ -127,11 +129,12 @@ fn segments_are_self_contained_and_carry_klv() {
     let pub_shell = MuxPublisher::with_config(publisher, mux_cfg).unwrap();
     let au = synthetic_h264_au();
 
-    // Three GOPs, each = 1 keyframe AU + 2 non-key AUs, PTS step 3003 ticks
-    // (~29.97 fps). One KLV LS per GOP, emitted at the keyframe PTS — a
-    // plausible telemetry cadence. Keyframes BEGIN segments
+    // Three GOPs, each = 1 keyframe AU + 59 non-key AUs, PTS step 3003 ticks
+    // (~29.97 fps, a 2.002 s GOP). One KLV LS per GOP, emitted at the
+    // keyframe PTS — a plausible telemetry cadence. Keyframes BEGIN segments
     // (cut-before-push), so GOP N opens segment N.
     const GOP: usize = 3;
+    const FRAMES_PER_GOP: usize = 60;
     const STEP: i64 = 3003;
     let mut sent_klv: Vec<Vec<u8>> = Vec::new();
     let mut sent_klv_pts: Vec<i64> = Vec::new();
@@ -143,12 +146,12 @@ fn segments_are_self_contained_and_carry_klv() {
         pub_shell.push_klv(&klv, Pts90khz::new(key_pts), 0).unwrap();
         sent_klv.push(klv);
         sent_klv_pts.push(key_pts);
-        // Keyframe AU, then two non-key AUs.
+        // Keyframe AU, then the GOP's non-key AUs.
         pub_shell
             .push_video(&au, Pts90khz::new(key_pts), true)
             .unwrap();
         frame += 1;
-        for _ in 0..2 {
+        for _ in 1..FRAMES_PER_GOP {
             pub_shell
                 .push_video(&au, Pts90khz::new(frame * STEP), false)
                 .unwrap();

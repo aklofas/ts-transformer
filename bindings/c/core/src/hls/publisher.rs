@@ -419,9 +419,9 @@ pub unsafe extern "C" fn tst_hls_publisher_render_playlist(
 /// Read the HLS `forced_cuts` counter into `*out`.
 ///
 /// `forced_cuts` is the number of segments cut by the wall-clock hard-cap
-/// fallback because a keyframe was overdue (keyframe-driven flow only). A
-/// persistently non-zero value means the upstream GOP length exceeds the
-/// configured `max_segment_duration` cap.
+/// fallback (keyframe-driven flow only): the open segment outlived
+/// `max_segment_duration` because the producer stalled. A GOP longer than
+/// the target does not count; the mux publisher cuts it in media time.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
 /// or `TST_E_HLS_CONFIG` if the publisher is finished / not an HLS

@@ -161,9 +161,11 @@ impl Segmenter {
         };
         let elapsed = now.duration_since(open.opened_at);
         if self.has_explicit_cuts {
-            // Keyframe-driven flow: the next explicit cut is coming; only the
-            // hard cap force-cuts (a mid-GOP cut yields a segment that does not
-            // start on an IDR — worth it only to bound unbounded growth).
+            // Keyframe-driven flow: the `MuxPublisher` shell owns the
+            // media-time bound (it cuts, with PSI, before a segment passes
+            // `segment_duration`). This wall-clock cap only guards a stalled
+            // producer, so an open segment cannot grow without limit when
+            // access units stop arriving; such a cut does not start on an IDR.
             let cap = self.config.max_segment_duration.unwrap_or_else(|| {
                 self.config
                     .segment_duration
@@ -178,15 +180,16 @@ impl Segmenter {
             // Raw push_ts flow (pre-muxed TS relay): no keyframe signal exists,
             // wall-clock segmenting is all we have — unchanged v0.2.0 behavior.
             //
-            // NOTE: `has_explicit_cuts` only flips on the FIRST explicit cut
-            // (which, for a keyframe-driven `MuxPublisher`, is the second
-            // keyframe). So the very first segment lands here until then, and
-            // if the initial GOP is longer than `segment_duration` it can be
-            // wall-clock-cut mid-GOP — breaking the "segments begin with IDR"
-            // guarantee for segment 0 only. This is unreachable in normal
-            // config (a keyframe interval shorter than `segment_duration` cuts
-            // the first segment before this fires). Under the misconfiguration
-            // GOP > segment_duration the cut fires here at `segment_duration`
+            // NOTE: `has_explicit_cuts` only flips on the FIRST explicit cut,
+            // which a keyframe-driven `MuxPublisher` makes once segment 0
+            // reaches `segment_duration` of media time. So the very first
+            // segment lands here until then: a producer ingesting in real time
+            // reaches `segment_duration` of wall clock at about the same
+            // moment, and one running behind the media clock is cut here
+            // first, mid-GOP — breaking the "segments begin with IDR"
+            // guarantee for segment 0 only. Ingestion faster than real time
+            // (files, transcodes) never reaches this. The cut fires here at
+            // `segment_duration`
             // and is deliberately NOT counted in `forced_cuts` (pinned by
             // raw_mode_tick_cuts_at_segment_duration_and_forced_cuts_stays_zero),
             // so segment-0 mid-GOP cuts are invisible in telemetry today. A
@@ -215,6 +218,11 @@ impl Segmenter {
     /// Bytes in the segment currently being written (zero between cuts).
     pub(crate) fn open_segment_bytes(&self) -> u64 {
         self.current.as_ref().map(|o| o.bytes_written).unwrap_or(0)
+    }
+
+    /// The configured segment duration (immutable after construction).
+    pub(crate) fn segment_duration(&self) -> Duration {
+        self.config.segment_duration
     }
 
     /// Number of segments completed in this run.

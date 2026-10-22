@@ -51,16 +51,20 @@ pub struct HlsConfig {
     /// each other's output and race on segment creation — give each publisher
     /// its own `output_dir`.
     pub output_dir: PathBuf,
-    /// Target segment duration (default 4 s; must be > 0).  Real segments cut
-    /// on `cut_segment()` calls (IDR-aligned) OR when this duration is
-    /// exceeded since the segment opened.
+    /// Maximum segment duration (default 4 s; must be > 0); the playlist
+    /// advertises its ceiling as `#EXT-X-TARGETDURATION`. Segments cut on
+    /// `cut_segment()` calls; a `MuxPublisher` makes them on the first
+    /// keyframe at or after this duration of media time, earlier when a
+    /// segment would otherwise round above the target. A raw `push_ts` relay
+    /// is cut when this duration of wall clock has passed since the segment
+    /// opened.
     pub segment_duration: Duration,
     /// Hard upper bound on an open segment's wall-clock age.
     ///
     /// Only consulted once the stream has driven at least one explicit
-    /// (keyframe) cut: in that flow the next keyframe owns cutting, and this
-    /// cap only force-cuts when a keyframe is overdue (a stalled or very-long
-    /// GOP) so segments never grow unbounded. `None` defaults to
+    /// (keyframe) cut: in that flow the `MuxPublisher` shell bounds segments
+    /// in media time, and this cap only force-cuts when the producer stalls,
+    /// so a segment never grows unbounded. `None` defaults to
     /// `2 × segment_duration`. Must be `≥ segment_duration`.
     ///
     /// In the raw pre-muxed `push_ts` relay flow (no keyframe signal) this is
