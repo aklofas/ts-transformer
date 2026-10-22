@@ -1200,8 +1200,9 @@ typedef struct tst_mux_config_t tst_mux_config_t;
  * Opaque handle for an HLS-backed `MuxPublisher`.
  *
  * Returned by [`tst_mux_publisher_with_config_hls`]. Freed with
- * [`tst_mux_publisher_free`]. The inner is `None` only after
- * [`tst_mux_publisher_finish_into_publisher`] moves the publisher out.
+ * [`tst_mux_publisher_free`]. The inner is `None` only while
+ * [`tst_mux_publisher_finish_into_publisher`] runs, which then frees the
+ * handle.
  */
 typedef struct TstMuxPublisher TstMuxPublisher;
 #endif
