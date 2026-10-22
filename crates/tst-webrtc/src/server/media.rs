@@ -624,15 +624,11 @@ impl Media {
             self.counters.datagrams_unrouted += 1;
             return;
         }
+        v.last_source = Some(source);
         if let Err(e) = v.rtc.handle_input(input) {
             debug!(session = %v.id, error = %e, "datagram input failed");
         }
         drain_rtc(v, &self.socket, now);
-        // The datagram that completed the handshake came from the peer
-        // holding the DTLS keys.
-        if v.connected && v.pinned.is_none() {
-            v.pinned = Some(source);
-        }
     }
 
     fn drain_control(&mut self) {
@@ -955,6 +951,12 @@ fn drain_rtc(v: &mut Viewer, socket: &dyn DatagramSink, now: Instant) {
                 return;
             }
             Ok(Output::Transmit(t)) => {
+                // ICE may still have nominated another admitted source;
+                // nothing leaves for an address other than the pinned one.
+                if v.pinned.is_some_and(|p| p != t.destination) {
+                    debug!(session = %v.id, to = %t.destination, "datagram for an address other than the pinned one dropped");
+                    continue;
+                }
                 v.remote = Some(t.destination);
                 socket.send(&t.contents, t.destination);
             }
@@ -975,6 +977,11 @@ fn handle_event(v: &mut Viewer, ev: Event, now: Instant) {
         Event::Connected => {
             v.connected = true;
             v.connected_at.get_or_insert(now);
+            // The datagram that completed the handshake came from the peer
+            // holding the DTLS keys.
+            if v.pinned.is_none() {
+                v.pinned = v.last_source;
+            }
         }
         Event::IceConnectionStateChange(s) => v.set_ice(ice_state(s), now),
         // The viewer's own channels open here too, whatever their labels:
@@ -1198,6 +1205,114 @@ mod tests {
         fn send(&self, _contents: &[u8], _to: SocketAddr) {
             self.0.set(self.0.get() + 1);
         }
+    }
+
+    /// Records where each datagram was sent.
+    #[derive(Default)]
+    struct RecordingSink(std::cell::RefCell<Vec<SocketAddr>>);
+
+    impl DatagramSink for RecordingSink {
+        fn send(&self, _contents: &[u8], to: SocketAddr) {
+            self.0.borrow_mut().push(to);
+        }
+    }
+
+    /// The value of the first `a=<attr>:` line of `sdp`.
+    fn sdp_attr<'a>(sdp: &'a str, attr: &str) -> &'a str {
+        let prefix = format!("a={attr}:");
+        sdp.lines()
+            .find_map(|l| l.trim_end().strip_prefix(prefix.as_str()))
+            .expect("the attribute")
+    }
+
+    #[test]
+    fn a_pinned_session_sends_nothing_to_another_address() {
+        use crate::MountConfig;
+        use crate::mount::MountHandle;
+        use str0m::ice::{StunMessage, TransId};
+
+        let now = Instant::now();
+        let mut rtc = server_rtc(now, AudioPolicy::Drop);
+        let local: SocketAddr = "192.0.2.1:40000".parse().unwrap();
+        rtc.add_local_candidate(Candidate::host(local, "udp").unwrap());
+        let answer = rtc
+            .sdp_api()
+            .accept_offer(SdpOffer::from_sdp_string(SAFARI).unwrap())
+            .expect("the offer is accepted")
+            .to_sdp_string();
+        let (handle, _rx) = MountHandle::for_test(MountConfig::default());
+        let mut v = Viewer::new("0".repeat(32), Arc::clone(&handle.state), rtc, 0, now);
+        drain_rtc(&mut v, &CountingSink::default(), now);
+
+        // An authenticated check from `other` makes the ICE-lite agent
+        // answer it there.
+        let username = format!(
+            "{}:{}",
+            sdp_attr(&answer, "ice-ufrag"),
+            sdp_attr(SAFARI, "ice-ufrag")
+        );
+        let password = sdp_attr(&answer, "ice-pwd").to_string();
+        let provider = str0m::crypto::from_feature_flags();
+        let check = |v: &mut Viewer, from: SocketAddr| {
+            let msg = StunMessage::binding_request(&username, TransId::new(), true, 1, 1, true);
+            let mut buf = vec![0; 1500];
+            let n = msg
+                .to_bytes(Some(password.as_bytes()), &mut buf, |k, p| {
+                    provider.sha1_hmac_provider.sha1_hmac(k, p)
+                })
+                .unwrap();
+            let input = Input::Receive(
+                now,
+                Receive {
+                    proto: Protocol::Udp,
+                    source: from,
+                    destination: local,
+                    contents: buf[..n].try_into().unwrap(),
+                },
+            );
+            assert!(v.rtc.accepts(&input));
+            v.rtc.handle_input(input).unwrap();
+        };
+        let peer: SocketAddr = "198.51.100.1:5000".parse().unwrap();
+        let other: SocketAddr = "198.51.100.2:5000".parse().unwrap();
+
+        // Unpinned, the answer goes out.
+        let sink = RecordingSink::default();
+        check(&mut v, other);
+        drain_rtc(&mut v, &sink, now);
+        assert_eq!(*sink.0.borrow(), [other]);
+
+        // Pinned to `peer`, the answer to `other` is dropped and `remote`
+        // keeps the pinned address.
+        v.pinned = Some(peer);
+        v.remote = Some(peer);
+        let sink = RecordingSink::default();
+        check(&mut v, other);
+        drain_rtc(&mut v, &sink, now);
+        assert!(sink.0.borrow().is_empty(), "{:?}", sink.0.borrow());
+        assert_eq!(v.remote, Some(peer));
+        check(&mut v, peer);
+        drain_rtc(&mut v, &sink, now);
+        assert_eq!(*sink.0.borrow(), [peer]);
+    }
+
+    #[test]
+    fn connected_pins_the_source_of_the_last_datagram_handed_over() {
+        use crate::MountConfig;
+        use crate::mount::MountHandle;
+
+        let now = Instant::now();
+        let rtc = accept(server_rtc(now, AudioPolicy::Drop), SAFARI);
+        let (handle, _rx) = MountHandle::for_test(MountConfig::default());
+        let mut v = Viewer::new("0".repeat(32), Arc::clone(&handle.state), rtc, 0, now);
+        let peer: SocketAddr = "198.51.100.1:5000".parse().unwrap();
+        v.last_source = Some(peer);
+        handle_event(&mut v, Event::Connected, now);
+        assert_eq!(v.pinned, Some(peer));
+        // A later Connected (ICE recovering) keeps the first pin.
+        v.last_source = Some("198.51.100.2:5000".parse().unwrap());
+        handle_event(&mut v, Event::Connected, now);
+        assert_eq!(v.pinned, Some(peer));
     }
 
     #[test]

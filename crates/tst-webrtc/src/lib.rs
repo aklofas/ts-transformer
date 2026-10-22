@@ -26,12 +26,12 @@
 //! the data channel.
 //!
 //! A session's media goes only to the address it connected from: the
-//! source of the datagram that completes the DTLS handshake is pinned, and
-//! datagrams from any other address are dropped and counted in
-//! [`ServerStats::datagrams_unrouted`]. A NAT rebinding or a move to
-//! another network interface therefore needs a new session (a new POST).
-//! Before the handshake completes, a session admits datagrams from at
-//! most four distinct source addresses.
+//! source of the datagram that completes the DTLS handshake is pinned,
+//! nothing is sent to any other address, and datagrams from any other
+//! address are dropped and counted in [`ServerStats::datagrams_unrouted`].
+//! A NAT rebinding or a move to another network interface therefore needs
+//! a new session (a new POST). Before the handshake completes, a session
+//! admits datagrams from at most 16 distinct source addresses.
 #![forbid(unsafe_code)]
 
 pub mod clock;

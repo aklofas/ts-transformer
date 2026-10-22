@@ -18,7 +18,8 @@ package org.tstrans.webrtc;
  * @param sessionsReapedDisconnected Sessions closed after the viewer disconnected.
  * @param rtpPacketsSent RTP packets sent to all viewers.
  * @param rtpBytesSent RTP bytes sent to all viewers.
- * @param datagramsUnrouted Datagrams that matched no session.
+ * @param datagramsUnrouted Datagrams that matched no session, came from an address other than the
+ *     one a session connected from, or came from a source beyond a session's pre-connect limit.
  */
 public record ServerStats(
         long mounts,

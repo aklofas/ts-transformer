@@ -1,5 +1,5 @@
 //! The addresses a session takes datagrams from: the address that
-//! completed the handshake is pinned, and before that at most four
+//! completed the handshake is pinned, and before that at most 16
 //! distinct sources are admitted. The extra sources send STUN binding
 //! requests built with the session's own ICE credentials, so they pass
 //! str0m's routing and only the source rules stop them.
@@ -94,7 +94,7 @@ fn a_connected_session_ignores_a_second_source() {
 }
 
 #[test]
-fn a_fifth_source_before_the_handshake_is_dropped() {
+fn a_seventeenth_source_before_the_handshake_is_dropped() {
     let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
     let _m = srv.add_mount("/cam", MountConfig::default()).unwrap();
     let mut v = TestViewer::new();
@@ -104,8 +104,8 @@ fn a_fifth_source_before_the_handshake_is_dropped() {
     let request = binding_request(&offer, &answer);
     let media = srv.media_addr();
 
-    // Four sources are admitted: each gets the server's binding response.
-    let admitted: Vec<UdpSocket> = (0..4).map(|_| extra_socket()).collect();
+    // Sixteen sources are admitted: each gets the server's binding response.
+    let admitted: Vec<UdpSocket> = (0..16).map(|_| extra_socket()).collect();
     for s in &admitted {
         s.send_to(&request, media).unwrap();
         assert!(
@@ -115,13 +115,13 @@ fn a_fifth_source_before_the_handshake_is_dropped() {
     }
     assert_eq!(srv.stats().datagrams_unrouted, 0);
 
-    let fifth = extra_socket();
-    fifth.send_to(&request, media).unwrap();
+    let seventeenth = extra_socket();
+    seventeenth.send_to(&request, media).unwrap();
     assert!(
         eventually(|| srv.stats().datagrams_unrouted == 1, WAIT),
-        "the fifth source was not counted unrouted"
+        "the seventeenth source was not counted unrouted"
     );
-    assert!(!got_datagram(&fifth, media));
+    assert!(!got_datagram(&seventeenth, media));
     // An admitted source is still served.
     admitted[0].send_to(&request, media).unwrap();
     assert!(eventually(|| got_datagram(&admitted[0], media), WAIT));
