@@ -59,6 +59,8 @@ expected_sym() { # <trait method> -> required C symbol, or "SKIP:<reason>"
         # The bound is read by the MuxPublisher shell; a C caller configures it
         # with tst_hls_publisher_builder_segment_duration_ms.
         segment_duration)           echo "SKIP:read by the MuxPublisher shell; the C builder already sets it" ;;
+        # The MuxPublisher shell sends this signal itself on its first video AU.
+        keyframe_driven)            echo "SKIP:sent by the MuxPublisher shell; no raw-C caller needs it" ;;
         *)                          echo "" ;;
     esac
 }

@@ -1576,16 +1576,14 @@ and the two below.
 ## HLS: keyframe-aligned segments for a raw `push_ts` relay
 
 - **Status:** Deferred. A `MuxPublisher` signals keyframe-driven
-  segmenting on its first video access unit (an explicit cut before any
-  bytes when the publisher reports a `segment_duration`), so every segment
+  segmenting on its first video access unit (`Publisher::keyframe_driven`,
+  sent when the publisher reports a `segment_duration`), so every segment
   it produces, segment 0 included, is cut by its media-time bound and the
   wall-clock cap only guards a stalled producer. A raw `push_ts` relay of
   pre-muxed TS carries no keyframe signal, so it is still cut on the wall
   clock at `segment_duration`, mid-GOP wherever that lands, and inherits
-  the upstream's PSI cadence. So is a `MuxPublisher` stream without video,
-  and segment 0 of one whose metadata reaches the publisher before its
-  first video access unit (the signal would close that segment). Those
-  cuts are not counted in `forced_cuts`.
+  the upstream's PSI cadence. So is a `MuxPublisher` stream without video.
+  Those cuts are not counted in `forced_cuts`.
 - **Why deferred:** Keyframe-aligned relay cuts need the publisher to find
   random-access points in arbitrary TS (PES parsing per codec) and to
   derive media durations from PTS it does not otherwise read. A relay that

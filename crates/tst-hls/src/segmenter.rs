@@ -53,7 +53,7 @@ pub(crate) struct Segmenter {
     /// Switches `tick` from wall-clock segmenting to keyframe-owned cutting
     /// where only the hard cap force-cuts (see [`Segmenter::tick_at`]).
     has_explicit_cuts: bool,
-    /// Count of segments cut by the hard-cap fallback (a keyframe was overdue).
+    /// Count of segments cut by the stall guard (no cut arrived in time).
     /// Surfaced via `HlsStats::forced_cuts`.
     forced_cuts: u64,
     /// Largest total duration of any live playlist published so far. RFC 8216
@@ -146,10 +146,11 @@ impl Segmenter {
         Ok(())
     }
 
-    /// Note that an explicit (keyframe-driven) cut is driving segmentation.
+    /// Note that explicit (keyframe-driven) cuts drive segmentation.
     /// Flips `tick` from wall-clock cutting to keyframe-owned cutting, where
-    /// only the hard cap force-cuts. Called by `HlsPublisher::cut_segment{,
-    /// _with_duration}` before delegating to the segmenter.
+    /// only the hard cap force-cuts. Called by `HlsPublisher::keyframe_driven`
+    /// and by `HlsPublisher::cut_segment{,_with_duration}` before delegating
+    /// to the segmenter.
     pub(crate) fn note_explicit_cut(&mut self) {
         self.has_explicit_cuts = true;
     }
@@ -186,13 +187,14 @@ impl Segmenter {
             // Raw push_ts flow (pre-muxed TS relay): no keyframe signal exists,
             // wall-clock segmenting is all we have — unchanged v0.2.0 behavior.
             //
-            // NOTE: a `MuxPublisher` sends an explicit cut on its first video
-            // access unit when no bytes have flowed yet, so such a stream
-            // never reaches this branch: segment 0 is cut by the shell's
-            // media-time bound like every other segment. A raw relay, a
-            // stream without video, and a stream that pushed metadata before
-            // its first video access unit take this branch until their first
-            // explicit cut, if any. Such a cut is deliberately NOT
+            // NOTE: a `MuxPublisher` signals `keyframe_driven` on its first
+            // video access unit, before that unit's bytes are pushed, so its
+            // stream leaves this branch there: segment 0, including any
+            // metadata or audio pushed ahead of the first video access unit,
+            // is cut by the shell's media-time bound like every other
+            // segment. A raw relay and a stream without video take this
+            // branch until their first explicit cut, if any. Such a cut is
+            // deliberately NOT
             // counted in `forced_cuts` (pinned by
             // raw_mode_tick_cuts_at_segment_duration_and_forced_cuts_stays_zero).
             self.cut()?;
@@ -228,7 +230,7 @@ impl Segmenter {
         self.next_seq
     }
 
-    /// Segments cut by the hard-cap fallback (a keyframe was overdue).
+    /// Segments cut by the stall guard (no cut arrived in time).
     pub(crate) fn forced_cuts(&self) -> u64 {
         self.forced_cuts
     }

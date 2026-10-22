@@ -145,6 +145,15 @@ impl Publisher for HlsPublisher {
         Some(s.segmenter.segment_duration())
     }
 
+    /// From now on the wall-clock cut at `segment_duration` stops: the
+    /// shell's explicit cuts drive segmentation, and only the stall guard
+    /// (`max_segment_duration`) still cuts on the wall clock. Nothing is
+    /// closed, written or counted.
+    fn keyframe_driven(&mut self) {
+        let mut s = self.state.lock().expect("HlsPublisher poisoned");
+        s.segmenter.note_explicit_cut();
+    }
+
     fn finish(mut self) -> Result<(), HlsError> {
         if self.finished {
             return Err(HlsError::Finished);
@@ -170,8 +179,9 @@ impl Publisher for HlsPublisher {
 
 impl HlsPublisher {
     /// Shared terminal-state work for [`Publisher::finish`] and
-    /// [`Self::finish_serving`]: cuts any open segment (which rewrites the
-    /// non-terminal playlist, like every cut), marks the segmenter
+    /// [`Self::finish_serving`]: cuts any open segment (which, like every
+    /// cut, rewrites the non-terminal playlist, except in VOD mode, where
+    /// no playlist is written before this final one), marks the segmenter
     /// finished, and writes the terminal playlist (with `#EXT-X-ENDLIST`)
     /// to disk. Callers still own taking/shutting down the HTTP server.
     fn finalize_and_write(&mut self) -> Result<(), HlsError> {
@@ -282,12 +292,12 @@ mod tests {
         assert!(pl.contains("segment_00000.ts"));
     }
 
-    /// The `cut_segment` the mux publisher shell sends on its first video
-    /// access unit, before any bytes, is a pure intent signal: nothing is written or counted, and the first segment
-    /// is then cut only by the stall guard, not by the wall clock at
-    /// `segment_duration`.
+    /// The `keyframe_driven` signal the mux publisher shell sends on its
+    /// first video access unit closes nothing: nothing is written or
+    /// counted, and the first segment is then cut only by the stall guard,
+    /// not by the wall clock at `segment_duration`.
     #[test]
-    fn a_cut_before_any_push_only_arms_keyframe_driven_segmenting() {
+    fn keyframe_driven_only_arms_keyframe_driven_segmenting() {
         let dir = tmpdir("intent");
         let cfg = HlsConfig {
             output_dir: dir.clone(),
@@ -295,7 +305,7 @@ mod tests {
             ..HlsConfig::default()
         };
         let mut p = HlsPublisher::with_config(cfg).unwrap();
-        p.cut_segment().unwrap();
+        p.keyframe_driven();
         let (stats, hls) = (p.stats(), p.hls_stats());
         assert_eq!(stats.segments_written, 0);
         assert_eq!(stats.bytes_written, 0);
@@ -318,6 +328,50 @@ mod tests {
                 .unwrap();
             assert_eq!(s.segmenter.forced_cuts(), 1, "the stall guard still cuts");
         }
+        p.finish().unwrap();
+    }
+
+    /// A stream that pushes KLV before its first video access unit: the
+    /// shell's `keyframe_driven` signal arrives after segment 0 is already
+    /// open, the wall clock then passes `segment_duration`, and segment 0 is
+    /// still not cut on the wall clock. It closes on the shell's cut with
+    /// its media duration, holding the KLV prelude and the first GOP.
+    #[test]
+    fn klv_before_the_first_video_au_keeps_segment_0_on_media_time() {
+        let dir = tmpdir("klv-first");
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            ..HlsConfig::default()
+        };
+        let mut p = HlsPublisher::with_config(cfg).unwrap();
+        let d = p.segment_duration().unwrap();
+        // KLV (with the PSI the muxer emits alongside it) opens segment 0.
+        p.push_ts(&[0x47u8; 376]).unwrap();
+        let now = std::time::Instant::now();
+        // The first video AU: the shell signals, then pushes the keyframe
+        // after the wall clock has passed `segment_duration`.
+        p.keyframe_driven();
+        {
+            let mut s = p.state.lock().unwrap();
+            s.segmenter
+                .tick_at(now + d + Duration::from_millis(1))
+                .unwrap();
+            assert_eq!(
+                s.segmenter.open_segment_bytes(),
+                376,
+                "segment 0 is not cut on the wall clock"
+            );
+        }
+        p.push_ts(&[0x47u8; 376]).unwrap();
+        // The keyframe `d` of media time after the first video AU.
+        p.cut_segment_with_duration(d).unwrap();
+        let s = p.state.lock().unwrap();
+        let segs = s.segmenter.visible_segments();
+        assert_eq!(segs.len(), 1, "one segment: {segs:?}");
+        assert_eq!(segs[0].duration, d, "segment 0 carries its media duration");
+        assert_eq!(s.segmenter.forced_cuts(), 0);
+        drop(s);
         p.finish().unwrap();
     }
 

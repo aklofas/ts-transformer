@@ -59,12 +59,13 @@ tst_core::binding_record! {
 /// independently decodable (RFC 8216 §3). The stream-head AU, with no open
 /// segment yet, opens the first segment without a zero-duration cut.
 ///
-/// When `min` is `Some` and the first video AU arrives before any bytes, the
-/// shell first calls [`Publisher::cut_segment`] once: nothing is closed, and
-/// the publisher learns that explicit cuts drive segmentation from the first
-/// segment on. A stream without video, or one whose first bytes precede its
-/// first video AU, sends no such signal and keeps the publisher's own rule
-/// for the segment already open.
+/// When `min` is `Some`, the first video AU first calls
+/// [`Publisher::keyframe_driven`]: nothing is closed, and the publisher
+/// learns that explicit cuts drive segmentation from the segment already
+/// open on. Metadata or audio pushed before that AU stays in segment 0,
+/// which the shell cuts once its media span from the first video AU reaches
+/// `min`. A stream without video sends no such signal and keeps the
+/// publisher's own rule.
 ///
 /// `last_video_pts` and the open segment's start are recorded when the hook
 /// runs, before the muxer push. A push the muxer then rejects (a full
@@ -196,19 +197,15 @@ impl<P: Publisher + Send> Transport for Segmented<P> {
     fn close(&mut self) {}
 
     fn on_video_au(&mut self, pts: Pts90khz, key_frame: bool) -> Result<bool, TransportError> {
-        if self.last_video_pts.is_none() && self.min_segment.is_some() && self.bytes_pushed == 0 {
-            // A cut before any bytes flow closes nothing; it tells the
-            // publisher that explicit cuts drive segmentation from the start,
-            // so segment 0 belongs to this shell's media-time bound and a
+        if self.last_video_pts.is_none() && self.min_segment.is_some() {
+            // Keyframes drive this stream's cuts from here on, so a
             // wall-clock fallback (HLS: the raw-relay cut at
             // `segment_duration`) only guards a stalled producer. Sent on the
             // first video AU, not at construction, so a stream without video
-            // keeps the publisher's own rule; and only before any bytes, so
-            // it never closes a segment that PSI or metadata already opened.
-            // Not routed through `cut`: no segment is closed.
-            if let Err(e) = self.publisher.cut_segment() {
-                return Err(self.fail(e));
-            }
+            // keeps the publisher's own rule; sent even after metadata or
+            // audio bytes, so the segment they opened is cut by the shell's
+            // media-time bound instead of mid-GOP by the wall clock.
+            self.publisher.keyframe_driven();
         }
         let mut cut = false;
         if let Some(start) = self.segment_start_pts {
@@ -453,7 +450,9 @@ impl<P: Publisher + Send> MuxPublisher<P> {
 
     /// Consume the shell and return the owned inner publisher.
     ///
-    /// The open segment is first closed with its media duration, the PTS
+    /// Bytes a failed earlier push left queued are offered to the publisher
+    /// once more first, because they belong to the segment about to close.
+    /// The open segment is then closed with its media duration, the PTS
     /// span from its first access unit to the last one pushed. That access
     /// unit's own display time is unknown, so the final `#EXTINF` ends at
     /// its presentation time. A stream with no open segment (no video, or
@@ -462,9 +461,7 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     /// No end-of-stream marker is written: if the caller needs to finalize
     /// the publisher (flush the pending segment, write an HLS
     /// `#EXT-X-ENDLIST` tag, tear down sinks, etc.), they should call
-    /// [`Publisher::finish`] on the returned publisher. Bytes a failed
-    /// earlier push left queued are offered to the publisher once more on
-    /// the way out ([`MuxSender::into_inner`]).
+    /// [`Publisher::finish`] on the returned publisher.
     ///
     /// If the inner lock was poisoned, the publisher is still returned:
     /// `into_inner` recovers the poisoned guard, and the publisher
@@ -908,6 +905,8 @@ mod tests {
         Push(usize),
         /// A `cut_segment_with_duration` of this media duration.
         Cut(Duration),
+        /// A `keyframe_driven` signal.
+        KeyframeDriven,
     }
 
     /// Test double that records the exact interleaving of pushes and cuts so
@@ -938,6 +937,9 @@ mod tests {
         fn cut_segment_with_duration(&mut self, d: Duration) -> Result<(), MemErr> {
             self.ops.push(Op::Cut(d));
             Ok(())
+        }
+        fn keyframe_driven(&mut self) {
+            self.ops.push(Op::KeyframeDriven);
         }
         fn finish(self) -> Result<(), MemErr> {
             Ok(())
@@ -1301,7 +1303,7 @@ mod tests {
 
     /// Push `feed` as `(pts ticks, key_frame)` video AUs through a publisher
     /// that reports `segment_duration`, and return the cut durations it
-    /// received after the construction of the shell.
+    /// received.
     fn cuts_for_feed(segment_duration: Option<Duration>, feed: &[(i64, bool)]) -> Vec<Duration> {
         let p = RecordingPublisher {
             cuts: vec![],
@@ -1317,12 +1319,6 @@ mod tests {
         // `finish` closes the open segment last.
         let closing = cuts.pop();
         assert!(closing.is_some(), "finish must close the open segment");
-        if segment_duration.is_some() {
-            // The intent signal on the first video AU: a plain `cut_segment`
-            // (recorded as zero), not a closed segment.
-            assert_eq!(cuts.first(), Some(&Duration::ZERO), "cuts: {cuts:?}");
-            cuts.remove(0);
-        }
         assert_eq!(cut_calls, cuts.len() as u64, "cuts: {cuts:?}");
         cuts
     }
@@ -1358,6 +1354,9 @@ mod tests {
         fn segment_duration(&self) -> Option<Duration> {
             self.1
         }
+        fn keyframe_driven(&mut self) {
+            self.0.keyframe_driven();
+        }
         fn finish(self) -> Result<(), MemErr> {
             Ok(())
         }
@@ -1366,11 +1365,11 @@ mod tests {
         }
     }
 
-    /// A publisher that reports a bound gets one `cut_segment` on the first
-    /// video AU, before any bytes, and none at construction; one that
-    /// reports no bound gets nothing.
+    /// A publisher that reports a bound gets one `keyframe_driven` signal,
+    /// on the first video AU and none at construction; one that reports no
+    /// bound gets nothing. No cut is sent for it.
     #[test]
-    fn a_bounded_publisher_is_told_on_the_first_video_au_that_cuts_drive_segments() {
+    fn a_bounded_publisher_is_told_on_the_first_video_au_that_keyframes_drive_cuts() {
         for bound in [TARGET, None] {
             let p = Bounded(OpLogPublisher { ops: vec![] }, bound);
             let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
@@ -1379,11 +1378,13 @@ mod tests {
                 "nothing reaches the publisher at construction"
             );
             mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
+            mp.push_video(&h264_au(), Pts90khz::new(3000), false)
+                .unwrap();
             assert_eq!(mp.stats().cut_calls, 0, "no segment was closed");
             let ops = without_closing_cut(mp.finish().unwrap().0.ops);
             match bound {
                 Some(_) => {
-                    assert_eq!(ops[0], Op::Cut(Duration::ZERO), "ops: {ops:?}");
+                    assert_eq!(ops[0], Op::KeyframeDriven, "ops: {ops:?}");
                     assert!(ops[1..].iter().all(|o| matches!(o, Op::Push(_))), "{ops:?}");
                 }
                 None => assert!(ops.iter().all(|o| matches!(o, Op::Push(_))), "{ops:?}"),
@@ -1392,10 +1393,10 @@ mod tests {
     }
 
     /// Bytes that reach the publisher before the first video AU (metadata
-    /// pushed first) open a segment; the intent cut would close it, so none
-    /// is sent.
+    /// pushed first) do not suppress the signal, and it closes nothing: the
+    /// metadata stays in the segment the first GOP joins.
     #[test]
-    fn no_intent_cut_once_bytes_precede_the_first_video_au() {
+    fn metadata_before_the_first_video_au_still_signals_keyframe_driven() {
         use tst_core::mpegts::mux::{MuxerProgramConfigBuilder, VideoCodec};
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
         prog.add_video(0x100, VideoCodec::H264);
@@ -1408,8 +1409,19 @@ mod tests {
         mp.push_data(&[0x42; 64], Pts90khz::new(0)).unwrap();
         mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
         let ops = without_closing_cut(mp.finish().unwrap().0.ops);
+        let signal = ops.iter().position(|o| *o == Op::KeyframeDriven);
+        assert!(matches!(signal, Some(i) if i > 0), "ops: {ops:?}");
         assert!(matches!(ops[0], Op::Push(_)), "ops: {ops:?}");
-        assert!(ops.iter().all(|o| matches!(o, Op::Push(_))), "ops: {ops:?}");
+        assert_eq!(
+            ops.iter().filter(|o| matches!(o, Op::Cut(_))).count(),
+            0,
+            "nothing is cut: {ops:?}"
+        );
+        assert_eq!(
+            ops.iter().filter(|o| **o == Op::KeyframeDriven).count(),
+            1,
+            "ops: {ops:?}"
+        );
     }
 
     const TARGET: Option<Duration> = Some(Duration::from_secs(4));

@@ -1654,6 +1654,15 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-hls"
+item = "tst_hls::publisher::HlsPublisher::keyframe_driven"
+owning_tests = ["crates/tst-hls/src/publisher.rs"]
+bindings = ["java:n/a(sent by the mux publisher shell the binding wraps)", "c:n/a(sent by the mux publisher shell the binding wraps)", "python:n/a(sent by the mux publisher shell the binding wraps)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
 item = "tst_hls::publisher::HlsPublisher::finish_serving"
 owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsServingTest.java"]
 bindings = ["java:org.tstrans.hls.HlsPublisher.finishServing", "c:unaudited", "python:tstrans.hls.HlsPublisher.finish_serving", "swift:deferred", "kotlin:deferred"]
@@ -1720,6 +1729,15 @@ crate = "tst-core"
 item = "tst_core::publisher::Publisher::segment_duration"
 owning_tests = ["crates/tst-core/src/publisher/mod.rs", "crates/tst-pipeline/src/mux_publisher.rs"]
 bindings = ["java:n/a(read by the mux publisher shell; the HLS builder sets the duration)", "c:n/a(read by the mux publisher shell; the HLS builder sets the duration)", "python:n/a(read by the mux publisher shell; the HLS builder sets the duration)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::publisher::Publisher::keyframe_driven"
+owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs", "crates/tst-hls/src/publisher.rs"]
+bindings = ["java:n/a(sent by the mux publisher shell the binding wraps)", "c:n/a(sent by the mux publisher shell the binding wraps)", "python:n/a(sent by the mux publisher shell the binding wraps)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
