@@ -358,14 +358,9 @@ pub unsafe extern "C" fn tst_hls_publisher_local_addr(
             set_last_error(TstError::InvalidConfig, "null buf pointer");
             return TstError::InvalidConfig as i32;
         }
-        // The address is a construction-time snapshot; the slot is only
-        // consulted to learn whether the publisher was finished.
-        let alive = handle.inner.with_inner_ref(|_| 0);
-        let addr = if alive == 0 {
-            *handle.inner.snapshot()
-        } else {
-            None
-        };
+        // The address is a construction-time snapshot; open/finished is
+        // observed without the slot a push or cut may hold.
+        let addr = handle.inner.open_snapshot().copied().flatten();
         match addr {
             Some(a) => unsafe { write_cstr_to_buf(&a.to_string(), buf, buf_len) },
             None => {
@@ -745,5 +740,50 @@ mod tests {
         assert_eq!(buf[0], b'h' as c_char);
         assert_eq!(buf[1], b'i' as c_char);
         assert_eq!(buf[2], 0);
+    }
+
+    #[test]
+    fn local_addr_answers_while_the_slot_is_held() {
+        use std::sync::{Arc, Barrier, mpsc};
+
+        let dir = std::env::temp_dir().join(format!("tst-c-hls-addr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut b = tst_hls::HlsPublisherBuilder::new();
+        b.bind("127.0.0.1:0".parse().unwrap()).output_dir(&dir);
+        let publisher = b.build().unwrap();
+        let handle = Arc::new(TstPublisher::new(PublisherImpl::Hls(publisher)));
+
+        let held = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let holder = {
+            let (handle, held, release) = (handle.clone(), held.clone(), release.clone());
+            std::thread::spawn(move || {
+                handle.inner.with_inner_mut(|_| {
+                    held.wait();
+                    release.wait();
+                    0
+                })
+            })
+        };
+        held.wait();
+
+        // The getter runs on its own thread so a regression (blocking on the
+        // slot) fails the bounded wait instead of hanging the suite.
+        let (tx, rx) = mpsc::channel();
+        let getter = {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0 as c_char; 64];
+                let p = Arc::as_ptr(&handle) as *mut TstPublisher;
+                let rc = unsafe { tst_hls_publisher_local_addr(p, buf.as_mut_ptr(), buf.len()) };
+                let _ = tx.send(rc);
+            })
+        };
+        let rc = rx.recv_timeout(std::time::Duration::from_secs(30));
+        release.wait();
+        holder.join().unwrap();
+        getter.join().unwrap();
+        assert!(matches!(rc, Ok(n) if n > 0), "getter result: {rc:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
