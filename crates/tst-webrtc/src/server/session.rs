@@ -15,9 +15,10 @@ use crate::server::media::MediaConfig;
 use crate::stats::{IceState, SessionStats};
 
 /// How many distinct source addresses a session admits before ICE and
-/// DTLS complete. A browser checks from a handful of candidates; the cap
+/// DTLS complete. A browser checks from every local socket and relay it
+/// has, so a multi-homed or relayed client can present several; the cap
 /// bounds the peer-reflexive candidates the ICE agent adds.
-pub(crate) const MAX_PRECONNECT_SOURCES: usize = 4;
+pub(crate) const MAX_PRECONNECT_SOURCES: usize = 16;
 
 /// A viewer session's own counters.
 #[derive(Debug, Default, Clone)]
@@ -77,9 +78,10 @@ pub(crate) enum Enqueued {
 /// A viewer session.
 ///
 /// A session's media goes only to the address it connected from: the
-/// source of the datagram that completed DTLS is pinned, and datagrams
-/// from any other address are dropped. Before that, at most
-/// [`MAX_PRECONNECT_SOURCES`] distinct sources are admitted.
+/// source of the datagram that completed DTLS is pinned, datagrams from
+/// any other address are dropped, and nothing is sent anywhere else.
+/// Before that, at most [`MAX_PRECONNECT_SOURCES`] distinct sources are
+/// admitted.
 pub(crate) struct Viewer {
     /// The session id, 32 hex characters.
     pub(crate) id: String,
@@ -137,9 +139,12 @@ pub(crate) struct Viewer {
     /// at most [`MAX_PRECONNECT_SOURCES`]; a datagram from a further
     /// source is dropped.
     pub(crate) sources: Vec<SocketAddr>,
+    /// The source of the datagram str0m was last handed; the pin is taken
+    /// from it when str0m reports the session connected.
+    pub(crate) last_source: Option<SocketAddr>,
     /// The address the session connected from. Once set, only datagrams
-    /// from it reach the session, so its media goes only there: a NAT
-    /// rebinding or an interface change needs a new session.
+    /// from it reach the session and only it is sent to: a NAT rebinding
+    /// or an interface change needs a new session.
     pub(crate) pinned: Option<SocketAddr>,
     /// str0m's next deadline for this session.
     pub(crate) timeout: Instant,
@@ -178,6 +183,7 @@ impl Viewer {
             stats: SessionCounters::default(),
             remote: None,
             sources: Vec::new(),
+            last_source: None,
             pinned: None,
             timeout: now,
         }

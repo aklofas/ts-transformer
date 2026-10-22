@@ -121,7 +121,9 @@ tst_core::binding_record! {
         pub rtp_packets_sent: u64,
         /// RTP bytes sent to all viewers.
         pub rtp_bytes_sent: u64,
-        /// Datagrams that matched no session.
+        /// Datagrams that matched no session, came from an address other
+        /// than the one a session connected from, or came from a source
+        /// beyond a session's pre-connect limit.
         pub datagrams_unrouted: u64,
     }
 }
