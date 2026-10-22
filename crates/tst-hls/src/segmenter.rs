@@ -320,7 +320,14 @@ impl Segmenter {
     /// complete playlist, never a truncated one (`rename(2)` replaces the
     /// target in one step on POSIX; `MoveFileEx` with replace on Windows).
     /// `is_final` appends `#EXT-X-ENDLIST` for EVENT/VOD — the finish path.
+    ///
+    /// A VOD playlist is never written before the final write: it must not
+    /// change once published (RFC 8216 section 4.3.3.5), so it exists only
+    /// once complete.
     pub(crate) fn write_playlist(&self, is_final: bool) -> Result<(), HlsError> {
+        if !is_final && self.config.mode == HlsMode::Vod {
+            return Ok(());
+        }
         let text = crate::playlist::render(self, is_final);
         let tmp = self.config.output_dir.join(PLAYLIST_TMP_FILENAME);
         std::fs::write(&tmp, text).map_err(HlsError::Io)?;

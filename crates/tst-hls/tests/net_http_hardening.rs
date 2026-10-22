@@ -232,48 +232,68 @@ fn event_served_after_finish_has_endlist() {
     handle.shutdown();
 }
 
-/// Calling `finish_serving()` on an already-finished publisher returns
-/// `HlsError::Finished`.
+/// A VOD playlist never changes (RFC 8216 section 4.3.3.5), so before finish
+/// it is neither served nor written; finish produces the complete playlist.
 #[test]
-fn finish_serving_on_finished_errors() {
-    let dir = tmpdir("already-finished");
+fn vod_playlist_is_404_until_finish() {
+    let dir = tmpdir("vod-404");
     let mut p = HlsPublisherBuilder::new()
         .bind("127.0.0.1:0".parse().unwrap())
         .output_dir(&dir)
-        .segment_duration(std::time::Duration::from_secs(10))
+        .segment_duration(Duration::from_secs(10))
         .mode(HlsMode::Vod)
         .build()
         .unwrap();
+    let addr = p.local_addr().unwrap();
+    for _ in 0..2 {
+        p.push_ts(&[0x47u8; 376]).unwrap();
+        p.cut_segment().unwrap();
+    }
 
-    p.push_ts(&[0x47u8; 376]).unwrap();
-    p.cut_segment().unwrap();
+    let pl = http_get(addr, "/playlist.m3u8");
+    assert!(pl.contains("404"), "unfinished VOD must 404:\n{pl}");
+    assert!(
+        !dir.join("playlist.m3u8").exists(),
+        "no playlist file before finish"
+    );
 
-    // First finish_serving succeeds.
     let handle = p.finish_serving().unwrap();
+    let pl = http_get(handle.local_addr(), "/playlist.m3u8");
+    assert!(pl.contains("200 OK"), "finished VOD must 200:\n{pl}");
+    assert!(pl.contains("#EXT-X-PLAYLIST-TYPE:VOD"), "{pl}");
+    assert!(pl.contains("#EXT-X-ENDLIST"), "{pl}");
+    assert!(
+        dir.join("playlist.m3u8").exists(),
+        "file present after finish"
+    );
     handle.shutdown();
+}
 
-    // A second call would need a new publisher — verify that calling finish()
-    // after finish_serving() on a fresh publisher also errors Finished.
-    // (We can't call finish_serving twice on same publisher since it consumes self.)
-    // Instead verify via finish() path:
-    let dir2 = tmpdir("already-finished-2");
-    let mut p2 = HlsPublisherBuilder::new()
+/// A VOD publisher finished without any segment still publishes a complete
+/// (empty) playlist, and only at finish.
+#[test]
+fn vod_with_no_segments_publishes_only_at_finish() {
+    let dir = tmpdir("vod-empty");
+    let p = HlsPublisherBuilder::new()
         .bind("127.0.0.1:0".parse().unwrap())
-        .output_dir(&dir2)
-        .segment_duration(std::time::Duration::from_secs(10))
+        .output_dir(&dir)
+        .segment_duration(Duration::from_secs(10))
         .mode(HlsMode::Vod)
         .build()
         .unwrap();
-    p2.push_ts(&[0x47u8; 376]).unwrap();
-    p2.cut_segment().unwrap();
+    let addr = p.local_addr().unwrap();
 
-    let handle2 = p2.finish_serving().unwrap();
-    // finish_serving consumes the publisher, so there is no second call possible.
-    // Verify HlsServerHandle keeps serving (addr still works).
-    let addr2 = handle2.local_addr();
-    let pl = http_get(addr2, "/playlist.m3u8");
-    assert!(pl.contains("200 OK"), "handle must still serve:\n{pl}");
-    handle2.shutdown();
+    let pl = http_get(addr, "/playlist.m3u8");
+    assert!(pl.contains("404"), "unfinished VOD must 404:\n{pl}");
+    assert!(!dir.join("playlist.m3u8").exists());
+
+    let handle = p.finish_serving().unwrap();
+    let pl = http_get(handle.local_addr(), "/playlist.m3u8");
+    assert!(pl.contains("200 OK"), "{pl}");
+    assert!(pl.contains("#EXT-X-ENDLIST"), "{pl}");
+    assert!(!pl.contains("#EXTINF"), "no segment lines:\n{pl}");
+    assert!(dir.join("playlist.m3u8").exists());
+    handle.shutdown();
 }
 
 /// With basic_auth configured, unauthenticated GETs to both /playlist.m3u8

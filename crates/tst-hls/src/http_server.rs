@@ -21,6 +21,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::check_basic_auth;
+use crate::config::HlsMode;
 use crate::error::HlsError;
 use crate::playlist;
 use crate::publisher::State;
@@ -269,7 +270,19 @@ async fn serve(
         Route::Playlist => {
             let pl = {
                 let s = state.lock().expect("HlsPublisher poisoned");
-                playlist::render(&s.segmenter, s.finished)
+                // A VOD playlist must not change once served (RFC 8216
+                // section 4.3.3.5), so none exists until finish.
+                if s.segmenter.mode() == HlsMode::Vod && !s.finished {
+                    None
+                } else {
+                    Some(playlist::render(&s.segmenter, s.finished))
+                }
+            };
+            let Some(pl) = pl else {
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::new()))
+                    .unwrap();
             };
             Response::builder()
                 .status(StatusCode::OK)

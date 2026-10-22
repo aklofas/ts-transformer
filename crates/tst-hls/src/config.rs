@@ -15,10 +15,10 @@ pub enum HlsMode {
     /// EVENT — playlist monotone-grows (no segments evicted) until finish.
     /// ENDLIST written on finish.
     Event,
-    /// VOD — same segment set as Event, tagged `#EXT-X-PLAYLIST-TYPE:VOD`;
-    /// ENDLIST written on finish. Like every mode, the on-disk playlist is
-    /// written at finish and the built-in server renders the growing
-    /// playlist from memory during the run.
+    /// VOD — same segment set as Event, tagged `#EXT-X-PLAYLIST-TYPE:VOD`
+    /// with ENDLIST. A VOD playlist must not change once published (RFC 8216
+    /// section 4.3.3.5), so no playlist is served (404) or written until
+    /// finish. Use [`HlsMode::Event`] to watch a recording while it is made.
     Vod,
 }
 
