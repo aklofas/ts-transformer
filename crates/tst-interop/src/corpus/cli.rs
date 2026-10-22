@@ -97,7 +97,11 @@ fn parse(args: &[String], sweep_flags: bool) -> Common {
                 let Some(sha) = pending.take() else {
                     fail("--because must follow an --accept");
                 };
-                accepts.push((sha, value(args, i, "--because")));
+                let why = value(args, i, "--because");
+                if why.trim().is_empty() {
+                    fail("--because needs a non-empty reason");
+                }
+                accepts.push((sha, why));
                 i += 2;
             }
             a if a.starts_with("--") => fail("unknown option"),

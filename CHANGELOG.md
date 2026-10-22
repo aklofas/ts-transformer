@@ -1344,6 +1344,15 @@ The integrator-facing changes at a glance (full detail in the sections below):
   streaming the old one, which left that fanout orphaned: the session and the
   shutdown registry named a mount the stream was not serving.
 
+### Fixed — tst-interop
+
+- `tst-interop corpus report` no longer rejects a replay that produced
+  600-second prefix digests: the sweep fingerprint covers whole-capture
+  digests only, and a new sweep removes the previous replay's prefix digests.
+  Every multi-hour capture makes a prefix pick, so the report used to call
+  such a replay the replay of an earlier sweep.
+- `tst-interop corpus sweep --because` refuses a blank reason.
+
 ### Docs — project pages
 
 - `docs/project/1.0-exit-criteria.md` records the maintainer's answers to its

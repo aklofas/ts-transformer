@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::inventory::{FileEntry, Inventory};
-use super::{PREFIX_SECONDS, REPLAY_PICK_MAX_BYTES, RunDir, Sha256Hex};
+use super::{REPLAY_PICK_MAX_BYTES, RunDir, Sha256Hex, prefix_seconds};
 
 /// One capture chosen for replay.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,17 +52,17 @@ const RARE_BELOW: usize = 3;
 /// The bytes a replay of `f` sends: the whole file, or the share of it the
 /// prefix covers.
 pub fn predicted_bytes(f: &FileEntry) -> u64 {
-    let share = (f64::from(PREFIX_SECONDS) / f.duration_s).min(1.0);
+    let share = (f64::from(prefix_seconds()) / f.duration_s).min(1.0);
     (f.bytes as f64 * share).ceil() as u64
 }
 
 fn make_pick(f: &FileEntry, why: String) -> Pick {
-    let long = f.duration_s > f64::from(PREFIX_SECONDS);
+    let long = f.duration_s > f64::from(prefix_seconds());
     Pick {
         sha256: f.sha256.clone(),
         why,
-        prefix_seconds: long.then_some(PREFIX_SECONDS),
-        seconds: f.duration_s.min(f64::from(PREFIX_SECONDS)),
+        prefix_seconds: long.then_some(prefix_seconds()),
+        seconds: f.duration_s.min(f64::from(prefix_seconds())),
     }
 }
 
