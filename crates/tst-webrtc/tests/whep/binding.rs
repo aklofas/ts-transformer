@@ -403,3 +403,59 @@ fn records_bound_after_a_rebase_share_one_splice() {
     assert_eq!(seis.len(), 4);
     assert_eq!(m.stats().klv_sei_inserted, 4);
 }
+
+/// Two threads pushing through clones of one handle: frames reach the media
+/// queue in the order the clock stamped them. Each frame the clock saw
+/// below its predecessor counts in `frames_pts_reordered`, so the number of
+/// timestamp steps backwards in the queue equals that counter exactly when
+/// queue order is clock order. A drainer keeps the bounded queue from
+/// filling, so no frame is dropped.
+#[test]
+fn concurrent_pushes_are_queued_in_clock_order() {
+    const PER_THREAD: u64 = 20_000;
+    let (m, rx) = MountHandle::for_test(MountConfig::default());
+    m.push_video(&au(&[SPS, PPS, IDR]), Pts90khz::new(0), true)
+        .unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let producers: Vec<_> = (0..2u64)
+        .map(|lane| {
+            let m = m.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                for k in 0..PER_THREAD {
+                    let pts = (1 + 2 * k + lane) * 3000;
+                    m.push_video(P, Pts90khz::new(pts as i64), false).unwrap();
+                }
+            })
+        })
+        .collect();
+    let drainer = std::thread::spawn(move || {
+        let mut prev = next_frame(&rx).rtp_ts;
+        let mut backwards = 0u64;
+        for _ in 0..2 * PER_THREAD {
+            let ts = next_frame_blocking(&rx).rtp_ts;
+            if (ts.wrapping_sub(prev) as i32) < 0 {
+                backwards += 1;
+            }
+            prev = ts;
+        }
+        backwards
+    });
+    for t in producers {
+        t.join().unwrap();
+    }
+    let backwards = drainer.join().unwrap();
+    assert_eq!(m.stats().viewer_packets_dropped_queue_full, 0);
+    assert_eq!(backwards, m.stats().frames_pts_reordered);
+}
+
+fn next_frame_blocking(
+    rx: &std::sync::mpsc::Receiver<MediaMsg>,
+) -> std::sync::Arc<tst_webrtc::mount::FramePacket> {
+    loop {
+        if let MediaMsg::Frame { packet, .. } = rx.recv().expect("message") {
+            return packet;
+        }
+    }
+}
