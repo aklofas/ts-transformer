@@ -8,9 +8,11 @@
 //! frame (as an SEI message) and next to it (as a data-channel message
 //! with the frame's RTP timestamp).
 //!
-//! The mount's state sits behind one mutex that is never held while a
-//! message is queued: the queue is bounded and filled with `try_send`, so
-//! a push never blocks on the media thread. When the queue is full the
+//! The mount's state sits behind one mutex that a push holds from the
+//! clock step through the enqueue, so pushes from any thread reach the
+//! media queue in the order the clock processed them. It is never held
+//! across the network: the queue is bounded and filled with `try_send`,
+//! so a push never blocks on the media thread. When the queue is full the
 //! message is dropped and counted.
 
 use std::collections::VecDeque;
@@ -190,7 +192,8 @@ pub(crate) struct MountState {
     /// is queued: until then the frames that follow would reference the
     /// lost one, so they are dropped too.
     video_gap: AtomicBool,
-    /// Never held across a queue send.
+    /// Held from the clock step through the queue send (`try_send`, which
+    /// never blocks and never takes this lock), so queue order is clock order.
     inner: Mutex<MountInner>,
     /// The demuxer behind `push_ts`; `Some` on an MP2T mount. Held while
     /// its events are dispatched, which takes `inner` and never blocks.
@@ -649,7 +652,9 @@ impl MountHandle {
         let own = extract_parameter_sets(au, codec);
         let pts = pts.as_ticks();
 
-        let msgs = {
+        // `inner` stays held through the enqueue so frames reach the media
+        // queue in the order the clock stamped them.
+        {
             let mut inner = s.lock();
             inner.cache(&own);
             if !has_vcl {
@@ -746,7 +751,6 @@ impl MountHandle {
 
             let nals: Vec<&[u8]> = annexb::nals(&buf).filter(|nal| !nal.is_empty()).collect();
             let payloads = inner.packetizer.packetize(&nals, DEFAULT_MTU_PAYLOAD);
-            drop(inner);
 
             let mut msgs = Vec::with_capacity(1 + bound.len());
             msgs.push(MediaMsg::Frame {
@@ -771,9 +775,8 @@ impl MountHandle {
                     });
                 }
             }
-            msgs
-        };
-        s.send(msgs)
+            s.send(msgs)
+        }
     }
 
     /// Push one KLV record (raw local-set bytes) with its 90 kHz PTS.
@@ -886,12 +889,13 @@ impl MountHandle {
                 // cast keeps the low 32 bits, as RTP does.
                 let pts = pts.as_ticks();
                 let ticks = pts.saturating_mul(8).div_euclid(15);
+                // Held through the enqueue, as in video.
+                let mut inner = s.lock();
                 let ClockStep {
                     rtp: rtp_ts,
                     rebased,
                     ..
-                } = s
-                    .lock()
+                } = inner
                     .audio_clock
                     .ts(pts, ticks as u32, AUDIO_REBASE_STEP_TICKS);
                 if rebased {
@@ -905,6 +909,7 @@ impl MountHandle {
                     }),
                 };
                 s.send(vec![msg])?;
+                drop(inner);
                 bump(&s.stats.audio_frames_pushed);
                 Ok(())
             }
