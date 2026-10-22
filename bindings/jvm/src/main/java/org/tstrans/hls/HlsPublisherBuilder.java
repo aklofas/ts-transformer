@@ -36,7 +36,8 @@ public final class HlsPublisherBuilder {
     public HlsPublisherBuilder outputDir(String path) { this.outputDir = Objects.requireNonNull(path, "path"); return this; }
 
     /**
-     * Target segment duration in milliseconds.
+     * The maximum a segment may reach, in milliseconds; the playlist
+     * advertises {@code ceil} of it as {@code #EXT-X-TARGETDURATION}.
      *
      * @throws IllegalArgumentException if {@code ms <= 0}
      */
@@ -47,7 +48,8 @@ public final class HlsPublisherBuilder {
     }
 
     /**
-     * Force-cut cap on an open segment's wall-clock age. {@code 0} leaves the
+     * Wall-clock stall guard of the keyframe-driven flow: an open segment this
+     * old is force-cut when no cut has arrived. {@code 0} leaves the
      * library default ({@code 2 × segmentDuration}); it does not reset an
      * earlier non-zero value.
      *

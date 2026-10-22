@@ -1363,7 +1363,7 @@ program = (
 
 # with_config_hls CONSUMES the publisher.
 mp = MuxPublisher.with_config_hls(publisher, program)
-mp.push_video(nal, pts=Pts90khz.from_raw(0), key_frame=True)  # auto-cuts on key_frame
+mp.push_video(nal, pts=Pts90khz.from_raw(0), key_frame=True)  # a keyframe past segment_duration begins a segment
 pub = mp.finish_into_publisher()   # recover the publisher to finish() it cleanly
 pub.finish()
 ```

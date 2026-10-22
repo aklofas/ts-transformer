@@ -63,7 +63,11 @@ The integrator-facing changes at a glance (full detail in the sections below):
   `RecvTransport` (the TS shells over `rtp://` are the `shells` classes),
   merge the end-reason enums (Python members change value) and reorder some
   record constructors, and the JVM exception `Kind` ordinals change; the C
-  header needs `tstrans_config.h` beside it. Read the "Removed — …" and
+  header needs `tstrans_config.h` beside it. Two tst-hls changes alter the
+  published stream: `segment_duration` is the maximum a segment may reach
+  (a segment holds whole GOPs up to it instead of cutting on every
+  keyframe), and a VOD publisher writes its playlist only at `finish`. Read
+  the "Removed — …" and
   "Changed — … (BREAKING)" sections; the `RtpUrlError` message table is
   under "Removed — tst-rtp" and the C live-shell error-code table under
   "Changed — tst-c". Renamed types keep deprecated aliases until 0.10.0
@@ -532,11 +536,12 @@ The integrator-facing changes at a glance (full detail in the sections below):
   rewrote the playlist more often than every half target (§6.2.1). Segments
   now hold whole GOPs up to the target; keep the GOP at or under
   `segment_duration` so every segment starts on a keyframe. When the
-  publisher reports a bound, the shell calls `cut_segment()` once on the
-  first video access unit if no bytes have flowed yet, so the HLS segmenter
-  treats segment 0 as keyframe-driven too and never cuts it on the wall
-  clock at `segment_duration`; streams without video keep the wall-clock
-  rule.
+  publisher reports a bound, the shell calls the new
+  `Publisher::keyframe_driven()` (default: does nothing) on the first video
+  access unit, so the HLS segmenter treats segment 0 as keyframe-driven too
+  and never cuts it on the wall clock at `segment_duration`, even when
+  metadata or audio was pushed first; only streams without video keep the
+  wall-clock rule.
 - A VOD publisher serves and writes its playlist only at `finish` (a request
   before then answers 404, and no `playlist.m3u8` exists on disk). It used to
   publish a `#EXT-X-PLAYLIST-TYPE:VOD` playlist that grew with every cut,
@@ -799,9 +804,17 @@ The integrator-facing changes at a glance (full detail in the sections below):
 
 - The release gate compares the whole tree between the soaked commit and the
   qualified one, ignoring only `CHANGELOG.md`, `docs/` and
-  `tests/coverage/evidence-archives.toml`. It also requires the corpus row to
-  show all five paths replayed with no failures, and treats a newer failed soak
-  of any duration on the same tree as a reason for NO-GO.
+  `tests/coverage/evidence-archives.toml`, except the WebRTC reference
+  player's JavaScript under `docs/webrtc/`: the soak's browser leg runs it,
+  so a change to it after the soak supersedes the soak (only Markdown under
+  that directory counts as a release document). It also requires the corpus
+  row to show all five paths replayed with no failures, and treats a newer
+  failed soak of any duration on the same tree as a reason for NO-GO.
+- A soak archive row may declare `legs`; the release gate requires the chosen
+  72-hour soak to have run srt, rist, rtsp-publish, rtsp-publish-es and whep.
+  `tst-interop report soak` prints the legs on its final line.
+- The release gate requires the corpus archive to have swept the declared
+  number of captures (`[corpus] expected_files` in the evidence archive list).
 - The real-capture corpus cross-check no longer runs on the maintainer's
   machine through `release-validation.sh`; it runs on the release VM as
   `tst-interop corpus`, and `release-validation.sh` has three steps.
@@ -1393,17 +1406,6 @@ The integrator-facing changes at a glance (full detail in the sections below):
   Every multi-hour capture makes a prefix pick, so the report used to call
   such a replay the replay of an earlier sweep.
 - `tst-interop corpus sweep --because` refuses a blank reason.
-
-### Changed — release tooling
-
-- A change to the WebRTC reference player under `docs/webrtc/` after the soak
-  now supersedes the soak. Only Markdown under that directory counts as a
-  release document.
-- A soak archive row may declare `legs`; the release gate requires the chosen
-  72-hour soak to have run srt, rist, rtsp-publish, rtsp-publish-es and whep.
-  `tst-interop report soak` prints the legs on its final line.
-- The release gate requires the corpus archive to have swept the declared
-  number of captures (`[corpus] expected_files` in the evidence archive list).
 
 ### Fixed — release tooling
 

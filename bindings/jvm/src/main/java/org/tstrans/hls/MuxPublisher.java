@@ -62,7 +62,10 @@ public final class MuxPublisher extends NativeHandle {
         return new MuxPublisher(h);
     }
 
-    /** Push one Annex-B access unit; a key frame cuts a segment first. */
+    /**
+     * Push one Annex-B access unit. A key frame begins a new segment once the
+     * open one has reached the segment duration (the maximum).
+     */
     public void pushVideo(byte[] nal, long pts, boolean keyFrame) throws MuxException, HlsException {
         ensureOpen("MuxPublisher is closed");
         nSendVideo(peekHandle(), nal, pts, keyFrame);

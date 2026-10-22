@@ -39,8 +39,8 @@ let publisher = HlsPublisherBuilder::new()
     // behind a reverse proxy, or with auth + TLS.
     .output_dir("/var/cache/hls")
     .segment_duration(Duration::from_secs(4))
-    // Force-cut cap for an overdue keyframe (stalled / very long GOP).
-    // Defaults to 2 × segment_duration; must be ≥ segment_duration.
+    // Wall-clock stall guard: force-cuts a segment this old when no cut has
+    // arrived. Defaults to 2 × segment_duration; must be ≥ segment_duration.
     .max_segment_duration(Duration::from_secs(8))
     .playlist_window(6)
     .mode(HlsMode::Live)
@@ -49,7 +49,8 @@ println!("serving http://{}/playlist.m3u8", publisher.local_addr().unwrap());
 
 let mut shell = MuxPublisher::with_config(publisher, mux_config)?;
 
-// push_video with key_frame=true automatically cuts a new segment.
+// A keyframe begins a new segment once the open one has reached
+// segment_duration, the maximum a segment may reach.
 shell.push_video(&nal_bytes, pts, key_frame)?;
 shell.push_klv(&klv_bytes, pts, 0)?;
 

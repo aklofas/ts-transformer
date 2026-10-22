@@ -319,7 +319,7 @@ The HLS publisher segments MPEG-TS to `.ts` files and serves them (plus a rollin
 The ABI-18 additions harden the terminal-playlist story:
 
 - `tst_hls_publisher_finish_serving` returns an opaque `TstHlsServerHandle` (`tst_hls_server_handle_local_addr` / `_shutdown` / `_free`) that keeps the built-in server up so a completed VOD/EVENT playlist and its segments stay fetchable after the stream ends.
-- `tst_hls_publisher_builder_max_segment_duration_ms` sets the wall-clock force-cut cap for an overdue keyframe (`0` leaves the `2 × segment_duration` default); `tst_hls_publisher_get_forced_cuts` reads how often it fired.
+- `tst_hls_publisher_builder_max_segment_duration_ms` sets the wall-clock stall guard, which force-cuts an open segment when no cut has arrived (`0` leaves the `2 × segment_duration` default); `tst_hls_publisher_get_forced_cuts` reads how often it fired.
 
 The ABI-19 additions carry MISB ST 0604 MISP timestamps through the C ABI:
 

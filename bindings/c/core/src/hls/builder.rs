@@ -167,7 +167,10 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_output_dir(
     })
 }
 
-/// Set the target segment duration in milliseconds.
+/// Set the segment duration in milliseconds: the maximum a segment may
+/// reach (the playlist advertises `ceil` of it as `#EXT-X-TARGETDURATION`).
+/// Through the mux publisher, a keyframe begins a new segment once the open
+/// one has reached it.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if `b` is null.
 ///
@@ -191,11 +194,13 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_segment_duration_ms(
     })
 }
 
-/// Set the hard upper bound on an open segment's wall-clock age (in
-/// milliseconds) in the keyframe-driven flow. When a keyframe is overdue,
-/// the segmenter force-cuts at this cap so segments never grow unbounded.
+/// Set the wall-clock stall guard (in milliseconds) of the keyframe-driven
+/// flow: an open segment this old is force-cut when no cut has arrived, so
+/// a stalled producer never grows a segment unbounded. A raw relay or a
+/// stream without video is cut on the wall clock at the segment duration
+/// instead.
 ///
-/// A non-zero `ms` must be at least the target segment duration; a smaller
+/// A non-zero `ms` must be at least the segment duration; a smaller
 /// value is rejected later at `tst_hls_publisher_builder_build` with
 /// `TST_E_HLS_CONFIG`.
 ///
