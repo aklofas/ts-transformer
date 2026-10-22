@@ -1250,8 +1250,8 @@ pub struct WhepLegResult {
     pub klv_sei_records: u64,
     pub klv_dc_records: u64,
     /// Records whose two copies named different (PTS, RTP timestamp)
-    /// pairs, summed over connections. Recorded, not gated: the matrix's
-    /// `whep/*` cells gate the frame binding.
+    /// pairs, summed over connections. Gated: any positive value fails the
+    /// leg, since both copies come from one server-side binding.
     pub klv_copies_disagreeing: u64,
     /// Records seen on one carriage only, all of them within a
     /// connection's head or tail allowance (see `whep_klv_sei_equals_dc`).

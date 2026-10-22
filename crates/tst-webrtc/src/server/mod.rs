@@ -172,7 +172,7 @@ struct Threads {
 /// | Java | `server.stop()`, or `close()` (try-with-resources) to also free the native server |
 /// | Kotlin | `server.use { … }`, or `server.stop()` |
 /// | Swift | Not exposed in this release |
-/// | Python | Not exposed by the Python binding in this release |
+/// | Python | `with WhepServer.bind(...) as server:`, or `server.stop()` |
 /// | C | Not exposed by the C binding in this release |
 pub struct WhepServer {
     shared: Arc<Shared>,
