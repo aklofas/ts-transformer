@@ -1333,6 +1333,11 @@ The integrator-facing changes at a glance (full detail in the sections below):
   playlist that listed it, measured, not estimated from the window.
 - `MuxPublisher::finish` closes the open segment with its media duration; the
   final `#EXTINF` no longer measures ingestion time.
+- The HLS guide's Rust quickstart timestamps its KLV (hls.js drops untimed
+  KLV); the HLS guide and cookbook describe the playlist, cut and serving
+  behaviour as implemented and note that hls.js 1.7.0-rc.1 drops the last KLV
+  PES of every fragment; the `push_klv` service-id parameter is documented as
+  such on every binding.
 
 ### Fixed — tst-py
 

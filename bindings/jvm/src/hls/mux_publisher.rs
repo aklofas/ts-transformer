@@ -131,6 +131,9 @@ jni_native! {
     }
 }
 
+// `stream_index` is the metadata service id written into the Metadata AU cell
+// for synchronous carriage; it is ignored for PrivateData and does not select
+// a stream.
 jni_native! {
     fn Java_org_tstrans_hls_MuxPublisher_nSendKlv<'local>(
         env,

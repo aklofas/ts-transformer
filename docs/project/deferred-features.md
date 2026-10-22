@@ -59,7 +59,8 @@ mean **Deferred**. An entry whose feature has shipped must never read
   on a timed-metadata PID — the shape some web players expect via the
   ID3 event path — is not emitted.
 - **Why deferred:** The native private-data KLV path already reaches
-  hls.js (`enableEmsgKLVMetadata`) and STANAG toolchains; ID3-wrapping is
+  hls.js (`enableEmsgKLVMetadata`; hls.js 1.7.0-rc.1 still drops the last
+  KLV PES of every fragment, see the HLS guide) and STANAG toolchains; ID3-wrapping is
   an extra encoding with no current consumer. It is additive, not a
   replacement.
 - **Trigger to revisit:** A target player exposes timed metadata only via

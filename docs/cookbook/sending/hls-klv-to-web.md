@@ -56,7 +56,8 @@ pub.finish()
 
 In production put a reverse proxy or CDN in front of the built-in server:
 during the run the playlist is served from memory, and `playlist.m3u8` is
-written to `/var/cache/hls` only when the publisher finishes — see the
+also written to `/var/cache/hls` at every cut, so a static origin pointed at
+that directory serves the live stream too — see the
 [HLS guide](/docs/guides/hls.md#serving-in-production).
 
 ## Client (hls.js)
@@ -66,9 +67,18 @@ samples on `FRAG_PARSING_METADATA`. Here "native `misbklv` path" means hls.js
 reads the KLV directly off the MPEG-TS private-data PID — `tst-hls` carries KLV
 in-band on that PID and does **not** emit CMAF `emsg` boxes (fMP4/emsg carriage
 per MISB ST 1910.1 is a separate deferred feature). The snippet below handles
-**both** that native path (hls.js ≥ 1.7 with `enableEmsgKLVMetadata: true`) and
-older/stock hls.js (anchor on the 16-byte SMPTE UL to slice the KLV out of
-the sample bytes):
+the native path (hls.js ≥ 1.7 with `enableEmsgKLVMetadata: true`) and falls
+back to anchoring on the 16-byte SMPTE UL to slice the KLV out of the sample
+bytes when a sample arrives under another type:
+
+Two client limits apply. hls.js discards a KLV PES that has no PTS, so the
+producer must create the KLV stream with PTS (`carries_pts=True`, as above).
+And hls.js 1.7.0-rc.1 parses a KLV PES only when the next KLV payload-unit
+start arrives in the same demux call, and never flushes the pending one: the
+last KLV PES of every fragment is dropped, and a fragment holding a single
+KLV PES delivers none. Until that is fixed upstream, push KLV at a rate that
+puts several records in every segment and expect the last record of each
+fragment to be missing.
 
 ```js
 const hls = new Hls({ enableEmsgKLVMetadata: true }); // hls.js >= 1.7: native KLV path
@@ -78,8 +88,8 @@ hls.on(Hls.Events.FRAG_PARSING_METADATA, (_e, data) => {
     const bytes = s.data instanceof Uint8Array ? s.data : new Uint8Array(s.data);
     // Native path: s.type === 'urn:misb:KLV:bin:1910.1' delivers the raw
     // KLV packet (16-byte SMPTE UL + BER length + value) directly.
-    // Older hls.js (<= 1.6): KLV on the private-data PID rides the metadata
-    // event path; anchor on the UL to slice the KLV out of the sample bytes:
+    // Any other sample type: anchor on the UL to slice the KLV out of the
+    // sample bytes:
     const klv = s.type === 'urn:misb:KLV:bin:1910.1' ? bytes : sliceAtUL(bytes);
     if (klv) onKlv(klv, s.pts); // s.pts is seconds on the media timeline
   }

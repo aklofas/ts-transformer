@@ -188,8 +188,9 @@ impl PyMuxPublisher {
         self.with_inner(py, |mp| mp.push_video(slice, rust_pts, key_frame))
     }
 
-    /// Push one KLV blob. `stream_index` selects the KLV stream when
-    /// multiple are configured (default 0 for single-stream).
+    /// Push one KLV blob. `stream_index` is the metadata service id written
+    /// into the Metadata AU cell for synchronous carriage; it is ignored for
+    /// PrivateData and does not select a stream.
     #[pyo3(signature = (klv, *, pts, stream_index = 0))]
     fn push_klv(
         &self,

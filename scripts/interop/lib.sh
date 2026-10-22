@@ -285,9 +285,8 @@ tsp_analyze_counters_zero() {
 # finding for the original instance of this). Every player this script
 # drives therefore logs a stream of codec-payload decode complaints on
 # EVERY profile it can open at all — verified line-for-line against real
-# captured logs (all 12 profiles x ffplay/vlc/mpv on this box, then all
-# 12 profiles x gst-play in the 2026-08-20 pre-evidence run that first
-# enabled those cells) before being added here, not guessed:
+# captured logs (all 12 profiles x ffplay/vlc/mpv, and all 12
+# profiles x gst-play) before being added here, not guessed:
 #   - h264: "crop values invalid", "sps_id N out of range",
 #     "non-existing PPS/SPS N referenced", "decode_slice_header error",
 #     "no frame!", "Error decoding the extradata"
@@ -343,7 +342,7 @@ DECODE_PAYLOAD_NOISE='crop values invalid|sps_id [0-9]+ out of range|non-existin
 # source-file prefix / the exact observed sink lines so a real
 # container error can't be swallowed. Decode cells are local-file
 # probes with no transport, so "Connection refused" here can only be
-# the audio server. Verified against the same 2026-08-20 12-profile
+# the audio server. Verified against the same 12-profile
 # gst-play capture as the DECODE_PAYLOAD_NOISE additions above.
 GST_PLAY_ENV_NOISE='^ALSA lib (conf|confmisc|pcm)\.c:[0-9]+:|Failed to create PipeWire event context|Failed to connect: Connection refused'
 

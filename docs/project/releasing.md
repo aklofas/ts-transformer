@@ -132,7 +132,7 @@ merge commit, and the qualification run checks that nothing under
      the soak rebuilds the same tree.
    - Run the corpus phase: `tst-interop corpus inventory` lists the
      captures, `corpus sweep` digests each one and compares it with the
-     previous release's baseline, `corpus replay` sends each capture through
+     previous release's baseline, `corpus replay` sends each selected capture through
      the transports and judges what arrives, and `corpus report` writes the
      result and its archive row. A failure stops the checklist here; it is a
      finding to fix, and the fix restarts at step 2.

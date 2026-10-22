@@ -378,8 +378,9 @@ impl<P: Publisher + Send> MuxPublisher<P> {
 
     /// Push one KLV unit.
     ///
-    /// `metadata_service_id` selects the KLV stream when multiple KLV PIDs
-    /// are configured; pass `0` for single-stream muxer configs.
+    /// `metadata_service_id` is the metadata service id written into the
+    /// Metadata AU cell for synchronous carriage; it is ignored for
+    /// PrivateData and does not select a stream.
     pub fn push_klv(
         &self,
         klv: &[u8],

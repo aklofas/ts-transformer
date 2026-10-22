@@ -833,7 +833,7 @@ fn srt_realistic_au_sizes_round_trip_and_match() {
 }
 
 /// `recv --managed`'s watcher/cancel path must actually bound the
-/// reconnect loop's runtime — the bug this fix wave found and fixed was
+/// reconnect loop's runtime — the bug this test pins was
 /// exactly a caller relying on that bound and getting an unbounded hang
 /// instead (see `recv.rs`'s `run_managed` doc comment). Manual dry-runs
 /// proved that during development; this pins it as a real regression

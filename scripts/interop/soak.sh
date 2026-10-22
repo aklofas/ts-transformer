@@ -84,9 +84,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 # Panics from any tst-interop process land in its log WITH a backtrace —
-# run 1's senders died with a bare panic line and no frames, which was
-# enough this time (the panic message named the value) but won't always
-# be. RUST_LOG=info additionally surfaces tst-pipeline's managed-
+# a panic message alone may omit the frames needed to diagnose a worker
+# failure. RUST_LOG=info additionally surfaces tst-pipeline's managed-
 # reconnect attempt/backoff logs (see main.rs's init_tracing doc), the
 # exact visibility a stuck reconnect loop needs; leaves libsrt/librist
 # at their modest info volume.
@@ -757,7 +756,7 @@ fi
 # ---------------------------------------------------------------------
 #
 # The run's expected resident memory, summed over the roles it launches
-# (the plateau figures of the 0.7.0 and 2026-10-08 runs, KiB), times
+# (measured plateau figures, KiB), times
 # SOAK_MEM_HEADROOM, must fit SOAK_MEM_BUDGET of MemTotal. A host that
 # cannot hold the run refuses it here, before any worker launches, and
 # names the --no-rtsp-publish* / --no-whep flags that would fit. The raw
@@ -771,8 +770,8 @@ declare -A ROLE_RSS_KB=(
   [rtsp-publish-recv]=60000 [rtsp-publish-publisher]=80000
   [rtsp-publish-es-recv]=60000 [rtsp-publish-es-publisher]=80000
   # whep-viewer is the browser's whole process tree, per-process RSS
-  # summed (14 processes of Chrome 155 playing the mount, measured on the
-  # 2026-10-21 wiring run; shared pages count once per process, so this
+  # summed (14 processes of Chrome 155 playing the mount, measured while
+  # 14 Chrome processes played the mount; shared pages count once per process, so this
   # overstates), though only the viewer loop's shell is sampled, like the
   # publisher loops; whep-serve the server with its in-process muxer
   # (15 MB measured, the plateau not yet known).
@@ -1156,8 +1155,8 @@ record_pid srt-send $!
 # ~200ms.
 #
 # tst-rist's default is 200ms — under the one-way delay on its own, and
-# the srt leg's counterpart was the one that got sized. Found on this
-# arc's 1-hour smoke: with the default, librist auto-scaled its flow
+# the srt leg's counterpart was the one that got sized. Found in a
+# measured 1-hour run: with the default, librist auto-scaled its flow
 # buffer down to 450ms, logged 148 "Dropped N late packets" and 49
 # "Dropped N packets due to buffers being full" errors, and this leg's
 # receiver reported 155 events no injection explained — against ZERO on
@@ -1551,8 +1550,7 @@ record_pid sampler $!
 # ---------------------------------------------------------------------
 #
 # See README.md's "Outputs and the supervisor" for why this exists
-# (run 1's senders died 14.5h in; the waits below can't notice until
-# the 72h deadline). Polls every worker + the sampler every 30s until
+# (ordinary waits cannot notice a worker death before the 72h deadline). Polls every worker + the sampler every 30s until
 # SUPERVISOR_GRACE_S before the nominal deadline; end-of-run process
 # exits inside that grace window are normal staggering and are left to
 # the ordinary waits below.

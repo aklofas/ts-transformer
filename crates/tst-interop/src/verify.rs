@@ -2694,8 +2694,8 @@ mod tests {
     }
 
     /// Error events are bucketed by packets since the last reconnect —
-    /// the question run 3 (2026-09-17) could not answer offline: WHEN in an
-    /// outage window its ~208 excused gaps fell.
+    /// how to locate gaps within an outage window: bucket errors by packets
+    /// since reconnect (~208 excused gaps fell in one measured outage window).
     #[test]
     fn error_events_are_bucketed_by_packets_since_the_last_reconnect() {
         let wire = wire_for("baseline", 2.0);
@@ -4507,8 +4507,8 @@ mod tests {
     /// Feed `generations` replays of one `frames`-frame source the way
     /// the `rtsp-publish://` mount surfaces a publisher that restarts it:
     /// every replay starts the video and KLV PTS lines at 0 again. At each
-    /// boundary the demuxer raises what the soak's elementary leg measured
-    /// (2026-10-19 drill): a backward `PcrAnomaly` on the PCR PID (the
+    /// boundary the demuxer raises what the soak's elementary leg measured:
+    /// a backward `PcrAnomaly` on the PCR PID (the
     /// video PID) before the old generation's final access unit surfaces,
     /// then on each of the video and KLV PIDs a `PtsAnomaly` whose delta
     /// is that PID's backward step, queued just before the sample.

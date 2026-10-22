@@ -221,9 +221,10 @@ pub unsafe extern "C" fn tst_mux_publisher_send_video(
 ///
 /// **Pass raw KLV LS bytes** — for streams configured as synchronous
 /// metadata the muxer prepends the 5-byte `Metadata_AU_cell` header per
-/// ITU-T H.222.0 V9 §2.12.4.2; do not pre-wrap. `stream_index` selects the
-/// KLV stream when multiple KLV PIDs are configured (`0` for single-stream
-/// configs). `pts` is in 90 kHz ticks.
+/// ITU-T H.222.0 V9 §2.12.4.2; do not pre-wrap. `stream_index` is the
+/// metadata service id written into the Metadata AU cell for synchronous
+/// carriage; it is ignored for PrivateData and does not select a stream.
+/// `pts` is in 90 kHz ticks.
 ///
 /// Returns 0 on success, a negative `TST_E_*` code on failure.
 ///

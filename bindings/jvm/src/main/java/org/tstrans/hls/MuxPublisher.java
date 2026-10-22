@@ -68,7 +68,12 @@ public final class MuxPublisher extends NativeHandle {
         nSendVideo(peekHandle(), nal, pts, keyFrame);
     }
 
-    /** Push raw KLV LS bytes (the muxer adds the AU-cell header on sync streams). */
+    /**
+     * Push raw KLV LS bytes (the muxer adds the AU-cell header on sync streams).
+     * {@code streamIndex} is the metadata service id written into the Metadata AU
+     * cell for synchronous carriage; it is ignored for PrivateData and does not
+     * select a stream.
+     */
     public void pushKlv(byte[] klv, long pts, int streamIndex) throws MuxException, HlsException {
         ensureOpen("MuxPublisher is closed");
         nSendKlv(peekHandle(), klv, pts, streamIndex);

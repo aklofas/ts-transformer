@@ -421,7 +421,9 @@ class MuxPublisher:
         ...
 
     def push_klv(self, klv: _BytesLike, *, pts: Any, stream_index: int = ...) -> None:
-        """Push one KLV blob. ``stream_index`` selects the KLV stream."""
+        """Push one KLV blob. ``stream_index`` is the metadata service id written
+        into the Metadata AU cell for synchronous carriage; it is ignored for
+        PrivateData and does not select a stream."""
         ...
 
     def push_audio(self, frames: _BytesLike, *, pts: Any) -> None:
