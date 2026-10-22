@@ -88,7 +88,8 @@ pub fn demux_file_with_config(
 ///
 /// # Error reporting contract
 ///
-/// - **Read error** (e.g. a disk read failure; a truncated file is not an error, it ends at EOF): the
+/// - **Read error** (e.g. a disk read failure; a truncated file is not an
+///   error, it ends at EOF): the
 ///   iterator emits `Some(Err(io_err))` next, then `None` on every
 ///   subsequent call. Events that the demuxer had already produced
 ///   from the successful prefix are returned BEFORE the error (they

@@ -176,8 +176,9 @@ merge commit, and the qualification run checks that nothing under
     tree and this commit. A `v*` tag push applies the same gate. The gate
     judges the newest 72-hour soak that stands for the commit. A newer failed
     soak of any declared duration on the same tree is a reason for NO-GO,
-    while a newer passing short run never replaces the 72-hour pass. Without the input the record is a
-    mid-cycle one and states that the gate was not applied.
+    while a newer passing short run never replaces the 72-hour pass. Without
+    the input the record is a mid-cycle one and states that the gate was not
+    applied.
 
     A **NO-GO** record lists its reasons (a failed or missing leg, a stale
     `ci` result, a dirty tree, an unexpected interop failure, a missing,

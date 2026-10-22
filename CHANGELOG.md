@@ -1021,7 +1021,7 @@ The integrator-facing changes at a glance (full detail in the sections below):
   and the `cert`/`key` pairing; `parse` and `WhepServer::bind_with` both run
   it, so a hand-edited `WhepUrl` is refused with `WhepServerError::InvalidUrl`
   before any port is bound. The `token` is checked on POST, PATCH and DELETE;
-  the OPTIONS preflight and the 404 and 405 answers need none.
+  the OPTIONS preflight and a request for no route need none.
 - A removed mount's `viewers` and `viewers_waiting_keyframe` read 0 on a
   retained `MountHandle`.
 

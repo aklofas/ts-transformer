@@ -100,9 +100,11 @@ fn same_but_version(a: &FileDigest, b: &FileDigest) -> bool {
 /// Files a sweep invalidates: the replay's results and its subset plan.
 const DOWNSTREAM_OUTPUTS: [&str; 3] = ["replay.json", "replay-rss.csv", "replay-plan.json"];
 
-/// SHA-256 over the bytes of every `digests/*.json` file of the run, in
-/// sorted file-name order. A replay records it when it starts, and the
-/// report recomputes it, so a replay of one sweep never stands for another.
+/// SHA-256 over every `digests/*.json` file of the run, in sorted file-name
+/// order: per file the name, then the byte length (u64 little-endian), then
+/// the bytes, so renaming a file or moving bytes between files changes it.
+/// A replay records it when it starts, and the report recomputes it, so a
+/// replay of one sweep never stands for another.
 pub fn digests_fingerprint(run: &RunDir) -> Result<Sha256Hex, String> {
     let dir = run.root.join("digests");
     let mut names: Vec<std::ffi::OsString> = std::fs::read_dir(&dir)
@@ -116,6 +118,8 @@ pub fn digests_fingerprint(run: &RunDir) -> Result<Sha256Hex, String> {
     for n in names {
         let bytes =
             std::fs::read(dir.join(&n)).map_err(|e| format!("read a digest file: {}", e.kind()))?;
+        h.update(n.to_string_lossy().as_bytes());
+        h.update((bytes.len() as u64).to_le_bytes());
         h.update(&bytes);
     }
     Ok(Sha256Hex(

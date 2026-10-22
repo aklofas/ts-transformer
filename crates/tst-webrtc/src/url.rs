@@ -41,7 +41,7 @@ pub struct WhepUrl {
     /// The most viewers connected at once (1 to 64, default 10).
     pub max_viewers: u64,
     /// A bearer token every POST, PATCH and DELETE must carry; the OPTIONS
-    /// preflight and the 404 and 405 answers need none. `None` admits any
+    /// preflight and a request for no route need none. `None` admits any
     /// request.
     pub token: Option<String>,
     /// The `Access-Control-Allow-Origin` value the endpoint answers with

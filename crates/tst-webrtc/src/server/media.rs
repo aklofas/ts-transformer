@@ -1314,6 +1314,84 @@ mod tests {
         assert_eq!(*sink.0.borrow(), [peer]);
     }
 
+    /// A media thread's state with one session on a fresh mount whose
+    /// viewer gauges read 3 and 2, never run.
+    fn media_with_seeded_session() -> (Media, Arc<MountState>, Instant) {
+        use crate::MountConfig;
+        use crate::clock::ManualClock;
+        use crate::mount::MountHandle;
+
+        let clock = Arc::new(ManualClock::new());
+        let now = clock.now();
+        let cfg = MediaConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            advertise: None,
+            max_viewers: 4,
+            ice_timeout: Duration::from_secs(30),
+            disconnect_timeout: Duration::from_secs(30),
+        };
+        let socket = UdpSocket::bind(cfg.bind).unwrap();
+        let local = socket.local_addr().unwrap();
+        let (_media_tx, media_rx) = mpsc::sync_channel(4);
+        let (_ctrl_tx, ctrl_rx) = mpsc::sync_channel(4);
+        let (handle, _frames) = MountHandle::for_test(MountConfig::default());
+        let state = Arc::clone(&handle.state);
+        state.stats.viewers.store(3, Ordering::Relaxed);
+        state
+            .stats
+            .viewers_waiting_keyframe
+            .store(2, Ordering::Relaxed);
+        let rtc = accept(server_rtc(now, AudioPolicy::Drop), SAFARI);
+        let media = Media {
+            cfg,
+            clock,
+            socket,
+            local,
+            wake_addr: local,
+            pending: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            media_rx,
+            ctrl_rx,
+            mounts: Arc::new(Mutex::new(HashMap::new())),
+            candidates: Vec::new(),
+            viewers: vec![Viewer::new("0".repeat(32), Arc::clone(&state), rtc, 0, now)],
+            counters: ServerCounters::default(),
+            gauges_dirty: false,
+            busy: false,
+            syncs: Vec::new(),
+            buf: Vec::new(),
+        };
+        (media, state, now)
+    }
+
+    fn gauges(state: &MountState) -> (u64, u64) {
+        (
+            state.stats.viewers.load(Ordering::Relaxed),
+            state.stats.viewers_waiting_keyframe.load(Ordering::Relaxed),
+        )
+    }
+
+    #[test]
+    fn a_removed_mount_message_zeroes_its_gauges_and_drops_its_sessions() {
+        let (mut media, state, now) = media_with_seeded_session();
+        let id = state.id;
+        media.handle_media_msg(MediaMsg::MountRemoved(id), now);
+        assert!(media.viewers.is_empty());
+        assert_eq!(gauges(&state), (0, 0));
+    }
+
+    #[test]
+    fn reaping_a_closed_mount_zeroes_its_gauges_and_drops_its_sessions() {
+        let (mut media, state, now) = media_with_seeded_session();
+        media.reap(now);
+        assert_eq!(media.viewers.len(), 1, "an open mount's session stays");
+        assert_eq!(gauges(&state), (3, 2));
+        state.closed.store(true, Ordering::Release);
+        media.reap(now);
+        assert!(media.viewers.is_empty());
+        assert_eq!(gauges(&state), (0, 0));
+    }
+
     #[test]
     fn connected_pins_the_source_of_the_last_datagram_handed_over() {
         use crate::MountConfig;

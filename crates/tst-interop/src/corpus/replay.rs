@@ -92,7 +92,7 @@ pub struct ReplaySummary {
     /// the sweep ran outside a repository, and absent from older files.
     #[serde(default)]
     pub sweep_tree: String,
-    /// [`sweep::digests_fingerprint`] of the run directory when the replay
+    /// [`digests_fingerprint`] of the run directory when the replay
     /// started; absent from older files.
     #[serde(default = "no_fingerprint")]
     pub sweep_digests_sha256: Sha256Hex,

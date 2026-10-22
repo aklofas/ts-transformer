@@ -365,7 +365,7 @@ ask the media thread and can wait up to 2 s for its reply; a mount's
 | other methods | `405` with `Allow: POST, PATCH, DELETE, OPTIONS` |
 | unknown mount | `404` |
 | server at `max_viewers` (all mounts together) | `503`, `Retry-After: 5` |
-| body not an SDP offer, or an offer whose payload types are inconsistent: one payload number mapped to two formats (also twice inside one media section), or an `a=rtpmap` or `a=fmtp` line for a number the section's `m=` line does not list | `400` with a plain-text reason |
+| body not an SDP offer, or an offer whose payload types are inconsistent: one payload number mapped to two formats (also twice inside one media section), or an `a=rtpmap` or `a=fmtp` line for a number the section's `m=` line does not list, or one number given the same `a=rtpmap` or `a=fmtp` line twice in a section | `400` with a plain-text reason |
 | no offered video payload matches the mount | `406` with a plain-text reason |
 | missing or wrong bearer token when `token=` is set | `401`, `WWW-Authenticate: Bearer` |
 | request head over 16 KiB, body over 64 KiB, no complete request within 5 s | `431`, `400`, `408` |

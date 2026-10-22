@@ -406,6 +406,7 @@ pub tst_webrtc::url::WhepUrl::tls: bool
 pub tst_webrtc::url::WhepUrl::token: core::option::Option<alloc::string::String>
 impl tst_webrtc::url::WhepUrl
 pub fn tst_webrtc::url::WhepUrl::parse(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
+pub fn tst_webrtc::url::WhepUrl::validate(&self) -> core::result::Result<(), tst_core::url::common::UrlError>
 impl core::clone::Clone for tst_webrtc::url::WhepUrl
 pub fn tst_webrtc::url::WhepUrl::clone(&self) -> tst_webrtc::url::WhepUrl
 impl core::cmp::Eq for tst_webrtc::url::WhepUrl

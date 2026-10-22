@@ -767,10 +767,11 @@ fn a_hand_edited_url_that_fails_validation_binds_no_port() {
     let mut plain_with_key = WhepUrl::parse("whep://127.0.0.1:0").unwrap();
     plain_with_key.key = Some("k.pem".into());
     for url in [too_many, plain_with_key] {
-        // Free the port, then check the refused bind did not take it.
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
+        // Hold both ports for the whole call: a bind that got past
+        // validation would fail with an I/O error, not `InvalidUrl`.
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = tcp.local_addr().unwrap().port();
+        let _udp = std::net::UdpSocket::bind(("127.0.0.1", port));
         let mut url = url;
         url.port = port;
         url.media_port = port;
@@ -778,7 +779,6 @@ fn a_hand_edited_url_that_fails_validation_binds_no_port() {
             Err(WhepServerError::InvalidUrl(_)) => {}
             other => panic!("{:?}", other.err()),
         }
-        std::net::TcpListener::bind(("127.0.0.1", port)).expect("the refused bind held no port");
     }
 }
 

@@ -48,8 +48,8 @@ export function fnv1a(bytes) {
  * is pushed.
  *
  * With `dedupe` a record delivered by both carriages (same bound frame
- * RTP timestamp, PTS and bytes) is emitted once. Within a frame the SEI copies go first, so the SEI copy
- * wins; on arrival the first copy wins.
+ * RTP timestamp, PTS and bytes) is emitted once. Within a frame the SEI
+ * copies go first, so the SEI copy wins; on arrival the first copy wins.
  */
 export class KlvQueue {
   constructor({ onKlv, dedupe = true, paintLocked = true, pendingMax = PENDING_FRAMES_MAX }) {
