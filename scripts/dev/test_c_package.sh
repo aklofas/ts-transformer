@@ -24,11 +24,17 @@ for d in a b; do
     feat_check() { test "$(jq -r '.features|sort|join(",")' "$T/$d/manifest.json")" = \
         "$(sed -n 's/^#define TST_HAS_\(.*\) 1$/\1/p' "$T/$d/include/tstrans_config.h" | tr '[:upper:]' '[:lower:]' | sort | paste -sd, -)"; }
     check feat_check
-    pc_check() { test "$(pkg-config --with-path="$T/$d/lib/pkgconfig" --variable=includedir tstrans)" = "$(cd "$T/$d" && pwd)/include"; }
+    pc_check() { test "$(pkg-config --with-path="$T/$d/lib/pkgconfig" --variable=includedir tstrans)" = "$T/$d/lib/pkgconfig/../../include"; }
     check pc_check
     ro_check() { ! test -w "$T/$d/include/tstrans.h"; }
     check ro_check
 done
+# A copy in another directory must resolve to itself, not to the staging dir.
+cp -R "$T/a" "$T/moved"
+reloc_cflags() { test "$(pkg-config --with-path="$T/moved/lib/pkgconfig" --cflags tstrans | xargs)" = "-I$T/moved/lib/pkgconfig/../../include"; }
+check reloc_cflags
+reloc_libs() { case "$(pkg-config --with-path="$T/moved/lib/pkgconfig" --libs tstrans)" in "-L$T/moved/lib/pkgconfig/../../lib -ltstrans"*) true ;; *) false ;; esac; }
+check reloc_libs
 a_features() { test "$(jq -r '.features|join(",")' "$T/a/manifest.json")" = "srt,rtp"; }
 check a_features
 refuse_check() { bash "$PKG" --features srt --out "$T/a" >/dev/null 2>&1; test $? -eq 2; }
