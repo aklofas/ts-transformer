@@ -452,6 +452,12 @@ impl<P: Publisher + Send> MuxPublisher<P> {
 
     /// Consume the shell and return the owned inner publisher.
     ///
+    /// The open segment is first closed with its media duration, the PTS
+    /// span from its first access unit to the last one pushed. That access
+    /// unit's own display time is unknown, so the final `#EXTINF` ends at
+    /// its presentation time. A stream with no open segment (no video, or
+    /// one just cut) closes nothing.
+    ///
     /// No end-of-stream marker is written: if the caller needs to finalize
     /// the publisher (flush the pending segment, write an HLS
     /// `#EXT-X-ENDLIST` tag, tear down sinks, etc.), they should call
@@ -464,6 +470,17 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     /// (possibly in partial state if the panic interrupted a push) is
     /// handed back for caller disposal.
     pub fn finish(self) -> Result<P, MuxPublisherError<P::Error>> {
+        let cut = self
+            .0
+            .with_parts(|_, seg| match (seg.segment_start_pts, seg.last_video_pts) {
+                (Some(start), Some(end)) => seg.cut(media_span(start, end)),
+                _ => Ok(()),
+            });
+        match cut {
+            Ok(r) => r.map_err(MuxPublisherError::Publisher)?,
+            Err(PartsError::Poisoned) => {}
+            Err(PartsError::Closed) => return Err(MuxPublisherError::Closed),
+        }
         Ok(self.0.into_inner().into_publisher())
     }
 }
@@ -840,11 +857,42 @@ mod tests {
         mp.push_video(&au, Pts90khz::new(18000), false).unwrap();
         mp.push_video(&au, Pts90khz::new(270000), true).unwrap();
         let p = mp.finish().unwrap();
-        assert_eq!(p.cuts.len(), 1, "stream-head IDR must not emit a cut");
+        // One cut for the second IDR, one from `finish` closing the segment
+        // it opened; the stream-head IDR emits none.
+        assert_eq!(p.cuts.len(), 2, "stream-head IDR must not emit a cut");
+        assert_eq!(p.cuts[1], Duration::ZERO, "single-AU segment");
         assert_eq!(
             p.cuts[0],
             Duration::from_nanos(270_000 * 1_000_000_000 / 90_000)
         );
+    }
+
+    #[test]
+    fn finish_cuts_the_open_segment_with_its_media_duration() {
+        // Fast ingestion: the open segment spans 0..2.5 s of media time.
+        // `finish` must close it with that span, not leave the publisher to
+        // fall back to wall-clock time.
+        let p = RecordingPublisher {
+            cuts: vec![],
+            segment_duration: None,
+        };
+        let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+        let au = h264_au();
+        mp.push_video(&au, Pts90khz::new(0), true).unwrap();
+        mp.push_video(&au, Pts90khz::new(120_000), false).unwrap();
+        mp.push_video(&au, Pts90khz::new(225_000), false).unwrap();
+        let p = mp.finish().unwrap();
+        assert_eq!(p.cuts, vec![Duration::from_millis(2500)]);
+    }
+
+    #[test]
+    fn finish_without_video_cuts_nothing() {
+        let p = RecordingPublisher {
+            cuts: vec![],
+            segment_duration: None,
+        };
+        let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+        assert!(mp.finish().unwrap().cuts.is_empty());
     }
 
     /// One recorded publisher operation, in call order.
@@ -862,6 +910,13 @@ mod tests {
     /// keyframe's bytes come after it).
     struct OpLogPublisher {
         ops: Vec<Op>,
+    }
+
+    /// `ops` without the cut `finish` appends to close the open segment.
+    fn without_closing_cut(mut ops: Vec<Op>) -> Vec<Op> {
+        assert!(matches!(ops.last(), Some(Op::Cut(_))), "ops: {ops:?}");
+        ops.pop();
+        ops
     }
 
     impl Publisher for OpLogPublisher {
@@ -904,7 +959,9 @@ mod tests {
         mp.push_video(&au, Pts90khz::new(k2), true).unwrap(); // K2
         mp.push_video(&au, Pts90khz::new(4 * 9000), false).unwrap(); // P
         mp.push_video(&au, Pts90khz::new(k3), true).unwrap(); // K3
-        let p = mp.finish().unwrap();
+        let p = OpLogPublisher {
+            ops: without_closing_cut(mp.finish().unwrap().ops),
+        };
 
         // Exactly two cuts (K2, K3 — none for the stream-head K1).
         let cut_positions: Vec<usize> = p
@@ -958,7 +1015,7 @@ mod tests {
         for (t, key) in feed {
             mp.push_video(&au, Pts90khz::new(t), key).unwrap();
         }
-        let expected = mp.finish().unwrap().ops;
+        let expected = without_closing_cut(mp.finish().unwrap().ops);
 
         let sender = MuxSender::new(
             Segmented::new(OpLogPublisher { ops: vec![] }),
@@ -1197,6 +1254,9 @@ mod tests {
         }
         let cut_calls = mp.stats().cut_calls;
         let mut cuts = mp.finish().unwrap().cuts;
+        // `finish` closes the open segment last.
+        let closing = cuts.pop();
+        assert!(closing.is_some(), "finish must close the open segment");
         if segment_duration.is_some() {
             // The intent signal on the first video AU: a plain `cut_segment`
             // (recorded as zero), not a closed segment.
@@ -1260,7 +1320,7 @@ mod tests {
             );
             mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
             assert_eq!(mp.stats().cut_calls, 0, "no segment was closed");
-            let ops = mp.finish().unwrap().0.ops;
+            let ops = without_closing_cut(mp.finish().unwrap().0.ops);
             match bound {
                 Some(_) => {
                     assert_eq!(ops[0], Op::Cut(Duration::ZERO), "ops: {ops:?}");
@@ -1287,7 +1347,7 @@ mod tests {
             .unwrap();
         mp.push_data(&[0x42; 64], Pts90khz::new(0)).unwrap();
         mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
-        let ops = mp.finish().unwrap().0.ops;
+        let ops = without_closing_cut(mp.finish().unwrap().0.ops);
         assert!(matches!(ops[0], Op::Push(_)), "ops: {ops:?}");
         assert!(ops.iter().all(|o| matches!(o, Op::Push(_))), "ops: {ops:?}");
     }

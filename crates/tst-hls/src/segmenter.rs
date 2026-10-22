@@ -747,6 +747,9 @@ mod tests {
         // segmenter must fall back to wall-clock so EXTINF is never 0.000.
         s.cut_with_duration(Some(Duration::ZERO)).unwrap();
         assert_eq!(s.history.len(), 1);
+        // The segmenter reads `Instant::now()` itself, so the elapsed time
+        // is not injectable here: only assert it is non-zero.
+        assert!(s.history[0].duration > Duration::ZERO);
     }
 
     // -- serve_lookup unit tests -------------------------------------------
