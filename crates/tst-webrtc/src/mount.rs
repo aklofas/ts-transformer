@@ -9,10 +9,11 @@
 //! with the frame's RTP timestamp).
 //!
 //! The mount's state sits behind one mutex that a push holds from the
-//! clock step through the enqueue, so pushes from any thread reach the
-//! media queue in the order the clock processed them. It is never held
-//! across the network: the queue is bounded and filled with `try_send`,
-//! so a push never blocks on the media thread. When the queue is full the
+//! clock step through the enqueue and the coalesced loopback wake, so
+//! pushes from any thread reach the media queue in the order the clock
+//! processed them. It is never held through a media send: the queue is
+//! bounded and filled with `try_send`, so a push never blocks on the media
+//! thread. When the queue is full the
 //! message is dropped and counted.
 
 use std::collections::VecDeque;

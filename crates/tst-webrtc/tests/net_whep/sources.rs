@@ -1,5 +1,5 @@
 //! The addresses a session takes datagrams from: the address that
-//! completed the handshake is pinned, and before that at most 16
+//! carried the handshake is pinned, and before that at most 16
 //! distinct sources are admitted. The extra sources send STUN binding
 //! requests built with the session's own ICE credentials, so they pass
 //! str0m's routing and only the source rules stop them.
@@ -126,4 +126,61 @@ fn a_seventeenth_source_before_the_handshake_is_dropped() {
     admitted[0].send_to(&request, media).unwrap();
     assert!(eventually(|| got_datagram(&admitted[0], media), WAIT));
     assert_eq!(srv.stats().datagrams_unrouted, 1);
+}
+
+#[test]
+fn a_handshake_finished_from_a_second_address_pins_nothing_there() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    let offer = v.offer(false);
+    let (status, _, answer) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    v.accept_answer(&answer);
+
+    // The viewer's DTLS records after the first leave from a second address,
+    // which the session has also seen a valid STUN check from.
+    let second = extra_socket();
+    v.alt_dtls_sock = Some(second.try_clone().unwrap());
+    second
+        .send_to(&binding_request(&offer, &answer), srv.media_addr())
+        .unwrap();
+    let _ = v.pump(|v| v.connected, Duration::from_secs(1));
+    assert!(!v.connected, "the handshake finished from a second address");
+    assert!(
+        eventually(|| srv.stats().datagrams_unrouted >= 1, WAIT),
+        "the later DTLS record was not counted unrouted"
+    );
+
+    // Drain what the server answered the STUN check with, then check that no
+    // media follows.
+    while got_datagram(&second, srv.media_addr()) {}
+    for (i, (au, key)) in h264_gop().iter().take(5).enumerate() {
+        m.push_video(au, Pts90khz::new(i as i64 * 3000), *key)
+            .unwrap();
+    }
+    let _ = v.pump(|v| !v.frames.is_empty(), Duration::from_millis(500));
+    assert!(!got_datagram(&second, srv.media_addr()));
+    let session = m.sessions().pop().expect("one session");
+    assert_eq!(session.connected_for, None, "the session connected");
+    assert_ne!(session.remote_addr, second.local_addr().ok());
+}
+
+#[test]
+fn a_stun_check_from_a_second_source_does_not_block_the_handshake() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    let offer = v.offer(false);
+    let (status, _, answer) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    v.accept_answer(&answer);
+
+    let second = extra_socket();
+    second
+        .send_to(&binding_request(&offer, &answer), srv.media_addr())
+        .unwrap();
+    connect_all(&m, std::slice::from_mut(&mut v));
+    let session = m.sessions().pop().expect("one session");
+    assert_eq!(session.remote_addr, Some(v.sock.local_addr().unwrap()));
 }

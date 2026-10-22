@@ -49,6 +49,11 @@ pub struct TestViewer {
     pub own_channel_msgs: u64,
     /// Every address a datagram came from.
     pub sources: HashSet<SocketAddr>,
+    /// When set, every DTLS datagram after the first leaves through this
+    /// socket instead of `sock`: a handshake continued from a second address.
+    pub alt_dtls_sock: Option<UdpSocket>,
+    /// DTLS datagrams sent so far.
+    pub dtls_sent: u64,
     /// STUN binding responses received: one per consent check the server
     /// answered.
     pub stun_responses: u64,
@@ -97,6 +102,8 @@ impl TestViewer {
             own_channels: Vec::new(),
             own_channel_msgs: 0,
             sources: HashSet::new(),
+            alt_dtls_sock: None,
+            dtls_sent: 0,
             stun_responses: 0,
             ice_log: Vec::new(),
             error: None,
@@ -190,7 +197,16 @@ impl TestViewer {
                     break;
                 }
                 Ok(Output::Transmit(t)) => {
-                    let _ = self.sock.send_to(&t.contents, t.destination);
+                    // RFC 7983: a first byte in 20..=63 is DTLS.
+                    let is_dtls = t.contents.first().is_some_and(|b| (20..=63).contains(b));
+                    if is_dtls {
+                        self.dtls_sent += 1;
+                    }
+                    let sock = match &self.alt_dtls_sock {
+                        Some(alt) if is_dtls && self.dtls_sent > 1 => alt,
+                        _ => &self.sock,
+                    };
+                    let _ = sock.send_to(&t.contents, t.destination);
                 }
                 Ok(Output::Event(ev)) => self.on_event(ev),
                 // One frame that does not depacketize; keep polling.

@@ -25,10 +25,12 @@
 //! [`SessionStats::dc_messages_dropped`]. The video is never held back for
 //! the data channel.
 //!
-//! A session's media goes only to the address it connected from: the
-//! source of the datagram that completes the DTLS handshake is pinned,
-//! nothing is sent to any other address, and datagrams from any other
-//! address are dropped and counted in [`ServerStats::datagrams_unrouted`].
+//! A session's media goes only to the address that carried its DTLS
+//! handshake: the source of the first DTLS record is fixed, a later DTLS
+//! record from another address is dropped, and once the handshake completes
+//! that address is pinned. Nothing is sent to any other address, and
+//! datagrams from any other address are dropped and counted in
+//! [`ServerStats::datagrams_unrouted`].
 //! A NAT rebinding or a move to another network interface therefore needs
 //! a new session (a new POST). Before the handshake completes, a session
 //! admits datagrams from at most 16 distinct source addresses.

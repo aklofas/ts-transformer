@@ -390,7 +390,8 @@ association once it is up.
   accepts it, and the ones no session accepts are counted in
   `datagrams_unrouted`.
 - **A session is pinned to one address.** Media goes only to the address
-  the datagram that completed the DTLS handshake came from. A NAT rebinding
+  that carried the DTLS handshake, fixed from the first DTLS record; a
+  later DTLS record from another address is dropped. A NAT rebinding
   or a move to another network interface needs a new session (a new POST).
   Before the handshake completes, a session admits datagrams from at most 16
   distinct source addresses.
