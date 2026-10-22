@@ -738,18 +738,48 @@ fn mount_paths_are_checked_and_removal_closes_the_mount() {
 
 #[test]
 fn removing_a_mount_closes_its_sessions() {
-    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let clock = Arc::new(ManualClock::new());
+    let url = WhepUrl::parse("whep://127.0.0.1:0").unwrap();
+    let srv = WhepServer::bind_with_clock(url, clock).unwrap();
     let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
     let mut v = TestViewer::new();
     join(srv.local_addr(), "/cam", &mut v, false);
     connect_all(&m, std::slice::from_mut(&mut v));
+    assert!(srv.wake_for_test());
+    assert_eq!(m.stats().viewers, 1);
     srv.remove_mount("/cam").unwrap();
+    assert!(srv.wake_for_test());
     assert!(
         eventually(|| srv.stats().active_sessions == 0, DELIVER),
         "{:?}",
         srv.stats()
     );
     assert!(m.sessions().is_empty());
+    // The retained handle reads no viewers of the removed mount.
+    let stats = m.stats();
+    assert_eq!((stats.viewers, stats.viewers_waiting_keyframe), (0, 0));
+}
+
+#[test]
+fn a_hand_edited_url_that_fails_validation_binds_no_port() {
+    let mut too_many = WhepUrl::parse("whep://127.0.0.1:0").unwrap();
+    too_many.max_viewers = 65;
+    let mut plain_with_key = WhepUrl::parse("whep://127.0.0.1:0").unwrap();
+    plain_with_key.key = Some("k.pem".into());
+    for url in [too_many, plain_with_key] {
+        // Free the port, then check the refused bind did not take it.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let mut url = url;
+        url.port = port;
+        url.media_port = port;
+        match WhepServer::bind_with(url) {
+            Err(WhepServerError::InvalidUrl(_)) => {}
+            other => panic!("{:?}", other.err()),
+        }
+        std::net::TcpListener::bind(("127.0.0.1", port)).expect("the refused bind held no port");
+    }
 }
 
 #[cfg(not(feature = "tls"))]

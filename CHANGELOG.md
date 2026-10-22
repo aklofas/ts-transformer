@@ -1014,6 +1014,16 @@ The integrator-facing changes at a glance (full detail in the sections below):
   `From<WhepServerError>` and `From<PushError>` for `BindingError`; Python's
   `tstrans.exceptions` gains `WebrtcErrorKind` and `WebrtcError`, which no
   `tstrans` call raises yet.
+- A video section the viewer offered `sendonly` or `inactive` is skipped
+  when choosing the payload (as audio already was); an offer with no
+  receiving video section is rejected with a reason that says so.
+- `WhepUrl::validate` checks `max_viewers` (1 to 64), a non-empty `token`
+  and the `cert`/`key` pairing; `parse` and `WhepServer::bind_with` both run
+  it, so a hand-edited `WhepUrl` is refused with `WhepServerError::InvalidUrl`
+  before any port is bound. The `token` is checked on POST, PATCH and DELETE;
+  the OPTIONS preflight and the 404 and 405 answers need none.
+- A removed mount's `viewers` and `viewers_waiting_keyframe` read 0 on a
+  retained `MountHandle`.
 
 ### Added — tst-c
 

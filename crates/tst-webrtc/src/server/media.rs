@@ -829,7 +829,13 @@ impl Media {
             }
             MediaMsg::MountRemoved(id) => {
                 let before = self.viewers.len();
-                self.viewers.retain(|v| v.mount != id);
+                self.viewers.retain(|v| {
+                    if v.mount != id {
+                        return true;
+                    }
+                    zero_gauges(&v.mount_state);
+                    false
+                });
                 self.gauges_dirty |= self.viewers.len() != before;
             }
             MediaMsg::Stop => return Flow::Stop,
@@ -845,6 +851,7 @@ impl Media {
             // A removed mount's sessions close even when its
             // MountRemoved message was dropped at a full queue.
             if v.mount_state.closed.load(Ordering::Acquire) {
+                zero_gauges(&v.mount_state);
                 return false;
             }
             let Some(cause) = reap_decision(v, now, cfg) else {
@@ -1149,6 +1156,17 @@ fn write_dc(v: &mut Viewer, msg: &KlvMessage) -> Write {
             Write::Discarded
         }
     }
+}
+
+/// Zeroes the viewer gauges of a mount whose viewers were dropped; a retained
+/// handle would otherwise keep reading the last counts of a mount that is no
+/// longer in the map `update_gauges` visits.
+fn zero_gauges(state: &MountState) {
+    state.stats.viewers.store(0, Ordering::Relaxed);
+    state
+        .stats
+        .viewers_waiting_keyframe
+        .store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
