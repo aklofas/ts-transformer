@@ -830,7 +830,7 @@ mod tests {
         assert_eq!(m.get("uri").map(String::as_str), Some("rtsp://cam/x"));
     }
 
-    // ── Combined client-build → server-verify round-trip ─────────
+    // ── Combined client-build → server-verify round-trip ────────────────
 
     /// Exercise the PUBLIC `build_digest_response` client builder against the
     /// server verifier. Previously each side was tested only against shared RFC

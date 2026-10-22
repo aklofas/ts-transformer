@@ -243,8 +243,8 @@ jni_native! {
             }
         };
         // Pulled BEFORE `inner` is boxed into the registry entry alongside
-        // it — same construction-time-capture shape as `cancel` above, so
-        // reading it never needs the resource lock. `cancel`
+        // it — same construction-time-capture shape as `cancel` above; the
+        // lock-free getters read it from the entry's `Owned` snapshot. `cancel`
         // serves as both the close hook and the lock-free `nCancelHandle`
         // target (readable while `recv` holds the resource lock).
         let end_reason = inner.end_reason_handle();

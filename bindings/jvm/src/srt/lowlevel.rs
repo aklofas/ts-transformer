@@ -10,9 +10,8 @@
 //!   after the native call.
 //! - `nClose` takes + tears down via `REGISTRY.close`.
 //!
-//! Error mapping keeps each KIND literal on the same line as `throw_srt` so the
-//! error-kind coverage rail (`scripts/check/jvm/kind-equivalence.sh`) can
-//! verify coverage.
+//! Errors are thrown through `throw_srt` with a `BindingErrorKind`; the kind
+//! tables behind them are checked by `scripts/check/repo/kind-equivalence.sh`.
 
 #![allow(clippy::too_many_arguments)]
 
