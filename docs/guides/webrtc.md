@@ -31,8 +31,10 @@ and no simulcast.
 
 The crate is `tst-webrtc` (feature `tls`, on by default, for `wheps://`).
 The JVM binding exposes it as `org.tstrans.webrtc`
-([JVM guide](/docs/languages/jvm.md#webrtc-playback-orgtstranswebrtc)). The
-Python and C bindings do not expose it in this release. The browser side
+([JVM guide](/docs/languages/jvm.md#webrtc-playback-orgtstranswebrtc)) and
+Python as `tstrans.webrtc`
+([Python guide](/docs/languages/python.md#webrtc-playback-tstranswebrtc)).
+The C binding does not expose it in this release. The browser side
 is a reference player, four plain ES modules under
 [`/docs/webrtc/`](/docs/webrtc/README.md).
 
@@ -363,7 +365,7 @@ ask the media thread and can wait up to 2 s for its reply; a mount's
 | other methods | `405` with `Allow: POST, PATCH, DELETE, OPTIONS` |
 | unknown mount | `404` |
 | server at `max_viewers` (all mounts together) | `503`, `Retry-After: 5` |
-| body not an SDP offer, or one payload type mapped to two formats | `400` with a plain-text reason |
+| body not an SDP offer, or an offer whose payload types are inconsistent: one payload number mapped to two formats (also twice inside one media section), or an `a=rtpmap` or `a=fmtp` line for a number the section's `m=` line does not list | `400` with a plain-text reason |
 | no offered video payload matches the mount | `406` with a plain-text reason |
 | missing or wrong bearer token when `token=` is set | `401`, `WWW-Authenticate: Bearer` |
 | request head over 16 KiB, body over 64 KiB, no complete request within 5 s | `431`, `400`, `408` |
@@ -387,6 +389,11 @@ association once it is up.
   carries every viewer's media; each datagram goes to the session that
   accepts it, and the ones no session accepts are counted in
   `datagrams_unrouted`.
+- **A session is pinned to one address.** Media goes only to the address
+  the datagram that completed the DTLS handshake came from. A NAT rebinding
+  or a move to another network interface needs a new session (a new POST).
+  Before the handshake completes, a session admits datagrams from at most 16
+  distinct source addresses.
 - **Candidates.** A bind on a specific address offers that address, plus
   `advertise=` when it differs. A bind on `0.0.0.0` or `::` offers only
   loopback unless `advertise=` names the address viewers reach, which
@@ -454,7 +461,8 @@ headless Chromium and checks that every record arrives by both carriages.
 
 - No ingest (WHIP), no transcoding, no simulcast, no B-frames, no TURN or
   STUN, no ICE over TCP, no trickle ICE from the server, no ICE restart.
-- The Python and C bindings do not expose WebRTC in this release.
+- The C binding does not expose WebRTC in this release; the JVM and Python
+  bindings do.
 - A viewer's PLI is counted, not forwarded; the source decides the GOP.
 - `advertise=` takes one address; a dual-homed deployment needs one server
   per address.

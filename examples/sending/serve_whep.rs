@@ -234,8 +234,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // forever.
     let url = SrtUrl::parse(&args.srt_url)?;
     println!(
-        "waiting for an SRT sender on {} (press Enter to stop)",
-        args.srt_url
+        "waiting for an SRT sender at {}:{} in {:?} mode (press Enter to stop)",
+        url.host, url.port, url.mode
     );
     let managed = match managed_recv_transport_from_url(
         &url,
@@ -337,7 +337,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // ── (5) Shutdown ─────────────────────────────────────────────────────
     //
     // `stop` closes every viewer session (the browser sees the peer
-    // connection end), removes the mounts and joins the server's two
+    // connection end), closes the mounts (the server's map keeps them) and joins the server's two
     // threads, waiting at most two seconds for each. Dropping the server
     // does the same; the explicit call makes the order clear: the last
     // stats line reads the counters before they are frozen.

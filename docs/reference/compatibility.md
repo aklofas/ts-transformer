@@ -27,8 +27,8 @@ via `finish_serving`. See the [HLS guide](/docs/guides/hls.md); fMP4/CMAF and
 LL-HLS remain deferred (`deferred-features.md`).
 The JVM binding exposes it as `org.tstrans.hls` (`HlsPublisher` +
 `MuxPublisher`).
-WebRTC playback ships as `tst-webrtc` (Rust, and the JVM binding as
-`org.tstrans.webrtc`): a WHEP server whose mounts browsers pull over WebRTC,
+WebRTC playback ships as `tst-webrtc` (Rust, the JVM binding as
+`org.tstrans.webrtc` and the Python binding as `tstrans.webrtc`): a WHEP server whose mounts browsers pull over WebRTC,
 H.264 and H.265 passed through with KLV frame-locked in an SEI message and
 on a data channel, plus a reference player under `docs/webrtc/`. `wheps://`
 serves the signalling over rustls under the `tls` feature (without it, bind
@@ -761,8 +761,9 @@ to each access unit, in a `user_data_unregistered` SEI message and on a
 `klv` data channel the server opens. ICE-lite on one UDP port for every
 viewer, DTLS-SRTP and RTX from str0m, no TURN or STUN, no ingest. The
 [WebRTC guide](/docs/guides/webrtc.md) has the endpoint table, the wire
-layouts and the mount rules; the JVM binding is `org.tstrans.webrtc`, and
-the Python and C bindings do not expose it in this release.
+layouts and the mount rules; the JVM binding is `org.tstrans.webrtc`, the Python
+binding is `tstrans.webrtc` ([Python guide](/docs/languages/python.md#webrtc-playback-tstranswebrtc)),
+and the C binding does not expose it in this release.
 
 | Feature | Default | Enables |
 | --- | --- | --- |
