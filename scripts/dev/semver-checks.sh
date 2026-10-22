@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Report each public crate's breaking changes since the previous release tag,
 # using cargo-semver-checks. INFORMATIONAL: the project
-# is pre-1.0, so breaks are recorded in the CHANGELOG, so this never gates; it
+# is pre-1.0 and breaks are recorded in the CHANGELOG, so this never gates; it
 # is a cross-check that the CHANGELOG's BREAKING list is complete.
 #
 # usage: scripts/dev/semver-checks.sh [<out-dir>]      (default: target/semver-report)

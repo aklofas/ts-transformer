@@ -1063,9 +1063,7 @@ KLV_ARGS=(--klv-set "$KLV_SET" --klv-seed "$SEED")
 # seconds dropping every packet — including that handshake — and both
 # `recv`'s accept (15s default timeout) and `send`'s connect (2s
 # default timeout) would time out well before a 90s outage window ever
-# clears. Window zero includes connection/handshake warm-up and is
-# omitted from the rate floor; without the head start srt-recv/srt-send
-# both fail with accept/connect timeouts on the first attempt. Starting the proxy
+# clears. Starting the proxy
 # `SRT_PROXY_WARMUP_S` seconds ahead of recv/send sidesteps it
 # entirely: only window 0 is affected by this launch-order artifact,
 # and every later window (starting at `OUTAGE_PERIOD_S`, `2 *
