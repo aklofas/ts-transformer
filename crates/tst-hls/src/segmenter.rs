@@ -180,23 +180,14 @@ impl Segmenter {
             // Raw push_ts flow (pre-muxed TS relay): no keyframe signal exists,
             // wall-clock segmenting is all we have — unchanged v0.2.0 behavior.
             //
-            // NOTE: `has_explicit_cuts` only flips on the FIRST explicit cut,
-            // which a keyframe-driven `MuxPublisher` makes once segment 0
-            // reaches `segment_duration` of media time. So the very first
-            // segment lands here until then: a producer ingesting in real time
-            // reaches `segment_duration` of wall clock at about the same
-            // moment, and one running behind the media clock is cut here
-            // first, mid-GOP — breaking the "segments begin with IDR"
-            // guarantee for segment 0 only. Ingestion faster than real time
-            // (files, transcodes) never reaches this. The cut fires here at
-            // `segment_duration`
-            // and is deliberately NOT counted in `forced_cuts` (pinned by
-            // raw_mode_tick_cuts_at_segment_duration_and_forced_cuts_stays_zero),
-            // so segment-0 mid-GOP cuts are invisible in telemetry today. A
-            // complete fix needs a keyframe-driven-intent signal through the
-            // `Publisher` trait — deferred, see
-            // docs/project/deferred-features.md ("HLS: keyframe-driven-intent
-            // signal").
+            // NOTE: a `MuxPublisher` makes an explicit cut at construction,
+            // before any bytes, when the publisher reports a
+            // `segment_duration`, so its stream never reaches this branch:
+            // segment 0 is cut by the shell's media-time bound like every
+            // other segment. Only a raw relay (or a caller that never cuts
+            // before pushing) lands here. Such a cut is deliberately NOT
+            // counted in `forced_cuts` (pinned by
+            // raw_mode_tick_cuts_at_segment_duration_and_forced_cuts_stays_zero).
             self.cut()?;
         }
         Ok(())

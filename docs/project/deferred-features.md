@@ -1572,30 +1572,22 @@ and the two below.
 - **Trigger to revisit:** a binding consumer hand-rolling retry on the
   bare `Sender`/`MuxSender` shell asks for it.
 
-## HLS: keyframe-driven-intent signal (segment-0 mid-GOP window)
+## HLS: keyframe-aligned segments for a raw `push_ts` relay
 
-- **Status:** Deferred (HLS is still maturing as a supported feature). The segmenter
-  enters keyframe-driven mode at the FIRST explicit cut — which
-  `MuxPublisher` issues at the *second* keyframe — so segment 0 rides the
-  wall-clock (raw `push_ts`) mode. If the first GOP is longer than
-  `segment_duration`, segment 0 alone can be cut mid-GOP, breaking the
-  PAT → PMT → IDR opening for that one segment. The initial raw-mode
-  wall-clock cut is deliberately NOT counted in `forced_cuts` (pinned by
-  test), so the window is currently invisible in telemetry. The HLS guide
-  and CHANGELOG qualify the boundary guarantee accordingly.
-- **Why deferred:** Only reachable when the encoder's keyframe interval
-  exceeds `segment_duration` (the inverse of normal HLS configuration),
-  bounded to segment 0, and self-healing at the second keyframe. The clean
-  fix is a default-no-op `Publisher` trait method (keyframe-driven intent)
-  that `MuxPublisher` calls when the stream-head keyframe opens a segment
-  and `HlsPublisher` overrides to pre-arm `note_explicit_cut()` — a trait
-  surface change not worth rushing into a release.
-- **Trigger to revisit:** the first field report of a mid-GOP segment 0
-  (player-join artifact at stream start), or the next tst-hls feature
-  release (LL-HLS / fMP4), whichever comes first. Ship with a regression test
-  proving no segment starts mid-GOP for an initial GOP > `segment_duration`,
-  and decide the telemetry story (count it in `forced_cuts` or a dedicated
-  counter).
+- **Status:** Deferred. A `MuxPublisher` signals keyframe-driven
+  segmenting at construction (an explicit cut before any bytes when the
+  publisher reports a `segment_duration`), so every segment it produces,
+  segment 0 included, is cut by its media-time bound and the wall-clock
+  cap only guards a stalled producer. A raw `push_ts` relay of pre-muxed TS
+  carries no keyframe signal, so it is still cut on the wall clock at
+  `segment_duration`, mid-GOP wherever that lands, and inherits the
+  upstream's PSI cadence. Those cuts are not counted in `forced_cuts`.
+- **Why deferred:** Keyframe-aligned relay cuts need the publisher to find
+  random-access points in arbitrary TS (PES parsing per codec) and to
+  derive media durations from PTS it does not otherwise read. A relay that
+  needs aligned segments can demux and re-mux through `MuxPublisher` today.
+- **Trigger to revisit:** a consumer relaying pre-muxed TS to HLS who needs
+  keyframe-aligned segments without re-muxing.
 
 ## ASan under the JVM test suite (tst-jni)
 

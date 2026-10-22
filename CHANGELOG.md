@@ -528,7 +528,11 @@ The integrator-facing changes at a glance (full detail in the sections below):
   `#EXTINF` above `#EXT-X-TARGETDURATION` (RFC 8216 §4.3.3.1) and a short GOP
   rewrote the playlist more often than every half target (§6.2.1). Segments
   now hold whole GOPs up to the target; keep the GOP at or under
-  `segment_duration` so every segment starts on a keyframe.
+  `segment_duration` so every segment starts on a keyframe. When the
+  publisher reports a bound, the shell calls `cut_segment()` once at
+  construction, before any bytes, so the HLS segmenter treats segment 0 as
+  keyframe-driven too and never cuts it on the wall clock at
+  `segment_duration`.
 
 ### Changed — tst-py (BREAKING)
 
