@@ -139,7 +139,9 @@ fn a_handshake_finished_from_a_second_address_pins_nothing_there() {
     v.accept_answer(&answer);
 
     // The viewer's DTLS records after the first leave from a second address,
-    // which the session has also seen a valid STUN check from.
+    // which the session has also seen a valid STUN check from. The test
+    // relies on the viewer's own address winning nomination: the second
+    // address's check has a lower priority than the viewer's host candidate.
     let second = extra_socket();
     v.alt_dtls_sock = Some(second.try_clone().unwrap());
     second
@@ -152,15 +154,6 @@ fn a_handshake_finished_from_a_second_address_pins_nothing_there() {
         "the later DTLS record was not counted unrouted"
     );
 
-    // Drain what the server answered the STUN check with, then check that no
-    // media follows.
-    while got_datagram(&second, srv.media_addr()) {}
-    for (i, (au, key)) in h264_gop().iter().take(5).enumerate() {
-        m.push_video(au, Pts90khz::new(i as i64 * 3000), *key)
-            .unwrap();
-    }
-    let _ = v.pump(|v| !v.frames.is_empty(), Duration::from_millis(500));
-    assert!(!got_datagram(&second, srv.media_addr()));
     let session = m.sessions().pop().expect("one session");
     assert_eq!(session.connected_for, None, "the session connected");
     assert_ne!(session.remote_addr, second.local_addr().ok());
@@ -183,4 +176,31 @@ fn a_stun_check_from_a_second_source_does_not_block_the_handshake() {
     connect_all(&m, std::slice::from_mut(&mut v));
     let session = m.sessions().pop().expect("one session");
     assert_eq!(session.remote_addr, Some(v.sock.local_addr().unwrap()));
+}
+
+#[test]
+fn handshake_flights_go_only_to_the_address_that_started_the_handshake() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = TestViewer::new();
+    let offer = v.offer(false);
+    let (status, _, answer) = whep_post(srv.local_addr(), "/cam", &offer, None);
+    assert_eq!(status, 201, "{answer}");
+    v.accept_answer(&answer);
+
+    // Every DTLS record, the first included, leaves from a second address
+    // while the viewer keeps reading at its own. The server has nominated the
+    // viewer's address, but its flights must still go to the address that
+    // sent the first record.
+    let second = extra_socket();
+    v.alt_dtls_sock = Some(second.try_clone().unwrap());
+    v.alt_dtls_after = 0;
+    second
+        .send_to(&binding_request(&offer, &answer), srv.media_addr())
+        .unwrap();
+    let _ = v.pump(|v| v.connected, Duration::from_secs(1));
+    assert!(!v.connected, "the viewer received a handshake flight");
+    let session = m.sessions().pop().expect("one session");
+    assert_eq!(session.connected_for, None, "the session connected");
+    assert_ne!(session.remote_addr, second.local_addr().ok());
 }

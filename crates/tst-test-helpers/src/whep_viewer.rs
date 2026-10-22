@@ -49,9 +49,13 @@ pub struct TestViewer {
     pub own_channel_msgs: u64,
     /// Every address a datagram came from.
     pub sources: HashSet<SocketAddr>,
-    /// When set, every DTLS datagram after the first leaves through this
-    /// socket instead of `sock`: a handshake continued from a second address.
+    /// When set, every DTLS datagram after the first `alt_dtls_after` leaves
+    /// through this socket instead of `sock`: a handshake continued from a
+    /// second address.
     pub alt_dtls_sock: Option<UdpSocket>,
+    /// How many DTLS datagrams still leave through `sock` before
+    /// `alt_dtls_sock` takes over: 1 by default, 0 for all of them.
+    pub alt_dtls_after: u64,
     /// DTLS datagrams sent so far.
     pub dtls_sent: u64,
     /// STUN binding responses received: one per consent check the server
@@ -103,6 +107,7 @@ impl TestViewer {
             own_channel_msgs: 0,
             sources: HashSet::new(),
             alt_dtls_sock: None,
+            alt_dtls_after: 1,
             dtls_sent: 0,
             stun_responses: 0,
             ice_log: Vec::new(),
@@ -203,7 +208,7 @@ impl TestViewer {
                         self.dtls_sent += 1;
                     }
                     let sock = match &self.alt_dtls_sock {
-                        Some(alt) if is_dtls && self.dtls_sent > 1 => alt,
+                        Some(alt) if is_dtls && self.dtls_sent > self.alt_dtls_after => alt,
                         _ => &self.sock,
                     };
                     let _ = sock.send_to(&t.contents, t.destination);
