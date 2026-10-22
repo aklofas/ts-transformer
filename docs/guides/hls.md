@@ -73,7 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Your encoder's output: one Annex-B access unit and one KLV local set per tick.
     let (nal_bytes, klv_bytes, pts): (Vec<u8>, Vec<u8>, i64) = (vec![0, 0, 0, 1, 0x65, 0xA5], vec![], 0);
 
-    // push_video with key_frame=true cuts a new segment at the keyframe.
+    // A keyframe begins a new segment once the open one has reached
+    // segment_duration, the maximum a segment may reach.
     shell.push_video(&nal_bytes, Pts90khz::new(pts), /* key_frame */ true)?;
     shell.push_klv(&klv_bytes, Pts90khz::new(pts), 0)?;
 
@@ -122,7 +123,7 @@ program = (
 
 # with_config_hls CONSUMES the publisher.
 mp = MuxPublisher.with_config_hls(publisher, program)
-mp.push_video(nal, pts=Pts90khz.from_raw(pts), key_frame=True)  # auto-cuts on key_frame
+mp.push_video(nal, pts=Pts90khz.from_raw(pts), key_frame=True)  # a keyframe past segment_duration begins a segment
 mp.push_klv(klv, pts=Pts90khz.from_raw(pts))
 
 pub = mp.finish_into_publisher()   # recover the publisher to finish it cleanly
@@ -157,7 +158,7 @@ MuxerConfig program = MuxerConfig.builder()
     .build();
 
 MuxPublisher shell = MuxPublisher.withConfigHls(publisher, program); // consumes `publisher`
-shell.pushVideo(annexBNal, pts, /*keyFrame=*/ true);   // a key frame cuts a segment
+shell.pushVideo(annexBNal, pts, /*keyFrame=*/ true);   // past segmentDuration, a key frame begins a segment
 shell.pushKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
 
 HlsPublisher back = shell.finishIntoPublisher();        // consumes the shell
@@ -273,11 +274,12 @@ the full producer + JavaScript client contract for both hls.js paths.
   next keyframe. **Keep the GOP at or under `segment_duration`** and every
   segment opens PAT → PMT → IDR, decodable from its first byte.
 - **Segment 0 follows the same rule.** On the first video access unit,
-  before any bytes, `MuxPublisher` tells the publisher that keyframes drive
-  segmentation, so segment 0 is never cut on the wall clock at
-  `segment_duration`, however the producer is paced. A stream without
-  video keeps the wall-clock rule, and so does segment 0 of a stream that
-  pushes metadata before its first video access unit.
+  `MuxPublisher` tells the publisher that keyframes drive segmentation, so
+  segment 0 is never cut on the wall clock at `segment_duration`, however
+  the producer is paced. Metadata or audio pushed before that access unit
+  stays in segment 0 with the first GOP, and the segment closes once its
+  media span from the first video access unit reaches `segment_duration`.
+  Only a stream without video keeps the wall-clock rule.
 - **A restarted timeline cuts.** A video access unit more than 1 s before
   the open segment's start (an encoder restart or a PTS wrap) closes the
   segment at the previous access unit, and the next segment starts on the

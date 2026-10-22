@@ -47,15 +47,19 @@ impl HlsPublisherBuilder {
         self
     }
 
-    /// Target segment duration.
+    /// The maximum a segment may reach; the playlist advertises `ceil` of it
+    /// as `#EXT-X-TARGETDURATION`. Through `MuxPublisher`, a keyframe begins
+    /// a new segment once the open one has reached it.
     pub fn segment_duration(&mut self, d: Duration) -> &mut Self {
         self.config.segment_duration = d;
         self
     }
 
-    /// Hard upper bound on an open segment's wall-clock age in the
-    /// keyframe-driven flow (force-cuts when a keyframe is overdue). Defaults
-    /// to `2 × segment_duration`; must be `≥ segment_duration`.
+    /// Wall-clock stall guard in the keyframe-driven flow: an open segment
+    /// this old is force-cut when no cut has arrived. A raw `push_ts` relay
+    /// or a stream without video is cut on the wall clock at
+    /// `segment_duration` instead. Defaults to `2 × segment_duration`; must
+    /// be `≥ segment_duration`.
     pub fn max_segment_duration(&mut self, d: Duration) -> &mut Self {
         self.config.max_segment_duration = Some(d);
         self

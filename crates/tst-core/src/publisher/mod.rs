@@ -69,6 +69,20 @@ pub trait Publisher {
         None
     }
 
+    /// The shell tells the publisher that keyframes, not the wall clock,
+    /// will drive its cuts.
+    ///
+    /// The `MuxPublisher` pipeline shell calls this once, on its first video
+    /// access unit, when [`segment_duration`] is `Some`. It closes nothing:
+    /// a publisher with a wall-clock fallback (HLS) keeps that only as a
+    /// stalled-producer guard from then on, so the segment already open,
+    /// even one that metadata or audio opened before the first video access
+    /// unit, is cut by the shell's media-time bound. The default does
+    /// nothing.
+    ///
+    /// [`segment_duration`]: Self::segment_duration
+    fn keyframe_driven(&mut self) {}
+
     /// Cleanly finalize: flush pending segment, write a terminating
     /// playlist tag (e.g., HLS `#EXT-X-ENDLIST`), tear down sinks.
     ///
