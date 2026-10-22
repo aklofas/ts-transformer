@@ -78,7 +78,11 @@ for f in "${files[@]}"; do
         /^jobs:/ { injobs=1; next }
         injobs && /^  [A-Za-z0-9_-]+:/ { flush(); job=$1; sub(/:$/,"",job); shaped=0; guarded=0; next }
         injobs && /^    environment:/ { shaped=1 }
-        injobs && /^    if:/ && (/![ ]*inputs\.dry_run/ || /inputs\.dry_run[ ]*==[ ]*false/ || /inputs\.dry_run[ ]*!=[ ]*true/) && !/\|\|/ { guarded=1 }
+        # A trailing YAML comment is not part of the condition.
+        injobs && /^    if:/ {
+            c = $0; sub(/#.*$/, "", c)
+            if ((c ~ /![ ]*inputs\.dry_run/ || c ~ /inputs\.dry_run[ ]*==[ ]*false/ || c ~ /inputs\.dry_run[ ]*!=[ ]*true/) && c !~ /\|\|/) guarded=1
+        }
         injobs && /uses:.*publish/ { shaped=1 }
         injobs && /cargo publish|gradlew .*publish|gh release (upload|create)/ { shaped=1 }
         END { flush(); exit bad }' "$f" || fail=1

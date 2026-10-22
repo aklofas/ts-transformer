@@ -770,10 +770,10 @@ declare -A ROLE_RSS_KB=(
   [rtsp-publish-recv]=60000 [rtsp-publish-publisher]=80000
   [rtsp-publish-es-recv]=60000 [rtsp-publish-es-publisher]=80000
   # whep-viewer is the browser's whole process tree, per-process RSS
-  # summed (14 processes of Chrome 155 playing the mount, measured while
-  # 14 Chrome processes played the mount; shared pages count once per process, so this
-  # overstates), though only the viewer loop's shell is sampled, like the
-  # publisher loops; whep-serve the server with its in-process muxer
+  # summed (measured over the 14 processes Chrome 155 runs while playing
+  # the mount; shared pages count once per process, so this overstates),
+  # though only the viewer loop's shell is sampled, like the publisher
+  # loops; whep-serve the server with its in-process muxer
   # (15 MB measured, the plateau not yet known).
   [whep-serve]=100000 [whep-viewer]=1200000
   [sampler]=10000
@@ -1550,7 +1550,8 @@ record_pid sampler $!
 # ---------------------------------------------------------------------
 #
 # See README.md's "Outputs and the supervisor" for why this exists
-# (ordinary waits cannot notice a worker death before the 72h deadline). Polls every worker + the sampler every 30s until
+# (ordinary waits cannot notice a worker death before the 72h deadline).
+# Polls every worker + the sampler every 30s until
 # SUPERVISOR_GRACE_S before the nominal deadline; end-of-run process
 # exits inside that grace window are normal staggering and are left to
 # the ordinary waits below.

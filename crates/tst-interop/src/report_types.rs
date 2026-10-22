@@ -1,8 +1,7 @@
 //! Serde report types shared by the `verify`, `recv`, and `report`
 //! subcommands. Kept in their own module (rather than folded into
-//! `verify.rs`) because later tasks (`recv`/`report`) need to
-//! (de)serialize these same shapes without depending on the verification
-//! logic itself.
+//! `verify.rs`) because `recv` and `report` (de)serialize these same
+//! shapes without depending on the verification logic itself.
 
 use serde::{Deserialize, Serialize};
 

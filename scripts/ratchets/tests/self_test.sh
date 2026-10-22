@@ -826,6 +826,7 @@ expect "publish-guards: a guarded job passes" 0 bash scripts/check/repo/publish-
 sed "s/github.event_name == 'push'/inputs.dry_run/" "$pg/bad.yml" > "$pg/inverted.yml"
 sed "s/github.event_name == 'push'/github.event_name == 'push' || !inputs.dry_run/" "$pg/bad.yml" > "$pg/disjunct.yml"
 sed "s/github.event_name == 'push'/\${{ !inputs.dry_run \&\& github.ref_type == 'tag' }}/" "$pg/bad.yml" > "$pg/wrapped.yml"
+sed "s/github.event_name == 'push'/github.event_name == 'push'  # !inputs.dry_run/" "$pg/bad.yml" > "$pg/commented.yml"
 
 # publish-guards, caller side: a job calling a callable workflow that declares dry_run must pass `dry_run: true`.
 cat > "$pg/callee.yml" <<'YML'
@@ -861,6 +862,7 @@ sed 's/dry_run: false/dry_run: true/' "$pg/caller-bad.yml" > "$pg/caller-good.ym
 mkdir -p "$pg/noyaml"
 real_py="$(command -v python3)"
 printf '#!/bin/sh\n[ "$1" = "-c" ] && exit 1\nexec %s "$@"\n' "$real_py" > "$pg/noyaml/python3"
+chmod +x "$pg/noyaml/python3"
 for mode in python awk; do
   if [[ $mode == awk ]]; then pre=(env PATH="$pg/noyaml:$PATH"); else pre=(); fi
   expect "publish-guards ($mode): a caller passing dry_run: false fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-bad.yml"
@@ -870,6 +872,7 @@ for mode in python awk; do
   expect "publish-guards ($mode): an inverted guard fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/inverted.yml"
   expect "publish-guards ($mode): a disjunctive guard fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/disjunct.yml"
   expect "publish-guards ($mode): a wrapped negated guard passes" 0 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/wrapped.yml"
+  expect "publish-guards ($mode): a guard only in a trailing comment fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/commented.yml"
 done
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
