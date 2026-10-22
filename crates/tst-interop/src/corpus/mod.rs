@@ -45,6 +45,32 @@ pub struct RunDir {
 pub const FEED_CHUNK: usize = 188 * 1024;
 /// Seconds of each capture replayed as a prefix.
 pub const PREFIX_SECONDS: u32 = 600;
+
+/// Test hook: whole seconds that replace [`PREFIX_SECONDS`], so a short
+/// capture can be cut in a test. Never set outside tests.
+pub const PREFIX_SECONDS_ENV: &str = "TST_CORPUS_TEST_PREFIX_SECONDS";
+
+/// The prefix length in seconds: [`PREFIX_SECONDS`] unless the test hook
+/// names another. The hook announces itself on stderr (the CLI also names
+/// every `TST_CORPUS_TEST_` variable it finds).
+pub fn prefix_seconds() -> u32 {
+    static SECONDS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *SECONDS.get_or_init(|| {
+        match std::env::var(PREFIX_SECONDS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&n| n > 0)
+        {
+            Some(n) => {
+                eprintln!(
+                    "tst-interop corpus: {PREFIX_SECONDS_ENV}={n} overrides the {PREFIX_SECONDS} s prefix"
+                );
+                n
+            }
+            None => PREFIX_SECONDS,
+        }
+    })
+}
 /// Total wall-clock seconds the replay stage may spend.
 pub const REPLAY_BUDGET_SECONDS: u32 = 7200;
 /// Seconds without progress before a replay is declared stalled.

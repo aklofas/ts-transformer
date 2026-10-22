@@ -356,3 +356,27 @@ fn a_replay_does_not_survive_a_new_sweep_into_a_passing_report() {
     assert_ne!(out.status.code(), Some(0), "{}", text(&out));
     assert_eq!(report_row(&run)["overall_pass"], false);
 }
+
+#[test]
+fn a_prefixed_replay_survives_into_a_passing_report() {
+    let dir = temp_dir_named("rp-prefix");
+    let a = gen_profile_bytes("baseline", 4.0);
+    let b = gen_profile_bytes("klv-sync", 4.0);
+    std::fs::write(dir.join("a.ts"), &a).unwrap();
+    std::fs::write(dir.join("b.ts"), &b).unwrap();
+    let run = dir.join("run");
+    sweep(&dir, &run);
+    let out = replay(&dir, &run, &[("TST_CORPUS_TEST_PREFIX_SECONDS", "2")]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+
+    let prefixed = [sha_of(&a).0, sha_of(&b).0].iter().any(|sha| {
+        run.join("digests")
+            .join(format!("{sha}.prefix2.json"))
+            .exists()
+    });
+    assert!(prefixed, "no pick was cut to a prefix");
+    let row = report_row(&run);
+    assert!(row["replay_files"].as_u64().unwrap() > 0, "{row}");
+    assert_eq!(row["overall_pass"], true, "{row}");
+    assert!(!row.to_string().contains("earlier sweep"), "{row}");
+}

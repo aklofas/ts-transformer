@@ -100,18 +100,23 @@ fn same_but_version(a: &FileDigest, b: &FileDigest) -> bool {
 /// Files a sweep invalidates: the replay's results and its subset plan.
 const DOWNSTREAM_OUTPUTS: [&str; 3] = ["replay.json", "replay-rss.csv", "replay-plan.json"];
 
-/// SHA-256 over every `digests/*.json` file of the run, in sorted file-name
-/// order: per file the name, then the byte length (u64 little-endian), then
+/// SHA-256 over every whole-capture `digests/*.json` file of the run, in
+/// sorted file-name order. The replay's prefix digests are its outputs, not
+/// its inputs, so they are left out: per file the name, then the byte length (u64 little-endian), then
 /// the bytes, so renaming a file or moving bytes between files changes it.
-/// A replay records it when it starts, and the report recomputes it, so a
-/// replay of one sweep never stands for another.
+/// It identifies the sweep's digest set. A replay records it when it starts
+/// and the report recomputes it; a new sweep also deletes the old replay's
+/// files, so a replay of one sweep never stands for another.
 pub fn digests_fingerprint(run: &RunDir) -> Result<Sha256Hex, String> {
     let dir = run.root.join("digests");
     let mut names: Vec<std::ffi::OsString> = std::fs::read_dir(&dir)
         .map_err(|e| format!("read digests directory: {}", e.kind()))?
         .filter_map(|e| e.ok())
         .map(|e| e.file_name())
-        .filter(|n| n.to_str().is_some_and(|n| n.ends_with(".json")))
+        .filter(|n| {
+            n.to_str()
+                .is_some_and(|n| n.ends_with(".json") && !n.contains(".prefix"))
+        })
         .collect();
     names.sort();
     let mut h = Sha256::new();
@@ -172,6 +177,18 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(format!("cannot remove a stale {name}: {}", e.kind())),
+        }
+    }
+    // The prefix digests belong to the replay that was just invalidated.
+    let digests = args.run.root.join("digests");
+    if let Ok(rd) = std::fs::read_dir(&digests) {
+        for e in rd.filter_map(|e| e.ok()) {
+            let name = e.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.contains(".prefix") && name.ends_with(".json") {
+                std::fs::remove_file(e.path())
+                    .map_err(|e| format!("cannot remove a stale prefix digest: {}", e.kind()))?;
+            }
         }
     }
     let next = AtomicUsize::new(0);

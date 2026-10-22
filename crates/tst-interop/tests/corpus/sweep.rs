@@ -459,3 +459,44 @@ fn a_new_sweep_removes_the_replay_results_of_the_old_one() {
     }
     assert!(run.join("sweep.json").is_file());
 }
+
+#[test]
+fn digests_fingerprint_ignores_prefix_digests() {
+    use tst_interop::corpus::{RunDir, sweep::digests_fingerprint};
+    let root = temp_dir_named("sw-fingerprint");
+    let digests = root.join("digests");
+    std::fs::create_dir_all(&digests).unwrap();
+    std::fs::write(digests.join("aa.json"), b"{\"a\":1}").unwrap();
+    std::fs::write(digests.join("bb.json"), b"{\"b\":2}").unwrap();
+    let run = RunDir { root };
+    let before = digests_fingerprint(&run).unwrap();
+
+    std::fs::write(digests.join("aa.prefix600.json"), b"{\"p\":1}").unwrap();
+    assert_eq!(digests_fingerprint(&run).unwrap(), before);
+
+    std::fs::write(digests.join("aa.json"), b"{\"a\":2}").unwrap();
+    assert_ne!(digests_fingerprint(&run).unwrap(), before);
+}
+
+#[test]
+fn a_sweep_removes_the_previous_replays_prefix_digests() {
+    let (dir, _) = two_files("sw-stale-prefix");
+    let run = temp_dir_named("sw-stale-prefix-run");
+    assert_eq!(sweep(&dir, &run, &[]).status.code(), Some(0));
+    let stale = run.join("digests").join("aa.prefix600.json");
+    std::fs::write(&stale, b"{}").unwrap();
+    assert_eq!(sweep(&dir, &run, &[]).status.code(), Some(0));
+    assert!(!stale.exists());
+}
+
+#[test]
+fn a_blank_because_is_a_usage_error() {
+    let (dir, shas) = two_files("sw-blankwhy");
+    let run = temp_dir_named("sw-blankwhy-run");
+    let out = sweep(&dir, &run, &["--accept", &shas[0], "--because", "  "]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--because needs a non-empty reason"),
+        "{out:?}"
+    );
+}
