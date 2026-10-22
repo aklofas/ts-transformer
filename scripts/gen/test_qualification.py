@@ -719,6 +719,16 @@ class ReleaseModeTests(unittest.TestCase):
                 q.load_archives(d)
             self.assertEqual(e.exception.code, 1)
 
+    def test_archives_rejects_a_malformed_corpus_expectation(self):
+        for bad in ("0", "true", "2.5", '"253"'):
+            text = RELEASE_OK.replace("expected_files = %d" % COUNTS["files"], "expected_files = " + bad)
+            with tempfile.TemporaryDirectory() as d:
+                put(os.path.join(d, "tests/coverage/evidence-archives.toml"), text)
+                with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()) as err:
+                    q.load_archives(d)
+                self.assertEqual(e.exception.code, 1, bad)
+                self.assertIn("[corpus] expected_files", err.getvalue(), bad)
+
     def test_a_malformed_sha_never_reaches_git(self):
         rows = q.parse_archives(SOAKED_EARLIER)
         with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):

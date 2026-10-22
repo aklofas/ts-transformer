@@ -15,6 +15,8 @@ ground bench rig and vendor test fixtures; H.264 and H.265 video; ST 0601 KLV
 in both carriage methods and private metadata streams; 253 files, 40.4 GB,
 durations from under a minute to several hours; PMT shapes a, b and c of the
 test-corpus catalog.
+The release gate requires the corpus run to have swept exactly the number of
+files named by `expected_files` in `tests/coverage/evidence-archives.toml`.
 
 The tool is generic. Point it at any directory of `.ts` files to get the same
 checks on your own material.
