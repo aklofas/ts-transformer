@@ -822,6 +822,10 @@ sed "s/github.event_name == 'push'/github.event_name == 'push' \&\& !inputs.dry_
 expect "publish-guards: an unguarded callable publish job fails" 1 bash scripts/check/repo/publish-guards.sh "$pg/bad.yml"
 grep -q "job 'publish'" "$tmp/out" || { echo "FAIL: publish-guards: the failure did not name the job"; sed 's/^/    /' "$tmp/out"; fail=1; }
 expect "publish-guards: a guarded job passes" 0 bash scripts/check/repo/publish-guards.sh "$pg/good.yml"
+# A guard must make the job impossible under dry_run: true; a mention is not a guard.
+sed "s/github.event_name == 'push'/inputs.dry_run/" "$pg/bad.yml" > "$pg/inverted.yml"
+sed "s/github.event_name == 'push'/github.event_name == 'push' || !inputs.dry_run/" "$pg/bad.yml" > "$pg/disjunct.yml"
+sed "s/github.event_name == 'push'/\${{ !inputs.dry_run \&\& github.ref_type == 'tag' }}/" "$pg/bad.yml" > "$pg/wrapped.yml"
 
 # publish-guards, caller side: a job calling a callable workflow that declares dry_run must pass `dry_run: true`.
 cat > "$pg/callee.yml" <<'YML'
@@ -863,6 +867,9 @@ for mode in python awk; do
   grep -q "job 'call'" "$tmp/out" || { echo "FAIL: publish-guards ($mode): the failure did not name the job"; sed 's/^/    /' "$tmp/out"; fail=1; }
   expect "publish-guards ($mode): a caller omitting dry_run fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-omit.yml"
   expect "publish-guards ($mode): a caller passing dry_run: true passes" 0 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-good.yml"
+  expect "publish-guards ($mode): an inverted guard fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/inverted.yml"
+  expect "publish-guards ($mode): a disjunctive guard fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/disjunct.yml"
+  expect "publish-guards ($mode): a wrapped negated guard passes" 0 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/wrapped.yml"
 done
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi

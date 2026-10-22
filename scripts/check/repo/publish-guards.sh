@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Every workflow that can be CALLED (declares `on.workflow_call`) keeps its
 # publish-shaped jobs behind `inputs.dry_run`, so a qualification run that
-# calls it can never publish. A job is publish-shaped when it has an
+# calls it can never publish. The guard must make the job impossible under
+# `dry_run: true`: the `if:` has to contain `!inputs.dry_run`,
+# `inputs.dry_run == false` or `inputs.dry_run != true` and no `||`; a mere
+# mention of the input is not a guard. A job is publish-shaped when it has an
 # `environment:`, a step `uses:` naming a publish action, or a step that runs
 # `cargo publish`, `gradlew ... publish` or `gh release upload|create`.
 # Callers are checked too: every `uses: ./.github/workflows/<x>.yml` job whose callee
@@ -17,6 +20,9 @@ python3 - "${files[@]}" <<'PY'
 import os, re, sys, yaml
 PUB_USES = re.compile(r'pypa/gh-action-pypi-publish|publish', re.I)
 PUB_RUN = re.compile(r'cargo publish|gradlew .*publish|gh release (upload|create)')
+NEGATED = re.compile(r'!\s*inputs\.dry_run|inputs\.dry_run\s*==\s*false|inputs\.dry_run\s*!=\s*true')
+def guarded(cond):
+    return bool(NEGATED.search(cond)) and '||' not in cond
 bad = []
 def callee_has_dry_run(path):
     try:
@@ -42,8 +48,8 @@ for f in sys.argv[1:]:
         shaped = 'environment' in job or any(
             PUB_USES.search(str(s.get('uses', ''))) or PUB_RUN.search(str(s.get('run', '')))
             for s in steps)
-        if shaped and 'inputs.dry_run' not in str(job.get('if', '')):
-            bad.append(f"{f}: job '{name}' is publish-shaped and callable but its `if:` lacks inputs.dry_run")
+        if shaped and not guarded(str(job.get('if', ''))):
+            bad.append(f"{f}: job '{name}' is publish-shaped and callable but its `if:` does not negate inputs.dry_run")
 if bad:
     print('\n'.join(bad)); sys.exit(1)
 print('publish-guards: OK')
@@ -68,11 +74,11 @@ for f in "${files[@]}"; do
         END { flush(); exit bad }' "$f" || fail=1
     grep -qE '^  workflow_call:' "$f" || continue
     awk -v F="$f" '
-        function flush() { if (job != "" && shaped && !guarded) { printf "%s: job \x27%s\x27 is publish-shaped and callable but its `if:` lacks inputs.dry_run\n", F, job; bad=1 } }
+        function flush() { if (job != "" && shaped && !guarded) { printf "%s: job \x27%s\x27 is publish-shaped and callable but its `if:` does not negate inputs.dry_run\n", F, job; bad=1 } }
         /^jobs:/ { injobs=1; next }
         injobs && /^  [A-Za-z0-9_-]+:/ { flush(); job=$1; sub(/:$/,"",job); shaped=0; guarded=0; next }
         injobs && /^    environment:/ { shaped=1 }
-        injobs && /^    if:/ && /inputs\.dry_run/ { guarded=1 }
+        injobs && /^    if:/ && (/![ ]*inputs\.dry_run/ || /inputs\.dry_run[ ]*==[ ]*false/ || /inputs\.dry_run[ ]*!=[ ]*true/) && !/\|\|/ { guarded=1 }
         injobs && /uses:.*publish/ { shaped=1 }
         injobs && /cargo publish|gradlew .*publish|gh release (upload|create)/ { shaped=1 }
         END { flush(); exit bad }' "$f" || fail=1
