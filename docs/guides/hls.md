@@ -249,15 +249,10 @@ the full producer + JavaScript client contract for both hls.js paths.
   the MUST of §4.3.3.1. A player joining on such a segment waits for the
   next keyframe. **Keep the GOP at or under `segment_duration`** and every
   segment opens PAT → PMT → IDR, decodable from its first byte.
-- **Segment 0 under real-time ingestion.** Until the first keyframe cut, the
-  segmenter cannot tell a `MuxPublisher` from a raw relay and cuts on the
-  wall clock at `segment_duration`. A producer pushing in real time reaches
-  that moment together with the first keyframe cut; one running behind the
-  media clock can have segment 0 cut there first, mid-GOP, and that cut is
-  not counted in `forced_cuts`. Faster-than-real-time ingestion (files,
-  transcodes) is not affected. A keyframe-intent signal that closes this
-  window is tracked in
-  [deferred-features](/docs/project/deferred-features.md).
+- **Segment 0 follows the same rule.** `MuxPublisher` tells the publisher
+  at construction that keyframes drive segmentation, so segment 0 is never
+  cut on the wall clock at `segment_duration`, however the producer is
+  paced.
 - **`max_segment_duration` guards a stalled producer.** In the
   keyframe-driven flow the media-time bound above is enforced as access
   units arrive; if they stop arriving, the publisher cuts on the wall clock

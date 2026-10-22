@@ -55,6 +55,10 @@ tst_core::binding_record! {
 /// independently decodable (RFC 8216 §3). The stream-head AU, with no open
 /// segment yet, opens the first segment without a zero-duration cut.
 ///
+/// When `min` is `Some`, [`Segmented::new`] calls [`Publisher::cut_segment`]
+/// once before any bytes: nothing is closed, and the publisher learns that
+/// explicit cuts drive segmentation from the first segment on.
+///
 /// `last_video_pts` and the open segment's start are recorded when the hook
 /// runs, before the muxer push. A push the muxer then rejects (a full
 /// buffer, a malformed NAL) therefore still advances them, and a following
@@ -83,8 +87,18 @@ pub struct Segmented<P: Publisher> {
 
 impl<P: Publisher> Segmented<P> {
     /// Wrap a publisher.
-    pub fn new(publisher: P) -> Self {
+    pub fn new(mut publisher: P) -> Self {
         let min_segment = publisher.segment_duration();
+        if min_segment.is_some() {
+            // A cut before any bytes flow closes nothing; it tells the
+            // publisher that explicit cuts drive segmentation from the start,
+            // so segment 0 belongs to this shell's media-time bound and a
+            // wall-clock fallback (HLS: the raw-relay cut at
+            // `segment_duration`) only guards a stalled producer. Not routed
+            // through `cut`: no segment was closed. A failure here (a
+            // finished publisher) resurfaces on the first push.
+            let _ = publisher.cut_segment();
+        }
         Self {
             publisher,
             segment_start_pts: None,
@@ -1121,7 +1135,58 @@ mod tests {
             mp.push_video(&au, Pts90khz::new(f * frame_ticks), keys.contains(&f))
                 .unwrap();
         }
-        mp.finish().unwrap().cuts
+        let cut_calls = mp.stats().cut_calls;
+        let mut cuts = mp.finish().unwrap().cuts;
+        if segment_duration.is_some() {
+            // The construction-time intent signal: a plain `cut_segment`
+            // (recorded as zero) before any access unit, not a closed segment.
+            assert_eq!(cuts.first(), Some(&Duration::ZERO), "cuts: {cuts:?}");
+            cuts.remove(0);
+        }
+        assert_eq!(cut_calls, cuts.len() as u64, "cuts: {cuts:?}");
+        cuts
+    }
+
+    /// A publisher that reports a bound gets one `cut_segment` before any
+    /// bytes, and one that reports none gets nothing.
+    #[test]
+    fn a_bounded_publisher_is_told_before_any_bytes_that_cuts_drive_segments() {
+        struct Bounded(OpLogPublisher, Option<Duration>);
+        impl Publisher for Bounded {
+            type Error = MemErr;
+            fn push_ts(&mut self, ts: &[u8]) -> Result<(), MemErr> {
+                self.0.push_ts(ts)
+            }
+            fn cut_segment(&mut self) -> Result<(), MemErr> {
+                self.0.cut_segment()
+            }
+            fn cut_segment_with_duration(&mut self, d: Duration) -> Result<(), MemErr> {
+                self.0.cut_segment_with_duration(d)
+            }
+            fn segment_duration(&self) -> Option<Duration> {
+                self.1
+            }
+            fn finish(self) -> Result<(), MemErr> {
+                Ok(())
+            }
+            fn stats(&self) -> PublisherStats {
+                PublisherStats::default()
+            }
+        }
+        for bound in [TARGET, None] {
+            let p = Bounded(OpLogPublisher { ops: vec![] }, bound);
+            let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+            mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
+            assert_eq!(mp.stats().cut_calls, 0, "no segment was closed");
+            let ops = mp.finish().unwrap().0.ops;
+            match bound {
+                Some(_) => {
+                    assert_eq!(ops[0], Op::Cut(Duration::ZERO), "ops: {ops:?}");
+                    assert!(ops[1..].iter().all(|o| matches!(o, Op::Push(_))), "{ops:?}");
+                }
+                None => assert!(ops.iter().all(|o| matches!(o, Op::Push(_))), "{ops:?}"),
+            }
+        }
     }
 
     const TARGET: Option<Duration> = Some(Duration::from_secs(4));

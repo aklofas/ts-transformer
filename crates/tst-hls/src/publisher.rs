@@ -277,6 +277,45 @@ mod tests {
         assert!(pl.contains("segment_00000.ts"));
     }
 
+    /// The mux publisher shell's construction-time `cut_segment` is a pure
+    /// intent signal: nothing is written or counted, and the first segment
+    /// is then cut only by the stall guard, not by the wall clock at
+    /// `segment_duration`.
+    #[test]
+    fn a_cut_before_any_push_only_arms_keyframe_driven_segmenting() {
+        let dir = tmpdir("intent");
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            ..HlsConfig::default()
+        };
+        let mut p = HlsPublisher::with_config(cfg).unwrap();
+        p.cut_segment().unwrap();
+        let (stats, hls) = (p.stats(), p.hls_stats());
+        assert_eq!(stats.segments_written, 0);
+        assert_eq!(stats.bytes_written, 0);
+        assert_eq!(hls.forced_cuts, 0);
+        assert!(!dir.join("playlist.m3u8").exists(), "no playlist written");
+        assert!(!dir.join("segment_00000.ts").exists(), "no segment opened");
+
+        p.push_ts(&[0x47u8; 376]).unwrap();
+        let d = p.segment_duration().unwrap();
+        {
+            let mut s = p.state.lock().unwrap();
+            let now = std::time::Instant::now();
+            s.segmenter
+                .tick_at(now + d + Duration::from_millis(1))
+                .unwrap();
+            assert_eq!(s.segmenter.segments_written(), 1, "segment 0 still open");
+            assert_eq!(s.segmenter.open_segment_bytes(), 376);
+            s.segmenter
+                .tick_at(now + 2 * d + Duration::from_millis(1))
+                .unwrap();
+            assert_eq!(s.segmenter.forced_cuts(), 1, "the stall guard still cuts");
+        }
+        p.finish().unwrap();
+    }
+
     #[test]
     fn cut_writes_a_live_playlist_before_finish() {
         let dir = tmpdir("live-pl");
