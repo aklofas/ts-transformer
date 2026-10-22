@@ -131,15 +131,13 @@ impl Default for KlvExpect {
 pub const KLV_PLACEMENT_TOLERANCE_TICKS: i64 = 91;
 
 /// What the KLV placement oracle holds a synchronous-KLV capture to: the
-/// KLV period, the video frame period, and how many generations the
+/// KLV period and how many generations the
 /// source is expected to produce (a source that loops its input starts a
 /// new generation, with a backward video PTS step, at every loop).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KlvPlacementExpect {
     /// Ticks between consecutive KLV records of one generation.
     pub klv_step_ticks: i64,
-    /// Ticks between consecutive video access units.
-    pub frame_ticks: i64,
     /// Generations the capture may carry; every backward video step past
     /// `expected_generations - 1` of them is a failure.
     ///
@@ -161,7 +159,6 @@ impl KlvPlacementExpect {
         match p.klv {
             KlvMode::Sync => Ok(Self {
                 klv_step_ticks: i64::from(PTS_HZ / p.klv_hz),
-                frame_ticks: i64::from(PTS_HZ / p.fps),
                 expected_generations,
             }),
             KlvMode::Async | KlvMode::AsyncWithMisp => Err(format!(
@@ -359,7 +356,21 @@ impl PlacementState {
         }
     }
 
+    /// Continue a stream's unwrapped timeline with raw 33-bit `pts`: the
+    /// signed step from the previous unwrapped value, so a rollover is a
+    /// forward step and a genuine restart a backward one.
+    fn unwrap_pts(last: Option<i64>, pts: i64) -> i64 {
+        match last {
+            None => pts,
+            Some(last) => {
+                let raw_last = last.rem_euclid(PTS_WRAP_MODULUS as i64) as u64;
+                last + pts_signed_step(pts as u64, raw_last)
+            }
+        }
+    }
+
     fn on_video(&mut self, pts: i64) {
+        let pts = Self::unwrap_pts(self.last_video, pts);
         let boundary = match self.last_video {
             Some(last) if pts < last && self.boundary_allowed() => Some(pts - last),
             _ => None,
@@ -417,6 +428,7 @@ impl PlacementState {
     }
 
     fn on_klv(&mut self, pts: i64) {
+        let pts = Self::unwrap_pts(self.last_klv, pts);
         self.metrics.records += 1;
         if self.v0.is_some()
             && !self.awaiting_video
@@ -438,7 +450,12 @@ impl PlacementState {
 
     fn judge(&mut self, k: u64, pts: i64, v0: i64) {
         let expected = v0 + k as i64 * self.expect.klv_step_ticks;
-        let error = pts - expected;
+        // The streams unwrap independently, so the two timelines may sit a
+        // whole number of wraps apart: read the error modulo the wrap.
+        let error = pts_signed_step(
+            pts.rem_euclid(PTS_WRAP_MODULUS as i64) as u64,
+            expected.rem_euclid(PTS_WRAP_MODULUS as i64) as u64,
+        );
         let m = &mut self.metrics;
         m.max_abs_error_ticks = m.max_abs_error_ticks.max(error.abs());
         if error.abs() > m.tolerance_ticks {
@@ -4230,7 +4247,6 @@ mod tests {
     fn placement_expect(expected_generations: u64) -> KlvPlacementExpect {
         KlvPlacementExpect {
             klv_step_ticks: KLV_STEP_TICKS,
-            frame_ticks: FPS_STEP_TICKS,
             expected_generations,
         }
     }
@@ -4240,6 +4256,42 @@ mod tests {
             .iter()
             .filter(|f| f.starts_with("klv_placement:"))
             .collect()
+    }
+
+    #[test]
+    fn klv_placement_reads_the_pts_wrap_as_a_forward_step() {
+        let m_wrap = 1i64 << 33;
+        let mut t = Tally::new();
+        t.set_klv_placement(placement_expect(1));
+        // Video M-6000, M-3000, 0, 3000; KLV at M-6000 and 3000.
+        feed_placement_generation(&mut t, m_wrap - 6_000, 4, &[]);
+        let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
+        assert!(placement_failures(&r).is_empty(), "{:?}", r.failures);
+        let m = r.metrics.klv_placement.expect("placement block");
+        assert_eq!(
+            (
+                m.records,
+                m.unexpected_resets,
+                m.max_abs_error_ticks,
+                m.generations
+            ),
+            (2, 0, 0, 1)
+        );
+    }
+
+    #[test]
+    fn klv_placement_counts_a_restart_after_a_wrap() {
+        let m_wrap = 1i64 << 33;
+        let mut t = Tally::new();
+        t.set_klv_placement(placement_expect(2));
+        feed_placement_generation(&mut t, m_wrap - 6_000, 4, &[]);
+        feed_placement_generation(&mut t, m_wrap - 100_000, 6, &[]);
+        let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
+        let m = r.metrics.klv_placement.expect("placement block");
+        assert_eq!(
+            (m.generations, m.unexpected_resets, m.out_of_tolerance),
+            (2, 0, 0)
+        );
     }
 
     #[test]
@@ -4784,7 +4836,7 @@ mod tests {
             KlvPlacementExpect::for_profile(profiles::by_name("baseline").unwrap(), 1).is_err()
         );
         let e = KlvPlacementExpect::for_profile(profiles::by_name("klv-sync").unwrap(), 1).unwrap();
-        assert_eq!((e.klv_step_ticks, e.frame_ticks), (9_000, 3_000));
+        assert_eq!(e.klv_step_ticks, 9_000);
         assert_eq!(e.expected_generations, 1);
     }
 }
