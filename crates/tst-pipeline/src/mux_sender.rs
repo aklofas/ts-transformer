@@ -1043,6 +1043,18 @@ impl<T: Transport> MuxSender<T> {
         drained
     }
 
+    /// Offer bytes a failed earlier push left queued to the transport once
+    /// more, without consuming the sender. Best-effort like
+    /// [`Self::into_inner`]: a failure leaves them queued, and a poisoned
+    /// lock is recovered.
+    #[cfg(feature = "std")]
+    pub(crate) fn drain_queued(&self) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if !inner.closed {
+            let _ = inner.drain_pending();
+        }
+    }
+
     /// Consume the sender and hand back the owned transport.
     ///
     /// Best-effort: `pending_bytes` retained from a prior transient
