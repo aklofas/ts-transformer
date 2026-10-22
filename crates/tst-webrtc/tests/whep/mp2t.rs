@@ -79,7 +79,7 @@ fn ts_bytes_become_frames_with_their_klv_bound() {
     let rtp: Vec<u32> = d.frames.iter().map(|f| f.0).collect();
     assert!(
         rtp.windows(2)
-            .all(|w| w[1] - w[0] == TICKS_PER_FRAME as u32)
+            .all(|w| w[1].wrapping_sub(w[0]) == TICKS_PER_FRAME as u32)
     );
     let stats = m.stats();
     assert_eq!(stats.frames_pushed, AU_COUNT as u64);
