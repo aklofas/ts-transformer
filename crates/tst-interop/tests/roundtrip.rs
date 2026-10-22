@@ -5,8 +5,8 @@
 //! against a raw-TS parse of the same bytes, not just the demuxed tallies.
 //!
 //! This is the zero-third-party-tools harness gate — every profile must
-//! generate and verify clean here before any transport/tool cell
-//! (later tasks) can be trusted to mean anything.
+//! generate and verify clean here before any transport/tool cell can be
+//! trusted to mean anything.
 
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::verify::KlvExpect;

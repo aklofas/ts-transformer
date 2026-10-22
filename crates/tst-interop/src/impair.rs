@@ -1,5 +1,5 @@
 //! Deterministic impairment decision engine — the pure-logic core the UDP
-//! impairment proxy (a later task) drives once per packet. Given the same
+//! impairment proxy ([`crate::proxy`]) drives once per packet. Given the same
 //! seed and [`ImpairConfig`], [`Engine::decide`] produces the exact same
 //! sequence of [`Action`]s for the exact same sequence of `elapsed_ms`
 //! inputs: determinism is the entire point, so nothing in this module

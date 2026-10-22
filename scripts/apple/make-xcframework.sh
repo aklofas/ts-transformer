@@ -12,7 +12,8 @@
 # slice, then `xcodebuild -create-xcframework`. Output:
 #   target/apple/TSTrans.xcframework
 #
-# The SPM package wrapper is intentionally out of scope (a later task).
+# No SPM package wrapper is built: its shape belongs with the UniFFI Swift
+# binding, which is deferred (docs/project/deferred-features.md).
 #
 # MUST run on macOS with Xcode. Env knobs match build-ios.sh (PROFILE,
 # FEATURES, APPLE_OUT).
