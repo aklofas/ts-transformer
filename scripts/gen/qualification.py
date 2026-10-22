@@ -12,16 +12,17 @@
 Artefact directory read by `collect` (a missing file is a missing leg, never a pass):
   context.json                         label, source{sha,ref,dirty,submodules}, toolchain, host
   legs.json                            {leg: {conclusion, run_url}} for interop, jvm-jar,
-                                       python-wheels, c-abi, fuzz, semver-checks and a
-                                       "sanitizers" run_url
+                                       python-wheels, c-abi, fuzz, semver-checks and
+                                       "sanitizers" (the workflow's own conclusion, a
+                                       required leg beside its four jobs)
   ci.json                              {conclusion, run_url} of the ci workflow on the sha
   interop-evidence/{results,inventory}.json
   sanitizer-<job>/sanitizer-<job>.json (or sanitizer-<job>.json) {job, conclusion}
   fuzz.json, abi.json, semver-checks.json
 
-A leg is GO only when its conclusion is exactly `success`. An empty or malformed
-artefact makes `collect` exit 2 and write NO record, so the job that runs it must
-never use `continue-on-error`. Stdlib only.
+A leg is GO only when its conclusion is exactly `success`. An unreadable artefact
+makes `collect` exit 2 and a wrongly shaped one fails the run; either way NO record is
+written, so the job that runs it must never use `continue-on-error`. Stdlib only.
 """
 import argparse
 import hashlib
@@ -52,8 +53,6 @@ EMPTY_BLOCK = (
 )
 
 SANITIZER_JOBS = ["asan", "asan-native", "tsan", "tsan-native"]
-REQUIRED_LEGS = (["interop"] + ["sanitizers/" + j for j in SANITIZER_JOBS]
-                 + ["fuzz", "jvm-jar", "python-wheels", "c-abi", "ci (on this sha)"])
 KINDS = ("soak", "stress", "corpus")
 # A soak archive still stands for a later tree when nothing outside these
 # release documents changed between the two commits: CHANGELOG.md, anything
@@ -382,6 +381,8 @@ def collect(art, root, release=False):
     for j in SANITIZER_JOBS:
         s = _find_sanitizer(art, j)
         add("sanitizers/" + j, (s or {}).get("conclusion"), san_url)
+    c, u = entry("sanitizers")
+    add("sanitizers", c, u)
     c, u = entry("fuzz")
     add("fuzz", c if c else (None if fuzz is None else ("success" if not fuzz["crashes"] else "failure")), u)
     for n in ("jvm-jar", "python-wheels"):
