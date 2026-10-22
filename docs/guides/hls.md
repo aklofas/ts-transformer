@@ -164,7 +164,7 @@ back.finish();                                          // or back.finishServing
 |---|---|---|---|
 | `HlsMode::Live` | Rolling window (`playlist_window` newest segments visible) | Never during the run | Yes — segments rolled out of the window are deleted |
 | `HlsMode::Event` | Monotone-growing (no eviction), `#EXT-X-PLAYLIST-TYPE:EVENT` | On `finish` | No |
-| `HlsMode::Vod` | Same as Event, tagged `#EXT-X-PLAYLIST-TYPE:VOD` | On `finish` | No |
+| `HlsMode::Vod` | Same as Event, tagged `#EXT-X-PLAYLIST-TYPE:VOD`, but no playlist is served (404) or written until `finish`; use EVENT to watch a recording while it is made | On `finish` | No |
 
 `Publisher::finish` writes the terminal playlist and tears the server down.
 For EVENT and VOD that is usually **not** what you want — the point of a VOD

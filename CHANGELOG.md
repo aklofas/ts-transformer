@@ -537,6 +537,11 @@ The integrator-facing changes at a glance (full detail in the sections below):
   treats segment 0 as keyframe-driven too and never cuts it on the wall
   clock at `segment_duration`; streams without video keep the wall-clock
   rule.
+- A VOD publisher serves and writes its playlist only at `finish` (a request
+  before then answers 404, and no `playlist.m3u8` exists on disk). It used to
+  publish a `#EXT-X-PLAYLIST-TYPE:VOD` playlist that grew with every cut,
+  but a VOD playlist must not change once published (RFC 8216 §4.3.3.5,
+  §6.2.1). `HlsMode::Event` remains the mode for a recording in progress.
 
 ### Changed — tst-py (BREAKING)
 

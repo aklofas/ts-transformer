@@ -129,7 +129,7 @@ mpv    'http://localhost:8080/playlist.m3u8'
 |---|---|---|---|
 | `HlsMode::Live` | Rolling window (`playlist_window` newest segments visible) | Never | Yes — segments rolled out of window are deleted |
 | `HlsMode::Event` | Monotone-growing | On `finish()` | No |
-| `HlsMode::Vod` | Same as Event | On `finish()` | No |
+| `HlsMode::Vod` | Same as Event, but no playlist is served or written until `finish` | On `finish()` | No |
 
 ## URL parameters (when constructed via `from_url`)
 

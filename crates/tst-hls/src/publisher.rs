@@ -90,6 +90,11 @@ impl HlsPublisher {
     }
 
     /// Manually render the current playlist (for tests / introspection).
+    ///
+    /// This renders what the server would serve. For an unfinished VOD
+    /// publisher the server serves nothing (a VOD playlist must not change
+    /// once published, RFC 8216 section 4.3.3.5); the text returned here is
+    /// introspection only.
     pub fn render_playlist(&self, is_final: bool) -> String {
         let s = self.state.lock().expect("HlsPublisher poisoned");
         playlist::render(&s.segmenter, is_final)
