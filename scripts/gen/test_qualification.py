@@ -566,6 +566,40 @@ class ReleaseModeTests(unittest.TestCase):
             git(d, "commit", "-q", "-m", "gitlink")
             self.assertEqual(q.changed_paths(d, a, git(d, "rev-parse", "HEAD")), ["vendor/sub"])
 
+    def test_changed_paths_counts_the_whep_player_as_code(self):
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q", "-b", "main")
+            os.makedirs(os.path.join(d, "docs/webrtc/test"))
+            for f in ("docs/webrtc/whep-player.js", "docs/webrtc/test/player.test.js"):
+                spit(os.path.join(d, f), "1\n")
+            git(d, "add", ".")
+            git(d, "commit", "-q", "-m", "A")
+            a = git(d, "rev-parse", "HEAD")
+            for f in ("docs/webrtc/whep-player.js", "docs/webrtc/test/player.test.js"):
+                spit(os.path.join(d, f), "2\n")
+            git(d, "commit", "-q", "-am", "B")
+            b = git(d, "rev-parse", "HEAD")
+            self.assertEqual(sorted(q.changed_paths(d, a, b)),
+                             ["docs/webrtc/test/player.test.js", "docs/webrtc/whep-player.js"])
+        with mock.patch.object(q, "changed_paths", return_value=["docs/webrtc/whep-player.js"]):
+            rec = collect(release=True, archives=SOAKED_EARLIER)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn(
+            "soak: archive soak-rel is superseded by 1 changed path(s) outside the release documents",
+            rec["verdict_reasons"])
+
+    def test_changed_paths_allows_markdown_under_docs_webrtc(self):
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q", "-b", "main")
+            os.makedirs(os.path.join(d, "docs/webrtc"))
+            spit(os.path.join(d, "docs/webrtc/README.md"), "1\n")
+            git(d, "add", ".")
+            git(d, "commit", "-q", "-m", "A")
+            a = git(d, "rev-parse", "HEAD")
+            spit(os.path.join(d, "docs/webrtc/README.md"), "2\n")
+            git(d, "commit", "-q", "-am", "B")
+            self.assertEqual(q.changed_paths(d, a, git(d, "rev-parse", "HEAD")), [])
+
     def test_changed_paths_sees_a_rename_into_docs(self):
         with tempfile.TemporaryDirectory() as d:
             git(d, "init", "-q", "-b", "main")

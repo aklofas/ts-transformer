@@ -58,6 +58,9 @@ KINDS = ("soak", "stress", "corpus")
 # release documents changed between the two commits: CHANGELOG.md, anything
 # under docs/, and the archive table itself.
 RELEASE_DOCUMENT_PATHS = ("CHANGELOG.md", "docs/", "tests/coverage/evidence-archives.toml")
+# The soak's browser leg executes the WebRTC reference player and its imports,
+# so under these prefixes only Markdown is a release document.
+RELEASE_CODE_UNDER_DOCS = ("docs/webrtc/",)
 RELEASE_SOAK_S = 259200
 MAINTAINER_LOCAL = [
     "long fuzz runs (10 min per target)",
@@ -156,9 +159,12 @@ def changed_paths(root, tree, sha):
         raise QualificationError(str(e))
     if p.returncode != 0:
         raise QualificationError(p.stderr.strip() or "git exited %d" % p.returncode)
-    return [l for l in p.stdout.splitlines()
-            if l and not any(l == d or (d.endswith("/") and l.startswith(d))
-                             for d in RELEASE_DOCUMENT_PATHS)]
+    def is_document(path):
+        if path.startswith(RELEASE_CODE_UNDER_DOCS) and not path.endswith(".md"):
+            return False
+        return any(path == d or (d.endswith("/") and path.startswith(d))
+                   for d in RELEASE_DOCUMENT_PATHS)
+    return [l for l in p.stdout.splitlines() if l and not is_document(l)]
 
 
 def _newest(rows):

@@ -108,7 +108,10 @@ merge commit, and the qualification run checks that nothing under
    outside `CHANGELOG.md`, `docs/` and
    `tests/coverage/evidence-archives.toml` changes after it until the tag,
    so a lockfile, toolchain pin or submodule change counts as much as source
-   code. A fix that must land elsewhere restarts the checklist at step 2,
+   code. The one exception inside `docs/` is the JavaScript under
+   `docs/webrtc/`, which the soak's browser leg runs, so only Markdown there
+   counts as a document. A fix that must land elsewhere restarts the
+   checklist at step 2,
    because the qualification run refuses a soak whose tree differs from the
    qualified one anywhere outside those three paths.
 4. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
@@ -173,7 +176,9 @@ merge commit, and the qualification run checks that nothing under
     passing corpus archive for the soaked tree that replayed all five paths
     (at least one file, none failed), with no change outside `CHANGELOG.md`,
     `docs/` and `tests/coverage/evidence-archives.toml` between the soaked
-    tree and this commit. A `v*` tag push applies the same gate. The gate
+    tree and this commit. The JavaScript under `docs/webrtc/` is not a
+    document, because the soak's browser leg runs it. A `v*` tag push
+    applies the same gate. The gate
     judges the newest 72-hour soak that stands for the commit. A newer failed
     soak of any declared duration on the same tree is a reason for NO-GO,
     while a newer passing short run never replaces the 72-hour pass. Without

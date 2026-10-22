@@ -1353,6 +1353,12 @@ The integrator-facing changes at a glance (full detail in the sections below):
   such a replay the replay of an earlier sweep.
 - `tst-interop corpus sweep --because` refuses a blank reason.
 
+### Changed — release tooling
+
+- A change to the WebRTC reference player under `docs/webrtc/` after the soak
+  now supersedes the soak. Only Markdown under that directory counts as a
+  release document.
+
 ### Fixed — release tooling
 
 - The qualification record requires the sanitizers workflow's own conclusion,
