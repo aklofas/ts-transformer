@@ -109,6 +109,14 @@ impl<T, S> CHandle<T, S> {
         self.0.snapshot()
     }
 
+    /// The construction-time snapshot while the handle is open, `None`
+    /// once it is closed. Never takes the slot, so it answers while a
+    /// parked call holds it.
+    #[allow(dead_code)] // consumed by the snapshot getters that also report closed
+    pub(crate) fn open_snapshot(&self) -> Option<&S> {
+        self.0.open_snapshot()
+    }
+
     #[cfg(feature = "std")]
     #[allow(dead_code)] // consumed by the `_end_reason` getters
     pub(crate) fn end_reason(&self) -> Option<EndReason> {
