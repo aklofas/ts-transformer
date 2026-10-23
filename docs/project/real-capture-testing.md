@@ -97,10 +97,13 @@ lists what was trimmed and skipped. A pick whose cut turns out longer than
 outside the corpus directory refuses the whole replay.
 
 Replays run over SRT, RIST, UDP, TCP and the RTSP publisher path on loopback,
-one long-lived receiver process per path. Each receiver's memory is gated per
-path by the soak's rule: after the soak's warm-up, a slope above 200 KiB per
-hour fails the replay. A run too short for the rule's sample count records
-the path as not gated, with the reason.
+one long-lived receiver process per path. Each receiver's memory is sampled
+and recorded per path, not gated: the report notes whether the slope after
+the soak's warm-up is within or above the soak's 200 KiB per hour threshold,
+or that the run was too short for the rule. The 72-hour soak is the memory
+instrument. A replay of a few unlike captures spends its first picks filling
+each receiver's working set, and a slope rule over a run that short reads
+that as growth.
 
 The replay's time rules:
 
@@ -123,9 +126,8 @@ read as transport loss. A damaged capture can still arrive short with no
 resync counted, because the sender's flush forwards a partial bundle
 without checking its framing.
 
-Picks replay largest first, by the bytes each one sends. Each receiver's
-largest allocation then happens inside the warm-up the RSS gate leaves out,
-so a one-time step in its memory is not read as a slope.
+Picks replay largest first, by the bytes each one sends, so the receiver's
+largest allocation comes early in the run.
 
 The variables named `TST_CORPUS_TEST_*` change these rules for the tool's own
 tests. When one is set, the tool names it on stderr.

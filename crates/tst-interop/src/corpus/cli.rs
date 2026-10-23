@@ -216,8 +216,8 @@ fn print_replay_summary(s: &ReplaySummary) {
             .unwrap_or(0.0);
         println!("rss {path}: max {max} kB, slope {slope:.1} kB/h");
     }
-    for (path, gate) in &s.rss_gate_by_path {
-        println!("rss slope {path} {gate}");
+    for (path, note) in &s.rss_note_by_path {
+        println!("rss slope {path}: {note}");
     }
     println!("{}", if s.pass { "pass" } else { "fail" });
 }

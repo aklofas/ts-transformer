@@ -103,6 +103,10 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
             .map_or("-".into(), |v| format!("{v:.1}"));
         let _ = writeln!(s, "| {p} | {files} | {failed} | {max} | {slope} |");
     }
+    s.push_str("\nRSS is recorded, not gated; the soak gates memory.\n");
+    for (path, note) in &r.rss_note_by_path {
+        let _ = writeln!(s, "- {path}: {note}");
+    }
     let _ = writeln!(
         s,
         "\nReplayed {} files over {} paths, {} failed. Predicted peak {} bytes.",

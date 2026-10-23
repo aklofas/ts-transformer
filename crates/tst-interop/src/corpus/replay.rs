@@ -30,10 +30,13 @@
 //! sampling is Linux-only: elsewhere the CSV holds only its header and the
 //! summary's RSS maps are empty.
 //!
-//! RSS is gated per path by the soak's rule ([`judge_rss`]): a path whose
-//! post-warm-up slope exceeds the soak's threshold fails the replay. A path
-//! with too few samples for the rule (any short run) is recorded as not
-//! gated, with the reason.
+//! RSS is recorded per path, not gated. [`judge_rss`] applies the soak's
+//! slope rule to the samples and notes whether the post-warm-up slope is
+//! within or above the soak's threshold, or that the run had too few
+//! samples for the rule; the verdict comes from the per-file judgements
+//! alone. The 72-hour soak is the memory instrument: a replay of a few
+//! unlike captures spends its first picks filling each receiver's working
+//! set, which a slope rule reads as growth.
 //!
 //! With `udp` among the paths, the replay refuses to start when
 //! `net.core.rmem_max` would clamp the receive buffer the largest pick's
@@ -102,7 +105,7 @@ pub struct ReplaySummary {
     /// Picks replayed.
     pub files: u64,
     pub paths: Vec<String>,
-    /// Verdicts that did not pass, plus paths whose RSS gate failed.
+    /// Verdicts that did not pass.
     pub failed: u64,
     /// Paths with at least one RSS sample only.
     pub rss_max_kb_by_path: BTreeMap<String, u64>,
@@ -110,15 +113,15 @@ pub struct ReplaySummary {
     /// as the child starts, before it holds anything), the soak report's
     /// arithmetic; 0 with fewer than two such samples.
     pub rss_slope_kb_per_hour_by_path: BTreeMap<String, f64>,
-    /// Whether each path's RSS was judged by the soak's slope rule.
+    /// Whether each path had enough samples for the soak's slope rule.
     #[serde(default)]
-    pub rss_gated_by_path: BTreeMap<String, bool>,
-    /// Per path: `PASS …` or `FAIL …` with the judged slope, or
-    /// `not gated: …` with the reason (see [`judge_rss`]).
+    pub rss_judged_by_path: BTreeMap<String, bool>,
+    /// Per path: the judged slope against the soak's threshold, or why the
+    /// rule could not judge it (see [`judge_rss`]). Recorded, not gated.
     #[serde(default)]
-    pub rss_gate_by_path: BTreeMap<String, String>,
-    /// No verdict failed, no path's RSS gate failed, and every path
-    /// produced a verdict.
+    pub rss_note_by_path: BTreeMap<String, String>,
+    /// No verdict failed and every path produced a verdict. RSS takes no
+    /// part: the soak gates memory.
     pub pass: bool,
 }
 
@@ -126,22 +129,27 @@ fn no_fingerprint() -> Sha256Hex {
     Sha256Hex(String::new())
 }
 
-/// What [`judge_rss`] made of each path's RSS samples.
+/// What [`judge_rss`] made of each path's RSS samples. Recorded in the
+/// summary and the report; nothing here decides the replay's verdict.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RssJudgement {
-    pub gated_by_path: BTreeMap<String, bool>,
-    pub gate_by_path: BTreeMap<String, String>,
-    /// Gated paths whose slope exceeded the threshold.
-    pub failed: Vec<String>,
+    /// Whether the path had enough samples for the soak's slope rule.
+    pub judged_by_path: BTreeMap<String, bool>,
+    /// Per path: the slope against the soak's threshold, or why the rule
+    /// could not judge it.
+    pub note_by_path: BTreeMap<String, String>,
+    /// Judged paths whose slope exceeded the soak's threshold.
+    pub above_threshold: Vec<String>,
 }
 
-/// Judges each path's RSS the soak's way. The run is as long as its last
-/// sample; the soak's warm-up for a run that long is left out; the
-/// post-warm-up points must meet the soak's coverage rule at `cadence_s`
-/// and span at least the soak's longest warm-up (30 minutes of samples),
-/// or the path is recorded as not gated; a gated path fails when its
-/// least-squares slope exceeds the soak's threshold. `samples` are
-/// `(path, elapsed seconds, kB)`.
+/// Applies the soak's RSS rule to each path's samples and records the
+/// outcome. The run is as long as its last sample; the soak's warm-up for
+/// a run that long is left out; the post-warm-up points must meet the
+/// soak's coverage rule at `cadence_s` and span at least the soak's longest
+/// warm-up (30 minutes of samples), or the path is noted as having too few
+/// samples; otherwise the note says whether the least-squares slope is
+/// within or above the soak's threshold. `samples` are `(path, elapsed
+/// seconds, kB)`.
 pub fn judge_rss(samples: &[(String, f64, u64)], paths: &[String], cadence_s: f64) -> RssJudgement {
     let run_s = samples.iter().map(|(_, t, _)| *t).fold(0.0, f64::max);
     let warmup_s = rss_warmup_s(run_s, WARMUP_FRACTION);
@@ -158,33 +166,33 @@ pub fn judge_rss(samples: &[(String, f64, u64)], paths: &[String], cadence_s: f6
         points.sort_by(|a, b| a.0.total_cmp(&b.0));
         let (covered, largest_gap, _) =
             rss_coverage(&points, min_samples, MAX_GAP_CADENCES * cadence_s);
-        let (gated, text) = if covered {
+        let (judged, text) = if covered {
             let slope = linear_regression_slope(&points) * 3600.0;
-            let pass = slope <= RSS_SLOPE_THRESHOLD_KB_PER_HOUR;
-            if !pass {
-                out.failed.push(path.clone());
+            let within = slope <= RSS_SLOPE_THRESHOLD_KB_PER_HOUR;
+            if !within {
+                out.above_threshold.push(path.clone());
             }
             (
                 true,
                 format!(
-                    "{} {slope:.1} KiB/h over {} post-warm-up sample(s) (threshold \
-                     {RSS_SLOPE_THRESHOLD_KB_PER_HOUR:.0})",
-                    if pass { "PASS" } else { "FAIL" },
-                    points.len()
+                    "{slope:.1} KiB/h over {} post-warm-up sample(s), {} the soak's threshold \
+                     {RSS_SLOPE_THRESHOLD_KB_PER_HOUR:.0} (recorded, not gated)",
+                    points.len(),
+                    if within { "within" } else { "above" },
                 ),
             )
         } else {
             (
                 false,
                 format!(
-                    "not gated: {} post-warm-up sample(s), largest gap {largest_gap:.0} s; \
-                     the slope rule needs {min_samples} at a {cadence_s:.0} s cadence",
+                    "too few samples: {} post-warm-up sample(s), largest gap {largest_gap:.0} s; \
+                     the soak's rule needs {min_samples} at a {cadence_s:.0} s cadence",
                     points.len()
                 ),
             )
         };
-        out.gated_by_path.insert(path.clone(), gated);
-        out.gate_by_path.insert(path.clone(), text);
+        out.judged_by_path.insert(path.clone(), judged);
+        out.note_by_path.insert(path.clone(), text);
     }
     out
 }
@@ -928,7 +936,8 @@ pub fn run_with(
             .insert(path.clone(), linear_regression_slope(&points[1..]) * 3600.0);
     }
     let rss = judge_rss(&samples, &args.paths, args.rss_sample_seconds.max(1) as f64);
-    let failed = verdicts.iter().filter(|v| !v.pass).count() as u64 + rss.failed.len() as u64;
+    // The per-file verdicts alone decide; RSS is recorded beside them.
+    let failed = verdicts.iter().filter(|v| !v.pass).count() as u64;
     let every_path_judged = args
         .paths
         .iter()
@@ -945,8 +954,8 @@ pub fn run_with(
         verdicts,
         rss_max_kb_by_path,
         rss_slope_kb_per_hour_by_path,
-        rss_gated_by_path: rss.gated_by_path,
-        rss_gate_by_path: rss.gate_by_path,
+        rss_judged_by_path: rss.judged_by_path,
+        rss_note_by_path: rss.note_by_path,
     };
     let text = serde_json::to_string_pretty(&summary).map_err(|e| format!("replay json: {e}"))?;
     std::fs::write(args.run.root.join("replay.json"), text).map_err(|e| {
