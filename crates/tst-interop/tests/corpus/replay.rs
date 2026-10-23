@@ -24,28 +24,37 @@ fn judged(kb_per_hour: f64) -> tst_interop::corpus::replay::RssJudgement {
 }
 
 #[test]
-fn a_flat_rss_passes_the_gate() {
+fn a_flat_rss_is_noted_within_the_soak_threshold() {
     let j = judged(0.0);
-    assert!(j.gated_by_path["udp"]);
-    assert!(j.gate_by_path["udp"].starts_with("PASS "), "{j:?}");
-    assert!(j.failed.is_empty(), "{j:?}");
+    assert!(j.judged_by_path["udp"]);
+    let note = &j.note_by_path["udp"];
+    assert!(note.contains("within the soak's threshold 200"), "{j:?}");
+    assert!(note.ends_with("(recorded, not gated)"), "{j:?}");
+    assert!(j.above_threshold.is_empty(), "{j:?}");
 }
 
 #[test]
-fn a_rising_rss_fails_the_gate() {
+fn a_rising_rss_is_noted_above_the_soak_threshold_and_nothing_fails() {
+    // The judgement carries no pass or fail: the replay's verdict comes
+    // from the per-file judgements, the soak gates memory.
     let j = judged(1000.0);
-    assert!(j.gated_by_path["udp"]);
-    assert!(j.gate_by_path["udp"].starts_with("FAIL "), "{j:?}");
-    assert_eq!(j.failed, ["udp"]);
+    assert!(j.judged_by_path["udp"]);
+    let note = &j.note_by_path["udp"];
+    assert!(note.contains("above the soak's threshold 200"), "{j:?}");
+    assert!(note.ends_with("(recorded, not gated)"), "{j:?}");
+    assert_eq!(j.above_threshold, ["udp"]);
 }
 
 #[test]
-fn a_path_with_too_few_samples_is_recorded_as_not_gated() {
+fn a_path_with_too_few_samples_is_noted_as_such() {
     // tcp's two samples rise by 50 MB, but no slope rule judges two points.
     let j = judged(0.0);
-    assert!(!j.gated_by_path["tcp"]);
-    assert!(j.gate_by_path["tcp"].starts_with("not gated: "), "{j:?}");
-    assert!(!j.failed.contains(&"tcp".to_string()), "{j:?}");
+    assert!(!j.judged_by_path["tcp"]);
+    assert!(
+        j.note_by_path["tcp"].starts_with("too few samples: "),
+        "{j:?}"
+    );
+    assert!(!j.above_threshold.contains(&"tcp".to_string()), "{j:?}");
 }
 
 #[test]

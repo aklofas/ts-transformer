@@ -77,8 +77,8 @@ fn replay(pass: bool) -> ReplaySummary {
         failed: if pass { 0 } else { 1 },
         rss_max_kb_by_path: max,
         rss_slope_kb_per_hour_by_path: slope,
-        rss_gated_by_path: BTreeMap::new(),
-        rss_gate_by_path: BTreeMap::new(),
+        rss_judged_by_path: BTreeMap::new(),
+        rss_note_by_path: BTreeMap::new(),
         pass,
     }
 }
@@ -230,11 +230,38 @@ fn the_markdown_table_carries_the_per_path_counts_rss_and_the_dash_fallback() {
     r.rss_max_kb_by_path.remove("rist");
     r.rss_slope_kb_per_hour_by_path.remove("rist");
     r.rss_max_kb_by_path.insert("srt".into(), 123_456);
+    r.rss_note_by_path.insert(
+        "srt".into(),
+        "9000.0 KiB/h over 181 post-warm-up sample(s), above the soak's threshold 200 \
+         (recorded, not gated)"
+            .into(),
+    );
     let md = report::markdown(&sweep(true), Some(&r));
     assert!(md.contains("| srt | 2 | 1 | 123456 | 1.5 |"), "{md}");
     assert!(md.contains("| udp | 1 | 0 | 120000 | 1.5 |"), "{md}");
     assert!(md.contains("| rist | 0 | 0 | - | - |"), "{md}");
+    assert!(
+        md.contains("RSS is recorded, not gated; the soak gates memory."),
+        "{md}"
+    );
+    assert!(md.contains("- srt: 9000.0 KiB/h over 181"), "{md}");
     assert!(md.contains("Predicted peak 4096 bytes."), "{md}");
+}
+
+#[test]
+fn an_rss_slope_above_the_soak_threshold_leaves_a_passing_replay_passing() {
+    let mut r = replay(true);
+    r.rss_slope_kb_per_hour_by_path
+        .insert("rist".into(), 6250.0);
+    r.rss_note_by_path.insert(
+        "rist".into(),
+        "6249.8 KiB/h over 181 post-warm-up sample(s), above the soak's threshold 200 \
+         (recorded, not gated)"
+            .into(),
+    );
+    let row = report::archive_row(&sweep(true), Some(&r));
+    assert!(row.overall_pass, "{row:?}");
+    assert_eq!(row.replay_failed, 0);
 }
 
 #[test]

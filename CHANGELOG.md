@@ -1406,6 +1406,15 @@ The integrator-facing changes at a glance (full detail in the sections below):
   Every multi-hour capture makes a prefix pick, so the report used to call
   such a replay the replay of an earlier sweep.
 - `tst-interop corpus sweep --because` refuses a blank reason.
+- `tst-interop corpus replay` records each receiver's RSS slope against the
+  soak's rule but no longer fails the replay on it; the per-file verdicts
+  alone decide, and the 72-hour soak gates memory. The first release run
+  showed the rule reading a receiver's working set filling over its first
+  picks as a slope: a 36-minute replay of four unlike captures left a
+  six-minute warm-up, and every receiver grew from about 6 MB to 15–19 MB
+  across the first two picks, then held or fell. The summary's
+  `rss_gated_by_path` and `rss_gate_by_path` are now `rss_judged_by_path`
+  and `rss_note_by_path`.
 
 ### Fixed — release tooling
 

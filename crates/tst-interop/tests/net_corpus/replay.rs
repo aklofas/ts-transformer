@@ -264,8 +264,8 @@ fn a_short_delivery_after_framing_damage_names_the_senders_resyncs() {
 }
 
 #[test]
-fn every_path_records_whether_its_rss_was_gated() {
-    let (dir, _) = two_files("rp-rssgate");
+fn every_path_records_whether_its_rss_could_be_judged() {
+    let (dir, _) = two_files("rp-rssnote");
     let run = dir.join("run");
     sweep(&dir, &run);
     let out = replay(&dir, &run, &[]);
@@ -273,11 +273,12 @@ fn every_path_records_whether_its_rss_was_gated() {
     let summary = json(&run.join("replay.json"));
     for path in ["udp", "tcp"] {
         // A run of seconds is far too short for the soak's slope rule.
-        assert_eq!(summary["rss_gated_by_path"][path], false, "{summary}");
-        let gate = summary["rss_gate_by_path"][path].as_str().unwrap();
-        assert!(gate.starts_with("not gated: "), "{gate}");
+        assert_eq!(summary["rss_judged_by_path"][path], false, "{summary}");
+        let note = summary["rss_note_by_path"][path].as_str().unwrap();
+        assert!(note.starts_with("too few samples: "), "{note}");
         assert!(
-            String::from_utf8_lossy(&out.stdout).contains(&format!("rss slope {path} not gated")),
+            String::from_utf8_lossy(&out.stdout)
+                .contains(&format!("rss slope {path}: too few samples")),
             "{}",
             text(&out)
         );
