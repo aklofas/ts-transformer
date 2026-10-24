@@ -878,23 +878,36 @@ BIN="$REPO_ROOT/target/release/tst-interop"
 # receiver log is always opened for append: a step's log is new, and a
 # restarted receiver continues its predecessor's.
 declare -A STREAM_PORT
+declare -A PROXY_PORT
 declare -A USED_PORTS
 PROXY_IMPAIR_ARGS=()
 PROXY_SEED=""
 PROXY_EXTRA_S=0
 
-# stream_port <transport> <leg> — the leg's port, allocated on first use.
-# Re-probes while the candidate is already taken by an earlier stream of
-# this step: those receivers may not have bound yet, so the kernel can
-# hand the same free port out twice.
-stream_port() {
-  local transport=$1 leg=$2 port=""
-  [[ -z "${STREAM_PORT[$leg]:-}" ]] || return 0
+# reserve_port <transport> — one port no other reservation of this step
+# holds. Re-probes while the candidate is already taken by an earlier
+# reservation: those sockets may not have bound yet, so the kernel can hand
+# the same free port out twice.
+reserve_port() {
+  local transport=$1 port=""
   until [[ -n "$port" && -z "${USED_PORTS[$port]:-}" ]]; do
     if [[ "$transport" == "tcp" ]]; then port=$(free_port tcp); else port=$(free_port udp); fi
   done
   USED_PORTS[$port]=1
-  STREAM_PORT[$leg]=$port
+  printf '%s' "$port"
+}
+
+# stream_port <transport> <leg> — the leg's ports, allocated on first use:
+# the receiver's bind port and, for the UDP transports, the impairment
+# proxy's listen port. Both come from the same reservation table. The proxy
+# used to listen on `:0` and take whatever the kernel chose, which can be a
+# port reserved here for a receiver that has not bound yet — one hold
+# launch of 176 streams lost its receiver that way.
+stream_port() {
+  local transport=$1 leg=$2
+  [[ -z "${STREAM_PORT[$leg]:-}" ]] || return 0
+  STREAM_PORT[$leg]=$(reserve_port "$transport")
+  [[ "$transport" == "tcp" ]] || PROXY_PORT[$leg]=$(reserve_port "$transport")
 }
 
 launch_stream() {
@@ -948,7 +961,7 @@ launch_stream() {
         rcvbuf=$(udp_rcvbuf_for "$scale")
         [[ -z "$rcvbuf" ]] || rcvbuf_args=(--rcvbuf "$rcvbuf")
       fi
-      "$BIN" proxy --listen 127.0.0.1:0 --forward "127.0.0.1:$port" \
+      "$BIN" proxy --listen "127.0.0.1:${PROXY_PORT[$leg]}" --forward "127.0.0.1:$port" \
         "${PROXY_IMPAIR_ARGS[@]}" --seed "${PROXY_SEED:-$SEED}" "${outage_args[@]}" "${rcvbuf_args[@]}" \
         --stats-json "$stream_dir/proxy-stats.json" \
         --run-seconds "$((seconds + PROXY_EXTRA_S + PROXY_END_SLACK_S))" \
@@ -1095,6 +1108,7 @@ run_step() {
 
   PIDS=()
   STREAM_PORT=()
+  PROXY_PORT=()
   USED_PORTS=()
   PROXY_IMPAIR_ARGS=(--loss 0 --jitter 0 --delay 0 --reorder 0,0)
   seconds=$((STEP_WARMUP_S + STEP_HOLD_S))
@@ -1473,6 +1487,7 @@ run_hold() {
 
   PIDS=()
   STREAM_PORT=()
+  PROXY_PORT=()
   USED_PORTS=()
   event "HOLD-START streams=$total n_hold=$(assoc_json_over HOLD_N HOLD_T | jq -c .) cpu_scale_factor=$HOLD_CPU_SCALE_FACTOR mem_scale_factor=$HOLD_MEM_SCALE_FACTOR predicted_mem_kb=$HOLD_PRED_MEM_KB mem_budget_kb=$HOLD_MEM_BUDGET_KB hold_s=$HOLD_S run_s=$HOLD_RUN_S restarts=${#RESTART_INSTANTS[@]}"
   echo "stress: hold — $total stream(s) for ${HOLD_RUN_S}s (${HOLD_WARMUP_S}s warm-up + ${HOLD_S}s)..." >&2
