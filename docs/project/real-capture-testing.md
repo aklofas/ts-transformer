@@ -159,6 +159,9 @@ Exit status is 0 on a pass, 1 when the sweep or replay fails, and 2 on a usage
 or I/O error. `report` exits 0 even for a failed run, because its job is to
 describe it.
 
+The release VM runs exactly this sequence, with the bucket sync before it and
+the digest push after, through `scripts/interop/release-vm-corpus.sh`.
+
 ## How results are cited
 
 The archive row holds eight counts: files, identical, changed and explained,
