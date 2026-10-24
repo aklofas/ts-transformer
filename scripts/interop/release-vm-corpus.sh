@@ -122,8 +122,10 @@ checkout() {
   fi
   echo "HEAD=$(git rev-parse HEAD)"
 }
-checkout || finish $?
-[[ "$DRY_RUN" -eq 1 ]] || echo "checkout rc=0"
+rc=0
+checkout || rc=$?
+[[ "$DRY_RUN" -eq 1 ]] || echo "checkout rc=$rc"
+[[ $rc -eq 0 ]] || finish "$rc"
 
 # 2. The release binary. Vendored libsrt/librist: the evidence is of
 # the trees this repo ships, not of whatever the host might have.
@@ -133,9 +135,12 @@ run build env SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -
 # prefixes; quarantine/ holds files the maintainer pulled from the run
 # (broken PCR, derived files) and is never synced. Annotations are the
 # curated per-capture notes the sweep's rules consult.
-run sync-captures aws s3 sync "s3://$BUCKET/" "$CAPTURES/" --only-show-errors \
+# --delete: the local trees are caches of the bucket and nothing else
+# writes them; a capture or annotation the maintainer withdrew from the
+# bucket must not stay on a reused VM and be swept against expected_files.
+run sync-captures aws s3 sync "s3://$BUCKET/" "$CAPTURES/" --only-show-errors --delete \
   --exclude '*' --include '*.ts' --exclude 'quarantine/*' --exclude 'annotations/*' --exclude 'baselines/*' || finish $?
-run sync-annotations aws s3 sync "s3://$BUCKET/annotations/" "$ANNOTATIONS/" --only-show-errors || finish $?
+run sync-annotations aws s3 sync "s3://$BUCKET/annotations/" "$ANNOTATIONS/" --only-show-errors --delete || finish $?
 if [[ "$DRY_RUN" -eq 0 ]]; then
   echo "captures=$(find "$CAPTURES" -name '*.ts' | wc -l) annotations=$(find "$ANNOTATIONS" -name '*.toml' 2>/dev/null | wc -l)"
   if [[ -e "$RUN_DIR" ]]; then
@@ -158,10 +163,12 @@ replay_rc=0
 if [[ $sweep_rc -eq 0 ]]; then
   run replay "$BIN" corpus replay "$CAPTURES" --out "$RUN_DIR" || replay_rc=$?
 fi
-run report "$BIN" corpus report "$RUN_DIR" --markdown "$RUN_DIR/report.md" --archive-row "$RUN_DIR/archive-row.json"
+report_rc=0
+run report "$BIN" corpus report "$RUN_DIR" --markdown "$RUN_DIR/report.md" --archive-row "$RUN_DIR/archive-row.json" || report_rc=$?
 [[ "$DRY_RUN" -eq 1 || ! -f "$RUN_DIR/archive-row.json" ]] || cat "$RUN_DIR/archive-row.json"
 [[ $sweep_rc -eq 0 ]] || finish "$sweep_rc"
 [[ $replay_rc -eq 0 ]] || finish "$replay_rc"
+[[ $report_rc -eq 0 ]] || finish "$report_rc"
 
 # 5. The digests become the commit's unreleased baseline; the release
 # promotes them under the tag's name.

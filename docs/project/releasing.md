@@ -140,7 +140,9 @@ merge commit, and the qualification run checks that nothing under
      the AWS CLI, the UDP receive-buffer ceiling, Google Chrome, and a clean
      checkout of the frozen commit with `tst-interop` built in release mode
      (`SETUP-DONE rc=0`).
-   - `release-vm-corpus.sh <full sha> --baseline <previous release's digests>`
+   - `aws s3 sync s3://<bucket>/baselines/vX.Y.Z/ ~/baseline-vX.Y.Z/` fetches
+     the previous release's digests, then
+     `release-vm-corpus.sh <full sha> --baseline ~/baseline-vX.Y.Z`
      runs the corpus phase: `corpus inventory` lists the captures,
      `corpus sweep` digests each one and compares it with the baseline,
      `corpus replay` sends each selected capture through the transports and
@@ -150,9 +152,13 @@ merge commit, and the qualification run checks that nothing under
      a finding to fix, and the fix restarts at step 2. A reviewed change is
      accepted with `--accept <sha256> --because <text>`.
    - From a machine with an authenticated `gh`,
-     `release-vm-soak.sh ci-green <full sha> ubuntu@<vm> --dispatch-wheels main`
+     `release-vm-soak.sh ci-green <full sha> ubuntu@<vm> --dispatch-wheels <ref>`
      dispatches the wheels dry run and creates `~/ci-green` on the VM once
      `ci`, `jvm-jar` and `python-wheels` have each succeeded on the commit.
+     `<ref>` is a branch or tag whose head is the frozen commit (`main`
+     while it still points there; otherwise push one, for example
+     `git push origin <sha>:refs/heads/release/X.Y.Z`): a workflow dispatch
+     takes no commit, and the script refuses a ref that has moved on.
    - On the VM, `release-vm-soak.sh launch <full sha> --outdir ~/soak-X.Y.Z
      --wait-marker ~/ci-green` waits for that marker, runs the pre-flight
      (soak.sh's own memory gate and the rtsp-publish disk rule, which needs
