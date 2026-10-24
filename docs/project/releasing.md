@@ -131,34 +131,53 @@ merge commit, and the qualification run checks that nothing under
    publish (publish is tag-gated). Confirm all legs are green, and watch for a
    leg sitting *queued* — that is the v0.1.0 failure mode.
 6. **The release VM.** One dedicated cloud VM runs the corpus phase and then
-   the soak, both on the frozen commit:
+   the soak, both on the frozen commit. Four scripts under `scripts/interop/`
+   carry the steps; each prints `<stage> rc=N` lines and one final marker a
+   watcher can anchor on:
    - Provision the VM. Its instance role reads the corpus bucket, which holds
-     the real captures and the previous release's corpus baseline.
-   - Check out the frozen commit, clean, with its submodules, and build
-     `tst-interop` with `--release`; the corpus phase runs that binary and
-     the soak rebuilds the same tree.
-   - Run the corpus phase: `tst-interop corpus inventory` lists the
-     captures, `corpus sweep` digests each one and compares it with the
-     previous release's baseline, `corpus replay` sends each selected capture through
-     the transports and judges what arrives, and `corpus report` writes the
-     result and its archive row. A failure stops the checklist here; it is a
-     finding to fix, and the fix restarts at step 2.
-   - Launch the soak detached, so no session limit can end it:
-     ```bash
-     SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh \
-       --outdir ~/soak-X.Y.Z --hours 72 &
-     ```
-     The script refuses to start when its declared memory gate does not fit
-     the VM.
-   - Check the run at 24 and 48 hours without touching it: every process is
-     alive, there is no fail-fast marker, and the SRT receiver's
-     `reconnects` reads 4 and then 8.
+     the real captures and the previous release's corpus baseline. Then, on
+     the VM, `release-vm-setup.sh <full sha>`: packages, a Rust toolchain,
+     the AWS CLI, the UDP receive-buffer ceiling, Google Chrome, and a clean
+     checkout of the frozen commit with `tst-interop` built in release mode
+     (`SETUP-DONE rc=0`).
+   - `release-vm-corpus.sh <full sha> --baseline <previous release's digests>`
+     runs the corpus phase: `corpus inventory` lists the captures,
+     `corpus sweep` digests each one and compares it with the baseline,
+     `corpus replay` sends each selected capture through the transports and
+     judges what arrives, `corpus report` writes the result and its archive
+     row, and the digests go to the bucket as the commit's unreleased
+     baseline (`CORPUS-DONE rc=0`). A failure stops the checklist here; it is
+     a finding to fix, and the fix restarts at step 2. A reviewed change is
+     accepted with `--accept <sha256> --because <text>`.
+   - From a machine with an authenticated `gh`,
+     `release-vm-soak.sh ci-green <full sha> ubuntu@<vm> --dispatch-wheels main`
+     dispatches the wheels dry run and creates `~/ci-green` on the VM once
+     `ci`, `jvm-jar` and `python-wheels` have each succeeded on the commit.
+   - On the VM, `release-vm-soak.sh launch <full sha> --outdir ~/soak-X.Y.Z
+     --wait-marker ~/ci-green` waits for that marker, runs the pre-flight
+     (soak.sh's own memory gate and the rtsp-publish disk rule, which needs
+     1.2 × the pre-generated stream's peak free — about 141 GiB for 72 hours),
+     launches `soak.sh` detached so no session limit can end it, and reports
+     `SOAK-UP roles=N running_until=…` only once every role is alive. A
+     refused pre-flight names the largest directories beside the outdir: a
+     previous run's outdir is the usual cause, and
+     `release-vm-soak.sh stop --outdir <old>` keeps its logs and frees its
+     media. Run `launch` detached too (it waits for the marker and then for
+     the roles, which can be an hour).
+   - Check the run at 24 and 48 hours without touching it:
+     `release-vm-soak.sh status --outdir ~/soak-X.Y.Z` lists every role
+     alive, the absence of the fail-fast marker, and the SRT receiver's
+     `reconnects`, which reads 4 and then 8.
    - When the run ends, harvest the corpus run directory and the soak
      directory. Write a checksum list for each on the VM and check the
      copies against it.
    - The `tst-interop report soak` that closes the run must print
      `overall_pass=true`, and the script exits 0. Any other verdict is a
      finding, not a rerun.
+   - A commit that replaces the frozen one restarts the whole step on the
+     same VM: `release-vm-soak.sh stop` on the running soak, then setup's
+     checkout stage (or `release-vm-corpus.sh` on the new sha, which checks
+     it out), then the chain above.
 7. **The archive-entry PR.** A docs-only PR adds two rows to
    `tests/coverage/evidence-archives.toml`, each with the frozen commit as
    its `tree`:

@@ -803,6 +803,17 @@ SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh --outdir ~/inte
 
 With the rtsp-publish leg on, a 72-hour run needs about 122 GB free in the
 outdir at launch (about 1.7 GB per hour; exit 2 below 1.2 × that peak).
+`soak.sh --preflight-only` runs the build, the declaration's validation, the
+memory gate and that disk check and exits without generating or launching
+anything.
+
+The release VM runs these steps through `release-vm-setup.sh` (a fresh host
+to a built checkout), `release-vm-corpus.sh` (the corpus phase) and
+`release-vm-soak.sh` (`preflight`, `launch`, `status`, `stop`, and the
+`ci-green` handshake the launch waits on); each prints `<stage> rc=N` lines
+and a final marker, and `release-vm-soak.sh launch` reports success only
+once every role is alive. The release checklist (`docs/project/releasing.md`,
+step 6) names them in order.
 `--hours 1` is the smoke: long enough for a real post-warm-up RSS window,
 too short for an outage, so it proves the managed receiver's steady state
 only. `--hours 0.05` runs launch, supervisor and report end to end in
