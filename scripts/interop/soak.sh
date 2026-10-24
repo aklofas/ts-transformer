@@ -39,6 +39,11 @@
 #   --rss-slope-threshold-kb-per-hour N
 #                       RSS-slope gate (default 200 for runs of 72 h or
 #                       more; shorter runs are provisional unless set)
+#   --preflight-only    build, validate the declaration, run the memory gate
+#                       and the rtsp-publish disk check, then exit 0 without
+#                       generating or launching anything (the release VM's
+#                       pre-check; leaves soak-config.json and
+#                       provenance.json in --outdir)
 #
 # Environment:
 #   SRT_RECONNECT_MODE         REQUIRED, blocking|background; no default — the
@@ -111,6 +116,7 @@ SCHEDULE_PHASE_S=""
 RTSP_PUBLISH=1
 RTSP_PUBLISH_ES=1
 WHEP=1
+PREFLIGHT_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -161,6 +167,10 @@ while [[ $# -gt 0 ]]; do
     --rss-slope-threshold-kb-per-hour)
       RSS_SLOPE_THRESHOLD=$2
       shift 2
+      ;;
+    --preflight-only)
+      PREFLIGHT_ONLY=1
+      shift
       ;;
     -h | --help)
       # Print the whole header comment block (line 2 up to the first
@@ -887,6 +897,10 @@ that could never pass its own completeness verdicts" >&2
 # the byte rate, and a run whose outdir has less than 1.2 x that peak free
 # exits 2 here, naming --no-rtsp-publish.
 PUBLISH_SEGMENTS=()
+if [[ "$RTSP_PUBLISH" -eq 0 && "$PREFLIGHT_ONLY" -eq 1 ]]; then
+  echo "soak: preflight ok: memory gate passed; no rtsp-publish leg, so no disk check" >&2
+  exit 0
+fi
 if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
   PUBLISH_SAMPLE="$OUTDIR/rtsp-publish/rate-sample.ts"
   "$BIN" gen --profile "$PUBLISH_PROFILE" --seconds 10 --out "$PUBLISH_SAMPLE" \
@@ -901,6 +915,11 @@ if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
 ($PUBLISH_PEAK_KB KiB, source + segments) in $OUTDIR, which has $PUBLISH_FREE_KB KiB free (< 1.2 x peak) — \
 free space, shorten --hours, or pass --no-rtsp-publish" >&2
     exit 2
+  fi
+  if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
+    echo "soak: preflight ok: memory gate passed; rtsp-publish peak ~$((PUBLISH_PEAK_KB / 1048576)) GiB \
+($PUBLISH_PEAK_KB KiB) against $((PUBLISH_FREE_KB / 1048576)) GiB free in $OUTDIR" >&2
+    exit 0
   fi
   echo "soak: generating the rtsp-publish leg's ${PUBLISH_CONTENT_S}s stream in $PUBLISH_GENERATIONS segments..." >&2
   PUBLISH_SOURCE="$OUTDIR/rtsp-publish/source.ts"
