@@ -1435,6 +1435,12 @@ The integrator-facing changes at a glance (full detail in the sections below):
 - `docs/project/benchmarks.md`'s introduction describes the 2026-10-06 run,
   whose 24-hour hold completed, instead of the earlier run whose hold did
   not.
+- `docs/project/benchmarks.md` publishes the sweep of the stress run of
+  2026-10-23 on the 0.9.0 tree: 256 streams on every transport (memory
+  bound), single-stream ceilings SRT 16 / RIST 16 / UDP 32 / TCP 16, with
+  the RIST row marked untriaged (its receiver's RSS kept rising through the
+  10-minute step) and no 24-hour hold (a harness port collision ended it at
+  launch; the 2026-10-06 hold stays the latest one).
 - New `docs/project/ci-flakes.md`: the CI failure classes a rerun is allowed
   for (job, symptom, cause, first and last sighting, the rule for the next
   sighting) and the closed classes whose recurrence is a regression. The
