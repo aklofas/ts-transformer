@@ -46,7 +46,9 @@
 #            jvm-jar and python-wheels workflows each have a successful run
 #            on the sha, then creates the marker on the VM over ssh (or
 #            locally with target `local`). --dispatch-wheels REF starts the
-#            wheels dry run once, after checking REF's head is the sha.
+#            wheels dry run once, after checking REF's head is the sha:
+#            REF is a branch or tag (`gh workflow run --ref` takes no sha),
+#            so push one at the frozen commit when main has moved on.
 #
 # Environment: SRT_RECONNECT_MODE (default background) and every soak.sh
 # knob pass through to preflight and launch. TSTRANS_REPO_DIR is the
@@ -83,6 +85,23 @@ soak_supervisor_pids() {
   pgrep -f "scripts/interop/soak\.sh .*--outdir ${1}( |\$)" || true
 }
 
+# absolute <path> — the path as soak.sh and every check here must see it:
+# soak.sh runs after `cd` into the checkout, so a relative --outdir would
+# land inside the frozen tree while the checks looked beside the caller.
+absolute() { realpath -m -- "${1%/}"; }
+
+# owns_pid <pid> <pid file> — true when the process started no later than
+# the pid file was written (plus slack): a pid recorded before a reboot or
+# wrapped since names someone else's process, which stop must not signal.
+owns_pid() {
+  local pid=$1 file=$2 up age
+  up=$(ps -o etimes= -p "$pid" 2>/dev/null) || return 1
+  up=${up// /}
+  [[ -n "$up" ]] || return 1
+  age=$(( $(date +%s) - $(stat -c %Y -- "$file") ))
+  [[ $up -ge $((age - 5)) ]]
+}
+
 # role_pids <outdir> — "<role> <pid>" per recorded role.
 role_pids() {
   local p
@@ -106,6 +125,7 @@ cmd_preflight() {
     esac
   done
   [[ -n "$outdir" ]] || die "preflight: --outdir is required"
+  outdir=$(absolute "$outdir")
   local parent scratch rc=0
   parent=$(dirname "$outdir")
   [[ -d "$parent" ]] || die "preflight: $parent does not exist"
@@ -143,35 +163,47 @@ cmd_stop() {
     esac
   done
   [[ -n "$outdir" ]] || die "stop: --outdir is required"
+  outdir=$(absolute "$outdir")
   [[ -d "$outdir" ]] || die "stop: $outdir is not a directory"
-  outdir=${outdir%/}
   [[ -n "$keep_as" ]] || keep_as="$outdir-aborted-$(date -u +%Y%m%dT%H%M%SZ)"
+  keep_as=$(absolute "$keep_as")
   [[ ! -e "$keep_as" ]] || die "stop: $keep_as already exists"
 
-  local pids role pid p
+  # The roles this run recorded and still owns (a pid file older than its
+  # process names a reused pid, not a role).
+  local pids role pid ours=()
+  while read -r role pid; do
+    [[ -n "${pid:-}" ]] || continue
+    alive "$pid" || continue
+    if owns_pid "$pid" "$outdir/pids/$role.pid"; then
+      ours+=("$role:$pid")
+    else
+      echo "stop: $role's recorded pid $pid started after its pid file was written — not this run's, left alone" >&2
+    fi
+  done < <(role_pids "$outdir")
+
   # The supervisor first, so it cannot read a role's death as a failure
-  # and write a fail-fast marker into the evidence we are keeping.
+  # and write a fail-fast marker into the evidence we are keeping. No
+  # match while roles are alive means the run was launched under another
+  # spelling of the outdir: stopping its roles would leave that soak.sh to
+  # fail-fast into a directory this command is about to move.
   pids=$(soak_supervisor_pids "$outdir")
+  if [[ -z "$pids" && ${#ours[@]} -gt 0 ]]; then
+    die "stop: no soak.sh supervisor matches --outdir $outdir while ${#ours[@]} role(s) are alive; see \`pgrep -af soak.sh\` for the outdir it was launched with"
+  fi
   for pid in $pids; do kill -TERM "$pid" 2>/dev/null || true; done
   sleep 2
-  while read -r role pid; do
-    [[ -n "${pid:-}" ]] || continue
-    kill -TERM "$pid" 2>/dev/null || true
-  done < <(role_pids "$outdir")
+  for role in "${ours[@]}"; do kill -TERM "${role##*:}" 2>/dev/null || true; done
   sleep 5
   for pid in $pids; do alive "$pid" && kill -KILL "$pid" 2>/dev/null; done
-  while read -r role pid; do
-    [[ -n "${pid:-}" ]] || continue
-    alive "$pid" && kill -KILL "$pid" 2>/dev/null
-  done < <(role_pids "$outdir")
+  for role in "${ours[@]}"; do alive "${role##*:}" && kill -KILL "${role##*:}" 2>/dev/null; done
   sleep 1
 
   local left=0
   for pid in $pids; do alive "$pid" && { echo "stop: supervisor $pid still alive" >&2; left=$((left + 1)); }; done
-  while read -r role pid; do
-    [[ -n "${pid:-}" ]] || continue
-    alive "$pid" && { echo "stop: role $role ($pid) still alive" >&2; left=$((left + 1)); }
-  done < <(role_pids "$outdir")
+  for role in "${ours[@]}"; do
+    alive "${role##*:}" && { echo "stop: role ${role%%:*} (${role##*:}) still alive" >&2; left=$((left + 1)); }
+  done
   [[ $left -eq 0 ]] || { echo "SOAK-STOPPED at $(now) FAILED: $left process(es) survived" >&2; return 1; }
 
   mv "$outdir" "$keep_as" || return 1
@@ -208,7 +240,7 @@ cmd_launch() {
   done
   [[ ${#sha} -eq 40 ]] || die "launch: need the full 40-hex sha (got '$sha')"
   [[ -n "$outdir" ]] || die "launch: --outdir is required"
-  outdir=${outdir%/}
+  outdir=$(absolute "$outdir")
   [[ ! -e "$outdir" ]] || die "launch: $outdir exists — \`stop\` a running soak or choose another --outdir"
   local head dirty
   head=$(cd "$REPO_DIR" && git rev-parse HEAD) || die "launch: $REPO_DIR is not a checkout"
@@ -258,12 +290,12 @@ cmd_launch() {
     roles=$((roles + 1))
     alive "$pid" || { dead=$((dead + 1)); echo "launch: role $role ($pid) is dead" >&2; }
   done < <(role_pids "$outdir")
-  if [[ $roles -eq 0 || $dead -gt 0 || -e "$outdir/soak-FAILED" ]]; then
+  if [[ $roles -eq 0 || $dead -gt 0 || -e "$outdir/soak-FAILED" ]] || ! alive "$sup"; then
     tail -15 "$log" >&2
-    echo "SOAK-UP FAILED roles=$roles dead=$dead"
+    echo "SOAK-UP FAILED roles=$roles dead=$dead supervisor_alive=$(alive "$sup" && echo yes || echo no)"
     return 1
   fi
-  echo "SOAK-UP roles=$roles ${until_line} at $(now)"
+  echo "SOAK-UP roles=$roles running_until=${until_line##* } at $(now)"
 }
 
 # --- status --------------------------------------------------------------
@@ -277,8 +309,8 @@ cmd_status() {
     esac
   done
   [[ -n "$outdir" ]] || die "status: --outdir is required"
+  outdir=$(absolute "$outdir")
   [[ -d "$outdir" ]] || die "status: $outdir is not a directory"
-  outdir=${outdir%/}
   local bad=0 roles=0 role pid
   echo "status at $(now) for $outdir"
   while read -r role pid; do
@@ -294,7 +326,7 @@ cmd_status() {
   if [[ -e "$outdir/soak-FAILED" ]]; then echo "fail-fast marker: PRESENT"; cat "$outdir/soak-FAILED"; bad=$((bad + 1)); else echo "fail-fast marker: none"; fi
   [[ ! -f "$outdir.launch.log" ]] || grep -o 'running until [^ ]*' "$outdir.launch.log" | tail -1
   [[ ! -f "$outdir/logs/srt-recv.log" ]] || echo "srt-recv: $(grep -o 'reconnects=[0-9]*' "$outdir/logs/srt-recv.log" | tail -1)"
-  echo "oom kills: $(journalctl -k --no-pager 2>/dev/null | grep -ci 'out of memory' || echo 0)"
+  echo "oom kills: $(journalctl -k --no-pager 2>/dev/null | grep -ci 'out of memory'; true)"
   echo "samples: $(($(wc -l <"$outdir/rss.csv" 2>/dev/null || echo 1) - 1)) rss rows"
   df -h "$outdir" | tail -1
   uptime

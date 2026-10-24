@@ -77,6 +77,7 @@ rc=0
 echo "net.core.rmem_max = 16777216" | sudo tee /etc/sysctl.d/90-tstrans-udp-rcvbuf.conf >/dev/null &&
   sudo sysctl --system >/dev/null && sysctl net.core.rmem_max || rc=$?
 stage sysctl "$rc"
+[[ $rc -eq 0 ]] || { stage SETUP-DONE "$rc"; exit "$rc"; }
 
 # Google Chrome for the whep leg (headless). The .deb is removed after the
 # install: it is 140 MB the disk check below would otherwise count.

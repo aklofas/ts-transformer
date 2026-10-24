@@ -896,9 +896,34 @@ that could never pass its own completeness verdicts" >&2
 # before anything is written: a 10 s sample of the leg's own profile gives
 # the byte rate, and a run whose outdir has less than 1.2 x that peak free
 # exits 2 here, naming --no-rtsp-publish.
+# publish_es_disk_check — the rtsp-publish-es leg's rate sample and disk
+# rule (its source alone, about 0.85 GB per hour of generation length,
+# ~140 MB for the default 600 s; less than 1.2 x that free exits 2). Sets
+# PUBLISH_ES_GEN_ARGS for the generation that follows it. A function so
+# --preflight-only can run it before exiting, ahead of the MPEG-TS leg's
+# generation below.
+publish_es_disk_check() {
+  PUBLISH_ES_GEN_ARGS=(--profile "$PUBLISH_ES_PROFILE" --klv-set "$PUBLISH_ES_KLV_SET" --klv-seed "$SEED"
+    --au-sizes realistic)
+  PUBLISH_ES_SAMPLE="$OUTDIR/rtsp-publish-es/rate-sample.ts"
+  "$BIN" gen --seconds 10 --out "$PUBLISH_ES_SAMPLE" "${PUBLISH_ES_GEN_ARGS[@]}" ||
+    { echo "soak.sh: rtsp-publish-es rate sample gen failed (see above)" >&2; exit 2; }
+  PUBLISH_ES_PEAK_KB=$(awk -v b="$(wc -c <"$PUBLISH_ES_SAMPLE")" -v s="$PUBLISH_SEGMENT_S" \
+    'BEGIN{printf "%d", b / 10 * s / 1024 + 1}')
+  rm -f "$PUBLISH_ES_SAMPLE"
+  PUBLISH_ES_FREE_KB=$(df -Pk "$OUTDIR" | awk 'NR==2{print $4}')
+  if awk -v f="$PUBLISH_ES_FREE_KB" -v p="$PUBLISH_ES_PEAK_KB" 'BEGIN{exit !(f < 1.2 * p)}'; then
+    echo "soak.sh: the rtsp-publish-es leg pre-generates its ${PUBLISH_SEGMENT_S}s source: ~$PUBLISH_ES_PEAK_KB KiB \
+in $OUTDIR, which has $PUBLISH_ES_FREE_KB KiB free (< 1.2 x that) — free space, lower PUBLISHER_DROP_PERIOD_S, \
+or pass --no-rtsp-publish-es" >&2
+    exit 2
+  fi
+}
+
 PUBLISH_SEGMENTS=()
 if [[ "$RTSP_PUBLISH" -eq 0 && "$PREFLIGHT_ONLY" -eq 1 ]]; then
-  echo "soak: preflight ok: memory gate passed; no rtsp-publish leg, so no disk check" >&2
+  [[ "$RTSP_PUBLISH_ES" -eq 0 ]] || publish_es_disk_check
+  echo "soak: preflight ok: memory gate passed; no rtsp-publish leg, so no stream disk check" >&2
   exit 0
 fi
 if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
@@ -917,6 +942,7 @@ free space, shorten --hours, or pass --no-rtsp-publish" >&2
     exit 2
   fi
   if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
+    [[ "$RTSP_PUBLISH_ES" -eq 0 ]] || publish_es_disk_check
     echo "soak: preflight ok: memory gate passed; rtsp-publish peak ~$((PUBLISH_PEAK_KB / 1048576)) GiB \
 ($PUBLISH_PEAK_KB KiB) against $((PUBLISH_FREE_KB / 1048576)) GiB free in $OUTDIR" >&2
     exit 0
@@ -981,21 +1007,7 @@ fi
 # sample gives the byte rate, and less than 1.2 x the source free exits 2
 # naming --no-rtsp-publish-es.
 if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
-  PUBLISH_ES_GEN_ARGS=(--profile "$PUBLISH_ES_PROFILE" --klv-set "$PUBLISH_ES_KLV_SET" --klv-seed "$SEED"
-    --au-sizes realistic)
-  PUBLISH_ES_SAMPLE="$OUTDIR/rtsp-publish-es/rate-sample.ts"
-  "$BIN" gen --seconds 10 --out "$PUBLISH_ES_SAMPLE" "${PUBLISH_ES_GEN_ARGS[@]}" ||
-    { echo "soak.sh: rtsp-publish-es rate sample gen failed (see above)" >&2; exit 2; }
-  PUBLISH_ES_PEAK_KB=$(awk -v b="$(wc -c <"$PUBLISH_ES_SAMPLE")" -v s="$PUBLISH_SEGMENT_S" \
-    'BEGIN{printf "%d", b / 10 * s / 1024 + 1}')
-  rm -f "$PUBLISH_ES_SAMPLE"
-  PUBLISH_ES_FREE_KB=$(df -Pk "$OUTDIR" | awk 'NR==2{print $4}')
-  if awk -v f="$PUBLISH_ES_FREE_KB" -v p="$PUBLISH_ES_PEAK_KB" 'BEGIN{exit !(f < 1.2 * p)}'; then
-    echo "soak.sh: the rtsp-publish-es leg pre-generates its ${PUBLISH_SEGMENT_S}s source: ~$PUBLISH_ES_PEAK_KB KiB \
-in $OUTDIR, which has $PUBLISH_ES_FREE_KB KiB free (< 1.2 x that) — free space, lower PUBLISHER_DROP_PERIOD_S, \
-or pass --no-rtsp-publish-es" >&2
-    exit 2
-  fi
+  publish_es_disk_check
   echo "soak: generating the rtsp-publish-es leg's ${PUBLISH_SEGMENT_S}s source (replayed $PUBLISH_GENERATIONS times)..." >&2
   PUBLISH_ES_SOURCE="$OUTDIR/rtsp-publish-es/source.ts"
   "$BIN" gen --seconds "$PUBLISH_SEGMENT_S" --out "$PUBLISH_ES_SOURCE" "${PUBLISH_ES_GEN_ARGS[@]}" ||
