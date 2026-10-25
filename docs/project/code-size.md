@@ -43,7 +43,7 @@ fraction of a percent, not to the line.
 |---|---|
 | **tst-core** | MPEG-TS mux/demux, KLV, codec parsers, and the `Transport` / `RecvTransport` traits. Depends on nothing else in the workspace and is a standalone crate: a consumer that needs only parsing and muxing depends on it alone and never compiles `tst-pipeline`. |
 | **tst-pipeline** | The sender/receiver shells and managed reconnect wrappers, layered on `tst-core`. Every transport crate and every binding depends on it, so it is only "compiled out" for a `tst-core`-only consumer. |
-| **transports** | `tst-srt`, `tst-rtp`, `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rist`: one crate per wire protocol, each listed on its own row with a group subtotal. Each depends on `tst-core` and `tst-pipeline`; none depends on another transport. |
+| **transports** | `tst-srt`, `tst-rtp`, `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rist`, `tst-webrtc`: one crate per wire protocol, each listed on its own row with a group subtotal. Each depends on `tst-core` and `tst-pipeline`; `tst-webrtc` also depends on `tst-rtp` for its RTP packetizers, and no other transport depends on another. |
 | **sys** | `tstrans-srt-sys`, `tstrans-rist-sys`, `tstrans-mbedtls-src`: raw FFI bindings and build scripts over the vendored C libraries (the vendored trees themselves are not counted). |
 | **bindings/c**, **bindings/python**, **bindings/jvm** | The C ABI (`tst-c` + `tst-c-core`), the PyO3 extension plus its Python package and stubs, and the JNI crate plus its Java sources. Each binding's own test suite is in its `test` column. |
 | **examples** | The runnable Rust examples. C examples live under `bindings/c/examples` and are counted with the C binding. |

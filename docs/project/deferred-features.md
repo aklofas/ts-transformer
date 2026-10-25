@@ -80,6 +80,22 @@ mean **Deferred**. An entry whose feature has shipped must never read
   wants to push segments straight to an object store / CDN origin without a
   disk round-trip.
 
+## HLS `#EXT-X-DISCONTINUITY` on a timestamp reset
+
+- **Status:** Deferred. When the video PTS jumps backwards (an encoder
+  restart, a looped source), the HLS publisher closes the open segment
+  at the last access unit of the old timeline and starts a new one, but
+  the playlist never writes `#EXT-X-DISCONTINUITY` before it or an
+  `#EXT-X-DISCONTINUITY-SEQUENCE` header. RFC 8216 §4.3.2.3 requires
+  the tag when the timestamp sequence changes, so a player may treat the
+  new segment's timestamps as a continuation of the old timeline.
+  Player behaviour on such a stream has not been measured.
+- **Why deferred:** The cut already lands at the right place; the
+  missing part is carrying the reason from the shell to the playlist
+  and counting discontinuities across the sliding window.
+- **Trigger to revisit:** Scheduled for 0.9.1, sooner if a player is
+  seen to stall or skip after a source restart.
+
 ## Other PMT entries / auxiliary services
 
 - **Status:** SCTE-35 splice info, EMM/ECM (conditional access), and
@@ -117,12 +133,17 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## Key rotation (`SRTO_KMREFRESHRATE`, `SRTO_KMPREANNOUNCE`)
 
-- **Status:** Not implemented; AES-CTR uses the static key derived
-  from the passphrase for the lifetime of the connection.
-- **Why deferred:** Shipping streams are typically minutes to hours;
-  static-key AES-CTR is fine across that duration.
-- **Trigger to revisit:** A 24/7 unattended stream, or a compliance
-  regime that requires periodic rekey.
+- **Status:** Not exposed. Rotation itself is on: with both options
+  unset, libsrt generates a fresh stream key every 2^24 packets
+  (`HAICRYPT_DEF_KM_REFRESH_RATE`) and pre-announces it to the peer. The
+  passphrase derives only the key that wraps those stream keys. What is
+  deferred is tuning the rotation interval and the pre-announce window;
+  the URL parser recognizes `kmrefreshrate` / `kmpreannounce` and refuses
+  them as not yet exposed.
+- **Why deferred:** libsrt's default interval suits every shipping
+  stream; no consumer has asked for a different one.
+- **Trigger to revisit:** A compliance regime that mandates a specific
+  rekey interval, or a peer that requires matching values.
 
 ## Protocol-version pinning (`SRTO_PEERVERSION`, `SRTO_MINVERSION`)
 
@@ -632,8 +653,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## URL parser: additional test coverage
 
-- **Status:** Deferred: three test categories and strict percent-encoding
-  validation.
+- **Status:** Deferred: three test categories.
   1. Property-based roundtrip via `proptest` (random valid URLs
      roundtrip cleanly through parse and apply); `tst-srt` already
      carries the `proptest` dev-dependency, but no URL property test
@@ -641,27 +661,14 @@ mean **Deferred**. An entry whose feature has shipped must never read
   2. Concurrent-open smoke (50–100 threads, no shared parser state).
   3. Atomicity-under-load 1000-iteration smoke (the clone-then-mutate
      atomicity invariant defended against future regression).
-  4. Strict percent-encoding: the parser inherits
-     `url::Url::query_pairs()`'s lenient handling, so `%2` or `%XY` in a
-     query pass through as literal substrings instead of failing with
-     `SrtUrlError::Syntax`. The fuzz target enforces panic-freedom only.
 - **Why deferred:** The shipped parser has a panic-freedom fuzz target
   and a one-shot atomicity test, and its structural invariants (no
   shared mutable state, clone-then-mutate) make 2–3 redundant for now.
-  Strict rejection would need a query pre-validation pass or a manual
-  percent-decode, for a low-risk failure mode: the typed per-key
-  validator usually rejects the literal substring (`StreamId::new("%2")`
-  accepts ASCII, so that escape hatch is partial).
 - **Trigger to revisit:** the first consumer-reported URL parser bug
   becomes a property test; concurrent-open returns when Group 3 setters
   land (more parser surface, more room for shared state); the atomicity
   smoke returns if the clone-then-mutate invariant is touched (e.g. the
-  clone optimized away); strict validation when a consumer reports a
-  malformed URL silently parsing where they expected an error.
-
-### URL parser: strict percent-encoding validation
-
-- **Status:** Deferred — covered by "URL parser: additional test coverage" above.
+  clone optimized away).
 
 ## Errno-based error classification (`SrtErrno` minor codes)
 
@@ -680,15 +687,21 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## `KeyLength` → `Option<KeyLength>` ergonomics
 
-- **Status:** `SrtSocketConfig::key_length` is `KeyLength` (default
-  `Aes128`) and is unconditionally written to `SRTO_PBKEYLEN` whenever
-  a passphrase is set. ffmpeg only sets `SRTO_PBKEYLEN` when the user
-  explicitly passes `?pbkeylen=`, letting libsrt auto-negotiate.
-- **Why deferred:** Negligible interop impact. AES-128 is the de-facto
-  default everywhere; the only failure mode is a peer hardcoded to
-  AES-256 rejecting our handshake.
-- **Trigger to revisit:** A user reports an interop failure with an
-  AES-256-only peer.
+- **Status:** Deferred. `SrtSocketConfig::key_length` is already
+  `Option<KeyLength>`, but `None` is still written to `SRTO_PBKEYLEN`
+  as 16 bytes (AES-128) whenever a passphrase is set, on callers and
+  listeners alike. ffmpeg only sets `SRTO_PBKEYLEN` when the user
+  explicitly passes `?pbkeylen=`, leaving it 0 so libsrt adopts the
+  peer's value.
+- **Why deferred:** Low interop impact. A key-length conflict does not
+  fail the handshake: libsrt keeps the `SRTO_SENDER` side's length and
+  logs a warning. So a passphrase-only sender against a listener set to
+  AES-256 runs AES-128, and a listener left at the default overrides a
+  receiving caller that asked for AES-256. The link stays encrypted;
+  default-to-default interop is AES-128 either way.
+- **Trigger to revisit:** A deployment that must get the peer's
+  AES-256 without setting `key_length` on our side. The fix is to apply
+  `SRTO_PBKEYLEN` only when `key_length` is `Some`.
 
 ## `srt_cleanup()` shutdown hatch
 
@@ -1162,16 +1175,34 @@ mean **Deferred**. An entry whose feature has shipped must never read
   (default `0xBD`), validation forcing `carries_pts = false` for
   `0xBF`, and the slimmer header-less PES emission path.
 
+## 204-byte TS packets (Reed-Solomon parity)
+
+- **Status:** Deferred. Every mux, demux and transport path uses
+  188-byte packets (`TS_PACKET_SIZE`). A DVB-ASI or broadcast capture
+  that carries 16 bytes of Reed-Solomon parity after each packet does
+  not keep a sync byte every 188 bytes, so the demuxer and the receive
+  shells' sync search cannot hold lock on it; nothing strips the parity.
+- **Why deferred:** The parity bytes belong to the physical-layer
+  interface, and the IP transports this library carries (SRT, RIST,
+  RTP, UDP, TCP, HLS) all use 188-byte packets.
+- **Trigger to revisit:** A consumer needing to read 204-byte captures
+  directly. The likely shape is an input adapter that detects the
+  204-byte stride and drops the parity before the demuxer.
+
 ## RTCP statistics reporting (RFC 3550 §6.4 Sender/Receiver Reports)
 
-- **Status:** Not implemented. No RTP transport sends RTCP or binds the RTCP
-  companion port, and the UDP transports do not receive RTCP. Receive-side
-  statistics are not computed: RFC 3550 §A.1 sequence and cycle tracking,
-  §A.8 interarrival jitter, loss accounting, sender packet and octet counts,
-  and the LSR/DLSR round-trip time. RTCP reception on the interleaved RTSP
-  path is implemented: a peer's receiver reports fill
-  `RtpRecvTransport::rtcp_stats()` and `socket_stats().packets_lost_send`,
-  and a publisher's sender reports place KLV on the video timeline of a
+- **Status:** Not implemented. No path sends RTCP. Where RTCP is received
+  today: a peer's packets on the interleaved RTSP client, and a
+  publisher's sender reports on `RtspServer`'s ingest, over interleaved
+  TCP or over UDP on the companion port the server binds at SETUP. A bare
+  `rtp://` receiver binds no companion port, and the RTSP client's UDP
+  session and the server's UDP play session bind one but never read it.
+  Receive-side statistics are not computed: RFC 3550 §A.1 sequence and
+  cycle tracking, §A.8 interarrival jitter, loss accounting, sender packet
+  and octet counts, and the LSR/DLSR round-trip time. On the interleaved
+  RTSP client a peer's receiver reports fill
+  `RtpRecvTransport::rtcp_stats()` and `socket_stats().packets_lost_send`;
+  a publisher's sender reports place KLV on the video timeline of a
   publish mount. `rtt_us` reports 0 everywhere.
 - **Why deferred:** The statistics are a new subsystem on the receive side
   (sequence/cycle tracking, jitter and loss accounting) plus SR/RR emission
@@ -1203,11 +1234,12 @@ mean **Deferred**. An entry whose feature has shipped must never read
 ## ST 0605 Nano Precision Time Stamp Pack
 
 - **Status:** Not implemented. The `tst_core::klv::st0605` module
-  decodes the standard 9-byte Precision Time Stamp Pack (the only
-  mandatory pack in ST 0605.7). The Nano Precision Time Stamp Pack
-  (10-byte body, nanosecond resolution, distinct UL) defined in the
-  same standard is not yet handled — decoding it returns an unknown-key
-  error.
+  decodes the Precision Time Stamp Pack (ST 0605.10 §7: Time Status
+  byte plus a microsecond `uint64`, 9-byte value). The Nano Precision
+  Time Stamp Pack (§8: the same 9-byte layout with a nanosecond
+  `uint64`, key `06.0E.2B.34.02.05.01.01.0E.01.03.03.01.00.00.00`) is
+  not yet handled — decoding it returns
+  `KlvDecodeError::UnexpectedUniversalLabel`.
 - **Why deferred:** No capture in the test corpus uses nanosecond-
   resolution timestamps; the standard Precision Time Stamp Pack
   (microsecond resolution) covers all observed real-world payloads.
@@ -1301,7 +1333,12 @@ mean **Deferred**. An entry whose feature has shipped must never read
   null, and the missing null check turns that graceful failure into a
   SIGSEGV that takes down the whole process (verified under gdb at
   `rist.c:1276`). On IPv4 the clobbered `rist://@127.0.0.1` re-parses
-  fine, so the RTCP peer correctly binds `port + 1`. The sender path is unaffected —
+  fine, so the RTCP peer binds `port + 1` when that port is free. Any
+  other RTCP-peer creation failure takes the same null dereference: an
+  IPv4 Simple-profile receiver whose `port + 1` is already held by
+  another socket crashes the process at `listen`. Until the fix lands
+  in 0.9.1, use the Main profile or make sure `port + 1` is free. The
+  sender path is unaffected —
   `rist_sender_peer_create` null-checks before dereferencing. Fixing
   this properly means patching vendored upstream C in two places (the
   null-check ordering *and* the RTCP address derivation) and carrying
@@ -1339,14 +1376,14 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Status:** Deferred. No C-ABI `H264Receiver` / `H264DepayConfig` /
   `H264Au` family exists; the H.264 ingest path is only available from
   Rust, Python, and JVM.
-- **Why deferred:** The C ABI grows additively (currently minor 22);
+- **Why deferred:** The C ABI grows additively (currently minor 25);
   adding an H.264-specific receive family would bump it further and
   requires cbindgen-friendly struct definitions (no opaque Rust types
   passed by value). The existing Python + JVM mirrors cover all current
   consumers.
 - **Trigger to revisit:** A C or embedded consumer asks for first-party
   H.264 ingest (e.g. a bare-metal pipeline receiving from a STANAG 4609
-  RTSP camera). Would be the next additive ABI minor bump (0.22 → 0.23).
+  RTSP camera). Would be the next additive ABI minor bump (0.25 → 0.26).
 
 ## Elementary H.264/H.265 RTP sender
 
@@ -1478,18 +1515,17 @@ mean **Deferred**. An entry whose feature has shipped must never read
   socket (for example a high-bitrate push to a small board), visible as
   missing access units with `aus_dropped` rising.
 
-## ST 0604 Commercial Time Stamp (UTC wall-clock SEI, `payloadType=21`)
+## ST 0604 Commercial Time Stamp (`pic_timing` / `time_code` SEI timecode)
 
-ST 0604 support covers the MISP Precision Time Stamp (Class 0 microsecond
-and Class 1 nanosecond precision) via `MispTimestamp::micros` / `::nanos`
+ST 0604 support covers the microsecond Precision Time Stamp and, on H.265,
+the Nano Precision Time Stamp via `MispTimestamp::micros` / `::nanos`
 and `push_video_misp_to` / `send_video_misp_to`, spliced as SEI into H.264
 and H.265 access units. Three ST 0604 variants are deferred: this entry
 and the two below.
 
-- **Status:** Deferred. The "Commercial Time Stamp" sub-family
-  (`payloadType=21`, UTC wall-clock values tied to the video bitstream
-  via H.264 SPS `vui_parameters` / HRD timing / `pic_timing` SEI /
-  `time_code` SEI) is not implemented.
+- **Status:** Deferred. The Commercial Time Stamp (HH:MM:SS:FF timecode,
+  ST 0604.6 §9; carried in the H.264 `pic_timing` SEI, payloadType 1, §11.2,
+  and the H.265 `time_code` SEI, payloadType 136, §12.3) is not implemented.
 - **Why deferred:** It requires coupling the SEI payload to SPS HRD / VUI
   timing parameters (CPB removal delay, coded picture buffer, output
   delay). The library does not own or inspect the encoder; reproducing a
@@ -1497,7 +1533,7 @@ and the two below.
   error-prone and would at minimum mean parsing and echoing the SPS HRD
   fields from the caller's video stream. No consumer has requested it.
 - **Trigger to revisit:** An integrator requests timecode interop with a
-  receiver toolchain that consumes `payloadType=21` UTC wall-clock SEI,
+  receiver toolchain that consumes `pic_timing` / `time_code` SEI timecode,
   specifically requiring the SPS/HRD coupling.
 
 ### H.262 / MPEG-2 video user_data timestamps (ST 0604 §10)
@@ -1545,13 +1581,13 @@ and the two below.
 ## MISMMS 30-second reporting-cadence tracker (stream-level)
 
 - **Status:** Deferred. `klv::st0601::validate_mismms` is a
-  per-record snapshot check — it tells the caller which of the 10
-  required ST 0902.8 Table 1 fields are absent or out of range in a
-  single decoded `UasDatalinkLs`. It does not track cadence across
-  records: ST 0902.3 §4 and ST 1204.1-34 both require stream-level
-  compliance (at least one conformant KLV record per 30 seconds for
-  MISMMS, or at least one Core ID record per second for ST 1204), and
-  the per-record validator cannot check this without state across calls.
+  per-record snapshot check — it tells the caller which of the 23
+  ST 0902.8 Table 1 items are unmet in a single
+  decoded `UasDatalinkLs`. It does not track cadence across records:
+  ST 0902.3-04 and ST 1204.1-34 both require stream-level compliance
+  (every MISMMS item reported at least once every 30 seconds, and a Core
+  Identifier at least every 30 seconds or whenever it changes), and the
+  per-record validator cannot check this without state across calls.
 - **Why deferred:** Stream-level cadence tracking is consumer-owned
   state (a rolling timestamp window + counter), not a record-level
   decode concern. Adding a stateful `MismmsTracker` struct that the
@@ -2030,9 +2066,13 @@ Shipped 0.3.0: removed from every receive builder and binding; receive URLs reje
 
 Shipped 0.6.0 (C ABI minor 20 for `TstStreamEndReason`): the opt-in `TSTRANS_LOG` bridge and `end_reason()` / `end_detail()` in Python and the JVM; the managed-SRT end-reason mirrors followed in 0.7.0. See [troubleshooting.md](/docs/troubleshooting.md#why-did-my-rtsp-stream-end).
 
-### RTSP keepalive response handling — RESOLVED
+### RTSP keepalive response handling — RESOLVED (TCP-interleaved sessions)
 
-Shipped 0.4.0: keepalive responses are consumed where reads happen (a 401 refreshes the challenge, a 454 marks the session dead), which also ended the TCP-interleaved session death after `CTRL_QUEUE_BOUND + 1` pings; the cadence retunes to the server's `Session` timeout.
+Shipped 0.4.0 for TCP-interleaved sessions: keepalive responses are consumed where reads happen (a 401 refreshes the challenge, a 454 marks the session dead), which also ended the TCP-interleaved session death after `CTRL_QUEUE_BOUND + 1` pings; the cadence retunes to the server's `Session` timeout. A UDP session has no reader on the control connection: a receive-only application never reads the ping replies, so a 401 or 454 goes unseen and the replies accumulate in the control socket's receive buffer until the server's writes block and it closes the connection.
+
+### URL parser: strict percent-encoding validation
+
+Shipped: every URL parser decodes query keys and values with the shared `tst_core::url::common::percent_decode`, which rejects a truncated or non-hex escape (`%2`, `%XY`) and escapes that decode to invalid UTF-8 with `UrlError::BadPercentEncoding` (`SrtUrlError::Syntax` on `srt://`). `+` is not decoded as a space; it stays a literal `+`.
 
 ### `TcpListener` cross-thread cancel
 
