@@ -232,11 +232,17 @@ internally.
   (published as `tstrans-srt-sys`), on by default.
   `--no-default-features` builds an unencrypted libsrt;
   setting a passphrase against that build fails at handshake.
-- Both peers must agree on passphrase and key length. A mismatch
-  surfaces as `SrtConnectError::Rejected { reason: RejectReason::BadSecret, .. }`
+- Both peers must agree on the passphrase. A mismatch surfaces as
+  `SrtConnectError::Rejected { reason: RejectReason::BadSecret, .. }`
   on the caller; the listener sees nothing — libsrt rejects the handshake
   before `accept()` returns (the `AcceptError::PeerRejected` variant exists
   but nothing produces it today).
+- A key-length mismatch is not rejected: the handshake negotiates it.
+  The side with `Role::Sender` (`SRTO_SENDER`, set by `sender_defaults()`)
+  keeps its own length, the other side adopts it, and libsrt logs a
+  warning. A socket with a passphrase always advertises a length
+  (`key_length` unset means AES-128), so set the same `KeyLength` on both
+  ends when the cipher strength matters.
 
 Paired listener and caller, mirroring
 [examples/encrypted_send_recv.rs](/examples/sending/encrypted_send_recv.rs):
@@ -487,7 +493,9 @@ The public API is sync blocking. Calls that block:
 
 Calls that don't block: builder / config setters, `SrtSocket::stats`,
 `SrtSocket::peer_addr`, `SrtSocket::local_addr`, `SrtSocket::stream_id`,
-`SrtSocket::close`, `SrtListener::close`.
+`SrtListener::close`. `SrtSocket::close` (and dropping an `SrtSocket`)
+can block while unsent data drains, for up to the configured `linger`:
+5 s with `sender_defaults()`, no wait at libsrt's default (off).
 
 Timeouts are configured pre-`connect` / pre-`bind` via the builder's
 `recv_timeout(Duration)` and `send_timeout(Duration)` (or
@@ -547,7 +555,7 @@ when both name the same option.
 | `rcvlatency` | `SRTO_RCVLATENCY` | INT (ms) | non-negative |
 | `peerlatency` | `SRTO_PEERLATENCY` | INT (ms) | non-negative |
 | `mss` | `SRTO_MSS` | INT | u16 range |
-| `payloadsize` | `SRTO_PAYLOADSIZE` | INT | u16 range; ffmpeg-style aliases `pkt_size`, `payload_size` |
+| `payloadsize` | `SRTO_PAYLOADSIZE` | INT | at most 1456 (libsrt's live-mode maximum); ffmpeg-style aliases `pkt_size`, `payload_size` |
 | `maxbw` | `SRTO_MAXBW` | INT64 | u64 range; non-negative only |
 | `inputbw` | `SRTO_INPUTBW` | INT64 | u64 range |
 | `oheadbw` | `SRTO_OHEADBW` | INT | 5..=100 |
@@ -605,8 +613,10 @@ Strict ASCII canonical forms — matches libsrt apps' own URL parser:
 - Integers: decimal only, no `ms`/`s` suffixes, non-negative.
 - Booleans: `0` or `1` only — not `true`/`false`/`yes`/`no`.
 - Enums: lowercase only — `live`, not `Live`.
-- Strings: percent-decoded once via the form-urlencoded convention
-  (`+` is treated as space; literal `+` must be encoded as `%2B`).
+- Strings: percent-decoded once (`%XX` only). `+` is not decoded as a
+  space: it stays a literal `+`, and `%2B` also decodes to `+`. A
+  truncated or non-hex escape (`%2`, `%XY`) is rejected with
+  `SrtUrlError::Syntax`.
 
 Anything else rejects with `SrtUrlError::InvalidValue` carrying the key
 name and a description.

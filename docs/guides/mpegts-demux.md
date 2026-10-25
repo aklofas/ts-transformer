@@ -48,7 +48,8 @@ Opt into hard-fail behaviour per category via `StrictMode`.
 
 ## Quick example
 
-Read a `.ts` file, feed it to a `Demuxer`, drain events:
+Read a `.ts` file, feed it to a `Demuxer` in chunks, drain events after
+each chunk:
 
 ```rust,no_run
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload, VideoPayload, split_video};
@@ -57,8 +58,18 @@ use std::fs;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = fs::read("input.ts")?;
     let mut d = Demuxer::new();
-    d.feed(&bytes)?;
+    // One `feed` call larger than the 4 MiB ingress ceiling fails with
+    // `SyncBufExhausted`, so feed bounded chunks and drain between them.
+    for chunk in bytes.chunks(188 * 1024) {
+        d.feed(chunk)?;
+        drain(&mut d);
+    }
     d.flush(); // recover trailing PES at end-of-file
+    drain(&mut d);
+    Ok(())
+}
+
+fn drain(d: &mut Demuxer) {
     while let Some(e) = d.next_event() {
         match e {
             DemuxEvent::ProgramMap(m) => {
@@ -80,7 +91,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         }
     }
-    Ok(())
 }
 ```
 
@@ -101,7 +111,7 @@ Runnable: [../examples/receiving/demux_to_events.rs](/examples/receiving/demux_t
 | `SubtitleCodec` | `DvbSubtitling`, `DvbTeletext`, `Cea708Standalone` (separate ES, "GA94"), `WebVttInTs` ("VTTC"). |
 | `SamplePayload` | `Video { codec, raw, random_access_indicator, av1_carriage }`, `Audio { codec, frames }`, `Subtitle { codec, payload }`, `Unknown { stream_type, raw }`. **Raw-first:** `raw` is the exact encoded access unit (a `SharedBytes`); call `split_video(&raw, codec, av1_carriage.unwrap_or_default())` to split it into a `VideoPayload` — `Nals(Vec<NalUnit>)` for H.264 / H.265 / H.266 or `Obus(Vec<Obu>)` for AV1. |
 | `split_video` / `split_video_strict` | `split_video(raw: &SharedBytes, codec: VideoCodec, av1_carriage: Av1CarriageMode) -> (VideoPayload, Vec<NonConformantIssue>)` — opt-in split of a raw video AU into NAL/OBU units (lenient; ES-conformance findings come back in the issue list). `split_video_strict` returns `Err(NonConformantIssue)` on the first issue. |
-| `NalUnit` | `H264 { nal_type, ref_idc, payload }` / `H265 { nal_type, layer_id, temporal_id_plus1, payload }` / `H266 { nal_type, layer_id, temporal_id_plus1, payload }`. RBSP bytes; Annex-B start codes stripped. |
+| `NalUnit` | `H264 { nal_type, ref_idc, payload }` / `H265 { nal_type, layer_id, temporal_id_plus1, payload }` / `H266 { nal_type, layer_id, temporal_id_plus1, payload }`. `payload` is the NAL body after the header, emulation-prevention bytes kept; the Annex-B start code and the NAL header bytes are stripped (the header fields carry their values). |
 | `Obu` | AV1 OBU: `{ obu_type, extension: Option<ObuExtension>, payload }`. Header byte + optional extension byte + LEB128 `obu_size` consumed; `payload` is OBU body bytes. `obu_type` = 1 SequenceHeader / 2 TemporalDelimiter / 3 FrameHeader / 6 Frame / etc. (AV1 §5.3.2). |
 | `MetadataKind` | `KlvSyncAuCell { metadata_service_id, sequence_number, cell_fragment_indication, decoder_config_flag, random_access_indicator, was_reassembled, cell_count }` (first 5 fields per H.222.0 § 2.12.4.2 Table 2-156, AU cell unwrapped; `was_reassembled` / `cell_count` describe multi-cell reassembly), `KlvAsync` (bare LS), `Unknown(u8)`. |
 | `ProgramMap` | `{ program_number, pcr_pid, pmt_pid, streams: Vec<StreamInfo>, klv_links: Vec<KlvLink> }`. `pmt_pid` is the PAT-declared PID carrying this program's PMT; needed to reconstruct a muxer config via `MuxerConfig::from_program_map`. |
@@ -236,9 +246,14 @@ use std::fs;
 fn drain_file(path: &str) -> Result<usize, Box<dyn std::error::Error>> {
     let bytes = fs::read(path)?;
     let mut d = Demuxer::new();
-    d.feed(&bytes)?;
-    d.flush();
     let mut count = 0;
+    for chunk in bytes.chunks(188 * 1024) {
+        d.feed(chunk)?;
+        while d.next_event().is_some() {
+            count += 1;
+        }
+    }
+    d.flush();
     while d.next_event().is_some() {
         count += 1;
     }
@@ -367,6 +382,15 @@ kept for non-exhaustive-enum binary-compatibility parity only.)
 drops the partial bytes, emits `DiscontinuityKind::PesOversize { pid }` (or
 `PesTotalOversize`), and resumes on the next PUSI for that PID.
 
+The per-PID default (4 MiB) is smaller than the H.264 RTP depayloader's
+default AU limit (`tst_rtp::depay::DepayConfig::max_au_bytes`, 8 MiB), and
+the muxer writes each access unit as one PES. An AU between the two
+limits received over RTP or RTSP and republished as MPEG-TS therefore
+reaches a default `Demuxer` as an oversize PES and is dropped. A demuxer
+downstream of such a gateway should raise `DemuxerConfig::pes_cap_per_pid`
+(builder `pes_cap_per_pid`) above the largest AU it must accept plus the
+PES header, for example `9 << 20` for the 8 MiB depayloader default.
+
 **Garbage prefix bytes (scan / N-of-M confirm / locked).** When a stream
 starts mid-flight or recovers from severe loss, the bytes leading the next
 TS packet boundary aren't TS-aligned. The demuxer scans for `0x47`; a
@@ -407,10 +431,12 @@ that's an opt-in call. Pass the AU to `split_video(&raw, codec, av1_carriage.unw
 `VideoPayload::Nals(Vec<NalUnit>)`: the splitter strips the Annex-B start
 codes (`0x000001` / `0x00000001`), preserves emulation-prevention bytes
 (the consumer's H.264 / H.265 decoder removes them), and returns each NAL
-with codec-tagged headers on `NalUnit::H264` / `NalUnit::H265`. Callers
+with its header parsed into the fields of `NalUnit::H264` /
+`NalUnit::H265` and `payload` holding the bytes after the header. Callers
 re-emitting to a downstream Annex-B sink that already have `raw` in hand
-can forward it verbatim; callers reconstituting from split NALs prepend
-`0x00 0x00 0x00 0x01` between them — see
+can forward it verbatim; callers reconstituting from split NALs write
+`0x00 0x00 0x00 0x01`, then rebuild the NAL header from those fields
+(one byte for H.264, two for H.265 / H.266), then `payload` — see
 [../examples/codec-parsing/extract_video_au.rs](/examples/codec-parsing/extract_video_au.rs).
 
 **Sync KLV (`stream_type=0x15`).** The demuxer detects the H.222.0
@@ -639,10 +665,12 @@ directly.
 **Assuming the NAL units from `split_video` are Annex-B framed.** They aren't.
 `SamplePayload::Video.raw` *is* the Annex-B access unit (start codes intact) —
 but once you split it with `split_video(&raw, codec, av1_carriage.unwrap_or_default())`, each
-`NalUnit::H264` / `NalUnit::H265` carries the RBSP bytes only: the Annex-B
-start codes have been stripped. Re-emit start codes between NALs yourself if
-writing split NALs back to an Annex-B sink (or just forward `raw`, which is
-already framed). Pattern shown in
+`NalUnit::H264` / `NalUnit::H265` carries the NAL body only: the Annex-B
+start code and the NAL header bytes have been stripped (the header lives in
+the variant's fields), and emulation-prevention bytes are kept, so the body
+is not RBSP. To write split NALs back to an Annex-B sink, emit a start code,
+the header rebuilt from the fields, then `payload` (or just forward `raw`,
+which is already framed). Pattern shown in
 [../examples/codec-parsing/extract_video_au.rs](/examples/codec-parsing/extract_video_au.rs).
 
 **Treating `Closed` as an error.** It isn't. `DemuxReceiver` turns
@@ -749,29 +777,35 @@ or `parse_teletext_descriptor`.
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload};
 
 let mut demux = Demuxer::new();
-demux.feed(&bytes)?;
-demux.flush();
-while let Some(e) = demux.next_event() {
-    if let DemuxEvent::Sample {
-        stream,
-        pts,
-        payload: SamplePayload::Subtitle { codec, payload },
-        ..
-    } = e
-    {
-        // payload is the raw PES payload bytes — for WebVTT-in-TS
-        // this is UTF-8 cue text per Apple's HLS draft; for
-        // DVB-sub it's a subtitle_data_segment per ETSI EN 300 743;
-        // for DVB-teletext it's a teletext_data_unit per ETSI EN
-        // 300 706; for CEA-708 standalone it's cc_data_pkt
-        // structures per CEA-708-D.
-        println!(
-            "subtitle PID 0x{:04x} codec={:?} pts={} bytes={}",
-            stream.pid,
-            codec,
-            pts.as_ticks(),
-            payload.len()
-        );
+// Feed bounded chunks (one feed() over the 4 MiB ingress ceiling fails)
+// and drain after each; the trailing `None` flushes the last PES.
+for chunk in bytes.chunks(188 * 1024).map(Some).chain([None]) {
+    match chunk {
+        Some(chunk) => demux.feed(chunk)?,
+        None => demux.flush(),
+    }
+    while let Some(e) = demux.next_event() {
+        if let DemuxEvent::Sample {
+            stream,
+            pts,
+            payload: SamplePayload::Subtitle { codec, payload },
+            ..
+        } = e
+        {
+            // payload is the raw PES payload bytes — for WebVTT-in-TS
+            // this is UTF-8 cue text per Apple's HLS draft; for
+            // DVB-sub it's a subtitle_data_segment per ETSI EN 300 743;
+            // for DVB-teletext it's a teletext_data_unit per ETSI EN
+            // 300 706; for CEA-708 standalone it's cc_data_pkt
+            // structures per CEA-708-D.
+            println!(
+                "subtitle PID 0x{:04x} codec={:?} pts={} bytes={}",
+                stream.pid,
+                codec,
+                pts.as_ticks(),
+                payload.len()
+            );
+        }
     }
 }
 ```

@@ -517,7 +517,10 @@ use tst_core::klv::{length, st0903};
 if data.starts_with(&st0903::VMTI_LS_UL) {
     let after_ul = &data[16..];
     let (declared_len, after_len) = length::read_ber(after_ul)?;
-    let inner = &after_len[..declared_len];
+    // A truncated record can declare more bytes than it carries.
+    let inner = after_len
+        .get(..declared_len)
+        .ok_or("VMTI value shorter than its BER length")?;
     let vmti = st0903::decode(inner)?;
     // ...
 }
@@ -771,12 +774,15 @@ use tst_core::klv::length::{read_ber, read_ber_oid};
 
 fn dump_fields(buf: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     // Skip the 16-byte UL, then read the outer BER length to find the body.
-    let (outer_len, rest) = read_ber(&buf[16..])?;
-    let mut body = &rest[..outer_len];
+    // Checked slices: a truncated record must return an error, not panic.
+    let after_ul = buf.get(16..).ok_or("shorter than a 16-byte UL")?;
+    let (outer_len, rest) = read_ber(after_ul)?;
+    let mut body = rest.get(..outer_len).ok_or("truncated Local Set body")?;
     while !body.is_empty() {
         let (tag, after_tag) = read_ber_oid(body)?;
         let (len, after_len) = read_ber(after_tag)?;
-        let f = RawField { tag, value: &after_len[..len] };
+        let value = after_len.get(..len).ok_or("truncated field value")?;
+        let f = RawField { tag, value };
         println!("tag={} len={} value={:02X?}", f.tag, f.value.len(), f.value);
         body = &after_len[len..];
     }

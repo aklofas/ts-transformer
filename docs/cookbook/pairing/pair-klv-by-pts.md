@@ -25,39 +25,45 @@ const KLV_HISTORY_LEN: usize = 32;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = fs::read("input.ts")?;
     let mut d = Demuxer::new();
-    d.feed(&bytes)?;
-    d.flush();
     let mut history: VecDeque<(i64, Vec<u8>)> = VecDeque::with_capacity(KLV_HISTORY_LEN);
     let (mut paired, mut unpaired) = (0usize, 0usize);
-    while let Some(e) = d.next_event() {
-        match e {
-            DemuxEvent::Metadata {
-                pts,
-                kind: MetadataKind::KlvSyncAuCell { .. } | MetadataKind::KlvAsync,
-                payload,
-                ..
-            } => {
-                // Plain i64 ticks for the arithmetic below (Pts90khz is a newtype).
-                history.push_back((pts.as_ticks(), payload));
-                if history.len() > KLV_HISTORY_LEN {
-                    history.pop_front();
-                }
-            }
-            DemuxEvent::Sample {
-                pts,
-                payload: SamplePayload::Video { .. },
-                ..
-            } => {
-                let pts = pts.as_ticks();
-                let nearest = history.iter().min_by_key(|(kpts, _)| (kpts - pts).abs());
-                match nearest {
-                    Some((kpts, _)) if (kpts - pts).abs() <= PAIRING_TOLERANCE_TICKS => {
-                        paired += 1;
+    // Feed bounded chunks (one feed() over the 4 MiB ingress ceiling fails)
+    // and drain after each; the trailing `None` flushes the last PES.
+    for chunk in bytes.chunks(188 * 1024).map(Some).chain([None]) {
+        match chunk {
+            Some(chunk) => d.feed(chunk)?,
+            None => d.flush(),
+        }
+        while let Some(e) = d.next_event() {
+            match e {
+                DemuxEvent::Metadata {
+                    pts,
+                    kind: MetadataKind::KlvSyncAuCell { .. } | MetadataKind::KlvAsync,
+                    payload,
+                    ..
+                } => {
+                    // Plain i64 ticks for the arithmetic below (Pts90khz is a newtype).
+                    history.push_back((pts.as_ticks(), payload));
+                    if history.len() > KLV_HISTORY_LEN {
+                        history.pop_front();
                     }
-                    _ => unpaired += 1,
                 }
+                DemuxEvent::Sample {
+                    pts,
+                    payload: SamplePayload::Video { .. },
+                    ..
+                } => {
+                    let pts = pts.as_ticks();
+                    let nearest = history.iter().min_by_key(|(kpts, _)| (kpts - pts).abs());
+                    match nearest {
+                        Some((kpts, _)) if (kpts - pts).abs() <= PAIRING_TOLERANCE_TICKS => {
+                            paired += 1;
+                        }
+                        _ => unpaired += 1,
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
     println!("paired={paired} unpaired={unpaired}");

@@ -1,7 +1,7 @@
 # Build a STANAG 4609-conformant stream
 
-> **When to use this:** You need a stream that satisfies the STANAG 4609 /
-> MISP conformance requirements end-to-end — ST 0604 per-frame timestamps,
+> **When to use this:** You are building a stream toward STANAG 4609 /
+> MISP conformance and need the library-side pieces — ST 0604 per-frame timestamps,
 > an ST 0902 minimum-metadata validator gate, strict-compliance KLV encoding,
 > and a MIIS Core Identifier in Tag 94.
 
@@ -13,22 +13,29 @@
 STANAG 4609 Ed 5 (= MISP-2019.1) has four specific requirements that go
 beyond a plain H.264 + KLV stream:
 
-1. **ST 0604 video timestamps** — a SMPTE-registered SEI NAL preceding each
-   access unit carries the capture wall-clock (Class 0 = microsecond
-   precision). This is what `push_video_misp_to` / `send_video_misp_to` do.
+1. **ST 0604 video timestamps** — MISP requires an absolute-time timestamp
+   in every frame. A `user_data_unregistered` SEI NAL placed ahead of the
+   access unit's first VCL NAL carries the capture time as a Precision Time
+   Stamp (microseconds). This is what `push_video_misp_to` /
+   `send_video_misp_to` do; the ordinary video push calls leave the access
+   unit unchanged.
 2. **ST 0603 Time Status byte** — the SEI also embeds a byte that tells the
-   receiver whether the clock is PPS-locked (`0x01`) or free-running (`0x00`).
-   Pass it as `time_status` to `MispTimestamp::micros`.
-3. **ST 0902 Minimum Metadata Set (MISMMS) compliance** — every KLV record
-   must carry at least the 10 required fields listed in ST 0902.8 Table 1.
-   `validate_mismms` gives you a per-record snapshot check before you encode.
-4. **ST 0601 strict-compliance encoding** — `encode_strict_compliance` rejects
-   out-of-range values (all 39 enforced fields) and checks that the required
-   tags are present, producing a record that a strict receiver will accept.
+   receiver whether the clock is locked to an absolute time reference. Bit 7
+   is `0` for locked and bits 4–0 are reserved as `11111`, so pass `0x1F`
+   (locked) or `0x9F` (lock unknown) as `time_status` to
+   `MispTimestamp::micros`; the library writes the byte unchanged.
+3. **ST 0902 Minimum Metadata Set (MISMMS) compliance** — each of the 23
+   items in ST 0902.8 Table 1 must be reported at least once every 30
+   seconds. `validate_mismms` checks that one record carries all of them
+   before you encode.
+4. **ST 0601 strict-compliance encoding** — `encode_strict_compliance`
+   requires Tag 2 (Precision Time Stamp) and cleans string fields per
+   ST 0107, then encodes as `encode_to_vec` does, which already rejects
+   values outside their ST 0601 wire range.
 
-A fifth optional but common requirement is embedding a **MIIS Core Identifier**
-(ST 1204.3 Tag 94) so a receiving archive system can correlate streams from
-the same physical sensor or platform.
+One of those items is the **MIIS Core Identifier** (ST 1204.3, ST 0601
+Tag 94), which MISP also requires on its own. It lets a receiving archive
+system correlate streams from the same physical sensor or platform.
 
 ## Rust
 
@@ -87,8 +94,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Per-frame encode loop ────────────────────────────────────────────────
 
     // Capture time from your platform's GPS/PPS-disciplined clock.
-    // MISB ST 0603: 0x01 = locked to UTC, 0x00 = free-running.
-    let time_status: u8 = 0x01; // PPS-locked
+    // MISB ST 0603 Time Status: 0x1F = locked, 0x9F = lock unknown
+    // (normal, forward time; bits 4-0 reserved = 11111).
+    let time_status: u8 = 0x1F; // locked
 
     // Simulated per-frame data — replace with real encoder/sensor output.
     let frame_pts_us: u64 = 1_700_000_000_000_000; // MISP timestamp (microseconds)
@@ -100,9 +108,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 4. Splice the ST 0604 MISP SEI into the access unit.
     //
-    //   MispTimestamp::micros builds the SMPTE-registered SEI payload
-    //   (Class 0 = microsecond precision, 8-byte value).  push_video_misp_to
-    //   prepends the SEI NAL *before* the VCL, then TS-frames the AU.
+    //   MispTimestamp::micros builds the ST 0604 user_data_unregistered SEI payload
+    //   (Precision Time Stamp, microseconds, 8-byte value).  push_video_misp_to
+    //   inserts the SEI NAL *before* the first VCL NAL, then TS-frames the AU.
     let misp = MispTimestamp::micros(frame_pts_us, time_status);
     muxer.push_video_misp_to(vid_handle, &nal, frame_pts_90khz, is_key_frame, &misp)?;
 
@@ -118,14 +126,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     rec.sensor_hfov_deg = Some(45.0);      // Tag 16 — required
     rec.sensor_vfov_deg = Some(30.0);      // Tag 17 — required
     rec.slant_range_m = Some(4800.0);      // Tag 21 — required
+    // ST 0902 also requires Tags 3, 10, 11, 12, 18-20, 22-25 and the
+    // Security Local Set (Tag 48). This sketch leaves them out, so the
+    // validate_mismms call below reports them; set them from your mission
+    // and sensor state.
     // Embed the Core ID in Tag 94 so archive systems can correlate streams.
     rec.miis_core_id = Some(core_id_bytes);
 
     // ── 6. Validate the record against the ST 0902 MISMMS before encoding.
     //
-    //   validate_mismms performs a snapshot check of the 10 required fields
-    //   and their value ranges.  A non-empty Vec means the record will fail a
-    //   strict receiver's minimum-metadata check.
+    //   validate_mismms checks the record against the 23 MISMMS items
+    //   (ST 0902.8 Table 1).  A non-empty Vec names every unmet item; the
+    //   record will fail a strict receiver's minimum-metadata check.
     let violations = validate_mismms(&rec);
     if !violations.is_empty() {
         // Surface the violation list so the operator can fix the gap.
@@ -135,10 +147,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 7. Encode via the strict-compliance path.
     //
-    //   encode_strict_compliance rejects any field whose value falls outside
-    //   the ST 0601 wire range and requires Tag 2 (Precision Time Stamp).
-    //   Use encode_to_vec for lenient production muxers; use this path for
-    //   conformance pipelines where the caller guarantees clean inputs.
+    //   encode_strict_compliance requires Tag 2 (Precision Time Stamp) and
+    //   cleans string fields (ST 0107), then encodes as encode_to_vec does;
+    //   both reject a value outside its ST 0601 wire range.
     let klv_bytes = encode_strict_compliance(&rec)?;
 
     // push_klv auto-prepends the 5-byte Metadata_AU_cell header (because
@@ -218,7 +229,7 @@ frame_pts_us: int = 1_700_000_000_000_000   # capture wall-clock (µs)
 # 90 kHz ticks from microseconds: ×9/100 keeps sub-second precision.
 frame_pts_90k = Pts90khz(frame_pts_us * 9 // 100)
 nal = bytes()       # replace: H.264 Annex-B NAL bytes from your encoder
-time_status = 0x01  # 0x01 = PPS-locked (ST 0603)
+time_status = 0x1F  # ST 0603: 0x1F = locked, 0x9F = lock unknown
 
 # ── 4. Splice the MISP SEI.
 #   push_video_misp_to uses keyword-only args after the NAL bytes.
@@ -265,23 +276,25 @@ while True:
 
 ## Notes
 
-**`encode_strict_compliance` vs `encode_to_vec`:** Strict compliance requires
-Tag 2 (Precision Time Stamp) and rejects all 39 ST 0601 field values that
-fall outside their wire range (e.g., Tag 6 Platform Pitch is ±20°, not
-±90°). For narrow-range tags, the error message names the full-range twin
+**`encode_strict_compliance` vs `encode_to_vec`:** Both reject ST 0601
+field values that fall outside their wire range (e.g., Tag 6 Platform Pitch
+is ±20°, not ±90°); strict compliance also requires Tag 2 (Precision Time
+Stamp) and removes banned characters and padding from string fields. For
+narrow-range tags, the error message names the full-range twin
 field (e.g., Tag 6 → Tag 90). If your platform can produce pitch values
 outside ±20°, use Tag 90 (Platform Pitch Angle, ±90°) and Tag 91 (Platform
-Roll Angle, ±90°) instead. Use `encode_to_vec` for lenient production
-pipelines where you want partial records to pass through.
+Roll Angle, ±90°) instead. Use `encode_to_vec` where a record without
+Tag 2 must still pass through.
 
 **`validate_mismms` is record-level:** The validator checks a single KLV
-record in isolation against the 10 required ST 0902.8 Table 1 fields. It
-does not track inter-record cadence (e.g., "at least one record per second"
+record in isolation against the 23 items of ST 0902.8 Table 1. It
+does not track inter-record cadence (the 30-second MISMMS reporting cadence
 is a stream-level requirement not checked here — see the
 [MISMMS cadence tracker](/docs/project/deferred-features.md) entry).
 
-**Tag 94 Core ID:** `encode_core_id` encodes a `CoreId` into 18+ bytes of
-binary wire format (1 version + 1 usage + N×16-byte UUID blocks). Assign
+**Tag 94 Core ID:** `encode_core_id` encodes a `CoreId` into 18, 34 or 50
+bytes of binary wire format (1 version + 1 usage + one to three 16-byte UUID
+blocks). Assign
 it to `UasDatalinkLs::miis_core_id` as a `Vec<u8>`. Use a stable UUID per
 physical sensor — changing it across sessions breaks archive correlation.
 

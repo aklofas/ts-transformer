@@ -21,29 +21,34 @@ use tst_core::mpegts::demux::{AudioCodec, Demuxer, DemuxEvent, SamplePayload};
 
 let bytes = std::fs::read("input.ts")?;
 let mut demuxer = Demuxer::new();
-demuxer.feed(&bytes)?;
-demuxer.flush();
-
-while let Some(ev) = demuxer.next_event() {
-    if let DemuxEvent::Sample {
-        stream,
-        payload: SamplePayload::Audio { codec, frames, .. },
-        ..
-    } = ev {
-        let pid = stream.pid;
-        match codec {
-            AudioCodec::Mp2 => {
-                for f in codec::mpegaudio::frames(&frames).filter_map(Result::ok) {
-                    println!("PID 0x{:04x} {:?} {} Hz, {} ch", pid, f.layer, f.sample_rate_hz, f.channels);
+// Feed bounded chunks (one feed() over the 4 MiB ingress ceiling fails)
+// and drain after each; the trailing `None` flushes the last PES.
+for chunk in bytes.chunks(188 * 1024).map(Some).chain([None]) {
+    match chunk {
+        Some(chunk) => demuxer.feed(chunk)?,
+        None => demuxer.flush(),
+    }
+    while let Some(ev) = demuxer.next_event() {
+        if let DemuxEvent::Sample {
+            stream,
+            payload: SamplePayload::Audio { codec, frames, .. },
+            ..
+        } = ev {
+            let pid = stream.pid;
+            match codec {
+                AudioCodec::Mp2 => {
+                    for f in codec::mpegaudio::frames(&frames).filter_map(Result::ok) {
+                        println!("PID 0x{:04x} {:?} {} Hz, {} ch", pid, f.layer, f.sample_rate_hz, f.channels);
+                    }
                 }
-            }
-            AudioCodec::Aac => {
-                for f in codec::aac::frames(&frames).filter_map(Result::ok) {
-                    // `channels()` is None for a PCE-defined layout (channel_configuration 0).
-                    println!("PID 0x{:04x} AAC {:?} {} Hz, {:?} ch", pid, f.profile, f.sample_rate_hz, f.channels());
+                AudioCodec::Aac => {
+                    for f in codec::aac::frames(&frames).filter_map(Result::ok) {
+                        // `channels()` is None for a PCE-defined layout (channel_configuration 0).
+                        println!("PID 0x{:04x} AAC {:?} {} Hz, {:?} ch", pid, f.profile, f.sample_rate_hz, f.channels());
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 }

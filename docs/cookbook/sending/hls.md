@@ -94,7 +94,7 @@ an `HlsServerHandle`:
 
 ```rust
 let publisher = shell.finish()?;
-let handle = publisher.finish_serving()?;   // #EXT-X-ENDLIST written; server stays up
+let handle = publisher.finish_serving()?;   // #EXT-X-ENDLIST written (Event/Vod modes); server stays up
 println!("VOD at http://{}/playlist.m3u8", handle.local_addr());
 // ... hold the handle for as long as clients should be able to fetch ...
 handle.shutdown();
@@ -104,7 +104,7 @@ handle.shutdown();
 
 ```java
 HlsPublisher back = shell.finishIntoPublisher();
-HlsServerHandle handle = back.finishServing();  // #EXT-X-ENDLIST written; server stays up
+HlsServerHandle handle = back.finishServing();  // #EXT-X-ENDLIST written (Event/Vod modes); server stays up
 System.out.println("VOD at http://" + handle.localAddr() + "/playlist.m3u8");
 // ... hold the handle for as long as clients should be able to fetch ...
 handle.shutdown();
@@ -128,7 +128,7 @@ mpv    'http://localhost:8080/playlist.m3u8'
 
 | Mode | Playlist behavior | ENDLIST written? | Disk eviction? |
 |---|---|---|---|
-| `HlsMode::Live` | Rolling window (`playlist_window` newest segments visible) | Never | Yes — segments rolled out of window are deleted |
+| `HlsMode::Live` | Rolling window (`playlist_window` newest segments visible) | Never, not even on `finish()` | Yes — segments rolled out of window are deleted |
 | `HlsMode::Event` | Monotone-growing | On `finish()` | No |
 | `HlsMode::Vod` | Same as Event, but no playlist is served or written until `finish` | On `finish()` | No |
 

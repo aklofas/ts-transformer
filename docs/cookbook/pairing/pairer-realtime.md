@@ -21,9 +21,6 @@ use tst_pipeline::ext::pairing::{Pairer, PairerMode, PairerConfig, PairerOutput}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = fs::read("input.ts")?;
     let mut demux = Demuxer::new();
-    demux.feed(&bytes)?;
-    demux.flush();
-
     // PairerConfig is `#[non_exhaustive]`; construct via Default + assign.
     let mut opts = PairerConfig::default();
     opts.mode = PairerMode::Realtime;
@@ -35,12 +32,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0x102, // KLV PID
         opts,
     );
-    while let Some(e) = demux.next_event() {
-        for o in pairer.feed(e) {
-            if let PairerOutput::Paired { video, klv } = o {
-                // video.raw → decoder (see "Reconstitute Annex B parameter sets")
-                // klv.payload   → tst_core::klv::st0601::decode
-                let _ = (video, klv);
+    // Feed bounded chunks (one feed() over the 4 MiB ingress ceiling fails)
+    // and drain after each; the trailing `None` flushes the last PES.
+    for chunk in bytes.chunks(188 * 1024).map(Some).chain([None]) {
+        match chunk {
+            Some(chunk) => demux.feed(chunk)?,
+            None => demux.flush(),
+        }
+        while let Some(e) = demux.next_event() {
+            for o in pairer.feed(e) {
+                if let PairerOutput::Paired { video, klv } = o {
+                    // video.raw → decoder (see "Reconstitute Annex B parameter sets")
+                    // klv.payload   → tst_core::klv::st0601::decode
+                    let _ = (video, klv);
+                }
             }
         }
     }
