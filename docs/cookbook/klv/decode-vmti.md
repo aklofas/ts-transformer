@@ -20,35 +20,40 @@ use tst_core::mpegts::demux::{DemuxEvent, Demuxer, MetadataKind};
 
 # fn process_capture(bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
 let mut demuxer = Demuxer::new();
-demuxer.feed(bytes)?;
-demuxer.flush();
-
-while let Some(event) = demuxer.next_event() {
-    let DemuxEvent::Metadata { kind, payload, .. } = event else {
-        continue;
-    };
-    match kind {
-        MetadataKind::KlvSyncAuCell { .. } | MetadataKind::KlvAsync => {}
-        MetadataKind::Unknown(_) => continue,
+// Feed bounded chunks (one feed() over the 4 MiB ingress ceiling fails)
+// and drain after each; the trailing `None` flushes the last PES.
+for chunk in bytes.chunks(188 * 1024).map(Some).chain([None]) {
+    match chunk {
+        Some(chunk) => demuxer.feed(chunk)?,
+        None => demuxer.flush(),
     }
+    while let Some(event) = demuxer.next_event() {
+        let DemuxEvent::Metadata { kind, payload, .. } = event else {
+            continue;
+        };
+        match kind {
+            MetadataKind::KlvSyncAuCell { .. } | MetadataKind::KlvAsync => {}
+            MetadataKind::Unknown(_) => continue,
+        }
 
-    let uas = st0601::decode(&payload)?;
-    let Some(vmti_bytes) = uas.vmti.as_deref() else {
-        continue;
-    };
-    let vmti = st0903::decode(vmti_bytes)?;
+        let uas = st0601::decode(&payload)?;
+        let Some(vmti_bytes) = uas.vmti.as_deref() else {
+            continue;
+        };
+        let vmti = st0903::decode(vmti_bytes)?;
 
-    for target in &vmti.targets {
-        // Analyst-actionable subset — pair with VObjectSeries
-        // (Tag 107, deferred typed layer) for classification.
-        println!(
-            "target {}: centroid_px={:?} bbox=({:?}..{:?}) confidence={:?}",
-            target.target_id,
-            target.centroid_pixel,
-            target.bbox_top_left_pixel,
-            target.bbox_bottom_right_pixel,
-            target.confidence_level,
-        );
+        for target in &vmti.targets {
+            // Analyst-actionable subset — pair with VObjectSeries
+            // (Tag 107, deferred typed layer) for classification.
+            println!(
+                "target {}: centroid_px={:?} bbox=({:?}..{:?}) confidence={:?}",
+                target.target_id,
+                target.centroid_pixel,
+                target.bbox_top_left_pixel,
+                target.bbox_bottom_right_pixel,
+                target.confidence_level,
+            );
+        }
     }
 }
 # Ok(())

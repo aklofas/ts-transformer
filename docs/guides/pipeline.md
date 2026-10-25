@@ -99,10 +99,17 @@ Concurrent `send_video` / `send_klv` calls are correct but serialize.
 The lock is held across push → mux drain → transport send so
 back-pressure is honoured end-to-end.
 
-`pending_bytes` is unbounded — the bare `MuxSender` has no cap on how
-many drained-but-unsent chunks accumulate during prolonged transport
-unavailability. Wrap with `ManagedTransport` when you expect outages
-longer than a fraction of a second.
+`pending_bytes` holds the muxed output a failed transport send left
+behind, and it does not grow with the length of an outage. Every
+`send_*` drains it first; if that drain fails, the call returns with
+`input_consumed: Some(false)` before its own input reaches the muxer, so
+the caller still owns that input and decides whether to retry or drop it.
+Only a call whose input was muxed (`input_consumed: Some(true)`) leaves
+output in `pending_bytes`, and the next call sends it exactly once
+(`close` tries once, best effort). During an outage the bare `MuxSender` therefore pushes the errors
+back to the producer rather than buffering for it. Wrap the transport
+with `ManagedTransport` when you want outages ridden out by reconnect and
+a gap buffer instead.
 
 **Sync KLV is muxer-side wrapped.** When the underlying `MuxerConfig` is
 set for `KlvStreamType::SynchronousMetadata` plus `carries_pts: true`,

@@ -169,7 +169,7 @@ back.finish();                                          // or back.finishServing
 
 | Mode | Playlist behavior | ENDLIST written? | Disk eviction? |
 |---|---|---|---|
-| `HlsMode::Live` | Rolling window (`playlist_window` newest segments visible) | Never during the run | Yes — segments rolled out of the window are deleted |
+| `HlsMode::Live` | Rolling window (`playlist_window` newest segments visible) | Never, not even on `finish` | Yes — segments rolled out of the window are deleted |
 | `HlsMode::Event` | Monotone-growing (no eviction), `#EXT-X-PLAYLIST-TYPE:EVENT` | On `finish` | No |
 | `HlsMode::Vod` | Same as Event, tagged `#EXT-X-PLAYLIST-TYPE:VOD`, but no playlist is served (404) or written until `finish`; use EVENT to watch a recording while it is made | On `finish` | No |
 
@@ -207,12 +207,22 @@ shapes are:
 - **Serve the output directory statically.** `segment_*.ts` files land in
   `output_dir` as they close and `playlist.m3u8` is rewritten there on every
   cut, so a static web server or CDN pointed at the directory serves the
-  stream live as well as after it finishes (the finish path writes the
-  terminal playlist with `#EXT-X-ENDLIST`). Serve with `Cache-Control:
+  stream live as well as after it finishes (in EVENT and VOD mode the
+  finish path writes the terminal playlist with `#EXT-X-ENDLIST`; a LIVE
+  playlist never carries it, so clients keep reloading the last window). Serve with `Cache-Control:
   no-cache` on the playlist, as for any live HLS origin.
 - Enable `basic_auth` and/or `enable_tls` on the builder if the built-in
   server must face untrusted clients directly, but a reverse proxy is the
   more flexible option.
+
+The built-in server does not bound its clients: it has no connection limit,
+no deadline for a client to finish sending request headers or the TLS
+handshake, and no back-off when `accept` fails. Each open connection holds a
+task until the client finishes or the server shuts down, so a client that
+opens many connections and stays silent consumes resources without limit.
+Keep the default loopback bind, or put a reverse proxy that enforces
+connection limits and timeouts in front of it. Release 0.9.1 adds these
+bounds to the server.
 
 Concurrent publishers must each use a **distinct `output_dir`** (and a
 distinct bind port if each runs its own server) — two publishers writing the
@@ -283,14 +293,23 @@ the full producer + JavaScript client contract for both hls.js paths.
 - **A restarted timeline cuts.** A video access unit more than 1 s before
   the open segment's start (an encoder restart or a PTS wrap) closes the
   segment at the previous access unit, and the next segment starts on the
-  new timeline.
+  new timeline. The playlist does not mark the break: `#EXT-X-DISCONTINUITY`
+  is never emitted, although RFC 8216 §4.3.2.3 requires it. Players that
+  anchor their timeline on the first segment (hls.js among them) can place
+  the new segments before the buffered range and stall. A forward jump in
+  PTS is not detected at all.
 - **`max_segment_duration` guards a stalled producer.** In the
   keyframe-driven flow the media-time bound above is enforced as access
   units arrive; if they stop arriving, the publisher cuts on the wall clock
   once the open segment is older than `max_segment_duration`, so a segment
   never grows unbounded. It defaults to `2 × segment_duration` and must be
   `≥ segment_duration`. Each such cut increments the `forced_cuts` stats
-  counter; a non-zero `forced_cuts` means the producer stalled.
+  counter; a non-zero `forced_cuts` means the producer stalled. The clock is
+  checked only when the next push arrives, and the forced segment's
+  `#EXTINF` is the wall time it was open, so after a stall longer than
+  `max_segment_duration` that segment's `#EXTINF` exceeds
+  `#EXT-X-TARGETDURATION` (an RFC 8216 §4.3.3.1 violation). Players
+  generally play it; stream validators flag it.
 - **`#EXTINF` reflects media (PTS) duration** when driven through
   `MuxPublisher`; the raw `push_ts` relay path falls back to wall-clock.
 - **Raw `push_ts` relays** cut on the wall clock at `segment_duration`. They

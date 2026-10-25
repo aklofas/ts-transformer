@@ -469,6 +469,12 @@ headless Chromium and checks that every record arrives by both carriages.
 - A viewer's PLI is counted, not forwarded; the source decides the GOP.
 - `advertise=` takes one address; a dual-homed deployment needs one server
   per address.
+- mediamtx's WHEP client cannot pull from this server. The server lists
+  `PATCH` in `Access-Control-Allow-Methods` but sends no `ETag` with its
+  `201`; that client turns on trickle ICE when it sees `PATCH`, then
+  rejects the answer for the missing `ETag`. Any client that makes the same
+  two choices fails the same way. Browsers and the reference player do not
+  depend on either header. The fix is planned for 0.9.1.
 
 The deferred items and their revisit triggers are in
 [deferred features](/docs/project/deferred-features.md).

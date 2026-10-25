@@ -36,7 +36,7 @@ mpegts::demux::Demuxer
 
 tst_core::mpegts::demux
   split_video(&raw, codec, av1_carriage.unwrap_or_default()) → (VideoPayload, Vec<NonConformantIssue>)
-  ↓ VideoPayload::Nals(nals)   — raw RBSP bytes; NAL type in the header
+  ↓ VideoPayload::Nals(nals)   — NAL body after the header, emulation-prevention bytes kept; header fields on the variant
 
 tst_core::codec::h264
   parse_sps(rbsp)         → Result<H264Sps, CodecParseError>

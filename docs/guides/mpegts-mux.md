@@ -25,6 +25,14 @@ metadata-record boundary for KLV. Output is deterministic: a function of
 inputs only, with no wall-clock dependency, so the same input sequence
 produces the same output bytes regardless of how the caller paces its calls.
 
+The muxer carries each video AU through verbatim and does not insert
+access unit delimiters. H.222.0 requires an AUD at the start of every
+H.264, H.265 and H.266 access unit in a transport stream, so a
+conforming STANAG 4609 / ST 1402 stream needs an encoder that emits
+them (x264 and x265 `--aud`, libavcodec `flags +aud`) or a caller that
+prepends them — see the
+[deferral entry](/docs/project/deferred-features.md#auto-prepend-of-access-unit-delimiter-aud-on-h264--h265--h266).
+
 This is the sender-side guide. The symmetric receiver-side guide is
 [guides/mpegts-demux.md](/docs/guides/mpegts-demux.md) — `mpegts::demux` ships
 a Rust-native TS demuxer covering the same wire shape. Consumers can
@@ -214,13 +222,16 @@ use tst_core::mpegts::mux::MuxerConfig;
 
 fn transmux_single_program(bytes: &[u8]) -> Result<MuxerConfig, Box<dyn std::error::Error>> {
     let mut d = Demuxer::new();
-    d.feed(bytes)?;
-    while let Some(ev) = d.next_event() {
-        if let DemuxEvent::ProgramMap(pm) = ev {
-            // Basic: fail on any unrepresentable stream (DVB sub/teletext);
-            // unknown stream types convert to Data pass-through specs.
-            let cfg = MuxerConfig::from_program_map(&pm, &[])?;
-            return Ok(cfg);
+    // Bounded chunks: one feed() over the 4 MiB ingress ceiling fails.
+    for chunk in bytes.chunks(188 * 1024) {
+        d.feed(chunk)?;
+        while let Some(ev) = d.next_event() {
+            if let DemuxEvent::ProgramMap(pm) = ev {
+                // Basic: fail on any unrepresentable stream (DVB sub/teletext);
+                // unknown stream types convert to Data pass-through specs.
+                let cfg = MuxerConfig::from_program_map(&pm, &[])?;
+                return Ok(cfg);
+            }
         }
     }
     Err("no ProgramMap in stream".into())
@@ -237,14 +248,17 @@ use tst_core::mpegts::mux::MuxerConfig;
 
 fn transmux_drop_private_data(bytes: &[u8]) -> Result<MuxerConfig, Box<dyn std::error::Error>> {
     let mut d = Demuxer::new();
-    d.feed(bytes)?;
-    while let Some(ev) = d.next_event() {
-        if let DemuxEvent::ProgramMap(pm) = ev {
-            let cfg = MuxerConfig::from_program_map(
-                &pm,
-                &[StreamKindTag::Unknown],
-            )?;
-            return Ok(cfg);
+    // Bounded chunks: one feed() over the 4 MiB ingress ceiling fails.
+    for chunk in bytes.chunks(188 * 1024) {
+        d.feed(chunk)?;
+        while let Some(ev) = d.next_event() {
+            if let DemuxEvent::ProgramMap(pm) = ev {
+                let cfg = MuxerConfig::from_program_map(
+                    &pm,
+                    &[StreamKindTag::Unknown],
+                )?;
+                return Ok(cfg);
+            }
         }
     }
     Err("no ProgramMap in stream".into())
@@ -260,13 +274,16 @@ use tst_core::mpegts::mux::{MuxerConfig, MuxerConfigBuilder};
 
 fn rebuild_multi_program(bytes: &[u8]) -> Result<MuxerConfig, Box<dyn std::error::Error>> {
     let mut d = Demuxer::new();
-    d.feed(bytes)?;
     let mut b = MuxerConfigBuilder::default();
-    while let Some(ev) = d.next_event() {
-        if let DemuxEvent::ProgramMap(pm) = ev {
-            let prog_cfg = MuxerConfig::from_program_map(&pm, &[StreamKindTag::Unknown])?;
-            for p in prog_cfg.programs {
-                b.add_program(p);
+    // Bounded chunks: one feed() over the 4 MiB ingress ceiling fails.
+    for chunk in bytes.chunks(188 * 1024) {
+        d.feed(chunk)?;
+        while let Some(ev) = d.next_event() {
+            if let DemuxEvent::ProgramMap(pm) = ev {
+                let prog_cfg = MuxerConfig::from_program_map(&pm, &[StreamKindTag::Unknown])?;
+                for p in prog_cfg.programs {
+                    b.add_program(p);
+                }
             }
         }
     }
@@ -422,13 +439,23 @@ gives 25 PCR samples per second, well inside the typical receiver
 expectation of "one PCR every 100 ms or better".
 
 The cadence is push-driven, not wall-clock. The muxer compares the
-PTS handed to `push_video` (or `push_klv`) against the PTS at the
+PTS handed to any `push_*` call against the PTS at the
 last PCR emission and emits a fresh PCR when the configured interval
 has elapsed in stream time. This is what makes the muxer
 deterministic — the same input PTS sequence produces the same output
 byte sequence — and means real-time scheduling is the caller's
 responsibility, not the muxer's. Drive `push_video` at the encoder's
 output cadence and PCR cadence falls out automatically.
+
+The PCR value is the PTS of the push that triggers it, with no decode
+lead: a PCR carried on a video AU equals that AU's PTS, so the AU
+arrives when the clock already reads its presentation time instead of
+ahead of its decode time as H.222.0's buffer model expects. Because a
+KLV, audio or data push can also trigger a PCR-only packet at its own
+PTS, a later PCR on the PCR PID (always emitted on a key frame) can
+step backwards from it. Every decoder in the interop matrix plays
+these streams, but strict analyzers (TSDuck, stream validators) may
+flag the PCR/DTS relationship or the backward step. Fixed in 0.9.1.
 
 ## PSI cadence
 
@@ -489,8 +516,12 @@ Required:
   `IDR_W_RADL` / `IDR_N_LP` (H.265). The muxer sets
   `random_access_indicator` in the adaptation field of the first TS
   packet of the resulting PES.
-- `push_klv`'s `pts_90khz` is honoured only when the KLV stream was
-  configured with `carries_pts: true`; otherwise it is ignored.
+- `push_klv`'s `pts_90khz` is written to the PES header only when the
+  KLV stream was configured with `carries_pts: true`. Either way it
+  still drives PSI and PCR pacing (it can trigger a PAT/PMT or a
+  PCR-only packet at that time), so pass the stream time of the
+  record even when the stream carries no PTS. `push_data` behaves the
+  same way.
 - `push_klv`'s `metadata_service_id` lands in the AU cell header per
   H.222.0 § 2.12.4.2 / ST 1402.2 App. B Table 2 ONLY when the
   configured `KlvStreamType` is `SynchronousMetadata` (stream_type
@@ -500,7 +531,10 @@ Required:
   `metadata_klva(svc)` PMT descriptor's `service_id` if you need
   consistency between the PMT advertisement and the wire AU cell.
 - KLV blobs are bounded by `PES_packet_length` (`u16`) — `65532`
-  bytes without PTS, `65527` bytes with. Real ST 0601 packs are
+  bytes without PTS, `65527` bytes with. On a `SynchronousMetadata`
+  stream the 5-byte AU cell header counts against the same limit, and
+  such a stream always carries PTS (`validate` rejects
+  `carries_pts: false`), so its limit is `65522` bytes of KLV. Real ST 0601 packs are
   typically under 2 KB so this is a sanity check, not a regular
   failure.
 
@@ -618,9 +652,12 @@ let klv = mux.klv_stream_handle(0).unwrap();
 ```
 
 Handles are opaque (`VideoStreamHandle` / `KlvStreamHandle` — both
-`Copy + Eq + Hash`). They're tied to the muxer that produced them —
-passing one to a different muxer surfaces as
-`MuxError::InvalidStreamHandle`.
+`Copy + Eq + Hash`). A handle is a packed program/stream index with
+no record of which muxer produced it, so using it only with its own
+muxer is the caller's job: a handle from another muxer whose index is
+in range is accepted and pushes to that muxer's stream at the same
+position. Only an index outside the muxer's configured streams
+surfaces as `MuxError::InvalidStreamHandle`.
 
 You can also enumerate everything in declaration order:
 
@@ -1122,9 +1159,10 @@ no cadence guarantee, so a data PID cannot promise ETSI TR 101 290
 `MuxError::DataPidUsedAsPcrPid`, and a program needs at least one
 PCR-eligible stream (video / audio) to validate.
 
-`carries_pts = false` omits the PES PTS field entirely (the `pts`
-argument to `push_data_to` is ignored); the demuxer surfaces such
-samples with `pts = 0`. The PES_packet_length budget bounds a single
+`carries_pts = false` omits the PES PTS field entirely; the demuxer
+surfaces such samples with `pts = 0`. The `pts` argument to
+`push_data_to` still drives PSI and PCR-only pacing, so pass the
+record's stream time either way. The PES_packet_length budget bounds a single
 push to 65527 payload bytes with PTS, 65532 without
 (`MuxError::DataTooLarge`).
 

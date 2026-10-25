@@ -13,21 +13,27 @@ capture, and what's the cue text?
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload};
 
 let mut demux = Demuxer::new();
-demux.feed(&bytes)?;
-demux.flush();
-while let Some(e) = demux.next_event() {
-    if let DemuxEvent::Sample {
-        stream,
-        payload: SamplePayload::Subtitle { codec, payload },
-        ..
-    } = e
-    {
-        println!(
-            "PID 0x{:04x} codec={:?} bytes={}",
-            stream.pid,
-            codec,
-            payload.len()
-        );
+// Feed bounded chunks (one feed() over the 4 MiB ingress ceiling fails)
+// and drain after each; the trailing `None` flushes the last PES.
+for chunk in bytes.chunks(188 * 1024).map(Some).chain([None]) {
+    match chunk {
+        Some(chunk) => demux.feed(chunk)?,
+        None => demux.flush(),
+    }
+    while let Some(e) = demux.next_event() {
+        if let DemuxEvent::Sample {
+            stream,
+            payload: SamplePayload::Subtitle { codec, payload },
+            ..
+        } = e
+        {
+            println!(
+                "PID 0x{:04x} codec={:?} bytes={}",
+                stream.pid,
+                codec,
+                payload.len()
+            );
+        }
     }
 }
 ```
