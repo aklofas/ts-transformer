@@ -8,7 +8,7 @@ This page is the entry point for authors writing language bindings on top of
 ## The shape the bindings use
 
 **C** keeps one `extern "C"` family per `(shell, transport)` pair
-(`tst_srt_mux_sender_*`, `tst_udp_mux_sender_*`, …): a C symbol cannot
+(`tst_mux_sender_*` for SRT, `tst_udp_mux_sender_*`, …): a C symbol cannot
 dispatch on a runtime type, so the generic shells are monomorphised per
 transport in `transport_impls`.
 
@@ -325,6 +325,23 @@ can be invoked concurrently with data-path calls without
 deadlocking. Each runtime handle is `Send` (ownership can transfer
 between threads) and effectively `Sync` for data-path use through the
 inner mutex.
+
+That mutex lives inside the handle, so it cannot protect the handle's own
+lifetime. `_close` / `_free` consumes the pointer (it is a `Box` handed
+back to Rust and dropped), so bindings MUST serialize it against every
+other call on that pointer, `_cancel` included, and call it exactly once:
+a call that races or follows the close uses freed memory. `_cancel` does
+not free anything. A byte slice passed as `(ptr, len)` is borrowed for
+the duration of the call only, and a call can park inside I/O for a long
+time. For a non-empty slice, `ptr` must point to `len` initialized bytes
+that stay valid for the whole call; input bytes must not be written by
+another thread during the call, and an output buffer must not be read or
+written by anyone else until the call returns. `len == 0` is accepted
+with any pointer, NULL included (whether an empty payload is then valid
+input is up to the entry point), a NULL pointer with a non-zero `len`
+fails with `TST_E_INVALID_CONFIG`, and so does a `len` above
+`isize::MAX`. Pointers a call returns (events, strings) follow the
+lifetime stated on each entry point in `tstrans.h`.
 
 **Opaque config builders** (`TstMuxConfig`, `TstDemuxConfig`,
 `TstSenderConfig`, `TstRawSenderConfig`, `TstReconnectPolicy`) are
