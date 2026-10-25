@@ -51,8 +51,11 @@ Before privatizing a public item, the implementer must:
 2. Read the JVM binding ([`docs/languages/jvm.md`](/docs/languages/jvm.md)
    and `bindings/jvm/src/`) to confirm it does not reach the item through a
    canonical workflow.
-3. Grep `crates/tst-core/fuzz/fuzz_targets/`, `crates/tst-core/tests/`,
-   and `examples/` for cross-crate uses.
+3. Do the same for the Python binding
+   ([`docs/languages/python.md`](/docs/languages/python.md) and
+   `bindings/python/src/`).
+4. Grep every fuzz workspace (`crates/*/fuzz/fuzz_targets/`), the crate's
+   `tests/`, and `examples/` for cross-crate uses.
 
 If any of those checks finds an item being used through a canonical
 workflow (i.e., not a hidden field-poking workaround), the item:
@@ -95,13 +98,14 @@ The `*ErrorKind` enums returned by `kind()` are not `#[non_exhaustive]` — see
 
 ## Binding crates: no `cargo public-api` baseline (by design)
 
-Ten Rust library crates carry a committed `public-api.txt` baseline that
+Eleven Rust library crates carry a committed `public-api.txt` baseline that
 CI checks via `cargo public-api` on every push: `tstrans-rist-sys`,
 `tstrans-mbedtls-src`, `tst-core`, `tst-hls`, `tst-pipeline`, `tst-rist`,
-`tst-rtp`, `tst-srt`, `tst-tcp`, and `tst-udp`.
+`tst-rtp`, `tst-srt`, `tst-tcp`, `tst-udp`, and `tst-webrtc`.
 
-The three binding crates — `bindings/c` (tst-c), `bindings/c/core`
-(tst-c-core), and `bindings/python` (tst-py) — intentionally carry **no**
+The binding crates — `bindings/c` (tst-c), `bindings/c/core`
+(tst-c-core), `bindings/python` (tst-py) and `bindings/jvm` (tst-jni) —
+intentionally carry **no**
 `public-api.txt`. Their consumer contract is not their Rust surface:
 
 - **tst-c / tst-c-core.** The Rust surface of these crates is a cdylib/staticlib
@@ -119,6 +123,9 @@ The three binding crates — `bindings/c` (tst-c), `bindings/c/core`
   itself, which is `tst_pipeline::binding::BindingErrorKind::name()` checked
   at `import tstrans` (`scripts/ratchets/kind-equivalence.tsv` records the
   Rust-C-Python-JVM member mapping and is generated from `kind.rs`).
+- **tst-jni.** The Rust surface is `Java_org_tstrans_*` JNI glue. The JVM
+  consumer surface is the Java API under `bindings/jvm/src/main/java/`, gated
+  by its JUnit suite and the same error-kind table.
 
 **Rule:** do not add `cargo public-api` baselines to binding crates unless
 they become actual CI release gates. Adding a baseline to a binding crate
@@ -143,7 +150,7 @@ an unpinned nightly cannot be trusted for rendering. To regenerate:
 (`tstrans-rist-sys` lives in `crates/rist-sys`, `tstrans-mbedtls-src` in
 `crates/mbedtls-src`). The CI step's `pkg:dir` list is the reference.
 
-To bump the pin: pick a new date, re-render all 10 baselines with it, and land
+To bump the pin: pick a new date, re-render all 11 baselines with it, and land
 the pin bump and the re-rendered baselines in the same commit.
 
 ## Cross-references

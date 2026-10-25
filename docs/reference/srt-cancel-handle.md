@@ -3,14 +3,23 @@
 Every long-lived pipeline shell (`MuxSender`, `Sender`, `RawSender`,
 `DemuxReceiver`, `Receiver`, `RawReceiver`) blocks the calling thread
 inside `send_*` / `recv_*`. The cancel-handle pattern is how a
-*different* thread (or a signal handler) wakes that blocked call so the
-process can shut down promptly without time-sliced polling.
+*different* thread (a signal-dispatch thread, a lifecycle observer, a
+watchdog) wakes that blocked call so the process can shut down promptly
+without time-sliced polling.
 
 SRT uses `ResourceCancel`; UDP, TCP, RIST, RTP and RTSP use `FlagCancel`
 (a shared flag their blocking calls poll, from `tst_core::cancel`).
 
 The handle is `Send + Sync`, one-shot, and idempotent — multiple
 `cancel()` calls from any thread are safe and no-op after the first.
+
+`Send + Sync` is not async-signal safety. Do not call `cancel()` from a
+raw OS signal handler: the SRT closer takes a mutex and calls
+`srt_close`, and a managed wrapper's `CancelSlot` takes a mutex too, so a
+signal that lands while the interrupted thread holds one of them
+deadlocks. Have the handler only wake an ordinary thread (a self-pipe,
+`signalfd`, or the language runtime's own signal dispatch) and call
+`cancel()` there.
 
 ## Two layers, same primitive
 
@@ -94,8 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .cancel_handle()
         .expect("real transports return Some");
 
-    // Cancel thread: in real code this is your signal handler / lifecycle
-    // observer / parent-process watchdog.
+    // Cancel thread: in real code this is your signal-dispatch thread /
+    // lifecycle observer / parent-process watchdog.
     thread::spawn(move || {
         thread::sleep(Duration::from_secs(30));
         cancel.cancel();  // wakes the parked send_ts on the main thread
@@ -173,8 +182,8 @@ The Rust API is the source of truth — every binding crate forwards
 another thread while a `&mut`-borrowing `send_*` is in flight. The
 cancel handle gives you a `Send + Sync + Clone` capability that
 *doesn't* hold a mutable reference to the shell — the perfect shape
-for "another thread / signal handler / FFI consumer needs to wake the
-sender".
+for "another thread / signal-dispatch thread / FFI consumer needs to
+wake the sender".
 
 `MuxSender::close()` internally invokes the cancel handle first
 ("cancel-then-close") so that a peer thread parked
@@ -205,6 +214,13 @@ above. See the **Sync vs. async** section in
 | TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. |
 | UDP (`tst-udp`) | `UdpCancelHandle` | From the inherent `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. A parked `recv_bytes` observes it at its next ~100 ms poll tick and returns `ExplicitClose`; `send_bytes` never parks and checks it at entry. `close()` stays `Closed`. `recv_timeout` (per-call deadline) does not observe it — check `is_cancelled()` between slices. |
 | RIST (`tst-rist`) | `RistCancelHandle` | From the inherent `RistTransport::cancel_handle()` / `RistRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. Observed when the current 100 ms `rist_receiver_data_read2` tick returns (`ExplicitClose` instead of that tick's `Backpressure`) and at `send_bytes` entry. `close()` (→ `rist_destroy`) stays `Closed`. |
+
+The table covers the byte transports, the ones that implement `Transport`
+/ `RecvTransport`. HLS and WebRTC are not byte transports and have no
+cancel handle; each has its own shutdown call. An `HlsPublisher` ends with
+`Publisher::finish()`, or, to keep serving the finished playlist, with
+`finish_serving()` followed later by `HlsServerHandle::shutdown()`. A `WhepServer` ends
+with `stop()`, which its `Drop` also calls.
 
 ## See also
 

@@ -165,7 +165,11 @@ and must not be confused:
   the SRT channel itself (data-plane wire encryption via `SRTO_PASSPHRASE` /
   `SRTO_PBKEYLEN`). Also used by `tst-rist` for RIST channel encryption. This
   is compile-time link-time crypto built into the SRT/RIST stack; it has
-  nothing to do with TLS certificates or the TCP transport layer.
+  nothing to do with TLS certificates or the TCP transport layer. Known
+  limitation: the C library's `mbedtls` feature reaches `tst-srt` but not
+  `tst-rist`, so the C package refuses every encrypted `rist://` URL with
+  `TST_E_RIST_ENCRYPTION_DISABLED` (-41); nothing is sent in plaintext.
+  Fixed in 0.9.1.
 
 - **`tls`** (`tst-tcp` / `tst-rtp` / `tst-hls` feature) — wires in rustls 0.23
   to provide TLS 1.2/1.3 on top of the raw TCP transport layer (`tcps://`,
@@ -192,9 +196,11 @@ shipping RTP/RTSP client + SRT) get a tokio-free dependency tree.
 
 `cargo build -p tst-rtp --no-default-features --features tls` is the
 tokio-free client-only build (`cargo tree -e normal` has no `tokio` entry).
-The C ABI (`tst-c`) always enables `rtsp-server` (no TLS surface at all);
-the JVM and Python bindings enable `rtsp-server-tls` (they ship the server's
-TLS acceptor).
+The C ABI (`tst-c`) enables `rtsp-server` with its `rtp` feature; its
+opt-in `tls` feature adds `rtsp-server-tls` (client and server `rtsps://`,
+plus `tcps://` and `hlss://` when those transports are on). The JVM and
+Python bindings enable `rtsp-server-tls` (they ship the server's TLS
+acceptor).
 
 ### Tunables (`SrtSocketConfig` / `SrtListenerConfig`)
 
@@ -204,7 +210,7 @@ aren't yet wrapped are reachable via `tstrans-srt-sys`.
 | libsrt option | Safe field / setter | Status |
 | --- | --- | --- |
 | `SRTO_PASSPHRASE` | `passphrase: Option<Passphrase>` | ✅ Full |
-| `SRTO_PBKEYLEN` | `key_length: KeyLength` | ✅ Full |
+| `SRTO_PBKEYLEN` | `key_length: Option<KeyLength>` | ✅ Full (`None` is written as AES-128 whenever a passphrase is set; see [deferred-features.md](/docs/project/deferred-features.md#keylength--optionkeylength-ergonomics)) |
 | `SRTO_LATENCY` | `latency: Option<Duration>` | ✅ Full |
 | `SRTO_PEERLATENCY` | `peer_latency` (caller) | ✅ Full |
 | `SRTO_RCVLATENCY` | `recv_latency` | ✅ Full |
@@ -516,7 +522,7 @@ level, color, frame rate). See [`guide-codec.md`](/docs/guides/codec.md).
 | H.266 VPS / SPS / PPS (`codec::h266`) | ⚙️ Partial (VPS+SPS+PPS) | ❌ Deferred |
 | AV1 Sequence Header + Frame Header light (`codec::av1`) | ⚙️ Partial | ❌ Deferred |
 
-**H.264 notes:** wraps `h264-reader` 0.8; `parse_sps` / `parse_pps` /
+**H.264 notes:** hand-rolled per spec; `parse_sps` / `parse_pps` /
 `parse_parameter_sets`; partial-success-tolerant on combined call; strict on
 per-set functions. 13/13 corpus fixtures matched ffprobe.
 
@@ -536,9 +542,10 @@ this flag.
 **H.266 notes:** hand-rolled per H.266 V4 §7.3 / §7.4; `parse_vps` /
 `parse_sps` / `parse_pps` / `parse_parameter_sets`. Full SPS body walk
 (entropy_coding_sync, POC config, partition constraints, ref_pic_list_struct,
-virtual boundaries, general_timing_hrd_parameters) + `parse_h266_vui` per
-§E.2.1 recover `frame_rate` (from `num_units_in_tick` + `time_scale` —
-H.266 moves timing OUT of VUI vs. H.265) and `ColorInfo` (primaries +
+virtual boundaries, general_timing_hrd_parameters) recovers `frame_rate`
+(from `num_units_in_tick` + `time_scale` in `general_timing_hrd_parameters`
+— H.266 moves timing OUT of VUI vs. H.265), and `parse_h266_vui` walks the
+VUI syntax H.266 takes from H.274 §7.2 to recover `ColorInfo` (primaries +
 transfer + matrix via H.273). APS NALs (types 17 / 18), Picture Header
 NALs (type 19), and multi-layer streams (`nuh_layer_id != 0`) pass through
 unparsed. Bails `UnsupportedProfile` on
@@ -586,7 +593,7 @@ do not decode audio content or verify CRCs. C ABI exposure is deferred.
 | URL parsing | ✅ Full | `srt://host:port?key=value&...` — IPv4 / DNS / bracketed IPv6 hosts plus the libsrt-URL Group 1 vocabulary (`streamid` / `passphrase` / `latency` / `payloadsize` / `congestion` / `conntimeo` / `linger` / `udprcvbuf` / `udpsndbuf` / etc.) plus a handful of ffmpeg-style aliases (`pkt_size`, `payload_size`, `srt_streamid`, `tsbpddelay`, `smoother`, `ffs`, `connect_timeout`, `recv_buffer_size`, `send_buffer_size`). See "FFmpeg URL interop quirks" below for unit divergence. |
 | Stats accessors | ✅ Full | Sender side: `tst_muxer_get_stats` / `_reset_stats`; `tst_mux_sender_*` and `tst_managed_mux_sender_*` (get + reset); `tst_sender_*` and `tst_managed_sender_*` (get + reset); `tst_raw_sender_*` and `tst_managed_raw_sender_*` (get + reset). Receiver side: `tst_raw_receiver_get_stats`, `tst_receiver_get_stats`, `tst_demux_receiver_get_stats` + `tst_demux_receiver_get_stream_codec_stats`, plus `_get_socket_stats` for SRT-level counters. `tst_sender_stats_t` + `tst_muxer_stats_t` + `tst_raw_send_stats_t` + `tst_raw_recv_stats_t` + `tst_receiver_stats_t` + `tst_demux_receiver_stats_t` + `tst_stream_codec_stats_t` + `tst_socket_stats_t` `repr(C)` types. |
 | Multi-stream `mpegts::mux` fan-out | ✅ Full | `tst_video_stream_handle_t` / `tst_klv_stream_handle_t` typedefs (transparent `uint32_t`); `tst_mux_config_add_video_stream` / `_add_klv_stream` return handles at config time; `_video_to(handle, ...)` / `_klv_to(handle, ...)` siblings on `tst_muxer_t`, `tst_mux_sender_t`, and `tst_managed_mux_sender_t` (≤16 video + ≤16 KLV streams per program — same caps as the Rust core). Single-target entry points (`tst_*_send_video` / `_send_klv`) keep their signatures and surface `MuxError::AmbiguousTarget` as `TST_E_INVALID_USAGE` on multi-stream muxers. The `Sender` / `RawSender` variants don't carry a `Muxer`, so multi-stream is N/A there. |
-| Multi-program `mpegts::mux` config | ✅ Full | `tst_program_handle_t` (transparent `uint32_t`); `tst_mux_config_add_program` returns a handle; `tst_mux_config_add_video_stream_to_program` / `_add_klv_stream_to_program` scope streams to a program; ≤16 programs per muxer config. |
+| Multi-program `mpegts::mux` config | ✅ Full | `tst_program_handle_t` (transparent `uint32_t`); `tst_mux_config_add_program` returns a handle; `tst_mux_config_add_video_stream` / `_add_klv_stream` (and the audio, subtitle and data siblings) take that handle as their `program` argument to scope a stream to a program; ≤16 programs per muxer config. |
 | Multi-program demux at the C ABI | ✅ Full | `tst_demux_receiver_t` ships today (`tst_demux_receiver_open` / `_recv_event` / `_get_stats` / `_get_stream_codec_stats` / `_close`); typed `tst_event_t` carries the same `DemuxEvent` shapes the Rust API emits, including multi-program PAT/PMT events. Pairs with `tst_raw_receiver_*` and `tst_receiver_*` for callers that want bytes or TS packets without the demux step. |
 | cbindgen-generated `tstrans.h` | ✅ Full | Committed at `bindings/c/include/tstrans.h`; CI verifies no drift via `bindings/c/tests/abi/header_drift.rs`. |
 | Exported-symbol list | ✅ Full | `bindings/c/abi-symbols.txt` lists every exported symbol; `scripts/check/c/abi-symbols.sh` diffs it against the build's `nm -D` output, so an unprefixed name or a leaked `srt_*` / `SRT_*` symbol (the statically linked libsrt stays hidden) fails CI. Against the previous release tag it also refuses removed names and names added without a minor-version bump. |
@@ -781,6 +788,7 @@ and the C binding does not expose it in this release.
 | Audio | ⚠️ | `AudioPolicy::Drop` (default; the browser's audio section is rejected) or `PassthroughOpus` on elementary mounts (RFC 7587). No transcoding; Opus in TS not demuxed. |
 | B-frames | ❌ | Counted in `MountStats::frames_pts_reordered`; sources must deliver decode order = presentation order. |
 | Trickle ICE | ⚠️ | `PATCH` answered 204 and ignored (ICE-lite needs no remote candidates); no ICE restart. |
+| mediamtx as a WHEP client | ❌ | The server advertises `PATCH` but sends no `ETag`, so mediamtx's WHEP client switches to trickle ICE and fails every session. Browsers and the reference player are unaffected. Fixed in 0.9.1. |
 | TURN / STUN / ICE over TCP | ❌ | Viewers must reach `advertise=` on `media_port` over UDP. |
 | WHIP ingest | ❌ | Deferred (see [deferred features](/docs/project/deferred-features.md)). |
 | Simulcast | ❌ | Out of scope. |
