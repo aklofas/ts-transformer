@@ -25,11 +25,18 @@ are ready to configure a passphrase on both peers.
 - C/C++ toolchain (`cmake`, `pkg-config`, `python3`, `build-essential`).
   Required because the SRT snippets below pull in `tst-srt`, which
   depends on `srt-sys` (published as `tstrans-srt-sys`) — it builds
-  vendored libsrt and mbedTLS from source. `tst-core` alone is pure
+  vendored libsrt and mbedTLS from source, and generates its Rust
+  bindings with bindgen, which needs libclang. `tst-core` alone is pure
   Rust and needs no C/C++ toolchain.
+- `meson` and `ninja`, only for the repository's bundled examples in
+  [Run the example pair](#run-the-example-pair): the examples crate also
+  depends on `tst-rist`, which builds vendored librist with meson when no
+  system librist is found. The standalone sender and receiver below do not
+  need them.
 - Debian/Ubuntu:
-  `sudo apt-get install -y build-essential cmake pkg-config python3`.
-- macOS: `brew install cmake pkg-config` (`python3` is pre-installed).
+  `sudo apt-get install -y build-essential cmake pkg-config python3 libclang-dev meson ninja-build`.
+- macOS: `brew install cmake pkg-config meson ninja` (`python3` is
+  pre-installed; libclang comes with the Xcode Command Line Tools).
 
 ## Get the code
 

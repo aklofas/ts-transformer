@@ -170,31 +170,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // problem and surfaces what it found as `NonConformant` events. For
     // hard-fail behavior, swap to `Demuxer::with_config(DemuxerConfig::builder().strict(...).build())`.
     let mut d = Demuxer::new();
-    d.feed(&bytes)?;  // `feed` accepts unaligned slices and re-syncs internally
-    d.flush();        // end-of-stream: commits the trailing PES-length-0 AU
+    // Feed bounded chunks and drain after each: one `feed` larger than the
+    // 4 MiB ingress ceiling fails with `SyncBufExhausted`. `feed` accepts
+    // unaligned slices and re-syncs internally; the trailing `None` is the
+    // end of stream, where `flush` commits the trailing PES-length-0 AU.
+    for chunk in bytes.chunks(188 * 1024).map(Some).chain([None]) {
+        match chunk {
+            Some(chunk) => d.feed(chunk)?,
+            None => d.flush(),
+        }
 
-    while let Some(event) = d.next_event() {
-        match event {
-            // ProgramMap wraps a single `ProgramMap` struct (one per PMT seen).
-            DemuxEvent::ProgramMap(m) => {
-                println!("PSI: program {} ({} streams)", m.program_number, m.streams.len());
+        while let Some(event) = d.next_event() {
+            match event {
+                // ProgramMap wraps a single `ProgramMap` struct (one per PMT seen).
+                DemuxEvent::ProgramMap(m) => {
+                    println!("PSI: program {} ({} streams)", m.program_number, m.streams.len());
+                }
+                // Sample / Metadata / Discontinuity / NonConformant are STRUCT
+                // variants — `pid` lives on the `stream` field, not the event.
+                DemuxEvent::Sample { stream, pts, .. } => {
+                    println!("Sample pid=0x{:04X} pts={}", stream.pid, pts.as_ticks());
+                }
+                DemuxEvent::Metadata { stream, kind, .. } => {
+                    println!("Metadata pid=0x{:04X} kind={:?}", stream.pid, kind);
+                }
+                DemuxEvent::Discontinuity { stream, kind } => {
+                    eprintln!("Discontinuity pid=0x{:04X} {kind:?}", stream.pid);
+                }
+                DemuxEvent::NonConformant { stream, issue } => {
+                    eprintln!("NonConformant pid=0x{:04X} {issue:?}", stream.pid);
+                }
+                // #[non_exhaustive] enum — wildcard arm required.
+                _ => {}
             }
-            // Sample / Metadata / Discontinuity / NonConformant are STRUCT
-            // variants — `pid` lives on the `stream` field, not the event.
-            DemuxEvent::Sample { stream, pts, .. } => {
-                println!("Sample pid=0x{:04X} pts={}", stream.pid, pts.as_ticks());
-            }
-            DemuxEvent::Metadata { stream, kind, .. } => {
-                println!("Metadata pid=0x{:04X} kind={:?}", stream.pid, kind);
-            }
-            DemuxEvent::Discontinuity { stream, kind } => {
-                eprintln!("Discontinuity pid=0x{:04X} {kind:?}", stream.pid);
-            }
-            DemuxEvent::NonConformant { stream, issue } => {
-                eprintln!("NonConformant pid=0x{:04X} {issue:?}", stream.pid);
-            }
-            // #[non_exhaustive] enum — wildcard arm required.
-            _ => {}
         }
     }
     Ok(())

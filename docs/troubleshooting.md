@@ -411,13 +411,18 @@ returns `None`/`EndOfStream` or a terminal error, and match on the
 result:
 
 ```rust,ignore
+use tst_core::transport::EndReason;
+
 match transport.end_reason() {
-    Some(StreamEndReason::CleanTeardown) => { /* expected — server hung up */ }
-    Some(StreamEndReason::SessionExpired) => { /* re-`describe()` + `setup()` */ }
-    Some(StreamEndReason::KeepaliveFailed { msg }) => eprintln!("keepalive died: {msg}"),
-    Some(StreamEndReason::TransportFailed { msg }) => eprintln!("wire broke: {msg}"),
-    Some(StreamEndReason::ProtocolError { msg }) => eprintln!("peer misbehaved: {msg}"),
-    Some(StreamEndReason::Cancelled) => { /* we asked for this */ }
+    Some(EndReason::CleanTeardown) => { /* expected — server hung up */ }
+    Some(EndReason::SessionExpired) => { /* re-`describe()` + `setup()` */ }
+    Some(EndReason::KeepaliveFailed { msg }) => eprintln!("keepalive died: {msg}"),
+    Some(EndReason::TransportFailed { msg }) => eprintln!("wire broke: {msg}"),
+    Some(EndReason::ProtocolError { msg }) => eprintln!("peer misbehaved: {msg}"),
+    Some(EndReason::Cancelled) => { /* we asked for this */ }
+    // `EndReason` is `#[non_exhaustive]` and shared by every receive
+    // surface, so a match outside the crate needs a wildcard arm.
+    Some(other) => eprintln!("session ended: {other:?}"),
     None => { /* session hasn't ended, or ended through an uninstrumented path */ }
 }
 ```

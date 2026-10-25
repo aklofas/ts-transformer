@@ -382,11 +382,14 @@ Caller mode is the default when `?mode=` is omitted. URL query parameters
 (`passphrase`, `latency`, `streamid`, `mss`, `payloadsize`, …) apply
 from the SRT URL:
 
+A passphrase must be 10 to 79 characters, and the receiver must be
+configured with the same one (`example-shared-secret` here):
+
 ```python
 from tstrans.shells import Sender
 
 # mode=caller is the default when ?mode= is omitted.
-with Sender.open("srt://host:9000?mode=caller&passphrase=secret") as tx:
+with Sender.open("srt://host:9000?mode=caller&passphrase=example-shared-secret") as tx:
     tx.send_bytes(ts_bytes)   # pre-muxed TS bytes, any length
     tx.flush()                # emit any buffered partial bundle
 ```
@@ -766,8 +769,11 @@ return, one enum for every transport.
 **Background reconnect** (`ReconnectMode`): pass `mode=ReconnectMode.BACKGROUND`
 on the `ReconnectPolicy` handed to `ManagedSender` / `ManagedMuxSender` to
 move the reconnect loop off the caller's thread — a dedicated per-outage
-worker owns backoff + the factory call, and `send`/`send_video`/… enqueue
-into the gap buffer under `overflow_policy` instead of blocking:
+worker owns backoff + the factory call, and while that worker is active (or
+the gap buffer still holds a backlog) `send`/`send_video`/… enqueue into the
+gap buffer under `overflow_policy` instead of blocking. With no worker and an
+empty gap buffer a send goes straight to the transport and can still block on
+network I/O:
 
 ```python
 from tstrans.srt import ManagedMuxSender, ReconnectPolicy, ReconnectMode
@@ -1316,7 +1322,8 @@ The `@` prefix on `bind_url` is mandatory (per librist / ffmpeg
 convention); omit it on the sender's `url`. Mixing them up raises
 `RistError(INVALID_CONFIG)`. `EncryptionKey.aes128` / `aes192` / `aes256`
 each force `RistProfile.MAIN` (the profile that carries encryption); the
-default is `RistProfile.SIMPLE`. Both transports return a `RistStats`
+default is `RistProfile.MAIN`; pass `RistProfile.SIMPLE` to `.profile()` (or `?profile=simple`
+on the URL) for a Simple-only peer. Both transports return a `RistStats`
 snapshot from `stats()`.
 
 `close()` from another thread ends a parked `recv()` with

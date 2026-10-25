@@ -416,7 +416,7 @@ The full code table is in `tstrans.h` (search `TST_E_`). Key transient-vs-persis
 
 - `TST_E_NOT_AVAILABLE` (-13) — **transient**. The next call may succeed (e.g., a managed transport is mid-reconnect).
 - `TST_E_NOT_FOUND` (-14) — **persistent**. The next call with the same key will return the same error (e.g., asking for stream stats on a PID the demuxer never saw).
-- `TST_E_INVALID_USAGE` (-9) — **programmer bug**. The handle is in a fundamentally wrong state (e.g., calling `_send_video` after `_close`).
+- `TST_E_INVALID_USAGE` (-9) — **programmer bug**. The call does not fit the handle's configuration (e.g., `tst_mux_sender_send_klv` on a sender with no KLV stream, or the single-stream form when two KLV streams are configured). A closed handle is not one of these cases: `_close` frees the allocation, so any later call on that pointer is undefined behaviour, not an error code.
 
 See [Binding-authors guide](/docs/reference/binding-authors.md#transient-vs-persistent-error-codes) for the full mapping recipe.
 
@@ -435,7 +435,7 @@ switch (ev.kind) {
 }
 ```
 
-**Threading.** Pipeline shells (`tst_mux_sender_t`, `tst_demux_receiver_t`, etc.) are internally synchronized — the data-path methods (`_send_*`, `_recv_*`, `_pull`) are callable from multiple threads concurrently. **Configs (`tst_mux_config_t`, `tst_sender_config_t`, etc.) are NOT.** Build a config on one thread, hand it to `_open`, then never touch it again.
+**Threading.** Pipeline shells (`tst_mux_sender_t`, `tst_demux_receiver_t`, etc.) are internally synchronized — the data-path methods (`_send_*`, `_recv_*`, `_pull`) are callable from multiple threads concurrently. That holds only while the handle is live, and `_close` is not a data-path call: it wakes a call already parked inside the handle and waits for it to leave, then frees the allocation, so a call that enters at the same moment, or after, uses freed memory. Serialize `_close` against every other use of the handle: cancel, join the threads that use it, then close. **Configs (`tst_mux_config_t`, `tst_sender_config_t`, etc.) are NOT.** Build a config on one thread, hand it to `_open`, then never touch it again.
 
 **Cancellation.** Every SRT and RTP shell has a `_cancel` (`tst_mux_sender_cancel`, `tst_demux_receiver_cancel`, …): lock-free, callable from any thread, idempotent. It closes the underlying socket (SRT) or flags the transport (RTP) so a thread parked in `_send` / `_recv` returns promptly. What that call returns: `TST_E_CLOSED` (-7) on every shell, managed or plain, for the call that observes the cancel and every call after it. libsrt reports the closed socket as a broken connection, but `SrtTransport` reads its own cancel latch afterwards and reports the cancel the caller asked for (0.7.0; through 0.6.x a plain SRT shell reported `TST_E_TRANSPORT` (-8) for the parked call and `TST_E_CLOSED` only for the ones after it). `_close` is cancel-first on every shell (SRT, RTP, UDP, TCP, RIST): it fires the same cancel, then frees. Since 0.7.0 every transport's cancel is a REAL handle, UDP and RIST included — calling `tst_udp_receiver_close` / `tst_udp_demux_receiver_close` (or the sender twins) from another thread ends a data-path call parked on the UDP 100 ms poll with `TST_E_CLOSED` within one tick, where before it waited for the next datagram. **RIST is the one family where a cross-thread `_close` is still not the answer:** a `tst_rist_*_recv_ts` / `_next_event` call does not park — it is a single ~100 ms librist poll that returns `TST_E_BUFFER_FULL` when nothing arrived, so callers poll in a loop, and because `_close` frees the handle, closing it from another thread while that loop runs is a use-after-free like any other post-free use. Close a RIST handle from the thread that polls it. The `tst_tcp_*_cancel` / `tst_udp_*_cancel` / `tst_rist_*_cancel` entry points — the non-freeing cross-thread cancel, and the only safe way to interrupt a RIST receive from another thread — are new symbols that ship with ABI 0.22. See [SRT cancel handle](/docs/reference/srt-cancel-handle.md) for the Rust-layer pattern.
 
@@ -466,6 +466,13 @@ wait for a peer. The unparked call reports `TST_E_CLOSED` (a listener-mode
 open returns `NULL` with that code), but the process is already on its way
 out — treat it as a way to leave, not as an event to handle. A program that
 closed everything pays nothing at exit.
+
+**Encrypted `rist://` is refused (fixed in 0.9.1).** The C package's `mbedtls` feature reaches libsrt but not `tst-rist`, which the C crate builds without its default features, so every RIST open that carries `?secret=` fails with `TST_E_RIST_ENCRYPTION_DISABLED` (-41), even in an `--all-features` build. It fails closed: nothing is sent in plaintext. Unencrypted `rist://` works; for encrypted RIST from C today, use SRT, or the Rust, Python or JVM surface.
+
+**RTSP client: URL options and the demux-receiver hand-off (fixed in 0.9.1).** Two limits on the C RTSP client:
+
+- `tst_rtsp_client_builder_connect` rebuilds the URL from its scheme, host, port and path only, so userinfo (`user:pass@`), `?transport=`, `?rtsp_version=`, `?tcp_keepalive=` and `?recv_timeout=` on the URL are dropped, and so is the `tst_rtsp_client_builder_transport_pref` setter. Pass credentials through the `tst_rtsp_client_builder_auth_*` setters, which are applied. Without `recv_timeout`, `_next_event` has no deadline; end a quiet stream with `_cancel`.
+- `tst_rtsp_session_into_demux_receiver` drops the RTSP control connection when it builds the receiver, which sends TEARDOWN, so the receiver delivers only what was already queued and then the stream stops. The Python and JVM bindings keep the control connection alive and are not affected.
 
 ## Where this binding differs from the Rust core
 
