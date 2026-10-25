@@ -1,7 +1,7 @@
 # Benchmarks + ceilings
 
 This page publishes the measured sweep of the stress run of 2026-10-23
-(tree `12c1ff1d`, the 0.9.0 tree, one AWS `c7i.2xlarge`; its 24-hour hold
+(tree `12c1ff1d`, one AWS `c7i.2xlarge`; its 24-hour hold
 did not run — a harness defect ended it at launch), the sweep and the
 completed 24-hour hold of the run of 2026-10-06 (tree `9bb728e1`), the
 sweep of the earlier 2026-10-03 run (tree `3a3f964f`, whose hold ended
@@ -269,7 +269,7 @@ No hold in this run.
 
 ## Measured: stress run of 2026-10-23
 
-The run used tree `12c1ff1d` (`v0.8.0-531-g12c1ff1d`, the 0.9.0 tree) on
+The run used tree `12c1ff1d` (`v0.8.0-531-g12c1ff1d`) on
 the reference machine above (8 vCPU, 15.3 GiB), with seed 11, all four
 transports, an RSS-slope threshold of 1024 KB/hour, and the RIST sender
 recorded, not gated, in sweep steps. The sweep ran 64 steps from
@@ -339,8 +339,8 @@ proxy in front of it asks the kernel for a port of its own at launch, and
 in a 484-process launch one proxy was handed the very port reserved for
 its own receiver, which had not bound yet. That receiver's listener bind
 failed and exited, and the supervisor ended the hold, as it is meant to
-when any hold worker dies. The harness is being changed to reserve the
-proxies' ports the same way. The run therefore carries no 24-hour hold
+when any hold worker dies. The harness now reserves the proxies' ports
+the same way; this run predates that change. The run therefore carries no 24-hour hold
 verdict, and no figure on this page from this run is a 24-hour
 measurement; the 2026-10-06 hold below remains the latest one.
 
@@ -383,7 +383,7 @@ This is a configuration ceiling: librist's default recovery bitrate cap
 `?bandwidth=`) is below the 108.8 Mb/s rung; the transport was not
 re-measured with the cap raised.
 
-UDP and TCP failed the same way run 3 did, by the same figures to the KB:
+UDP and TCP failed the same way the 2026-10-03 run did, by the same figures to the KB:
 each axis ended on its memory-slope verdict alone, with delivery, CPU,
 descriptor and thread verdicts passing at the failing rung. The allowance
 is the 1024 KB/hour threshold scaled to the step's judged window, so a
@@ -399,14 +399,14 @@ hold was sized from the memory budget rather than the CPU budget: 41 SRT +
 soak's impairment schedule — a 30-second outage on every SRT proxy every 15
 minutes, and the SRT receiver `srt-0` restarted every 2 hours (12 of 12
 scheduled restarts ran; every old process exited on SIGTERM on schedule,
-including the ninth restart, where run 3 died).
+including the ninth restart, where the 2026-10-03 run's hold died).
 
 Every resource and liveness verdict passed. All 535 processes' RSS slopes
 stayed under the 1024 KB/hour allowance — the largest anywhere was
 292 KB/h, on the restarted receiver `srt-0`, judged per restarted pid —
 file descriptor and thread counts stayed flat on every process, and the
 reconnect, queue-depth, restart-recovery and gap-drain verdicts all passed.
-The SRT sender whose receiver was restarted twelve times (**F4**) slopes at
+The SRT sender whose receiver was restarted twelve times slopes at
 23.0 KB/h over 86 340 seconds; the 41 SRT senders span 2.4–23.0 KB/h.
 Aggregate wire throughput over the hold was 384.6 Mb/s at 0.23 of the
 host's 8 vCPUs.
@@ -432,7 +432,7 @@ next packet had a flipped sync byte, discarding a good anchor and
 resolving the injection one PCR interval late. The one unrecovered
 injection comes from a reconnect-gap excusal keyed to media on any PID
 rather than the injection's own. The `recv_invariants` FAIL is cited here
-as that harness verdict defect (finding R4-F2), not as an overall 24-hour
+as that harness verdict defect, not as an overall 24-hour
 PASS and not as a product finding; a passing attribution verdict needs a
 re-run after the harness fix. The resource measurements above stand on
 their own.

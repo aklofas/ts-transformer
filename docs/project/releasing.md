@@ -5,20 +5,20 @@ three workflows — treat them as one release transaction:
 
 | Registry | Artifact(s) | Workflow | Publish mode |
 |---|---|---|---|
-| **crates.io** | the 11 Rust library crates, in dependency-layer order | `crates-io.yml` | automatic (OIDC trusted publishing, per-layer tokens) |
+| **crates.io** | the 12 Rust library crates, in dependency-layer order | `crates-io.yml` | automatic (OIDC trusted publishing, per-layer tokens) |
 | **PyPI** | `tstrans` wheels + sdist | `python-wheels.yml` | automatic (OIDC trusted publishing) |
 | **Maven Central** | `org.tstrans:tstrans-jvm` fat JAR | `jvm-jar.yml` | **staged** — a maintainer inspects and clicks Publish |
 
 A GitHub Release (notes seeded from the CHANGELOG highlights block) completes
-the set — 14 published artifacts per release in total.
+the set — 15 published artifacts per release in total.
 
 The 1.0 release has further conditions, listed with the check that proves
 each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 
 > **Release state.** All three registries are
-> live: crates.io (all 11 crates, first published at 0.4.0 and OIDC-wired
-> since), PyPI `tstrans` (since 0.2.0), and Maven Central
-> `org.tstrans:tstrans-jvm` (since 0.1.0). Standing cautions: every one of
+> live: crates.io (all 12 crates; the first 11 published at 0.4.0 and
+> OIDC-wired since, `tst-webrtc` from 0.9.0), PyPI `tstrans` (since 0.2.0),
+> and Maven Central `org.tstrans:tstrans-jvm` (since 0.1.0). Standing cautions: every one of
 > these registries is immutable — **never tag a release without explicit
 > maintainer confirmation** — and on the tag run **watch the OIDC
 > `publish to PyPI` job**: a *skipped* publish means nothing reached PyPI
@@ -232,7 +232,10 @@ merge commit, and the qualification run checks that nothing under
     | C demux round trip | `bindings/c/tests/receiving/demux_receiver_loopback.rs` |
     | HLS segment probe | the `hls/{ffmpeg,tsp}-pull` cells and `crates/tst-hls/tests/net_hls_e2e.rs` |
     | PTS-rollover and PCR-jitter checks | removed; they never ran |
-13. **Tag** the qualified date commit, following the release procedure below.
+13. **Tag** the commit that carries the qualification record from step 11,
+    following the release procedure below. That PR changes release-document
+    paths only, so the soaked and qualified tree still stands for it and the
+    tagged tree carries its own record.
 
 ## Release procedure
 
@@ -274,10 +277,10 @@ merge commit, and the qualification run checks that nothing under
 
 ## crates.io publish (Rust crates)
 
-`ts-transformer` publishes its 11 publishable Rust library crates to
+`ts-transformer` publishes its 12 publishable Rust library crates to
 crates.io. Since the v0.4.0 first publish this is **wired to CI via
 Trusted Publishing (OIDC)**: pushing a `v*` release tag runs
-`.github/workflows/crates-io.yml`, which publishes all 11 crates in
+`.github/workflows/crates-io.yml`, which publishes all 12 crates in
 dependency order with per-layer OIDC-minted tokens — no maintainer-held
 API token. The crates.io side of the binding (per crate: repository
 `aklofas/ts-transformer`, workflow `crates-io.yml`, environment
@@ -326,12 +329,13 @@ live on the index):
    each other)
 3. `tst-core` (no internal path dependencies with a `version` key)
 4. `tst-pipeline` (depends on `tst-core`)
-5. `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rtp`, `tst-srt`, `tst-rist` (each
-   depends on `tst-core` and `tst-pipeline` — the shared
+5. `tst-udp`, `tst-tcp`, `tst-hls`, `tst-rtp`, `tst-webrtc`, `tst-srt`,
+   `tst-rist` (each depends on `tst-core` and `tst-pipeline` — the shared
    `tst_pipeline::binding` layer — with pinned `version` keys; `tst-srt`
    additionally depends on `tstrans-srt-sys` and `tst-rist` on
-   `tstrans-rist-sys` — both already live from layer 2. Publish in any
-   order once layers 2-4 are live)
+   `tstrans-rist-sys` — both already live from layer 2 — and `tst-webrtc`
+   on `tst-rtp`, so publish `tst-webrtc` after `tst-rtp` is visible on the
+   index. The rest publish in any order once layers 2-4 are live)
 
 For each crate, in the order above:
 

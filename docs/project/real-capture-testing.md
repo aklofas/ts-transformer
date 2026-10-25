@@ -12,7 +12,7 @@ into a verdict that can be compared against the previous release.
 The corpus is not published, because the captures are not ours to share. It
 holds captures from airborne electro-optical and infrared sensor pods, a
 ground bench rig and vendor test fixtures; H.264 and H.265 video; ST 0601 KLV
-in both carriage methods and private metadata streams; 253 files, 40.4 GB,
+in both carriage methods and private metadata streams; 251 files, 39.76 GB,
 durations from under a minute to several hours; PMT shapes a, b and c of the
 test-corpus catalog.
 The release gate requires the corpus run to have swept exactly the number of

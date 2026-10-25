@@ -247,13 +247,13 @@ with a looser assertion. Five clusters account for 64 of the 65
   downgrades the PMT's stream_type from `0x15` to `0x06` on write-back. Full
   byte-level evidence in README.md item 1.
 - **SRT (only) loses a small trailing fraction of a paced live send, with
-  two rounds of disproven hypotheses recorded honestly.** A `tsp -P regulate`
+  the disproven hypotheses recorded.** A `tsp -P regulate`
   or `gst` paced sender lands well inside this project's nominal-count
   tolerance but the received `stream_sha256` doesn't exactly match — the
   same pacing over RIST and UDP is byte-perfect in the same run, so this is
-  SRT-specific. Round 1 suspected the receive-side deadline; round 2
-  deliberately disproved that by giving the receiver 2.5x the sender's real
-  content duration and reproducing the identical byte shortfall — the
+  SRT-specific. Giving the receiver 2.5x the sender's real content
+  duration reproduced the identical byte shortfall, which rules out the
+  receive-side deadline — the
   connection closes from the sender's side the moment it decides it's done,
   regardless of how much slack the receiver is given. The residual
   mechanism narrows to the peer tool's own SRT output-plugin closing
@@ -270,7 +270,7 @@ with a looser assertion. Five clusters account for 64 of the 65
   drops a PID it can't classify; FFmpeg's VVC parser rejects this codebase's
   H.266 fixture's `vps_video_parameter_set_id = 0` (a value H.266, unlike
   HEVC, reserves to mean "no VPS referenced" — not independently checked
-  against the spec text in this session); and FFmpeg can't determine the
+  against the cited specification); and FFmpeg can't determine the
   AAC-ADTS audio stream's sample rate quickly enough over a live,
   non-seekable SRT source to open its output at all. Full detail in
   README.md items 6-9.
@@ -400,16 +400,14 @@ correctly reads 0; this is recorded, not gating (see `report/soak.rs`'s own
 module doc for why that check stays provisional even once a real count is
 available).
 
-RSS sampling with `--no-klv-digest` active on every process (the fix from
-an earlier round) shows the SRT leg's `send`/`recv` both flat at 0.0
+RSS sampling with `--no-klv-digest` active on every process shows the SRT leg's `send`/`recv` both flat at 0.0
 KiB/hour, matching the proxy baseline — the digest-accumulation fix
 accounts for its entire prior growth. The RIST leg's `send`/`recv` still
 show measurable growth (1485.1 / 349.3 KiB/hour respectively) — an order
 of magnitude down from the pre-fix ~5.8 / ~4.0 MiB/hour, confirming digest
 accumulation was the dominant cause there too, but not zero: an
 unexplained RIST-specific residual remained an open watch item at the
-time (plausibly librist's own recovery-buffer growth, per the earlier
-round's own unresolved note) — since resolved by the 72-hour run below,
+time (plausibly librist's own recovery-buffer growth) — since resolved by the 72-hour run below,
 which measured that same sender at 0.1 KiB/hour over its final 24 hours:
 the residual was warm-up convergence toward a steady-state plateau, not
 growth.
@@ -833,12 +831,13 @@ their first CI run ([run 37858440566](https://github.com/aklofas/ts-transformer/
   fails on any difference. In the final-tree CI run the cell logged equal
   source and received digests.
   On three CI runs the cell lost exactly the KLV record at PTS 0; the cause (the sender-report offset rounding that unit a tick before the video origin) is fixed in this release and the cell record now carries the mount's own counters.
-  The cell holds KLV **content**, not KLV **timing**: no interop oracle
-  relates a KLV unit's PTS to the video PTS it was placed against, so
-  where the server puts a unit on the video timeline is pinned by the
-  aligner's unit tests (`align.rs`) only. A timing oracle for `klv-sync`
-  sources under `--remuxed` is after-tag work. The soak's `rtsp-publish`
-  leg is MP2T passthrough and never reaches the re-muxer.
+  The cell holds KLV **timing** as well as content: it runs `recv
+  --klv-placement 1`, which holds every KLV record to the video access
+  unit it was generated with, within 91 ticks (the aligner's 1 ms step
+  tolerance plus one tick of sender-report offset rounding). The soak's
+  `rtsp-publish` leg is MP2T passthrough and never reaches the re-muxer;
+  its `rtsp-publish-es` leg publishes the elementary tracks and runs the
+  same oracle across publisher generations.
 
 Sanitizers (ASan + TSan, nightly jobs) ran green on the final tree `43834194` in [run 37883341432](https://github.com/aklofas/ts-transformer/actions/runs/37883341432) (dispatched 2026-10-09).
 
@@ -888,7 +887,7 @@ the bound and the case where no video was muxed yet.
 ### Fuzz targets
 
 Three `cargo-fuzz` targets cover the publisher's ingest parsers.
-`tests/coverage/fuzz-targets.toml` lists all 36 targets in the workspace.
+`tests/coverage/fuzz-targets.toml` lists all 40 targets in the workspace.
 
 | Target | Drives |
 | --- | --- |
@@ -1272,12 +1271,13 @@ read margin and the version numbers. Evidence on `c9cd8163`:
 
 ## Evidence for the 0.9.0 tree
 
-The last library commit before the 0.9.0 version sweep is `9947bc28`, the
-merge of the WebRTC playback work. After it the tree changed only in
-`Cargo.lock` (tokio 1.54.1), the CI flake ledger, the version numbers, the
-CHANGELOG, the documentation, and the removal of `DemuxFromFile` from
-`tst-core`. Evidence on
-`907adb30`, the tree directly before that sweep:
+The frozen 0.9.0 tree is `9b8acb3b`. The results below were produced on
+`907adb30`, after the merge of the WebRTC playback work and before the
+0.9.0 version sweep. The release fixes that followed changed
+library and binding code (among them the HLS mux publisher's segment cuts
+and playlist lifetimes, and the WHEP server's DTLS source binding), so
+these earlier results do not by themselves qualify `9b8acb3b`. Evidence on
+`907adb30`:
 
 - the interop census at 161 / 96 / 0 / 65 / 0 at realistic
   access-unit sizes, including the two `whep/*` browser cells
