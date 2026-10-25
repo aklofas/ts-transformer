@@ -152,6 +152,34 @@ The integrator-facing changes at a glance (full detail in the sections below):
   server's parsers. Full figures in
   [`docs/project/validation-evidence.md`](/docs/project/validation-evidence.md).
 
+### Known issues
+
+- An `rtsps://` client spins at full CPU, with no timeout, if the server
+  closes the TCP connection during the TLS handshake. Fixed in 0.9.1.
+- A RIST receiver with `?profile=simple` crashes the process when port + 1
+  (its RTCP port) is already in use. Fixed in 0.9.1.
+- JVM module-path users can't use the `org.tstrans.shells`,
+  `org.tstrans.hls` and `org.tstrans.webrtc` packages: `module-info` does not
+  export them. Classpath users are unaffected. Fixed in 0.9.1.
+- The C package refuses every encrypted `rist://` URL with
+  `TST_E_RIST_ENCRYPTION_DISABLED` (-41). It fails closed; nothing is sent
+  in plaintext. Fixed in 0.9.1.
+- mediamtx's WHEP client fails against the WHEP server: the server
+  advertises PATCH but sends no `ETag`, so that client takes the trickle-ICE
+  path and rejects the answer. Browsers and the reference player are
+  unaffected. Fixed in 0.9.1.
+- The C RTSP client builder drops the URL's credentials and options
+  (userinfo, `?transport=`, `?rtsp_version=`, `?tcp_keepalive=`,
+  `?recv_timeout=`), and a C RTSP session converted to a demux receiver stops
+  after the media already queued. Fixed in 0.9.1.
+- The muxer writes a PCR equal to the PTS of the access unit it precedes, so
+  decoders get no decode lead, and the PCR can step back after a PCR sent
+  with KLV, audio or data. Every tested player plays the output; strict
+  analyzers may flag it. Fixed in 0.9.1.
+- The HLS server has no connection limit and no request-header or TLS
+  handshake deadline. Keep its default loopback bind, or put it behind a
+  reverse proxy that enforces limits and timeouts. Fixed in 0.9.1.
+
 ### Removed — tst-pipeline (BREAKING)
 
 - The dyn-erased shell aliases are removed: the `tst_pipeline::dyn_aliases`
@@ -276,9 +304,9 @@ The integrator-facing changes at a glance (full detail in the sections below):
   `RtcpReporterHandle`, `RTCP_BASE_INTERVAL`, `rtcp::reporter::jitter_interval`,
   `RtcpStats::{sr_packets_sent, rr_packets_sent}` and
   `RtpTransport::rtcp_stats`. The emitter was off by default and sent reports
-  whose statistics were all zero. No RTP transport binds the `port + 1`
-  companion socket any more. RTCP reception on the interleaved RTSP path is
-  unchanged: `RtpRecvTransport::rtcp_stats` and `socket_stats()` still fill
+  whose statistics were all zero. Standalone RTP transports no longer bind a
+  `port + 1` companion socket; RTSP UDP SETUP still binds its RTP/RTCP socket
+  pairs. RTCP reception on the interleaved RTSP path is unchanged: `RtpRecvTransport::rtcp_stats` and `socket_stats()` still fill
   from the peer's reports.
 - `compute_rtt_us` and `system_time_to_ntp_mid` are removed. Round-trip time
   was never computed; `rtt_us` reports 0, as before.
@@ -664,8 +692,8 @@ The integrator-facing changes at a glance (full detail in the sections below):
 - `org.tstrans.shells.Receiver` over `tcp://` throws kind `END_OF_STREAM`
   on the first receive after the peer's clean close, and
   `org.tstrans.shells.DemuxReceiver` over `tcp://` ends its iteration there
-  (`hasNext()` false); both previously threw `BROKEN` once first. Raw
-  `org.tstrans.tcp` transports and `srt://` shells are unchanged.
+  (`hasNext()` false); both previously threw `BROKEN` once first. `srt://`
+  shells are unchanged.
 - `org.tstrans.klv.UasDatalinkLs` lists its components in the order of the Rust
   declaration, so the canonical constructor's argument order changes; build it
   with `UasDatalinkLs.Builder`, the documented path, whose setters keep their
@@ -1048,8 +1076,8 @@ The integrator-facing changes at a glance (full detail in the sections below):
 - Error kinds: six `BindingErrorKind::Webrtc*` rows (`URL`, `IO`, `TLS`,
   `MOUNT`, `SERVER`, `PUSH`) and `Domain::Webrtc` in tst-pipeline, with
   `From<WhepServerError>` and `From<PushError>` for `BindingError`; Python's
-  `tstrans.exceptions` gains `WebrtcErrorKind` and `WebrtcError`, which no
-  `tstrans` call raises yet.
+  `tstrans.exceptions` gains `WebrtcErrorKind` and `WebrtcError`, raised by
+  the `tstrans.webrtc` binding.
 - A video section the viewer offered `sendonly` or `inactive` is skipped
   when choosing the payload (as audio already was); an offer with no
   receiving video section is rejected with a reason that says so.
@@ -1267,8 +1295,9 @@ The integrator-facing changes at a glance (full detail in the sections below):
   - `replay` sends a budgeted subset, paced by the capture's own clock,
     through SRT, RIST, UDP, TCP and the RTSP publisher path on loopback, one
     long-lived receiver per path, and compares each reconstruction with the
-    sent bytes. Each receiver's RSS is gated per path by the soak's slope
-    rule. An internal `receive` subcommand runs the receiver side.
+    sent bytes. Each receiver's RSS is recorded per path and compared with
+    the soak's slope rule without failing the replay; the 72-hour soak gates
+    memory. An internal `receive` subcommand runs the receiver side.
   - `report` renders the run as Markdown and writes the archive row with its
     eight counts.
 
