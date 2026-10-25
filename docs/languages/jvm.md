@@ -72,6 +72,14 @@ at runtime.
 bundling the per-platform native libraries (linux-x86_64 / linux-aarch64 /
 macos-arm64 / windows-x86_64); the consumer picks no classifier.
 
+**Classpath, not the module path (fixed in 0.9.1).** The JAR's
+`module-info` does not export `org.tstrans.shells`, `org.tstrans.hls` or
+`org.tstrans.webrtc`. On the classpath, the default for Maven and Gradle
+builds, every package is reachable. An application that puts the JAR on
+the module path cannot use those three packages, and that includes the
+`srt` and `rtp` calls whose signatures name a `shells` type such as
+`CancelHandle` or `EndReason`.
+
 ## Hello world
 
 The smallest thing that proves the native library loads and the JNI bridge
@@ -182,20 +190,31 @@ idiom for a sealed hierarchy:
 import org.tstrans.mpegts.*;
 
 byte[] ts = java.nio.file.Files.readAllBytes(java.nio.file.Path.of("capture.ts"));
+// Feed bounded chunks and drain after each: one feed() larger than the
+// 4 MiB ingress ceiling throws DemuxException (kind SYNC_BUF_EXHAUSTED).
+// The last pass flushes.
+final int chunk = 188 * 1024;
 try (Demuxer d = new Demuxer()) {
-    d.feed(ts);
-    d.flush();
-    for (DemuxEvent e : d) {
-        if (e instanceof DemuxEvent.ProgramMap pm) {
-            System.out.println("PSI: program " + pm.programNumber() + ", " + pm.elementaryPids().size() + " streams");
-        } else if (e instanceof DemuxEvent.Video v) {
-            System.out.println("Video pid=" + v.stream().pid() + " pts=" + v.pts() + " len=" + v.raw().remaining());
-        } else if (e instanceof DemuxEvent.Metadata m) {
-            System.out.println("KLV pid=" + m.stream().pid() + " kind=" + m.kind() + " len=" + m.payload().remaining());
-        } else if (e instanceof DemuxEvent.NonConformant nc) {
-            System.out.println("non-conformant: " + nc.kind() + " — " + nc.issue());
+    for (int off = 0; ; off += chunk) {
+        boolean end = off >= ts.length;
+        if (end) {
+            d.flush();
+        } else {
+            d.feed(java.util.Arrays.copyOfRange(ts, off, Math.min(ts.length, off + chunk)));
         }
-        // Audio / Subtitle / UnknownSample / Discontinuity / ReconnectDiscontinuity handled similarly.
+        for (DemuxEvent e : d) {
+            if (e instanceof DemuxEvent.ProgramMap pm) {
+                System.out.println("PSI: program " + pm.programNumber() + ", " + pm.elementaryPids().size() + " streams");
+            } else if (e instanceof DemuxEvent.Video v) {
+                System.out.println("Video pid=" + v.stream().pid() + " pts=" + v.pts() + " len=" + v.raw().remaining());
+            } else if (e instanceof DemuxEvent.Metadata m) {
+                System.out.println("KLV pid=" + m.stream().pid() + " kind=" + m.kind() + " len=" + m.payload().remaining());
+            } else if (e instanceof DemuxEvent.NonConformant nc) {
+                System.out.println("non-conformant: " + nc.kind() + " — " + nc.issue());
+            }
+            // Audio / Subtitle / UnknownSample / Discontinuity / ReconnectDiscontinuity handled similarly.
+        }
+        if (end) break;
     }
 }
 ```
@@ -227,11 +246,7 @@ DemuxerConfig cfg = DemuxerConfig.builder()
     .build();
 
 try (Demuxer d = new Demuxer(cfg)) {
-    d.feed(ts);
-    d.flush();
-    for (DemuxEvent e : d) {
-        // ...
-    }
+    // feed in chunks, flush and iterate as in the loop above
 }
 ```
 
@@ -875,7 +890,9 @@ feature flag is needed.
 
 ### Sender hello
 
-The simplest sender: connect to a peer in caller mode and stream bytes.
+The simplest sender: connect to a peer in caller mode and stream bytes. A
+passphrase must be 10 to 79 characters, and the receiver must be configured
+with the same one (`example-shared-secret` here).
 
 ```java
 import org.tstrans.shells.Sender;
@@ -883,7 +900,7 @@ import org.tstrans.SrtException;
 
 // mode=caller is the default when ?mode= is omitted.
 try (var tx = Sender.open(
-        "srt://host:9000?mode=caller&passphrase=secret")) {
+        "srt://host:9000?mode=caller&passphrase=example-shared-secret")) {
     tx.sendBytes(tsBytes);  // push pre-muxed TS bytes (any length)
     tx.flush();             // emit any buffered partial bundle
 }
@@ -1370,8 +1387,10 @@ carefully, they are not uniform across the four shells:**
 Set `.mode(ReconnectMode.BACKGROUND)` on the `ReconnectPolicy.Builder` handed to
 `ManagedSender` / `ManagedMuxSender` to move the reconnect loop off the
 caller's thread — a dedicated per-outage worker owns backoff + the factory
-call, and `send`/`sendVideo`/… enqueue into the gap buffer under
-`overflowPolicy` instead of blocking:
+call, and while that worker is active (or the gap buffer still holds a
+backlog) `send`/`sendVideo`/… enqueue into the gap buffer under
+`overflowPolicy` instead of blocking. With no worker and an empty gap buffer
+a send goes straight to the transport and can still block on network I/O:
 
 ```java
 import org.tstrans.srt.ManagedMuxSender;
