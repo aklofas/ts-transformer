@@ -404,21 +404,28 @@ int main(int argc, char **argv) {
      *      identical regardless of whether the data came from a raw RTP
      *      URL or an RTSP session.
      *
-     * IMPORTANT — session is consumed after this call.  The RTSP control
-     * channel (RtspClient) is dropped along with the session object.  If
-     * you need to send an explicit TEARDOWN before closing, call
-     * `tst_rtsp_session_teardown_and_free(session)` INSTEAD of this
-     * function.  Using both on the same session is undefined.
+     * Ownership — the session's fate depends on the return value:
+     *   - non-NULL: the session is consumed AND freed.  The RTSP control
+     *     channel (with its keepalive and, for TCP-interleaved, the pump
+     *     that feeds the receiver) now lives inside the receiver, so the
+     *     camera keeps streaming until we close the receiver.  Never touch
+     *     or free `session` again.
+     *   - NULL: the session is untouched and still ours.  We must free it
+     *     with `tst_rtsp_session_teardown_and_free`, which also sends
+     *     TEARDOWN, or it leaks (and the camera holds the session open).
      * ---------------------------------------------------------------- */
     TstRtpDemuxReceiver *rx = tst_rtsp_session_into_demux_receiver(session, NULL);
-    session = NULL; /* consumed — pointer is now dangling */
 
     if (!rx) {
         fprintf(stderr,
                 "into_demux_receiver failed: %s\n",
                 tst_get_last_error_str());
+        /* NULL return: the session is still ours to tear down and free. */
+        tst_rtsp_session_teardown_and_free(session);
         return 1;
     }
+    /* Only now is the session gone: the bridge consumed and freed it. */
+    session = NULL;
     fprintf(stderr, "demux receiver ready — press Ctrl-C to stop\n");
 
     /* ------------------------------------------------------------------
@@ -495,11 +502,12 @@ int main(int argc, char **argv) {
      * all memory associated with this handle.  Safe to call after cancel.
      * The handle must not be used after this point.
      *
-     * Note: the RTSP control channel was already dropped when we called
-     * `tst_rtsp_session_into_demux_receiver`.  There is no TEARDOWN sent
-     * here — the server will timeout the session naturally after the TCP
-     * connection closes.  If you need a clean TEARDOWN, use
-     * `tst_rtsp_session_teardown_and_free` before the bridge step instead.
+     * The RTSP control channel lives in the receiver, so closing the
+     * receiver also ends the RTSP session: it closes the data plane
+     * first (so nothing is left parked in a recv), then sends TEARDOWN,
+     * bounded to 500 ms so an unresponsive camera cannot stall shutdown.
+     * Cancel (above) stops only the data plane; the control channel stays
+     * up until this call.
      * ---------------------------------------------------------------- */
     tst_rtp_demux_receiver_close(rx);
     fprintf(stderr, "done\n");
