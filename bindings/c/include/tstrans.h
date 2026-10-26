@@ -1450,9 +1450,11 @@ typedef struct TstRtspServerBuilder TstRtspServerBuilder;
  * Opaque handle for a live RTSP client session.
  *
  * Obtained from [`tst_rtsp_client_builder_connect`].  Freed by either
- * [`tst_rtsp_session_teardown_and_free`] (sends TEARDOWN first) or
- * [`tst_rtsp_session_into_demux_receiver`] (consumes the data-plane
- * transport into a new `TstRtpDemuxReceiver` handle).
+ * [`tst_rtsp_session_teardown_and_free`] (sends TEARDOWN first) or a
+ * successful [`tst_rtsp_session_into_demux_receiver`] (moves the client and
+ * the data-plane transport into a new `TstRtpDemuxReceiver` handle, which
+ * sends TEARDOWN when it is closed). A NULL return from the bridge leaves
+ * the session allocated and still the caller's to free.
  *
  * Call [`tst_rtsp_session_play`] after obtaining the session handle to
  * begin the RTP data flow; the builder's `_connect` step only runs
@@ -7745,12 +7747,18 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
 /**
  * Close and free a `tst_rtp_demux_receiver_t`.
  *
+ * For a receiver from `tst_rtsp_session_into_demux_receiver` this also
+ * closes the RTSP control connection, sending TEARDOWN (bounded to
+ * 500 ms).
+ *
  * Safe to call with `NULL` (no-op).
  *
  * # Safety
  *
  * `p` must be NULL or a valid non-freed `*mut TstRtpDemuxReceiver`
- * returned by `tst_rtp_demux_receiver_open`.
+ * returned by `tst_rtp_demux_receiver_open`,
+ * `tst_rtsp_session_into_demux_receiver` or
+ * `tst_rtsp_publish_mount_into_demux_receiver`.
  */
  void tst_rtp_demux_receiver_close(struct TstRtpDemuxReceiver *p);
 #endif
@@ -10197,7 +10205,8 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  * This is the primary path for reading RTP data after
  * `tst_rtsp_client_builder_connect` + `tst_rtsp_session_play`:
  *
- * 1. Locks the session's pair Mutex and moves out `(RtspClient, RtspSession)`.
+ * 1. Locks the session's pair Mutex, moves out `(RtspClient, RtspSession)`
+ *    and frees the session allocation.
  * 2. Calls `RtspSession::into_recv_transport()` to get the `RtpRecvTransport`
  *    (either a bound UDP socket or an mpsc channel fed by the TCP-interleaved
  *    pump thread, depending on what SETUP negotiated).
@@ -10208,17 +10217,23 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  *    `tst_rtp_demux_receiver_next_event` / `_cancel` / `_close` data-path
  *    entry points unchanged.
  *
- * After this call the `session` handle is consumed (the inner pair is None).
- * The RTSP control channel (`RtspClient`) is also dropped — if you need to
- * send TEARDOWN before consuming the transport, call
- * [`tst_rtsp_session_teardown_and_free`] instead.
+ * The returned receiver owns the RTSP control connection (`RtspClient`),
+ * with its keepalive and, for TCP-interleaved, the pump that feeds the
+ * receiver, until `tst_rtp_demux_receiver_close`, which sends TEARDOWN.
+ * `tst_rtp_demux_receiver_cancel` stops only the data plane; the control
+ * connection stays up until close.
+ *
+ * Ownership: a non-NULL return consumes `session` and frees it, so the
+ * caller must not use or free it again. A NULL return leaves `session`
+ * untouched: it is still the caller's, to free with
+ * [`tst_rtsp_session_teardown_and_free`].
  *
  * The returned `tst_rtp_demux_receiver_t` must eventually be freed with
  * `tst_rtp_demux_receiver_close`.  Returns NULL on failure.
  *
  * # Safety
  *
- * - `session` must be a non-NULL, non-consumed pointer from
+ * - `session` must be a non-NULL, non-freed pointer from
  *   `tst_rtsp_client_builder_connect`.
  * - `demux_cfg` may be NULL (default options) or a valid pointer from
  *   `tst_demux_config_new`.
@@ -10279,7 +10294,9 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  *
  * `session` must be NULL, or a pointer returned by
  * `tst_rtsp_client_builder_connect` that has not yet been freed or
- * consumed by [`tst_rtsp_session_into_demux_receiver`].
+ * consumed by a successful [`tst_rtsp_session_into_demux_receiver`]. A
+ * session the bridge returned NULL for is still valid here and must be
+ * freed with this call.
  */
  int tst_rtsp_session_teardown_and_free(struct TstRtspSession *session);
 #endif

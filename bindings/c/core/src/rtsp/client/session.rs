@@ -16,13 +16,15 @@
 //!           tst_rtsp_session_play()  ────────────────►│   PLAY sent
 //!           tst_rtsp_session_pause() ────────────────►│   PAUSE sent
 //!                                                     │
-//!  ┌─  tst_rtsp_session_into_demux_receiver() ───────►│   consumes session
-//!  │                                                   │   returns TstRtpDemuxReceiver
+//!  ┌─  tst_rtsp_session_into_demux_receiver() ───────►│   consumes + frees session
+//!  │                                                   │   returns TstRtpDemuxReceiver,
+//!  │                                                   │   which now owns the RtspClient
 //!  └──► tst_rtp_demux_receiver_next_event()  ────────────► event loop
-//!       tst_rtp_demux_receiver_cancel()
-//!       tst_rtp_demux_receiver_close()
+//!       tst_rtp_demux_receiver_cancel()  ────────────────► data plane only
+//!       tst_rtp_demux_receiver_close()   ────────────────► TEARDOWN sent; receiver freed
 //!
-//!   OR, to close without consuming the transport:
+//!   OR, to close without consuming the transport (also after the bridge
+//!   returned NULL, which leaves the session with the caller):
 //!       tst_rtsp_session_teardown_and_free() ────────► TEARDOWN sent; session freed
 //! ```
 //!
@@ -71,9 +73,11 @@ use crate::rtp::demux_receiver::TstRtpDemuxReceiver;
 /// Opaque handle for a live RTSP client session.
 ///
 /// Obtained from [`tst_rtsp_client_builder_connect`].  Freed by either
-/// [`tst_rtsp_session_teardown_and_free`] (sends TEARDOWN first) or
-/// [`tst_rtsp_session_into_demux_receiver`] (consumes the data-plane
-/// transport into a new `TstRtpDemuxReceiver` handle).
+/// [`tst_rtsp_session_teardown_and_free`] (sends TEARDOWN first) or a
+/// successful [`tst_rtsp_session_into_demux_receiver`] (moves the client and
+/// the data-plane transport into a new `TstRtpDemuxReceiver` handle, which
+/// sends TEARDOWN when it is closed). A NULL return from the bridge leaves
+/// the session allocated and still the caller's to free.
 ///
 /// Call [`tst_rtsp_session_play`] after obtaining the session handle to
 /// begin the RTP data flow; the builder's `_connect` step only runs
@@ -325,7 +329,9 @@ pub unsafe extern "C" fn tst_rtsp_session_pause(session: *mut TstRtspSession) ->
 ///
 /// `session` must be NULL, or a pointer returned by
 /// `tst_rtsp_client_builder_connect` that has not yet been freed or
-/// consumed by [`tst_rtsp_session_into_demux_receiver`].
+/// consumed by a successful [`tst_rtsp_session_into_demux_receiver`]. A
+/// session the bridge returned NULL for is still valid here and must be
+/// freed with this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
     session: *mut TstRtspSession,
@@ -413,7 +419,8 @@ pub unsafe extern "C" fn tst_rtsp_session_cancel(session: *mut TstRtspSession) -
 /// This is the primary path for reading RTP data after
 /// `tst_rtsp_client_builder_connect` + `tst_rtsp_session_play`:
 ///
-/// 1. Locks the session's pair Mutex and moves out `(RtspClient, RtspSession)`.
+/// 1. Locks the session's pair Mutex, moves out `(RtspClient, RtspSession)`
+///    and frees the session allocation.
 /// 2. Calls `RtspSession::into_recv_transport()` to get the `RtpRecvTransport`
 ///    (either a bound UDP socket or an mpsc channel fed by the TCP-interleaved
 ///    pump thread, depending on what SETUP negotiated).
@@ -424,17 +431,23 @@ pub unsafe extern "C" fn tst_rtsp_session_cancel(session: *mut TstRtspSession) -
 ///    `tst_rtp_demux_receiver_next_event` / `_cancel` / `_close` data-path
 ///    entry points unchanged.
 ///
-/// After this call the `session` handle is consumed (the inner pair is None).
-/// The RTSP control channel (`RtspClient`) is also dropped — if you need to
-/// send TEARDOWN before consuming the transport, call
-/// [`tst_rtsp_session_teardown_and_free`] instead.
+/// The returned receiver owns the RTSP control connection (`RtspClient`),
+/// with its keepalive and, for TCP-interleaved, the pump that feeds the
+/// receiver, until `tst_rtp_demux_receiver_close`, which sends TEARDOWN.
+/// `tst_rtp_demux_receiver_cancel` stops only the data plane; the control
+/// connection stays up until close.
+///
+/// Ownership: a non-NULL return consumes `session` and frees it, so the
+/// caller must not use or free it again. A NULL return leaves `session`
+/// untouched: it is still the caller's, to free with
+/// [`tst_rtsp_session_teardown_and_free`].
 ///
 /// The returned `tst_rtp_demux_receiver_t` must eventually be freed with
 /// `tst_rtp_demux_receiver_close`.  Returns NULL on failure.
 ///
 /// # Safety
 ///
-/// - `session` must be a non-NULL, non-consumed pointer from
+/// - `session` must be a non-NULL, non-freed pointer from
 ///   `tst_rtsp_client_builder_connect`.
 /// - `demux_cfg` may be NULL (default options) or a valid pointer from
 ///   `tst_demux_config_new`.
@@ -450,7 +463,8 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
         };
 
         // Step 1: move the (RtspClient, RtspSession) pair out of the Mutex.
-        // After this, `pair` is None and subsequent calls return TST_E_CLOSED.
+        // Every early return below leaves the allocation alone: a NULL
+        // return keeps the session with the caller.
         let pair = {
             let mut guard = match handle.pair.lock() {
                 Ok(g) => g,
@@ -468,11 +482,16 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
             }
         };
 
-        // Destructure. The RtspClient is dropped here — its Drop impl joins the
-        // keepalive thread and (for TCP-interleaved) the pump thread.  This is
-        // intentional: the RTSP control channel is no longer needed once we hand
-        // the data-plane transport to DemuxReceiver.
-        let (_client, rtsp_session) = *pair;
+        // The pair is out and the guard released, so the session is consumed:
+        // free its allocation (the caller passed ownership on this path).
+        // SAFETY: `session` came from `Box::into_raw` in
+        // `tst_rtsp_client_builder_connect` and the caller does not use it
+        // after a non-NULL return.
+        drop(unsafe { Box::from_raw(session) });
+
+        // The client moves into the receiver: dropping it here would join the
+        // pump and send TEARDOWN, ending the stream after the queued backlog.
+        let (client, rtsp_session) = *pair;
 
         // Step 2: convert RtspSession into RtpRecvTransport.
         // For UDP: wraps the SETUP-allocated UDP socket pair.
@@ -503,6 +522,7 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
             inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
+            rtsp_client: Mutex::new(Some(client)),
         }))
     })
 }
@@ -533,5 +553,23 @@ mod tests {
         null_into_demux_receiver_returns_null => null {
             tst_rtsp_session_into_demux_receiver(std::ptr::null_mut(), std::ptr::null())
         };
+    }
+
+    /// A NULL return leaves the session with the caller: the bridge neither
+    /// frees it (the teardown below would double-free) nor may the caller
+    /// skip freeing it (LeakSanitizer would report the allocation).
+    #[test]
+    fn bridge_with_an_emptied_pair_returns_null_and_keeps_the_session() {
+        let p = Box::into_raw(Box::new(TstRtspSession {
+            pair: Mutex::new(None),
+            rtsp_cancel: RtspCancelHandle::new(),
+        }));
+        let rx = unsafe { tst_rtsp_session_into_demux_receiver(p, std::ptr::null()) };
+        assert!(rx.is_null());
+        assert_eq!(
+            crate::error::test_last_error_code(),
+            TstError::Closed as i32
+        );
+        assert_eq!(unsafe { tst_rtsp_session_teardown_and_free(p) }, 0);
     }
 }

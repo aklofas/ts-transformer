@@ -645,6 +645,7 @@ pub unsafe extern "C" fn tst_rtsp_publish_mount_into_demux_receiver(
             inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
+            rtsp_client: Mutex::new(None),
         }))
     })
 }

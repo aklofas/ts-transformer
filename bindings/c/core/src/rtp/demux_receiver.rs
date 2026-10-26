@@ -47,6 +47,11 @@ pub struct TstRtpDemuxReceiver {
     pub(crate) arena: Mutex<EventArena>,
     /// Per-stream stats snapshot buffer (borrowed-buffer design §4.5).
     pub(crate) stream_stats_buf: Mutex<Vec<crate::stats::TstStreamStats>>,
+    /// The RTSP client of a receiver bridged from an RTSP session; `None`
+    /// on every other receiver. Holding it keeps the control connection,
+    /// its keepalive and (for TCP-interleaved) the pump that feeds this
+    /// receiver alive; dropping it on close sends TEARDOWN.
+    pub(crate) rtsp_client: Mutex<Option<tst_rtp::RtspClient>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +96,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
                 inner,
                 arena: Mutex::new(EventArena::new()),
                 stream_stats_buf: Mutex::new(Vec::new()),
+                rtsp_client: Mutex::new(None),
             })),
             None => std::ptr::null_mut(),
         }
@@ -103,12 +109,18 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
 
 /// Close and free a `tst_rtp_demux_receiver_t`.
 ///
+/// For a receiver from `tst_rtsp_session_into_demux_receiver` this also
+/// closes the RTSP control connection, sending TEARDOWN (bounded to
+/// 500 ms).
+///
 /// Safe to call with `NULL` (no-op).
 ///
 /// # Safety
 ///
 /// `p` must be NULL or a valid non-freed `*mut TstRtpDemuxReceiver`
-/// returned by `tst_rtp_demux_receiver_open`.
+/// returned by `tst_rtp_demux_receiver_open`,
+/// `tst_rtsp_session_into_demux_receiver` or
+/// `tst_rtsp_publish_mount_into_demux_receiver`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_rtp_demux_receiver_close(p: *mut TstRtpDemuxReceiver) {
     crate::panic::ffi_catch((), || {
@@ -118,6 +130,9 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_close(p: *mut TstRtpDemuxReceive
         let boxed = unsafe { Box::from_raw(p) };
         // `CHandle::close` is cancel-first (see `tst_receiver_close`).
         boxed.inner.close();
+        // The RTSP client goes only after the data plane is closed, so its
+        // TEARDOWN never waits behind a parked recv.
+        drop(boxed.rtsp_client.lock().ok().and_then(|mut g| g.take()));
         drop(boxed);
     });
 }
