@@ -12,9 +12,10 @@
 
 #![cfg(feature = "tls")]
 
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::error::RtspError;
 use crate::url::RtspUrl;
@@ -41,14 +42,31 @@ impl TlsStream {
     /// synchronously. `root_certs` defaults to the OS native trust store
     /// (via `rustls-native-certs`) when `None`.
     ///
+    /// The handshake shares the connect budget: it must finish before
+    /// `deadline` (`None` = unbounded, the budget overflowed `Instant`).
+    /// Each socket read is bounded by `read_timeout` or the time left,
+    /// whichever is shorter, and a read that times out is a poll tick that
+    /// comes back to the deadline check, not a failure. A peer FIN reaches
+    /// rustls only as `read_tls` returning 0, so that is an error here
+    /// rather than another poll. `ClientConnection::complete_io` is not
+    /// used: it loops internally until the handshake completes, so a peer
+    /// that drips a byte inside every read timeout would hold it past any
+    /// deadline checked between calls. On return the socket's read timeout
+    /// is `read_timeout` again.
+    ///
     /// # Errors
     ///
     /// - [`RtspError::Tls`] on any rustls construction, handshake, or
-    ///   server-name validation failure.
+    ///   server-name validation failure, and when the peer closes the
+    ///   connection mid-handshake.
+    /// - [`RtspError::Io`] with [`io::ErrorKind::TimedOut`] when `deadline`
+    ///   passes first.
     pub fn connect(
         url: &RtspUrl,
         sock: TcpStream,
         root_certs: Option<rustls::RootCertStore>,
+        read_timeout: Duration,
+        deadline: Option<Instant>,
     ) -> Result<Self, RtspError> {
         let roots = root_certs.unwrap_or_else(default_roots);
         let config = rustls::ClientConfig::builder()
@@ -58,23 +76,65 @@ impl TlsStream {
             .map_err(|e| RtspError::Tls(format!("invalid server name: {e}")))?;
         let mut conn = rustls::ClientConnection::new(Arc::new(config), server_name)
             .map_err(|e| RtspError::Tls(format!("rustls construct: {e}")))?;
-        // Drive the handshake to completion synchronously.
         let mut sock = sock;
+        // Unix reports a socket timeout as WouldBlock, Windows as TimedOut.
+        let is_tick = |e: &io::Error| {
+            matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            )
+        };
         while conn.is_handshaking() {
-            // Order matters: flush any pending handshake bytes first,
-            // then poll for the server's response. write_tls/read_tls
-            // are no-ops when nothing is pending.
-            if conn.wants_write() {
-                conn.write_tls(&mut sock)
-                    .map_err(|e| RtspError::Tls(format!("write_tls: {e}")))?;
+            let remaining = match deadline {
+                Some(d) => match d.checked_duration_since(Instant::now()) {
+                    Some(left) if !left.is_zero() => Some(left),
+                    _ => return Err(RtspError::Io(io::ErrorKind::TimedOut)),
+                },
+                None => None,
+            };
+            // Flush everything rustls has queued (ClientHello, Finished, …)
+            // before polling for the server's answer.
+            let mut flushed = true;
+            while conn.wants_write() {
+                match conn.write_tls(&mut sock) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) if is_tick(&e) => {
+                        flushed = false;
+                        break;
+                    }
+                    Err(e) => return Err(RtspError::Tls(format!("write_tls: {e}"))),
+                }
             }
-            if conn.wants_read() {
-                conn.read_tls(&mut sock)
-                    .map_err(|e| RtspError::Tls(format!("read_tls: {e}")))?;
-                conn.process_new_packets()
-                    .map_err(|e| RtspError::Tls(format!("process: {e}")))?;
+            if !flushed || !conn.wants_read() {
+                continue;
+            }
+            // A zero read timeout is an error, so floor the time left.
+            let wait = remaining.map_or(read_timeout, |left| {
+                read_timeout.min(left.max(Duration::from_millis(1)))
+            });
+            sock.set_read_timeout(Some(wait))
+                .map_err(|e| RtspError::Io(e.kind()))?;
+            match conn.read_tls(&mut sock) {
+                Ok(0) => {
+                    return Err(RtspError::Tls(
+                        "peer closed the connection during the TLS handshake".into(),
+                    ));
+                }
+                Ok(_) => {
+                    if let Err(e) = conn.process_new_packets() {
+                        // Let the alert rustls queued for the peer go out
+                        // (best effort) before reporting the failure.
+                        let _ = conn.write_tls(&mut sock);
+                        return Err(RtspError::Tls(format!("process: {e}")));
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted || is_tick(&e) => {}
+                Err(e) => return Err(RtspError::Tls(format!("read_tls: {e}"))),
             }
         }
+        sock.set_read_timeout(Some(read_timeout))
+            .map_err(|e| RtspError::Io(e.kind()))?;
         Ok(Self { conn, sock })
     }
 

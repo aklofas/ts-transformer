@@ -140,7 +140,9 @@ impl RtspClientBuilder {
         self
     }
 
-    /// TCP connect timeout. Default 10 s.
+    /// Connect budget, default 10 s: bounds the TCP connect and, for
+    /// `rtsps://`, the TLS handshake together. Expiry is
+    /// `RtspError::Io(TimedOut)`.
     pub fn connect_timeout(mut self, t: Duration) -> Self {
         self.connect_timeout = t;
         self

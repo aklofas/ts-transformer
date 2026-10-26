@@ -159,6 +159,12 @@ pub use error::{test_record_mux_error, test_record_recv_error, test_record_shell
 pub use rtp::{tst_rtp_mux_sender_open, tst_rtp_sender_open};
 #[cfg(feature = "rtp")]
 pub use rtsp::client::builder::tst_rtsp_client_builder_new;
+// RTSP client connect, re-exported flat for the
+// `transports::rtsp_client_connect` integration test.
+#[cfg(feature = "rtp")]
+pub use rtsp::client::builder::tst_rtsp_client_builder_keepalive;
+#[cfg(feature = "rtp")]
+pub use rtsp::client::session::tst_rtsp_client_builder_connect;
 #[cfg(feature = "rtp")]
 pub use rtsp::server::builder::tst_rtsp_server_builder_new;
 // RTSP server lifecycle + publisher role (ABI 23), re-exported flat for the

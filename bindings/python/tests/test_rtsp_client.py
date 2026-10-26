@@ -484,3 +484,59 @@ def test_cancel_of_a_parked_control_call_is_closed():
     finally:
         done.set()
         server.join(timeout=5)
+
+
+def _recv_exact(sock: socket.socket, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise OSError("peer closed early")
+        buf += chunk
+    return buf
+
+
+def _fin_after_client_hello_peer():
+    """Accepts one connection, reads exactly one TLS record (the
+    ClientHello: 5-byte header + its length), then closes. Reading the
+    whole record matters: closing with unread bytes would send RST, which
+    already took the error path. Returns (port, server thread)."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(10)
+    port = listener.getsockname()[1]
+
+    def serve() -> None:
+        try:
+            sock, _ = listener.accept()
+        except OSError:
+            return
+        finally:
+            listener.close()
+        with sock:
+            sock.settimeout(5)
+            try:
+                header = _recv_exact(sock, 5)
+                _recv_exact(sock, int.from_bytes(header[3:5], "big"))
+            except OSError:
+                return
+
+    server = threading.Thread(target=serve, daemon=True)
+    server.start()
+    return port, server
+
+
+# `method="thread"`: a regressed handshake spins inside native code, where
+# the signal method's exception would never be delivered.
+@pytest.mark.timeout(20, method="thread")
+def test_rtsps_peer_closing_mid_handshake_raises_tls():
+    """A FIN after the ClientHello ends `connect` with `RtspError(TLS)`
+    instead of polling the closed socket forever."""
+    port, server = _fin_after_client_hello_peer()
+    with pytest.raises(RtspError) as exc_info:
+        RtspClient.connect(
+            RtspClientConfig(url=f"rtsps://127.0.0.1:{port}/x", keepalive=False)
+        )
+    assert exc_info.value.kind == RtspErrorKind.TLS
+    server.join(5)

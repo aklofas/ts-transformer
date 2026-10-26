@@ -423,6 +423,10 @@ impl RtspClient {
             ));
         }
 
+        // One budget for the TCP connect and the TLS handshake together.
+        // `None` (the budget overflowed `Instant`) means unbounded.
+        #[cfg(feature = "tls")]
+        let deadline = std::time::Instant::now().checked_add(params.connect_timeout);
         let host_port = (url.host.as_str(), url.port);
         let mut addrs = host_port
             .to_socket_addrs()
@@ -456,7 +460,13 @@ impl RtspClient {
         let stream = if is_tls {
             #[cfg(feature = "tls")]
             {
-                Stream::Tls(Box::new(tls::TlsStream::connect(url, tcp, roots)?))
+                Stream::Tls(Box::new(tls::TlsStream::connect(
+                    url,
+                    tcp,
+                    roots,
+                    params.read_timeout,
+                    deadline,
+                )?))
             }
             #[cfg(not(feature = "tls"))]
             {
