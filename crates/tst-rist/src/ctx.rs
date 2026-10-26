@@ -45,21 +45,22 @@ impl RistCtx {
             return Err(RistError::EncryptionDisabled);
         }
 
-        // Vendored librist 0.2.20's Simple-profile receiver-side RTCP-peer
-        // creation dereferences the new peer before checking it for null
-        // (rist.c's rist_receiver_peer_create); that null case is reachable
-        // for an IPv6 bind (the RTCP peer's re-derived bind URL fails to
-        // come up as IPv6), which SIGSEGVs the whole process. Refuse here,
-        // before any librist context or peer creation, rather than let the
-        // process crash.
+        // librist's Simple-profile receiver (rist.c's rist_receiver_peer_create)
+        // opens a second, RTCP peer on port + 1 by rebuilding the bind address
+        // from host and port, and drops the IPv6 brackets doing it, so for an
+        // IPv6 bind that peer never comes up. The vendored build null-checks
+        // the RTCP peer, so there the failure would be PeerCreateFailed; but a
+        // system librist 0.2.20 dereferences the failed peer and SIGSEGVs the
+        // process. Refuse here, before any librist context or peer creation:
+        // the IPv6 Simple-profile receiver cannot work with either build.
         // Caller/sender side is unaffected — rist_sender_peer_create
         // null-checks before dereferencing — so only the receiver bind is
         // guarded.
         if role == Role::Receiver && cfg.profile == RistProfile::Simple && url.addr.is_ipv6() {
             return Err(RistError::InvalidConfig(
-                "IPv6 bind is not supported in the Simple profile: vendored librist 0.2.20 \
-                 dereferences the RTCP peer before its null check (rist.c \
-                 rist_receiver_peer_create); use RistProfile::Main"
+                "IPv6 bind is not supported in the Simple profile: librist rebuilds the RTCP \
+                 peer's address without the IPv6 brackets, and librist 0.2.20 as shipped \
+                 upstream dereferences that failed peer; use RistProfile::Main"
                     .into(),
             ));
         }

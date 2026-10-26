@@ -170,6 +170,9 @@ fn main() {
     // builds silently reuse the previous librist/mbedTLS static libs.
     // Mirrors srt-sys; see the comment there.
     println!("cargo:rerun-if-changed=vendor/librist/meson.build");
+    // The file `SOURCE_FIXUPS` patches: a bump that changes it must re-run the
+    // fixup check even when meson.build is untouched.
+    println!("cargo:rerun-if-changed=vendor/librist/src/rist.c");
     println!(
         "cargo:rerun-if-changed={}",
         tstrans_mbedtls_src::source_dir()
@@ -258,11 +261,146 @@ fn main() {
         .expect("Failed to write bindings.rs to OUT_DIR");
 }
 
+/// A source correction applied to the staged copy of `vendor/librist`, so the
+/// submodule stays pinned at the upstream commit and untouched.
+struct SourceFixup {
+    /// Named in the panic when the fixup stops matching.
+    name: &'static str,
+    /// Path relative to the librist source root.
+    file: &'static str,
+    old: &'static str,
+    new: &'static str,
+}
+
+const SOURCE_FIXUPS: &[SourceFixup] = &[SourceFixup {
+    // `rist_receiver_peer_create` (Simple profile) dereferences the RTCP peer
+    // it creates on port + 1 one statement before its null check, so a
+    // failed RTCP bind (port + 1 already held) crashes the process. Moving
+    // the assignment after the check makes that failure return -1.
+    name: "rtcp-peer-null-check",
+    file: "src/rist.c",
+    old: "\t\tp_rtcp = rist_receiver_peer_insert_local(ctx, config);\n\
+          \t\tp_rtcp->peer_ssrc = p->peer_ssrc;\n\
+          \t\tif (!p_rtcp)\n\
+          \t\t{\n\
+          \t\t\tudpsocket_close(p->sd);\n\
+          \t\t\tfree(p);\n\
+          \t\t\treturn -1;\n\
+          \t\t}\n",
+    new: "\t\tp_rtcp = rist_receiver_peer_insert_local(ctx, config);\n\
+          \t\tif (!p_rtcp)\n\
+          \t\t{\n\
+          \t\t\tudpsocket_close(p->sd);\n\
+          \t\t\tfree(p);\n\
+          \t\t\treturn -1;\n\
+          \t\t}\n\
+          \t\tp_rtcp->peer_ssrc = p->peer_ssrc;\n",
+}];
+
+/// Paths under `vendor/librist` that are not staged. KEEP IN SYNC with the
+/// `vendor/librist/…` entries of Cargo.toml's `exclude` list (prefix
+/// stripped), so a build from the git checkout compiles exactly the tree a
+/// build from the published crate does. `.git` is a file (submodule) or
+/// directory that the package never carries either.
+const STAGE_SKIP: &[&str] = &[
+    ".git",
+    "docs",
+    "test",
+    "tools",
+    "subprojects",
+    ".gitlab-ci.yml",
+    "contrib/mbedtls/include",
+    "contrib/mbedtls/library",
+    "contrib/mbedtls/LICENSE",
+    "contrib/mbedtls/Makefile",
+    "contrib/mbedtls/refresh_mbedtls_source.sh",
+];
+
+/// Copies the vendored tree to `staged`, skipping [`STAGE_SKIP`] and the
+/// [`SOURCE_FIXUPS`] targets (which [`apply_source_fixups`] writes). A file is
+/// written only when it is missing or its bytes differ, so a re-run keeps
+/// mtimes and ninja rebuilds nothing. Nothing is ever deleted from `staged`.
+fn stage_vendored_source(vendor_dir: &Path, staged: &Path) {
+    fn copy_dir(src_root: &Path, src: &Path, dst_root: &Path) {
+        let entries = std::fs::read_dir(src)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()));
+        for entry in entries {
+            let entry = entry.unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()));
+            let path = entry.path();
+            let rel = path.strip_prefix(src_root).unwrap();
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            if STAGE_SKIP.contains(&rel_str.as_str())
+                || SOURCE_FIXUPS.iter().any(|f| f.file == rel_str)
+            {
+                continue;
+            }
+            let dst = dst_root.join(rel);
+            let file_type = entry
+                .file_type()
+                .unwrap_or_else(|e| panic!("Failed to stat {}: {e}", path.display()));
+            if file_type.is_dir() {
+                std::fs::create_dir_all(&dst)
+                    .unwrap_or_else(|e| panic!("Failed to create {}: {e}", dst.display()));
+                copy_dir(src_root, &path, dst_root);
+            } else {
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
+                write_if_changed(&dst, &bytes);
+            }
+        }
+    }
+    std::fs::create_dir_all(staged)
+        .unwrap_or_else(|e| panic!("Failed to create {}: {e}", staged.display()));
+    copy_dir(vendor_dir, vendor_dir, staged);
+}
+
+/// Writes each [`SOURCE_FIXUPS`] target into the staged tree with its fixup
+/// applied. The text is read from the pristine `vendor_dir`, never from the
+/// staged copy, so a re-run sees the upstream bytes and writes nothing new.
+/// Panics unless each fixup's `old` text occurs exactly once, so a vendor
+/// bump that changes the patched code fails the build instead of silently
+/// shipping the bug or a double patch.
+fn apply_source_fixups(vendor_dir: &Path, staged: &Path) {
+    for fixup in SOURCE_FIXUPS {
+        let src = vendor_dir.join(fixup.file);
+        let text = std::fs::read_to_string(&src)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()));
+        match text.matches(fixup.old).count() {
+            1 => write_if_changed(
+                &staged.join(fixup.file),
+                text.replacen(fixup.old, fixup.new, 1).as_bytes(),
+            ),
+            0 if text.contains(fixup.new) => panic!(
+                "rist-sys source fixup `{}` no longer matches {}: upstream now carries \
+                 this fix: delete the fixup from SOURCE_FIXUPS in build.rs",
+                fixup.name, fixup.file
+            ),
+            n => panic!(
+                "rist-sys source fixup `{}` matched {n} times in {} (expected exactly \
+                 once): refresh the fixup text against the bumped source",
+                fixup.name, fixup.file
+            ),
+        }
+    }
+}
+
+/// Writes `bytes` to `path` only when the file is missing or differs.
+fn write_if_changed(path: &Path, bytes: &[u8]) {
+    if std::fs::read(path).is_ok_and(|current| current == bytes) {
+        return;
+    }
+    std::fs::write(path, bytes)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {e}", path.display()));
+}
+
 /// Build librist from `vendor/librist` via meson + ninja.
 ///
 /// Unlike srt-sys (which uses cmake), librist is a meson project. We invoke
 /// `meson setup` + `meson compile` via `std::process::Command`. Both `meson`
 /// and `ninja` must be on `$PATH` (Debian: `apt install meson ninja-build`).
+///
+/// meson builds a staged copy under `OUT_DIR` (see [`SOURCE_FIXUPS`]), never
+/// the submodule itself.
 fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let vendor_dir = manifest_dir.join("vendor/librist");
@@ -280,6 +418,9 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let build_dir = out_dir.join("librist-build");
+    let source_dir = out_dir.join("librist-src");
+    stage_vendored_source(&vendor_dir, &source_dir);
+    apply_source_fixups(&vendor_dir, &source_dir);
 
     // ===== meson setup =====
     //
@@ -301,7 +442,7 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
     let mut args: Vec<String> = vec![
         "setup".into(),
         build_dir.to_string_lossy().into_owned(),
-        vendor_dir.to_string_lossy().into_owned(),
+        source_dir.to_string_lossy().into_owned(),
         "--default-library=static".into(),
         "--buildtype=release".into(),
         "-Dbuilt_tools=false".into(),
@@ -440,12 +581,12 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
         args.insert(1, "--reconfigure".into());
     }
 
-    if !try_run_cmd("meson", &args, &vendor_dir, &meson_envs) {
+    if !try_run_cmd("meson", &args, &source_dir, &meson_envs) {
         if !reconfiguring {
             panic!(
                 "Command `meson {}` failed (cwd={})",
                 args.join(" "),
-                vendor_dir.display()
+                source_dir.display()
             );
         }
         println!(
@@ -460,7 +601,7 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
             )
         });
         args.remove(1); // drop --reconfigure
-        run_cmd("meson", &args, &vendor_dir, &meson_envs);
+        run_cmd("meson", &args, &source_dir, &meson_envs);
     }
 
     // ===== meson compile =====
@@ -471,13 +612,13 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
             "-C".to_string(),
             build_dir.to_string_lossy().into_owned(),
         ],
-        &vendor_dir,
+        &source_dir,
         &meson_envs,
     );
 
     // librist's meson outputs `librist.a` directly in builddir (with
-    // --default-library=static). Headers stay in source tree under
-    // `vendor/librist/include/`.
+    // --default-library=static). Headers stay in the staged source tree under
+    // `include/`.
     println!(
         "cargo:rustc-link-search=native={}",
         build_dir.to_string_lossy()
@@ -538,7 +679,7 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
     // header via a relative include (`#include "librist_config.h"`), so the
     // include path must reach the librist/ subdirectory directly.
     vec![
-        vendor_dir.join("include"),
+        source_dir.join("include"),
         build_dir.join("include").join("librist"),
         build_dir.join("include"),
     ]
