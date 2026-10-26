@@ -632,6 +632,7 @@ impl tst_rtp::rtsp::client::builder::RtspClientBuilder
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::auth(self, impl core::convert::Into<alloc::string::String>, secrecy::SecretString) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::connect(self) -> core::result::Result<tst_rtp::rtsp::client::RtspClient, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::connect_timeout(self, core::time::Duration) -> Self
+pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::from_url(tst_rtp::url::RtspUrl) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::keepalive_interval(self, core::time::Duration) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::no_auto_keepalive(self, bool) -> Self
@@ -2173,6 +2174,7 @@ impl tst_rtp::rtsp::client::builder::RtspClientBuilder
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::auth(self, impl core::convert::Into<alloc::string::String>, secrecy::SecretString) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::connect(self) -> core::result::Result<tst_rtp::rtsp::client::RtspClient, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::connect_timeout(self, core::time::Duration) -> Self
+pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::from_url(tst_rtp::url::RtspUrl) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::keepalive_interval(self, core::time::Duration) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::no_auto_keepalive(self, bool) -> Self
