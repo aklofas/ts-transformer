@@ -40,7 +40,7 @@ pub struct WhepUrl {
     pub advertise: Option<IpAddr>,
     /// The most viewers connected at once (1 to 64, default 10).
     pub max_viewers: u64,
-    /// A bearer token every POST, PATCH and DELETE must carry; the OPTIONS
+    /// A bearer token every POST and DELETE must carry; the OPTIONS
     /// preflight and a request for no route need none. `None` admits any
     /// request.
     pub token: Option<String>,
