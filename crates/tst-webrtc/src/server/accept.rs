@@ -389,9 +389,7 @@ fn read_some(
 fn answer(request: &Request, body: &[u8], peer: SocketAddr, shared: &Shared) -> Response {
     match http::route(request) {
         Route::Preflight => resp(204, ""),
-        Route::MethodNotAllowed => {
-            with_header(resp(405, ""), "Allow", "POST, PATCH, DELETE, OPTIONS")
-        }
+        Route::MethodNotAllowed { allow } => with_header(resp(405, ""), "Allow", allow),
         Route::NotFound => resp(404, ""),
         Route::CreateSession { mount } => {
             if let Some(refused) = check_bearer(request, shared) {
@@ -412,26 +410,6 @@ fn answer(request: &Request, body: &[u8], peer: SocketAddr, shared: &Shared) -> 
                 .request(|reply| ControlMsg::Delete { mount, id, reply })
             {
                 Some(true) => resp(200, ""),
-                Some(false) => resp(404, ""),
-                None => resp(503, ""),
-            }
-        }
-        // The trickle-ICE fragment is read (the body is bounded by
-        // MAX_BODY) and ignored: ICE-lite needs no remote candidates. An
-        // ICE restart in it is not supported either.
-        Route::Patch { mount, id } => {
-            if let Some(refused) = check_bearer(request, shared) {
-                return refused;
-            }
-            let Some(mount) = shared.mount_by_path(&mount) else {
-                return resp(404, "");
-            };
-            let mount = mount.id;
-            match shared
-                .control
-                .request(|reply| ControlMsg::Exists { mount, id, reply })
-            {
-                Some(true) => resp(204, ""),
                 Some(false) => resp(404, ""),
                 None => resp(503, ""),
             }

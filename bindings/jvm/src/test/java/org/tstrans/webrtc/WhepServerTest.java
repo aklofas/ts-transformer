@@ -2,6 +2,10 @@ package org.tstrans.webrtc;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -36,6 +40,25 @@ class WhepServerTest {
                 s.removeMount("/cam");
                 assertEquals(0L, s.stats().mounts());
             }
+        }
+    }
+
+    /**
+     * Neither trickle ICE nor ICE restart is supported; a client that sees
+     * PATCH in the method list switches to trickle and then needs an ETag.
+     */
+    @Test @Timeout(15)
+    void preflightDoesNotAdvertisePatch() throws Exception {
+        try (WhepServer s = WhepServer.bind("whep://127.0.0.1:0")) {
+            HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
+            HttpRequest req = HttpRequest.newBuilder(URI.create("http://" + s.localAddr() + "/cam"))
+                    .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                    .build();
+            HttpResponse<Void> resp = client.send(req, HttpResponse.BodyHandlers.discarding());
+            assertEquals(204, resp.statusCode());
+            assertEquals(
+                    "POST, DELETE, OPTIONS",
+                    resp.headers().firstValue("Access-Control-Allow-Methods").orElse(null));
         }
     }
 
