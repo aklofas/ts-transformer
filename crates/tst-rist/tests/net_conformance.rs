@@ -7,7 +7,7 @@
 //!    librist's socket teardown (the "ephemeral-bind + librist-rebind race"
 //!    `loopback.rs` documents), so every receiver factory call takes the
 //!    NEXT even port from a private range (33050–33076; senders 33080–33096),
-//!    disjoint from `loopback.rs` 33010–33026, `cancel.rs` 33040–33048, the
+//!    disjoint from `loopback.rs` 33010–33029, `cancel.rs` 33040–33048, the
 //!    C test's 33100 and the pytest suite 34110–34150. Simple profile needs
 //!    EVEN ports (`rist.c:866`).
 //! 2. **Handshake warm-up inside `feed`.** A receiver parks at once (each
