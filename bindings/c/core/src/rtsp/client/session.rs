@@ -382,19 +382,24 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
 /// Cancel any blocking RTSP I/O on the control channel.
 ///
 /// Sets the session's cancel flag so that any thread blocked inside a RTSP
-/// request/response cycle (e.g. a blocking DESCRIBE or PLAY) will break out
-/// at the next poll interval.  Safe to call from any thread. Idempotent.
-/// The interrupted call returns `TST_E_CLOSED` (-7).
+/// request/response cycle (e.g. a blocking PLAY or PAUSE) will break out
+/// at the next poll interval.  Callable from another thread while a PLAY
+/// or PAUSE on the same session is in flight.  Idempotent.  The interrupted
+/// call returns `TST_E_CLOSED` (-7).
 ///
-/// Note: cancels the RTSP *control plane* only. If
-/// [`tst_rtsp_session_into_demux_receiver`] has already been called, the
-/// RTP data plane is governed by `tst_rtp_demux_receiver_cancel`.
+/// Never call this after a successful
+/// [`tst_rtsp_session_into_demux_receiver`] (the session is freed then), nor
+/// concurrently with one: the bridge may free the session under you. To stop
+/// a bridged receiver use `tst_rtp_demux_receiver_cancel`. After the bridge
+/// returns NULL the session is still valid and this call is allowed.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if `session` is NULL.
 ///
 /// # Safety
 ///
-/// `session` must be NULL or a valid non-freed `*mut TstRtspSession`.
+/// `session` must be NULL or a valid non-freed `*mut TstRtspSession`, not
+/// consumed by a successful `tst_rtsp_session_into_demux_receiver` and not
+/// being passed to it concurrently.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_rtsp_session_cancel(session: *mut TstRtspSession) -> libc::c_int {
     ffi_catch(TstError::Internal as i32, || {
@@ -482,13 +487,6 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
             }
         };
 
-        // The pair is out and the guard released, so the session is consumed:
-        // free its allocation (the caller passed ownership on this path).
-        // SAFETY: `session` came from `Box::into_raw` in
-        // `tst_rtsp_client_builder_connect` and the caller does not use it
-        // after a non-NULL return.
-        drop(unsafe { Box::from_raw(session) });
-
         // The client moves into the receiver: dropping it here would join the
         // pump and send TEARDOWN, ending the stream after the queued backlog.
         let (client, rtsp_session) = *pair;
@@ -517,6 +515,15 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
         // tst_rtp_demux_receiver_* data-path API without any distinction.
         use crate::event::EventArena;
         use crate::rtp::RtpRecvSnap;
+
+        // Nothing below can fail, so this is where the session is consumed:
+        // free its allocation only now, after every path that could still
+        // return NULL (a panic above included), so a NULL return always
+        // leaves it with the caller.
+        // SAFETY: `session` came from `Box::into_raw` in
+        // `tst_rtsp_client_builder_connect`, its mutex guard is released,
+        // and the caller does not use it after a non-NULL return.
+        drop(unsafe { Box::from_raw(session) });
 
         Box::into_raw(Box::new(TstRtpDemuxReceiver {
             inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
