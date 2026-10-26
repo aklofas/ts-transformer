@@ -165,11 +165,7 @@ and must not be confused:
   the SRT channel itself (data-plane wire encryption via `SRTO_PASSPHRASE` /
   `SRTO_PBKEYLEN`). Also used by `tst-rist` for RIST channel encryption. This
   is compile-time link-time crypto built into the SRT/RIST stack; it has
-  nothing to do with TLS certificates or the TCP transport layer. Known
-  limitation: the C library's `mbedtls` feature reaches `tst-srt` but not
-  `tst-rist`, so the C package refuses every encrypted `rist://` URL with
-  `TST_E_RIST_ENCRYPTION_DISABLED` (-41); nothing is sent in plaintext.
-  Fixed in 0.9.1.
+  nothing to do with TLS certificates or the TCP transport layer.
 
 - **`tls`** (`tst-tcp` / `tst-rtp` / `tst-hls` feature) — wires in rustls 0.23
   to provide TLS 1.2/1.3 on top of the raw TCP transport layer (`tcps://`,
@@ -787,8 +783,8 @@ and the C binding does not expose it in this release.
 | MPEG-TS mounts | ✅ | `MountKind::Mp2t` + `push_ts`: one video stream of the mount's codec and its program's KLV; runs one frame behind. |
 | Audio | ⚠️ | `AudioPolicy::Drop` (default; the browser's audio section is rejected) or `PassthroughOpus` on elementary mounts (RFC 7587). No transcoding; Opus in TS not demuxed. |
 | B-frames | ❌ | Counted in `MountStats::frames_pts_reordered`; sources must deliver decode order = presentation order. |
-| Trickle ICE | ⚠️ | `PATCH` answered 204 and ignored (ICE-lite needs no remote candidates); no ICE restart. |
-| mediamtx as a WHEP client | ❌ | The server advertises `PATCH` but sends no `ETag`, so mediamtx's WHEP client switches to trickle ICE and fails every session. Browsers and the reference player are unaffected. Fixed in 0.9.1. |
+| Trickle ICE | ❌ | Not supported (ICE-lite answers carry every candidate); PATCH is not advertised and answers `405`; no ICE restart. |
+| mediamtx as a WHEP client | ✅ | The server does not advertise `PATCH`, so the client sends a complete offer without trickle ICE. |
 | TURN / STUN / ICE over TCP | ❌ | Viewers must reach `advertise=` on `media_port` over UDP. |
 | WHIP ingest | ❌ | Deferred (see [deferred features](/docs/project/deferred-features.md)). |
 | Simulcast | ❌ | Out of scope. |

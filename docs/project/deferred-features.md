@@ -1320,7 +1320,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   refusal is new with the change that made IPv6 endpoints reach librist
   correctly bracketed at all — before that, an IPv6 RIST URL silently
   resolved to `0.0.0.0:0` and never reached the affected code.
-- **Why deferred:** The bug is in vendored librist 0.2.20, not in this
+- **Why deferred:** The bug is in librist 0.2.20, not in this
   crate. `rist_receiver_peer_create` creates a second RTCP peer at
   `local_port + 1` and dereferences it *before* its own null check, so
   a failed RTCP-peer creation is a null dereference rather than an
@@ -1330,25 +1330,22 @@ mean **Deferred**. An entry whose feature has shipped must never read
   the port were overwritten with NUL, so the stored string is
   `rist://@[::1` and the rebuilt RTCP URL `rist://@[::1:9001` has no
   closing bracket. The parser rejects it, RTCP-peer creation returns
-  null, and the missing null check turns that graceful failure into a
-  SIGSEGV that takes down the whole process (verified under gdb at
-  `rist.c:1276`). On IPv4 the clobbered `rist://@127.0.0.1` re-parses
-  fine, so the RTCP peer binds `port + 1` when that port is free. Any
-  other RTCP-peer creation failure takes the same null dereference: an
-  IPv4 Simple-profile receiver whose `port + 1` is already held by
-  another socket crashes the process at `listen`. Until the fix lands
-  in 0.9.1, use the Main profile or make sure `port + 1` is free. The
-  sender path is unaffected —
-  `rist_sender_peer_create` null-checks before dereferencing. Fixing
-  this properly means patching vendored upstream C in two places (the
-  null-check ordering *and* the RTCP address derivation) and carrying
-  the patch across vendor bumps; refusing the one broken combination is
-  a smaller, honest surface. The refusal message names the librist
-  version, so it must be re-checked and refreshed at the next vendor
-  bump.
+  null, and without the null check that graceful failure is a SIGSEGV
+  that takes down the whole process. On IPv4 the clobbered
+  `rist://@127.0.0.1` re-parses fine, so the RTCP peer binds `port + 1`
+  when that port is free. The null-check half is fixed in the vendored
+  build, which compiles a staged copy of the tree with the peer checked
+  before use: an IPv4 Simple-profile receiver whose `port + 1` is held
+  returns `RistError::PeerCreateFailed`, and an IPv6 bind would fail the
+  same way. The guard stays for the address-derivation half, which has no
+  fixup here, and because a system librist found through pkg-config still
+  dereferences the null peer. The sender path is unaffected
+  (`rist_sender_peer_create` null-checks before dereferencing). The
+  refusal message names the librist version, so it must be re-checked and
+  refreshed at the next vendor bump.
 - **Trigger to revisit:** An upstream librist release that fixes both
-  halves (this is an upstream-report candidate — a maintainer files it).
-  On that bump: drop the guard in `listen_with_config`, drop its unit
+  halves. On that bump: drop the
+  build-time fixup, drop the guard in `listen_with_config`, drop its unit
   test, and add a Simple-profile IPv6 loopback round-trip test
   alongside the existing Main-profile one.
 
