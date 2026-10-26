@@ -471,8 +471,9 @@ headless Chromium and checks that every record arrives by both carriages.
   per address.
 - Trickle ICE and ICE restart are not supported. The server does not list
   `PATCH` in `Access-Control-Allow-Methods`, so clients that enable
-  trickle from the method list, mediamtx's WHEP client among them, send a
-  complete offer. A `PATCH` answers `405` before the bearer check.
+  trickle from the method list should send a complete offer. mediamtx's
+  WHEP client is expected to behave this way, but the interop matrix does
+  not verify it yet. A `PATCH` answers `405` before the bearer check.
 
 The deferred items and their revisit triggers are in
 [deferred features](/docs/project/deferred-features.md).
