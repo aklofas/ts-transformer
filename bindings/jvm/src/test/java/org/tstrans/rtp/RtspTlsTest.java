@@ -6,8 +6,13 @@ import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
+import java.io.DataInputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -78,6 +83,42 @@ class RtspTlsTest {
         RtspException ex = assertThrows(RtspException.class, () -> RtspClient.connect(cfg));
         assertEquals(RtspException.Kind.TLS, ex.kind());
         assertTrue(ex.getMessage().contains("invalid PEM"));
+    }
+
+    /**
+     * A peer that reads the whole ClientHello record (5-byte header + its
+     * length) and then closes with a FIN ends {@code connect} with
+     * {@code Kind.TLS}; the handshake loop used to poll the closed socket
+     * forever. Reading the whole record matters: closing with unread bytes
+     * would send RST, which already took the error path.
+     */
+    @Test
+    void peerClosingMidHandshakeThrowsTls() throws Exception {
+        assumeTrue(isLinux(), "live RTSP tests gated to Linux");
+        try (ServerSocket listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            Thread peer = new Thread(() -> {
+                try (Socket s = listener.accept()) {
+                    s.setSoTimeout(5000);
+                    DataInputStream in = new DataInputStream(s.getInputStream());
+                    byte[] header = new byte[5];
+                    in.readFully(header);
+                    int len = ((header[3] & 0xff) << 8) | (header[4] & 0xff);
+                    in.readFully(new byte[len]);
+                } catch (Exception ignored) {
+                    // the assertion below reports the failure
+                }
+            });
+            peer.setDaemon(true);
+            peer.start();
+
+            String url = "rtsps://127.0.0.1:" + listener.getLocalPort() + "/x";
+            RtspException ex = assertTimeoutPreemptively(Duration.ofSeconds(20),
+                () -> assertThrows(RtspException.class,
+                    () -> RtspClient.connect(RtspClientConfig.builder(url).build())),
+                "connect did not return: the handshake loop is spinning on EOF");
+            assertEquals(RtspException.Kind.TLS, ex.kind(), ex.getMessage());
+            peer.join(5000);
+        }
     }
 
     @Test

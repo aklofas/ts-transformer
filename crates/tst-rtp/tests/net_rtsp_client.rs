@@ -42,3 +42,7 @@ mod teardown;
 // — it drives a real in-process `rtsps://` server via `RtspServerBuilder`.
 #[path = "rtsp_client/tls_keepalive.rs"]
 mod tls_keepalive;
+// Gate lives inside the file itself (`#![cfg(feature = "tls")]`) — it drives
+// the client's rustls handshake against hand-rolled TLS peers.
+#[path = "rtsp_client/tls_handshake.rs"]
+mod tls_handshake;
