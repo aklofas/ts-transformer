@@ -784,7 +784,7 @@ and the C binding does not expose it in this release.
 | Audio | ⚠️ | `AudioPolicy::Drop` (default; the browser's audio section is rejected) or `PassthroughOpus` on elementary mounts (RFC 7587). No transcoding; Opus in TS not demuxed. |
 | B-frames | ❌ | Counted in `MountStats::frames_pts_reordered`; sources must deliver decode order = presentation order. |
 | Trickle ICE | ❌ | Not supported (ICE-lite answers carry every candidate); PATCH is not advertised and answers `405`; no ICE restart. |
-| mediamtx as a WHEP client | ✅ | The server does not advertise `PATCH`, so the client sends a complete offer without trickle ICE. |
+| mediamtx as a WHEP client | ⚠️ | Expected to work: `PATCH` is no longer advertised, so its client sends a complete offer; not yet in the interop matrix. |
 | TURN / STUN / ICE over TCP | ❌ | Viewers must reach `advertise=` on `media_port` over UDP. |
 | WHIP ingest | ❌ | Deferred (see [deferred features](/docs/project/deferred-features.md)). |
 | Simulcast | ❌ | Out of scope. |
