@@ -139,38 +139,40 @@ fn rist_recv_open_send_url_returns_null_with_rist_config() {
 }
 
 // ---------------------------------------------------------------------------
-// Encryption probe — lenient: accept success OR RistEncryptionDisabled (-41)
+// Encryption: the outcome follows the `mbedtls` feature exactly
 // ---------------------------------------------------------------------------
 
-/// Open a RIST receiver with AES-256 encryption requested.
-///
-/// This test is lenient: it accepts either a successful handle (when
-/// librist was built with mbedTLS, i.e., the `mbedtls` cargo feature is
-/// enabled) OR a null return with `TST_E_RIST_ENCRYPTION_DISABLED (-41)`
-/// (when the build omits mbedTLS encryption support).
-///
-/// WHY lenient?
-///   The CI matrix builds both `--features rist` (with mbedtls, default)
-///   and potentially without. Both outcomes are correct behaviour; forcing
-///   a specific one would hard-code the build configuration into the test.
+/// `mbedtls` on (the default with `rist`): an AES-256 receiver opens.
+#[cfg(feature = "mbedtls")]
 #[test]
-fn rist_recv_open_aes256_encryption_is_lenient() {
+fn rist_recv_open_aes256_opens_when_mbedtls_is_on() {
     let url = CString::new("rist://@127.0.0.1:0?aes-type=256&secret=test-key&buffer=200").unwrap();
     let handle = unsafe { tst_rist_recv_open(url.as_ptr()) };
+    assert!(
+        !handle.is_null(),
+        "encrypted open refused: {} ({})",
+        unsafe { tst_get_last_error() },
+        crate::common::last_error_msg()
+    );
+    unsafe { tst_rist_receiver_close(handle) };
+}
 
-    if handle.is_null() {
-        // Encryption disabled at build time — the only acceptable failure code.
-        let code = unsafe { tst_get_last_error() };
-        assert_eq!(
-            code,
-            TstError::RistEncryptionDisabled as i32,
-            "AES-256 receiver open failed with unexpected code {code} \
-             (expected RistEncryptionDisabled (-41) when mbedtls is disabled)"
-        );
-    } else {
-        // mbedTLS is available — the handle is live; close it cleanly.
-        unsafe { tst_rist_receiver_close(handle) };
-    }
+/// `mbedtls` off: the same URL is refused with RistEncryptionDisabled (-41).
+#[cfg(not(feature = "mbedtls"))]
+#[test]
+fn rist_recv_open_aes256_is_refused_without_mbedtls() {
+    let url = CString::new("rist://@127.0.0.1:0?aes-type=256&secret=test-key&buffer=200").unwrap();
+    let handle = unsafe { tst_rist_recv_open(url.as_ptr()) };
+    assert!(
+        handle.is_null(),
+        "encrypted open must be refused without mbedtls"
+    );
+    let code = unsafe { tst_get_last_error() };
+    assert_eq!(
+        code,
+        TstError::RistEncryptionDisabled as i32,
+        "expected RistEncryptionDisabled (-41), got {code}"
+    );
 }
 
 // ---------------------------------------------------------------------------
