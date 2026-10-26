@@ -157,7 +157,7 @@ pub const URL_KEYS: &[QueryKey<WhepUrl>] = &[
     QueryKey::new(
         "token",
         &[],
-        "Bearer token every POST, PATCH and DELETE must carry",
+        "Bearer token every POST and DELETE must carry",
         "text",
         set_token,
     ),

@@ -9,7 +9,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed — tst-rtp
+
+- An `rtsps://` connect to a server that closes the connection during the TLS handshake now fails with `RtspError::Tls` instead of spinning a CPU forever; `connect_timeout` now bounds the TCP connect and the TLS handshake together (`RtspError::Io(TimedOut)` on expiry), and a server slower than `read_timeout` to answer the handshake no longer fails it. The same change is visible in Python `RtspError(TLS)` / `RtspError(IO)` and JVM `RtspException`.
+
+### Fixed — tstrans-rist-sys, tst-rist
+
+- A Simple-profile receiver whose RTCP port (data port + 1) is already bound now returns `RistError::PeerCreateFailed` instead of crashing the process; the vendored librist 0.2.20 build carries a one-statement fix (the RTCP peer is null-checked before use). A system librist found through pkg-config still has the upstream defect.
+
+### Fixed — tst-c
+
+- The `mbedtls` feature now reaches the RIST transport, so encrypted `rist://` URLs open instead of returning `TST_E_RIST_ENCRYPTION_DISABLED`.
+- `tst_rtsp_client_builder_connect` keeps URL credentials, `?transport=`, `?rtsp_version=`, `?tcp_keepalive=`, `?recv_timeout=` and the explicit `_transport_pref`.
+- `tst_rtsp_session_into_demux_receiver` keeps the RTSP client alive until `tst_rtp_demux_receiver_close`, which now sends TEARDOWN, and frees the session on success; on a NULL return the session stays the caller's.
+
+### Fixed — tst-jni
+
+- `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
+
+### Changed — tst-webrtc
+
+- WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
+
+### Changed — tstrans-rist-sys
+
+- The vendored build compiles a staged copy of the librist tree under `OUT_DIR`; `tst-rist --no-default-features` builds librist without mbedTLS.
+
+### Added — tst-rtp
+
+- `RtspClientBuilder::from_url(RtspUrl)`.
 
 ---
 

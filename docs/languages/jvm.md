@@ -72,14 +72,6 @@ at runtime.
 bundling the per-platform native libraries (linux-x86_64 / linux-aarch64 /
 macos-arm64 / windows-x86_64); the consumer picks no classifier.
 
-**Classpath, not the module path (fixed in 0.9.1).** The JAR's
-`module-info` does not export `org.tstrans.shells`, `org.tstrans.hls` or
-`org.tstrans.webrtc`. On the classpath, the default for Maven and Gradle
-builds, every package is reachable. An application that puts the JAR on
-the module path cannot use those three packages, and that includes the
-`srt` and `rtp` calls whose signatures name a `shells` type such as
-`CancelHandle` or `EndReason`.
-
 ## Hello world
 
 The smallest thing that proves the native library loads and the JNI bridge

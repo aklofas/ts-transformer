@@ -467,13 +467,6 @@ open returns `NULL` with that code), but the process is already on its way
 out — treat it as a way to leave, not as an event to handle. A program that
 closed everything pays nothing at exit.
 
-**Encrypted `rist://` is refused (fixed in 0.9.1).** The C package's `mbedtls` feature reaches libsrt but not `tst-rist`, which the C crate builds without its default features, so every RIST open that carries `?secret=` fails with `TST_E_RIST_ENCRYPTION_DISABLED` (-41), even in an `--all-features` build. It fails closed: nothing is sent in plaintext. Unencrypted `rist://` works; for encrypted RIST from C today, use SRT, or the Rust, Python or JVM surface.
-
-**RTSP client: URL options and the demux-receiver hand-off (fixed in 0.9.1).** Two limits on the C RTSP client:
-
-- `tst_rtsp_client_builder_connect` rebuilds the URL from its scheme, host, port and path only, so userinfo (`user:pass@`), `?transport=`, `?rtsp_version=`, `?tcp_keepalive=` and `?recv_timeout=` on the URL are dropped, and so is the `tst_rtsp_client_builder_transport_pref` setter. Pass credentials through the `tst_rtsp_client_builder_auth_*` setters, which are applied. Without `recv_timeout`, `_next_event` has no deadline; end a quiet stream with `_cancel`.
-- `tst_rtsp_session_into_demux_receiver` drops the RTSP control connection when it builds the receiver, which sends TEARDOWN, so the receiver delivers only what was already queued and then the stream stops. The Python and JVM bindings keep the control connection alive and are not affected.
-
 ## Where this binding differs from the Rust core
 
 The C surface is `tst_pipeline` + `tst_srt` mechanically projected through `cbindgen`, with these structural deviations:
