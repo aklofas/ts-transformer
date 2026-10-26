@@ -14,6 +14,19 @@ pub const MAX_HEAD: usize = 16 * 1024;
 /// kilobytes.
 pub const MAX_BODY: usize = 64 * 1024;
 
+/// The methods a mount endpoint (`/<mount>`) takes, as a 405's `Allow`.
+pub const ENDPOINT_ALLOW: &str = "POST, OPTIONS";
+
+/// The methods a session resource (`/<mount>/sessions/<id>`) takes, as a
+/// 405's `Allow`.
+pub const SESSION_ALLOW: &str = "DELETE, OPTIONS";
+
+/// The CORS method list on every response. WHEP draft-ietf-wish-whep-03
+/// §4.4.1 makes trickle ICE and ICE restart optional and this server
+/// supports neither, so PATCH is absent: a client that sees it switches to
+/// trickle and then needs an ETag the 201 never carries.
+pub const ALLOW_METHODS: &str = "POST, DELETE, OPTIONS";
+
 /// The request method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
@@ -23,10 +36,7 @@ pub enum Method {
     Delete,
     /// `OPTIONS`: a CORS preflight.
     Options,
-    /// `PATCH`: a trickle-ICE update, accepted and ignored (ICE-lite needs
-    /// no remote candidates).
-    Patch,
-    /// Any other method token.
+    /// Any other method token, `PATCH` included.
     Other,
 }
 
@@ -162,7 +172,6 @@ fn parse_request_line(line: &str) -> Option<(Method, String)> {
         "POST" => Method::Post,
         "DELETE" => Method::Delete,
         "OPTIONS" => Method::Options,
-        "PATCH" => Method::Patch,
         _ => Method::Other,
     };
     let path = target.split_once('?').map_or(target, |(p, _)| p);
@@ -189,67 +198,65 @@ pub enum Route {
         /// The session id from the resource URL.
         id: String,
     },
-    /// `PATCH /<mount>/sessions/<id>`: a trickle-ICE update for a session,
-    /// answered with 204 and ignored.
-    Patch {
-        /// The mount path, with its leading `/`.
-        mount: String,
-        /// The session id from the resource URL.
-        id: String,
-    },
     /// `OPTIONS` on any target: a CORS preflight.
     Preflight,
-    /// A method this server does not take (answered with 405).
-    MethodNotAllowed,
+    /// A method the target does not take, answered with 405 and `allow`
+    /// as its `Allow` (RFC 9110 §15.5.6).
+    MethodNotAllowed {
+        /// The target's own methods: [`SESSION_ALLOW`] or [`ENDPOINT_ALLOW`].
+        allow: &'static str,
+    },
     /// A target that names no mount or session resource (answered with 404).
     NotFound,
 }
 
 /// Routes a parsed request. A trailing `/` is ignored and empty path
 /// segments name nothing; whether the mount or session exists is the
-/// server's question, not the router's. A `PATCH` on anything but a
-/// session resource is a method the target does not take.
+/// server's question, not the router's. A method the target does not take
+/// is refused by the target's shape alone, before any lookup or bearer
+/// check.
 pub fn route(req: &Request) -> Route {
+    let segments = path_segments(&req.path);
+    let session = segments.as_deref().and_then(session_target);
     match req.method {
-        Method::Options => return Route::Preflight,
-        Method::Other => return Route::MethodNotAllowed,
-        Method::Post | Method::Delete | Method::Patch => {}
-    }
-    let Some(rest) = req.path.strip_prefix('/') else {
-        return not_found(req.method);
-    };
-    let rest = rest.strip_suffix('/').unwrap_or(rest);
-    let segments: Vec<&str> = rest.split('/').collect();
-    if segments.iter().any(|s| s.is_empty()) {
-        return not_found(req.method);
-    }
-    match req.method {
-        Method::Post => Route::CreateSession {
-            mount: format!("/{rest}"),
+        Method::Options => Route::Preflight,
+        Method::Post => match segments {
+            Some(segments) => Route::CreateSession {
+                mount: format!("/{}", segments.join("/")),
+            },
+            None => Route::NotFound,
         },
-        _ => match segments.as_slice() {
-            [mount @ .., "sessions", id] if !mount.is_empty() => {
-                let mount = format!("/{}", mount.join("/"));
-                let id = (*id).to_string();
-                if req.method == Method::Patch {
-                    Route::Patch { mount, id }
-                } else {
-                    Route::DeleteSession { mount, id }
-                }
-            }
-            _ => not_found(req.method),
+        Method::Delete => match session {
+            Some((mount, id)) => Route::DeleteSession { mount, id },
+            None => Route::NotFound,
+        },
+        Method::Other => Route::MethodNotAllowed {
+            allow: if session.is_some() {
+                SESSION_ALLOW
+            } else {
+                ENDPOINT_ALLOW
+            },
         },
     }
 }
 
-/// Where a target that names no resource goes: 405 for `PATCH`, 404
-/// otherwise.
-fn not_found(method: Method) -> Route {
-    if method == Method::Patch {
-        Route::MethodNotAllowed
-    } else {
-        Route::NotFound
+/// The mount path and session id of `/<mount>/sessions/<id>`.
+fn session_target(segments: &[&str]) -> Option<(String, String)> {
+    match segments {
+        [mount @ .., "sessions", id] if !mount.is_empty() => {
+            Some((format!("/{}", mount.join("/")), (*id).to_string()))
+        }
+        _ => None,
     }
+}
+
+/// The path's segments without the leading `/` or a trailing one; `None`
+/// when the path is not origin-form or has an empty segment.
+fn path_segments(path: &str) -> Option<Vec<&str>> {
+    let rest = path.strip_prefix('/')?;
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    let segments: Vec<&str> = rest.split('/').collect();
+    (!segments.iter().any(|s| s.is_empty())).then_some(segments)
 }
 
 /// A response before rendering.
@@ -279,7 +286,7 @@ pub fn render(resp: &Response, cors_origin: &str) -> Vec<u8> {
     let _ = write!(
         head,
         "Access-Control-Allow-Origin: {cors_origin}\r\n\
-         Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n\
+         Access-Control-Allow-Methods: {ALLOW_METHODS}\r\n\
          Access-Control-Allow-Headers: Authorization, Content-Type, If-Match\r\n\
          Access-Control-Expose-Headers: Location\r\n\
          Content-Length: {}\r\n\

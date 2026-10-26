@@ -8,6 +8,7 @@ written in Python would be a second implementation.
 
 from __future__ import annotations
 
+import http.client
 import os
 import threading
 import time
@@ -86,6 +87,19 @@ def test_bind_reports_kernel_picked_addresses(server):
     media_host, media_port = server.media_addr().rsplit(":", 1)
     assert media_host == "127.0.0.1"
     assert int(media_port) > 0
+
+
+def test_preflight_does_not_advertise_patch(server):
+    # Neither trickle ICE nor ICE restart is supported; a client that sees
+    # PATCH in the method list switches to trickle and then needs an ETag.
+    conn = http.client.HTTPConnection(*server.local_addr().rsplit(":", 1))
+    try:
+        conn.request("OPTIONS", "/cam")
+        resp = conn.getresponse()
+        assert resp.status == 204
+        assert resp.getheader("Access-Control-Allow-Methods") == "POST, DELETE, OPTIONS"
+    finally:
+        conn.close()
 
 
 def test_add_mount_push_and_stats(server):

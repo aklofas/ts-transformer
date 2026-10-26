@@ -418,58 +418,52 @@ const SDP_FRAG: &[u8] = b"a=ice-ufrag:0000\r\na=ice-pwd:000000000000000000000000
 m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n\
 a=candidate:1 1 UDP 2122252543 192.0.2.1 50000 typ host\r\n";
 
+/// An ICE-restart fragment: new credentials, sent with `If-Match: *`.
+const ICE_RESTART_FRAG: &[u8] = b"a=ice-ufrag:1111\r\na=ice-pwd:11111111111111111111111111\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n";
+
+/// Neither trickle ICE nor ICE restart is supported, so a session resource
+/// refuses PATCH whatever it carries, and the refusal leaves the session
+/// as it was.
 #[test]
-fn patch_on_a_live_session_is_204_and_ignored() {
+fn patch_on_a_live_session_is_405_and_the_session_survives() {
     let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
     let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
-    srv.add_mount("/other", MountConfig::default()).unwrap();
     let mut v = TestViewer::new();
     let location = join(srv.local_addr(), "/cam", &mut v, true);
-    let headers = [("Content-Type", "application/trickle-ice-sdpfrag")];
-    let (status, _, body) = http(srv.local_addr(), "PATCH", &location, &headers, SDP_FRAG);
-    assert_eq!(status, 204);
-    assert!(body.is_empty());
-    // The candidates went nowhere: the session is as it was and connects.
-    assert_eq!(srv.stats().active_sessions, 1);
+    for (headers, body) in [
+        (
+            &[("Content-Type", "application/trickle-ice-sdpfrag")][..],
+            SDP_FRAG,
+        ),
+        (
+            &[("Content-Type", "text/plain")][..],
+            &b"\x00not a fragment"[..],
+        ),
+        (
+            &[
+                ("Content-Type", "application/trickle-ice-sdpfrag"),
+                ("If-Match", "*"),
+            ][..],
+            ICE_RESTART_FRAG,
+        ),
+    ] {
+        let (status, resp_headers, _) = http(srv.local_addr(), "PATCH", &location, headers, body);
+        assert_eq!(status, 405);
+        assert_eq!(resp_headers["allow"], "DELETE, OPTIONS");
+        assert_eq!(srv.stats().active_sessions, 1);
+    }
     connect_all(&m, std::slice::from_mut(&mut v));
     for (i, (au, key)) in h264_gop().iter().take(3).enumerate() {
         m.push_video(au, pts(i), *key).unwrap();
     }
     assert!(v.pump(|v| v.frames.len() >= 3, DELIVER), "{}", v.trace());
-
-    let id = location.rsplit('/').next().unwrap();
-    let (unknown, _, _) = http(
-        srv.local_addr(),
-        "PATCH",
-        "/cam/sessions/0000",
-        &headers,
-        SDP_FRAG,
-    );
-    assert_eq!(unknown, 404);
-    let (other_mount, _, _) = http(
-        srv.local_addr(),
-        "PATCH",
-        &format!("/other/sessions/{id}"),
-        &headers,
-        SDP_FRAG,
-    );
-    assert_eq!(other_mount, 404);
-    let (no_mount, _, _) = http(
-        srv.local_addr(),
-        "PATCH",
-        &format!("/nope/sessions/{id}"),
-        &headers,
-        SDP_FRAG,
-    );
-    assert_eq!(no_mount, 404);
-    let (ended, _, _) = http(srv.local_addr(), "DELETE", &location, &[], b"");
-    assert_eq!(ended, 200);
-    let (gone, _, _) = http(srv.local_addr(), "PATCH", &location, &headers, SDP_FRAG);
-    assert_eq!(gone, 404);
 }
 
+/// The method check comes before the bearer check: a PATCH is refused for
+/// what it is, and does not count as a failed authentication.
 #[test]
-fn patch_needs_the_bearer_token() {
+fn patch_is_refused_before_auth() {
     let srv = WhepServer::bind("whep://127.0.0.1:0?token=abc").unwrap();
     srv.add_mount("/cam", MountConfig::default()).unwrap();
     let offer = TestViewer::new().offer(true);
@@ -477,12 +471,9 @@ fn patch_needs_the_bearer_token() {
     assert_eq!(status, 201);
     let location = &headers["location"];
     let (none, headers, _) = http(srv.local_addr(), "PATCH", location, &[], SDP_FRAG);
-    assert_eq!(none, 401);
-    assert_eq!(headers["www-authenticate"], "Bearer");
-    let auth = [("Authorization", "Bearer abc")];
-    let (right, _, _) = http(srv.local_addr(), "PATCH", location, &auth, SDP_FRAG);
-    assert_eq!(right, 204);
-    assert_eq!(srv.stats().sessions_rejected_auth, 1);
+    assert_eq!(none, 405);
+    assert_eq!(headers["allow"], "DELETE, OPTIONS");
+    assert_eq!(srv.stats().sessions_rejected_auth, 0);
 }
 
 #[test]
@@ -523,7 +514,7 @@ fn preflight_patch_and_unknown_mount() {
     );
     assert_eq!(
         headers["access-control-allow-methods"],
-        "POST, PATCH, DELETE, OPTIONS"
+        "POST, DELETE, OPTIONS"
     );
     // mediamtx-style players send the trickle PATCH with `If-Match`, so a
     // cross-origin preflight must allow it.
@@ -533,11 +524,11 @@ fn preflight_patch_and_unknown_mount() {
     );
     assert_eq!(headers["access-control-expose-headers"], "Location");
 
-    // PATCH on anything but a session resource is still 405.
+    // A 405 on the endpoint lists the endpoint's own methods.
     for method in ["PATCH", "GET"] {
         let (status, headers, _) = http(addr, method, "/cam", &[], b"");
         assert_eq!(status, 405, "{method}");
-        assert_eq!(headers["allow"], "POST, PATCH, DELETE, OPTIONS");
+        assert_eq!(headers["allow"], "POST, OPTIONS");
     }
     let offer = TestViewer::new().offer(true);
     let (status, _, _) = whep_post(addr, "/nope", &offer, None);

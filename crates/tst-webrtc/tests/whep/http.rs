@@ -39,45 +39,51 @@ fn incomplete_too_large_malformed() {
     assert_eq!(parse_head(b"GARBAGE\r\n\r\n"), HeadParse::Malformed);
 }
 
+/// Exact response head. WHEP draft-ietf-wish-whep-03 §4.4.1: trickle ICE
+/// and ICE restart are optional, and this server supports neither, so its
+/// CORS method list (Fetch, "CORS protocol") names only what it takes.
+/// A client that sees PATCH switches to trickle and then demands an ETag.
 #[test]
-fn render_adds_cors_and_length() {
-    let out = String::from_utf8(render(&resp(201, "v=0"), "*")).unwrap();
-    for h in [
-        "HTTP/1.1 201 Created\r\n",
-        "Access-Control-Allow-Origin: *\r\n",
-        "Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n",
-        "Access-Control-Allow-Headers: Authorization, Content-Type, If-Match\r\n",
-        "Access-Control-Expose-Headers: Location\r\n",
-        "Content-Length: 3\r\n",
-        "Connection: close\r\n",
-    ] {
-        assert!(out.contains(h), "{h}");
-    }
+fn render_golden_bytes() {
+    assert_eq!(
+        String::from_utf8(render(&resp(201, "v=0"), "*")).unwrap(),
+        "HTTP/1.1 201 Created\r\n\
+         Access-Control-Allow-Origin: *\r\n\
+         Access-Control-Allow-Methods: POST, DELETE, OPTIONS\r\n\
+         Access-Control-Allow-Headers: Authorization, Content-Type, If-Match\r\n\
+         Access-Control-Expose-Headers: Location\r\n\
+         Content-Length: 3\r\n\
+         Connection: close\r\n\r\nv=0"
+    );
 }
 
 #[test]
-fn preflight_and_unknown_methods() {
+fn preflight_routes_on_any_target() {
     let HeadParse::Done { request, .. } = parse_head(b"OPTIONS /cam1 HTTP/1.1\r\n\r\n") else {
         panic!()
     };
     assert!(matches!(route(&request), Route::Preflight));
-    let HeadParse::Done { request, .. } = parse_head(b"PATCH /cam1/sessions/1 HTTP/1.1\r\n\r\n")
-    else {
-        panic!()
-    };
-    assert!(matches!(route(&request), Route::Patch { mount, id } if mount == "/cam1" && id == "1"));
-    // PATCH names a session resource or nothing.
-    for raw in [
-        &b"PATCH /cam1 HTTP/1.1\r\n\r\n"[..],
-        b"PATCH /cam1/sessions HTTP/1.1\r\n\r\n",
-        b"PATCH /sessions/1 HTTP/1.1\r\n\r\n",
-        b"PATCH * HTTP/1.1\r\n\r\n",
+}
+
+/// RFC 9110 §15.5.6: a 405 lists the target resource's own methods.
+#[test]
+fn patch_and_other_methods_route_to_405_with_the_targets_allow() {
+    for (raw, allow) in [
+        (
+            &b"PATCH /cam1/sessions/1 HTTP/1.1\r\n\r\n"[..],
+            SESSION_ALLOW,
+        ),
+        (b"GET /cam1/sessions/1 HTTP/1.1\r\n\r\n", SESSION_ALLOW),
+        (b"PATCH /cam1 HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
+        (b"PATCH /cam1/sessions HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
+        (b"PATCH * HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
+        (b"GET /cam1 HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
     ] {
         let HeadParse::Done { request, .. } = parse_head(raw) else {
-            panic!("{}", String::from_utf8_lossy(raw))
+            panic!()
         };
         assert!(
-            matches!(route(&request), Route::MethodNotAllowed),
+            matches!(route(&request), Route::MethodNotAllowed { allow: a } if a == allow),
             "{}",
             String::from_utf8_lossy(raw)
         );
@@ -122,7 +128,9 @@ fn routing_edges() {
     }
     assert_eq!(
         routed(b"GET /cam1 HTTP/1.1\r\n\r\n"),
-        Route::MethodNotAllowed
+        Route::MethodNotAllowed {
+            allow: ENDPOINT_ALLOW
+        }
     );
     assert_eq!(routed(b"OPTIONS * HTTP/1.1\r\n\r\n"), Route::Preflight);
 }
