@@ -107,8 +107,8 @@ pub struct TstRtspSession {
 ///
 /// Runs the full RTSP client-side connection sequence:
 ///
-/// 1. Reconstructs an `RtspClientBuilder` from fields stored by the
-///    `tst_rtsp_client_builder_*` setters.
+/// 1. Builds the Rust builder from the URL parsed at `_new`, keeping its
+///    userinfo and query options; explicit setters override them.
 /// 2. Calls `.connect()` to open the TCP control channel and spawn the
 ///    auto-keepalive thread (unless disabled via `tst_rtsp_client_builder_keepalive`).
 /// 3. Calls `describe()` to fetch the server's SDP.
@@ -141,21 +141,13 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
         // SAFETY: caller guarantees valid, unaliased pointer from _new.
         let b = unsafe { TstRtspClientBuilder::from_raw(builder) };
 
-        // Build the URL string, applying any transport-preference override.
-        let mut url_to_use = b.url.clone();
+        // Start from the parsed URL itself: re-rendering it would drop the
+        // userinfo and every query option. The explicit setters below then
+        // override what the URL carries.
+        let mut rust_builder = RtspClientBuilder::from_url(b.url.clone());
         if let Some(pref) = b.transport_pref {
-            url_to_use.transport_preference = pref;
+            rust_builder = rust_builder.transport_preference(pref);
         }
-        let url_str = url_to_use.render_no_credentials();
-
-        // Reconstruct the Rust builder from the stored fields.
-        let mut rust_builder = match RtspClientBuilder::new(&url_str) {
-            Ok(rb) => rb,
-            Err(e) => {
-                crate::error::record_with_context(e, "RTSP URL parse error");
-                return std::ptr::null_mut();
-            }
-        };
 
         // Apply auth credentials if set by any _auth_* setter.
         if let (Some(user), Some(pass)) = (b.username.clone(), b.password.clone()) {

@@ -162,12 +162,15 @@ pub use rtsp::client::builder::tst_rtsp_client_builder_new;
 // RTSP client connect, re-exported flat for the
 // `transports::rtsp_client_connect` integration test.
 #[cfg(feature = "rtp")]
+pub use rtsp::client::auth::tst_rtsp_client_builder_auth_basic;
+#[cfg(feature = "rtp")]
 pub use rtsp::client::builder::tst_rtsp_client_builder_keepalive;
 #[cfg(feature = "rtp")]
 pub use rtsp::client::builder::tst_rtsp_client_builder_transport_pref;
 #[cfg(feature = "rtp")]
 pub use rtsp::client::session::{
-    tst_rtsp_client_builder_connect, tst_rtsp_session_into_demux_receiver, tst_rtsp_session_play,
+    TstRtspSession, tst_rtsp_client_builder_connect, tst_rtsp_session_into_demux_receiver,
+    tst_rtsp_session_play, tst_rtsp_session_teardown_and_free,
 };
 #[cfg(feature = "rtp")]
 pub use rtsp::server::builder::tst_rtsp_server_builder_new;
