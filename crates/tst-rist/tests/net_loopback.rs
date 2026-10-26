@@ -50,6 +50,10 @@ const PORT_V6: u16 = 33022;
 const PORT_V6_SIMPLE_REFUSED: u16 = 33024;
 /// Sender-only (no receiver bound). EVEN, same rule as PORT_SIMPLE.
 const PORT_BURST: u16 = 33026;
+/// Even data port whose RTCP companion (port + 1) the child holds itself.
+const PORT_SIMPLE_RTCP_HELD: u16 = 33028;
+const RTCP_CHILD_ENV: &str = "TST_RIST_RTCP_COLLISION_CHILD";
+const RTCP_CHILD_OK: &str = "RTCP-COLLISION-REFUSED-THEN-BOUND";
 
 /// 188 bytes of arbitrary payload — one MPEG-TS packet's worth.
 fn synthetic_ts_packet(seq_byte: u8) -> [u8; 188] {
@@ -363,14 +367,13 @@ fn ipv6_loopback_round_trip() {
     }
 }
 
-/// Vendored librist 0.2.20's Simple-profile receiver-side RTCP-peer creation
-/// dereferences the new peer before its own null check (`rist.c`'s
-/// `rist_receiver_peer_create`), and that null case is reachable for an IPv6
-/// bind — SIGSEGV. `listen_with_config` must refuse this combination BEFORE
-/// any librist context or peer creation (never reaching `rist_receiver_create`),
-/// not let the process crash. This must NOT be run without the guard: without it,
-/// this exact profile+URL combination segfaults the whole test process, so there is no "assert it
-/// panics" fallback here — the guard is the only safe way to exercise this.
+/// librist's Simple-profile receiver (`rist.c`'s `rist_receiver_peer_create`)
+/// rebuilds the RTCP peer's bind address without the IPv6 brackets, so for an
+/// IPv6 bind that peer never comes up. The vendored build null-checks the
+/// failed peer, but a system librist 0.2.20 dereferences it and SIGSEGVs the
+/// process. `listen_with_config` must refuse this combination BEFORE any
+/// librist context or peer creation (never reaching `rist_receiver_create`),
+/// so the outcome is the same `InvalidConfig` whichever librist is linked.
 ///
 /// No `ipv6_loopback_available()` probe: the guard refuses before any socket
 /// bind or librist context creation, and `[::1]` is parsed as a literal, so
@@ -437,4 +440,120 @@ fn send_burst_without_receiver_never_latches_broken() {
     }
     eprintln!("queue-full drops during burst: {queue_full}");
     send.close();
+}
+
+/// librist's Simple profile opens a second, RTCP peer on port + 1
+/// (VSF TR-06-1 §5.2: RTCP on the next port). When that bind fails, the
+/// listen must return an error and the process must live. A null
+/// dereference here was a SIGSEGV through the safe API. Afterwards the
+/// data port must be free again, so the failed open closed its first socket.
+///
+/// Runs in a child process so a crash shows up as the child's wait status
+/// instead of killing the whole test binary.
+///
+/// Not on Windows: librist sets SO_REUSEADDR, which on Windows lets its bind
+/// take over the held port instead of failing.
+#[cfg(not(windows))]
+#[test]
+fn simple_profile_rtcp_port_collision_is_an_error_not_a_crash() {
+    if std::env::var_os(RTCP_CHILD_ENV).is_some() {
+        let holder = std::net::UdpSocket::bind(("127.0.0.1", PORT_SIMPLE_RTCP_HELD + 1))
+            .expect("hold the RTCP port");
+        let url = format!("rist://@127.0.0.1:{PORT_SIMPLE_RTCP_HELD}");
+        let first = RistRecvTransportBuilder::new(&url)
+            .unwrap()
+            .profile(RistProfile::Simple)
+            .listen();
+        assert!(
+            matches!(first, Err(RistError::PeerCreateFailed)),
+            "{:?}",
+            first.err()
+        );
+        drop(holder);
+        let second = RistRecvTransportBuilder::new(&url)
+            .unwrap()
+            .profile(RistProfile::Simple)
+            .listen();
+        assert!(
+            second.is_ok(),
+            "data port still held after the failed open: {:?}",
+            second.err()
+        );
+        println!("{RTCP_CHILD_OK}");
+        return;
+    }
+    let out = run_child_with_deadline(
+        "simple_profile_rtcp_port_collision_is_an_error_not_a_crash",
+        RTCP_CHILD_ENV,
+        Duration::from_secs(20),
+    );
+    assert!(
+        out.status.success(),
+        "child died: {:?}\n{}",
+        out.status,
+        out.stderr
+    );
+    assert!(out.stdout.contains(RTCP_CHILD_OK), "{}", out.stdout);
+}
+
+#[cfg(not(windows))]
+struct ChildOutput {
+    status: std::process::ExitStatus,
+    stdout: String,
+    stderr: String,
+}
+
+/// Re-executes this test binary on `test` alone with `env` set, and kills the
+/// child once `limit` (scaled by `TST_TEST_TIMEOUT_SCALE` for slow runners)
+/// has passed, so a hang fails the test instead of wedging the run.
+#[cfg(not(windows))]
+fn run_child_with_deadline(test: &str, env: &str, limit: Duration) -> ChildOutput {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
+    let scale = std::env::var("TST_TEST_TIMEOUT_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or(1);
+    let limit = limit * scale;
+
+    let exe = std::env::current_exe().expect("current_exe");
+    let mut child = Command::new(exe)
+        .args([test, "--exact", "--nocapture", "--test-threads=1"])
+        .env(env, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the child test process");
+
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let status = child.wait().expect("wait for the killed child");
+            panic!("{test}: the child did not exit within {limit:?} (killed: {status:?})");
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    // The child prints a few lines of librist logging at most, far below a
+    // pipe buffer, so reading after it exited cannot have blocked it.
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    if let Some(mut out) = child.stdout.take() {
+        let _ = out.read_to_string(&mut stdout);
+    }
+    if let Some(mut err) = child.stderr.take() {
+        let _ = err.read_to_string(&mut stderr);
+    }
+    ChildOutput {
+        status,
+        stdout,
+        stderr,
+    }
 }
