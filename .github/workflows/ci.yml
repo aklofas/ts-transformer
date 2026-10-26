@@ -606,6 +606,12 @@ jobs:
               cargo nextest run -p tst-c --no-default-features --features "$feats" \
                 --test net_transports --no-fail-fast
             fi
+            # The mbedtls-off refusal test (rist_recv_open_aes256_is_refused_without_mbedtls)
+            # compiles only in a build without mbedtls, and no other job runs that flavour.
+            if [ "$feats" = "rist" ]; then
+              cargo nextest run -p tst-c --no-default-features --features "$feats" \
+                --test net_transports -E 'test(rist_recv_open_aes256)' --no-fail-fast
+            fi
           done
 
       - name: cargo build (all crate types, all-features)
