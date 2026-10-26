@@ -5,8 +5,8 @@
 #![cfg(feature = "rtp")]
 
 use std::ffi::CString;
-use std::io::Write as _;
-use std::net::{Shutdown, TcpStream};
+use std::io::{BufRead as _, BufReader, Write as _};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle as ThreadHandle;
@@ -16,6 +16,7 @@ use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
     tst_mux_config_free, tst_mux_config_new,
 };
+use tstrans::error::TstError;
 use tstrans::event::{TstEvent, TstEventKind};
 use tstrans::handle::TstRtspClientBuilder;
 use tstrans::rtp::{
@@ -23,20 +24,19 @@ use tstrans::rtp::{
     tst_rtp_demux_receiver_next_event,
 };
 use tstrans::{
-    TstRtspMountHandle, TstRtspServer, tst_rtsp_client_builder_connect,
+    TstRtspMountHandle, TstRtspServer, TstRtspSession, tst_rtsp_client_builder_auth_basic,
+    tst_rtsp_client_builder_connect, tst_rtsp_client_builder_keepalive,
     tst_rtsp_client_builder_new, tst_rtsp_client_builder_transport_pref,
     tst_rtsp_mount_handle_free, tst_rtsp_mount_push_video, tst_rtsp_server_add_unicast_mount,
     tst_rtsp_server_builder_new, tst_rtsp_server_builder_start, tst_rtsp_server_free,
     tst_rtsp_server_local_addr, tst_rtsp_server_stop, tst_rtsp_session_into_demux_receiver,
-    tst_rtsp_session_play,
+    tst_rtsp_session_play, tst_rtsp_session_teardown_and_free,
 };
 
 use crate::common::{last_error_msg, scaled};
 
 #[cfg(feature = "tls")]
 use std::io::Read;
-#[cfg(feature = "tls")]
-use std::net::TcpListener;
 #[cfg(feature = "tls")]
 use std::thread::JoinHandle;
 
@@ -67,8 +67,7 @@ fn fin_after_client_hello_peer() -> (u16, JoinHandle<()>) {
 #[test]
 fn rtsps_connect_to_a_peer_closing_mid_handshake_is_rtsp_tls() {
     use std::sync::mpsc;
-    use tstrans::error::{TstError, tst_get_last_error};
-    use tstrans::tst_rtsp_client_builder_keepalive;
+    use tstrans::error::tst_get_last_error;
 
     let (port, peer) = fin_after_client_hello_peer();
     let url = CString::new(format!("rtsps://127.0.0.1:{port}/x")).unwrap();
@@ -319,7 +318,6 @@ fn bridged_receiver_gets_media_sent_after_the_bridge(pref: u32, transport: &str)
 }
 
 #[test]
-#[ignore = "the C connect does not yet pass the transport preference to the client, so this negotiates UDP"]
 fn bridged_tcp_receiver_gets_media_sent_after_the_bridge() {
     bridged_receiver_gets_media_sent_after_the_bridge(2, "RTP/AVP/TCP;")
 }
@@ -327,4 +325,228 @@ fn bridged_tcp_receiver_gets_media_sent_after_the_bridge() {
 #[test]
 fn bridged_udp_receiver_gets_media_sent_after_the_bridge() {
     bridged_receiver_gets_media_sent_after_the_bridge(1, "RTP/AVP;")
+}
+
+/// One MP2T track (static payload type 33, RFC 3551 §6).
+const MP2T_SDP: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=tst test\r\nt=0 0\r\n\
+                        a=control:*\r\nm=video 0 RTP/AVP 33\r\na=control:trackID=0\r\n";
+
+/// The value of header `name` (case-insensitive) in a recorded request head.
+fn header<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    request.lines().skip(1).find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
+    })
+}
+
+/// Hand-rolled RTSP peer, the Rust twin of test_rtsp_client.py's
+/// `_recording_peer`: answers OPTIONS / DESCRIBE (one MP2T track, PT 33) /
+/// SETUP (echoes Transport, `Session: DEADBEEF;timeout=60`) / PLAY /
+/// TEARDOWN in the request's own version, records every request head, and
+/// with `basic = Some(b64)` answers a DESCRIBE lacking `Authorization: Basic
+/// <b64>` with `401` + `WWW-Authenticate: Basic realm="t"`. It sends no
+/// media, and returns after TEARDOWN or when the client hangs up.
+fn recording_peer(basic: Option<&'static str>) -> (u16, Arc<Mutex<Vec<String>>>, ThreadHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&requests);
+    let peer = std::thread::spawn(move || {
+        let Ok((sock, _)) = listener.accept() else {
+            return;
+        };
+        // Bounds a test whose client never sends TEARDOWN; never reached
+        // by a passing test.
+        sock.set_read_timeout(Some(scaled(Duration::from_secs(10))))
+            .unwrap();
+        let mut reader = BufReader::new(sock.try_clone().unwrap());
+        let mut out = sock;
+        loop {
+            // None of the client's requests carries a body, so a head ends
+            // at the first empty line.
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+                if line == "\r\n" {
+                    break;
+                }
+                head.push_str(&line);
+            }
+            record.lock().unwrap().push(head.clone());
+            let request_line = head.lines().next().unwrap_or_default();
+            let method = request_line.split(' ').next().unwrap_or_default();
+            let version = request_line.rsplit(' ').next().unwrap_or_default();
+            let cseq = header(&head, "cseq").unwrap_or("1");
+            let authorized = basic.is_none_or(|b64| {
+                header(&head, "authorization") == Some(format!("Basic {b64}").as_str())
+            });
+            let (status, extra, body) = match method {
+                "DESCRIBE" if !authorized => (
+                    "401 Unauthorized",
+                    "WWW-Authenticate: Basic realm=\"t\"\r\n".to_owned(),
+                    "",
+                ),
+                "OPTIONS" => (
+                    "200 OK",
+                    "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN\r\n".to_owned(),
+                    "",
+                ),
+                "DESCRIBE" => (
+                    "200 OK",
+                    format!(
+                        "Content-Type: application/sdp\r\nContent-Length: {}\r\n",
+                        MP2T_SDP.len()
+                    ),
+                    MP2T_SDP,
+                ),
+                "SETUP" => (
+                    "200 OK",
+                    format!(
+                        "Session: DEADBEEF;timeout=60\r\nTransport: {}\r\n",
+                        header(&head, "transport").unwrap_or_default()
+                    ),
+                    "",
+                ),
+                _ => ("200 OK", "Session: DEADBEEF\r\n".to_owned(), ""),
+            };
+            let reply = format!("{version} {status}\r\nCSeq: {cseq}\r\n{extra}\r\n{body}");
+            if out.write_all(reply.as_bytes()).is_err() || method == "TEARDOWN" {
+                return;
+            }
+        }
+    });
+    (port, requests, peer)
+}
+
+/// Connects `b` with the RTSP-level keepalive off, so the recorded requests
+/// are only the ones the connect, play and teardown send.
+fn connect_builder_no_keepalive(b: *mut TstRtspClientBuilder) -> *mut TstRtspSession {
+    unsafe {
+        tst_rtsp_client_builder_keepalive(b, false);
+        tst_rtsp_client_builder_connect(b)
+    }
+}
+
+fn connect_no_keepalive(url: &str) -> *mut TstRtspSession {
+    connect_builder_no_keepalive(builder(url))
+}
+
+/// The `Transport:` header the client sent in SETUP.
+fn setup_transport(reqs: &[String]) -> String {
+    let setup = reqs
+        .iter()
+        .find(|r| r.starts_with("SETUP "))
+        .unwrap_or_else(|| panic!("no SETUP request: {reqs:?}"));
+    header(setup, "transport").unwrap_or_default().to_owned()
+}
+
+/// URL userinfo authenticates (RFC 7617 §2: base64("alice:secret")) and
+/// never appears on a request line (RFC 7826 §18.2: the Request-URI carries
+/// no userinfo).
+#[test]
+fn connect_authenticates_with_url_userinfo() {
+    let (port, reqs, peer) = recording_peer(Some("YWxpY2U6c2VjcmV0"));
+    let s = connect_no_keepalive(&format!("rtsp://alice:secret@127.0.0.1:{port}/live"));
+    assert!(!s.is_null(), "{}", last_error_msg());
+    unsafe { tst_rtsp_session_teardown_and_free(s) };
+    peer.join().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert!(
+        reqs.iter()
+            .any(|r| r.contains("Authorization: Basic YWxpY2U6c2VjcmV0")),
+        "{reqs:?}"
+    );
+    assert!(
+        reqs.iter()
+            .all(|r| !r.lines().next().unwrap().contains("alice")),
+        "{reqs:?}"
+    );
+}
+
+/// `?transport=tcp` reaches SETUP and `?rtsp_version=2.0` every request line.
+#[test]
+fn connect_honours_url_transport_and_version() {
+    let (port, reqs, peer) = recording_peer(None);
+    let s = connect_no_keepalive(&format!(
+        "rtsp://127.0.0.1:{port}/live?transport=tcp&rtsp_version=2.0"
+    ));
+    assert!(!s.is_null(), "{}", last_error_msg());
+    unsafe { tst_rtsp_session_teardown_and_free(s) };
+    peer.join().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert!(setup_transport(&reqs).contains("RTP/AVP/TCP"), "{reqs:?}");
+    let lines: Vec<&str> = reqs.iter().map(|r| r.lines().next().unwrap()).collect();
+    assert!(
+        !lines.is_empty() && lines.iter().all(|l| l.ends_with(" RTSP/2.0")),
+        "{lines:?}"
+    );
+}
+
+/// The explicit setter reaches SETUP (it was applied before the lossy
+/// re-render).
+#[test]
+fn transport_pref_setter_reaches_setup() {
+    let (port, reqs, peer) = recording_peer(None);
+    let b = builder(&format!("rtsp://127.0.0.1:{port}/live"));
+    unsafe { tst_rtsp_client_builder_transport_pref(b, 2) };
+    let s = connect_builder_no_keepalive(b);
+    assert!(!s.is_null(), "{}", last_error_msg());
+    unsafe { tst_rtsp_session_teardown_and_free(s) };
+    peer.join().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert!(setup_transport(&reqs).contains("RTP/AVP/TCP"), "{reqs:?}");
+}
+
+/// An explicit `_auth_basic` still overrides URL userinfo.
+#[test]
+fn explicit_auth_overrides_url_userinfo() {
+    let (port, reqs, peer) = recording_peer(Some("YWxpY2U6c2VjcmV0"));
+    let b = builder(&format!("rtsp://alice:wrong@127.0.0.1:{port}/live"));
+    let (user, pass) = (
+        CString::new("alice").unwrap(),
+        CString::new("secret").unwrap(),
+    );
+    unsafe { tst_rtsp_client_builder_auth_basic(b, user.as_ptr(), pass.as_ptr()) };
+    let s = connect_builder_no_keepalive(b);
+    assert!(!s.is_null(), "{}", last_error_msg());
+    unsafe { tst_rtsp_session_teardown_and_free(s) };
+    peer.join().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert!(
+        reqs.iter()
+            .all(|r| !r.lines().next().unwrap().contains("alice")),
+        "{reqs:?}"
+    );
+}
+
+/// `?recv_timeout=200` bounds a silent stream: next_event returns
+/// `TST_E_BUFFER_FULL`, as tstrans.h promises for the URL deadline.
+#[test]
+fn url_recv_timeout_bounds_a_silent_bridged_stream() {
+    let (port, _reqs, peer) = recording_peer(None);
+    let s = connect_no_keepalive(&format!(
+        "rtsp://127.0.0.1:{port}/live?transport=tcp&recv_timeout=200"
+    ));
+    assert!(!s.is_null(), "{}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_rtsp_session_play(s) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    let rx = unsafe { tst_rtsp_session_into_demux_receiver(s, std::ptr::null()) };
+    assert!(!rx.is_null(), "{}", last_error_msg());
+    // Without the deadline the receiver would park until this cancels it,
+    // and next_event would return TST_E_CLOSED instead.
+    let watchdog = cancel_after(SendPtr(rx), scaled(Duration::from_secs(10)));
+    let mut ev = TstEvent::default();
+    let rc = unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) };
+    watchdog.release();
+    assert_eq!(rc, TstError::BufferFull as i32, "{}", last_error_msg());
+    unsafe { tst_rtp_demux_receiver_close(rx) };
+    peer.join().unwrap();
 }

@@ -46,11 +46,19 @@ impl RtspClientBuilder {
     ///
     /// - [`RtspError::Url`] if the URL cannot be parsed.
     pub fn new(url: &str) -> Result<Self, RtspError> {
-        let parsed = RtspUrl::parse(url)?;
-        let username = parsed.username.clone();
-        let password = parsed.password.clone();
-        Ok(Self {
-            url: parsed,
+        Ok(Self::from_url(RtspUrl::parse(url)?))
+    }
+
+    /// Builder for an already parsed URL; URL userinfo becomes the default
+    /// credentials, which [`Self::auth`] overrides. Every query option the
+    /// URL carries (`?transport=`, `?rtsp_version=`, `?tcp_keepalive=`,
+    /// `?recv_timeout=`) is kept, so a caller holding an [`RtspUrl`] need
+    /// not render it back to a string first.
+    pub fn from_url(url: RtspUrl) -> Self {
+        let username = url.username.clone();
+        let password = url.password.clone();
+        Self {
+            url,
             username,
             password,
             no_auto_keepalive: false,
@@ -61,7 +69,7 @@ impl RtspClientBuilder {
             user_agent: "tst-rtp/0.1".into(),
             #[cfg(feature = "tls")]
             tls_root_certs: None,
-        })
+        }
     }
 
     /// Disable the auto-keepalive background thread. Default `false`
@@ -273,6 +281,28 @@ impl RtspClientBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every URL field survives the parsed-URL constructor.
+    #[test]
+    fn from_url_keeps_every_url_field() {
+        let url = RtspUrl::parse(
+            "rtsp://u:p@h:1/x?transport=tcp&rtsp_version=2.0&tcp_keepalive=7&recv_timeout=250",
+        )
+        .unwrap();
+        let b = RtspClientBuilder::from_url(url);
+        assert_eq!(b.url.transport_preference, RtspTransportPref::ForceTcp);
+        assert_eq!(b.url.rtsp_version, RtspVersion::V2_0);
+        assert_eq!(b.url.tcp_keepalive, Some(Duration::from_secs(7)));
+        assert_eq!(b.url.recv_timeout, Some(Duration::from_millis(250)));
+        assert_eq!(b.username.as_deref(), Some("u"));
+        assert_eq!(
+            b.password
+                .as_ref()
+                .map(|p| p.expose_secret().to_owned())
+                .as_deref(),
+            Some("p")
+        );
+    }
 
     /// Both knob homes land on the same `RtspUrl` field: the builder
     /// setter and the `?tcp_keepalive=` URL query (already baked in by
