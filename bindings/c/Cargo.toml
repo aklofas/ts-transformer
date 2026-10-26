@@ -19,11 +19,12 @@ doctest    = false
 # crate only produces the cdylib/staticlib + cbindgen header.
 #
 # All transports (srt/rtp/udp/tcp/hls/rist) are opt-in. `mbedtls` stays
-# default-on but is inert (zero build cost) unless `srt` is also enabled —
-# its `tst-srt?/mbedtls` forward in tst-c-core only fires when tst-srt is in
-# the graph — so `--features srt` is encrypted by default (the workspace
-# "encryption ON by default" convention) while a bare build links neither
-# libsrt nor mbedTLS.
+# default-on but is inert (zero build cost) unless `srt` or `rist` is also
+# enabled — its `tst-srt?/mbedtls` and `tst-rist?/mbedtls` forwards in
+# tst-c-core only fire when that crate is in the graph — so `--features srt`
+# or `--features rist` is encrypted by default (the workspace "encryption ON
+# by default" convention) while a bare build links neither transport library
+# nor mbedTLS.
 default = ["std", "mbedtls"]
 std     = ["tst-c-core/std"]
 srt     = ["tst-c-core/srt"]
