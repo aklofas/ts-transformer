@@ -360,9 +360,9 @@ ask the media thread and can wait up to 2 s for its reply; a mount's
 |---|---|
 | `POST /<mount>`, body `application/sdp` | `201 Created`, the answer as `application/sdp`, `Location: /<mount>/sessions/<id>` |
 | `DELETE /<mount>/sessions/<id>` | `200 OK`; `404` for an unknown session |
-| `PATCH /<mount>/sessions/<id>` | `204 No Content`; the trickle-ICE fragment is read and ignored (ICE-lite needs no remote candidates); `404` unknown session; `405` on any other target |
+| `PATCH` (any target) | `405`, `Allow: DELETE, OPTIONS` on a session resource, `POST, OPTIONS` elsewhere; trickle ICE and ICE restart are not supported |
 | `OPTIONS` on any target | `204` with the CORS headers |
-| other methods | `405` with `Allow: POST, PATCH, DELETE, OPTIONS` |
+| other methods | `405` with the target's `Allow` |
 | unknown mount | `404` |
 | server at `max_viewers` (all mounts together) | `503`, `Retry-After: 5` |
 | body not an SDP offer, or an offer whose payload types are inconsistent: one payload number mapped to two formats (also twice inside one media section), or an `a=rtpmap` or `a=fmtp` line for a number the section's `m=` line does not list, or one number given the same `a=rtpmap` or `a=fmtp` line twice in a section | `400` with a plain-text reason |
@@ -372,7 +372,7 @@ ask the media thread and can wait up to 2 s for its reply; a mount's
 | the server stopping | `503` |
 
 Every response carries `Access-Control-Allow-Origin` (`cors_origin=`,
-default `*`), `Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS`,
+default `*`), `Access-Control-Allow-Methods: POST, DELETE, OPTIONS`,
 `Access-Control-Allow-Headers: Authorization, Content-Type, If-Match` and
 `Access-Control-Expose-Headers: Location`. HTTP/1.1, one request per
 connection, `Connection: close`.
@@ -409,7 +409,7 @@ association once it is up.
   with either, is refused at parse time, and a file that cannot be loaded
   is `WhepServerError::Tls` at bind with no port held. Media stays on UDP
   under DTLS-SRTP regardless.
-- **Token.** `token=` makes every POST, PATCH and DELETE carry
+- **Token.** `token=` makes every POST and DELETE carry
   `Authorization: Bearer <token>`; refused requests are counted in
   `sessions_rejected_auth`.
 
@@ -469,12 +469,10 @@ headless Chromium and checks that every record arrives by both carriages.
 - A viewer's PLI is counted, not forwarded; the source decides the GOP.
 - `advertise=` takes one address; a dual-homed deployment needs one server
   per address.
-- mediamtx's WHEP client cannot pull from this server. The server lists
-  `PATCH` in `Access-Control-Allow-Methods` but sends no `ETag` with its
-  `201`; that client turns on trickle ICE when it sees `PATCH`, then
-  rejects the answer for the missing `ETag`. Any client that makes the same
-  two choices fails the same way. Browsers and the reference player do not
-  depend on either header. The fix is planned for 0.9.1.
+- Trickle ICE and ICE restart are not supported. The server does not list
+  `PATCH` in `Access-Control-Allow-Methods`, so clients that enable
+  trickle from the method list, mediamtx's WHEP client among them, send a
+  complete offer. A `PATCH` answers `405` before the bearer check.
 
 The deferred items and their revisit triggers are in
 [deferred features](/docs/project/deferred-features.md).
