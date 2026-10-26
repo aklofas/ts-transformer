@@ -10180,19 +10180,24 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  * Cancel any blocking RTSP I/O on the control channel.
  *
  * Sets the session's cancel flag so that any thread blocked inside a RTSP
- * request/response cycle (e.g. a blocking DESCRIBE or PLAY) will break out
- * at the next poll interval.  Safe to call from any thread. Idempotent.
- * The interrupted call returns `TST_E_CLOSED` (-7).
+ * request/response cycle (e.g. a blocking PLAY or PAUSE) will break out
+ * at the next poll interval.  Callable from another thread while a PLAY
+ * or PAUSE on the same session is in flight.  Idempotent.  The interrupted
+ * call returns `TST_E_CLOSED` (-7).
  *
- * Note: cancels the RTSP *control plane* only. If
- * [`tst_rtsp_session_into_demux_receiver`] has already been called, the
- * RTP data plane is governed by `tst_rtp_demux_receiver_cancel`.
+ * Never call this after a successful
+ * [`tst_rtsp_session_into_demux_receiver`] (the session is freed then), nor
+ * concurrently with one: the bridge may free the session under you. To stop
+ * a bridged receiver use `tst_rtp_demux_receiver_cancel`. After the bridge
+ * returns NULL the session is still valid and this call is allowed.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if `session` is NULL.
  *
  * # Safety
  *
- * `session` must be NULL or a valid non-freed `*mut TstRtspSession`.
+ * `session` must be NULL or a valid non-freed `*mut TstRtspSession`, not
+ * consumed by a successful `tst_rtsp_session_into_demux_receiver` and not
+ * being passed to it concurrently.
  */
  int tst_rtsp_session_cancel(struct TstRtspSession *session);
 #endif
