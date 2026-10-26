@@ -27,9 +27,9 @@
 //! - `rist://group:port` (group ∈ 224.0.0.0/4) — multicast send
 //! - Query params: `?profile=simple|main`, `?buffer=N` (recovery buffer ms),
 //!   `?bandwidth=N` (kbps), `?cname=...` (RTCP CNAME)
-//! - Encryption (Main Profile only, requires `mbedtls` feature):
+//! - Encryption (Main Profile only, requires the C `mbedtls` feature, default-on):
 //!   `?aes-type=128|192|256&secret=<psk>` — forces Main Profile; returns
-//!   `TST_E_RIST_ENCRYPTION_DISABLED (-41)` when mbedtls is disabled.
+//!   `TST_E_RIST_ENCRYPTION_DISABLED (-41)` when `mbedtls` is off.
 //!   `?secret=` alone also forces Main Profile and selects AES-256
 //!   (librist's own default); `?aes-type=` alone is rejected at parse,
 //!   since a cipher without a PSK would configure a plaintext link.

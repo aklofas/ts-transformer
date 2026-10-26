@@ -14,7 +14,7 @@ categories  = ["multimedia::video", "network-programming"]
 doctest = false
 
 [dependencies]
-rist-sys     = { package = "tstrans-rist-sys", path = "../rist-sys", version = "0.9.0" }
+rist-sys     = { package = "tstrans-rist-sys", path = "../rist-sys", version = "0.9.0", default-features = false }
 tst-core     = { path = "../tst-core", version = "0.9.0" }
 tst-pipeline = { path = "../tst-pipeline", version = "0.9.0" }
 libc         = { workspace = true }
@@ -25,8 +25,9 @@ tracing      = { workspace = true }
 [features]
 default = ["mbedtls"]
 
-# Enable AES-128/192/256 PSK encryption. Re-exports rist-sys's mbedtls feature
-# so consumers get one feature flag.
+# The one switch for native librist crypto and the wrapper's AES-128/192/256
+# PSK encryption: rist-sys is taken without its defaults, so its mbedtls
+# feature is on only through this one.
 mbedtls = ["rist-sys/mbedtls"]
 
 [dev-dependencies]

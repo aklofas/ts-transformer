@@ -14,9 +14,10 @@ doctest = false
 
 [features]
 # All transports (srt/rtp/udp/tcp/hls/rist) are opt-in. `mbedtls` stays
-# default-on but is inert unless `srt` is also enabled (the `tst-srt?/mbedtls`
-# forward below only fires when tst-srt is in the dependency graph), so
-# `--features srt` is encrypted by default while a bare build pulls neither.
+# default-on but is inert unless `srt` or `rist` is also enabled (the
+# `tst-srt?/mbedtls` and `tst-rist?/mbedtls` forwards below only fire when the
+# crate is in the dependency graph), so `--features srt` or `--features rist`
+# is encrypted by default while a bare build pulls neither.
 default = ["std", "mbedtls"]
 # `std` gates every transport-bearing surface + std-only sinks. The offline
 # core (muxer / demuxer / config / error / handle / panic) compiles without it
@@ -25,7 +26,7 @@ default = ["std", "mbedtls"]
 std     = ["tst-pipeline/std", "tst-core/std"]
 srt     = ["std", "dep:tst-srt"]
 rtp     = ["std", "dep:tst-rtp", "dep:secrecy"]
-mbedtls = ["tst-srt?/mbedtls"]
+mbedtls = ["tst-srt?/mbedtls", "tst-rist?/mbedtls"]
 udp     = ["std", "dep:tst-udp"]
 tcp     = ["std", "dep:tst-tcp"]
 hls     = ["std", "dep:tst-hls", "tst-hls?/serve"]
