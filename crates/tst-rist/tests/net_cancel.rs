@@ -2,7 +2,7 @@
 //! Same shape as `crates/tst-udp/tests/net_cancel.rs`.
 //!
 //! Ports are hardcoded EVEN values (Simple profile = RTP on `port` + RTCP on
-//! `port + 1`, `rist.c:866`), distinct from `loopback.rs` (33010–33026) and
+//! `port + 1`, `rist.c:866`), distinct from `loopback.rs` (33010–33029) and
 //! from the pytest suite (34110–34150). A sender needs no listening peer
 //! (`rist_sender_data_write` enqueues; the burst test in `loopback.rs`
 //! relies on the same fact), so the send-side tests open no receiver.

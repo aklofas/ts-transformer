@@ -92,7 +92,9 @@ def test_bind_reports_kernel_picked_addresses(server):
 def test_preflight_does_not_advertise_patch(server):
     # Neither trickle ICE nor ICE restart is supported; a client that sees
     # PATCH in the method list switches to trickle and then needs an ETag.
-    conn = http.client.HTTPConnection(*server.local_addr().rsplit(":", 1))
+    conn = http.client.HTTPConnection(
+        *server.local_addr().rsplit(":", 1), timeout=10
+    )
     try:
         conn.request("OPTIONS", "/cam")
         resp = conn.getresponse()
