@@ -8770,8 +8770,8 @@ void tst_rtsp_client_builder_auth_digest_sha256(struct tst_rtsp_client_builder_t
  *
  * Runs the full RTSP client-side connection sequence:
  *
- * 1. Reconstructs an `RtspClientBuilder` from fields stored by the
- *    `tst_rtsp_client_builder_*` setters.
+ * 1. Builds the Rust builder from the URL parsed at `_new`, keeping its
+ *    userinfo and query options; explicit setters override them.
  * 2. Calls `.connect()` to open the TCP control channel and spawn the
  *    auto-keepalive thread (unless disabled via `tst_rtsp_client_builder_keepalive`).
  * 3. Calls `describe()` to fetch the server's SDP.

@@ -19,8 +19,8 @@
 //! (`?transport=tcp|udp`) for callers using `RtspClient::connect` directly.
 //! The C ABI exposes it as an integer enum so callers do not need to
 //! manipulate URL strings themselves.  The pref is stored in
-//! `TstRtspClientBuilder.transport_pref` and applied via
-//! `url.transport_preference` at connect time.
+//! `TstRtspClientBuilder.transport_pref` and applied at connect time with
+//! `RtspClientBuilder::transport_preference`, overriding the URL's query.
 //!
 //! # Auth scheme
 //!
