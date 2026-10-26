@@ -6,7 +6,11 @@ no safe wrapper — see `tst-rist` for the safe API tstrans applications use.
 **Bundled source.** This crate packages the pinned librist v0.2.20 tree and
 builds it when no suitable system librist >= 0.2.10 is found via
 pkg-config. Set `RIST_FORCE_VENDORED=1` to force the vendored build even
-when a system librist is present.
+when a system librist is present. The build compiles a copy of that tree
+in `OUT_DIR` carrying one correction: the Simple-profile receiver checks
+its RTCP peer (port + 1) for null before using it, so a failed RTCP bind
+returns an error instead of crashing. A system librist 0.2.20 lacks this
+fix.
 
 **Build prerequisites:** a C toolchain, meson, and ninja (for librist —
 Debian/Ubuntu: `apt install meson ninja-build`), plus libclang (for
