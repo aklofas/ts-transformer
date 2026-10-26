@@ -164,7 +164,11 @@ pub use rtsp::client::builder::tst_rtsp_client_builder_new;
 #[cfg(feature = "rtp")]
 pub use rtsp::client::builder::tst_rtsp_client_builder_keepalive;
 #[cfg(feature = "rtp")]
-pub use rtsp::client::session::tst_rtsp_client_builder_connect;
+pub use rtsp::client::builder::tst_rtsp_client_builder_transport_pref;
+#[cfg(feature = "rtp")]
+pub use rtsp::client::session::{
+    tst_rtsp_client_builder_connect, tst_rtsp_session_into_demux_receiver, tst_rtsp_session_play,
+};
 #[cfg(feature = "rtp")]
 pub use rtsp::server::builder::tst_rtsp_server_builder_new;
 // RTSP server lifecycle + publisher role (ABI 23), re-exported flat for the
@@ -181,6 +185,12 @@ pub use rtsp::server::publish::{
     tst_rtsp_server_remove_mount, tst_rtsp_server_total_rtp_bytes_received,
     tst_rtsp_server_total_rtp_packets_received,
 };
+// Unicast mount + push, re-exported flat for the session-bridge tests in
+// `transports::rtsp_client_connect`.
+#[cfg(feature = "rtp")]
+pub use rtsp::server::mount::{
+    tst_rtsp_mount_handle_free, tst_rtsp_mount_push_video, tst_rtsp_server_add_unicast_mount,
+};
 #[cfg(feature = "rtp")]
 pub use rtsp::server::start::tst_rtsp_server_builder_start;
 #[cfg(feature = "rtp")]
@@ -190,8 +200,8 @@ pub use rtsp::server::stop::{
 };
 #[cfg(feature = "rtp")]
 pub use rtsp::server::types::{
-    TST_RTSP_PEER_ADDR_LEN, TstRtspClockAlignment, TstRtspPublishMount, TstRtspPublishMountStats,
-    TstRtspPublishShape, TstRtspPublisherInfo, TstRtspServer,
+    TST_RTSP_PEER_ADDR_LEN, TstRtspClockAlignment, TstRtspMountHandle, TstRtspPublishMount,
+    TstRtspPublishMountStats, TstRtspPublishShape, TstRtspPublisherInfo, TstRtspServer,
 };
 #[cfg(feature = "srt")]
 pub use sender::ts_sender::tst_sender_open;
