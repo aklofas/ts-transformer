@@ -102,7 +102,7 @@ fn register_exit_cleanup() {
 }
 
 /// libsrt's ERROR-level line for an empty non-blocking `srt_accept`
-/// (`CUDTUnited::accept`, api.cpp:1312). `SrtListener::try_accept_nonblocking`
+/// (`CUDTUnited::accept`). `SrtListener::try_accept_nonblocking`
 /// probes this way, so the line is routine and is logged at debug.
 const ACCEPT_PROBE_EMPTY: &str = "no pending connection available";
 
