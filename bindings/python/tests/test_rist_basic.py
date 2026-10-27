@@ -254,6 +254,33 @@ def test_recv_transport_builder_rejects_non_bind_url():
     assert exc_info.value.kind in (RistErrorKind.URL, RistErrorKind.INVALID_CONFIG)
 
 
+def test_encryption_then_simple_profile_is_invalid_config():
+    """The Simple profile sends RTP straight to UDP, so a key would go unused;
+    the build refuses rather than send in the clear."""
+    with pytest.raises(RistError) as exc_info:
+        (
+            rist.Transport.builder()
+            .url("rist://127.0.0.1:19020")
+            .encryption(rist.EncryptionKey.aes256(b"example-secret"))
+            .profile(rist.RistProfile.SIMPLE)
+            .build()
+        )
+    assert exc_info.value.kind == RistErrorKind.INVALID_CONFIG
+
+
+def test_simple_profile_then_encryption_builds_main():
+    """Encryption after the profile promotes it to Main, so this builds; the
+    same pair as Simple would be refused."""
+    (
+        rist.Transport.builder()
+        .url("rist://127.0.0.1:19020")
+        .profile(rist.RistProfile.SIMPLE)
+        .encryption(rist.EncryptionKey.aes256(b"example-secret"))
+        .build()
+        .close()
+    )
+
+
 def test_pkt_size_above_9968_is_invalid_config():
     """9968 is the largest payload librist carries in one datagram."""
     with pytest.raises(RistError) as exc_info:

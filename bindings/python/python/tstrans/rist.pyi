@@ -152,7 +152,13 @@ class TransportBuilder:
         ...
 
     def profile(self, p: RistProfile) -> Self:
-        """Override the RIST profile (``SIMPLE`` or ``MAIN``)."""
+        """Override the RIST profile (``SIMPLE`` or ``MAIN``).
+
+        Between ``profile()`` and ``encryption()`` the later call wins:
+        encryption after a profile promotes it to ``MAIN``, and
+        ``profile(SIMPLE)`` after encryption is refused at build with
+        ``RistError(kind=INVALID_CONFIG)``.
+        """
         ...
 
     def bandwidth_kbps(self, v: int) -> Self:
@@ -168,7 +174,13 @@ class TransportBuilder:
         ...
 
     def encryption(self, key: EncryptionKey) -> Self:
-        """AES encryption key. Forces profile to ``MAIN``."""
+        """AES encryption key. Promotes the profile to ``MAIN``.
+
+        Between ``profile()`` and ``encryption()`` the later call wins:
+        encryption after a profile promotes it to ``MAIN``, and
+        ``profile(SIMPLE)`` after encryption is refused at build with
+        ``RistError(kind=INVALID_CONFIG)``.
+        """
         ...
 
     def recovery_maxbitrate_kbps(self, v: int) -> Self:
@@ -270,7 +282,13 @@ class RecvTransportBuilder:
         ...
 
     def profile(self, p: RistProfile) -> Self:
-        """Override the RIST profile."""
+        """Override the RIST profile.
+
+        Between ``profile()`` and ``encryption()`` the later call wins:
+        encryption after a profile promotes it to ``MAIN``, and
+        ``profile(SIMPLE)`` after encryption is refused at build with
+        ``RistError(kind=INVALID_CONFIG)``.
+        """
         ...
 
     def buffer_ms(self, ms: int) -> Self:
@@ -282,7 +300,13 @@ class RecvTransportBuilder:
         ...
 
     def encryption(self, key: EncryptionKey) -> Self:
-        """AES decryption key. Forces profile to ``MAIN``."""
+        """AES decryption key. Promotes the profile to ``MAIN``.
+
+        Between ``profile()`` and ``encryption()`` the later call wins:
+        encryption after a profile promotes it to ``MAIN``, and
+        ``profile(SIMPLE)`` after encryption is refused at build with
+        ``RistError(kind=INVALID_CONFIG)``.
+        """
         ...
 
     def session_timeout_ms(self, ms: int) -> Self:
