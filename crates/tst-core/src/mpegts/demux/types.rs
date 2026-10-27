@@ -174,10 +174,12 @@ pub struct DemuxerConfig {
     /// flood where each PID stays under `au_cell_cap_per_pid` but the
     /// aggregate explodes.
     pub au_cell_cap_total: Option<usize>,
-    /// Ceiling on the number of PIDs with a concurrently in-flight AU cell
-    /// reassembly (an open `First` awaiting its `Last`). `None` uses
+    /// Ceiling on the number of concurrently in-flight AU cell
+    /// reassemblies (an open `First` awaiting its `Last`), counted per
+    /// `(PID, metadata_service_id)`: H.222.0 §2.12.4.2 lets several
+    /// metadata services share one PID. `None` uses
     /// `DEFAULT_AU_CELL_MAX_IN_FLIGHT_PIDS` (64). A `First` cell that would
-    /// open reassembly on a PID beyond this is rejected with
+    /// open a reassembly beyond this is rejected with
     /// [`crate::mpegts::demux::NonConformantIssue::MultiCellAu`]
     /// `reason = MultiCellAuReason::TooManyPids`; existing reassemblies are
     /// left intact. Bounds active-PID state against an adversary opening a

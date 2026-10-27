@@ -728,6 +728,7 @@ impl Demuxer {
                 }
             }
             self.pes.remove_pid(pid);
+            self.au_reassembler.reset_pid(pid);
         }
         for pmt_pid in diff.retired_pmt_pids {
             if let Some(state) = self.pid_state.get_mut(&pmt_pid) {
@@ -739,6 +740,7 @@ impl Demuxer {
         }
         for pid in diff.kind_changed {
             self.pes.remove_pid(pid);
+            self.au_reassembler.reset_pid(pid);
             if let Some(state) = self.pid_state.get_mut(&pid) {
                 state.clear_timing();
                 state.codec = None;
@@ -948,9 +950,10 @@ impl Demuxer {
     /// the 3-state [`Self::stream_codec_stats`] accessor symmetric across
     /// reset — an unseen PID returns `None` both before AND after.
     ///
-    /// Also drops the cached PMT version so the next incoming PMT will
-    /// increment `pmt_versions_seen` even if the version_number hasn't
-    /// changed.
+    /// Counters only: topology caches (the PAT and PMT versions, the
+    /// declared streams) and in-flight reassembly are untouched, so a PMT
+    /// repeat after this call is still a repeat — no `ProgramMap`, no
+    /// `pmt_versions_seen` increment. Only a real version change counts.
     pub fn reset_stats(&mut self) {
         self.program_maps_seen = 0;
         self.pmt_versions_seen = 0;
@@ -962,11 +965,6 @@ impl Demuxer {
             state.reset_stats();
         }
         self.pid_state.retain(|_, s| !s.is_vacant());
-        // Drop cached PMT versions on each ProgramTracker so the next PMT
-        // triggers pmt_versions_seen += 1 even if the version_number hasn't changed.
-        for tracker in self.programs.values_mut() {
-            tracker.pmt_version = None;
-        }
     }
 }
 
@@ -2766,5 +2764,84 @@ mod tests {
             "MPEG-2 video (unrecognized codec) zero-length PES must NOT be \
              flagged as ZeroLengthPesNonVideo; got {events:?}"
         );
+    }
+
+    // `reset_stats` resets counters only: the cached PMT version survives,
+    // so a PMT repeat after it is still a repeat.
+    #[test]
+    fn reset_stats_then_pmt_repeat_keeps_in_flight_au_and_emits_no_program_map() {
+        use crate::mpegts::au_cell::{AuCellHeader, CellFragmentIndication};
+        use crate::mpegts::demux::event::MetadataKind;
+        use crate::mpegts::demux::test_support::{au_cell_pes_packets, pmt_packet_for_test_cc};
+        let cell = |seq, cfi| AuCellHeader {
+            metadata_service_id: 0,
+            sequence_number: seq,
+            cell_fragment_indication: cfi,
+            decoder_config_flag: false,
+            random_access_indicator: true,
+        };
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        d.feed(&pmt_packet_for_test(
+            0x1000,
+            1,
+            0x1FFF,
+            &[(0x15, 0x0101)],
+            0,
+        ))
+        .unwrap();
+        drain_all_events(&mut d);
+
+        feed_packets(
+            &mut d,
+            &au_cell_pes_packets(0x0101, 0, cell(0, CellFragmentIndication::First), b"ab"),
+        )
+        .unwrap();
+        d.reset_stats();
+        d.feed(&pmt_packet_for_test_cc(
+            0x1000,
+            1,
+            0x1FFF,
+            &[(0x15, 0x0101)],
+            0,
+            1,
+        ))
+        .unwrap();
+        feed_packets(
+            &mut d,
+            &au_cell_pes_packets(0x0101, 1, cell(1, CellFragmentIndication::Last), b"cd"),
+        )
+        .unwrap();
+
+        let events = drain_all_events(&mut d);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::ProgramMap(_))),
+            "a PMT repeat after reset_stats is no new ProgramMap: {events:?}"
+        );
+        let metas: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Metadata {
+                    kind:
+                        MetadataKind::KlvSyncAuCell {
+                            was_reassembled,
+                            cell_count,
+                            ..
+                        },
+                    payload,
+                    ..
+                } => Some((*was_reassembled, *cell_count, payload.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            metas,
+            vec![(true, 2, b"abcd".to_vec())],
+            "events: {events:?}"
+        );
+        assert_eq!(d.stats().pmt_versions_seen, 0);
     }
 }

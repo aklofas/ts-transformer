@@ -553,3 +553,22 @@ fn pmt_section_matches_hand_computed_bytes() {
         ]
     );
 }
+
+/// One bounded sync-metadata PES (stream_id 0xFC, PTS 90 000) on `pid`
+/// carrying a single `Metadata_AU_cell` (H.222.0 §2.12.4.2), as TS
+/// packets starting at continuity counter `cc`.
+pub(super) fn au_cell_pes_packets(
+    pid: u16,
+    cc: u8,
+    header: crate::mpegts::au_cell::AuCellHeader,
+    payload: &[u8],
+) -> Vec<[u8; 188]> {
+    let mut cell = Vec::new();
+    crate::mpegts::au_cell::write_metadata_au_cell(&mut cell, header, payload)
+        .expect("AU cell fits");
+    pes_to_packets(
+        pid,
+        cc,
+        &pes_bytes(0xFC, Some(90_000), None, true, &cell, true),
+    )
+}

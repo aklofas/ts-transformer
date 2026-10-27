@@ -657,7 +657,8 @@ impl super::demuxer::Demuxer {
                                 // single-cell case since the buffer is
                                 // never populated then.
                                 if was_reassembled {
-                                    self.au_reassembler.clear_after_emit(pes.pid);
+                                    self.au_reassembler
+                                        .clear_after_emit(pes.pid, emit_header.metadata_service_id);
                                 }
                                 let meta_len = payload_vec.len();
                                 self.record_item(&stream, program_number, meta_len);
