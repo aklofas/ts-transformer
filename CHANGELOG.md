@@ -12,7 +12,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-rtp
 
 - An `rtsps://` connect to a server that closes the connection during the TLS handshake now fails with `RtspError::Tls` instead of spinning a CPU forever; `connect_timeout` now bounds the TCP connect and the TLS handshake together (`RtspError::Io(TimedOut)` on expiry), and a server slower than `read_timeout` to answer the handshake no longer fails it. The same change is visible in Python `RtspError(TLS)` / `RtspError(IO)` and JVM `RtspException`.
-- An `rtp://…?pkt_size=188` sender now refuses its first send with `TransportError::TooLarge` instead of leaving the muxer output unsent without an error: `pkt_size` is the whole datagram, and the 12-byte RTP header leaves a 176-byte payload, less than one TS packet. The smallest usable value is 376.
+- A `MuxSender` over an `rtp://…?pkt_size=188` transport now refuses its first send with `TransportError::TooLarge` instead of leaving the muxer output unsent without an error: `pkt_size` is the whole datagram, and the 12-byte RTP header leaves a 176-byte payload, less than one TS packet. The smallest usable value is 376.
 
 ### Fixed — tstrans-rist-sys, tst-rist
 
@@ -90,6 +90,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — release tooling
 
 - The public-api baselines now ratchet the optional TLS surfaces: `tst-core` is rendered with `tls` and `tst-rtp` with `rtsp-server-tls`.
+- The fuzz workspaces' `Cargo.lock` files are committed, and the qualification run's fuzz job refuses to re-resolve them (`cargo metadata --locked`) and records the nightly it fuzzed with.
 
 ### Added — tst-core
 

@@ -300,11 +300,11 @@ the full producer + JavaScript client contract for both hls.js paths.
   the open segment's start (an encoder restart) closes the segment at the
   previous access unit, and the next segment starts on the new timeline.
   A raw 33-bit PTS wrap is not a restart: spans are measured across it, so
-  the wrap alone does not cut and never produces a zero-duration segment. The shell tells
-  the publisher that the timeline restarted, but `tst-hls` does not yet
-  render `#EXT-X-DISCONTINUITY`, so the playlist does not mark the break,
-  although RFC 8216 §4.3.2.3 requires it. Players that anchor their
-  timeline on the first segment (hls.js among them) can place the new
+  the wrap alone does not cut and never produces a zero-duration segment.
+  The shell tells the publisher that the timeline restarted, but `tst-hls`
+  does not yet render `#EXT-X-DISCONTINUITY`, so the playlist does not mark
+  the break, although RFC 8216 §4.3.2.3 requires it. Players that anchor
+  their timeline on the first segment (hls.js among them) can place the new
   segments before the buffered range and stall. A forward gap is signalled
   and left unmarked in the same way.
 - **`max_segment_duration` guards a stalled producer.** In the
