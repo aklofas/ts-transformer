@@ -180,6 +180,16 @@ jobs:
           ' "$CRATE" > "$RUNNER_TEMP/targets.txt"
           [ -s "$RUNNER_TEMP/targets.txt" ] || { echo "no targets declared for $CRATE" >&2; exit 1; }
           cd "crates/$CRATE/fuzz"
+          # The committed lockfile is the resolution the record attests: fail
+          # here, with cargo's own message, if it would need re-resolving.
+          cargo +nightly metadata --locked --format-version 1 > /dev/null
+          {
+            echo "### Toolchain for ${CRATE}"
+            echo '```'
+            rustc +nightly -V
+            cargo +nightly fuzz --version
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           run=0; crashes=0; failed=0
           while IFS= read -r name; do
             corpus=()
