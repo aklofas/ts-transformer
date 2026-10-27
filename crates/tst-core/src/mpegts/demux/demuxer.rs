@@ -19,9 +19,10 @@ use crate::mpegts::common::Pts90khz;
 use crate::mpegts::demux::event::{
     AdaptationFieldKind, DemuxEvent, NonConformantIssue, StreamId, StreamKind,
 };
-use crate::mpegts::demux::pes::Reassembler;
+use crate::mpegts::demux::pes::{Reassembler, ReassemblyOutcome, is_damage_reason};
 use crate::mpegts::demux::pid_state::{PidState, TopologyDiff};
 use crate::mpegts::demux::psi_assembler::PsiSectionAssembler;
+use crate::mpegts::demux::strict::StrictMode;
 #[cfg(test)]
 use crate::mpegts::demux::timestamp::UnwrapState;
 use crate::mpegts::demux::timestamp::{PcrHistory, TimestampUnwrapper};
@@ -506,9 +507,34 @@ impl Demuxer {
     ///
     /// `tst_demuxer_flush` — see `bindings/c/include/tstrans.h`.
     pub fn flush(&mut self) {
-        let partials = self.pes.drain_partial();
-        for pes in partials {
-            self.handle_complete_pes(pes);
+        // Same marking as `handle_pes_packet`, but `flush` cannot fail: a
+        // damaged PES is queued as `MalformedPes` before its sample, and a
+        // strict mode drops the sample. A partial that fails to parse is
+        // dropped silently, as it always was at flush.
+        let mut drop_next_complete: Option<u16> = None;
+        for outcome in self.pes.drain_partial_outcomes() {
+            match outcome {
+                ReassemblyOutcome::Complete(pes) => {
+                    if drop_next_complete == Some(pes.pid) {
+                        drop_next_complete = None;
+                        continue;
+                    }
+                    self.handle_complete_pes(pes);
+                }
+                ReassemblyOutcome::Malformed { pid, reason } if is_damage_reason(reason) => {
+                    let stream = self.lookup_stream(pid).unwrap_or_else(|| {
+                        StreamId::anonymous(pid, self.program_number_for_pid(pid))
+                    });
+                    self.queue_nonconformant(
+                        stream,
+                        NonConformantIssue::MalformedPes { pid, reason },
+                    );
+                    if self.options.strict != StrictMode::Off {
+                        drop_next_complete = Some(pid);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -604,6 +630,11 @@ impl Demuxer {
                 cc_jumped,
             )?;
         } else if pkt.has_payload && self.stream_kind(pkt.pid).is_some() {
+            // H.222.0 §2.4.3.3: a continuity_counter gap means packets of
+            // this PID were lost, so the PES in flight is missing bytes.
+            if cc_jumped {
+                self.pes.mark_damaged(pkt.pid);
+            }
             self.handle_pes_packet(&pkt)?;
         }
         Ok(())
