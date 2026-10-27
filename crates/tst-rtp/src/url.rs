@@ -380,7 +380,7 @@ pub const URL_KEYS_RTP: &[QueryKey<RtpUrl, RtpUrlError>] = &[
         "pkt_size",
         &[],
         "Bytes per datagram (send URLs only)",
-        "positive multiple of 188; default 1316",
+        "positive multiple of 188; default 1316; the 12-byte RTP header comes out of it, so the smallest usable value is 376 (188 parses, but its first send fails with `TooLarge`)",
         set_pkt_size,
     ),
     QueryKey::new(
