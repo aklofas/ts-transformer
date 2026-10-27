@@ -25,9 +25,9 @@ folded into the relevant domains and listed in their own section below.
   directory deeper: relative `include_bytes!("fixtures/…")` became
   `"../fixtures/…"`. (`env!("CARGO_MANIFEST_DIR")`-anchored and CWD-relative
   paths were unaffected.)
-- Shared helpers are declared once per domain binary: each `tests/<domain>.rs`
-  root carries `#[path = "common/mod.rs"] mod common;` and member files refer
-  to `crate::common::…`. Members never declare `mod common` themselves (a
+- Shared helpers are declared once per domain binary: every domain root that
+  uses shared helpers carries `#[path = "common/mod.rs"] mod common;` and
+  member files refer to `crate::common::…`. Members never declare `mod common` themselves (a
   second declaration loads the module twice and trips
   `clippy::duplicate_mod`).
 - Note: the binary is `codec_conformance` and its directory is
