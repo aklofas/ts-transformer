@@ -366,3 +366,49 @@ fn blocking_too_large_after_reconnect_is_not_left_queued() {
     managed.send_bytes(b"B").expect("the next message goes out");
     assert_eq!(*rig.wire.lock().unwrap(), vec![b"B".to_vec()]);
 }
+
+/// The rebuilt inner's ceiling is one TS packet where the bundle was sized
+/// for seven. The drain's `TooLarge` reaches the shell with the bundle
+/// still the caller's, and the shell re-splits it to the new ceiling:
+/// every packet reaches the wire once and nothing is dropped.
+#[test]
+fn sender_over_blocking_managed_resplits_a_bundle_after_the_ceiling_shrinks() {
+    let wire = Arc::new(Mutex::new(Vec::new()));
+    let initial = ScriptedSend::scripted(
+        Arc::new(Mutex::new(VecDeque::from([SendStep::Broken]))),
+        Arc::clone(&wire),
+    );
+    let factory = {
+        let wire = Arc::clone(&wire);
+        move || -> Result<ScriptedSend, TransportError> {
+            Ok(ScriptedSend::scripted(Arc::default(), Arc::clone(&wire)).with_max_payload(188))
+        }
+    };
+    let policy = ReconnectPolicy {
+        max_attempts: Some(3),
+        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
+        gap_buffer_capacity: 64,
+        overflow_policy: OverflowPolicy::DropOldest,
+        mode: ReconnectMode::Blocking,
+    };
+    let managed = ManagedTransport::new(initial, factory, policy);
+    let stats = managed.stats_handle();
+    let mut sender = Sender::new(managed, SenderConfig::default());
+
+    let a = ts_bundle(0xA1);
+    let err = sender
+        .send_ts(&a)
+        .expect_err("precondition: the rebuilt inner refuses the 1316-byte bundle");
+    assert_eq!(err.input_consumed, Some(true), "the shell retained it");
+    sender
+        .flush()
+        .expect("the retained bundle goes out re-split");
+
+    let wire = wire.lock().unwrap().clone();
+    assert_eq!(wire.len(), 7, "one message per packet");
+    assert!(wire.iter().all(|m| m.len() == 188));
+    assert_eq!(wire.concat(), a, "every packet once, in order");
+    let s = stats.stats().expect("not poisoned");
+    assert_eq!((s.gap_messages_dropped, s.gap_bytes_dropped), (0, 0));
+    assert_eq!(s.gap_len, 0);
+}
