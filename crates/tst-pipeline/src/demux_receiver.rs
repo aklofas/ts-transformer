@@ -762,8 +762,8 @@ mod stats_tests {
         assert_eq!(st.bytes_received, 0);
         assert!(st.per_stream.is_empty());
 
-        // The parser keeps its PSI: the next access unit, sent with no PSI
-        // ahead of it, still demuxes.
+        // A later access unit still demuxes (parser state kept); the last
+        // read carries no PSI.
         while !is_sample(&r.recv_event().unwrap().expect("a sample after the reset")) {}
     }
 }
