@@ -5,6 +5,7 @@
 //! stream_type 0x33 -> `VideoCodec::H266`) and the per-NAL header fields.
 
 use crate::common::mux_demux::{collect_events, drain_mux};
+use crate::common::synthetic::synthetic_h266_au;
 use tst_core::codec::{NalUnit, VideoCodec};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::Demuxer;
@@ -13,29 +14,6 @@ use tst_core::mpegts::demux::split_video;
 use tst_core::mpegts::mux::{
     Av1CarriageMode, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };
-
-/// Build a minimal valid Annex-B H.266 access unit: AUD + VPS + SPS + PPS + IDR.
-/// Bytes after each NAL header are placeholders — what matters for this test
-/// is that the demuxer recovers each NAL with its header fields intact.
-fn synthetic_h266_au() -> Vec<u8> {
-    fn nal(nal_type: u8, body: &[u8]) -> Vec<u8> {
-        let mut v = vec![0x00, 0x00, 0x00, 0x01];
-        // H.266 V4 §7.3.1.2:
-        //   byte 0: forbidden_zero_bit(1)=0 | nuh_reserved_zero_bit(1)=0 | nuh_layer_id(6)=0
-        //   byte 1: nal_unit_type(5) | nuh_temporal_id_plus1(3)=1
-        v.push(0x00);
-        v.push((nal_type << 3) | 0x01);
-        v.extend_from_slice(body);
-        v
-    }
-    let mut au = Vec::new();
-    au.extend(nal(20, &[0x10])); // AUD_NUT
-    au.extend(nal(14, &[0xA0])); // VPS_NUT
-    au.extend(nal(15, &[0xB0])); // SPS_NUT
-    au.extend(nal(16, &[0xC0])); // PPS_NUT
-    au.extend(nal(7, &[0xD0])); // IDR_W_RADL (slice payload placeholder)
-    au
-}
 
 #[test]
 fn h266_mux_demux_roundtrip_emits_h266_nals() {

@@ -5,7 +5,7 @@
 //! KLV-only, and dual-video + dual-KLV (worst case for PMT enumeration).
 //!
 //! The bit-level wire-format checks live in the existing
-//! `mpegts_mux_ffprobe.rs` and `mpegts_mux.rs` files; these tests focus
+//! `mpegts/mux_ffprobe.rs` and `mpegts/mux.rs` files; these tests focus
 //! on routing — the right bytes go to the right PIDs.
 
 use crate::common::mux_demux::drain_mux as drain_all;

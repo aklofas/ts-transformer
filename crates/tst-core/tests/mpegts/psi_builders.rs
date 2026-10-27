@@ -1,10 +1,11 @@
-//! Hand-built PSI sections, single-packet TS wrapping and adaptation-field
-//! PCR packets, shared by the `mpegts` test binary's demux tests
-//! (`pts_unwrap`, `demux_multi_program`, `demux_pcr_history`,
-//! `demux_psi_program_number`). Byte layouts per ISO/IEC 13818-1 §2.4.4;
-//! every section carries a valid CRC-32/MPEG-2 trailer. `demux_strict`
-//! keeps its own builders on purpose: it needs oversized and deliberately
-//! split sections these single-packet shapes cannot express.
+//! Hand-built PSI sections, single- and multi-packet TS wrapping and
+//! adaptation-field PCR packets, shared by the `mpegts` test binary's demux
+//! tests (`pts_unwrap`, `demux_multi_program`, `demux_pcr_history`,
+//! `demux_psi_program_number`, `demux_strict`, `large_async_klv`). Byte
+//! layouts per ISO/IEC 13818-1 §2.4.4; every section carries a valid
+//! CRC-32/MPEG-2 trailer. `demux_strict` keeps its own oversized PMT
+//! section builder, whose descriptor loop spans three packets, and its own
+//! PAT packet builder.
 
 /// Build a PAT section (table_id 0x00). `programs` is `(program_number,
 /// pmt_pid)`.
@@ -107,6 +108,41 @@ pub(crate) fn psi_packet(pid: u16, section: &[u8], cc: u8) -> Vec<u8> {
     assert!(end <= 188, "section too large for one TS packet");
     pkt[5..end].copy_from_slice(section);
     pkt
+}
+
+/// Pack a PSI section into as many 188-byte TS packets on `pid` as it needs.
+///
+/// First packet: PUSI=1, pointer_field 0, then up to 183 section bytes.
+/// Continuation packets: PUSI=0, up to 184 section bytes each. The last
+/// packet is padded with 0xFF stuffing; no packet carries an adaptation
+/// field. Continuity counters start at `cc_start` and advance mod 16.
+pub(crate) fn pack_section(pid: u16, section: &[u8], cc_start: u8) -> Vec<[u8; 188]> {
+    assert!(pid <= 0x1FFF, "PID {pid:#06x} exceeds the 13-bit field");
+    let pid_hi = (pid >> 8) as u8 & 0x1F;
+    let pid_lo = (pid & 0xFF) as u8;
+    let mut pkts = Vec::new();
+    let mut cc = cc_start & 0x0F;
+    let mut pos = 0usize;
+    while pkts.is_empty() || pos < section.len() {
+        let mut pkt = [0xFFu8; 188];
+        pkt[0] = 0x47; // sync byte
+        pkt[2] = pid_lo;
+        pkt[3] = 0x10 | cc; // payload-only + continuity counter
+        let start = if pkts.is_empty() {
+            pkt[1] = 0x40 | pid_hi; // PUSI + PID hi
+            pkt[4] = 0x00; // pointer_field
+            5
+        } else {
+            pkt[1] = pid_hi; // PID hi, no PUSI
+            4
+        };
+        let chunk = (section.len() - pos).min(188 - start);
+        pkt[start..start + chunk].copy_from_slice(&section[pos..pos + chunk]);
+        pos += chunk;
+        pkts.push(pkt);
+        cc = (cc + 1) & 0x0F;
+    }
+    pkts
 }
 
 /// One adaptation-field-only TS packet carrying `pcr_27mhz` on `pid`

@@ -15,7 +15,7 @@ use tst_core::mpegts::mux::{
 
 use crate::common::mux_demux::drain_mux as drain;
 use crate::common::mux_demux::patch_pes_strip_pts;
-use crate::common::synthetic::minimal_klv;
+use crate::common::synthetic::{build_minimal_h264_au, minimal_klv};
 use crate::psi_builders::{build_pat_section, build_pmt_section, psi_packet};
 
 /// Mirrors `crates/tst-interop/src/profiles.rs`'s `PTS_ROLLOVER_START`: 5 s
@@ -23,14 +23,6 @@ use crate::psi_builders::{build_pat_section, build_pmt_section, psi_packet};
 /// (`1 << 33`, ITU-T H.222.0 §2.4.3.6).
 const PTS_ROLLOVER_START: i64 = (1i64 << 33) - 450_000;
 const WRAP: i64 = 1i64 << 33;
-
-fn minimal_h264_au() -> Vec<u8> {
-    // Annex-B: AUD (nal_type=9) + IDR (nal_type=5). Contents aren't
-    // parsed by the demuxer (raw-first) — any bytes work as the AU.
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC,
-    ]
-}
 
 /// Feed `ts_buf` through a fresh `Demuxer` (`unwrap_timestamps` per
 /// `unwrap`), flush, and collect every event in order.
@@ -93,7 +85,7 @@ fn single_video_cfg(pid: u16) -> MuxerConfig {
 #[test]
 fn wrap_forward_unwraps_monotonically_when_enabled() {
     let mut mux = Muxer::new(single_video_cfg(0x100)).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
 
     let raw1 = PTS_ROLLOVER_START;
     let delta = 900_000i64; // ~10 s at 90 kHz — comfortably crosses the boundary
@@ -127,7 +119,7 @@ fn wrap_forward_unwraps_monotonically_when_enabled() {
 #[test]
 fn non_wrapping_stream_emits_identical_pts_both_modes() {
     let mut mux = Muxer::new(single_video_cfg(0x100)).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let base = 90_000i64; // 1 s at 90 kHz
     for i in 1..=3 {
         mux.push_video(&au, Pts90khz::new(base * i), true).unwrap();
@@ -151,7 +143,7 @@ fn missing_pts_stays_zero_and_does_not_corrupt_following_pts() {
     // the continuity-counter reset that two independent `Muxer`
     // instances concatenated together would introduce.
     let mut mux = Muxer::new(single_video_cfg(0x101)).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let placeholder_pts = 90_000i64; // stripped below; the value is irrelevant
     let raw2 = 180_000i64; // real forward-progressing PTS, no wrap
     mux.push_video(&au, Pts90khz::new(placeholder_pts), true)
@@ -194,7 +186,7 @@ fn dts_straddling_the_wrap_stays_below_unwrapped_pts() {
     let cfg = single_video_cfg(0x102);
     let mut mux = Muxer::new(cfg).unwrap();
     let handle = mux.video_handles()[0];
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
 
     // First AU anchors the pre-wrap epoch (a plain PTS-only push).
     mux.push_video_to(handle, &au, Pts90khz::new(PTS_ROLLOVER_START), true)
@@ -260,7 +252,7 @@ fn dts_straddling_the_wrap_stays_below_unwrapped_pts() {
 #[test]
 fn reordered_pts_across_wrap_does_not_double_the_epoch() {
     let mut mux = Muxer::new(single_video_cfg(0x100)).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
 
     // Composition order straddling the boundary: two pre-wrap values
     // (`WRAP-100`, `WRAP-50`) interleaved with two post-wrap ones
@@ -308,7 +300,7 @@ fn video_and_klv_pids_share_one_wrap_aware_clock() {
         b.build().unwrap()
     };
     let mut mux = Muxer::new(cfg).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let klv = minimal_klv();
 
     // Different anchors: KLV starts flowing 30_000 ticks before video.
@@ -378,7 +370,7 @@ fn late_starting_pid_anchors_to_its_programs_running_clock() {
         b.build().unwrap()
     };
     let mut mux = Muxer::new(cfg).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let klv = minimal_klv();
 
     // Drain after each push so the wire order is unambiguous: both video
@@ -438,7 +430,7 @@ fn independent_programs_do_not_share_an_anchor() {
         b.build().unwrap()
     };
     let mut mux = Muxer::new(cfg).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let p1_video = mux.video_handles_for_program(1).unwrap()[0];
     let p2_video = mux.video_handles_for_program(2).unwrap()[0];
 
@@ -500,7 +492,7 @@ fn late_starting_pid_anchors_through_a_reordered_reference_sample() {
         b.build().unwrap()
     };
     let mut mux = Muxer::new(cfg).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let klv = minimal_klv();
 
     // Drain after each push so the wire order is unambiguous: the KLV PID
@@ -583,7 +575,7 @@ fn pid_removed_and_readded_across_a_wrap_anchors_to_the_program_clock() {
         b.build().unwrap()
     };
     let mut mux = Muxer::new(cfg).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let klv = minimal_klv();
 
     // v0 topology: both PIDs present.
@@ -686,7 +678,7 @@ fn dormant_pid_reanchors_onto_its_programs_running_clock() {
         b.build().unwrap()
     };
     let mut mux = Muxer::new(cfg).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let klv = minimal_klv();
 
     // Drain after each push so the wire order is unambiguous. The KLV PES
@@ -753,7 +745,7 @@ fn reordered_late_sample_does_not_trigger_a_reanchor() {
         b.build().unwrap()
     };
     let mut mux = Muxer::new(cfg).unwrap();
-    let au = minimal_h264_au();
+    let au = build_minimal_h264_au();
     let klv = minimal_klv();
 
     let mut ts_buf = Vec::new();

@@ -143,11 +143,13 @@ fn fixture_funky_ul_decodes_with_decode_but_not_strict() {
     let bytes = load_fixture("synthetic_funky_ul.klv");
     let parsed = decode(&bytes).unwrap();
     assert_eq!(parsed.universal_label.st0601_version_byte(), 0x09);
-    // Strict still accepts this — bytes 0-13 match the canonical prefix and
-    // byte 15 is 0x00. So this fixture exercises the "non-default-version"
-    // branch but not the "non-family" branch. Use a hand-crafted buffer for
-    // the non-family case (covered in unit tests).
-    let _ = decode_strict(&bytes); // does not panic
+    // Strict accepts a non-default ST 0601 version byte too: bytes 0-13
+    // match the canonical prefix and byte 15 is 0x00, so the label is still
+    // in the ST 0601 family. This fixture exercises the "non-default-version"
+    // branch but not the "non-family" rejection, which a hand-crafted buffer
+    // covers in the unit tests.
+    let strict = decode_strict(&bytes).expect("strict accepts a non-default version byte");
+    assert_eq!(strict.universal_label.st0601_version_byte(), 0x09);
 }
 
 #[test]

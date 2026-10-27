@@ -27,7 +27,7 @@ use tst_core::mpegts::mux::{
 
 /// Drain every queued packet from the muxer into a single `Vec<u8>`.
 ///
-/// Mirrors the helper in `tests/mpegts_mux_subtitle.rs` — no public
+/// Mirrors `tests/common/mux_demux.rs::drain_mux` — no public
 /// `drain_output` on `Muxer`, so we pull in chunks until exhausted.
 fn drain_all(mux: &mut Muxer) -> Vec<u8> {
     let mut all = Vec::new();

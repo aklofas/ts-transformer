@@ -3,20 +3,21 @@
 # tst-core subtitle carriage tests.
 #
 # Unlike the audio fixtures, these are NOT produced by ffmpeg —
-# they're emitted by our own Muxer through the
-# `gen-subtitle-fixtures` example. Bootstrap cycle: muxer must work
-# to emit them, then they guard against regression in either side.
+# they're emitted by our own Muxer through tst-core's
+# `gen-subtitle-fixtures` maintainer bin (pure tst-core, no transport).
+# Bootstrap cycle: muxer must work to emit them, then they guard
+# against regression in either side.
 #
 # Run: ./regen.sh
 #
-# Tools required (locally; not on CI): cargo build environment with
-# the libsrt + mbedTLS submodules vendored (SRT_FORCE_VENDORED=1).
+# Tools required (locally; not on CI): a cargo build environment. The
+# bin links no libsrt or mbedTLS.
 
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Climb to the workspace root: tests/fixtures/subtitles -> crate ->
-# crates/ -> repo root (4 levels).
+# Climb four levels (subtitles -> fixtures -> tests -> tst-core ->
+# crates/); cargo finds the workspace from there.
 cd "$DIR/../../../.."
 
 SRT_FORCE_VENDORED=1 cargo run -p tst-core --bin gen-subtitle-fixtures --release -- "$DIR"

@@ -9,28 +9,6 @@ use std::path::PathBuf;
 
 use tst_core::codec::{ChromaFormat, CodecParseError};
 
-/// Fixtures with known parser bugs. The test runner SKIPS these fixtures
-/// instead of asserting against them. Each entry must have a TODO comment
-/// pointing at the issue tracker.
-///
-/// When the parser is fixed, REMOVE the entry from this list and let the
-/// test exercise the fixture normally. If the sidecar's expected.fields
-/// are still correct (they should be — they describe what the parser
-/// SHOULD produce), the test will pass.
-const KNOWN_PARSER_BUGS: &[(&str, &str, &str)] = &[
-    // (codec, fixture_name, bug_summary)
-    // Empty — DBLK_A_MAIN10_VIXS_4 entry removed after fixing the
-    // SPS-context delta_idx_minus1 over-read in
-    // crates/tst-core/src/codec/h265/short_term_rps.rs.
-];
-
-fn is_known_bug(codec: &str, name: &str) -> Option<&'static str> {
-    KNOWN_PARSER_BUGS
-        .iter()
-        .find(|(c, n, _)| *c == codec && *n == name)
-        .map(|(_, _, summary)| *summary)
-}
-
 #[derive(Debug, Deserialize)]
 struct Sidecar {
     // Retained for documentation; not asserted by the test runner.
@@ -106,10 +84,6 @@ fn h264_conformance_vectors() {
     let pairs = load_pairs("h264");
     assert!(!pairs.is_empty(), "no H.264 fixtures found");
     for (name, bin, sidecar) in pairs {
-        if let Some(summary) = is_known_bug("h264", &name) {
-            eprintln!("SKIP h264/{name}: {summary}");
-            continue;
-        }
         eprintln!("checking h264/{name}");
         assert_eq!(sidecar.kind, "h264_sps", "{name}: kind must be h264_sps");
         let result = tst_core::codec::h264::parse_sps(&bin);
@@ -181,10 +155,6 @@ fn h265_conformance_vectors() {
     let pairs = load_pairs("h265");
     assert!(!pairs.is_empty(), "no H.265 fixtures found");
     for (name, bin, sidecar) in pairs {
-        if let Some(summary) = is_known_bug("h265", &name) {
-            eprintln!("SKIP h265/{name}: {summary}");
-            continue;
-        }
         eprintln!("checking h265/{name}");
         // h265::sps/vps/pps are private submodules; types are re-exported at h265::*.
         let result_kind: Result<H265AnyResult, CodecParseError> = match sidecar.kind.as_str() {
@@ -275,10 +245,6 @@ fn h266_conformance_vectors() {
     let pairs = load_pairs("h266");
     assert!(!pairs.is_empty(), "no H.266 fixtures found");
     for (name, bin, sidecar) in pairs {
-        if let Some(summary) = is_known_bug("h266", &name) {
-            eprintln!("SKIP h266/{name}: {summary}");
-            continue;
-        }
         eprintln!("checking h266/{name}");
         let result_kind: Result<H266AnyResult, CodecParseError> = match sidecar.kind.as_str() {
             "h266_sps" => tst_core::codec::h266::parse_sps(&bin).map(H266AnyResult::Sps),
@@ -368,10 +334,6 @@ fn av1_conformance_vectors() {
     let pairs = load_pairs("av1");
     assert!(!pairs.is_empty(), "no AV1 fixtures found");
     for (name, bin, sidecar) in pairs {
-        if let Some(summary) = is_known_bug("av1", &name) {
-            eprintln!("SKIP av1/{name}: {summary}");
-            continue;
-        }
         eprintln!("checking av1/{name}");
         assert_eq!(
             sidecar.kind, "av1_sequence_header",

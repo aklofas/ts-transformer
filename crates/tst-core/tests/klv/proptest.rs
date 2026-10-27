@@ -42,9 +42,9 @@ proptest! {
     /// IMAPB round-trip: encode a value in [min, max] with `length`-byte
     /// representation, decode the bytes, assert the result is within
     /// one IMAPB scale-factor of the original. Scale factor is the
-    /// quantization step; rounding is to nearest grid point so worst-
-    /// case error is scale_factor/2, but we allow full scale_factor
-    /// tolerance for floating-point safety margin.
+    /// quantization step; encode truncates to the grid point at or
+    /// below the value, so the worst-case error is just under one full
+    /// scale factor.
     ///
     /// `length` is sampled across 1..=8 so the domain reaches the u64
     /// cap. The range is drawn valid (`max - min >= 1e-6`) and the value
@@ -73,8 +73,8 @@ proptest! {
         let decoded = decode_imapb(&params, &buf).unwrap().value().unwrap();
         // Tolerance is the max of two sources of round-trip error:
         // (1) IMAPB quantization step `scale = 2^ceil(log2(span)) / 2^(8L-1)`.
-        //     Encode rounds to nearest grid point so the integer-rounding
-        //     error is at most `scale/2`; we allow full `scale` for safety.
+        //     Encode truncates (ST 1201.5 §7.2.1), so the quantization
+        //     error is below one full `scale`.
         // (2) f64 ULP propagated through the encode/decode arithmetic. At
         //     L=6/7 with degree-scale spans, `scale` drops below f64's
         //     relative precision and representation error dominates. The
@@ -86,8 +86,8 @@ proptest! {
         //     versus a `scale` of ~7.1e-15 when value is small but span
         //     is degree-scale).
         //
-        // Formula extracted to `tests/common::imapb_tol` so the typed-
-        // set proptests share the same derivation.
+        // Formula extracted to `common::imapb_tol` so the typed-set
+        // proptests share the same derivation.
         let bound = imapb_tol(min, max, length);
         prop_assert!(
             (decoded - value).abs() <= bound.tol,
