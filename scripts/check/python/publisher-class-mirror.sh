@@ -21,11 +21,12 @@ PYI_FILE="$ROOT/bindings/python/python/tstrans/hls.pyi"
 # Rust trait methods: lines like `fn push_ts(...)` inside the
 # `pub trait Publisher { ... }` block, before its closing brace.
 # `type Error` and the `where` clause are skipped (we match `fn `).
-# Rust-only trait methods, left out of the comparison: `segment_duration` and
-# `keyframe_driven` are called inside the Rust mux publisher shell on the Rust
-# publisher it wraps; no Python object implements the trait for that shell, the
-# HLS builder already sets the duration, and the binding mux publishers wrap
-# that shell, which sends the signal.
+# Rust-only trait methods, left out of the comparison: `segment_duration`,
+# `keyframe_driven` and `cut_segment_discontinuous` are called inside the Rust
+# mux publisher shell on the Rust publisher it wraps; no Python object
+# implements the trait for that shell, the HLS builder already sets the
+# duration, and the binding mux publishers wrap that shell, which sends the
+# signal and cuts from the media timeline it tracks.
 rust_methods=$(awk '
   /^pub trait Publisher/ { in_trait = 1; next }
   in_trait && /^}/ { in_trait = 0 }
@@ -35,7 +36,7 @@ rust_methods=$(awk '
     sub(/[^a-z_].*$/, "", line)
     print line
   }
-' "$RUST_FILE" | grep -vx -e segment_duration -e keyframe_driven | sort -u)
+' "$RUST_FILE" | grep -vx -e segment_duration -e keyframe_driven -e cut_segment_discontinuous | sort -u)
 
 # Python ABC methods: `def <name>(` lines inside the `class Publisher(abc.ABC):`
 # block (terminated by the next top-level `class `). Dunders are skipped.
