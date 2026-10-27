@@ -51,6 +51,14 @@ pub struct CellMetrics {
     /// corruption log every one is fatal.
     #[serde(default)]
     pub nonconformant: u64,
+    /// `MalformedPes` damage markers (a PES that completed with bytes
+    /// missing) that followed a continuity jump on their PID. Counted
+    /// apart from `nonconformant`: the jump in `discontinuities` already
+    /// reports that loss, so these are judged through it, never on their
+    /// own. A damage marker with no jump before it stays in
+    /// `nonconformant`.
+    #[serde(default)]
+    pub damaged_pes: u64,
     /// Sender-side corruption tap counters (`send --corrupt`), `None`
     /// when the tap was off. The SENT side of the same run the receiver
     /// judges via `corruption_attribution` below: this says what was
