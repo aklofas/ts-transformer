@@ -42,6 +42,9 @@ pub(super) struct PidState {
     /// AAC-LATM: bytes the last LOAS record still owes the next PES
     /// (ISO/IEC 14496-3 §1.7.2); `None` = unknown.
     pub(super) latm_carry: Option<usize>,
+    /// AAC-LATM: consecutive carry-unknown PES that showed no LOAS record,
+    /// saturating at the count that raised the issue.
+    pub(super) latm_unsynced: u8,
     /// Public per-stream counters, created on the first event.
     pub(super) stats: Option<StreamStats>,
     /// Codec counters, created on the first counted event.
@@ -72,6 +75,7 @@ impl PidState {
         self.pts_less_since_pts = false;
         self.unwrap = None;
         self.latm_carry = None;
+        self.latm_unsynced = 0;
     }
 
     /// What `Demuxer::reset_sync` clears. Counters (`stats`, `codec`) and
@@ -114,6 +118,7 @@ impl PidState {
             pts_less_since_pts,
             unwrap,
             latm_carry,
+            latm_unsynced,
             stats,
             codec,
             subtitle_missing_descriptor_emitted,
@@ -132,6 +137,7 @@ impl PidState {
             && !pts_less_since_pts
             && unwrap.is_none()
             && latm_carry.is_none()
+            && *latm_unsynced == 0
             && stats.is_none()
             && codec.is_none()
             && !subtitle_missing_descriptor_emitted
