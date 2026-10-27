@@ -484,7 +484,7 @@ pub(crate) fn classify_audio_stream_type(stream_type: u8) -> Option<crate::codec
 }
 
 /// The fixed fields of a `metadata_descriptor` body (H.222.0 §2.6.60,
-/// Table 2-86) that classification and link readout need.
+/// Table 2-89) that classification and link readout need.
 pub(super) struct MetadataDescriptorFields {
     /// `metadata_format`.
     pub(super) format: u8,
@@ -497,7 +497,7 @@ pub(super) struct MetadataDescriptorFields {
 }
 
 /// Parse a `metadata_descriptor` body (the bytes after tag + length) up to
-/// its `private_data_byte` loop, per H.222.0 §2.6.60 Table 2-86. `None`
+/// its `private_data_byte` loop, per H.222.0 §2.6.60, Table 2-89. `None`
 /// when the body is shorter than the fixed fields it declares.
 pub(super) fn metadata_descriptor_fields(body: &[u8]) -> Option<MetadataDescriptorFields> {
     // metadata_application_format (16), + identifier (32) when 0xFFFF.
@@ -528,6 +528,8 @@ pub(super) fn metadata_descriptor_fields(body: &[u8]) -> Option<MetadataDescript
         0b001 | 0b011 => pos += 1 + usize::from(*body.get(pos)?),
         // decoder_config_metadata_service_id (8).
         0b100 => pos += 1,
+        // reserved_data_length (8) + reserved bytes.
+        0b101 | 0b110 => pos += 1 + usize::from(*body.get(pos)?),
         _ => {}
     }
     if body.len() < pos {
@@ -547,7 +549,7 @@ pub(super) fn metadata_descriptor_fields(body: &[u8]) -> Option<MetadataDescript
 /// is a convention. Two paths:
 ///
 /// - **Well-formed descriptor**: the body parses through its fixed fields
-///   (Table 2-86) and the flags byte's reserved bits read `1111`. A link is
+///   (Table 2-89) and the flags byte's reserved bits read `1111`. A link is
 ///   read only from the first two `private_data_byte`s; a descriptor with no
 ///   private data declares no link. The muxer's own KLVA descriptor ends
 ///   with `metadata_service_id` + flags, which this path never reads as a
@@ -556,6 +558,12 @@ pub(super) fn metadata_descriptor_fields(body: &[u8]) -> Option<MetadataDescript
 ///   lenient readout many encoders rely on: when the body is at least 5
 ///   bytes, its trailing 2 bytes are the link if they fall in
 ///   0x0010..=0x1FFE.
+///
+/// Accepted limitation: a 5-byte body whose trailing PID has a low nibble
+/// of 0xF, with DSM-CC_flag clear and decoder_config_flags 000, 010 or 111
+/// (a link to 0x010F, say), parses as `metadata_service_id` + flags and
+/// loses its link; it cannot be told apart from a descriptor whose trailing
+/// bytes really are those fields.
 ///
 /// The demuxer surfaces a link as `LinkSource::Declared` only when it names
 /// a video PID of the same PMT; consumers calling this directly should
@@ -843,7 +851,7 @@ mod pmt_tests {
     }
 
     /// The muxer's own canonical descriptor: its trailing two bytes are
-    /// `metadata_service_id` + the flags byte (H.222.0 §2.6.60 Table 2-86),
+    /// `metadata_service_id` + the flags byte (H.222.0 §2.6.60, Table 2-89),
     /// not a linked PID.
     #[test]
     fn canonical_klva_metadata_descriptor_declares_no_link() {
@@ -859,6 +867,24 @@ mod pmt_tests {
                 "{service_id}"
             );
         }
+    }
+
+    /// decoder_config_flags '101' carries reserved_data_length + reserved
+    /// bytes (H.222.0 §2.6.60, Table 2-89); they are fixed fields, not a link.
+    #[test]
+    fn reserved_decoder_config_bytes_are_not_read_as_a_link() {
+        let data = vec![
+            0x01, 0x00, 0xFF, b'K', b'L', b'V', b'A', 0x00, 0xAF, 0x01, 0x00,
+        ];
+        assert_eq!(
+            extract_metadata_link(&[RawDescriptor { tag: 0x26, data }]),
+            None
+        );
+        // A missing reserved_data_length byte is a truncated descriptor.
+        assert!(
+            metadata_descriptor_fields(&[0x01, 0x00, 0xFF, b'K', b'L', b'V', b'A', 0x00, 0xCF])
+                .is_none()
+        );
     }
 
     /// private_data_byte after a well-formed descriptor's fixed fields still

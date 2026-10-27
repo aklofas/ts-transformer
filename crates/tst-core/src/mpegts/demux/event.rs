@@ -105,7 +105,11 @@ pub enum StreamKind {
     Video(VideoCodec),
     Audio(AudioCodec),
     Subtitle(SubtitleCodec),
-    KlvSync { declared_link: Option<u16> },
+    /// `declared_link` is the raw `metadata_descriptor` readout;
+    /// `ProgramMap::klv_links` is authoritative (filtered to video PIDs).
+    KlvSync {
+        declared_link: Option<u16>,
+    },
     KlvAsync,
     Unknown(u8),
 }
