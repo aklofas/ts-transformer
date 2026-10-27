@@ -7,8 +7,9 @@
 //! 2. `bg_active` transitions and the send-path enqueue decision happen
 //!    under the `gap` lock, so worker exit and pump enqueue linearize.
 //! 3. `spawn_worker` is never called while holding the `gap` lock.
-//! 4. The worker NEVER holds `gap` across an inner send. It takes the
-//!    lock only for the buffer's own critical sections: mark the front
+//! 4. The worker NEVER holds `gap` across an inner send, and neither does
+//!    the `Blocking` drain (`drain_gap_if_alive`). Each takes the lock
+//!    only for the buffer's own critical sections: mark the front
 //!    message in flight (`begin_send`), release, send with just `inner`
 //!    held, then re-take it to settle (`finish_send` / `abort_send`).
 //!    The in-flight message is pinned by the buffer's `in_flight` mark

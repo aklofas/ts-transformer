@@ -8,5 +8,6 @@ pub mod errors;
 pub mod mock_transport;
 pub mod synthetic_nal;
 pub mod rawts;
+pub mod timing;
 #[cfg(feature = "whep-viewer")]
 pub mod whep_viewer;
