@@ -75,6 +75,15 @@ impl RistTransport {
 
     /// Build a sender from a parsed URL + config.
     pub fn connect_with_config(url: &RistUrl, cfg: &RistConfig) -> Result<Self, RistError> {
+        // A larger budget would open fine and then latch the sender dead on the
+        // first oversize write, so refuse it before the context exists.
+        if cfg.pkt_size == 0 || cfg.pkt_size > RistConfig::MAX_PKT_SIZE {
+            return Err(RistError::InvalidConfig(format!(
+                "pkt_size must be 1..={} (librist's per-write limit), got {}",
+                RistConfig::MAX_PKT_SIZE,
+                cfg.pkt_size
+            )));
+        }
         Ok(Self {
             ctx: crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Sender)?,
             pkt_size: cfg.pkt_size,
@@ -238,8 +247,9 @@ pub(crate) fn global_logging_ptr() -> *mut rist_sys::rist_logging_settings {
 ///   time length or increase packet size" in librist's own log line).
 /// - any other negative — fatal: null/non-sender context, zero-length or
 ///   oversize payload, `USE_SEQ` with split mode, no peers. After
-///   `connect_with_config` the only reachable one is the zero-length payload,
-///   which `send_bytes` rejects before calling librist.
+///   `connect_with_config` neither payload case is reachable: it refuses a
+///   `pkt_size` above [`RistConfig::MAX_PKT_SIZE`], and `send_bytes` rejects a
+///   zero-length payload before calling librist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WriteOutcome {
     Sent,
@@ -394,10 +404,30 @@ impl RistTransport {
 mod tests {
     use super::*;
 
+    #[test]
+    fn pkt_size_is_bounded_by_librists_write_limit() {
+        assert_eq!(RistConfig::MAX_PKT_SIZE, 9968);
+        for bad in ["0", "9969", "10K"] {
+            let r = RistTransport::connect(&format!("rist://127.0.0.1:19016?pkt_size={bad}"));
+            assert!(
+                matches!(r, Err(RistError::InvalidConfig(ref m)) if m.contains("9968")),
+                "{bad}"
+            );
+        }
+        let mut t = RistTransport::connect("rist://127.0.0.1:19018?pkt_size=9968")
+            .expect("9968 is in range");
+        t.send_bytes(&vec![0x47u8; 9968])
+            .expect("a full-budget send is accepted by librist");
+        assert!(t.is_alive());
+    }
+
     fn native_peer_config() -> *mut rist_sys::rist_peer_config {
         let url = std::ffi::CString::new("rist://127.0.0.1:9000").unwrap();
         let mut pc = std::ptr::null_mut();
-        assert_eq!(unsafe { rist_sys::rist_parse_address2(url.as_ptr(), &mut pc) }, 0);
+        assert_eq!(
+            unsafe { rist_sys::rist_parse_address2(url.as_ptr(), &mut pc) },
+            0
+        );
         pc
     }
 
