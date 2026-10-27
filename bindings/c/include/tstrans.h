@@ -10320,7 +10320,9 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  * Sends an RTSP TEARDOWN request, then unconditionally drops the session
  * and its `RtspClient` regardless of whether TEARDOWN succeeded (network
  * errors at teardown time are recorded in last-error but do not prevent
- * the handle from being freed).
+ * the handle from being freed). A healthy peer's 200 returns 0; a peer
+ * that does not answer within 500 ms, or a call parked on another thread,
+ * ends the TEARDOWN early and the handle is still freed.
  *
  * After this call the `session` pointer is invalid; any further use is
  * undefined behavior. NULL is a no-op.
