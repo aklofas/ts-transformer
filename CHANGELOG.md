@@ -14,10 +14,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An `rtsps://` connect to a server that closes the connection during the TLS handshake now fails with `RtspError::Tls` instead of spinning a CPU forever; `connect_timeout` now bounds the TCP connect and the TLS handshake together (`RtspError::Io(TimedOut)` on expiry), and a server slower than `read_timeout` to answer the handshake no longer fails it. The same change is visible in Python `RtspError(TLS)` / `RtspError(IO)` and JVM `RtspException`.
 - A `MuxSender` over an `rtp://…?pkt_size=188` transport now refuses its first send with `TransportError::TooLarge` instead of leaving the muxer output unsent without an error: `pkt_size` is the whole datagram, and the 12-byte RTP header leaves a 176-byte payload, less than one TS packet. The smallest usable value is 376.
 
+### Fixed — tstrans-srt-sys, tstrans-rist-sys
+
+- `srt-sys` and `rist-sys` link a host libsrt or librist only when `pkg-config --static` resolves it, it is at least libsrt 1.5.7 / librist 0.2.20 and, with the `mbedtls` feature on, it is built against mbedTLS; otherwise the vendored copy is built and the build prints a warning naming the reason. Before, libsrt 1.5.0 and librist 0.2.10 were accepted whatever their crypto backend.
+
 ### Fixed — tstrans-rist-sys, tst-rist
 
 - A Simple-profile receiver whose RTCP port (data port + 1) is already bound now returns `RistError::PeerCreateFailed` instead of crashing the process; the vendored librist 0.2.20 build carries a one-statement fix (the RTCP peer is null-checked before use). A system librist found through pkg-config still has the upstream defect.
-- `srt-sys` and `rist-sys` link a host libsrt or librist only when `pkg-config --static` resolves it, it is at least libsrt 1.5.7 / librist 0.2.20 and, with the `mbedtls` feature on, it is built against mbedTLS; otherwise the vendored copy is built and the build prints a warning naming the reason. Before, libsrt 1.5.0 and librist 0.2.10 were accepted whatever their crypto backend.
 - `tst-rist` refuses the Simple profile together with an encryption key (`RistError::InvalidConfig`) for both roles, instead of sending in the clear.
 - `tst-rist` `pkt_size` is accepted from 1 to 9968 bytes (`RistConfig::MAX_PKT_SIZE`); a larger value used to open and then latch the sender dead on its first oversized write.
 - `tst-rist` refuses a `buffer` under 1 ms.
@@ -125,6 +128,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-rist
 
 - `buffer=N` is a fixed N ms recovery window; before, only the minimum was set and the 200 ms default started at 600 ms.
+
+### Changed — tst-py
+
+- The RIST sender and receiver builders apply `profile()` and `encryption()` in call order, so `.encryption(k).profile(RistProfile.SIMPLE)` now raises `RistError(INVALID_CONFIG)` at build where it used to build an encrypted Main-profile peer; `.profile(RistProfile.SIMPLE).encryption(k)` still builds Main.
 
 ### Changed — tst-udp
 
