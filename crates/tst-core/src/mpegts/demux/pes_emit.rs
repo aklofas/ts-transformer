@@ -35,12 +35,39 @@ use crate::shared::SharedBytes;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-/// True when H.222.0 §2.7.4 requires the PES to carry a PTS for this
-/// stream kind. Audio and video have a mandatory PTS contract; subtitle,
-/// KLV (sync via PTS-bearing AU cells, async without PTS), and unknown
-/// stream types are optional/codec-defined.
-fn stream_type_requires_pts(kind: &StreamKind) -> bool {
-    matches!(kind, StreamKind::Video(_) | StreamKind::Audio(_))
+/// H.222.0 §2.7.4: consecutive coded PTS of one audio or video stream are at
+/// most 0.7 s apart.
+const PTS_SPACING_LIMIT_90KHZ: i64 = 63_000;
+
+/// Which PTS rule a PES on a stream is judged by.
+enum PtsRule {
+    /// Every PES must carry a PTS.
+    PerPes,
+    /// PES may omit the PTS, but the coded PTS around a PTS-less run must
+    /// stay within [`PTS_SPACING_LIMIT_90KHZ`].
+    Spacing,
+    /// No PTS requirement.
+    None,
+}
+
+/// The PTS rule for a stream of `kind` declared with PMT `stream_type`.
+///
+/// - Audio and video: H.222.0 §2.7.4 only bounds the spacing of coded PTS
+///   (0.7 s); a PES without one is fine as long as that bound holds. A gap
+///   between coded PTS with no PTS-less PES inside it is not diagnosed: the
+///   still-picture and low-frame-rate exceptions of §2.7.4 cannot be told
+///   apart from such a gap.
+/// - DVB subtitles: EN 300 743 requires a PTS on every subtitle PES.
+/// - KLV on `stream_type` 0x15 (synchronous metadata): ST 1402-07 requires a
+///   PTS on every PES. KLV on any other stream type is asynchronous and
+///   carries no timing contract.
+fn pts_rule(kind: &StreamKind, stream_type: u8) -> PtsRule {
+    match kind {
+        StreamKind::Video(_) | StreamKind::Audio(_) => PtsRule::Spacing,
+        StreamKind::Subtitle(SubtitleCodec::DvbSubtitling) => PtsRule::PerPes,
+        StreamKind::KlvSync { .. } | StreamKind::KlvAsync if stream_type == 0x15 => PtsRule::PerPes,
+        _ => PtsRule::None,
+    }
 }
 
 /// Tolerance-mode validator for orphan Middle/Last AU cells.
@@ -95,6 +122,13 @@ impl super::demuxer::Demuxer {
             }
             _ => false,
         };
+        // A PUSI with no PES in flight means the PES that straddled a
+        // time-base reset was already dropped (cap, damage): settle before
+        // the push, or a PES that starts and ends in this packet is judged
+        // against the old clock.
+        if pkt.payload_unit_start && !self.pes.has_pid(pkt.pid) {
+            self.settle_pts_baseline(pkt.pid);
+        }
         let outcomes = self.pes.push(
             pkt.pid,
             pkt.payload,
@@ -208,6 +242,17 @@ impl super::demuxer::Demuxer {
         self.queue.push_back(event);
     }
 
+    /// The PMT `stream_type` byte declared for `pid` by its owning program.
+    fn pmt_stream_type(&self, pid: u16) -> Option<u8> {
+        let program = self.program_of(pid)?;
+        self.programs
+            .values()
+            .filter(|t| t.program_number == program)
+            .flat_map(|t| &t.streams)
+            .find(|s| s.pid == pid)
+            .map(|s| s.stream_type.as_byte())
+    }
+
     fn emit_complete_pes(&mut self, pes: PesPayload, damage: &mut Option<&'static str>) {
         let kind = match self.stream_kind(pes.pid) {
             Some(k) => k,
@@ -233,16 +278,49 @@ impl super::demuxer::Demuxer {
                 },
             );
         }
-        // PTS distinct from PCR. Only update `last_pts_by_pid` when an
-        // actual PTS arrived; never write 0 as a fallback (that corrupts
-        // the monotonicity check for streams that omit PTS sporadically).
-        // For stream types where H.222.0 §2.7.4 makes PTS mandatory (audio +
-        // video), emit `MissingRequiredPts` when absent.
+        // PTS distinct from PCR. Only update `last_pts` when an actual PTS
+        // arrived; never write 0 as a fallback (that corrupts the
+        // monotonicity check for streams that omit PTS sporadically).
         let pts = pes.pts.unwrap_or(Pts90khz::new(0));
-        if pes.pts.is_none() && stream_type_requires_pts(&kind) {
-            self.queue_nonconformant(
+        // The stream_type byte comes from the PMT: KLV's PTS contract hangs
+        // on the declared type (0x15), not on the payload shape.
+        let stream_type = self.pmt_stream_type(pes.pid).unwrap_or(0);
+        match (pts_rule(&kind, stream_type), pes.pts) {
+            (PtsRule::PerPes, None) => self.queue_nonconformant(
                 stream,
                 NonConformantIssue::MissingRequiredPts { pid: pes.pid },
+            ),
+            (PtsRule::Spacing, None) => self.pid_state_mut(pes.pid).pts_less_since_pts = true,
+            (PtsRule::Spacing, Some(now)) => {
+                // A PTS-less run is closed by this PTS: judge the spacing of
+                // the coded PTS around it once, before this PES's sample.
+                let state = self.pid_state_mut(pes.pid);
+                let closes_run = core::mem::take(&mut state.pts_less_since_pts);
+                if closes_run
+                    && let Some(last) = state.last_pts
+                    && pts_diff_33bit(now.as_ticks() as u64, last as u64) > PTS_SPACING_LIMIT_90KHZ
+                {
+                    self.queue_nonconformant(
+                        stream,
+                        NonConformantIssue::MissingRequiredPts { pid: pes.pid },
+                    );
+                }
+            }
+            _ => {}
+        }
+        // ST 1402-08: synchronous metadata PES carry a PTS only
+        // (PTS_DTS_flags = '10'). Reported once per PID.
+        if matches!(kind, StreamKind::KlvSync { .. } | StreamKind::KlvAsync)
+            && stream_type == 0x15
+            && pes.dts.is_some()
+            && set_once(&mut self.pid_state_mut(pes.pid).sync_pes_shape_emitted)
+        {
+            self.queue_nonconformant(
+                stream,
+                NonConformantIssue::Other(
+                    "sync metadata PES carries a DTS; ST 1402-08 requires PTS_DTS_flags = '10'"
+                        .to_string(),
+                ),
             );
         }
         if let Some(observed_pts) = pes.pts {
@@ -1182,6 +1260,242 @@ mod tests {
             !issues(&ev)
                 .iter()
                 .any(|i| matches!(i, NonConformantIssue::MalformedPes { .. })),
+            "{ev:?}"
+        );
+    }
+
+    /// One bounded audio PES (20-byte ES) on 0x101, CC from `cc`, which
+    /// advances past the packets returned.
+    fn audio_pes(cc: &mut u8, pts: Option<u64>) -> Vec<[u8; 188]> {
+        let pkts = pes_to_packets(
+            0x101,
+            *cc,
+            &pes_bytes(0xC0, pts, None, true, &[0xAA; 20], true),
+        );
+        *cc = cc.wrapping_add(pkts.len() as u8) & 0x0F;
+        pkts
+    }
+
+    fn missing_pts_count(ev: &[DemuxEvent], pid: u16) -> usize {
+        issues(ev)
+            .iter()
+            .filter(|i| matches!(i, NonConformantIssue::MissingRequiredPts { pid: p } if *p == pid))
+            .count()
+    }
+
+    /// Feed audio PES with `pts` in order on a TimingOnly demuxer; the feed
+    /// result and every event.
+    fn feed_audio_timing_only(pts: &[Option<u64>]) -> (Result<(), DemuxError>, Vec<DemuxEvent>) {
+        let mut d = audio_demuxer(StrictMode::TimingOnly);
+        let mut cc = 0;
+        let pkts: Vec<[u8; 188]> = pts.iter().flat_map(|p| audio_pes(&mut cc, *p)).collect();
+        let result = feed_packets(&mut d, &pkts);
+        d.flush();
+        (result, drain_all_events(&mut d))
+    }
+
+    #[test]
+    fn pts_less_audio_pes_within_0_7_s_raises_nothing() {
+        let (result, ev) = feed_audio_timing_only(&[Some(0), None, Some(3_000)]);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// H.222.0 §2.7.4: consecutive coded PTS of one A/V stream differ by at most
+    /// 0.7 s. A PTS-less run whose bracketing PTS differ by more raises once.
+    #[test]
+    fn pts_less_run_longer_than_0_7_s_raises_missing_required_pts_once() {
+        let mut d = audio_demuxer(StrictMode::Off);
+        let mut cc = 0;
+        let mut pkts = audio_pes(&mut cc, Some(0));
+        for _ in 0..10 {
+            pkts.extend(audio_pes(&mut cc, None));
+        }
+        pkts.extend(audio_pes(&mut cc, Some(63_001)));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
+        let issue = ev.iter().position(|e| {
+            matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::MissingRequiredPts { pid: 0x101 },
+                    ..
+                }
+            )
+        });
+        let sample = sample_index(&ev, 0x101, 63_001);
+        assert!(
+            matches!((issue, sample), (Some(i), Some(s)) if i + 1 == s),
+            "{ev:?}"
+        );
+    }
+
+    #[test]
+    fn pts_spacing_of_exactly_0_7_s_is_allowed() {
+        let (result, ev) = feed_audio_timing_only(&[Some(0), None, Some(63_000)]);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// A 1 fps stream that timestamps every PES is conformant.
+    #[test]
+    fn one_fps_stream_with_every_pes_timestamped_raises_nothing() {
+        let (result, ev) = feed_audio_timing_only(&[Some(0), Some(90_000), Some(180_000)]);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    #[test]
+    fn pts_spacing_baseline_resets_on_a_signalled_timebase_discontinuity() {
+        let mut d = audio_demuxer(StrictMode::TimingOnly);
+        let pcr = |disc, v| {
+            ts_packet(&PktSpec {
+                pid: 0x101,
+                discontinuity: disc,
+                pcr: Some(v),
+                ..Default::default()
+            })
+        };
+        let mut cc = 0;
+        let mut pkts = vec![pcr(false, 0)];
+        pkts.extend(audio_pes(&mut cc, Some(0)));
+        pkts.extend(audio_pes(&mut cc, None));
+        // H.222.0 §2.4.3.5: a new system time base on the PCR_PID.
+        pkts.push(pcr(true, 2_700_000_000));
+        pkts.extend(audio_pes(&mut cc, Some(900_000)));
+        let result = feed_packets(&mut d, &pkts);
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// EN 300 743: every DVB subtitle PES carries a PTS.
+    #[test]
+    fn dvb_subtitle_pes_without_pts_raises_missing_required_pts() {
+        // subtitling_descriptor: "eng", type 0x10, composition page 1, ancillary page 1.
+        let subtitling: &[u8] = &[0x59, 0x08, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x01];
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x102,
+            &[(0x06, 0x102, subtitling)],
+        );
+        // data_identifier 0x20, subtitle_stream_id 0x00, one empty segment
+        // (sync 0x0F, type 0x10, page 1, length 0), end_of_PES 0xFF.
+        let es = [0x20, 0x00, 0x0F, 0x10, 0x00, 0x01, 0x00, 0x00, 0xFF];
+        let pkts = pes_to_packets(0x102, 0, &pes_bytes(0xBD, None, None, true, &es, true));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(missing_pts_count(&ev, 0x102), 1, "{ev:?}");
+    }
+
+    fn sync_klv_demuxer() -> Demuxer {
+        demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x103,
+            &[(0x15, 0x103, &[])],
+        )
+    }
+
+    /// One AU-cell-wrapped KLV record, as a synchronous metadata PES body.
+    fn au_cell_es() -> Vec<u8> {
+        let mut es = Vec::new();
+        crate::mpegts::au_cell::write_metadata_au_cell(
+            &mut es,
+            crate::mpegts::au_cell::AuCellHeader {
+                metadata_service_id: 0,
+                sequence_number: 0,
+                cell_fragment_indication: crate::mpegts::au_cell::CellFragmentIndication::Complete,
+                decoder_config_flag: false,
+                random_access_indicator: true,
+            },
+            &synth_klv_record(8),
+        )
+        .unwrap();
+        es
+    }
+
+    /// ST 1402-07: each synchronous-metadata PES carries a PTS.
+    #[test]
+    fn sync_klv_pes_without_pts_raises_missing_required_pts() {
+        let mut d = sync_klv_demuxer();
+        let pkts = pes_to_packets(
+            0x103,
+            0,
+            &pes_bytes(0xFC, None, None, true, &au_cell_es(), true),
+        );
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(missing_pts_count(&ev, 0x103), 1, "{ev:?}");
+    }
+
+    /// ST 1402-08: PTS_DTS_flags = '10' on synchronous-metadata PES.
+    #[test]
+    fn sync_klv_pes_with_dts_raises_one_other_issue_per_pid() {
+        let mut d = sync_klv_demuxer();
+        let es = au_cell_es();
+        let mut pkts = pes_to_packets(
+            0x103,
+            0,
+            &pes_bytes(0xFC, Some(93_000), Some(90_000), true, &es, true),
+        );
+        pkts.extend(pes_to_packets(
+            0x103,
+            1,
+            &pes_bytes(0xFC, Some(96_000), Some(93_000), true, &es, true),
+        ));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        let others = issues(&ev)
+            .iter()
+            .filter(|i| matches!(i, NonConformantIssue::Other(s) if s.contains("ST 1402-08")))
+            .count();
+        assert_eq!(others, 1, "{ev:?}");
+    }
+
+    /// A PES cut short by the per-PID cap after a signalled time-base reset
+    /// was the old clock's: the next PES starts the new baseline even when it
+    /// begins and ends inside one packet.
+    #[test]
+    fn pes_dropped_across_a_timebase_reset_does_not_leave_the_old_baseline() {
+        let mut b = DemuxerConfig::builder();
+        b.strict(StrictMode::TimingOnly);
+        b.pes_cap_per_pid(300);
+        let mut d = demuxer_with_streams(b.build(), 0x101, &[(0x0F, 0x101, &[])]);
+        let pcr = |disc, v| {
+            ts_packet(&PktSpec {
+                pid: 0x101,
+                discontinuity: disc,
+                pcr: Some(v),
+                ..Default::default()
+            })
+        };
+        let mut cc = 0;
+        let mut pkts = vec![pcr(false, 0)];
+        pkts.extend(audio_pes(&mut cc, Some(900_000)));
+        let truncated = pes_to_packets(0x101, cc, &three_packet_pes(903_000));
+        pkts.push(truncated[0]);
+        // H.222.0 §2.4.3.5: a new system time base on the PCR_PID, with the
+        // old-clock PES in flight.
+        pkts.push(pcr(true, 2_700_000_000));
+        // The second packet breaches the cap: the PES is dropped.
+        pkts.push(truncated[1]);
+        cc = (cc + 2) & 0x0F;
+        pkts.extend(audio_pes(&mut cc, Some(90_000)));
+        let result = feed_packets(&mut d, &pkts);
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(sample_index(&ev, 0x101, 90_000).is_some(), "{ev:?}");
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
             "{ev:?}"
         );
     }

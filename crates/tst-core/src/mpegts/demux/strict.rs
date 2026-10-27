@@ -16,7 +16,10 @@ pub enum StrictMode {
     Off,
     /// Hard-fail on timing anomalies (`PcrAnomaly`, `PtsAnomaly`,
     /// `MissingRequiredPts`, `PcrMalformed`, `PsiChecksumMismatch`).
-    /// Tolerate descriptor and stream-type issues.
+    /// Tolerate descriptor and stream-type issues. A PES without a PTS
+    /// fails only where `MissingRequiredPts` is raised: per PES on DVB
+    /// subtitles and synchronous KLV, on the 0.7 s spacing bound for audio
+    /// and video. A DTS on synchronous KLV (`Other`) is not rejected here.
     ///
     /// Note: `PusiMidPes` appears in this mode's reject set for
     /// non-exhaustive-enum parity but is never emitted by the demuxer —

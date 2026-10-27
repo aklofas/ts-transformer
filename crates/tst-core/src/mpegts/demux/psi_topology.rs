@@ -488,6 +488,7 @@ impl super::demuxer::Demuxer {
                 state.subtitle_missing_descriptor_emitted = false;
                 state.av1_registration_malformed_emitted = false;
                 state.subtitle_descriptor_ambiguous_emitted = false;
+                state.sync_pes_shape_emitted = false;
             }
         }
         // Drop any in-flight AU cell reassembly buffers wholesale on PMT
@@ -1424,6 +1425,7 @@ mod tests {
             last_pkt_raw: Some([0x47; 188]),
             last_pts: Some(90_000),
             pts_baseline_clears_after_pes: true,
+            pts_less_since_pts: true,
             unwrap: Some(super::super::timestamp::UnwrapState {
                 last_raw: 1,
                 last_unwrapped: 1,
@@ -1433,6 +1435,7 @@ mod tests {
             subtitle_missing_descriptor_emitted: true,
             av1_registration_malformed_emitted: true,
             subtitle_descriptor_ambiguous_emitted: true,
+            sync_pes_shape_emitted: true,
             subtitle_seen: true,
         }
     }
