@@ -634,6 +634,26 @@ mod tests {
     }
 
     #[test]
+    fn send_ts_delivers_a_framed_bundle_before_the_watchdog_error() {
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cfg = SenderConfig {
+            max_unsynced_bytes: 18_800,
+            ..SenderConfig::default()
+        };
+        let mut s = Sender::new(Recorder(sent.clone()), cfg);
+        let good7 = ts_packets(7);
+        let mut input = good7.clone();
+        input.extend_from_slice(&[0x00; 20_000]);
+        s.send_ts(&input).unwrap();
+        assert_eq!(*sent.lock().unwrap(), good7);
+        let e = s.send_ts(&[]).unwrap_err();
+        assert!(matches!(
+            e.source,
+            SenderErrorSource::Framing(TsFramingError::NoSyncAfterLimit { max: 18_800 })
+        ));
+    }
+
+    #[test]
     fn send_ts_retains_failed_bundle_and_retry_delivers_exactly_once() {
         // 14 TS packets → 2 bundles (7 packets × 1316 bytes each).
         // Transport fails the first send_bytes call (bundle 0), so bundle 0
