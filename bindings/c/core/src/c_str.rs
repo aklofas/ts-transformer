@@ -79,7 +79,7 @@ pub(crate) unsafe fn credentials(
     user: *const c_char,
     pass: *const c_char,
     context: &str,
-) -> Option<(String, String)> {
+) -> Option<(String, secrecy::SecretString)> {
     if user.is_null() || pass.is_null() {
         set_last_error(
             TstError::InvalidConfig,
@@ -103,5 +103,7 @@ pub(crate) unsafe fn credentials(
             String::new,
         )
     }?;
-    Some((u.to_owned(), p.to_owned()))
+    // `to_owned` allocates the exact length, so the boxed str is not
+    // reallocated and no unwiped copy is left behind.
+    Some((u.to_owned(), secrecy::SecretString::from(p.to_owned())))
 }
