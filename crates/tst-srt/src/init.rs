@@ -101,26 +101,31 @@ fn register_exit_cleanup() {
     }
 }
 
-fn install_log_handler() {
-    use std::ffi::{CStr, c_char, c_int, c_void};
+/// libsrt's ERROR-level line for an empty non-blocking `srt_accept`
+/// (`CUDTUnited::accept`, api.cpp:1312). `SrtListener::try_accept_nonblocking`
+/// probes this way, so the line is routine and is logged at debug.
+const ACCEPT_PROBE_EMPTY: &str = "no pending connection available";
 
-    extern "C" fn forward(
-        _opaque: *mut c_void,
-        level: c_int,
-        _file: *const c_char,
-        _line: c_int,
-        _area: *const c_char,
-        message: *const c_char,
-    ) {
-        // libsrt logs from inside `srt_cleanup()`; the exit handler's rule
-        // (no `tracing` once exit started) applies here too.
-        if crate::exit_guard::is_exiting() {
-            return;
-        }
-        if message.is_null() {
-            return;
-        }
-        let msg = unsafe { CStr::from_ptr(message) }.to_string_lossy();
+/// libsrt log callback. A panic (a host `tracing` subscriber may panic) must
+/// not unwind into libsrt's C++ frames, so the body is caught here.
+extern "C" fn forward(
+    _opaque: *mut std::ffi::c_void,
+    level: std::ffi::c_int,
+    _file: *const std::ffi::c_char,
+    _line: std::ffi::c_int,
+    _area: *const std::ffi::c_char,
+    message: *const std::ffi::c_char,
+) {
+    // libsrt logs from inside `srt_cleanup()`; the exit handler's rule
+    // (no `tracing` once exit started) applies here too.
+    if crate::exit_guard::is_exiting() {
+        return;
+    }
+    if message.is_null() {
+        return;
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let msg = unsafe { std::ffi::CStr::from_ptr(message) }.to_string_lossy();
         // libsrt log levels (LOG_DEBUG=7, INFO=6, NOTICE=5, WARNING=4,
         // ERROR=3, CRITICAL=2, ALERT=1, EMERGENCY=0). Map roughly to
         // tracing levels. `tracing::event!` requires a const-known level,
@@ -130,11 +135,58 @@ fn install_log_handler() {
             6 => tracing::debug!(target: "srt", "{}", msg),
             5 => tracing::info!(target: "srt", "{}", msg),
             4 => tracing::warn!(target: "srt", "{}", msg),
+            3 if msg.contains(ACCEPT_PROBE_EMPTY) => {
+                tracing::debug!(target: "srt", "{}", msg)
+            }
             _ => tracing::error!(target: "srt", "{}", msg),
         }
+    }));
+    if let Err(payload) = result {
+        // A payload whose `Drop` panics would unwind out of this frame.
+        std::mem::forget(payload);
     }
+}
 
+fn install_log_handler() {
     unsafe {
         srt_sys::srt_setloghandler(std::ptr::null_mut(), Some(forward));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct PanickingSubscriber;
+    impl tracing::Subscriber for PanickingSubscriber {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, _: &tracing::Event<'_>) {
+            panic!("subscriber panic")
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// A host subscriber that panics must not abort the process from inside
+    /// the extern "C" callback libsrt calls.
+    #[test]
+    fn a_panicking_subscriber_does_not_abort_the_log_callback() {
+        tracing::subscriber::with_default(PanickingSubscriber, || {
+            forward(
+                std::ptr::null_mut(),
+                3,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                c"boom".as_ptr(),
+            );
+        });
     }
 }

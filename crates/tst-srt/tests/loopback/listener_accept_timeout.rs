@@ -152,3 +152,35 @@ fn accept_timeout_accepts_a_peer_that_arrives_after_stale_readiness() {
     // Ports only: the connector's socket may be bound to the wildcard.
     assert_eq!(accepted_port, connector_local.map(|a| a.port()));
 }
+
+#[tracing_test::traced_test]
+#[test]
+fn an_empty_accept_probe_logs_no_error() {
+    require_loopback!();
+    let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+    let _ = listener.accept_timeout(Duration::from_millis(200));
+    assert!(logs_contain("no pending connection available"));
+    assert!(
+        !logs_contain("ERROR"),
+        "libsrt's empty-probe line is not an error"
+    );
+}
+
+#[tracing_test::traced_test]
+#[test]
+fn other_libsrt_errors_still_log_at_error() {
+    require_loopback!();
+    // Building a listener starts libsrt and installs the log forwarder; an
+    // accept on an invalid socket id is then an ERROR line unrelated to the
+    // empty-probe one.
+    let _listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+    let rc = unsafe {
+        srt_sys::srt_accept(
+            srt_sys::SRT_INVALID_SOCK,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, srt_sys::SRT_ERROR);
+    assert!(logs_contain("ERROR"));
+}
