@@ -20,10 +20,8 @@ use std::process::Command;
 
 #[test]
 fn pts_rollover_fixture_passes_pcr_jitter_threshold() {
-    let tmp = std::env::temp_dir().join("pts_rollover_smoke.ts");
-    if tmp.exists() {
-        std::fs::remove_file(&tmp).expect("clear stale tmp file");
-    }
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let tmp = dir.path().join("pts_rollover_smoke.ts");
 
     let gen_bin = env!("CARGO_BIN_EXE_gen-pts-rollover-fixture");
     let gen_status = Command::new(gen_bin)
@@ -53,12 +51,7 @@ fn pts_rollover_fixture_passes_pcr_jitter_threshold() {
         .output()
         .expect("spawn measure-pcr-jitter");
 
-    let cleanup = || {
-        std::fs::remove_file(&tmp).ok();
-    };
-
     if !measure_output.status.success() {
-        cleanup();
         panic!(
             "measure-pcr-jitter exited non-zero on muxer output: {:?}\nstdout: {}\nstderr: {}",
             measure_output.status,
@@ -70,6 +63,4 @@ fn pts_rollover_fixture_passes_pcr_jitter_threshold() {
         !measure_output.stdout.is_empty(),
         "measure-pcr-jitter produced no stdout",
     );
-
-    cleanup();
 }
