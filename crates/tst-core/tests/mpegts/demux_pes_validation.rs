@@ -175,12 +175,14 @@ fn demux_b4_missing_pts_does_not_poison_last_pts() {
     );
 }
 
-/// PES on a PTS-required stream type (video) arriving without PTS surfaces
-/// `NonConformantIssue::MissingRequiredPts { pid }`. We can't ask the muxer
-/// for a no-PTS video PES (it always sets PTS), so we patch the PES flags2
-/// byte to clear PTS_DTS_flags (set to 0b00) and the header_data_length to 0.
+/// A video PES without a PTS is legal on its own: H.222.0 §2.7.4 bounds only
+/// the spacing of coded PTS, and this stream carries no coded PTS at all, so
+/// there is no spacing to measure and no `MissingRequiredPts`. We can't ask
+/// the muxer for a no-PTS video PES (it always sets PTS), so we patch the PES
+/// flags2 byte to clear PTS_DTS_flags (set to 0b00) and the
+/// header_data_length to 0.
 #[test]
-fn demux_b4_missing_pts_on_required_stream_type_surfaces_issue() {
+fn pts_less_video_pes_without_spacing_violation_raises_nothing() {
     let raw = build_h264_ts_with_one_pes();
     let patched = patch_pes_strip_pts(raw, 0xE0);
 
@@ -196,14 +198,14 @@ fn demux_b4_missing_pts_on_required_stream_type_surfaces_issue() {
         matches!(
             e,
             DemuxEvent::NonConformant {
-                issue: NonConformantIssue::MissingRequiredPts { pid: 0x101 },
+                issue: NonConformantIssue::MissingRequiredPts { .. },
                 ..
             }
         )
     });
     assert!(
-        issue_seen,
-        "expected MissingRequiredPts on video PID 0x101, got {events:?}"
+        !issue_seen,
+        "a lone PTS-less video PES must not raise MissingRequiredPts, got {events:?}"
     );
 }
 
