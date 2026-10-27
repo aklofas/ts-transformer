@@ -232,10 +232,10 @@ pub(super) fn wrap_av1_obus_binding(obu_bytes: &[u8], out: &mut Vec<u8>) -> bool
             i += 1;
         }
         if !has_size_field {
-            // Binding §3.1 requires every OBU to carry obu_size. Without
-            // it we can't find the boundary to the next OBU, so we can't
-            // emit a per-OBU start code for what follows. Bail out
-            // lenient-stance (same as split_obus on the demux side).
+            // AV1 §5.2 requires obu_has_size_field = 1 in the low-overhead
+            // format, which binding §3.1 mandates for the elementary input;
+            // without it we can't find the next OBU boundary to start-code.
+            // Bail out lenient-stance (same as split_obus on the demux side).
             break;
         }
         let (obu_size, consumed) =

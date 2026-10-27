@@ -66,6 +66,10 @@ fn parse_one_nal(
     match codec {
         VideoCodec::H264 => {
             if nal.is_empty() {
+                issues.push(NonConformantIssue::NalHeader {
+                    codec,
+                    kind: NalHeaderKind::Truncated,
+                });
                 return None;
             }
             let header = nal[0];
@@ -90,6 +94,10 @@ fn parse_one_nal(
         }
         VideoCodec::H265 => {
             if nal.len() < 2 {
+                issues.push(NonConformantIssue::NalHeader {
+                    codec,
+                    kind: NalHeaderKind::Truncated,
+                });
                 return None;
             }
             // forbidden_zero_bit (1) | nal_unit_type (6) | nuh_layer_id (6) | nuh_temporal_id_plus1 (3)
@@ -124,6 +132,10 @@ fn parse_one_nal(
         }
         VideoCodec::H266 => {
             if nal.len() < 2 {
+                issues.push(NonConformantIssue::NalHeader {
+                    codec,
+                    kind: NalHeaderKind::Truncated,
+                });
                 return None;
             }
             // Per H.266 V4 §7.3.1.2:
@@ -210,17 +222,39 @@ fn parse_one_nal(
 ///
 /// Returns `(obus, issues)`. `issues` contains any non-conformance
 /// issues raised during the walk (missing obu_size field, forbidden
-/// Tile List OBU); the caller surfaces these to its consumer. `pid` on
-/// each issue is left as a sentinel `0` — the opt-in `split_video` parse
-/// path that calls this has no PID context.
+/// Tile List OBU, truncated OBU); the caller surfaces these to its
+/// consumer. `pid` on each issue is left as a sentinel `0` — the opt-in
+/// `split_video` parse path that calls this has no PID context.
 ///
-/// On a malformed buffer (truncated header, truncated LEB128, length
-/// runs past buffer end) the splitter stops and returns what it has
-/// accumulated, mirroring `split_nals`'s lenient stance.
+/// On a malformed buffer (truncated extension byte, truncated LEB128,
+/// length runs past buffer end) the splitter reports
+/// [`Av1ObuHeaderKind::Truncated`], stops and returns what it has
+/// accumulated.
 pub fn split_obus(es_payload: &SharedBytes) -> (Vec<Obu>, Vec<NonConformantIssue>) {
     let mut out = Vec::new();
     let mut issues = Vec::new();
-    let bytes: &[u8] = es_payload;
+    split_obus_in(es_payload, false, &mut out, &mut issues);
+    (out, issues)
+}
+
+/// Walk the OBUs of one unit, appending to `out` and `issues`.
+///
+/// `unsized_allowed` is true inside a binding `ts_open_bitstream_unit()`:
+/// binding §3.1 lets an OBU there omit `obu_size`, because the unit ends at
+/// the next start code (§3.2). Such an OBU takes the rest of the unit and is
+/// not reported. Outside the binding, AV1 §5.2 requires the size field in
+/// the low-overhead format, so its absence is reported.
+fn split_obus_in(
+    es: &SharedBytes,
+    unsized_allowed: bool,
+    out: &mut Vec<Obu>,
+    issues: &mut Vec<NonConformantIssue>,
+) {
+    let truncated = NonConformantIssue::Av1ObuHeader {
+        pid: 0,
+        kind: Av1ObuHeaderKind::Truncated,
+    };
+    let bytes: &[u8] = es;
     let mut i = 0usize;
     while i < bytes.len() {
         // OBU header byte (AV1 §5.3.2):
@@ -252,10 +286,10 @@ pub fn split_obus(es_payload: &SharedBytes) -> (Vec<Obu>, Vec<NonConformantIssue
         i += 1;
 
         let extension = if extension_flag {
-            if i >= bytes.len() {
-                break; // truncated extension — stop
-            }
-            let ext = bytes[i];
+            let Some(&ext) = bytes.get(i) else {
+                issues.push(truncated);
+                break;
+            };
             i += 1;
             // temporal_id(3) | spatial_id(2) | reserved(3)
             // Per AV1 §5.3.3 the low 3 reserved bits MUST be 0.
@@ -273,13 +307,20 @@ pub fn split_obus(es_payload: &SharedBytes) -> (Vec<Obu>, Vec<NonConformantIssue
             None
         };
 
+        // Binding §3.1: Tile List OBUs shall not be used, sized or not.
+        if obu_type == 8 {
+            issues.push(NonConformantIssue::Av1TileListNotAllowed { pid: 0 });
+        }
+
         if !has_size_field {
-            issues.push(NonConformantIssue::Av1ObuMissingSizeField {
-                pid: 0, // sentinel — opt-in split_video path has no PID context
-                obu_type,
-            });
-            // Zero-copy view: body runs from i to end of es_payload.
-            let payload = es_payload.slice(i..bytes.len());
+            if !unsized_allowed {
+                issues.push(NonConformantIssue::Av1ObuMissingSizeField {
+                    pid: 0, // sentinel — opt-in split_video path has no PID context
+                    obu_type,
+                });
+            }
+            // Zero-copy view: body runs from i to the end of the unit.
+            let payload = es.slice(i..bytes.len());
             out.push(Obu {
                 obu_type,
                 extension,
@@ -288,31 +329,28 @@ pub fn split_obus(es_payload: &SharedBytes) -> (Vec<Obu>, Vec<NonConformantIssue
             break;
         }
 
-        let (obu_size, consumed) = match read_leb128(bytes, i) {
-            Ok(t) => t,
-            Err(_) => break, // truncated LEB128 — stop
+        let Ok((obu_size, consumed)) = read_leb128(bytes, i) else {
+            issues.push(truncated);
+            break;
         };
         i += consumed;
 
         // AV1 §4.10.5 guarantees obu_size <= u32::MAX (read_leb128 enforces
         // it), so try_from is infallible on 64-bit and safe on 32-bit; the
         // checked_add prevents `i + obu_size` from wrapping near usize::MAX.
-        let obu_size = match usize::try_from(obu_size) {
-            Ok(n) => n,
-            Err(_) => break,
-        };
-        let body_end = match i.checked_add(obu_size) {
+        let body_end = match usize::try_from(obu_size)
+            .ok()
+            .and_then(|n| i.checked_add(n))
+        {
             Some(end) if end <= bytes.len() => end,
-            _ => break,
+            _ => {
+                issues.push(truncated);
+                break;
+            }
         };
         // Zero-copy view: body runs from i to body_end.
-        let payload = es_payload.slice(i..body_end);
+        let payload = es.slice(i..body_end);
         i = body_end;
-
-        // Tile List OBU non-conformance issue per binding §3.3.
-        if obu_type == 8 {
-            issues.push(NonConformantIssue::Av1TileListNotAllowed { pid: 0 });
-        }
 
         out.push(Obu {
             obu_type,
@@ -320,7 +358,6 @@ pub fn split_obus(es_payload: &SharedBytes) -> (Vec<Obu>, Vec<NonConformantIssue
             payload,
         });
     }
-    (out, issues)
 }
 
 /// Opt-in video ES parse. Splits the encoded access unit `raw` into NAL units
@@ -355,14 +392,31 @@ pub fn split_video(
             (VideoPayload::Nals(nals), issues)
         }
         VideoCodec::Av1 => match av1_carriage {
-            Av1CarriageMode::Mpeg2TsBinding => match unwrap_av1_binding(raw) {
-                Av1BindingUnwrap::Conformant(unwrapped) => {
+            Av1CarriageMode::Mpeg2TsBinding => match unwrap_av1_binding_units(raw) {
+                Some(Av1BindingUnits {
+                    bytes,
+                    units,
+                    escape_violations,
+                }) => {
                     // Binding-framed: OBU views point into the unwrapped buffer
-                    // (the documented AV1 ~2× allocation case).
-                    let (obus, issues) = split_obus(&SharedBytes::from_vec(unwrapped));
+                    // (the documented AV1 ~2× allocation case). Each tsOBU is
+                    // walked on its own, so an unsized OBU (binding §3.1) ends
+                    // at its unit's boundary (§3.2).
+                    let mut obus = Vec::new();
+                    let mut issues = Vec::new();
+                    if escape_violations > 0 {
+                        issues.push(NonConformantIssue::Av1ObuHeader {
+                            pid: 0,
+                            kind: Av1ObuHeaderKind::InvalidEmulationPrevention,
+                        });
+                    }
+                    let unwrapped = SharedBytes::from_vec(bytes);
+                    for unit in units {
+                        split_obus_in(&unwrapped.slice(unit), true, &mut obus, &mut issues);
+                    }
                     (VideoPayload::Obus(obus), issues)
                 }
-                Av1BindingUnwrap::MissingFraming => {
+                None => {
                     // Binding REQUIRES ts_open_bitstream_unit framing; its
                     // absence is genuinely non-conformant here.
                     // `pid: 0` sentinel — this opt-in path has no PID context
@@ -405,10 +459,10 @@ pub fn split_video_strict(
 
 /// Outcome of the AV1-binding `ts_open_bitstream_unit()` unwrap step.
 ///
-/// Used by the opt-in [`split_video`] AV1 parse to detect binding-framed vs.
-/// raw-OBU (interop) carriage: binding-framed input is unwrapped before the
-/// OBU walk, while a missing start code falls back to raw-OBU parsing with a
-/// [`NonConformantIssue::Av1MissingTsObuFraming`] issue surfaced.
+/// The mux-side round-trip tests check the wire against this; the opt-in
+/// [`split_video`] AV1 parse uses `unwrap_av1_binding_units`, which also
+/// keeps the unit boundaries.
+#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Av1BindingUnwrap {
     /// PES payload was binding-framed: 3-byte start code `0x00 0x00 0x01`
@@ -452,25 +506,53 @@ pub(crate) enum Av1BindingUnwrap {
 /// OBU bytes are appended back-to-back.
 ///
 /// On a malformed input (start code missing) the unwrap returns
-/// [`Av1BindingUnwrap::MissingFraming`]; [`split_video`] treats that as a
-/// non-conformance signal and falls back to raw-OBU parsing. A truncated
+/// [`Av1BindingUnwrap::MissingFraming`]. A truncated
 /// escape near end-of-payload is tolerated by emitting the trailing bytes
 /// verbatim (lenient stance — matches `split_obus`).
+#[cfg(test)]
 pub(crate) fn unwrap_av1_binding(payload: &[u8]) -> Av1BindingUnwrap {
+    match unwrap_av1_binding_units(payload) {
+        Some(units) => Av1BindingUnwrap::Conformant(units.bytes),
+        None => Av1BindingUnwrap::MissingFraming,
+    }
+}
+
+/// The unescaped OBU bytes of a binding-framed PES payload, with the
+/// boundaries of each `ts_open_bitstream_unit()` kept.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Av1BindingUnits {
+    /// The concatenated unescaped OBU bytes of every unit.
+    pub bytes: Vec<u8>,
+    /// The range of `bytes` each unit occupies, in wire order.
+    pub units: Vec<core::ops::Range<usize>>,
+    /// How many sequences binding §3.2 forbids inside a unit were seen:
+    /// `0x000002`, or `0x000003` followed by a byte greater than `0x03`.
+    /// Such bytes are kept verbatim.
+    pub escape_violations: usize,
+}
+
+/// Unwrap binding framing as `unwrap_av1_binding` does, keeping unit
+/// boundaries and counting forbidden escape sequences. `None` means the payload does not start with the
+/// binding start code.
+pub(crate) fn unwrap_av1_binding_units(payload: &[u8]) -> Option<Av1BindingUnits> {
     // Binding §3.2 start code is 3 bytes; anything shorter can't carry it.
-    if payload.len() < 3 || payload[0..3] != [0x00, 0x00, 0x01] {
-        return Av1BindingUnwrap::MissingFraming;
+    if payload.get(0..3) != Some(&[0x00, 0x00, 0x01][..]) {
+        return None;
     }
     // Walk the body byte-by-byte, tracking the trailing-zero count to
-    // disambiguate three on-wire patterns:
+    // disambiguate the on-wire patterns:
     //   (1) `0x00 0x00 0x01` — a NEW start code (next OBU). Pop the two
     //       trailing zeros we just appended to `out` (they were the
-    //       start-code prefix, not body bytes) and continue into the
-    //       next unit's body.
+    //       start-code prefix, not body bytes), close the current unit and
+    //       continue into the next unit's body.
     //   (2) `0x00 0x00 0x03 X` with `X ≤ 0x03` — emulation-prevention
     //       escape. Drop the 0x03; the 0x00 0x00 are real body bytes;
     //       reset the zero-run so a subsequent 0x00 starts a fresh run.
-    //   (3) anything else — body byte; push verbatim.
+    //   (3) `0x00 0x00 0x02`, or `0x00 0x00 0x03 X` with `X > 0x03` —
+    //       forbidden inside a unit (§3.2). Counted, then kept verbatim.
+    //       `0x00 0x00 0x00` is not counted: a unit whose last body byte is
+    //       `0x00` reads as `0x00 0x00 0x00 0x01` before the next start code.
+    //   (4) anything else — body byte; push verbatim.
     //
     // The mux guarantees (1) and (2) are mutually exclusive on
     // conformant input: a literal body 0x01 after 0x00 0x00 is wired as
@@ -478,10 +560,12 @@ pub(crate) fn unwrap_av1_binding(payload: &[u8]) -> Av1BindingUnwrap {
     // (2) with X=0x03. So an un-escaped 0x00 0x00 0x01 is ALWAYS a start
     // code, never a body sequence.
     let mut out = Vec::with_capacity(payload.len().saturating_sub(3));
+    let mut units = Vec::new();
+    let mut unit_start = 0usize;
+    let mut escape_violations = 0usize;
     let mut zero_run = 0u8;
     let mut i = 3usize;
-    while i < payload.len() {
-        let b = payload[i];
+    while let Some(&b) = payload.get(i) {
         if zero_run >= 2 && b == 0x01 {
             // New start code. The two 0x00 bytes immediately preceding
             // this 0x01 in `out` were the start-code prefix, not body
@@ -490,16 +574,26 @@ pub(crate) fn unwrap_av1_binding(payload: &[u8]) -> Av1BindingUnwrap {
             // 0x00s into `out` since the last reset.)
             let new_len = out.len() - 2;
             out.truncate(new_len);
+            units.push(unit_start..new_len);
+            unit_start = new_len;
             zero_run = 0;
             i += 1;
             continue;
         }
-        if zero_run >= 2 && b == 0x03 && i + 1 < payload.len() && payload[i + 1] <= 0x03 {
-            // Drop the emulation-prevention byte; reset zero_run so the
-            // next 0x00 starts a fresh run.
-            zero_run = 0;
-            i += 1;
-            continue;
+        if zero_run >= 2 && b == 0x03 {
+            match payload.get(i + 1) {
+                Some(&next) if next <= 0x03 => {
+                    // Drop the emulation-prevention byte; reset zero_run so
+                    // the next 0x00 starts a fresh run.
+                    zero_run = 0;
+                    i += 1;
+                    continue;
+                }
+                Some(_) => escape_violations += 1,
+                None => {}
+            }
+        } else if zero_run >= 2 && b == 0x02 {
+            escape_violations += 1;
         }
         out.push(b);
         if b == 0x00 {
@@ -509,7 +603,12 @@ pub(crate) fn unwrap_av1_binding(payload: &[u8]) -> Av1BindingUnwrap {
         }
         i += 1;
     }
-    Av1BindingUnwrap::Conformant(out)
+    units.push(unit_start..out.len());
+    Some(Av1BindingUnits {
+        bytes: out,
+        units,
+        escape_violations,
+    })
 }
 
 /// KLV payload classification result.
@@ -1364,6 +1463,147 @@ mod tests {
                 }
             )),
             "expected ExtensionReservedBits issue, got {issues:?}"
+        );
+    }
+
+    /// AV1 binding §3.1: "An OBU may contain the obu_size field", so inside a
+    /// tsOBU an unsized OBU ends at the next start code (§3.2).
+    #[test]
+    fn binding_unsized_obu_ends_at_its_tsobu_boundary() {
+        use crate::mpegts::common::Av1CarriageMode;
+        // TD unsized, then sized type 6.
+        let wire = [&[0, 0, 1, 0x10][..], &[0, 0, 1, 0x32, 0x02, 0xAA, 0xBB][..]].concat();
+        let (p, issues) = split_video(
+            &SharedBytes::from_vec(wire),
+            VideoCodec::Av1,
+            Av1CarriageMode::Mpeg2TsBinding,
+        );
+        let VideoPayload::Obus(obus) = p else {
+            panic!()
+        };
+        assert_eq!(
+            obus.iter().map(|o| o.obu_type).collect::<Vec<_>>(),
+            vec![2, 6]
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn truncated_obu_size_makes_split_video_strict_fail() {
+        use crate::mpegts::common::Av1CarriageMode;
+        let raw = SharedBytes::from_vec(vec![0x32, 0x0A, 0x01, 0x02]); // obu_size 10, 2 bytes present
+        assert_eq!(
+            split_video_strict(&raw, VideoCodec::Av1, Av1CarriageMode::InteropRawObu).unwrap_err(),
+            NonConformantIssue::Av1ObuHeader {
+                pid: 0,
+                kind: Av1ObuHeaderKind::Truncated
+            }
+        );
+    }
+
+    #[test]
+    fn truncated_extension_byte_and_truncated_leb128_are_reported() {
+        use crate::mpegts::common::Av1CarriageMode;
+        // 0x36: type 6, extension flag and size flag set, extension byte missing.
+        // [0x12, 0x80]: type 2 with a LEB128 obu_size whose continuation byte is missing.
+        for raw in [vec![0x36u8], vec![0x12, 0x80]] {
+            let (_, issues) = split_video(
+                &SharedBytes::from_vec(raw.clone()),
+                VideoCodec::Av1,
+                Av1CarriageMode::InteropRawObu,
+            );
+            assert_eq!(
+                issues,
+                vec![NonConformantIssue::Av1ObuHeader {
+                    pid: 0,
+                    kind: Av1ObuHeaderKind::Truncated
+                }],
+                "{raw:02X?}"
+            );
+        }
+    }
+
+    /// AV1 binding §3.2: 0x000002 and 0x000003xx with xx > 0x03 shall not occur.
+    #[test]
+    fn forbidden_binding_sequences_are_reported() {
+        use crate::mpegts::common::Av1CarriageMode;
+        for body in [
+            &[0x32u8, 0x03, 0x00, 0x00, 0x02][..],
+            &[0x32, 0x04, 0x00, 0x00, 0x03, 0x04],
+        ] {
+            let wire = [&[0u8, 0, 1][..], body].concat();
+            let (_, issues) = split_video(
+                &SharedBytes::from_vec(wire),
+                VideoCodec::Av1,
+                Av1CarriageMode::Mpeg2TsBinding,
+            );
+            assert!(
+                issues.contains(&NonConformantIssue::Av1ObuHeader {
+                    pid: 0,
+                    kind: Av1ObuHeaderKind::InvalidEmulationPrevention
+                }),
+                "{body:02X?}: {issues:?}"
+            );
+        }
+    }
+
+    /// `00 00 01` is the next start code and `00 00 00` is not an escape
+    /// violation: a unit's trailing `00` before the next start code reads as
+    /// `00 00 00 01` on the wire.
+    #[test]
+    fn start_code_and_zero_triple_are_not_escape_violations() {
+        use crate::mpegts::common::Av1CarriageMode;
+        // Sized type 6 with body `00` (a trailing zero), then the next tsOBU.
+        let wire = [
+            &[0u8, 0, 1, 0x32, 0x01, 0x00][..],
+            &[0, 0, 1, 0x32, 0x00][..],
+        ]
+        .concat();
+        let (p, issues) = split_video(
+            &SharedBytes::from_vec(wire),
+            VideoCodec::Av1,
+            Av1CarriageMode::Mpeg2TsBinding,
+        );
+        let VideoPayload::Obus(obus) = p else {
+            panic!()
+        };
+        assert_eq!(obus.len(), 2);
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    /// Binding §3.1: Tile List OBUs shall not be used, sized or not.
+    #[test]
+    fn tile_list_on_an_unsized_obu_is_reported() {
+        use crate::mpegts::common::Av1CarriageMode;
+        // 0x40: type 8 (Tile List), no extension, no size field.
+        let (_, issues) = split_video(
+            &SharedBytes::from_vec(vec![0x40]),
+            VideoCodec::Av1,
+            Av1CarriageMode::InteropRawObu,
+        );
+        assert_eq!(
+            issues,
+            vec![
+                NonConformantIssue::Av1TileListNotAllowed { pid: 0 },
+                NonConformantIssue::Av1ObuMissingSizeField {
+                    pid: 0,
+                    obu_type: 8
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn one_byte_h265_nal_is_reported_as_truncated() {
+        use crate::mpegts::common::Av1CarriageMode;
+        let raw = SharedBytes::from_vec(vec![0, 0, 1, 0x40, 0, 0, 1, 0x26, 0x01, 0xAF]);
+        let (_, issues) = split_video(&raw, VideoCodec::H265, Av1CarriageMode::default());
+        assert_eq!(
+            issues,
+            vec![NonConformantIssue::NalHeader {
+                codec: VideoCodec::H265,
+                kind: NalHeaderKind::Truncated
+            }]
         );
     }
 }
