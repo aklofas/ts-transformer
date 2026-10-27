@@ -4634,7 +4634,9 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::Adaptatio
 #[non_exhaustive] pub enum tst_core::mpegts::demux::event::Av1ObuHeaderKind
 pub tst_core::mpegts::demux::event::Av1ObuHeaderKind::ExtensionReservedBits
 pub tst_core::mpegts::demux::event::Av1ObuHeaderKind::ForbiddenBit
+pub tst_core::mpegts::demux::event::Av1ObuHeaderKind::InvalidEmulationPrevention
 pub tst_core::mpegts::demux::event::Av1ObuHeaderKind::ReservedBit
+pub tst_core::mpegts::demux::event::Av1ObuHeaderKind::Truncated
 impl core::clone::Clone for tst_core::mpegts::demux::event::Av1ObuHeaderKind
 pub fn tst_core::mpegts::demux::event::Av1ObuHeaderKind::clone(&self) -> tst_core::mpegts::demux::event::Av1ObuHeaderKind
 impl core::cmp::Eq for tst_core::mpegts::demux::event::Av1ObuHeaderKind
@@ -4785,6 +4787,7 @@ pub tst_core::mpegts::demux::event::NalHeaderKind::ForbiddenZeroBit
 pub tst_core::mpegts::demux::event::NalHeaderKind::LayerIdOutOfRange
 pub tst_core::mpegts::demux::event::NalHeaderKind::LayerIdOutOfRange::id: u8
 pub tst_core::mpegts::demux::event::NalHeaderKind::ReservedBit
+pub tst_core::mpegts::demux::event::NalHeaderKind::Truncated
 pub tst_core::mpegts::demux::event::NalHeaderKind::ZeroTemporalIdPlus1
 impl core::clone::Clone for tst_core::mpegts::demux::event::NalHeaderKind
 pub fn tst_core::mpegts::demux::event::NalHeaderKind::clone(&self) -> tst_core::mpegts::demux::event::NalHeaderKind
@@ -4941,6 +4944,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::PcrMal
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::PcrMalformedKind
 #[non_exhaustive] pub enum tst_core::mpegts::demux::event::PesHeaderMalformedKind
 pub tst_core::mpegts::demux::event::PesHeaderMalformedKind::ForbiddenPtsDtsFlags
+pub tst_core::mpegts::demux::event::PesHeaderMalformedKind::HeaderDataLengthTooShort
 pub tst_core::mpegts::demux::event::PesHeaderMalformedKind::InvalidDtsPrefix
 pub tst_core::mpegts::demux::event::PesHeaderMalformedKind::InvalidMarkerBits
 pub tst_core::mpegts::demux::event::PesHeaderMalformedKind::InvalidPtsDtsMarkerBits
@@ -4962,9 +4966,12 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::PesHeaderMalf
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::PesHeaderMalformedKind
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::PesHeaderMalformedKind
 #[non_exhaustive] pub enum tst_core::mpegts::demux::event::PsiSyntaxKind
+pub tst_core::mpegts::demux::event::PsiSyntaxKind::Malformed
 pub tst_core::mpegts::demux::event::PsiSyntaxKind::ReservedBits
 pub tst_core::mpegts::demux::event::PsiSyntaxKind::SectionNumberNonZero
 pub tst_core::mpegts::demux::event::PsiSyntaxKind::SectionNumberNonZero::observed: u8
+pub tst_core::mpegts::demux::event::PsiSyntaxKind::SectionNumberOutOfRange
+pub tst_core::mpegts::demux::event::PsiSyntaxKind::SectionNumberOutOfRange::observed: u8
 pub tst_core::mpegts::demux::event::PsiSyntaxKind::SectionSyntaxIndicatorUnset
 impl core::clone::Clone for tst_core::mpegts::demux::event::PsiSyntaxKind
 pub fn tst_core::mpegts::demux::event::PsiSyntaxKind::clone(&self) -> tst_core::mpegts::demux::event::PsiSyntaxKind
@@ -5406,9 +5413,12 @@ pub struct tst_core::mpegts::demux::low_level::Reassembler
 impl tst_core::mpegts::demux::low_level::Reassembler
 pub fn tst_core::mpegts::demux::low_level::Reassembler::buffered_bytes(&self) -> usize
 pub fn tst_core::mpegts::demux::low_level::Reassembler::drain_partial(&mut self) -> alloc::vec::Vec<tst_core::mpegts::demux::low_level::PesPayload>
+pub fn tst_core::mpegts::demux::low_level::Reassembler::drain_partial_outcomes(&mut self) -> alloc::vec::Vec<tst_core::mpegts::demux::low_level::ReassemblyOutcome>
+pub fn tst_core::mpegts::demux::low_level::Reassembler::mark_damaged(&mut self, u16)
 pub fn tst_core::mpegts::demux::low_level::Reassembler::new(usize, usize) -> Self
 pub fn tst_core::mpegts::demux::low_level::Reassembler::push(&mut self, u16, &[u8], bool, bool, bool) -> alloc::vec::Vec<tst_core::mpegts::demux::low_level::ReassemblyOutcome>
 pub fn tst_core::mpegts::demux::low_level::Reassembler::remove_pid(&mut self, u16)
+pub fn tst_core::mpegts::demux::low_level::Reassembler::take_total_overflow_pids(&mut self) -> alloc::vec::Vec<u16>
 impl core::fmt::Debug for tst_core::mpegts::demux::low_level::Reassembler
 pub fn tst_core::mpegts::demux::low_level::Reassembler::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for tst_core::mpegts::demux::low_level::Reassembler
@@ -5425,6 +5435,7 @@ pub fn tst_core::mpegts::demux::low_level::has_klva_registration(&[tst_core::mpe
 pub fn tst_core::mpegts::demux::low_level::iter_au_cells(&[u8]) -> impl core::iter::traits::iterator::Iterator<Item = core::result::Result<(tst_core::mpegts::au_cell::AuCellHeader, &[u8]), tst_core::error::KlvDecodeError>> + '_
 pub fn tst_core::mpegts::demux::low_level::parse_pat(&[u8]) -> core::result::Result<tst_core::mpegts::demux::low_level::Pat, tst_core::mpegts::demux::low_level::PsiParseError>
 pub fn tst_core::mpegts::demux::low_level::parse_pmt(&[u8]) -> core::result::Result<tst_core::mpegts::demux::low_level::Pmt, tst_core::mpegts::demux::low_level::PsiParseError>
+pub fn tst_core::mpegts::demux::low_level::psi_section_syntax_issues(&[u8], bool) -> alloc::vec::Vec<tst_core::mpegts::demux::event::PsiSyntaxKind>
 pub fn tst_core::mpegts::demux::low_level::walk_descriptors(&[u8]) -> core::result::Result<alloc::vec::Vec<tst_core::mpegts::descriptors::parse::RawDescriptor>, tst_core::mpegts::demux::low_level::PsiParseError>
 pub mod tst_core::mpegts::demux::strict
 pub enum tst_core::mpegts::demux::strict::StrictMode
@@ -5496,7 +5507,9 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::AudioCodec
 #[non_exhaustive] pub enum tst_core::mpegts::demux::Av1ObuHeaderKind
 pub tst_core::mpegts::demux::Av1ObuHeaderKind::ExtensionReservedBits
 pub tst_core::mpegts::demux::Av1ObuHeaderKind::ForbiddenBit
+pub tst_core::mpegts::demux::Av1ObuHeaderKind::InvalidEmulationPrevention
 pub tst_core::mpegts::demux::Av1ObuHeaderKind::ReservedBit
+pub tst_core::mpegts::demux::Av1ObuHeaderKind::Truncated
 impl core::clone::Clone for tst_core::mpegts::demux::event::Av1ObuHeaderKind
 pub fn tst_core::mpegts::demux::event::Av1ObuHeaderKind::clone(&self) -> tst_core::mpegts::demux::event::Av1ObuHeaderKind
 impl core::cmp::Eq for tst_core::mpegts::demux::event::Av1ObuHeaderKind
@@ -5624,6 +5637,7 @@ pub tst_core::mpegts::demux::NalHeaderKind::ForbiddenZeroBit
 pub tst_core::mpegts::demux::NalHeaderKind::LayerIdOutOfRange
 pub tst_core::mpegts::demux::NalHeaderKind::LayerIdOutOfRange::id: u8
 pub tst_core::mpegts::demux::NalHeaderKind::ReservedBit
+pub tst_core::mpegts::demux::NalHeaderKind::Truncated
 pub tst_core::mpegts::demux::NalHeaderKind::ZeroTemporalIdPlus1
 impl core::clone::Clone for tst_core::mpegts::demux::event::NalHeaderKind
 pub fn tst_core::mpegts::demux::event::NalHeaderKind::clone(&self) -> tst_core::mpegts::demux::event::NalHeaderKind
@@ -5810,6 +5824,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::PcrMal
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::PcrMalformedKind
 #[non_exhaustive] pub enum tst_core::mpegts::demux::PesHeaderMalformedKind
 pub tst_core::mpegts::demux::PesHeaderMalformedKind::ForbiddenPtsDtsFlags
+pub tst_core::mpegts::demux::PesHeaderMalformedKind::HeaderDataLengthTooShort
 pub tst_core::mpegts::demux::PesHeaderMalformedKind::InvalidDtsPrefix
 pub tst_core::mpegts::demux::PesHeaderMalformedKind::InvalidMarkerBits
 pub tst_core::mpegts::demux::PesHeaderMalformedKind::InvalidPtsDtsMarkerBits
@@ -5831,9 +5846,12 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::PesHeaderMalf
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::PesHeaderMalformedKind
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::PesHeaderMalformedKind
 #[non_exhaustive] pub enum tst_core::mpegts::demux::PsiSyntaxKind
+pub tst_core::mpegts::demux::PsiSyntaxKind::Malformed
 pub tst_core::mpegts::demux::PsiSyntaxKind::ReservedBits
 pub tst_core::mpegts::demux::PsiSyntaxKind::SectionNumberNonZero
 pub tst_core::mpegts::demux::PsiSyntaxKind::SectionNumberNonZero::observed: u8
+pub tst_core::mpegts::demux::PsiSyntaxKind::SectionNumberOutOfRange
+pub tst_core::mpegts::demux::PsiSyntaxKind::SectionNumberOutOfRange::observed: u8
 pub tst_core::mpegts::demux::PsiSyntaxKind::SectionSyntaxIndicatorUnset
 impl core::clone::Clone for tst_core::mpegts::demux::event::PsiSyntaxKind
 pub fn tst_core::mpegts::demux::event::PsiSyntaxKind::clone(&self) -> tst_core::mpegts::demux::event::PsiSyntaxKind
