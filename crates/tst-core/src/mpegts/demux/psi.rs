@@ -60,12 +60,11 @@ pub enum PsiParseError {
         min_required: u16,
     },
     /// Per ISO/IEC 13818-1 §2.4.4.5, sections with `last_section_number > 0`
-    /// belong to a multi-section table that requires reassembly. Current
-    /// demuxer scope handles single-section tables only; multi-section
-    /// tables are rejected with this error and the demuxer emits a
-    /// [`crate::mpegts::demux::event::NonConformantIssue::PsiMultiSectionUnsupported`]
-    /// event. Full §2.4.4.5 reassembly is deferred until a real consumer
-    /// needs it.
+    /// belong to a multi-section table that requires reassembly. The
+    /// single-section parsers (`parse_pat`, `parse_pmt`) reject such a
+    /// section with this error. The demuxer reassembles a multi-section PAT
+    /// itself; a multi-section PMT is dropped and reported as
+    /// [`crate::mpegts::demux::event::NonConformantIssue::PsiMultiSectionUnsupported`].
     #[error(
         "multi-section PSI table not supported (table_id=0x{table_id:02X}, last_section_number={last_section_number})"
     )]

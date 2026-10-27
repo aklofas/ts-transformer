@@ -40,12 +40,10 @@ pub(super) const PCR_ANOMALY_THRESHOLD: i64 = 27_000_000;
 /// rejects false sync on a stray 0x47 inside PES payload, descriptors,
 /// or other in-band data.
 ///
-/// Values match ffmpeg `libavformat/mpegts.c::mpegts_resync` (5 of 7),
-/// which is the long-standing tested value for the same problem. ffmpeg's
-/// `MAX_RESYNC_SIZE` is exposed via the `resync_size` AVOption; we match
-/// the upstream default. Per H.222.0 §2.4.3.2 a real 188-byte aligned
-/// stream MUST satisfy this; a 0x47 byte inside a PES payload almost
-/// never aligns 5-of-7 times at 188-byte stride.
+/// The 188-byte stride is fixed (no other packet size is probed). Per
+/// H.222.0 §2.4.3.2 a real 188-byte aligned stream MUST satisfy this;
+/// a 0x47 byte inside a PES payload almost never aligns 5-of-7 times at
+/// 188-byte stride.
 pub(super) const SYNC_REACQ_N: usize = 5;
 pub(super) const SYNC_REACQ_M: usize = 7;
 

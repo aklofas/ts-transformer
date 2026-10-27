@@ -21,23 +21,20 @@ use crate::url::RtspVersion;
 /// from declaring a multi-GB body and driving the process to OOM.
 pub(crate) const MAX_RTSP_BODY_BYTES: usize = 1024 * 1024; // 1 MiB
 
-/// Maximum bytes an in-progress RTSP message (status/request line + headers +
-/// body) may accumulate in a pre-parse read buffer before it is rejected.
+/// Maximum bytes an RTSP message may accumulate in a pre-parse read buffer
+/// before its header terminator (`CRLFCRLF`) arrives; past it the message is
+/// rejected.
 ///
-/// This is the single coherent cap for *accumulation* shared by every code
-/// path that buffers raw RTSP text off a socket — the server session loop, the
-/// server interleaved pump, the client `send_and_read` non-pump loop, and the
-/// client interleaved pump. It guards the pre-parse path against a peer that
-/// declares a huge `Content-Length` (or never sends a `CRLFCRLF` terminator)
-/// and dribbles bytes, forcing the buffer to grow unbounded.
+/// This is the single coherent cap shared by every code path that buffers raw
+/// RTSP text off a socket: the server session loop, the server interleaved
+/// pump, the client `send_and_read` non-pump loop, and the client interleaved
+/// pump. It guards against a peer that never sends the terminator and dribbles
+/// bytes, forcing the buffer to grow unbounded. It does not bound the body:
+/// once the headers are complete, the declared body is capped separately at
+/// [`MAX_RTSP_BODY_BYTES`] (1 MiB).
 ///
-/// 64 KiB is generous for any legitimate RTSP message (typical OPTIONS /
-/// DESCRIBE / SETUP responses are well under 2 KiB; even large SDP bodies are
-/// rarely more than a few KiB). Note this accumulation cap is intentionally
-/// smaller than the parser's [`MAX_RTSP_BODY_BYTES`] (1 MiB) body cap: the
-/// body cap bounds a single already-complete message's declared body, while
-/// this caps the live read buffer so a slow-dribble peer can't grow it
-/// without bound.
+/// 64 KiB is generous for any legitimate set of RTSP headers (typical
+/// OPTIONS / DESCRIBE / SETUP responses are well under 2 KiB in total).
 pub(crate) const MAX_RTSP_MESSAGE_BYTES: usize = 64 * 1024; // 64 KiB
 
 /// Strictly interpret a `Content-Length` header value (already trimmed by the

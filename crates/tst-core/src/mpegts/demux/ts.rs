@@ -54,7 +54,7 @@ pub struct TsPacket<'a> {
     /// `transport_error_indicator` per ISO/IEC 13818-1 §2.4.3.2 (bit 0x80 of
     /// byte 1). Set when an upstream link-layer (e.g. ATSC FEC, satellite
     /// demod, CMTS) flagged the packet as known-corrupt. The demuxer drops
-    /// these packets per ffmpeg `mpegts.c:3091-3097`.
+    /// these packets rather than feed them to reassembly.
     pub transport_error_indicator: bool,
     /// `transport_scrambling_control` per ISO/IEC 13818-1 §2.4.3.2 (bits
     /// 7-6 of byte 3). `0b00` = not scrambled; `0b01`/`0b10`/`0b11` =

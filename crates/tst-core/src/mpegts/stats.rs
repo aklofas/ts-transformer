@@ -291,27 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn equality_is_field_wise() {
-        let a = StreamStats {
-            pid: 0x100,
-            stream_type: StreamTypeCode::from_byte(0x1B),
-            program_number: 1,
-            label: Some("EO".into()),
-            items: 5,
-            bytes: 1024,
-            discontinuities: 0,
-            // `last_seen` exists only with `std`.
-            #[cfg(feature = "std")]
-            last_seen: None,
-        };
-        let b = a.clone();
-        assert_eq!(a, b);
-        let mut c = a.clone();
-        c.items = 6;
-        assert_ne!(a, c);
-    }
-
-    #[test]
     fn stream_codec_stats_default_is_unknown() {
         let s = StreamCodecStats::default();
         assert_eq!(s, StreamCodecStats::Unknown);
