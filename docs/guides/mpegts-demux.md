@@ -235,9 +235,16 @@ pending event queue — so nothing from a dead connection splices into the
 next one. `ManagedDemuxReceiver` calls it on reconnect, which forces a
 fresh `0x47` sync hunt and a fresh PAT/PMT on the new transport. The
 `DemuxerConfig` and the stats counters are preserved (reset stats with
-`reset_stats`). Most direct callers should not need this — call it only
+`reset_stats`, which clears counters only: the PAT and PMT version
+caches, the declared streams and in-flight reassembly are untouched, so
+a PMT repeat after it is still a repeat). Most direct callers should not need this — call it only
 when the byte stream is known to have a hard discontinuity that can't be
 diagnosed from PCR or CC alone.
+
+`DemuxerStats::per_stream` reports each PID's PMT `stream_type` byte and
+keeps its lifetime counters after the PID leaves the PMT, until
+`reset_stats`. A PID that a later PMT re-declares under another codec
+family restarts its codec counters.
 
 ```rust,no_run
 use tst_core::mpegts::demux::Demuxer;
@@ -272,9 +279,15 @@ on most live data.
 | Mode | Rejects | Use case |
 | --- | --- | --- |
 | `Off` (default) | nothing | Triage, real-world capture analysis, live receivers. |
-| `TimingOnly` | `PcrAnomaly`, `PtsAnomaly`, `MissingRequiredPts`, `PcrMalformed`, `PsiChecksumMismatch`, `PusiMidPes` (vestigial — not currently emitted) | Receivers paranoid about clock integrity but tolerant of encoder quirks. |
+| `TimingOnly` | `PcrAnomaly`, `PtsAnomaly`, `MissingRequiredPts` (a PTS-less run longer than 0.7 s on audio/video; a missing PTS on any single DVB-subtitle or synchronous-KLV PES), `PcrMalformed`, `PsiChecksumMismatch`, `PusiMidPes` (vestigial — not currently emitted) | Receivers paranoid about clock integrity but tolerant of encoder quirks. |
 | `DescriptorsOnly` | `StreamTypeMismatch{Sync,Async}OnPid`, `MissingMetadataDescriptor`, `SubtitleMissingDescriptor`, `SubtitleDescriptorAmbiguous` | Spec-compliance gating: did the encoder declare its streams correctly? |
 | `Full` | every variant including future-added ones, except a multi-section PAT (`PsiMultiSectionUnsupported` with `table_id 0x00`), which stays a surface-only event | CI-grade compliance test against a known-good encoder. |
+
+A PES the demuxer found damaged (see `MalformedPes` under Robustness
+behaviours) is dropped in every strict mode rather than delivered, but
+it still updates the PTS baseline and spacing run: damage costs the
+delivery, not the timing. A strict verdict covers only the packet that
+raised it.
 
 In strict mode, the rejected `NonConformant` event is still pushed onto
 the event queue *before* the error returns from `feed`. This means a
@@ -349,8 +362,13 @@ declare `stream_type=0x15` on the KLV PID without the
 `metadata_descriptor` that links it to the video PID. The demuxer
 infers the link when there is exactly one video PID in the PMT
 (surfaces in `klv_links` as `LinkSource::Inferred`); if there are
-zero or multiple video PIDs it cannot infer and emits
-`NonConformantIssue::MissingMetadataDescriptor` instead.
+zero or multiple video PIDs it cannot infer. The issue
+`NonConformantIssue::MissingMetadataDescriptor` is raised only when the
+descriptor is absent and no link can be inferred. A link is read only
+from the descriptor's private data, never from bytes that merely look
+like a PID. A `0x15` stream whose `metadata_descriptor` names a
+non-KLV `metadata_format` is `Unknown(0x15)`, and `StreamSpec::Data`
+accepts it.
 
 **Wrong `stream_type` on the KLV PID.** A PID declared `0x06` (private
 data) that actually carries an H.222.0 § 2.12.4.2 `Metadata_AU_cell`,
@@ -366,17 +384,28 @@ per (PID, PMT version) — re-arms on PMT version bump.
 **Continuity-counter jumps (CC discontinuities).** When the per-PID CC
 skips a value, the demuxer emits `DiscontinuityKind::ContinuityJump
 { expected, observed }` and continues. PES reassembly state on that PID
-is preserved — the CC jump is a signal, not a teardown.
+is preserved — the CC jump is a signal, not a teardown. On a PSI
+PID a CC gap instead resets the section assembler, so a splice cannot
+join halves of two sections.
 
-**PUSI mid-PES.** A new PUSI-set TS packet arrives before the previous
-PES's `PES_packet_length` has been satisfied (or before a length-zero
-PES has had a chance to terminate). The demuxer silently discards the
-partial PES and starts fresh on the new PUSI — this is the normal
-start-of-PES path, not a separate diagnostic event, so no
-`NonConformantIssue` is emitted. This is the recovery shape for live
-captures where a few packets dropped upstream split a PES across a gap.
+**PUSI mid-PES and damaged PES.** A new PUSI-set TS packet arrives
+before the previous PES's `PES_packet_length` has been satisfied (or a
+CC jump or dropped packets left it short or gapped). The demuxer starts
+fresh on the new PUSI, but a PES it knows is damaged is no longer
+discarded silently: it emits `NonConformantIssue::MalformedPes { pid,
+reason }` in wire order, before whatever sample the next PES yields, so
+a consumer sees the loss at the point it happened. Lenient mode drops
+the damaged partial and continues; strict modes drop it and reject. An
+unbounded (length-zero) video PES that simply ends at the next PUSI is
+the normal path and is not damaged.
 (`NonConformantIssue::PusiMidPes` exists in the enum but is vestigial —
 kept for non-exhaustive-enum binary-compatibility parity only.)
+
+**Programs sharing a PMT PID.** Several programs may declare the same
+PMT PID in the PAT (H.222.0 §2.4.4.8). The demuxer routes the shared
+PID's sections to each program by `program_number`, so one program's
+version change does not hide another's. A PAT is treated as new when
+its transport stream id, version or CRC differs.
 
 **Oversize PES.** A PES grows past the per-PID or total cap. The demuxer
 drops the partial bytes, emits `DiscontinuityKind::PesOversize { pid }` (or
@@ -413,7 +442,11 @@ Strict (`TimingOnly` or `Full`) converts to `StrictRejection`.
 relative to the previous. The demuxer emits
 `NonConformantIssue::PcrAnomaly { delta }` (delta in 27 MHz ticks)
 and continues. Reported only on a PMT-declared `PCR_PID`; a PCR on an
-undeclared PID is ignored rather than tracked. A per-PID backward PTS
+undeclared PID is ignored rather than tracked. A discontinuity the
+stream signals (the adaptation-field `discontinuity_indicator`) is
+legal: it reseeds the PCR check and resets the PTS baselines instead of
+raising an anomaly. A PES still in flight when it arrives is judged on
+the old clock, and the PTS baseline clears when that PES completes. A per-PID backward PTS
 step of more than one second
 (90 000 ticks, computed 33-bit-wrap-aware) is a separate variant,
 `NonConformantIssue::PtsAnomaly { delta }` (delta in 90 kHz ticks, negative).
