@@ -323,6 +323,14 @@ path = "crates/tst-integration/tests/fixtures/scenarios/cancelled-recv-kind/inpu
 sha256 = "99c6629972e06f534a75af35581a2474401a3e060a281ae70d6c2418cb755780"
 
 [[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/damaged-pes-lenient/golden.json"
+sha256 = "a1b5f8a1a5c96ee4e638f51c96b1890411c20d99161adedbc0d679dbaa501ed4"
+
+[[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/damaged-pes-lenient/input.ts"
+sha256 = "d3615478ad175be352c14013c80bb5e9035f49c7d95e4f1a2c4373650f5a85f1"
+
+[[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/drop-idempotence/golden.json"
 sha256 = "cd1f6ec06b46d6ef35ef5c68c95c886726af4d84cc39b2d3df42fb5d3f593ef8"
 
@@ -380,7 +388,7 @@ sha256 = "9db980ce60d106fa216aa8dccf6db037e656453d7b5619e4d582a5edf1374b02"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/malformed-pes-lenient/golden.json"
-sha256 = "954a4345df8c56ec3401f3ece39955fb6616d89e48b7923a2308b7006bea2664"
+sha256 = "94179c9e1353d0234d610a0ac6fa0e113aa6ae88f4adc38198891bd8f34991f8"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/malformed-pes-lenient/input.ts"
@@ -395,8 +403,16 @@ path = "crates/tst-integration/tests/fixtures/scenarios/malformed-psi-strict/inp
 sha256 = "637525b5bf575a8a337f838ccd9495d589198ad6c2dfd0d6c563ff7b60551341"
 
 [[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/pts-spacing-exceeded/golden.json"
+sha256 = "b5e3698c28427e0ab7628eb2c0c90148005a2caf0591bce480b6b2f51dece08c"
+
+[[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/pts-spacing-exceeded/input.ts"
+sha256 = "7a3d91c2c862ed1c4fd1c3e695b7292534a845d31b7f1a86571e5d4db23003ce"
+
+[[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/scenarios.toml"
-sha256 = "830044a23a1f98acbf77dffaecd769d5eaf7134452b7cb7db15d4ad2d546e2e5"
+sha256 = "1c981a899841f38245d356d1f16da1ceb4aedeaa0bee81ddb35c10413fd81d10"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/strict-rejection/golden.json"

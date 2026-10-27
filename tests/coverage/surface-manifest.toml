@@ -1381,6 +1381,42 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
+item = "tst_core::mpegts::demux::low_level::psi_section_syntax_issues"
+owning_tests = ["crates/tst-core/src/mpegts/demux/psi.rs"]
+bindings = ["c:deferred(low_level extension point; no binding exposes it)", "python:deferred(low_level extension point; no binding exposes it)", "java:deferred(low_level extension point; no binding exposes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::demux::low_level::Reassembler::mark_damaged"
+owning_tests = ["crates/tst-core/src/mpegts/demux/pes.rs"]
+bindings = ["c:deferred(low_level extension point; no binding exposes it)", "python:deferred(low_level extension point; no binding exposes it)", "java:deferred(low_level extension point; no binding exposes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::demux::low_level::Reassembler::drain_partial_outcomes"
+owning_tests = ["crates/tst-core/src/mpegts/demux/pes.rs"]
+bindings = ["c:deferred(low_level extension point; no binding exposes it)", "python:deferred(low_level extension point; no binding exposes it)", "java:deferred(low_level extension point; no binding exposes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::demux::low_level::Reassembler::take_total_overflow_pids"
+owning_tests = ["crates/tst-core/src/mpegts/demux/pes.rs"]
+bindings = ["c:deferred(low_level extension point; no binding exposes it)", "python:deferred(low_level extension point; no binding exposes it)", "java:deferred(low_level extension point; no binding exposes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
 item = "tst_core::mpegts::descriptors::descriptor_with_tag_unchecked"
 owning_tests = ["crates/tst-core/src/mpegts/descriptors/mod.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]

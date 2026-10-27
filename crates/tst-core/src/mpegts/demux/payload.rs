@@ -528,7 +528,7 @@ pub(crate) struct Av1BindingUnits {
     /// How many sequences binding §3.2 forbids inside a unit were seen:
     /// `0x000002`, or `0x000003` followed by a byte greater than `0x03`.
     /// Such bytes are kept verbatim.
-    pub escape_violations: usize,
+    pub(crate) escape_violations: usize,
 }
 
 /// Unwrap binding framing as `unwrap_av1_binding` does, keeping unit
