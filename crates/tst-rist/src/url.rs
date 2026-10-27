@@ -8,8 +8,8 @@
 //! - Query params: `profile`, `buffer`, `aes-type`, `secret`, `cname`,
 //!   `recovery_maxbitrate` (alias `bandwidth`), `session_timeout`,
 //!   `compression`, `pkt_size`. `bandwidth` and `recovery_maxbitrate` set the same
-//!   librist field (`recovery_maxbitrate`, the retransmit-bandwidth cap in
-//!   kbps); giving both with different values is a parse error.
+//!   librist field (`recovery_maxbitrate`, the cap on payload plus
+//!   retransmissions in kbps); giving both with different values is a parse error.
 
 use std::net::IpAddr;
 use std::time::Duration;
@@ -220,7 +220,7 @@ impl RistUrl {
         apply_query(URL_KEYS, &mut url, &parsed.query, UnknownKeys::Ignore)?;
 
         // `bandwidth` is an alias of `recovery_maxbitrate` (both set librist's
-        // `recovery_maxbitrate`, the retransmit-bandwidth cap). Two different
+        // `recovery_maxbitrate`, the cap on payload plus retransmissions). Two different
         // values is a contradiction, not a precedence question.
         if let (Some(bw), Some(rm)) = (
             url.config.bandwidth_kbps,

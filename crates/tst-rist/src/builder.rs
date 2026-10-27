@@ -66,7 +66,8 @@ impl RistTransportBuilder {
         self
     }
 
-    /// Retransmit bandwidth cap (kbps, librist `recovery_maxbitrate`).
+    /// Ceiling on payload plus retransmissions (kbps, librist
+    /// `recovery_maxbitrate`).
     pub fn recovery_maxbitrate_kbps(&mut self, kbps: u32) -> &mut Self {
         self.config.recovery_maxbitrate_kbps = Some(kbps);
         self

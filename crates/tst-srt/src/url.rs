@@ -476,7 +476,10 @@ fn set_input_bandwidth(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Appl
     check_decimal("inputbw", value)?;
     let n: i64 = value.parse().map_err(|e| SrtUrlError::InvalidValue {
         key: "inputbw".to_string(),
-        detail: format!("expected non-negative decimal integer in range, got '{value}': {e}"),
+        detail: format!(
+            "expected non-negative decimal integer at most {}, got '{value}': {e}",
+            i64::MAX
+        ),
     })?;
     c.input_bandwidth = Some(n as u64);
     Ok(())
