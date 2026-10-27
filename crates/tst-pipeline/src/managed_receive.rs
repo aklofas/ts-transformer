@@ -318,6 +318,10 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
 
 impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        // An empty read is a no-op in every state: no gate, no latch.
+        if buf.is_empty() {
+            return Ok(0);
+        }
         // Caller-initiated paths (close() or cancel_handle().cancel()) return
         // ExplicitClose. The receive-side shell's kind_of_transport maps this
         // to ShellErrorKind::Closed (→ TST_E_CLOSED -7), distinguishing from
