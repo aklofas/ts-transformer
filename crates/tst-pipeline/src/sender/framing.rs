@@ -117,7 +117,11 @@ impl TsFraming {
     /// # Errors
     /// [`TsFramingError::NoSyncAfterLimit`] if scanning for sync consumes
     /// more than `max_unsynced_bytes` (see [`Self::new`]) without
-    /// acquiring it.
+    /// acquiring it. The error is raised only by a call that has framed no
+    /// bundle: a call that framed one before the limit was crossed stops
+    /// scanning there and returns its bundles, and the next call raises
+    /// the error. A bundle framed before the loss is therefore always
+    /// returned, however the input is chunked.
     pub fn push(&mut self, bytes: &[u8]) -> Result<(Vec<Vec<u8>>, &SenderStats), TsFramingError> {
         self.stats.bytes_pushed += bytes.len() as u64;
         self.buffer.extend(bytes.iter().copied());
@@ -125,7 +129,10 @@ impl TsFraming {
         loop {
             match self.state {
                 State::Unsynced => {
-                    if !self.try_acquire()? {
+                    // Raising the watchdog error here would discard the
+                    // bundles already framed in this call, and the caller
+                    // is told not to resend consumed input.
+                    if !self.try_acquire(!bundles.is_empty())? {
                         break;
                     }
                 }
@@ -185,12 +192,18 @@ impl TsFraming {
     /// In UNSYNCED: try to acquire sync via 3-byte verify. Returns
     /// `Ok(true)` if state changed (so the caller's outer loop
     /// re-evaluates), `Ok(false)` if we don't yet have enough bytes to
-    /// verify, `Err` if `max_unsynced_bytes` was exceeded first.
-    fn try_acquire(&mut self) -> Result<bool, TsFramingError> {
+    /// verify, `Err` if `max_unsynced_bytes` was exceeded first. With
+    /// `defer_limit`, exceeding the limit stops the scan with `Ok(false)`
+    /// instead, leaving the counter over the limit so the next call
+    /// raises the error before scanning.
+    fn try_acquire(&mut self, defer_limit: bool) -> Result<bool, TsFramingError> {
         // Scan from current buffer head for a candidate position. Need at
         // least 2*188+1 = 377 bytes after the candidate to verify P, P+188, P+376.
         const NEEDED: usize = 2 * TS_PACKET_SIZE + 1;
         const ACQUIRE: TsSync = TsSync::strict(3);
+        if self.unsynced_limit_hit(defer_limit)? {
+            return Ok(false);
+        }
         while !self.buffer.is_empty() {
             // Find next 0x47 in buffer.
             let candidate_idx = match self.buffer.iter().position(|&b| b == SYNC_BYTE) {
@@ -201,7 +214,7 @@ impl TsFraming {
                     self.buffer.clear();
                     self.unsynced_consumed += n;
                     self.stats.bytes_skipped_for_sync += n as u64;
-                    self.check_unsynced_limit()?;
+                    self.unsynced_limit_hit(defer_limit)?;
                     return Ok(false);
                 }
             };
@@ -215,7 +228,7 @@ impl TsFraming {
             }
             // Now buffer[0] == 0x47. Need 377 bytes to verify.
             if self.buffer.len() < NEEDED {
-                self.check_unsynced_limit()?;
+                self.unsynced_limit_hit(defer_limit)?;
                 return Ok(false);
             }
             if ACQUIRE.verify(self.buffer.make_contiguous(), 0) == Some(true) {
@@ -227,7 +240,9 @@ impl TsFraming {
             self.buffer.pop_front();
             self.unsynced_consumed += 1;
             self.stats.bytes_skipped_for_sync += 1;
-            self.check_unsynced_limit()?;
+            if self.unsynced_limit_hit(defer_limit)? {
+                return Ok(false);
+            }
         }
         Ok(false)
     }
@@ -261,15 +276,20 @@ impl TsFraming {
 
     /// Errors once `unsynced_consumed` exceeds `max_unsynced_bytes`, then
     /// resets the counter so the watchdog can fire again after another
-    /// full `max_unsynced_bytes` of unrecovered garbage.
-    fn check_unsynced_limit(&mut self) -> Result<(), TsFramingError> {
-        if self.unsynced_consumed > self.max_unsynced_bytes {
-            self.unsynced_consumed = 0;
-            return Err(TsFramingError::NoSyncAfterLimit {
-                max: self.max_unsynced_bytes as u64,
-            });
+    /// full `max_unsynced_bytes` of unrecovered garbage. With `defer`, an
+    /// exceeded limit returns `Ok(true)` (stop scanning) and keeps the
+    /// counter for the next call.
+    fn unsynced_limit_hit(&mut self, defer: bool) -> Result<bool, TsFramingError> {
+        if self.unsynced_consumed <= self.max_unsynced_bytes {
+            return Ok(false);
         }
-        Ok(())
+        if defer {
+            return Ok(true);
+        }
+        self.unsynced_consumed = 0;
+        Err(TsFramingError::NoSyncAfterLimit {
+            max: self.max_unsynced_bytes as u64,
+        })
     }
 
     /// Emit any pending whole packets as a partial bundle (1-6 packets).
@@ -277,9 +297,11 @@ impl TsFraming {
     ///
     /// Only packets whose sync byte reads 0x47 go out: the boundaries
     /// past the third have not been checked yet (a bundle is checked only
-    /// once all seven packets are present). From the first damaged
-    /// boundary on, the buffered bytes are discarded, counted in
-    /// `bytes_skipped_for_sync`, with one `resync_events`.
+    /// once all seven packets are present). Flush is the end-of-input
+    /// signal, so nothing after a damaged boundary can be verified: from
+    /// it on the buffered bytes are discarded, counted in
+    /// `bytes_skipped_for_sync` with one `resync_events`, and the state
+    /// returns to UNSYNCED.
     pub fn flush(&mut self) -> Vec<Vec<u8>> {
         if self.state != State::Synced || self.buffer.is_empty() {
             return Vec::new();
@@ -476,6 +498,40 @@ mod tests {
         assert_eq!(f.flush(), vec![good3]);
         assert_eq!(f.stats().resync_events, 1);
         assert_eq!(f.stats().bytes_skipped_for_sync, 188);
+    }
+
+    #[test]
+    fn watchdog_after_a_framed_bundle_returns_the_bundle_first() {
+        let good7 = synthetic_ts_stream(7);
+        let mut input = good7.clone();
+        input.extend_from_slice(&[0x00; 20_000]);
+
+        let mut one_call = TsFraming::new(18_800);
+        let (out, _) = one_call.push(&input).unwrap();
+        assert_eq!(out, vec![good7.clone()]);
+        assert!(matches!(
+            one_call.push(&[]),
+            Err(TsFramingError::NoSyncAfterLimit { max: 18_800 })
+        ));
+
+        let mut byte_by_byte = TsFraming::new(18_800);
+        let mut out2 = Vec::new();
+        let mut watchdog_errors = 0;
+        for b in &input {
+            match byte_by_byte.push(&[*b]) {
+                Ok((bundles, _)) => out2.extend(bundles),
+                Err(TsFramingError::NoSyncAfterLimit { max: 18_800 }) => watchdog_errors += 1,
+                Err(e) => panic!("unexpected {e:?}"),
+            }
+        }
+        assert_eq!(out2, vec![good7]);
+        assert_eq!(watchdog_errors, 1);
+
+        let (a, b) = (one_call.stats(), byte_by_byte.stats());
+        assert_eq!(a.packets_sent, 7);
+        assert_eq!(a.packets_sent, b.packets_sent);
+        assert_eq!(a.bytes_skipped_for_sync, b.bytes_skipped_for_sync);
+        assert_eq!(a.resync_events, b.resync_events);
     }
 
     #[test]
