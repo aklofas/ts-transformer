@@ -138,6 +138,23 @@ fn rist_recv_open_send_url_returns_null_with_rist_config() {
     );
 }
 
+/// 9968 bytes is the largest payload librist carries in one datagram, so a
+/// sender URL asking for 10 KiB is a configuration error, not a send-time one.
+#[test]
+fn pkt_size_10k_is_rist_invalid_config() {
+    let handle = unsafe { tst_rist_sender_open(c"rist://127.0.0.1:19022?pkt_size=10K".as_ptr()) };
+    assert!(
+        handle.is_null(),
+        "tst_rist_sender_open should refuse pkt_size=10K"
+    );
+    let code = unsafe { tst_get_last_error() };
+    assert_eq!(
+        code,
+        TstError::RistConfig as i32,
+        "pkt_size above 9968 should set RistConfig (-39), got {code}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Encryption: the outcome follows the `mbedtls` feature exactly
 // ---------------------------------------------------------------------------

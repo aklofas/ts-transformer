@@ -197,6 +197,24 @@ fn tcp_demux_receiver_open_malformed_url_returns_null_with_tcp_config() {
     assert_eq!(code, TstError::TcpConfig as i32, "got {code}");
 }
 
+/// `?listen=1` names a listener; the caller-side open refuses it as a config
+/// error instead of dialling the address. Port 9 has no listener, so a dial
+/// would surface as `TcpIo` and the assertion tells the two apart.
+#[test]
+fn listen_url_is_refused_by_the_sender_open() {
+    let handle = unsafe { tst_tcp_sender_open(c"tcp://127.0.0.1:9?listen=1".as_ptr()) };
+    assert!(
+        handle.is_null(),
+        "tst_tcp_sender_open should refuse a ?listen=1 URL"
+    );
+    let code = unsafe { tst_get_last_error() };
+    assert_eq!(
+        code,
+        TstError::TcpConfig as i32,
+        "a ?listen=1 URL should set TcpConfig (-31), got {code}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Connect-refused → null with TcpIo (-30) or TcpConnectTimeout (-32)
 // ---------------------------------------------------------------------------

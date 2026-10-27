@@ -75,6 +75,11 @@ def test_construct_bad_passphrase_raises_config_invalid() -> None:
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
 
 
+def test_passphrase_of_80_bytes_is_accepted() -> None:
+    """80 bytes is the top of libsrt's passphrase range, so it must build."""
+    tstrans.srt.Builder("srt://127.0.0.1:9000", passphrase="a" * 80)
+
+
 def test_construct_bad_congestion_raises_config_invalid() -> None:
     """`Congestion::from_str_strict` rejects unknown values."""
     with pytest.raises(SrtError) as exc_info:

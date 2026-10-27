@@ -78,8 +78,8 @@
 /* ── Constants ─────────────────────────────────────────────────────────── */
 
 /*
- * The shared secret both peers must agree on. libsrt requires 10..79
- * printable ASCII bytes; the URL parser enforces the same range up front
+ * The shared secret both peers must agree on. libsrt requires 10 to 80
+ * bytes of UTF-8; the URL parser enforces the same range up front
  * (a too-short value fails the open with TST_E_INVALID_CONFIG before any
  * socket exists). 32 characters here.
  */
