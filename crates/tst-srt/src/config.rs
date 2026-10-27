@@ -28,16 +28,15 @@ const RECEIVER_DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Configuration for a caller-side data socket.
 ///
 /// All `Option<T>` fields default to `None`, meaning "leave the libsrt default."
-/// `key_length` is only relevant when `passphrase` is set, where `None`
-/// means AES-128.
+/// `key_length` is only relevant when `passphrase` is set.
 #[must_use]
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct SrtSocketConfig {
     // Encryption
     pub passphrase: Option<Passphrase>,
-    /// AES key length; `None` is libsrt's AES-128 (applied before the
-    /// passphrase, so only a socket with a passphrase uses it).
+    /// AES key length; `None` lets libsrt negotiate: it adopts the peer's
+    /// advertised length, and AES-128 when neither side sets one.
     pub key_length: Option<KeyLength>,
 
     // Timeouts

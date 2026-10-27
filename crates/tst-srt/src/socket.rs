@@ -736,13 +736,13 @@ fn apply_common_options(
     handle: srt_sys::SRTSOCKET,
     opts: &SrtSocketConfig,
 ) -> Result<(), OptionError> {
+    // Only an explicit key length is applied: left at 0, libsrt adopts the
+    // peer's advertised length (AES-128 when neither side sets one). Set it
+    // BEFORE the passphrase.
+    if let Some(kl) = opts.key_length {
+        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN, kl.as_bytes())?;
+    }
     if let Some(p) = opts.passphrase.as_ref() {
-        // Set key length BEFORE passphrase.
-        set_int(
-            handle,
-            srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN,
-            opts.key_length.unwrap_or_default().as_bytes(),
-        )?;
         set_passphrase(handle, p)?;
     }
     if let Some(d) = opts.latency {
@@ -1006,23 +1006,23 @@ pub type Stats = SrtStats;
 
 #[cfg(test)]
 mod tests {
-    /// A passphrase with no `key_length` negotiates libsrt's AES-128:
-    /// `None` is applied as 16 bytes, on a caller socket and a listener.
+    /// An unset key length leaves SRTO_PBKEYLEN at libsrt's 0 (negotiate),
+    /// on a caller and on a listener; an explicit one is applied even with no
+    /// passphrase.
     #[test]
-    fn passphrase_without_key_length_applies_16_byte_pbkeylen() {
+    fn unset_key_length_leaves_pbkeylen_native() {
         super::ensure_initialized();
-        let passphrase = crate::options::Passphrase::new("secretsecretsecret").unwrap();
         let cfg = super::SrtSocketConfig {
-            passphrase: Some(passphrase),
+            passphrase: Some(crate::options::Passphrase::new("secretsecretsecret").unwrap()),
             ..Default::default()
         };
-        assert_eq!(cfg.key_length, None);
         let h = unsafe { srt_sys::srt_create_socket() };
-        assert_ne!(h, super::SRT_INVALID_SOCK);
         super::apply_socket_config(h, &cfg).unwrap();
-        let caller = super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN).unwrap();
+        assert_eq!(
+            super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN).unwrap(),
+            0
+        );
         unsafe { srt_sys::srt_close(h) };
-        assert_eq!(caller, 16);
 
         let lcfg = crate::config::SrtListenerConfig {
             socket: cfg,
@@ -1030,9 +1030,23 @@ mod tests {
         };
         let h = unsafe { srt_sys::srt_create_socket() };
         super::apply_listener_config(h, &lcfg).unwrap();
-        let listener = super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN).unwrap();
+        assert_eq!(
+            super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN).unwrap(),
+            0
+        );
         unsafe { srt_sys::srt_close(h) };
-        assert_eq!(listener, 16);
+
+        let explicit = super::SrtSocketConfig {
+            key_length: Some(crate::options::KeyLength::Aes256),
+            ..Default::default()
+        };
+        let h = unsafe { srt_sys::srt_create_socket() };
+        super::apply_socket_config(h, &explicit).unwrap();
+        assert_eq!(
+            super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN).unwrap(),
+            32
+        );
+        unsafe { srt_sys::srt_close(h) };
     }
 
     /// libsrt silently clamps `SRTO_RCVBUF` to the flow-control window

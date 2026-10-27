@@ -91,6 +91,9 @@ impl std::fmt::Debug for Passphrase {
 // ============================================================================
 
 /// AES key length for SRT encryption (`SRTO_PBKEYLEN`).
+///
+/// `Aes128` is the `Default`, the value a caller picks explicitly. A config
+/// with no key length does not apply it; libsrt negotiates instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KeyLength {
     #[default]
@@ -246,8 +249,9 @@ pub enum Role {
     /// negotiation). Use for receiver pipelines.
     #[default]
     Receiver,
-    /// Set `SRTO_SENDER=1`. Required for HSv4 peers (older Teradek/Makito
-    /// gear, cable-industry hardware); harmless under HSv5.
+    /// Set `SRTO_SENDER=1`. Required for HSv4 peers; under HSv5 it also
+    /// decides a key-length conflict in this side's favour (libsrt core.cpp
+    /// `checkUpdateCryptoKeyLen`).
     Sender,
 }
 
