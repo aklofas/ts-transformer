@@ -11,6 +11,7 @@
 //! entry points that reject before they bind.
 
 use std::fmt::Display;
+use std::path::Path;
 use std::time::Duration;
 
 use tst_hls::HlsUrl;
@@ -1917,4 +1918,28 @@ fn effective_rtsp(url: &str) -> Effective {
 #[test]
 fn rtsp_keys() {
     run("rtsp", RTSP_PARSE, effective_rtsp);
+}
+
+/// Every honoured SRT URL key is named in the guide's "URL parsing" section.
+#[test]
+fn guide_srt_md_keytable_count_matches() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/guides/srt.md");
+    let body = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
+    // Not a markdown parse: each key must appear as a backticked table cell
+    // somewhere in the URL parsing section.
+    let section_marker = "## URL parsing";
+    let section_start = body
+        .find(section_marker)
+        .unwrap_or_else(|| panic!("'{section_marker}' section not found in guide srt.md"));
+    let section = &body[section_start..];
+    let found = tst_srt::url::URL_KEYS
+        .iter()
+        .filter(|row| section.contains(&format!("`{}`", row.canonical)))
+        .count();
+    let expected = tst_srt::url::URL_KEYS.len();
+    assert_eq!(
+        found, expected,
+        "srt.md URL parsing table is missing keys; found {found}, expected {expected}"
+    );
 }

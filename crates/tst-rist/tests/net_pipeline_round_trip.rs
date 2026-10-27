@@ -6,7 +6,7 @@
 //! Runs on Windows too: the librist ≤ 0.2.16 Windows teardown hang and
 //! zero-delivery bug are fixed upstream in librist 0.2.18 (see `loopback.rs`).
 
-#[path = "../../tst-pipeline/tests/support/round_trip.rs"]
+#[path = "support/round_trip.rs"]
 mod round_trip;
 
 use std::net::UdpSocket;

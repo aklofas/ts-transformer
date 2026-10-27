@@ -3,7 +3,7 @@
 //! body, and why it pushes several PSI-carrying frames, is in
 //! `tst-pipeline/tests/support/round_trip.rs`.
 
-#[path = "../../tst-pipeline/tests/support/round_trip.rs"]
+#[path = "support/round_trip.rs"]
 mod round_trip;
 
 use tst_udp::{UdpRecvTransport, UdpTransport};

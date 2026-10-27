@@ -171,37 +171,3 @@ fn group3_keys_all_reject_with_srto() {
         }
     }
 }
-
-#[test]
-fn guide_srt_md_keytable_count_matches() {
-    // Cargo test CWD is the crate root (crates/tst-srt/), so guide-srt.md
-    // is two directories up at docs/guides/srt.md.
-    let path = "../../docs/guides/srt.md";
-    let body = std::fs::read_to_string(path).unwrap_or_else(|e| {
-        panic!(
-            "could not read guide-srt.md: {e}; cwd = {:?}",
-            std::env::current_dir()
-        )
-    });
-    // Count rows in the Group 1 + Group 2 honored-keys table. We don't
-    // parse the markdown rigorously; we just count occurrences of the
-    // representative key names inside the URL parsing section.
-    let section_marker = "## URL parsing";
-    let section_start = body
-        .find(section_marker)
-        .unwrap_or_else(|| panic!("'{section_marker}' section not found in guide-srt.md"));
-    let section = &body[section_start..];
-    let mut found = 0;
-    for key in GROUP1_KEYS.iter().chain(GROUP2_KEYS.iter()) {
-        // Each key appears in a markdown table cell as `\`<key>\``.
-        let needle = format!("`{key}`");
-        if section.contains(&needle) {
-            found += 1;
-        }
-    }
-    let expected = GROUP1_KEYS.len() + GROUP2_KEYS.len();
-    assert_eq!(
-        found, expected,
-        "guide-srt.md URL parsing table is missing keys; found {found}, expected {expected}"
-    );
-}

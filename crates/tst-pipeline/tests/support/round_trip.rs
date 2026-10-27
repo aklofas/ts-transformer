@@ -1,8 +1,11 @@
-//! Shared body of the `pipeline_round_trip.rs` tests in tst-udp, tst-tcp
+//! Shared body of the `net_pipeline_round_trip.rs` tests in tst-udp, tst-tcp
 //! and tst-rist: `MuxSender` over a live send transport, the wire, then
 //! `DemuxReceiver` over the matching receive transport must surface a
-//! `ProgramMap`. Each crate includes this file with `#[path]`; it is not a
-//! tst-pipeline test target (Cargo discovers only `tests/*.rs` and
+//! `ProgramMap`. A package cannot include a file from a sibling package, so
+//! this file is copied byte for byte to `tests/support/round_trip.rs` in each
+//! of those three crates; `scripts/check/repo/test-support-copies.sh` fails
+//! when a copy drifts. Edit this file, then copy it over the others. It is
+//! not a test target of any crate (Cargo discovers only `tests/*.rs` and
 //! `tests/*/main.rs`).
 //!
 //! # Sync lock
