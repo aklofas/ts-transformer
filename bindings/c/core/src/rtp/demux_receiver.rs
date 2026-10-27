@@ -181,7 +181,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_next_event(
     };
     // The generic body owns the null-check on `out_event`, the cancel-aware
     // relabel (it reads the latch off the `CHandle` itself) and the arena
-    // borrow. `broken_is_eos = true`: this is a plain transport.
+    // borrow. `broken_is_eos = false`: only plain SRT shells fold Broken into EOS.
     unsafe {
         crate::transport_impls::demux_receiver_next_event(&handle.inner, &handle.arena, out_event)
     }

@@ -161,8 +161,8 @@ pub unsafe extern "C" fn tst_rtp_receiver_recv_ts(
         return TstError::InvalidConfig as i32;
     }
     // See `tst_receiver_recv_packet`: the latch is read on both sides of the
-    // park, and `broken_is_eos` is `true` because a Broken on a plain
-    // transport that nobody cancelled means the peer went away.
+    // park, and `broken_is_eos` is `false`: only plain SRT shells fold a
+    // Broken into end of stream, so here it stays a hard transport error.
     let cancelled = handle.inner.is_cancelled();
     handle.inner.with_inner_mut(|rx| match rx.next_packet() {
         Ok(pkt) => {
