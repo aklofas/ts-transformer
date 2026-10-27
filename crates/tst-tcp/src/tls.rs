@@ -21,10 +21,16 @@ pub enum TlsStream {
 }
 
 impl TlsStream {
+    /// Read plaintext with at most one socket read per call.
+    ///
+    /// `StreamOwned::read` loops until a whole record arrives, so a peer
+    /// dripping a record one byte at a time keeps it inside that loop past
+    /// any cancel. Returning `WouldBlock` after each socket read hands the
+    /// caller's receive loop a chance to observe a cancel in between.
     pub fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
-            Self::Client(s) => s.read(buf),
-            Self::Server(s) => s.read(buf),
+            Self::Client(s) => read_stepwise(&mut s.conn, &mut s.sock, buf),
+            Self::Server(s) => read_stepwise(&mut s.conn, &mut s.sock, buf),
         }
     }
     pub fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -69,6 +75,59 @@ impl TlsStream {
             }
         }
     }
+}
+
+/// One step of a TLS read: buffered plaintext first; otherwise flush any
+/// pending handshake output, make one `read_tls`, process it and look for
+/// plaintext once more. `WouldBlock` means "no plaintext yet, call again".
+fn read_stepwise<C, D>(conn: &mut C, sock: &mut TcpStream, buf: &mut [u8]) -> io::Result<usize>
+where
+    C: std::ops::DerefMut<Target = rustls::ConnectionCommon<D>>,
+{
+    if let Some(r) = buffered_plaintext(conn, buf) {
+        return r;
+    }
+    if conn.wants_write() {
+        // Handshake replies and key updates. A full send buffer must not
+        // stop us reading: the next call retries the write.
+        match conn.write_tls(sock) {
+            Ok(_) => {}
+            Err(e) if is_poll_timeout(&e) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    if conn.read_tls(sock)? == 0 {
+        // TCP EOF without a preceding close_notify: a truncated stream.
+        return Err(io::ErrorKind::UnexpectedEof.into());
+    }
+    if let Err(e) = conn.process_new_packets() {
+        // Best effort: let the peer see the alert rustls queued.
+        let _ = conn.write_tls(sock);
+        return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+    }
+    buffered_plaintext(conn, buf).unwrap_or_else(|| Err(io::ErrorKind::WouldBlock.into()))
+}
+
+/// `Some` when the connection already holds an answer for the caller:
+/// plaintext, `Ok(0)` after the peer's close_notify, or a reader error.
+/// `None` when no plaintext is buffered yet.
+fn buffered_plaintext<C, D>(conn: &mut C, buf: &mut [u8]) -> Option<io::Result<usize>>
+where
+    C: std::ops::DerefMut<Target = rustls::ConnectionCommon<D>>,
+{
+    match conn.reader().read(buf) {
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => None,
+        other => Some(other),
+    }
+}
+
+/// The socket's poll interval elapsing (Linux spells it `WouldBlock`,
+/// Windows `TimedOut`).
+fn is_poll_timeout(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
 }
 
 /// Read and discard the TLS records the peer has already delivered, without
