@@ -580,7 +580,9 @@ pub enum NonConformantIssue {
     ///
     /// A PES without a PTS is emitted with PTS=0. `StrictMode::TimingOnly`
     /// and `StrictMode::Full` reject.
-    #[error("PTS required by stream type on PID 0x{pid:04X} but absent in PES header")]
+    #[error(
+        "coded PTS missing on PID 0x{pid:04X}: required on every PES for this stream kind, or a PTS-less run longer than 0.7 s on audio/video"
+    )]
     MissingRequiredPts { pid: u16 },
 
     /// PES header structural validation failure. Catches spec violations
@@ -1269,7 +1271,7 @@ mod tests {
             (I::PsiCcDiscontinuity { pid: 0, expected: 3, observed: 0xA }, "PSI continuity-counter jump on PID 0x0000: expected 0x3, observed 0xA".into()),
             (I::DvbSubDataIdentifier { observed: 0x10 }, "DVB-subtitle data_identifier=0x10 (EN 300 743 §6.2 Table 3 requires 0x20)".into()),
             (I::PtsAnomaly { delta: 9000 }, "PTS anomaly: delta=9000 (90 kHz ticks)".into()),
-            (I::MissingRequiredPts { pid: 0x100 }, "PTS required by stream type on PID 0x0100 but absent in PES header".into()),
+            (I::MissingRequiredPts { pid: 0x100 }, "coded PTS missing on PID 0x0100: required on every PES for this stream kind, or a PTS-less run longer than 0.7 s on audio/video".into()),
             (I::SubtitleAlignmentMissing { pid: 0x30 }, "subtitle PES on PID 0x0030 missing data_alignment_indicator (EN 300 743 §6.2 / EN 300 472 §4.2 require =1)".into()),
             (I::Ac3SyncMissing { pid: 0x44 }, "AC-3 PES on PID 0x0044 missing syncword 0x0B77 despite data_alignment_indicator=1 (A/52:2018 §A.6.3)".into()),
             (I::Av1WrongStreamId { pid: 0x41, observed: 0xE0 }, "AV1 PES on PID 0x0041 carries stream_id=0xE0 (AV1-in-MPEG-2-TS binding §3.4 mandates 0xBD)".into()),

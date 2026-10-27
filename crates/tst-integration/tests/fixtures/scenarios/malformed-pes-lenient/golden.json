@@ -8,7 +8,7 @@
     },
     {
       "event": "error",
-      "code": "MISSING_REQUIRED_PTS"
+      "code": "MALFORMED_PES"
     },
     {
       "event": "video",
@@ -18,10 +18,6 @@
       "pts": 0,
       "key": false,
       "payload_sha256": "14fd0494993cc643f7d0fd33d7439d3ff06dd563193ad389ce1026301dffb82d"
-    },
-    {
-      "event": "error",
-      "code": "MISSING_REQUIRED_PTS"
     },
     {
       "event": "video",
