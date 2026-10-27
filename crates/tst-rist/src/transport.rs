@@ -282,8 +282,19 @@ pub(crate) fn apply_peer_overrides(
     if let Some(kbps) = recovery_maxbitrate {
         pc.recovery_maxbitrate = kbps;
     }
-    pc.recovery_length_min = duration_millis_u32(cfg.buffer);
-    pc.recovery_length_max = duration_millis_u32(cfg.buffer).max(pc.recovery_length_max);
+    // librist divides by the buffer, and its own URL parser ignores buffer=0
+    // for that reason; refuse it rather than pass it through.
+    let buffer_ms = duration_millis_u32(cfg.buffer);
+    if buffer_ms == 0 {
+        return Err(RistError::InvalidConfig(format!(
+            "buffer must be at least 1 ms, got {:?}",
+            cfg.buffer
+        )));
+    }
+    // Both bounds take the buffer so the window is fixed; with only the
+    // minimum set, librist keeps its 1000 ms maximum and starts at the midpoint.
+    pc.recovery_length_min = buffer_ms;
+    pc.recovery_length_max = buffer_ms;
     if let Some(t) = cfg.session_timeout {
         pc.session_timeout = duration_millis_u32(t);
     }
@@ -382,6 +393,43 @@ impl RistTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn native_peer_config() -> *mut rist_sys::rist_peer_config {
+        let url = std::ffi::CString::new("rist://127.0.0.1:9000").unwrap();
+        let mut pc = std::ptr::null_mut();
+        assert_eq!(unsafe { rist_sys::rist_parse_address2(url.as_ptr(), &mut pc) }, 0);
+        pc
+    }
+
+    /// librist's `buffer=` sets both recovery bounds, so the window is fixed
+    /// (with only the minimum set, librist starts at the midpoint).
+    #[test]
+    fn buffer_sets_both_recovery_bounds() {
+        for ms in [200u64, 500, 1500] {
+            let mut pc = native_peer_config();
+            let cfg = RistConfig {
+                buffer: std::time::Duration::from_millis(ms),
+                ..RistConfig::default()
+            };
+            apply_peer_overrides(pc, &cfg).unwrap();
+            let (min, max) = unsafe { ((*pc).recovery_length_min, (*pc).recovery_length_max) };
+            unsafe { rist_sys::rist_peer_config_free2(&mut pc) };
+            assert_eq!((min, max), (ms as u32, ms as u32));
+        }
+    }
+
+    /// librist divides by the buffer, so a value that rounds to 0 ms is refused.
+    #[test]
+    fn zero_buffer_is_refused() {
+        let mut pc = native_peer_config();
+        let cfg = RistConfig {
+            buffer: std::time::Duration::from_micros(500),
+            ..RistConfig::default()
+        };
+        let r = apply_peer_overrides(pc, &cfg);
+        unsafe { rist_sys::rist_peer_config_free2(&mut pc) };
+        assert!(matches!(r, Err(RistError::InvalidConfig(_))));
+    }
 
     /// Regression: after an error path sets alive=false WITHOUT destroying ctx,
     /// a subsequent close() (or Drop) MUST still destroy and null the ctx.

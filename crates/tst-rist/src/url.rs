@@ -432,6 +432,14 @@ mod tests {
     }
 
     #[test]
+    fn secret_promotes_simple_profile_in_either_order() {
+        for q in ["profile=simple&secret=x", "secret=x&profile=simple"] {
+            let u = RistUrl::parse(&format!("rist://1.2.3.4:8000?{q}")).unwrap();
+            assert_eq!(u.config.profile, RistProfile::Main, "{q}");
+        }
+    }
+
+    #[test]
     fn pkt_size_is_a_byte_size() {
         let u = RistUrl::parse("rist://1.2.3.4:8000?pkt_size=1K").unwrap();
         assert_eq!(u.config.pkt_size, 1024);

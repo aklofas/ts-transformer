@@ -53,7 +53,7 @@ impl RistTransportBuilder {
         self
     }
 
-    /// Recovery buffer duration.
+    /// Recovery window, fixed (librist's minimum and maximum recovery length).
     pub fn buffer(&mut self, buffer: Duration) -> &mut Self {
         self.config.buffer = buffer;
         self
@@ -156,7 +156,7 @@ impl RistRecvTransportBuilder {
         self
     }
 
-    /// Recovery buffer duration.
+    /// Recovery window, fixed (librist's minimum and maximum recovery length).
     pub fn buffer(&mut self, buffer: Duration) -> &mut Self {
         self.config.buffer = buffer;
         self
