@@ -30,3 +30,5 @@ mod tcps_loopback;
 mod udp_close_cancels_first;
 #[path = "transports/udp_open_smoke.rs"]
 mod udp_open_smoke;
+#[path = "transports/udp_sender_ceiling.rs"]
+mod udp_sender_ceiling;
