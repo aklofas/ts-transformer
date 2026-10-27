@@ -105,7 +105,10 @@ impl super::demuxer::Demuxer {
             let stream = self.pcr_stream_id(pkt.pid);
             self.queue_nonconformant(stream, NonConformantIssue::PcrMalformed { kind });
         }
-        let declared = self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid));
+        // Only a packet with a PCR or the flag needs the declaration, so the
+        // program scan stays off the per-packet path.
+        let declared = (pkt.pcr_27mhz.is_some() || pkt.discontinuity_indicator)
+            && self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid));
         // H.222.0 §2.4.3.5: `discontinuity_indicator = 1` on the PCR_PID means
         // the next PCR on that PID samples a new system time clock. That PCR
         // may ride this packet or a later one, so the expectation is held
@@ -160,11 +163,14 @@ impl super::demuxer::Demuxer {
 
     /// Forget the last PTS of every stream in every program clocked by
     /// `pcr_pid`, so the first PTS on the new time base is not judged against
-    /// the old one.
+    /// the old one. A PES already in flight started on the old clock: it
+    /// keeps the old baseline, and the baseline is dropped once it ends
+    /// (`settle_pts_baseline`).
     pub(super) fn forget_program_pts(&mut self, pcr_pid: u16) {
         let Self {
             programs,
             pid_state,
+            pes,
             ..
         } = self;
         for stream in programs
@@ -173,8 +179,22 @@ impl super::demuxer::Demuxer {
             .flat_map(|t| &t.streams)
         {
             if let Some(state) = pid_state.get_mut(&stream.pid) {
-                state.last_pts = None;
+                if pes.has_pid(stream.pid) {
+                    state.pts_baseline_clears_after_pes = true;
+                } else {
+                    state.last_pts = None;
+                }
             }
+        }
+    }
+
+    /// The PES that straddled a time-base reset on `pid` has ended (emitted
+    /// or dropped): drop the old-clock PTS baseline it was judged against.
+    pub(super) fn settle_pts_baseline(&mut self, pid: u16) {
+        if let Some(state) = self.pid_state.get_mut(&pid)
+            && core::mem::take(&mut state.pts_baseline_clears_after_pes)
+        {
+            state.last_pts = None;
         }
     }
 
