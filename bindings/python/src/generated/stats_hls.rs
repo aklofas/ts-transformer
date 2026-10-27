@@ -56,7 +56,8 @@ impl From<&tst_pipeline::MuxPublisherStats> for MuxPublisherStats {
 )]
 #[derive(Debug, Clone, Copy)]
 pub struct HlsStats {
-    /// Total completed segments (history + current run).
+    /// Segment sequence numbers allocated so far, including the open
+    /// segment.
     pub segments_written: u64,
     /// Total bytes accepted from the muxer across all segments.
     pub bytes_pushed_total: u64,

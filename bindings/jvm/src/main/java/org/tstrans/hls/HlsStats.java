@@ -8,7 +8,7 @@ package org.tstrans.hls;
  * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
  * or more reads as negative.
  *
- * @param segmentsWritten Total completed segments (history + current run).
+ * @param segmentsWritten Segment sequence numbers allocated so far, including the open segment.
  * @param bytesPushedTotal Total bytes accepted from the muxer across all segments.
  * @param openSegmentBytes Bytes in the currently-open segment (0 between cuts).
  * @param forcedCuts Segments cut by the wall-clock hard-cap fallback (keyframe-driven flow only):

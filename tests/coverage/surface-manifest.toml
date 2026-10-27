@@ -4818,3 +4818,31 @@ owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
 bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
+
+[[exempt]]
+item = "tst_core::net::udp_socket::bind_udp_socket_multicast_group"
+reason = "shared multicast recv helper that joins one group with an optional IPv6 zone; consumed by the tst-udp and tst-rtp recv paths"
+
+[[exempt]]
+item = "tst_core::url::common::decode_ipv6_zone"
+reason = "shared helper that percent-decodes an IPv6 zone id in transport URLs; consumed by the udp, rtp and rist URL parsers"
+
+[[exempt]]
+item = "tst_rist::config::RistConfig::MAX_PKT_SIZE"
+reason = "upper bound the RIST config validates pkt_size against; asserted through the config validation tests, no binding surface of its own"
+
+[[exempt]]
+item = "tst_srt::builder::SrtListenerBuilder::input_bandwidth"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the managed listener config"
+
+[[exempt]]
+item = "tst_srt::builder::SrtListenerBuilder::peer_latency"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the managed listener config"
+
+[[exempt]]
+item = "tst_srt::builder::SrtListenerBuilder::send_buf_bytes"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the managed listener config"
+
+[[exempt]]
+item = "tst_srt::builder::SrtListenerBuilder::udp_send_buffer_bytes"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the managed listener config"
