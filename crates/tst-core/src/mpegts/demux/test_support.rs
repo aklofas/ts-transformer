@@ -279,8 +279,16 @@ pub(super) fn ts_packet(spec: &PktSpec<'_>) -> [u8; 188] {
     buf[3] = ((spec.scrambling & 0x03) << 6) | (afc << 4) | (spec.cc & 0x0F);
     let mut payload_at = 4;
     if has_af {
+        assert!(
+            spec.payload.len() <= 183,
+            "no room for an adaptation field: shorten the payload"
+        );
         // The adaptation field fills everything the payload leaves free.
         let af_len = 183 - spec.payload.len();
+        assert!(
+            af_len >= 1 || !(spec.discontinuity || spec.rai),
+            "no room for the adaptation-field flags: shorten the payload"
+        );
         buf[4] = af_len as u8;
         if af_len >= 1 {
             let mut flags = 0u8;
@@ -450,6 +458,16 @@ fn ts_packet_without_payload_is_adaptation_only_and_full_payload_has_no_af() {
         ..Default::default()
     });
     assert_eq!(&full[..5], &[0x47, 0x00, 0x20, 0x15, 1]);
+}
+
+#[test]
+#[should_panic(expected = "no room for the adaptation-field flags")]
+fn ts_packet_refuses_a_flag_it_cannot_carry() {
+    let _ = ts_packet(&PktSpec {
+        discontinuity: true,
+        payload: &[0; 183],
+        ..Default::default()
+    });
 }
 
 #[test]

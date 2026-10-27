@@ -1,6 +1,6 @@
 //! Real-capture-shaped fixtures must keep decoding as every demux strictness
 //! fix lands: same sample count in lenient and TimingOnly mode, and none of
-//! the issue classes the 0.9.1 demux fixes touch.
+//! the issue classes the demux strictness fixes touch.
 use crate::common::fixtures::fixture_path;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, StrictMode};
 
