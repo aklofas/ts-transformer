@@ -594,7 +594,7 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
             let p = tst_rist_mux_sender_open(std::ptr::null(), cfg as *const _);
             assert!(p.is_null());
             tst_mux_config_free(cfg);

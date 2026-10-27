@@ -10,7 +10,7 @@
 
 use super::{TstMuxConfig, TstProgramHandle};
 use crate::demux_config::TstAv1CarriageMode;
-use crate::error::{TstError, set_last_error};
+use crate::error::{TstError, record_bad_enum, set_last_error};
 use crate::handle::{
     TST_INVALID_STREAM_HANDLE, TstAudioStreamHandle, TstDataStreamHandle, TstKlvStreamHandle,
     TstSubtitleStreamHandle, TstVideoStreamHandle,
@@ -30,7 +30,10 @@ use tst_core::mpegts::mux::{
 /// `tst_muxer_push_video_to` / `tst_mux_sender_send_video_to` /
 /// `tst_managed_mux_sender_send_video_to` to fan out to this specific stream.
 ///
-/// Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: null `cfg`,
+/// `codec` is one of the `TST_VIDEO_CODEC_*` constants.
+///
+/// Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: a `codec`
+/// outside `TST_VIDEO_CODEC_*` (`TST_E_INVALID_CONFIG`), null `cfg`,
 /// invalid `program` handle, or per-program stream cap exceeded (>16 streams
 /// of any kind per program). Hard validation errors surface at `_open` time.
 #[unsafe(no_mangle)]
@@ -38,9 +41,13 @@ pub unsafe extern "C" fn tst_mux_config_add_video_stream(
     cfg: *mut TstMuxConfig,
     program: TstProgramHandle,
     pid: u16,
-    codec: TstVideoCodec,
+    codec: i32,
 ) -> TstVideoStreamHandle {
     ffi_catch(TST_INVALID_STREAM_HANDLE, || {
+        let Some(codec) = TstVideoCodec::from_c_int(codec) else {
+            record_bad_enum("codec", codec, "TST_VIDEO_CODEC_*");
+            return TST_INVALID_STREAM_HANDLE;
+        };
         let Some(cfg) = (unsafe { cfg.as_mut() }) else {
             set_last_error(TstError::InvalidConfig, "null config pointer");
             return TST_INVALID_STREAM_HANDLE;
@@ -93,17 +100,22 @@ pub unsafe extern "C" fn tst_mux_config_add_video_stream(
 /// `carries_pts`: set `true` for synchronous KLV (PTS carried in PES header),
 /// `false` for async KLV.
 ///
-/// Returns `TST_INVALID_STREAM_HANDLE` on error (same conditions as
-/// `tst_mux_config_add_video_stream`).
+/// Returns `TST_INVALID_STREAM_HANDLE` on error: a `stream_type` outside
+/// `TST_KLV_STREAM_TYPE_*` (`TST_E_INVALID_CONFIG`), or the same conditions
+/// as `tst_mux_config_add_video_stream`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_config_add_klv_stream(
     cfg: *mut TstMuxConfig,
     program: TstProgramHandle,
     pid: u16,
-    stream_type: TstKlvStreamType,
+    stream_type: i32,
     carries_pts: bool,
 ) -> TstKlvStreamHandle {
     ffi_catch(TST_INVALID_STREAM_HANDLE, || {
+        let Some(stream_type) = TstKlvStreamType::from_c_int(stream_type) else {
+            record_bad_enum("stream_type", stream_type, "TST_KLV_STREAM_TYPE_*");
+            return TST_INVALID_STREAM_HANDLE;
+        };
         let Some(cfg) = (unsafe { cfg.as_mut() }) else {
             set_last_error(TstError::InvalidConfig, "null config pointer");
             return TST_INVALID_STREAM_HANDLE;
@@ -221,7 +233,10 @@ pub unsafe extern "C" fn tst_mux_config_add_data_stream(
 /// `tst_managed_mux_sender_send_audio_to` to fan out to this specific
 /// stream.
 ///
-/// Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: null `cfg`,
+/// `codec` is one of the `TST_AUDIO_CODEC_*` constants.
+///
+/// Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: a `codec`
+/// outside `TST_AUDIO_CODEC_*` (`TST_E_INVALID_CONFIG`), null `cfg`,
 /// invalid `program` handle, or per-program stream cap exceeded (>16 audio
 /// streams per program). Hard validation errors surface at `_open` time.
 ///
@@ -232,10 +247,14 @@ pub unsafe extern "C" fn tst_mux_config_add_audio_stream(
     cfg: *mut TstMuxConfig,
     program: TstProgramHandle,
     pid: u16,
-    codec: TstAudioCodec,
+    codec: i32,
 ) -> TstAudioStreamHandle {
-    ffi_catch(TST_INVALID_STREAM_HANDLE, || unsafe {
-        add_audio_stream_inner(cfg, program, pid, codec, None)
+    ffi_catch(TST_INVALID_STREAM_HANDLE, || {
+        let Some(codec) = TstAudioCodec::from_c_int(codec) else {
+            record_bad_enum("codec", codec, "TST_AUDIO_CODEC_*");
+            return TST_INVALID_STREAM_HANDLE;
+        };
+        unsafe { add_audio_stream_inner(cfg, program, pid, codec, None) }
     })
 }
 
@@ -250,17 +269,24 @@ pub unsafe extern "C" fn tst_mux_config_add_audio_stream(
 /// use the bare `tst_mux_config_add_audio_stream` variant when no language
 /// tag is desired.
 ///
-/// Other failure modes match `tst_mux_config_add_audio_stream` (null
-/// `cfg`, invalid `program`, per-program cap exceeded).
+/// `codec` is one of the `TST_AUDIO_CODEC_*` constants.
+///
+/// Other failure modes match `tst_mux_config_add_audio_stream` (a `codec`
+/// outside `TST_AUDIO_CODEC_*`, null `cfg`, invalid `program`, per-program
+/// cap exceeded).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_config_add_audio_stream_with_language(
     cfg: *mut TstMuxConfig,
     program: TstProgramHandle,
     pid: u16,
-    codec: TstAudioCodec,
+    codec: i32,
     language: *const u8,
 ) -> TstAudioStreamHandle {
     ffi_catch(TST_INVALID_STREAM_HANDLE, || {
+        let Some(codec) = TstAudioCodec::from_c_int(codec) else {
+            record_bad_enum("codec", codec, "TST_AUDIO_CODEC_*");
+            return TST_INVALID_STREAM_HANDLE;
+        };
         if language.is_null() {
             set_last_error(
                 TstError::InvalidConfig,
@@ -692,6 +718,18 @@ impl TstAudioCodec {
             AudioCodec::Ac3 => Self::Ac3,
         }
     }
+
+    /// Validate a raw C `int32_t` against the four known discriminants
+    /// (see [`TstVideoCodec::from_c_int`]).
+    pub(crate) fn from_c_int(v: i32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Mp2),
+            1 => Some(Self::Aac),
+            2 => Some(Self::AacLatm),
+            3 => Some(Self::Ac3),
+            _ => None,
+        }
+    }
 }
 
 /// `repr(i32)` mirror of `tst_core::mpegts::demux::SubtitleCodec`.
@@ -723,4 +761,16 @@ impl TstSubtitleCodec {
 pub enum TstKlvStreamType {
     PrivateData = 0,
     SynchronousMetadata = 1,
+}
+
+impl TstKlvStreamType {
+    /// Validate a raw C `int32_t` against the two known discriminants
+    /// (see [`TstVideoCodec::from_c_int`]).
+    pub(crate) fn from_c_int(v: i32) -> Option<Self> {
+        match v {
+            0 => Some(Self::PrivateData),
+            1 => Some(Self::SynchronousMetadata),
+            _ => None,
+        }
+    }
 }

@@ -594,7 +594,7 @@ mod tests {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
             let real_handle =
-                tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+                tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
             // Forge a handle by setting a high bit that try_from_raw rejects.
             let forged = real_handle | 0x100;
 
@@ -632,7 +632,8 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            let handle = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+            let handle =
+                tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
             let body = [0xDE, 0xAD];
             let desc = TstDescriptor {
                 tag: 0x52,
@@ -726,15 +727,15 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            let v = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264);
+            let v = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264 as i32);
             let k = tst_mux_config_add_klv_stream(
                 cfg,
                 prog,
                 0x101,
-                TstKlvStreamType::PrivateData,
+                TstKlvStreamType::PrivateData as i32,
                 false,
             );
-            let a = tst_mux_config_add_audio_stream(cfg, prog, 0x102, TstAudioCodec::Aac);
+            let a = tst_mux_config_add_audio_stream(cfg, prog, 0x102, TstAudioCodec::Aac as i32);
             let s = tst_mux_config_add_subtitle_stream_webvtt(cfg, prog, 0x103);
             let d = tst_mux_config_add_data_stream(cfg, prog, 0x104, 0xF0, true);
             let body = [0xAAu8, 0xBB];
@@ -804,7 +805,7 @@ mod tests {
                 cfg,
                 prog,
                 0x101,
-                TstKlvStreamType::PrivateData,
+                TstKlvStreamType::PrivateData as i32,
                 false,
             );
             let rc = tst_mux_config_set_stream_descriptors_for_video(cfg, k, tlv.as_ptr(), 3, 1);
@@ -822,10 +823,10 @@ mod tests {
                 cfg,
                 prog,
                 0x101,
-                TstKlvStreamType::PrivateData,
+                TstKlvStreamType::PrivateData as i32,
                 false,
             );
-            let v = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264);
+            let v = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264 as i32);
             assert_eq!(
                 tst_mux_config_set_stream_descriptors_for_video(cfg, k, tlv.as_ptr(), 3, 1),
                 0

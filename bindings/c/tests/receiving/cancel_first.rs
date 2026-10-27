@@ -200,7 +200,7 @@ fn plain_mux_sender_cancel_then_push_reports_plain_srt_cancel_code() {
     let (tx, cfg) = unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         (tst_mux_sender_open(url.as_ptr(), cfg), cfg)
     };
     assert!(!tx.is_null(), "open: {}", last_error_msg());
@@ -467,7 +467,7 @@ fn managed_mux_sender_cancel_then_push_reports_closed() {
     let (tx, cfg) = unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         (
             tst_managed_mux_sender_open(url.as_ptr(), cfg, std::ptr::null()),
             cfg,
