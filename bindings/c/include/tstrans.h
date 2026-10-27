@@ -1418,8 +1418,9 @@ typedef struct tst_rtsp_publish_mount_t tst_rtsp_publish_mount_t;
  * graceful shutdown) via `tst_rtsp_server_stop` + `tst_rtsp_server_free`,
  * or implicitly via Drop (hard cancel).
  *
- * The inner `Mutex<Option<…>>` gives close-idempotence: after `_stop` or
- * `_free` the `Option` is `None` and subsequent calls return `TST_E_CLOSED`.
+ * The inner `Mutex<Option<…>>` gives close-idempotence: after `_stop` the
+ * `Option` is `None` and later calls return `TST_E_CLOSED`; `_free` releases
+ * the allocation, and any later call is undefined behaviour.
  * This mirrors the `TstRtspSession` shape used in the client surface.
  *
  * The server is held in an `Arc` so the calls that block on it
@@ -5450,9 +5451,11 @@ int tst_mux_publisher_send_video(struct TstMuxPublisher *p,
  * Build an HLS-backed `MuxPublisher` from a `TstPublisher` (which must
  * currently hold an HLS publisher) + a `tst_mux_config_t`.
  *
- * Consumes `hls` — the `TstPublisher` pointer is freed by this call (do
- * not free it again). `program_cfg` is borrowed; the caller still owns it
- * and must free it with `tst_mux_config_free`.
+ * Consumes `hls` whenever it is non-null, including on every error return;
+ * a NULL `hls` is the only call that consumes nothing. The `TstPublisher`
+ * pointer is freed by this call (do not free it again). `program_cfg` is
+ * borrowed; the caller still owns it and must free it with
+ * `tst_mux_config_free`.
  *
  * Returns `NULL` on error: `TST_E_HLS_CONFIG` if `hls` is null / finished
  * / not an HLS publisher, `TST_E_INVALID_CONFIG` if `program_cfg` is
