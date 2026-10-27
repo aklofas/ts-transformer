@@ -29,6 +29,13 @@
 //!   boundary, so the mutex is NOT poisoned. A panicking MUTATOR drops `T`
 //!   (later calls → [`HandleState::Closed`]); a panicking READER keeps it.
 //! - **Double close is quiet**: the second `close()` is `Ok(())`.
+//! - **Implicit drop cancels first**: dropping an `Owned` whose slot still
+//!   holds a value (a binding object freed or collected without `close()`)
+//!   fires [`Owned::cancel`] before the value drops, so the value's own
+//!   `Drop` (a sender's final flush through a reconnecting transport) sees
+//!   a cancelled transport and returns instead of retrying. An emptied
+//!   slot (`close`, `take`, a panicked mutator) fires nothing. The peek
+//!   recovers a poisoned mutex, like the other readers.
 //! - **Snapshot getters never take the slot**; **`cancel()` never takes the
 //!   slot** — the cancel handle is an `Arc` read lock-free, so a cancel
 //!   never waits behind the parked call it must wake.
@@ -395,6 +402,21 @@ impl<T: Close, S> Owned<T, S> {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(CloseFailure::Inner(e)),
             Err(detail) => Err(CloseFailure::Panicked { detail }),
+        }
+    }
+}
+
+impl<T, S> Drop for Owned<T, S> {
+    fn drop(&mut self) {
+        // Only a peek: the value stays in the slot and drops with the
+        // fields, after this body, now that its transport is cancelled.
+        let holds_value = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if holds_value {
+            self.cancel();
         }
     }
 }
@@ -1145,12 +1167,17 @@ mod tests {
         }
         impl TransportCancel for OrderCancel {
             fn cancel(&self) {
-                let owned = self
+                // The `Owned`'s own drop fires the cancel once more, when
+                // the `Weak` can no longer upgrade; only the explicit cancel
+                // below is under test.
+                let Some(owned) = self
                     .owned
                     .get()
                     .expect("wired immediately after construction")
                     .upgrade()
-                    .expect("the Owned outlives this call");
+                else {
+                    return;
+                };
                 *self.latch_seen_from_transport.lock().unwrap() = Some(owned.is_cancelled());
             }
             // DELIBERATELY latch-less: `Owned::is_cancelled` ORs this in, so
@@ -1281,5 +1308,120 @@ mod tests {
         owned.cancel();
         assert!(fresh.is_cancelled());
         assert!(owned.is_cancelled());
+    }
+
+    // ---- implicit drop ----
+
+    /// A `MockCancel` as the `Arc<dyn TransportCancel>` an `Owned` takes,
+    /// plus the flag it flips.
+    fn mock_cancel() -> (Arc<dyn TransportCancel>, Arc<AtomicBool>) {
+        let flag = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::new(MockCancel {
+            calls: AtomicU32::new(0),
+            flag: Arc::clone(&flag),
+        });
+        (cancel as Arc<dyn TransportCancel>, flag)
+    }
+
+    #[test]
+    fn dropping_an_owned_with_a_value_fires_the_cancel_first() {
+        let (cancel, flag) = mock_cancel();
+        let seen = Arc::new(AtomicBool::new(false));
+        struct SeesCancel(Arc<AtomicBool>, Arc<AtomicBool>);
+        impl Drop for SeesCancel {
+            fn drop(&mut self) {
+                self.1
+                    .store(self.0.load(Ordering::SeqCst), Ordering::SeqCst);
+            }
+        }
+        drop(Owned::new(
+            SeesCancel(flag.clone(), seen.clone()),
+            cancel,
+            (),
+        ));
+        assert!(
+            seen.load(Ordering::SeqCst),
+            "the value's Drop ran after the cancel"
+        );
+    }
+
+    #[test]
+    fn dropping_an_emptied_owned_does_not_fire_the_cancel() {
+        let (cancel, flag) = mock_cancel();
+        let o = Owned::new(7u32, cancel, ());
+        assert_eq!(o.take(), Some(7));
+        drop(o);
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    /// The managed-sender shape a binding drops without `close()` after its
+    /// peer is gone: every inner send and every reconnect fails, the policy
+    /// retries forever, and a partial bundle is still buffered, so
+    /// `Sender::drop`'s flush enters the reconnect loop. The cancel that
+    /// `Owned`'s drop fires first is what makes that flush return.
+    #[test]
+    #[cfg(feature = "std")]
+    fn dropping_a_managed_sender_owned_after_the_peer_is_lost_returns_promptly() {
+        use crate::reconnect::{BackoffStrategy, ManagedTransport, ReconnectPolicy};
+        use crate::sender::{Sender, SenderConfig};
+        use tst_core::transport::{BrokenCause, Transport, TransportError};
+
+        fn broken() -> TransportError {
+            TransportError::Broken {
+                msg: "peer lost".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            }
+        }
+        struct Lost;
+        impl Transport for Lost {
+            fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
+                Err(broken())
+            }
+            fn max_payload(&self) -> usize {
+                1316
+            }
+            fn is_alive(&self) -> bool {
+                false
+            }
+            fn close(&mut self) {}
+        }
+
+        let policy = ReconnectPolicy {
+            max_attempts: None,
+            backoff: BackoffStrategy::Constant(std::time::Duration::from_millis(50)),
+            ..ReconnectPolicy::default()
+        };
+        let managed = ManagedTransport::new(Lost, || Err::<Lost, _>(broken()), policy);
+        let cancel = managed
+            .cancel_handle()
+            .expect("a managed transport has one");
+        let mut sender = Sender::new(managed, SenderConfig::default());
+        // Three packets: fewer than a bundle, so they stay buffered and only
+        // the drop's flush tries to send them.
+        let mut ts = [0u8; 3 * 188];
+        for p in ts.chunks_mut(188) {
+            p[0] = 0x47;
+            p[1] = 0x1F;
+            p[2] = 0xFF;
+            p[3] = 0x10;
+        }
+        sender
+            .send_ts(&ts)
+            .expect("a partial bundle is only buffered");
+        let owned = Owned::new(sender, cancel as Arc<dyn TransportCancel>, ());
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(owned);
+            let _ = tx.send(());
+        });
+        assert!(
+            rx.recv_timeout(tst_test_helpers::timing::scaled(
+                std::time::Duration::from_secs(2)
+            ))
+            .is_ok(),
+            "dropping the Owned parked in the reconnect loop"
+        );
     }
 }
