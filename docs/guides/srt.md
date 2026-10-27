@@ -629,7 +629,8 @@ Strict ASCII canonical forms — matches libsrt apps' own URL parser:
   `SrtUrlError::Syntax`, and that error names the escape's offset and the
   key, never the value.
 - IPv6 hosts: an RFC 6874 zone delimiter is written `%25` and decodes to
-  `%`, so `srt://[fe80::1%25eth0]:9000` has the host `fe80::1%eth0`.
+  `%`, so `srt://[fe80::1%25eth0]:9000` has the host `fe80::1%eth0`. A
+  named zone resolves to its interface through the system resolver.
 
 Anything else rejects with `SrtUrlError::InvalidValue` carrying the key
 name and a description.
