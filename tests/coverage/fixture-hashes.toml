@@ -403,6 +403,14 @@ path = "crates/tst-integration/tests/fixtures/scenarios/malformed-psi-strict/inp
 sha256 = "637525b5bf575a8a337f838ccd9495d589198ad6c2dfd0d6c563ff7b60551341"
 
 [[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/peer-reset-recv-kind/golden.json"
+sha256 = "13e661b723819018c8bef0214c6e9b0a90e586d880c483143fdaa3aaf8cf96e6"
+
+[[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/peer-reset-recv-kind/input.bin"
+sha256 = "99c6629972e06f534a75af35581a2474401a3e060a281ae70d6c2418cb755780"
+
+[[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/pts-spacing-exceeded/golden.json"
 sha256 = "b5e3698c28427e0ab7628eb2c0c90148005a2caf0591bce480b6b2f51dece08c"
 
@@ -412,7 +420,7 @@ sha256 = "7a3d91c2c862ed1c4fd1c3e695b7292534a845d31b7f1a86571e5d4db23003ce"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/scenarios.toml"
-sha256 = "1c981a899841f38245d356d1f16da1ceb4aedeaa0bee81ddb35c10413fd81d10"
+sha256 = "0fc33bd2c6fae9f4258961a78ef82ae6da0264972034d10341786786382adbdb"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/strict-rejection/golden.json"

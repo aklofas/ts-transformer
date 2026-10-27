@@ -391,6 +391,63 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
                 code: projected.kind.name().to_string(),
             }]
         }
+        "peer-reset-recv-kind" => {
+            // One plain TCP receive whose peer resets the connection; the kind
+            // projected by the shared binding layer is the golden's code.
+            // Choreography: the peer listener on this thread writes the
+            // artifact and closes with SO_LINGER zero (an RST), the receive
+            // runs on a worker until its first error, and a deadline that
+            // misses cancels a pre-obtained handle and FAILS. The worker is
+            // never joined after a failed verdict, so a regression reports
+            // instead of hanging.
+            use std::io::Write;
+            use std::net::TcpListener;
+            use std::sync::mpsc;
+            use std::time::Duration;
+            use tst_core::transport::{RecvTransport, TransportError};
+            use tst_pipeline::binding::BindingError;
+            use tst_test_helpers::timing::scaled;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect(
+                "peer-reset-recv-kind: bind 127.0.0.1:0 (loopback is required, not optional)",
+            );
+            let port = listener.local_addr().expect("local_addr").port();
+            let opened = tst_tcp::opener::open_recv(&format!("tcp://127.0.0.1:{port}"))
+                .expect("peer-reset-recv-kind: open the plain TCP receiver");
+            let cancel = opened.cancel.clone();
+            let (mut conn, _) = listener.accept().expect("accept");
+            conn.write_all(input).expect("peer write");
+            socket2::SockRef::from(&conn)
+                .set_linger(Some(Duration::ZERO))
+                .expect("SO_LINGER zero");
+            drop(conn); // RST
+
+            let mut rx = opened.transport;
+            let (tx, result_rx) = mpsc::channel::<TransportError>();
+            std::thread::spawn(move || {
+                let mut buf = vec![0u8; rx.max_payload()];
+                let err = loop {
+                    match rx.recv_bytes(&mut buf) {
+                        Ok(_) | Err(TransportError::Backpressure { .. }) => continue,
+                        Err(e) => break e,
+                    }
+                };
+                let _ = tx.send(err);
+            });
+            let err = match result_rx.recv_timeout(scaled(Duration::from_secs(10))) {
+                Ok(err) => err,
+                Err(_) => {
+                    cancel.cancel();
+                    panic!(
+                        "peer-reset-recv-kind: the receive did not fail within 10 s of the reset"
+                    );
+                }
+            };
+            let projected = BindingError::from(err);
+            vec![CoreEvent::Error {
+                code: projected.kind.name().to_string(),
+            }]
+        }
         other => panic!("unknown binding_contract scenario: {other}"),
     }
 }
