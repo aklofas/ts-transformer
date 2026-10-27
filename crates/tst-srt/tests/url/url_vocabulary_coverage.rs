@@ -1,16 +1,16 @@
 //! Vocabulary-coverage drift test.
 //!
 //! Asserts:
-//!   1. All 16 Group 1 honored keys parse to a `Some(_)` field on
-//!      `SrtUrl::config` (catches "I forgot to wire the new key into the
-//!      apply layer").
-//!   2. All 2 Group 2 keys parse successfully.
+//!   1. Every Group 1 honored key lands in its own `SrtUrl::config` field
+//!      (catches "I forgot to wire the new key into the apply layer").
+//!   2. Every Group 2 key parses and changes the config.
 //!   3. All 24 Group 3 keys reject with `UnsupportedKey` carrying a
 //!      non-empty `SRTO_*` static string.
 //!   4. The honored-key count matches what's documented in
 //!      `docs/guides/srt.md` (drift between code and docs).
 
-use tst_srt::{SrtUrl, SrtUrlError};
+use std::time::Duration;
+use tst_srt::{Congestion, KeyLength, MaxBandwidth, SrtSocketConfig, SrtUrl, SrtUrlError};
 
 const GROUP1_KEYS: &[&str] = &[
     "passphrase",
@@ -63,53 +63,93 @@ const GROUP3_KEYS: &[&str] = &[
     "tsbpdmode",
 ];
 
-/// For each Group 1 key, build a URL with a value the parser will accept,
-/// parse it, and assert the resulting config has at least one Some(_)
-/// field. (Approximation: we count distinct fields by snapshotting before
-/// and after; if the parse succeeds, the key is wired.)
+type Check = fn(&SrtSocketConfig) -> bool;
+
+/// Every Group 1 key, a value the parser accepts, and the config field the
+/// key must land in. A key parsed but not wired into its field fails here.
 #[test]
 fn group1_keys_all_parse_and_wire() {
-    let representative_value: &[(&str, &str)] = &[
-        ("passphrase", "ten-chars!"),
-        ("pbkeylen", "16"),
-        ("latency", "100"),
-        ("rcvlatency", "100"),
-        ("peerlatency", "80"),
-        ("mss", "1316"),
-        ("payloadsize", "1316"),
-        ("maxbw", "10000000"),
-        ("inputbw", "5000000"),
-        ("oheadbw", "25"),
-        ("streamid", "front"),
-        ("lossmaxttl", "20"),
-        ("tlpktdrop", "1"),
-        ("fc", "8192"),
-        ("packetfilter", "fec,cols:10,rows:5"),
-        ("congestion", "live"),
-        ("conntimeo", "10000"),
-        ("linger", "5"),
-        ("udprcvbuf", "2000000"),
-        ("udpsndbuf", "2000000"),
+    let rows: &[(&str, &str, Check)] = &[
+        ("passphrase", "ten-chars!", |c| c.passphrase.is_some()),
+        ("pbkeylen", "16", |c| {
+            c.key_length == Some(KeyLength::Aes128)
+        }),
+        ("latency", "100", |c| {
+            c.latency == Some(Duration::from_millis(100))
+        }),
+        ("rcvlatency", "100", |c| {
+            c.recv_latency == Some(Duration::from_millis(100))
+        }),
+        ("peerlatency", "80", |c| {
+            c.peer_latency == Some(Duration::from_millis(80))
+        }),
+        ("mss", "1316", |c| c.mss == Some(1316)),
+        ("payloadsize", "1316", |c| c.payload_size == Some(1316)),
+        ("maxbw", "10000000", |c| {
+            c.max_bandwidth == Some(MaxBandwidth::Limited(10_000_000))
+        }),
+        ("inputbw", "5000000", |c| {
+            c.input_bandwidth == Some(5_000_000)
+        }),
+        ("oheadbw", "25", |c| c.overhead_bandwidth_pct == Some(25)),
+        ("streamid", "front", |c| {
+            c.stream_id.as_ref().map(|s| s.as_str()) == Some("front")
+        }),
+        ("lossmaxttl", "20", |c| c.loss_max_ttl == Some(20)),
+        ("tlpktdrop", "1", |c| c.too_late_packet_drop == Some(true)),
+        ("fc", "8192", |c| c.flow_window_packets == Some(8192)),
+        ("packetfilter", "fec,cols:10,rows:5", |c| {
+            c.packet_filter.is_some()
+        }),
+        ("congestion", "live", |c| {
+            c.congestion == Some(Congestion::Live)
+        }),
+        ("conntimeo", "10000", |c| {
+            c.connect_timeout == Some(Duration::from_millis(10_000))
+        }),
+        ("linger", "5", |c| c.linger == Some(Duration::from_secs(5))),
+        ("udprcvbuf", "2000000", |c| {
+            c.udp_recv_buffer_bytes == Some(2_000_000)
+        }),
+        ("udpsndbuf", "2000000", |c| {
+            c.udp_send_buffer_bytes == Some(2_000_000)
+        }),
     ];
     assert_eq!(
-        representative_value.len(),
+        rows.len(),
         GROUP1_KEYS.len(),
-        "GROUP1_KEYS and representative_value must match"
+        "GROUP1_KEYS and the row table must match"
     );
-    for (key, value) in representative_value {
+    for key in GROUP1_KEYS {
+        assert!(
+            rows.iter().any(|(k, _, _)| k == key),
+            "Group 1 key '{key}' has no row"
+        );
+    }
+    for (key, value, wired) in rows {
         let url = format!("srt://1.2.3.4:9000?{key}={value}");
-        let _ = SrtUrl::parse(&url).unwrap_or_else(|e| {
+        let parsed = SrtUrl::parse(&url).unwrap_or_else(|e| {
             panic!("Group 1 key '{key}' should parse with value '{value}': {e}")
         });
+        assert!(
+            wired(&parsed.config),
+            "Group 1 key '{key}={value}' parsed but did not reach its config field"
+        );
     }
 }
 
 #[test]
 fn group2_keys_all_parse_and_wire() {
+    let default = format!("{:?}", SrtSocketConfig::default());
     for key in GROUP2_KEYS {
         let url = format!("srt://1.2.3.4:9000?{key}=1000");
-        let _ =
+        let parsed =
             SrtUrl::parse(&url).unwrap_or_else(|e| panic!("Group 2 key '{key}' should parse: {e}"));
+        assert_ne!(
+            format!("{:?}", parsed.config),
+            default,
+            "Group 2 key '{key}' parsed but changed nothing"
+        );
     }
 }
 

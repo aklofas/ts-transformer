@@ -242,25 +242,19 @@ mod free_guard_tests {
             // normal scope exit
         }
         assert_eq!(n.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn guard_fires_once_when_inner_returns_early() {
-        let n = AtomicUsize::new(0);
-        let run = |early: bool| {
+        // An early return out of a function also drops the guard exactly once.
+        let skipped = AtomicUsize::new(0);
+        let early = || {
             let _g = OnDrop::new(|| {
                 n.fetch_add(1, Ordering::SeqCst);
             });
-            if !early {
-                // ... rest of body that we skip
+            if skipped.load(Ordering::SeqCst) == 0 {
+                return;
             }
+            skipped.fetch_add(1, Ordering::SeqCst);
         };
-        run(true);
-        assert_eq!(
-            n.load(Ordering::SeqCst),
-            1,
-            "early return still drops the guard"
-        );
+        early();
+        assert_eq!(n.load(Ordering::SeqCst), 2);
     }
 
     #[test]
