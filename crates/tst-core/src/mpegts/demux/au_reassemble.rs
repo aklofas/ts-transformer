@@ -8,9 +8,10 @@
 //! ConcurrentFirst / Overflow.
 //!
 //! Owned by the demuxer (one instance per [`super::Demuxer`]). Keyed by
-//! PID, because PIDs are unique within a TS even when shared across
-//! PMTs. Cleared wholesale on `Demuxer::reset_sync()` and on PMT
-//! version change.
+//! `(PID, metadata_service_id)`: PIDs are unique within a TS even when
+//! shared across PMTs, and §2.12.4.2 lets several metadata services share
+//! one PID, each with its own Access Units. Cleared wholesale on
+//! `Demuxer::reset_sync()`, and per PID when a PMT retires or retypes it.
 
 use crate::mpegts::au_cell::{AuCellHeader, CellFragmentIndication};
 use alloc::vec::Vec;
@@ -18,7 +19,7 @@ use hashbrown::HashMap;
 
 use super::event::MultiCellAuReason;
 
-/// In-flight reassembly state for one PID.
+/// In-flight reassembly state for one `(PID, metadata_service_id)`.
 #[derive(Debug)]
 struct PidReassemblyState {
     /// Header from the `First` cell. Surfaced on emit (CFI forced to
@@ -29,14 +30,6 @@ struct PidReassemblyState {
     buf: Vec<u8>,
     /// Number of cells accumulated so far (≥ 1 once a `First` is seen).
     cell_count: u32,
-}
-
-impl PidReassemblyState {
-    fn next_expected_seq(&self) -> u8 {
-        self.first_header
-            .sequence_number
-            .wrapping_add(self.cell_count as u8)
-    }
 }
 
 /// Outcome of feeding one AU cell into the reassembler.
@@ -66,15 +59,22 @@ pub(crate) enum ReassembleOutcome<'a> {
 
 #[derive(Debug)]
 pub(crate) struct AuCellReassembler {
-    per_pid: HashMap<u16, PidReassemblyState>,
+    /// Keyed by `(pid, metadata_service_id)`.
+    per_pid: HashMap<(u16, u8), PidReassemblyState>,
+    /// `sequence_number` of the last cell seen on each PID. §2.12.4.2
+    /// increments it once per cell independent of `metadata_service_id`,
+    /// so continuity is checked per PID even though buffers are per
+    /// service.
+    last_seq: HashMap<u16, u8>,
     cap_per_pid: usize,
     /// Aggregate cap on the sum of all per-PID buffer bytes. Defends a
     /// multi-PID flood where each PID stays under `cap_per_pid` but the
     /// total explodes (mirrors the PES `Reassembler::cap_total` shape).
     cap_total: usize,
-    /// Ceiling on the number of PIDs with an in-flight (open `First`)
-    /// reassembly. Bounds active-PID count when an adversary opens a
-    /// `First` for thousands of distinct PIDs and never sends `Last`.
+    /// Ceiling on the number of in-flight (open `First`) reassemblies,
+    /// counted per `(pid, metadata_service_id)`. Bounds active state when
+    /// an adversary opens a `First` for thousands of distinct PIDs or
+    /// services and never sends `Last`.
     max_in_flight_pids: usize,
     /// Live sum of `per_pid[*].buf.len()`. Maintained on every
     /// insert/append/drop/emit path so the aggregate cap can be enforced
@@ -101,6 +101,7 @@ impl AuCellReassembler {
     ) -> Self {
         Self {
             per_pid: HashMap::new(),
+            last_seq: HashMap::new(),
             cap_per_pid,
             cap_total,
             max_in_flight_pids,
@@ -141,8 +142,13 @@ impl AuCellReassembler {
         header: AuCellHeader,
         payload: &'a [u8],
     ) -> ReassembleOutcome<'a> {
+        let key = (pid, header.metadata_service_id);
+        let seq_follows = self
+            .last_seq
+            .insert(pid, header.sequence_number)
+            .is_some_and(|prev| prev.wrapping_add(1) == header.sequence_number);
         match (
-            self.per_pid.contains_key(&pid),
+            self.per_pid.contains_key(&key),
             header.cell_fragment_indication,
         ) {
             // Empty + Complete → emit directly.
@@ -160,11 +166,12 @@ impl AuCellReassembler {
                         dropped_bytes: payload.len(),
                     };
                 }
-                // Aggregate active-PID ceiling: refuse to open a new PID
-                // beyond the limit. Deterministic rejection (we do NOT
-                // evict an existing PID — that would silently drop another
-                // stream's in-flight AU). The adversary's flood of unique
-                // First cells is bounded; legitimate streams keep theirs.
+                // Aggregate in-flight ceiling: refuse to open a new
+                // `(pid, service)` reassembly beyond the limit.
+                // Deterministic rejection (we do NOT evict an existing one
+                // — that would silently drop another stream's in-flight
+                // AU). The adversary's flood of unique First cells is
+                // bounded; legitimate streams keep theirs.
                 if self.per_pid.len() >= self.max_in_flight_pids {
                     return ReassembleOutcome::Failure {
                         reason: MultiCellAuReason::TooManyPids,
@@ -181,7 +188,7 @@ impl AuCellReassembler {
                 }
                 self.total_buffered += payload.len();
                 self.per_pid.insert(
-                    pid,
+                    key,
                     PidReassemblyState {
                         first_header: header,
                         buf: payload.to_vec(),
@@ -201,7 +208,7 @@ impl AuCellReassembler {
 
             // Buffering + Complete → drop buffer (concurrent), then caller re-enters.
             (true, CellFragmentIndication::Complete) => {
-                let dropped = self.per_pid.remove(&pid).unwrap();
+                let dropped = self.per_pid.remove(&key).unwrap();
                 self.decrement_total(dropped.buf.len());
                 let _ = header;
                 ReassembleOutcome::Failure {
@@ -212,7 +219,7 @@ impl AuCellReassembler {
 
             // Buffering + First → drop buffer (concurrent). Caller re-calls.
             (true, CellFragmentIndication::First) => {
-                let dropped = self.per_pid.remove(&pid).unwrap();
+                let dropped = self.per_pid.remove(&key).unwrap();
                 self.decrement_total(dropped.buf.len());
                 ReassembleOutcome::Failure {
                     reason: MultiCellAuReason::ConcurrentFirst,
@@ -222,9 +229,9 @@ impl AuCellReassembler {
 
             // Buffering + Middle → seq check + append.
             (true, CellFragmentIndication::Middle) => {
-                let state = self.per_pid.get_mut(&pid).unwrap();
-                if header.sequence_number != state.next_expected_seq() {
-                    let dropped = self.per_pid.remove(&pid).unwrap();
+                let state = self.per_pid.get_mut(&key).unwrap();
+                if !seq_follows {
+                    let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
                     return ReassembleOutcome::Failure {
                         reason: MultiCellAuReason::SequenceGap,
@@ -232,7 +239,7 @@ impl AuCellReassembler {
                     };
                 }
                 if state.buf.len() + payload.len() > self.cap_per_pid {
-                    let dropped = self.per_pid.remove(&pid).unwrap();
+                    let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
                     return ReassembleOutcome::Failure {
                         reason: MultiCellAuReason::Overflow,
@@ -242,25 +249,33 @@ impl AuCellReassembler {
                 // Aggregate byte ceiling on append: drop this PID's buffer
                 // and surface OverflowTotal if appending would breach it.
                 if self.total_buffered + payload.len() > self.cap_total {
-                    let dropped = self.per_pid.remove(&pid).unwrap();
+                    let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
                     return ReassembleOutcome::Failure {
                         reason: MultiCellAuReason::OverflowTotal,
                         dropped_bytes: dropped.buf.len() + payload.len(),
                     };
                 }
-                let state = self.per_pid.get_mut(&pid).unwrap();
+                let state = self.per_pid.get_mut(&key).unwrap();
+                let Some(cell_count) = state.cell_count.checked_add(1) else {
+                    let dropped = self.per_pid.remove(&key).unwrap();
+                    self.decrement_total(dropped.buf.len());
+                    return ReassembleOutcome::Failure {
+                        reason: MultiCellAuReason::Overflow,
+                        dropped_bytes: dropped.buf.len() + payload.len(),
+                    };
+                };
                 state.buf.extend_from_slice(payload);
-                state.cell_count += 1;
+                state.cell_count = cell_count;
                 self.total_buffered += payload.len();
                 ReassembleOutcome::Buffered
             }
 
             // Buffering + Last → seq check + append + emit.
             (true, CellFragmentIndication::Last) => {
-                let state = self.per_pid.get_mut(&pid).unwrap();
-                if header.sequence_number != state.next_expected_seq() {
-                    let dropped = self.per_pid.remove(&pid).unwrap();
+                let state = self.per_pid.get_mut(&key).unwrap();
+                if !seq_follows {
+                    let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
                     return ReassembleOutcome::Failure {
                         reason: MultiCellAuReason::SequenceGap,
@@ -268,7 +283,7 @@ impl AuCellReassembler {
                     };
                 }
                 if state.buf.len() + payload.len() > self.cap_per_pid {
-                    let dropped = self.per_pid.remove(&pid).unwrap();
+                    let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
                     return ReassembleOutcome::Failure {
                         reason: MultiCellAuReason::Overflow,
@@ -276,18 +291,26 @@ impl AuCellReassembler {
                     };
                 }
                 if self.total_buffered + payload.len() > self.cap_total {
-                    let dropped = self.per_pid.remove(&pid).unwrap();
+                    let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
                     return ReassembleOutcome::Failure {
                         reason: MultiCellAuReason::OverflowTotal,
                         dropped_bytes: dropped.buf.len() + payload.len(),
                     };
                 }
-                let state = self.per_pid.get_mut(&pid).unwrap();
+                let state = self.per_pid.get_mut(&key).unwrap();
+                let Some(cell_count) = state.cell_count.checked_add(1) else {
+                    let dropped = self.per_pid.remove(&key).unwrap();
+                    self.decrement_total(dropped.buf.len());
+                    return ReassembleOutcome::Failure {
+                        reason: MultiCellAuReason::Overflow,
+                        dropped_bytes: dropped.buf.len() + payload.len(),
+                    };
+                };
                 state.buf.extend_from_slice(payload);
-                state.cell_count += 1;
+                state.cell_count = cell_count;
                 self.total_buffered += payload.len();
-                let state_ref = self.per_pid.get(&pid).unwrap();
+                let state_ref = self.per_pid.get(&key).unwrap();
                 let mut first_header = state_ref.first_header;
                 first_header.cell_fragment_indication = CellFragmentIndication::Complete;
                 ReassembleOutcome::Emit {
@@ -299,19 +322,39 @@ impl AuCellReassembler {
         }
     }
 
-    /// Clear all buffers. Called from `Demuxer::reset_sync()` and on PMT
-    /// version change.
+    /// Whether any service on `pid` has an in-flight reassembly.
+    #[cfg(test)]
+    pub(crate) fn has_pid(&self, pid: u16) -> bool {
+        self.per_pid.keys().any(|&(p, _)| p == pid)
+    }
+
+    /// Clear all buffers. Called from `Demuxer::reset_sync()`.
     pub(crate) fn reset_all(&mut self) {
         self.per_pid.clear();
+        self.last_seq.clear();
         self.total_buffered = 0;
+    }
+
+    /// Drop every service's in-flight reassembly on `pid`. Called when a
+    /// PMT retires the PID or changes its stream kind.
+    pub(crate) fn reset_pid(&mut self, pid: u16) {
+        self.last_seq.remove(&pid);
+        let mut dropped_len = 0;
+        self.per_pid.retain(|&(p, _), state| {
+            if p == pid {
+                dropped_len += state.buf.len();
+            }
+            p != pid
+        });
+        self.decrement_total(dropped_len);
     }
 
     /// On `Emit` of a multi-cell AU the caller drains the buffer via this
     /// method (since `Emit`'s `&[u8]` borrow prevents `&mut self`
     /// operations during the emit). Call AFTER copying / consuming the
     /// `Emit::payload` slice.
-    pub(crate) fn clear_after_emit(&mut self, pid: u16) {
-        if let Some(dropped) = self.per_pid.remove(&pid) {
+    pub(crate) fn clear_after_emit(&mut self, pid: u16, service_id: u8) {
+        if let Some(dropped) = self.per_pid.remove(&(pid, service_id)) {
             self.decrement_total(dropped.buf.len());
         }
     }
@@ -329,6 +372,64 @@ mod tests {
             decoder_config_flag: false,
             random_access_indicator: true,
         }
+    }
+
+    /// `hdr` with an explicit `metadata_service_id`.
+    fn svc_hdr(service: u8, seq: u8, cfi: CellFragmentIndication) -> AuCellHeader {
+        AuCellHeader {
+            metadata_service_id: service,
+            ..hdr(cfi, seq)
+        }
+    }
+
+    /// H.222.0 §2.12.4.2: metadata_service_id distinguishes services on one PID,
+    /// and sequence_number counts every cell on the PID, whatever its service.
+    #[test]
+    fn interleaved_services_on_one_pid_reassemble_independently() {
+        use CellFragmentIndication::{First, Last};
+        let mut r = AuCellReassembler::new(1 << 20);
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(0, 0, First), b"a1"),
+            ReassembleOutcome::Buffered
+        ));
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(1, 1, First), b"b1"),
+            ReassembleOutcome::Buffered
+        ));
+        assert!(matches!(r.process_cell(0x101, svc_hdr(0, 2, Last), b"a2"),
+            ReassembleOutcome::Emit { payload, cell_count: 2, .. } if payload == b"a1a2"));
+        r.clear_after_emit(0x101, 0);
+        assert!(matches!(r.process_cell(0x101, svc_hdr(1, 3, Last), b"b2"),
+            ReassembleOutcome::Emit { payload, .. } if payload == b"b1b2"));
+    }
+
+    #[test]
+    fn middle_cell_at_the_u32_cell_count_limit_fails_overflow_without_panicking() {
+        use CellFragmentIndication::{First, Middle};
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.process_cell(0x101, svc_hdr(0, 0, First), b"x");
+        r.per_pid.get_mut(&(0x101, 0)).unwrap().cell_count = u32::MAX;
+        let seq = 1; // the cell after the First
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(0, seq, Middle), b""),
+            ReassembleOutcome::Failure {
+                reason: MultiCellAuReason::Overflow,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reset_pid_drops_every_service_of_that_pid_only() {
+        use CellFragmentIndication::First;
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.process_cell(0x101, svc_hdr(0, 0, First), b"aaa");
+        r.process_cell(0x101, svc_hdr(1, 0, First), b"bb");
+        r.process_cell(0x102, svc_hdr(0, 0, First), b"c");
+        r.reset_pid(0x101);
+        assert!(!r.has_pid(0x101));
+        assert!(r.has_pid(0x102));
+        assert_eq!(r.total_buffered, 1);
     }
 
     #[test]
@@ -384,8 +485,8 @@ mod tests {
             }
             _ => panic!("expected Emit, got {:?}", out),
         }
-        r.clear_after_emit(0x100);
-        assert!(!r.per_pid.contains_key(&0x100));
+        r.clear_after_emit(0x100, 0);
+        assert!(!r.per_pid.contains_key(&(0x100, 0)));
     }
 
     #[test]
@@ -426,7 +527,7 @@ mod tests {
                 dropped_bytes: 6,
             }
         ));
-        assert!(!r.per_pid.contains_key(&0x100));
+        assert!(!r.per_pid.contains_key(&(0x100, 0)));
     }
 
     #[test]
@@ -493,7 +594,7 @@ mod tests {
                 dropped_bytes: 15,
             }
         ));
-        assert!(!r.per_pid.contains_key(&0x100));
+        assert!(!r.per_pid.contains_key(&(0x100, 0)));
     }
 
     #[test]
@@ -512,10 +613,10 @@ mod tests {
         r.process_cell(0x200, hdr(CellFragmentIndication::First, 100), &[0xBB; 3]);
         let out_a = r.process_cell(0x100, hdr(CellFragmentIndication::Last, 1), &[0xCC; 3]);
         assert!(matches!(out_a, ReassembleOutcome::Emit { .. }));
-        r.clear_after_emit(0x100);
+        r.clear_after_emit(0x100, 0);
         let out_b = r.process_cell(0x200, hdr(CellFragmentIndication::Last, 101), &[0xDD; 3]);
         assert!(matches!(out_b, ReassembleOutcome::Emit { .. }));
-        r.clear_after_emit(0x200);
+        r.clear_after_emit(0x200, 0);
         assert!(r.per_pid.is_empty());
     }
 
@@ -628,12 +729,12 @@ mod tests {
 
         // Middle-arm per-PID append overflow drops PID 0x10's buffer.
         let _ = r.process_cell(0x10, hdr(CellFragmentIndication::Middle, 1), &[0xAA; 100]);
-        assert!(!r.per_pid.contains_key(&0x10));
+        assert!(!r.per_pid.contains_key(&(0x10, 0)));
         assert_eq!(r.total_buffered, live_sum(&r));
 
         // Middle-arm sequence gap drops PID 0x20's buffer.
         let _ = r.process_cell(0x20, hdr(CellFragmentIndication::Middle, 99), &[0xBB; 5]);
-        assert!(!r.per_pid.contains_key(&0x20));
+        assert!(!r.per_pid.contains_key(&(0x20, 0)));
         assert_eq!(r.total_buffered, live_sum(&r));
 
         // Buffering+First ConcurrentFirst drops PID 0x30's open buffer.
@@ -648,7 +749,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(!r.per_pid.contains_key(&0x30));
+        assert!(!r.per_pid.contains_key(&(0x30, 0)));
         assert_eq!(r.total_buffered, live_sum(&r));
 
         // Buffering+Complete ConcurrentFirst: open a fresh PID, then send a
@@ -663,7 +764,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(!r.per_pid.contains_key(&0x35));
+        assert!(!r.per_pid.contains_key(&(0x35, 0)));
         assert_eq!(r.total_buffered, live_sum(&r));
 
         // Last-arm sequence gap: open a PID, advance one valid Middle,
@@ -679,7 +780,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(!r.per_pid.contains_key(&0x50));
+        assert!(!r.per_pid.contains_key(&(0x50, 0)));
         assert_eq!(r.total_buffered, live_sum(&r));
 
         // Last-arm per-PID overflow: a Last whose payload pushes the
@@ -694,7 +795,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(!r.per_pid.contains_key(&0x60));
+        assert!(!r.per_pid.contains_key(&(0x60, 0)));
         assert_eq!(r.total_buffered, live_sum(&r));
 
         // Clean emit path: First+Last, clear_after_emit zeroes the counter.
@@ -702,7 +803,7 @@ mod tests {
         assert_eq!(r.total_buffered, live_sum(&r));
         let out = r.process_cell(0x40, hdr(CellFragmentIndication::Last, 1), &[0x22; 4]);
         assert!(matches!(out, ReassembleOutcome::Emit { .. }));
-        r.clear_after_emit(0x40);
+        r.clear_after_emit(0x40, 0);
         assert_eq!(r.total_buffered, 0);
         assert_eq!(r.total_buffered, live_sum(&r));
     }
@@ -730,7 +831,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(!r.per_pid.contains_key(&0x10));
+        assert!(!r.per_pid.contains_key(&(0x10, 0)));
         assert_eq!(r.total_buffered, 0);
         assert_eq!(r.total_buffered, live_sum(&r));
 
@@ -745,7 +846,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(!r.per_pid.contains_key(&0x20));
+        assert!(!r.per_pid.contains_key(&(0x20, 0)));
         assert_eq!(r.total_buffered, 0);
         assert_eq!(r.total_buffered, live_sum(&r));
     }
