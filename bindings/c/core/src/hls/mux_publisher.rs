@@ -131,7 +131,7 @@ pub unsafe extern "C" fn tst_mux_publisher_with_config_hls(
                 return std::ptr::null_mut();
             }
         };
-        // `boxed` is dropped here (its inner is now None — no double close).
+        // `boxed` (inner now None) drops when the closure ends: no double close.
         match MuxPublisher::with_config(hls_pub, muxer_cfg) {
             Ok(mp) => Box::into_raw(Box::new(TstMuxPublisher {
                 inner: CHandle::offline(mp),
