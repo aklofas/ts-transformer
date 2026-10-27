@@ -143,7 +143,7 @@ fn c_server() -> (*mut TstRtspServer, *mut TstRtspMountHandle, u16) {
 
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
     let path = CString::new("/live").unwrap();
     let mount = unsafe { tst_rtsp_server_add_unicast_mount(server, path.as_ptr(), cfg) };
     unsafe { tst_mux_config_free(cfg) };

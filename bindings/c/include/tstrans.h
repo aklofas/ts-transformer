@@ -206,67 +206,6 @@ typedef enum tst_stream_end_reason {
   TST_STREAM_END_REASON_CANCELLED = 6,
 } tst_stream_end_reason;
 
-enum tst_video_codec
-#ifdef __cplusplus
-  : int32_t
-#endif // __cplusplus
- {
-  TST_VIDEO_CODEC_H264 = 0,
-  TST_VIDEO_CODEC_H265 = 1,
-  TST_VIDEO_CODEC_H266 = 2,
-  TST_VIDEO_CODEC_AV1 = 3,
-};
-#ifndef __cplusplus
-typedef int32_t tst_video_codec;
-#endif // __cplusplus
-
-/**
- * `repr(i32)` mirror of `tst_core::mpegts::demux::AudioCodec`.
- * On `tst_event_t.u.sample.codec` when `stream_kind == TST_STREAM_KIND_AUDIO`,
- * and on `tst_stream_info_t.codec`.
- */
-enum tst_audio_codec
-#ifdef __cplusplus
-  : int32_t
-#endif // __cplusplus
- {
-  TST_AUDIO_CODEC_MP2 = 0,
-  TST_AUDIO_CODEC_AAC = 1,
-  TST_AUDIO_CODEC_AAC_LATM = 2,
-  TST_AUDIO_CODEC_AC3 = 3,
-};
-#ifndef __cplusplus
-typedef int32_t tst_audio_codec;
-#endif // __cplusplus
-
-typedef enum tst_klv_stream_type {
-  TST_KLV_STREAM_TYPE_PRIVATE_DATA = 0,
-  TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA = 1,
-} tst_klv_stream_type;
-
-/**
- * Where a `ManagedTransport`'s reconnect loop runs after the inner
- * transport breaks.
- *
- * - `Blocking` (default): reconnect runs on the caller's thread — a sink
- *   outage blocks the caller inside a send call until reconnect succeeds
- *   or `max_attempts` runs out.
- * - `Background`: reconnect runs on a dedicated per-outage worker thread.
- *   Sends never wait out backoff or a factory call while the transport is
- *   down; they enqueue into the gap buffer under the configured overflow
- *   policy instead. On a managed *receive* open, `Background` is not
- *   supported: the open logs a warning and degrades to `Blocking`.
- */
-typedef enum tst_reconnect_mode {
-  TST_RECONNECT_MODE_BLOCKING = 0,
-  TST_RECONNECT_MODE_BACKGROUND = 1,
-} tst_reconnect_mode;
-
-typedef enum tst_overflow_policy {
-  TST_OVERFLOW_POLICY_DROP_OLDEST = 0,
-  TST_OVERFLOW_POLICY_REJECT = 1,
-} tst_overflow_policy;
-
 #if defined(TST_HAS_RTP)
 /**
  * How a publish mount aligns its announced tracks to one clock
@@ -326,11 +265,6 @@ typedef enum tst_rtsp_publish_shape {
 } tst_rtsp_publish_shape;
 #endif
 
-typedef enum tst_ts_framing_mode {
-  TST_TS_FRAMING_MODE_RECOVER = 0,
-  TST_TS_FRAMING_MODE_STRICT = 1,
-} tst_ts_framing_mode;
-
 /**
  * State of one ST 0601 tag on a decoded record. See the module docs for
  * why "not present" needs more than a bool.
@@ -370,6 +304,25 @@ typedef enum tst_st0601_field_state {
    */
   TST_ST0601_FIELD_STATE_WRONG_TYPE = 4,
 } tst_st0601_field_state;
+
+/**
+ * `repr(i32)` mirror of `tst_core::mpegts::demux::AudioCodec`.
+ * On `tst_event_t.u.sample.codec` when `stream_kind == TST_STREAM_KIND_AUDIO`,
+ * and on `tst_stream_info_t.codec`.
+ */
+enum tst_audio_codec
+#ifdef __cplusplus
+  : int32_t
+#endif // __cplusplus
+ {
+  TST_AUDIO_CODEC_MP2 = 0,
+  TST_AUDIO_CODEC_AAC = 1,
+  TST_AUDIO_CODEC_AAC_LATM = 2,
+  TST_AUDIO_CODEC_AC3 = 3,
+};
+#ifndef __cplusplus
+typedef int32_t tst_audio_codec;
+#endif // __cplusplus
 
 /**
  * `repr(i32)` mirror of `tst_core::mpegts::mux::Av1CarriageMode`.
@@ -743,6 +696,11 @@ enum tst_event_kind
 typedef int32_t tst_event_kind;
 #endif // __cplusplus
 
+typedef enum tst_klv_stream_type {
+  TST_KLV_STREAM_TYPE_PRIVATE_DATA = 0,
+  TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA = 1,
+} tst_klv_stream_type;
+
 /**
  * `repr(i32)` mirror of `tst_core::mpegts::demux::LinkSource`.
  * On `tst_klv_link_t.source` and on synthetic KLV-link inference.
@@ -998,6 +956,11 @@ enum tst_nonconformant_code
 typedef int32_t tst_nonconformant_code;
 #endif // __cplusplus
 
+typedef enum tst_overflow_policy {
+  TST_OVERFLOW_POLICY_DROP_OLDEST = 0,
+  TST_OVERFLOW_POLICY_REJECT = 1,
+} tst_overflow_policy;
+
 /**
  * `repr(i32)` mirror of `tst_core::mpegts::demux::PcrMalformedKind`.
  * Surfaced on `tst_event_t.u.nonconformant.table_id` when
@@ -1042,6 +1005,24 @@ enum tst_publisher_kind
 typedef uint32_t tst_publisher_kind;
 #endif // __cplusplus
 #endif
+
+/**
+ * Where a `ManagedTransport`'s reconnect loop runs after the inner
+ * transport breaks.
+ *
+ * - `Blocking` (default): reconnect runs on the caller's thread — a sink
+ *   outage blocks the caller inside a send call until reconnect succeeds
+ *   or `max_attempts` runs out.
+ * - `Background`: reconnect runs on a dedicated per-outage worker thread.
+ *   Sends never wait out backoff or a factory call while the transport is
+ *   down; they enqueue into the gap buffer under the configured overflow
+ *   policy instead. On a managed *receive* open, `Background` is not
+ *   supported: the open logs a warning and degrades to `Blocking`.
+ */
+typedef enum tst_reconnect_mode {
+  TST_RECONNECT_MODE_BLOCKING = 0,
+  TST_RECONNECT_MODE_BACKGROUND = 1,
+} tst_reconnect_mode;
 
 /**
  * `repr(i32)` mirror of `tst_core::mpegts::demux::StreamKind`'s
@@ -1106,6 +1087,25 @@ enum tst_subtitle_codec
 };
 #ifndef __cplusplus
 typedef int32_t tst_subtitle_codec;
+#endif // __cplusplus
+
+typedef enum tst_ts_framing_mode {
+  TST_TS_FRAMING_MODE_RECOVER = 0,
+  TST_TS_FRAMING_MODE_STRICT = 1,
+} tst_ts_framing_mode;
+
+enum tst_video_codec
+#ifdef __cplusplus
+  : int32_t
+#endif // __cplusplus
+ {
+  TST_VIDEO_CODEC_H264 = 0,
+  TST_VIDEO_CODEC_H265 = 1,
+  TST_VIDEO_CODEC_H266 = 2,
+  TST_VIDEO_CODEC_AV1 = 3,
+};
+#ifndef __cplusplus
+typedef int32_t tst_video_codec;
 #endif // __cplusplus
 
 /**
@@ -4836,11 +4836,12 @@ struct tst_managed_sender_t *tst_managed_sender_open(const char *srt_url,
  * or a malformed MISP payload. `out_kind`: 0 = micro, 1 = nano.
  *
  * `au` must point to `len` bytes of an Annex-B access unit. The `codec`
- * argument selects how SEI NAL units are located (H.264 vs H.265 NAL
- * structure); once an SEI payload is found, extraction accepts any known
- * ST 0604 MISP UUID (microsecond or nanosecond) regardless of codec. AV1
- * and H.266 always return 1 (absent) because ST 0604 defines no SEI
- * carriage for them.
+ * argument is one of the `TST_VIDEO_CODEC_*` constants (any other value
+ * returns `TST_E_INVALID_CONFIG`) and selects how SEI NAL units are
+ * located (H.264 vs H.265 NAL structure); once an SEI payload is found,
+ * extraction accepts any known ST 0604 MISP UUID (microsecond or
+ * nanosecond) regardless of codec. AV1 and H.266 always return 1 (absent)
+ * because ST 0604 defines no SEI carriage for them.
  *
  * # Safety
  *
@@ -4852,7 +4853,7 @@ struct tst_managed_sender_t *tst_managed_sender_open(const char *srt_url,
 
 int tst_misp_time_extract(const uint8_t *au,
                           size_t len,
-                          tst_video_codec codec,
+                          int32_t codec,
                           uint8_t *out_kind,
                           uint8_t *out_time_status,
                           uint64_t *out_value);
@@ -4885,7 +4886,10 @@ int tst_mux_config_add_audio_descriptor(struct tst_mux_config_t *cfg,
  * `tst_managed_mux_sender_send_audio_to` to fan out to this specific
  * stream.
  *
- * Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: null `cfg`,
+ * `codec` is one of the `TST_AUDIO_CODEC_*` constants.
+ *
+ * Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: a `codec`
+ * outside `TST_AUDIO_CODEC_*` (`TST_E_INVALID_CONFIG`), null `cfg`,
  * invalid `program` handle, or per-program stream cap exceeded (>16 audio
  * streams per program). Hard validation errors surface at `_open` time.
  *
@@ -4896,7 +4900,7 @@ int tst_mux_config_add_audio_descriptor(struct tst_mux_config_t *cfg,
 tst_audio_stream_handle_t tst_mux_config_add_audio_stream(struct tst_mux_config_t *cfg,
                                                           tst_program_handle_t program,
                                                           uint16_t pid,
-                                                          tst_audio_codec codec);
+                                                          int32_t codec);
 
 /**
  * Add an audio elementary stream with an ISO 639-2 language tag.
@@ -4910,14 +4914,17 @@ tst_audio_stream_handle_t tst_mux_config_add_audio_stream(struct tst_mux_config_
  * use the bare `tst_mux_config_add_audio_stream` variant when no language
  * tag is desired.
  *
- * Other failure modes match `tst_mux_config_add_audio_stream` (null
- * `cfg`, invalid `program`, per-program cap exceeded).
+ * `codec` is one of the `TST_AUDIO_CODEC_*` constants.
+ *
+ * Other failure modes match `tst_mux_config_add_audio_stream` (a `codec`
+ * outside `TST_AUDIO_CODEC_*`, null `cfg`, invalid `program`, per-program
+ * cap exceeded).
  */
 
 tst_audio_stream_handle_t tst_mux_config_add_audio_stream_with_language(struct tst_mux_config_t *cfg,
                                                                         tst_program_handle_t program,
                                                                         uint16_t pid,
-                                                                        tst_audio_codec codec,
+                                                                        int32_t codec,
                                                                         const uint8_t *language);
 
 /**
@@ -4984,14 +4991,15 @@ int tst_mux_config_add_klv_descriptor(struct tst_mux_config_t *cfg,
  * `carries_pts`: set `true` for synchronous KLV (PTS carried in PES header),
  * `false` for async KLV.
  *
- * Returns `TST_INVALID_STREAM_HANDLE` on error (same conditions as
- * `tst_mux_config_add_video_stream`).
+ * Returns `TST_INVALID_STREAM_HANDLE` on error: a `stream_type` outside
+ * `TST_KLV_STREAM_TYPE_*` (`TST_E_INVALID_CONFIG`), or the same conditions
+ * as `tst_mux_config_add_video_stream`.
  */
 
 tst_klv_stream_handle_t tst_mux_config_add_klv_stream(struct tst_mux_config_t *cfg,
                                                       tst_program_handle_t program,
                                                       uint16_t pid,
-                                                      enum tst_klv_stream_type stream_type,
+                                                      int32_t stream_type,
                                                       bool carries_pts);
 
 /**
@@ -5125,7 +5133,10 @@ int tst_mux_config_add_video_descriptor(struct tst_mux_config_t *cfg,
  * `tst_muxer_push_video_to` / `tst_mux_sender_send_video_to` /
  * `tst_managed_mux_sender_send_video_to` to fan out to this specific stream.
  *
- * Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: null `cfg`,
+ * `codec` is one of the `TST_VIDEO_CODEC_*` constants.
+ *
+ * Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: a `codec`
+ * outside `TST_VIDEO_CODEC_*` (`TST_E_INVALID_CONFIG`), null `cfg`,
  * invalid `program` handle, or per-program stream cap exceeded (>16 streams
  * of any kind per program). Hard validation errors surface at `_open` time.
  */
@@ -5133,7 +5144,7 @@ int tst_mux_config_add_video_descriptor(struct tst_mux_config_t *cfg,
 tst_video_stream_handle_t tst_mux_config_add_video_stream(struct tst_mux_config_t *cfg,
                                                           tst_program_handle_t program,
                                                           uint16_t pid,
-                                                          tst_video_codec codec);
+                                                          int32_t codec);
 
 /**
  * Free a mux config previously returned by `tst_mux_config_new`.
@@ -6849,14 +6860,19 @@ int tst_reconnect_policy_set_backoff_exponential_ms(struct tst_reconnect_policy_
  int tst_reconnect_policy_set_max_attempts(struct tst_reconnect_policy_t *p, int32_t n);
 
 /**
- * Set the reconnect-loop placement. See `TstReconnectMode` for the
- * semantics of each mode. Default: `Blocking`.
+ * Set the reconnect-loop placement. `mode` is one of the
+ * `TST_RECONNECT_MODE_*` constants (see `TstReconnectMode` for the
+ * semantics of each); any other value returns `TST_E_INVALID_CONFIG`.
+ * Default: `Blocking`.
  */
- int tst_reconnect_policy_set_mode(struct tst_reconnect_policy_t *p, enum tst_reconnect_mode mode);
+ int tst_reconnect_policy_set_mode(struct tst_reconnect_policy_t *p, int32_t mode);
 
-
-int tst_reconnect_policy_set_overflow_policy(struct tst_reconnect_policy_t *p,
-                                             enum tst_overflow_policy policy);
+/**
+ * Set the gap buffer's overflow policy. `policy` is one of the
+ * `TST_OVERFLOW_POLICY_*` constants; any other value returns
+ * `TST_E_INVALID_CONFIG`.
+ */
+ int tst_reconnect_policy_set_overflow_policy(struct tst_reconnect_policy_t *p, int32_t policy);
 
 #if defined(TST_HAS_RIST)
 /**
@@ -10360,9 +10376,12 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
 
  struct tst_sender_config_t *tst_sender_config_new(void);
 
-
-int tst_sender_config_set_framing_mode(struct tst_sender_config_t *p,
-                                       enum tst_ts_framing_mode mode);
+/**
+ * Set the sender's TS framing mode. `mode` is one of the
+ * `TST_TS_FRAMING_MODE_*` constants; any other value returns
+ * `TST_E_INVALID_CONFIG`.
+ */
+ int tst_sender_config_set_framing_mode(struct tst_sender_config_t *p, int32_t mode);
 
  int tst_sender_config_set_max_unsynced_bytes(struct tst_sender_config_t *p, size_t n);
 

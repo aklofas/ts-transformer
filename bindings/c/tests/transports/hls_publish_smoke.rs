@@ -277,7 +277,7 @@ fn with_config_hls_valid_config_still_publishes() {
     let (publisher, _addr) = hls_publisher_on_loopback(dir.path());
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264 as i32) };
     let mp = unsafe { tst_mux_publisher_with_config_hls(publisher, cfg) };
     unsafe { tst_mux_config_free(cfg) };
     assert!(!mp.is_null(), "with_config failed: {}", unsafe {

@@ -41,10 +41,15 @@ fn two_program_muxer_pat_carries_both_programs() {
         // Program 1: PMT on 0x1000, video on 0x1011, KLV on 0x1031.
         let p1 = tst_mux_config_add_program(cfg, 1, 0x1000);
         assert_ne!(p1, TstProgramHandle(u32::MAX), "p1 handle must be valid");
-        let v1 = tst_mux_config_add_video_stream(cfg, p1, 0x1011, TstVideoCodec::H264);
+        let v1 = tst_mux_config_add_video_stream(cfg, p1, 0x1011, TstVideoCodec::H264 as i32);
         assert_ne!(v1, TST_INVALID_STREAM_HANDLE);
-        let k1 =
-            tst_mux_config_add_klv_stream(cfg, p1, 0x1031, TstKlvStreamType::PrivateData, false);
+        let k1 = tst_mux_config_add_klv_stream(
+            cfg,
+            p1,
+            0x1031,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         assert_ne!(k1, TST_INVALID_STREAM_HANDLE);
 
         // Program 2: PMT on 0x1100, video on 0x1111, KLV on 0x1131.
@@ -52,11 +57,16 @@ fn two_program_muxer_pat_carries_both_programs() {
         let p2 = tst_mux_config_add_program(cfg, 2, 0x1100);
         assert_ne!(p2, TstProgramHandle(u32::MAX), "p2 handle must be valid");
         assert_ne!(p1, p2, "program handles must be distinct");
-        let v2 = tst_mux_config_add_video_stream(cfg, p2, 0x1111, TstVideoCodec::H264);
+        let v2 = tst_mux_config_add_video_stream(cfg, p2, 0x1111, TstVideoCodec::H264 as i32);
         assert_ne!(v2, TST_INVALID_STREAM_HANDLE);
         assert_ne!(v1, v2, "cross-program video handles must be distinct");
-        let k2 =
-            tst_mux_config_add_klv_stream(cfg, p2, 0x1131, TstKlvStreamType::PrivateData, false);
+        let k2 = tst_mux_config_add_klv_stream(
+            cfg,
+            p2,
+            0x1131,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         assert_ne!(k2, TST_INVALID_STREAM_HANDLE);
 
         // ── Open muxer ────────────────────────────────────────────────────

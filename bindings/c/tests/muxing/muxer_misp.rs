@@ -31,7 +31,7 @@ unsafe fn open_h264_muxer() -> (*mut TstMuxer, TstVideoStreamHandle) {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let handle = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264);
+        let handle = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264 as i32);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);
         assert!(!mux.is_null(), "tst_muxer_open returned null");
@@ -124,7 +124,7 @@ fn push_video_misp_to_round_trip_extract() {
         tst_misp_time_extract(
             au.as_ptr(),
             au.len(),
-            TstVideoCodec::H264,
+            TstVideoCodec::H264 as i32,
             &mut out_kind,
             &mut out_time_status,
             &mut out_value,
@@ -185,7 +185,7 @@ fn push_video_misp_to_with_dts_emits_pts_dts_flags_11() {
         tst_misp_time_extract(
             au.as_ptr(),
             au.len(),
-            TstVideoCodec::H264,
+            TstVideoCodec::H264 as i32,
             &mut ok,
             &mut ts_field,
             &mut val,
@@ -233,7 +233,7 @@ fn extract_absent_returns_one_on_plain_au() {
         tst_misp_time_extract(
             NAL_IDR.as_ptr(),
             NAL_IDR.len(),
-            TstVideoCodec::H264,
+            TstVideoCodec::H264 as i32,
             &mut out_kind,
             &mut out_time_status,
             &mut out_value,

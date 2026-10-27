@@ -40,7 +40,7 @@ fn push_video_to_with_dts_emits_pts_dts_flags_11() {
     let (mux, video_handle) = unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let handle = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264);
+        let handle = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264 as i32);
         let mux = tst_muxer_open(cfg);
         // Free the config immediately — muxer holds its own copy of the config.
         tst_mux_config_free(cfg);
@@ -122,7 +122,7 @@ fn push_video_wire_to_with_dts_emits_pts_dts_flags_11() {
     let (mux, video_handle) = unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let handle = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264);
+        let handle = tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264 as i32);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);
         assert!(!mux.is_null(), "tst_muxer_open returned null");

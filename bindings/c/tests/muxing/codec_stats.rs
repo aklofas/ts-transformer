@@ -128,7 +128,7 @@ fn muxer_get_stream_codec_stats_null_out_returns_invalid_config() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264 as i32);
         let m = tst_muxer_open(cfg);
         assert!(!m.is_null());
 
@@ -150,7 +150,7 @@ fn muxer_get_stream_codec_stats_unconfigured_pid_returns_not_found() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264 as i32);
         let m = tst_muxer_open(cfg);
         assert!(!m.is_null());
 
@@ -180,7 +180,7 @@ fn muxer_get_stream_codec_stats_after_push_video_returns_video_variant() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264 as i32);
         let m = tst_muxer_open(cfg);
         assert!(!m.is_null());
 
@@ -338,8 +338,9 @@ fn loopback_mux_sender_to_demux_receiver_codec_stats_video_and_psi_not_found() {
 
         let cfg = unsafe { tst_mux_config_new() };
         let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x0100) };
-        let _video =
-            unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+        let _video = unsafe {
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32)
+        };
 
         // Retry-connect loop matching demux_receiver_loopback.rs's pattern —
         // the listener may not be bound yet when this thread starts.

@@ -5,6 +5,8 @@
 //! compiled into this single binary. Test bodies are unchanged; only the
 //! module path gained a `abi::<file>::` prefix. Per-file `#![cfg(feature=…)]`
 //! gates still apply (a gated-out member compiles to an empty module).
+#[path = "abi/enum_params.rs"]
+mod enum_params;
 #[path = "abi/error_routing.rs"]
 mod error_routing;
 #[path = "abi/feature_matrix_compile.rs"]

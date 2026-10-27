@@ -49,7 +49,7 @@ fn build_ts_bytes() -> Vec<u8> {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
             let mux = tst_muxer_open(cfg);
             tst_mux_config_free(cfg);
             assert!(!mux.is_null(), "tst_muxer_open returned null");
