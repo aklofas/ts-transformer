@@ -72,6 +72,9 @@ echo "scenarios dir: $SCENARIOS_DIR"
 # ── Run the adapter ──────────────────────────────────────────────────────────
 echo ""
 ADAPTER_EXIT=0
-timeout 60 "$BINARY" "$SCENARIOS_DIR" || ADAPTER_EXIT=$?
+# The adapters stretch their own bounds by TST_TEST_TIMEOUT_SCALE; so does this one.
+SCALE=${TST_TEST_TIMEOUT_SCALE:-1}
+[[ "$SCALE" =~ ^[1-9][0-9]*$ ]] || SCALE=1
+timeout $((60 * SCALE)) "$BINARY" "$SCENARIOS_DIR" || ADAPTER_EXIT=$?
 echo "ADAPTER_EXIT=$ADAPTER_EXIT"
 exit "$ADAPTER_EXIT"
