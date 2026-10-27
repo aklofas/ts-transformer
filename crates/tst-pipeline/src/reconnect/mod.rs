@@ -571,7 +571,9 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         // enqueues") false exactly when it matters. The value is
         // republished at construction and on every successful install; a
         // ceiling that shrank after a message was queued is caught by the
-        // drain's own `TooLarge` handling.
+        // drain's own `TooLarge` handling: in `Blocking` the error reaches
+        // the caller, who owns the message and re-splits it; in
+        // `Background` the worker drops it and counts the drop.
         let max = self
             .shared
             .max_payload
