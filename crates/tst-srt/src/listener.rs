@@ -690,9 +690,12 @@ mod tests {
     /// Once `go` fires, connect to `port` and hold the socket until
     /// `release` fires (each wait bounded by the watchdog), so the
     /// listener-side connection is never reaped while a test still expects
-    /// it queued.
+    /// it queued. Only a peer the test will accept reads its local address
+    /// (right after connecting): libsrt's GC may free a broken socket while a
+    /// getter runs, so a peer the hook closes must never be queried.
     fn hold_peer(
         port: u16,
+        capture_local: bool,
         go: mpsc::Receiver<()>,
         release: mpsc::Receiver<()>,
     ) -> std::thread::JoinHandle<Option<SocketAddr>> {
@@ -701,7 +704,11 @@ mod tests {
             let socket = SrtSocketBuilder::new()
                 .connect(format!("127.0.0.1:{port}"))
                 .ok()?;
-            let local = socket.local_addr().ok();
+            let local = if capture_local {
+                socket.local_addr().ok()
+            } else {
+                None
+            };
             let _ = release.recv_timeout(watchdog());
             local
         })
@@ -752,7 +759,7 @@ mod tests {
         let port = listener.local_addr().expect("local_addr").port();
         let go = arm(&STALE_FIRST_GO);
         let (release_tx, release_rx) = mpsc::channel();
-        let peer = hold_peer(port, go, release_rx);
+        let peer = hold_peer(port, false, go, release_rx);
 
         let result = accept_with_hook(
             listener,
@@ -782,9 +789,9 @@ mod tests {
         let first_go = arm(&REWAIT_FIRST_GO);
         let second_go = arm(&REWAIT_SECOND_GO);
         let (release_tx, release_rx) = mpsc::channel();
-        let first = hold_peer(port, first_go, release_rx);
+        let first = hold_peer(port, false, first_go, release_rx);
         let (release2_tx, release2_rx) = mpsc::channel();
-        let second = hold_peer(port, second_go, release2_rx);
+        let second = hold_peer(port, true, second_go, release2_rx);
 
         let result = accept_with_hook(
             listener,
