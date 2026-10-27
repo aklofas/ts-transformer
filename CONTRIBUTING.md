@@ -50,10 +50,14 @@ A change to the C API changes `bindings/c/include/tstrans.h`: regenerate it (`en
 
 Three ratchets need a deliberate update when your change is intentional:
 
-- **Public API** — `cargo public-api` baselines for ten crates at
+- **Public API** — `cargo public-api` baselines for eleven crates at
   `crates/<dir>/public-api.txt`. Re-render with the nightly PINNED in
-  `ci.yml` (search `nightly-2026-07-03`):
-  `cargo +nightly-2026-07-03 public-api -p <pkg> --simplified > crates/<dir>/public-api.txt`.
+  `ci.yml` (search `nightly-2026-07-03`) and the crate's declared feature
+  envelope (`[package.metadata.public-api] features`; tst-core `tls`,
+  tst-rtp `rtsp-server-tls`; `bash scripts/lib/roster.sh public-api-features`
+  lists them):
+  `cargo +nightly-2026-07-03 public-api -p <pkg> --features <envelope> --simplified > crates/<dir>/public-api.txt`
+  (no `--features` where the envelope is `-`).
   An unpinned nightly renders `std::io` vs `core::io` paths differently
   and produces false drift.
 - **`#[non_exhaustive]` count** — `BASELINE` in `ci.yml` (search
