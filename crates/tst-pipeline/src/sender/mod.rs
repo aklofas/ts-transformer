@@ -14,7 +14,8 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use tracing::info_span;
-use tst_core::transport::Transport;
+use tst_core::mpegts::common::TS_PACKET_SIZE;
+use tst_core::transport::{Transport, TransportError};
 
 /// Construction-time knobs for [`Sender`].
 #[must_use]
@@ -229,8 +230,9 @@ impl<T: Transport> Sender<T> {
     ///
     /// `bytes` need not be a whole number of 188-byte packets — partial
     /// packets are buffered until the next call (or [`Self::flush`]).
-    /// Each emitted bundle to the underlying transport is sized to fit
-    /// `transport.max_payload()`.
+    /// Each bundle is split into whole-packet messages of at most
+    /// `transport.max_payload()` bytes; a ceiling below one TS packet is
+    /// refused before any input is consumed.
     ///
     /// # C ABI
     ///
@@ -318,6 +320,8 @@ impl<T: Transport> Sender<T> {
                     .with_input_consumed(false),
             );
         }
+        self.check_ceiling()
+            .map_err(|e| SenderError::from(e).with_input_consumed(false))?;
         // Drain any leftover from a previous failed call first. A failure
         // here happens BEFORE this call's `bytes` are touched.
         self.drain_pending()
@@ -339,12 +343,12 @@ impl<T: Transport> Sender<T> {
         };
         let mut iter = bundles.into_iter();
         for bundle in &mut iter {
-            if let Err(e) = self.transport.send_bytes(&bundle) {
-                // Retain the failed bundle + any remaining so the next
-                // send_ts/flush call can re-try them in order. From here
-                // `bytes` is framed and retained: a failure leaves it in
-                // the pending queue, draining exactly once on the next call.
-                self.pending_bundles.push_back(bundle);
+            if let Err(e) = self.send_fitted(bundle) {
+                // The unsent remainder is already queued; retain the bundles
+                // not yet attempted behind it so the next send_ts/flush call
+                // re-tries them in order. From here `bytes` is framed and
+                // retained: a failure leaves it in the pending queue,
+                // draining exactly once on the next call.
                 self.pending_bundles.extend(iter);
                 return Err(SenderError::from(e).with_input_consumed(true));
             }
@@ -377,8 +381,7 @@ impl<T: Transport> Sender<T> {
         let bundles = self.framing.flush();
         let mut iter = bundles.into_iter();
         for bundle in &mut iter {
-            if let Err(e) = self.transport.send_bytes(&bundle) {
-                self.pending_bundles.push_back(bundle);
+            if let Err(e) = self.send_fitted(bundle) {
                 self.pending_bundles.extend(iter);
                 return Err(e.into());
             }
@@ -389,13 +392,38 @@ impl<T: Transport> Sender<T> {
     /// Drain the `pending_bundles` queue. Returns on the first transport
     /// error, leaving the remaining bundles in the queue.
     fn drain_pending(&mut self) -> Result<(), SenderError> {
-        while let Some(bundle) = self.pending_bundles.front() {
-            match self.transport.send_bytes(bundle) {
-                Ok(()) => {
-                    self.pending_bundles.pop_front();
-                }
-                Err(e) => return Err(e.into()),
+        while let Some(bundle) = self.pending_bundles.pop_front() {
+            self.send_fitted(bundle)?;
+        }
+        Ok(())
+    }
+
+    /// Refuse a transport whose ceiling cannot carry one TS packet.
+    fn check_ceiling(&self) -> Result<(), TransportError> {
+        let max = self.transport.max_payload();
+        if max < TS_PACKET_SIZE {
+            return Err(TransportError::TooLarge {
+                len: TS_PACKET_SIZE,
+                max,
+            });
+        }
+        Ok(())
+    }
+
+    /// Send `bundle` in whole-packet slices that fit the transport's ceiling.
+    /// On a failed slice the unsent remainder, starting at that slice's first
+    /// byte, goes back to the front of the pending queue.
+    fn send_fitted(&mut self, bundle: Vec<u8>) -> Result<(), TransportError> {
+        self.check_ceiling()?;
+        let step = self.transport.max_payload() / TS_PACKET_SIZE * TS_PACKET_SIZE;
+        let mut sent = 0;
+        while sent < bundle.len() {
+            let end = bundle.len().min(sent + step);
+            if let Err(e) = self.transport.send_bytes(&bundle[sent..end]) {
+                self.pending_bundles.push_front(bundle[sent..].to_vec());
+                return Err(e);
             }
+            sent = end;
         }
         Ok(())
     }
