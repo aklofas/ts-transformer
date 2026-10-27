@@ -64,10 +64,8 @@ pub struct ImapbTol {
 /// - `tests/klv_typed_set_proptest.rs` (typed-set proptests for ST 0601
 ///   IMAPB tags and ST 0903 FOV fields)
 ///
-/// `length` is the wire byte width (1..=8 per ST 1201.5 §8.9). For
-/// typed-set tests that aggregate multiple tags with different widths,
-/// pass the SMALLEST width in use to get a conservative (looser) bound
-/// that's safe for all of them.
+/// `length` is the wire byte width (1..=8 per ST 1201.5 §8.9); pass each
+/// tag's own width.
 pub fn imapb_tol(min: f64, max: f64, length: usize) -> ImapbTol {
     let span = max - min;
     let log2_ceil = span.log2().ceil();

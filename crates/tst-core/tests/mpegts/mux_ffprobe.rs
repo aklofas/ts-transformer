@@ -55,7 +55,8 @@ fn ffprobe_recognizes_our_pmt() {
     }
     let bytes = drain_all(&mut mux);
 
-    let tmp = std::env::temp_dir().join("tstrans_ffprobe_smoke.ts");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let tmp = dir.path().join("tstrans_ffprobe_smoke.ts");
     std::fs::write(&tmp, &bytes).expect("write temp ts");
 
     let out = Command::new("ffprobe")
@@ -81,8 +82,6 @@ fn ffprobe_recognizes_our_pmt() {
         "expected >= 2 streams, got {}",
         stream_count
     );
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
@@ -139,7 +138,8 @@ fn ffprobe_recognizes_dual_camera_plus_klv() {
         }
     }
 
-    let tmp = std::env::temp_dir().join("tstrans_ffprobe_dual_camera.ts");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let tmp = dir.path().join("tstrans_ffprobe_dual_camera.ts");
     std::fs::write(&tmp, &ts).expect("write temp ts");
 
     let out = Command::new("ffprobe")
@@ -171,8 +171,6 @@ fn ffprobe_recognizes_dual_camera_plus_klv() {
         data_count,
         stdout,
     );
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
@@ -248,7 +246,8 @@ fn ffprobe_recognizes_two_programs_with_distinct_streams() {
         }
     }
 
-    let tmp = std::env::temp_dir().join("tstrans_ffprobe_two_programs.ts");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let tmp = dir.path().join("tstrans_ffprobe_two_programs.ts");
     std::fs::write(&tmp, &ts).expect("write temp ts");
 
     // -show_programs reports the program table; -of json gives structured output.
@@ -284,8 +283,6 @@ fn ffprobe_recognizes_two_programs_with_distinct_streams() {
         "program_num 2 missing from ffprobe output: {}",
         stdout
     );
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
@@ -327,7 +324,8 @@ fn ffprobe_roundtrip_audio_video_klv_three_streams() {
     }
 
     let ts = drain_all(&mut muxer);
-    let tmp = std::env::temp_dir().join("tstrans_ffprobe_audio_three_streams.ts");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let tmp = dir.path().join("tstrans_ffprobe_audio_three_streams.ts");
     std::fs::write(&tmp, &ts).expect("write temp ts");
 
     let out = Command::new("ffprobe")
@@ -371,8 +369,6 @@ fn ffprobe_roundtrip_audio_video_klv_three_streams() {
         "audio codec_name missing or not aac: {}",
         stdout
     );
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
@@ -435,7 +431,10 @@ fn ffprobe_roundtrip_each_audio_codec() {
         }
 
         let ts = drain_all(&mut muxer);
-        let tmp = std::env::temp_dir().join(format!("tstrans_ffprobe_audio_{:?}.ts", codec));
+        let dir = tempfile::TempDir::new().expect("private temp dir");
+        let tmp = dir
+            .path()
+            .join(format!("tstrans_ffprobe_audio_{:?}.ts", codec));
         std::fs::write(&tmp, &ts).expect("write temp ts");
 
         let out = Command::new("ffprobe")
@@ -466,8 +465,6 @@ fn ffprobe_roundtrip_each_audio_codec() {
             codec,
             stdout
         );
-
-        let _ = std::fs::remove_file(&tmp);
     }
 }
 
@@ -532,7 +529,8 @@ fn ffprobe_validates_dvb_subtitling_round_trip() {
     }
     let bytes = drain_all(&mut mux);
 
-    let tmp = std::env::temp_dir().join("tstrans_ffprobe_dvb_sub.ts");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let tmp = dir.path().join("tstrans_ffprobe_dvb_sub.ts");
     std::fs::write(&tmp, &bytes).expect("write temp ts");
 
     let out = Command::new("ffprobe")
@@ -558,8 +556,6 @@ fn ffprobe_validates_dvb_subtitling_round_trip() {
         "expected language tag 'eng' in ffprobe output: {}",
         stdout
     );
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
@@ -611,7 +607,8 @@ fn ffprobe_validates_dvb_teletext_round_trip() {
     }
     let bytes = drain_all(&mut mux);
 
-    let tmp = std::env::temp_dir().join("tstrans_ffprobe_dvb_teletext.ts");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let tmp = dir.path().join("tstrans_ffprobe_dvb_teletext.ts");
     std::fs::write(&tmp, &bytes).expect("write temp ts");
 
     let out = Command::new("ffprobe")
@@ -632,8 +629,6 @@ fn ffprobe_validates_dvb_teletext_round_trip() {
         "expected dvb_teletext codec_name in ffprobe output: {}",
         stdout
     );
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
@@ -674,7 +669,8 @@ fn ffprobe_validates_webvtt_in_ts_round_trip() {
     .unwrap();
     let bytes = drain_all(&mut mux);
 
-    let tmp = std::env::temp_dir().join("tstrans_ffprobe_webvtt_in_ts.ts");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let tmp = dir.path().join("tstrans_ffprobe_webvtt_in_ts.ts");
     std::fs::write(&tmp, &bytes).expect("write temp ts");
 
     let out = Command::new("ffprobe")
@@ -698,8 +694,6 @@ fn ffprobe_validates_webvtt_in_ts_round_trip() {
         "expected webvtt/subtitle/bin_data in ffprobe output: {}",
         stdout
     );
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
