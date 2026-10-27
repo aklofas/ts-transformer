@@ -32,11 +32,12 @@
 //! - **PTS is not monotone in decode order.** Streams with B-frames
 //!   deliver video AUs whose PTS falls below a frame already seen, and
 //!   below KLV that already arrived. The nearest pairer matches against
-//!   its whole KLV history, so order does not matter within tolerance.
-//!   The last-before pairer keeps the last eight KLV samples and pairs a
-//!   frame with the newest one at or before its PTS, so a reordered
-//!   frame pairs with the sample that preceded it rather than going
-//!   unpaired.
+//!   its KLV history; in [`PairerMode::Realtime`] a video that arrives
+//!   before its KLV is emitted as `UnpairedVideo` at once. The
+//!   last-before pairer keeps the last eight KLV samples and pairs a
+//!   frame with the one carrying the largest PTS at or before its own,
+//!   so a reordered frame whose KLV is still in that history pairs with
+//!   the sample that preceded it rather than going unpaired.
 //! - **Across the 33-bit rollover boundary** (≈ 26.5 h at 90 kHz), the
 //!   demuxer's emitted PTS wraps back to 0 (it does not accumulate
 //!   stream-monotonic deltas). The nearest pairer in
@@ -45,7 +46,11 @@
 //!   video against the pre-wrap history (paired if in tolerance, else
 //!   `UnpairedVideo`), emits never-used history as `UnpairedKlv`, and
 //!   starts afresh, so frames buffered before the wrap are released
-//!   rather than held. No pairing is made across the wrap itself;
+//!   rather than held. A reordered straddle (post-wrap frames, then a
+//!   pre-wrap B-frame, then post-wrap frames again) raises the newest PTS
+//!   back above the wrap and triggers a second reset: every output is
+//!   still accounted for, but post-wrap frames buffered at that moment
+//!   may be released unpaired. No pairing is made across the wrap itself;
 //!   long-session callers who need continuity across it should use a
 //!   monotone PTS source. This holds only when
 //!   `DemuxerConfig::unwrap_timestamps` is `false` (the default); with
