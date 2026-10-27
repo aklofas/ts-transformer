@@ -91,9 +91,10 @@ impl UdpRecvTransport {
     /// Build from already-parsed `UdpUrl` + config.
     pub fn with_config(url: &UdpUrl, cfg: &UdpConfig) -> Result<Self, UdpError> {
         // A multicast receiver shares group:port with other receivers on the
-        // host (SO_REUSEADDR, + SO_REUSEPORT on BSD/macOS) and binds the group
-        // so it delivers only that group. A unicast receiver uses the plain
-        // bind to avoid sharing ports unintentionally.
+        // host (SO_REUSEADDR, + SO_REUSEPORT on BSD/macOS) and, where the
+        // platform allows, binds the group so it delivers only that group. A
+        // unicast receiver uses the plain bind to avoid sharing ports
+        // unintentionally.
         let socket = if url.is_multicast() {
             bind_udp_socket_multicast_group(url.addr, url.port, cfg.iface.as_deref())
                 .map_err(UdpError::Io)?
@@ -118,7 +119,9 @@ impl UdpRecvTransport {
         })
     }
 
-    /// Local bound address (useful for tests that bind to port 0).
+    /// Local bound address (useful for tests that bind to port 0). For an
+    /// IPv4 multicast URL off Windows this is `group:port`; an IPv6 or
+    /// Windows multicast receiver reports the family wildcard and the port.
     pub fn local_addr(&self) -> SocketAddr {
         self.local
     }
