@@ -48,8 +48,8 @@ use std::sync::{Arc, Mutex};
 /// `next_publisher` must not hold the lock `tst_rtsp_server_stop` needs to
 /// wake it.
 pub struct TstRtspServer {
-    /// Live Rust `RtspServer`. `None` after a call to `tst_rtsp_server_stop`
-    /// or `tst_rtsp_server_free` consumes the value.
+    /// Live Rust `RtspServer`. `None` after `tst_rtsp_server_stop` consumes
+    /// the value; `tst_rtsp_server_free` releases the whole allocation.
     pub(crate) inner: Mutex<Option<Arc<tst_rtp::RtspServer>>>,
     /// Hard-cancel handle. Cloned from the server before inserting into
     /// `inner` so that `tst_rtsp_server_cancel_handle` can fire it

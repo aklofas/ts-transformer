@@ -587,8 +587,9 @@ pub(crate) fn record_recv_closed(cancelled: bool) -> i32 {
 /// peer close and an abort as the same `SRT_ECONNLOST`, so `tst-srt` maps
 /// both to `Broken` and, at the C boundary of a handle nobody cancelled, that
 /// is read as end of stream. No other transport has that ambiguity (a clean
-/// FIN already arrives as `Closed`), so they pass `false` and a `Broken` is a
-/// hard `TST_E_TRANSPORT`. Managed shells also pass `false`: their decorator
+/// FIN arrives as `Broken { cause: CleanEof }`, which the kind table projects
+/// to `EndOfStream`), so they pass `false` and any other `Broken` is a hard
+/// `TST_E_TRANSPORT`. Managed shells also pass `false`: their decorator
 /// already retried on `Broken`.
 ///
 /// A cancelled plain-SRT operation arrives as `ExplicitClose` → kind
