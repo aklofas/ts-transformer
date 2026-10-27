@@ -69,7 +69,7 @@ def test_construct_with_all_kwargs() -> None:
 
 
 def test_construct_bad_passphrase_raises_config_invalid() -> None:
-    """SRT passphrases are 10-79 chars — a 5-char one should be rejected."""
+    """SRT passphrases are 10-80 bytes — a 5-char one should be rejected."""
     with pytest.raises(SrtError) as exc_info:
         tstrans.srt.Builder("srt://127.0.0.1:9000", passphrase="short")
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
