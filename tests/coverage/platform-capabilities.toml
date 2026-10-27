@@ -83,6 +83,17 @@ Tier-A runner, not by an upstream bug or a code gap.
 """
 
 [[platform_skip]]
+file = "crates/tst-srt/tests/loopback/url_open.rs"
+platform = "windows-msvc"
+capability = "named_ipv6_zone_resolution"
+class = "portability"
+note = """
+`named_ipv6_zone_resolves_before_the_dial` is `#[cfg(unix)]`: Windows
+does not resolve interface-name IPv6 zones, so the test would fail there. Every
+other url_open test runs on every platform.
+"""
+
+[[platform_skip]]
 file = "crates/tst-rtp/tests/rtp/loopback_unicast.rs"
 platform = "macos-arm64,windows-msvc"
 capability = "second_loopback_address"
