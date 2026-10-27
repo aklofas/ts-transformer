@@ -470,11 +470,8 @@ mod tests {
     fn close_destroys_ctx_even_when_already_dead() {
         // Attempt to construct a real sender. Port 0 on loopback is enough for
         // the context + peer setup path; actual data-path is never exercised.
-        // If construction fails (e.g. rist_sender_create fails in CI), skip.
-        let mut t = match RistTransport::connect("rist://127.0.0.1:19001") {
-            Ok(t) => t,
-            Err(_) => return, // librist not available or port unusable — skip
-        };
+        let mut t = RistTransport::connect("rist://127.0.0.1:19001")
+            .expect("RistTransport::connect on a native-enabled build");
         assert!(
             !t.ctx_is_null(),
             "ctx should be non-null after construction"
@@ -498,10 +495,8 @@ mod tests {
     /// safe because the second call sees ctx==null and skips rist_destroy.
     #[test]
     fn double_close_is_safe() {
-        let mut t = match RistTransport::connect("rist://127.0.0.1:19002") {
-            Ok(t) => t,
-            Err(_) => return,
-        };
+        let mut t = RistTransport::connect("rist://127.0.0.1:19002")
+            .expect("RistTransport::connect on a native-enabled build");
         t.close();
         assert!(t.ctx_is_null());
         t.close(); // must not panic / double-free
@@ -513,10 +508,8 @@ mod tests {
     /// consume the context, and it must not make `close()` skip it.
     #[test]
     fn close_after_cancel_destroys_ctx_exactly_once() {
-        let mut t = match RistTransport::connect("rist://127.0.0.1:19006") {
-            Ok(t) => t,
-            Err(_) => return,
-        };
+        let mut t = RistTransport::connect("rist://127.0.0.1:19006")
+            .expect("RistTransport::connect on a native-enabled build");
         let h = t.cancel_handle();
         h.cancel();
         assert!(h.is_cancelled());
@@ -620,10 +613,8 @@ mod tests {
     /// latched `Broken` that makes `ManagedTransport` tear the context down.
     #[test]
     fn empty_payload_is_an_input_error_not_a_broken_latch() {
-        let mut t = match RistTransport::connect("rist://127.0.0.1:19004") {
-            Ok(t) => t,
-            Err(_) => return, // librist not available or port unusable — skip
-        };
+        let mut t = RistTransport::connect("rist://127.0.0.1:19004")
+            .expect("RistTransport::connect on a native-enabled build");
         let err = t
             .send_bytes(&[])
             .expect_err("empty payload must be refused");
@@ -711,10 +702,8 @@ mod tests {
     /// a second close and the drop leave it alone.
     #[test]
     fn close_reclaims_the_stats_reference_exactly_once() {
-        let mut t = match RistTransport::connect("rist://127.0.0.1:19007") {
-            Ok(t) => t,
-            Err(_) => return, // librist unavailable on this runner — same skip as the siblings
-        };
+        let mut t = RistTransport::connect("rist://127.0.0.1:19007")
+            .expect("RistTransport::connect on a native-enabled build");
         assert_eq!(t.stats_refs_for_test(), 2);
         t.close();
         assert_eq!(t.stats_refs_for_test(), 1);

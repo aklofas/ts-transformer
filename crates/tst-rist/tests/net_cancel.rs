@@ -27,26 +27,22 @@ const PORT_RECV_CANCEL: u16 = 33040;
 const PORT_RECV_CLOSE: u16 = 33042;
 const PORT_SEND_CANCEL: u16 = 33044;
 const PORT_SEND_CLOSE: u16 = 33046;
-const PORT_RECV_EMPTY: u16 = 33048;
 const PORT_OPENER: u16 = 33120;
 const PORT_RECV_REASON: u16 = 33122;
 
-/// Build a Simple-profile receiver on `port`, or return `None` when librist
-/// cannot bind here (the same skip the sibling suites take).
-fn listen(port: u16) -> Option<tst_rist::RistRecvTransport> {
-    RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{port}"))
-        .ok()?
-        .profile(RistProfile::Simple)
-        .listen()
-        .ok()
+/// Build a Simple-profile receiver on `port`; a setup failure fails the test.
+fn listen(port: u16) -> tst_rist::RistRecvTransport {
+    let url = format!("rist://@127.0.0.1:{port}");
+    RistRecvTransportBuilder::new(&url)
+        .and_then(|mut b| b.profile(RistProfile::Simple).listen())
+        .unwrap_or_else(|e| panic!("rist setup failed for {url}: {e:?}"))
 }
 
-fn connect(port: u16) -> Option<tst_rist::RistTransport> {
-    RistTransportBuilder::new(&format!("rist://127.0.0.1:{port}"))
-        .ok()?
-        .profile(RistProfile::Simple)
-        .connect()
-        .ok()
+fn connect(port: u16) -> tst_rist::RistTransport {
+    let url = format!("rist://127.0.0.1:{port}");
+    RistTransportBuilder::new(&url)
+        .and_then(|mut b| b.profile(RistProfile::Simple).connect())
+        .unwrap_or_else(|e| panic!("rist setup failed for {url}: {e:?}"))
 }
 
 /// A cancelled sender's NEXT send is `ExplicitClose`; `is_alive()` reads
@@ -55,10 +51,7 @@ fn connect(port: u16) -> Option<tst_rist::RistTransport> {
 #[test]
 fn send_after_cancel_loopback_is_explicit_close() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(mut send) = connect(PORT_SEND_CANCEL) else {
-        eprintln!("skip: librist sender unavailable");
-        return;
-    };
+    let mut send = connect(PORT_SEND_CANCEL);
     let handle =
         Transport::cancel_handle(&send).expect("RistTransport must expose a cancel handle");
     assert!(!handle.is_cancelled());
@@ -76,10 +69,7 @@ fn send_after_cancel_loopback_is_explicit_close() {
 #[test]
 fn send_after_close_loopback_is_closed() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(mut send) = connect(PORT_SEND_CLOSE) else {
-        eprintln!("skip: librist sender unavailable");
-        return;
-    };
+    let mut send = connect(PORT_SEND_CLOSE);
     let handle = send.cancel_handle();
     send.close();
     send.close();
@@ -107,10 +97,7 @@ enum Parked {
 #[test]
 fn recv_cancel_from_other_thread_loopback_returns_explicit_close() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(mut recv) = listen(PORT_RECV_CANCEL) else {
-        eprintln!("skip: librist receiver unavailable on {PORT_RECV_CANCEL}");
-        return;
-    };
+    let mut recv = listen(PORT_RECV_CANCEL);
     let handle =
         RecvTransport::cancel_handle(&recv).expect("RistRecvTransport must expose a cancel handle");
     let (tx, rx) = mpsc::channel();
@@ -167,10 +154,7 @@ fn recv_cancel_from_other_thread_loopback_returns_explicit_close() {
 #[test]
 fn recv_after_close_loopback_is_closed() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(mut recv) = listen(PORT_RECV_CLOSE) else {
-        eprintln!("skip: librist receiver unavailable on {PORT_RECV_CLOSE}");
-        return;
-    };
+    let mut recv = listen(PORT_RECV_CLOSE);
     let handle = recv.cancel_handle();
     recv.close();
     recv.close();
@@ -181,49 +165,20 @@ fn recv_after_close_loopback_is_closed() {
     assert!(!handle.is_cancelled());
 }
 
-/// The kit row `empty_recv_is_noop`: `recv_bytes(&mut [])` is
-/// `Ok(0)` and the transport stays alive. (That no librist tick is spent
-/// follows from the guard's placement but is not asserted here; the kit's
-/// `empty_recv_is_noop` row is the behavioural pin.)
-/// Without the empty-buffer guard the call waits out a 100 ms
-/// `rist_receiver_data_read2` tick and returns `Backpressure`.
-#[test]
-fn recv_empty_buffer_loopback_is_noop() {
-    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(mut recv) = listen(PORT_RECV_EMPTY) else {
-        eprintln!("skip: librist receiver unavailable on {PORT_RECV_EMPTY}");
-        return;
-    };
-    let r = recv.recv_bytes(&mut []);
-    assert!(
-        matches!(r, Ok(0)),
-        "empty read must be Ok(0) at once, got {r:?}"
-    );
-    assert!(
-        recv.is_alive(),
-        "an empty read must not latch the transport"
-    );
-}
-
 /// The binding openers over RIST: both open (a sender needs no listening
 /// peer), report the RIST domain, carry one datagram end to end, and the
 /// receiver's `Opened::cancel` from another thread ends the call with
-/// `ExplicitClose`. Skips where librist cannot bind, like the sibling tests.
+/// `ExplicitClose`.
 #[test]
 fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
     use tst_pipeline::binding::Domain;
 
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    let Ok(rx) = tst_rist::opener::open_recv(&format!("rist://@127.0.0.1:{PORT_OPENER}")) else {
-        eprintln!("skip: librist receiver unavailable on {PORT_OPENER}");
-        return;
-    };
+    let rx = tst_rist::opener::open_recv(&format!("rist://@127.0.0.1:{PORT_OPENER}"))
+        .unwrap_or_else(|e| panic!("rist setup failed for the opener receiver: {e:?}"));
     assert_eq!(rx.domain, Domain::Rist);
-    let Ok(mut tx) = tst_rist::opener::open_sender(&format!("rist://127.0.0.1:{PORT_OPENER}"))
-    else {
-        eprintln!("skip: librist sender unavailable");
-        return;
-    };
+    let mut tx = tst_rist::opener::open_sender(&format!("rist://127.0.0.1:{PORT_OPENER}"))
+        .unwrap_or_else(|e| panic!("rist setup failed for the opener sender: {e:?}"));
     assert_eq!(tx.domain, Domain::Rist);
     tx.transport.send_bytes(&[0x47u8; 188]).expect("send");
 
@@ -268,10 +223,7 @@ fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
 #[test]
 fn recv_cancel_loopback_records_cancelled_end_reason() {
     let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(mut recv) = listen(PORT_RECV_REASON) else {
-        eprintln!("skip: librist receiver unavailable on {PORT_RECV_REASON}");
-        return;
-    };
+    let mut recv = listen(PORT_RECV_REASON);
     let reason = recv.end_reason_handle().expect("rist records end reasons");
     assert_eq!(reason.get(), None, "live receiver has no end reason");
     RecvTransport::cancel_handle(&recv)
