@@ -161,10 +161,6 @@ pub(crate) fn errno_code_from_transport(e: &TransportError) -> Option<i32> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Direction {
     Send,
-    // Only constructed by the receiver-side shells, which are gated behind the
-    // `std` feature. Under `no_std` (sender-only) the variant is never built,
-    // but `kind_of_transport` still matches it.
-    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     Recv,
 }
 

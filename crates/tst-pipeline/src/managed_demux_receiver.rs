@@ -554,9 +554,8 @@ mod tests {
     /// Note: ManagedRecvTransport treats inner `Closed` as a reconnect
     /// trigger (not EOF) — the policy budget (max_attempts=0 here)
     /// rejects the rebuild attempt and converts to terminal `Closed`.
-    /// Factory is invoked once during the budget-rejection sequence
-    /// but its result is discarded; we still expect no
-    /// reconnect-count rise.
+    /// The budget check returns before the factory is called, so the
+    /// factory never runs and the reconnect count stays at zero.
     #[test]
     fn no_reconnect_no_discontinuity_event() {
         // 5 aligned PID-0 packets, then the transport closes.

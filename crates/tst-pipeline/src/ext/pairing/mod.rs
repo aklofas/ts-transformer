@@ -287,8 +287,8 @@ impl Pairer {
     ///
     /// // Feed each `DemuxEvent` from a `DemuxReceiver` into `pairer.feed(...)`
     /// // and consume the resulting `PairerOutput`s. Call `pairer.flush()`
-    /// // at end-of-stream to drain remaining buffered video AUs (a no-op
-    /// // in `Realtime` mode but kept for symmetry with `Buffered`).
+    /// // at end-of-stream: it emits never-paired KLV as `UnpairedKlv` in
+    /// // both modes and also drains buffered video AUs in `Buffered`.
     /// let _stats = pairer.stats();
     /// ```
     pub fn with_config(video_pid: u16, klv_pid: u16, config: PairerConfig) -> Self {

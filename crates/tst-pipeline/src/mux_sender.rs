@@ -8,11 +8,11 @@
 //! from different threads concurrently. The lock is held across push →
 //! mux drain → transport send for correct back-pressure.
 //!
-//! Lossless on transient transport errors: drained-but-not-yet-sent
-//! bytes are retained in `pending_bytes` and drained first on the next
-//! call. Only catastrophic transport failures (Broken/Closed) are
-//! propagated to the caller; those are the cases where `ManagedTransport`
-//! is the right wrapper.
+//! Lossless on transport errors: drained-but-not-yet-sent bytes are
+//! retained in `pending_bytes` and drained first on the next call. Every
+//! transport error, backpressure included, retains whatever the muxer had
+//! already produced and is returned to the caller; wrap the transport in
+//! `ManagedTransport` when Broken/Closed should reconnect instead.
 //!
 //! # Input consumption and retry
 //!
@@ -2324,10 +2324,10 @@ mod cancel_tests {
     }
 
     /// Build a `MuxerConfig` with one stream of every type under program 1.
-    /// This is the canonical config shared by Tasks 2 and 3 poisoned-lock
-    /// regression tests — stream handle indices are deterministic for a given
-    /// config layout, so both tests can use handles snapshotted from any
-    /// sender built from this config.
+    /// Shared configuration for the poisoned-lock regression tests (also
+    /// used by the send-wrapper forwarding test) — stream handle indices are
+    /// deterministic for a given config layout, so those tests can use
+    /// handles snapshotted from any sender built from this config.
     fn all_streams_config() -> MuxerConfig {
         use tst_core::mpegts::mux::{AudioCodec, KlvStreamType, SubtitleCodec};
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
@@ -2637,10 +2637,11 @@ mod cancel_tests {
         b.build().unwrap()
     }
 
-    /// Interop-arc regression: explicit close() must be as lossless as Drop.
-    /// Models SRT/RIST semantics where cancel() kills in-flight/subsequent
-    /// sends: if close() cancels before draining pending_bytes, the tail is
-    /// forfeited.
+    /// Explicit finish drains retained bytes before shutdown; prompt close
+    /// cancels first. The transport models SRT/RIST semantics where cancel()
+    /// kills in-flight and later sends, so a shutdown that cancels before
+    /// draining `pending_bytes` forfeits the tail: `finish` and `into_inner`
+    /// must drain without cancelling, while `close` cancels by contract.
     #[derive(Default)]
     struct TailLossState {
         sent: Vec<Vec<u8>>,
