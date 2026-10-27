@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
+use tst_test_helpers::timing::scaled;
 
 use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::{
@@ -98,9 +99,11 @@ fn wait_until(deadline: Duration, mut cond: impl FnMut() -> bool) {
 fn background_send_never_blocks_during_outage() {
     let rig = Rig::new();
     rig.push_outcome(SendStep::Broken); // first send breaks the inner
-    // Factory never succeeds; backoff parks the worker 5s per attempt.
-    // Every send during the outage must return immediately regardless.
-    let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_secs(5)));
+    // Factory never succeeds; backoff parks the worker 60s per attempt.
+    // Every send during the outage must return immediately regardless; a
+    // send that waited on the backoff would take 60s, so the 30s bound is
+    // half of it and needs no scaling.
+    let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_secs(60)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy);
     for i in 0..20u8 {
         let t0 = Instant::now();
@@ -108,12 +111,12 @@ fn background_send_never_blocks_during_outage() {
             .send_bytes(&[i])
             .expect("background mode accepts into the gap buffer");
         assert!(
-            t0.elapsed() < Duration::from_secs(1),
+            t0.elapsed() < Duration::from_secs(30),
             "send_bytes blocked on reconnect backoff: {:?}",
             t0.elapsed()
         );
     }
-    // Drop detaches; the worker wakes from its 5s wait on the signal and exits.
+    // Drop detaches; the worker wakes from its 60s wait on the signal and exits.
 }
 
 #[test]
@@ -279,7 +282,7 @@ fn flap_cycles_never_wedge_or_hang() {
                 .send_bytes(&idx.to_le_bytes())
                 .expect("background mode always accepts, direct or into the gap");
             assert!(
-                t0.elapsed() < Duration::from_secs(1),
+                t0.elapsed() < scaled(Duration::from_secs(1)),
                 "send_bytes blocked for {:?} on message {idx} — possible join() wedge",
                 t0.elapsed()
             );
@@ -352,7 +355,7 @@ fn flap_cycles_never_wedge_or_hang() {
                 .send_bytes(&idx.to_le_bytes())
                 .expect("background mode always accepts, direct or into the gap");
             assert!(
-                t0.elapsed() < Duration::from_secs(1),
+                t0.elapsed() < scaled(Duration::from_secs(1)),
                 "send_bytes blocked for {:?} on message {idx} (persisting-outage cycle) — possible join() wedge",
                 t0.elapsed()
             );
@@ -460,15 +463,15 @@ fn background_none_budget_never_gives_up() {
 fn close_joins_worker_promptly_mid_backoff() {
     let rig = Rig::new();
     rig.push_outcome(SendStep::Broken);
-    // 30s backoff: a sleep-bounded join would hang the test far past the
-    // assert; the interruptible wait makes close return in milliseconds.
-    let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_secs(30)));
+    // 60s backoff: a sleep-bounded join would take the whole 60s, twice the
+    // 30s bound; the interruptible wait makes close return in milliseconds.
+    let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_secs(60)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy);
-    managed.send_bytes(&[0]).unwrap(); // worker parks in the 30s wait
+    managed.send_bytes(&[0]).unwrap(); // worker parks in the 60s wait
     let t0 = Instant::now();
     managed.close();
     assert!(
-        t0.elapsed() < Duration::from_secs(5),
+        t0.elapsed() < Duration::from_secs(30),
         "close must interrupt the backoff wait and join, took {:?}",
         t0.elapsed()
     );
@@ -492,7 +495,7 @@ fn drop_detaches_without_blocking_and_worker_quiesces() {
     let t0 = Instant::now();
     drop(managed);
     assert!(
-        t0.elapsed() < Duration::from_secs(1),
+        t0.elapsed() < scaled(Duration::from_secs(1)),
         "Drop must signal-and-detach, never join: {:?}",
         t0.elapsed()
     );
@@ -573,7 +576,7 @@ fn background_reject_full_returns_backpressure_immediately() {
     rig.push_outcome(SendStep::Broken);
     let policy = ReconnectPolicy {
         max_attempts: None,
-        backoff: BackoffStrategy::Constant(Duration::from_secs(5)), // park the worker far away
+        backoff: BackoffStrategy::Constant(Duration::from_secs(60)), // park the worker far away
         gap_buffer_capacity: 2,
         overflow_policy: OverflowPolicy::Reject,
         mode: ReconnectMode::Background,
@@ -591,7 +594,7 @@ fn background_reject_full_returns_backpressure_immediately() {
         "Reject-full surfaces Backpressure, got {err:?}"
     );
     assert!(
-        t0.elapsed() < Duration::from_secs(1),
+        t0.elapsed() < Duration::from_secs(30),
         "Reject path must not block either"
     );
 }

@@ -14,6 +14,9 @@ fn connect_timeout_fires_after_configured_duration() {
     let elapsed = started.elapsed();
 
     assert!(result.is_err(), "expected connect to fail to TEST-NET-2");
+    // Unscaled on purpose: the wrong branch is libsrt's fixed 3 s default
+    // and cannot be lengthened, so the 2.2 s margin below 3 s is the
+    // scheduling tolerance.
     assert!(
         elapsed >= Duration::from_millis(700) && elapsed < Duration::from_secs(3),
         "connect_timeout 800ms should fire well before libsrt's 3s default; \

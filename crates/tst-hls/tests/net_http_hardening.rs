@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use tst_core::publisher::Publisher;
 use tst_hls::{HlsMode, HlsPublisherBuilder};
+use tst_test_helpers::timing::scaled;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -350,7 +351,7 @@ fn shutdown_returns_promptly_with_a_slow_client_connected() {
     let t0 = std::time::Instant::now();
     handle.shutdown();
     assert!(
-        t0.elapsed() < Duration::from_secs(2),
+        t0.elapsed() < scaled(Duration::from_secs(2)),
         "shutdown took {:?}",
         t0.elapsed()
     );
