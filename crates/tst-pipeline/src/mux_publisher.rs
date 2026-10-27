@@ -92,12 +92,24 @@ pub struct Segmented<P: Publisher> {
     /// transport returned, kept typed for [`MuxPublisher`] to hand back. It
     /// is stored under the failing thread's id inside the sender's critical
     /// section, so concurrent failing callers each get their own error back.
+    /// Only the [`MuxPublisher`] shell can take these errors back, so a
+    /// standalone adapter keeps none: they would only accumulate.
     last_error: Vec<(std::thread::ThreadId, P::Error)>,
+    keep_typed_errors: bool,
 }
 
 impl<P: Publisher> Segmented<P> {
     /// Wrap a publisher.
     pub fn new(publisher: P) -> Self {
+        Self::build(publisher, false)
+    }
+
+    /// Wrap a publisher for [`MuxPublisher`], which hands typed errors back.
+    pub(crate) fn for_shell(publisher: P) -> Self {
+        Self::build(publisher, true)
+    }
+
+    fn build(publisher: P, keep_typed_errors: bool) -> Self {
         let min_segment = publisher.segment_duration();
         Self {
             publisher,
@@ -109,6 +121,7 @@ impl<P: Publisher> Segmented<P> {
             bytes_pushed: 0,
             drain_calls: 0,
             last_error: Vec::new(),
+            keep_typed_errors,
         }
     }
 
@@ -120,9 +133,11 @@ impl<P: Publisher> Segmented<P> {
     /// Keep the typed error and report it to the sender as a broken transport.
     fn fail(&mut self, e: P::Error) -> TransportError {
         let msg = format!("publisher error: {e}");
-        let me = std::thread::current().id();
-        self.last_error.retain(|(t, _)| *t != me);
-        self.last_error.push((me, e));
+        if self.keep_typed_errors {
+            let me = std::thread::current().id();
+            self.last_error.retain(|(t, _)| *t != me);
+            self.last_error.push((me, e));
+        }
         TransportError::Broken {
             msg,
             errno_code: None,
@@ -301,7 +316,7 @@ impl<P: Publisher + Send> MuxPublisher<P> {
         publisher: P,
         config: MuxerConfig,
     ) -> Result<Self, MuxPublisherError<P::Error>> {
-        MuxSender::new(Segmented::new(publisher), config)
+        MuxSender::new(Segmented::for_shell(publisher), config)
             .map(Self)
             .map_err(MuxPublisherError::Mux)
     }
@@ -628,6 +643,25 @@ mod tests {
         fn stats(&self) -> PublisherStats {
             PublisherStats::default()
         }
+    }
+
+    #[test]
+    fn a_standalone_segmented_sender_keeps_no_error_per_failing_thread() {
+        let sender = std::sync::Arc::new(
+            MuxSender::new(Segmented::new(ThreadErrPublisher), test_muxer_config()).unwrap(),
+        );
+        let handles: Vec<_> = (0..32)
+            .map(|i| {
+                let s = sender.clone();
+                std::thread::spawn(move || {
+                    let _ = s.send_video(&h264_au(), Pts90khz::new(i * 3000), true);
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(sender.with_transport(|t| t.last_error.len()), 0);
     }
 
     #[test]
