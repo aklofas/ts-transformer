@@ -34,6 +34,7 @@ optional = true
 
 [dev-dependencies]
 tst-core = { path = "../tst-core", features = ["conformance"] }
+tst-test-helpers = { path = "../tst-test-helpers" }
 libc = { workspace = true }
 # Self-signed cert + key generator for TLS loopback integration tests
 # (tests/net_tls_hostname.rs). Matches the version used in tst-rtp.

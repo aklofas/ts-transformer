@@ -33,6 +33,7 @@ use tst_srt::shells::{
 };
 use tst_srt::{SrtError, SrtListenerBuilder, SrtTransport, SrtUrl};
 use tst_test_helpers::synthetic_nal;
+use tst_test_helpers::timing::scaled;
 
 const WATCHDOG: Duration = Duration::from_secs(10);
 
@@ -435,7 +436,7 @@ fn managed_recv_transport_from_url_first_accept_runs_through_the_caller_slot() {
         "{err:?}"
     );
     assert!(
-        start.elapsed() < WATCHDOG,
+        start.elapsed() < scaled(WATCHDOG),
         "the cancelled open must return promptly, took {:?}",
         start.elapsed()
     );

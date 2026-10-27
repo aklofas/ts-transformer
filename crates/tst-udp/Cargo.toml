@@ -19,6 +19,7 @@ tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 tst-core = { path = "../tst-core", features = ["conformance"] }
+tst-test-helpers = { path = "../tst-test-helpers" }
 
 [lints]
 workspace = true

@@ -79,5 +79,8 @@ default-features = false
 features         = ["ring"]
 optional = true
 
+[dev-dependencies]
+tst-test-helpers = { path = "../tst-test-helpers" }
+
 [lints]
 workspace = true

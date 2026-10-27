@@ -16,6 +16,7 @@
 
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
+use tst_test_helpers::timing::scaled;
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::RtspServer;
@@ -77,7 +78,7 @@ fn slow_peer_does_not_block_muxer() {
     // generous bound still fails loudly (and well within nextest's per-test
     // timeout) if the push path ever became coupled to peer drain.
     assert!(
-        elapsed < Duration::from_secs(10),
+        elapsed < scaled(Duration::from_secs(10)),
         "muxer push loop stalled behind the slow peer: took {elapsed:?}"
     );
 

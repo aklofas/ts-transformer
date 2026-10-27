@@ -6,6 +6,7 @@
 
 use std::time::{Duration, Instant};
 use tst_srt::SrtListenerBuilder;
+use tst_test_helpers::timing::scaled;
 
 #[test]
 fn cancel_handle_wakes_parked_accept_promptly() {
@@ -36,7 +37,7 @@ fn cancel_handle_wakes_parked_accept_promptly() {
         "accept returned before the cancel fired: {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < scaled(Duration::from_secs(2)),
         "cancel did not wake the parked accept promptly: {elapsed:?}"
     );
 }
