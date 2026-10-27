@@ -208,7 +208,7 @@ pub struct ScriptedSend {
     pub wire: Arc<Mutex<Vec<Vec<u8>>>>,
     pub sends: Arc<AtomicU32>,
     pub every_send: Option<TransportError>,
-    pub max_payload: usize,
+    pub max_payload: Arc<std::sync::atomic::AtomicUsize>,
     pub alive: bool,
 }
 
@@ -220,7 +220,7 @@ impl ScriptedSend {
             wire: Arc::default(),
             sends: Arc::default(),
             every_send: None,
-            max_payload: 1316,
+            max_payload: Arc::new(std::sync::atomic::AtomicUsize::new(1316)),
             alive: true,
         }
     }
@@ -245,9 +245,14 @@ impl ScriptedSend {
         }
     }
 
-    pub fn with_max_payload(mut self, n: usize) -> Self {
-        self.max_payload = n;
+    pub fn with_max_payload(self, n: usize) -> Self {
+        self.set_max_payload(n);
         self
+    }
+
+    /// Changes the ceiling for this transport and every clone of it.
+    pub fn set_max_payload(&self, n: usize) {
+        self.max_payload.store(n, Ordering::SeqCst);
     }
 
     pub fn with_alive(mut self, alive: bool) -> Self {
@@ -272,10 +277,11 @@ impl Transport for ScriptedSend {
         if let Some(e) = &self.every_send {
             return Err(e.clone());
         }
-        if msg.len() > self.max_payload {
+        let max = self.max_payload.load(Ordering::SeqCst);
+        if msg.len() > max {
             return Err(TransportError::TooLarge {
                 len: msg.len(),
-                max: self.max_payload,
+                max,
             });
         }
         if !self.alive {
@@ -298,7 +304,7 @@ impl Transport for ScriptedSend {
             }),
             SendStep::TooLarge => Err(TransportError::TooLarge {
                 len: msg.len(),
-                max: self.max_payload,
+                max,
             }),
             SendStep::Broken => {
                 self.alive = false;
@@ -307,7 +313,7 @@ impl Transport for ScriptedSend {
         }
     }
     fn max_payload(&self) -> usize {
-        self.max_payload
+        self.max_payload.load(Ordering::SeqCst)
     }
     fn is_alive(&self) -> bool {
         self.alive
