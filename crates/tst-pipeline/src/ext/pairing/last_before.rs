@@ -1,18 +1,27 @@
 //! Sample-and-hold (last-before-PTS) pairing state machine.
 //!
-//! Holds a single `Option<KlvSlot>`. Each video event pairs with the
-//! current slot if `slot.pts <= video.pts` (and within freshness, if
-//! configured). Past-only by definition — a future KLV (PTS > video
-//! PTS) cannot satisfy "before."
+//! Keeps the last [`LAST_BEFORE_DEPTH`] KLV samples. Each video event
+//! pairs with the newest one whose PTS is at or before the video PTS
+//! (and within freshness, if configured). Past-only by definition: a
+//! future KLV (PTS > video PTS) cannot satisfy "before". The history
+//! lets a reordered frame (a B-frame whose PTS is below the newest
+//! KLV's) still find the sample that preceded it.
 
 use super::types::{KlvSample, PairerOutput, VideoSample};
+use std::collections::VecDeque;
 use tst_core::mpegts::demux::DemuxEvent;
+
+/// KLV samples kept for pairing reordered frames. Eight covers the
+/// reorder depth of common GOP structures at typical KLV rates.
+const LAST_BEFORE_DEPTH: usize = 8;
 
 pub(super) struct LastBeforeState {
     video_pid: u16,
     klv_pid: u16,
     freshness_ticks: Option<i64>,
-    current: Option<KlvSlot>,
+    /// Oldest at the front. An entry stays after it pairs; one that
+    /// leaves (eviction or flush) without ever pairing is `UnpairedKlv`.
+    history: VecDeque<KlvSlot>,
 }
 
 struct KlvSlot {
@@ -26,7 +35,7 @@ impl LastBeforeState {
             video_pid,
             klv_pid,
             freshness_ticks,
-            current: None,
+            history: VecDeque::with_capacity(LAST_BEFORE_DEPTH + 1),
         }
     }
 
@@ -39,44 +48,46 @@ impl LastBeforeState {
     }
 
     pub(super) fn flush(&mut self) -> Vec<PairerOutput> {
-        match self.current.take() {
-            Some(slot) if !slot.used => vec![PairerOutput::UnpairedKlv(slot.sample)],
-            _ => Vec::new(),
-        }
+        self.history
+            .drain(..)
+            .filter(|slot| !slot.used)
+            .map(|slot| PairerOutput::UnpairedKlv(slot.sample))
+            .collect()
     }
 
     fn handle_video(&mut self, v: VideoSample) -> Vec<PairerOutput> {
-        let pair_eligible = self
-            .current
-            .as_ref()
-            .map(|s| {
-                s.sample.pts <= v.pts
-                    && match self.freshness_ticks {
-                        Some(n) => super::pts_distance(v.pts, s.sample.pts) <= n,
-                        None => true,
-                    }
-            })
-            .unwrap_or(false);
-        if pair_eligible {
-            // Mark used, clone the sample for emission.
-            let slot = self.current.as_mut().unwrap();
-            slot.used = true;
-            let klv = slot.sample.clone();
-            vec![PairerOutput::Paired { video: v, klv }]
-        } else {
-            vec![PairerOutput::UnpairedVideo(v)]
+        let freshness_ticks = self.freshness_ticks;
+        let slot = self
+            .history
+            .iter_mut()
+            .rev()
+            .find(|s| s.sample.pts <= v.pts)
+            .filter(|s| match freshness_ticks {
+                Some(n) => super::pts_distance(v.pts, s.sample.pts) <= n,
+                None => true,
+            });
+        match slot {
+            Some(slot) => {
+                slot.used = true;
+                let klv = slot.sample.clone();
+                vec![PairerOutput::Paired { video: v, klv }]
+            }
+            None => vec![PairerOutput::UnpairedVideo(v)],
         }
     }
 
     fn handle_klv(&mut self, k: KlvSample) -> Vec<PairerOutput> {
-        let prev = self.current.replace(KlvSlot {
+        self.history.push_back(KlvSlot {
             sample: k,
             used: false,
         });
-        match prev {
-            Some(slot) if !slot.used => vec![PairerOutput::UnpairedKlv(slot.sample)],
-            _ => Vec::new(),
+        if self.history.len() > LAST_BEFORE_DEPTH
+            && let Some(evicted) = self.history.pop_front()
+            && !evicted.used
+        {
+            return vec![PairerOutput::UnpairedKlv(evicted.sample)];
         }
+        Vec::new()
     }
 }
 
@@ -122,6 +133,31 @@ mod tests {
     }
 
     #[test]
+    fn a_reordered_frame_pairs_with_the_klv_before_it() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(klv_event(0));
+        s.feed(video_event(0));
+        s.feed(klv_event(9000));
+        s.feed(video_event(9000));
+        let out = s.feed(video_event(3000));
+        assert!(matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 0));
+    }
+
+    #[test]
+    fn freshness_is_inclusive_at_the_bound() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, Some(3000));
+        s.feed(klv_event(0));
+        assert!(matches!(
+            &s.feed(video_event(3000))[..],
+            [PairerOutput::Paired { .. }]
+        ));
+        assert!(matches!(
+            &s.feed(video_event(3001))[..],
+            [PairerOutput::UnpairedVideo(_)]
+        ));
+    }
+
+    #[test]
     fn paired_when_klv_before_video_no_freshness() {
         let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
         let _ = s.feed(klv_event(50));
@@ -156,11 +192,15 @@ mod tests {
     }
 
     #[test]
-    fn displaced_unused_klv_emits_unpaired() {
+    fn evicted_unused_klv_emits_unpaired() {
         let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
-        let _ = s.feed(klv_event(0));
-        // Second KLV displaces the first (which was unused).
-        let out = s.feed(klv_event(50));
+        // A newer KLV no longer displaces an older one: the older stays
+        // available to reordered frames until it leaves the history.
+        for i in 0..LAST_BEFORE_DEPTH as i64 {
+            assert!(s.feed(klv_event(i * 50)).is_empty());
+        }
+        // One past the depth evicts the oldest (PTS 0), never used.
+        let out = s.feed(klv_event(LAST_BEFORE_DEPTH as i64 * 50));
         assert_eq!(out.len(), 1);
         match &out[0] {
             PairerOutput::UnpairedKlv(k) => assert_eq!(k.pts.as_ticks(), 0),
@@ -169,14 +209,29 @@ mod tests {
     }
 
     #[test]
-    fn displaced_used_klv_silent() {
+    fn evicted_used_klv_silent() {
         let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
         let _ = s.feed(klv_event(0));
-        let _ = s.feed(video_event(10)); // marks slot used
-        let out = s.feed(klv_event(50));
+        let _ = s.feed(video_event(10)); // marks PTS 0 used
+        for i in 1..LAST_BEFORE_DEPTH as i64 {
+            let _ = s.feed(klv_event(i * 50));
+        }
+        let out = s.feed(klv_event(LAST_BEFORE_DEPTH as i64 * 50));
+        assert!(out.is_empty(), "expected silent eviction, got {:?}", out);
+    }
+
+    #[test]
+    fn flush_emits_only_never_used_entries() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        let _ = s.feed(klv_event(0));
+        let _ = s.feed(video_event(10)); // uses PTS 0
+        let _ = s.feed(klv_event(50));
+        let _ = s.feed(klv_event(100));
+        let _ = s.feed(video_event(120)); // uses PTS 100
+        let out = s.flush();
         assert!(
-            out.is_empty(),
-            "expected silent displacement, got {:?}",
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == 50),
+            "expected only the never-used PTS 50, got {:?}",
             out
         );
     }
