@@ -39,24 +39,30 @@ tst_core::binding_record! {
 /// With `min` = [`Publisher::segment_duration`] and `span` = the PTS span from
 /// the open segment's first AU to this one:
 ///
-/// 1. **`min` is `None`**: every keyframe cuts.
+/// 1. **`min` is `None`**: every keyframe cuts, and so does an encoder
+///    reset (rule 4).
 /// 2. **A keyframe with `span >= min`** cuts: segments hold whole GOPs and
 ///    close on the first keyframe at or after the target.
 /// 3. **Any AU** cuts when the segment would otherwise reach `min + 499 ms`
 ///    by the next AU, predicted from the gap to the previous AU. With a
 ///    steady frame cadence every `#EXTINF` then stays below the point where
 ///    it would round above `ceil(min)`, the advertised target (RFC 8216
-///    §4.3.3.1), even when the GOP is longer than the target; a gap longer
-///    than the one before it can still overshoot by the difference. The new
+///    §4.3.3.1), even when the GOP is longer than the target. The new
 ///    segment starts on this AU, a non-keyframe when the GOP is too long.
-/// 4. **An AU more than 1 s before the segment's start** (an encoder
-///    restart or a PTS wrap) cuts with the span up to the previous AU, and
-///    the new segment starts on the new timeline.
+/// 4. **An encoder reset**, an AU more than 1 s before the segment's start,
+///    and, when `min` is `Some`, **an AU whose span already reaches
+///    `min + 499 ms`** (a gap longer than rule 3 predicted) both close the
+///    segment and mark the next one discontinuous
+///    ([`Publisher::cut_segment_discontinuous`]). Raw 33-bit PTS are
+///    compared modulo the PTS period, so a wrap is a small forward step,
+///    not a reset. A reset closes with the span up to the previous AU; a
+///    gap closes at the previous AU plus its frame interval, held below
+///    `min + 499 ms`. The new segment starts on this AU.
 ///
-/// A cut closes the segment with EXTINF = the exact PTS span
-/// `segment_start..this AU` and asks the caller to re-emit PAT/PMT, so the
-/// new segment opens with PSI and, on a keyframe cut, PAT → PMT → IDR,
-/// independently decodable (RFC 8216 §3). The stream-head AU, with no open
+/// A keyframe or forced cut closes the segment with EXTINF = the exact PTS
+/// span `segment_start..this AU`. Every cut asks the caller to re-emit
+/// PAT/PMT, so the new segment opens with PSI and, on a keyframe cut,
+/// PAT → PMT → IDR, independently decodable (RFC 8216 §3). The stream-head AU, with no open
 /// segment yet, opens the first segment without a zero-duration cut.
 ///
 /// When `min` is `Some`, the first video AU first calls
@@ -80,6 +86,9 @@ pub struct Segmented<P: Publisher> {
     /// PTS of the most recent video AU (drives an explicit cut, and gives
     /// the previous inter-AU gap the forced-cut prediction uses).
     last_video_pts: Option<Pts90khz>,
+    /// Ticks from the previous video AU to the most recent one, never
+    /// negative: the frame interval a gap cut adds after the last AU.
+    last_gap_ticks: i64,
     /// The publisher's [`Publisher::segment_duration`], read once: the
     /// media-time bound a segment may reach. `None` cuts on every keyframe.
     min_segment: Option<Duration>,
@@ -115,6 +124,7 @@ impl<P: Publisher> Segmented<P> {
             publisher,
             segment_start_pts: None,
             last_video_pts: None,
+            last_gap_ticks: 0,
             min_segment,
             warned_forced_cut: false,
             cut_calls: 0,
@@ -162,11 +172,15 @@ impl<P: Publisher> Segmented<P> {
         span: Duration,
         key_frame: bool,
     ) -> Option<Cut> {
+        if media_delta(start, pts) < -REORDER_TOLERANCE_TICKS {
+            return Some(Cut::Discontinuity);
+        }
         let Some(min) = self.min_segment else {
             return key_frame.then_some(Cut::Keyframe);
         };
-        if pts.as_ticks() < start.as_ticks().saturating_sub(REORDER_TOLERANCE_TICKS) {
-            return Some(Cut::Discontinuity);
+        let bound = min.saturating_add(FORCED_CUT_MARGIN);
+        if span >= bound {
+            return Some(Cut::Gap);
         }
         if key_frame && span >= min {
             return Some(Cut::Keyframe);
@@ -175,14 +189,19 @@ impl<P: Publisher> Segmented<P> {
         // prediction lands exactly on the boundary when the gaps are even.
         let gap = self
             .last_video_pts
-            .map_or(0, |p| pts.as_ticks().saturating_sub(p.as_ticks()).max(0));
-        let next = Pts90khz::new(pts.as_ticks().saturating_add(gap));
-        (media_span(start, next) >= min.saturating_add(FORCED_CUT_MARGIN)).then_some(Cut::Forced)
+            .map_or(0, |p| media_delta(p, pts).max(0));
+        let next = media_delta(start, pts).saturating_add(gap);
+        (ticks_duration(next) >= bound).then_some(Cut::Forced)
     }
 
-    /// Cut the open segment with its media duration and start a new one.
-    fn cut(&mut self, media_dur: Duration) -> Result<(), P::Error> {
-        self.publisher.cut_segment_with_duration(media_dur)?;
+    /// Cut the open segment with its media duration and start a new one,
+    /// marked as a new timeline when `discontinuous`.
+    fn cut(&mut self, media_dur: Duration, discontinuous: bool) -> Result<(), P::Error> {
+        if discontinuous {
+            self.publisher.cut_segment_discontinuous(media_dur)?;
+        } else {
+            self.publisher.cut_segment_with_duration(media_dur)?;
+        }
         self.cut_calls = self.cut_calls.saturating_add(1);
         self.segment_start_pts = None;
         Ok(())
@@ -226,16 +245,25 @@ impl<P: Publisher + Send> Transport for Segmented<P> {
         if let Some(start) = self.segment_start_pts {
             let span = media_span(start, pts);
             if let Some(reason) = self.cut_reason(start, pts, span, key_frame) {
-                // A discontinuity closes the segment at the last AU of the
-                // old timeline; `span` would saturate to zero.
-                let closed = match reason {
-                    Cut::Discontinuity => {
-                        self.last_video_pts.map_or(span, |p| media_span(start, p))
+                let to_last = self.last_video_pts.map_or(0, |p| media_delta(start, p));
+                let (closed, discontinuous) = match reason {
+                    // The segment ends at the last AU of the old timeline;
+                    // `span` would saturate to zero.
+                    Cut::Discontinuity => (ticks_duration(to_last), true),
+                    // The segment ends one frame interval after its last AU,
+                    // never at this AU, which would overshoot the target.
+                    Cut::Gap => {
+                        let closed = ticks_duration(to_last.saturating_add(self.last_gap_ticks));
+                        let cap = self.min_segment.map_or(closed, |min| {
+                            min.saturating_add(FORCED_CUT_MARGIN)
+                                .saturating_sub(ticks_duration(1))
+                        });
+                        (closed.min(cap), true)
                     }
-                    _ => span,
+                    Cut::Keyframe | Cut::Forced => (span, false),
                 };
                 self.log_cut(reason, closed, key_frame);
-                if let Err(e) = self.cut(closed) {
+                if let Err(e) = self.cut(closed, discontinuous) {
                     return Err(self.fail(e));
                 }
                 cut = true;
@@ -244,6 +272,9 @@ impl<P: Publisher + Send> Transport for Segmented<P> {
         if self.segment_start_pts.is_none() {
             self.segment_start_pts = Some(pts);
         }
+        self.last_gap_ticks = self
+            .last_video_pts
+            .map_or(0, |p| media_delta(p, pts).max(0));
         self.last_video_pts = Some(pts);
         Ok(cut)
     }
@@ -274,6 +305,10 @@ impl<P: Publisher> Segmented<P> {
                 span_ms,
                 "segment cut on a backward PTS step: the stream restarted its timeline"
             ),
+            Cut::Gap => tracing::debug!(
+                span_ms,
+                "segment cut on a forward PTS gap: the access unit is past the target duration"
+            ),
         }
     }
 }
@@ -284,6 +319,7 @@ enum Cut {
     Keyframe,
     Forced,
     Discontinuity,
+    Gap,
 }
 
 /// Shell that owns a muxer and pushes its output to a [`Publisher`].
@@ -352,7 +388,10 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     /// when the segment would otherwise reach `min + 499 ms` by the next AU
     /// (so, at a steady frame cadence, no `#EXTINF` rounds above the
     /// target); without one, every keyframe does. An AU more than 1 s before
-    /// the segment's start (a restarted timeline) also begins one. See
+    /// the segment's start (a restarted timeline; a raw 33-bit PTS wrap is
+    /// not one) also begins one, as does, with `min`, an AU already
+    /// `min + 499 ms` past it (a forward gap): both mark the new segment
+    /// discontinuous ([`Publisher::cut_segment_discontinuous`]). See
     /// [`Segmented`] for the full rules. Keep the GOP at or under `min` and every segment opens
     /// PAT → PMT → IDR (RFC 8216 §3). The stream-head AU (no open segment
     /// yet) opens the first segment without a spurious zero-duration cut.
@@ -442,7 +481,7 @@ impl<P: Publisher + Send> MuxPublisher<P> {
                 (Some(start), Some(end)) => media_span(start, end),
                 _ => Duration::ZERO,
             };
-            seg.cut(media_dur)?;
+            seg.cut(media_dur, false)?;
             muxer.request_psi();
             Ok(())
         });
@@ -496,7 +535,7 @@ impl<P: Publisher + Send> MuxPublisher<P> {
         let cut = self
             .0
             .with_parts(|_, seg| match (seg.segment_start_pts, seg.last_video_pts) {
-                (Some(start), Some(end)) => seg.cut(media_span(start, end)),
+                (Some(start), Some(end)) => seg.cut(media_span(start, end), false),
                 _ => Ok(()),
             });
         match cut {
@@ -560,12 +599,36 @@ const FORCED_CUT_MARGIN: Duration = Duration::from_millis(499);
 /// count as frame reordering rather than a restarted timeline: 1 s.
 const REORDER_TOLERANCE_TICKS: i64 = 90_000;
 
-/// Media-presentation duration spanned from `start` to `end` PTS (90 kHz).
-///
-/// Saturates to zero on a non-increasing delta. PTS wraparound is out of
-/// scope — a single segment does not span the ~26.5 h 33-bit PTS period.
+/// The 33-bit PTS period, in 90 kHz ticks.
+const PTS_PERIOD: i64 = 1 << 33;
+
+/// Signed 90 kHz delta from `start` to `end`. Raw 33-bit timestamps (both in
+/// `0..2^33`) are compared modulo the period, so a wrap is a small forward
+/// step; unwrapped ticks are subtracted directly.
+fn media_delta(start: Pts90khz, end: Pts90khz) -> i64 {
+    let (s, e) = (start.as_ticks(), end.as_ticks());
+    if (0..PTS_PERIOD).contains(&s) && (0..PTS_PERIOD).contains(&e) {
+        let d = (e - s).rem_euclid(PTS_PERIOD);
+        if d < PTS_PERIOD / 2 {
+            d
+        } else {
+            d - PTS_PERIOD
+        }
+    } else {
+        e.saturating_sub(s)
+    }
+}
+
+/// Media-presentation duration spanned from `start` to `end` PTS (90 kHz),
+/// measured by [`media_delta`]: a raw 33-bit wrap between them is a small
+/// forward step. Zero when `end` is not after `start`.
 fn media_span(start: Pts90khz, end: Pts90khz) -> Duration {
-    let ticks = end.as_ticks().saturating_sub(start.as_ticks()).max(0) as u64;
+    ticks_duration(media_delta(start, end))
+}
+
+/// `ticks` of 90 kHz media time as a `Duration`; zero when negative.
+fn ticks_duration(ticks: i64) -> Duration {
+    let ticks = ticks.max(0) as u64;
     // Split into whole seconds + sub-second nanos rather than computing
     // `ticks * 1e9` (which overflows u64 past ~56.9 h of delta). `ticks / 90_000`
     // always fits u64 and `(ticks % 90_000) * 1e9 < 9e13` cannot overflow, so
@@ -851,6 +914,9 @@ mod tests {
 
     struct RecordingPublisher {
         cuts: Vec<Duration>,
+        /// Index into `cuts` of each cut that marked the next segment
+        /// discontinuous.
+        discontinuous: Vec<usize>,
         segment_duration: Option<Duration>,
     }
 
@@ -864,6 +930,11 @@ mod tests {
             Ok(())
         }
         fn cut_segment_with_duration(&mut self, d: Duration) -> Result<(), MemErr> {
+            self.cuts.push(d);
+            Ok(())
+        }
+        fn cut_segment_discontinuous(&mut self, d: Duration) -> Result<(), MemErr> {
+            self.discontinuous.push(self.cuts.len());
             self.cuts.push(d);
             Ok(())
         }
@@ -895,6 +966,7 @@ mod tests {
         // 270000 ticks = 3.0 s, then begins the next segment.
         let p = RecordingPublisher {
             cuts: vec![],
+            discontinuous: vec![],
             segment_duration: None,
         };
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
@@ -921,6 +993,7 @@ mod tests {
         // fall back to wall-clock time.
         let p = RecordingPublisher {
             cuts: vec![],
+            discontinuous: vec![],
             segment_duration: None,
         };
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
@@ -936,6 +1009,7 @@ mod tests {
     fn finish_without_video_cuts_nothing() {
         let p = RecordingPublisher {
             cuts: vec![],
+            discontinuous: vec![],
             segment_duration: None,
         };
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
@@ -1406,6 +1480,7 @@ mod tests {
         let mp = MuxPublisher::with_config(
             RecordingPublisher {
                 cuts: vec![],
+                discontinuous: vec![],
                 segment_duration: None,
             },
             cfg,
@@ -1440,8 +1515,27 @@ mod tests {
     /// that reports `segment_duration`, and return the cut durations it
     /// received.
     fn cuts_for_feed(segment_duration: Option<Duration>, feed: &[(i64, bool)]) -> Vec<Duration> {
+        feed_through(segment_duration, feed).cuts
+    }
+
+    /// Push `feed` as in [`cuts_for_feed`] and return the index of each cut
+    /// that marked the next segment discontinuous.
+    fn discontinuities_for_feed(
+        segment_duration: Option<Duration>,
+        feed: &[(i64, bool)],
+    ) -> Vec<usize> {
+        feed_through(segment_duration, feed).discontinuous
+    }
+
+    /// The publisher after `feed` and `finish`, with `finish`'s closing cut
+    /// removed from `cuts`.
+    fn feed_through(
+        segment_duration: Option<Duration>,
+        feed: &[(i64, bool)],
+    ) -> RecordingPublisher {
         let p = RecordingPublisher {
             cuts: vec![],
+            discontinuous: vec![],
             segment_duration,
         };
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
@@ -1450,12 +1544,17 @@ mod tests {
             mp.push_video(&au, Pts90khz::new(t), key).unwrap();
         }
         let cut_calls = mp.stats().cut_calls;
-        let mut cuts = mp.finish().unwrap().cuts;
-        // `finish` closes the open segment last.
-        let closing = cuts.pop();
+        let mut p = mp.finish().unwrap();
+        // `finish` closes the open segment last, never as a discontinuity.
+        let closing = p.cuts.pop();
         assert!(closing.is_some(), "finish must close the open segment");
-        assert_eq!(cut_calls, cuts.len() as u64, "cuts: {cuts:?}");
-        cuts
+        assert!(
+            p.discontinuous.iter().all(|&i| i < p.cuts.len()),
+            "finish marked its cut discontinuous: {:?}",
+            p.discontinuous
+        );
+        assert_eq!(cut_calls, p.cuts.len() as u64, "cuts: {:?}", p.cuts);
+        p
     }
 
     /// Frames `0..=last_frame`, `frame_ticks` apart, with `keys` marked as
@@ -1623,19 +1722,24 @@ mod tests {
         assert_eq!(cuts, [Duration::from_secs(4)]);
     }
 
-    #[test]
-    fn a_backward_pts_step_cuts_and_restarts_the_timeline() {
-        // 1 s GOPs at 30 fps from 20 s to 25 s: one cut at 24 s (4.000).
-        // Then the timeline restarts 10 s earlier, at 15 s: the open segment
-        // (24 s .. 25 s) closes at the last AU of the old timeline, 1.000 s,
-        // and the new timeline cuts again 4 s in, at 19 s.
+    /// 1 s GOPs at 30 fps from 20 s to 25 s, then the same from 15 s: the
+    /// timeline restarts 10 s earlier.
+    fn backward_step_feed() -> Vec<(i64, bool)> {
         let base = 20 * 90_000;
         let mut feed: Vec<(i64, bool)> = (0..=150)
             .map(|f| (base + f * FRAME_30FPS, f % 30 == 0))
             .collect();
         let restart = 15 * 90_000;
         feed.extend((0..=150).map(|f| (restart + f * FRAME_30FPS, f % 30 == 0)));
-        let cuts = cuts_for_feed(TARGET, &feed);
+        feed
+    }
+
+    #[test]
+    fn a_backward_pts_step_cuts_and_restarts_the_timeline() {
+        // One cut at 24 s (4.000). Then the timeline restarts at 15 s: the
+        // open segment (24 s .. 25 s) closes at the last AU of the old
+        // timeline, 1.000 s, and the new timeline cuts again 4 s in, at 19 s.
+        let cuts = cuts_for_feed(TARGET, &backward_step_feed());
         assert_eq!(
             cuts,
             [
@@ -1647,18 +1751,70 @@ mod tests {
         );
     }
 
+    const W: i64 = 1 << 33;
+
     #[test]
-    fn a_gap_longer_than_the_last_can_overshoot_the_target() {
-        // The forced-cut prediction assumes the next gap equals the last.
-        // Under a 1 s target, AUs at 0, 1.0 s and a keyframe at 2.9 s: the
-        // AU at 1.0 s is cut before (its successor would end the segment at
-        // 2.0 s), and the 1.9 s gap that follows closes a 1.900 s segment,
-        // which rounds above the target. This pins the documented limit.
-        let cuts = cuts_for_feed(
-            Some(Duration::from_secs(1)),
-            &[(0, true), (90_000, false), (261_000, true)],
+    fn an_unbounded_publisher_spans_a_raw_pts_wrap() {
+        let cuts = cuts_for_feed(None, &[(W - 9000, true), (W - 6000, false), (3000, true)]);
+        assert_eq!(cuts, [ticks(12_000)]);
+    }
+
+    #[test]
+    fn a_bounded_publisher_continues_across_a_raw_pts_wrap() {
+        let feed: Vec<(i64, bool)> = (0..=150)
+            .map(|f| ((W - 180_000 + f * FRAME_30FPS).rem_euclid(W), f % 30 == 0))
+            .collect();
+        assert_eq!(cuts_for_feed(TARGET, &feed), [Duration::from_secs(4)]);
+        assert!(discontinuities_for_feed(TARGET, &feed).is_empty());
+    }
+
+    #[test]
+    fn an_encoder_reset_is_marked_discontinuous() {
+        // The feed of a_backward_pts_step_cuts_and_restarts_the_timeline.
+        assert_eq!(discontinuities_for_feed(TARGET, &backward_step_feed()), [1]);
+    }
+
+    #[test]
+    fn an_unbounded_publisher_cuts_and_marks_a_backward_reset_on_a_non_keyframe() {
+        let feed = [(900_000, true), (903_000, false), (0, false)];
+        assert_eq!(cuts_for_feed(None, &feed), [ticks(3000)]);
+        assert_eq!(discontinuities_for_feed(None, &feed), [0]);
+    }
+
+    /// RFC 8216 §4.3.3.1: no EXTINF may round above the target.
+    #[test]
+    fn a_gap_longer_than_the_last_closes_at_the_previous_unit_and_starts_a_new_timeline() {
+        let feed = [(0, true), (90_000, false), (261_000, true)];
+        let bound = Some(Duration::from_secs(1));
+        assert_eq!(
+            cuts_for_feed(bound, &feed),
+            [Duration::from_secs(1), Duration::from_secs(1)]
         );
-        assert_eq!(cuts, [Duration::from_secs(1), ticks(171_000)]);
+        assert_eq!(discontinuities_for_feed(bound, &feed), [1]);
+    }
+
+    #[test]
+    fn a_lost_run_of_frames_does_not_overshoot_the_target() {
+        // 40 ms frames to 4.440 s, then the next AU at 4.800 s (target 4).
+        let mut feed: Vec<(i64, bool)> = (0..=111).map(|f| (f * 3600, f == 0)).collect();
+        feed.push((432_000, false));
+        let cuts = cuts_for_feed(TARGET, &feed);
+        assert_eq!(cuts, [ticks(111 * 3600 + 3600)]); // 4.480 s
+        assert!(cuts.iter().all(|d| d.as_secs_f64().round() <= 4.0));
+        assert_eq!(discontinuities_for_feed(TARGET, &feed), [0]);
+    }
+
+    #[test]
+    fn a_reordered_b_frame_does_not_cut() {
+        let feed = [
+            (0, true),
+            (9000, false),
+            (3000, false),
+            (6000, false),
+            (18_000, false),
+        ];
+        assert!(cuts_for_feed(TARGET, &feed).is_empty());
+        assert!(discontinuities_for_feed(TARGET, &feed).is_empty());
     }
 
     #[test]
