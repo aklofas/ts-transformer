@@ -329,8 +329,9 @@ fn split_pmt_with_dropped_continuation_drops_section_in_strict_mode() {
 #[test]
 fn split_pmt_with_dropped_continuation_keeps_section_in_lenient_mode() {
     // Same packet sequence as the strict-mode test, but with lenient_psi_reassembly=true.
-    // Lenient mode must NOT emit PsiCcDiscontinuity — it feeds the bytes through
-    // and lets the section either pass CRC by luck or surface as PsiChecksumMismatch.
+    // Lenient mode must NOT emit PsiCcDiscontinuity — it keeps the bytes across the
+    // gap and lets the section either pass CRC by luck or surface as
+    // PsiChecksumMismatch.
     let pmt_bytes = build_pmt_section_at_least_3_ts_packets();
     let pmt_pid: u16 = 0x0FFF;
     let pkts = pack_section(pmt_pid, &pmt_bytes, 0x0);
@@ -352,7 +353,16 @@ fn split_pmt_with_dropped_continuation_keeps_section_in_lenient_mode() {
             .any(|i| matches!(i, NonConformantIssue::PsiCcDiscontinuity { .. })),
         "lenient mode must not emit PsiCcDiscontinuity, got {issues:?}"
     );
-    // No assertion about PMT parse outcome — lenient mode either passes by luck
-    // (bytes happen to form valid section data) or surfaces PsiChecksumMismatch;
-    // both are legitimate outcomes.
+    // Packets 1 + 3 hold fewer bytes than the section length, so nothing is
+    // parsed yet. The late packet completes the section that lenient mode kept
+    // across the gap; out of order, its CRC fails. (Strict mode dropped the
+    // partial section, so the same packet would start nothing.)
+    demux.feed(&pkts[1]).unwrap();
+    let issues = drain_non_conformant_issues(&mut demux);
+    assert!(
+        issues
+            .iter()
+            .any(|i| matches!(i, NonConformantIssue::PsiChecksumMismatch { pid: 0x0FFF })),
+        "the kept section must complete and fail its CRC, got {issues:?}"
+    );
 }
