@@ -11,8 +11,15 @@
 //! packet boundary 0.
 //!
 //! Loss detection (SYNCED): every 188-byte boundary in the staging
-//! buffer must read 0x47. On failure: drop staging buffer, increment
-//! resync_events, return to UNSYNCED, restart scan from next byte.
+//! buffer must read 0x47. When boundary `i` of a candidate bundle fails,
+//! the `i` packets before it (each already seen to start with 0x47) go
+//! out as one short message, resync_events is incremented and the state
+//! returns to UNSYNCED with the rest of the buffer kept: the scan resumes
+//! at the failed boundary, so a valid stream after the damage is not
+//! thrown away with it.
+//!
+//! STRICT mode checks every boundary of a call before committing any of
+//! it, so a rejected call leaves the framer exactly as it was.
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -134,55 +141,42 @@ impl TsFraming {
 
     /// Push bytes (STRICT mode): returns any bundles emitted. Errors on
     /// any misalignment — no recovery.
+    ///
+    /// # Errors
+    /// [`TsFramingError::SyncLost`] when any packet boundary whose first
+    /// byte is present (the bytes still buffered from earlier calls
+    /// followed by `bytes`) does not read 0x47. `offset` counts from the
+    /// first byte still buffered before this call. On error nothing
+    /// changes — buffer, stats and sync state are as they were — so the
+    /// caller may retry with corrected input.
     pub fn push_strict(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, TsFramingError> {
+        // Validate before committing anything: the buffered bytes start on
+        // a packet boundary (everything buffered here was validated by an
+        // earlier call), so the boundaries of the whole call sit at
+        // multiples of 188 into `buffer ∥ bytes`.
+        if let Some(k) = self
+            .buffer
+            .iter()
+            .chain(bytes)
+            .step_by(TS_PACKET_SIZE)
+            .position(|&b| b != SYNC_BYTE)
+        {
+            return Err(TsFramingError::SyncLost {
+                offset: (k * TS_PACKET_SIZE) as u64,
+            });
+        }
         self.stats.bytes_pushed += bytes.len() as u64;
         self.buffer.extend(bytes.iter().copied());
+        // Sync is declared once the first three boundaries are present;
+        // with fewer the bytes wait for flush.
+        if self.state == State::Unsynced && self.buffer.len() > 2 * TS_PACKET_SIZE {
+            self.state = State::Synced;
+        }
         let mut bundles = Vec::new();
-        loop {
-            match self.state {
-                State::Unsynced => {
-                    // STRICT mode: first byte must be 0x47. If buffer
-                    // doesn't start with sync byte, error immediately.
-                    if self.buffer.is_empty() {
-                        break;
-                    }
-                    if self.buffer[0] != SYNC_BYTE {
-                        return Err(TsFramingError::SyncLost { offset: 0u64 });
-                    }
-                    // STRICT: still need 3-byte verify, but no skipping.
-                    if self.buffer.len() < 2 * TS_PACKET_SIZE + 1 {
-                        // Need ≥ 377 bytes (P + 188 + 188 + 1) to verify.
-                        // Use < 2*188+1 = 377, but checking buffer.len() < 377
-                        // is what we want for verify of (0, 188, 376).
-                        break;
-                    }
-                    if self.buffer[TS_PACKET_SIZE] != SYNC_BYTE {
-                        return Err(TsFramingError::SyncLost {
-                            offset: TS_PACKET_SIZE as u64,
-                        });
-                    }
-                    if self.buffer[2 * TS_PACKET_SIZE] != SYNC_BYTE {
-                        return Err(TsFramingError::SyncLost {
-                            offset: (2 * TS_PACKET_SIZE) as u64,
-                        });
-                    }
-                    self.state = State::Synced;
-                }
-                State::Synced => {
-                    // STRICT: every boundary must be 0x47.
-                    if self.buffer.len() < SRT_BUNDLE_BYTES {
-                        break;
-                    }
-                    for i in 0..SRT_BUNDLE_PACKETS {
-                        let off = i * TS_PACKET_SIZE;
-                        if self.buffer[off] != SYNC_BYTE {
-                            return Err(TsFramingError::SyncLost { offset: off as u64 });
-                        }
-                    }
-                    let bundle: Vec<u8> = self.buffer.drain(..SRT_BUNDLE_BYTES).collect();
-                    bundles.push(bundle);
-                    self.stats.packets_sent += SRT_BUNDLE_PACKETS as u64;
-                }
+        if self.state == State::Synced {
+            while self.buffer.len() >= SRT_BUNDLE_BYTES {
+                bundles.push(self.buffer.drain(..SRT_BUNDLE_BYTES).collect());
+                self.stats.packets_sent += SRT_BUNDLE_PACKETS as u64;
             }
         }
         Ok(bundles)
@@ -238,26 +232,30 @@ impl TsFraming {
         Ok(false)
     }
 
-    /// In SYNCED: try to emit one bundle. Returns true if a bundle was
-    /// emitted (caller should loop), false if not enough bytes (or
-    /// loss-of-sync triggered a return to UNSYNCED).
+    /// In SYNCED: try to emit one bundle. Returns true if the caller
+    /// should loop (a bundle went out, or loss-of-sync returned the state
+    /// to UNSYNCED), false if there are not enough bytes yet.
     fn try_emit(&mut self, bundles: &mut Vec<Vec<u8>>) -> bool {
         if self.buffer.len() < SRT_BUNDLE_BYTES {
             return false;
         }
-        // Verify every 188-byte boundary in the candidate bundle.
-        for i in 0..SRT_BUNDLE_PACKETS {
-            if self.buffer[i * TS_PACKET_SIZE] != SYNC_BYTE {
-                // Sync lost.
-                self.state = State::Unsynced;
-                self.stats.resync_events += 1;
-                self.buffer.clear();
-                return true; // re-enter loop in UNSYNCED.
-            }
+        // Verify every 188-byte boundary in the candidate bundle. The
+        // decision waits for a full bundle's bytes even when an earlier
+        // boundary could be checked sooner, so how the input is chunked
+        // never changes which messages go out.
+        let bad = (0..SRT_BUNDLE_PACKETS).find(|&i| self.buffer[i * TS_PACKET_SIZE] != SYNC_BYTE);
+        let good = bad.unwrap_or(SRT_BUNDLE_PACKETS);
+        if good > 0 {
+            bundles.push(self.buffer.drain(..good * TS_PACKET_SIZE).collect());
+            self.stats.packets_sent += good as u64;
         }
-        let bundle: Vec<u8> = self.buffer.drain(..SRT_BUNDLE_BYTES).collect();
-        bundles.push(bundle);
-        self.stats.packets_sent += SRT_BUNDLE_PACKETS as u64;
+        if bad.is_some() {
+            // Sync lost at the failed boundary. Keep the rest: try_acquire
+            // skips (and counts) the damaged bytes up to the next verified
+            // sync point, so a valid stream after the damage survives.
+            self.state = State::Unsynced;
+            self.stats.resync_events += 1;
+        }
         true
     }
 
@@ -274,20 +272,35 @@ impl TsFraming {
         Ok(())
     }
 
-    /// Emit any pending bytes as a partial bundle (1-6 packets).
+    /// Emit any pending whole packets as a partial bundle (1-6 packets).
     /// Called explicitly via flush() or implicitly on close.
+    ///
+    /// Only packets whose sync byte reads 0x47 go out: the boundaries
+    /// past the third have not been checked yet (a bundle is checked only
+    /// once all seven packets are present). From the first damaged
+    /// boundary on, the buffered bytes are discarded, counted in
+    /// `bytes_skipped_for_sync`, with one `resync_events`.
     pub fn flush(&mut self) -> Vec<Vec<u8>> {
         if self.state != State::Synced || self.buffer.is_empty() {
             return Vec::new();
         }
-        // Buffer should be a whole-packet multiple in SYNCED state.
-        let n = self.buffer.len() - (self.buffer.len() % TS_PACKET_SIZE);
-        if n == 0 {
-            return Vec::new();
+        let whole = self.buffer.len() / TS_PACKET_SIZE;
+        let bad = (0..whole).find(|&i| self.buffer[i * TS_PACKET_SIZE] != SYNC_BYTE);
+        let good = bad.unwrap_or(whole);
+        let mut out = Vec::new();
+        if good > 0 {
+            out.push(self.buffer.drain(..good * TS_PACKET_SIZE).collect());
+            self.stats.packets_sent += good as u64;
         }
-        let bundle: Vec<u8> = self.buffer.drain(..n).collect();
-        self.stats.packets_sent += (n / TS_PACKET_SIZE) as u64;
-        vec![bundle]
+        if bad.is_some() {
+            // Nothing after the damage is aligned to a verified sync
+            // point, the partial tail included.
+            self.stats.bytes_skipped_for_sync += self.buffer.len() as u64;
+            self.stats.resync_events += 1;
+            self.buffer.clear();
+            self.state = State::Unsynced;
+        }
+        out
     }
 }
 
@@ -378,25 +391,91 @@ mod tests {
         assert_eq!(accumulated_out[0].len(), 1316);
     }
 
+    /// A packet with a zero where its sync byte should be.
+    fn damaged_packet(i: usize) -> Vec<u8> {
+        let mut p = synthetic_ts_stream(i + 1)[i * 188..].to_vec();
+        p[0] = 0x00;
+        p
+    }
+
     #[test]
-    fn loss_of_sync_resyncs() {
-        let mut framing = TsFraming::new(18800);
-        // 7 valid packets, then garbage that breaks alignment, then 7
-        // more valid packets with their own valid sync.
+    fn recover_keeps_verified_packets_and_the_suffix_after_garbage() {
         let ts1 = synthetic_ts_stream(7);
-        let garbage: Vec<u8> = vec![0x00; 100]; // 100 bytes of zeros — no 0x47
+        let good3 = synthetic_ts_stream(3);
         let ts2 = synthetic_ts_stream(7);
         let mut input = ts1.clone();
-        input.extend_from_slice(&garbage);
+        input.extend_from_slice(&good3);
+        input.extend_from_slice(&[0x00; 100]);
         input.extend_from_slice(&ts2);
-        let (out, stats) = framing.push(&input).unwrap();
-        // 7 + 7 = 14 packets, but the garbage breaks alignment; after
-        // resync the second 7 packets get bundled.
-        assert!(!out.is_empty(), "first bundle must emit");
-        assert!(
-            stats.resync_events >= 1,
-            "must have at least one resync event"
+
+        let mut one_call = TsFraming::new(18_800);
+        let (out, stats) = one_call.push(&input).unwrap();
+        assert_eq!(out, vec![ts1.clone(), good3.clone(), ts2.clone()]);
+        assert_eq!(stats.resync_events, 1);
+        assert_eq!(stats.bytes_skipped_for_sync, 100);
+        assert_eq!(stats.packets_sent, 17);
+
+        let mut byte_by_byte = TsFraming::new(18_800);
+        let mut out2 = Vec::new();
+        for b in &input {
+            out2.extend(byte_by_byte.push(&[*b]).unwrap().0);
+        }
+        assert_eq!(out2, out, "chunking must not change what survives");
+    }
+
+    #[test]
+    fn strict_error_after_one_bundle_changes_nothing_and_a_clean_retry_sends() {
+        let good7 = synthetic_ts_stream(7);
+        let mut bad7 = synthetic_ts_stream(7);
+        bad7[3 * 188] = 0x00;
+        let mut input = good7.clone();
+        input.extend_from_slice(&bad7);
+        let mut f = TsFraming::new(18_800);
+        assert_eq!(
+            f.push_strict(&input),
+            Err(TsFramingError::SyncLost {
+                offset: (7 + 3) * 188
+            })
         );
+        assert_eq!(
+            f.stats(),
+            SenderStats::default(),
+            "a rejected call is not counted"
+        );
+        assert_eq!(f.push_strict(&good7).unwrap(), vec![good7]);
+    }
+
+    #[test]
+    fn strict_rejected_garbage_prefix_does_not_poison_later_input() {
+        let mut f = TsFraming::new(18_800);
+        assert!(f.push_strict(&[0x00; 10]).is_err());
+        let good3 = synthetic_ts_stream(3);
+        assert!(f.push_strict(&good3).unwrap().is_empty());
+        assert_eq!(f.flush(), vec![good3]);
+    }
+
+    #[test]
+    fn strict_rejects_a_damaged_fourth_packet_before_flush() {
+        let mut input = synthetic_ts_stream(3);
+        input.extend(damaged_packet(3));
+        let mut f = TsFraming::new(18_800);
+        assert_eq!(
+            f.push_strict(&input),
+            Err(TsFramingError::SyncLost { offset: 3 * 188 })
+        );
+        assert!(f.flush().is_empty());
+    }
+
+    #[test]
+    fn recover_flush_drops_a_damaged_tail_packet() {
+        let good3 = synthetic_ts_stream(3);
+        let mut input = good3.clone();
+        input.extend(damaged_packet(3));
+        let mut f = TsFraming::new(18_800);
+        assert!(f.push(&input).unwrap().0.is_empty());
+        assert_eq!(f.flush(), vec![good3]);
+        assert_eq!(f.stats().resync_events, 1);
+        assert_eq!(f.stats().bytes_skipped_for_sync, 188);
     }
 
     #[test]
