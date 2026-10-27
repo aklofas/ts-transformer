@@ -20,7 +20,7 @@ fn demux_rejects_unbounded_sync_buf_growth() {
         "expected SyncBufExhausted, got {result:?}"
     );
     // The `observed` figure reports the projected post-extend total even
-    // though the bytes were never copied in (check-before-extend, T2-DEMUX-INGRESS).
+    // though the bytes were never copied in (check-before-extend).
     if let Err(DemuxError::SyncBufExhausted { observed, max }) = result {
         assert_eq!(observed, 8 * 1024 * 1024);
         assert_eq!(max, 4 * 1024 * 1024);

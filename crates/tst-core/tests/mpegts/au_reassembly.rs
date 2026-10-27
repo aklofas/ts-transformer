@@ -199,10 +199,9 @@ fn three_complete_cells_back_to_back_in_one_pes_emit_three_samples() {
     // back-to-back 5+M-byte Complete cells. Total bytes are preserved
     // so the surrounding PES header's PES_packet_length stays valid.
     //
-    // Pre-Task-4 the demuxer's classify_klv only walked the FIRST cell
-    // — three back-to-back Completes emitted only one Sample. Post-
-    // Task-4 (via the reassembler's empty-state row 1) every Complete
-    // cell emits its own Sample.
+    // Every Complete cell in one PES must emit its own Sample (the
+    // reassembler's empty-state row 1). A demuxer that classified only the
+    // FIRST cell would emit one Sample for three back-to-back Completes.
     let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 8, 90_000);
 

@@ -28,10 +28,11 @@
 //! `MissingMetadataDescriptor`. With a single video PID in the PMT, the
 //! demuxer's linkage builder falls into the "infer from topology" arm
 //! (`LinkSource::Inferred`) instead of the "no entry" arm. Triggering
-//! `MissingMetadataDescriptor` requires a multi-video PMT, which the
-//! current `mpegts::mux::MuxerConfig::validate` rejects (Path 3 lifts that).
+//! `MissingMetadataDescriptor` requires a multi-video PMT with no metadata
+//! descriptor; the demuxer's PSI-topology unit tests cover that arm.
 
 use crate::common::mux_demux::drain_mux as drain;
+use crate::psi_builders::pack_section;
 use tst_core::error::DemuxError;
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
@@ -155,7 +156,7 @@ fn strict_off_emits_event_keeps_running() {
 /// well over 368 bytes, forcing the demuxer to reassemble across 3 packets.
 ///
 /// Returns the raw section bytes (table_id through CRC32 inclusive), ready to
-/// be sliced into TS packets by `pack_section_into_ts_packets`.
+/// be sliced into TS packets by `psi_builders::pack_section`.
 fn build_pmt_section_at_least_3_ts_packets() -> Vec<u8> {
     // Descriptor payload: tag=0xFF, length=0xDE (222 bytes) -- repeated twice
     // gives descriptor loop length = 2 * (2 + 222) = 448 bytes.
@@ -217,57 +218,6 @@ fn build_pmt_section_at_least_3_ts_packets() -> Vec<u8> {
     sec.push(crc as u8);
 
     sec
-}
-
-/// Pack a raw PSI section into a sequence of 188-byte TS packets on `pid`.
-///
-/// * First packet: PUSI=1, payload = pointer_field(0x00) + first 183 bytes of section.
-/// * Subsequent packets: PUSI=0, payload = next 184 bytes of section (last
-///   packet padded with 0xFF stuffing if the section doesn't fill it exactly).
-/// * Continuity counters start at `cc_start` and increment mod 16.
-/// * No adaptation field on any packet (flags = payload-only = 0x10 | cc).
-fn pack_section_into_ts_packets(pid: u16, section: &[u8], cc_start: u8) -> Vec<[u8; 188]> {
-    let mut pkts: Vec<[u8; 188]> = Vec::new();
-    let mut cc = cc_start & 0x0F;
-    let mut pos = 0usize;
-
-    // First packet: PUSI=1, pointer_field=0x00, then up to 183 bytes of section.
-    {
-        let mut pkt = [0xFFu8; 188];
-        let pid_hi = (pid >> 8) as u8 & 0x1F;
-        let pid_lo = (pid & 0xFF) as u8;
-        pkt[0] = 0x47; // sync
-        pkt[1] = 0x40 | pid_hi; // PUSI=1, TEI=0, priority=0
-        pkt[2] = pid_lo;
-        pkt[3] = 0x10 | cc; // payload-only, no AF
-        pkt[4] = 0x00; // pointer_field
-        let avail = 183; // 188 - 4 (header) - 1 (pointer_field)
-        let chunk = (section.len() - pos).min(avail);
-        pkt[5..5 + chunk].copy_from_slice(&section[pos..pos + chunk]);
-        // Remainder (if section < 183 bytes) stays 0xFF stuffing.
-        pos += chunk;
-        pkts.push(pkt);
-        cc = (cc + 1) & 0x0F;
-    }
-
-    // Continuation packets: PUSI=0, 184 bytes of section per packet.
-    while pos < section.len() {
-        let mut pkt = [0xFFu8; 188];
-        let pid_hi = (pid >> 8) as u8 & 0x1F;
-        let pid_lo = (pid & 0xFF) as u8;
-        pkt[0] = 0x47;
-        pkt[1] = pid_hi; // PUSI=0
-        pkt[2] = pid_lo;
-        pkt[3] = 0x10 | cc;
-        let avail = 184; // 188 - 4 (header)
-        let chunk = (section.len() - pos).min(avail);
-        pkt[4..4 + chunk].copy_from_slice(&section[pos..pos + chunk]);
-        pos += chunk;
-        pkts.push(pkt);
-        cc = (cc + 1) & 0x0F;
-    }
-
-    pkts
 }
 
 /// Build a single 188-byte TS packet carrying a PAT that references `pmt_pid`
@@ -341,7 +291,7 @@ fn split_pmt_with_dropped_continuation_drops_section_in_strict_mode() {
     //   2. NOT emit a parsed PMT (ProgramMap) event — partial section was dropped
     let pmt_bytes = build_pmt_section_at_least_3_ts_packets();
     let pmt_pid: u16 = 0x0FFF;
-    let pkts = pack_section_into_ts_packets(pmt_pid, &pmt_bytes, 0x0);
+    let pkts = pack_section(pmt_pid, &pmt_bytes, 0x0);
     assert!(
         pkts.len() >= 3,
         "section must span ≥3 packets, got {}",
@@ -383,7 +333,7 @@ fn split_pmt_with_dropped_continuation_keeps_section_in_lenient_mode() {
     // and lets the section either pass CRC by luck or surface as PsiChecksumMismatch.
     let pmt_bytes = build_pmt_section_at_least_3_ts_packets();
     let pmt_pid: u16 = 0x0FFF;
-    let pkts = pack_section_into_ts_packets(pmt_pid, &pmt_bytes, 0x0);
+    let pkts = pack_section(pmt_pid, &pmt_bytes, 0x0);
 
     let mut demux = tst_core::mpegts::demux::Demuxer::with_config({
         let mut cfg = DemuxerConfig::default();

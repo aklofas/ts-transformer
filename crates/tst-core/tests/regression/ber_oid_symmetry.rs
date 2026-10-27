@@ -546,7 +546,7 @@ fn st0903_decode_reencode_byte_identical_e5_walker_symmetry() {
 // ============================================================================
 
 /// Cross-set: ST 0102 SecurityLs nested inside ST 0601 Tag 48. Mirrors
-/// `tests/klv_st0102_via_st0601.rs` but explicitly checks the outer
+/// `tests/klv/st0102_via_st0601.rs` but explicitly checks the outer
 /// walker descends correctly across both BER-OID layers.
 #[test]
 fn cross_st0601_tag_48_carries_st0102_security_ls() {

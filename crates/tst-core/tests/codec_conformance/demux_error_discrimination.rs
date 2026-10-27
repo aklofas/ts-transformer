@@ -20,7 +20,7 @@
 //!   inside `tst-core/src/mpegts/demux/demuxer.rs`.
 //! - `StrictRejection` similarly requires a configured `StrictMode` plus a
 //!   specific `NonConformantIssue` that the chosen mode rejects. It is also
-//!   covered by unit + integration tests in `mpegts_demux_strict.rs`.
+//!   covered by unit + integration tests in `mpegts/demux_strict.rs`.
 
 use tst_core::error::DemuxError;
 use tst_core::mpegts::common::Pts90khz;
@@ -49,9 +49,10 @@ fn sync_buf_exhausted_when_no_sync_byte_for_4mib() {
     // Feed 4 MiB + 1 byte of zeros — all-zero contains no 0x47 sync byte,
     // so the demuxer's sync buffer grows until it hits the hard ceiling.
     //
-    // We feed in one shot (the ceiling check fires after extend_from_slice,
-    // before the inner sync-walk loop). Feeding incrementally works too, but
-    // one-shot is the simplest trigger.
+    // We feed in one shot: the ceiling check projects the post-extend total
+    // and rejects before copying any byte in, ahead of the inner sync-walk
+    // loop. Feeding incrementally works too, but one-shot is the simplest
+    // trigger.
     let adversarial = vec![0u8; MIB_4 + 1];
     let err = d
         .feed(&adversarial)

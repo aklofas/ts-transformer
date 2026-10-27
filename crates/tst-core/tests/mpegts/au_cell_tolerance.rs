@@ -20,7 +20,7 @@
 //!    *orphan* Middle/Last, not mid-buffer corruption).
 //!
 //! All tests reuse the same wire-bytes patching strategy as
-//! `mpegts_au_reassembly.rs`: muxer emits a baseline TS, we surgically
+//! `mpegts/au_reassembly.rs`: muxer emits a baseline TS, we surgically
 //! patch the 5-byte AU cell header (and optionally the inner payload) of
 //! the PUSI packet on the KLV PID. The muxer always writes Complete CFI,
 //! so patches are what drive the demuxer through the non-conformant paths.

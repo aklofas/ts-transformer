@@ -37,6 +37,28 @@ pub fn build_minimal_h264_au() -> Vec<u8> {
     ]
 }
 
+/// An Annex-B H.266 access unit: AUD, VPS, SPS, PPS and one IDR_W_RADL
+/// slice NAL, each with a one-byte placeholder body.
+pub fn synthetic_h266_au() -> Vec<u8> {
+    fn nal(nal_type: u8, body: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x00, 0x00, 0x00, 0x01];
+        // H.266 V4 §7.3.1.2:
+        //   byte 0: forbidden_zero_bit(1)=0 | nuh_reserved_zero_bit(1)=0 | nuh_layer_id(6)=0
+        //   byte 1: nal_unit_type(5) | nuh_temporal_id_plus1(3)=1
+        v.push(0x00);
+        v.push((nal_type << 3) | 0x01);
+        v.extend_from_slice(body);
+        v
+    }
+    let mut au = Vec::new();
+    au.extend(nal(20, &[0x10])); // AUD_NUT
+    au.extend(nal(14, &[0xA0])); // VPS_NUT
+    au.extend(nal(15, &[0xB0])); // SPS_NUT
+    au.extend(nal(16, &[0xC0])); // PPS_NUT
+    au.extend(nal(7, &[0xD0])); // IDR_W_RADL
+    au
+}
+
 /// One ST 0601 KLV packet whose local set holds a single all-zero Tag 2
 /// (Precision Time Stamp, 8 bytes).
 pub fn build_dummy_klv() -> Vec<u8> {

@@ -1,6 +1,6 @@
 //! End-to-end: synthetic H.266 NALs -> mux -> demux -> codec::h266 parse.
 //!
-//! Composes three layers shipped earlier in this phase:
+//! Composes three public layers:
 //!   1. `mpegts::mux` carries an Annex-B H.266 access unit at PMT
 //!      stream_type 0x33.
 //!   2. `mpegts::demux` recovers NALs and tags them
@@ -172,7 +172,8 @@ fn h266_end_to_end_parses_minimal_vps_sps_pps() {
     let mut mux = Muxer::new(cfg).unwrap();
     let h = mux.video_handles()[0];
 
-    // Build an AU with valid minimal VPS/SPS/PPS from the per-task tests.
+    // Build an AU with the valid minimal VPS/SPS/PPS bodies the per-set
+    // unit tests use.
     let mut au = Vec::new();
     au.extend(h266_nal(20, &[0x10])); // AUD_NUT
     au.extend(h266_nal(14, &minimal_vps_rbsp())); // VPS_NUT

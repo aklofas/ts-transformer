@@ -8,7 +8,9 @@ use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, SubtitleCodec, VideoCodec,
 };
 
-fn webvtt_cue(pts: i64, text: &str) -> Vec<u8> {
+/// One WebVTT document holding a single 0–5 s cue of `text`. The cue
+/// timing is fixed; the presentation time rides the PES header.
+fn webvtt_cue(text: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"WEBVTT\n\n");
     buf.extend_from_slice(
@@ -20,7 +22,6 @@ fn webvtt_cue(pts: i64, text: &str) -> Vec<u8> {
     );
     buf.extend_from_slice(text.as_bytes());
     buf.push(b'\n');
-    let _ = pts;
     buf
 }
 
@@ -36,14 +37,10 @@ fn mux_webvtt_in_single_program() {
     };
     let mut mux = Muxer::new(cfg).unwrap();
     let h = mux.subtitle_handles()[0];
-    mux.push_subtitle_to(h, Pts90khz::new(90_000), &webvtt_cue(90_000, "POI #1"))
+    mux.push_subtitle_to(h, Pts90khz::new(90_000), &webvtt_cue("POI #1"))
         .unwrap();
-    mux.push_subtitle_to(
-        h,
-        Pts90khz::new(90_000 * 5),
-        &webvtt_cue(90_000 * 5, "POI #2"),
-    )
-    .unwrap();
+    mux.push_subtitle_to(h, Pts90khz::new(90_000 * 5), &webvtt_cue("POI #2"))
+        .unwrap();
     let out = drain_all(&mut mux);
     // PSI + 2 subtitle PES at minimum.
     assert!(out.len() > 188 * 3);
