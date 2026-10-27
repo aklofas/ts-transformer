@@ -38,6 +38,22 @@ fn rejects_wrong_scheme() {
 }
 
 #[test]
+fn malformed_escape_never_echoes_the_passphrase() {
+    for url in [
+        "srt://127.0.0.1:9000?passphrase=example-secret%",
+        "srt://127.0.0.1:9000?passphrase=example-secret%zz",
+        "srt://127.0.0.1:9000?passphrase=example-secret%FF",
+    ] {
+        let e = SrtUrl::parse(url).unwrap_err();
+        for text in [e.to_string(), format!("{e:?}")] {
+            assert!(!text.contains("example-secret"), "{text}");
+            assert!(!text.contains('z'), "{text}");
+            assert!(text.contains("passphrase"), "{text}");
+        }
+    }
+}
+
+#[test]
 fn rejects_no_scheme() {
     // Bare "host:port" doesn't have a scheme separator — the common parser rejects.
     let e = SrtUrl::parse("1.2.3.4:9000").unwrap_err();
