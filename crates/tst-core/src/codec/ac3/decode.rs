@@ -108,8 +108,8 @@ pub fn parse_syncframe(bytes: &[u8]) -> Result<Ac3SyncInfo, CodecParseError> {
     let bsid = (bytes[5] >> 3) & 0b1_1111;
     let bsmod = bytes[5] & 0b0000_0111;
     if bsid >= 9 {
-        // bsid 16 is Annex E (E-AC-3); bsid 11..=15 are the reserved backward-compatible
-        // range; bsid 9 and 10 are alternative bitstreams. All are rejected here.
+        // bsid 11..=16 are E-AC-3 values (Annex E) and bsid 9 and 10 are
+        // alternative bitstreams. None of them is supported here.
         return Err(CodecParseError::UnsupportedProfile { profile_idc: bsid });
     }
 

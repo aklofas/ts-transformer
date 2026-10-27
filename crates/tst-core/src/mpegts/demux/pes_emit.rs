@@ -551,8 +551,7 @@ impl super::demuxer::Demuxer {
                 let shape = classify_klv(&pes.payload);
 
                 // Async-shape PIDs (bare SMPTE UL) — bypass the AU cell
-                // reassembler entirely. One emit per PES, unchanged from
-                // the pre-Task-4 path.
+                // reassembler entirely. One emit per PES.
                 if let KlvShape::Async { klv } = shape {
                     if matches!(kind, StreamKind::KlvSync { .. })
                         && self.klv_mismatch_insert(pes.pid)
@@ -676,8 +675,9 @@ impl super::demuxer::Demuxer {
                                 self.push_pes_event(damage, DemuxEvent::Metadata {
                                     stream,
                                     // PES PTS reused for every AU emitted
-                                    // from this PES (documented limitation
-                                    // — multi-AU PES has only one PTS).
+                                    // from this PES: H.222.0 §2.12.4.2
+                                    // (ST 1402-10) requires one PTS for
+                                    // all AUs in the PES.
                                     pts,
                                     kind: MetadataKind::KlvSyncAuCell {
                                         metadata_service_id: emit_header.metadata_service_id,
@@ -714,9 +714,9 @@ impl super::demuxer::Demuxer {
                                 // orphan payload is a self-consistent KLV
                                 // record, emit it as Complete + a dedicated
                                 // diagnostic so the malformation is loud but
-                                // the data flows. Off by default (callers
-                                // must opt in via
-                                // DemuxerConfig::cfi_tolerance).
+                                // the data flows. On by default; callers
+                                // may turn it off via
+                                // DemuxerConfig::cfi_tolerance.
                                 let observed_cfi = h.cell_fragment_indication;
                                 let orphan_continuation =
                                     matches!(reason, MultiCellAuReason::Orphan)
@@ -866,9 +866,9 @@ impl super::demuxer::Demuxer {
                 // AC-3 syncframe alignment enforcement.
                 //
                 // ATSC A/52:2018 §A.6.3 mandates `data_alignment_indicator=1`
-                // for every AC-3 PES, with the implication that the PES
-                // payload starts at an AC-3 syncframe (sync word 0x0B77).
-                // Surface a NonConformantIssue when the alignment flag is
+                // for every AC-3 PES, which requires the payload to be
+                // byte-aligned to a syncframe, not one syncframe per PES.
+                // We check only the two sync-word bytes (0x0B77). Surface a NonConformantIssue when the alignment flag is
                 // set but the payload doesn't begin with the syncword;
                 // strict mode (Full) suppresses the sample so consumers
                 // can fail closed.

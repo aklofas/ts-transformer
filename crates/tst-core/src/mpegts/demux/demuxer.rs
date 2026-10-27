@@ -595,9 +595,8 @@ impl Demuxer {
             Err(TsParseError::NoSyncByte) | Err(TsParseError::Truncated) => return Ok(()),
         };
         // ISO/IEC 13818-1 §2.4.3.2: `transport_error_indicator=1` means an
-        // upstream link-layer flagged the packet as known-corrupt. ffmpeg
-        // drops these and flags AV_PKT_FLAG_CORRUPT (mpegts.c:3091-3097);
-        // feeding the payload to PES/PSI reassembly would corrupt downstream
+        // upstream link-layer flagged the packet as known-corrupt.
+        // Feeding the payload to PES/PSI reassembly would corrupt downstream
         // parse state. Drop entirely and surface the drop as non-conformant
         // so consumers can correlate with downstream parse failures.
         if pkt.transport_error_indicator {
@@ -2291,9 +2290,9 @@ mod tests {
     }
 
     /// Per ISO/IEC 13818-1 §2.4.3.2, bit 0x80 of byte 1 (transport_error_indicator)
-    /// marks a packet as link-layer-corrupt. ffmpeg drops these
-    /// (mpegts.c:3091-3097); we must too — silently feeding the payload to
-    /// PES/PSI reassembly produces garbage parse output downstream.
+    /// marks a packet as link-layer-corrupt. We drop these: silently
+    /// feeding the payload to PES/PSI reassembly produces garbage parse
+    /// output downstream.
     ///
     /// We pre-seed the demuxer with a PAT that maps program 1 → PMT PID 0x100
     /// so that without the TEI drop, the packet would route to the PMT-PID

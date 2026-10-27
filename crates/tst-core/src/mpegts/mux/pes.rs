@@ -70,9 +70,8 @@ pub(crate) enum PesPtsField {
     PtsAndDts { pts: Pts90khz, dts: Pts90khz },
 }
 
-/// PES header flag bits the writer can set up-front. Matches ffmpeg's pattern
-/// of passing all flags into the writer rather than post-ORing bits at the
-/// call site (`libavformat/mpegtsenc.c::mpegts_write_pes`).
+/// PES header flag bits the writer can set up-front, passed into the
+/// writer rather than OR-ed in at the call site.
 ///
 /// Only `data_alignment_indicator` is exposed today — that's the only flag any
 /// of our codec paths set. `PES_priority`, `copyright`, `original_or_copy`,

@@ -6,9 +6,10 @@
 //! Stateless, minimal parser for the syncinfo + first few bsi fields of
 //! an AC-3 elementary stream, used by the muxer to derive the mandatory
 //! `AC-3_audio_stream_descriptor` (ATSC A/52 §A.4.3 + Table A4.1) and
-//! by the demuxer to enforce `data_alignment_indicator = 1` per ATSC
-//! A/52:2018 §A.6.3 (which mandates one syncframe per PES with the
-//! alignment indicator set).
+//! by the demuxer to check the two syncword bytes of a PES carrying
+//! `data_alignment_indicator = 1` per ATSC A/52:2018 §A.6.3 (which
+//! requires the payload to be byte-aligned to a syncframe, not one
+//! syncframe per PES).
 //!
 //! ## Spec coverage
 //!
@@ -30,9 +31,8 @@
 //!   num_channels) are all available from the syncinfo + first few bsi
 //!   bits.
 //! - audblk / auxdata / errorcheck — block-level audio data and CRCs.
-//! - E-AC-3 (Annex E) — extension to AC-3, signalled by bsid 16
-//!   (E-AC-3 decoders accept the 11..=16 compatibility range; 9/10 are
-//!   alternative bitstreams). `parse_syncframe` rejects bsid >= 9 as
+//! - E-AC-3 (Annex E) — extension to AC-3, signalled by bsid 11..=16
+//!   (9/10 are alternative bitstreams). `parse_syncframe` rejects bsid >= 9 as
 //!   unsupported; if E-AC-3 support is needed, add a separate parser
 //!   keyed on bsid.
 

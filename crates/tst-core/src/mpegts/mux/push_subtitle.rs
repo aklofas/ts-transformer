@@ -70,8 +70,9 @@ impl Muxer {
     /// - [`MuxError::InvalidStreamHandle`] if `handle`'s index is out of
     ///   range for this muxer's configured subtitle stream count.
     /// - [`MuxError::SubtitleTooLarge`] if `payload.len()` would overflow
-    ///   `PES_packet_length` (max 65527 bytes for DVB-sub / CEA-708 /
-    ///   WebVTT shapes; DVB-teletext caps at 65458 when the writer
+    ///   `PES_packet_length` (max 65527 bytes for CEA-708 / WebVTT
+    ///   passthrough, 65524 raw bytes for DVB-sub after the 3-byte
+    ///   EN 300 743 §6.2 envelope; DVB-teletext caps at 65458 when the writer
     ///   auto-prepends the EN 300 472 §4.4.1 `data_identifier` byte and
     ///   65459 when the caller's first payload byte is already in
     ///   `0x10..=0x1F`).

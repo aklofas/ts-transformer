@@ -430,9 +430,10 @@ pub enum NonConformantIssue {
     /// completed.
     ///
     /// **Vestigial — never emitted by [`Demuxer`](crate::mpegts::demux::Demuxer).**
-    /// The PES reassembler silently discards any in-flight partial PES when a
-    /// new PUSI arrives; this is the normal start-of-PES path, not a separate
-    /// diagnostic event. The variant is preserved for non-exhaustive-enum
+    /// A new PUSI completes the in-flight PES on that PID, which is the
+    /// normal start-of-PES path, not a separate diagnostic event. When the
+    /// in-flight PES was short or gapped it is reported as
+    /// [`Self::MalformedPes`] before the new PES starts. The variant is preserved for non-exhaustive-enum
     /// binary-compatibility parity only (same zero-emit-site status as
     /// `DemuxException.Kind::UNEXPECTED_EOF` in the Python binding).
     #[error("PUSI packet arrived mid-PES")]
@@ -528,8 +529,7 @@ pub enum NonConformantIssue {
     /// (ATSC FEC, satellite demod, CMTS, etc.). The demuxer drops the packet
     /// (does not feed payload to PES/PSI reassembly) and emits this issue so
     /// consumers can correlate with downstream parse failures or surface to
-    /// telemetry. Matches ffmpeg's `AV_PKT_FLAG_CORRUPT` in
-    /// `mpegts.c:3091-3097`.
+    /// telemetry.
     #[error("transport_error_indicator set on PID 0x{pid:04X}")]
     TransportErrorPacket { pid: u16 },
 
@@ -554,12 +554,13 @@ pub enum NonConformantIssue {
     )]
     DvbSubDataIdentifier { observed: u8 },
 
-    /// PTS anomaly distinct from PCR anomaly. Per ITU-T
-    /// H.222.0 V9 §2.4.3.6 the PTS clock is per-PES and must be
-    /// monotonically non-decreasing on a given elementary stream PID
-    /// (modulo the 33-bit wrap). A backward jump means either an
-    /// upstream re-mux mishap, a non-conformant encoder, or packet
-    /// drops between PES boundaries.
+    /// PTS anomaly distinct from PCR anomaly. PTS may legitimately step
+    /// back on reordered video (B-frames), so only a backward step of more
+    /// than 1 s (modulo the 33-bit wrap) on one elementary stream PID is
+    /// reported. It means an upstream re-mux mishap, a non-conformant
+    /// encoder, or packet drops between PES boundaries. A signalled
+    /// time-base discontinuity resets the PID's PTS baseline, so the step
+    /// across it is not reported.
     ///
     /// `delta` is the signed difference in **90 kHz ticks** between the
     /// new PTS and the previously observed PTS on the same PID
@@ -728,7 +729,7 @@ pub enum NonConformantIssue {
     /// The demuxer emitted the cell as a
     /// [`MetadataKind::KlvSyncAuCell`] event with
     /// `cell_fragment_indication = Complete` AND this diagnostic.
-    /// Without the opt-in tolerance knob, the cell would have surfaced
+    /// With tolerance turned off, the cell would have surfaced
     /// only as [`Self::MultiCellAu`] `{ reason = MultiCellAuReason::Orphan }`.
     ///
     /// Per H.222.0 V9 §2.12.4.2 Table 2-157, only `cfi_bits = 0b11`
@@ -751,18 +752,18 @@ pub enum NonConformantIssue {
 
     /// Per ISO/IEC 13818-1 §2.4.4.5, PSI tables may be split across
     /// multiple sections (the table's `last_section_number > 0`).
-    /// Current demuxer scope reassembles single-section tables only;
-    /// multi-section PAT/PMT tables are rejected and the partial
-    /// section is dropped. Surfaced once per section (the assembler
-    /// finalizes per declared section_length, so each rejected
-    /// section emits one event).
+    /// The demuxer reassembles a multi-section PAT; a PMT must be
+    /// single-section. This event reports a multi-section PMT, whose
+    /// section is dropped, and a PAT whose sections disagree on
+    /// `last_section_number` or exceed the reassembly cap, whose
+    /// partial table is discarded. It is surfaced once per rejected
+    /// section.
     ///
     /// Real-world MISB-shaped ISR streams pack PAT/PMT into a single
-    /// section well under the 1021-byte short-form cap. This variant
-    /// fires only on high-program-count or descriptor-heavy streams
-    /// (e.g. > ~250 programs in a PAT, or a PMT with many typed
-    /// streams + descriptors). Full §2.4.4.5 reassembly is deferred
-    /// until a real consumer needs it.
+    /// section well under the 1021-byte short-form cap, so this
+    /// fires only on broken input or a descriptor-heavy PMT that
+    /// spills into a second section. PMT reassembly across sections
+    /// is deferred until a real consumer needs it.
     ///
     /// `pid` is the PID the rejected section arrived on (0x0000 for
     /// PAT, the PMT PID for PMT). `table_id` is `0x00` (PAT) or
@@ -781,10 +782,11 @@ pub enum NonConformantIssue {
 
     /// AC-3 PES on a stream type `0x81` (System A) arrived with
     /// `data_alignment_indicator = 1` but the payload does not begin
-    /// with the AC-3 syncword `0x0B77`. Per ATSC
-    /// A/52:2018 §A.6.3, every AC-3 PES with the alignment flag set
-    /// MUST start with a syncframe; receivers gating on the flag may
-    /// drop or mis-decode misaligned payloads.
+    /// with the AC-3 syncword `0x0B77`. Per ATSC A/52:2018 §A.6.3, the
+    /// payload of an AC-3 PES with the alignment flag set is byte-aligned
+    /// to a syncframe, so it starts with the sync word; the demuxer checks
+    /// those two bytes only. Receivers gating on the flag may drop or
+    /// mis-decode misaligned payloads.
     ///
     /// Lenient mode emits the sample alongside this issue; strict mode
     /// (`StrictMode::Full`) suppresses the sample so receivers can
@@ -1315,6 +1317,7 @@ mod tests {
             (I::PsiOverlongSection { pid: 0, observed_len: 1025 }, "PSI section overlong on PID 0x0000: 1025 bytes".into()),
             (I::TransportErrorPacket { pid: 0x100 }, "transport_error_indicator set on PID 0x0100".into()),
             (I::PsiCcDiscontinuity { pid: 0, expected: 3, observed: 0xA }, "PSI continuity-counter jump on PID 0x0000: expected 0x3, observed 0xA".into()),
+            (I::PsiCcDiscontinuity { pid: 0x100, expected: 0x9, observed: 0xC }, "PSI continuity-counter jump on PID 0x0100: expected 0x9, observed 0xC".into()),
             (I::DvbSubDataIdentifier { observed: 0x10 }, "DVB-subtitle data_identifier=0x10 (EN 300 743 §6.2 Table 3 requires 0x20)".into()),
             (I::PtsAnomaly { delta: 9000 }, "PTS anomaly: delta=9000 (90 kHz ticks)".into()),
             (I::MissingRequiredPts { pid: 0x100 }, "coded PTS missing on PID 0x0100: required on every PES for this stream kind, or a PTS-less run longer than 0.7 s on audio/video".into()),
@@ -1360,7 +1363,7 @@ mod tests {
             (I::PsiSyntax { pid: 0, table_id: 0, kind: PsiSyntaxKind::SectionNumberOutOfRange { observed: 2 } }, "PSI syntax violation on PID 0x0000 (table_id=0x00): section_number=2 > last_section_number (H.222.0 §2.4.4.5)".into()),
             (I::PsiSyntax { pid: 0x100, table_id: 2, kind: PsiSyntaxKind::Malformed }, "PSI syntax violation on PID 0x0100 (table_id=0x02): malformed section rejected by the parser (H.222.0 §2.4.4)".into()),
         ];
-        assert_eq!(cases.len(), 61);
+        assert_eq!(cases.len(), 62);
         for (issue, want) in &cases {
             assert_eq!(&issue.to_string(), want, "{issue:?}");
         }
@@ -1405,42 +1408,6 @@ mod tests {
             pts_to_duration(Pts90khz::new(i64::MAX)),
             Duration::from_micros(u64::MAX)
         );
-    }
-
-    #[test]
-    fn audio_codec_real_variants_in_demux_event_surface() {
-        let codecs = [
-            AudioCodec::Mp2,
-            AudioCodec::Aac,
-            AudioCodec::AacLatm,
-            AudioCodec::Ac3,
-        ];
-        assert_ne!(codecs[0], codecs[1]);
-    }
-
-    #[test]
-    fn demux_subtitle_codec_real_variants_in_event_surface() {
-        let codecs = [
-            SubtitleCodec::DvbSubtitling,
-            SubtitleCodec::DvbTeletext,
-            SubtitleCodec::Cea708Standalone,
-            SubtitleCodec::WebVttInTs,
-        ];
-        assert_ne!(codecs[0], codecs[1]);
-        assert_ne!(codecs[2], codecs[3]);
-    }
-
-    #[test]
-    fn psi_cc_discontinuity_displays_pid_and_counter_pair() {
-        let issue = NonConformantIssue::PsiCcDiscontinuity {
-            pid: 0x100,
-            expected: 0x9,
-            observed: 0xC,
-        };
-        let s = format!("{issue}");
-        assert!(s.contains("PID 0x0100"), "Display includes PID: {s}");
-        assert!(s.contains("expected 0x9"), "Display includes expected: {s}");
-        assert!(s.contains("observed 0xC"), "Display includes observed: {s}");
     }
 
     #[test]

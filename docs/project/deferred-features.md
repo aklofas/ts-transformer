@@ -799,8 +799,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `gen-subtitle-fixtures`), no real broadcast captures.
 - **Why deferred:** Neither marker is normative for this use. `"VTTC"` is
   in no published spec (RFC 8216, draft-pantos-hls-rfc8216bis, Apple HLS
-  authoring docs); it comes from ffmpeg's `mpegtsenc.c` emitter and is
-  widely observed in WebVTT-in-TS captures. ATSC A/53 Part 4 §6.2.3
+  authoring docs); it is our own internal marker. ATSC A/53 Part 4 §6.2.3
   defines `"GA94"` as the `user_data_identifier` for caption data
   **embedded in MPEG-2 video user_data**, not as a stream-level marker,
   so standalone PES carriage is best-effort. Empirical interop needs a
