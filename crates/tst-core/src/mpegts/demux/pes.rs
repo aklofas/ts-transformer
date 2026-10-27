@@ -350,8 +350,7 @@ impl Reassembler {
         }
     }
 
-    /// Test probe: does `pid` hold a partial PES?
-    #[cfg(test)]
+    /// Does `pid` hold a partial PES?
     pub(crate) fn has_pid(&self, pid: u16) -> bool {
         self.by_pid.contains_key(&pid)
     }
