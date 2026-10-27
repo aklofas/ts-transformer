@@ -4,6 +4,8 @@
 //! - `bind_udp_socket` — bind + apply cancel-poll timeouts
 //! - `bind_udp_socket_multicast` — like `bind_udp_socket` but with `SO_REUSEADDR`
 //!   so multiple receivers can bind the same group:port
+//! - `bind_udp_socket_multicast_group` — the multicast receiver: binds the
+//!   group, joins it, and drops other groups' traffic
 //! - `set_socket_buffers` — `SO_RCVBUF`/`SO_SNDBUF` via `socket2::SockRef`,
 //!   shared by `tst-udp` and `tst-tcp` to avoid duplication
 //! - Multicast send knobs (TTL + iface, IPv4 + IPv6)
@@ -59,6 +61,49 @@ pub fn bind_udp_socket_multicast(local: SocketAddr) -> io::Result<UdpSocket> {
     let socket: UdpSocket = sock.into();
     socket.set_read_timeout(Some(CANCEL_POLL_INTERVAL))?;
     socket.set_write_timeout(Some(CANCEL_POLL_INTERVAL))?;
+    Ok(socket)
+}
+
+/// Bind a UDP socket that receives one multicast group: the multicast-receive
+/// helper every receiver uses.
+///
+/// The socket gets the reuse options of [`bind_udp_socket_multicast`], so
+/// several receivers on one host can share `group:port`, and then joins
+/// `group` through [`apply_multicast_recv_join`], so the `iface` rules and
+/// errors are the same. An `iface` the join rejects returns that error and the
+/// socket is dropped. `port` 0 binds an ephemeral port; read it back with
+/// `local_addr()`.
+///
+/// On non-Windows targets the socket binds `group:port`, so the kernel drops
+/// unicast datagrams to the port. On Linux it also clears `IP_MULTICAST_ALL`
+/// (`IPV6_MULTICAST_ALL` for IPv6): per ip(7) a member socket otherwise
+/// receives every group any socket on the host joined on that port.
+///
+/// Windows cannot bind a multicast address, so the socket binds the wildcard
+/// of the group's family there; a Windows receiver also sees other groups'
+/// traffic and unicast sent to the port.
+pub fn bind_udp_socket_multicast_group(
+    group: IpAddr,
+    port: u16,
+    iface: Option<&str>,
+) -> io::Result<UdpSocket> {
+    #[cfg(not(windows))]
+    let local = SocketAddr::new(group, port);
+    #[cfg(windows)]
+    let local = match group {
+        IpAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+        IpAddr::V6(_) => SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), port),
+    };
+    let socket = bind_udp_socket_multicast(local)?;
+    #[cfg(target_os = "linux")]
+    {
+        let sock = socket2::SockRef::from(&socket);
+        match group {
+            IpAddr::V4(_) => sock.set_multicast_all_v4(false)?,
+            IpAddr::V6(_) => sock.set_multicast_all_v6(false)?,
+        }
+    }
+    apply_multicast_recv_join(&socket, group, iface)?;
     Ok(socket)
 }
 
@@ -378,5 +423,34 @@ mod buffer_clamp_tests {
         let s = UdpSocket::bind("127.0.0.1:0").unwrap();
         set_socket_buffers(&s, Some(64 * 1024), None).unwrap();
         assert!(!logs_contain("SO_RCVBUF"));
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod multicast_group_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// The helper joins: a bound-and-joined socket receives without a
+    /// separate join call, and a rejected `iface` surfaces the join's error.
+    #[test]
+    fn group_helper_joins_and_honours_iface() {
+        let group = IpAddr::V4(Ipv4Addr::new(239, 255, 42, 4));
+        let rx = bind_udp_socket_multicast_group(group, 0, Some("127.0.0.1")).unwrap();
+        let port = rx.local_addr().unwrap().port();
+        rx.set_read_timeout(Some(tst_test_helpers::timing::scaled(Duration::from_secs(
+            5,
+        ))))
+        .unwrap();
+
+        let tx = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        set_multicast_if_v4(&tx, Ipv4Addr::LOCALHOST).unwrap();
+        tx.send_to(b"G", SocketAddr::new(group, port)).unwrap();
+        let mut buf = [0u8; 16];
+        let n = rx.recv(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"G");
+
+        let err = bind_udp_socket_multicast_group(group, 0, Some("not-an-ip")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 }

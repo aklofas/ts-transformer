@@ -1,12 +1,12 @@
 //! [`UdpRecvTransport`] — UDP receiver implementing `tst_core::transport::RecvTransport`.
 
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::cancel::CANCEL_POLL_INTERVAL;
 use tst_core::net::udp_socket::{
-    apply_multicast_recv_join, bind_udp_socket, bind_udp_socket_multicast, set_socket_buffers,
+    bind_udp_socket, bind_udp_socket_multicast_group, set_socket_buffers,
 };
 use tst_core::net::{RecvAction, classify_recv_error};
 use tst_core::transport::{
@@ -90,33 +90,16 @@ impl UdpRecvTransport {
 
     /// Build from already-parsed `UdpUrl` + config.
     pub fn with_config(url: &UdpUrl, cfg: &UdpConfig) -> Result<Self, UdpError> {
-        let bind_addr: SocketAddr = if url.is_multicast() {
-            match url.addr {
-                IpAddr::V4(_) => {
-                    SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), url.port)
-                }
-                IpAddr::V6(_) => {
-                    SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), url.port)
-                }
-            }
-        } else {
-            SocketAddr::new(url.addr, url.port)
-        };
-
-        // Multicast receivers must use SO_REUSEADDR (+ SO_REUSEPORT on BSD/macOS)
-        // so that more than one receiver process can bind the same group:port on
-        // the same host. Unicast receivers use the plain bind to avoid sharing
-        // ports unintentionally.
+        // A multicast receiver shares group:port with other receivers on the
+        // host (SO_REUSEADDR, + SO_REUSEPORT on BSD/macOS) and binds the group
+        // so it delivers only that group. A unicast receiver uses the plain
+        // bind to avoid sharing ports unintentionally.
         let socket = if url.is_multicast() {
-            bind_udp_socket_multicast(bind_addr).map_err(UdpError::Io)?
+            bind_udp_socket_multicast_group(url.addr, url.port, cfg.iface.as_deref())
+                .map_err(UdpError::Io)?
         } else {
-            bind_udp_socket(bind_addr).map_err(UdpError::Io)?
+            bind_udp_socket(SocketAddr::new(url.addr, url.port)).map_err(UdpError::Io)?
         };
-
-        if url.is_multicast() {
-            apply_multicast_recv_join(&socket, url.addr, cfg.iface.as_deref())
-                .map_err(UdpError::Io)?;
-        }
 
         set_socket_buffers(&socket, cfg.rcvbuf, None).map_err(UdpError::Io)?;
 
