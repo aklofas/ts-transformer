@@ -417,6 +417,10 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     }
 
     /// Explicit segment-cut hint.
+    ///
+    /// Bytes retained from an earlier failed push are sent before the cut.
+    /// If they cannot be sent, the publisher's error is returned and nothing
+    /// is cut.
     pub fn cut_segment(&self) -> Result<(), MuxPublisherError<P::Error>> {
         let cut = self.0.with_parts(|muxer, seg| {
             let media_dur = match (seg.segment_start_pts, seg.last_video_pts) {
@@ -1225,6 +1229,32 @@ mod tests {
         v
     }
 
+    /// Bytes the publisher accepted before the first cut: failed offers
+    /// (the listed call indices) carry nothing.
+    fn accepted_before_cut(ops: &[Op], fail: &[usize]) -> usize {
+        ops.iter()
+            .take_while(|o| !matches!(o, Op::Cut(_)))
+            .filter_map(|o| match o {
+                Op::Push(n) => Some(*n),
+                _ => None,
+            })
+            .enumerate()
+            .filter(|(i, _)| !fail.contains(i))
+            .map(|(_, n)| n)
+            .sum()
+    }
+
+    /// What `big_au()` muxes to when every push succeeds.
+    fn big_au_reference_len() -> usize {
+        let p = FailAt {
+            ops: vec![],
+            fail: vec![],
+        };
+        let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+        mp.push_video(&big_au(), Pts90khz::new(0), true).unwrap();
+        accepted_before_cut(&mp.finish().unwrap().ops, &[])
+    }
+
     #[test]
     fn an_explicit_cut_after_a_failed_push_drains_the_tail_first() {
         let p = FailAt {
@@ -1241,11 +1271,18 @@ mod tests {
             ops[cut + 1..].iter().all(|o| !matches!(o, Op::Push(_))),
             "no old bytes after the cut: {ops:?}"
         );
+        assert_eq!(
+            accepted_before_cut(&ops, &[1]),
+            big_au_reference_len(),
+            "every byte of the AU lands before the cut: {ops:?}"
+        );
     }
 
     #[test]
     fn finish_never_offers_bytes_after_its_closing_cut() {
-        // The push fails, and finish's first retry fails too.
+        // The push fails, and finish's first retry fails too. `finish`
+        // consumes the shell, so the op log is out of reach: the property
+        // follows from `finish` failing before any cut is issued.
         let p = FailAt {
             ops: vec![],
             fail: vec![1, 2],
@@ -1267,6 +1304,11 @@ mod tests {
             .unwrap_err();
         let ops = mp.finish().unwrap().ops;
         assert!(matches!(ops.last(), Some(Op::Cut(_))), "{ops:?}");
+        assert_eq!(
+            accepted_before_cut(&ops, &[1]),
+            big_au_reference_len(),
+            "every byte of the AU lands before the cut: {ops:?}"
+        );
     }
 
     /// Bytes a failed push left queued are offered before the closing cut,
