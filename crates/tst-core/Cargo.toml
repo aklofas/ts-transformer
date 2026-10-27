@@ -150,6 +150,11 @@ doc   = false
 [package.metadata.docs.rs]
 features = ["conformance"]
 
+# Features the public-api baseline is rendered with, so the optional TLS
+# surface is ratcheted too (read by scripts/lib/roster.sh).
+[package.metadata.public-api]
+features = ["tls"]
+
 [lints]
 workspace = true
 

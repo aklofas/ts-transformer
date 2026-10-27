@@ -52,11 +52,16 @@ git worktree add --detach "$base" "$prev" >/dev/null 2>&1 || { echo "semver-chec
 (cd "$base" && git submodule update --init --recursive -- \
     crates/srt-sys/vendor/srt crates/mbedtls-src/vendor/mbedtls crates/rist-sys/vendor/librist) >"$OUT/baseline-submodules.log" 2>&1 \
     || { echo "semver-checks: baseline submodule init failed, see $OUT/baseline-submodules.log" >&2; exit 2; }
+feats="$(bash scripts/lib/roster.sh public-api-features)" || exit 2
 for pair in $pairs; do
     pkg="${pair%%:*}"
     report="$OUT/$pkg.txt"
+    # The crate's declared public-api feature envelope, as the baselines use.
+    feat="$(printf '%s\n' "$feats" | awk -F'\t' -v p="$pkg" '$1 == p {print $2}')"
+    fargs=()
+    [ -z "$feat" ] || [ "$feat" = "-" ] || fargs=(--features "$feat")
     SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo +stable semver-checks check-release \
-        -p "$pkg" --baseline-root "$base" --release-type minor >"$report" 2>&1
+        -p "$pkg" "${fargs[@]}" --baseline-root "$base" --release-type minor >"$report" 2>&1
     rc=$?
     failed="$(sed -n 's/.* checks: .*, \([0-9][0-9]*\) fail.*/\1/p' "$report" | head -1)"
     items="$(awk '/^Failed in:/{f=1;next} /^$/{f=0} f' "$report" | grep -c .)"

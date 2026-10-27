@@ -7071,6 +7071,36 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::net::io_classify::Sen
 impl core::panic::unwind_safe::UnwindSafe for tst_core::net::io_classify::SendClass
 pub fn tst_core::net::io_classify::classify_recv_error(core::io::error::ErrorKind) -> tst_core::net::io_classify::RecvAction
 pub fn tst_core::net::io_classify::classify_send_error(&core::io::error::Error) -> tst_core::net::io_classify::SendClass
+pub mod tst_core::net::tls
+#[non_exhaustive] pub enum tst_core::net::tls::TlsLoadError
+pub tst_core::net::tls::TlsLoadError::Config(rustls::error::Error)
+pub tst_core::net::tls::TlsLoadError::NoCertificates
+pub tst_core::net::tls::TlsLoadError::NoCertificates::what: alloc::string::String
+pub tst_core::net::tls::TlsLoadError::NoPrivateKey
+pub tst_core::net::tls::TlsLoadError::NoPrivateKey::what: alloc::string::String
+pub tst_core::net::tls::TlsLoadError::Pem
+pub tst_core::net::tls::TlsLoadError::Pem::source: core::io::error::Error
+pub tst_core::net::tls::TlsLoadError::Pem::what: alloc::string::String
+pub tst_core::net::tls::TlsLoadError::Read
+pub tst_core::net::tls::TlsLoadError::Read::path: alloc::string::String
+pub tst_core::net::tls::TlsLoadError::Read::source: core::io::error::Error
+pub tst_core::net::tls::TlsLoadError::TrustAnchor(rustls::error::Error)
+impl core::error::Error for tst_core::net::tls::TlsLoadError
+pub fn tst_core::net::tls::TlsLoadError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_core::net::tls::TlsLoadError
+pub fn tst_core::net::tls::TlsLoadError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_core::net::tls::TlsLoadError
+pub fn tst_core::net::tls::TlsLoadError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_core::net::tls::TlsLoadError
+impl core::marker::Send for tst_core::net::tls::TlsLoadError
+impl core::marker::Sync for tst_core::net::tls::TlsLoadError
+impl core::marker::Unpin for tst_core::net::tls::TlsLoadError
+impl core::marker::UnsafeUnpin for tst_core::net::tls::TlsLoadError
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_core::net::tls::TlsLoadError
+impl !core::panic::unwind_safe::UnwindSafe for tst_core::net::tls::TlsLoadError
+pub fn tst_core::net::tls::load_root_store(&[u8]) -> core::result::Result<rustls::webpki::anchors::RootCertStore, tst_core::net::tls::TlsLoadError>
+pub fn tst_core::net::tls::load_server_config(&std::path::Path, &std::path::Path) -> core::result::Result<rustls::server::server_conn::ServerConfig, tst_core::net::tls::TlsLoadError>
+pub fn tst_core::net::tls::server_config_from_pem(&[u8], &[u8]) -> core::result::Result<rustls::server::server_conn::ServerConfig, tst_core::net::tls::TlsLoadError>
 pub mod tst_core::net::udp_socket
 pub const tst_core::net::udp_socket::MCAST_DEFAULT_TTL: u8
 pub fn tst_core::net::udp_socket::apply_multicast_iface(&std::net::udp::UdpSocket, core::net::ip_addr::IpAddr, &str) -> core::io::error::Result<()>
@@ -7143,6 +7173,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::publisher::PublisherStat
 pub trait tst_core::publisher::Publisher
 pub type tst_core::publisher::Publisher::Error: core::error::Error + core::marker::Send + core::marker::Sync + 'static
 pub fn tst_core::publisher::Publisher::cut_segment(&mut self) -> core::result::Result<(), Self::Error>
+pub fn tst_core::publisher::Publisher::cut_segment_discontinuous(&mut self, core::time::Duration) -> core::result::Result<(), Self::Error>
 pub fn tst_core::publisher::Publisher::cut_segment_with_duration(&mut self, core::time::Duration) -> core::result::Result<(), Self::Error>
 pub fn tst_core::publisher::Publisher::finish(self) -> core::result::Result<(), Self::Error> where Self: core::marker::Sized
 pub fn tst_core::publisher::Publisher::keyframe_driven(&mut self)
