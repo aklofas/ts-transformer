@@ -285,6 +285,7 @@ impl super::demuxer::Demuxer {
                     // be re-inserted with the identical value — skipping the
                     // tail is a no-op for it.)
                     self.last_psi_cc_jump = Some((expected, pkt.continuity_counter));
+                    self.pid_state_mut(pkt.pid).latm_carry = None;
                     if let Some(stream) = self.lookup_stream(pkt.pid) {
                         self.record_discontinuity(
                             stream,
@@ -318,6 +319,8 @@ impl super::demuxer::Demuxer {
             if expected != pkt.continuity_counter && !pkt.discontinuity_indicator {
                 real_jump = true;
                 self.last_psi_cc_jump = Some((expected, pkt.continuity_counter));
+                // Lost bytes leave the LOAS record position unknown.
+                self.pid_state_mut(pkt.pid).latm_carry = None;
                 if let Some(stream) = self.lookup_stream(pkt.pid) {
                     self.record_discontinuity(
                         stream,

@@ -25,6 +25,7 @@ use crate::mpegts::demux::event::{
 };
 use crate::mpegts::demux::payload::{
     DvbSubStripResult, KlvShape, classify_klv, iter_au_cells, strip_dvb_sub_envelope,
+    teletext_data_field_ok,
 };
 use crate::mpegts::demux::pes::{PesPayload, ReassemblyOutcome, is_damage_reason};
 use crate::mpegts::demux::pid_state::set_once;
@@ -38,6 +39,15 @@ use alloc::vec::Vec;
 /// H.222.0 §2.7.4: consecutive coded PTS of one audio or video stream are at
 /// most 0.7 s apart.
 const PTS_SPACING_LIMIT_90KHZ: i64 = 63_000;
+
+/// `MalformedPes` reason for a DVB subtitle PES whose PES_data_field
+/// envelope does not parse.
+pub(crate) const DVB_SUB_ENVELOPE_MALFORMED: &str = "DVB subtitle PES_data_field envelope malformed (EN 300 743 Table 3: data_identifier 0x20, subtitle_stream_id 0x00, end marker 0xFF)";
+
+/// `MalformedPes` reason for a teletext PES whose size or PES_data_field
+/// breaks EN 300 472.
+pub(crate) const TELETEXT_DATA_FIELD_MALFORMED: &str =
+    "teletext PES_data_field malformed (EN 300 472 §4.2/§4.3)";
 
 /// Which PTS rule a PES on a stream is judged by.
 enum PtsRule {
@@ -369,7 +379,48 @@ impl super::demuxer::Demuxer {
             // No events to stamp: the returned timestamps go unused.
             let _ = self.record_pes_timing(&pes, stream);
         }
+        // Its payload is not walked, so the LOAS record position is lost.
+        if let Some(state) = self.pid_state.get_mut(&pes.pid) {
+            state.latm_carry = None;
+        }
         self.settle_pts_baseline(pes.pid);
+    }
+
+    /// Walk the LOAS records of an AAC-LATM PES and update the PID's carry
+    /// (ISO/IEC 14496-3 §1.7.2: a record may continue into the next PES).
+    /// Returns `true` when strict mode rejects a framing issue it raised.
+    ///
+    /// - Carry known (`Some(n)`): a PES of at most `n` bytes is still inside
+    ///   the record; a longer one is walked from `n`.
+    /// - Carry unknown: walked from 0 only when the PES announces a record
+    ///   start (`data_alignment_indicator`) or begins with a syncword.
+    /// - A damaged PES lost bytes, so it is not walked and the carry is lost.
+    fn check_latm_framing(&mut self, pes: &PesPayload, damaged: bool, stream: StreamId) -> bool {
+        use crate::codec::aac::latm::{starts_with_loas_sync, walk_loas};
+        let state = self.pid_state_mut(pes.pid);
+        let len = pes.payload.len();
+        let start = match state.latm_carry.take() {
+            _ if damaged => return false,
+            Some(n) if len <= n => {
+                state.latm_carry = Some(n - len);
+                return false;
+            }
+            Some(n) => n,
+            None if pes.data_alignment_indicator || starts_with_loas_sync(&pes.payload) => 0,
+            None => return false,
+        };
+        match walk_loas(&pes.payload, start) {
+            Ok(carry) => {
+                state.latm_carry = carry;
+                false
+            }
+            Err(kind) => {
+                let issue = NonConformantIssue::LatmFraming { pid: pes.pid, kind };
+                let reject = self.options.strict.rejects(&issue);
+                self.queue_nonconformant(stream, issue);
+                reject
+            }
+        }
     }
 
     fn emit_complete_pes(&mut self, pes: PesPayload, damage: &mut Option<&'static str>) {
@@ -720,22 +771,14 @@ impl super::demuxer::Demuxer {
                 let payload_len = pes.payload.len();
                 self.record_item(&stream, program_number, payload_len);
                 // For AAC-LATM (stream_type 0x11) validate the LOAS
-                // syncword at the start of the PES payload. Without a
-                // framing check, malformed streams produce opaque Sample
-                // events that downstream decoders can't parse. Lenient mode surfaces the
-                // NonConformantIssue alongside the Sample (callers may
-                // want the raw bytes for forensic analysis); strict mode
-                // (Full) suppresses the sample.
+                // syncword at every record boundary. Without a framing
+                // check, malformed streams produce opaque Sample events
+                // that downstream decoders can't parse. Lenient mode
+                // surfaces the NonConformantIssue alongside the Sample
+                // (callers may want the raw bytes for forensic analysis);
+                // strict mode (Full) suppresses the sample.
                 let latm_rejected = if codec == AudioCodec::AacLatm {
-                    match crate::codec::aac::latm::validate_latm_sync(&pes.payload) {
-                        Ok(_) => false,
-                        Err(kind) => {
-                            let issue = NonConformantIssue::LatmFraming { pid: pes.pid, kind };
-                            let reject = self.options.strict.rejects(&issue);
-                            self.queue_nonconformant(stream, issue);
-                            reject
-                        }
-                    }
+                    self.check_latm_framing(&pes, damage.is_some(), stream)
                 } else {
                     false
                 };
@@ -863,8 +906,25 @@ impl super::demuxer::Demuxer {
                                 self.queue_nonconformant(stream, issue);
                                 if reject { None } else { Some(stripped) }
                             }
-                            DvbSubStripResult::Malformed => Some(raw.to_vec()),
+                            DvbSubStripResult::Malformed => {
+                                let issue = NonConformantIssue::MalformedPes {
+                                    pid: pes.pid,
+                                    reason: DVB_SUB_ENVELOPE_MALFORMED,
+                                };
+                                let reject = self.options.strict.rejects(&issue);
+                                self.queue_nonconformant(stream, issue);
+                                if reject { None } else { Some(raw.to_vec()) }
+                            }
                         },
+                        SubtitleCodec::DvbTeletext if !teletext_data_field_ok(raw) => {
+                            let issue = NonConformantIssue::MalformedPes {
+                                pid: pes.pid,
+                                reason: TELETEXT_DATA_FIELD_MALFORMED,
+                            };
+                            let reject = self.options.strict.rejects(&issue);
+                            self.queue_nonconformant(stream, issue);
+                            if reject { None } else { Some(raw.to_vec()) }
+                        }
                         _ => Some(raw.to_vec()),
                     }
                 };
@@ -1628,5 +1688,242 @@ mod tests {
             )),
             "{ev:?}"
         );
+    }
+
+    fn latm_demuxer() -> Demuxer {
+        demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x104,
+            &[(0x11, 0x104, &[])],
+        )
+    }
+
+    /// One LOAS record (ISO/IEC 14496-3 §1.7.2): sync 0x2B7, 13-bit
+    /// audioMuxLengthBytes, then `len` zero body bytes.
+    fn loas_record(len: u16) -> Vec<u8> {
+        let mut out = vec![0x56, 0xE0 | ((len >> 8) as u8 & 0x1F), (len & 0xFF) as u8];
+        out.resize(3 + usize::from(len), 0);
+        out
+    }
+
+    fn latm_framing_count(ev: &[DemuxEvent]) -> usize {
+        issues(ev)
+            .iter()
+            .filter(|i| matches!(i, NonConformantIssue::LatmFraming { pid: 0x104, .. }))
+            .count()
+    }
+
+    fn sample_count(ev: &[DemuxEvent], pid: u16) -> usize {
+        ev.iter()
+            .filter(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == pid))
+            .count()
+    }
+
+    /// ISO/IEC 14496-3 §1.7.2: an AudioSyncStream record may continue into the
+    /// next PES; data_alignment_indicator = 0 announces that.
+    #[test]
+    fn latm_record_split_across_two_pes_is_not_flagged() {
+        let mut d = latm_demuxer();
+        let record_b = loas_record(50);
+        let mut es1 = loas_record(10);
+        es1.extend_from_slice(&record_b[..20]);
+        let mut es2 = record_b[20..].to_vec();
+        es2.extend_from_slice(&loas_record(8));
+        let mut pkts = pes_to_packets(
+            0x104,
+            0,
+            &pes_bytes(0xC0, Some(90_000), None, true, &es1, true),
+        );
+        pkts.extend(pes_to_packets(
+            0x104,
+            1,
+            &pes_bytes(0xC0, None, None, false, &es2, true),
+        ));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(latm_framing_count(&ev), 0, "{ev:?}");
+        assert_eq!(sample_count(&ev, 0x104), 2, "{ev:?}");
+    }
+
+    /// H.222.0 §2.4.3.3: after a continuity_counter gap the bytes a split
+    /// record still owed are unknown, so a PES that starts mid-record with
+    /// data_alignment_indicator = 0 is not walked.
+    #[test]
+    fn latm_continuation_after_a_cc_gap_is_not_validated() {
+        let mut d = latm_demuxer();
+        let mut es1 = loas_record(10);
+        es1.extend_from_slice(&loas_record(50)[..20]);
+        // The lost packet (CC 1) held a whole PES; PES 2 continues the
+        // record it began with 43 body bytes, then one whole record.
+        let mut es2 = vec![0x00; 43];
+        es2.extend_from_slice(&loas_record(8));
+        let mut pkts = pes_to_packets(
+            0x104,
+            0,
+            &pes_bytes(0xC0, Some(90_000), None, true, &es1, true),
+        );
+        pkts.extend(pes_to_packets(
+            0x104,
+            2,
+            &pes_bytes(0xC0, None, None, false, &es2, true),
+        ));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(latm_framing_count(&ev), 0, "{ev:?}");
+        assert_eq!(sample_count(&ev, 0x104), 2, "{ev:?}");
+    }
+
+    #[test]
+    fn latm_aligned_pes_without_sync_is_still_flagged() {
+        let mut d = latm_demuxer();
+        let pkts = pes_to_packets(
+            0x104,
+            0,
+            &pes_bytes(0xC0, Some(90_000), None, true, &[0x00, 0x11, 0x22], true),
+        );
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(
+            issues(&ev).iter().any(|i| matches!(
+                i,
+                NonConformantIssue::LatmFraming {
+                    pid: 0x104,
+                    kind: crate::codec::aac::latm::LatmFramingKind::MissingSyncword
+                }
+            )),
+            "{ev:?}"
+        );
+    }
+
+    fn dvb_sub_demuxer() -> Demuxer {
+        // subtitling_descriptor: "eng", type 0x10, composition page 1, ancillary page 1.
+        let subtitling: &[u8] = &[0x59, 0x08, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x01];
+        demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x102,
+            &[(0x06, 0x102, subtitling)],
+        )
+    }
+
+    fn subtitle_payload(ev: &[DemuxEvent], pid: u16) -> Option<Vec<u8>> {
+        ev.iter().find_map(|e| match e {
+            DemuxEvent::Sample {
+                stream,
+                payload: SamplePayload::Subtitle { payload, .. },
+                ..
+            } if stream.pid == pid => Some(payload.as_slice().to_vec()),
+            _ => None,
+        })
+    }
+
+    fn malformed_index(ev: &[DemuxEvent], pid: u16, want: &str) -> Option<usize> {
+        ev.iter().position(|e| {
+            matches!(e, DemuxEvent::NonConformant {
+                issue: NonConformantIssue::MalformedPes { pid: p, reason }, ..
+            } if *p == pid && *reason == want)
+        })
+    }
+
+    /// EN 300 743 Table 3 envelope violations: wrong data_identifier, wrong
+    /// subtitle_stream_id, missing end marker.
+    #[test]
+    fn malformed_dvb_sub_envelopes_raise_malformed_pes_and_keep_the_raw_sample() {
+        for payload in [
+            &[0x40u8, 0x00, 0x0F, 0xFF][..],
+            &[0x20, 0x01, 0x0F, 0xFF],
+            &[0x20, 0x00, 0x0F, 0x00],
+        ] {
+            let mut d = dvb_sub_demuxer();
+            let pkts = pes_to_packets(
+                0x102,
+                0,
+                &pes_bytes(0xBD, Some(90_000), None, true, payload, true),
+            );
+            feed_packets(&mut d, &pkts).unwrap();
+            d.flush();
+            let ev = drain_all_events(&mut d);
+            let marker = malformed_index(&ev, 0x102, DVB_SUB_ENVELOPE_MALFORMED);
+            let sample = ev.iter().position(
+                |e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x102),
+            );
+            assert!(
+                matches!((marker, sample), (Some(m), Some(s)) if m < s),
+                "{payload:02X?}: {ev:?}"
+            );
+            assert_eq!(
+                subtitle_payload(&ev, 0x102).as_deref(),
+                Some(payload),
+                "{ev:?}"
+            );
+            assert!(!is_damage_reason(DVB_SUB_ENVELOPE_MALFORMED));
+        }
+    }
+
+    fn teletext_demuxer() -> Demuxer {
+        // teletext_descriptor: "eng", type 0x02 (subtitle page), magazine 8, page 0x88.
+        let teletext: &[u8] = &[0x56, 0x05, b'e', b'n', b'g', 0x10, 0x88];
+        demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x103,
+            &[(0x06, 0x103, teletext)],
+        )
+    }
+
+    /// A teletext PES with `header_data_length` header bytes (PTS, then 0xFF
+    /// stuffing) and `data_field`, padded with 0xFF to a multiple of 184 bytes.
+    fn teletext_pes(header_data_length: usize, data_field: &[u8]) -> Vec<u8> {
+        let mut pes = pes_bytes(0xBD, Some(90_000), None, true, &[], true);
+        pes[8] = header_data_length as u8;
+        pes.resize(9 + header_data_length, 0xFF);
+        pes.extend_from_slice(data_field);
+        let total = pes.len().div_ceil(184) * 184;
+        pes.resize(total, 0xFF);
+        pes[4..6].copy_from_slice(&((total - 6) as u16).to_be_bytes());
+        pes
+    }
+
+    /// data_identifier, then one data unit of `unit_id` and `unit_length`.
+    fn teletext_data_field(data_identifier: u8, unit_id: u8, unit_length: u8) -> Vec<u8> {
+        let mut field = vec![data_identifier, unit_id, unit_length];
+        field.resize(3 + usize::from(unit_length), 0x00);
+        field
+    }
+
+    fn feed_teletext(pes: &[u8]) -> Vec<DemuxEvent> {
+        let mut d = teletext_demuxer();
+        feed_packets(&mut d, &pes_to_packets(0x103, 0, pes)).unwrap();
+        d.flush();
+        drain_all_events(&mut d)
+    }
+
+    /// EN 300 472 §4.2: the PES header is 45 bytes and the PES is N × 184 bytes,
+    /// so payload.len() + 45 is a multiple of 184; §4.3: data_identifier
+    /// 0x10..=0x1F (or user-defined 0x80..=0xFF), data_unit_id 0x02/0x03/0xFF,
+    /// data_unit_length 0x2C for 0x02/0x03.
+    #[test]
+    fn teletext_with_short_header_or_bad_unit_length_raises_malformed_pes() {
+        for pes in [
+            teletext_pes(5, &teletext_data_field(0x10, 0x03, 0x2C)),
+            teletext_pes(0x24, &teletext_data_field(0x10, 0x03, 0x20)),
+            teletext_pes(0x24, &teletext_data_field(0x40, 0x03, 0x2C)),
+        ] {
+            let ev = feed_teletext(&pes);
+            assert!(
+                malformed_index(&ev, 0x103, TELETEXT_DATA_FIELD_MALFORMED).is_some(),
+                "{ev:?}"
+            );
+            assert_eq!(sample_count(&ev, 0x103), 1, "{ev:?}");
+        }
+        assert!(!is_damage_reason(TELETEXT_DATA_FIELD_MALFORMED));
+    }
+
+    #[test]
+    fn conformant_teletext_pes_raises_nothing() {
+        let ev = feed_teletext(&teletext_pes(0x24, &teletext_data_field(0x10, 0x03, 0x2C)));
+        assert!(issues(&ev).is_empty(), "{ev:?}");
+        assert_eq!(sample_count(&ev, 0x103), 1, "{ev:?}");
     }
 }
