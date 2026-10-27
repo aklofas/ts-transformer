@@ -49,6 +49,7 @@ on:
 env:
   # Vendored native builds for the sys crates' verify step.
   SRT_FORCE_VENDORED: "1"
+  RIST_FORCE_VENDORED: "1"
   CARGO_TERM_COLOR: always
 
 jobs:
