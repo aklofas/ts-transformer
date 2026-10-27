@@ -105,3 +105,67 @@ fn ts_sender_recover_mode_errors_after_max_unsynced_bytes() {
         other => panic!("expected Framing(NoSyncAfterLimit), got {other:?}"),
     }
 }
+
+fn wire_sizes(t: &crate::common::ScriptedSend) -> Vec<usize> {
+    t.wire.lock().unwrap().iter().map(Vec::len).collect()
+}
+
+#[test]
+fn sender_splits_bundles_to_a_smaller_ceiling() {
+    for (max, sizes) in [
+        (188, vec![188; 7]),
+        (1128, vec![1128, 188]),
+        (1316, vec![1316]),
+    ] {
+        let t = crate::common::ScriptedSend::ok().with_max_payload(max);
+        let mut s = Sender::new(t.clone(), SenderConfig::default());
+        let ts = synthetic_ts_packets(7);
+        s.send_ts(&ts).unwrap();
+        assert_eq!(wire_sizes(&t), sizes, "max {max}");
+        assert_eq!(t.wire_bytes(), ts);
+    }
+}
+
+#[test]
+fn sender_refuses_a_ceiling_below_one_packet_without_consuming() {
+    let t = crate::common::ScriptedSend::ok().with_max_payload(100);
+    let mut s = Sender::new(t, SenderConfig::default());
+    let e = s.send_ts(&synthetic_ts_packets(7)).unwrap_err();
+    assert_eq!(e.input_consumed, Some(false));
+    assert!(matches!(
+        e.source,
+        tst_pipeline::SenderErrorSource::Transport(tst_pipeline::TransportError::TooLarge {
+            len: 188,
+            max: 100
+        })
+    ));
+    assert_eq!(s.stats().bytes_pushed, 0);
+}
+
+#[test]
+fn a_failure_between_split_slices_resends_only_the_rest() {
+    use crate::common::SendStep;
+    let script = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from([
+        SendStep::Ok,
+        SendStep::Backpressure,
+    ])));
+    let wire = std::sync::Arc::default();
+    let t = crate::common::ScriptedSend::scripted(script, wire).with_max_payload(1128);
+    let mut s = Sender::new(t.clone(), SenderConfig::default());
+    let ts = synthetic_ts_packets(7);
+    let e = s.send_ts(&ts).unwrap_err();
+    assert_eq!(e.input_consumed, Some(true));
+    s.flush().unwrap();
+    assert_eq!(t.wire_bytes(), ts);
+    assert_eq!(wire_sizes(&t), vec![1128, 188]);
+}
+
+#[test]
+fn default_ceiling_messages_are_unchanged() {
+    let t = crate::common::ScriptedSend::ok();
+    let mut s = Sender::new(t.clone(), SenderConfig::default());
+    s.send_ts(&synthetic_ts_packets(10)).unwrap();
+    assert_eq!(wire_sizes(&t), vec![1316]);
+    s.flush().unwrap();
+    assert_eq!(wire_sizes(&t), vec![1316, 564]);
+}
