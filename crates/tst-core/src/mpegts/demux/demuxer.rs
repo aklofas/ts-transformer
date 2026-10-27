@@ -33,7 +33,7 @@ use crate::mpegts::demux::types::{
 };
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 /// MPEG-TS demuxer.
 ///
@@ -79,9 +79,12 @@ pub struct Demuxer {
     /// complete section once `section_length + 3` bytes have been
     /// accumulated for that PID. See `psi_assembler.rs`.
     pub(super) psi_assemblers: HashMap<u16, PsiSectionAssembler>,
-    /// Programs found in the current PAT, keyed by `pmt_pid`.
-    /// O(1) lookup when routing PMT-bound packets.
+    /// Programs found in the current PAT, keyed by `program_number`.
+    /// Several programs may share one PMT PID (H.222.0 §2.4.4.8).
     pub(super) programs: HashMap<u16, ProgramTracker>,
+    /// Every PMT PID the current PAT declares. O(1) lookup when routing
+    /// PMT-bound packets.
+    pub(super) pmt_pids: HashSet<u16>,
     /// Identity of the last applied PAT: `(transport_stream_id,
     /// version_number, CRC_32 of the completing section)`. A PAT that
     /// differs in any of the three triggers the diff (programs added/removed).
@@ -185,6 +188,7 @@ impl Demuxer {
             sync_consumed: 0,
             psi_assemblers,
             programs: HashMap::new(),
+            pmt_pids: HashSet::new(),
             pat_identity: None,
             pid_state: HashMap::new(),
             last_psi_cc_jump: None,
@@ -655,7 +659,7 @@ impl Demuxer {
                 true,
                 cc_jumped,
             )?;
-        } else if self.programs.contains_key(&pkt.pid) {
+        } else if self.pmt_pids.contains(&pkt.pid) {
             self.handle_psi(
                 pkt.pid,
                 pkt.payload,
@@ -805,7 +809,7 @@ impl Demuxer {
 
     /// Return a reference to the programs map for white-box unit tests.
     ///
-    /// Keyed by `pmt_pid`. Crate-internal test accessor for PAT/PMT diffing
+    /// Keyed by `program_number`. Crate-internal test accessor for PAT/PMT diffing
     /// logic. Not part of the stable API.
     #[cfg(test)]
     pub(crate) fn programs_for_test(&self) -> &HashMap<u16, ProgramTracker> {
@@ -871,6 +875,7 @@ impl Demuxer {
         self.psi_assemblers
             .insert(0x0000, PsiSectionAssembler::new());
         self.programs.clear();
+        self.pmt_pids.clear();
         self.pat_identity = None;
         // Per-PID state resets entry by entry: counters and the
         // subtitle-seen flag survive a reconnect (`reset_stats` owns them).

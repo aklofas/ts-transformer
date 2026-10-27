@@ -335,33 +335,33 @@ impl super::demuxer::Demuxer {
     /// Apply the program list from a newly-complete PAT version, performing
     /// the topology diff (remove programs that disappeared, add new programs).
     pub(super) fn apply_pat_programs(&mut self, programs: &[PatEntry]) {
-        // Map each PMT PID in the new PAT to its program_number (skip program 0).
+        // Map each program_number in the new PAT to its PMT PID (skip
+        // program 0). Several programs may share one PMT PID (H.222.0
+        // §2.4.4.8), so the program, not the PID, is the key.
         let new_pmt: HashMap<u16, u16> = programs
             .iter()
             .filter(|e| e.program_number != 0)
-            .map(|e| (e.pid, e.program_number))
+            .map(|e| (e.program_number, e.pid))
             .collect();
+        let new_pmt_pids: HashSet<u16> = new_pmt.values().copied().collect();
 
-        // Drop trackers whose PMT PID disappeared from this PAT version, OR
-        // whose PMT PID was reassigned to a different program_number (PID
-        // reuse across programs). A reassigned PMT PID must tear down the
-        // stale program so the new program's PMT is adopted cleanly instead of
-        // being rejected as PmtProgramNumberMismatch against the old identity.
+        // Drop trackers whose program disappeared from this PAT version, OR
+        // whose PMT PID moved. A moved program gets a fresh tracker so its
+        // PMT on the new PID is adopted cleanly.
         // Per-PID cleanup is shared with the PMT-version path through the
         // `TopologyDiff`: a PID's state entry is otherwise unreachable and
         // would leak under PAT rotation.
         let removed: Vec<u16> = self
             .programs
             .iter()
-            .filter(|(pmt_pid, tracker)| {
-                // Remove if the PMT PID is gone OR now maps to a different program.
-                new_pmt.get(*pmt_pid).copied() != Some(tracker.program_number)
+            .filter(|(program_number, tracker)| {
+                new_pmt.get(*program_number).copied() != Some(tracker.pmt_pid)
             })
-            .map(|(pmt_pid, _)| *pmt_pid)
+            .map(|(program_number, _)| *program_number)
             .collect();
         let mut diff = TopologyDiff::default();
-        for pmt_pid in removed {
-            if let Some(tracker) = self.programs.remove(&pmt_pid) {
+        for program_number in removed {
+            if let Some(tracker) = self.programs.remove(&program_number) {
                 diff.retired.extend(tracker.streams.iter().map(|s| s.pid));
                 diff.pcr_pid_changes.push((tracker.pcr_pid, None));
                 // The per-program unwrap reference is keyed by
@@ -369,11 +369,17 @@ impl super::demuxer::Demuxer {
                 // gone — and a later program re-using the number must not
                 // anchor its first sample onto this one's epoch.
                 self.timestamps.retire_program(tracker.program_number);
-                // Free the PSI assembly buffer + PMT-PID continuity state.
+            }
+        }
+        // A PMT PID retires — its PSI assembly buffer and continuity state
+        // go — only once no program of the new PAT uses it.
+        for &pmt_pid in &self.pmt_pids {
+            if !new_pmt_pids.contains(&pmt_pid) {
                 self.psi_assemblers.remove(&pmt_pid);
                 diff.retired_pmt_pids.push(pmt_pid);
             }
         }
+        self.pmt_pids = new_pmt_pids;
         // The removed programs' elementary PIDs lose all state and their PCR
         // PIDs lose their history, unless a surviving program declares the
         // same PID.
@@ -381,14 +387,14 @@ impl super::demuxer::Demuxer {
 
         // Add empty trackers for programs that are new in this PAT version.
         // PMT contents will populate them when handle_pmt_section fires.
-        for entry in programs {
-            if entry.program_number == 0 {
-                continue; // program 0 = Network PID, not a real program
-            }
+        // Program 0 (the Network PID) is not a real program and is not in
+        // `new_pmt`.
+        for (&program_number, &pmt_pid) in &new_pmt {
             self.programs
-                .entry(entry.pid)
+                .entry(program_number)
                 .or_insert_with(|| ProgramTracker {
-                    program_number: entry.program_number,
+                    program_number,
+                    pmt_pid,
                     pmt_version: None,
                     pcr_pid: None,
                     streams: Vec::new(),
@@ -396,8 +402,28 @@ impl super::demuxer::Demuxer {
                 });
             // Seed the PSI assembler for this PMT PID so handle_psi can
             // accumulate bytes without a separate "first packet" init step.
-            self.psi_assemblers.entry(entry.pid).or_default();
+            // One assembler per PID, shared by every program on it.
+            self.psi_assemblers.entry(pmt_pid).or_default();
         }
+    }
+
+    /// The tracker of `program_number`, if the PAT carries that program's
+    /// PMT on `pmt_pid`.
+    pub(super) fn tracker_for(&self, pmt_pid: u16, program_number: u16) -> Option<&ProgramTracker> {
+        self.programs
+            .get(&program_number)
+            .filter(|t| t.pmt_pid == pmt_pid)
+    }
+
+    /// The lowest program_number whose PMT the PAT places on `pmt_pid`, or
+    /// 0 if none.
+    pub(super) fn first_program_on(&self, pmt_pid: u16) -> u16 {
+        self.programs
+            .values()
+            .filter(|t| t.pmt_pid == pmt_pid)
+            .map(|t| t.program_number)
+            .min()
+            .unwrap_or(0)
     }
 
     /// Retire the PCR history of every PID that no program declares as its
@@ -425,13 +451,12 @@ impl super::demuxer::Demuxer {
     /// keeps its baseline across the version bump.
     fn pmt_topology_diff(
         &self,
-        pmt_pid: u16,
         new_pcr_pid: u16,
         program_number: u16,
         stream_infos: &[StreamInfo],
     ) -> TopologyDiff {
         let mut diff = TopologyDiff::default();
-        if let Some(tracker) = self.programs.get(&pmt_pid) {
+        if let Some(tracker) = self.programs.get(&program_number) {
             for old in &tracker.streams {
                 match stream_infos.iter().find(|s| s.pid == old.pid) {
                     None => diff.retired.push(old.pid),
@@ -452,14 +477,10 @@ impl super::demuxer::Demuxer {
     }
 
     pub(super) fn handle_pmt_section(&mut self, pmt_pid: u16, section: &[u8]) {
-        // The PMT PID itself is owned by a program (the one this PMT describes).
-        // PAT pre-populates `self.programs` keyed by PMT PID, so we can resolve
-        // the program_number here even when the PMT body fails to parse.
-        let pmt_program_number = self
-            .programs
-            .get(&pmt_pid)
-            .map(|t| t.program_number)
-            .unwrap_or(0);
+        // A section that fails to parse names no program, so its
+        // diagnostics carry the first program the PAT places on this PID
+        // (several may share it, H.222.0 §2.4.4.8).
+        let pmt_program_number = self.first_program_on(pmt_pid);
         let pmt = match parse_pmt(section) {
             Ok(p) => p,
             Err(PsiParseError::CrcMismatch { .. }) => {
@@ -494,32 +515,31 @@ impl super::demuxer::Demuxer {
             }
         };
 
-        // Look up the tracker — must exist if PAT pre-populated us.
-        let program_number = match self.programs.get(&pmt_pid) {
-            Some(t) => t.program_number,
-            None => return, // PMT arriving on PID not in PAT — drop.
-        };
-
-        // Reject PMT whose body program_number doesn't match PAT.
-        // A validly-checksummed PMT for program B arriving on program A's PMT
-        // PID is a structural violation per H.222.0 §2.4.4.8. Do NOT adopt
-        // topology; emit a NonConformant diagnostic.
-        if pmt.program_number != program_number {
-            self.queue_nonconformant(
-                StreamId::anonymous(pmt_pid, program_number),
-                NonConformantIssue::PmtProgramNumberMismatch {
-                    pid: pmt_pid,
-                    pat_program: program_number,
-                    pmt_program: pmt.program_number,
-                },
-            );
-            return;
+        // H.222.0 §2.4.4.8: the section's program_number says which program
+        // it describes; the PAT must place that program's PMT on this PID.
+        // A validly-checksummed PMT for a program the PAT puts elsewhere (or
+        // not at all) is a structural violation. Do NOT adopt topology; emit
+        // a NonConformant diagnostic.
+        let program_number = pmt.program_number;
+        if self.tracker_for(pmt_pid, program_number).is_none() {
+            if self.pmt_pids.contains(&pmt_pid) {
+                let pat_program = self.first_program_on(pmt_pid);
+                self.queue_nonconformant(
+                    StreamId::anonymous(pmt_pid, pat_program),
+                    NonConformantIssue::PmtProgramNumberMismatch {
+                        pid: pmt_pid,
+                        pat_program,
+                        pmt_program: program_number,
+                    },
+                );
+            }
+            return; // Not adopted; a PID the PAT never named is dropped silently.
         }
 
         // Validate fixed/reserved PSI syntax fields.
         self.check_psi_syntax(pmt_pid, 0x02, section);
         // Dedup: re-emit only if version changed or first ever.
-        if let Some(tracker) = self.programs.get(&pmt_pid)
+        if let Some(tracker) = self.programs.get(&program_number)
             && Some(pmt.version) == tracker.pmt_version
         {
             return;
@@ -562,12 +582,12 @@ impl super::demuxer::Demuxer {
             // stream lists. First-program-wins — skip this PID if already owned.
             let other_prog = self
                 .programs
-                .iter()
-                .find(|(other_pmt_pid, t)| {
-                    **other_pmt_pid != pmt_pid
+                .values()
+                .find(|t| {
+                    t.program_number != program_number
                         && t.streams.iter().any(|st| st.pid == s.elementary_pid)
                 })
-                .map(|(_, t)| t.program_number);
+                .map(|t| t.program_number);
 
             if let Some(other_program_number) = other_prog {
                 collision_issues.push((
@@ -693,13 +713,16 @@ impl super::demuxer::Demuxer {
         // under the new kind, and stale CC / PTS baselines would produce false
         // anomaly events on the first post-bump packet); kinds and owners are
         // set for every accepted (new and persisting) stream.
-        let diff = self.pmt_topology_diff(pmt_pid, pmt.pcr_pid, program_number, &stream_infos);
+        let diff = self.pmt_topology_diff(pmt.pcr_pid, program_number, &stream_infos);
 
         // Build klv_links from the accepted streams.
         let prog_map = self.build_program_map(pmt_pid, &pmt, program_number, &stream_infos);
 
         // Update tracker.
-        let tracker = self.programs.get_mut(&pmt_pid).expect("checked above");
+        let tracker = self
+            .programs
+            .get_mut(&program_number)
+            .expect("checked above");
         tracker.pmt_version = Some(pmt.version);
         tracker.pcr_pid = Some(pmt.pcr_pid);
         tracker.streams = stream_infos;
@@ -1732,14 +1755,8 @@ mod tests {
             "expected 2 program trackers, got {}",
             progs.len()
         );
-        assert!(
-            progs.contains_key(&0x1000),
-            "missing tracker for pmt_pid=0x1000"
-        );
-        assert!(
-            progs.contains_key(&0x1100),
-            "missing tracker for pmt_pid=0x1100"
-        );
+        assert!(progs.contains_key(&1), "missing tracker for program 1");
+        assert!(progs.contains_key(&2), "missing tracker for program 2");
     }
 
     #[test]
@@ -1764,8 +1781,8 @@ mod tests {
             "expected 2 trackers after version bump, got {}",
             progs.len()
         );
-        assert!(progs.contains_key(&0x1000));
-        assert!(progs.contains_key(&0x1100));
+        assert!(progs.contains_key(&1));
+        assert!(progs.contains_key(&2));
     }
 
     #[test]
@@ -1786,11 +1803,11 @@ mod tests {
             progs.len()
         );
         assert!(
-            progs.contains_key(&0x1000),
+            progs.contains_key(&1),
             "surviving program 1 tracker missing"
         );
         assert!(
-            !progs.contains_key(&0x1100),
+            !progs.contains_key(&2),
             "dropped program 2 tracker still present"
         );
     }
@@ -1821,10 +1838,10 @@ mod tests {
             .unwrap();
 
         let progs = demuxer.programs_for_test();
-        assert_eq!(progs[&0x1000].pmt_version, Some(3));
-        assert_eq!(progs[&0x1100].pmt_version, Some(5));
-        assert_eq!(progs[&0x1000].streams.len(), 2);
-        assert_eq!(progs[&0x1100].streams.len(), 2);
+        assert_eq!(progs[&1].pmt_version, Some(3));
+        assert_eq!(progs[&2].pmt_version, Some(5));
+        assert_eq!(progs[&1].streams.len(), 2);
+        assert_eq!(progs[&2].streams.len(), 2);
     }
 
     #[test]
@@ -1869,11 +1886,11 @@ mod tests {
 
         let progs = demuxer.programs_for_test();
         assert!(
-            progs[&0x1000].streams.iter().any(|s| s.pid == 0x1011),
+            progs[&1].streams.iter().any(|s| s.pid == 0x1011),
             "program 1 should retain ownership of PID 0x1011"
         );
         assert!(
-            !progs[&0x1100].streams.iter().any(|s| s.pid == 0x1011),
+            !progs[&2].streams.iter().any(|s| s.pid == 0x1011),
             "program 2 must not own PID 0x1011 after collision"
         );
     }
@@ -1895,9 +1912,9 @@ mod tests {
             .unwrap();
 
         let progs = demuxer.programs_for_test();
-        assert!(progs.contains_key(&0x1000), "program 1 tracker missing");
-        assert_eq!(progs[&0x1000].streams.len(), 1);
-        assert_eq!(progs[&0x1000].streams[0].pid, 0x1011);
+        assert!(progs.contains_key(&1), "program 1 tracker missing");
+        assert_eq!(progs[&1].streams.len(), 1);
+        assert_eq!(progs[&1].streams[0].pid, 0x1011);
 
         demuxer
             .feed(&pat_packet_with_programs_cc(
@@ -1918,17 +1935,14 @@ mod tests {
 
         let progs = demuxer.programs_for_test();
         assert_eq!(progs.len(), 2, "expected 2 program trackers after add");
+        assert!(progs.contains_key(&1), "program 1 tracker must survive");
+        assert!(progs.contains_key(&2), "program 2 tracker must appear");
         assert!(
-            progs.contains_key(&0x1000),
-            "program 1 tracker must survive"
-        );
-        assert!(progs.contains_key(&0x1100), "program 2 tracker must appear");
-        assert!(
-            progs[&0x1000].streams.iter().any(|s| s.pid == 0x1011),
+            progs[&1].streams.iter().any(|s| s.pid == 0x1011),
             "program 1 stream 0x1011 must survive after PAT bump"
         );
         assert!(
-            progs[&0x1100].streams.iter().any(|s| s.pid == 0x1111),
+            progs[&2].streams.iter().any(|s| s.pid == 0x1111),
             "program 2 stream 0x1111 must be tracked"
         );
     }
@@ -1971,15 +1985,15 @@ mod tests {
         let progs = demuxer.programs_for_test();
         assert_eq!(progs.len(), 1, "expected 1 tracker after removal");
         assert!(
-            progs.contains_key(&0x1000),
+            progs.contains_key(&1),
             "surviving program 1 tracker missing"
         );
         assert!(
-            !progs.contains_key(&0x1100),
+            !progs.contains_key(&2),
             "dropped program 2 tracker still present"
         );
         assert!(
-            progs[&0x1000].streams.iter().any(|s| s.pid == 0x1011),
+            progs[&1].streams.iter().any(|s| s.pid == 0x1011),
             "program 1 stream 0x1011 must survive program 2 removal"
         );
     }
@@ -2466,7 +2480,7 @@ mod tests {
         let progs = d.programs_for_test();
         assert_eq!(progs.len(), 1);
         assert_eq!(
-            progs.get(&0x1000).and_then(|t| t.pmt_version),
+            progs.get(&1).and_then(|t| t.pmt_version),
             Some(0),
             "a repeated PAT must not rebuild the program tracker"
         );
@@ -2550,7 +2564,7 @@ mod tests {
             "the spliced partial must not be parsed: {got:?}"
         );
         let progs = d.programs_for_test();
-        assert!(progs.get(&0x1700).is_some_and(|t| t.program_number == 7));
+        assert!(progs.get(&7).is_some_and(|t| t.pmt_pid == 0x1700));
         assert_eq!(progs.len(), 1);
     }
 
@@ -2576,6 +2590,125 @@ mod tests {
                 table_id: 0,
                 kind: PsiSyntaxKind::SectionNumberOutOfRange { observed: 2 },
             })
+        );
+    }
+
+    /// H.222.0 §2.4.4.8: TS_program_map_sections of different programs may share
+    /// a PID; program_number in each section says which program it describes.
+    #[test]
+    fn two_programs_sharing_one_pmt_pid_both_apply() {
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1000)], 0))
+            .unwrap();
+        d.feed(&pmt_packet_for_test_cc(
+            0x1000,
+            1,
+            0x100,
+            &[(0x1B, 0x100)],
+            0,
+            0,
+        ))
+        .unwrap();
+        d.feed(&pmt_packet_for_test_cc(
+            0x1000,
+            2,
+            0x200,
+            &[(0x1B, 0x200)],
+            0,
+            1,
+        ))
+        .unwrap();
+        let ev = drain_all_events(&mut d);
+        let maps: Vec<u16> = ev
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::ProgramMap(m) => Some(m.program_number),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(maps, vec![1, 2]);
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PmtProgramNumberMismatch { .. }))
+        );
+        assert_eq!(d.program_number_for_pid(0x200), 2);
+    }
+
+    #[test]
+    fn pmt_for_a_program_absent_from_the_pat_is_still_a_mismatch() {
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        d.feed(&pmt_packet_for_test(0x1000, 2, 0x200, &[(0x1B, 0x200)], 0))
+            .unwrap();
+        let ev = drain_all_events(&mut d);
+        assert!(
+            issues(&ev).contains(&NonConformantIssue::PmtProgramNumberMismatch {
+                pid: 0x1000,
+                pat_program: 1,
+                pmt_program: 2,
+            }),
+            "{ev:?}"
+        );
+        assert!(!ev.iter().any(|e| matches!(e, DemuxEvent::ProgramMap(_))));
+    }
+
+    #[test]
+    fn removing_one_of_two_programs_on_a_shared_pmt_pid_keeps_the_other() {
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1000)], 0))
+            .unwrap();
+        d.feed(&pmt_packet_for_test_cc(
+            0x1000,
+            1,
+            0x100,
+            &[(0x1B, 0x100)],
+            0,
+            0,
+        ))
+        .unwrap();
+        d.feed(&pmt_packet_for_test_cc(
+            0x1000,
+            2,
+            0x200,
+            &[(0x1B, 0x200)],
+            0,
+            1,
+        ))
+        .unwrap();
+        d.feed(&pat_packet_with_programs_cc(&[(2, 0x1000)], 1, 1))
+            .unwrap();
+        drain_all_events(&mut d);
+
+        let progs = d.programs_for_test();
+        assert_eq!(progs.len(), 1);
+        assert!(!progs.contains_key(&1), "program 1 must be gone");
+        let p2 = progs.get(&2).expect("program 2 must survive");
+        assert_eq!(p2.pmt_pid, 0x1000);
+        assert!(p2.streams.iter().any(|s| s.pid == 0x200));
+        assert_eq!(d.program_number_for_pid(0x200), 2);
+        assert_eq!(
+            d.program_number_for_pid(0x100),
+            0,
+            "program 1's stream retires"
+        );
+
+        // The shared PMT PID still routes: program 2's next version applies.
+        d.feed(&pmt_packet_for_test_cc(
+            0x1000,
+            2,
+            0x200,
+            &[(0x1B, 0x200)],
+            1,
+            2,
+        ))
+        .unwrap();
+        let ev = drain_all_events(&mut d);
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, DemuxEvent::ProgramMap(m) if m.program_number == 2)),
+            "{ev:?}"
         );
     }
 }
