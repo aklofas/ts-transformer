@@ -135,7 +135,14 @@ test = "wave_i1_matrix_no_regression"
 crate = "tst-core"
 path = "crates/tst-core/tests/regression/subtitle_interop.rs"
 class = "diagnostic"
-note = "Strict subtitle-interop regression guard; run explicitly before tagging a release (informational variant runs in PR CI)."
+note = "Strict subtitle-interop regression guard; run explicitly before tagging a release."
+
+[[skip]]
+test = "wave_i1_matrix_informational"
+crate = "tst-core"
+path = "crates/tst-core/tests/regression/subtitle_interop.rs"
+class = "diagnostic"
+note = "Prints the subtitle-interop tool matrix for a human; asserts nothing. Run on demand with --ignored --nocapture."
 
 # --- Environmental / live-resource unit tests -------------------------------
 

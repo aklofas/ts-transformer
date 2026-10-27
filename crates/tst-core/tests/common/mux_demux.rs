@@ -22,6 +22,37 @@ pub fn drain_mux(mux: &mut Muxer) -> Vec<u8> {
     }
 }
 
+/// The `(elementary_PID, stream_type)` pairs of the PMT section carried
+/// whole in the one TS packet `pkt` (PUSI set, section ending in that
+/// packet). The walk is bounded by `section_length`, so the CRC and the
+/// stuffing after the section are never read as ES entries.
+pub fn es_entries(pkt: &[u8]) -> impl Iterator<Item = (u16, u8)> + '_ {
+    assert_eq!(pkt[0], 0x47, "TS sync byte");
+    assert_ne!(pkt[1] & 0x40, 0, "PMT packet carries a section start");
+    let mut off = 4;
+    if pkt[3] & 0x20 != 0 {
+        off += 1 + pkt[4] as usize;
+    }
+    off += 1 + pkt[off] as usize; // pointer_field
+    let sec = &pkt[off..];
+    assert_eq!(sec[0], 0x02, "table_id is a PMT");
+    let section_length = ((sec[1] as usize & 0x0F) << 8) | sec[2] as usize;
+    let end = 3 + section_length - 4; // the ES loop stops before the CRC_32
+    assert!(end <= sec.len(), "PMT section ends inside this packet");
+    let program_info_length = ((sec[10] as usize & 0x0F) << 8) | sec[11] as usize;
+    let mut i = 12 + program_info_length;
+    core::iter::from_fn(move || {
+        if i + 5 > end {
+            return None;
+        }
+        let stream_type = sec[i];
+        let pid = ((sec[i + 1] as u16 & 0x1F) << 8) | sec[i + 2] as u16;
+        let es_info_length = ((sec[i + 3] as usize & 0x0F) << 8) | sec[i + 4] as usize;
+        i += 5 + es_info_length;
+        Some((pid, stream_type))
+    })
+}
+
 /// Every event `d` has queued, in order.
 pub fn collect_events(d: &mut Demuxer) -> Vec<DemuxEvent> {
     core::iter::from_fn(|| d.next_event()).collect()

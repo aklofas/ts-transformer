@@ -332,19 +332,6 @@ fn drain_non_conformant_issues(
     issues
 }
 
-/// Drain all queued events and return those that are `ProgramMap` events.
-fn drain_program_map_events(
-    demux: &mut tst_core::mpegts::demux::Demuxer,
-) -> Vec<tst_core::mpegts::demux::ProgramMap> {
-    let mut maps = Vec::new();
-    while let Some(ev) = demux.next_event() {
-        if let DemuxEvent::ProgramMap(pm) = ev {
-            maps.push(pm);
-        }
-    }
-    maps
-}
-
 #[test]
 fn split_pmt_with_dropped_continuation_drops_section_in_strict_mode() {
     // Build a 3-TS-packet PMT (section large enough to require 3 packets) and
@@ -368,18 +355,24 @@ fn split_pmt_with_dropped_continuation_drops_section_in_strict_mode() {
     // Skip pkts[1] — simulates a dropped TS packet in the middle.
     demux.feed(&pkts[2]).unwrap();
 
-    let issues = drain_non_conformant_issues(&mut demux);
+    // One drain: both checks read the same events, so neither can be satisfied
+    // by a queue an earlier drain already emptied.
+    let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.next_event()).collect();
     assert!(
-        issues.iter().any(|i| matches!(
-            i,
-            NonConformantIssue::PsiCcDiscontinuity { pid, .. } if *pid == pmt_pid
+        events.iter().any(|e| matches!(
+            e,
+            DemuxEvent::NonConformant {
+                issue: NonConformantIssue::PsiCcDiscontinuity { pid: 0x0FFF, .. },
+                ..
+            }
         )),
-        "expected PsiCcDiscontinuity on PMT PID 0x{pmt_pid:04X}, got {issues:?}"
+        "expected PsiCcDiscontinuity on PMT PID 0x{pmt_pid:04X}, got {events:?}"
     );
-    let parsed_pmt_events = drain_program_map_events(&mut demux);
     assert!(
-        parsed_pmt_events.is_empty(),
-        "PMT section must NOT parse — partial reassembly was dropped on CC jump"
+        !events
+            .iter()
+            .any(|e| matches!(e, DemuxEvent::ProgramMap(_))),
+        "PMT section must NOT parse — partial reassembly was dropped on CC jump, got {events:?}"
     );
 }
 

@@ -1,5 +1,6 @@
 //! Integration tests for sender-side audio carriage in `mpegts::mux`.
 
+use crate::common::mux_demux::es_entries;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     AudioCodec, KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -105,25 +106,14 @@ fn each_audio_codec_has_correct_pmt_stream_type() {
 
         let mut buf = vec![0u8; 188 * 16];
         let n = muxer.pull(&mut buf);
-        // Find PMT packet (PID 0x1000) and walk the ES loop to find PID 0x300.
         let pmt = buf[..n]
             .chunks_exact(188)
             .find(|p| (((p[1] as u16 & 0x1F) << 8) | p[2] as u16) == 0x1000)
-            .unwrap();
-        // Skip TS header (4) + pointer (1) + table_id (1) + section_length (2)
-        // + program_number (2) + version (1) + section_num (2)
-        // + PCR_PID (2) + program_info_length (2) = 17 bytes to ES loop start.
-        let mut off = 17;
-        // Look for stream_type byte preceding PID 0x300 (5-byte ES entries).
-        while off < pmt.len() - 5 {
-            let st = pmt[off];
-            let pid = ((pmt[off + 1] as u16 & 0x1F) << 8) | pmt[off + 2] as u16;
-            if pid == 0x300 {
-                assert_eq!(st, expected_st, "codec {codec:?} stream_type mismatch");
-                break;
-            }
-            let info_len = (((pmt[off + 3] as usize) & 0x0F) << 8) | pmt[off + 4] as usize;
-            off += 5 + info_len;
-        }
+            .expect("a PMT packet on PID 0x1000");
+        let st = es_entries(pmt)
+            .find(|(pid, _)| *pid == 0x300)
+            .expect("PID 0x300 in the PMT")
+            .1;
+        assert_eq!(st, expected_st, "codec {codec:?} stream_type mismatch");
     }
 }

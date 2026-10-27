@@ -55,13 +55,6 @@ fn truncated_obu_body_returns_typed_error() {
     );
 }
 
-/// 2-byte input — enough for profile bits but missing everything after.
-#[test]
-fn two_byte_sequence_header_returns_typed_error() {
-    let result = parse_sequence_header(&[0x00, 0x00]);
-    assert!(result.is_err());
-}
-
 /// All-0xFF bytes — malformed but should not panic; parser terminates
 /// with an error when it walks off the end of the available bits.
 #[test]
@@ -73,18 +66,15 @@ fn all_ones_sequence_header_returns_err_not_panic() {
     let _ = result;
 }
 
-/// Verify `TruncatedRbsp` is the actual variant returned for a short input.
+/// 2-byte input — enough for profile bits but missing everything after —
+/// returns the `TruncatedRbsp` variant, not just some error.
 #[test]
 fn truncated_sequence_header_returns_truncated_rbsp() {
     let result = parse_sequence_header(&[0u8; 2]);
-    match result {
-        Err(CodecParseError::TruncatedRbsp { .. }) => {} // correct
-        Err(other) => {
-            // Any typed error is acceptable — just not a panic.
-            let _ = other;
-        }
-        Ok(_) => panic!("expected Err for 2-byte SH input"),
-    }
+    assert!(
+        matches!(result, Err(CodecParseError::TruncatedRbsp { .. })),
+        "expected TruncatedRbsp for a 2-byte SH input, got {result:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
