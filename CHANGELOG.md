@@ -69,7 +69,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `accept_timeout` no longer waits past its timeout when libsrt retires a queued connection between readiness and the accept, and its epoll wait no longer overflows libsrt's millisecond timeout multiply.
 - A UDP buffer or input-rate value that wraps negative in libsrt's signed field is refused.
 - `Passphrase::new` accepts 10 to 80 bytes of UTF-8 (libsrt's limit) and `StreamId::new` accepts UTF-8 up to 512 bytes; both rejected valid values before.
-- IPv6 hosts written with an RFC 6874 `%25` zone delimiter decode to the `%` form.
+- IPv6 hosts written with an RFC 6874 `%25` zone delimiter decode to the `%` form and resolve, a named zone included.
 - libsrt's empty accept-probe log line is logged at debug, and a panicking log subscriber no longer aborts the process from inside libsrt's log callback.
 
 ### Fixed — tst-tcp

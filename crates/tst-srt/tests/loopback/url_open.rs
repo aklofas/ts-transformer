@@ -115,6 +115,34 @@ fn connect_ipv6_literal_round_trips() {
     t.close();
 }
 
+/// A named RFC 6874 zone (`%25lo`) gets past name resolution: the dial fails
+/// at the connect (nothing answers on `fe80::1`), never at the lookup. std
+/// parses only a numeric scope id, so a re-bracketed `[fe80::1%lo]:PORT`
+/// reached `getaddrinfo` with its brackets and failed to resolve.
+#[cfg(unix)]
+#[test]
+fn named_ipv6_zone_resolves_before_the_dial() {
+    let loopback = if cfg!(target_os = "linux") {
+        "lo"
+    } else {
+        "lo0"
+    };
+    let timeout_ms = tst_test_helpers::timing::scaled(Duration::from_millis(500)).as_millis();
+    // No socket is bound: nothing listens on fe80::1, so any port will do.
+    let url = SrtUrl::parse(&format!(
+        "srt://[fe80::1%25{loopback}]:9000?conntimeo={timeout_ms}"
+    ))
+    .expect("parse");
+    assert_eq!(url.host, format!("fe80::1%{loopback}"));
+    match url.connect_recv() {
+        Err(SrtError::Connect(tst_srt::SrtConnectError::InvalidAddress(e))) => {
+            panic!("the named zone did not resolve: {e}")
+        }
+        Err(_) => {}
+        Ok(_) => panic!("nothing listens on fe80::1, the dial cannot succeed"),
+    }
+}
+
 /// The whole point of taking the slot: a cancel fired from another thread
 /// while the accept is parked wakes it, and the wake is reported as a
 /// caller-initiated close (`ExplicitClose`), not a transport fault.
