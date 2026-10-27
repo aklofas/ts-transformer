@@ -354,6 +354,14 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-duplicate-test-helpers.sh
 
+      - name: Check package-local test support copies
+        # A package cannot include a file from a sibling package, so the
+        # shared test bodies and build helpers are byte copies; this fails
+        # when one drifts from its original. Gated to linux-x86_64: a
+        # platform-independent source scan.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/test-support-copies.sh
+
       - name: Check Publisher trait C mirror
         # Plan A5a — every tst_core::publisher::Publisher trait method has a
         # corresponding tst_publisher_* C entry point in the generated header.
