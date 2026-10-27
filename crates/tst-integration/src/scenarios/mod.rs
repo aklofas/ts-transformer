@@ -2241,7 +2241,8 @@ impl Scenario for PeerResetRecvKind {
 
     fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
         // One TS null packet (PID 0x1FFF): what the peer writes before the
-        // reset, so the receive sees data first and the reset second.
+        // reset. An abortive close may discard unread data, so the receive
+        // sees zero or one packet, then the reset.
         let pkt = ts_packet(0x1FFF, false, &[]);
 
         let artifact_rel = PathBuf::from(self.id()).join("input.bin");
