@@ -349,6 +349,16 @@ fn header<'a>(request: &'a str, name: &str) -> Option<&'a str> {
 /// <b64>` with `401` + `WWW-Authenticate: Basic realm="t"`. It sends no
 /// media, and returns after TEARDOWN or when the client hangs up.
 fn recording_peer(basic: Option<&'static str>) -> (u16, Arc<Mutex<Vec<String>>>, ThreadHandle<()>) {
+    recording_peer_with(basic, true)
+}
+
+/// [`recording_peer`]; with `answer_teardown = false` it records the
+/// TEARDOWN, never replies, and holds the socket open until the client
+/// hangs up.
+fn recording_peer_with(
+    basic: Option<&'static str>,
+    answer_teardown: bool,
+) -> (u16, Arc<Mutex<Vec<String>>>, ThreadHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -381,6 +391,9 @@ fn recording_peer(basic: Option<&'static str>) -> (u16, Arc<Mutex<Vec<String>>>,
             record.lock().unwrap().push(head.clone());
             let request_line = head.lines().next().unwrap_or_default();
             let method = request_line.split(' ').next().unwrap_or_default();
+            if method == "TEARDOWN" && !answer_teardown {
+                continue;
+            }
             let version = request_line.rsplit(' ').next().unwrap_or_default();
             let cseq = header(&head, "cseq").unwrap_or("1");
             let authorized = basic.is_none_or(|b64| {
@@ -595,6 +608,41 @@ fn teardown_of_a_healthy_session_returns_success() {
         tst_rtsp_server_stop(server, 0);
         tst_rtsp_server_free(server);
     }
+}
+
+/// A peer that never answers TEARDOWN cannot hold the call past the reply
+/// bound: the timer cancels the wait, the call reports `TST_E_CLOSED` and
+/// frees the handle. Without the timer it would park for the client's 10 s
+/// request timeout.
+#[test]
+fn teardown_against_a_silent_peer_is_bounded_by_the_timer() {
+    let (port, reqs, peer) = recording_peer_with(None, false);
+    let s = connect_no_keepalive(&format!("rtsp://127.0.0.1:{port}/live"));
+    assert!(!s.is_null(), "{}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_rtsp_session_play(s) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    let t0 = Instant::now();
+    let rc = unsafe { tst_rtsp_session_teardown_and_free(s) };
+    let elapsed = t0.elapsed();
+    assert_eq!(rc, TstError::Closed as i32, "{}", last_error_msg());
+    assert!(
+        elapsed >= Duration::from_millis(400),
+        "teardown returned in {elapsed:?}, before the 500 ms reply bound"
+    );
+    assert!(
+        elapsed < scaled(Duration::from_secs(3)),
+        "teardown against a silent peer took {elapsed:?}"
+    );
+    peer.join().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert!(
+        reqs.iter().any(|r| r.starts_with("TEARDOWN ")),
+        "the peer saw no TEARDOWN: {reqs:?}"
+    );
 }
 
 /// A server that stopped without answering cannot hold the teardown: the call
