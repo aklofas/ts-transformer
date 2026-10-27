@@ -254,6 +254,20 @@ def test_recv_transport_builder_rejects_non_bind_url():
     assert exc_info.value.kind in (RistErrorKind.URL, RistErrorKind.INVALID_CONFIG)
 
 
+def test_pkt_size_above_9968_is_invalid_config():
+    """9968 is the largest payload librist carries in one datagram."""
+    with pytest.raises(RistError) as exc_info:
+        rist.Transport.builder().url("rist://127.0.0.1:19020").pkt_size(9969).build()
+    assert exc_info.value.kind == RistErrorKind.INVALID_CONFIG
+
+
+def test_zero_buffer_is_invalid_config():
+    """librist divides by the recovery buffer, so a zero buffer is refused."""
+    with pytest.raises(RistError) as exc_info:
+        rist.Transport.builder().url("rist://127.0.0.1:19020").buffer_ms(0).build()
+    assert exc_info.value.kind == RistErrorKind.INVALID_CONFIG
+
+
 # ---------------------------------------------------------------------------
 # AES-256 encryption probe (mbedtls ships in the default build)
 # ---------------------------------------------------------------------------
