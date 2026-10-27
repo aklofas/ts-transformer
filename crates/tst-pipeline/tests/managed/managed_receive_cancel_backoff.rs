@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tst_core::transport::{RecvTransport, TransportError};
 use tst_pipeline::{BackoffStrategy, ManagedRecvTransport, ReconnectPolicy};
+use tst_test_helpers::timing::scaled;
 
 #[test]
 fn cancel_interrupts_the_backoff_wait() {
@@ -23,22 +24,35 @@ fn cancel_interrupts_the_backoff_wait() {
         });
 
     // A 60 s constant backoff: the first reconnect attempt cannot begin
-    // before 60 s. The cancel lands at 150 ms, and the 30 s bound below is
-    // half the wait it must cut short, so it needs no scaling.
+    // before 60 s. The cancel lands once the inner receive has failed, and
+    // the 30 s bound below is half the wait it must cut short, so it needs
+    // no scaling.
     let policy = ReconnectPolicy {
         max_attempts: Some(3),
         backoff: BackoffStrategy::Constant(Duration::from_secs(60)),
         ..Default::default()
     };
+    // The inner receive counts its calls: the canceller waits until the
+    // managed transport has called it (and so is past it, into the
+    // backoff) instead of guessing with a sleep.
+    let recvs = Arc::new(AtomicU32::new(0));
     let mut managed = ManagedRecvTransport::new(
-        ScriptedRecv::failing(broken("dead on arrival")),
+        ScriptedRecv::failing(broken("dead on arrival")).with_counter(Arc::clone(&recvs)),
         factory,
         policy,
     );
     let cancel = managed.cancel_handle().expect("managed cancel handle");
 
     let canceller = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(150));
+        let deadline = Instant::now() + scaled(Duration::from_secs(10));
+        while recvs.load(Ordering::SeqCst) < 1 {
+            if Instant::now() >= deadline {
+                // Release the receive first, then report.
+                cancel.cancel();
+                panic!("the managed transport never called its inner receive");
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
         cancel.cancel();
     });
 

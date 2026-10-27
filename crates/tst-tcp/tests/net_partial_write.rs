@@ -149,11 +149,11 @@ fn partial_write_stall_loopback_stream_stays_contiguous() {
 }
 
 /// The remainder loop is bounded by cancel: against a peer that NEVER reads,
-/// a `cancel()` from another thread ends the parked `send_bytes` with
-/// `Closed` within a couple of poll ticks and leaves the transport dead. If
-/// a partial write is torn down instead, the send returns
-/// `Broken { msg: "partial write …" }` long before the cancel lands, so the
-/// `Closed` match fails.
+/// a cancel from another thread ends the call with `ExplicitClose` within a
+/// couple of poll ticks and leaves the transport dead. If a partial write is
+/// torn down instead, the send returns `Broken { msg: "partial write …" }`
+/// long before the cancel lands, so the `ExplicitClose` match fails. The
+/// test does not prove a send was parked when the cancel landed.
 ///
 /// Why the sender loops instead of priming a fixed amount: loopback's TCP receive
 /// window is negotiated at accept time, *before* the peer's `SO_RCVBUF`

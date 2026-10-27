@@ -4,14 +4,11 @@
 #![allow(dead_code)]
 
 use std::net::{SocketAddr, TcpListener};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
-
-/// Small wall-clock pause to give a listener thread time to enter accept().
-pub fn settle() {
-    std::thread::sleep(Duration::from_millis(100));
-}
+use tst_core::cancel::CancelSlot;
+use tst_test_helpers::timing::scaled;
 
 /// Probe whether 127.0.0.1 is bindable. Tests gate on this so
 /// sandbox/restricted CI environments don't fail dozens of tests
@@ -321,6 +318,172 @@ impl<R> Drop for AcceptHandle<R> {
         }
         if handle.is_finished() {
             let _ = handle.join();
+        }
+    }
+}
+
+// ------------------------------------------------------------------------
+// Listener-mode URL fixtures.
+// ------------------------------------------------------------------------
+
+/// Reserve an ephemeral UDP port and release it again. This exists only
+/// because a listener-mode URL (and `accept_one_cancellable`, which owns its
+/// listener and never exposes a `local_addr`) must name its port before
+/// `accept_one` binds, so a connecting peer can know it in advance. Every
+/// other test binds port 0 and reads the address back; the bind-then-release
+/// race is accepted only here.
+pub fn reserve_port() -> u16 {
+    let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve an ephemeral port");
+    let port = probe.local_addr().expect("local_addr").port();
+    drop(probe);
+    port
+}
+
+/// Spawn the peer a happy-path listener-mode accept needs: retry `connect`
+/// until the listener under test has bound (its first attempt can run
+/// before the bind), then hold the connected socket open until the caller
+/// sends on the returned channel — closing it mid-flight lets libsrt's GC
+/// reap the listener-side accepted socket before `srt_accept` resolves it
+/// (the libsrt accept-queue prune).
+///
+/// `slot` is the accept's cancel slot, and giving up fires it BEFORE the
+/// panic: the accept runs on the test's own thread with nothing else able
+/// to reach it, so a connector that dies while the accept is parked would
+/// leave the test in `srt_accept` forever — a hang instead of a failure,
+/// and a thread left parked there stalls process exit on top (the
+/// `atexit(srt_cleanup)` class).
+pub fn spawn_connector(
+    port: u16,
+    slot: Arc<CancelSlot>,
+) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let handle = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let attempt = tst_srt::SrtSocketBuilder::new()
+                .connect_timeout(Duration::from_millis(500))
+                .connect(format!("127.0.0.1:{port}"));
+            match attempt {
+                Ok(socket) => {
+                    let _ = release_rx.recv();
+                    drop(socket);
+                    return;
+                }
+                Err(e) => {
+                    if Instant::now() >= deadline {
+                        // Release the parked accept first, then report.
+                        slot.cancel();
+                        panic!("connect never succeeded: {e:?}");
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    });
+    (release_tx, handle)
+}
+
+// ------------------------------------------------------------------------
+// ParkLatch: proof that a call is parked inside tst-srt.
+// ------------------------------------------------------------------------
+
+/// How long the park has to hold before [`ParkLatch::assert_parked`]
+/// believes it.
+pub fn park_look() -> Duration {
+    scaled(Duration::from_millis(200))
+}
+
+/// How long [`ParkLatch::assert_parked`] waits for the park to settle.
+pub fn park_deadline() -> Duration {
+    scaled(Duration::from_secs(8))
+}
+
+/// Proof that a worker is parked inside a `tst-srt` call.
+///
+/// A test of a cancel that wakes a parked call proves nothing if the call
+/// was never parked: a call that failed or finished at once passes the
+/// same assertions with the cancel removed. `entered` / `returned` bracket
+/// the call, but on their own they prove little: a worker descheduled
+/// right after it set `entered` looks the same as one inside libsrt. The
+/// observation is the library's own count of operations in flight —
+/// non-zero means a thread has entered a `tst-srt` operation and has not
+/// returned from it. The park is proven when, for the whole of
+/// [`park_look`], that count is non-zero, the call has not returned, and
+/// `progress` has not moved (a worker that calls in a loop [`bump`]s it
+/// after every call that completed).
+///
+/// The count is process-wide, so the proof holds under nextest's
+/// process-per-test model, not beside unrelated tests in one process.
+///
+/// [`bump`]: Self::bump
+#[derive(Clone, Default)]
+pub struct ParkLatch {
+    entered: Arc<AtomicBool>,
+    returned: Arc<AtomicBool>,
+    progress: Arc<AtomicU64>,
+    /// The parked closure's type name: it names the test that parked it,
+    /// for the failure messages.
+    call: Arc<OnceLock<&'static str>>,
+}
+
+impl ParkLatch {
+    /// Run `call` on its own thread, bracketed by the latch. The handle
+    /// yields the call's result; a caller that only needs the park (the
+    /// process exits under it) drops the handle.
+    pub fn park<F, R>(&self, call: F) -> std::thread::JoinHandle<R>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let _ = self.call.set(std::any::type_name::<F>());
+        let latch = self.clone();
+        std::thread::spawn(move || {
+            latch.entered.store(true, Ordering::SeqCst);
+            let result = call();
+            latch.returned.store(true, Ordering::SeqCst);
+            result
+        })
+    }
+
+    /// Calls the worker completed so far.
+    pub fn progress(&self) -> u64 {
+        self.progress.load(Ordering::SeqCst)
+    }
+
+    /// Record one completed call: a worker that calls in a loop bumps after
+    /// every call, so a loop that is still making progress is not a park.
+    pub fn bump(&self) {
+        self.progress.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Wait for the thread to reach the call, then require the park to
+    /// hold for [`park_look`]. The look starts over whenever the worker is
+    /// seen outside an operation or making progress, up to
+    /// [`park_deadline`]. Panics, naming the call, if the call returns or
+    /// the park never settles.
+    pub fn assert_parked(&self) {
+        let call = self.call.get().copied().unwrap_or("<no call parked>");
+        wait_for_ready(&self.entered);
+        let (look, deadline_in) = (park_look(), park_deadline());
+        let deadline = Instant::now() + deadline_in;
+        let mut seen = self.progress();
+        let mut held_since = Instant::now();
+        while held_since.elapsed() < look {
+            assert!(
+                !self.returned.load(Ordering::SeqCst),
+                "{call}: the blocking call returned; nothing is parked"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "{call}: no thread stayed inside a tst-srt operation for \
+                 {look:?} within {deadline_in:?}"
+            );
+            let now = self.progress();
+            if tst_srt::operations_in_flight() == 0 || now != seen {
+                seen = now;
+                held_since = Instant::now();
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
     }
 }

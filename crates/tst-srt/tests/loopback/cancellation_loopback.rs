@@ -9,7 +9,9 @@
 //! 3. NOT calling recv on the listener side — bytes accumulate in the
 //!    receive buffer and propagate back-pressure to the sender.
 //! 4. Pumping payloads from the sender thread until libsrt's send call
-//!    blocks (typically within < 100 packets).
+//!    blocks (typically within < 100 packets), and PROVING the park (the
+//!    shared `ParkLatch`) before the cancel — a send loop that never parked
+//!    would pass the same assertions with the cancel removed.
 //! 5. Calling `s.close()` from the main thread; the parked thread must
 //!    return within a generous timeout.
 
@@ -66,10 +68,13 @@ fn close_unblocks_libsrt_parked_send() {
     let s = Arc::new(MuxSender::new(transport, cfg).unwrap());
     let s_send = s.clone();
 
-    // MuxSender thread: pump 64-byte NAL payloads until the call returns
-    // (with Ok, or with our ExplicitClose-via-cancel error). 1000 NALs is
-    // ~64 KB, far more than the 8-packet SNDBUF can absorb.
-    let send_thread = std::thread::spawn(move || -> Result<u32, MuxSenderError> {
+    // MuxSender thread: pump 64-byte NAL payloads until a call parks. 1000
+    // NALs is ~64 KB, far more than the 8-packet SNDBUF can absorb. Every
+    // completed call bumps the latch, so a loop still making progress is
+    // never mistaken for a park.
+    let latch = crate::common::ParkLatch::default();
+    let worker = latch.clone();
+    let send_thread = latch.park(move || -> Result<u32, MuxSenderError> {
         // 4-byte Annex B start code (0x00000001) + 60 bytes payload.
         // The muxer rejects NALs without a start code as InvalidNal.
         let mut nal = vec![0u8; 64];
@@ -77,13 +82,14 @@ fn close_unblocks_libsrt_parked_send() {
         let mut count = 0u32;
         for pts in 0..1000 {
             s_send.send_video(&nal, Pts90khz::new(pts * 90), false)?;
+            worker.bump();
             count += 1;
         }
         Ok(count)
     });
 
-    // Give the sender ~500ms to pump and park.
-    std::thread::sleep(Duration::from_millis(500));
+    // The cancel below must land on a send that is parked inside libsrt.
+    latch.assert_parked();
 
     // Cancel via close from main thread. Must be near-instant — no
     // mutex contention with the parked thread.
@@ -107,13 +113,13 @@ fn close_unblocks_libsrt_parked_send() {
         "send thread didn't unpark within 2s of cancel ({join_elapsed:?})"
     );
     match result {
-        // Three legal outcomes: the parked send woke on the cancel
-        // (`ExplicitClose`, the usual one), the sender was between calls
-        // when `close()` won the send lock and closed the transport
-        // (`Closed`), or it pumped every payload before close (unlikely
-        // with SNDBUF=8). All three prove cancel works; we fail on stuck —
-        // and on `Broken`, which this path never reports.
-        Ok(_) => {}
+        // Two legal outcomes: the parked send woke on the cancel
+        // (`ExplicitClose`, the usual one), or the sender was between
+        // calls when `close()` won the send lock and closed the transport
+        // (`Closed`). Both prove cancel works; we fail on stuck, on a loop
+        // that finished (it was never parked), and on `Broken`, which this
+        // path never reports.
+        Ok(_) => panic!("the send loop finished before the cancel; nothing was parked"),
         Err(ref err)
             if matches!(
                 err.source,

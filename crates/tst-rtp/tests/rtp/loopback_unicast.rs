@@ -75,6 +75,9 @@ fn unicast_loopback_round_trip() {
     }
 }
 
+/// A cancel from another thread ends a `recv_bytes` with `ExplicitClose`.
+/// The test does not prove the recv was parked when the cancel landed; a
+/// cancel before the recv ends it the same way.
 #[test]
 fn cancel_wakes_blocked_recv() {
     let base = free_rtp_port_base();
@@ -491,8 +494,10 @@ fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
     assert_eq!(rx_t.recv_bytes(&mut buf).expect("recv"), 188);
     assert_eq!(&buf[..188], &synthetic_ts_packet(0x01)[..]);
 
-    // The join is watched: a recv the cancel failed to end fails the test
-    // within 5 s instead of hanging the binary.
+    // A cancel from another thread ends the call with `ExplicitClose`
+    // (parked or not yet entered — both end the same way). The join is
+    // watched: a recv the cancel failed to end fails the test within 5 s
+    // instead of hanging the binary.
     let cancel = rx.cancel.clone();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
@@ -502,7 +507,7 @@ fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
     cancel.cancel();
     let r = done_rx
         .recv_timeout(Duration::from_secs(5))
-        .expect("the parked recv ended within 5 s of the cancel");
+        .expect("the recv ended within 5 s of the cancel");
     assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
 
     // A bad URL is the RtpUrl kind.
