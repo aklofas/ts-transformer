@@ -20,7 +20,7 @@ use crate::socket::SrtSocket;
 use crate::transport::SrtTransport;
 use std::time::Duration;
 use tst_core::cancel::CancelSlot;
-use tst_core::url::common::{UrlError as CoreUrlError, parse_url};
+use tst_core::url::common::{UrlError as CoreUrlError, decode_ipv6_zone, parse_url};
 use tst_core::url::query::{KeyDoc, QueryKey, lookup};
 
 /// `?latency=N` is parsed as N milliseconds (libsrt-URL canonical), but
@@ -168,8 +168,9 @@ impl SrtUrl {
     ///
     /// Strict ASCII canonical forms (decimal-only integers, `0`/`1` for
     /// bools, lowercase enums); the common parser URL-decodes percent
-    /// sequences (`%XX` only — `+` is NOT decoded as space). Last-occurrence
-    /// wins on duplicate keys.
+    /// sequences (`%XX` only — `+` is NOT decoded as space). Every occurrence
+    /// of a repeated key is validated and the last valid one wins, so an
+    /// invalid occurrence anywhere is an error.
     ///
     /// # Example
     ///
@@ -201,13 +202,15 @@ impl SrtUrl {
         }
 
         // The common parser strips IPv6 brackets, so host is always the
-        // raw address string (e.g. "::1" not "[::1]").
-        let host = parsed.host.to_string();
+        // raw address string (e.g. "::1" not "[::1]"); an RFC 6874 "%25" zone
+        // delimiter is decoded to the "%" libsrt's resolver expects.
+        let host = decode_ipv6_zone(parsed.host).into_owned();
         let port = parsed.port.ok_or(SrtUrlError::MissingPort)?;
 
         let mut config = SrtSocketConfig::default();
         let mut mode = Mode::Caller;
-        // Last-occurrence wins (Q4-A): we just overwrite as we go.
+        // Every occurrence is applied (and validated) in order, so the last
+        // valid one wins and an invalid one anywhere is an error.
         for (key, value) in &parsed.query {
             // mode is consumed at the SrtUrl level (not in the config) since
             // it decides whether the caller dials or accepts.

@@ -645,14 +645,7 @@ pub(crate) fn read_bool(
     handle: srt_sys::SRTSOCKET,
     opt: srt_sys::SRT_SOCKOPT,
 ) -> Result<bool, OptionError> {
-    let mut value: c_int = 0;
-    let mut len = std::mem::size_of::<c_int>() as c_int;
-    let rc =
-        unsafe { srt_sys::srt_getsockflag(handle, opt, (&raw mut value).cast(), &raw mut len) };
-    if rc < 0 {
-        return Err(last_error().into());
-    }
-    Ok(value != 0)
+    get_int(handle, opt).map(|v| v != 0)
 }
 
 pub(crate) fn set_string(

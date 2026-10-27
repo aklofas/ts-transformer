@@ -231,6 +231,25 @@ fn parse_query(q: &str) -> Result<Vec<QueryPair<'_>>, UrlError> {
     Ok(out)
 }
 
+/// Decode the RFC 6874 §2 zone delimiter of a bracket-stripped IPv6 literal.
+///
+/// In a URI the zone separator `%` is written `%25`, so `[fe80::1%25eth0]`
+/// names the interface-scoped address `fe80::1%eth0`. Only a host that
+/// contains `:` (an IPv6 literal) is touched, and only its first `%25`;
+/// every other input is returned borrowed and unchanged.
+pub fn decode_ipv6_zone(host: &str) -> Cow<'_, str> {
+    if host.contains(':')
+        && let Some(i) = host.find("%25")
+    {
+        let mut out = String::with_capacity(host.len());
+        out.push_str(&host[..i]);
+        out.push('%');
+        out.push_str(&host[i + 3..]);
+        return Cow::Owned(out);
+    }
+    Cow::Borrowed(host)
+}
+
 /// Percent-decode a string. Returns `Cow::Borrowed` when no `%` appears
 /// (the fast path); otherwise allocates. Invalid `%XY` sequences return
 /// `Err(UrlError::BadPercentEncoding)`.
@@ -465,6 +484,15 @@ mod tests {
         assert_eq!(u.password, None);
         assert_eq!(u.path, "");
         assert!(u.query.is_empty());
+    }
+
+    /// RFC 6874 §2: in a URI the zone delimiter is written "%25".
+    #[test]
+    fn ipv6_zone_id_is_decoded() {
+        assert_eq!(decode_ipv6_zone("fe80::1%25eth0"), "fe80::1%eth0");
+        assert!(matches!(decode_ipv6_zone("::1"), Cow::Borrowed("::1")));
+        assert_eq!(decode_ipv6_zone("fe80::1%eth0"), "fe80::1%eth0");
+        assert_eq!(decode_ipv6_zone("camera.local"), "camera.local");
     }
 
     #[test]
