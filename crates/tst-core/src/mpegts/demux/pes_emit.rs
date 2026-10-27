@@ -592,7 +592,12 @@ impl super::demuxer::Demuxer {
                             pts,
                             dts,
                             payload: SamplePayload::Unknown {
-                                stream_type: StreamTypeCode::from_byte(0x15),
+                                stream_type: StreamTypeCode::from_byte(
+                                    self.pid_state
+                                        .get(&pes.pid)
+                                        .and_then(|s| s.stream_type)
+                                        .unwrap_or(0x15),
+                                ),
                                 raw: SharedBytes::from_slice(&raw),
                             },
                         },
@@ -1522,6 +1527,35 @@ mod tests {
         d.flush();
         let ev = drain_all_events(&mut d);
         assert_eq!(missing_pts_count(&ev, 0x102), 1, "{ev:?}");
+    }
+
+    /// A payload that is neither an AU cell nor a SMPTE UL on a 0x06 KLV PID
+    /// is passed through tagged with the PMT's own stream_type byte.
+    #[test]
+    fn other_shaped_payload_on_a_0x06_klv_pid_reports_stream_type_0x06() {
+        let klva_registration: &[u8] = &[0x05, 0x04, b'K', b'L', b'V', b'A'];
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x101,
+            &[(0x06, 0x101, klva_registration)],
+        );
+        let es = [0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF];
+        let pkts = pes_to_packets(
+            0x101,
+            0,
+            &pes_bytes(0xBD, Some(90_000), None, true, &es, true),
+        );
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        let tag = ev.iter().find_map(|e| match e {
+            DemuxEvent::Sample {
+                payload: SamplePayload::Unknown { stream_type, .. },
+                ..
+            } => Some(*stream_type),
+            _ => None,
+        });
+        assert_eq!(tag, Some(StreamTypeCode::from_byte(0x06)), "{ev:?}");
     }
 
     fn sync_klv_demuxer() -> Demuxer {

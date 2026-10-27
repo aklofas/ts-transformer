@@ -738,21 +738,22 @@ impl super::demuxer::Demuxer {
         program_number: u16,
         streams: &[StreamInfo],
     ) -> ProgramMap {
-        let mut klv_pids: Vec<(u16, Option<u16>)> = Vec::new();
-        let mut video_pids: Vec<u16> = Vec::new();
-        for info in streams {
-            if let StreamKind::Video(_) = info.kind {
-                video_pids.push(info.pid);
-            }
-            if matches!(info.kind, StreamKind::KlvSync { .. } | StreamKind::KlvAsync) {
-                let declared_link =
-                    super::pmt_classify::extract_metadata_link_for_pid(pmt, info.pid);
-                klv_pids.push((info.pid, declared_link));
-            }
-        }
+        let video_pids: Vec<u16> = streams
+            .iter()
+            .filter(|info| matches!(info.kind, StreamKind::Video(_)))
+            .map(|info| info.pid)
+            .collect();
         // Build klv_links table.
         let mut klv_links = Vec::new();
-        for (klv_pid, declared) in klv_pids {
+        for info in streams {
+            if !matches!(info.kind, StreamKind::KlvSync { .. } | StreamKind::KlvAsync) {
+                continue;
+            }
+            let klv_pid = info.pid;
+            // A declared link counts only when it names a video PID of this
+            // PMT; otherwise inference decides.
+            let declared = super::pmt_classify::extract_metadata_link_for_pid(pmt, klv_pid)
+                .filter(|pid| video_pids.contains(pid));
             // 1. Caller override wins.
             if let Some(&(_, video_pid)) = self
                 .options
@@ -785,13 +786,17 @@ impl super::demuxer::Demuxer {
                 });
             }
             // 4. Otherwise: no entry. Surface MissingMetadataDescriptor as
-            // non-conformant.
-            else {
+            // non-conformant when the PID carries no metadata_descriptor at
+            // all; one that is present but names no video PID is not missing.
+            else if !pmt
+                .streams
+                .iter()
+                .find(|s| s.elementary_pid == klv_pid)
+                .is_some_and(|s| s.descriptors.iter().any(|d| d.tag == 0x26))
+            {
                 let stream = StreamId {
                     pid: klv_pid,
-                    kind: StreamKind::KlvSync {
-                        declared_link: None,
-                    },
+                    kind: info.kind,
                     program_number,
                 };
                 self.queue_nonconformant(stream, NonConformantIssue::MissingMetadataDescriptor);
@@ -2875,6 +2880,68 @@ mod tests {
             ev.iter()
                 .any(|e| matches!(e, DemuxEvent::ProgramMap(m) if m.program_number == 2)),
             "{ev:?}"
+        );
+    }
+
+    fn program_map_and_issues(
+        streams: &[(u8, u16, &[u8])],
+    ) -> (super::super::event::ProgramMap, Vec<NonConformantIssue>) {
+        let mut d = crate::mpegts::demux::test_support::demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x100,
+            streams,
+        );
+        let ev = drain_all_events(&mut d);
+        let map = ev
+            .iter()
+            .find_map(|e| match e {
+                DemuxEvent::ProgramMap(m) => Some(m.clone()),
+                _ => None,
+            })
+            .expect("ProgramMap");
+        (map, issues(&ev))
+    }
+
+    /// A metadata_descriptor whose private data names an audio PID is not a
+    /// video link; the lone video PID is inferred instead.
+    #[test]
+    fn declared_link_to_a_non_video_pid_falls_back_to_inference() {
+        use super::super::event::{KlvLink, LinkSource};
+        let mut klv = crate::mpegts::descriptors::metadata_klva(0);
+        klv.extend_from_slice(&[0x03, 0x00]);
+        klv[1] += 2;
+        let (map, _) =
+            program_map_and_issues(&[(0x1B, 0x100, &[]), (0x0F, 0x300, &[]), (0x15, 0x101, &klv)]);
+        assert_eq!(
+            map.klv_links,
+            [KlvLink {
+                klv_pid: 0x101,
+                video_pid: 0x100,
+                source: LinkSource::Inferred,
+            }]
+        );
+    }
+
+    #[test]
+    fn two_video_program_with_a_metadata_descriptor_raises_no_missing_descriptor() {
+        let klv = crate::mpegts::descriptors::metadata_klva(0);
+        let (map, found) =
+            program_map_and_issues(&[(0x1B, 0x100, &[]), (0x1B, 0x200, &[]), (0x15, 0x101, &klv)]);
+        assert!(map.klv_links.is_empty(), "{map:?}");
+        assert!(
+            !found.contains(&NonConformantIssue::MissingMetadataDescriptor),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn two_video_program_without_a_metadata_descriptor_still_raises() {
+        let (map, found) =
+            program_map_and_issues(&[(0x1B, 0x100, &[]), (0x1B, 0x200, &[]), (0x15, 0x101, &[])]);
+        assert!(map.klv_links.is_empty(), "{map:?}");
+        assert!(
+            found.contains(&NonConformantIssue::MissingMetadataDescriptor),
+            "{found:?}"
         );
     }
 }
