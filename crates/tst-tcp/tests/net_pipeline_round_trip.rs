@@ -1,7 +1,7 @@
 //! Pipeline-shell integration over TCP: `MuxSender<TcpTransport>` → TCP →
 //! `DemuxReceiver<TcpTransport>` recovers the `ProgramMap` (shared body in
 //! `tst-pipeline/tests/support/round_trip.rs`), plus a cancel test for a
-//! managed TCP receive parked against a silent peer.
+//! managed TCP receive against a silent peer.
 
 #[path = "../../tst-pipeline/tests/support/round_trip.rs"]
 mod round_trip;
@@ -28,8 +28,10 @@ fn mux_via_tcp_demux_round_trip_recovers_program_map() {
     );
 }
 
-/// A `ManagedRecvTransport<TcpTransport>` parked in `recv_bytes` against
-/// a real (silent) TCP peer must be cancellable from another thread.
+/// A `ManagedRecvTransport<TcpTransport>` in `recv_bytes` against a real
+/// (silent) TCP peer: a cancel from another thread ends the call with
+/// `ExplicitClose`. The test does not prove the read was parked when the
+/// cancel landed; a cancel before the read ends it the same way.
 ///
 /// Without `TcpTransport::cancel_handle` wired through the trait-level
 /// `Transport`/`RecvTransport` overrides, `ManagedRecvTransport` — which can

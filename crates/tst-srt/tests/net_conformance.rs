@@ -44,9 +44,8 @@ const RECV_TICK: Duration = Duration::from_millis(200);
 /// libsrt drops datagrams sent on a connection whose `accept()` has only just
 /// returned — the caller side is still finalising. A row that calls `feed()`
 /// and then receives (`empty_recv_is_noop`) would lose its probe and fail on
-/// a cold connection. The in-tree convention for this class is
-/// `common::settle()`, a 100 ms sleep; looping until a datagram actually
-/// lands is the same idea made deterministic — no wall-clock assertion, and a
+/// a cold connection. A fixed sleep would only make that unlikely; looping
+/// until a datagram actually lands makes it deterministic — no wall-clock assertion, and a
 /// connection that never carries fails loudly here instead of ten seconds
 /// later inside a row.
 ///

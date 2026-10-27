@@ -3,26 +3,14 @@
 //! listener-mode factory (C ABI, Python, JVM) routes through this helper, so
 //! the cancel contract is pinned here once. Requires libsrt loopback.
 
+use crate::common::{reserve_port, spawn_connector};
 use std::sync::Arc;
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
+use tst_srt::SrtListener;
 use tst_srt::config::SrtListenerConfig;
-use tst_srt::{SrtListener, SrtSocketBuilder};
 use tst_test_helpers::timing::scaled;
-
-/// Reserve an ephemeral UDP port and release it again. Unlike
-/// `127.0.0.1:0`, the resulting port is knowable by a connecting peer
-/// *before* the listener under test has bound it — which is what a caller
-/// of `accept_one_cancellable` needs, since the helper owns its listener
-/// and never exposes a `local_addr`.
-fn reserve_port() -> u16 {
-    let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve an ephemeral port");
-    let port = probe.local_addr().expect("local_addr").port();
-    drop(probe);
-    port
-}
 
 /// A slot cancelled before the call must skip the bind entirely: a cancelled
 /// caller gets no socket, and nothing is left listening on the port.
@@ -84,49 +72,6 @@ fn cancel_during_accept_returns_explicit_close_promptly() {
         elapsed < scaled(Duration::from_secs(2)),
         "cancel did not wake the parked accept promptly: {elapsed:?}"
     );
-}
-
-/// Spawn the peer every happy-path accept test needs: retry `connect`
-/// until the listener under test has bound (its first attempt can run
-/// before the bind), then hold the connected socket open until the caller
-/// sends on the returned channel — closing it mid-flight lets libsrt's GC
-/// reap the listener-side accepted socket before `srt_accept` resolves it
-/// (same hazard as `listener_accept_timeout.rs`).
-///
-/// `slot` is the accept's cancel slot, and giving up fires it BEFORE the
-/// assert: the accept runs on the caller's (main) thread with nothing else
-/// able to reach it, so a connector that dies while the accept is parked
-/// would leave main in `srt_accept` forever — a hang instead of a failure,
-/// and a leaked parked thread stalls process exit on top.
-fn spawn_connector(
-    port: u16,
-    slot: Arc<CancelSlot>,
-) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
-    let (release_tx, release_rx) = mpsc::channel::<()>();
-    let handle = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let attempt = SrtSocketBuilder::new()
-                .connect_timeout(Duration::from_millis(500))
-                .connect(format!("127.0.0.1:{port}"));
-            match attempt {
-                Ok(socket) => {
-                    let _ = release_rx.recv();
-                    drop(socket);
-                    return;
-                }
-                Err(e) => {
-                    if Instant::now() >= deadline {
-                        // Release the parked accept first, then report.
-                        slot.cancel();
-                        panic!("connect never succeeded: {e:?}");
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            }
-        }
-    });
-    (release_tx, handle)
 }
 
 /// The happy path still works: a peer that connects is handed back as a live

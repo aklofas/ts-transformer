@@ -14,10 +14,9 @@
 //! unset and the CHILD when it is set. The child parks a thread, proves the
 //! park, prints [`PARKED`] and calls `std::process::exit(0)`.
 
+use crate::common::ParkLatch;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tst_core::mpegts::demux::DemuxerConfig;
 use tst_pipeline::ReconnectPolicy;
@@ -35,72 +34,12 @@ const PARKED: &str = "PARKED";
 /// nextest's 20 s kill for the network group.
 const CHILD_DEADLINE: Duration = Duration::from_secs(12);
 
-/// How long the child waits for its worker to park.
-const PARK_DEADLINE: Duration = Duration::from_secs(8);
-
-/// How long the park has to hold before the child believes it.
-const PARK_LOOK: Duration = Duration::from_millis(200);
-
-/// Proof that a worker is parked inside a `tst-srt` call.
-///
-/// `entered` / `returned` bracket the call, but on their own they prove
-/// little: a worker descheduled right after it set `entered` looks the same
-/// as one inside libsrt. The observation is the library's own count of
-/// operations in flight — non-zero means a thread has entered a `tst-srt`
-/// operation and has not returned from it. The park is proven when, for
-/// the whole of [`PARK_LOOK`], that count is non-zero, the call has not
-/// returned, and `progress` has not moved (a worker that calls in a loop
-/// bumps it after every call that completed). Without that proof a test
-/// whose call failed at once would pass with the guard removed.
-#[derive(Clone, Default)]
-struct ParkLatch {
-    entered: Arc<AtomicBool>,
-    returned: Arc<AtomicBool>,
-    progress: Arc<AtomicU64>,
-}
-
-impl ParkLatch {
-    /// Run `call` on a detached thread, bracketed by the latch.
-    fn park<F, R>(&self, call: F)
-    where
-        F: FnOnce() -> R + Send + 'static,
-    {
-        let latch = self.clone();
-        std::thread::spawn(move || {
-            latch.entered.store(true, Ordering::SeqCst);
-            let _ = call();
-            latch.returned.store(true, Ordering::SeqCst);
-        });
-    }
-
-    /// Wait for the thread to reach the call, then require the park to
-    /// hold for [`PARK_LOOK`]. The look starts over whenever the worker is
-    /// seen outside an operation or making progress, up to
-    /// [`PARK_DEADLINE`].
-    fn assert_parked(&self) {
-        crate::common::wait_for_ready(&self.entered);
-        let deadline = Instant::now() + PARK_DEADLINE;
-        let mut seen = self.progress.load(Ordering::SeqCst);
-        let mut held_since = Instant::now();
-        while held_since.elapsed() < PARK_LOOK {
-            assert!(
-                !self.returned.load(Ordering::SeqCst),
-                "the blocking call returned; nothing is parked"
-            );
-            assert!(
-                Instant::now() < deadline,
-                "no thread stayed inside a tst-srt operation within {PARK_DEADLINE:?}"
-            );
-            let now = self.progress.load(Ordering::SeqCst);
-            if tst_srt::operations_in_flight() == 0 || now != seen {
-                seen = now;
-                held_since = Instant::now();
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        println!("{PARKED}");
-        std::io::stdout().flush().expect("flush stdout");
-    }
+/// Prove the park, then tell the parent: [`PARKED`] is printed only once
+/// [`ParkLatch::assert_parked`] has held.
+fn prove_parked(latch: &ParkLatch) {
+    latch.assert_parked();
+    println!("{PARKED}");
+    std::io::stdout().flush().expect("flush stdout");
 }
 
 /// PARENT half: re-execute this binary on `test_name` with [`CHILD_ENV`]
@@ -186,7 +125,7 @@ fn exit_is_clean_with_a_listener_parked_in_accept() {
         .expect("bind 127.0.0.1:0");
     let latch = ParkLatch::default();
     latch.park(move || listener.accept());
-    latch.assert_parked();
+    prove_parked(&latch);
     // Deliberately no close and no join: the leaked-parked-thread shape.
     std::process::exit(0);
 }
@@ -208,7 +147,7 @@ fn exit_is_clean_with_a_listener_parked_in_accept_timeout() {
         .expect("bind 127.0.0.1:0");
     let latch = ParkLatch::default();
     latch.park(move || listener.accept_timeout(Duration::from_secs(300)));
-    latch.assert_parked();
+    prove_parked(&latch);
     std::process::exit(0);
 }
 
@@ -235,7 +174,7 @@ fn exit_is_clean_with_a_thread_parked_in_the_url_opens_first_accept() {
         )
         .map(|_| ())
     });
-    latch.assert_parked();
+    prove_parked(&latch);
     std::process::exit(0);
 }
 
@@ -265,7 +204,7 @@ fn exit_is_clean_with_a_socket_parked_in_recv() {
         let mut buf = [0u8; 1500];
         socket.recv(&mut buf)
     });
-    latch.assert_parked();
+    prove_parked(&latch);
     std::process::exit(0);
 }
 
@@ -308,17 +247,17 @@ fn exit_is_clean_with_a_socket_parked_in_send() {
     let _accepted = accept.join().expect("join accept").expect("accept");
 
     let latch = ParkLatch::default();
-    let progress = latch.progress.clone();
+    let worker = latch.clone();
     latch.park(move || {
         let packet = [0x47u8; 1316];
         loop {
             if socket.send(&packet).is_err() {
                 return;
             }
-            progress.fetch_add(1, Ordering::SeqCst);
+            worker.bump();
         }
     });
-    latch.assert_parked();
+    prove_parked(&latch);
     std::process::exit(0);
 }
 
@@ -342,7 +281,7 @@ fn exit_is_clean_with_a_caller_parked_in_connect() {
             .connect_timeout(Duration::from_secs(300))
             .connect(format!("127.0.0.1:{port}"))
     });
-    latch.assert_parked();
+    prove_parked(&latch);
     drop(silent);
     std::process::exit(0);
 }

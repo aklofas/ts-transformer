@@ -80,7 +80,7 @@ fn mismatched_passphrase_rejects_connect() {
         .expect("bind");
     let port = listener.local_addr().unwrap().port();
 
-    crate::common::settle();
+    std::thread::sleep(Duration::from_millis(100));
 
     let result = SrtSocketBuilder::new()
         .passphrase(Passphrase::new("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB").unwrap())

@@ -96,8 +96,9 @@ enum Parked {
     NeverEnded,
 }
 
-/// The headline row for RIST: a receiver parked on librist's 100 ms poll,
-/// cancelled from another thread, ends with `ExplicitClose` at its next tick.
+/// The headline row for RIST: a receiver polling librist's 100 ms tick in a
+/// loop — a cancel from another thread ends the call with `ExplicitClose` at
+/// its next tick.
 /// Bound 2 s (20 ticks) on the test thread — a failure bound, not an
 /// elapsed-time assert (see the UDP twin for the reasoning); the worker's
 /// own 10 s deadline guarantees the binary exits even if the cancel is
@@ -206,8 +207,8 @@ fn recv_empty_buffer_loopback_is_noop() {
 
 /// The binding openers over RIST: both open (a sender needs no listening
 /// peer), report the RIST domain, carry one datagram end to end, and the
-/// receiver's `Opened::cancel` ends a recv parked on librist's 100 ms poll. Skips where librist cannot bind,
-/// like the sibling tests.
+/// receiver's `Opened::cancel` from another thread ends the call with
+/// `ExplicitClose`. Skips where librist cannot bind, like the sibling tests.
 #[test]
 fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
     use tst_pipeline::binding::Domain;
