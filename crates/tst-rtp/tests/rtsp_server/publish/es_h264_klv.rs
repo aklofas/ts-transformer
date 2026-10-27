@@ -134,6 +134,8 @@ fn klv_is_aligned_to_video_by_sender_reports() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app_t = mount.clone().into_recv_transport().unwrap();
+    // Quiet detector: ends the read loop once the already-sent data has drained.
+    // Deliberately not scaled (scaling it ran this test past the nextest limit under scale 5).
     app_t.set_recv_timeout(Some(Duration::from_secs(2)));
     let mut app = DemuxReceiver::new(app_t);
 
@@ -216,6 +218,7 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app_t = mount.clone().into_recv_transport().unwrap();
+    // Quiet detector, deliberately unscaled (same as above).
     app_t.set_recv_timeout(Some(Duration::from_secs(2)));
     let mut app = DemuxReceiver::new(app_t);
 
@@ -346,6 +349,7 @@ fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app_t = mount.clone().into_recv_transport().unwrap();
+    // Quiet detector, deliberately unscaled (same as above).
     app_t.set_recv_timeout(Some(Duration::from_secs(2)));
     let mut app = DemuxReceiver::new(app_t);
 

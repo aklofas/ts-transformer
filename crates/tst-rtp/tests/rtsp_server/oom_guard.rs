@@ -127,7 +127,7 @@ fn oversized_content_length_gets_413_response() {
         );
     }
 
-    // The fix must respond promptly — well within the 5s read timeout.
+    // The fix must respond promptly — well within the (scaled) read timeout.
     assert!(
         elapsed < scaled(Duration::from_secs(5)),
         "server took too long to close or respond: {elapsed:?}"
