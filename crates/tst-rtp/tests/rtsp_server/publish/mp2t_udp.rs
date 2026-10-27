@@ -25,6 +25,8 @@ fn mp2t_udp_publisher_reaches_app() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app = mount.clone().into_recv_transport().unwrap();
+    // Quiet detector for the expected silence, deliberately unscaled: scaling a
+    // silence window only slows the test (an es_h264 test ran past the nextest limit).
     app.set_recv_timeout(Some(Duration::from_millis(1500)));
 
     // The announced client port pair (never sent from).

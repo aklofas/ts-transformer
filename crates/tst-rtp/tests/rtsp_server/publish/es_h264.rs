@@ -92,6 +92,8 @@ fn ffmpeg_shaped_h264_publisher_reaches_app_and_reader() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app_t = mount.clone().into_recv_transport().unwrap();
+    // Quiet detector: ends the read loop once the already-sent data has drained.
+    // Deliberately not scaled (scaling it ran this test past the nextest limit under scale 5).
     app_t.set_recv_timeout(Some(Duration::from_secs(2)));
     let mut app = DemuxReceiver::new(app_t);
 
@@ -101,6 +103,7 @@ fn ffmpeg_shaped_h264_publisher_reaches_app_and_reader() {
     let sdp = reader.describe().unwrap();
     let sess = reader.setup_mp2t_auto(&sdp).unwrap();
     let mut reader_t = sess.into_recv_transport();
+    // Quiet detector, deliberately unscaled (same as above).
     reader_t.set_recv_timeout(Some(Duration::from_secs(2)));
     reader.play().unwrap();
     let mut reader_rx = DemuxReceiver::new(reader_t);
@@ -154,6 +157,7 @@ fn ffmpeg_shaped_h264_publisher_over_udp_reaches_app() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app_t = mount.clone().into_recv_transport().unwrap();
+    // Quiet detector, deliberately unscaled (same as above).
     app_t.set_recv_timeout(Some(Duration::from_secs(2)));
     let mut app = DemuxReceiver::new(app_t);
 
