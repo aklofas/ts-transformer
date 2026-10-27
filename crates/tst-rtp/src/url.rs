@@ -81,8 +81,9 @@ pub struct RtpUrl {
     pub ttl: Option<u8>,
     /// `?iface=eth0` or `?iface=192.168.1.50` — empty when absent.
     pub iface: Option<String>,
-    /// `?pkt_size=N` — bytes per UDP datagram (188-multiple). `None` when
-    /// the query key is absent; the send path resolves
+    /// `?pkt_size=N` — bytes per UDP datagram (188-multiple, at least 376:
+    /// the RTP header comes out of it). `None` when the query key is
+    /// absent; the send path resolves
     /// [`DEFAULT_PKT_SIZE`] at build time. Receive-side entry points
     /// reject `Some` with [`RtpUrlError::RecvPktSize`] — the knob is
     /// send-side only since the recv-ceiling change.

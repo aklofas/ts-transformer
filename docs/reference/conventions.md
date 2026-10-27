@@ -355,7 +355,7 @@ rejected by `srt`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `tos` | IP type of service | decimal, or hex with a `0x` prefix, 0 to 255 | `udp` |
 | `ttl` | Multicast hop limit | decimal 0 to 255 | `udp` |
 | `iface` | Multicast interface | interface name or IPv4 literal | `rtp` |
-| `pkt_size` | Bytes per datagram (send URLs only) | positive multiple of 188; default 1316 | `rtp` |
+| `pkt_size` | Bytes per datagram (send URLs only) | positive multiple of 188; default 1316; the 12-byte RTP header comes out of it, so the smallest usable value is 376 (188 parses, but its first send fails with `TooLarge`) | `rtp` |
 | `pt` | Payload type for elementary-stream ingest | 1..=127 except 33 | `rtp` |
 | `rcvbuf` | `SO_RCVBUF` (receive URLs only) | bytes, `K`/`M` suffixes | `rtp` |
 | `recv_timeout` | Receive deadline | milliseconds, nonzero | `rtp`, `rtsp(s)` |

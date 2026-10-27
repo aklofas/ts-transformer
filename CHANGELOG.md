@@ -12,6 +12,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-rtp
 
 - An `rtsps://` connect to a server that closes the connection during the TLS handshake now fails with `RtspError::Tls` instead of spinning a CPU forever; `connect_timeout` now bounds the TCP connect and the TLS handshake together (`RtspError::Io(TimedOut)` on expiry), and a server slower than `read_timeout` to answer the handshake no longer fails it. The same change is visible in Python `RtspError(TLS)` / `RtspError(IO)` and JVM `RtspException`.
+- An `rtp://…?pkt_size=188` sender now refuses its first send with `TransportError::TooLarge` instead of leaving the muxer output unsent without an error: `pkt_size` is the whole datagram, and the 12-byte RTP header leaves a 176-byte payload, less than one TS packet. The smallest usable value is 376.
 
 ### Fixed — tstrans-rist-sys, tst-rist
 
@@ -26,6 +27,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-jni
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
+
+### Fixed — tst-c, tst-jni, tst-py
+
+- An object dropped without `close()` (a C handle freed, a JVM or Python object collected) cancels its shell first, so a lost peer can no longer hold the drop in a reconnect loop.
 
 ### Fixed — tst-core
 
@@ -48,6 +53,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Aggregate PES overflow reports a discontinuity for every PID it drops.
 - DVB subtitle and teletext PES envelopes are checked and reported.
 
+### Fixed — tst-pipeline
+
+- `MuxPublisher` sends retained bytes before a cut and no longer offers bytes after `finish`'s closing cut; a forward gap no longer produces an `#EXTINF` above the target; a raw 33-bit PTS wrap no longer yields a zero-duration segment.
+- `ManagedStatsHandle::stats` no longer waits behind a Blocking-mode replay; `ManagedRecvTransport` returns `Ok(0)` for an empty buffer in every state; `Pairer::last_before_pts` pairs reordered frames; the nearest pairer releases frames buffered before a raw PTS wrap.
+
 ### Changed — tst-webrtc
 
 - WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
@@ -68,15 +78,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A `0x15` stream whose `metadata_descriptor` is not KLV is `Unknown(0x15)`, and `StreamSpec::Data` accepts it.
 - `DemuxerStats::per_stream` entries survive PID retirement until `reset_stats` and report the PMT `stream_type` byte. A PID re-declared under another codec family restarts its codec counters.
 
+### Changed — tst-pipeline
+
+- `Sender` and `MuxSender` split messages to the transport's `max_payload()` in whole TS packets and refuse a ceiling below 188 bytes with `TooLarge` (input not consumed); retained bytes are re-split after a ceiling shrink.
+- `Sender` RECOVER mode keeps the packets before a lost sync and the data after it; STRICT mode rejects a call atomically (no state change, `input_consumed = Some(false)` is now accurate); `flush` checks every packet's sync byte.
+
 ### Changed — tst-c
 
 - C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 invalid emulation prevention. No struct layout changes.
+
+### Changed — release tooling
+
+- The public-api baselines now ratchet the optional TLS surfaces: `tst-core` is rendered with `tls` and `tst-rtp` with `rtsp-server-tls`.
 
 ### Added — tst-core
 
 - `mpegts::demux::low_level::psi_section_syntax_issues`.
 - `mpegts::demux::low_level::Reassembler::{mark_damaged, drain_partial_outcomes, take_total_overflow_pids}`.
 - Six new kind variants: `PesHeaderMalformedKind::HeaderDataLengthTooShort`, `PsiSyntaxKind::{SectionNumberOutOfRange, Malformed}`, `NalHeaderKind::Truncated`, `Av1ObuHeaderKind::{Truncated, InvalidEmulationPrevention}`.
+- `Publisher::cut_segment_discontinuous` (default: `cut_segment_with_duration`); `MuxPublisher` calls it after an encoder reset or a forward gap.
 
 ### Added — tst-rtp
 
