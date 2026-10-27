@@ -580,6 +580,9 @@ impl Demuxer {
             );
             return Ok(());
         }
+        // The adaptation field is never scrambled (H.222.0 §2.4.3.2), so its
+        // PCR stays valid; check it before the scrambled payload is dropped.
+        self.check_pcr(&pkt);
         // ISO/IEC 13818-1 §2.4.3.2: a non-zero `transport_scrambling_control`
         // marks the payload as scrambled. The library does not descramble;
         // feeding scrambled bytes to PSI/PES reassembly would corrupt parse
@@ -612,10 +615,9 @@ impl Demuxer {
                 NonConformantIssue::AdaptationFieldMalformed { pid: pkt.pid, kind },
             );
         }
-        self.check_pcr(&pkt);
         let (cc_jumped, is_duplicate) = self.check_continuity(&pkt);
-        // H.222.0 §2.4.3.3: a spec-legal duplicate (same CC, no
-        // discontinuity_indicator) carries no new payload data. Suppress all
+        // H.222.0 §2.4.3.3: a spec-legal duplicate (same CC, identical
+        // bytes) carries no new payload data. Suppress all
         // routing to avoid replaying bytes into PSI or PES reassemblers.
         if is_duplicate {
             return Ok(());
