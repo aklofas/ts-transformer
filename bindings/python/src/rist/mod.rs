@@ -133,8 +133,9 @@ fn extract_secret_string(secret: &Bound<'_, PyAny>) -> PyResult<String> {
 /// - `SIMPLE` — VSF TR-06-1: basic ARQ + multiplexing.
 /// - `MAIN` — VSF TR-06-2: adds encryption, RTCP, tunneling.
 ///
-/// The default profile for new builders is `MAIN`. Setting `.encryption(key)`
-/// on a builder forces the profile to `MAIN` regardless of this setting.
+/// The default profile for new builders is `MAIN`. Between `.profile(p)` and
+/// `.encryption(key)` the later call wins: encryption after a profile promotes
+/// it to `MAIN`, and `.profile(SIMPLE)` after encryption is refused at build.
 #[pyclass(
     from_py_object,
     eq,
@@ -148,6 +149,14 @@ fn extract_secret_string(secret: &Bound<'_, PyAny>) -> PyResult<String> {
 pub(crate) enum PyRistProfile {
     SIMPLE = 0,
     MAIN = 1,
+}
+
+/// A `.profile()` or `.encryption()` call, kept in call order: encryption
+/// promotes the profile to Main, so replaying the two in a fixed order would
+/// let a later `.profile(SIMPLE)` be silently overridden instead of refused.
+enum ProfileOp {
+    Profile(RistProfile),
+    Encryption(EncryptionKey),
 }
 
 impl From<PyRistProfile> for RistProfile {
@@ -284,11 +293,10 @@ impl PyRistTransport {
 #[derive(Default)]
 pub(crate) struct PyRistTransportBuilder {
     url: Option<String>,
-    profile: Option<PyRistProfile>,
+    profile_ops: Vec<ProfileOp>,
     bandwidth_kbps: Option<u32>,
     buffer_ms: Option<u64>,
     cname: Option<String>,
-    encryption: Option<Py<PyAny>>,
     recovery_maxbitrate_kbps: Option<u32>,
     pkt_size: Option<usize>,
     compression: Option<bool>,
@@ -303,8 +311,9 @@ impl PyRistTransportBuilder {
     }
 
     /// Override the RIST profile (`RistProfile.SIMPLE` or `RistProfile.MAIN`).
+    /// The later of this and `.encryption()` wins; see `RistProfile`.
     fn profile(mut slf: PyRefMut<'_, Self>, p: PyRistProfile) -> PyRefMut<'_, Self> {
-        slf.profile = Some(p);
+        slf.profile_ops.push(ProfileOp::Profile(p.into()));
         slf
     }
 
@@ -326,9 +335,11 @@ impl PyRistTransportBuilder {
         slf
     }
 
-    /// AES encryption key. Forces profile to `MAIN`.
+    /// AES encryption key. Promotes the profile to `MAIN`; a later
+    /// `.profile(SIMPLE)` is refused at build.
     fn encryption(mut slf: PyRefMut<'_, Self>, key: Py<PyEncryptionKey>) -> PyRefMut<'_, Self> {
-        slf.encryption = Some(key.into_any());
+        slf.profile_ops
+            .push(ProfileOp::Encryption(key.get().inner.clone()));
         slf
     }
 
@@ -362,8 +373,11 @@ impl PyRistTransportBuilder {
         // URL params (the URL keys of the key table).
         let mut b = RistTransportBuilder::new(url_str)
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
-        if let Some(p) = self.profile {
-            b.profile(p.into());
+        for op in &self.profile_ops {
+            match op {
+                ProfileOp::Profile(p) => b.profile(*p),
+                ProfileOp::Encryption(key) => b.encryption(key.clone()),
+            };
         }
         if let Some(kbps) = self.bandwidth_kbps {
             b.bandwidth_kbps(kbps);
@@ -373,11 +387,6 @@ impl PyRistTransportBuilder {
         }
         if let Some(ref cname) = self.cname {
             b.cname(cname.as_str());
-        }
-        if let Some(ref key_obj) = self.encryption {
-            let key_ref = key_obj.bind(py).cast::<PyEncryptionKey>()?.clone();
-            let inner_key = key_ref.borrow().inner.clone();
-            b.encryption(inner_key);
         }
         if let Some(kbps) = self.recovery_maxbitrate_kbps {
             b.recovery_maxbitrate_kbps(kbps);
@@ -582,10 +591,9 @@ impl PyRistRecvTransport {
 #[derive(Default)]
 pub(crate) struct PyRistRecvTransportBuilder {
     url: Option<String>,
-    profile: Option<PyRistProfile>,
+    profile_ops: Vec<ProfileOp>,
     buffer_ms: Option<u64>,
     cname: Option<String>,
-    encryption: Option<Py<PyAny>>,
     session_timeout_ms: Option<u64>,
 }
 
@@ -599,9 +607,10 @@ impl PyRistRecvTransportBuilder {
         slf
     }
 
-    /// Override the RIST profile.
+    /// Override the RIST profile. The later of this and `.encryption()`
+    /// wins; see `RistProfile`.
     fn profile(mut slf: PyRefMut<'_, Self>, p: PyRistProfile) -> PyRefMut<'_, Self> {
-        slf.profile = Some(p);
+        slf.profile_ops.push(ProfileOp::Profile(p.into()));
         slf
     }
 
@@ -617,9 +626,11 @@ impl PyRistRecvTransportBuilder {
         slf
     }
 
-    /// AES decryption key. Forces profile to `MAIN`.
+    /// AES decryption key. Promotes the profile to `MAIN`; a later
+    /// `.profile(SIMPLE)` is refused at build.
     fn encryption(mut slf: PyRefMut<'_, Self>, key: Py<PyEncryptionKey>) -> PyRefMut<'_, Self> {
-        slf.encryption = Some(key.into_any());
+        slf.profile_ops
+            .push(ProfileOp::Encryption(key.get().inner.clone()));
         slf
     }
 
@@ -640,19 +651,17 @@ impl PyRistRecvTransportBuilder {
         })?;
         let mut b = RistRecvTransportBuilder::new(url_str)
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
-        if let Some(p) = self.profile {
-            b.profile(p.into());
+        for op in &self.profile_ops {
+            match op {
+                ProfileOp::Profile(p) => b.profile(*p),
+                ProfileOp::Encryption(key) => b.encryption(key.clone()),
+            };
         }
         if let Some(ms) = self.buffer_ms {
             b.buffer(std::time::Duration::from_millis(ms));
         }
         if let Some(ref cname) = self.cname {
             b.cname(cname.as_str());
-        }
-        if let Some(ref key_obj) = self.encryption {
-            let key_ref = key_obj.bind(py).cast::<PyEncryptionKey>()?.clone();
-            let inner_key = key_ref.borrow().inner.clone();
-            b.encryption(inner_key);
         }
         if let Some(ms) = self.session_timeout_ms {
             b.session_timeout(std::time::Duration::from_millis(ms));
