@@ -912,6 +912,10 @@ pub enum PesHeaderMalformedKind {
     /// One of the three trailing marker bits inside a 5-byte PTS or DTS
     /// field is `0`. Each must be `1` per H.222.0 §2.4.3.7.
     InvalidPtsDtsMarkerBits,
+    /// `PES_header_data_length` is shorter than the PTS/DTS fields that
+    /// `PTS_DTS_flags` announces, so the missing timestamp is left absent
+    /// and its bytes stay elementary-stream payload (H.222.0 §2.4.3.7).
+    HeaderDataLengthTooShort,
 }
 
 /// Which fixed/reserved PSI syntax field a PAT/PMT section violated.
@@ -1050,6 +1054,9 @@ fn fmt_pes_header_malformed(
         PesHeaderMalformedKind::InvalidDtsPrefix => "DTS 4-bit prefix mismatch (H.222.0 §2.4.3.7)",
         PesHeaderMalformedKind::InvalidPtsDtsMarkerBits => {
             "PTS/DTS 5-byte marker bit != 1 (H.222.0 §2.4.3.7)"
+        }
+        PesHeaderMalformedKind::HeaderDataLengthTooShort => {
+            "PES_header_data_length shorter than the PTS/DTS fields PTS_DTS_flags announces (H.222.0 §2.4.3.7)"
         }
     };
     write!(f, "PES header malformed on PID 0x{pid:04X}: {detail}")
