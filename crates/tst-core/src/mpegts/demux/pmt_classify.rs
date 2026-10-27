@@ -68,9 +68,9 @@ pub(crate) fn classify_pmt_stream(stream_type: u8, descriptors: &[RawDescriptor]
 }
 
 /// True when the `metadata_descriptor` positively names a format other
-/// than KLV (H.222.0 §2.6.60 Table 2-86): `metadata_format` 0x10 (ISO/IEC
-/// 15938-1 TeM) or 0x11 (BiM), or 0xFF with a `metadata_format_identifier`
-/// other than `KLVA`. A missing, truncated or other-format descriptor does
+/// than KLV (H.222.0 §2.6.60, Tables 2-89 and 2-87): `metadata_format`
+/// 0x10 (ISO/IEC 15938-1 TeM) or 0x11 (BiM), or 0xFF with a
+/// `metadata_format_identifier` other than `KLVA`. A missing, truncated or other-format descriptor does
 /// not, so the stream stays KLV.
 fn names_non_klv_metadata(descriptors: &[RawDescriptor]) -> bool {
     descriptors
@@ -278,6 +278,19 @@ mod tests {
                 &[RawDescriptor {
                     tag: 0x26,
                     data: body.to_vec(),
+                }]
+            ),
+            StreamKind::Unknown(0x15)
+        );
+        // The format is named even when the reserved bits are not `1111`.
+        let mut bad_reserved = body;
+        bad_reserved[12] = 0x00;
+        assert_eq!(
+            classify_pmt_stream(
+                0x15,
+                &[RawDescriptor {
+                    tag: 0x26,
+                    data: bad_reserved.to_vec(),
                 }]
             ),
             StreamKind::Unknown(0x15)
