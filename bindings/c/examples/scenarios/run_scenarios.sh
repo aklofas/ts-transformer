@@ -5,8 +5,8 @@
 #   bash bindings/c/examples/scenarios/run_scenarios.sh
 #   bash bindings/c/examples/scenarios/run_scenarios.sh [/path/to/scenarios]
 #
-# Must be run from the workspace root (the directory containing Cargo.toml).
-# If run from elsewhere, set WORKSPACE_ROOT before calling:
+# WORKSPACE_ROOT is derived from this script's location, so it can be run
+# from any directory. To point it at another checkout, set WORKSPACE_ROOT:
 #   WORKSPACE_ROOT=/path/to/ts-transformer bash bindings/c/examples/scenarios/run_scenarios.sh
 #
 # Env vars honoured:

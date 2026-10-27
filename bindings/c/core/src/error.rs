@@ -391,6 +391,10 @@ pub(crate) fn clear_last_error_for_test() {
 /// [`tst_get_last_error_str`] — may be overwritten by a tst-c call from any
 /// task/core; a multi-task `no_std` consumer must read it before the next
 /// tst-c call from anywhere.
+///
+/// **After thread teardown:** once the calling thread's thread-local storage
+/// has been destroyed (a host TLS destructor calling in after ours ran),
+/// writes are dropped and this returns `TST_E_INTERNAL`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_get_last_error() -> crate::c_types::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
@@ -412,6 +416,10 @@ pub unsafe extern "C" fn tst_get_last_error() -> crate::c_types::c_int {
 /// per-thread (see [`tst_get_last_error`]), so "the next tst-c call"
 /// means the next call from **any** task — copy the message out before
 /// another task can make a tst-c call if it must be retained.
+///
+/// **After thread teardown:** once the calling thread's thread-local storage
+/// has been destroyed (a host TLS destructor calling in after ours ran),
+/// writes are dropped and this returns `""`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_get_last_error_str() -> *const crate::c_types::c_char {
     // The thread-local CString is unreachable after this thread's TLS

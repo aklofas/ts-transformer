@@ -6,11 +6,8 @@
 //! against the per-handle `EventArena` (design §4.5 borrowed-buffer
 //! lifetime). `_cancel` lives alongside `_recv_event` (rather than with
 //! the `_open` / `_close` lifecycle in `mod.rs`) because its sole
-//! purpose is to unblock a thread parked in `_recv_event`, and the two
-//! must remain adjacent in `tstrans.h` for the byte-identical header
-//! contract (cbindgen emits all parent-module items first, then
-//! sub-modules in declaration order). Sibling-managed variant lives in
-//! `managed.rs`.
+//! purpose is to unblock a thread parked in `_recv_event`. Sibling-managed
+//! variant lives in `managed.rs`.
 
 use super::TstDemuxReceiver;
 use crate::error::{TstError, record_recv_closed, record_recv_error, set_last_error};

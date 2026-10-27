@@ -31,7 +31,7 @@
 //! `TstRtspServerBuilder`, both the cert chain and the private key
 //! together, via a single `tls_cert_pem` call, and hands them to the server's
 //! `tls_cert_pem` in a build with the `tls` feature (`TST_HAS_TLS`). Without
-//! that feature `tst_rtsp_server_builder_start` FAILS (`TST_E_RTSP_SERVER`)
+//! that feature `tst_rtsp_server_builder_start` FAILS (`TST_E_RTSP_TLS`)
 //! whenever these bytes are set — the alternative would be a server that
 //! silently starts PLAINTEXT with the supplied certs ignored.
 //!

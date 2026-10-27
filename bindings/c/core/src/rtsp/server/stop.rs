@@ -265,14 +265,15 @@ pub unsafe extern "C" fn tst_rtsp_cancel_handle_free(handle: *mut TstRtspCancelH
 ///    control channel (best-effort, 1 s per-session timeout), then
 ///    cancels the per-session token.
 /// 2. Fires the global cancel token so the listener stops accepting.
-/// 3. Sleeps `drain_ms` + 1000 ms to allow in-flight RTP to drain.
+/// 3. Waits for the session tasks to end, bounded by the builder's
+///    `graceful_shutdown_drain_ms` (default 100 ms) plus 500 ms, then shuts
+///    each session's write half (at most 500 ms each).
 /// 4. Sets the inner `Option` to `None` (subsequent calls on this handle
 ///    return `TST_E_CLOSED`).
 ///
-/// Pass `drain_ms = 0` to use the builder's configured
-/// `graceful_shutdown_drain` (the drain the Rust `RtspServer::stop`
-/// method already adds 1 s on top of). For fine-grained control, build
-/// the server with `tst_rtsp_server_builder_graceful_shutdown_drain_ms`.
+/// `drain_ms` is ignored: the drain is the one set with
+/// `tst_rtsp_server_builder_graceful_shutdown_drain_ms`. The parameter is
+/// kept for ABI stability.
 ///
 /// Idempotent — a second call after shutdown completes returns
 /// `TST_E_SUCCESS` immediately. Returns `TST_E_INVALID_USAGE` if called
@@ -307,7 +308,8 @@ pub unsafe extern "C" fn tst_rtsp_server_stop(
         // Delegate to RtspServer::stop() which performs:
         //   - Notice 5402 ANNOUNCE per active session
         //   - per-session cancel + global cancel
-        //   - sleep(graceful_shutdown_drain + 1 s)
+        //   - bounded wait for the session tasks (graceful_shutdown_drain +
+        //     500 ms), then a write-half shutdown per session (<= 500 ms each)
         if let Err(e) = server_ref.stop() {
             return crate::error::record_with_context(e, "server stop failed");
         }

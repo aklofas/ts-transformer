@@ -339,10 +339,10 @@ impl TstRtspServerBuilder {
     /// Called by `tst_rtsp_server_builder_start` after consuming the
     /// builder via `from_raw`.
     ///
-    /// TLS cert + key PEM bytes: tst-c is built without tst-rtp's `tls`
-    /// feature, so stored bytes can never take effect — if either is
-    /// present this returns `RtspServerError::Tls` instead of building a
-    /// server that would silently start PLAINTEXT (see the guard below).
+    /// TLS cert + key PEM bytes: with the `tls` feature the PEM bytes are
+    /// handed to the server; without it, stored bytes return
+    /// `RtspServerError::Tls` rather than starting plaintext (see the guard
+    /// below).
     pub(crate) fn build_server(
         self: Box<Self>,
     ) -> Result<tst_rtp::RtspServer, tst_rtp::RtspServerError> {
