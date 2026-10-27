@@ -27,29 +27,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
 
-### Changed — tst-webrtc
-
-- WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
-
-### Changed — tstrans-rist-sys
-
-- The vendored build compiles a staged copy of the librist tree under `OUT_DIR`; `tst-rist --no-default-features` builds librist without mbedTLS.
-
-### Changed — tst-core
-
-- A PES the demuxer finds damaged (a continuity gap, a short or gapped PES cut off by the next PUSI) is now announced by `NonConformantIssue::MalformedPes` in wire order, before the next sample, instead of being discarded silently. Strict modes drop the damaged PES; it still updates the PTS baseline and spacing run, so damage costs delivery, not timing.
-- `MissingRequiredPts` now means a PTS-less run longer than 0.7 s on audio and video, and a missing PTS on a single PES for DVB subtitles and synchronous KLV. Its message text covers both rules.
-- A signalled time-base discontinuity reseeds the PCR check and resets the PTS baselines. A PES in flight when it arrives is judged on the old clock and the PTS baseline clears when it completes, so ordinary unbounded video no longer raises `PtsAnomaly` across a legal splice.
-- LATM: with the record position unknown (stream start, after a continuity gap) the demuxer resyncs on a confirmed LOAS syncword and raises `LatmFraming { MissingSyncword }` only after two consecutive PES without a confirmed record. `Truncated` and `AudioMuxLengthOverrun` are no longer reported for a record that continues into the next PES.
-- AU cells are reassembled per (PID, `metadata_service_id`) with one per-PID `sequence_number` counter (H.222.0 §2.12.4.2). A sequence gap drops every in-flight service's AU on that PID and reports one `MultiCellAu { SequenceGap }`; a First or Complete cell whose number jumps while an AU is in flight reports `SequenceGap` instead of `ConcurrentFirst`.
-- `reset_stats` clears counters only; the PAT and PMT version caches survive, so a PMT repeat after it stays a repeat.
-- A `0x15` stream whose `metadata_descriptor` is not KLV is `Unknown(0x15)`, and `StreamSpec::Data` accepts it.
-- `DemuxerStats::per_stream` entries survive PID retirement until `reset_stats` and report the PMT `stream_type` byte. A PID re-declared under another codec family restarts its codec counters.
-
-### Changed — tst-c
-
-- C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 binding escapes. No struct layout changes.
-
 ### Fixed — tst-core
 
 - A PES header whose `PES_header_data_length` ends before the PTS no longer yields a PTS read past the header.
@@ -71,10 +48,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Aggregate PES overflow reports a discontinuity for every PID it drops.
 - DVB subtitle and teletext PES envelopes are checked and reported.
 
+### Changed — tst-webrtc
+
+- WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
+
+### Changed — tstrans-rist-sys
+
+- The vendored build compiles a staged copy of the librist tree under `OUT_DIR`; `tst-rist --no-default-features` builds librist without mbedTLS.
+
+### Changed — tst-core
+
+- A PES the demuxer finds damaged (a continuity gap, a short or gapped PES cut off by the next PUSI) is now announced by `NonConformantIssue::MalformedPes` in wire order, before the next sample, instead of being discarded silently. Strict modes drop the damaged PES; it still updates the PTS baseline and spacing run, so damage costs delivery, not timing.
+- `MissingRequiredPts` now means a PTS-less run longer than 0.7 s on audio and video, and a missing PTS on a single PES for DVB subtitles and synchronous KLV. Its message text covers both rules.
+- A signalled time-base discontinuity reseeds the PCR check and resets the PTS baselines. A PES in flight when it arrives is judged on the old clock and the PTS baseline clears when it completes, so ordinary unbounded video no longer raises `PtsAnomaly` across a legal splice.
+- LATM: with the record position unknown (stream start, after a continuity gap) the demuxer resyncs on a confirmed LOAS syncword and raises `LatmFraming { MissingSyncword }` only after two consecutive PES without a confirmed record. `Truncated` and `AudioMuxLengthOverrun` are no longer reported for a record that continues into the next PES.
+- AU cells are reassembled per (PID, `metadata_service_id`) with one per-PID `sequence_number` counter (H.222.0 §2.12.4.2). A sequence gap drops every in-flight service's AU on that PID and reports one `MultiCellAu { SequenceGap }`; a First or Complete cell whose number jumps while an AU is in flight reports `SequenceGap` instead of `ConcurrentFirst`.
+- `reset_stats` clears counters only; the PAT and PMT version caches survive, so a PMT repeat after it stays a repeat.
+- A `0x15` stream whose `metadata_descriptor` is not KLV is `Unknown(0x15)`, and `StreamSpec::Data` accepts it.
+- `DemuxerStats::per_stream` entries survive PID retirement until `reset_stats` and report the PMT `stream_type` byte. A PID re-declared under another codec family restarts its codec counters.
+
+### Changed — tst-c
+
+- C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 invalid emulation prevention. No struct layout changes.
+
 ### Added — tst-core
 
 - `mpegts::demux::low_level::psi_section_syntax_issues`.
-- `Reassembler::{mark_damaged, drain_partial_outcomes, take_total_overflow_pids}`.
+- `mpegts::demux::low_level::Reassembler::{mark_damaged, drain_partial_outcomes, take_total_overflow_pids}`.
 - Six new kind variants: `PesHeaderMalformedKind::HeaderDataLengthTooShort`, `PsiSyntaxKind::{SectionNumberOutOfRange, Malformed}`, `NalHeaderKind::Truncated`, `Av1ObuHeaderKind::{Truncated, InvalidEmulationPrevention}`.
 
 ### Added — tst-rtp
