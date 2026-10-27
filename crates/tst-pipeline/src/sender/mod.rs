@@ -358,6 +358,10 @@ impl<T: Transport> Sender<T> {
 
     /// Emit any buffered partial bundle.
     ///
+    /// Bundles are sent in whole-packet slices that fit `max_payload()`; a
+    /// ceiling below one TS packet returns `TooLarge` and keeps the bundle
+    /// queued.
+    ///
     /// # C ABI
     ///
     /// `tst_sender_flush` — see `bindings/c/include/tstrans.h`.
