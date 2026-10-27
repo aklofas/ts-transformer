@@ -277,8 +277,14 @@ the full producer + JavaScript client contract for both hls.js paths.
   last one, would carry the open segment to `segment_duration + 0.499 s`,
   the segment is cut before the current access unit, PAT and PMT are
   re-emitted, and the next segment starts on that non-keyframe access unit.
-  The bound holds for a steady frame cadence: a gap longer than the one
-  before it can still overshoot by the difference.
+  The bound holds for a steady frame cadence. A gap that carries an access
+  unit to `segment_duration + 0.499 s` or past it closes the segment at the
+  previous access unit plus its frame interval, capped below that bound,
+  and the shell tells the publisher the next segment starts a new timeline.
+  A lone access unit followed by such a gap closes at the cap. A steady
+  cadence slower than `segment_duration + 0.499 s` (a target shorter than
+  the frame interval) therefore closes every segment at the cap and marks
+  each one discontinuous.
   The SHOULD of RFC 8216 §3 (a segment starts on a keyframe) is traded for
   the MUST of §4.3.3.1. A player joining on such a segment waits for the
   next keyframe. **Keep the GOP at or under `segment_duration`** and every
@@ -291,13 +297,16 @@ the full producer + JavaScript client contract for both hls.js paths.
   media span from the first video access unit reaches `segment_duration`.
   Only a stream without video keeps the wall-clock rule.
 - **A restarted timeline cuts.** A video access unit more than 1 s before
-  the open segment's start (an encoder restart or a PTS wrap) closes the
-  segment at the previous access unit, and the next segment starts on the
-  new timeline. The playlist does not mark the break: `#EXT-X-DISCONTINUITY`
-  is never emitted, although RFC 8216 §4.3.2.3 requires it. Players that
-  anchor their timeline on the first segment (hls.js among them) can place
-  the new segments before the buffered range and stall. A forward jump in
-  PTS is not detected at all.
+  the open segment's start (an encoder restart) closes the segment at the
+  previous access unit, and the next segment starts on the new timeline.
+  A raw 33-bit PTS wrap is not a restart: spans are measured across it, so
+  the wrap alone does not cut and never produces a zero-duration segment. The shell tells
+  the publisher that the timeline restarted, but `tst-hls` does not yet
+  render `#EXT-X-DISCONTINUITY`, so the playlist does not mark the break,
+  although RFC 8216 §4.3.2.3 requires it. Players that anchor their
+  timeline on the first segment (hls.js among them) can place the new
+  segments before the buffered range and stall. A forward gap is signalled
+  and left unmarked in the same way.
 - **`max_segment_duration` guards a stalled producer.** In the
   keyframe-driven flow the media-time bound above is enforced as access
   units arrive; if they stop arriving, the publisher cuts on the wall clock

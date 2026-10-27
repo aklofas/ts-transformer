@@ -61,11 +61,15 @@ Decision tree:
   `send_video` and `send_klv` are safe to call concurrently from
   different threads. Lossless across transient transport failures —
   drained-but-not-yet-sent bytes are retained in `pending_bytes` and
-  drained first on the next call.
-- **Pre-muxed TS bytes → `Sender`.** 3-byte TS sync verification,
-  7-packet bundling for the canonical 1316-byte SRT payload size.
-  RECOVER mode auto-resyncs to the next sync byte after loss; STRICT
-  mode fails fast on any non-aligned input.
+  drained first on the next call, re-split to the transport's current
+  `max_payload()`. A ceiling below one TS packet (188 bytes) is refused
+  with `TooLarge` before the push, so the call's input is not consumed.
+- **Pre-muxed TS bytes → `Sender`.** 3-byte TS sync verification and
+  7-packet bundles, sent to the transport in whole TS packets that fit
+  its `max_payload()`: one 1316-byte message at the SRT default, split
+  when the ceiling is smaller. RECOVER mode auto-resyncs to the next
+  sync byte after loss; STRICT mode fails fast on any non-aligned
+  input.
 - **Arbitrary byte-blind messages → `RawSender`.** One `send` call
   equals one outbound SRT message of the exact length you passed. No
   buffering, no framing, no accumulation.
@@ -159,17 +163,32 @@ impl<T: Transport> Sender<T> {
 ```
 
 `send_ts` accepts any number of bytes; the sender does 188-alignment
-and 7-packet bundling internally. `flush` emits any buffered partial
-bundle so the tail of a finite input reaches the wire. Drop also
-best-effort flushes.
+and 7-packet bundling internally. Each bundle goes to the transport in
+whole TS packets that fit `max_payload()`: 1316 bytes, seven packets, is
+one message at the SRT default, and a smaller ceiling splits the bundle
+into several messages. A ceiling below one TS packet is refused with
+`TransportError::TooLarge` before the input is touched
+(`input_consumed = Some(false)`); bundles already queued stay queued
+for a later call. `flush` emits any buffered partial bundle so the tail
+of a finite input reaches the wire, and it checks every packet's sync
+byte before sending: on damage it sends the packets before it, counts
+one `resync_events` and keeps the rest buffered for the next `send_ts`
+to resync. Drop also best-effort flushes.
 
 `SenderConfig` has two knobs:
 
 - `framing_mode: TsFramingMode::Recover` (default) silently skips
   misaligned bytes until it finds a TS sync byte (counts them in
-  `bytes_skipped_for_sync`); auto-resyncs after sync loss.
+  `bytes_skipped_for_sync`); auto-resyncs after sync loss. On a lost
+  sync it sends the verified packets before the damage, keeps the data
+  after it and resumes the scan at the damaged boundary, so only the
+  damaged bytes are skipped and counted.
 - `framing_mode: TsFramingMode::Strict` returns
-  `TsFramingError::SyncLost { offset }` on any non-aligned input.
+  `TsFramingError::SyncLost { offset }` on any non-aligned input. It
+  checks every packet boundary of the call before taking any of it, so
+  a rejected call changes nothing (buffer, stats and sync state) and
+  reports `input_consumed = Some(false)`: retrying corrected input is
+  safe.
 - `max_unsynced_bytes: usize` — threshold (in bytes consumed while
   UNSYNCED) above which RECOVER mode flags that sync has not been
   acquired. Default 18,800 (≈100 packets' worth). When scanning for
@@ -177,7 +196,9 @@ best-effort flushes.
   `send_ts` returns `TsFramingError::NoSyncAfterLimit`. The counter
   resets after the error is raised, so RECOVER mode keeps scanning
   afterward — the watchdog fires again only after another full
-  `max_unsynced_bytes` of unrecovered garbage.
+  `max_unsynced_bytes` of unrecovered garbage. A call that frames a
+  bundle before the limit is crossed returns that bundle, and the error
+  surfaces on the next call.
 
 `SenderError` is a `{ kind: ShellErrorKind, source: SenderErrorSource }`
 struct; its `source` enum has two variants: `Framing(TsFramingError)`
