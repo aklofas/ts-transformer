@@ -402,7 +402,7 @@ Treat handles as moved-into the close call: set your local variable to `NULL` im
 
 **C++.** `tstrans.h` compiles as C++ (C++11 and later) and carries its own `extern "C"` guards, so `#include "tstrans.h"` is all a C++ translation unit needs.
 
-**End of stream versus failure.** `TST_E_END_OF_STREAM` means a clean close. On TCP, a reset is `TST_E_TRANSPORT`.
+**End of stream versus failure.** `TST_E_END_OF_STREAM` (-12) is a clean close on TCP (the peer's FIN) and the local close or end of stream on the other transports. On plain SRT receivers (`tst_receiver_*`, `tst_raw_receiver_*`, `tst_demux_receiver_*`) a lost connection is also -12, because libsrt cannot tell a peer close from an abort. On TCP, UDP, RIST and RTP a reset or read failure is `TST_E_TRANSPORT` (-8), with the transport's message in `tst_get_last_error_str()`.
 
 **Configs are copied, not consumed, by `_open`.** `tst_mux_sender_open(url, cfg)`, `tst_muxer_open(cfg)`, and their managed variants copy what they need from the config; the caller still owns it and frees it with `tst_mux_config_free(cfg)`, right after the open or after reusing it for further opens.
 
