@@ -31,3 +31,32 @@ fn bind_address_in_use() {
 // SRTO_RCVTIMEO, and the test as planned would hang because the listener is
 // moved into the spawned thread (no inter-thread close coordination). Revisit
 // when typed close-from-other-thread coordination is added.
+
+/// Peer latency set on the listener is inherited by the accepted socket.
+#[test]
+fn accepted_socket_inherits_listener_peer_latency() {
+    require_loopback!();
+    let mut lb = SrtListenerBuilder::new();
+    lb.peer_latency(std::time::Duration::from_millis(500));
+    let fixture = crate::common::Loopback::bind_with(lb);
+    let port = fixture.port;
+    let accept = fixture.spawn_accept(|sock| {
+        let mut value: std::ffi::c_int = 0;
+        let mut len = std::mem::size_of::<std::ffi::c_int>() as std::ffi::c_int;
+        let rc = unsafe {
+            srt_sys::srt_getsockflag(
+                sock.raw_handle(),
+                srt_sys::SRT_SOCKOPT_SRTO_PEERLATENCY,
+                (&raw mut value).cast(),
+                &raw mut len,
+            )
+        };
+        assert!(rc >= 0, "srt_getsockflag(SRTO_PEERLATENCY) failed");
+        value
+    });
+    accept.wait_ready();
+    let _caller = tst_srt::SrtSocketBuilder::new()
+        .connect(("127.0.0.1", port))
+        .expect("connect");
+    assert_eq!(accept.join(), 500);
+}

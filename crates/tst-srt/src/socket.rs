@@ -809,6 +809,23 @@ fn apply_common_options(
     if let Some(d) = opts.linger {
         set_linger(handle, d)?;
     }
+    if let Some(d) = opts.peer_latency {
+        set_int(
+            handle,
+            srt_sys::SRT_SOCKOPT_SRTO_PEERLATENCY,
+            duration_to_ms(d),
+        )?;
+    }
+    if let Some(n) = opts.send_buf_bytes {
+        let bytes = buf_bytes_to_i32("send_buf_bytes", n)?;
+        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_SNDBUF, bytes)?;
+    }
+    if let Some(bw) = opts.input_bandwidth {
+        set_i64(handle, srt_sys::SRT_SOCKOPT_SRTO_INPUTBW, bw as i64)?;
+    }
+    if let Some(n) = opts.udp_send_buffer_bytes {
+        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_UDP_SNDBUF, n as i32)?;
+    }
     Ok(())
 }
 
@@ -834,23 +851,6 @@ pub(crate) fn apply_socket_config(
             srt_sys::SRT_SOCKOPT_SRTO_CONNTIMEO,
             duration_to_ms(t),
         )?;
-    }
-    if let Some(d) = cfg.peer_latency {
-        set_int(
-            handle,
-            srt_sys::SRT_SOCKOPT_SRTO_PEERLATENCY,
-            duration_to_ms(d),
-        )?;
-    }
-    if let Some(n) = cfg.send_buf_bytes {
-        let bytes = buf_bytes_to_i32("send_buf_bytes", n)?;
-        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_SNDBUF, bytes)?;
-    }
-    if let Some(bw) = cfg.input_bandwidth {
-        set_i64(handle, srt_sys::SRT_SOCKOPT_SRTO_INPUTBW, bw as i64)?;
-    }
-    if let Some(n) = cfg.udp_send_buffer_bytes {
-        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_UDP_SNDBUF, n as i32)?;
     }
     if let Some(id) = &cfg.stream_id {
         set_string(handle, srt_sys::SRT_SOCKOPT_SRTO_STREAMID, id.as_str())?;
@@ -1006,6 +1006,43 @@ pub type Stats = SrtStats;
 
 #[cfg(test)]
 mod tests {
+    fn get_i64(handle: srt_sys::SRTSOCKET, opt: srt_sys::SRT_SOCKOPT) -> i64 {
+        let mut value: i64 = 0;
+        let mut len = std::mem::size_of::<i64>() as std::ffi::c_int;
+        let rc =
+            unsafe { srt_sys::srt_getsockflag(handle, opt, (&raw mut value).cast(), &raw mut len) };
+        assert!(rc >= 0, "srt_getsockflag failed");
+        value
+    }
+
+    /// Peer latency, the send-side buffers and the input bandwidth mean
+    /// something on a passive socket too: accepted sockets inherit them.
+    #[test]
+    fn listener_applies_peer_latency_and_send_side_buffers() {
+        super::ensure_initialized();
+        let lcfg = crate::config::SrtListenerConfig {
+            socket: super::SrtSocketConfig {
+                peer_latency: Some(std::time::Duration::from_millis(500)),
+                udp_send_buffer_bytes: Some(2_000_000),
+                input_bandwidth: Some(1_000_000),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let h = unsafe { srt_sys::srt_create_socket() };
+        super::apply_listener_config(h, &lcfg).unwrap();
+        assert_eq!(
+            super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_PEERLATENCY).unwrap(),
+            500
+        );
+        assert_eq!(
+            super::get_int(h, srt_sys::SRT_SOCKOPT_SRTO_UDP_SNDBUF).unwrap(),
+            2_000_000
+        );
+        assert_eq!(get_i64(h, srt_sys::SRT_SOCKOPT_SRTO_INPUTBW), 1_000_000);
+        unsafe { srt_sys::srt_close(h) };
+    }
+
     /// An unset key length leaves SRTO_PBKEYLEN at libsrt's 0 (negotiate),
     /// on a caller and on a listener; an explicit one is applied even with no
     /// passphrase.
