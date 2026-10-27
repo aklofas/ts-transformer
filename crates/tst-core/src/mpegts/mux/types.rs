@@ -45,7 +45,8 @@ pub enum SubtitleCodec {
         /// ISO 639-2 language code, lowercase ASCII (e.g. *b"eng").
         language: [u8; 3],
         /// ETSI EN 300 468 Table 26. Common values: 0x10 (DVB sub,
-        /// no AR signalling), 0x14 (DVB sub for 4:3 aspect-ratio).
+        /// no AR signalling), 0x11 (DVB sub for 4:3 aspect ratio),
+        /// 0x14 (DVB sub for display on a high definition monitor).
         subtitling_type: u8,
         /// Composition page identifier (0..=0xFFFF).
         composition_page_id: u16,
@@ -62,8 +63,9 @@ pub enum SubtitleCodec {
         teletext_type: u8,
         /// Magazine number, 0..=7. (3-bit field.)
         magazine_number: u8,
-        /// BCD-encoded page number, 0x00..=0x99. The convention for
-        /// subtitles is magazine 8 page 88 (= magazine_number=0,
+        /// Page number as the two hex digits of the teletext page
+        /// (EN 300 706 pages are hex, so A-F digits are accepted). The
+        /// convention for subtitles is magazine 8 page 88 (= magazine_number=0,
         /// page_number=0x88 in this representation since
         /// magazine "8" wraps to 0 in the 3-bit field).
         page_number: u8,
@@ -84,9 +86,9 @@ pub enum SubtitleCodec {
     /// WebVTT cues carried inside MPEG-TS PES. **Informal industry
     /// convention** — neither RFC 8216 nor draft-pantos-hls-rfc8216bis
     /// nor any published spec defines WebVTT-in-MPEG-TS PES carriage.
-    /// The `"VTTC"` `format_identifier` is a ffmpeg `mpegtsenc.c`
-    /// convention recognized by hls.js v1.7+ and mediamtx, not a
-    /// normatively-defined codepoint. Auto-emits `registration_descriptor`
+    /// The `"VTTC"` `format_identifier` is our own internal marker, not a
+    /// normatively-defined codepoint, and no external tool is known to
+    /// recognise it. Auto-emits `registration_descriptor`
     /// with `format_identifier = "VTTC"`.
     WebVttInTs,
 }

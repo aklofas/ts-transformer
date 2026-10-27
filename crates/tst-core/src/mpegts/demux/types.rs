@@ -145,16 +145,17 @@ pub struct DemuxerConfig {
     /// (spec-conformant per the AV1-in-MPEG-2-TS binding).
     ///
     /// In `Mpeg2TsBinding` mode the demuxer expects PES
-    /// `stream_id=0xBD` and `ts_open_bitstream_unit()` framing on each
-    /// OBU. Violations surface as
-    /// [`crate::mpegts::demux::NonConformantIssue::Av1WrongStreamId`]
-    /// and [`crate::mpegts::demux::NonConformantIssue::Av1MissingTsObuFraming`].
-    /// The demuxer falls back to raw-OBU parsing in lenient mode so the
-    /// sample still surfaces.
+    /// `stream_id=0xBD`; a different id surfaces as
+    /// [`crate::mpegts::demux::NonConformantIssue::Av1WrongStreamId`].
+    /// The demuxer emits the video payload raw and never inspects the OBU
+    /// framing: [`split_video`](crate::mpegts::demux::split_video) and
+    /// [`split_video_strict`](crate::mpegts::demux::split_video_strict)
+    /// own that validation, including
+    /// [`crate::mpegts::demux::NonConformantIssue::Av1MissingTsObuFraming`].
     ///
     /// In `InteropRawObu` mode the demuxer accepts raw OBUs without the
     /// `ts_open_bitstream_unit` framing (matches ffmpeg / libaom /
-    /// hls.js / mediamtx today) and does not raise the binding issues.
+    /// hls.js / mediamtx today) and does not raise the stream-id issue.
     pub av1_carriage: crate::mpegts::common::Av1CarriageMode,
     /// Cap on each in-flight AU cell reassembly buffer, one per
     /// `(PID, metadata_service_id)`. `None` uses `DEFAULT_AU_CELL_CAP_PER_PID` (1 MiB). When the
@@ -196,7 +197,7 @@ pub struct DemuxerConfig {
     /// the field to zero and ship CFI=`0b00` (Middle) on single-cell AUs
     /// that should be `0b11` (Complete). MISB ST 1402.2 Appendix B lists
     /// the four bit patterns without semantic explanation, and no other
-    /// public reference decoder (FFmpeg's `mpegtsenc.c`, GStreamer's
+    /// public reference decoder (FFmpeg's `mpegts.c`, GStreamer's
     /// `tsdemux.c::parse_pes_metadata_frame`, TSDuck, paretech/klvdata,
     /// jimcavoy/klvp) enforces CFI — the spec-strict reading lost its
     /// last enforcement battery, and producers ship malformed CFI bits
@@ -421,7 +422,7 @@ impl DemuxerConfigBuilder {
         self
     }
 
-    /// Enable opt-in tolerance for sync-metadata AU cells whose
+    /// Set tolerance (on by default) for sync-metadata AU cells whose
     /// `cell_fragment_indication` bits are set to `0b00` (middle) or
     /// `0b01` (last) without a prior First cell. See
     /// [`DemuxerConfig::cfi_tolerance`].
@@ -479,18 +480,12 @@ mod tests {
     }
 
     #[test]
-    fn builder_sets_cfi_tolerance() {
+    fn builder_can_toggle_cfi_tolerance() {
         let mut builder = DemuxerConfig::builder();
-        builder.cfi_tolerance(true);
-        let config = builder.options;
-        assert!(config.cfi_tolerance);
-    }
-
-    #[test]
-    fn builder_can_toggle_cfi_tolerance_off() {
-        let mut builder = DemuxerConfig::builder();
-        builder.cfi_tolerance(true).cfi_tolerance(false);
+        builder.cfi_tolerance(false);
         assert!(!builder.options.cfi_tolerance);
+        builder.cfi_tolerance(true);
+        assert!(builder.options.cfi_tolerance);
     }
 
     #[test]

@@ -504,11 +504,9 @@ pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u
 
         let mut bytes = Vec::new();
         // KLVA Registration auto-emit on KLV streams (both
-        // PrivateData=0x06 and SynchronousMetadata=0x15). ffmpeg
-        // mpegtsenc.c:817-818 emits KLVA on the metadata
-        // stream_type path too — receivers gate KLV
-        // classification on the descriptor regardless of
-        // stream_type. Sync KLV with metadata_descriptor
+        // PrivateData=0x06 and SynchronousMetadata=0x15).
+        // Receivers gate KLV classification on the descriptor
+        // regardless of stream_type. Sync KLV with metadata_descriptor
         // (tag 0x26) doesn't *replace* KLVA — TSDuck + ffmpeg
         // consume both side-by-side.
         if matches!(

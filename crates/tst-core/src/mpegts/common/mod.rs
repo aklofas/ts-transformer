@@ -29,11 +29,13 @@ pub(crate) mod handle_pack;
 /// (`DemuxerConfig::av1_carriage`); the two MUST match for a successful
 /// round-trip.
 ///
-/// Strict-mode receivers running in `Mpeg2TsBinding` mode surface
+/// A demuxer running in `Mpeg2TsBinding` mode surfaces
 /// [`crate::mpegts::demux::NonConformantIssue::Av1WrongStreamId`] when
-/// an incoming AV1 PES uses `stream_id != 0xBD`, and
+/// an incoming AV1 PES uses `stream_id != 0xBD`. It emits the payload raw;
+/// [`crate::mpegts::demux::split_video`] and
+/// [`crate::mpegts::demux::split_video_strict`] report
 /// [`crate::mpegts::demux::NonConformantIssue::Av1MissingTsObuFraming`]
-/// when the PES payload does not start with a `ts_open_bitstream_unit`
+/// when the payload does not start with a `ts_open_bitstream_unit`
 /// start code.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -342,7 +344,8 @@ impl Pcr27mhz {
 /// Standard MPEG-TS packet size in bytes, per ITU-T H.222.0 §2.4.3.2.
 ///
 /// All MPEG-TS packets in this library are exactly 188 bytes (no DVB-ASI
-/// 204-byte FEC-augmented packets — see `docs/project/deferred-features.md`).
+/// 204-byte FEC-augmented packets — see the "204-byte TS packets
+/// (Reed-Solomon parity)" entry in `docs/project/deferred-features.md`).
 pub const TS_PACKET_SIZE: usize = 188;
 
 /// MPEG-TS sync byte, per ITU-T H.222.0 §2.4.3.2. Every TS packet begins

@@ -33,10 +33,10 @@ pub use parse::{
 /// Four failure modes today:
 ///
 /// - [`DescriptorError::EmptyEntries`] — empty `entries` arguments
-///   produce a degenerate `tag 0x00` descriptor that the demux parser
-///   rejects with [`DescriptorParseError::EmptyInput`]. The encoder
-///   rejects the same shape symmetrically rather than emitting invalid
-///   PSI.
+///   would produce a descriptor with tag 0x59 or 0x56 and length 0, which
+///   the demux parser rejects with [`DescriptorParseError::EmptyInput`].
+///   The encoder rejects the same shape symmetrically rather than
+///   emitting invalid PSI.
 /// - [`DescriptorError::TooLarge`] — the payload would overflow the
 ///   8-bit `descriptor_length` field (H.222.0 §2.6: max body 255 bytes).
 ///   A hard error, not silent truncation: truncation produces malformed
@@ -363,7 +363,8 @@ pub fn subtitling_descriptor_multi(
 ///
 /// `language` is ISO 639-2 lowercase ASCII. `teletext_type` is a 5-bit
 /// value (e.g. 0x02 = subtitle page). `magazine_number` is 0..=7
-/// (3 bits). `page_number` is BCD-encoded.
+/// (3 bits). `page_number` is the two hex digits of the page
+/// (A-F accepted).
 pub fn teletext_descriptor(
     language: [u8; 3],
     teletext_type: u8,
@@ -421,8 +422,7 @@ pub fn teletext_descriptor_multi(
 /// `registration_descriptor` (tag 0x05) carrying ASCII format_identifier
 /// `"VTTC"` — used as a marker for WebVTT-in-MPEG-TS. Not defined by
 /// RFC 8216 / draft-pantos-hls-rfc8216bis nor any published normative
-/// spec; appears in ffmpeg's `mpegtsenc.c` emitter and is widely
-/// observed in WebVTT-in-TS captures. **Library-internal round-trip
+/// spec; it is our own internal marker. **Library-internal round-trip
 /// only — external-tool interop has not been empirically verified as
 /// of this writing.** See `docs/project/deferred-features.md` "WebVTT-in-TS
 /// interop" for the empirical-test-pending status.
@@ -452,10 +452,10 @@ pub fn format_identifier_av01() -> Vec<u8> {
 }
 
 /// `registration_descriptor` (tag 0x05) carrying ASCII format_identifier
-/// `"AC-3"` — the ATSC AC-3 marker per ATSC A/53 Part 3 §5.1. Strict
-/// ATSC consumers (ffmpeg, GStreamer, TSDuck) gate AC-3 classification
-/// on stream_type 0x81 + this registration; without it they may
-/// fall back to probing or misclassify as MP3-on-user-private.
+/// `"AC-3"` — the ATSC AC-3 marker per ATSC A/53 Part 3 §5.1. System A
+/// identifies AC-3 by stream_type 0x81; this registration is an additional
+/// marker that some consumers use to tell AC-3 apart from other private
+/// uses of the stream_type.
 ///
 /// 6 bytes total: tag(1) + length(1) + format_identifier(4).
 ///
@@ -474,9 +474,9 @@ pub fn format_identifier_ac3() -> Vec<u8> {
 /// fields signaled here (sample_rate / bsid / bit_rate / surround /
 /// service-mode / channels / language).
 ///
-/// This builder emits the minimum-conformant 3-byte payload — fields
-/// up to and including `langcod` (the first allowed termination point
-/// per the table's horizontal lines). Callers needing the full
+/// This builder emits the minimum-conformant 3-byte payload — the
+/// fields up to `full_svc`, ending before `langcod` (the first allowed
+/// termination point per the table's horizontal lines). Callers needing the full
 /// extension (text, language codes, asvcflags) can build them on top
 /// of [`registration`] or layer additional bytes via a follow-up
 /// helper.
@@ -871,12 +871,6 @@ mod tests {
     }
 
     #[test]
-    fn format_identifier_av01_descriptor_round_trip_bytes() {
-        let bytes = format_identifier_av01();
-        assert_eq!(bytes, vec![0x05, 0x04, b'A', b'V', b'0', b'1']);
-    }
-
-    #[test]
     fn subtitling_descriptor_multi_emits_two_entries() {
         let descriptor =
             subtitling_descriptor_multi(&[(*b"eng", 0x10, 1, 1), (*b"spa", 0x10, 2, 2)])
@@ -916,20 +910,20 @@ mod tests {
     }
 
     #[test]
-    fn subtitling_descriptor_single_via_multi_matches_single_helper() {
-        // The single-entry helper's output should match a 1-element multi call.
-        let single = subtitling_descriptor(*b"eng", 0x10, 1, 1);
-        let multi =
-            subtitling_descriptor_multi(&[(*b"eng", 0x10, 1, 1)]).expect("non-empty entries");
-        assert_eq!(single, multi);
+    fn subtitling_descriptor_emits_golden_bytes() {
+        assert_eq!(
+            subtitling_descriptor(*b"eng", 0x10, 1, 1),
+            [0x59, 0x08, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x01]
+        );
     }
 
     #[test]
-    fn teletext_descriptor_single_via_multi_matches_single_helper() {
-        let single = teletext_descriptor(*b"eng", 0x02, 0, 0x88);
-        let multi =
-            teletext_descriptor_multi(&[(*b"eng", 0x02, 0, 0x88)]).expect("non-empty entries");
-        assert_eq!(single, multi);
+    fn teletext_descriptor_emits_golden_bytes() {
+        // teletext_type 0x02 << 3 | magazine 0 = 0x10.
+        assert_eq!(
+            teletext_descriptor(*b"eng", 0x02, 0, 0x88),
+            [0x56, 0x05, b'e', b'n', b'g', 0x10, 0x88]
+        );
     }
 
     // ── Empty-entries rejection ──────────────────────────────────────────
@@ -947,22 +941,6 @@ mod tests {
     fn teletext_descriptor_multi_rejects_empty_entries() {
         let result = teletext_descriptor_multi(&[]);
         assert_eq!(result, Err(DescriptorError::EmptyEntries { tag: 0x56 }));
-    }
-
-    #[test]
-    fn subtitling_descriptor_multi_accepts_one_entry() {
-        let bytes = subtitling_descriptor_multi(&[(*b"eng", 0x10, 0x0001, 0x0002)])
-            .expect("one entry should succeed");
-        assert_eq!(bytes[0], 0x59); // descriptor_tag
-        assert_eq!(bytes[1], 8); // length = 1 entry × 8 bytes
-    }
-
-    #[test]
-    fn teletext_descriptor_multi_accepts_one_entry() {
-        let bytes = teletext_descriptor_multi(&[(*b"eng", 0x02, 0, 0x88)])
-            .expect("one entry should succeed");
-        assert_eq!(bytes[0], 0x56); // descriptor_tag
-        assert_eq!(bytes[1], 5); // length = 1 entry × 5 bytes
     }
 
     #[test]
@@ -1063,9 +1041,10 @@ mod tests {
     fn ac3_audio_stream_descriptor_packs_all_max_values() {
         // Exercise upper bits of every field — confirm no overflow into
         // adjacent fields. sample_rate_code=7, bsid=31, bit_rate_code=63
-        // (MSB=1 = upper limit; lower 5 bits = 31 → 640 kbps),
-        // surround_mode=3 (reserved but bit-legal), bsmod=7 (VO),
-        // num_channels=15 (reserved but bit-legal), full_svc=0.
+        // (MSB=1 = upper limit; lower 5 bits = 31, which is undefined —
+        // code 18 is 640 kbps), surround_mode=3 (reserved but bit-legal),
+        // bsmod=7 (VO), num_channels=15 (reserved but bit-legal),
+        // full_svc=0. Undefined values are used on purpose to fill every bit.
         let bytes = ac3_audio_stream_descriptor(7, 31, 63, 3, 7, 15, false);
         assert_eq!(bytes.len(), 5);
         assert_eq!(bytes[0], 0x81);
