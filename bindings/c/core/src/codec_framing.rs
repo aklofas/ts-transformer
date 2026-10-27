@@ -49,6 +49,16 @@ fn record_nal_framing_error(e: &CodecParseError) -> i32 {
     code as i32
 }
 
+/// True when the byte ranges `[a, a + a_len)` and `[b, b + b_len)` share
+/// an address. An empty range never overlaps.
+fn ranges_overlap(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> bool {
+    if a_len == 0 || b_len == 0 {
+        return false;
+    }
+    let (a, b) = (a as usize, b as usize);
+    a < b.saturating_add(b_len) && b < a.saturating_add(a_len)
+}
+
 /// Convert an Annex-B-framed NAL buffer into length-prefixed (AVCC/HVCC)
 /// framing — see [`nal_framing::annexb_to_length_prefixed`].
 ///
@@ -72,7 +82,9 @@ fn record_nal_framing_error(e: &CodecParseError) -> i32 {
 /// `annexb` must be valid for reads of `annexb_len` bytes (or NULL with
 /// `annexb_len == 0`). `out_len` must be a valid writable `size_t`
 /// pointer. When `out` is non-null, it must be valid for writes of
-/// `out_cap` bytes.
+/// `out_cap` bytes. `out` must not overlap `annexb` (the call returns
+/// `TST_E_INVALID_CONFIG` if it does; in-place conversion is not
+/// supported because the output is longer than the input).
 ///
 /// # C ABI
 ///
@@ -107,6 +119,12 @@ pub unsafe extern "C" fn tst_annexb_to_length_prefixed(
         if out.is_null() || out_cap < needed {
             *out_len_ref = needed;
             return TstError::BufferFull as i32;
+        }
+        // A `&[u8]` and a `&mut [u8]` over the same bytes is undefined
+        // behaviour, so refuse before forming either.
+        if ranges_overlap(annexb, annexb_len, out, needed) {
+            set_last_error(TstError::InvalidConfig, "annexb and out overlap");
+            return TstError::InvalidConfig as i32;
         }
         // Only the `needed` bytes this call will actually write are
         // materialized as a slice, even when the caller offers more.

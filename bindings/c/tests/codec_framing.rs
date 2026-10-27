@@ -317,3 +317,52 @@ fn param_sets_free_is_null_safe() {
         tst_param_sets_free(std::ptr::null_mut());
     }
 }
+
+/// Rust forbids a `&[u8]` and a `&mut [u8]` over the same bytes; the call
+/// must refuse overlap before forming either.
+#[test]
+fn annexb_overlapping_out_is_rejected_without_touching_out_len() {
+    let mut buf = vec![0u8; 64];
+    let au = [0x00, 0x00, 0x01, 0x65, 0xAA];
+    buf[..5].copy_from_slice(&au);
+    let base = buf.as_mut_ptr();
+    for out_off in [0usize, 2] {
+        // exact alias, then partial overlap
+        let mut out_len: usize = 0xDEAD;
+        let rc = unsafe {
+            tst_annexb_to_length_prefixed(base, 5, 4, base.add(out_off), 59, &mut out_len)
+        };
+        assert_eq!(rc, TstError::InvalidConfig as i32);
+        assert_eq!(out_len, 0xDEAD);
+        assert!(last_error_msg().contains("overlap"), "{}", last_error_msg());
+        assert_eq!(&buf[..5], &au); // input untouched
+    }
+}
+
+/// A touching range, or an overlap with only the bytes the call does not
+/// write, is not an overlap.
+#[test]
+fn annexb_adjacent_and_tail_only_overlap_still_convert() {
+    let au = [0x00, 0x00, 0x01, 0x65, 0xAA];
+    let expected = [0x00, 0x00, 0x00, 0x02, 0x65, 0xAA];
+
+    // Adjacent: input base..base+5, out base+5..
+    let mut buf = vec![0u8; 64];
+    buf[..5].copy_from_slice(&au);
+    let base = buf.as_mut_ptr();
+    let mut out_len: usize = 0;
+    let rc = unsafe { tst_annexb_to_length_prefixed(base, 5, 4, base.add(5), 59, &mut out_len) };
+    assert_eq!(rc, 0, "{}", last_error_msg());
+    assert_eq!(out_len, 6);
+    assert_eq!(&buf[5..11], &expected);
+
+    // Tail-only: input base+6..base+11, out base.. with out_cap 16 (needed 6).
+    let mut buf = vec![0u8; 64];
+    buf[6..11].copy_from_slice(&au);
+    let base = buf.as_mut_ptr();
+    let mut out_len: usize = 0;
+    let rc = unsafe { tst_annexb_to_length_prefixed(base.add(6), 5, 4, base, 16, &mut out_len) };
+    assert_eq!(rc, 0, "{}", last_error_msg());
+    assert_eq!(out_len, 6);
+    assert_eq!(&buf[..6], &expected);
+}
