@@ -384,7 +384,12 @@ impl Demuxer {
             // corrupt PES on one PID. Strict modes still escalate. See
             // `handle_process_packet_result` for the per-error policy.
             let result = self.process_packet(&pkt_buf);
-            self.handle_process_packet_result(result)?;
+            if let Err(e) = self.handle_process_packet_result(result) {
+                // A verdict raised by this packet must not outlive its error
+                // return and fail a later, clean packet.
+                self.fatal = None;
+                return Err(e);
+            }
             // Strict-mode hatch: if the packet just processed produced a
             // `NonConformant` event whose issue category is rejected by the
             // configured `StrictMode`, surface it as a fatal error here. The
@@ -436,6 +441,9 @@ impl Demuxer {
     /// d.feed_aligned(&pkt).expect("packet was aligned");
     /// while let Some(_event) = d.next_event() { /* handle */ }
     /// ```
+    ///
+    /// An aligned packet discards a partial packet buffered by an earlier
+    /// [`feed`](Self::feed), which could not be continued across it.
     pub fn feed_aligned(&mut self, pkt: &[u8; 188]) -> Result<(), DemuxError> {
         if pkt[0] != crate::mpegts::common::TS_SYNC_BYTE {
             return Err(DemuxError::Unrecoverable { after_bytes: 0 });
@@ -445,8 +453,17 @@ impl Demuxer {
         self.is_synced = true;
         self.resync_required = false;
         self.bytes_since_sync = 0;
+        // A partial packet buffered by `feed` would otherwise be spliced
+        // onto the next `feed` as if the aligned packet never arrived.
+        if self.sync_buf.len() > self.sync_consumed {
+            self.sync_buf.clear();
+            self.sync_consumed = 0;
+        }
         let result = self.process_packet(pkt);
-        self.handle_process_packet_result(result)?;
+        if let Err(e) = self.handle_process_packet_result(result) {
+            self.fatal = None;
+            return Err(e);
+        }
         if let Some(fatal) = self.fatal.take() {
             return Err(DemuxError::StrictRejection(format!("{fatal:?}")));
         }
@@ -500,6 +517,9 @@ impl Demuxer {
     /// Idempotent: calling twice with no further `feed` between them is safe
     /// and a no-op the second time.
     ///
+    /// `flush` cannot return an error; a strict verdict raised while flushing
+    /// is reported only as the queued `NonConformant` event.
+    ///
     /// The partial PES are released in ascending PID order, so the tail of a
     /// stream is the same on every run.
     ///
@@ -545,6 +565,7 @@ impl Demuxer {
                 _ => {}
             }
         }
+        self.fatal = None;
     }
 
     fn process_packet(&mut self, buf: &[u8; 188]) -> Result<(), DemuxError> {
@@ -931,11 +952,128 @@ mod tests {
     use crate::mpegts::common::Pts90khz;
     use crate::mpegts::demux::StrictMode;
     use crate::mpegts::demux::event::{DiscontinuityKind, SamplePayload, SubtitleCodec};
-    use crate::mpegts::demux::test_support::{pat_packet_with_programs, pmt_packet_for_test};
+    use crate::mpegts::demux::pes::DAMAGE_SHORT_PES;
+    use crate::mpegts::demux::test_support::{
+        PktSpec, demuxer_with_streams, drain_all_events, feed_packets, pat_packet_with_programs,
+        pes_bytes, pes_to_packets, pmt_packet_for_test, ts_packet,
+    };
     use crate::mpegts::demux::types::{
         DemuxerConfig, default_pes_cap_per_pid, default_pes_cap_total,
     };
     use crate::test_prelude::*;
+
+    fn full_demuxer(streams: &[(u8, u16, &[u8])], pcr_pid: u16) -> Demuxer {
+        let mut b = DemuxerConfig::builder();
+        b.strict(StrictMode::Full);
+        demuxer_with_streams(b.build(), pcr_pid, streams)
+    }
+
+    fn null_packet() -> [u8; 188] {
+        ts_packet(&PktSpec {
+            pid: 0x1FFF,
+            payload: &[0xFF; 184],
+            ..Default::default()
+        })
+    }
+
+    /// An unbounded video PES whose flags byte lacks the `10` marker.
+    fn bad_marker_pes_packet(cc: u8) -> [u8; 188] {
+        let mut pes = pes_bytes(0xE0, None, None, false, &[0xAA; 20], false);
+        pes[6] = 0x40;
+        pes_to_packets(0x100, cc, &pes)[0]
+    }
+
+    /// A strict verdict belongs to the packet that raised it; an error return
+    /// must not leave it pending for a later, clean packet.
+    #[test]
+    fn strict_verdict_does_not_survive_an_error_return() {
+        let mut d = full_demuxer(&[(0x1B, 0x100, &[])], 0x100);
+        let a = bad_marker_pes_packet(0);
+        // Completes the first PES (header verdict) and starts a bounded PES
+        // with an invalid start code that ends inside this packet.
+        let mut bad_start = pes_bytes(0xE0, Some(90_000), None, false, &[0xBB; 20], true);
+        bad_start[2] = 0x02;
+        let b = pes_to_packets(0x100, 1, &bad_start)[0];
+        let mut both = a.to_vec();
+        both.extend_from_slice(&b);
+        let err = d.feed(&both).unwrap_err();
+        assert!(matches!(err, DemuxError::MalformedPes { .. }), "{err:?}");
+        d.feed(&null_packet())
+            .expect("a clean packet must not fail");
+    }
+
+    #[test]
+    fn flush_does_not_leave_a_verdict_for_the_next_feed() {
+        let mut d = full_demuxer(&[(0x1B, 0x100, &[])], 0x100);
+        d.feed(&bad_marker_pes_packet(0)).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PesHeaderMalformed { .. },
+                    ..
+                }
+            )),
+            "{ev:?}"
+        );
+        d.feed(&null_packet())
+            .expect("a clean packet must not fail");
+    }
+
+    #[test]
+    fn flush_damage_marker_does_not_fail_the_next_feed_in_full_mode() {
+        let mut d = full_demuxer(&[(0x0F, 0x101, &[])], 0x101);
+        let pes = pes_bytes(0xC0, Some(90_000), None, true, &[0xAA; 400], true);
+        let pkts = pes_to_packets(0x101, 0, &pes);
+        feed_packets(&mut d, &pkts[..2]).unwrap();
+        d.flush();
+        d.feed(&null_packet())
+            .expect("a clean packet must not fail");
+        let ev = drain_all_events(&mut d);
+        assert!(
+            ev.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::MalformedPes { pid: 0x101, reason },
+                    ..
+                } if *reason == DAMAGE_SHORT_PES
+            )),
+            "{ev:?}"
+        );
+    }
+
+    #[test]
+    fn feed_aligned_discards_a_partial_packet_left_by_feed() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x101,
+            &[(0x0F, 0x101, &[])],
+        );
+        let pkt = |cc| {
+            ts_packet(&PktSpec {
+                pid: 0x101,
+                cc,
+                payload: &[0xAA; 184],
+                ..Default::default()
+            })
+        };
+        let p0 = pkt(0);
+        d.feed_aligned(&p0).unwrap();
+        d.feed(&p0[..100]).unwrap();
+        d.feed_aligned(&pkt(1)).unwrap();
+        let mut rest = pkt(2).to_vec();
+        rest.extend_from_slice(&pkt(3));
+        d.feed(&rest).unwrap();
+        let ev = drain_all_events(&mut d);
+        assert!(
+            !ev.iter().any(
+                |e| matches!(e, DemuxEvent::Discontinuity { stream, .. } if stream.pid == 0x101)
+            ),
+            "{ev:?}"
+        );
+    }
 
     #[test]
     fn builder_carries_defaults() {
