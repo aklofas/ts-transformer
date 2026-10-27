@@ -431,6 +431,7 @@ impl<P: Publisher + Send> MuxPublisher<P> {
             Ok(r) => r.map_err(MuxPublisherError::Publisher),
             Err(PartsError::Poisoned) => Err(MuxPublisherError::LockPoisoned),
             Err(PartsError::Closed) => Err(MuxPublisherError::Closed),
+            Err(PartsError::Drain(e)) => Err(self.map_err(e)),
         }
     }
 
@@ -450,9 +451,13 @@ impl<P: Publisher + Send> MuxPublisher<P> {
 
     /// Consume the shell and return the owned inner publisher.
     ///
-    /// Bytes a failed earlier push left queued are offered to the publisher
-    /// once more first, because they belong to the segment about to close.
-    /// The open segment is then closed with its media duration, the PTS
+    /// Bytes a failed earlier push left queued are sent to the publisher
+    /// before the closing cut, because they belong to the segment about to
+    /// close. If they cannot be sent, `finish` returns the publisher's error
+    /// and closes nothing: cutting anyway would leave those bytes to be
+    /// offered after the cut of the segment they belong to.
+    ///
+    /// Otherwise the open segment is closed with its media duration, the PTS
     /// span from its first access unit to the last one pushed. That access
     /// unit's own display time is unknown, so the final `#EXTINF` ends at
     /// its presentation time. A stream with no open segment (no video, or
@@ -468,9 +473,7 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     /// (possibly in partial state if the panic interrupted a push) is
     /// handed back for caller disposal.
     pub fn finish(self) -> Result<P, MuxPublisherError<P::Error>> {
-        // Queued tail bytes belong to the segment about to close, so they
-        // go out before the cut.
-        self.0.drain_queued();
+        // `with_parts` sends queued tail bytes before the cut runs.
         let cut = self
             .0
             .with_parts(|_, seg| match (seg.segment_start_pts, seg.last_video_pts) {
@@ -483,6 +486,9 @@ impl<P: Publisher + Send> MuxPublisher<P> {
             // Unreachable: only `MuxSender::close` and `finish` mark the
             // sender closed, and this shell calls neither.
             Err(PartsError::Closed) => return Err(MuxPublisherError::Closed),
+            // No cut was issued, so the sender's best-effort drain on drop
+            // may still offer the retained bytes to their own segment.
+            Err(PartsError::Drain(e)) => return Err(self.map_err(e)),
         }
         Ok(self.0.into_inner().into_publisher())
     }
@@ -1178,21 +1184,22 @@ mod tests {
         }
     }
 
-    /// Fails the first `push_ts` and records every offer and cut in order.
-    struct FailOnceOpLog {
+    /// Fails `push_ts` on the listed call indices (counting every call) and
+    /// records every offer and cut in order.
+    struct FailAt {
         ops: Vec<Op>,
-        has_failed: bool,
+        fail: Vec<usize>,
     }
 
-    impl Publisher for FailOnceOpLog {
+    impl Publisher for FailAt {
         type Error = MemErr;
         fn push_ts(&mut self, ts: &[u8]) -> Result<(), MemErr> {
+            let call = self.ops.iter().filter(|o| matches!(o, Op::Push(_))).count();
             self.ops.push(Op::Push(ts.len()));
-            if self.has_failed {
-                Ok(())
-            } else {
-                self.has_failed = true;
+            if self.fail.contains(&call) {
                 Err(MemErr)
+            } else {
+                Ok(())
             }
         }
         fn cut_segment(&mut self) -> Result<(), MemErr> {
@@ -1210,13 +1217,65 @@ mod tests {
         }
     }
 
+    /// A keyframe access unit large enough that its muxer output spans
+    /// three of the shell's 16 KiB chunks.
+    fn big_au() -> Vec<u8> {
+        let mut v = h264_au();
+        v.extend(std::iter::repeat_n(0xab, 40 * 1024));
+        v
+    }
+
+    #[test]
+    fn an_explicit_cut_after_a_failed_push_drains_the_tail_first() {
+        let p = FailAt {
+            ops: vec![],
+            fail: vec![1],
+        };
+        let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+        mp.push_video(&big_au(), Pts90khz::new(0), true)
+            .unwrap_err();
+        mp.cut_segment().unwrap();
+        let ops = mp.finish().unwrap().ops;
+        let cut = ops.iter().position(|o| matches!(o, Op::Cut(_))).unwrap();
+        assert!(
+            ops[cut + 1..].iter().all(|o| !matches!(o, Op::Push(_))),
+            "no old bytes after the cut: {ops:?}"
+        );
+    }
+
+    #[test]
+    fn finish_never_offers_bytes_after_its_closing_cut() {
+        // The push fails, and finish's first retry fails too.
+        let p = FailAt {
+            ops: vec![],
+            fail: vec![1, 2],
+        };
+        let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+        mp.push_video(&big_au(), Pts90khz::new(0), true)
+            .unwrap_err();
+        assert!(matches!(mp.finish(), Err(MuxPublisherError::Publisher(_))));
+    }
+
+    #[test]
+    fn finish_after_a_recovered_retry_cuts_last() {
+        let p = FailAt {
+            ops: vec![],
+            fail: vec![1],
+        };
+        let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
+        mp.push_video(&big_au(), Pts90khz::new(0), true)
+            .unwrap_err();
+        let ops = mp.finish().unwrap().ops;
+        assert!(matches!(ops.last(), Some(Op::Cut(_))), "{ops:?}");
+    }
+
     /// Bytes a failed push left queued are offered before the closing cut,
     /// so they land in the segment it closes and no segment opens after it.
     #[test]
     fn finish_drains_queued_bytes_before_the_closing_cut() {
-        let p = FailOnceOpLog {
+        let p = FailAt {
             ops: vec![],
-            has_failed: false,
+            fail: vec![0],
         };
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
         mp.push_video(&h264_au(), Pts90khz::new(0), true)

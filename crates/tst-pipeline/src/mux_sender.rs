@@ -242,6 +242,8 @@ enum BackpressureState {
 pub(crate) enum PartsError {
     Poisoned,
     Closed,
+    /// Bytes retained from an earlier failed push could not all be sent.
+    Drain(MuxSenderError),
 }
 
 /// Build the poisoned-lock error for a named `send_*` site.
@@ -323,6 +325,10 @@ impl<T: Transport> MuxSender<T> {
     /// Run `f` over the muxer and the transport under the inner lock, for a
     /// shell that owns this sender and needs both at once (a segment cut
     /// that must also re-emit PSI).
+    ///
+    /// Retained bytes and any muxer output are sent first, so `f` sees a
+    /// transport that has been offered everything muxed so far. If they
+    /// cannot all be sent, `f` is not called.
     #[cfg(feature = "std")]
     pub(crate) fn with_parts<R>(
         &self,
@@ -332,6 +338,8 @@ impl<T: Transport> MuxSender<T> {
         if inner.closed {
             return Err(PartsError::Closed);
         }
+        inner.drain_pending().map_err(PartsError::Drain)?;
+        inner.drain_muxer().map_err(PartsError::Drain)?;
         let inner = &mut *inner;
         Ok(f(&mut inner.muxer, &mut inner.transport))
     }
@@ -1053,18 +1061,6 @@ impl<T: Transport> MuxSender<T> {
         inner.closed = true;
         inner.transport.close();
         drained
-    }
-
-    /// Offer bytes a failed earlier push left queued to the transport once
-    /// more, without consuming the sender. Best-effort like
-    /// [`Self::into_inner`]: a failure leaves them queued, and a poisoned
-    /// lock is recovered.
-    #[cfg(feature = "std")]
-    pub(crate) fn drain_queued(&self) {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if !inner.closed {
-            let _ = inner.drain_pending();
-        }
     }
 
     /// Consume the sender and hand back the owned transport.
