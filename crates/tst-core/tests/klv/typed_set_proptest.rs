@@ -13,17 +13,17 @@
 //!    time is fine — see `st0601_per_tag_roundtrip` below).
 //! 2. Encode → decode → assert_eq!(original, decoded).
 //! 3. For f64-bearing fields routed through IMAPB, allow a tolerance
-//!    computed per `klv_proptest.rs::imapb_roundtrip` (scale_factor
-//!    plus f64-precision floor).
+//!    from `common::imapb_tol` (quantization step plus f64-precision
+//!    floor), the derivation `klv/proptest.rs::imapb_roundtrip` shares.
 //! ```
 //!
 //! The existing in-module example-based `round_trip_*` tests cover
 //! fixed-value records; these proptests add **value-space exploration**
 //! and catch range-boundary + f64-precision corners.
 //!
-//! ## Why this is its own file (not `klv_proptest.rs`)
+//! ## Why this is its own file (not `klv/proptest.rs`)
 //!
-//! `klv_proptest.rs` covers the **substrate** (BER, BER-OID, IMAPB).
+//! `klv/proptest.rs` covers the **substrate** (BER, BER-OID, IMAPB).
 //! This file covers the **typed sets that sit on top**. Splitting by
 //! layer keeps each file focused and makes the "where do I add the
 //! proptest for my new typed set?" answer mechanical: this file.
@@ -485,9 +485,10 @@ proptest! {
     /// random `t ∈ [0,1]` lerped into the tag's [min, max] range,
     /// decode, assert within IMAPB tolerance.
     ///
-    /// Tolerance derivation mirrors `klv_proptest.rs::imapb_roundtrip`:
-    /// max of (quantization scale, f64 ULP × span/magnitude × safety
-    /// factor). See that file lines 73-94 for the rationale.
+    /// Tolerance is `common::imapb_tol`, shared with
+    /// `klv/proptest.rs::imapb_roundtrip`: max of (quantization scale,
+    /// f64 ULP × span/magnitude × safety factor). Its doc comment carries
+    /// the rationale.
     ///
     /// `which` indexes into the ranged-tag table built below. The
     /// table is a hand-curated subset covering both IMAPB encodings
@@ -588,8 +589,8 @@ fn st0903_one_field_vmti_strategy() -> impl Strategy<Value = VmtiLs> {
             source_sensor: Some(s),
             ..Default::default()
         }),
-        // Tags 11/12 FOV: IMAPB f64 0..180 deg, 2-byte wire. Use the
-        // klv_proptest.rs tolerance derivation locally below.
+        // Tags 11/12 FOV: IMAPB f64 0..180 deg, 2-byte wire. The check
+        // below applies `common::imapb_tol` to them.
         (0.0f64..=1.0).prop_map(|t| VmtiLs {
             horizontal_fov: Some(t * 180.0),
             ..Default::default()
@@ -635,8 +636,8 @@ proptest! {
         // failure-report sites.
         if let Some(hfov) = record.horizontal_fov {
             let got = decoded.horizontal_fov.expect("hfov present");
-            // ST 0903.6 §10.1.11: 0..180 deg, 2-byte IMAPB. Compute
-            // tolerance per klv_proptest.rs lines 73-94.
+            // ST 0903.6 §10.1.11: 0..180 deg, 2-byte IMAPB, tolerance
+            // from `common::imapb_tol`.
             let tol = imapb_tol(0.0, 180.0, 2).tol;
             prop_assert!((got - hfov).abs() <= tol, "hfov delta {} > tol {}", (got - hfov).abs(), tol);
         } else {

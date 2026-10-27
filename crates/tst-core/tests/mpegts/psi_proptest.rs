@@ -282,9 +282,9 @@ proptest! {
     #[test]
     fn demuxer_chunking_invariant(
         // 8192 chosen to comfortably exceed the fixed stream length
-        // (~5.2 KiB with 16 video pushes) so the modulo mapping at line
-        // 126 actually distributes boundaries across the full stream
-        // rather than clustering in the first half.
+        // (~5.2 KiB with 16 video pushes) so the `b % (bytes.len() + 1)`
+        // split mapping below actually distributes boundaries across the
+        // full stream rather than clustering in the first half.
         boundaries in proptest::collection::vec(0usize..=8192, 0..=32),
     ) {
         let bytes = mux_fixed_one_program_stream();

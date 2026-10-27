@@ -33,10 +33,9 @@ pub struct ImapbTol {
     /// Final tolerance: `max(scale, fp_eps)`. Use this for the
     /// round-trip assertion (`(decoded - input).abs() <= imapb_tol(..).tol`).
     pub tol: f64,
-    /// IMAPB quantization step at this (min, max, length).
-    /// Round-trip error is at most `scale/2` in theory; we use full
-    /// `scale` for safety. Dominates the tolerance for short lengths
-    /// + large spans.
+    /// IMAPB quantization step at this (min, max, length). Encode
+    /// truncates, so round-trip error is below one full `scale`.
+    /// Dominates the tolerance for short lengths + large spans.
     pub scale: f64,
     /// f64 ULP floor scaled by field magnitude. Dominates the
     /// tolerance for long lengths + small spans where `scale` drops
@@ -48,8 +47,9 @@ pub struct ImapbTol {
 ///
 /// Combines two error sources per ST 1201.5 §8.9 + IEEE 754:
 /// 1. **IMAPB quantization step** — `scale = 2^ceil(log2(span)) / 2^(8L-1)`.
-///    Encode rounds to nearest grid point so the integer-rounding
-///    error is at most `scale/2`; we allow full `scale` for safety.
+///    Encode truncates to the grid point at or below the value
+///    (ST 1201.5 §7.2.1), so the quantization error is below one full
+///    `scale`.
 /// 2. **f64 ULP propagation** — at small `scale` (large `L` and small
 ///    span), f64 representation error dominates. The intermediate
 ///    `(value - min)` and `sf * (i + offset) + min` terms have
@@ -60,8 +60,8 @@ pub struct ImapbTol {
 /// component dominated (`scale` vs `fp_eps`).
 ///
 /// Used by:
-/// - `tests/klv_proptest.rs::imapb_roundtrip` (substrate-level test)
-/// - `tests/klv_typed_set_proptest.rs` (typed-set proptests for ST 0601
+/// - `tests/klv/proptest.rs::imapb_roundtrip` (substrate-level test)
+/// - `tests/klv/typed_set_proptest.rs` (typed-set proptests for ST 0601
 ///   IMAPB tags and ST 0903 FOV fields)
 ///
 /// `length` is the wire byte width (1..=8 per ST 1201.5 §8.9); pass each

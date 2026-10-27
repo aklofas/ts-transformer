@@ -10,20 +10,13 @@
 //! path (the hot path used by `DemuxReceiver`).
 
 use crate::common::mux_demux::drain_mux;
+use crate::common::synthetic::build_minimal_h264_au;
 use tst_core::error::DemuxError;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, SamplePayload, StrictMode,
 };
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
-
-/// One H.264 AU (AUD + IDR) — minimal valid input for the muxer.
-fn build_minimal_h264_au() -> Vec<u8> {
-    vec![
-        0x00, 0x00, 0x00, 0x01, 0x09, 0x10, // AUD
-        0x00, 0x00, 0x00, 0x01, 0x65, 0xAA, 0xBB, 0xCC, // IDR
-    ]
-}
 
 /// Build a TS byte stream containing: PAT + PMT + first H.264 PES (with its
 /// PES start-code corrupted → triggers `MalformedPes` on the FIRST PUSI for

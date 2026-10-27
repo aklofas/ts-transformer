@@ -74,7 +74,7 @@ use tst_core::mpegts::mux::{
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// AV1 access-unit synthesis (mirrors `tests/av1_carriage_roundtrip.rs`)
+// AV1 access-unit synthesis (mirrors `tests/codec/av1_carriage_roundtrip.rs`)
 // ─────────────────────────────────────────────────────────────────────
 
 /// Build a single AV1 low-overhead OBU with `obu_has_size_field = 1`.
@@ -601,8 +601,9 @@ fn dav1d_handles_extracted_binding_bitstream_without_crashing() {
 }
 
 /// Diagnostic dump for the results doc — writes both binding and
-/// interop streams to /tmp + runs every available external tool,
-/// captures all outputs to a single report file.
+/// interop streams to `av1_diagnostic_artifacts/` under the system temp
+/// dir + runs every available external tool, captures all outputs to a
+/// single report file.
 ///
 /// Run with: `cargo test -p tst-core --test regression
 ///   av1_external_decoder::diagnostic_dump_for_results_doc -- --ignored --nocapture`

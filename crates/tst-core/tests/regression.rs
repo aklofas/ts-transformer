@@ -1,4 +1,6 @@
-//! Domain harness: cross-impl interop regression tests (formerly wave_i*)
+//! Domain harness: fixed spec-conformance regressions (KLV BER/BER-OID
+//! symmetry, IMAPB and ST 0903 FOV spec vectors) and optional cross-impl
+//! interop probes (external AV1 decoders, WebVTT/CEA-708 tools)
 //! (consolidated from the former per-file tests/*.rs — see tests/MOVEMENT_MAP.md).
 //!
 //! Each `mod` below is one former top-level integration-test file, now

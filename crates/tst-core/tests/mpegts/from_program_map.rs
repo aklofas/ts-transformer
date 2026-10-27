@@ -11,7 +11,7 @@
 //! and real mux→demux→`from_program_map` round-trips.
 
 use crate::common::mux_demux::drain_mux as drain;
-use crate::common::synthetic::synthetic_klv_ls;
+use crate::common::synthetic::{synthetic_h264_au, synthetic_klv_ls};
 use tst_core::MuxError;
 use tst_core::mpegts::common::{Pts90khz, StreamTypeCode};
 use tst_core::mpegts::demux::{
@@ -156,7 +156,7 @@ fn unknown_stream_maps_to_data_spec_unless_dropped() {
         ],
     );
 
-    // Deliberate pre-1.0 behavior change (private-data W2): unknown stream
+    // Deliberate pre-1.0 behavior change: unknown stream
     // types are no longer offenders — they map to `StreamSpec::Data` PES
     // pass-through streams keeping the raw stream_type byte.
     let cfg =
@@ -520,21 +520,6 @@ fn audio_descriptors_always_language_none_verbatim_pass_through() {
 // Integration round-trip: mux → demux → from_program_map
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Minimal Annex-B H.264 access unit: SPS + PPS + IDR slice.
-fn synthetic_h264_au() -> Vec<u8> {
-    fn nal(nal_type: u8, body: &[u8]) -> Vec<u8> {
-        let mut v = vec![0x00, 0x00, 0x00, 0x01];
-        v.push((0b11 << 5) | nal_type); // high nal_ref_idc
-        v.extend_from_slice(body);
-        v
-    }
-    let mut au = Vec::new();
-    au.extend(nal(7, &[0x42, 0xC0, 0x28, 0xD9])); // SPS
-    au.extend(nal(8, &[0xCE, 0x38, 0x80])); // PPS
-    au.extend(nal(5, &[0x88, 0x84, 0x0A, 0x7C, 0x11])); // IDR slice
-    au
-}
-
 #[test]
 fn mux_demux_program_map_rebuilds_the_config() {
     // Config A: H.264 video + sync KLV, pcr_pid left None (auto-resolve).
@@ -584,7 +569,7 @@ fn mux_demux_program_map_rebuilds_the_config() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Unknown→Data mapping on a real demuxed map (private-data W2)
+// Unknown→Data mapping on a real demuxed map
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Mux the corpus-shaped private-stream mix (video + sync KLV + data
@@ -672,7 +657,7 @@ fn full_round_trip_preserves_unknown_streams() {
     // PMT-level fidelity proof: convert the demuxed map, mux through the
     // converted config, demux again — the second ProgramMap classifies the
     // same PIDs Unknown with the same descriptors. (Sample-payload
-    // fidelity is pinned by the W1 golden in mux_data.rs.)
+    // fidelity is pinned by the Data-stream round-trip golden in mux_data.rs.)
     let first = demuxed_private_mix_pm();
     let cfg = MuxerConfig::from_program_map(&first, &[]).expect("convert the demuxed map");
 

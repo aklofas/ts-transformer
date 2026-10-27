@@ -1,6 +1,6 @@
 # ST 0601 fixture files
 
-Committed `.klv` fixtures used by `tests/klv_st0601.rs`.
+Committed `.klv` fixtures used by `tests/klv/st0601.rs`.
 
 ## Synthetic
 

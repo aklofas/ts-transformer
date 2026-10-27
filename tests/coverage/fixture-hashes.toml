@@ -120,7 +120,7 @@ sha256 = "67e310bfdf7b13dae6eb348ef8fa375bfc44e34cf14cd9e56849a422da648e28"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/conformance/README.md"
-sha256 = "c9db033ac2e12eb1ce2e6deedaa5f082b748f3eae76b0be1acf90d0a9dc19c7f"
+sha256 = "4af9b844d6f78d73bb0b3ed75141b8b862389579b590830bb340a8360d628c9b"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/conformance/_cache/.gitkeep"
@@ -220,7 +220,7 @@ sha256 = "3e13ae9a1a057d6d1a4393d2dac50a55733d41ecc1b13112444a95fdab9f439c"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/st0601/README.md"
-sha256 = "b2ab5d0aea55227d907a2f83454aa4a28b8deed3e2775aac4657d8e03a3435ee"
+sha256 = "ad694b1b7e526a9b49fbe8fcffe055b1b9d90d0070b03bdc6967ed4e144c6473"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/st0601/synthetic_field_errors.klv"
@@ -264,7 +264,7 @@ sha256 = "d26be99279f51e41b21ca3e87b28ec752b8df345bb8c692f1b2414b7fec231ff"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/subtitles/regen.sh"
-sha256 = "f5ad5c4152690633ce944f8969e2835c602a9f9134899befca690198d94bdc19"
+sha256 = "c0320a4eecb112ca6d743e7620b8921a707e237b47149861b09f68eefaf1ab9a"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/subtitles/subtitle_with_klv_same_program.ts"

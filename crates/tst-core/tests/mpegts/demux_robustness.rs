@@ -11,7 +11,7 @@
 //!   event with `DiscontinuityKind::ContinuityJump`.
 //!
 //! Strict-mode rejection of these same issues is exercised in
-//! `mpegts_demux_strict.rs`; here we only assert the lenient-mode contract.
+//! `mpegts/demux_strict.rs`; here we only assert the lenient-mode contract.
 
 use crate::common::mux_demux::drain_mux as drain;
 use tst_core::mpegts::common::Pts90khz;

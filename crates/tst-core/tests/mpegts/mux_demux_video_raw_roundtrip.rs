@@ -9,7 +9,7 @@
 //! OBU bytes without binding-mode wrapping — the byte-faithful path.
 
 use crate::common::mux_demux::drain_mux;
-use crate::common::synthetic::synthetic_h264_au;
+use crate::common::synthetic::{synthetic_h264_au, synthetic_h266_au};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     Demuxer, DemuxerConfig,
@@ -39,27 +39,6 @@ fn synthetic_h265_au() -> Vec<u8> {
     au.extend(nal(33, &[0x01, 0x02])); // SPS_NUT
     au.extend(nal(34, &[0xC8])); // PPS_NUT
     au.extend(nal(19, &[0xA0, 0x10, 0x20])); // IDR_W_RADL
-    au
-}
-
-/// Minimal Annex-B H.266 access unit: AUD + VPS + SPS + PPS + IDR slice.
-fn synthetic_h266_au() -> Vec<u8> {
-    fn nal(nal_type: u8, body: &[u8]) -> Vec<u8> {
-        let mut v = vec![0x00, 0x00, 0x00, 0x01];
-        // H.266 V4 §7.3.1.2:
-        //   byte 0: forbidden_zero_bit(1)=0 | nuh_reserved_zero_bit(1)=0 | nuh_layer_id(6)=0
-        //   byte 1: nal_unit_type(5) | nuh_temporal_id_plus1(3)=1
-        v.push(0x00);
-        v.push((nal_type << 3) | 0x01);
-        v.extend_from_slice(body);
-        v
-    }
-    let mut au = Vec::new();
-    au.extend(nal(20, &[0x10])); // AUD_NUT
-    au.extend(nal(14, &[0xA0])); // VPS_NUT
-    au.extend(nal(15, &[0xB0])); // SPS_NUT
-    au.extend(nal(16, &[0xC0])); // PPS_NUT
-    au.extend(nal(7, &[0xD0])); // IDR_W_RADL
     au
 }
 

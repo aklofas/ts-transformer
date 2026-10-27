@@ -4,12 +4,10 @@
 //!   §10.1.11  Horizontal_FOV  (Tag 11, IMAPB(0, 180, 2), units °)
 //!   §10.1.12  Vertical_FOV    (Tag 12, IMAPB(0, 180, 2), units °)
 //!
-//! ST 0903.6 does NOT define an "incremental update" or "vTarget
-//! delete" flow at these section numbers (that may belong to a different
-//! MISB document, possibly ST 0903 vTracker LS §10.3 or a draft
-//! revision). The substrate has no incremental-update logic to exercise.
-//!
-//! These tests instead exercise the actual §10.1.11 + §10.1.12 surface —
+//! Despite the file name, nothing here covers an incremental-update or
+//! vTarget-delete flow: ST 0903.6 defines none at these sections and the
+//! substrate has no incremental-update logic. The tests exercise the
+//! §10.1.11 + §10.1.12 surface —
 //! Horizontal_FOV / Vertical_FOV IMAPB worked examples, edge values, top-level
 //! VMTI LS encode/decode symmetry, and interaction with the IMAPB special-value
 //! branches (since the top-level lenient walker funnels every non-Value decode

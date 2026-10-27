@@ -23,9 +23,13 @@ folded into the relevant domains and listed in their own section below.
   `wave_i*` files were given content-descriptive names (see table).
 - A small number of files needed mechanical path fixes after moving one
   directory deeper: relative `include_bytes!("fixtures/…")` became
-  `"../fixtures/…"`, and `mod common;` became
-  `#[path = "../common/mod.rs"] mod common;`. (`env!("CARGO_MANIFEST_DIR")`-
-  anchored and CWD-relative paths were unaffected.)
+  `"../fixtures/…"`. (`env!("CARGO_MANIFEST_DIR")`-anchored and CWD-relative
+  paths were unaffected.)
+- Shared helpers are declared once per domain binary: each `tests/<domain>.rs`
+  root carries `#[path = "common/mod.rs"] mod common;` and member files refer
+  to `crate::common::…`. Members never declare `mod common` themselves (a
+  second declaration loads the module twice and trips
+  `clippy::duplicate_mod`).
 - Note: the binary is `codec_conformance` and its directory is
   `tests/codec_conformance/`. The member `tests/codec_conformance/conformance.rs`
   is the former `tests/conformance.rs`, and `tests/codec_conformance.rs` is the

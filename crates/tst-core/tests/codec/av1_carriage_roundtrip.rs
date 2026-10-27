@@ -439,7 +439,3 @@ fn interop_sample_split_is_clean_under_interop_carriage() {
         "binding carriage on raw-OBU input must surface missing-framing: {issues:?}"
     );
 }
-
-// Suppress unused import warning when StreamId-only branches don't fire.
-#[allow(dead_code)]
-fn _unused_imports(_: StreamId) {}

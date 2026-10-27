@@ -9,8 +9,8 @@
 //!   `None`, not `Some(0-valued variant)`)
 //!
 //! All fixtures use the in-crate `mpegts::mux::Muxer` to produce TS bytes
-//! deterministically — same pattern as `mpegts_demux.rs` / `mpegts_demux_audio.rs`
-//! / `mpegts_demux_subtitle.rs`. Hand-rolling raw PAT/PMT/PES bytes would
+//! deterministically — same pattern as `mpegts/demux.rs` / `mpegts/demux_audio.rs`
+//! / `mpegts/demux_subtitle.rs`. Hand-rolling raw PAT/PMT/PES bytes would
 //! duplicate dozens of LoC of muxer logic for no real coverage gain.
 
 use crate::common::mux_demux::drain_mux as drain_all;

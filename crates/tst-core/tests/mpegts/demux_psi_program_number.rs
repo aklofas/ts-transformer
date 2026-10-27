@@ -10,12 +10,12 @@
 //! `StrictMode::Full` additionally converts the mismatch into a fatal
 //! `DemuxError::StrictRejection`.
 
-use crate::psi_builders;
+use crate::psi_builders::{self, pack_section};
 use tst_core::error::DemuxError;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, NonConformantIssue, StrictMode};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section builders (shared `psi_builders`) + a multi-packet section packer
+// Section builders (shared `psi_builders`)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A valid-CRC PAT section declaring `program_number` on PMT PID `pmt_pid`.
@@ -30,49 +30,6 @@ fn build_pat_section(program_number: u16, pmt_pid: u16) -> Vec<u8> {
 /// trigger the mismatch.
 fn build_pmt_section(program_number: u16, pcr_pid: u16, video_pid: u16) -> Vec<u8> {
     psi_builders::build_pmt_section(program_number, pcr_pid, 0, &[(0x1B, video_pid, &[])])
-}
-
-/// Pack a raw PSI section into one or more 188-byte TS packets on `pid`.
-///
-/// First packet: PUSI=1 + pointer_field=0. Continuation packets: PUSI=0.
-/// Tail padding with 0xFF. Continuity counter starts at `cc_start`.
-fn pack_section(pid: u16, section: &[u8], cc_start: u8) -> Vec<[u8; 188]> {
-    let mut pkts = Vec::new();
-    let mut cc = cc_start & 0x0F;
-    let mut pos = 0usize;
-    let pid_hi = (pid >> 8) as u8 & 0x1F;
-    let pid_lo = (pid & 0xFF) as u8;
-
-    // First packet with PUSI=1 and pointer_field.
-    {
-        let mut pkt = [0xFFu8; 188];
-        pkt[0] = 0x47;
-        pkt[1] = 0x40 | pid_hi; // PUSI=1
-        pkt[2] = pid_lo;
-        pkt[3] = 0x10 | cc;
-        pkt[4] = 0x00; // pointer_field
-        let chunk = section.len().min(183);
-        pkt[5..5 + chunk].copy_from_slice(&section[pos..pos + chunk]);
-        pos += chunk;
-        pkts.push(pkt);
-        cc = (cc + 1) & 0x0F;
-    }
-
-    // Continuation packets.
-    while pos < section.len() {
-        let mut pkt = [0xFFu8; 188];
-        pkt[0] = 0x47;
-        pkt[1] = pid_hi; // PUSI=0
-        pkt[2] = pid_lo;
-        pkt[3] = 0x10 | cc;
-        let chunk = (section.len() - pos).min(184);
-        pkt[4..4 + chunk].copy_from_slice(&section[pos..pos + chunk]);
-        pos += chunk;
-        pkts.push(pkt);
-        cc = (cc + 1) & 0x0F;
-    }
-
-    pkts
 }
 
 /// Drain all queued events; return `(nonconformant_issues, program_map_count)`.
