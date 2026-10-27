@@ -1,0 +1,67 @@
+{
+  "schema_version": 0,
+  "lossy": false,
+  "core": [
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 0,
+      "payload_sha256": "dab9927faf5fba918eea2ae3864efc36dd128267da8691563589711b6f1057d3"
+    },
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 0,
+      "payload_sha256": "dab9927faf5fba918eea2ae3864efc36dd128267da8691563589711b6f1057d3"
+    },
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 0,
+      "payload_sha256": "dab9927faf5fba918eea2ae3864efc36dd128267da8691563589711b6f1057d3"
+    },
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 0,
+      "payload_sha256": "dab9927faf5fba918eea2ae3864efc36dd128267da8691563589711b6f1057d3"
+    },
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 0,
+      "payload_sha256": "dab9927faf5fba918eea2ae3864efc36dd128267da8691563589711b6f1057d3"
+    },
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 0,
+      "payload_sha256": "dab9927faf5fba918eea2ae3864efc36dd128267da8691563589711b6f1057d3"
+    },
+    {
+      "event": "error",
+      "code": "MISSING_REQUIRED_PTS"
+    },
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 63001,
+      "payload_sha256": "dab9927faf5fba918eea2ae3864efc36dd128267da8691563589711b6f1057d3"
+    }
+  ],
+  "extensions": null
+}

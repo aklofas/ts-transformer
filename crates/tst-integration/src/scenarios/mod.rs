@@ -54,6 +54,8 @@ pub fn all_scenarios() -> Vec<Box<dyn Scenario>> {
         Box::new(WebVttInTsScenario),
         Box::new(MalformedPsiStrict),
         Box::new(MalformedPesLenient),
+        Box::new(DamagedPesLenient),
+        Box::new(PtsSpacingExceeded),
         Box::new(UnknownStreamType),
         Box::new(AudioKlvRoundtrip),
         Box::new(VideoDtsRoundtrip),
@@ -1426,6 +1428,199 @@ impl Scenario for MalformedPesLenient {
         };
         (artifact_rel, golden)
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario — damaged-pes-lenient (demux)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `kind = "demux"`: an ADTS audio stream (PID 0x0101) of three 600-byte
+/// frames, with the second TS packet of the second PES removed.
+///
+/// The damaged PES no longer fills its declared `PES_packet_length`. The
+/// lenient demuxer queues a `MalformedPes` marker directly before that
+/// sample, so the golden shows `MALFORMED_PES` immediately before the second
+/// audio sample.
+///
+/// This generator NEVER reads from `testfiles/`, `local/`, or any real corpus.
+struct DamagedPesLenient;
+
+impl Scenario for DamagedPesLenient {
+    fn id(&self) -> &'static str {
+        "damaged-pes-lenient"
+    }
+    fn kind(&self) -> &'static str {
+        "demux"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec![]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        const AUDIO_PID: u16 = 0x0101;
+        let mut mux = audio_only_muxer(AUDIO_PID);
+        for i in 0..3i64 {
+            mux.push_audio(&synthetic_adts_frame_of_len(600), Pts90khz::new(i * 1_920))
+                .expect("push_audio");
+        }
+        let ts = drain_mux(&mut mux);
+
+        // Remove the second TS packet of the second PES.
+        let starts = pes_starts(&ts, AUDIO_PID);
+        let victim = ts
+            .chunks_exact(188)
+            .enumerate()
+            .skip(starts[1].0 + 1)
+            .find(|(_, pkt)| packet_pid(pkt) == AUDIO_PID)
+            .map(|(i, _)| i)
+            .expect("second PES spans more than one packet");
+        assert!(
+            victim < starts[2].0,
+            "removed packet belongs to the second PES"
+        );
+        let mut ts_bytes = ts;
+        ts_bytes.drain(victim * 188..(victim + 1) * 188);
+
+        let core = demux_to_core_events(&ts_bytes);
+
+        let artifact_rel = PathBuf::from(self.id()).join("input.ts");
+        write_file(&out_dir.join(&artifact_rel), &ts_bytes);
+
+        let golden = Golden {
+            schema_version: 0,
+            lossy: false,
+            core,
+            extensions: serde_json::Value::Null,
+        };
+        (artifact_rel, golden)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario — pts-spacing-exceeded (demux)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `kind = "demux"`: an audio PES at PTS 0, five PES without a PTS, then a PES
+/// at PTS 63 001.
+///
+/// H.222.0 §2.7.4 bounds coded PTS on audio to at most 0.7 s (63 000 ticks)
+/// apart; a PES may omit its PTS while that bound holds. The run here spans
+/// 63 001 ticks, so the demuxer raises exactly one `MissingRequiredPts`, when
+/// the closing PTS arrives (before the last sample).
+///
+/// This generator NEVER reads from `testfiles/`, `local/`, or any real corpus.
+struct PtsSpacingExceeded;
+
+impl Scenario for PtsSpacingExceeded {
+    fn id(&self) -> &'static str {
+        "pts-spacing-exceeded"
+    }
+    fn kind(&self) -> &'static str {
+        "demux"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec![]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        const AUDIO_PID: u16 = 0x0101;
+        let mut mux = audio_only_muxer(AUDIO_PID);
+        // PES 1..=5 get their PTS stripped below; the values pushed for them
+        // only keep the muxer's own pacing monotonic.
+        let pts = [0i64, 9_000, 18_000, 27_000, 36_000, 45_000, 63_001];
+        for p in pts {
+            mux.push_audio(&synthetic_adts_frame(), Pts90khz::new(p))
+                .expect("push_audio");
+        }
+        let mut ts_bytes = drain_mux(&mut mux);
+
+        let starts = pes_starts(&ts_bytes, AUDIO_PID);
+        assert_eq!(starts.len(), pts.len(), "one PES per pushed frame");
+        for &(pkt, off) in &starts[1..6] {
+            strip_pes_pts(&mut ts_bytes[pkt * 188 + off..(pkt + 1) * 188]);
+        }
+
+        let core = demux_to_core_events(&ts_bytes);
+
+        let artifact_rel = PathBuf::from(self.id()).join("input.ts");
+        write_file(&out_dir.join(&artifact_rel), &ts_bytes);
+
+        let golden = Golden {
+            schema_version: 0,
+            lossy: false,
+            core,
+            extensions: serde_json::Value::Null,
+        };
+        (artifact_rel, golden)
+    }
+}
+
+/// A one-program muxer carrying a single AAC (ADTS) audio stream on `pid`.
+fn audio_only_muxer(pid: u16) -> Muxer {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_audio(pid, AudioCodec::Aac);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    Muxer::new(b.build().expect("valid muxer config")).expect("muxer init")
+}
+
+/// ADTS frame of `total_len` bytes (7-byte header + deterministic payload),
+/// with the same fixed parameters as [`synthetic_adts_frame`].
+fn synthetic_adts_frame_of_len(total_len: usize) -> Vec<u8> {
+    assert!(
+        (7..0x2000).contains(&total_len),
+        "ADTS frame_length is 13 bits"
+    );
+    let len = total_len as u32;
+    let mut out = vec![
+        0xFF,
+        0b1111_0001,
+        (1 << 6) | (4 << 2),
+        (2 << 6) | ((len >> 11) & 0b11) as u8,
+        ((len >> 3) & 0xFF) as u8,
+        (((len & 0b111) as u8) << 5) | 0b1_1111,
+        0b11_1111 << 2,
+    ];
+    out.extend((0..total_len - 7).map(|i| i as u8));
+    out
+}
+
+/// The 13-bit PID of a TS packet.
+fn packet_pid(pkt: &[u8]) -> u16 {
+    (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2])
+}
+
+/// `(packet index, PES offset within the packet)` of every PES start on `pid`.
+fn pes_starts(ts: &[u8], pid: u16) -> Vec<(usize, usize)> {
+    ts.chunks_exact(188)
+        .enumerate()
+        .filter_map(|(i, pkt)| {
+            if packet_pid(pkt) != pid || pkt[1] & 0x40 == 0 {
+                return None;
+            }
+            let off = if pkt[3] & 0x20 != 0 {
+                5 + usize::from(pkt[4])
+            } else {
+                4
+            };
+            assert_eq!(&pkt[off..off + 3], &[0x00, 0x00, 0x01], "PES start code");
+            Some((i, off))
+        })
+        .collect()
+}
+
+/// Clear `PTS_DTS_flags` on a PES header and turn the timestamp bytes into
+/// stuffing (0xFF), keeping `PES_header_data_length` and the packet layout.
+fn strip_pes_pts(pes: &mut [u8]) {
+    pes[7] &= !0xC0;
+    let hdl = usize::from(pes[8]);
+    pes[9..9 + hdl].fill(0xFF);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -102,7 +102,7 @@ Package version (matches Cargo.toml):
 
 ABI contract version (breaking-change cadence):
   TST_ABI_VERSION_MAJOR      runtime=0  header=0  [OK]
-  TST_ABI_VERSION_MINOR      runtime=25  header=25  [OK]
+  TST_ABI_VERSION_MINOR      runtime=26  header=26  [OK]
 
 After tst_clear_last_error():
   tst_get_last_error()     = 0  (expect 0 = TST_E_SUCCESS)

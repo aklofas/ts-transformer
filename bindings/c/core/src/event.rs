@@ -144,7 +144,8 @@ pub enum TstNonConformantCode {
     /// PES header structural violation. Re-uses the
     /// `table_id` field as the [`tst_core::mpegts::demux::PesHeaderMalformedKind`]
     /// discriminator (0=ForbiddenPtsDtsFlags, 1=InvalidMarkerBits,
-    /// 2=InvalidPtsPrefix, 3=InvalidDtsPrefix, 4=InvalidPtsDtsMarkerBits).
+    /// 2=InvalidPtsPrefix, 3=InvalidDtsPrefix, 4=InvalidPtsDtsMarkerBits,
+    /// 5=HeaderDataLengthTooShort).
     PesHeaderMalformed = 23,
     /// DVB subtitle / teletext PES arrived with
     /// `data_alignment_indicator = 0`. `pid` carries the
@@ -160,14 +161,15 @@ pub enum TstNonConformantCode {
     /// values match `TstVideoCodec` discriminants — H264=0, H265=1, H266=2,
     /// Av1=3); `nal_header_kind` byte (`obu_type` carrier) encodes which
     /// constraint variant (0=ForbiddenZeroBit, 1=ReservedBit,
-    /// 2=ZeroTemporalIdPlus1, 3=LayerIdOutOfRange).
+    /// 2=ZeroTemporalIdPlus1, 3=LayerIdOutOfRange, 4=Truncated).
     /// `LayerIdOutOfRange.id` surfaces on `cc_observed` (the offending
     /// `nuh_layer_id` byte).
     NalHeader = 26,
     /// AV1 OBU header constraint violation (obu_forbidden_bit /
     /// obu_reserved_1bit / OBU extension reserved bits).
     /// `obu_header_kind` byte (`obu_type` carrier) encodes which constraint
-    /// variant (0=ForbiddenBit, 1=ReservedBit, 2=ExtensionReservedBits).
+    /// variant (0=ForbiddenBit, 1=ReservedBit, 2=ExtensionReservedBits,
+    /// 3=Truncated, 4=InvalidEmulationPrevention).
     Av1ObuHeader = 27,
     /// AC-3 PES with `data_alignment_indicator=1` did not start with
     /// the syncword `0x0B77` (ATSC A/52:2018 §A.6.3).
@@ -217,8 +219,9 @@ pub enum TstNonConformantCode {
     /// PAT/PMT fixed/reserved syntax violation. `pid` = the PID;
     /// `table_id` = the PSI table_id (0x00 PAT, 0x02 PMT); `obu_type` carries
     /// the PsiSyntaxKind discriminator (0=SectionSyntaxIndicatorUnset,
-    /// 1=SectionNumberNonZero, 2=ReservedBits, 0xFF=unknown); for
-    /// SectionNumberNonZero, `cc_observed` carries the observed section_number.
+    /// 1=SectionNumberNonZero, 2=ReservedBits, 3=SectionNumberOutOfRange,
+    /// 4=Malformed, 0xFF=unknown); for SectionNumberNonZero and
+    /// SectionNumberOutOfRange, `cc_observed` carries the observed section_number.
     PsiSyntax = 37,
 }
 
@@ -1308,6 +1311,7 @@ fn fill_nonconformant(
                 PesHeaderMalformedKind::InvalidPtsPrefix => 2,
                 PesHeaderMalformedKind::InvalidDtsPrefix => 3,
                 PesHeaderMalformedKind::InvalidPtsDtsMarkerBits => 4,
+                PesHeaderMalformedKind::HeaderDataLengthTooShort => 5,
                 // `PesHeaderMalformedKind` is #[non_exhaustive]. Future
                 // variants surface as 0xFF until the C mapping is widened.
                 _ => 0xFF,
@@ -1362,6 +1366,7 @@ fn fill_nonconformant(
                 NalHeaderKind::ReservedBit => (1u8, 0u8),
                 NalHeaderKind::ZeroTemporalIdPlus1 => (2u8, 0u8),
                 NalHeaderKind::LayerIdOutOfRange { id } => (3u8, *id),
+                NalHeaderKind::Truncated => (4u8, 0u8),
                 _ => (0xFFu8, 0u8),
             };
             body.obu_type = kind_code;
@@ -1377,6 +1382,8 @@ fn fill_nonconformant(
                 Av1ObuHeaderKind::ForbiddenBit => 0,
                 Av1ObuHeaderKind::ReservedBit => 1,
                 Av1ObuHeaderKind::ExtensionReservedBits => 2,
+                Av1ObuHeaderKind::Truncated => 3,
+                Av1ObuHeaderKind::InvalidEmulationPrevention => 4,
                 _ => 0xFF,
             };
         }
@@ -1462,6 +1469,8 @@ fn fill_nonconformant(
                 PsiSyntaxKind::SectionSyntaxIndicatorUnset => (0u8, 0u8),
                 PsiSyntaxKind::SectionNumberNonZero { observed } => (1u8, *observed),
                 PsiSyntaxKind::ReservedBits => (2u8, 0u8),
+                PsiSyntaxKind::SectionNumberOutOfRange { observed } => (3u8, *observed),
+                PsiSyntaxKind::Malformed => (4u8, 0u8),
                 _ => (0xFFu8, 0u8),
             };
             body.obu_type = kind_code;
