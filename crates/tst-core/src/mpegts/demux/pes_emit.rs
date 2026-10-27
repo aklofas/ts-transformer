@@ -105,6 +105,10 @@ impl super::demuxer::Demuxer {
         // A damage `Malformed` is always the outcome right before the
         // `Complete` it describes. Lenient mode carries the reason into that
         // PES's emission; a strict mode applies its verdict now and drops it.
+        // A PUSI ends whatever PES was in flight on the PID, completed or
+        // dropped (cap, damage), so a reset that waited on it settles after
+        // this packet's outcomes.
+        let settles = pkt.payload_unit_start;
         let mut drop_next_complete: Option<u16> = None;
         let mut damage_next_complete: Option<(u16, &'static str)> = None;
         for outcome in outcomes {
@@ -160,6 +164,9 @@ impl super::demuxer::Demuxer {
                 }
             }
         }
+        if settles {
+            self.settle_pts_baseline(pkt.pid);
+        }
         Ok(())
     }
 
@@ -172,6 +179,9 @@ impl super::demuxer::Demuxer {
         let pid = pes.pid;
         let mut damage = damage;
         self.emit_complete_pes(pes, &mut damage);
+        // Judged on its own clock above; a pending reset applies from the
+        // next PES on.
+        self.settle_pts_baseline(pid);
         if let Some(reason) = damage {
             let stream = self
                 .lookup_stream(pid)
@@ -1073,6 +1083,50 @@ mod tests {
         feed_packets(&mut d, &pkts).unwrap();
         d.flush();
         let ev = drain_all_events(&mut d);
+        assert!(sample_index(&ev, 0x100, 90_000).is_some(), "{ev:?}");
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
+            "{ev:?}"
+        );
+    }
+
+    /// An unbounded video PES that started on the old time base completes
+    /// only at the PUSI that carries the new-base PCR: it is judged on the old
+    /// clock, and the PES after it starts the new PTS baseline.
+    #[test]
+    fn pts_after_signalled_timebase_reset_with_unbounded_video_is_not_a_pts_anomaly() {
+        let mut b = DemuxerConfig::builder();
+        b.strict(StrictMode::TimingOnly);
+        let mut d = demuxer_with_streams(b.build(), 0x100, &[(0x1B, 0x100, &[])]);
+        let before = pes_bytes(0xE0, Some(900_000), None, true, &[0xAA; 300], false);
+        let after = pes_bytes(0xE0, Some(90_000), None, true, &[0xAA; 40], false);
+        let next = pes_bytes(0xE0, Some(93_000), None, true, &[0xAA; 40], false);
+        let mut pkts = vec![ts_packet(&PktSpec {
+            pid: 0x100,
+            pcr: Some(0),
+            ..Default::default()
+        })];
+        let old = pes_to_packets(0x100, 0, &before);
+        assert_eq!(old.len(), 2);
+        pkts.extend(old);
+        // H.222.0 §2.4.3.5: the new time base rides the PUSI that starts the
+        // first PES on it, and that PUSI is what completes the old PES.
+        pkts.push(ts_packet(&PktSpec {
+            pid: 0x100,
+            cc: 2,
+            pusi: true,
+            discontinuity: true,
+            pcr: Some(2_700_000_000),
+            payload: &after,
+            ..Default::default()
+        }));
+        pkts.extend(pes_to_packets(0x100, 3, &next));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(sample_index(&ev, 0x100, 900_000).is_some(), "{ev:?}");
         assert!(sample_index(&ev, 0x100, 90_000).is_some(), "{ev:?}");
         assert!(
             !issues(&ev)

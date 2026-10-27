@@ -30,6 +30,10 @@ pub(super) struct PidState {
     /// Bytes of the last routed payload packet, for the duplicate compare.
     pub(super) last_pkt_raw: Option<[u8; 188]>,
     pub(super) last_pts: Option<i64>,
+    /// A signalled time-base reset arrived while a PES was in flight: that
+    /// PES belongs to the old clock and is judged against `last_pts`, then
+    /// `last_pts` is cleared so the next PES starts the new baseline.
+    pub(super) pts_baseline_clears_after_pes: bool,
     /// Opt-in PTS/DTS unwrap accumulator.
     pub(super) unwrap: Option<UnwrapState>,
     /// Public per-stream counters, created on the first event.
@@ -56,6 +60,7 @@ impl PidState {
     pub(super) fn clear_timing(&mut self) {
         self.clear_continuity();
         self.last_pts = None;
+        self.pts_baseline_clears_after_pes = false;
         self.unwrap = None;
     }
 
@@ -94,6 +99,7 @@ impl PidState {
             dup,
             last_pkt_raw,
             last_pts,
+            pts_baseline_clears_after_pes,
             unwrap,
             stats,
             codec,
@@ -108,6 +114,7 @@ impl PidState {
             && !dup
             && last_pkt_raw.is_none()
             && last_pts.is_none()
+            && !pts_baseline_clears_after_pes
             && unwrap.is_none()
             && stats.is_none()
             && codec.is_none()

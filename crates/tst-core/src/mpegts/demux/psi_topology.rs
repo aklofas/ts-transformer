@@ -1423,6 +1423,7 @@ mod tests {
             dup: true,
             last_pkt_raw: Some([0x47; 188]),
             last_pts: Some(90_000),
+            pts_baseline_clears_after_pes: true,
             unwrap: Some(super::super::timestamp::UnwrapState {
                 last_raw: 1,
                 last_unwrapped: 1,

@@ -1154,8 +1154,8 @@ mod tests {
             &[
                 af_packet(false, Some(0)),
                 af_packet(true, None),
-                // 100 s past the old time base.
-                af_packet(true, Some(2_700_000_000)),
+                // 100 s past the old time base, in a packet without the flag.
+                af_packet(false, Some(2_700_000_000)),
             ],
         )
         .unwrap();
