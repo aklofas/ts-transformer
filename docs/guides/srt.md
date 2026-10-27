@@ -134,7 +134,10 @@ fn build_via_config() -> Result<SrtSocket, Box<dyn std::error::Error>> {
 
 `SrtListenerBuilder` and `SrtListenerConfig` mirror the same pattern; the listener's
 socket options are a `SrtSocketConfig` in `SrtListenerConfig::socket`, next to
-`backlog` and `reuse_addr`.
+`backlog` and `reuse_addr`. The listener applies peer latency, the SRT and UDP
+send buffers and the input bandwidth to the sockets it accepts, and
+`SrtListenerBuilder` has a setter for each (`peer_latency`, `send_buf_bytes`,
+`udp_send_buffer_bytes`, `input_bandwidth`).
 
 ## Sender / receiver presets
 
@@ -222,12 +225,15 @@ internally.
 
 ## Encryption
 
-- `Passphrase::new(s)` accepts 10 to 79 ASCII-printable bytes. Returns
+- `Passphrase::new(s)` accepts 10 to 80 bytes of UTF-8 (libsrt's own
+  limit; the length is counted in bytes). Returns
   `Result<Passphrase, PassphraseError>`. Backed by
   `secrecy::SecretString` — `Debug` redacts and the buffer zeroes on
   drop. `Passphrase::from_env(var)` and `Passphrase::from_file(path)`
   cover the usual deployment shapes.
-- `KeyLength` enum: `Aes128`, `Aes192`, `Aes256`. Default `Aes128`.
+- `KeyLength` enum: `Aes128`, `Aes192`, `Aes256`; `KeyLength::default()`
+  is `Aes128`. A config whose `key_length` is `None` does not set
+  `SRTO_PBKEYLEN`, so libsrt negotiates the length with the peer.
 - Encryption is gated by the `mbedtls` cargo feature on `srt-sys`
   (published as `tstrans-srt-sys`), on by default.
   `--no-default-features` builds an unencrypted libsrt;
@@ -239,10 +245,11 @@ internally.
   but nothing produces it today).
 - A key-length mismatch is not rejected: the handshake negotiates it.
   The side with `Role::Sender` (`SRTO_SENDER`, set by `sender_defaults()`)
-  keeps its own length, the other side adopts it, and libsrt logs a
-  warning. A socket with a passphrase always advertises a length
-  (`key_length` unset means AES-128), so set the same `KeyLength` on both
-  ends when the cipher strength matters.
+  keeps an explicitly set length, the other side adopts it, and libsrt
+  logs a warning. A side with `key_length` unset takes the peer's length,
+  so a passphrase-only sender connecting to an AES-256 peer adopts
+  AES-256. Set the same `KeyLength` on both ends when the cipher strength
+  must not depend on the peer.
 
 Paired listener and caller, mirroring
 [examples/encrypted_send_recv.rs](/examples/sending/encrypted_send_recv.rs):
@@ -320,7 +327,7 @@ demonstrates a specific shortfall.
 
 ## Stream IDs
 
-`StreamId::new(s)` validates ASCII and length (up to 512 bytes) and
+`StreamId::new(s)` accepts UTF-8 of at most 512 bytes and
 returns `Result<StreamId, StreamIdError>`. The caller sets the ID on
 the builder before `connect`; the listener reads it post-`accept` via
 `socket.stream_id() -> Option<&str>`.
@@ -549,8 +556,8 @@ when both name the same option.
 
 | URL key | libsrt option | Type | Notes |
 |---|---|---|---|
-| `passphrase` | `SRTO_PASSPHRASE` | STRING | 10-79 ASCII printable bytes |
-| `pbkeylen` | `SRTO_PBKEYLEN` | INT | 16, 24, or 32 |
+| `passphrase` | `SRTO_PASSPHRASE` | STRING | 10 to 80 bytes of UTF-8 |
+| `pbkeylen` | `SRTO_PBKEYLEN` | INT | 16, 24, or 32; absent means libsrt negotiates |
 | `latency` | `SRTO_LATENCY` | INT (ms) | non-negative; ffmpeg-style alias `tsbpddelay` (still ms — note ffmpeg's URL parses it as µs, so a value ≥10s logs a warn-level unit-mismatch hint) |
 | `rcvlatency` | `SRTO_RCVLATENCY` | INT (ms) | non-negative |
 | `peerlatency` | `SRTO_PEERLATENCY` | INT (ms) | non-negative |
@@ -559,7 +566,7 @@ when both name the same option.
 | `maxbw` | `SRTO_MAXBW` | INT64 | u64 range; non-negative only |
 | `inputbw` | `SRTO_INPUTBW` | INT64 | u64 range |
 | `oheadbw` | `SRTO_OHEADBW` | INT | 5..=100 |
-| `streamid` | `SRTO_STREAMID` | STRING | ASCII, ≤512 bytes; ffmpeg-style alias `srt_streamid` |
+| `streamid` | `SRTO_STREAMID` | STRING | UTF-8, ≤512 bytes; ffmpeg-style alias `srt_streamid` |
 | `lossmaxttl` | `SRTO_LOSSMAXTTL` | INT | u32 range |
 | `tlpktdrop` | `SRTO_TLPKTDROP` | BOOL | `0` or `1` only |
 | `fc` | `SRTO_FC` | INT | u32 range; ffmpeg-style alias `ffs` |
@@ -595,7 +602,9 @@ leak through logs.
 ### Conflict resolution
 
 When a URL query parameter and a builder setter both target the same
-option, **the URL value wins**. Last-occurrence wins on duplicate keys.
+option, **the URL value wins**. On a repeated key every occurrence is
+validated and the last valid one wins, so an invalid occurrence anywhere
+is an error.
 `SrtUrl::config` is a `SrtSocketConfig` holding exactly the keys the URL
 carried. Layer it over a config you built with
 `cfg.merge_from(&parsed.config)`: every key the URL set overwrites, every
@@ -610,13 +619,17 @@ is never mutated by URL parsing.
 
 Strict ASCII canonical forms — matches libsrt apps' own URL parser:
 
-- Integers: decimal only, no `ms`/`s` suffixes, non-negative.
+- Integers: decimal digits only, without a sign or leading zeros and with
+  no `ms`/`s` suffixes; the signed options also refuse a negative value.
 - Booleans: `0` or `1` only — not `true`/`false`/`yes`/`no`.
 - Enums: lowercase only — `live`, not `Live`.
 - Strings: percent-decoded once (`%XX` only). `+` is not decoded as a
   space: it stays a literal `+`, and `%2B` also decodes to `+`. A
   truncated or non-hex escape (`%2`, `%XY`) is rejected with
-  `SrtUrlError::Syntax`.
+  `SrtUrlError::Syntax`, and that error names the escape's offset and the
+  key, never the value.
+- IPv6 hosts: an RFC 6874 zone delimiter is written `%25` and decodes to
+  `%`, so `srt://[fe80::1%25eth0]:9000` has the host `fe80::1%eth0`.
 
 Anything else rejects with `SrtUrlError::InvalidValue` carrying the key
 name and a description.

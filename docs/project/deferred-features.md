@@ -687,21 +687,18 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## `KeyLength` → `Option<KeyLength>` ergonomics
 
-- **Status:** Deferred. `SrtSocketConfig::key_length` is already
-  `Option<KeyLength>`, but `None` is still written to `SRTO_PBKEYLEN`
-  as 16 bytes (AES-128) whenever a passphrase is set, on callers and
-  listeners alike. ffmpeg only sets `SRTO_PBKEYLEN` when the user
-  explicitly passes `?pbkeylen=`, leaving it 0 so libsrt adopts the
-  peer's value.
-- **Why deferred:** Low interop impact. A key-length conflict does not
-  fail the handshake: libsrt keeps the `SRTO_SENDER` side's length and
-  logs a warning. So a passphrase-only sender against a listener set to
-  AES-256 runs AES-128, and a listener left at the default overrides a
-  receiving caller that asked for AES-256. The link stays encrypted;
-  default-to-default interop is AES-128 either way.
-- **Trigger to revisit:** A deployment that must get the peer's
-  AES-256 without setting `key_length` on our side. The fix is to apply
-  `SRTO_PBKEYLEN` only when `key_length` is `Some`.
+- **Status:** Resolved. `SrtSocketConfig::key_length` is
+  `Option<KeyLength>`, and `SRTO_PBKEYLEN` is written only when it is
+  `Some`, on callers and listeners alike. Like ffmpeg, which sets
+  `SRTO_PBKEYLEN` only when the user passes `?pbkeylen=`, an unset
+  length stays 0 so libsrt adopts the peer's value.
+- **Why it was deferred:** Low interop impact. A key-length conflict does
+  not fail the handshake: libsrt keeps the `SRTO_SENDER` side's length and
+  logs a warning.
+- **Trigger to revisit:** Fired by a deployment that must get the peer's
+  AES-256 without setting `key_length` on our side. The fix applies
+  `SRTO_PBKEYLEN` only when `key_length` is `Some`; a passphrase-only
+  sender now adopts a peer's AES-256.
 
 ## `srt_cleanup()` shutdown hatch
 

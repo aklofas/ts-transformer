@@ -30,6 +30,11 @@ for event in &mut receiver {
 }
 ```
 
+`buffer` is a fixed recovery window: `Duration::from_millis(200)` sets both
+of librist's recovery bounds to 200 ms, so the window no longer starts at the
+600 ms midpoint of a 200 to 1000 ms range. A buffer under 1 ms is refused
+when the transport is opened. The URL form is `buffer=200`.
+
 ## Main Profile + AES-256 decryption
 
 ```rust

@@ -30,3 +30,11 @@ for event in &mut receiver {
 
 For unicast bind, prefix the host with `@` to make intent explicit:
 `udp://@0.0.0.0:5004`.
+
+A multicast receiver binds its own group on Linux and macOS for IPv4, so it
+delivers only that group's datagrams, not unicast sent to the port. On
+Windows the receiver binds the wildcard address, so it also receives other
+groups' traffic and unicast sent to the port. An IPv6 multicast receiver binds
+the wildcard (`?iface=` is not supported for IPv6 yet), so it also sees
+unicast sent to the port; outside Linux it sees other groups' traffic too, and
+Linux kernels before 4.20 leave IPv6 receivers unfiltered.

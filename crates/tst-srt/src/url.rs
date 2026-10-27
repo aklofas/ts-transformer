@@ -739,7 +739,7 @@ pub const URL_KEYS: &[QueryKey<SrtSocketConfig, SrtUrlError>] = &[
         "passphrase",
         &[],
         "Encryption passphrase",
-        "10 to 79 characters",
+        "10 to 80 bytes",
         set_passphrase,
     ),
     QueryKey::new(

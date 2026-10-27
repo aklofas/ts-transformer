@@ -8,6 +8,10 @@ its members from `tests/<domain>/`. A fourth, single-file binary,
 probes: a thread-count delta is only reliable with no sibling test building a
 server in the same process, so it keeps its own binary.
 
+This history predates the binaries added later (for example
+`deprecated_aliases`), so the counts above describe the consolidation as it
+happened; the "Current binaries" list is the authority.
+
 ## Current binaries
 
 - `deprecated_aliases`
