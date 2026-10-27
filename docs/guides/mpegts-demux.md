@@ -235,9 +235,9 @@ pending event queue — so nothing from a dead connection splices into the
 next one. `ManagedDemuxReceiver` calls it on reconnect, which forces a
 fresh `0x47` sync hunt and a fresh PAT/PMT on the new transport. The
 `DemuxerConfig` and the stats counters are preserved (reset stats with
-`reset_stats`, which clears counters only: the PAT and PMT version
-caches, the declared streams and in-flight reassembly are untouched, so
-a PMT repeat after it is still a repeat). Most direct callers should not need this — call it only
+`reset_stats`). `reset_stats` clears counters only: the PAT and PMT
+version caches, the declared streams and in-flight reassembly are
+untouched, so a PMT repeat after it is still a repeat. Most direct callers should not need this — call it only
 when the byte stream is known to have a hard discontinuity that can't be
 diagnosed from PCR or CC alone.
 
@@ -395,7 +395,7 @@ fresh on the new PUSI, but a PES it knows is damaged is no longer
 discarded silently: it emits `NonConformantIssue::MalformedPes { pid,
 reason }` in wire order, before whatever sample the next PES yields, so
 a consumer sees the loss at the point it happened. Lenient mode drops
-the damaged partial and continues; strict modes drop it and reject. An
+the damaged partial and continues; every strict mode drops it from delivery, and `Full` also rejects with `StrictRejection`. An
 unbounded (length-zero) video PES that simply ends at the next PUSI is
 the normal path and is not damaged.
 (`NonConformantIssue::PusiMidPes` exists in the enum but is vestigial —
