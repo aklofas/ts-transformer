@@ -161,6 +161,44 @@ fn apply_socket2_knobs(socket: &UdpSocket, cfg: &UdpConfig) -> std::io::Result<(
     Ok(())
 }
 
+/// Maps a failed `send_to` to the transport error and whether the transport
+/// must be latched dead. A cancel that landed while the send was parked wins
+/// over whatever the interrupted syscall reported, then a close, so the caller
+/// sees why the send stopped rather than a spurious `Backpressure`/`Broken`.
+fn send_error(
+    e: &std::io::Error,
+    cancel: &UdpCancelHandle,
+    alive: &AtomicBool,
+) -> (TransportError, bool) {
+    if cancel.is_cancelled() {
+        return (TransportError::ExplicitClose, false);
+    }
+    if !alive.load(Ordering::Acquire) {
+        return (TransportError::Closed, false);
+    }
+    if classify_send_error(e) == SendClass::Transient {
+        // The send deadline ticked over (`WouldBlock` on Linux/macOS,
+        // `TimedOut` on Windows) or a signal interrupted the call: the
+        // datagram was NOT consumed, so this is retryable Backpressure.
+        return (
+            TransportError::Backpressure {
+                msg: format!("send deadline expired: {e}"),
+                errno_code: e.raw_os_error(),
+            },
+            false,
+        );
+    }
+    // Fatal (EMSGSIZE, ENETUNREACH, EPERM, ...).
+    (
+        TransportError::Broken {
+            msg: format!("send error: {e}"),
+            errno_code: e.raw_os_error(),
+            cause: BrokenCause::Unspecified,
+        },
+        true,
+    )
+}
+
 impl Transport for UdpTransport {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         // Cancel wins over close: a caller who fired the handle sees the
@@ -184,29 +222,17 @@ impl Transport for UdpTransport {
                 self.stats.bytes_sent = self.stats.bytes_sent.saturating_add(msg.len() as u64);
                 Ok(())
             }
-            // The send deadline ticked over (`WouldBlock` on Linux/macOS,
-            // `TimedOut` on Windows) or a signal interrupted the
-            // call: the datagram was NOT consumed, so this is retryable
-            // Backpressure with the transport still alive.
-            Err(e) if classify_send_error(&e) == SendClass::Transient => {
-                Err(TransportError::Backpressure {
-                    msg: format!("send deadline expired: {e}"),
-                    errno_code: e.raw_os_error(),
-                })
-            }
             Err(e) => {
-                // Fatal (EMSGSIZE, ENETUNREACH, EPERM, …): per the
-                // `Transport` contract the state is undefined after any
-                // non-Backpressure error — latch dead so `is_alive()` tells
-                // the truth and later sends are `Closed`, the same as the
-                // TCP/RIST fatal arms.
-                self.stats.send_errors = self.stats.send_errors.saturating_add(1);
-                self.alive.store(false, Ordering::Release);
-                Err(TransportError::Broken {
-                    msg: format!("send error: {e}"),
-                    errno_code: e.raw_os_error(),
-                    cause: BrokenCause::Unspecified,
-                })
+                let (err, mark_dead) = send_error(&e, &self.cancel, &self.alive);
+                if mark_dead {
+                    // Per the `Transport` contract the state is undefined
+                    // after any non-Backpressure error — latch dead so
+                    // `is_alive()` tells the truth and later sends are
+                    // `Closed`, the same as the TCP/RIST fatal arms.
+                    self.stats.send_errors = self.stats.send_errors.saturating_add(1);
+                    self.alive.store(false, Ordering::Release);
+                }
+                Err(err)
             }
         }
     }
@@ -229,5 +255,50 @@ impl Transport for UdpTransport {
 
     fn socket_stats(&self) -> Option<SocketStats> {
         Some(self.stats.to_socket_stats())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn send_error_after_cancel_is_explicit_close() {
+        let cancel = UdpCancelHandle::new();
+        cancel.cancel();
+        let alive = AtomicBool::new(false);
+        for kind in [ErrorKind::WouldBlock, ErrorKind::ConnectionRefused] {
+            let (e, dead) = send_error(&Error::from(kind), &cancel, &alive);
+            assert!(
+                matches!(e, TransportError::ExplicitClose),
+                "{kind:?}: {e:?}"
+            );
+            assert!(!dead);
+        }
+    }
+
+    #[test]
+    fn send_error_after_close_is_closed() {
+        let alive = AtomicBool::new(false);
+        let (e, dead) = send_error(
+            &Error::from(ErrorKind::WouldBlock),
+            &UdpCancelHandle::new(),
+            &alive,
+        );
+        assert!(matches!(e, TransportError::Closed), "{e:?}");
+        assert!(!dead);
+    }
+
+    #[test]
+    fn send_error_without_cancel_keeps_its_mapping() {
+        let cancel = UdpCancelHandle::new();
+        let alive = AtomicBool::new(true);
+        let (e, dead) = send_error(&Error::from(ErrorKind::WouldBlock), &cancel, &alive);
+        assert!(matches!(e, TransportError::Backpressure { .. }), "{e:?}");
+        assert!(!dead);
+        let (e, dead) = send_error(&Error::from(ErrorKind::PermissionDenied), &cancel, &alive);
+        assert!(matches!(e, TransportError::Broken { .. }), "{e:?}");
+        assert!(dead);
     }
 }
