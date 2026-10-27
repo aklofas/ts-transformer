@@ -96,7 +96,8 @@ pub struct RistConfig {
     /// `recovery_maxbitrate`). Setting both to different values fails at
     /// connect/listen with [`crate::RistError::InvalidConfig`].
     pub bandwidth_kbps: Option<u32>,
-    /// Recovery buffer.
+    /// Recovery window, fixed: librist's minimum and maximum recovery length
+    /// both take this value. Must be at least 1 ms.
     pub buffer: Duration,
     /// Encryption (None = unencrypted). The builders' `encryption` call
     /// and a URL `secret` also set [`Self::profile`] to Main; a config
