@@ -100,7 +100,8 @@ pub struct RistConfig {
     pub buffer: Duration,
     /// Encryption (None = unencrypted). The builders' `encryption` call
     /// and a URL `secret` also set [`Self::profile`] to Main; a config
-    /// built by hand is used as given.
+    /// built by hand is used as given, and encryption with
+    /// [`RistProfile::Simple`] fails at connect/listen.
     pub encryption: Option<EncryptionKey>,
     /// RTCP CNAME.
     pub cname: Option<String>,
