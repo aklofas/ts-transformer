@@ -11,12 +11,22 @@
 #![cfg(feature = "hls")]
 
 use std::ffi::CString;
+use std::net::{SocketAddr, TcpStream};
+use std::time::{Duration, Instant};
 
+use crate::common::scaled;
+use tstrans::config::{
+    TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
+    tst_mux_config_free, tst_mux_config_new,
+};
 use tstrans::error::{TstError, tst_get_last_error};
 use tstrans::hls::{
-    TstPublisherKind, tst_hls_publisher_builder_bind, tst_hls_publisher_builder_build,
-    tst_hls_publisher_builder_new, tst_hls_publisher_builder_output_dir,
-    tst_hls_publisher_builder_segment_duration_ms, tst_publisher_cut_segment, tst_publisher_finish,
+    TstPublisher, TstPublisherKind, tst_hls_publisher_builder_bind,
+    tst_hls_publisher_builder_build, tst_hls_publisher_builder_new,
+    tst_hls_publisher_builder_output_dir, tst_hls_publisher_builder_segment_duration_ms,
+    tst_hls_publisher_local_addr, tst_mux_publisher_cut_segment,
+    tst_mux_publisher_finish_into_publisher, tst_mux_publisher_send_video,
+    tst_mux_publisher_with_config_hls, tst_publisher_cut_segment, tst_publisher_finish,
     tst_publisher_free, tst_publisher_get_kind, tst_publisher_push_ts,
 };
 
@@ -179,4 +189,122 @@ fn push_ts_racing_finish_is_serialized() {
         TstError::HlsFinished as i32
     );
     unsafe { tst_publisher_free(publisher) };
+}
+
+/// An HLS publisher on an ephemeral loopback port writing into `dir`, and
+/// the address its HTTP listener is bound to.
+fn hls_publisher_on_loopback(dir: &std::path::Path) -> (*mut TstPublisher, SocketAddr) {
+    let builder = unsafe { tst_hls_publisher_builder_new() };
+    let bind = CString::new("127.0.0.1:0").unwrap();
+    assert_eq!(
+        unsafe { tst_hls_publisher_builder_bind(builder, bind.as_ptr()) },
+        0
+    );
+    let out_c = CString::new(dir.to_str().expect("utf8 path")).unwrap();
+    assert_eq!(
+        unsafe { tst_hls_publisher_builder_output_dir(builder, out_c.as_ptr()) },
+        0
+    );
+    let publisher = unsafe { tst_hls_publisher_builder_build(builder) };
+    assert!(!publisher.is_null(), "build failed: {}", unsafe {
+        tst_get_last_error()
+    });
+    let mut buf = [0 as std::ffi::c_char; 64];
+    // Returns the number of bytes written on success.
+    assert!(
+        unsafe { tst_hls_publisher_local_addr(publisher, buf.as_mut_ptr(), buf.len()) } > 0,
+        "local_addr: {}",
+        unsafe { tst_get_last_error() }
+    );
+    let addr = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+        .to_str()
+        .unwrap()
+        .parse()
+        .expect("local_addr parses");
+    (publisher, addr)
+}
+
+/// Polls until a connect to `addr` is refused (the listener is gone);
+/// `false` once `bound` has passed first.
+fn listener_closes_within(addr: SocketAddr, bound: Duration) -> bool {
+    let deadline = Instant::now() + bound;
+    while Instant::now() < deadline {
+        match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => return true,
+            _ => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    false
+}
+
+/// The header promises `hls` is consumed by every call: a rejected config
+/// must still release the publisher (its HTTP listener closes).
+#[test]
+fn with_config_hls_rejected_config_still_consumes_the_publisher() {
+    let dir = tempfile::tempdir().unwrap();
+    let (publisher, addr) = hls_publisher_on_loopback(dir.path());
+    let empty = unsafe { tst_mux_config_new() }; // no program: build_config fails
+    let mp = unsafe { tst_mux_publisher_with_config_hls(publisher, empty) };
+    assert!(mp.is_null());
+    assert_ne!(unsafe { tst_get_last_error() }, 0);
+    unsafe { tst_mux_config_free(empty) };
+    assert!(
+        listener_closes_within(addr, scaled(Duration::from_secs(5))),
+        "publisher still serving on {addr} after a rejected config: it was not consumed"
+    );
+}
+
+#[test]
+fn with_config_hls_null_config_still_consumes_the_publisher() {
+    let dir = tempfile::tempdir().unwrap();
+    let (publisher, addr) = hls_publisher_on_loopback(dir.path());
+    let mp = unsafe { tst_mux_publisher_with_config_hls(publisher, std::ptr::null()) };
+    assert!(mp.is_null());
+    assert_eq!(
+        unsafe { tst_get_last_error() },
+        TstError::InvalidConfig as i32
+    );
+    assert!(
+        listener_closes_within(addr, scaled(Duration::from_secs(5))),
+        "publisher still serving on {addr} after a null config: it was not consumed"
+    );
+}
+
+/// The success path is unchanged.
+#[test]
+fn with_config_hls_valid_config_still_publishes() {
+    let dir = tempfile::tempdir().unwrap();
+    let (publisher, _addr) = hls_publisher_on_loopback(dir.path());
+    let cfg = unsafe { tst_mux_config_new() };
+    let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x100, TstVideoCodec::H264) };
+    let mp = unsafe { tst_mux_publisher_with_config_hls(publisher, cfg) };
+    unsafe { tst_mux_config_free(cfg) };
+    assert!(!mp.is_null(), "with_config failed: {}", unsafe {
+        tst_get_last_error()
+    });
+
+    // SPS, PPS, IDR slice.
+    let au: &[u8] = &[
+        0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1E, 0xDA, 0x05, 0x07, 0xE8, 0, 0, 0, 1, 0x68, 0xCE, 0x3C,
+        0x80, 0, 0, 0, 1, 0x65, 0x88, 0x84, 0x00, 0x10,
+    ];
+    assert_eq!(
+        unsafe { tst_mux_publisher_send_video(mp, au.as_ptr(), au.len(), 90_000, true) },
+        0,
+        "send_video: {}",
+        unsafe { tst_get_last_error() }
+    );
+    assert_eq!(unsafe { tst_mux_publisher_cut_segment(mp) }, 0);
+    let back = unsafe { tst_mux_publisher_finish_into_publisher(mp) };
+    assert!(!back.is_null());
+    unsafe { tst_publisher_free(back) };
+
+    let entries: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(entries.iter().any(|n| n.ends_with(".ts")), "{entries:?}");
+    assert!(entries.iter().any(|n| n.ends_with(".m3u8")), "{entries:?}");
 }

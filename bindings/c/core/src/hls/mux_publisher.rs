@@ -76,9 +76,11 @@ fn record_mux_publisher_error(e: MuxPublisherError<tst_hls::HlsError>) -> i32 {
 /// Build an HLS-backed `MuxPublisher` from a `TstPublisher` (which must
 /// currently hold an HLS publisher) + a `tst_mux_config_t`.
 ///
-/// Consumes `hls` — the `TstPublisher` pointer is freed by this call (do
-/// not free it again). `program_cfg` is borrowed; the caller still owns it
-/// and must free it with `tst_mux_config_free`.
+/// Consumes `hls` whenever it is non-null, including on every error return;
+/// a NULL `hls` is the only call that consumes nothing. The `TstPublisher`
+/// pointer is freed by this call (do not free it again). `program_cfg` is
+/// borrowed; the caller still owns it and must free it with
+/// `tst_mux_config_free`.
 ///
 /// Returns `NULL` on error: `TST_E_HLS_CONFIG` if `hls` is null / finished
 /// / not an HLS publisher, `TST_E_INVALID_CONFIG` if `program_cfg` is
@@ -99,6 +101,9 @@ pub unsafe extern "C" fn tst_mux_publisher_with_config_hls(
             set_last_error(TstError::HlsConfig, "null publisher pointer");
             return std::ptr::null_mut();
         }
+        // Take ownership before validating anything else, so every later
+        // return drops the publisher (and closes its HTTP listener).
+        let boxed = unsafe { Box::from_raw(hls) };
         let cfg_ref = match unsafe { program_cfg.as_ref() } {
             Some(c) => c,
             None => {
@@ -115,8 +120,7 @@ pub unsafe extern "C" fn tst_mux_publisher_with_config_hls(
                 return std::ptr::null_mut();
             }
         };
-        // Consume the TstPublisher Box and require it currently holds HLS.
-        let boxed = unsafe { Box::from_raw(hls) };
+        // Require the consumed publisher to currently hold HLS.
         let hls_pub = match boxed.inner.take() {
             Some(PublisherImpl::Hls(h)) => h,
             None => {
