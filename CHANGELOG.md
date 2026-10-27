@@ -28,9 +28,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
 
-### Fixed — tst-c, tst-jni, tst-py
+### Fixed — tst-py
 
-- An object dropped without `close()` (a C handle freed, a JVM or Python object collected) cancels its shell first, so a lost peer can no longer hold the drop in a reconnect loop.
+- A Python shell object dropped without `close()` now cancels its transport first, so a lost peer can no longer hold the drop in a reconnect loop. (C's `tst_*_close` and the JVM's `close()` already cancel first.)
 
 ### Fixed — tst-core
 
