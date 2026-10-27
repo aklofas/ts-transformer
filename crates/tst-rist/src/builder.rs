@@ -46,7 +46,8 @@ impl RistTransportBuilder {
     }
 
     /// Override profile. [`Self::encryption`] sets [`RistProfile::Main`];
-    /// the later of the two calls wins.
+    /// the later of the two calls wins, and a later `profile(Simple)` makes
+    /// `connect`/`listen` fail while a key is set.
     pub fn profile(&mut self, profile: RistProfile) -> &mut Self {
         self.config.profile = profile;
         self
@@ -148,7 +149,8 @@ impl RistRecvTransportBuilder {
     }
 
     /// Override profile. [`Self::encryption`] sets [`RistProfile::Main`];
-    /// the later of the two calls wins.
+    /// the later of the two calls wins, and a later `profile(Simple)` makes
+    /// `connect`/`listen` fail while a key is set.
     pub fn profile(&mut self, profile: RistProfile) -> &mut Self {
         self.config.profile = profile;
         self
@@ -240,5 +242,40 @@ mod tests {
         assert_eq!(b.config().profile, RistProfile::Main);
         assert_eq!(b.config().buffer, Duration::from_millis(300));
         assert_eq!(b.config().cname.as_deref(), Some("recv-1"));
+    }
+
+    /// librist udp.c: the Simple profile sends RTP straight to UDP, so a key
+    /// would be silently unused.
+    #[cfg(feature = "mbedtls")]
+    #[test]
+    fn encryption_then_simple_is_refused_at_connect() {
+        let mut b = RistTransportBuilder::new("rist://127.0.0.1:19010").unwrap();
+        b.encryption(EncryptionKey::aes256("example-secret"))
+            .profile(RistProfile::Simple);
+        assert!(matches!(b.connect(), Err(RistError::InvalidConfig(ref m)) if m.contains("Main")));
+    }
+
+    #[cfg(feature = "mbedtls")]
+    #[test]
+    fn receiver_encryption_then_simple_is_refused_at_listen() {
+        let mut b = RistRecvTransportBuilder::new("rist://@127.0.0.1:19012").unwrap();
+        b.encryption(EncryptionKey::aes256("example-secret"))
+            .profile(RistProfile::Simple);
+        assert!(matches!(b.listen(), Err(RistError::InvalidConfig(ref m)) if m.contains("Main")));
+    }
+
+    #[cfg(feature = "mbedtls")]
+    #[test]
+    fn direct_config_simple_with_encryption_is_refused() {
+        let url = crate::url::RistUrl::parse("rist://127.0.0.1:19014").unwrap();
+        let cfg = RistConfig {
+            profile: RistProfile::Simple,
+            encryption: Some(EncryptionKey::aes128("example-secret")),
+            ..RistConfig::default()
+        };
+        assert!(matches!(
+            RistTransport::connect_with_config(&url, &cfg),
+            Err(RistError::InvalidConfig(_))
+        ));
     }
 }

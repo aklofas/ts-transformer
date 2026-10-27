@@ -45,6 +45,15 @@ impl RistCtx {
             return Err(RistError::EncryptionDisabled);
         }
 
+        // The Simple profile sends RTP straight to UDP, so a key would be
+        // silently unused; refuse rather than send in the clear.
+        if cfg.encryption.is_some() && cfg.profile == RistProfile::Simple {
+            return Err(RistError::InvalidConfig(
+                "encryption needs the Main profile; RistProfile::Simple sends RTP unencrypted"
+                    .into(),
+            ));
+        }
+
         // librist's Simple-profile receiver (rist.c's rist_receiver_peer_create)
         // opens a second, RTCP peer on port + 1 by rebuilding the bind address
         // from host and port, and drops the IPv6 brackets doing it, so for an
