@@ -1000,6 +1000,9 @@ pub enum NalHeaderKind {
     /// `nuh_layer_id` is unconstrained at the spec level (extension layers
     /// are valid). This variant fires only for H.266.
     LayerIdOutOfRange { id: u8 },
+    /// The NAL unit is shorter than its header (1 byte for H.264, 2 for
+    /// H.265 / H.266), so no header fields can be read. The NAL is dropped.
+    Truncated,
 }
 
 /// Spec-clause that an AV1 OBU header violated. Carried inside
@@ -1022,6 +1025,13 @@ pub enum Av1ObuHeaderKind {
     /// (low 3 bits, after `temporal_id` and `spatial_id`) are set.
     /// Per AV1 §5.3.3 these MUST be `0`.
     ExtensionReservedBits,
+    /// The OBU's extension byte, `obu_size` field or body runs past the end
+    /// of its unit. The walk stops at this OBU.
+    Truncated,
+    /// A sequence the AV1-in-MPEG-2-TS binding §3.2 forbids inside a
+    /// `ts_open_bitstream_unit()`: `0x000002`, or `0x000003` followed by a
+    /// byte greater than `0x03`. Reported once per payload.
+    InvalidEmulationPrevention,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1133,6 +1143,9 @@ fn fmt_nal_header(
             f,
             "{codec:?} NAL header nuh_layer_id={id} out of range (spec allows 0..=55)"
         ),
+        NalHeaderKind::Truncated => {
+            write!(f, "{codec:?} NAL unit shorter than its header")
+        }
     }
 }
 
@@ -1153,6 +1166,14 @@ fn fmt_av1_obu_header(
         Av1ObuHeaderKind::ExtensionReservedBits => write!(
             f,
             "AV1 OBU extension header reserved bits set on PID 0x{pid:04X} (spec mandates =0)"
+        ),
+        Av1ObuHeaderKind::Truncated => write!(
+            f,
+            "AV1 OBU on PID 0x{pid:04X} runs past the end of its unit"
+        ),
+        Av1ObuHeaderKind::InvalidEmulationPrevention => write!(
+            f,
+            "AV1 tsOBU on PID 0x{pid:04X} carries a forbidden 0x000002 or 0x000003xx (xx > 0x03) sequence (binding §3.2)"
         ),
     }
 }
