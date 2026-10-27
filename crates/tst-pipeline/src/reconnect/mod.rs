@@ -302,8 +302,9 @@ impl ManagedStatsHandle {
 /// 3. Never call `spawn_worker()` while holding the `gap` lock (it joins
 ///    the previous worker, which may be blocked acquiring `gap` in its
 ///    exit path).
-/// 4. The background worker NEVER holds `gap` across an inner send, and
-///    nothing on the producer's path takes `inner`: neither
+/// 4. Neither the background worker nor the `Blocking` drain holds `gap`
+///    across an inner send, and nothing on the producer's path takes
+///    `inner`: neither
 ///    `send_bytes`'s size pre-check nor [`Transport::max_payload`] —
 ///    which `RawSender`/`MuxSender` call on every send — both read the
 ///    cached ceiling instead. One inner send is unbounded against a peer
