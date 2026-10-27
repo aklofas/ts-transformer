@@ -1,6 +1,9 @@
 use std::env;
 use std::path::PathBuf;
 
+#[path = "build/host_lib.rs"]
+mod host_lib;
+
 /// Sanitizer instrumentation for the vendored native builds.
 ///
 /// `TST_NATIVE_SANITIZER=address|thread` (set by the sanitizers workflow's
@@ -183,14 +186,13 @@ fn main() {
     // silently survives into a sanitized run — an invisible false-green.
     println!("cargo:rerun-if-env-changed=TST_NATIVE_SANITIZER");
 
-    // Symbol hygiene for downstream cdylib consumers is wired
-    // in each cdylib crate's OWN build.rs, not here: a `cargo:rustc-link-arg-cdylib`
-    // directive applies only to a cdylib target in the SAME package, and srt-sys
-    // is rlib-only — so emitting it here would do nothing except print a per-build
-    // warning ("does not contain a cdylib target", rust-lang/cargo#9562). The
-    // effective `-Wl,--exclude-libs=ALL` (Linux) lives in bindings/c/build.rs
-    // (alongside the macOS exported_symbols_list path); the "no srt_*/SRT_*
-    // symbol leak in libtstrans.so" CI ratchet verifies it works.
+    // Symbol hygiene for downstream cdylib consumers is wired in each cdylib
+    // crate's OWN build.rs, not here: a `cargo:rustc-link-arg-cdylib` directive
+    // applies only to a cdylib target in the SAME package, and srt-sys is
+    // rlib-only (rust-lang/cargo#9562). No `--exclude-libs=ALL` is used at all
+    // (see bindings/c/build.rs): rustc's cdylib export policy already localizes
+    // every symbol that is not a crate-graph `#[no_mangle]` export, and the
+    // "no srt_*/SRT_* symbol leak" C export rail verifies it.
 
     let force_vendored = env::var_os("SRT_FORCE_VENDORED").is_some();
     let no_pkg_config = env::var_os("SRT_NO_PKG_CONFIG").is_some();
@@ -216,11 +218,36 @@ fn main() {
     let include_paths: Vec<PathBuf> = if force_vendored || no_pkg_config {
         build_vendored(mbedtls_prefix.as_ref(), sanitizer.as_deref())
     } else {
+        // The floor is ours, not pkg-config's: an older host libsrt predates
+        // the fixes the vendored tree carries, and one built against another
+        // crypto backend would link a second TLS stack.
         match pkg_config::Config::new()
-            .atleast_version("1.5.0")
+            .cargo_metadata(false)
+            .statik(true)
             .probe("srt")
         {
-            Ok(lib) => lib.include_paths,
+            Ok(probe) => {
+                match host_lib::host_lib_verdict(
+                    &probe.version,
+                    (1, 5, 7),
+                    &probe.libs,
+                    want_mbedtls,
+                ) {
+                    Ok(()) => pkg_config::Config::new()
+                        .probe("srt")
+                        .map(|lib| lib.include_paths)
+                        .unwrap_or_else(|_| {
+                            build_vendored(mbedtls_prefix.as_ref(), sanitizer.as_deref())
+                        }),
+                    Err(reason) => {
+                        println!(
+                            "cargo:warning={}",
+                            host_lib::vendored_warning("libsrt", &reason)
+                        );
+                        build_vendored(mbedtls_prefix.as_ref(), sanitizer.as_deref())
+                    }
+                }
+            }
             Err(_) => build_vendored(mbedtls_prefix.as_ref(), sanitizer.as_deref()),
         }
     };
