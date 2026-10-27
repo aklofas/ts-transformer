@@ -21,6 +21,7 @@ use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::{MuxSender, MuxSenderError, MuxSenderErrorSource, TransportError};
 use tst_srt::SrtTransport;
 use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
+use tst_test_helpers::timing::scaled;
 
 #[test]
 fn close_unblocks_libsrt_parked_send() {
@@ -90,7 +91,7 @@ fn close_unblocks_libsrt_parked_send() {
     s.close();
     let close_elapsed = close_start.elapsed();
     assert!(
-        close_elapsed < Duration::from_millis(500),
+        close_elapsed < scaled(Duration::from_millis(500)),
         "close() took {close_elapsed:?} — should be near-instant via cancel"
     );
 
@@ -102,7 +103,7 @@ fn close_unblocks_libsrt_parked_send() {
     let result = send_thread.join().expect("send thread panic");
     let join_elapsed = join_start.elapsed();
     assert!(
-        join_elapsed < Duration::from_secs(2),
+        join_elapsed < scaled(Duration::from_secs(2)),
         "send thread didn't unpark within 2s of cancel ({join_elapsed:?})"
     );
     match result {

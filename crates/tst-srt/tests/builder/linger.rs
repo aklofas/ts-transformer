@@ -3,6 +3,7 @@
 
 use std::time::{Duration, Instant};
 use tst_srt::SrtSocketBuilder;
+use tst_test_helpers::timing::scaled;
 
 #[test]
 fn drop_with_zero_linger_does_not_block() {
@@ -30,7 +31,7 @@ fn drop_with_zero_linger_does_not_block() {
     let drop_elapsed = drop_started.elapsed();
 
     assert!(
-        drop_elapsed < Duration::from_secs(2),
+        drop_elapsed < scaled(Duration::from_secs(2)),
         "Drop with linger=0s should return promptly, took {drop_elapsed:?}",
     );
 }

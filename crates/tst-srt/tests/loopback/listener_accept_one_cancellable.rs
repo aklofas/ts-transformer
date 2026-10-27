@@ -10,6 +10,7 @@ use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
 use tst_srt::config::SrtListenerConfig;
 use tst_srt::{SrtListener, SrtSocketBuilder};
+use tst_test_helpers::timing::scaled;
 
 /// Reserve an ephemeral UDP port and release it again. Unlike
 /// `127.0.0.1:0`, the resulting port is knowable by a connecting peer
@@ -43,7 +44,7 @@ fn cancelled_before_bind_returns_explicit_close_and_leaves_the_port_free() {
         Err(e) => panic!("expected ExplicitClose; got {e:?}"),
     }
     assert!(
-        elapsed < Duration::from_secs(1),
+        elapsed < scaled(Duration::from_secs(1)),
         "an already-cancelled slot must return at once: {elapsed:?}"
     );
 
@@ -80,7 +81,7 @@ fn cancel_during_accept_returns_explicit_close_promptly() {
         Err(e) => panic!("expected ExplicitClose; got {e:?}"),
     }
     assert!(
-        elapsed < Duration::from_secs(2),
+        elapsed < scaled(Duration::from_secs(2)),
         "cancel did not wake the parked accept promptly: {elapsed:?}"
     );
 }

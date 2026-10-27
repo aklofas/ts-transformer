@@ -5,6 +5,7 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
+use tst_test_helpers::timing::scaled;
 
 /// `connect_timeout` must be honored: a 1-second limit on a blackhole
 /// address must return an error in well under the old hardcoded 10 s.
@@ -26,7 +27,7 @@ fn connect_timeout_is_honored() {
         "expected connection to blackhole to fail, but it succeeded"
     );
     assert!(
-        elapsed < Duration::from_secs(4),
+        elapsed < scaled(Duration::from_secs(4)),
         "connect_timeout of 1 s was ignored — elapsed {elapsed:?} exceeds 4 s"
     );
 }
@@ -201,15 +202,16 @@ fn request_timeout_duration_max_does_not_panic() {
 //
 // The request deadline and the cancel flag must be honored whatever the
 // per-read socket timeout is configured to. These are deadline tests, so
-// they assert on elapsed time, with a bound 20x the configured deadline
-// and well under the 5 s read timeout, so the outcomes cannot be confused.
-// None of them can hang: the 5 s socket read timeout ends the client call
-// even without the behavior under test, and each server thread has its
-// own cap.
+// they assert on elapsed time. The wrong behavior takes at least the 30 s
+// read timeout, so the 15 s bound is half of it and needs no scaling: a slow
+// host cannot push the right behavior across it, and the wrong one cannot
+// land under it. None of them can hang: the socket read timeout ends the
+// client call even without the behavior under test, and each server thread
+// has its own cap.
 
 const SHORT_REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
-const LONG_READ_TIMEOUT: Duration = Duration::from_secs(5);
-const PROMPT: Duration = Duration::from_secs(2);
+const LONG_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const PROMPT: Duration = Duration::from_secs(15);
 
 /// Accept one connection and hold it open, silent, until `done` fires.
 fn silent_peer() -> (
@@ -222,7 +224,7 @@ fn silent_peer() -> (
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     let server = std::thread::spawn(move || {
         if let Ok((sock, _)) = listener.accept() {
-            let _ = done_rx.recv_timeout(Duration::from_secs(20));
+            let _ = done_rx.recv_timeout(Duration::from_secs(40));
             drop(sock);
         }
     });
@@ -263,8 +265,8 @@ fn request_timeout_is_not_stretched_by_a_longer_read_timeout() {
     server.join().unwrap();
 }
 
-/// A well-formed response that arrives 2 s after the request — twenty
-/// request deadlines late — is a `Timeout`, not a success.
+/// A well-formed response that arrives 20 s after the request, long past the
+/// request deadline, is a `Timeout`, not a success.
 #[test]
 fn response_after_the_request_deadline_is_a_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -290,8 +292,8 @@ fn response_after_the_request_deadline_is_a_timeout() {
                 .lines()
                 .find_map(|l| l.strip_prefix("cseq:").map(|v| v.trim().to_string()))
                 .unwrap_or_else(|| "1".to_string());
-            // Stay silent for 2 s (or until the client is already done).
-            let _ = done_rx.recv_timeout(Duration::from_secs(2));
+            // Stay silent for 20 s (or until the client is already done).
+            let _ = done_rx.recv_timeout(Duration::from_secs(20));
             let _ = sock.write_all(
                 format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nPublic: OPTIONS\r\n\r\n").as_bytes(),
             );
@@ -314,7 +316,7 @@ fn response_after_the_request_deadline_is_a_timeout() {
 
     assert!(
         matches!(result, Err(tst_rtp::RtspError::Timeout)),
-        "a response 2 s after a request with a {SHORT_REQUEST_TIMEOUT:?} deadline \
+        "a response 20 s after a request with a {SHORT_REQUEST_TIMEOUT:?} deadline \
          must be a Timeout; got {:?} after {elapsed:?}",
         result.as_ref().map(|_| "Ok(<response>)")
     );
@@ -393,7 +395,7 @@ fn request_timeout_is_not_stretched_by_a_longer_read_timeout_over_tls() {
                     return;
                 }
             }
-            let _ = done_rx.recv_timeout(Duration::from_secs(20));
+            let _ = done_rx.recv_timeout(Duration::from_secs(40));
         }
     });
 

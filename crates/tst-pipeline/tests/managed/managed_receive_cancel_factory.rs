@@ -47,9 +47,10 @@ fn cancel_wakes_a_factory_parked_on_its_installed_handle() {
             });
             fc.install(handle);
             // Park like a listener in accept(): only the installed handle's
-            // cancel() can release us. A 5 s cap keeps a regression from
-            // hanging the test binary.
-            let released = rx.recv_timeout(Duration::from_secs(5)).is_ok();
+            // cancel() can release us. The 30 s cap keeps a regression from
+            // hanging the test binary, and the 15 s bound on the wake below
+            // is half of it, so it needs no scaling.
+            let released = rx.recv_timeout(Duration::from_secs(30)).is_ok();
             fc.clear();
             if released {
                 woken.fetch_add(1, Ordering::SeqCst);
@@ -93,7 +94,7 @@ fn cancel_wakes_a_factory_parked_on_its_installed_handle() {
         "the factory was not released through its installed cancel handle"
     );
     assert!(
-        elapsed < Duration::from_secs(1),
+        elapsed < Duration::from_secs(15),
         "cancel took {elapsed:?} to reach the parked factory"
     );
     assert!(

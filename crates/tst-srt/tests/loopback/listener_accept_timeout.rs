@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tst_srt::{AcceptError, SrtListenerBuilder};
+use tst_test_helpers::timing::scaled;
 
 #[test]
 fn accept_timeout_returns_timed_out_when_no_connection() {
@@ -26,7 +27,10 @@ fn accept_timeout_returns_timed_out_when_no_connection() {
     // is deliberately loose: a loaded macOS runner took 1.17 s for this
     // 200 ms wait (2026-10-06), and the old `< 1 s` bound read that as
     // a failure.
-    assert!(elapsed < Duration::from_secs(5), "elapsed={elapsed:?}");
+    assert!(
+        elapsed < scaled(Duration::from_secs(5)),
+        "elapsed={elapsed:?}"
+    );
 }
 
 #[test]
@@ -92,7 +96,9 @@ fn accept_timeout_drains_connection_queued_before_subscribe() {
     let _peer = connector.join().expect("connector thread panicked");
 
     let start = std::time::Instant::now();
-    let result = listener.accept_timeout(Duration::from_millis(500));
+    // 30 s: a missed probe waits the whole timeout, so the half-way bound
+    // below separates the two behaviours however slow the host is.
+    let result = listener.accept_timeout(Duration::from_secs(30));
     let elapsed = start.elapsed();
 
     assert!(
@@ -101,7 +107,7 @@ fn accept_timeout_drains_connection_queued_before_subscribe() {
         result.err()
     );
     assert!(
-        elapsed < Duration::from_millis(100),
+        elapsed < Duration::from_secs(15),
         "accept_timeout took {elapsed:?} for an already-queued connection — non-blocking probe is not draining the queue"
     );
 }

@@ -2852,6 +2852,7 @@ dependencies = [
  "tokio-util",
  "tst-core",
  "tst-pipeline",
+ "tst-test-helpers",
 ]
 
 [[package]]
@@ -2984,6 +2985,7 @@ dependencies = [
  "tracing",
  "tst-core",
  "tst-pipeline",
+ "tst-test-helpers",
 ]
 
 [[package]]
@@ -3018,6 +3020,7 @@ dependencies = [
  "tracing",
  "tst-core",
  "tst-pipeline",
+ "tst-test-helpers",
 ]
 
 [[package]]
@@ -3039,6 +3042,7 @@ dependencies = [
  "tracing",
  "tst-core",
  "tst-pipeline",
+ "tst-test-helpers",
 ]
 
 [[package]]

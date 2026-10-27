@@ -22,11 +22,12 @@ fn cancel_interrupts_the_backoff_wait() {
             Err(broken("peer still down"))
         });
 
-    // A 5 s constant backoff: the first reconnect attempt cannot begin
-    // before 5 s. The cancel lands at 150 ms.
+    // A 60 s constant backoff: the first reconnect attempt cannot begin
+    // before 60 s. The cancel lands at 150 ms, and the 30 s bound below is
+    // half the wait it must cut short, so it needs no scaling.
     let policy = ReconnectPolicy {
         max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_secs(5)),
+        backoff: BackoffStrategy::Constant(Duration::from_secs(60)),
         ..Default::default()
     };
     let mut managed = ManagedRecvTransport::new(
@@ -52,7 +53,7 @@ fn cancel_interrupts_the_backoff_wait() {
         "expected ExplicitClose after a cross-thread cancel, got {result:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(1),
+        elapsed < Duration::from_secs(30),
         "cancel did not interrupt the backoff wait: recv_bytes returned after {elapsed:?}"
     );
     assert_eq!(
