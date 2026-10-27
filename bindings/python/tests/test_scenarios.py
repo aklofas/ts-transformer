@@ -794,12 +794,16 @@ def _run_peer_reset_recv_kind(scenario_id: str, packet: bytes) -> list[dict[str,
     import os
     import socket
     import struct
+    import sys
     import threading
 
     from tstrans.exceptions import TcpError
 
-    scale = int(os.environ.get("TST_TEST_TIMEOUT_SCALE", "1") or "1")
-    deadline = 10.0 * max(scale, 1)
+    try:
+        scale = max(int(os.environ.get("TST_TEST_TIMEOUT_SCALE", "1")), 1)
+    except ValueError:
+        scale = 1  # unset semantics, as the Rust `scaled()` helper
+    deadline = 10.0 * scale
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.bind(("127.0.0.1", 0))
@@ -809,7 +813,9 @@ def _run_peer_reset_recv_kind(scenario_id: str, packet: bytes) -> list[dict[str,
         handle = receiver.cancel_handle()
         conn, _ = server.accept()
         conn.sendall(packet)
-        conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        # struct linger is two ints on POSIX, two u_shorts on Windows.
+        linger_fmt = "hh" if sys.platform == "win32" else "ii"
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack(linger_fmt, 1, 0))
         conn.close()  # RST
 
     outcome: dict[str, Any] = {}
