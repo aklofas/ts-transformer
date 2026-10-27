@@ -8,9 +8,7 @@
 //! accumulator itself lives in `crates/tst-core/src/mpegts/demux/demuxer.rs`.
 
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::{
-    DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, NonConformantIssue, SamplePayload,
-};
+use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, SamplePayload};
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
@@ -142,10 +140,11 @@ fn non_wrapping_stream_emits_identical_pts_both_modes() {
     assert_eq!(off, on, "no wrap occurred — both modes must agree exactly");
 }
 
-/// Test C — a video PES with no PTS still emits `pts = 0` plus
-/// `MissingRequiredPts`, even with the knob on (the synthesized 0 must
-/// never reach the accumulator), and a real PTS immediately afterward on
-/// the same PID is unaffected.
+/// Test C — a video PES with no PTS still emits `pts = 0`, even with the
+/// knob on (the synthesized 0 must never reach the accumulator), and a real
+/// PTS immediately afterward on the same PID is unaffected. No coded PTS
+/// precedes the stripped PES, so the 0.7 s spacing rule has nothing to
+/// measure and raises nothing here.
 #[test]
 fn missing_pts_stays_zero_and_does_not_corrupt_following_pts() {
     // Single continuous mux session, two video AUs on one PID — avoids
@@ -182,16 +181,6 @@ fn missing_pts_stays_zero_and_does_not_corrupt_following_pts() {
         pts_seq,
         vec![0, raw2],
         "missing-PTS sample stays 0 (never unwrapped), following real PTS is untouched"
-    );
-    assert!(
-        events.iter().any(|e| matches!(
-            e,
-            DemuxEvent::NonConformant {
-                issue: NonConformantIssue::MissingRequiredPts { pid: 0x101 },
-                ..
-            }
-        )),
-        "expected MissingRequiredPts on PID 0x101, got {events:?}"
     );
 }
 

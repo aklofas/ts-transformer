@@ -564,10 +564,22 @@ pub enum NonConformantIssue {
     #[error("PTS anomaly: delta={delta} (90 kHz ticks)")]
     PtsAnomaly { delta: i64 },
 
-    /// A PES on a stream type that requires PTS (audio or video per
-    /// H.222.0 V9 §2.7.4) arrived without one. The demuxer cannot
-    /// timestamp the sample; lenient mode emits the sample with PTS=0
-    /// and surfaces this issue. Strict mode (`StrictMode::Full`) rejects.
+    /// A stream broke its PTS contract. Three rules apply:
+    ///
+    /// - Audio and video (H.222.0 §2.7.4): coded PTS of one stream are at
+    ///   most 0.7 s apart. A PES may omit its PTS; when the coded PTS on
+    ///   either side of a run of PTS-less PES differ by more than 0.7 s,
+    ///   this is raised once, just before the sample whose PTS closes the
+    ///   run. A gap between coded PTS with no PTS-less PES inside it is not
+    ///   diagnosed (the still-picture and low-frame-rate exceptions of
+    ///   §2.7.4 cannot be told apart from it), nor is a run with no coded
+    ///   PTS before it.
+    /// - DVB subtitles (EN 300 743): raised for every PES without a PTS.
+    /// - Synchronous KLV on a `stream_type` 0x15 PID (ST 1402-07): raised
+    ///   for every PES without a PTS.
+    ///
+    /// A PES without a PTS is emitted with PTS=0. `StrictMode::TimingOnly`
+    /// and `StrictMode::Full` reject.
     #[error("PTS required by stream type on PID 0x{pid:04X} but absent in PES header")]
     MissingRequiredPts { pid: u16 },
 

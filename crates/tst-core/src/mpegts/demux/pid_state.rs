@@ -34,6 +34,9 @@ pub(super) struct PidState {
     /// PES belongs to the old clock and is judged against `last_pts`, then
     /// `last_pts` is cleared so the next PES starts the new baseline.
     pub(super) pts_baseline_clears_after_pes: bool,
+    /// A PES without a PTS arrived since the last coded PTS on an audio or
+    /// video PID; the next coded PTS judges the spacing around the run.
+    pub(super) pts_less_since_pts: bool,
     /// Opt-in PTS/DTS unwrap accumulator.
     pub(super) unwrap: Option<UnwrapState>,
     /// Public per-stream counters, created on the first event.
@@ -44,6 +47,7 @@ pub(super) struct PidState {
     pub(super) subtitle_missing_descriptor_emitted: bool,
     pub(super) av1_registration_malformed_emitted: bool,
     pub(super) subtitle_descriptor_ambiguous_emitted: bool,
+    pub(super) sync_pes_shape_emitted: bool,
     /// A subtitle sample has been counted for this PID.
     pub(super) subtitle_seen: bool,
 }
@@ -61,6 +65,7 @@ impl PidState {
         self.clear_continuity();
         self.last_pts = None;
         self.pts_baseline_clears_after_pes = false;
+        self.pts_less_since_pts = false;
         self.unwrap = None;
     }
 
@@ -73,6 +78,7 @@ impl PidState {
         self.subtitle_missing_descriptor_emitted = false;
         self.av1_registration_malformed_emitted = false;
         self.subtitle_descriptor_ambiguous_emitted = false;
+        self.sync_pes_shape_emitted = false;
     }
 
     /// What `Demuxer::reset_stats` clears.
@@ -100,12 +106,14 @@ impl PidState {
             last_pkt_raw,
             last_pts,
             pts_baseline_clears_after_pes,
+            pts_less_since_pts,
             unwrap,
             stats,
             codec,
             subtitle_missing_descriptor_emitted,
             av1_registration_malformed_emitted,
             subtitle_descriptor_ambiguous_emitted,
+            sync_pes_shape_emitted,
             subtitle_seen,
         } = self;
         stream_kind.is_none()
@@ -115,12 +123,14 @@ impl PidState {
             && last_pkt_raw.is_none()
             && last_pts.is_none()
             && !pts_baseline_clears_after_pes
+            && !pts_less_since_pts
             && unwrap.is_none()
             && stats.is_none()
             && codec.is_none()
             && !subtitle_missing_descriptor_emitted
             && !av1_registration_malformed_emitted
             && !subtitle_descriptor_ambiguous_emitted
+            && !sync_pes_shape_emitted
             && !subtitle_seen
     }
 }
