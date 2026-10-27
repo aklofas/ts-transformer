@@ -53,7 +53,9 @@ fn c_program_sees_the_runtime_answers() {
     // copy under target/debug is refreshed only when the build script re-runs.
     let include_dir = PathBuf::from(env!("OUT_DIR")).join("include");
     let c_file = PathBuf::from(manifest_dir).join("tests/has_feature.c");
-    let bin = std::env::temp_dir().join("tst_has_feature_check");
+    // Private dir: concurrent runs must not overwrite each other's binary.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bin = dir.path().join("tst_has_feature_check");
 
     let so = format!(
         "{}tstrans{}",
