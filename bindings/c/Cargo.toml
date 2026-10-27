@@ -54,6 +54,7 @@ cbindgen = { workspace = true }
 [dev-dependencies]
 cbindgen         = { workspace = true }
 tempfile         = "3"
+socket2          = { workspace = true }
 # The integration tests in `tests/` reference these crates directly (constructing
 # Rust-side fixtures + comparing against the C ABI surface). They are pulled in
 # transitively through `tst-c-core`, but the test binaries must name them, so

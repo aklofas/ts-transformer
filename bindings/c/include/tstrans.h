@@ -10715,9 +10715,9 @@ int tst_tcp_demux_receiver_get_stream_stats(struct TstTcpDemuxReceiver *p,
  *
  * Returns:
  * - `0` on success (`*out_event` populated)
- * - `TST_E_END_OF_STREAM` (-12) on graceful peer close / EOF
+ * - `TST_E_END_OF_STREAM` (-12) on a graceful peer close (FIN) / EOF
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
- * - `TST_E_TRANSPORT` (-8) on transport failure
+ * - `TST_E_TRANSPORT` (-8) on transport failure, including a peer reset or read error
  * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
  *   unrecoverable packet malformation, or a malformed PES)
  * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
@@ -11332,9 +11332,9 @@ int tst_tcp_mux_sender_push_video_to(struct TstTcpMuxSender *p,
  *
  * Returns:
  * - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
- * - `TST_E_END_OF_STREAM` (-12) on graceful peer close / EOF
+ * - `TST_E_END_OF_STREAM` (-12) on a graceful peer close (FIN) / EOF
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
- * - `TST_E_TRANSPORT` (-8) on transport failure
+ * - `TST_E_TRANSPORT` (-8) on transport failure, including a peer reset or read error
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
  *
  * # Safety

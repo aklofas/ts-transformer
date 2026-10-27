@@ -150,9 +150,9 @@ pub unsafe extern "C" fn tst_tcp_receiver_cancel(p: *mut TstTcpReceiver) -> libc
 ///
 /// Returns:
 /// - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
-/// - `TST_E_END_OF_STREAM` (-12) on graceful peer close / EOF
+/// - `TST_E_END_OF_STREAM` (-12) on a graceful peer close (FIN) / EOF
 /// - `TST_E_CLOSED` (-7) if the handle was `_close`'d
-/// - `TST_E_TRANSPORT` (-8) on transport failure
+/// - `TST_E_TRANSPORT` (-8) on transport failure, including a peer reset or read error
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
 ///
 /// # Safety
