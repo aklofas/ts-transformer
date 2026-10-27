@@ -241,10 +241,11 @@ impl NearestState {
     }
 
     /// Linear-scan history for nearest-PTS KLV; emit Paired (and mark
-    /// the entry used) if within tolerance, else UnpairedVideo. Tie-
-    /// break on equidistant entries: prefer the newer (higher index in
-    /// the FIFO), matching the spec's "most recently sent telemetry
-    /// wins" rule.
+    /// the entry used) if within tolerance, else UnpairedVideo. Equidistant
+    /// entries go to the newer one (higher index in the FIFO), matching the
+    /// spec's "most recently sent telemetry wins" rule: the scan walks
+    /// oldest to newest and replaces the best on `<=`, so that rule depends
+    /// on the traversal order.
     fn match_video_against_history(&mut self, v: VideoSample) -> Vec<PairerOutput> {
         let mut best: Option<(usize, i64)> = None;
         for (i, entry) in self.klv_history.iter().enumerate() {
@@ -258,11 +259,6 @@ impl NearestState {
                 .saturating_abs();
             match best {
                 None => best = Some((i, dist)),
-                // Strict `<` so a later equidistant entry wins (newer
-                // telemetry preferred). The loop walks oldest-to-newest,
-                // so the last equidistant entry naturally wins via
-                // `<=` — but using `<=` here makes the intent explicit
-                // even if iteration order changes.
                 Some((_, best_dist)) if dist <= best_dist => best = Some((i, dist)),
                 _ => {}
             }

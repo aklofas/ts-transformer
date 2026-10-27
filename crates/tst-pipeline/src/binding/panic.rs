@@ -2,7 +2,7 @@
 //!
 //! The payload-to-string helper and the `catch_unwind(AssertUnwindSafe(f))`
 //! shape, defined once: `tst-c`'s `ffi_catch` and `tst-jni`'s `jni_catch`
-//! both delegate here.
+//! both run their closure through [`catch`].
 
 use alloc::string::String;
 

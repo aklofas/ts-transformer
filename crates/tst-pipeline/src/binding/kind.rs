@@ -501,13 +501,13 @@ pub enum Domain {
     Rtp,
     /// Host classes: `RtspError` / `RtspErrorKind`, `RtspException`.
     Rtsp,
-    /// Host classes: `UdpError` / `UdpErrorKind` (Python only).
+    /// Host classes: `UdpError` / `UdpErrorKind`, `UdpException`.
     Udp,
-    /// Host classes: `TcpError` / `TcpErrorKind` (Python only).
+    /// Host classes: `TcpError` / `TcpErrorKind`, `TcpException`.
     Tcp,
     /// Host classes: `HlsError` / `HlsErrorKind`, `HlsException`.
     Hls,
-    /// Host classes: `RistError` / `RistErrorKind` (Python only).
+    /// Host classes: `RistError` / `RistErrorKind`, `RistException`.
     Rist,
     /// Host classes: `MuxError` / `MuxErrorKind`, `MuxException`.
     Mux,
@@ -1234,32 +1234,35 @@ impl From<ShellErrorKind> for BindingErrorKind {
     }
 }
 
-/// The kind of a transport failure and the detail the binding surfaces.
-/// The kind comes from the exhaustive `TransportError::kind()`; the detail
-/// is a second match whose fallback is not a classification.
-fn map_transport(e: &TransportError) -> (BindingErrorKind, String) {
+/// The binding kind of a transport failure, direction aside. Exhaustive
+/// over `TransportErrorKind`, so a new category is a compile error here.
+fn transport_kind(e: &TransportError) -> BindingErrorKind {
     use tst_core::transport::TransportErrorKind as T;
-    let kind = match e.kind() {
+    match e.kind() {
         T::Backpressure => BindingErrorKind::Backpressure,
         T::Broken => BindingErrorKind::Broken,
         T::Closed | T::ExplicitClose => BindingErrorKind::Closed,
         T::TooLarge => BindingErrorKind::TooLarge,
-    };
-    let detail = match e {
+    }
+}
+
+/// The detail text the binding surfaces for a transport failure. Built
+/// only when a `BindingError` is; the fallback is not a classification.
+fn transport_detail(e: &TransportError) -> String {
+    match e {
         TransportError::Backpressure { msg, .. } | TransportError::Broken { msg, .. } => {
             msg.clone()
         }
         TransportError::Closed => String::from("transport closed"),
         TransportError::ExplicitClose => String::from("cancelled from another thread"),
         _ => e.to_string(),
-    };
-    (kind, detail)
+    }
 }
 
 impl From<TransportError> for BindingError {
     fn from(e: TransportError) -> Self {
-        let (kind, detail) = map_transport(&e);
-        BindingError::new(kind, detail).with_diagnostics(transport_diagnostics(&e))
+        BindingError::new(transport_kind(&e), transport_detail(&e))
+            .with_diagnostics(transport_diagnostics(&e))
     }
 }
 
@@ -1288,7 +1291,7 @@ pub(crate) fn kind_of_transport(
         (T::Broken, crate::shell_error::Direction::Recv) if is_clean_eof(e) => {
             BindingErrorKind::EndOfStream
         }
-        _ => map_transport(e).0,
+        _ => transport_kind(e),
     }
 }
 
@@ -1524,6 +1527,40 @@ mod tests {
     use crate::binding::owned::HandleState;
     use crate::shell_error::ShellErrorKind;
     use tst_core::transport::{BrokenCause, TransportError};
+
+    #[test]
+    fn transport_kind_agrees_with_the_binding_error_and_the_send_direction() {
+        use crate::shell_error::Direction;
+        let every = || {
+            [
+                TransportError::Backpressure {
+                    msg: "full".into(),
+                    errno_code: None,
+                },
+                TransportError::Broken {
+                    msg: "reset".into(),
+                    errno_code: Some(104),
+                    cause: BrokenCause::Unspecified,
+                },
+                TransportError::Broken {
+                    msg: "eof".into(),
+                    errno_code: None,
+                    cause: BrokenCause::CleanEof,
+                },
+                TransportError::Closed,
+                TransportError::ExplicitClose,
+                TransportError::TooLarge {
+                    len: 2000,
+                    max: 1316,
+                },
+            ]
+        };
+        for e in every() {
+            let kind = transport_kind(&e);
+            assert_eq!(kind_of_transport(&e, Direction::Send), kind, "{e:?}");
+            assert_eq!(BindingError::from(e).kind, kind);
+        }
+    }
 
     #[test]
     fn of_scheme_names_the_six_shell_schemes() {
