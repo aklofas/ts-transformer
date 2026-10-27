@@ -56,7 +56,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use tracing::info_span;
 use tst_core::error::MuxError;
-use tst_core::mpegts::common::Pts90khz;
+use tst_core::mpegts::common::{Pts90khz, TS_PACKET_SIZE};
 use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, Muxer, MuxerConfig, SubtitleStreamHandle,
     VideoStreamHandle,
@@ -77,9 +77,11 @@ pub struct MuxSenderStats {
     /// Each chunk is one `transport.send_bytes` call that returned `Ok`.
     pub packets_sent: u64,
     /// Live gauge — bytes currently buffered in `pending_bytes` after
-    /// a transport flap. NOT a counter; reflects current state.
+    /// a transport flap, excluding the part of the front chunk the
+    /// transport already accepted. NOT a counter; reflects current state.
     pub pending_bytes_queued: u64,
-    /// Live gauge — chunk count currently in the pending buffer.
+    /// Live gauge — chunk count currently in the pending buffer. A
+    /// partly sent front chunk still counts as one.
     pub pending_chunks_queued: u64,
     /// Number of programs (PAT entries) in the muxer configuration.
     /// Delegated from the inner `MuxerStats`.
@@ -202,6 +204,10 @@ struct Inner<T: Transport> {
     /// should wrap with `ManagedTransport`, which adds a gap-buffer with
     /// overflow policy.
     pending_bytes: VecDeque<Vec<u8>>,
+    /// Bytes of the front `pending_bytes` chunk the transport already
+    /// accepted. Always below the front chunk's length; `0` when the queue
+    /// is empty.
+    pending_front_sent: usize,
     closed: bool,
     bytes_sent: u64,
     packets_sent: u64,
@@ -270,6 +276,7 @@ impl<T: Transport> MuxSender<T> {
                 muxer,
                 transport,
                 pending_bytes: VecDeque::new(),
+                pending_front_sent: 0,
                 closed: false,
                 bytes_sent: 0,
                 packets_sent: 0,
@@ -889,7 +896,12 @@ impl<T: Transport> MuxSender<T> {
             return MuxSenderStats::default();
         };
         let mux_stats = inner.muxer.stats();
-        let pending_bytes_queued: u64 = inner.pending_bytes.iter().map(|c| c.len() as u64).sum();
+        let pending_bytes_queued: u64 = inner
+            .pending_bytes
+            .iter()
+            .map(|c| c.len() as u64)
+            .sum::<u64>()
+            - inner.pending_front_sent as u64;
         let pending_chunks_queued = inner.pending_bytes.len() as u64;
         MuxSenderStats {
             bytes_sent: inner.bytes_sent,
@@ -1159,6 +1171,10 @@ impl<T: Transport> Inner<T> {
         if self.closed {
             return Err(MuxSenderError::from(TransportError::Closed).with_input_consumed(false));
         }
+        // A ceiling below one TS packet cannot carry any of this call's
+        // output; refuse before the input is touched.
+        self.packet_step()
+            .map_err(|e| MuxSenderError::from(e).with_input_consumed(false))?;
         // Drain any leftover from a previous failed call first. A failure
         // here happens BEFORE this call's input is touched.
         self.drain_pending()
@@ -1234,9 +1250,22 @@ impl<T: Transport> Inner<T> {
 
     /// Drain the muxer's internal buffer and forward each chunk to the
     /// transport. On transport error, captures any unsent chunks into
-    /// `pending_bytes` and returns the error.
+    /// `pending_bytes` and returns the error. A ceiling below one TS packet
+    /// moves all muxer output into `pending_bytes` and returns `TooLarge`.
     fn drain_muxer(&mut self) -> Result<(), MuxSenderError> {
         let max = self.transport.max_payload();
+        if max < TS_PACKET_SIZE {
+            // `pull` produces nothing into a view smaller than one packet,
+            // so the output would sit in the muxer. Retain it in 188-byte
+            // chunks: one packet is the smallest unit `pull` emits, and any
+            // later ceiling of at least one packet sends each chunk whole.
+            self.retain_muxer_output(TS_PACKET_SIZE);
+            return Err(TransportError::TooLarge {
+                len: TS_PACKET_SIZE,
+                max,
+            }
+            .into());
+        }
         // Grow the scratch buffer lazily. The Transport trait does not
         // guarantee a fixed max_payload() across calls, so re-check each
         // time and resize only when the current allocation is too small.
@@ -1263,27 +1292,60 @@ impl<T: Transport> Inner<T> {
                     // Drain any further muxer output into pending_bytes too,
                     // so the muxer's internal buffer doesn't fill up while
                     // transport is unavailable.
-                    loop {
-                        let n2 = self.muxer.pull(&mut self.scratch[..max]);
-                        if n2 == 0 {
-                            break;
-                        }
-                        self.pending_bytes.push_back(self.scratch[..n2].to_vec());
-                    }
+                    self.retain_muxer_output(max);
                     return Err(e.into());
                 }
             }
         }
     }
 
+    /// Move all muxer output into `pending_bytes` in chunks of at most
+    /// `chunk` bytes (`chunk` >= one TS packet).
+    fn retain_muxer_output(&mut self, chunk: usize) {
+        if self.scratch.len() < chunk {
+            self.scratch.resize(chunk, 0);
+        }
+        loop {
+            let n = self.muxer.pull(&mut self.scratch[..chunk]);
+            if n == 0 {
+                return;
+            }
+            self.pending_bytes.push_back(self.scratch[..n].to_vec());
+        }
+    }
+
+    /// The largest whole-packet slice the transport's current ceiling
+    /// carries, or `TooLarge` when it cannot carry one TS packet.
+    fn packet_step(&self) -> Result<usize, TransportError> {
+        let max = self.transport.max_payload();
+        if max < TS_PACKET_SIZE {
+            return Err(TransportError::TooLarge {
+                len: TS_PACKET_SIZE,
+                max,
+            });
+        }
+        Ok(max / TS_PACKET_SIZE * TS_PACKET_SIZE)
+    }
+
+    /// Send the pending chunks oldest first, each from `pending_front_sent`
+    /// in whole-packet slices that fit the transport's current ceiling.
+    /// Returns on the first failure; the accepted prefix of the front chunk
+    /// is never sent again.
     fn drain_pending(&mut self) -> Result<(), MuxSenderError> {
         while let Some(chunk) = self.pending_bytes.front() {
-            let len = chunk.len() as u64;
-            self.transport.send_bytes(chunk)?;
+            let step = self.packet_step()?;
+            let start = self.pending_front_sent;
+            let end = chunk.len().min(start + step);
+            self.transport.send_bytes(&chunk[start..end])?;
             // Only count after successful send.
-            self.bytes_sent += len;
+            self.bytes_sent += (end - start) as u64;
             self.packets_sent += 1;
-            self.pending_bytes.pop_front();
+            if end == chunk.len() {
+                self.pending_bytes.pop_front();
+                self.pending_front_sent = 0;
+            } else {
+                self.pending_front_sent = end;
+            }
         }
         Ok(())
     }
@@ -2803,5 +2865,279 @@ mod cancel_tests {
                 .sum::<usize>()
                 > 0
         );
+    }
+}
+
+#[cfg(test)]
+mod ceiling_tests {
+    use super::*;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    use tst_core::mpegts::mux::{MuxerProgramConfigBuilder, VideoCodec};
+
+    /// Ceiling and refusals under test control; records accepted messages.
+    ///
+    /// `refuse_next` refuses that many sends outright; `refuse_at` refuses
+    /// the one send made when exactly that many messages have been accepted
+    /// (`usize::MAX` = never). Both refusals are `Backpressure`.
+    /// `max_on_au`, unless `usize::MAX`, becomes the ceiling when a video
+    /// access unit is announced, after the sender's pre-push check.
+    #[derive(Clone)]
+    struct Dial {
+        max: Arc<AtomicUsize>,
+        max_on_au: Arc<AtomicUsize>,
+        refuse_next: Arc<AtomicUsize>,
+        refuse_at: Arc<AtomicUsize>,
+        msgs: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl Dial {
+        fn new(max: usize) -> (Self, Self) {
+            let d = Self {
+                max: Arc::new(AtomicUsize::new(max)),
+                max_on_au: Arc::new(AtomicUsize::new(usize::MAX)),
+                refuse_next: Arc::new(AtomicUsize::new(0)),
+                refuse_at: Arc::new(AtomicUsize::new(usize::MAX)),
+                msgs: Arc::new(Mutex::new(Vec::new())),
+            };
+            (d.clone(), d)
+        }
+
+        fn msgs(&self) -> Vec<Vec<u8>> {
+            self.msgs.lock().unwrap().clone()
+        }
+    }
+
+    impl Transport for Dial {
+        fn send_bytes(&mut self, b: &[u8]) -> Result<(), TransportError> {
+            let mut msgs = self.msgs.lock().unwrap();
+            let refused = if self.refuse_next.load(SeqCst) > 0 {
+                self.refuse_next.fetch_sub(1, SeqCst);
+                true
+            } else if self.refuse_at.load(SeqCst) == msgs.len() {
+                self.refuse_at.store(usize::MAX, SeqCst);
+                true
+            } else {
+                false
+            };
+            if refused {
+                return Err(TransportError::Backpressure {
+                    msg: "dial refusal".into(),
+                    errno_code: None,
+                });
+            }
+            let max = self.max.load(SeqCst);
+            if b.len() > max {
+                return Err(TransportError::TooLarge { len: b.len(), max });
+            }
+            msgs.push(b.to_vec());
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            self.max.load(SeqCst)
+        }
+        fn on_video_au(
+            &mut self,
+            _pts: Pts90khz,
+            _key_frame: bool,
+        ) -> Result<bool, TransportError> {
+            let m = self.max_on_au.swap(usize::MAX, SeqCst);
+            if m != usize::MAX {
+                self.max.store(m, SeqCst);
+            }
+            Ok(false)
+        }
+        fn close(&mut self) {}
+        fn is_alive(&self) -> bool {
+            true
+        }
+    }
+
+    fn one_video_config() -> MuxerConfig {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    }
+
+    /// A 2 000-byte H.264 keyframe access unit, so its PES spans several
+    /// TS packets and several 1316-byte messages.
+    fn h264_au() -> Vec<u8> {
+        let mut au = vec![0, 0, 0, 1, 0x09, 0xF0]; // AUD
+        au.extend_from_slice(&[0, 0, 0, 1, 0x67, 0x42, 0xC0, 0x28]); // SPS
+        au.extend_from_slice(&[0, 0, 0, 1, 0x68, 0xCE, 0x38]); // PPS
+        au.extend_from_slice(&[0, 0, 0, 1, 0x65]); // IDR header
+        // Body bytes are never zero, so no start code can appear inside it.
+        let mut i = 0usize;
+        while au.len() < 2000 {
+            au.push((i % 251) as u8 | 1);
+            i += 1;
+        }
+        au
+    }
+
+    /// The messages an error-free 1316-byte sink receives for `pushes`.
+    fn messages_error_free(pushes: &[(i64, bool)]) -> Vec<Vec<u8>> {
+        let (t, h) = Dial::new(1316);
+        let s = MuxSender::new(t, one_video_config()).unwrap();
+        for &(pts, key) in pushes {
+            s.send_video(&h264_au(), Pts90khz::new(pts), key).unwrap();
+        }
+        s.finish().unwrap();
+        h.msgs()
+    }
+
+    fn mux_bytes_error_free(pushes: &[(i64, bool)]) -> Vec<u8> {
+        messages_error_free(pushes).concat()
+    }
+
+    #[test]
+    fn a_ceiling_below_one_packet_is_refused_before_the_push() {
+        for max in [0usize, 100, 187] {
+            let (t, h) = Dial::new(max);
+            let s = MuxSender::new(t, one_video_config()).unwrap();
+            let e = s
+                .send_video(&h264_au(), Pts90khz::new(0), true)
+                .unwrap_err();
+            assert_eq!(e.input_consumed, Some(false), "max {max}");
+            assert!(
+                matches!(
+                    e.source,
+                    MuxSenderErrorSource::Transport(TransportError::TooLarge { len: 188, .. })
+                ),
+                "max {max}: {e:?}"
+            );
+            assert_eq!(s.stats().bytes_sent, 0, "max {max}");
+            assert_eq!(s.stats().per_stream[&0x100].items, 0, "max {max}");
+            assert!(h.msgs().is_empty(), "max {max}");
+        }
+    }
+
+    #[test]
+    fn retained_chunks_are_resplit_after_the_ceiling_shrinks() {
+        let reference = mux_bytes_error_free(&[(0, true), (3000, false)]);
+        let (t, h) = Dial::new(1316);
+        h.refuse_next.store(1, SeqCst);
+        let s = MuxSender::new(t, one_video_config()).unwrap();
+        assert_eq!(
+            s.send_video(&h264_au(), Pts90khz::new(0), true)
+                .unwrap_err()
+                .input_consumed,
+            Some(true)
+        );
+        h.max.store(188, SeqCst);
+        s.send_video(&h264_au(), Pts90khz::new(3000), false)
+            .unwrap();
+        let msgs = h.msgs();
+        assert!(msgs.iter().all(|m| m.len() == 188));
+        assert_eq!(msgs.concat(), reference);
+    }
+
+    #[test]
+    fn a_refusal_midway_through_a_resplit_chunk_does_not_resend_its_prefix() {
+        let reference = mux_bytes_error_free(&[(0, true), (3000, false)]);
+        let (t, h) = Dial::new(1316);
+        h.refuse_next.store(1, SeqCst);
+        let s = MuxSender::new(t, one_video_config()).unwrap();
+        assert_eq!(
+            s.send_video(&h264_au(), Pts90khz::new(0), true)
+                .unwrap_err()
+                .input_consumed,
+            Some(true)
+        );
+        let retained = s.stats().pending_bytes_queued;
+        let chunks = s.stats().pending_chunks_queued;
+        assert!(retained > 376, "AU1 must be retained across several slices");
+
+        // Accept one 376-byte slice of the first retained chunk, refuse the
+        // next one.
+        h.max.store(376, SeqCst);
+        h.refuse_at.store(h.msgs().len() + 1, SeqCst);
+        let e = s
+            .send_video(&h264_au(), Pts90khz::new(3000), false)
+            .unwrap_err();
+        assert_eq!(e.input_consumed, Some(false), "AU2 was not pushed");
+        assert!(matches!(
+            e.source,
+            MuxSenderErrorSource::Transport(TransportError::Backpressure { .. })
+        ));
+        assert_eq!(h.msgs().len(), 1);
+        let st = s.stats();
+        assert_eq!(st.pending_bytes_queued, retained - 376);
+        assert_eq!(st.pending_chunks_queued, chunks);
+        assert_eq!(st.bytes_sent, 376);
+        assert_eq!(st.packets_sent, 1);
+
+        s.send_video(&h264_au(), Pts90khz::new(3000), false)
+            .unwrap();
+        s.finish().unwrap();
+        let msgs = h.msgs();
+        assert!(msgs.iter().all(|m| m.len() <= 376), "{:?}", lens(&msgs));
+        assert_eq!(msgs.concat(), reference, "no slice twice, none missing");
+        let st = s.stats();
+        assert_eq!(st.bytes_sent, reference.len() as u64);
+        assert_eq!(st.packets_sent, msgs.len() as u64);
+        assert_eq!(st.pending_bytes_queued, 0);
+    }
+
+    #[test]
+    fn a_ceiling_that_drops_below_one_packet_after_the_push_retains_the_output() {
+        let reference = mux_bytes_error_free(&[(0, true), (3000, false)]);
+        let (t, h) = Dial::new(1316);
+        h.max_on_au.store(100, SeqCst);
+        let s = MuxSender::new(t, one_video_config()).unwrap();
+        let e = s
+            .send_video(&h264_au(), Pts90khz::new(0), true)
+            .unwrap_err();
+        assert_eq!(e.input_consumed, Some(true));
+        assert!(matches!(
+            e.source,
+            MuxSenderErrorSource::Transport(TransportError::TooLarge { len: 188, max: 100 })
+        ));
+        assert!(h.msgs().is_empty());
+        let st = s.stats();
+        assert!(
+            st.pending_bytes_queued > 2000,
+            "the muxer output is retained"
+        );
+        assert_eq!(st.pending_bytes_queued, 188 * st.pending_chunks_queued);
+
+        h.max.store(1316, SeqCst);
+        s.send_video(&h264_au(), Pts90khz::new(3000), false)
+            .unwrap();
+        s.finish().unwrap();
+        assert_eq!(h.msgs().concat(), reference);
+    }
+
+    #[test]
+    fn default_ceiling_messages_are_unchanged() {
+        let pushes = [(0, true), (3000, false)];
+        let reference = messages_error_free(&pushes);
+        // At the default ceiling the muxer output goes out in 1316-byte
+        // messages (seven packets) with one shorter tail per push.
+        let total: usize = reference.iter().map(Vec::len).sum();
+        assert!(total > 2 * 1316);
+        assert!(
+            reference
+                .iter()
+                .all(|m| m.len() <= 1316 && m.len() % 188 == 0)
+        );
+        assert!(reference.iter().filter(|m| m.len() < 1316).count() <= pushes.len());
+
+        // Bytes retained by a refusal go out as the same messages.
+        let (t, h) = Dial::new(1316);
+        h.refuse_next.store(1, SeqCst);
+        let s = MuxSender::new(t, one_video_config()).unwrap();
+        assert!(s.send_video(&h264_au(), Pts90khz::new(0), true).is_err());
+        s.send_video(&h264_au(), Pts90khz::new(3000), false)
+            .unwrap();
+        s.finish().unwrap();
+        assert_eq!(lens(&h.msgs()), lens(&reference));
+        assert_eq!(h.msgs(), reference);
+    }
+
+    fn lens(msgs: &[Vec<u8>]) -> Vec<usize> {
+        msgs.iter().map(Vec::len).collect()
     }
 }
