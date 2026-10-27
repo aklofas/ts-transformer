@@ -1071,10 +1071,10 @@ mod tests {
     #[test]
     fn umbrella_from_klv_field() {
         let e: SrtError = KlvFieldError::InvalidUtf8 { tag: 50 }.into();
-        matches!(
+        assert!(matches!(
             e,
             SrtError::KlvField(KlvFieldError::InvalidUtf8 { tag: 50 })
-        );
+        ));
     }
 
     #[test]
