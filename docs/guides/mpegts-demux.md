@@ -279,7 +279,7 @@ on most live data.
 | Mode | Rejects | Use case |
 | --- | --- | --- |
 | `Off` (default) | nothing | Triage, real-world capture analysis, live receivers. |
-| `TimingOnly` | `PcrAnomaly`, `PtsAnomaly`, `MissingRequiredPts` (a PTS-less run longer than 0.7 s on audio/video, measured by the coded PTS that closes it or, until one does, by the program's PCR; a missing PTS on any single DVB-subtitle or synchronous-KLV PES), `PcrMalformed`, `PsiChecksumMismatch`, `PusiMidPes` (vestigial — not currently emitted) | Receivers paranoid about clock integrity but tolerant of encoder quirks. |
+| `TimingOnly` | `PcrAnomaly`, `PtsAnomaly`, `MissingRequiredPts` (a PTS-less run longer than 0.7 s on audio/video, measured by the coded PTS that closes it or, until one does, by the program's PCR advancing more than 1.7 s, which is 0.7 s plus the 1 s decoder-buffer delay of H.222.0 §2.4.2.6; a missing PTS on any single DVB-subtitle or synchronous-KLV PES), `PcrMalformed`, `PsiChecksumMismatch`, `PusiMidPes` (vestigial — not currently emitted) | Receivers paranoid about clock integrity but tolerant of encoder quirks. |
 | `DescriptorsOnly` | `StreamTypeMismatch{Sync,Async}OnPid`, `MissingMetadataDescriptor`, `SubtitleMissingDescriptor`, `SubtitleDescriptorAmbiguous` | Spec-compliance gating: did the encoder declare its streams correctly? |
 | `Full` | every variant including future-added ones, except a multi-section PAT (`PsiMultiSectionUnsupported` with `table_id 0x00`), which stays a surface-only event | CI-grade compliance test against a known-good encoder. |
 

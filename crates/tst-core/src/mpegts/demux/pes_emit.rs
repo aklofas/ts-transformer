@@ -40,6 +40,14 @@ use alloc::vec::Vec;
 /// most 0.7 s apart.
 const PTS_SPACING_LIMIT_90KHZ: i64 = 63_000;
 
+/// How far the PCR may advance across a PTS-less run before the run is
+/// reported (1.7 s). The PCR at a PES's arrival trails its PTS by the
+/// decoder-buffer delay, which H.222.0 §2.4.2.6 allows anywhere from 0 to
+/// 1 s, so a run whose coded PTS keep the §2.7.4 0.7 s spacing can span up
+/// to 0.7 s + 1 s of PCR. No conformant stream exceeds this (still pictures
+/// are excepted by §2.7.4 itself).
+const PCR_RUN_LIMIT_90KHZ: i64 = PTS_SPACING_LIMIT_90KHZ + 90_000;
+
 /// `MalformedPes` reason for a DVB subtitle PES whose PES_data_field
 /// envelope does not parse.
 pub(crate) const DVB_SUB_ENVELOPE_MALFORMED: &str = "DVB subtitle PES_data_field envelope malformed (EN 300 743 Table 3: data_identifier 0x20, subtitle_stream_id 0x00, end marker 0xFF)";
@@ -53,9 +61,10 @@ pub(crate) const TELETEXT_DATA_FIELD_MALFORMED: &str =
 enum PtsRule {
     /// Every PES must carry a PTS.
     PerPes,
-    /// PES may omit the PTS, but a PTS-less run must stay within
-    /// [`PTS_SPACING_LIMIT_90KHZ`], measured by the coded PTS around it or,
-    /// until one closes it, by the program's PCR.
+    /// PES may omit the PTS, but the coded PTS around a PTS-less run must
+    /// stay within [`PTS_SPACING_LIMIT_90KHZ`]; until a coded PTS closes the
+    /// run, the program's PCR may advance at most [`PCR_RUN_LIMIT_90KHZ`]
+    /// across it.
     Spacing,
     /// No PTS requirement.
     None,
@@ -67,7 +76,8 @@ enum PtsRule {
 ///   (0.7 s); a PES without one is fine as long as that bound holds. A run
 ///   of PTS-less PES is judged by the coded PTS that closes it, and is also
 ///   timed by the program's PCR from its first PES, so a run that never
-///   closes is caught once 0.7 s of program time passes. A gap between
+///   closes is caught once the PCR advances more than 1.7 s (0.7 s plus the
+///   1 s decoder-buffer delay §2.4.2.6 allows). A gap between
 ///   coded PTS with no PTS-less PES inside it is not diagnosed: the
 ///   still-picture and low-frame-rate exceptions of §2.7.4 cannot be told
 ///   apart from such a gap.
@@ -295,10 +305,10 @@ impl super::demuxer::Demuxer {
             (PtsRule::Spacing, None) => {
                 // H.222.0 §2.7.4 bounds the interval between coded PTS. A
                 // run that never ends in a coded PTS (a stream that never
-                // stamps one, or stops stamping) breaks that bound once
-                // 0.7 s of program time has passed, and the PCR is the only
-                // clock left to measure it: the run is timed from the PCR
-                // seen at its first PES.
+                // stamps one, or stops stamping) breaks that bound, and the
+                // PCR is the only clock left to measure it: the run is timed
+                // from the PCR seen at its first PES, against a bound that
+                // allows for the decoder-buffer delay.
                 let pcr_now = self.program_pcr_90khz(stream.program_number);
                 let state = self.pid_state_mut(pes.pid);
                 state.pts_less_since_pts = true;
@@ -308,9 +318,7 @@ impl super::demuxer::Demuxer {
                         state.pts_less_run_pcr = now;
                         false
                     }
-                    (Some(start), Some(now)) => {
-                        pts_diff_33bit(now, start) > PTS_SPACING_LIMIT_90KHZ
-                    }
+                    (Some(start), Some(now)) => pts_diff_33bit(now, start) > PCR_RUN_LIMIT_90KHZ,
                     (Some(_), None) => false,
                 };
                 if overdue {
@@ -1580,10 +1588,10 @@ mod tests {
     }
 
     /// H.222.0 §2.7.4: an audio stream that never stamps a PTS breaks the
-    /// 0.7 s bound once 0.7 s of program time (the PCR) has passed.
+    /// 0.7 s bound; it is reported once the PCR has advanced past 1.7 s.
     #[test]
-    fn pts_less_stream_longer_than_0_7_s_of_pcr_raises_missing_required_pts_once() {
-        let pkts = audio_run_under_pcr(&[None; 11], 27_000_000);
+    fn pts_less_stream_longer_than_1_7_s_of_pcr_raises_missing_required_pts_once() {
+        let pkts = audio_run_under_pcr(&[None; 11], 54_000_000);
         let (result, ev) = feed_audio(StrictMode::Off, &pkts);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
@@ -1597,19 +1605,29 @@ mod tests {
         assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
     }
 
+    /// A PCR span above 0.7 s but within the 1 s decoder-buffer allowance
+    /// (H.222.0 §2.4.2.6) is not evidence of a broken PTS bound.
+    #[test]
+    fn pts_less_stream_within_1_7_s_of_pcr_raises_nothing() {
+        let pkts = audio_run_under_pcr(&[None; 11], 32_400_000);
+        let (result, ev) = feed_audio(StrictMode::TimingOnly, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
     /// A run that follows a coded PTS and never closes is timed by the PCR
     /// too; a PTS that closes it late does not report it a second time.
     #[test]
     fn unclosed_pts_less_run_after_a_coded_pts_is_timed_by_the_pcr() {
         let mut pts = vec![Some(0)];
         pts.extend([None; 10]);
-        let pkts = audio_run_under_pcr(&pts, 54_000_000);
+        let pkts = audio_run_under_pcr(&pts, 81_000_000);
         let (result, ev) = feed_audio(StrictMode::Off, &pkts);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
 
         pts.push(Some(200_000));
-        let pkts = audio_run_under_pcr(&pts, 54_000_000);
+        let pkts = audio_run_under_pcr(&pts, 81_000_000);
         let (result, ev) = feed_audio(StrictMode::Off, &pkts);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
@@ -1619,6 +1637,41 @@ mod tests {
     fn one_fps_stream_with_every_pes_timestamped_under_a_pcr_raises_nothing() {
         let pkts = audio_run_under_pcr(&[Some(0), Some(90_000), Some(180_000)], 54_000_000);
         let (result, ev) = feed_audio(StrictMode::TimingOnly, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// The PCR latch of a PTS-less run is a value on the PCR clock: a
+    /// signalled new time base clears it at once, even with a PES in flight,
+    /// so the PES that straddles the reset is not timed across two clocks.
+    #[test]
+    fn pts_less_run_across_a_signalled_pcr_jump_is_not_timed_across_clocks() {
+        let mut d = audio_demuxer(StrictMode::TimingOnly);
+        let pcr = |disc, v| {
+            ts_packet(&PktSpec {
+                pid: 0x101,
+                discontinuity: disc,
+                pcr: Some(v),
+                ..Default::default()
+            })
+        };
+        let mut cc = 0;
+        let mut pkts = vec![pcr(false, 0)];
+        pkts.extend(audio_pes(&mut cc, None));
+        let straddling = pes_to_packets(
+            0x101,
+            cc,
+            &pes_bytes(0xC0, None, None, true, &[0xAA; 400], true),
+        );
+        assert_eq!(straddling.len(), 3);
+        pkts.push(straddling[0]);
+        // H.222.0 §2.4.3.5: a new system time base 10 s ahead, with the
+        // PTS-less PES in flight.
+        pkts.push(pcr(true, 270_000_000));
+        pkts.extend_from_slice(&straddling[1..]);
+        let result = feed_packets(&mut d, &pkts);
+        d.flush();
+        let ev = drain_all_events(&mut d);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
     }

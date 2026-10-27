@@ -1534,7 +1534,9 @@ impl Scenario for PtsSpacingExceeded {
         let mut mux = audio_only_muxer(AUDIO_PID);
         // PES 1..=5 get their PTS stripped below; the values pushed for them
         // only keep the muxer's own pacing monotonic.
-        let pts = [90_000i64, 99_000, 108_000, 117_000, 126_000, 135_000, 153_001];
+        let pts = [
+            90_000i64, 99_000, 108_000, 117_000, 126_000, 135_000, 153_001,
+        ];
         for p in pts {
             mux.push_audio(&synthetic_adts_frame(), Pts90khz::new(p))
                 .expect("push_audio");
