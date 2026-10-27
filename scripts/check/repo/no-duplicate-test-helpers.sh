@@ -77,7 +77,12 @@ awk -v min="${DTH_MIN_LINES:-4}" '
     skip = testattr; testattr = 0
     seen = ($0 ~ /\{/)
     match($0, /^[ \t]*/); ind = RLENGTH; pad = substr($0, 1, RLENGTH)
-    name = $0; sub("^.*" re "([^ (]+ )*", "", name); sub(/[<(].*/, "", name); body = ""; n = 0
+    # The name is the identifier after `fn`/`def`, or the one before the
+    # Java parameter list; it stops at a generic `<` or the `(`.
+    name = $0; sub("^.*" re, "", name)
+    if (re == "private static ") { sub(/\(.*/, "", name); sub(/^.*[^A-Za-z0-9_]/, "", name) }
+    else { match(name, /^[A-Za-z0-9_]+/); name = substr(name, 1, RLENGTH) }
+    body = ""; n = 0
     if (py && name ~ /^test_/) skip = 1
   }
   END {

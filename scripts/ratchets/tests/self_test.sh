@@ -351,6 +351,11 @@ cat "$tmp/dth/rs/a/tests/t.rs" >> "$tmp/dth/tr/a/tests/t.rs"
 cp "$tmp/dth/rs/a/tests/t.rs" "$tmp/dth/tr/b/tests/t.rs"
 expect "dup helpers: a bodiless multi-line trait declaration does not hide a duplicate after it" 1 env DTH_ROOTS="$tmp/dth/tr" DTH_ALLOWLIST="$tmp/dth/empty.tsv" bash "$DTH"
 
+mkdir -p "$tmp/dth/gen/a/tests" "$tmp/dth/gen/b/tests"
+for d in a b; do sed 's/^fn drain(mux: &mut Muxer)/fn drain<R, T>(mux: \&mut Muxer)/' "$tmp/dth/rs/a/tests/t.rs" > "$tmp/dth/gen/$d/tests/t.rs"; done
+printf '%s\t%s\t%s\n' "$tmp/dth/gen/a/tests/t.rs" drain fixture "$tmp/dth/gen/b/tests/t.rs" drain fixture > "$tmp/dth/gen.tsv"
+expect "dup helpers: a generic helper is listed by its identifier, not its type parameters" 0 env DTH_ROOTS="$tmp/dth/gen" DTH_ALLOWLIST="$tmp/dth/gen.tsv" bash "$DTH"
+
 # ---- doc ABI currency (scripts/check/repo/doc-abi-and-st1910-currency.sh) ----
 DAC="$DIR/../check/repo/doc-abi-and-st1910-currency.sh"
 d="$tmp/dac"; mkdir -p "$d/bindings/c/core/src" "$d/docs/languages" "$d/docs/reference" "$d/crates"
