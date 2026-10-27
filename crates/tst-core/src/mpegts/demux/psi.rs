@@ -483,45 +483,97 @@ pub(crate) fn classify_audio_stream_type(stream_type: u8) -> Option<crate::codec
     }
 }
 
-/// Returns the `linked_pid` from a `metadata_descriptor` if present, else
-/// `None`. The descriptor's structure is per H.222.0 §2.6.60 Table 2-89;
-/// the trailing-PID readout below is **heuristic** and not normatively
-/// defined by either H.222.0 §2.6.60 (where trailing bytes are
-/// `private_data_byte[N]`) or by ST 1402.2 (which does not specify a
-/// linked-PID field at all).
+/// The fixed fields of a `metadata_descriptor` body (H.222.0 §2.6.60,
+/// Table 2-86) that classification and link readout need.
+pub(super) struct MetadataDescriptorFields {
+    /// `metadata_format`.
+    pub(super) format: u8,
+    /// `metadata_format_identifier`, present when `metadata_format` is 0xFF.
+    pub(super) format_identifier: Option<[u8; 4]>,
+    /// Bytes before the first `private_data_byte`.
+    pub(super) fixed_len: usize,
+    /// The flags byte's four reserved bits read `1111`.
+    pub(super) flags_reserved_ok: bool,
+}
+
+/// Parse a `metadata_descriptor` body (the bytes after tag + length) up to
+/// its `private_data_byte` loop, per H.222.0 §2.6.60 Table 2-86. `None`
+/// when the body is shorter than the fixed fields it declares.
+pub(super) fn metadata_descriptor_fields(body: &[u8]) -> Option<MetadataDescriptorFields> {
+    // metadata_application_format (16), + identifier (32) when 0xFFFF.
+    let app_format = u16::from_be_bytes([*body.first()?, *body.get(1)?]);
+    let mut pos = if app_format == 0xFFFF { 6 } else { 2 };
+    // metadata_format (8), + metadata_format_identifier (32) when 0xFF.
+    let format = *body.get(pos)?;
+    pos += 1;
+    let format_identifier = if format == 0xFF {
+        let id: [u8; 4] = body.get(pos..pos + 4)?.try_into().ok()?;
+        pos += 4;
+        Some(id)
+    } else {
+        None
+    };
+    // metadata_service_id (8).
+    pos += 1;
+    // decoder_config_flags (3) + DSM-CC_flag (1) + reserved (4).
+    let flags = *body.get(pos)?;
+    pos += 1;
+    if flags & 0x10 != 0 {
+        // service_identification_length (8) + service_identification_record.
+        pos += 1 + usize::from(*body.get(pos)?);
+    }
+    match flags >> 5 {
+        // decoder_config_length (8) + decoder_config_byte, or
+        // dec_config_identification_record_length (8) + its record.
+        0b001 | 0b011 => pos += 1 + usize::from(*body.get(pos)?),
+        // decoder_config_metadata_service_id (8).
+        0b100 => pos += 1,
+        _ => {}
+    }
+    if body.len() < pos {
+        return None;
+    }
+    Some(MetadataDescriptorFields {
+        format,
+        format_identifier,
+        fixed_len: pos,
+        flags_reserved_ok: flags & 0x0F == 0x0F,
+    })
+}
+
+/// Returns the linked video PID a `metadata_descriptor` (tag 0x26) declares,
+/// else `None`. H.222.0 §2.6.60 defines no linked-PID field (the trailing
+/// bytes are `private_data_byte`), and neither does ST 1402, so any readout
+/// is a convention. Two paths:
 ///
-/// Best-effort interpretation: if the descriptor body ends with at least
-/// 2 bytes whose value falls in the PID range, return that value. Other
-/// shapes return `None`; the caller treats that as "no declared link."
+/// - **Well-formed descriptor**: the body parses through its fixed fields
+///   (Table 2-86) and the flags byte's reserved bits read `1111`. A link is
+///   read only from the first two `private_data_byte`s; a descriptor with no
+///   private data declares no link. The muxer's own KLVA descriptor ends
+///   with `metadata_service_id` + flags, which this path never reads as a
+///   PID.
+/// - **Anything else** (truncated, or reserved bits not `1111`): the
+///   lenient readout many encoders rely on: when the body is at least 5
+///   bytes, its trailing 2 bytes are the link if they fall in
+///   0x0010..=0x1FFE.
 ///
-/// Note: if the trailing 2 bytes coincidentally land in the valid PID
-/// range without being a real linked PID, the caller will receive a
-/// linkage that doesn't reflect actual encoder intent. The demuxer
-/// surfaces this as `LinkSource::Declared`; consumers should treat
-/// declared linkages as informational and validate (e.g., by confirming
-/// the linked PID appears as an `elementary_PID` in the same PMT) when
-/// strict pairing matters.
+/// The demuxer surfaces a link as `LinkSource::Declared` only when it names
+/// a video PID of the same PMT; consumers calling this directly should
+/// apply the same check when strict pairing matters.
 pub fn extract_metadata_link(descs: &[RawDescriptor]) -> Option<u16> {
     let d = descs.iter().find(|d| d.tag == 0x26)?;
-    // metadata_descriptor body:
-    //   metadata_application_format (16) + maybe metadata_application_format_identifier (32)
-    //   metadata_format (8) + maybe metadata_format_identifier (32)
-    //   metadata_service_id (8)
-    //   decoder_config_flags (3) + DSM_CC_flag (1) + reserved (4)
-    //   if DSM_CC_flag: service_identification_length (8) + service_identification_record(...)
-    //   for body remainder: private_data
-    //
-    // Many real encoders produce a 5-byte body with the linked PID encoded
-    // in private_data as the trailing 2 bytes. We accept that lenient
-    // shape: if the descriptor body is at least 5 bytes long and the
-    // trailing 2 bytes look like a valid PID (0x0010..=0x1FFE), return it.
-    if d.data.len() >= 5 {
-        let candidate = u16::from_be_bytes([d.data[d.data.len() - 2], d.data[d.data.len() - 1]]);
-        if (0x0010..=0x1FFE).contains(&candidate) {
-            return Some(candidate);
+    let pid_in_range = |v: u16| (0x0010..=0x1FFE).contains(&v).then_some(v);
+    match metadata_descriptor_fields(&d.data) {
+        Some(fields) if fields.flags_reserved_ok => {
+            let private = d.data.get(fields.fixed_len..fields.fixed_len + 2)?;
+            pid_in_range(u16::from_be_bytes([private[0], private[1]]))
         }
+        _ if d.data.len() >= 5 => pid_in_range(u16::from_be_bytes([
+            d.data[d.data.len() - 2],
+            d.data[d.data.len() - 1],
+        ])),
+        _ => None,
     }
-    None
 }
 
 /// Walk a descriptor loop, returning the parsed list. Returns
@@ -786,6 +838,38 @@ mod pmt_tests {
         let pmt = parse_pmt(&bytes).unwrap();
         assert_eq!(
             extract_metadata_link(&pmt.streams[0].descriptors),
+            Some(0x0100)
+        );
+    }
+
+    /// The muxer's own canonical descriptor: its trailing two bytes are
+    /// `metadata_service_id` + the flags byte (H.222.0 §2.6.60 Table 2-86),
+    /// not a linked PID.
+    #[test]
+    fn canonical_klva_metadata_descriptor_declares_no_link() {
+        use crate::mpegts::descriptors::metadata_klva;
+        for service_id in [0u8, 1, 0x1F, 0xFE] {
+            let d = metadata_klva(service_id);
+            assert_eq!(
+                extract_metadata_link(&[RawDescriptor {
+                    tag: 0x26,
+                    data: d[2..].to_vec(),
+                }]),
+                None,
+                "{service_id}"
+            );
+        }
+    }
+
+    /// private_data_byte after a well-formed descriptor's fixed fields still
+    /// carries a declared link.
+    #[test]
+    fn private_data_after_a_well_formed_descriptor_still_carries_a_link() {
+        use crate::mpegts::descriptors::metadata_klva;
+        let mut data = metadata_klva(0)[2..].to_vec();
+        data.extend_from_slice(&[0x01, 0x00]);
+        assert_eq!(
+            extract_metadata_link(&[RawDescriptor { tag: 0x26, data }]),
             Some(0x0100)
         );
     }
