@@ -4754,3 +4754,67 @@ owning_tests = ["crates/tst-webrtc/tests/net_whep/shutdown.rs"]
 bindings = ["c:deferred(no C consumer yet)", "python:tstrans.webrtc.WhepServer.stop", "java:org.tstrans.webrtc.WhepServer.stop", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
+
+# --- Optional TLS surface (rendered into the baselines with each crate's
+# [package.metadata.public-api] features) ---------------------------------
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::tls_root_certs"
+owning_tests = ["crates/tst-rtp/tests/rtsp_client/tls_handshake.rs"]
+bindings = ["c:tst_rtsp_client_builder_tls_root_cert_pem", "python:tstrans.rtp.RtspClientConfig.tls_root_certs_pem", "java:org.tstrans.rtp.RtspClientConfig.Builder.tlsRootCertsPem", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/rtsps_record.rs", "crates/tst-rtp/tests/rtsp_server/tls_handshake_timeout.rs"]
+bindings = ["c:deferred(the C builder takes PEM bytes through tst_rtsp_server_builder_tls_cert_pem)", "python:tstrans.rtp.RtspServerConfig.tls_cert", "java:org.tstrans.rtp.RtspServerConfig.Builder.tlsCert", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert_pem"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/tls.rs"]
+bindings = ["c:tst_rtsp_server_builder_tls_cert_pem", "python:deferred(the Python config takes PEM file paths)", "java:deferred(the JVM config takes PEM file paths)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_handshake_timeout"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/tls_handshake_timeout.rs"]
+bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_core::net::tls::load_root_store"
+reason = "PEM helper the transport crates build their rustls configs with; bindings reach it through each transport's trust-anchor option, not directly"
+
+[[exempt]]
+item = "tst_core::net::tls::load_server_config"
+reason = "PEM helper the transport crates build their rustls configs with; bindings reach it through each transport's certificate-path option, not directly"
+
+[[exempt]]
+item = "tst_core::net::tls::server_config_from_pem"
+reason = "PEM helper the transport crates build their rustls configs with; bindings reach it through each transport's in-memory certificate option, not directly"
+
+[[exempt]]
+item = "tst_core::net::tls::TlsLoadError::source"
+reason = "std::error::Error impl of the PEM helpers' error; bindings map it to their TLS error kind"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::publisher::Publisher::cut_segment_discontinuous"
+owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
+bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"

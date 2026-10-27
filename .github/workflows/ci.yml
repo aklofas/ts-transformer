@@ -743,15 +743,25 @@ jobs:
           # substitution would otherwise leave an empty loop and a green step.
           pairs="$(bash scripts/lib/roster.sh public-api)"
           test "$(printf '%s\n' $pairs | grep -c .)" -eq 11 || { echo "public-api roster is not the 11 baselined crates: $pairs" >&2; exit 1; }
+          # Each crate's declared feature envelope ([package.metadata.public-api]
+          # in its Cargo.toml), so optional surfaces such as TLS are ratcheted.
+          feats="$(bash scripts/lib/roster.sh public-api-features)"
           for pair in $pairs; do
             pkg="${pair%%:*}"
             dir="${pair##*:}"
-            SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo +nightly-2026-07-03 public-api -p $pkg --simplified > /tmp/public-api-current-$pkg.txt
+            feat="$(printf '%s\n' "$feats" | awk -F'\t' -v p="$pkg" '$1 == p {print $2}')"
+            test -n "$feat" || { echo "no public-api-features row for $pkg" >&2; exit 1; }
+            fargs=()
+            [ "$feat" = "-" ] || fargs=(--features "$feat")
+            SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo +nightly-2026-07-03 public-api -p $pkg "${fargs[@]}" --simplified > /tmp/public-api-current-$pkg.txt
             if ! diff -u $dir/public-api.txt /tmp/public-api-current-$pkg.txt; then
               echo "Public API drift in $pkg. Update $dir/public-api.txt or revert the change." >&2
               exit 1
             fi
           done
+          # The optional TLS items must be in the baselines, not only in a render.
+          rg -q 'pub mod tst_core::net::tls' crates/tst-core/public-api.txt || { echo "tst-core baseline lacks the tls surface" >&2; exit 1; }
+          rg -q 'tls_root_certs' crates/tst-rtp/public-api.txt || { echo "tst-rtp baseline lacks the rtsp-server-tls surface" >&2; exit 1; }
 
       - name: non_exhaustive sweep guard
         # This CI step asserts the count of every #[non_exhaustive] attribute
