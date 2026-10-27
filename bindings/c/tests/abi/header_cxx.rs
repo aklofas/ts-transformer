@@ -41,6 +41,15 @@ fn header_compiles_as_cxx17_with_and_without_abi_asserts() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let out = syntax_check("cc", &["-std=c11", "-Wall", "-Werror", "-x", "c"], &include, None);
-    assert!(out.status.success(), "cc: {}", String::from_utf8_lossy(&out.stderr));
+    let out = syntax_check(
+        "cc",
+        &["-std=c11", "-Wall", "-Werror", "-x", "c"],
+        &include,
+        None,
+    );
+    assert!(
+        out.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
