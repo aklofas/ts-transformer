@@ -46,39 +46,30 @@ proptest! {
     /// case error is scale_factor/2, but we allow full scale_factor
     /// tolerance for floating-point safety margin.
     ///
-    /// `length` is sampled across 1..=8 so the domain exercises the
-    /// L=8 cap; `encode_imapb` returns `UnsupportedImapbLength` for
-    /// L=8 and `prop_assume!` skips those samples. The round-trip
-    /// property only applies when encode succeeds.
+    /// `length` is sampled across 1..=8 so the domain reaches the u64
+    /// cap. The range is drawn valid (`max - min >= 1e-6`) and the value
+    /// inside it, so every sample must encode: an encode error fails the
+    /// property instead of being skipped.
     #[test]
     fn imapb_roundtrip(
         // Bounded but realistic IMAPB params. ST 0601 lat/lon use
         // length=4; altitude uses length=2; pitch/yaw use length=2/4.
-        // Sample length=8 too so the cap is exercised (skipped via prop_assume).
         length in 1usize..=8usize,
-        min in -180.0f64..0.0,
-        max in 0.0f64..180.0,
+        min in -180.0f64..180.0,
+        span in 1e-6f64..=360.0,
         // `t` is a [0,1] interpolation factor; we lerp into [min, max].
-        // Generating `value` directly in [-180, 180] would force a
-        // prop_assume rejection any time `value` fell outside [min, max],
-        // which dominates the global-rejects budget at higher case counts.
         t in 0.0f64..=1.0,
     ) {
-        prop_assume!(min < max);
-        let value = min + t * (max - min);
+        let max = min + span;
+        // The clamp keeps a rounding error in the lerp from stepping one
+        // ULP past `max`.
+        let value = (min + t * (max - min)).clamp(min, max);
         let params = ImapbParams { min, max, length };
         let mut buf = vec![0u8; length];
-        // encode_imapb errors on length >= 8 (UnsupportedImapbLength) —
-        // prop_assume skips those samples; the round-trip property
-        // only applies when encode succeeds.
-        prop_assume!(encode_imapb(&params, value, &mut buf).is_ok());
+        encode_imapb(&params, value, &mut buf).expect("a value inside the range encodes");
         // decode_imapb returns DecodedImapb (ST 1201.5 §7.2.2/.3
-        // special values + bounds check). The round-trip property only
-        // applies when encode produced normal-range output, so chain
-        // `.value()` to extract the f64; if the legitimate encoded
-        // integer arithmetic-decodes to a top-2-bits-set pattern
-        // (impossible by construction here since encode rejects values
-        // outside [min, max]), the prop_assume above already filtered.
+        // special values + bounds check); a value encoded from inside
+        // [min, max] decodes to the normal-range `Value` variant.
         let decoded = decode_imapb(&params, &buf).unwrap().value().unwrap();
         // Tolerance is the max of two sources of round-trip error:
         // (1) IMAPB quantization step `scale = 2^ceil(log2(span)) / 2^(8L-1)`.

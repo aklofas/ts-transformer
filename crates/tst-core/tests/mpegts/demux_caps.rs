@@ -30,22 +30,14 @@ fn demux_rejects_unbounded_sync_buf_growth() {
     assert!(dx.feed(&[0xFFu8; 16]).is_ok());
 }
 
-/// Regression: both `Demuxer::new()` and `Demuxer::with_config(default)`
-/// produce a reassembler with finite caps. The `pes_cap_per_pid` and
-/// `pes_cap_total` fields on `DemuxerConfig` are `Option<usize>` where
-/// `None` resolves to the module-private `DEFAULT_PES_CAP_PER_PID`
-/// (4 MiB) and `DEFAULT_PES_CAP_TOTAL` (64 MiB) at construction time.
-/// This test guards the constructor path against accidental regression
-/// to an unbounded reassembler (e.g., if a future refactor changed the
-/// `unwrap_or` to leave `None` as "no cap").
+/// Every demuxer constructor path builds without panicking: `new()`,
+/// `with_config(default)` (both resolve the `None` cap fields to the
+/// default constants) and `with_config` with explicit small caps.
 ///
-/// Direct cap-overflow exercise (per-PID and aggregate) is covered
-/// indirectly via the existing `mpegts_demux_*` integration tests; a
-/// dedicated overflow-event test would require significant TS-packet
-/// scaffolding (PAT + PMT + many PUSI=0 continuations sized to exceed
-/// the cap) and is deferred to a future test-helper consolidation.
+/// This checks construction only: it does not show the resolved caps are
+/// finite, which would need a PES stream sized past the cap.
 #[test]
-fn demuxer_default_pes_caps_are_bounded() {
+fn demuxer_default_pes_caps_construct_without_panic() {
     // Constructor path 1: zero-arg `new()`.
     let _ = Demuxer::new();
     // Constructor path 2: `with_config(default)` — also resolves both

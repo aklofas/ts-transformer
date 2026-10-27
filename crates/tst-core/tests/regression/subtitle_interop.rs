@@ -528,21 +528,18 @@ fn print_matrix(rows: &[ProbeResult]) {
     eprintln!();
 }
 
-/// Default-pass informational test. Runs the matrix, prints results,
-/// and asserts only that we got at least one cell back (sanity check
-/// that the harness itself runs). Cells where the tool is missing
-/// become `skip` rows — they don't fail the test.
+/// Informational probe: runs the matrix and prints the results for a
+/// human to read. It asserts nothing — cells where the tool is missing
+/// become `skip` rows — so it is ignored by default; the strict guard
+/// below is the test that can fail.
 ///
 /// Run with `cargo test -p tst-core --test regression
-/// subtitle_interop::wave_i1_matrix_informational -- --nocapture` to view the matrix.
+/// subtitle_interop::wave_i1_matrix_informational -- --ignored --nocapture` to view the matrix.
 #[test]
+#[ignore = "informational interop probe; run by hand"]
 fn wave_i1_matrix_informational() {
     let rows = run_matrix();
     print_matrix(&rows);
-    assert!(
-        !rows.is_empty(),
-        "matrix produced zero cells — fixtures missing?"
-    );
     // Summarize action counts for quick triage in CI logs.
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     for r in &rows {
