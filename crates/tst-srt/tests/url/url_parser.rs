@@ -40,9 +40,9 @@ fn rejects_wrong_scheme() {
 #[test]
 fn malformed_escape_never_echoes_the_passphrase() {
     for url in [
-        "srt://127.0.0.1:9000?passphrase=example-secret%",
-        "srt://127.0.0.1:9000?passphrase=example-secret%zz",
-        "srt://127.0.0.1:9000?passphrase=example-secret%FF",
+        "srt://1.2.3.4:9000?passphrase=example-secret%",
+        "srt://1.2.3.4:9000?passphrase=example-secret%zz",
+        "srt://1.2.3.4:9000?passphrase=example-secret%FF",
     ] {
         let e = SrtUrl::parse(url).unwrap_err();
         for text in [e.to_string(), format!("{e:?}")] {
