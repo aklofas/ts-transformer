@@ -541,3 +541,14 @@ fn listener_config_carries_the_url_as_its_socket_options() {
     assert_eq!(cfg.backlog, SrtListenerConfig::default().backlog);
     assert_eq!(cfg.reuse_addr, SrtListenerConfig::default().reuse_addr);
 }
+
+#[test]
+fn bracketed_ipv6_zone_is_decoded() {
+    let u = SrtUrl::parse("srt://[fe80::1%25eth0]:9000").unwrap();
+    assert_eq!(u.host, "fe80::1%eth0");
+}
+
+#[test]
+fn an_invalid_earlier_duplicate_is_still_an_error() {
+    assert!(SrtUrl::parse("srt://1.2.3.4:9000?latency=bad&latency=200").is_err());
+}

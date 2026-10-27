@@ -386,30 +386,7 @@ mod tests {
     /// own. Returns `true` in the child; in the parent it re-executes this
     /// test binary on `test_name` and requires a clean exit.
     fn in_own_process(test_name: &str) -> bool {
-        if std::env::var_os(CHILD_ENV).is_some() {
-            return true;
-        }
-        let exe = std::env::current_exe().expect("current_exe");
-        let mut child = Command::new(exe)
-            .args([test_name, "--exact", "--nocapture", "--test-threads=1"])
-            .env(CHILD_ENV, "1")
-            .stdin(Stdio::null())
-            .spawn()
-            .expect("spawn the child test process");
-        let deadline = Instant::now() + DEADLINE;
-        let status = loop {
-            if let Some(status) = child.try_wait().expect("try_wait") {
-                break status;
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("{test_name}: the child did not exit within {DEADLINE:?}");
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        };
-        assert_eq!(status.code(), Some(0), "{test_name}: the child failed");
-        false
+        in_own_process_capturing_stderr(test_name).is_none()
     }
 
     /// Like [`in_own_process`], but the parent half also captures the
