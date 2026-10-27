@@ -20,7 +20,8 @@ pub struct MuxPublisherStats {
     /// Total muxer drain calls that produced at least one chunk.
     pub drain_calls: u64,
     /// Total explicit segment cuts, plus the automatic cuts made before a
-    /// video access unit (on a keyframe, or forced to hold the target).
+    /// video access unit (on a keyframe, forced to hold the target, on a
+    /// forward gap, or on an encoder reset).
     pub cut_calls: u64,
 }
 
