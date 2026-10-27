@@ -92,6 +92,7 @@ pub tst_rist::config::RistConfig::recovery_maxbitrate_kbps: core::option::Option
 pub tst_rist::config::RistConfig::session_timeout: core::option::Option<core::time::Duration>
 impl tst_rist::config::RistConfig
 pub const tst_rist::config::RistConfig::DEFAULT_PKT_SIZE: usize
+pub const tst_rist::config::RistConfig::MAX_PKT_SIZE: usize
 impl core::clone::Clone for tst_rist::config::RistConfig
 pub fn tst_rist::config::RistConfig::clone(&self) -> tst_rist::config::RistConfig
 impl core::default::Default for tst_rist::config::RistConfig
@@ -325,6 +326,7 @@ pub tst_rist::RistConfig::recovery_maxbitrate_kbps: core::option::Option<u32>
 pub tst_rist::RistConfig::session_timeout: core::option::Option<core::time::Duration>
 impl tst_rist::config::RistConfig
 pub const tst_rist::config::RistConfig::DEFAULT_PKT_SIZE: usize
+pub const tst_rist::config::RistConfig::MAX_PKT_SIZE: usize
 impl core::clone::Clone for tst_rist::config::RistConfig
 pub fn tst_rist::config::RistConfig::clone(&self) -> tst_rist::config::RistConfig
 impl core::default::Default for tst_rist::config::RistConfig

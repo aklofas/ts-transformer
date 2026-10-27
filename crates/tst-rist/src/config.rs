@@ -114,6 +114,8 @@ pub struct RistConfig {
     /// NULL-packet deletion / compression.
     pub compression: bool,
     /// Per-send-call payload cap. Default 1316 (7 × 188, matches ffmpeg).
+    /// A sender refuses a value outside `1..=`[`Self::MAX_PKT_SIZE`] at
+    /// connect; a receiver ignores it.
     pub pkt_size: usize,
 }
 
@@ -136,6 +138,11 @@ impl Default for RistConfig {
 impl RistConfig {
     /// Default per-send-call payload cap (1316 bytes; 7 × 188).
     pub const DEFAULT_PKT_SIZE: usize = 7 * 188;
+
+    /// Largest payload one send accepts. librist's `rist_sender_data_write`
+    /// (`rist.c`) fails any write with `payload_len > RIST_MAX_PACKET_SIZE - 32`,
+    /// and `RIST_MAX_PACKET_SIZE` is 10000 (`rist-private.h`).
+    pub const MAX_PKT_SIZE: usize = 10_000 - 32;
 }
 
 #[cfg(test)]

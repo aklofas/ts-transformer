@@ -180,7 +180,7 @@ pub const URL_KEYS: &[QueryKey<RistUrl>] = &[
     QueryKey::new(
         "pkt_size",
         &[],
-        "Largest payload one send accepts",
+        "Largest payload one send accepts (1..=9968)",
         "bytes with the `K`/`M` forms",
         set_pkt_size,
     ),
