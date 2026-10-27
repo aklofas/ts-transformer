@@ -44,6 +44,11 @@ impl TcpTransportBuilder {
     /// (listeners must use [`TcpListenerBuilder`] instead).
     pub fn from_url(url: &str) -> Result<Self, UrlError> {
         let url = TcpUrl::parse(url)?;
+        if url.listen {
+            return Err(UrlError::Rejected(
+                "URL has ?listen=1 — use TcpListenerBuilder".into(),
+            ));
+        }
         let config = url.config.clone();
         Ok(Self { url, config })
     }
@@ -244,6 +249,15 @@ mod tests {
     fn listener_url_parse_error_propagates() {
         let err = TcpListenerBuilder::from_url("invalid://host");
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn from_url_refuses_a_listener_url() {
+        let e = TcpTransportBuilder::from_url("tcp://127.0.0.1:5000?listen=1").unwrap_err();
+        assert!(
+            matches!(e, UrlError::Rejected(ref m) if m.contains("TcpListenerBuilder")),
+            "{e:?}"
+        );
     }
 
     #[test]
