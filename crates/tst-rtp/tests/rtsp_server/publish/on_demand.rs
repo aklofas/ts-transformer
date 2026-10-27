@@ -7,6 +7,7 @@ use std::time::Duration;
 use tst_core::transport::RecvTransport;
 use tst_rtp::{RtspServer, RtspServerBuilder, RtspServerError};
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
 fn on_demand_server() -> RtspServer {
@@ -35,13 +36,13 @@ fn announce_on_an_unknown_path_queues_a_mount_for_next_publisher() {
     let mut p = RawPublisher::connect(port);
     assert_eq!(p.announce("/anything", SDP_MP2T), 200);
     let h = server
-        .next_publisher(Duration::from_secs(5))
+        .next_publisher(scaled(Duration::from_secs(5)))
         .unwrap()
         .expect("the ANNOUNCE queued a mount");
     assert_eq!(h.mount_path(), "/anything");
     assert!(h.publisher().is_some(), "the announcing publisher holds it");
     let mut app = h.clone().into_recv_transport().unwrap();
-    app.set_recv_timeout(Some(Duration::from_secs(5)));
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
 
     let (status, ch) = p.setup_interleaved("/anything", "streamid=0");
     assert_eq!(status, 200);

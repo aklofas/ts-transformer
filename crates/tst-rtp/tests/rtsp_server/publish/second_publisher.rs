@@ -6,6 +6,7 @@ use std::time::Duration;
 use tst_core::transport::RecvTransport;
 use tst_rtp::RtspServer;
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
 #[test]
@@ -15,7 +16,7 @@ fn second_announce_on_a_live_mount_is_403_and_first_keeps_publishing() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app = mount.clone().into_recv_transport().unwrap();
-    app.set_recv_timeout(Some(Duration::from_secs(5)));
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
 
     let mut a = RawPublisher::connect(port);
     assert_eq!(a.announce("/pub", SDP_MP2T), 200);

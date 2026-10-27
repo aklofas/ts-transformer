@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::{MountHandle, RtspServer, RtspServerBuilder};
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp::{header, make_muxer_cfg, request, session_id};
 
 /// Connect with a deliberately tiny receive buffer so the kernel runs out
@@ -57,7 +58,8 @@ fn stalled_interleaved_peer(
 
     let mut tcp = connect_with_small_rcvbuf(port);
     // Per-read bound only; nothing in these tests asserts through a duration.
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
     let setup = request(
         &mut tcp,
         &format!(
@@ -198,7 +200,7 @@ fn a_second_play_on_a_backpressured_interleaved_peer_never_splits_a_frame() {
     // so the mount counts two peers. Bounded wait, not an assertion: the
     // wire parse below is the verdict (a server that killed the old task
     // outright never shows two, and fails the parse instead).
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + scaled(Duration::from_secs(2));
     while mount.peer_count() < 2 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -289,7 +291,7 @@ fn a_fanout_retired_by_pause_on_a_stalled_peer_dies_with_the_reaped_session() {
     // The idle bound (6 s) reaps the session; the retired fanout must go
     // with it. Latch-and-poll with a deadline far above the bound — a
     // failure here is "never", not "slow".
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + scaled(Duration::from_secs(20));
     while mount.peer_count() != 0 {
         assert!(
             Instant::now() < deadline,

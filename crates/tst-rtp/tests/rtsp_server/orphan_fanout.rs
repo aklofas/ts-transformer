@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::RtspServer;
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
 
 #[test]
@@ -26,7 +27,8 @@ fn a_peer_that_leaves_without_teardown_takes_its_fanout_with_it() {
     let client_port = rtp.local_addr().unwrap().port();
 
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
     let url = format!("rtsp://127.0.0.1:{port}/live");
     let setup = request(
         &mut tcp,
@@ -47,7 +49,7 @@ fn a_peer_that_leaves_without_teardown_takes_its_fanout_with_it() {
     let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
     let mut buf = [0u8; 2048];
     let mut pts: i64 = 0;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         mount.push_video(&nal, Pts90khz::new(pts), true).unwrap();
         pts += 3600;
@@ -66,7 +68,7 @@ fn a_peer_that_leaves_without_teardown_takes_its_fanout_with_it() {
 
     // The session task sees EOF and drops its state; the fanout must go
     // with it. Latch-and-poll — no duration assertion.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     while mount.peer_count() != 0 {
         assert!(
             Instant::now() < deadline,

@@ -6,6 +6,7 @@ use std::time::Duration;
 use tst_core::transport::RecvTransport;
 use tst_rtp::{RtspClient, RtspServer};
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
 /// Read from `t` until `want` bytes of payload have arrived; returns their
@@ -36,7 +37,7 @@ fn mp2t_interleaved_publisher_reaches_app_and_reader() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app = mount.clone().into_recv_transport().unwrap();
-    app.set_recv_timeout(Some(Duration::from_secs(5)));
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
 
     // Reader first, so it is subscribed to the fanout before the publisher sends.
     let mut reader =
@@ -44,7 +45,7 @@ fn mp2t_interleaved_publisher_reaches_app_and_reader() {
     let sdp = reader.describe().unwrap();
     let sess = reader.setup_mp2t_auto(&sdp).unwrap();
     let mut reader_t = sess.into_recv_transport();
-    reader_t.set_recv_timeout(Some(Duration::from_secs(5)));
+    reader_t.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
     reader.play().unwrap();
 
     let mut p = RawPublisher::connect(port);

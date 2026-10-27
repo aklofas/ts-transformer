@@ -35,7 +35,8 @@ fn slow_peer_does_not_block_muxer() {
     // Raw TCP-interleaved handshake. SETUP uses the bare mount path (the
     // server's extract_mount_path does not strip a trailing trackID segment).
     let mut peer = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    peer.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
     let setup_resp = request(
         &mut peer,
         &format!(
