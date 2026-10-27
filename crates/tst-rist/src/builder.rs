@@ -97,7 +97,8 @@ impl RistTransportBuilder {
         self
     }
 
-    /// Per-send-call payload cap.
+    /// Per-send-call payload cap, `1..=`[`RistConfig::MAX_PKT_SIZE`]; a sender
+    /// refuses anything else at connect.
     pub fn pkt_size(&mut self, n: usize) -> &mut Self {
         self.config.pkt_size = n;
         self
