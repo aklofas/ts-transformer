@@ -123,5 +123,10 @@ rcgen            = "0.14"
 # tokio dependency above does not enable it.
 tokio            = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "macros", "test-util"] }
 
+# Features the public-api baseline is rendered with, so the optional TLS
+# surface is ratcheted too (read by scripts/lib/roster.sh).
+[package.metadata.public-api]
+features = ["rtsp-server-tls"]
+
 [lints]
 workspace = true

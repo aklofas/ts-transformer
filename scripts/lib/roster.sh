@@ -11,12 +11,12 @@ ROOT="${ROSTER_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 # Every workspace member, exactly once: pure | native | none.
 SANITIZE="tst-core:pure tst-pipeline:pure tst-rtp:pure tst-udp:pure tst-tcp:pure tst-hls:pure tst-webrtc:pure tst-srt:native tst-rist:native tst-c:native tst-c-core:none tstrans-srt-sys:none tstrans-rist-sys:none tstrans-mbedtls-src:none tst-py:none tst-jni:none tst-integration:none tst-interop:none tst-binding-gen:none tst-test-helpers:none tst-examples:none"
 
-usage="usage: roster.sh members|manifests|publishable|public-api|api-stability|surface|dep-tomls|publish-deps|test-targets|sanitize-pure|sanitize-native|check-sanitize"
+usage="usage: roster.sh members|manifests|publishable|public-api|public-api-features|api-stability|surface|dep-tomls|publish-deps|test-targets|sanitize-pure|sanitize-native|check-sanitize"
 list="${1:?$usage}"
 case "$list" in
   sanitize-pure|sanitize-native)
     for e in $SANITIZE; do [ "${e#*:}" = "${list#sanitize-}" ] && echo "${e%%:*}"; done; exit 0 ;;
-  members|manifests|publishable|public-api|api-stability|surface|dep-tomls|publish-deps|test-targets|check-sanitize) ;;
+  members|manifests|publishable|public-api|public-api-features|api-stability|surface|dep-tomls|publish-deps|test-targets|check-sanitize) ;;
   *) echo "$usage" >&2; exit 1 ;;
 esac
 if [ -n "${ROSTER_METADATA:-}" ]; then meta="$(cat "$ROSTER_METADATA")"
@@ -40,6 +40,7 @@ out = {
     "manifests": [p["manifest_path"] for p in pk],
     "publishable": [p["name"] for p in pk if p["publish"] is None],
     "public-api": ["%s:%s" % (p["name"], rel(p)) for p in api],
+    "public-api-features": ["%s\t%s" % (p["name"], ",".join(((p.get("metadata") or {}).get("public-api") or {}).get("features") or []) or "-") for p in api],
     "api-stability": ["%s:%s:%s" % (p["name"], rel(p), lib(p)) for p in api],
     "surface": [os.path.basename(rel(p)) for p in api],
     "dep-tomls": [p["manifest_path"] for p in pk if any(d.get("path") and d["req"] != "*" for d in p["dependencies"])],

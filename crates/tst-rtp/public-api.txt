@@ -640,6 +640,7 @@ pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::read_timeout(self, cor
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::request_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::rtsp_version(self, tst_rtp::url::RtspVersion) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::tcp_keepalive(self, core::time::Duration) -> Self
+pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::tls_root_certs(self, rustls::webpki::anchors::RootCertStore) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::transport_preference(self, tst_rtp::url::RtspTransportPref) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::user_agent(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::marker::Freeze for tst_rtp::rtsp::client::builder::RtspClientBuilder
@@ -701,7 +702,7 @@ impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
 pub fn tst_rtp::rtsp::client::RtspClient::connect(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect_with(&tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspError>
-pub fn tst_rtp::rtsp::client::RtspClient::connect_with_roots(&tst_rtp::url::RtspUrl, core::option::Option<()>) -> core::result::Result<Self, tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::RtspClient::connect_with_roots(&tst_rtp::url::RtspUrl, core::option::Option<rustls::webpki::anchors::RootCertStore>) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::is_session_alive(&self) -> bool
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::describe(&mut self) -> core::result::Result<tst_rtp::sdp::Sdp, tst_rtp::error::RtspError>
@@ -741,6 +742,9 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drai
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert(&mut self, std::path::PathBuf, std::path::PathBuf) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert_pem(&mut self, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_handshake_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::with_url(tst_rtp::url::RtspUrl) -> Self
 impl core::marker::Freeze for tst_rtp::rtsp::server::builder::RtspServerBuilder
 impl core::marker::Send for tst_rtp::rtsp::server::builder::RtspServerBuilder
@@ -2144,7 +2148,7 @@ impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
 pub fn tst_rtp::rtsp::client::RtspClient::connect(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect_with(&tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspError>
-pub fn tst_rtp::rtsp::client::RtspClient::connect_with_roots(&tst_rtp::url::RtspUrl, core::option::Option<()>) -> core::result::Result<Self, tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::RtspClient::connect_with_roots(&tst_rtp::url::RtspUrl, core::option::Option<rustls::webpki::anchors::RootCertStore>) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::is_session_alive(&self) -> bool
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::describe(&mut self) -> core::result::Result<tst_rtp::sdp::Sdp, tst_rtp::error::RtspError>
@@ -2182,6 +2186,7 @@ pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::read_timeout(self, cor
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::request_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::rtsp_version(self, tst_rtp::url::RtspVersion) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::tcp_keepalive(self, core::time::Duration) -> Self
+pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::tls_root_certs(self, rustls::webpki::anchors::RootCertStore) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::transport_preference(self, tst_rtp::url::RtspTransportPref) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::user_agent(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::marker::Freeze for tst_rtp::rtsp::client::builder::RtspClientBuilder
@@ -2228,6 +2233,9 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drai
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert(&mut self, std::path::PathBuf, std::path::PathBuf) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert_pem(&mut self, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_handshake_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::with_url(tst_rtp::url::RtspUrl) -> Self
 impl core::marker::Freeze for tst_rtp::rtsp::server::builder::RtspServerBuilder
 impl core::marker::Send for tst_rtp::rtsp::server::builder::RtspServerBuilder
