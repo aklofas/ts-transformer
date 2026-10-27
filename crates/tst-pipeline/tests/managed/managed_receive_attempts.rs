@@ -4,7 +4,7 @@
 //! (`ManagedTransportStats::reconnect_attempts`); the two sides are
 //! symmetric and the counter is exposed lock-free.
 
-use crate::common::{broken, fast_policy, wait_for};
+use crate::common::{ScriptedRecv, broken, fast_policy, wait_for};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -196,4 +196,39 @@ fn attempts_handles_are_plain_shared_atomics() {
     let _: Arc<AtomicU64> = managed.attempts_handle();
     let rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
     let _: Arc<AtomicU64> = rx.attempts_handle();
+}
+
+fn managed_over(inner: ScriptedRecv) -> ManagedRecvTransport<ScriptedRecv> {
+    ManagedRecvTransport::new(
+        inner,
+        Box::new(|| Err(broken("factory down"))),
+        fast_policy(Some(0)),
+    )
+}
+
+/// A receiver whose reconnect budget is spent: one failed read latched `closed`.
+fn exhausted_managed() -> ManagedRecvTransport<ScriptedRecv> {
+    let mut m = managed_over(ScriptedRecv::packets(vec![], broken("x")));
+    let mut buf = [0u8; 188];
+    assert!(m.recv_bytes(&mut buf).is_err());
+    m
+}
+
+#[test]
+fn an_empty_receive_is_ok_zero_after_close_cancel_and_exhaustion() {
+    let mut a = managed_over(ScriptedRecv::packets(vec![], broken("x")));
+    a.close();
+    assert!(matches!(a.recv_bytes(&mut []), Ok(0)));
+    let mut b = managed_over(ScriptedRecv::packets(vec![], broken("x")));
+    let h = b.cancel_handle().unwrap();
+    h.cancel();
+    assert!(matches!(b.recv_bytes(&mut []), Ok(0)));
+    assert!(b.is_alive(), "an empty read latches nothing");
+    let mut c = exhausted_managed();
+    assert!(matches!(c.recv_bytes(&mut []), Ok(0)));
+    let mut buf = [0u8; 188];
+    assert!(
+        matches!(b.recv_bytes(&mut buf), Err(TransportError::ExplicitClose)),
+        "non-empty result unchanged"
+    );
 }
