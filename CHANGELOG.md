@@ -27,6 +27,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
 
+### Fixed — tst-core
+
+- A PES header whose `PES_header_data_length` ends before the PTS no longer yields a PTS read past the header.
+- PES `stream_id` handling follows Table 2-21.
+- A duplicate packet that carries a discontinuity indicator is no longer dropped as a duplicate.
+- A scrambled packet no longer feeds the PCR check.
+- A strict verdict applies only to the packet that raised it.
+- `feed_aligned` no longer leaves residue from a previous call.
+- A PAT is identified by transport stream id, version and CRC, not by version alone.
+- A continuity gap on a PSI PID resets the section assembler so a splice cannot join two sections.
+- A PAT section outside its `last_section_number` range is reported; unparseable PSI is reported as `Malformed` instead of being ignored.
+- Programs that share a PMT PID are all tracked.
+- AU cells are tracked per service, and a sequence gap resets that PID's AU state.
+- The AU `cell_count` is bounded.
+- The KLV link heuristic reads only the descriptor's private data; `MissingMetadataDescriptor` fires only when the descriptor is absent and no link can be inferred.
+- AV1 binding streams are walked as `ts_open_bitstream_unit`s, and truncation and invalid emulation prevention are reported.
+- NAL units shorter than their header are reported as `Truncated`.
+- Component descriptor text honours the EN 300 468 Annex A character-set selector.
+- Aggregate PES overflow reports a discontinuity for every PID it drops.
+- DVB subtitle and teletext PES envelopes are checked and reported.
+
 ### Changed — tst-webrtc
 
 - WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
@@ -53,33 +74,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-c
 
-- C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 binding escapes. No struct layout changes.
-
-### Fixed — tst-core
-
-- A PES header whose `PES_header_data_length` ends before the PTS no longer yields a PTS read past the header.
-- PES `stream_id` handling follows Table 2-21.
-- A duplicate packet that carries a discontinuity indicator is no longer dropped as a duplicate.
-- A scrambled packet no longer feeds the PCR check.
-- A strict verdict applies only to the packet that raised it.
-- `feed_aligned` no longer leaves residue from a previous call.
-- A PAT is identified by transport stream id, version and CRC, not by version alone.
-- A continuity gap on a PSI PID resets the section assembler so a splice cannot join two sections.
-- A PAT section outside its `last_section_number` range is reported; unparseable PSI is reported as `Malformed` instead of being ignored.
-- Programs that share a PMT PID are all tracked.
-- AU cells are tracked per service, and a sequence gap resets that PID's AU state.
-- The AU `cell_count` is bounded.
-- The KLV link heuristic reads only the descriptor's private data; `MissingMetadataDescriptor` fires only when the descriptor is absent and no link can be inferred.
-- AV1 binding streams are walked as `ts_open_bitstream_unit`s, and truncation and invalid emulation prevention are reported.
-- NAL units shorter than their header are reported as `Truncated`.
-- Component descriptor text honours the EN 300 468 Annex A character-set selector.
-- Aggregate PES overflow reports a discontinuity for every PID it drops.
-- DVB subtitle and teletext PES envelopes are checked and reported.
+- C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 invalid emulation prevention. No struct layout changes.
 
 ### Added — tst-core
 
 - `mpegts::demux::low_level::psi_section_syntax_issues`.
-- `Reassembler::{mark_damaged, drain_partial_outcomes, take_total_overflow_pids}`.
+- `mpegts::demux::low_level::Reassembler::{mark_damaged, drain_partial_outcomes, take_total_overflow_pids}`.
 - Six new kind variants: `PesHeaderMalformedKind::HeaderDataLengthTooShort`, `PsiSyntaxKind::{SectionNumberOutOfRange, Malformed}`, `NalHeaderKind::Truncated`, `Av1ObuHeaderKind::{Truncated, InvalidEmulationPrevention}`.
 
 ### Added — tst-rtp
