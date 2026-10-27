@@ -509,8 +509,9 @@ impl Demuxer {
     pub fn flush(&mut self) {
         // Same marking as `handle_pes_packet`, but `flush` cannot fail:
         // lenient mode queues `MalformedPes` directly before the damaged
-        // sample; a strict mode queues it and drops the sample. A partial
-        // that fails to parse is dropped silently, as it always was at flush.
+        // sample; a strict mode queues it and drops the sample, keeping its
+        // timing. A partial that fails to parse is dropped silently, as it
+        // always was at flush.
         let mut drop_next_complete: Option<u16> = None;
         let mut damage_next_complete: Option<(u16, &'static str)> = None;
         for outcome in self.pes.drain_partial_outcomes() {
@@ -518,6 +519,7 @@ impl Demuxer {
                 ReassemblyOutcome::Complete(pes) => {
                     if drop_next_complete == Some(pes.pid) {
                         drop_next_complete = None;
+                        self.drop_damaged_pes(pes);
                         continue;
                     }
                     let damage = damage_next_complete
