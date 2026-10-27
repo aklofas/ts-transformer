@@ -818,3 +818,153 @@ fn tcp_mux_sender_finish_reports_the_drain_error() {
 
     unsafe { tst_tcp_mux_sender_close(h) };
 }
+
+// ---------------------------------------------------------------------------
+// Peer disconnect classification on the plain receivers
+// ---------------------------------------------------------------------------
+
+/// Bind `127.0.0.1:0`, send the port, accept one connection and hand it to
+/// `after_accept`.
+fn peer_that(
+    port_tx: mpsc::Sender<u16>,
+    after_accept: impl FnOnce(std::net::TcpStream) + Send + 'static,
+) -> thread::JoinHandle<()> {
+    let listener = StdTcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+    port_tx.send(listener.local_addr().unwrap().port()).unwrap();
+    thread::spawn(move || {
+        if let Ok((conn, _)) = listener.accept() {
+            after_accept(conn);
+        }
+    })
+}
+
+/// Write one TS null packet, then close with an RST (zero linger).
+fn write_then_reset(mut conn: std::net::TcpStream) {
+    use std::io::Write;
+    let mut pkt = [0xFFu8; 188];
+    pkt[0] = 0x47;
+    pkt[1] = 0x1F;
+    pkt[2] = 0xFF;
+    pkt[3] = 0x10;
+    conn.write_all(&pkt).unwrap();
+    socket2::SockRef::from(&conn)
+        .set_linger(Some(Duration::ZERO))
+        .unwrap();
+    drop(conn);
+}
+
+/// Write one TS null packet, then close normally (FIN).
+fn write_then_fin(mut conn: std::net::TcpStream) {
+    use std::io::Write;
+    let mut pkt = [0xFFu8; 188];
+    pkt[0] = 0x47;
+    pkt[1] = 0x1F;
+    pkt[2] = 0xFF;
+    pkt[3] = 0x10;
+    conn.write_all(&pkt).unwrap();
+    drop(conn);
+}
+
+struct SendPtr<T>(*mut T);
+unsafe impl<T> Send for SendPtr<T> {}
+
+/// Connect a plain receiver to a peer running `after_accept`, receive until
+/// the first non-zero return and report it with the last-error text. The
+/// receive runs on a worker joined within a deadline; a miss cancels the
+/// pre-obtained handle and fails the test.
+fn first_failure(
+    demux: bool,
+    after_accept: impl FnOnce(std::net::TcpStream) + Send + 'static,
+) -> (i32, String) {
+    let (port_tx, port_rx) = mpsc::channel();
+    let peer = peer_that(port_tx, after_accept);
+    let port = port_rx.recv().unwrap();
+    let url = CString::new(format!("tcp://127.0.0.1:{port}")).unwrap();
+
+    let (done_tx, done_rx) = mpsc::channel::<(i32, String)>();
+    let msg_of = || {
+        unsafe { std::ffi::CStr::from_ptr(tstrans::error::tst_get_last_error_str()) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let (worker, cancel): (thread::JoinHandle<()>, Box<dyn Fn()>) = if demux {
+        let h = unsafe { tst_tcp_demux_receiver_open(url.as_ptr(), std::ptr::null()) };
+        assert!(!h.is_null(), "open failed: {}", msg_of());
+        let p = SendPtr(h);
+        let w = thread::spawn(move || {
+            let p = p;
+            let mut ev = TstEvent::default();
+            let rc = loop {
+                let rc = unsafe { tst_tcp_demux_receiver_next_event(p.0, &mut ev) };
+                if rc != 0 {
+                    break rc;
+                }
+            };
+            let _ = done_tx.send((rc, msg_of()));
+        });
+        let c = SendPtr(h);
+        (
+            w,
+            Box::new(move || unsafe {
+                tst_tcp_demux_receiver_cancel(c.0);
+            }),
+        )
+    } else {
+        let h = unsafe { tst_tcp_recv_open(url.as_ptr()) };
+        assert!(!h.is_null(), "open failed: {}", msg_of());
+        let p = SendPtr(h);
+        let w = thread::spawn(move || {
+            let p = p;
+            let mut buf = vec![0u8; 1316];
+            let mut n = 0usize;
+            let rc = loop {
+                let rc =
+                    unsafe { tst_tcp_receiver_recv_ts(p.0, buf.as_mut_ptr(), buf.len(), &mut n) };
+                if rc != 0 {
+                    break rc;
+                }
+            };
+            let _ = done_tx.send((rc, msg_of()));
+        });
+        let c = SendPtr(h);
+        (
+            w,
+            Box::new(move || unsafe {
+                tst_tcp_receiver_cancel(c.0);
+            }),
+        )
+    };
+
+    let out = done_rx.recv_timeout(crate::common::scaled(Duration::from_secs(10)));
+    if out.is_err() {
+        cancel();
+        panic!("receive did not return within the deadline");
+    }
+    worker.join().unwrap();
+    peer.join().unwrap();
+    // The handle is intentionally not freed: the test process exits next.
+    out.unwrap()
+}
+
+/// A peer reset is a failure, not a clean end of stream: -8 with the
+/// transport's own message (Python/JVM raise BROKEN for the same event).
+#[test]
+fn tcp_receiver_peer_reset_is_transport_error() {
+    let (rc, msg) = first_failure(false, write_then_reset);
+    assert_eq!(rc, TstError::Transport as i32, "{msg}");
+    assert!(!msg.contains("end of stream"), "{msg}");
+}
+
+#[test]
+fn tcp_demux_receiver_peer_reset_is_transport_error() {
+    let (rc, msg) = first_failure(true, write_then_reset);
+    assert_eq!(rc, TstError::Transport as i32, "{msg}");
+    assert!(!msg.contains("end of stream"), "{msg}");
+}
+
+/// A clean FIN after data is still end of stream.
+#[test]
+fn tcp_receiver_peer_fin_is_end_of_stream() {
+    let (rc, msg) = first_failure(false, write_then_fin);
+    assert_eq!(rc, TstError::EndOfStream as i32, "{msg}");
+}

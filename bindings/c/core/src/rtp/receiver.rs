@@ -171,7 +171,7 @@ pub unsafe extern "C" fn tst_rtp_receiver_recv_ts(
             }
             0
         }
-        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
+        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
     })
 }
 

@@ -555,11 +555,13 @@ pub(crate) fn record_recv_closed(cancelled: bool) -> i32 {
 
 /// Receive-side error projection shared by every `_recv_*` / `_next_event`.
 ///
-/// `broken_is_eos` is `true` for PLAIN shells: a plain transport reports a
-/// peer disconnect as `Broken` (SRT: `tst-srt/src/transport.rs`), which at
-/// the C boundary of a handle nobody cancelled means end of stream. Managed
-/// shells pass `false` — their decorator already retried on `Broken`, so one
-/// reaching C is a hard `TST_E_TRANSPORT`.
+/// `broken_is_eos` is `true` only for plain SRT shells. libsrt reports a
+/// peer close and an abort as the same `SRT_ECONNLOST`, so `tst-srt` maps
+/// both to `Broken` and, at the C boundary of a handle nobody cancelled, that
+/// is read as end of stream. No other transport has that ambiguity (a clean
+/// FIN already arrives as `Closed`), so they pass `false` and a `Broken` is a
+/// hard `TST_E_TRANSPORT`. Managed shells also pass `false`: their decorator
+/// already retried on `Broken`.
 ///
 /// A cancelled plain-SRT operation arrives as `ExplicitClose` → kind
 /// `Closed` and takes the first arm (-7) — unconditionally, not via the
@@ -730,6 +732,28 @@ mod tests {
         assert_eq!(
             record_recv_error(eos(), true, false),
             TstError::Closed as i32
+        );
+    }
+
+    /// With the fold off a `Broken` is a transport failure that keeps the
+    /// transport's own message.
+    #[cfg(feature = "std")]
+    #[test]
+    fn broken_is_transport_when_the_fold_is_off() {
+        use tst_pipeline::BrokenCause;
+        let e = tst_pipeline::ReceiverError::from(TransportError::Broken {
+            msg: "reset".into(),
+            errno_code: None,
+            cause: BrokenCause::Unspecified,
+        });
+        assert_eq!(
+            record_recv_error(e, false, false),
+            TstError::Transport as i32
+        );
+        assert!(
+            test_last_error_msg().contains("reset"),
+            "{}",
+            test_last_error_msg()
         );
     }
 
