@@ -169,3 +169,27 @@ fn default_ceiling_messages_are_unchanged() {
     s.flush().unwrap();
     assert_eq!(wire_sizes(&t), vec![1316, 564]);
 }
+
+#[test]
+fn a_ceiling_that_shrinks_below_a_packet_keeps_the_bundle_for_later() {
+    use crate::common::SendStep;
+    let script = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from([
+        SendStep::Backpressure,
+    ])));
+    let t = crate::common::ScriptedSend::scripted(script, std::sync::Arc::default());
+    let mut s = Sender::new(t.clone(), SenderConfig::default());
+    let ts = synthetic_ts_packets(7);
+    s.send_ts(&ts).unwrap_err();
+    t.set_max_payload(100);
+    let e = s.flush().unwrap_err();
+    assert!(matches!(
+        e.source,
+        tst_pipeline::SenderErrorSource::Transport(tst_pipeline::TransportError::TooLarge {
+            len: 188,
+            ..
+        })
+    ));
+    t.set_max_payload(1316);
+    s.flush().unwrap();
+    assert_eq!(t.wire_bytes(), ts);
+}
