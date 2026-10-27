@@ -1,6 +1,8 @@
 //! Integration tests for `pipeline::Sender` over a mock transport.
 
-use tst_pipeline::{Sender, SenderConfig, TsFramingMode};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use tst_pipeline::{Sender, SenderConfig, SenderErrorSource, TransportError, TsFramingMode};
 use tst_test_helpers::mock_transport::MockTransport;
 
 fn synthetic_ts_packets(n: usize) -> Vec<u8> {
@@ -129,27 +131,25 @@ fn sender_splits_bundles_to_a_smaller_ceiling() {
 #[test]
 fn sender_refuses_a_ceiling_below_one_packet_without_consuming() {
     let t = crate::common::ScriptedSend::ok().with_max_payload(100);
-    let mut s = Sender::new(t, SenderConfig::default());
+    let mut s = Sender::new(t.clone(), SenderConfig::default());
     let e = s.send_ts(&synthetic_ts_packets(7)).unwrap_err();
     assert_eq!(e.input_consumed, Some(false));
     assert!(matches!(
         e.source,
-        tst_pipeline::SenderErrorSource::Transport(tst_pipeline::TransportError::TooLarge {
-            len: 188,
-            max: 100
-        })
+        SenderErrorSource::Transport(TransportError::TooLarge { len: 188, max: 100 })
     ));
     assert_eq!(s.stats().bytes_pushed, 0);
+    assert!(t.wire_bytes().is_empty());
 }
 
 #[test]
 fn a_failure_between_split_slices_resends_only_the_rest() {
     use crate::common::SendStep;
-    let script = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from([
+    let script = Arc::new(Mutex::new(VecDeque::from([
         SendStep::Ok,
         SendStep::Backpressure,
     ])));
-    let wire = std::sync::Arc::default();
+    let wire = Arc::default();
     let t = crate::common::ScriptedSend::scripted(script, wire).with_max_payload(1128);
     let mut s = Sender::new(t.clone(), SenderConfig::default());
     let ts = synthetic_ts_packets(7);
@@ -173,10 +173,8 @@ fn default_ceiling_messages_are_unchanged() {
 #[test]
 fn a_ceiling_that_shrinks_below_a_packet_keeps_the_bundle_for_later() {
     use crate::common::SendStep;
-    let script = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from([
-        SendStep::Backpressure,
-    ])));
-    let t = crate::common::ScriptedSend::scripted(script, std::sync::Arc::default());
+    let script = Arc::new(Mutex::new(VecDeque::from([SendStep::Backpressure])));
+    let t = crate::common::ScriptedSend::scripted(script, Arc::default());
     let mut s = Sender::new(t.clone(), SenderConfig::default());
     let ts = synthetic_ts_packets(7);
     s.send_ts(&ts).unwrap_err();
@@ -184,12 +182,23 @@ fn a_ceiling_that_shrinks_below_a_packet_keeps_the_bundle_for_later() {
     let e = s.flush().unwrap_err();
     assert!(matches!(
         e.source,
-        tst_pipeline::SenderErrorSource::Transport(tst_pipeline::TransportError::TooLarge {
-            len: 188,
-            ..
-        })
+        SenderErrorSource::Transport(TransportError::TooLarge { len: 188, .. })
     ));
     t.set_max_payload(1316);
     s.flush().unwrap();
+    assert_eq!(t.wire_bytes(), ts);
+}
+
+#[test]
+fn a_ceiling_that_shrinks_while_bundles_are_queued_splits_them() {
+    use crate::common::SendStep;
+    let script = Arc::new(Mutex::new(VecDeque::from([SendStep::Backpressure])));
+    let t = crate::common::ScriptedSend::scripted(script, Arc::default());
+    let mut s = Sender::new(t.clone(), SenderConfig::default());
+    let ts = synthetic_ts_packets(7);
+    s.send_ts(&ts).unwrap_err();
+    t.set_max_payload(376);
+    s.flush().unwrap();
+    assert!(wire_sizes(&t).iter().all(|&n| n <= 376));
     assert_eq!(t.wire_bytes(), ts);
 }
