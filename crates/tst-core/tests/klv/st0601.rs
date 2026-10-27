@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use tst_core::KlvFieldError;
 use tst_core::klv::UniversalLabel;
 use tst_core::klv::st0601::{
     EncodeConfig, UasDatalinkLs, decode, decode_strict, decode_unchecked, encode,
@@ -153,10 +154,19 @@ fn fixture_funky_ul_decodes_with_decode_but_not_strict() {
 fn fixture_field_errors_decodes() {
     let bytes = load_fixture("synthetic_field_errors.klv");
     let parsed = decode(&bytes).unwrap();
-    // The malformed tag 13 was written via the unknown bag, so it shows up
-    // there on round trip — not necessarily as a field_error (depends on
-    // whether the tag dispatch matched it).
-    let _ = parsed; // just verifies decode succeeds without panic
+    // The fixture carries a valid Tag 2 timestamp beside a Tag 13 (Sensor
+    // Latitude) declared 3 bytes long where the spec requires 4: the good
+    // field decodes, the bad one is left unset and reported per field.
+    assert_eq!(parsed.timestamp_us, Some(789));
+    assert_eq!(parsed.sensor_lat_deg, None);
+    assert!(
+        parsed
+            .field_errors
+            .iter()
+            .any(|e| matches!(e, KlvFieldError::InvalidLength { tag: 13, .. })),
+        "expected InvalidLength on tag 13, got {:?}",
+        parsed.field_errors
+    );
 }
 
 // -------- ST 0107.5 §6.3.3.2 empty-string convention --------

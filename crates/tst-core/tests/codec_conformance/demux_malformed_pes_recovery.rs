@@ -110,15 +110,6 @@ fn build_stream_with_malformed_pes() -> (Vec<u8>, Vec<[u8; 188]>) {
 }
 
 #[test]
-fn malformed_pes_variant_exists() {
-    let issue = NonConformantIssue::MalformedPes {
-        pid: 0x100,
-        reason: "test",
-    };
-    let _ = issue;
-}
-
-#[test]
 fn feed_lenient_mode_recovers_from_malformed_pes() {
     let mut d = Demuxer::new(); // default = StrictMode::Off
     let (bytes, _) = build_stream_with_malformed_pes();

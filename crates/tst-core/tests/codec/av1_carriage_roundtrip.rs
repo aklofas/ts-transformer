@@ -320,17 +320,18 @@ fn av1_interop_round_trip_no_binding_issues() {
     assert!(saw_sample, "interop round-trip should emit Sample");
 }
 
-/// Spec-byte assertion: for an AV1 binding-mode
-/// access unit carrying N OBUs, the on-wire PES payload MUST contain
-/// EXACTLY N `0x00 0x00 0x01` start codes — one per `ts_open_bitstream_unit()`
-/// invocation per binding §3.2 syntax. Single-start-code-per-AU framing is
-/// non-conformant; this test pairs the round-trip test above with a
-/// wire-format assertion to catch any regression to it.
+/// Spec-byte assertion: for an AV1 binding-mode access unit carrying N OBUs,
+/// the on-wire PES payload is EXACTLY each OBU prefixed by its own
+/// `0x00 0x00 0x01` start code — one per `ts_open_bitstream_unit()`
+/// invocation per binding §3.2 syntax. The expected bytes are written out
+/// by hand rather than produced by the muxer, so a regression to one start
+/// code per AU (or any other framing change) fails here even though the
+/// round-trip tests above would still recover the OBUs.
 #[test]
 fn av1_binding_mode_emits_one_start_code_per_obu_on_wire() {
     // 4-OBU AU — same shape as the round-trip test above but with bodies
-    // chosen so no body needs escape padding (verifies the COUNT
-    // independent of escape mechanics).
+    // chosen so no body needs emulation-prevention escapes: the framing is
+    // checked independent of escape mechanics.
     let mut au = Vec::new();
     au.extend(obu(2, &[])); // Temporal Delimiter
     au.extend(obu(1, &[0xAA, 0xBB])); // Sequence Header
@@ -351,29 +352,29 @@ fn av1_binding_mode_emits_one_start_code_per_obu_on_wire() {
         .unwrap();
     let ts_bytes = drain_mux(&mut mux);
 
-    // Count occurrences of the 3-byte binding §3.2 start code in the TS
-    // byte stream. The PES payload region is interleaved with TS-packet
-    // headers (4 bytes every 188 bytes), but the start code as a 3-byte
-    // sequence cannot straddle a TS header boundary in a meaningful way:
-    // either the start code lands entirely within the PES payload of one
-    // TS packet, or its bytes are contiguous in the demuxer's reassembled
-    // PES buffer. For the small synthetic AU here all OBUs land in a
-    // single PES, and the simple windows() scan over the raw TS byte
-    // stream gives a stable lower bound.
-    //
-    // We expect AT LEAST 4 occurrences (one per OBU). PSI sections and
-    // TS headers don't contain `0x00 0x00 0x01` as a natural pattern, so
-    // false positives are extremely unlikely on a synthetic stream like
-    // this — but assert ≥ 4 (not == 4) to keep the test robust to any
-    // future TS-stuffing change.
-    let count = ts_bytes
-        .windows(3)
-        .filter(|w| *w == [0x00, 0x00, 0x01])
-        .count();
-    assert!(
-        count >= 4,
-        "expected ≥ 4 binding start codes (one per OBU) in PES wire bytes, got {count}"
-    );
+    let mut demux = Demuxer::new();
+    demux.feed(&ts_bytes).unwrap();
+    demux.flush();
+    let payload = std::iter::from_fn(|| demux.next_event())
+        .find_map(|e| match e {
+            DemuxEvent::Sample {
+                payload: SamplePayload::Video { raw, .. },
+                ..
+            } => Some(raw),
+            _ => None,
+        })
+        .expect("expected a video Sample");
+
+    // OBU header byte = (obu_type << 3) | obu_has_size_field, then a
+    // one-byte LEB128 size, then the body.
+    #[rustfmt::skip]
+    let expected_binding_bytes: &[u8] = &[
+        0x00, 0x00, 0x01, 0x12, 0x00,                   // Temporal Delimiter
+        0x00, 0x00, 0x01, 0x0A, 0x02, 0xAA, 0xBB,       // Sequence Header
+        0x00, 0x00, 0x01, 0x1A, 0x01, 0xCC,             // Frame Header
+        0x00, 0x00, 0x01, 0x22, 0x03, 0xDD, 0xEE, 0xFF, // Tile Group
+    ];
+    assert_eq!(&payload[..], expected_binding_bytes);
 }
 
 /// The demux `SamplePayload::Video` is stamped with the
