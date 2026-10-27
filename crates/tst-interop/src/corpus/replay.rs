@@ -458,8 +458,9 @@ impl PathRun {
             v.pass = false;
             v.failures.insert(0, format!("sender error: {e}"));
         }
-        // A sender that lost framing dropped what it held: name it, so a
-        // short delivery is not read as transport loss.
+        // A sender that lost framing skipped the damaged bytes up to the
+        // next point it could re-verify: name it, so a failed delivery is
+        // not read as transport loss.
         if !v.pass && resyncs.events > 0 {
             v.failures.push(format!(
                 "sender resynced {} times, skipped {} bytes",
