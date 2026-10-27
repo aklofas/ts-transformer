@@ -24,17 +24,20 @@
  *
  * HOW TO BUILD AND RUN
  * --------------------
- * From the workspace root (ts-transformer/):
+ * Use the companion shell script, from the workspace root (ts-transformer/):
  *
- *   SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build -p tst-c
- *   gcc -I bindings/c/include -L target/debug -Wall -Werror \
+ *   bash bindings/c/examples/scenarios/run_scenarios.sh
+ *
+ * It stages one all-features package and builds against it. Do not compile
+ * against bindings/c/include directly: the committed tstrans_config.h defines
+ * no TST_HAS_* macros, so the transport declarations this file needs are
+ * absent. By hand, the same steps are:
+ *
+ *   bash scripts/dev/c-package.sh --all-features --out "$PKG"
+ *   gcc -I "$PKG/include" -L "$PKG/lib" -Wl,-rpath,"$PKG/lib" -Wall -Werror \
  *       -o /tmp/run_scenarios \
  *       bindings/c/examples/scenarios/run_scenarios.c -ltstrans
- *   LD_LIBRARY_PATH=target/debug /tmp/run_scenarios \
- *       crates/tst-integration/tests/fixtures/scenarios
- *
- * Or use the companion shell script:
- *   bash bindings/c/examples/scenarios/run_scenarios.sh
+ *   /tmp/run_scenarios crates/tst-integration/tests/fixtures/scenarios
  *
  * Default scenarios dir (when no argv[1] given):
  *   ../../../tst-integration/tests/fixtures/scenarios  (relative to CWD).
