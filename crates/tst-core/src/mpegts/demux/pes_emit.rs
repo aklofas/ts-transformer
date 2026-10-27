@@ -1590,4 +1590,43 @@ mod tests {
             "{ev:?}"
         );
     }
+
+    /// KLV on a `stream_type` 0x06 PID (registration "KLVA") is asynchronous
+    /// metadata: neither the per-PES PTS rule (ST 1402-07) nor the DTS
+    /// report (ST 1402-08) applies to it.
+    #[test]
+    fn async_klv_on_private_data_pid_has_no_pts_rule() {
+        let klva: &[u8] = &[0x05, 0x04, b'K', b'L', b'V', b'A'];
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x104,
+            &[(0x06, 0x104, klva)],
+        );
+        let klv = synth_klv_record(8);
+        let mut pkts = pes_to_packets(
+            0x104,
+            0,
+            &pes_bytes(0xBD, Some(93_000), Some(90_000), true, &klv, true),
+        );
+        pkts.extend(pes_to_packets(
+            0x104,
+            1,
+            &pes_bytes(0xBD, None, None, true, &klv, true),
+        ));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        let metadata = ev
+            .iter()
+            .filter(|e| matches!(e, DemuxEvent::Metadata { stream, .. } if stream.pid == 0x104))
+            .count();
+        assert_eq!(metadata, 2, "{ev:?}");
+        assert!(
+            !issues(&ev).iter().any(|i| matches!(
+                i,
+                NonConformantIssue::MissingRequiredPts { .. } | NonConformantIssue::Other(_)
+            )),
+            "{ev:?}"
+        );
+    }
 }
