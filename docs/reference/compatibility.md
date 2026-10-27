@@ -119,7 +119,7 @@ against the same bare-metal targets. The `Managed*` reconnect wrappers,
 | `bindgen` | 0.73 (FFI; the `tstrans-srt-sys` and `tstrans-rist-sys` builds) |
 | `cbindgen` | 0.29.2 (C header generation; `tst-c` build; held below 0.29.3, whose C23 enum syntax would leave the C11 header) |
 | `cc` | 1.9 (the `tstrans-rist-sys` build) |
-| `cmake` | upstream-compatible; `pkg-config` discovery first, vendored fallback |
+| `cmake` | upstream-compatible; `pkg-config` discovery first, vendored fallback. A host library is accepted only when `pkg-config --static` resolves it (a `Requires.private` entry without its own `.pc`, as mbedTLS often ships, makes the probe fail), it is at least libsrt 1.5.7 / librist 0.2.20, and, with the `mbedtls` feature on, its static link set contains `mbedcrypto`. Otherwise the vendored copy is built, with a build warning naming the reason. |
 
 The vendored builds disable libsrt's `ENABLE_HEAVY_LOGGING` (Debug+static
 init crash), and force `USE_ENCLIB=mbedtls` when the `mbedtls` feature is
@@ -147,8 +147,8 @@ on (default).
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Pre-shared passphrase (10–79 chars) | ✅ Full | `Passphrase::new` enforces the spec range. |
-| AES-128 key length | ✅ Full | `KeyLength::Aes128` (default). |
+| Pre-shared passphrase (10–80 bytes) | ✅ Full | `Passphrase::new` enforces libsrt's range: 10 to 80 bytes of UTF-8. |
+| AES-128 key length | ✅ Full | `KeyLength::Aes128`; also what `KeyLength::default()` returns. An unset `key_length` lets libsrt negotiate. |
 | AES-192 key length | ✅ Full | `KeyLength::Aes192`. |
 | AES-256 key length | ✅ Full | `KeyLength::Aes256`. |
 | mbedTLS backend | ✅ Full | Default; statically linked from `crates/mbedtls-src/vendor/mbedtls`. |
@@ -206,7 +206,7 @@ aren't yet wrapped are reachable via `tstrans-srt-sys`.
 | libsrt option | Safe field / setter | Status |
 | --- | --- | --- |
 | `SRTO_PASSPHRASE` | `passphrase: Option<Passphrase>` | ✅ Full |
-| `SRTO_PBKEYLEN` | `key_length: Option<KeyLength>` | ✅ Full (`None` is written as AES-128 whenever a passphrase is set; see [deferred-features.md](/docs/project/deferred-features.md#keylength--optionkeylength-ergonomics)) |
+| `SRTO_PBKEYLEN` | `key_length: Option<KeyLength>` | ✅ Full (`None` leaves `SRTO_PBKEYLEN` unset so libsrt negotiates; see [deferred-features.md](/docs/project/deferred-features.md#keylength--optionkeylength-ergonomics)) |
 | `SRTO_LATENCY` | `latency: Option<Duration>` | ✅ Full |
 | `SRTO_PEERLATENCY` | `peer_latency` (caller) | ✅ Full |
 | `SRTO_RCVLATENCY` | `recv_latency` | ✅ Full |

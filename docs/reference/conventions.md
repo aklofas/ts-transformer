@@ -387,9 +387,9 @@ rejected by `srt`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `buffer` | Recovery buffer | milliseconds | `rist` |
 | `cname` | RIST canonical name | text | `rist` |
 | `compression` | NULL-packet compression | boolean | `rist` |
-| `pkt_size` | Largest payload one send accepts | bytes with the `K`/`M` forms | `rist` |
+| `pkt_size` | Largest payload one send accepts (1..=9968) | bytes with the `K`/`M` forms | `rist` |
 | `profile` | RIST profile | `simple` or `main` | `rist` |
-| `recovery_maxbitrate` (also `recovery-maxbitrate`) | Retransmit bandwidth cap | kilobits per second | `rist` |
+| `recovery_maxbitrate` (also `recovery-maxbitrate`) | Bandwidth cap (payload plus retransmissions) | kilobits per second | `rist` |
 | `secret` | Encryption passphrase | non-empty text; alone it means AES-256 | `rist` |
 | `session_timeout` (also `session-timeout`) | Session timeout | milliseconds | `rist` |
 | `congestion` (also `smoother`) | Congestion-control algorithm | `live` or `file` | `srt` |
@@ -404,7 +404,7 @@ rejected by `srt`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `mss` | Maximum segment size | bytes, 16 bits | `srt` |
 | `oheadbw` | Recovery bandwidth overhead | percent, 5 to 100 | `srt` |
 | `packetfilter` | Packet filter (forward error correction) configuration | libsrt spec string, for example `fec,cols:10,rows:5` | `srt` |
-| `passphrase` | Encryption passphrase | 10 to 79 characters | `srt` |
+| `passphrase` | Encryption passphrase | 10 to 80 bytes | `srt` |
 | `payloadsize` (also `pkt_size`, `payload_size`) | Payload bytes per packet | bytes, at most 1456 | `srt` |
 | `pbkeylen` | Encryption key length | 16, 24 or 32 bytes | `srt` |
 | `peerlatency` | Latency the peer should use when receiving | milliseconds | `srt` |

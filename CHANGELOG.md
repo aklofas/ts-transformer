@@ -17,6 +17,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tstrans-rist-sys, tst-rist
 
 - A Simple-profile receiver whose RTCP port (data port + 1) is already bound now returns `RistError::PeerCreateFailed` instead of crashing the process; the vendored librist 0.2.20 build carries a one-statement fix (the RTCP peer is null-checked before use). A system librist found through pkg-config still has the upstream defect.
+- `srt-sys` and `rist-sys` link a host libsrt or librist only when `pkg-config --static` resolves it, it is at least libsrt 1.5.7 / librist 0.2.20 and, with the `mbedtls` feature on, it is built against mbedTLS; otherwise the vendored copy is built and the build prints a warning naming the reason. Before, libsrt 1.5.0 and librist 0.2.10 were accepted whatever their crypto backend.
+- `tst-rist` refuses the Simple profile together with an encryption key (`RistError::InvalidConfig`) for both roles, instead of sending in the clear.
+- `tst-rist` `pkt_size` is accepted from 1 to 9968 bytes (`RistConfig::MAX_PKT_SIZE`); a larger value used to open and then latch the sender dead on its first oversized write.
+- `tst-rist` refuses a `buffer` under 1 ms.
+- A panicking log subscriber no longer aborts the process from inside librist's log callback.
 
 ### Fixed — tst-c
 
@@ -58,6 +63,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `MuxPublisher` sends retained bytes before a cut and no longer offers bytes after `finish`'s closing cut; a forward gap no longer produces an `#EXTINF` above the target; a raw 33-bit PTS wrap no longer yields a zero-duration segment.
 - `ManagedStatsHandle::stats` no longer waits behind a Blocking-mode replay; `ManagedRecvTransport` returns `Ok(0)` for an empty buffer in every state; `Pairer::last_before_pts` pairs reordered frames; the nearest pairer releases frames buffered before a raw PTS wrap.
 
+### Fixed — tst-srt
+
+- A listener applies peer latency, send buffers and input bandwidth to the sockets it accepts.
+- `accept_timeout` no longer waits past its timeout when libsrt retires a queued connection between readiness and the accept, and its epoll wait no longer overflows libsrt's millisecond timeout multiply.
+- A UDP buffer or input-rate value that wraps negative in libsrt's signed field is refused.
+- `Passphrase::new` accepts 10 to 80 bytes of UTF-8 (libsrt's limit) and `StreamId::new` accepts UTF-8 up to 512 bytes; both rejected valid values before.
+- IPv6 hosts written with an RFC 6874 `%25` zone delimiter decode to the `%` form.
+- libsrt's empty accept-probe log line is logged at debug, and a panicking log subscriber no longer aborts the process from inside libsrt's log callback.
+
+### Fixed — tst-tcp
+
+- `from_url` refuses `?listen=1` on the caller builder, as documented.
+- A TLS receive sees a cancel between socket reads, even when a peer drips a record.
+- A send that fails after a cancel reports `ExplicitClose`.
+
+### Fixed — tst-udp
+
+- A send that fails after a cancel reports `ExplicitClose`.
+
 ### Changed — tst-webrtc
 
 - WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
@@ -92,6 +116,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 invalid emulation prevention. No struct layout changes.
 
+### Changed — tst-srt
+
+- An unset `key_length` no longer writes `SRTO_PBKEYLEN`, so libsrt negotiates the length: a passphrase-only sender now adopts a peer's AES-256 instead of forcing AES-128. `KeyLength::default()` is still `Aes128`.
+- A malformed percent escape in a URL query now fails with an error that names the offset and the key, never the value. The same holds for `rist://` URLs.
+- A repeated URL key has every occurrence validated, so an invalid one anywhere is an error; the last valid one still wins.
+
+### Changed — tst-rist
+
+- `buffer=N` is a fixed N ms recovery window; before, only the minimum was set and the 200 ms default started at 600 ms.
+
+### Changed — tst-udp
+
+- A multicast receiver binds its group (IPv4, non-Windows) and, on Linux, clears `IP_MULTICAST_ALL`, so it delivers only its own group. IPv6 receivers bind the wildcard, and Linux kernels before 4.20 leave them unfiltered; Windows receivers still see other groups and unicast to the port.
+
 ### Changed — release tooling
 
 - The public-api baselines now ratchet the optional TLS surfaces: `tst-core` is rendered with `tls` and `tst-rtp` with `rtsp-server-tls`.
@@ -103,10 +141,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `mpegts::demux::low_level::Reassembler::{mark_damaged, drain_partial_outcomes, take_total_overflow_pids}`.
 - Six new kind variants: `PesHeaderMalformedKind::HeaderDataLengthTooShort`, `PsiSyntaxKind::{SectionNumberOutOfRange, Malformed}`, `NalHeaderKind::Truncated`, `Av1ObuHeaderKind::{Truncated, InvalidEmulationPrevention}`.
 - `Publisher::cut_segment_discontinuous` (default: `cut_segment_with_duration`); `MuxPublisher` calls it after an encoder reset or a forward gap.
+- `url::common::decode_ipv6_zone` and `net::udp_socket::bind_udp_socket_multicast_group`.
 
 ### Added — tst-rtp
 
 - `RtspClientBuilder::from_url(RtspUrl)`.
+
+### Added — tst-srt
+
+- `SrtListenerBuilder::{peer_latency, send_buf_bytes, udp_send_buffer_bytes, input_bandwidth}`.
+
+### Added — tst-rist
+
+- `RistConfig::MAX_PKT_SIZE`.
+
+### Deprecated — tst-srt
+
+- `PassphraseError::InvalidCharset` and `StreamIdError::NonAscii` are no longer returned; they will be removed in 0.10.0.
 
 ---
 

@@ -8,7 +8,7 @@
 
 Reach for this when you need a secure uplink. SRT's encryption is AES-CTR with a passphrase-derived key, negotiated during the handshake; both peers must agree on the same passphrase and key length.
 
-The diff against an unencrypted setup is small: `passphrase(...)` plus `key_length(...)` on both the `SrtSocketBuilder` and the `SrtListenerBuilder`. `Passphrase::new` validates length (10–79 ASCII-printable bytes, libsrt's own constraint).
+The diff against an unencrypted setup is small: `passphrase(...)` plus `key_length(...)` on both the `SrtSocketBuilder` and the `SrtListenerBuilder`. `Passphrase::new` validates length (10 to 80 bytes of UTF-8, libsrt's own limit). `key_length(...)` is optional: when it is unset, libsrt negotiates the key length with the peer, so set it on both sides when the cipher strength must not depend on the peer.
 
 ```rust,no_run
 use tst_srt::{KeyLength, Passphrase, SrtSocketBuilder};

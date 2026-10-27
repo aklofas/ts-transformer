@@ -883,7 +883,7 @@ feature flag is needed.
 ### Sender hello
 
 The simplest sender: connect to a peer in caller mode and stream bytes. A
-passphrase must be 10 to 79 characters, and the receiver must be configured
+passphrase must be 10 to 80 bytes, and the receiver must be configured
 with the same one (`example-shared-secret` here).
 
 ```java
