@@ -6,10 +6,7 @@
 //! Run across all four feature modes:
 //!
 //! ```text
-//! cargo test -p tst-c --test feature_matrix_compile                              # default (srt + rtp)
-//! cargo test -p tst-c --no-default-features --features srt --test ...            # srt-only
-//! cargo test -p tst-c --no-default-features --features rtp --test ...            # rtp-only
-//! cargo test -p tst-c --no-default-features --test ...                           # neither (0 tests)
+//! cargo nextest run -p tst-c --features <f> --test abi feature_matrix_compile
 //! ```
 //!
 //! Symbols are imported by Rust path rather than by FFI call — the goal is
@@ -82,10 +79,10 @@ fn rist_feature_exposes_open_function() {
     let _ = tstrans::tst_rist_sender_open;
 }
 
-// Combined-feature sanity: the four new transports compose without
-// symbol-resolution conflicts (no rist here — see the dual-mbedTLS note
-// in build.rs; srt+rist in one binary is unsupported, and this test runs
-// under whatever feature set the build selected).
+// Combined-feature sanity: udp, tcp and hls compose without
+// symbol-resolution conflicts. This test runs under whatever feature set
+// the build selected; the linking policy (srt+rist supported) lives in
+// build.rs.
 #[cfg(all(feature = "udp", feature = "tcp", feature = "hls"))]
 #[test]
 fn udp_tcp_hls_features_compose() {

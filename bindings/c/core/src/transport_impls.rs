@@ -645,7 +645,8 @@ pub(crate) fn raw_sender_reset_stats<T: Transport, S>(h: &CHandle<RawSender<T>, 
 /// Validates that `buf` is non-null and `buf_len ≥ TS_PACKET_SIZE (188)`. The
 /// stream-end outcomes route through `record_recv_error`: a handle the caller
 /// cancelled reports `TST_E_CLOSED`, a peer close reports
-/// `TST_E_END_OF_STREAM` (`broken_is_eos = true` — these are plain shells).
+/// `TST_E_END_OF_STREAM`; `broken_is_eos` is `false` here, so a `Broken` is a
+/// hard `TST_E_TRANSPORT` (only plain SRT shells fold it into end of stream).
 ///
 /// # Safety
 /// `buf` must be writable for `buf_len` bytes; `out_n` must be non-null.

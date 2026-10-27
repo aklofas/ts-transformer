@@ -8,7 +8,8 @@
 # on macOS.
 #
 # Apple ld uses positional one-pattern-per-line syntax (no braces, no
-# version tags). Linux's version_script.txt uses the parallel ld scheme.
+# version tags). Linux exports are rustc's cdylib default;
+# scripts/check/c/abi-symbols.sh enforces the tst_*/TST_* set.
 
 _tst_*
 _TST_*

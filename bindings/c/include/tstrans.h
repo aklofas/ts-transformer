@@ -2384,8 +2384,8 @@ typedef struct tst_rtsp_publisher_info_t {
  * Fields:
  * - `active_sessions` — live (accepted, not-yet-closed) client sessions.
  *   Decrements when a session sends TEARDOWN or drops its TCP connection.
- * - `mounts` — number of registered mount paths (unicast + multicast).
- *   Monotonically increases; mounts are never unregistered.
+ * - `mounts` — registered mount paths (unicast + multicast);
+ *   `tst_rtsp_server_remove_mount` decrements it.
  * - `total_rtp_packets_sent` — cumulative RTP packets sent across all
  *   peers and all mounts since the server started.
  * - `total_rtp_bytes_sent` — cumulative RTP payload bytes (not including
@@ -3106,6 +3106,10 @@ struct tst_demux_receiver_t *tst_demux_receiver_open_with_config(const char *srt
  * [`tst_get_last_error_str`] — may be overwritten by a tst-c call from any
  * task/core; a multi-task `no_std` consumer must read it before the next
  * tst-c call from anywhere.
+ *
+ * **After thread teardown:** once the calling thread's thread-local storage
+ * has been destroyed (a host TLS destructor calling in after ours ran),
+ * writes are dropped and this returns `TST_E_INTERNAL`.
  */
  int tst_get_last_error(void);
 
@@ -3124,6 +3128,10 @@ struct tst_demux_receiver_t *tst_demux_receiver_open_with_config(const char *srt
  * per-thread (see [`tst_get_last_error`]), so "the next tst-c call"
  * means the next call from **any** task — copy the message out before
  * another task can make a tst-c call if it must be retained.
+ *
+ * **After thread teardown:** once the calling thread's thread-local storage
+ * has been destroyed (a host TLS destructor calling in after ours ran),
+ * writes are dropped and this returns `""`.
  */
  const char *tst_get_last_error_str(void);
 
@@ -10155,14 +10163,15 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  *    control channel (best-effort, 1 s per-session timeout), then
  *    cancels the per-session token.
  * 2. Fires the global cancel token so the listener stops accepting.
- * 3. Sleeps `drain_ms` + 1000 ms to allow in-flight RTP to drain.
+ * 3. Waits for the session tasks to end, bounded by the builder's
+ *    `graceful_shutdown_drain_ms` (default 100 ms) plus 500 ms, then shuts
+ *    each session's write half (at most 500 ms each).
  * 4. Sets the inner `Option` to `None` (subsequent calls on this handle
  *    return `TST_E_CLOSED`).
  *
- * Pass `drain_ms = 0` to use the builder's configured
- * `graceful_shutdown_drain` (the drain the Rust `RtspServer::stop`
- * method already adds 1 s on top of). For fine-grained control, build
- * the server with `tst_rtsp_server_builder_graceful_shutdown_drain_ms`.
+ * `drain_ms` is ignored: the drain is the one set with
+ * `tst_rtsp_server_builder_graceful_shutdown_drain_ms`. The parameter is
+ * kept for ABI stability.
  *
  * Idempotent — a second call after shutdown completes returns
  * `TST_E_SUCCESS` immediately. Returns `TST_E_INVALID_USAGE` if called

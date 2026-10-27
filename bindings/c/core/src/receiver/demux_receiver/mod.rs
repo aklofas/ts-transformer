@@ -17,11 +17,7 @@
 //! This module is split across sibling files grouped by concern:
 //! - `events` — `tst_demux_receiver_recv_event` + `tst_demux_receiver_cancel`
 //!   (cancel lives with events, not lifecycle, because its sole purpose
-//!   is to unblock a thread parked in `_recv_event`, and the two must
-//!   remain adjacent in `tstrans.h` for the byte-identical header
-//!   contract — cbindgen emits all parent-module items first, then
-//!   sub-modules in declaration order, so the interleaving would
-//!   otherwise force `_cancel` to emit before `_recv_event`)
+//!   is to unblock a thread parked in `_recv_event`)
 //! - `stats` — 5 stats accessors on the plain receiver
 //! - `managed` — `TstManagedDemuxReceiver` struct + every
 //!   `tst_managed_demux_receiver_*` C entry

@@ -644,8 +644,8 @@ pub(crate) fn codec_stats_to_c(
 /// Fields:
 /// - `active_sessions` — live (accepted, not-yet-closed) client sessions.
 ///   Decrements when a session sends TEARDOWN or drops its TCP connection.
-/// - `mounts` — number of registered mount paths (unicast + multicast).
-///   Monotonically increases; mounts are never unregistered.
+/// - `mounts` — registered mount paths (unicast + multicast);
+///   `tst_rtsp_server_remove_mount` decrements it.
 /// - `total_rtp_packets_sent` — cumulative RTP packets sent across all
 ///   peers and all mounts since the server started.
 /// - `total_rtp_bytes_sent` — cumulative RTP payload bytes (not including
