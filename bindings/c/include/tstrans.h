@@ -2496,7 +2496,9 @@ extern "C" {
  * `annexb` must be valid for reads of `annexb_len` bytes (or NULL with
  * `annexb_len == 0`). `out_len` must be a valid writable `size_t`
  * pointer. When `out` is non-null, it must be valid for writes of
- * `out_cap` bytes.
+ * `out_cap` bytes. `out` must not overlap `annexb` (the call returns
+ * `TST_E_INVALID_CONFIG` if it does; in-place conversion is not
+ * supported because the output is longer than the input).
  *
  * # C ABI
  *
