@@ -685,7 +685,7 @@ pub(crate) unsafe fn receiver_recv_ts<R: RecvTransport, S>(
             }
             0
         }
-        Err(e) => record_recv_error(e, cancelled || h.is_cancelled(), true),
+        Err(e) => record_recv_error(e, cancelled || h.is_cancelled(), false),
     })
 }
 
@@ -838,7 +838,7 @@ pub(crate) unsafe fn demux_receiver_next_event<R: RecvTransport, S>(
             0
         }
         Ok(None) => record_recv_closed(cancelled || inner.is_cancelled()),
-        Err(e) => record_recv_error(e, cancelled || inner.is_cancelled(), true),
+        Err(e) => record_recv_error(e, cancelled || inner.is_cancelled(), false),
     })
 }
 

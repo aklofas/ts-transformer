@@ -2768,6 +2768,7 @@ dependencies = [
  "cbindgen",
  "libc",
  "rcgen",
+ "socket2",
  "tempfile",
  "tst-c-core",
  "tst-core",
