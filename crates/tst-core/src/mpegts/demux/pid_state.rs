@@ -22,6 +22,8 @@ pub(super) struct PidState {
     pub(super) stream_kind: Option<StreamKind>,
     /// Owning `program_number`, set with `stream_kind`.
     pub(super) program: Option<u16>,
+    /// PMT `stream_type` byte that declared the PID, set with `stream_kind`.
+    pub(super) stream_type: Option<u8>,
     /// Last continuity counter seen on a payload-bearing packet.
     pub(super) cc: Option<u8>,
     /// The packet before the current one was a spec-legal duplicate
@@ -84,10 +86,26 @@ impl PidState {
         self.clear_timing();
         self.stream_kind = None;
         self.program = None;
+        self.stream_type = None;
         self.subtitle_missing_descriptor_emitted = false;
         self.av1_registration_malformed_emitted = false;
         self.subtitle_descriptor_ambiguous_emitted = false;
         self.sync_pes_shape_emitted = false;
+    }
+
+    /// The PID left the topology: forget everything except the lifetime
+    /// counters (`stats`, `codec`, `subtitle_seen`), which `reset_stats`
+    /// owns.
+    pub(super) fn retire(&mut self) {
+        let Self {
+            stats,
+            codec,
+            subtitle_seen,
+            ..
+        } = core::mem::take(self);
+        self.stats = stats;
+        self.codec = codec;
+        self.subtitle_seen = subtitle_seen;
     }
 
     /// What `Demuxer::reset_stats` clears.
@@ -110,6 +128,7 @@ impl PidState {
         let Self {
             stream_kind,
             program,
+            stream_type,
             cc,
             dup,
             last_pkt_raw,
@@ -129,6 +148,7 @@ impl PidState {
         } = self;
         stream_kind.is_none()
             && program.is_none()
+            && stream_type.is_none()
             && cc.is_none()
             && !dup
             && last_pkt_raw.is_none()
@@ -157,10 +177,12 @@ pub(super) fn set_once(flag: &mut bool) -> bool {
 /// touching `Demuxer::pid_state`; applied by `Demuxer::apply_topology_diff`.
 #[derive(Debug, Default)]
 pub(super) struct TopologyDiff {
-    /// `(pid, kind, program_number)` for every accepted PMT stream: sets the
-    /// PID's kind and owner (new and persisting PIDs alike).
-    pub(super) added: Vec<(u16, StreamKind, u16)>,
-    /// Elementary PIDs that left the topology: their whole entry goes.
+    /// `(pid, kind, program_number, stream_type)` for every accepted PMT
+    /// stream: sets the PID's kind, owner and PMT `stream_type` byte (new and
+    /// persisting PIDs alike).
+    pub(super) added: Vec<(u16, StreamKind, u16, u8)>,
+    /// Elementary PIDs that left the topology: their state goes, their
+    /// lifetime counters stay until `reset_stats`.
     pub(super) retired: Vec<u16>,
     /// PMT PIDs of removed programs: only the continuity baseline goes.
     pub(super) retired_pmt_pids: Vec<u16>,

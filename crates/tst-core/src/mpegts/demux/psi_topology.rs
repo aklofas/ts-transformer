@@ -350,7 +350,8 @@ impl super::demuxer::Demuxer {
         // PMT on the new PID is adopted cleanly.
         // Per-PID cleanup is shared with the PMT-version path through the
         // `TopologyDiff`: a PID's state entry is otherwise unreachable and
-        // would leak under PAT rotation.
+        // stays behind. Its lifetime counters stay until `reset_stats`,
+        // bounded by the 8192-PID space.
         let removed: Vec<u16> = self
             .programs
             .iter()
@@ -471,7 +472,7 @@ impl super::demuxer::Demuxer {
         }
         diff.added = stream_infos
             .iter()
-            .map(|s| (s.pid, s.kind, program_number))
+            .map(|s| (s.pid, s.kind, program_number, s.stream_type.as_byte()))
             .collect();
         diff
     }
@@ -1468,6 +1469,20 @@ mod tests {
         );
     }
 
+    /// A retired PID keeps its lifetime counters and nothing else.
+    fn assert_only_counters_remain(demux: &Demuxer, pid: u16) {
+        let state = demux
+            .pid_state
+            .get(&pid)
+            .expect("a retired PID keeps its counters");
+        assert!(state.stats.is_some() && state.codec.is_some() && state.subtitle_seen);
+        let mut expected = fully_populated_state();
+        expected.retire();
+        assert!(state.stream_kind.is_none() && state.program.is_none());
+        assert!(state.stream_type.is_none() && state.cc.is_none() && state.last_pts.is_none());
+        assert!(!state.sync_pes_shape_emitted && !expected.sync_pes_shape_emitted);
+    }
+
     /// A fully populated `PidState` for `pid`. Written as an exhaustive
     /// struct literal on purpose: a field added to `PidState` stops this
     /// compiling until the retirement tests below cover it.
@@ -1476,6 +1491,7 @@ mod tests {
         super::super::pid_state::PidState {
             stream_kind: Some(StreamKind::Unknown(0xFC)),
             program: Some(1),
+            stream_type: Some(0xFC),
             cc: Some(3),
             dup: true,
             last_pkt_raw: Some([0x47; 188]),
@@ -1526,10 +1542,7 @@ mod tests {
             .feed(&wrap_section_in_ts_packet_cc(0x1000, &pmt_v1, 1))
             .unwrap();
 
-        assert!(
-            demux.pid_state.get(&0x0101).is_none(),
-            "a retired PID must have no PidState entry"
-        );
+        assert_only_counters_remain(&demux, 0x0101);
         assert!(
             !demux.pes.has_pid(0x0101),
             "a retired PID must have no reassembler buffer"
@@ -1568,7 +1581,7 @@ mod tests {
             .feed(&wrap_section_in_ts_packet_cc(0x0000, &pat_v1, 1))
             .unwrap();
 
-        assert!(demux.pid_state.get(&0x0101).is_none());
+        assert_only_counters_remain(&demux, 0x0101);
         assert!(!demux.pes.has_pid(0x0101));
         // The removed program's PMT PID keeps no continuity baseline.
         assert!(
