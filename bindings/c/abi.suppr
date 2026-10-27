@@ -18,6 +18,8 @@
 # out-of-range value is validated instead of being an invalid discriminant.
 # The C prototype already declared int32_t (or an int-sized C enum), so callers
 # are unaffected; only the library's DWARF parameter type changed.
+# Only needed while the comparison baseline predates this change; remove it once
+# the previous-tag baseline is a tag at or after the release that carries it (0.9.1).
 [suppress_function]
   change_kind = function-subtype-change
   name_regexp = ^tst_(mux_config_add_(video|klv|audio)_stream|mux_config_add_audio_stream_with_language|sender_config_set_framing_mode|reconnect_policy_set_(overflow_policy|mode)|misp_time_extract)$
