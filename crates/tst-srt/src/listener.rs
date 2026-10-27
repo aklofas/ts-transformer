@@ -13,7 +13,7 @@ use os_socketaddr::OsSocketAddr;
 use std::ffi::c_int;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{BrokenCause, TransportError};
 
@@ -214,22 +214,24 @@ impl SrtListener {
     /// the accept call itself. This method works around that via
     /// `srt_epoll_wait`.
     ///
-    /// Implementation: registers the listener fd with a one-shot epoll
-    /// set on `SRT_EPOLL_IN`, drains any connection that was queued
-    /// before the subscription was registered (see below), then either
-    /// calls `srt_accept` (epoll signaled readiness) or returns
-    /// `TimedOut`. The epoll set is always released before this method
-    /// returns.
+    /// Implementation: registers the listener fd with a per-call epoll
+    /// set on `SRT_EPOLL_IN`, then loops until `timeout` has passed: a
+    /// non-blocking accept probe, then `srt_epoll_wait` for the time left.
+    /// It never parks in a blocking `srt_accept`, because readiness can go
+    /// stale before the accept runs. The epoll set is always released
+    /// before this method returns.
     pub fn accept_timeout(
         &mut self,
         timeout: Duration,
     ) -> Result<(SrtSocket, SocketAddr), AcceptError> {
-        // Covers the epoll set, the probe with its option restore, the
-        // wait and the accept after it.
+        // Covers the epoll set and every probe with its option restore.
         let Some(_op) = crate::exit_guard::enter() else {
             return Err(AcceptError::ListenerClosed);
         };
-        // Create an epoll set for this call only.
+        // `None` when the deadline is not representable: wait without end.
+        let deadline = Instant::now().checked_add(timeout);
+
+        // Create an epoll set for this call only; released on every return.
         let eid = unsafe { srt_sys::srt_epoll_create() };
         if eid < 0 {
             return Err(AcceptError::Other {
@@ -237,96 +239,104 @@ impl SrtListener {
                 message: format!("srt_epoll_create returned {eid}"),
             });
         }
+        let _epoll = EpollSet(eid);
 
         // Register the listener fd for IN (= accept-ready) events.
         // Bind to a local binding so &raw const has a place expression.
         let events: c_int = SRT_EPOLL_IN;
         let rc = unsafe { srt_sys::srt_epoll_add_usock(eid, self.handle, &raw const events) };
         if rc < 0 {
-            let raw = last_error();
-            unsafe { srt_sys::srt_epoll_release(eid) };
-            return Err(raw.into());
-        }
-
-        // libsrt's srt_epoll_add_usock initializes a new subscription's
-        // state field to 0 and does NOT scan the listener's current
-        // accept queue (vendor/srt/srtcore/epoll.cpp Wait::Wait + the
-        // `wait.watch & wait.state` check in srt_epoll_update_usock).
-        // If a peer's handshake completed before our subscription was
-        // wired in — common under workspace test load when this thread
-        // is descheduled between creating the listener and reaching
-        // srt_epoll_wait — that already-queued connection is invisible
-        // to srt_epoll_wait and we'd hang until either *another* peer
-        // connects or the timeout fires.
-        //
-        // Drain that pre-existing readiness with a single non-blocking
-        // accept probe before going to sleep on epoll. The listener is
-        // `&mut self`, so flipping SRTO_RCVSYN around the probe is
-        // exclusive — no other accept caller can observe the transient
-        // non-blocking state.
-        match self.try_accept_nonblocking() {
-            Ok(Some(conn)) => {
-                unsafe { srt_sys::srt_epoll_release(eid) };
-                return Ok(conn);
-            }
-            Ok(None) => {} // queue empty; fall through to epoll_wait
-            Err(e) => {
-                unsafe { srt_sys::srt_epoll_release(eid) };
-                return Err(e);
-            }
-        }
-
-        // msTimeOut is i64; clamp Duration to the representable range.
-        let timeout_ms: i64 = timeout.as_millis().min(i64::MAX as u128) as i64;
-        let mut readfds: [srt_sys::SRTSOCKET; 1] = [SRT_INVALID_SOCK];
-        let mut rnum: c_int = 1;
-
-        let n = unsafe {
-            srt_sys::srt_epoll_wait(
-                eid,
-                readfds.as_mut_ptr(),
-                &raw mut rnum,
-                std::ptr::null_mut(), // writefds
-                std::ptr::null_mut(), // wnum
-                timeout_ms,
-                std::ptr::null_mut(), // lrfds (system sockets)
-                std::ptr::null_mut(), // lrnum
-                std::ptr::null_mut(), // lwfds
-                std::ptr::null_mut(), // lwnum
-            )
-        };
-        unsafe { srt_sys::srt_epoll_release(eid) };
-
-        if n == 0 {
-            // Unreachable per libsrt's contract: srt_epoll_wait returns
-            // either > 0 (event ready) or -1 with SRT_ETIMEOUT on timeout.
-            // The n == 0 case cannot arise from a blocking epoll_wait call.
-            // Treated as timeout defensively: if libsrt ever changes its
-            // contract, falling through to srt_accept would block forever.
-            return Err(AcceptError::TimedOut);
-        }
-        if n < 0 {
             return Err(last_error().into());
         }
 
-        // n > 0: listener fd is accept-ready; delegate to the blocking path.
-        // srt_accept will return immediately because epoll confirmed readiness.
-        self.accept()
+        loop {
+            // The first probe drains a connection queued before the
+            // subscription: srt_epoll_add_usock starts the subscription's
+            // state at 0 and does not scan the accept queue
+            // (vendor/srt/srtcore/epoll.cpp Wait::Wait + the
+            // `wait.watch & wait.state` check in srt_epoll_update_usock), so
+            // such a connection never wakes srt_epoll_wait.
+            //
+            // A probe after readiness accepts the connection that woke us.
+            // The queue can be empty by then: libsrt's GC erases a broken
+            // queued connection without clearing the listener's readiness
+            // (vendor/srt/srtcore/api.cpp checkBrokenSockets). The probe's
+            // own srt_accept clears that stale readiness when it finds the
+            // queue empty (api.cpp CUDTUnited::accept), so the next wait
+            // blocks rather than spins.
+            //
+            // The listener is `&mut self`, so flipping SRTO_RCVSYN around
+            // the probe is exclusive: no other accept caller can observe the
+            // transient non-blocking state.
+            if let Some(conn) = self.try_accept_nonblocking()? {
+                return Ok(conn);
+            }
+
+            let timeout_ms: i64 = match deadline {
+                Some(deadline) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(AcceptError::TimedOut);
+                    }
+                    // At least 1 ms: 0 would be a non-blocking poll and spin.
+                    // At most what libsrt can scale to microseconds without
+                    // overflow; a longer wait just goes round again.
+                    remaining.as_millis().clamp(1, (i64::MAX / 1000) as u128) as i64
+                }
+                // libsrt reads a negative timeout as "wait forever".
+                None => -1,
+            };
+            let mut readfds: [srt_sys::SRTSOCKET; 1] = [SRT_INVALID_SOCK];
+            let mut rnum: c_int = 1;
+
+            let n = unsafe {
+                srt_sys::srt_epoll_wait(
+                    eid,
+                    readfds.as_mut_ptr(),
+                    &raw mut rnum,
+                    std::ptr::null_mut(), // writefds
+                    std::ptr::null_mut(), // wnum
+                    timeout_ms,
+                    std::ptr::null_mut(), // lrfds (system sockets)
+                    std::ptr::null_mut(), // lrnum
+                    std::ptr::null_mut(), // lwfds
+                    std::ptr::null_mut(), // lwnum
+                )
+            };
+
+            if n == 0 {
+                // Unreachable per libsrt's contract: srt_epoll_wait returns
+                // either > 0 (event ready) or -1 with SRT_ETIMEOUT on
+                // timeout. Treated as timeout defensively.
+                return Err(AcceptError::TimedOut);
+            }
+            if n < 0 {
+                match AcceptError::from(last_error()) {
+                    // Go round once more: the final probe takes a connection
+                    // that raced the timeout, then the zero remaining time
+                    // returns TimedOut.
+                    AcceptError::TimedOut => continue,
+                    e => return Err(e),
+                }
+            }
+            #[cfg(test)]
+            run_after_readiness_hook(self.handle);
+        }
     }
 
     /// Non-blocking accept probe: returns `Ok(Some(...))` if a
     /// connection is already queued, `Ok(None)` if the queue is empty
     /// (libsrt `SRT_EASYNCRCV`), or `Err(...)` for any other libsrt
     /// failure. Toggles `SRTO_RCVSYN` to false for the duration of the
-    /// `srt_accept` call and restores it before returning.
+    /// `srt_accept` call and restores it before returning; a failed
+    /// restore is an error, and a connection the probe accepted is closed
+    /// before it is reported.
     fn try_accept_nonblocking(&mut self) -> Result<Option<(SrtSocket, SocketAddr)>, AcceptError> {
         let prev_rcvsyn = read_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN).unwrap_or(true);
-        if set_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN, false).is_err() {
-            // Can't flip to non-blocking — skip the probe and let
-            // srt_epoll_wait drive timing. The probe is an optimistic
-            // race-recovery; if it can't run we fall back to the prior
-            // behavior (which is correct for the non-racy case).
-            return Ok(None);
+        if let Err(e) = set_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN, false) {
+            // No blocking fallback exists to hand over to, and a closed
+            // listener lands here, so this ends the accept.
+            return Err(self.option_failure("making the listener non-blocking", e));
         }
 
         let mut os_addr = OsSocketAddr::new();
@@ -350,7 +360,17 @@ impl SrtListener {
             };
 
         // Always restore the original blocking mode, even on probe error.
-        let _ = set_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN, prev_rcvsyn);
+        // Left non-blocking, a later `accept()` would return at once
+        // instead of waiting, so a failed restore is reported. A probe
+        // error is reported first: it is the cause (a closed listener
+        // fails both).
+        if let Err(e) = set_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN, prev_rcvsyn) {
+            let accepted = probe_outcome?;
+            if let Some(accepted) = accepted {
+                unsafe { srt_sys::srt_close(accepted) };
+            }
+            return Err(self.option_failure("restoring the listener's blocking mode", e));
+        }
 
         match probe_outcome {
             Ok(None) => Ok(None),
@@ -370,6 +390,25 @@ impl SrtListener {
                 Ok(Some((socket, peer)))
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// The accept error for a failed `SRTO_RCVSYN` flip around the probe:
+    /// a listener closed by a cancel or by process exit reports
+    /// `ListenerClosed`, anything else names the step that failed.
+    fn option_failure(&self, step: &str, e: OptionError) -> AcceptError {
+        if self.cancel.is_cancelled() || crate::exit_guard::is_exiting() {
+            return AcceptError::ListenerClosed;
+        }
+        match e {
+            OptionError::Other { kind, message } => AcceptError::Other {
+                kind,
+                message: format!("{step}: {message}"),
+            },
+            other => AcceptError::Other {
+                kind: crate::error::SrtErrno::Unknown(0),
+                message: format!("{step}: {other}"),
+            },
         }
     }
 
@@ -516,6 +555,15 @@ impl SrtListener {
     }
 }
 
+/// Releases a per-call epoll set on every return path.
+struct EpollSet(c_int);
+
+impl Drop for EpollSet {
+    fn drop(&mut self) {
+        unsafe { srt_sys::srt_epoll_release(self.0) };
+    }
+}
+
 /// What `bind_with` answers once process exit has started. `BindError` has
 /// no closed variant.
 fn refused_bind() -> BindError {
@@ -539,3 +587,173 @@ impl Drop for SrtListener {
 /// The name this type had before it was renamed.
 #[deprecated(since = "0.9.0", note = "renamed to `SrtListener`")]
 pub type Listener = SrtListener;
+
+#[cfg(test)]
+thread_local! {
+    /// Called with the listener handle right after `srt_epoll_wait` reports
+    /// readiness, on the thread running `accept_timeout`. One-shot: taken
+    /// before it runs, so a hook fires for the first readiness only.
+    static AFTER_READINESS: std::cell::Cell<Option<fn(srt_sys::SRTSOCKET)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn run_after_readiness_hook(handle: srt_sys::SRTSOCKET) {
+    if let Some(hook) = AFTER_READINESS.with(std::cell::Cell::take) {
+        hook(handle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{SrtListenerBuilder, SrtSocketBuilder};
+    use std::sync::Mutex;
+    use std::sync::mpsc;
+    use tst_test_helpers::timing::scaled;
+
+    fn watchdog() -> Duration {
+        scaled(Duration::from_secs(20))
+    }
+
+    fn loopback_available() -> bool {
+        std::env::var_os("SKIP_LOOPBACK").is_none()
+            && std::net::TcpListener::bind("127.0.0.1:0").is_ok()
+    }
+
+    /// Accept the connection readiness announced and close it, so the queue
+    /// is empty by the time `accept_timeout` acts on the readiness. The
+    /// queue holds an entry here, so this blocking accept returns at once.
+    fn steal_queued(listener: srt_sys::SRTSOCKET) {
+        let mut os_addr = OsSocketAddr::new();
+        let mut len = os_addr.capacity() as c_int;
+        let stolen =
+            unsafe { srt_sys::srt_accept(listener, os_addr.as_mut_ptr().cast(), &raw mut len) };
+        if stolen != SRT_INVALID_SOCK {
+            unsafe { srt_sys::srt_close(stolen) };
+        }
+    }
+
+    /// Lets the second connector of the re-wait test go once the first
+    /// connection has been stolen.
+    static SECOND_PEER_GO: Mutex<Option<mpsc::Sender<()>>> = Mutex::new(None);
+
+    fn steal_queued_then_release_second_peer(listener: srt_sys::SRTSOCKET) {
+        steal_queued(listener);
+        if let Some(go) = SECOND_PEER_GO.lock().unwrap().take() {
+            let _ = go.send(());
+        }
+    }
+
+    /// Connect to `port` and hold the socket until `release` fires (or the
+    /// watchdog passes), so the listener-side connection is never reaped
+    /// while a test still expects it queued.
+    fn hold_peer(
+        port: u16,
+        release: mpsc::Receiver<()>,
+    ) -> std::thread::JoinHandle<Option<SocketAddr>> {
+        std::thread::spawn(move || {
+            let socket = SrtSocketBuilder::new()
+                .connect(format!("127.0.0.1:{port}"))
+                .ok()?;
+            let local = socket.local_addr().ok();
+            let _ = release.recv_timeout(watchdog());
+            local
+        })
+    }
+
+    /// Run `accept_timeout(timeout)` with `hook` installed on a worker; wait
+    /// for it up to the watchdog, and on expiry fire the pre-obtained cancel
+    /// handle and panic.
+    fn accept_with_hook(
+        listener: SrtListener,
+        timeout: Duration,
+        hook: fn(srt_sys::SRTSOCKET),
+    ) -> Result<(SrtSocket, SocketAddr), AcceptError> {
+        let cancel = listener.cancel_handle();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut listener = listener;
+            AFTER_READINESS.with(|h| h.set(Some(hook)));
+            let _ = done_tx.send(listener.accept_timeout(timeout));
+        });
+        match done_rx.recv_timeout(watchdog()) {
+            Ok(result) => {
+                worker.join().expect("join the accept worker");
+                result
+            }
+            Err(_) => {
+                cancel.cancel();
+                panic!("accept_timeout still parked after {:?}", watchdog());
+            }
+        }
+    }
+
+    /// libsrt api.cpp:2928: the GC erases a queued socket independently of an
+    /// epoll waiter, so readiness can be stale by the time we accept. The hook
+    /// empties the queue between readiness and accept, deterministically.
+    #[test]
+    fn accept_timeout_returns_timed_out_when_readiness_goes_stale() {
+        if !loopback_available() {
+            eprintln!("SKIP: loopback unavailable");
+            return;
+        }
+        let listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        let (release_tx, release_rx) = mpsc::channel();
+        let peer = hold_peer(port, release_rx);
+
+        let result = accept_with_hook(listener, scaled(Duration::from_secs(2)), steal_queued);
+        let _ = release_tx.send(());
+        let _ = peer.join();
+        assert!(
+            matches!(result, Err(AcceptError::TimedOut)),
+            "expected TimedOut; got {:?}",
+            result.map(|(_, peer)| peer)
+        );
+    }
+
+    /// After a stale readiness the same call waits again and accepts the
+    /// next peer.
+    #[test]
+    fn accept_timeout_rewaits_after_stale_readiness_and_accepts_the_next_peer() {
+        if !loopback_available() {
+            eprintln!("SKIP: loopback unavailable");
+            return;
+        }
+        let listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        *SECOND_PEER_GO.lock().unwrap() = Some(go_tx);
+        let (release_tx, release_rx) = mpsc::channel();
+        let first = hold_peer(port, release_rx);
+        let (release2_tx, release2_rx) = mpsc::channel();
+        let second = std::thread::spawn(move || {
+            go_rx.recv_timeout(watchdog()).ok()?;
+            let socket = SrtSocketBuilder::new()
+                .connect(format!("127.0.0.1:{port}"))
+                .ok()?;
+            let local = socket.local_addr().ok();
+            let _ = release2_rx.recv_timeout(watchdog());
+            local
+        });
+
+        let result = accept_with_hook(
+            listener,
+            scaled(Duration::from_secs(5)),
+            steal_queued_then_release_second_peer,
+        );
+        let accepted_port = result.as_ref().map(|(_, peer)| peer.port()).ok();
+        let _ = release_tx.send(());
+        let _ = release2_tx.send(());
+        let _ = first.join();
+        let second_local = second.join().expect("join the second connector");
+        assert!(result.is_ok(), "expected Ok; got {:?}", result.err());
+        // Ports only: the connector's socket may be bound to the wildcard.
+        assert_eq!(
+            accepted_port,
+            second_local.map(|a| a.port()),
+            "the accepted connection must be the second peer"
+        );
+    }
+}
