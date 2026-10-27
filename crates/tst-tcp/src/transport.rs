@@ -374,6 +374,12 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
                 ));
             }
             Ok(n) => written += n,
+            // A cancel or close that landed while the write was parked wins
+            // over whatever the interrupted syscall reported, at any progress.
+            Err(_) if cancel.is_cancelled() => return Err((TransportError::ExplicitClose, false)),
+            Err(_) if !alive.load(Ordering::Acquire) => {
+                return Err((TransportError::Closed, false));
+            }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { /* EINTR: retry */ }
             Err(e) if classify_send_error(&e) == SendClass::Transient => {
                 if written == 0 {
@@ -388,17 +394,8 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
                     ));
                 }
                 // A partial prefix is on the wire in order; the deadline
-                // ticked over. Keep writing the remainder unless a cancel or
-                // close landed while we were parked (the write timeout is
-                // the poll cadence, so this check runs every ~100 ms).
-                if !alive.load(Ordering::Acquire) {
-                    let e = if cancel.is_cancelled() {
-                        TransportError::ExplicitClose
-                    } else {
-                        TransportError::Closed
-                    };
-                    return Err((e, false));
-                }
+                // ticked over. Keep writing the remainder (the write timeout
+                // is the poll cadence for the cancel/close checks above).
             }
             Err(e) => {
                 return Err((
@@ -707,6 +704,50 @@ mod write_loop_tests {
             Err((TransportError::ExplicitClose, mark_dead)) => assert!(!mark_dead),
             other => panic!("expected ExplicitClose after a mid-message cancel, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn zero_progress_timeout_after_cancel_is_explicit_close() {
+        let alive = AtomicBool::new(true);
+        let cancel = FlagCancel::new();
+        let r = write_loop(&[0u8; 188], &alive, &cancel, |_| {
+            cancel.cancel();
+            alive.store(false, Ordering::Release);
+            Err(io::Error::from(io::ErrorKind::WouldBlock))
+        });
+        assert!(
+            matches!(r, Err((TransportError::ExplicitClose, false))),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn hard_error_racing_a_cancel_is_explicit_close() {
+        let alive = AtomicBool::new(true);
+        let cancel = FlagCancel::new();
+        let r = write_loop(&[0u8; 188], &alive, &cancel, |_| {
+            cancel.cancel();
+            alive.store(false, Ordering::Release);
+            Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        });
+        assert!(
+            matches!(r, Err((TransportError::ExplicitClose, false))),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn zero_progress_timeout_without_cancel_stays_backpressure() {
+        let r = write_loop(
+            &[0u8; 188],
+            &live(),
+            &uncancelled(),
+            scripted(vec![Err(io::Error::from(io::ErrorKind::WouldBlock))]),
+        );
+        assert!(
+            matches!(r, Err((TransportError::Backpressure { .. }, false))),
+            "{r:?}"
+        );
     }
 
     /// `TimedOut` is what Windows reports when `SO_SNDTIMEO` expires
