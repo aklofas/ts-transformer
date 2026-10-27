@@ -3,26 +3,17 @@
 //! loopback. The accept tests park a thread on purpose, so every wait is
 //! bounded by [`WATCHDOG`] and FAILS on expiry instead of hanging.
 
+use crate::common::{ParkLatch, reserve_port, spawn_connector};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
-use tst_srt::{SrtError, SrtListenerBuilder, SrtSocketBuilder, SrtUrl};
+use tst_srt::{SrtError, SrtListenerBuilder, SrtUrl};
 
 /// Upper bound on anything that must NOT park forever.
 const WATCHDOG: Duration = Duration::from_secs(10);
-
-/// Reserve an ephemeral UDP port and release it again, so a listener-mode
-/// URL can name its port BEFORE the listener under test binds it (same
-/// helper as `listener_accept_one_cancellable.rs`).
-fn reserve_port() -> u16 {
-    let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve an ephemeral port");
-    let port = probe.local_addr().expect("local_addr").port();
-    drop(probe);
-    port
-}
 
 fn ipv6_loopback_available() -> bool {
     std::net::UdpSocket::bind("[::1]:0").is_ok()
@@ -144,13 +135,14 @@ fn accept_one_cancelled_from_another_thread_returns_explicit_close() {
     let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?mode=listener")).expect("parse");
     let slot = Arc::new(CancelSlot::new());
 
+    let latch = ParkLatch::default();
     let acceptor = {
         let slot = Arc::clone(&slot);
-        std::thread::spawn(move || url.accept_one(&slot))
+        latch.park(move || url.accept_one(&slot))
     };
-    // Let the accept park before firing: a cancel that lands before the
-    // bind is the other (already pinned) branch of the helper.
-    std::thread::sleep(Duration::from_millis(200));
+    // Prove the accept is parked before firing: a cancel that lands before
+    // the bind is the other (already pinned) branch of the helper.
+    latch.assert_parked();
     slot.cancel();
 
     let deadline = Instant::now() + WATCHDOG;
@@ -167,50 +159,6 @@ fn accept_one_cancelled_from_another_thread_returns_explicit_close() {
         Err(e) => panic!("expected SrtError::Transport(ExplicitClose); got {e:?}"),
     }
     assert!(slot.is_cancelled(), "the slot stays latched after the wake");
-}
-
-/// Spawn the peer the two happy-path accept tests need: retry `connect`
-/// until the listener under test has bound (its first attempt can run
-/// before the bind), then hold the connected socket open until the caller
-/// sends on the returned channel — closing it mid-flight lets libsrt's GC
-/// reap the listener-side accepted socket before `srt_accept` resolves it
-/// (the libsrt accept-queue prune).
-///
-/// `slot` is the accept's cancel slot, and giving up fires it BEFORE the
-/// panic: `accept_one` runs on the test's own thread with nothing else
-/// able to reach it, so a connector that dies while the accept is parked
-/// would leave the test hanging in `srt_accept` instead of failing (and a
-/// thread left parked there stalls process exit — the `atexit(srt_cleanup)`
-/// class).
-fn spawn_connector(
-    port: u16,
-    slot: Arc<CancelSlot>,
-) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
-    let (release_tx, release_rx) = mpsc::channel::<()>();
-    let handle = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let attempt = SrtSocketBuilder::new()
-                .connect_timeout(Duration::from_millis(500))
-                .connect(format!("127.0.0.1:{port}"));
-            match attempt {
-                Ok(socket) => {
-                    let _ = release_rx.recv();
-                    drop(socket);
-                    return;
-                }
-                Err(e) => {
-                    if Instant::now() >= deadline {
-                        // Release the parked accept first, then report.
-                        slot.cancel();
-                        panic!("connect never succeeded: {e:?}");
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-            }
-        }
-    });
-    (release_tx, handle)
 }
 
 /// Happy path: a peer that connects is handed back as a live transport,

@@ -10,8 +10,10 @@ use tst_rtp::{RtpRecvTransport, RtspClient, RtspServer, RtspServerBuilder, RtspS
 
 use crate::fixtures::raw_rtsp_publisher::*;
 
-/// Park `app.recv_bytes` on a thread; the result arrives on the returned
-/// channel (the caller bounds its wait with `recv_timeout`).
+/// Run `app.recv_bytes` on a thread; the result arrives on the returned
+/// channel (the caller bounds its wait with `recv_timeout`). Nothing proves
+/// the call is parked when the caller acts, so the tests claim only that
+/// the action ends the call.
 fn park(mut app: RtpRecvTransport) -> mpsc::Receiver<Result<usize, TransportError>> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -39,6 +41,8 @@ fn record_udp(p: &mut RawPublisher, mount: &str, client_port: u16) -> u16 {
     ports.unwrap().0
 }
 
+/// A cancel from another thread ends the application `recv_bytes` with
+/// `ExplicitClose`, and leaves the publisher and the reader running.
 #[test]
 fn cancel_wakes_parked_app_recv_with_explicit_close() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
@@ -58,11 +62,11 @@ fn cancel_wakes_parked_app_recv_with_explicit_close() {
     let ch = record_interleaved(&mut p, "/pub");
 
     let parked = park(app);
-    std::thread::sleep(Duration::from_millis(200)); // let it park (cancel-before-op ends the same way)
+    std::thread::sleep(Duration::from_millis(200)); // usually parked by now; cancel-before-op ends the same way
     mount.cancel();
     let r = parked
         .recv_timeout(Duration::from_secs(5))
-        .expect("cancel woke the parked recv");
+        .expect("cancel ended the recv");
     assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
 
     // The app side ended; the publisher and the reader did not.
@@ -107,8 +111,8 @@ fn publisher_teardown_leaves_app_transport_open() {
 }
 
 /// `stop()` sends the publisher the Notice 5402 ANNOUNCE before closing its
-/// connection, and ends the application transport: a parked `recv_bytes`
-/// returns `Closed`.
+/// connection, and ends the application transport: a `recv_bytes` on
+/// another thread returns `Closed`.
 #[test]
 fn server_stop_closes_app_transport() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
@@ -120,7 +124,7 @@ fn server_stop_closes_app_transport() {
     let mut p = RawPublisher::connect(port);
     record_interleaved(&mut p, "/pub");
     let parked = park(app);
-    std::thread::sleep(Duration::from_millis(200)); // let it park
+    std::thread::sleep(Duration::from_millis(200)); // usually parked by now; not proven
 
     // stop() blocks through its graceful drain; run it off the test thread.
     let stopper = std::thread::spawn(move || {
@@ -142,7 +146,7 @@ fn server_stop_closes_app_transport() {
 
     let r = parked
         .recv_timeout(Duration::from_secs(5))
-        .expect("stop() woke the parked recv");
+        .expect("stop() ended the recv");
     assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
     assert!(mount.publisher().is_none());
     drop(stopper.join().unwrap());
@@ -198,8 +202,8 @@ fn idle_publisher_is_reaped_but_media_only_publisher_is_not() {
     server.stop().ok();
 }
 
-/// `remove_mount` on a publish mount with a recording publisher, a parked
-/// application `recv_bytes` and a PLAY reader: the publisher reads the
+/// `remove_mount` on a publish mount with a recording publisher, an
+/// application `recv_bytes` on another thread and a PLAY reader: the publisher reads the
 /// Notice 5402 ANNOUNCE then EOF, the application transport reads
 /// `Closed`, the reader's stream ends, and the path is free again.
 #[test]
@@ -220,7 +224,7 @@ fn remove_publish_mount_closes_app_transport_and_ends_sessions() {
     let mut p = RawPublisher::connect(port);
     record_interleaved(&mut p, "/pub");
     let parked = park(app);
-    std::thread::sleep(Duration::from_millis(200)); // let it park (close-before-op ends the same way)
+    std::thread::sleep(Duration::from_millis(200)); // usually parked by now; close-before-op ends the same way
 
     server.remove_mount("/pub").unwrap();
 
@@ -239,7 +243,7 @@ fn remove_publish_mount_closes_app_transport_and_ends_sessions() {
 
     let r = parked
         .recv_timeout(Duration::from_secs(5))
-        .expect("remove_mount woke the parked recv");
+        .expect("remove_mount ended the recv");
     assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
     assert!(mount.publisher().is_none());
 
