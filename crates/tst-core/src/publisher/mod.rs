@@ -56,6 +56,15 @@ pub trait Publisher {
         self.cut_segment()
     }
 
+    /// Close the open segment with `media_duration`, as
+    /// [`cut_segment_with_duration`](Self::cut_segment_with_duration) does, and
+    /// mark the next segment as starting a new timestamp sequence (RFC 8216
+    /// §4.3.2.3). The `MuxPublisher` shell calls this after an encoder reset or
+    /// a forward gap; the default ignores the marker.
+    fn cut_segment_discontinuous(&mut self, media_duration: Duration) -> Result<(), Self::Error> {
+        self.cut_segment_with_duration(media_duration)
+    }
+
     /// The longest a segment may run, in media time, when the publisher
     /// advertises a fixed bound to its clients (the HLS target duration).
     ///
