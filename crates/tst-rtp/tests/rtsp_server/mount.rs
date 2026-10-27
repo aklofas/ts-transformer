@@ -3,6 +3,7 @@
 //! client tests cover the actual streaming paths.
 
 use crate::fixtures::raw_rtsp::make_muxer_cfg;
+use crate::fixtures::raw_rtsp::scaled;
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::{MountKind, RtspServer, RtspServerError};
 
@@ -137,7 +138,7 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
         RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/live?transport=tcp")).unwrap();
     let sdp = reader.describe().unwrap();
     let mut reader_t = reader.setup_mp2t_auto(&sdp).unwrap().into_recv_transport();
-    reader_t.set_recv_timeout(Some(Duration::from_secs(5)));
+    reader_t.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
     reader.play().unwrap();
 
     // A second mount with its own reader: removing `/live` must leave it alone.
@@ -157,7 +158,7 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
     // Nothing was pushed, so the first non-data result is the end; a 5 s
     // recv timeout would show up as `Backpressure`.
     let mut buf = vec![0u8; 65536];
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     let end = loop {
         match reader_t.recv_bytes(&mut buf) {
             Ok(_) if Instant::now() < deadline => continue,
@@ -182,7 +183,7 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
     // `/other`'s reader still receives: push an IDR per attempt until bytes
     // arrive (its fanout subscription is in place once PLAY returned; the
     // retry only absorbs scheduling), bounded by a deadline.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     let mut pts = 0i64;
     let got = loop {
         other

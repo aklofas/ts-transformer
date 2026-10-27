@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_rtp::RtspServerBuilder;
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::tls_certs::SelfSignedCert;
 
 /// Two raw TCP connects that never speak TLS fill `max_sessions(2)`. The
@@ -39,7 +40,7 @@ fn silent_connects_release_their_slots_after_the_handshake_deadline() {
         .collect();
 
     // The accept loop is async — wait for both slots to be reserved.
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + scaled(Duration::from_secs(3));
     while server.stats().active_sessions < 2 {
         assert!(
             Instant::now() < deadline,
@@ -49,7 +50,7 @@ fn silent_connects_release_their_slots_after_the_handshake_deadline() {
     }
 
     // The 1 s handshake deadline must release both slots (generous slack).
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     let mut count = usize::MAX;
     while Instant::now() < deadline {
         count = server.stats().active_sessions;

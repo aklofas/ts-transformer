@@ -12,6 +12,7 @@ use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::{ClockAlignment, RtspClient, RtspServer};
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
 const VIDEO_PID: u16 = 0x100;
@@ -119,7 +120,7 @@ fn ffmpeg_shaped_h264_publisher_reaches_app_and_reader() {
         p.send_frame(rtp_ch, pkt);
     }
 
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + scaled(Duration::from_secs(20));
     let app_samples = video_samples(&demux_until_quiet(&mut app, deadline, "app"));
     assert_video_delivery(&app_samples, "app");
     let reader_samples = video_samples(&demux_until_quiet(&mut reader_rx, deadline, "reader"));
@@ -178,7 +179,7 @@ fn ffmpeg_shaped_h264_publisher_over_udp_reaches_app() {
         sender.send_to(pkt, ("127.0.0.1", server_rtp)).unwrap();
     }
 
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + scaled(Duration::from_secs(20));
     let samples = video_samples(&demux_until_quiet(&mut app, deadline, "app"));
     assert!(
         samples.len() >= 10,

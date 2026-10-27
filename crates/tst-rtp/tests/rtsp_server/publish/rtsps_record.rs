@@ -8,6 +8,7 @@ use std::time::Duration;
 use tst_core::transport::RecvTransport;
 use tst_rtp::RtspServerBuilder;
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 use crate::fixtures::tls_certs::SelfSignedCert;
 
@@ -21,7 +22,7 @@ fn rtsps_interleaved_record_reaches_app() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app = mount.clone().into_recv_transport().unwrap();
-    app.set_recv_timeout(Some(Duration::from_secs(5)));
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
 
     let roots =
         tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");

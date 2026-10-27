@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use tst_rtp::RtspServer;
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
 
 /// Read from `stream` until `terminator` appears anywhere in the
@@ -116,7 +117,7 @@ fn stop_sends_notice_5402_announce_to_active_session() {
     // Now read whatever bytes the server pushes before TCP close.
     // stop() should have queued the ANNOUNCE before this read starts;
     // we give ourselves up to 3 s of read budget.
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + scaled(Duration::from_secs(3));
     let buf = read_until(&mut tcp, b"\r\n\r\n", deadline);
     let text = String::from_utf8_lossy(&buf);
 
@@ -241,7 +242,7 @@ fn stop_without_active_sessions_is_clean_noop_path() {
     // Loose upper bound — drain is 100ms + 1s safety buffer in the
     // default builder + per-session timeouts (none here).
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        started.elapsed() < scaled(Duration::from_secs(5)),
         "stop() with no sessions took too long: {:?}",
         started.elapsed()
     );

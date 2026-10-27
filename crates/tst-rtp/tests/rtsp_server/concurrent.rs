@@ -1,6 +1,7 @@
 //! Concurrent unicast clients.
 
 use crate::fixtures::raw_rtsp::make_muxer_cfg;
+use crate::fixtures::raw_rtsp::scaled;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
@@ -132,7 +133,7 @@ fn unauth_connection_burst_never_exceeds_max_sessions() {
     // exits immediately, so the common case is FASTER than the old full sweep.
     let threshold = BURST - CAP - 4;
     let mut refused = 0usize;
-    let census_deadline = Instant::now() + Duration::from_secs(5);
+    let census_deadline = Instant::now() + scaled(Duration::from_secs(5));
     let mut pending = held; // classified sockets drop out of the pool
     while refused < threshold && Instant::now() < census_deadline && !pending.is_empty() {
         let mut still_pending = Vec::with_capacity(pending.len());
@@ -175,7 +176,7 @@ fn unauth_connection_burst_never_exceeds_max_sessions() {
     // already gone. The counter must drain back to 0 (no leaked slots on the
     // accept-reserve / refuse / normal-close paths).
     drop(pending);
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + scaled(Duration::from_secs(2));
     let mut final_count = usize::MAX;
     while Instant::now() < deadline {
         final_count = server.stats().active_sessions;
@@ -222,7 +223,7 @@ fn unauth_connection_burst_never_exceeds_max_sessions() {
 fn over_cap_refusals_never_overshoot_active_sessions_gauge() {
     const CAP: usize = 1;
     const STORM_MAX: usize = 5000;
-    const STORM_DEADLINE: Duration = Duration::from_secs(4);
+    let storm_deadline_len = scaled(Duration::from_secs(4));
 
     let mut builder = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
     builder.max_sessions(CAP);
@@ -240,7 +241,7 @@ fn over_cap_refusals_never_overshoot_active_sessions_gauge() {
         .unwrap();
     // Deadline-poll the precondition (a fixed settle sleep is exactly the
     // kind of load-sensitive timing this file has been burned by).
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     while server.stats().active_sessions < CAP && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -268,7 +269,7 @@ fn over_cap_refusals_never_overshoot_active_sessions_gauge() {
         // reserve/refuse path once. Count- and wall-clock-bounded so a
         // slow loaded runner exits early rather than overrunning the
         // network group's per-test budget.
-        let storm_deadline = Instant::now() + STORM_DEADLINE;
+        let storm_deadline = Instant::now() + storm_deadline_len;
         for _ in 0..STORM_MAX {
             if Instant::now() >= storm_deadline {
                 break;
@@ -293,7 +294,7 @@ fn over_cap_refusals_never_overshoot_active_sessions_gauge() {
     // Slot hygiene: dropping the parked session must drain the gauge to 0
     // (no leaked reservation on the CAS-reserve or refusal paths).
     drop(parked);
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + scaled(Duration::from_secs(2));
     let mut final_count = usize::MAX;
     while Instant::now() < deadline {
         final_count = server.stats().active_sessions;

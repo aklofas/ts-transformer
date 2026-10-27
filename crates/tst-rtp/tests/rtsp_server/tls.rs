@@ -13,6 +13,7 @@
 use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use tst_rtp::{RtspServerBuilder, RtspServerError};
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::tls_certs::SelfSignedCert;
 
 /// Server with TLS cert configured starts cleanly and binds to a port.
@@ -114,7 +115,7 @@ fn tls_handshake_failure_does_not_leak_session_slot() {
     // The counter must drain back to 0 (no leaked slots) within a bounded
     // window. If the guard didn't cover the handshake-fail path this would
     // stay pinned at the number of failed handshakes (≥ the cap).
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + scaled(Duration::from_secs(3));
     let mut final_count = usize::MAX;
     while Instant::now() < deadline {
         final_count = server.stats().active_sessions;
@@ -260,7 +261,7 @@ fn interleaved_play_over_rtsps_delivers_ts() {
     client
         .play()
         .expect("PLAY with an interleaved transport over rtsps");
-    rx.set_recv_timeout(Some(std::time::Duration::from_secs(5)));
+    rx.set_recv_timeout(Some(scaled(std::time::Duration::from_secs(5))));
 
     // Push until the fanout is attached and a packet comes back.
     let pusher = StopOnDrop::new(move |stop| {
@@ -343,7 +344,7 @@ fn stop_sends_notice_5402_to_a_tls_session_and_closes_it_cleanly() {
         std::thread::spawn(move || server.stop().unwrap())
     };
     // Read everything until the server ends the session.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + scaled(std::time::Duration::from_secs(5));
     let mut got = Vec::new();
     let mut chunk = [0u8; 4096];
     let end = loop {

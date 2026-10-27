@@ -12,6 +12,7 @@ use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::{ClockAlignment, PublishMountHandle, PublishMountStats, RtspServer};
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
 const VIDEO_PID: u16 = 0x100;
@@ -165,7 +166,11 @@ fn klv_is_aligned_to_video_by_sender_reports() {
         p.send_frame(*ch, pkt);
     }
 
-    let events = demux_until_quiet(&mut app, Instant::now() + Duration::from_secs(20), "app");
+    let events = demux_until_quiet(
+        &mut app,
+        Instant::now() + scaled(Duration::from_secs(20)),
+        "app",
+    );
     let video = video_pts(&events);
     assert!(video.len() >= 10, "only {} video samples", video.len());
     let klv = klv_events(&events);
@@ -240,7 +245,7 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     }
 
     // Everything sent so far has been processed, and the KLV is held.
-    let s = stats_when(&mount, Duration::from_secs(5), |s| {
+    let s = stats_when(&mount, scaled(Duration::from_secs(5)), |s| {
         s.rtp_packets_received == video_packets.len() as u64 + 5
     });
     assert_eq!(s.rtp_packets_received, video_packets.len() as u64 + 5);
@@ -248,7 +253,7 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     assert_eq!(s.alignment, ClockAlignment::Pending);
 
     // Keep the KLV source live until the two-second fallback engages.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     while mount.stats().alignment != ClockAlignment::Provisional {
         assert!(
             Instant::now() < deadline,
@@ -259,14 +264,18 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
         send_klv(&mut p, &mut units);
     }
     let sent = units.len() as u64;
-    let s = stats_when(&mount, Duration::from_secs(5), |s| {
+    let s = stats_when(&mount, scaled(Duration::from_secs(5)), |s| {
         s.klv_units_emitted == sent
     });
     assert_eq!(s.klv_units_emitted, sent, "every held unit is released");
     assert_eq!(s.klv_units_dropped, 0);
     assert_eq!(s.alignment, ClockAlignment::Provisional);
 
-    let events = demux_until_quiet(&mut app, Instant::now() + Duration::from_secs(20), "app");
+    let events = demux_until_quiet(
+        &mut app,
+        Instant::now() + scaled(Duration::from_secs(20)),
+        "app",
+    );
     let video = video_pts(&events);
     assert!(video.len() >= 10, "only {} video samples", video.len());
     let klv = klv_events(&events);
@@ -290,13 +299,17 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     p.send_frame(k_rtcp, &sr_packet(KLV_SSRC, NTP_SECS, 1 << 31, KLV_SR.1));
     let j = units.len() as u32;
     send_klv(&mut p, &mut units);
-    let s = stats_when(&mount, Duration::from_secs(5), |s| {
+    let s = stats_when(&mount, scaled(Duration::from_secs(5)), |s| {
         s.klv_units_emitted == sent + 1
     });
     assert_eq!(s.klv_units_emitted, sent + 1);
     assert_eq!(s.alignment, ClockAlignment::SenderReport);
     assert_eq!(s.alignment_steps, 1);
-    let events = demux_until_quiet(&mut app, Instant::now() + Duration::from_secs(20), "app");
+    let events = demux_until_quiet(
+        &mut app,
+        Instant::now() + scaled(Duration::from_secs(20)),
+        "app",
+    );
     let klv = klv_events(&events);
     assert_eq!(klv.len(), 1);
     let want = spec_klv_pts(KLV_TS0 + j * KLV_STEP);
@@ -369,7 +382,7 @@ fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
         };
 
     // The first KLV source, until the fallback engages.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     while mount.stats().alignment != ClockAlignment::Provisional {
         assert!(Instant::now() < deadline, "never Provisional");
         tick(&mut p, &mut sent, (KLV_SSRC, 0, KLV_TS0));
@@ -377,10 +390,12 @@ fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
     // The KLV payloader restarts.
     let restart_au = sent.len();
     tick(&mut p, &mut sent, (NEW_KLV_SSRC, restart_au, NEW_KLV_TS0));
-    let s = stats_when(&mount, Duration::from_secs(5), |s| s.ssrc_changes == 1);
+    let s = stats_when(&mount, scaled(Duration::from_secs(5)), |s| {
+        s.ssrc_changes == 1
+    });
     assert_eq!(s.ssrc_changes, 1);
     assert_eq!(s.alignment, ClockAlignment::Pending);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     while mount.stats().alignment != ClockAlignment::Provisional {
         assert!(
             Instant::now() < deadline,
@@ -389,7 +404,7 @@ fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
         tick(&mut p, &mut sent, (NEW_KLV_SSRC, restart_au, NEW_KLV_TS0));
     }
     let total = sent.len() as u64;
-    let s = stats_when(&mount, Duration::from_secs(5), |s| {
+    let s = stats_when(&mount, scaled(Duration::from_secs(5)), |s| {
         s.klv_units_emitted == total
     });
     assert_eq!(s.klv_units_emitted, total, "every unit is released");
@@ -397,7 +412,11 @@ fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
     assert_eq!(s.ssrc_changes, 1);
     assert_eq!(s.alignment, ClockAlignment::Provisional);
 
-    let events = demux_until_quiet(&mut app, Instant::now() + Duration::from_secs(20), "app");
+    let events = demux_until_quiet(
+        &mut app,
+        Instant::now() + scaled(Duration::from_secs(20)),
+        "app",
+    );
     let video = video_pts(&events);
     let klv = klv_events(&events);
     assert_eq!(klv.len(), sent.len(), "KLV units demuxed on PID 0x101");

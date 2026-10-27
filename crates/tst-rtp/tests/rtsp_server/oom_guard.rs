@@ -18,6 +18,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
+use crate::fixtures::raw_rtsp::scaled;
 use tst_rtp::RtspServer;
 
 /// Connect a raw TCP client, send a crafted RTSP request with
@@ -42,8 +43,10 @@ fn oversized_content_length_gets_413_response() {
     // control block is gone) — setting the read timeout only AFTER the
     // request/junk write flakes on macos-arm64 (`set_read_timeout` ->
     // "Invalid argument" within ~10ms, i.e. the 413+close had already landed).
-    tcp.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_write_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
 
     // Send the malicious request: OPTIONS with a 2 GB declared body.
     let request = b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 2000000000\r\n\r\n";
@@ -126,7 +129,7 @@ fn oversized_content_length_gets_413_response() {
 
     // The fix must respond promptly — well within the 5s read timeout.
     assert!(
-        elapsed < Duration::from_secs(5),
+        elapsed < scaled(Duration::from_secs(5)),
         "server took too long to close or respond: {elapsed:?}"
     );
 
@@ -149,8 +152,10 @@ fn valid_large_body_request_is_accepted() {
 
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
-    tcp.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_write_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
 
     // OPTIONS with a 100 KiB body. The server tolerates (ignores) the body
     // and returns 200 OK with a Public header. 100 KiB > 64 KiB header cap
@@ -203,8 +208,10 @@ fn over_cap_body_request_gets_413() {
 
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
-    tcp.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_write_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
 
     // Content-Length = 1 MiB + 1, just over MAX_RTSP_BODY_BYTES. The full
     // header block terminates immediately (CRLFCRLF present), so the server
@@ -269,7 +276,8 @@ fn pipelined_over_cap_head_gets_413_without_another_read() {
 
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     tcp.set_nodelay(true).unwrap();
-    tcp.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_write_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
     tcp.set_read_timeout(Some(crate::fixtures::raw_rtsp::scaled(
         Duration::from_secs(2),
     )))
@@ -343,7 +351,7 @@ fn pipelined_over_cap_head_gets_413_without_another_read() {
         String::from_utf8_lossy(&buf)
     );
     assert!(
-        start.elapsed() < Duration::from_secs(2),
+        start.elapsed() < scaled(Duration::from_secs(2)),
         "413 for the pipelined over-cap request took too long: {:?}",
         start.elapsed()
     );
@@ -358,7 +366,8 @@ fn non_utf8_request_headers_get_413_and_close() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
     server.start().unwrap();
     let mut tcp = TcpStream::connect(server.local_addr().unwrap()).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
     tcp.write_all(b"OPTIONS rtsp://127.0.0.1/x RTSP/1.0\r\nCSeq: 1\r\nX: \xff\r\n\r\n")
         .unwrap();
     let mut resp = Vec::new();
