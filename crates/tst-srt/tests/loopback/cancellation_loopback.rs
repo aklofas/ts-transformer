@@ -57,6 +57,11 @@ fn close_unblocks_libsrt_parked_send() {
     let _peer_socket = accept.join();
 
     let transport = SrtTransport::new(socket);
+    // Obtained before the sender owns the transport: if `close()` blocks
+    // (a close that skips the cancel waits on the lock the parked send
+    // holds), the watchdog below fires this to release the send.
+    let watchdog_cancel =
+        Transport::cancel_handle(&transport).expect("SrtTransport has a cancel handle");
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
         prog.add_video(0x100, VideoCodec::H264);
@@ -91,11 +96,26 @@ fn close_unblocks_libsrt_parked_send() {
     // The cancel below must land on a send that is parked inside libsrt.
     latch.assert_parked();
 
-    // Cancel via close from main thread. Must be near-instant — no
-    // mutex contention with the parked thread.
+    // Cancel via close from another thread. Must be near-instant — no
+    // mutex contention with the parked thread. Run on a helper thread so a
+    // close that blocks fails here, by the watchdog, instead of hanging the
+    // test binary.
     let close_start = Instant::now();
-    s.close();
+    let (closed_tx, closed_rx) = std::sync::mpsc::channel();
+    let s_close = s.clone();
+    let close_thread = std::thread::spawn(move || {
+        s_close.close();
+        let _ = closed_tx.send(());
+    });
+    if closed_rx
+        .recv_timeout(scaled(Duration::from_secs(5)))
+        .is_err()
+    {
+        watchdog_cancel.cancel();
+        panic!("close() blocked on a parked send");
+    }
     let close_elapsed = close_start.elapsed();
+    close_thread.join().expect("close thread panic");
     assert!(
         close_elapsed < scaled(Duration::from_millis(500)),
         "close() took {close_elapsed:?} — should be near-instant via cancel"
