@@ -297,11 +297,11 @@ impl TsFraming {
     ///
     /// Only packets whose sync byte reads 0x47 go out: the boundaries
     /// past the third have not been checked yet (a bundle is checked only
-    /// once all seven packets are present). Flush is the end-of-input
-    /// signal, so nothing after a damaged boundary can be verified: from
-    /// it on the buffered bytes are discarded, counted in
-    /// `bytes_skipped_for_sync` with one `resync_events`, and the state
-    /// returns to UNSYNCED.
+    /// once all seven packets are present). Damage at flush counts one
+    /// `resync_events`, returns the state to UNSYNCED and leaves everything
+    /// from the damaged boundary on buffered, so the next push skips (and
+    /// counts) only the damaged bytes and resyncs on the packets after
+    /// them. A clean flush keeps a partial tail buffered and stays SYNCED.
     pub fn flush(&mut self) -> Vec<Vec<u8>> {
         if self.state != State::Synced || self.buffer.is_empty() {
             return Vec::new();
@@ -315,11 +315,10 @@ impl TsFraming {
             self.stats.packets_sent += good as u64;
         }
         if bad.is_some() {
-            // Nothing after the damage is aligned to a verified sync
-            // point, the partial tail included.
-            self.stats.bytes_skipped_for_sync += self.buffer.len() as u64;
+            // Flush may be called mid-stream (e.g. after every frame), so
+            // the good packets after the damage must survive: keep the
+            // bytes for try_acquire, which counts what it skips.
             self.stats.resync_events += 1;
-            self.buffer.clear();
             self.state = State::Unsynced;
         }
         out
@@ -489,15 +488,58 @@ mod tests {
     }
 
     #[test]
-    fn recover_flush_drops_a_damaged_tail_packet() {
+    fn recover_flush_emits_the_verified_prefix_and_keeps_the_rest() {
         let good3 = synthetic_ts_stream(3);
         let mut input = good3.clone();
         input.extend(damaged_packet(3));
         let mut f = TsFraming::new(18_800);
         assert!(f.push(&input).unwrap().0.is_empty());
         assert_eq!(f.flush(), vec![good3]);
+        assert_eq!(f.stats().bytes_skipped_for_sync, 0);
         assert_eq!(f.stats().resync_events, 1);
-        assert_eq!(f.stats().bytes_skipped_for_sync, 188);
+        assert!(!f.is_synced());
+
+        let good7 = synthetic_ts_stream(7);
+        let (out, stats) = f.push(&good7).unwrap();
+        assert_eq!(out, vec![good7]);
+        assert_eq!(stats.bytes_skipped_for_sync, 188);
+        assert_eq!(stats.resync_events, 1);
+    }
+
+    #[test]
+    fn mid_stream_flush_after_damage_keeps_the_good_packets_that_follow() {
+        let all = synthetic_ts_stream(16);
+        let pkt = |i: usize| &all[i * 188..(i + 1) * 188];
+        let mut f = TsFraming::new(18_800);
+        assert_eq!(
+            f.push(&all[..7 * 188]).unwrap().0,
+            vec![all[..7 * 188].to_vec()]
+        );
+
+        let mut six = all[7 * 188..13 * 188].to_vec();
+        six[188] = 0x00; // packet 8 loses its sync byte
+        assert!(f.push(&six).unwrap().0.is_empty());
+        assert_eq!(f.flush(), vec![pkt(7).to_vec()]);
+
+        let (out, stats) = f.push(&all[13 * 188..]).unwrap();
+        assert_eq!(out, vec![all[9 * 188..16 * 188].to_vec()]);
+        assert_eq!(stats.bytes_skipped_for_sync, 188);
+        assert_eq!(stats.resync_events, 1);
+        assert_eq!(stats.packets_sent, 7 + 1 + 7);
+    }
+
+    #[test]
+    fn clean_flush_keeps_a_partial_tail_buffered_and_synced() {
+        let all = synthetic_ts_stream(10);
+        let mut f = TsFraming::new(18_800);
+        assert!(f.push(&all[..3 * 188 + 100]).unwrap().0.is_empty());
+        assert_eq!(f.flush(), vec![all[..3 * 188].to_vec()]);
+        assert!(f.is_synced());
+
+        let (out, stats) = f.push(&all[3 * 188 + 100..]).unwrap();
+        assert_eq!(out, vec![all[3 * 188..].to_vec()]);
+        assert_eq!(stats.bytes_skipped_for_sync, 0);
+        assert_eq!(stats.resync_events, 0);
     }
 
     #[test]
