@@ -139,7 +139,7 @@ fn fixture_full_decodes() {
 }
 
 #[test]
-fn fixture_funky_ul_decodes_with_decode_but_not_strict() {
+fn fixture_nondefault_family_version_is_accepted() {
     let bytes = load_fixture("synthetic_funky_ul.klv");
     let parsed = decode(&bytes).unwrap();
     assert_eq!(parsed.universal_label.st0601_version_byte(), 0x09);
