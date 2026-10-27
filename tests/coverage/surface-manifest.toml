@@ -4829,20 +4829,20 @@ reason = "shared helper that percent-decodes an IPv6 zone id in transport URLs; 
 
 [[exempt]]
 item = "tst_rist::config::RistConfig::MAX_PKT_SIZE"
-reason = "upper bound the RIST config validates pkt_size against; asserted through the config validation tests, no binding surface of its own"
+reason = "upper bound a RIST sender checks pkt_size against at connect; pinned by the transport unit test pkt_size_is_bounded_by_librists_write_limit; bindings meet it as the invalid-config error, no constant of their own"
 
 [[exempt]]
 item = "tst_srt::builder::SrtListenerBuilder::input_bandwidth"
-reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the managed listener config"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through a listener URL's inputbw key"
 
 [[exempt]]
 item = "tst_srt::builder::SrtListenerBuilder::peer_latency"
-reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the managed listener config"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through a listener URL's peerlatency key"
 
 [[exempt]]
 item = "tst_srt::builder::SrtListenerBuilder::send_buf_bytes"
-reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the managed listener config"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; no binding reaches it: the sndbuf URL key is refused as unsupported and no binding builder sets it"
 
 [[exempt]]
 item = "tst_srt::builder::SrtListenerBuilder::udp_send_buffer_bytes"
-reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the managed listener config"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through a listener URL's udpsndbuf key"
