@@ -64,7 +64,9 @@ fn smoke_c_compiles_links_runs() {
     );
     assert!(header.exists(), "header missing at {}", header.display());
 
-    let bin_path = std::env::temp_dir().join("tst_smoke");
+    // Private dir: concurrent runs must not overwrite each other's binary.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bin_path = dir.path().join("tst_smoke");
     let status = Command::new("cc")
         .args([
             "-Wall",
