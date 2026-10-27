@@ -3,7 +3,7 @@
 //! `tst-pipeline/tests/support/round_trip.rs`), plus a cancel test for a
 //! managed TCP receive against a silent peer.
 
-#[path = "../../tst-pipeline/tests/support/round_trip.rs"]
+#[path = "support/round_trip.rs"]
 mod round_trip;
 
 use std::sync::mpsc;

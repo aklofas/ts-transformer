@@ -16,9 +16,20 @@ crates/tst-interop/tests/net_loopback.rs	status_of	shared test support not yet w
 crates/tst-interop/tests/net_proxy.rs	join_with_timeout	shared test support not yet written for this crate
 crates/tst-interop/tests/net_serve.rs	join_with_timeout	shared test support not yet written for this crate
 crates/tst-pipeline/tests/shells/pipeline_receiver.rs	minimal_klv	cross-crate twin of the tst-srt live receiver test helper; consolidation into tst-test-helpers deferred
+crates/tst-pipeline/tests/support/round_trip.rs	T>	package-local copy; kept identical by test-support-copies.sh
+crates/tst-pipeline/tests/support/round_trip.rs	mux_config	package-local copy; kept identical by test-support-copies.sh
 crates/tst-pipeline/tests/support/round_trip.rs	synthetic_h264_au	cross-crate twin of the hls/udp/tcp/rist round-trip helper; consolidation into tst-test-helpers deferred
+crates/tst-rist/tests/support/round_trip.rs	T>	package-local copy; kept identical by test-support-copies.sh
+crates/tst-rist/tests/support/round_trip.rs	mux_config	package-local copy; kept identical by test-support-copies.sh
+crates/tst-rist/tests/support/round_trip.rs	synthetic_h264_au	package-local copy; kept identical by test-support-copies.sh
 crates/tst-rtp/tests/fixtures/raw_rtsp_publisher.rs	status_of	tst-rtp tests: shared fixture not yet written
 crates/tst-srt/tests/common/mod.rs	reserve_port	twin of bindings/c/tests/receiving/exit_with_parked_call.rs (Rust crate vs C-binding test crate); no shared crate between them
 crates/tst-srt/tests/pipeline/pipeline_receiver_live.rs	minimal_klv	pipeline and transport tests: shared tests/common not yet written
 crates/tst-srt/tests/pipeline/pipeline_receiver_live_corpus.rs	fixtures_dir	pipeline and transport tests: shared tests/common not yet written
+crates/tst-tcp/tests/support/round_trip.rs	T>	package-local copy; kept identical by test-support-copies.sh
+crates/tst-tcp/tests/support/round_trip.rs	mux_config	package-local copy; kept identical by test-support-copies.sh
+crates/tst-tcp/tests/support/round_trip.rs	synthetic_h264_au	package-local copy; kept identical by test-support-copies.sh
 crates/tst-udp/tests/net_zero_length.rs	null_ts_packet	pipeline and transport tests: shared tests/common not yet written
+crates/tst-udp/tests/support/round_trip.rs	T>	package-local copy; kept identical by test-support-copies.sh
+crates/tst-udp/tests/support/round_trip.rs	mux_config	package-local copy; kept identical by test-support-copies.sh
+crates/tst-udp/tests/support/round_trip.rs	synthetic_h264_au	package-local copy; kept identical by test-support-copies.sh
