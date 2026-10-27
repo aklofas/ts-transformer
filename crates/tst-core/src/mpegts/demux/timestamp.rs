@@ -11,7 +11,7 @@
 //! unrelated to the RTP crate's 32-bit sequence/timestamp unwrapper.
 
 use crate::mpegts::common::{Pts90khz, pts_diff_33bit};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 /// Per-PID PTS/DTS unwrap accumulator state, in raw 90 kHz ticks.
 ///
@@ -201,6 +201,10 @@ impl TimestampUnwrapper {
 #[derive(Debug, Default)]
 pub(super) struct PcrHistory {
     last: HashMap<u16, u64>,
+    /// PCR PIDs that signalled `discontinuity_indicator` (H.222.0 §2.4.3.5)
+    /// and whose next PCR starts a new time base. The flag may ride an
+    /// earlier packet than the new PCR, so it is held here until that PCR.
+    new_timebase: HashSet<u16>,
 }
 
 impl PcrHistory {
@@ -212,8 +216,21 @@ impl PcrHistory {
         self.last.insert(pid, pcr_27mhz);
     }
 
+    /// The next PCR on `pid` samples a new system time clock: record it
+    /// without comparing against the old one.
+    pub(super) fn expect_new_timebase(&mut self, pid: u16) {
+        self.new_timebase.insert(pid);
+    }
+
+    /// Whether `pid` signalled a new time base since its last PCR; clears the
+    /// expectation.
+    pub(super) fn take_new_timebase(&mut self, pid: u16) -> bool {
+        self.new_timebase.remove(&pid)
+    }
+
     pub(super) fn clear(&mut self) {
         self.last.clear();
+        self.new_timebase.clear();
     }
 
     /// Keep only the PIDs for which `declared` holds.
@@ -226,6 +243,7 @@ impl PcrHistory {
     /// instead of being judged against an earlier declaration's baseline.
     pub(super) fn retain_declared(&mut self, mut declared: impl FnMut(u16) -> bool) {
         self.last.retain(|pid, _| declared(*pid));
+        self.new_timebase.retain(|pid| declared(*pid));
     }
 
     #[cfg(test)]
@@ -242,8 +260,9 @@ mod tests {
     use crate::mpegts::demux::demuxer::Demuxer;
     use crate::mpegts::demux::event::{DemuxEvent, NonConformantIssue};
     use crate::mpegts::demux::test_support::{
+        PktSpec, demuxer_with_streams, drain_all_events, feed_packets, issues,
         pat_packet_with_programs, pat_packet_with_programs_cc, pcr_packet_for_test,
-        pmt_packet_for_test, pmt_packet_for_test_cc,
+        pmt_packet_for_test, pmt_packet_for_test_cc, ts_packet,
     };
     use crate::mpegts::demux::types::DemuxerConfig;
     use crate::test_prelude::*;
@@ -1082,5 +1101,114 @@ mod tests {
         assert_eq!(h.last(0x200), None);
         h.clear();
         assert!(!h.contains(0x100));
+    }
+
+    /// An adaptation-field-only packet on 0x100 carrying `pcr` (if any) and
+    /// the `discontinuity_indicator` bit.
+    fn af_packet(disc: bool, pcr: Option<u64>) -> [u8; 188] {
+        ts_packet(&PktSpec {
+            pid: 0x100,
+            discontinuity: disc,
+            pcr,
+            ..Default::default()
+        })
+    }
+
+    fn timing_only_video_demuxer() -> Demuxer {
+        let mut b = DemuxerConfig::builder();
+        b.strict(StrictMode::TimingOnly);
+        demuxer_with_streams(b.build(), 0x100, &[(0x1B, 0x100, &[])])
+    }
+
+    fn has_pcr_anomaly(found: &[NonConformantIssue]) -> bool {
+        found
+            .iter()
+            .any(|i| matches!(i, NonConformantIssue::PcrAnomaly { .. }))
+    }
+
+    /// H.222.0 §2.4.3.5: with discontinuity_indicator = 1 on the PCR_PID, the
+    /// next PCR on that PID samples a new system time clock. No PcrAnomaly.
+    #[test]
+    fn signalled_timebase_discontinuity_reseeds_without_pcr_anomaly() {
+        let mut d = timing_only_video_demuxer();
+        feed_packets(
+            &mut d,
+            &[
+                af_packet(false, Some(0)),
+                af_packet(false, Some(2_700_000)),
+                af_packet(true, Some(2_700_000_000)),
+            ],
+        )
+        .unwrap();
+        assert!(!has_pcr_anomaly(&issues(&drain_all_events(&mut d))));
+    }
+
+    /// H.222.0 §2.4.3.5: the discontinuity state starts at the packet with
+    /// discontinuity_indicator = 1 and the new time base arrives with the
+    /// next PCR on the PCR_PID, which need not be in the same packet.
+    #[test]
+    fn discontinuity_flag_before_the_new_pcr_packet_still_reseeds() {
+        let mut d = timing_only_video_demuxer();
+        feed_packets(
+            &mut d,
+            &[
+                af_packet(false, Some(0)),
+                af_packet(true, None),
+                // 100 s past the old time base.
+                af_packet(true, Some(2_700_000_000)),
+            ],
+        )
+        .unwrap();
+        assert!(!has_pcr_anomaly(&issues(&drain_all_events(&mut d))));
+    }
+
+    /// The same jump without discontinuity_indicator is an unsignalled
+    /// time-base break and still reports PcrAnomaly.
+    #[test]
+    fn unsignalled_pcr_jump_still_raises_pcr_anomaly() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x100,
+            &[(0x1B, 0x100, &[])],
+        );
+        feed_packets(
+            &mut d,
+            &[
+                af_packet(false, Some(0)),
+                af_packet(false, Some(2_700_000)),
+                af_packet(false, Some(2_700_000_000)),
+            ],
+        )
+        .unwrap();
+        assert!(has_pcr_anomaly(&issues(&drain_all_events(&mut d))));
+    }
+
+    /// H.222.0 §2.4.3.2: the adaptation field is never scrambled, so its PCR
+    /// keeps feeding the time base when the payload is scrambled.
+    #[test]
+    fn pcr_in_scrambled_packet_updates_the_time_base() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x100,
+            &[(0x1B, 0x100, &[])],
+        );
+        let scrambled = ts_packet(&PktSpec {
+            pid: 0x100,
+            pcr: Some(13_500_000),
+            scrambling: 0b10,
+            payload: &[0x5A; 100],
+            ..Default::default()
+        });
+        feed_packets(
+            &mut d,
+            &[
+                af_packet(false, Some(0)),
+                scrambled,
+                af_packet(false, Some(32_400_000)),
+            ],
+        )
+        .unwrap();
+        let found = issues(&drain_all_events(&mut d));
+        assert!(!has_pcr_anomaly(&found), "{found:?}");
     }
 }

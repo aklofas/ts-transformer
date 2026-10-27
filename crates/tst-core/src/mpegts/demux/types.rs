@@ -286,6 +286,11 @@ pub struct DemuxerConfig {
     /// [`NonConformantIssue::MissingRequiredPts`](crate::mpegts::demux::NonConformantIssue::MissingRequiredPts))
     /// is never fed to the accumulator.
     ///
+    /// A time-base discontinuity signalled on the PCR_PID
+    /// (`discontinuity_indicator`, ITU-T H.222.0 §2.4.3.5) leaves the
+    /// unwrap timeline unchanged: samples after the splice are placed by
+    /// the rules above, whose re-anchor rule already absorbs a large jump.
+    ///
     /// The accumulators — per-PID and per-program alike — reset
     /// alongside all other per-PID parse state on
     /// [`Demuxer::reset_sync`](crate::mpegts::demux::Demuxer::reset_sync)

@@ -105,6 +105,14 @@ impl super::demuxer::Demuxer {
             let stream = self.pcr_stream_id(pkt.pid);
             self.queue_nonconformant(stream, NonConformantIssue::PcrMalformed { kind });
         }
+        let declared = self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid));
+        // H.222.0 §2.4.3.5: `discontinuity_indicator = 1` on the PCR_PID means
+        // the next PCR on that PID samples a new system time clock. That PCR
+        // may ride this packet or a later one, so the expectation is held
+        // until it arrives.
+        if declared && pkt.discontinuity_indicator {
+            self.pcr.expect_new_timebase(pkt.pid);
+        }
         if let Some(now) = pkt.pcr_27mhz {
             // A time base belongs to a program, and a program names the ONE
             // PID that carries it (`PCR_PID`, H.222.0 §2.4.4.9). A PCR on any
@@ -122,7 +130,15 @@ impl super::demuxer::Demuxer {
             // as soon as no program declares it
             // (`retire_undeclared_pcr_history`), so an undeclared PID never
             // has one.
-            if !self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid)) {
+            if !declared {
+                return;
+            }
+            if self.pcr.take_new_timebase(pkt.pid) {
+                // A signalled new time base: the jump is the splice, not an
+                // anomaly, and the program's PTS history belongs to the old
+                // clock.
+                self.pcr.record(pkt.pid, now);
+                self.forget_program_pts(pkt.pid);
                 return;
             }
             if let Some(last) = self.pcr.last(pkt.pid) {
@@ -142,6 +158,26 @@ impl super::demuxer::Demuxer {
         }
     }
 
+    /// Forget the last PTS of every stream in every program clocked by
+    /// `pcr_pid`, so the first PTS on the new time base is not judged against
+    /// the old one.
+    pub(super) fn forget_program_pts(&mut self, pcr_pid: u16) {
+        let Self {
+            programs,
+            pid_state,
+            ..
+        } = self;
+        for stream in programs
+            .values()
+            .filter(|t| t.pcr_pid == Some(pcr_pid))
+            .flat_map(|t| &t.streams)
+        {
+            if let Some(state) = pid_state.get_mut(&stream.pid) {
+                state.last_pts = None;
+            }
+        }
+    }
+
     /// Returns `(cc_jumped, is_duplicate)`.
     ///
     /// `cc_jumped` is `true` when a CC gap was observed AND not suppressed by
@@ -149,9 +185,12 @@ impl super::demuxer::Demuxer {
     /// signal to gate strict-mode PSI reassembly drops in `handle_psi`.
     ///
     /// `is_duplicate` is `true` when the packet is a spec-legal duplicate per
-    /// H.222.0 §2.4.3.3 (same CC as the preceding payload packet, no
-    /// `discontinuity_indicator`). The caller MUST suppress all payload
-    /// routing for such packets — they carry no new data. A THIRD packet with
+    /// H.222.0 §2.4.3.3 (same CC as the preceding payload packet, byte-
+    /// identical apart from the PCR). A duplicate in the discontinuity state
+    /// counts too: §2.4.3.5 lets its second copy be discarded, and identical
+    /// bytes carry the same `discontinuity_indicator` as the original. The
+    /// caller MUST suppress all payload routing for such packets — they
+    /// carry no new data. A THIRD packet with
     /// the same CC on the same PID IS a discontinuity (the "only-two" rule is
     /// enforced via `PidState::dup`).
     ///
@@ -187,10 +226,12 @@ impl super::demuxer::Demuxer {
         if let Some(prev_cc) = prev_cc {
             let expected = (prev_cc + 1) & 0x0F;
 
-            // Spec-legal duplicate: same CC, no discontinuity_indicator, AND
-            // byte-identical content. H.222.0 §2.4.3.3 — "a packet may be
-            // sent exactly twice with the same continuity_counter value; such
-            // a duplicate shall not cause discontinuity", and "each byte of
+            // Spec-legal duplicate: same CC AND byte-identical content (so the
+            // same discontinuity_indicator as the original; in the
+            // discontinuity state §2.4.3.5 permits discarding the copy).
+            // H.222.0 §2.4.3.3 — "a packet may be sent exactly twice with the
+            // same continuity_counter value; such a duplicate shall not cause
+            // discontinuity", and "each byte of
             // the original packet shall be duplicated" with the sole
             // exception of the PCR field, which a duplicate may refresh —
             // `pcr_masked_identical` implements exactly that compare. A
@@ -203,7 +244,6 @@ impl super::demuxer::Demuxer {
             // ("only-two" rule). A third identical packet with the same CC IS
             // a real discontinuity — treat it like a CC jump.
             let is_identical_dup = pkt.continuity_counter == prev_cc
-                && !pkt.discontinuity_indicator
                 && self
                     .pid_state
                     .get(&pkt.pid)

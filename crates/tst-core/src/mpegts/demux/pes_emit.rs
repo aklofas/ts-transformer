@@ -781,7 +781,8 @@ mod tests {
     use crate::mpegts::demux::Demuxer;
     use crate::mpegts::demux::pes::{DAMAGE_CC_GAP, DAMAGE_SHORT_PES};
     use crate::mpegts::demux::test_support::{
-        demuxer_with_streams, drain_all_events, feed_packets, issues, pes_bytes, pes_to_packets,
+        PktSpec, demuxer_with_streams, drain_all_events, feed_packets, issues, pes_bytes,
+        pes_to_packets, ts_packet,
     };
     use crate::mpegts::demux::types::DemuxerConfig;
 
@@ -1044,5 +1045,90 @@ mod tests {
             })
             .collect();
         assert_eq!(pids, vec![0x101, 0x102, 0x103], "{ev:?}");
+    }
+
+    /// Backward PTS after a new time base is the splice, not a PTS anomaly.
+    #[test]
+    fn pts_after_signalled_timebase_reset_is_not_a_pts_anomaly() {
+        let mut b = DemuxerConfig::builder();
+        b.strict(StrictMode::TimingOnly);
+        let mut d = demuxer_with_streams(b.build(), 0x100, &[(0x1B, 0x100, &[])]);
+        let pcr = |disc, v| {
+            ts_packet(&PktSpec {
+                pid: 0x100,
+                discontinuity: disc,
+                pcr: Some(v),
+                ..Default::default()
+            })
+        };
+        // Bounded, so each PES completes on its own last packet rather than
+        // at the next PUSI: the first one is judged before the new time base.
+        let before = pes_bytes(0xE0, Some(900_000), None, true, &[0xAA; 40], true);
+        let after = pes_bytes(0xE0, Some(90_000), None, true, &[0xAA; 40], true);
+        let mut pkts = vec![pcr(false, 0)];
+        pkts.extend(pes_to_packets(0x100, 0, &before));
+        // H.222.0 §2.4.3.5: a new system time base on the PCR_PID.
+        pkts.push(pcr(true, 2_700_000_000));
+        pkts.extend(pes_to_packets(0x100, 1, &after));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(sample_index(&ev, 0x100, 90_000).is_some(), "{ev:?}");
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
+            "{ev:?}"
+        );
+    }
+
+    /// H.222.0 §2.4.3.5: in the discontinuity state the second of two identical
+    /// same-CC packets may be discarded; its payload must not be appended twice.
+    #[test]
+    fn identical_duplicate_with_discontinuity_indicator_is_not_replayed() {
+        let es: Vec<u8> = (0..400u16).map(|i| i as u8).collect();
+        let pes = pes_bytes(0xC0, Some(0), None, true, &es, true);
+        // The packet carrying discontinuity_indicator needs adaptation-field
+        // room, so it holds 182 payload bytes instead of 184.
+        let (head, rest) = pes.split_at(184);
+        let (middle, tail) = rest.split_at(182);
+        let first = ts_packet(&PktSpec {
+            pid: 0x101,
+            cc: 0,
+            pusi: true,
+            payload: head,
+            ..Default::default()
+        });
+        let flagged = ts_packet(&PktSpec {
+            pid: 0x101,
+            cc: 1,
+            discontinuity: true,
+            payload: middle,
+            ..Default::default()
+        });
+        let last = ts_packet(&PktSpec {
+            pid: 0x101,
+            cc: 2,
+            payload: tail,
+            ..Default::default()
+        });
+        let mut d = audio_demuxer(StrictMode::Off);
+        feed_packets(&mut d, &[first, flagged, flagged, last]).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        let frames = ev.iter().find_map(|e| match e {
+            DemuxEvent::Sample {
+                payload: SamplePayload::Audio { frames, .. },
+                ..
+            } => Some(frames.to_vec()),
+            _ => None,
+        });
+        assert_eq!(frames.as_deref(), Some(&es[..]), "{ev:?}");
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::MalformedPes { .. })),
+            "{ev:?}"
+        );
     }
 }
