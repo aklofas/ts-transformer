@@ -12410,7 +12410,11 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  */
 #if !defined(TST_SKIP_ABI_ASSERTS) && !defined(_TST_ABI_ASSERTS_DONE)
 #define _TST_ABI_ASSERTS_DONE
+#if defined(__cplusplus)
+#define _TST_ABI_ASSERT(c, msg) static_assert((c), msg)
+#else
 #define _TST_ABI_ASSERT(c, msg) _Static_assert((c), msg)
+#endif
 /* Pointer-width-independent layouts (fixed-width integer fields only). */
 _TST_ABI_ASSERT(sizeof(tst_klv_link_t)             ==  8, "tst_klv_link_t size drift");
 _TST_ABI_ASSERT(sizeof(tst_demux_receiver_stats_t) == 48, "tst_demux_receiver_stats_t size drift");
