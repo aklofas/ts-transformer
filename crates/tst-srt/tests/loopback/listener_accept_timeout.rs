@@ -105,3 +105,50 @@ fn accept_timeout_drains_connection_queued_before_subscribe() {
         "accept_timeout took {elapsed:?} for an already-queued connection — non-blocking probe is not draining the queue"
     );
 }
+
+/// A peer arriving after a stale event is still accepted
+/// within the same call. A stale event cannot be forced from outside the
+/// crate (the call's first probe clears any readiness left over from before
+/// it, and libsrt's GC timing is not observable), so this pins the
+/// surrounding shape: the peer arrives while the call is already waiting,
+/// and it is that peer the call returns. The stale case itself is pinned by
+/// the unit tests in `listener.rs`, which empty the queue between readiness
+/// and accept through a test hook.
+#[test]
+fn accept_timeout_accepts_a_peer_that_arrives_after_stale_readiness() {
+    require_loopback!();
+    let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let watchdog = tst_test_helpers::timing::scaled(Duration::from_secs(20));
+
+    // Held until accepted: a connector closing mid-accept lets libsrt's GC
+    // reap the queued connection (see the test above).
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let ready = Arc::new(AtomicBool::new(false));
+    let r = ready.clone();
+    let connector = std::thread::spawn(move || {
+        crate::common::wait_for_ready(&r);
+        // Let the call get past its first probe into the wait. Either way
+        // the assertions hold; the pause only makes the wait the usual path.
+        std::thread::sleep(Duration::from_millis(200));
+        let socket = tst_srt::SrtSocketBuilder::new()
+            .connect(format!("127.0.0.1:{port}"))
+            .ok()?;
+        let local = socket.local_addr().ok();
+        let _ = release_rx.recv_timeout(watchdog);
+        local
+    });
+
+    ready.store(true, Ordering::SeqCst);
+    let result = listener.accept_timeout(tst_test_helpers::timing::scaled(Duration::from_secs(5)));
+    let accepted_port = result.as_ref().map(|(_, peer)| peer.port()).ok();
+    let _ = release_tx.send(());
+    let connector_local = connector.join().expect("connector thread panicked");
+    assert!(
+        result.is_ok(),
+        "accept should succeed; got {:?}",
+        result.err()
+    );
+    // Ports only: the connector's socket may be bound to the wildcard.
+    assert_eq!(accepted_port, connector_local.map(|a| a.port()));
+}

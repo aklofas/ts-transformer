@@ -97,9 +97,10 @@ pub(crate) struct Operation(());
 /// after its last, error paths included. On `None` the entry point must
 /// return its caller-close error and make no libsrt call.
 ///
-/// Entry points nest (`accept_timeout` calls `accept`); each level takes
-/// its own `Operation`. It is a count, so nesting cannot deadlock, and the
-/// handler only ever asks whether it is zero.
+/// Entry points nest (`accept_one_cancellable` calls `bind_with` and
+/// `accept`); each level takes its own `Operation`. It is a count, so
+/// nesting cannot deadlock, and the handler only ever asks whether it is
+/// zero.
 ///
 /// # Why zero means nobody is inside
 ///
