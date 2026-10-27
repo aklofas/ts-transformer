@@ -74,10 +74,15 @@ pub fn bind_udp_socket_multicast(local: SocketAddr) -> io::Result<UdpSocket> {
 /// socket is dropped. `port` 0 binds an ephemeral port; read it back with
 /// `local_addr()`.
 ///
-/// On non-Windows targets the socket binds `group:port`, so the kernel drops
-/// unicast datagrams to the port. On Linux it also clears `IP_MULTICAST_ALL`
-/// (`IPV6_MULTICAST_ALL` for IPv6): per ip(7) a member socket otherwise
-/// receives every group any socket on the host joined on that port.
+/// On non-Windows targets an IPv4 socket binds `group:port`, so the kernel
+/// drops unicast datagrams to the port. An IPv6 socket binds `group:port` with
+/// the interface's scope id when `iface` gives one; without `iface` it binds
+/// `[::]:port`, because Linux refuses to bind a link-local group (`ff02::`)
+/// without a scope id. Such a receiver also sees unicast sent to the port and,
+/// outside Linux, other groups' traffic on the port. On Linux the socket also
+/// clears `IP_MULTICAST_ALL` (`IPV6_MULTICAST_ALL` for IPv6): per ip(7) a
+/// member socket otherwise receives every group any socket on the host joined
+/// on that port.
 ///
 /// Windows cannot bind a multicast address, so the socket binds the wildcard
 /// of the group's family there; a Windows receiver also sees other groups'
@@ -88,7 +93,13 @@ pub fn bind_udp_socket_multicast_group(
     iface: Option<&str>,
 ) -> io::Result<UdpSocket> {
     #[cfg(not(windows))]
-    let local = SocketAddr::new(group, port);
+    let local = match group {
+        IpAddr::V4(_) => SocketAddr::new(group, port),
+        IpAddr::V6(v6_group) => match multicast_recv_scope_v6(iface)? {
+            0 => SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), port),
+            scope_id => SocketAddr::V6(std::net::SocketAddrV6::new(v6_group, port, 0, scope_id)),
+        },
+    };
     #[cfg(windows)]
     let local = match group {
         IpAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
@@ -374,22 +385,26 @@ pub fn apply_multicast_recv_join(
             socket.set_multicast_loop_v4(true)?;
         }
         IpAddr::V6(v6_group) => {
-            let scope_id = match iface {
-                None => 0, // Default scope.
-                Some(iface_str) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        format!(
-                            "IPv6 multicast iface name lookup is not implemented; \
-                             ?iface= must be omitted for ipv6 receive (iface='{iface_str}')"
-                        ),
-                    ));
-                }
-            };
-            socket.join_multicast_v6(&v6_group, scope_id)?;
+            socket.join_multicast_v6(&v6_group, multicast_recv_scope_v6(iface)?)?;
         }
     }
     Ok(())
+}
+
+/// The scope id an IPv6 multicast receiver joins and binds with: 0 (the
+/// default scope) without `iface`. One function so the bind and the join
+/// cannot disagree.
+fn multicast_recv_scope_v6(iface: Option<&str>) -> io::Result<u32> {
+    match iface {
+        None => Ok(0),
+        Some(iface_str) => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "IPv6 multicast iface name lookup is not implemented; \
+                 ?iface= must be omitted for ipv6 receive (iface='{iface_str}')"
+            ),
+        )),
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -452,5 +467,15 @@ mod multicast_group_tests {
 
         let err = bind_udp_socket_multicast_group(group, 0, Some("not-an-ip")).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    /// An IPv6 `iface` gets the join's answer before any bind: a link-local
+    /// group never reaches the kernel's scope-id bind check (EINVAL).
+    #[test]
+    fn v6_group_iface_gets_the_join_error() {
+        let group = IpAddr::V6("ff02::1".parse().unwrap());
+        let err = bind_udp_socket_multicast_group(group, 0, Some("lo")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert!(err.to_string().contains("iface='lo'"), "{err}");
     }
 }
