@@ -17,6 +17,7 @@ use tst_core::transport::RecvTransport;
 use tst_rtp::{PublishMountHandle, RtpRecvTransport, RtspServer};
 
 use crate::fixtures::raw_rtsp::header;
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::{RawPublisher, SDP_MP2T, frame};
 
 /// A started server with one `/pub` publish mount: `(server, mount, port)`.
@@ -42,7 +43,7 @@ fn rtp_mp2t_packet(n: usize) -> Vec<u8> {
 /// One payload from the application transport, bounded by a 5 s recv
 /// timeout so a frame that never arrives fails instead of hanging.
 fn app_recv(app: &mut RtpRecvTransport) -> Vec<u8> {
-    app.set_recv_timeout(Some(Duration::from_secs(5)));
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
     let mut buf = vec![0u8; 4096];
     let n = app.recv_bytes(&mut buf).expect("a frame reached the app");
     buf.truncate(n);

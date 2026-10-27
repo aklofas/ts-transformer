@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use tst_rtp::RtspServer;
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp::{header, make_muxer_cfg, request, session_id};
 
 /// The RTCP channel of an `interleaved=A-B` Transport answer.
@@ -35,7 +36,8 @@ fn a_tcp_reader_that_sends_rtcp_receiver_reports_keeps_its_session() {
     let port = server.local_addr().expect("bound").port();
 
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
     let setup = request(
         &mut tcp,
         &format!(

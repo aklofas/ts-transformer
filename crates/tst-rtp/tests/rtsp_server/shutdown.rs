@@ -2,6 +2,7 @@
 //! registry/cancel path; the RFC 7826 §13.5.1 Notice 5402 wire
 //! transmission is covered by `notice_5402.rs`.
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::{RtspServer, RtspServerError};
@@ -111,7 +112,7 @@ fn hard_cancel_ends_a_session_parked_in_read() {
     let wait_for = |want: usize| {
         let t0 = std::time::Instant::now();
         while server.stats().active_sessions != want
-            && t0.elapsed() < std::time::Duration::from_secs(5)
+            && t0.elapsed() < scaled(std::time::Duration::from_secs(5))
         {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
@@ -145,7 +146,8 @@ fn hard_cancel_ends_a_streaming_play_session_and_its_fanout() {
         .unwrap();
     let client_port = rtp.local_addr().unwrap().port();
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
     let url = format!("rtsp://127.0.0.1:{port}/live");
     let setup = request(
         &mut tcp,
@@ -166,7 +168,7 @@ fn hard_cancel_ends_a_streaming_play_session_and_its_fanout() {
     let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
     let mut buf = [0u8; 2048];
     let mut pts: i64 = 0;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         mount.push_video(&nal, Pts90khz::new(pts), true).unwrap();
         pts += 3600;
@@ -180,7 +182,7 @@ fn hard_cancel_ends_a_streaming_play_session_and_its_fanout() {
 
     // The control connection stays open; only the hard cancel ends the session.
     server.cancel_handle().cancel();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     while server.stats().active_sessions != 0 || mount.peer_count() != 0 {
         mount.push_video(&nal, Pts90khz::new(pts), true).unwrap();
         pts += 3600;

@@ -7,6 +7,7 @@ use std::time::Duration;
 use tst_core::transport::RecvTransport;
 use tst_rtp::RtspServer;
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 use crate::fixtures::wait_for;
 
@@ -31,7 +32,7 @@ fn second_publisher_after_teardown_feeds_the_same_app_transport() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app = mount.clone().into_recv_transport().unwrap();
-    app.set_recv_timeout(Some(Duration::from_secs(5)));
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
 
     let bundles = ts_fixture_packets(6);
     let mut a = publish(port, &bundles[..3], 0xA);
@@ -66,7 +67,7 @@ fn publisher_dropping_its_connection_frees_the_mount() {
     drop(p); // no TEARDOWN
     // The publisher slot must free once the connection drops; panics
     // "condition not met within 3s" otherwise.
-    wait_for(Duration::from_secs(3), || {
+    wait_for(scaled(Duration::from_secs(3)), || {
         mount.publisher().is_none().then_some(())
     });
     assert_eq!(mount.generation(), 1);

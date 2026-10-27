@@ -10,6 +10,7 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 use tst_rtp::RtspServerBuilder;
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp::{header, make_muxer_cfg, request, session_id};
 
 fn interleaved_session(timeout_secs: u64) -> (tst_rtp::RtspServer, TcpStream, String, String) {
@@ -22,7 +23,8 @@ fn interleaved_session(timeout_secs: u64) -> (tst_rtp::RtspServer, TcpStream, St
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     // Per-response read bound only — generous for the slow macOS/Windows
     // runners; no test below asserts anything through its duration.
-    tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
     let url = format!("rtsp://127.0.0.1:{port}/live");
     let setup = request(
         &mut tcp,
@@ -51,7 +53,7 @@ fn an_idle_session_is_reaped_at_the_advertised_timeout_plus_grace() {
     // No keepalive. The bound is 1 s + max(0.5 s, 2 s) = 3 s; the 10 s
     // deadline (checked at each 5 s read timeout) is far above it and far
     // below a fixed 30 s, so no timing is asserted.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     let mut buf = [0u8; 4096];
     loop {
         match tcp.read(&mut buf) {

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tst_core::transport::RecvTransport;
 use tst_rtp::{PublishShape, RtspClient, RtspServer};
 
+use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
 /// Read from `t` until `want` payload bytes have arrived.
@@ -23,7 +24,7 @@ fn drain(t: &mut impl RecvTransport, want: usize) {
 /// bounds a failure; a loaded runner can take a while to see a dropped
 /// connection).
 fn eventually(what: &str, mut cond: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     while !cond() {
         assert!(Instant::now() < deadline, "{what} never held");
         std::thread::sleep(Duration::from_millis(10));
@@ -40,7 +41,7 @@ fn publish_mount_and_server_stats_count_an_interleaved_publisher() {
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
     let mut app = mount.clone().into_recv_transport().unwrap();
-    app.set_recv_timeout(Some(Duration::from_secs(5)));
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
     assert_eq!(server.stats().active_publishers, 0);
 
     let mut reader =
