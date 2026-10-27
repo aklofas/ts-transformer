@@ -81,6 +81,9 @@ pub struct TsFraming {
     buffer: VecDeque<u8>,
     /// In UNSYNCED: count of bytes consumed scanning for sync.
     unsynced_consumed: usize,
+    /// Set by [`Self::push_strict`]: every boundary in `buffer` has been
+    /// checked, so `flush` may emit it before the sync threshold.
+    strict: bool,
     stats: SenderStats,
 }
 
@@ -91,6 +94,7 @@ impl TsFraming {
             state: State::Unsynced,
             buffer: VecDeque::new(),
             unsynced_consumed: 0,
+            strict: false,
             stats: SenderStats::default(),
         }
     }
@@ -172,10 +176,12 @@ impl TsFraming {
                 offset: (k * TS_PACKET_SIZE) as u64,
             });
         }
+        self.strict = true;
         self.stats.bytes_pushed += bytes.len() as u64;
         self.buffer.extend(bytes.iter().copied());
         // Sync is declared once the first three boundaries are present;
-        // with fewer the bytes wait for flush.
+        // with fewer the bytes wait for flush, which emits them anyway
+        // because every boundary was checked above.
         if self.state == State::Unsynced && self.buffer.len() > 2 * TS_PACKET_SIZE {
             self.state = State::Synced;
         }
@@ -302,8 +308,14 @@ impl TsFraming {
     /// from the damaged boundary on buffered, so the next push skips (and
     /// counts) only the damaged bytes and resyncs on the packets after
     /// them. A clean flush keeps a partial tail buffered and stays SYNCED.
+    ///
+    /// In STRICT mode the whole packets go out even before sync is
+    /// declared: `push_strict` checked every boundary, so a stream of one
+    /// or two packets still reaches the wire. In RECOVER mode a stream
+    /// shorter than three packets never acquires sync and flush emits
+    /// nothing.
     pub fn flush(&mut self) -> Vec<Vec<u8>> {
-        if self.state != State::Synced || self.buffer.is_empty() {
+        if (self.state != State::Synced && !self.strict) || self.buffer.is_empty() {
             return Vec::new();
         }
         let whole = self.buffer.len() / TS_PACKET_SIZE;
@@ -600,6 +612,25 @@ mod tests {
             result.is_err(),
             "STRICT mode must error on the first non-sync byte"
         );
+    }
+
+    #[test]
+    fn strict_flush_emits_a_stream_shorter_than_three_packets() {
+        for n in [1, 2] {
+            let mut f = TsFraming::new(18800);
+            let ts = synthetic_ts_stream(n);
+            assert!(f.push_strict(&ts).unwrap().is_empty());
+            assert_eq!(f.flush(), vec![ts], "{n} packet(s)");
+            assert_eq!(f.stats().packets_sent, n as u64);
+        }
+    }
+
+    #[test]
+    fn recover_flush_of_a_single_packet_emits_nothing() {
+        let mut f = TsFraming::new(18800);
+        let (out, _) = f.push(&synthetic_ts_stream(1)).unwrap();
+        assert!(out.is_empty());
+        assert!(f.flush().is_empty());
     }
 
     #[test]
