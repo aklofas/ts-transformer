@@ -212,11 +212,12 @@ fn a_receiver_that_stops_reading_trips_the_send_deadline() {
     assert_eq!(verdicts.len(), 2, "{summary}");
 }
 
-#[test]
-fn a_short_delivery_after_framing_damage_names_the_senders_resyncs() {
-    let dir = temp_dir_named("rp-resync");
-    // Realistic access units, so a PCR interval holds more than one
-    // seven-packet bundle and the sender checks the framing it sends.
+/// Sweeps then replays over tcp a 2 s capture at realistic access-unit
+/// sizes (so a PCR interval holds more than one seven-packet bundle and the
+/// sender checks the framing it sends), after `damage` has edited its bytes.
+/// Returns the replay's output and its summary.
+fn replay_damaged(name: &str, damage: impl FnOnce(&mut Vec<u8>)) -> (Output, Value) {
+    let dir = temp_dir_named(name);
     let src = dir.join("src.tmp");
     let p = tst_interop::profiles::by_name("baseline").unwrap();
     tst_interop::r#gen::run(
@@ -230,10 +231,7 @@ fn a_short_delivery_after_framing_damage_names_the_senders_resyncs() {
     .unwrap();
     let mut bytes = std::fs::read(&src).unwrap();
     std::fs::remove_file(&src).unwrap();
-    // One byte gone from the middle of a packet halfway in: every packet
-    // after it is off its 188-byte grid until the sender resyncs.
-    let at = bytes.len() / 188 / 2 * 188 + 100;
-    bytes.remove(at);
+    damage(&mut bytes);
     std::fs::write(dir.join("damaged.ts"), &bytes).unwrap();
     let run = dir.join("run");
     // The sweep may fail its invariants on this capture; the replay only
@@ -247,8 +245,34 @@ fn a_short_delivery_after_framing_damage_names_the_senders_resyncs() {
         LIMIT,
     );
     let out = replay_over(&dir, &run, "tcp", &[]);
-    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let summary = json(&run.join("replay.json"));
+    (out, summary)
+}
+
+/// Removes the 100th byte of every third packet across `count` packets
+/// from the middle of the capture. The sender re-acquires sync only on
+/// three packets in a row on the 188-byte grid, and every removal moves
+/// the grid, so it resyncs at each one and what reaches the receiver no
+/// longer demuxes the way the file does.
+fn remove_a_byte_from_every_third_packet(bytes: &mut Vec<u8>, count: usize) {
+    let first = bytes.len() / 188 / 2;
+    // Back to front, so each offset is still on the original grid.
+    for k in (first..first + count).step_by(3).rev() {
+        bytes.remove(k * 188 + 100);
+    }
+}
+
+/// The receiver's digest no longer matches the sweep's, and the failed
+/// verdict says the sender resynced, so the loss is not read as the
+/// transport's.
+#[test]
+fn a_failed_delivery_after_framing_damage_names_the_senders_resyncs() {
+    // Sixty packets keep what the sender skips under its default watchdog
+    // limit, so the send itself does not fail.
+    let (out, summary) = replay_damaged("rp-resync", |b| {
+        remove_a_byte_from_every_third_packet(b, 60)
+    });
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let v = &summary["verdicts"][0];
     assert_eq!(v["pass"], false, "{summary}");
     let failures: Vec<&str> = v["failures"]
@@ -261,6 +285,25 @@ fn a_short_delivery_after_framing_damage_names_the_senders_resyncs() {
         failures.iter().any(|f| f.starts_with("sender resynced ")),
         "{summary}"
     );
+    assert!(
+        !failures.iter().any(|f| f.starts_with("sender error")),
+        "{summary}"
+    );
+}
+
+/// One byte gone from the middle of one packet costs the sender that
+/// packet alone: it re-acquires sync on the packets after it, so the
+/// receiver demuxes what the sweep did and the replay passes.
+#[test]
+fn a_single_damaged_packet_does_not_fail_the_replay() {
+    let (out, summary) = replay_damaged("rp-resync-one", |b| {
+        let at = b.len() / 188 / 2 * 188 + 100;
+        b.remove(at);
+    });
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let v = &summary["verdicts"][0];
+    assert_eq!(v["pass"], true, "{summary}");
+    assert_eq!(v["failures"].as_array().unwrap().len(), 0, "{summary}");
 }
 
 #[test]
