@@ -177,6 +177,11 @@ impl super::demuxer::Demuxer {
             .flat_map(|t| &t.streams)
         {
             if let Some(state) = pid_state.get_mut(&stream.pid) {
+                // The run's PCR latch is a value on the PCR clock, not part
+                // of the PTS baseline: it goes now, even with a PES in
+                // flight, or that PES would be timed across two clocks.
+                state.pts_less_run_pcr = None;
+                state.pts_less_run_reported = false;
                 if pes.has_pid(stream.pid) {
                     state.pts_baseline_clears_after_pes = true;
                 } else {
