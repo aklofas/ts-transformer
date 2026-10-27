@@ -173,7 +173,10 @@ for a later call. `flush` emits any buffered partial bundle so the tail
 of a finite input reaches the wire, and it checks every packet's sync
 byte before sending: on damage it sends the packets before it, counts
 one `resync_events` and keeps the rest buffered for the next `send_ts`
-to resync. Drop also best-effort flushes.
+to resync. A RECOVER stream shorter than three packets never acquires
+sync and `flush` emits nothing; STRICT mode has already checked every
+boundary, so its one- or two-packet stream does go out. Drop also
+best-effort flushes.
 
 `SenderConfig` has two knobs:
 
