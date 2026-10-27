@@ -411,7 +411,13 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 ///
 /// First match wins, in priority order:
 ///   1. Component descriptor (tag 0x50, ETSI EN 300 468 §6.2.8) — body
-///      starting at offset 6 is UTF-8 free text. ISO/IEC 13818-1 Annex.
+///      starting at offset 6 is free text. A leading character-table
+///      selector (EN 300 468 Annex A.2, Table A.3) is consumed: 0x15
+///      selects UTF-8, and the ISO 8859 selectors are accepted only when
+///      the text is ASCII (no transcoding). Any other selector, or text
+///      the selector cannot be decoded as, falls through to the next
+///      source. Text starting at 0x20 or above is the default table,
+///      read as UTF-8.
 ///   2. Stream Identifier descriptor (tag 0x52, ETSI EN 300 468 §6.2.40) —
 ///      single `component_tag` byte rendered as `"tag=NN"`.
 ///   3. Metadata descriptor (tag 0x26) — when present, label is `"KLV"`
@@ -426,13 +432,11 @@ pub fn extract_user_label(descs: &[RawDescriptor]) -> Option<String> {
     // 1. Component descriptor — UTF-8 free text after the 6-byte header.
     if let Some(d) = descs.iter().find(|d| d.tag == 0x50)
         && d.data.len() > 6
+        && let Some(s) = dvb_text(&d.data[6..])
     {
-        let raw = &d.data[6..];
-        if let Ok(s) = core::str::from_utf8(raw) {
-            let trimmed = s.trim_end_matches('\0').trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
+        let trimmed = s.trim_end_matches('\0').trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
         }
     }
     // 2. Stream Identifier — single component_tag byte.
@@ -467,6 +471,30 @@ pub fn extract_user_label(descs: &[RawDescriptor]) -> Option<String> {
         }
     }
     None
+}
+
+/// Decodes DVB text per the EN 300 468 Annex A.2 character-table selector.
+/// `None` when the selector is unsupported or the text cannot be decoded
+/// without transcoding.
+fn dvb_text(bytes: &[u8]) -> Option<String> {
+    let (&first, rest) = bytes.split_first()?;
+    let text = match first {
+        0x20.. => bytes,
+        0x15 => rest,
+        0x10 => {
+            let text = bytes.get(3..)?;
+            return text.is_ascii().then(|| ascii_string(text));
+        }
+        0x01..=0x0B | 0x11..=0x14 => {
+            return rest.is_ascii().then(|| ascii_string(rest));
+        }
+        _ => return None,
+    };
+    core::str::from_utf8(text).ok().map(str::to_string)
+}
+
+fn ascii_string(ascii: &[u8]) -> String {
+    ascii.iter().map(|&b| char::from(b)).collect()
 }
 
 /// Maps PMT `stream_type` byte → typed audio codec. Returns `None` for
@@ -1023,6 +1051,71 @@ mod label_tests {
             data: vec![b'e', b'n', b'g', 0x00],
         }];
         assert_eq!(extract_user_label(&descs).as_deref(), Some("eng"));
+    }
+
+    fn component_with_text(text: &[u8]) -> Vec<RawDescriptor> {
+        let mut body = vec![0xF1, 0x01, 0x00, b'e', b'n', b'g'];
+        body.extend_from_slice(text);
+        vec![RawDescriptor {
+            tag: 0x50,
+            data: body,
+        }]
+    }
+
+    /// EN 300 468 Annex A.2: a first byte of 0x15 selects UTF-8 for the rest.
+    #[test]
+    fn component_text_with_the_utf8_selector_is_decoded_without_it() {
+        let mut text = vec![0x15];
+        text.extend_from_slice("Kanal ü".as_bytes());
+        assert_eq!(
+            extract_user_label(&component_with_text(&text)).as_deref(),
+            Some("Kanal ü")
+        );
+    }
+
+    #[test]
+    fn component_text_with_an_iso_8859_selector_and_ascii_text_is_decoded() {
+        assert_eq!(
+            extract_user_label(&component_with_text(&[0x10, 0x00, 0x02, b'a', b'b', b'c']))
+                .as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            extract_user_label(&component_with_text(&[0x05, b'a', b'b', b'c'])).as_deref(),
+            Some("abc")
+        );
+    }
+
+    #[test]
+    fn component_text_in_the_default_table_is_unchanged() {
+        assert_eq!(
+            extract_user_label(&component_with_text(b"EO Camera")).as_deref(),
+            Some("EO Camera")
+        );
+    }
+
+    /// An 8859 remainder that is not ASCII is not transcoded, and a truncated
+    /// 0x10 selector or a reserved control value yields no text, so the label
+    /// falls through to the next source.
+    #[test]
+    fn component_text_that_cannot_be_decoded_falls_through() {
+        let with_lang = |text: &[u8]| {
+            let mut descs = component_with_text(text);
+            descs.push(RawDescriptor {
+                tag: 0x0A,
+                data: vec![b'e', b'n', b'g', 0x00],
+            });
+            descs
+        };
+        for text in [
+            &[0x05, 0xFC, b'x'][..],
+            &[0x10, 0x00][..],
+            &[0x10][..],
+            &[0x1F, b'a'][..],
+            &[0x1E, b'a'][..],
+        ] {
+            assert_eq!(extract_user_label(&with_lang(text)).as_deref(), Some("eng"));
+        }
     }
 
     #[test]
