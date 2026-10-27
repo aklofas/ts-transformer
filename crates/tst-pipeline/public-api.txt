@@ -378,6 +378,8 @@ pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref_blocking<R>(&self, tst_pipeline::binding::view::BlockingReason, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::close(&self) -> core::result::Result<(), tst_pipeline::binding::owned::CloseFailure<<T as tst_pipeline::binding::owned::Close>::Error>>
+impl<T, S> core::ops::drop::Drop for tst_pipeline::binding::owned::Owned<T, S>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::drop(&mut self)
 impl<T, S> !core::marker::Freeze for tst_pipeline::binding::owned::Owned<T, S>
 impl<T, S> core::marker::Send for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Send, T: core::marker::Send
 impl<T, S> core::marker::Sync for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Sync, T: core::marker::Send
@@ -868,6 +870,8 @@ pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref_blocking<R>(&self, tst_pipeline::binding::view::BlockingReason, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::close(&self) -> core::result::Result<(), tst_pipeline::binding::owned::CloseFailure<<T as tst_pipeline::binding::owned::Close>::Error>>
+impl<T, S> core::ops::drop::Drop for tst_pipeline::binding::owned::Owned<T, S>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::drop(&mut self)
 impl<T, S> !core::marker::Freeze for tst_pipeline::binding::owned::Owned<T, S>
 impl<T, S> core::marker::Send for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Send, T: core::marker::Send
 impl<T, S> core::marker::Sync for tst_pipeline::binding::owned::Owned<T, S> where S: core::marker::Sync, T: core::marker::Send
