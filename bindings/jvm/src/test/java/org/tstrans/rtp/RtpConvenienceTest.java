@@ -61,9 +61,28 @@ class RtpConvenienceTest {
     void muxSenderWithExplicitPktSize() throws Exception {
         try (DatagramSocket peer = peer()) {
             String url = "rtp://127.0.0.1:" + peer.getLocalPort();
-            try (MuxSender s = MuxSender.open(url + "?pkt_size=188", roundtripConfig())) {
+            // pkt_size is the whole UDP datagram; the 12-byte RTP header comes
+            // out of it, so 376 is the smallest size whose payload (364 bytes)
+            // still holds one 188-byte TS packet.
+            try (MuxSender s = MuxSender.open(url + "?pkt_size=376", roundtripConfig())) {
                 assertTrue(s.isAlive());
                 s.sendVideo(syntheticH264Idr(), 0L, true);
+            }
+        }
+    }
+
+    @Test
+    void muxSenderRefusesPktSizeBelowOnePacket() throws Exception {
+        try (DatagramSocket peer = peer()) {
+            String url = "rtp://127.0.0.1:" + peer.getLocalPort();
+            // A 188-byte datagram leaves 176 bytes after the RTP header: not
+            // enough for one TS packet, so the send is refused rather than
+            // leaving the muxer output unsent.
+            try (MuxSender s = MuxSender.open(url + "?pkt_size=188", roundtripConfig())) {
+                org.tstrans.RtpException e = assertThrows(org.tstrans.RtpException.class,
+                    () -> s.sendVideo(syntheticH264Idr(), 0L, true));
+                assertTrue(e.getMessage().contains("exceeds payload-size cap"),
+                    "unexpected message: " + e.getMessage());
             }
         }
     }
