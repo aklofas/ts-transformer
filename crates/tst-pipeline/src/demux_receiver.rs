@@ -711,14 +711,59 @@ mod stats_tests {
         assert_eq!(st.per_stream.len(), 0);
     }
 
+    /// One H.264 stream on PID 0x100: PSI and two access units from one
+    /// muxer, then a third access unit with no PSI ahead of it.
+    fn two_reads_of_one_stream() -> (Vec<u8>, Vec<u8>) {
+        use tst_core::mpegts::common::Pts90khz;
+        use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        let mut m = Muxer::new(b.build().unwrap()).unwrap();
+        let au = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB, 0xBB, 0xBB];
+        let pull = |m: &mut Muxer| {
+            let mut out = vec![0u8; 188 * 16];
+            let n = m.pull(&mut out);
+            out.truncate(n);
+            out
+        };
+        m.push_video(&au, Pts90khz::new(0), true).unwrap();
+        m.push_video(&au, Pts90khz::new(3000), true).unwrap();
+        let first = pull(&mut m);
+        m.push_video(&au, Pts90khz::new(6000), false).unwrap();
+        let second: Vec<u8> = pull(&mut m)
+            .chunks_exact(188)
+            .filter(|p| (u16::from(p[1] & 0x1F) << 8 | u16::from(p[2])) == 0x100)
+            .flatten()
+            .copied()
+            .collect();
+        // `CannedRecv` truncates a chunk to the read buffer.
+        assert!(first.len() <= 1316 && second.len() <= 1316);
+        (first, second)
+    }
+
     #[test]
-    fn reset_stats_clears_per_stream() {
+    fn reset_stats_zeros_observed_counters() {
+        let (first, second) = two_reads_of_one_stream();
         let mut r = DemuxReceiver::new(CannedRecv {
-            chunks: VecDeque::new(),
+            chunks: VecDeque::from([first, second]),
             alive: true,
         });
+        let is_sample = |ev: &DemuxEvent| matches!(ev, DemuxEvent::Sample { .. });
+        while !is_sample(&r.recv_event().unwrap().expect("a sample before EOF")) {}
+        let st = r.stats();
+        assert!(st.packets_received > 0, "packets were counted");
+        assert!(!st.per_stream.is_empty(), "the stream was counted");
+
         r.reset_stats();
         let st = r.stats();
+        assert_eq!(st.packets_received, 0);
+        assert_eq!(st.bytes_received, 0);
         assert!(st.per_stream.is_empty());
+
+        // The parser keeps its PSI: the next access unit, sent with no PSI
+        // ahead of it, still demuxes.
+        while !is_sample(&r.recv_event().unwrap().expect("a sample after the reset")) {}
     }
 }

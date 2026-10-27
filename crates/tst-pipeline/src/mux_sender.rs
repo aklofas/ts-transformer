@@ -1500,13 +1500,24 @@ mod multi_stream_tests {
             b.add_program(prog.build());
             b.build().unwrap()
         };
-        let s = MuxSender::new(MemTransport::new(), cfg).unwrap();
+        let wire = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let s = MuxSender::new(SnoopTransport(wire.clone()), cfg).unwrap();
         let ir = s.video_handles()[1];
         let nal = [0x00, 0x00, 0x00, 0x01, 0x67, 0xBB];
         s.send_video_to(ir, &nal, Pts90khz::new(0), true).unwrap();
-        // We can't read the transport bytes directly from outside the lock,
-        // but we can confirm the call returns Ok and the sender is alive.
-        assert!(s.is_alive());
+        drop(s);
+        let bytes = wire.lock().unwrap();
+        assert_eq!(bytes.len() % 188, 0, "whole TS packets only");
+        // A PES start (payload_unit_start_indicator) on each PID tells which
+        // stream the access unit went to; PAT/PMT live on other PIDs.
+        let starts_on = |want: u16| {
+            bytes.chunks_exact(188).any(|p| {
+                let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
+                pid == want && p[1] & 0x40 != 0
+            })
+        };
+        assert!(starts_on(0x1021), "the AU must start a PES on PID 0x1021");
+        assert!(!starts_on(0x1011), "no PES may start on PID 0x1011");
     }
 
     /// Collects every byte sent to it behind a shared handle — unlike
@@ -2360,132 +2371,6 @@ mod cancel_tests {
         poison_sender().close();
     }
 
-    /// Regression: every fallible-return method on
-    /// `MuxSender` converts a poisoned inner lock to a typed error instead
-    /// of panicking. The 10 `send_*` methods must return a `MuxSenderError`
-    /// whose kind is `ShellErrorKind::TransportBroken`; the 2
-    /// `*_handles_for_program` methods must return `MuxError::ProgramNotFound`.
-    // std::sync::Mutex poisoning; the no_std spin ShellMutex cannot poison.
-    #[cfg(feature = "std")]
-    #[test]
-    fn mux_sender_inner_lock_poisoned_returns_broken_error() {
-        // Snapshot handles from a fresh (unpoisoned) sender with the same
-        // config — stream handles are packed indices deterministic for a given
-        // config layout, so any sender built from all_streams_config() has the
-        // same handles.
-        let fresh = MuxSender::new(PanicOnSend, all_streams_config()).unwrap();
-        let video_h = fresh.video_handles()[0];
-        let klv_h = fresh.klv_handles()[0];
-        let audio_h = fresh.audio_handles()[0];
-        let subtitle_h = fresh.subtitle_handles()[0];
-        let data_h = fresh.data_handles()[0];
-        drop(fresh);
-
-        let sender = poison_sender();
-
-        // --- 10 send_* methods: must return TransportBroken, not panic ---
-
-        let nal = [0x00, 0x00, 0x00, 0x01, 0x67, 0xBB];
-        let pts = Pts90khz::new(0);
-
-        let err = sender.send_video(&nal, pts, true).unwrap_err();
-        assert_eq!(
-            err.kind,
-            ShellErrorKind::TransportBroken,
-            "send_video: expected TransportBroken, got {:?}",
-            err.kind
-        );
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_video")),
-            "send_video: message should contain 'send_video', got: {err:?}"
-        );
-
-        let err = sender.send_klv(&[0xAA, 0xBB, 0xCC], pts, 0x00).unwrap_err();
-        assert_eq!(err.kind, ShellErrorKind::TransportBroken, "send_klv");
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_klv")),
-            "send_klv: message should contain 'send_klv', got: {err:?}"
-        );
-
-        let err = sender.send_video_to(video_h, &nal, pts, true).unwrap_err();
-        assert_eq!(err.kind, ShellErrorKind::TransportBroken, "send_video_to");
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_video_to")),
-            "send_video_to: message should contain 'send_video_to', got: {err:?}"
-        );
-
-        let err = sender
-            .send_klv_to(klv_h, &[0xAA, 0xBB, 0xCC], pts, 0x00)
-            .unwrap_err();
-        assert_eq!(err.kind, ShellErrorKind::TransportBroken, "send_klv_to");
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_klv_to")),
-            "send_klv_to: message should contain 'send_klv_to', got: {err:?}"
-        );
-
-        let err = sender.send_audio(&[0xFF; 32], pts).unwrap_err();
-        assert_eq!(err.kind, ShellErrorKind::TransportBroken, "send_audio");
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_audio")),
-            "send_audio: message should contain 'send_audio', got: {err:?}"
-        );
-
-        let err = sender.send_audio_to(audio_h, &[0xFF; 32], pts).unwrap_err();
-        assert_eq!(err.kind, ShellErrorKind::TransportBroken, "send_audio_to");
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_audio_to")),
-            "send_audio_to: message should contain 'send_audio_to', got: {err:?}"
-        );
-
-        let err = sender.send_subtitle(b"WEBVTT cue", pts).unwrap_err();
-        assert_eq!(err.kind, ShellErrorKind::TransportBroken, "send_subtitle");
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_subtitle")),
-            "send_subtitle: message should contain 'send_subtitle', got: {err:?}"
-        );
-
-        let err = sender
-            .send_subtitle_to(subtitle_h, b"WEBVTT cue", pts)
-            .unwrap_err();
-        assert_eq!(
-            err.kind,
-            ShellErrorKind::TransportBroken,
-            "send_subtitle_to"
-        );
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_subtitle_to")),
-            "send_subtitle_to: message should contain 'send_subtitle_to', got: {err:?}"
-        );
-
-        let err = sender.send_data(&[0x42; 32], pts).unwrap_err();
-        assert_eq!(err.kind, ShellErrorKind::TransportBroken, "send_data");
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_data")),
-            "send_data: message should contain 'send_data', got: {err:?}"
-        );
-
-        let err = sender.send_data_to(data_h, &[0x42; 32], pts).unwrap_err();
-        assert_eq!(err.kind, ShellErrorKind::TransportBroken, "send_data_to");
-        assert!(
-            matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if msg.contains("send_data_to")),
-            "send_data_to: message should contain 'send_data_to', got: {err:?}"
-        );
-
-        // --- 2 *_handles_for_program methods: must return ProgramNotFound ---
-
-        let err = sender.audio_handles_for_program(1).unwrap_err();
-        assert!(
-            matches!(err, MuxError::ProgramNotFound { program_number: 1 }),
-            "audio_handles_for_program: expected ProgramNotFound{{1}}, got: {err:?}"
-        );
-
-        let err = sender.subtitle_handles_for_program(1).unwrap_err();
-        assert!(
-            matches!(err, MuxError::ProgramNotFound { program_number: 1 }),
-            "subtitle_handles_for_program: expected ProgramNotFound{{1}}, got: {err:?}"
-        );
-    }
-
     /// Every `send_*` names its own site in the poisoned-lock message,
     /// exactly. `contains("send_video")` would also accept `send_video_to…`,
     /// so the message is compared whole.
@@ -2534,6 +2419,7 @@ mod cancel_tests {
         for (site, r) in calls {
             let err = r.unwrap_err();
             let want = alloc::format!("mux_sender: inner lock poisoned during {site}");
+            assert_eq!(err.kind, ShellErrorKind::TransportBroken, "{site}");
             assert!(
                 matches!(&err.source, MuxSenderErrorSource::Transport(TransportError::Broken { msg, .. }) if *msg == want),
                 "{site}: expected {want:?}, got {err:?}"
@@ -2543,6 +2429,18 @@ mod cancel_tests {
                 "{site}: a poisoned lock is not an input-path error"
             );
         }
+        // The program-handle lookups surface a poisoned lock as "no such
+        // program" rather than panicking.
+        let err = sender.audio_handles_for_program(1).unwrap_err();
+        assert!(
+            matches!(err, MuxError::ProgramNotFound { program_number: 1 }),
+            "audio_handles_for_program: expected ProgramNotFound{{1}}, got: {err:?}"
+        );
+        let err = sender.subtitle_handles_for_program(1).unwrap_err();
+        assert!(
+            matches!(err, MuxError::ProgramNotFound { program_number: 1 }),
+            "subtitle_handles_for_program: expected ProgramNotFound{{1}}, got: {err:?}"
+        );
     }
 
     /// Records every byte handed to the transport.

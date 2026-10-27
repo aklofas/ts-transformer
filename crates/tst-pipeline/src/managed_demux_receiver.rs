@@ -674,48 +674,86 @@ mod tests {
         let _ = total_events;
     }
 
-    /// Reconnect during mid-stream PES (partial-packet tail in the
-    /// syncer): the reset_sync call drops those bytes so they don't
-    /// splice into the new connection's framing.
-    ///
-    /// We bound factory rebuilds explicitly via a shared counter
-    /// because `ManagedRecvTransport`'s `max_attempts` budget resets
-    /// per-`recv_bytes` call (it's a local var); without an in-factory
-    /// cap, a `broken_after_exhaust: true` inner that the factory
-    /// keeps rebuilding would loop forever.
+    /// One H.264 access unit: an Annex-B IDR NAL whose body is `len`
+    /// copies of `fill`.
+    fn h264_au(fill: u8, len: usize) -> Vec<u8> {
+        let mut au = vec![0x00, 0x00, 0x00, 0x01, 0x65];
+        au.resize(5 + len, fill);
+        au
+    }
+
+    /// A fresh single-program muxer: one H.264 stream on PID 0x100.
+    fn h264_muxer() -> tst_core::mpegts::mux::Muxer {
+        use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        Muxer::new(b.build().unwrap()).unwrap()
+    }
+
+    /// Push `au` at `pts` and return every TS packet the muxer queued.
+    fn mux_au(m: &mut tst_core::mpegts::mux::Muxer, au: &[u8], pts: i64) -> Vec<[u8; 188]> {
+        use tst_core::mpegts::common::Pts90khz;
+        m.push_video(au, Pts90khz::new(pts), true).unwrap();
+        let mut out = vec![0u8; 188 * 512];
+        let n = m.pull(&mut out);
+        out[..n]
+            .chunks_exact(188)
+            .map(|p| p.try_into().unwrap())
+            .collect()
+    }
+
+    /// A reconnect that cuts a PES short must discard it: the dead
+    /// connection's partial access unit may not leak into a sample, and
+    /// the fresh connection's stream decodes from its own PSI.
     #[test]
     fn reconnect_clears_syncer_buffer_and_demux_state() {
-        // First connection: enough aligned packets to lock + a partial-packet
-        // tail of 187 bytes (< 188, won't form a full packet).
-        let p1_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0100, i as u8)).collect();
-        let mut p1 = chunk_of_aligned(&p1_packets);
-        // 187 bytes — the syncer would otherwise hold these as the
-        // start of packet 6. After reset_sync they MUST be dropped.
-        p1.extend_from_slice(&[0x47; 187]);
+        let pid_of = |p: &[u8; 188]| (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
+        // Connection 1: PAT, PMT and only the first three packets of a PES
+        // carrying a 2000-byte 0xAA access unit, then the first 100 bytes
+        // of its fourth packet: the connection dies mid-packet, leaving a
+        // partial packet in the syncer.
+        let mut m1 = h264_muxer();
+        let mut conn1 = Vec::new();
+        let mut pes_packets = 0;
+        for p in mux_au(&mut m1, &h264_au(0xAA, 2000), 0) {
+            if pid_of(&p) == 0x100 {
+                if pes_packets == 3 {
+                    conn1.extend_from_slice(&p[..100]);
+                    break;
+                }
+                pes_packets += 1;
+            }
+            conn1.extend_from_slice(&p);
+        }
+        assert_eq!(
+            pes_packets, 3,
+            "the 0xAA PES must span more than three packets"
+        );
+
+        // Connection 2: a fresh muxer's PAT, PMT and two complete 0xBB
+        // access units, one TS packet per read. The reconnect boundary
+        // drops the packet in flight (this connection's first PAT), so the
+        // muxer repeats its PSI before the second access unit, as an
+        // encoder's PSI cadence would.
+        let bb_au = h264_au(0xBB, 400);
+        let mut m2 = h264_muxer();
+        let mut conn2: Vec<[u8; 188]> = mux_au(&mut m2, &bb_au, 0);
+        m2.request_psi();
+        conn2.extend(mux_au(&mut m2, &bb_au, 3000));
 
         let inner = ScriptedRecv {
-            packets: vec![p1].into(),
+            packets: vec![conn1].into(),
             broken_after_exhaust: true,
         };
-
-        // Factory invocation count cap so the test terminates. After
-        // 1 successful rebuild + 1 final failure, the shell exhausts
-        // its budget and returns terminal Closed.
+        // One rebuild serves connection 2; the next fails and ends the run.
         let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let calls_cl = calls.clone();
         let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
-            let n = calls_cl.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if n == 0 {
-                // After reconnect, serve a TS stream that starts with a
-                // BAD sync byte (0x00, 0xFF...) before becoming valid. If
-                // the syncer wasn't reset, the dead-tail's 0x47s would
-                // mis-lock onto a fake boundary. After reset, the syncer
-                // hunts cleanly through the bad prefix.
-                let mut bytes = vec![0x00u8; 50];
-                let packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0200, i as u8)).collect();
-                bytes.extend(chunk_of_aligned(&packets));
+            if calls_cl.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                 Ok(ScriptedRecv {
-                    packets: vec![bytes].into(),
+                    packets: conn2.iter().map(|p| p.to_vec()).collect(),
                     broken_after_exhaust: true,
                 })
             } else {
@@ -729,27 +767,43 @@ mod tests {
         let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)));
         let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
-        let mut saw_reconnect = false;
+        let mut discontinuities = 0;
+        let mut samples: Vec<Vec<u8>> = Vec::new();
         let mut iters = 0;
         loop {
             iters += 1;
             assert!(iters < 1000, "test loop should terminate");
             match rx.recv_event() {
-                Ok(Some(DemuxEvent::ReconnectDiscontinuity)) => {
-                    saw_reconnect = true;
-                }
+                Ok(Some(DemuxEvent::ReconnectDiscontinuity)) => discontinuities += 1,
+                Ok(Some(DemuxEvent::Sample {
+                    payload: tst_core::mpegts::demux::SamplePayload::Video { raw, .. },
+                    ..
+                })) => samples.push(raw.to_vec()),
                 Ok(Some(_)) => {}
                 Ok(None) => break,
-                Err(_) => break,
+                Err(e) => {
+                    // A terminal error must be the last thing the receiver
+                    // yields.
+                    assert!(
+                        matches!(rx.recv_event(), Ok(None) | Err(_)),
+                        "an error must be terminal, got {e:?} mid-stream"
+                    );
+                    break;
+                }
             }
         }
-        assert!(saw_reconnect, "reconnect should have surfaced");
-        // The crucial assertion: the demuxer didn't crash with a
-        // stale-state error and the shell reached terminal cleanly. If
-        // the syncer or demuxer state had been left intact, the bad
-        // prefix or the orphan 187-byte tail would have caused either
-        // a phantom sample to emit (mixed bytes) or an Unrecoverable
-        // error inside the demuxer.
+        assert_eq!(discontinuities, 1, "exactly one reconnect boundary");
+        for s in &samples {
+            assert!(
+                !s.contains(&0xAA),
+                "a sample carries bytes of the dead connection's partial PES"
+            );
+        }
+        assert!(
+            samples.contains(&bb_au),
+            "a fresh-connection access unit must decode intact, got {} samples",
+            samples.len()
+        );
         assert!(!rx.is_alive());
     }
 
