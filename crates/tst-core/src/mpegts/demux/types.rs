@@ -329,6 +329,9 @@ impl Default for DemuxerConfig {
 #[derive(Debug)]
 pub(crate) struct ProgramTracker {
     pub program_number: u16,
+    /// PID carrying this program's TS_program_map_section. Several programs
+    /// may share one (H.222.0 §2.4.4.8).
+    pub pmt_pid: u16,
     pub pmt_version: Option<u8>,
     pub pcr_pid: Option<u16>,
     pub streams: Vec<StreamInfo>,
