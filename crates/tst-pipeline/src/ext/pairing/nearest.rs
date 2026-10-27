@@ -102,6 +102,9 @@ impl NearestState {
             && (0..1 << 33).contains(&newest)
             && newest - pts > WRAP_JUMP_TICKS
         {
+            // Every Buffered feed already drains in-tolerance videos, so
+            // the paired branch here is a safety net; in practice these
+            // come out as `UnpairedVideo`.
             while let Some(v) = self.video_buffer.pop_front() {
                 out.extend(self.match_video_against_history(v));
             }
@@ -485,7 +488,7 @@ mod tests {
     fn a_raw_wrap_clears_the_history() {
         let mut p = buffered_pairer(100, 9000);
         p.feed(klv_event((1 << 33) - 5000)); // never used
-        p.feed(klv_event((1 << 33) - 950)); // pairs the buffered video at the wrap
+        p.feed(klv_event((1 << 33) - 950)); // pairs the next video at once (distance 50)
         p.feed(video_event((1 << 33) - 1000)); // pairs at once
         p.feed(video_event((1 << 33) - 500)); // buffered: 450 from the newest KLV
         let out = p.feed(klv_event(0));

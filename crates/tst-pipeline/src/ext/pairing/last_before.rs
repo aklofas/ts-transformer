@@ -1,8 +1,8 @@
 //! Sample-and-hold (last-before-PTS) pairing state machine.
 //!
 //! Keeps the last [`LAST_BEFORE_DEPTH`] KLV samples. Each video event
-//! pairs with the newest one whose PTS is at or before the video PTS
-//! (and within freshness, if configured). Past-only by definition: a
+//! pairs with the one carrying the largest PTS at or before the video
+//! PTS (and within freshness, if configured), or with nothing. Past-only by definition: a
 //! future KLV (PTS > video PTS) cannot satisfy "before". The history
 //! lets a reordered frame (a B-frame whose PTS is below the newest
 //! KLV's) still find the sample that preceded it.
@@ -56,12 +56,21 @@ impl LastBeforeState {
     }
 
     fn handle_video(&mut self, v: VideoSample) -> Vec<PairerOutput> {
+        // The latest-timestamped entry at or before the video, not the
+        // latest-arrived: KLV may arrive out of PTS order. Ties go to the
+        // newer arrival. Freshness is then checked on that entry alone.
         let freshness_ticks = self.freshness_ticks;
         let slot = self
             .history
             .iter_mut()
-            .rev()
-            .find(|s| s.sample.pts <= v.pts)
+            .filter(|s| s.sample.pts <= v.pts)
+            .reduce(|best, s| {
+                if s.sample.pts >= best.sample.pts {
+                    s
+                } else {
+                    best
+                }
+            })
             .filter(|s| match freshness_ticks {
                 Some(n) => super::pts_distance(v.pts, s.sample.pts) <= n,
                 None => true,
@@ -141,6 +150,46 @@ mod tests {
         s.feed(video_event(9000));
         let out = s.feed(video_event(3000));
         assert!(matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 0));
+    }
+
+    #[test]
+    fn out_of_order_klv_pairs_with_the_latest_timestamp() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(klv_event(100));
+        s.feed(klv_event(50));
+        let out = s.feed(video_event(120));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 100),
+            "got {:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn a_stale_late_arrival_does_not_hide_a_fresh_entry() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, Some(30));
+        s.feed(klv_event(100));
+        s.feed(klv_event(50));
+        let out = s.feed(video_event(120));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 100),
+            "got {:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn a_pre_wrap_frame_does_not_pair_with_a_post_wrap_klv() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(klv_event((1 << 33) - 1000));
+        s.feed(klv_event(0));
+        // A B-frame from before the wrap, delivered after the post-wrap KLV.
+        let out = s.feed(video_event((1 << 33) - 200));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == (1 << 33) - 1000),
+            "got {:?}",
+            out
+        );
     }
 
     #[test]
@@ -247,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn flush_emits_unused_current_klv() {
+    fn flush_emits_an_unused_klv() {
         let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
         let _ = s.feed(klv_event(0));
         let out = s.flush();
@@ -256,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn flush_silent_when_current_used() {
+    fn flush_silent_when_the_klv_was_used() {
         let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
         let _ = s.feed(klv_event(0));
         let _ = s.feed(video_event(10));
