@@ -159,9 +159,12 @@ impl crate::shell_error::ShellError for SenderError {
 ///    any buffered partial bundle (same as Drop), marks the sender
 ///    closed so subsequent `send_ts` / `flush` calls return
 ///    [`SenderErrorSource::Transport`]`(`[`tst_core::transport::TransportError::Closed`]`)`,
-///    then closes the transport. Idempotent. Equivalent to Drop —
-///    `AutoCloseable`/`__exit__`/`.use { }` bindings that call
-///    `close()` in their cleanup path do not lose any buffered bytes.
+///    then closes the transport. Idempotent. Called directly in Rust it
+///    is equivalent to Drop. A binding's `close()`
+///    (`AutoCloseable`/`__exit__`/`.use { }`/`tst_sender_close`) cancels
+///    the transport first and then closes, so a partial bundle buffered
+///    against a lost peer is dropped rather than replayed through a
+///    reconnect.
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
 ///    `Send + Sync` [`tst_core::transport::TransportCancel`] handle,
 ///    then `cancel()` from any thread. Wakes a peer thread parked in
