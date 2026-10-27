@@ -322,15 +322,13 @@ fn parse_complete(
         });
     }
     let stream_id = buf[3];
-    // Stream IDs that don't carry the optional header: 0xBE (padding), 0xBF
-    // (private_stream_2), 0xF0–0xF2 (PROG/...), 0xFF (program_stream_directory).
-    // Spec lists more; the common ones for our domain (video 0xE0-0xEF,
-    // audio 0xC0-0xDF, private_stream_1 0xBD, metadata 0xFC) all carry the
-    // optional header.
-    let has_optional_header = matches!(
-        stream_id,
-        0xC0..=0xDF | 0xE0..=0xEF | 0xBD | 0xFC | 0xFD
-    );
+    // H.222.0 Table 2-21: every stream_id from 0xBD to 0xFE carries the
+    // optional PES header except padding (0xBE), private_stream_2 (0xBF),
+    // ECM (0xF0), EMM (0xF1), DSMCC (0xF2) and H.222.1 type E (0xF8).
+    // program_stream_map (0xBC) and program_stream_directory (0xFF) fall
+    // outside the range.
+    let has_optional_header = (0xBD..=0xFE).contains(&stream_id)
+        && !matches!(stream_id, 0xBE | 0xBF | 0xF0 | 0xF1 | 0xF2 | 0xF8);
     let mut body_off = 6;
     let mut pts = None;
     let mut dts = None;
@@ -370,7 +368,17 @@ fn parse_complete(
                 reason: "PES too short for declared header_data_length",
             });
         }
-        if pts_dts_flags == 0b10 || pts_dts_flags == 0b11 {
+        // PTS/DTS live inside the header_data_length bytes; a shorter length
+        // means the bytes that follow are payload, not timestamps.
+        let needed = match pts_dts_flags {
+            0b10 => 5,
+            0b11 => 10,
+            _ => 0,
+        };
+        if header_data_length < needed {
+            header_issues.push(PesHeaderMalformedKind::HeaderDataLengthTooShort);
+        }
+        if (pts_dts_flags == 0b10 || pts_dts_flags == 0b11) && header_data_length >= 5 {
             // PTS in 5 bytes at offset 9.
             if buf.len() < 14 {
                 return Err(DemuxError::MalformedPes {
@@ -395,7 +403,7 @@ fn parse_complete(
                 &buf[9..14],
             )));
         }
-        if pts_dts_flags == 0b11 {
+        if pts_dts_flags == 0b11 && header_data_length >= 10 {
             if buf.len() < 19 {
                 return Err(DemuxError::MalformedPes {
                     pid,
@@ -492,6 +500,68 @@ mod tests {
         s[4] = (pes_packet_length >> 8) as u8;
         s[5] = pes_packet_length as u8;
         s
+    }
+
+    /// H.222.0 §2.4.3.7: PTS/DTS sit inside the PES_header_data_length bytes.
+    /// With PTS_DTS_flags = '10' and header_data_length = 0 the PTS is absent,
+    /// and the 5 bytes after the header are elementary-stream payload.
+    #[test]
+    fn pts_flag_with_zero_header_data_length_is_flagged_and_bytes_stay_payload() {
+        let mut pes = build_pes(0xE0, Some(90_000), b"abc");
+        pes[8] = 0; // header_data_length 0, flags still say PTS
+        let p = parse_complete(0x100, &pes, false).unwrap().unwrap();
+        assert_eq!(p.pts, None);
+        assert_eq!(
+            p.header_issues,
+            vec![PesHeaderMalformedKind::HeaderDataLengthTooShort]
+        );
+        assert_eq!(p.payload, [&pes[9..14], b"abc"].concat());
+    }
+
+    #[test]
+    fn pts_dts_flags_with_header_data_length_5_reads_pts_but_not_dts() {
+        // flags '11' need 10 bytes; 5 covers PTS only.
+        let mut pes = build_pes(0xE0, Some(90_000), b"abcdefghij");
+        pes[7] = 0b11 << 6;
+        let p = parse_complete(0x100, &pes, false).unwrap().unwrap();
+        assert_eq!(p.pts.map(|t| t.as_ticks()), Some(90_000));
+        assert_eq!(p.dts, None);
+        assert!(
+            p.header_issues
+                .contains(&PesHeaderMalformedKind::HeaderDataLengthTooShort)
+        );
+        assert_eq!(
+            p.header_issues
+                .iter()
+                .filter(|k| **k == PesHeaderMalformedKind::HeaderDataLengthTooShort)
+                .count(),
+            1
+        );
+        assert_eq!(p.payload, b"abcdefghij");
+    }
+
+    /// H.222.0 Table 2-21: every stream_id except program_stream_map (0xBC),
+    /// padding (0xBE), private_stream_2 (0xBF), ECM (0xF0), EMM (0xF1),
+    /// DSMCC (0xF2), H.222.1 type E (0xF8) and program_stream_directory (0xFF)
+    /// carries the optional PES header.
+    #[test]
+    fn optional_header_present_for_every_table_2_21_stream_id() {
+        for sid in [0xF3u8, 0xF4, 0xF5, 0xF6, 0xF7, 0xF9, 0xFA, 0xFB, 0xFE] {
+            let p = parse_complete(0x100, &build_pes(sid, Some(90_000), b"xy"), false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                p.pts.map(|t| t.as_ticks()),
+                Some(90_000),
+                "stream_id 0x{sid:02X}"
+            );
+            assert_eq!(p.payload, b"xy");
+        }
+        for sid in [0xBCu8, 0xBE, 0xBF, 0xF0, 0xF1, 0xF2, 0xF8, 0xFF] {
+            let pes = build_pes(sid, None, b"xy");
+            let p = parse_complete(0x100, &pes, false).unwrap().unwrap();
+            assert_eq!(&p.payload[..], &pes[6..], "stream_id 0x{sid:02X}");
+        }
     }
 
     /// A completed PES survives a malformed predecessor
