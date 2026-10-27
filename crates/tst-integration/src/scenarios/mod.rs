@@ -1503,8 +1503,9 @@ impl Scenario for DamagedPesLenient {
 // Scenario — pts-spacing-exceeded (demux)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `kind = "demux"`: an audio PES at PTS 0, five PES without a PTS, then a PES
-/// at PTS 63 001.
+/// `kind = "demux"`: an audio PES at PTS 90 000, five PES without a PTS, then a
+/// PES at PTS 153 001. The non-zero base keeps the PTS-less samples (emitted
+/// with PTS 0) distinct from the first sample in the golden.
 ///
 /// H.222.0 §2.7.4 bounds coded PTS on audio to at most 0.7 s (63 000 ticks)
 /// apart; a PES may omit its PTS while that bound holds. The run here spans
@@ -1533,7 +1534,7 @@ impl Scenario for PtsSpacingExceeded {
         let mut mux = audio_only_muxer(AUDIO_PID);
         // PES 1..=5 get their PTS stripped below; the values pushed for them
         // only keep the muxer's own pacing monotonic.
-        let pts = [0i64, 9_000, 18_000, 27_000, 36_000, 45_000, 63_001];
+        let pts = [90_000i64, 99_000, 108_000, 117_000, 126_000, 135_000, 153_001];
         for p in pts {
             mux.push_audio(&synthetic_adts_frame(), Pts90khz::new(p))
                 .expect("push_audio");

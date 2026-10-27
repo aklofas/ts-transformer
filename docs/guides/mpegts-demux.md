@@ -279,15 +279,16 @@ on most live data.
 | Mode | Rejects | Use case |
 | --- | --- | --- |
 | `Off` (default) | nothing | Triage, real-world capture analysis, live receivers. |
-| `TimingOnly` | `PcrAnomaly`, `PtsAnomaly`, `MissingRequiredPts` (a PTS-less run longer than 0.7 s on audio/video; a missing PTS on any single DVB-subtitle or synchronous-KLV PES), `PcrMalformed`, `PsiChecksumMismatch`, `PusiMidPes` (vestigial — not currently emitted) | Receivers paranoid about clock integrity but tolerant of encoder quirks. |
+| `TimingOnly` | `PcrAnomaly`, `PtsAnomaly`, `MissingRequiredPts` (a PTS-less run longer than 0.7 s on audio/video, measured by the coded PTS that closes it or, until one does, by the program's PCR; a missing PTS on any single DVB-subtitle or synchronous-KLV PES), `PcrMalformed`, `PsiChecksumMismatch`, `PusiMidPes` (vestigial — not currently emitted) | Receivers paranoid about clock integrity but tolerant of encoder quirks. |
 | `DescriptorsOnly` | `StreamTypeMismatch{Sync,Async}OnPid`, `MissingMetadataDescriptor`, `SubtitleMissingDescriptor`, `SubtitleDescriptorAmbiguous` | Spec-compliance gating: did the encoder declare its streams correctly? |
 | `Full` | every variant including future-added ones, except a multi-section PAT (`PsiMultiSectionUnsupported` with `table_id 0x00`), which stays a surface-only event | CI-grade compliance test against a known-good encoder. |
 
 A PES the demuxer found damaged (see `MalformedPes` under Robustness
-behaviours) is dropped in every strict mode rather than delivered, but
-it still updates the PTS baseline and spacing run: damage costs the
-delivery, not the timing. A strict verdict covers only the packet that
-raised it.
+behaviours) is dropped by `TimingOnly` and `DescriptorsOnly` rather than
+delivered, but it still updates the PTS baseline and spacing run: damage
+costs the delivery, not the timing. `Full` fails `feed` with
+`DemuxError::MalformedPes` instead. A strict verdict covers only the
+packet that raised it.
 
 In strict mode, the rejected `NonConformant` event is still pushed onto
 the event queue *before* the error returns from `feed`. This means a
@@ -391,11 +392,15 @@ join halves of two sections.
 **PUSI mid-PES and damaged PES.** A new PUSI-set TS packet arrives
 before the previous PES's `PES_packet_length` has been satisfied (or a
 CC jump or dropped packets left it short or gapped). The demuxer starts
-fresh on the new PUSI, but a PES it knows is damaged is no longer
-discarded silently: it emits `NonConformantIssue::MalformedPes { pid,
-reason }` in wire order, before whatever sample the next PES yields, so
-a consumer sees the loss at the point it happened. Lenient mode drops
-the damaged partial and continues; every strict mode drops it from delivery, and `Full` also rejects with `StrictRejection`. An
+fresh on the new PUSI and reports a PES it knows is damaged as
+`NonConformantIssue::MalformedPes { pid, reason }` in wire order, so a
+consumer sees the loss at the point it happened. Lenient mode (`Off`)
+delivers the damaged PES with the marker immediately before that PES's
+own first sample (or on its own when the PES yields no event, such as a
+synchronous-KLV PES whose AU cells only buffer). `TimingOnly` and
+`DescriptorsOnly` queue the marker and drop the sample. `Full` makes
+`feed` return `DemuxError::MalformedPes`, so under `Full` a continuity
+gap inside a PES fails `feed`. An
 unbounded (length-zero) video PES that simply ends at the next PUSI is
 the normal path and is not damaged.
 (`NonConformantIssue::PusiMidPes` exists in the enum but is vestigial —
@@ -639,7 +644,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 In priority order:
 
-1. Component descriptor (tag 0x50) — UTF-8 text after the 6-byte header.
+1. Component descriptor (tag 0x50) — text after the 6-byte header. A
+   leading EN 300 468 character-table selector is honoured: 0x15 (UTF-8)
+   is decoded, the ISO 8859 selectors only when the text is ASCII, and the
+   multi-byte selectors 0x11–0x14 fall through to the next source.
 2. Stream Identifier descriptor (tag 0x52) — formatted as `tag=N`.
 3. Metadata descriptor (tag 0x26) — generic `"KLV"` label.
 4. ISO 639 Language (tag 0x0A) — 3-byte language code.

@@ -31,10 +31,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A PES header whose `PES_header_data_length` ends before the PTS no longer yields a PTS read past the header.
 - PES `stream_id` handling follows Table 2-21.
-- A duplicate packet that carries a discontinuity indicator is no longer dropped as a duplicate.
-- A scrambled packet no longer feeds the PCR check.
+- A byte-identical duplicate packet that carries `discontinuity_indicator` is discarded instead of replayed into the PES (H.222.0 §2.4.3.5).
+- A PCR carried in a scrambled packet now updates the time base (the adaptation field is never scrambled, §2.4.3.2).
 - A strict verdict applies only to the packet that raised it.
-- `feed_aligned` no longer leaves residue from a previous call.
+- `feed_aligned` discards a partial packet left by an earlier `feed`.
 - A PAT is identified by transport stream id, version and CRC, not by version alone.
 - A continuity gap on a PSI PID resets the section assembler so a splice cannot join two sections.
 - A PAT section outside its `last_section_number` range is reported; unparseable PSI is reported as `Malformed` instead of being ignored.
@@ -44,7 +44,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The KLV link heuristic reads only the descriptor's private data; `MissingMetadataDescriptor` fires only when the descriptor is absent and no link can be inferred.
 - AV1 binding streams are walked as `ts_open_bitstream_unit`s, and truncation and invalid emulation prevention are reported.
 - NAL units shorter than their header are reported as `Truncated`.
-- Component descriptor text honours the EN 300 468 Annex A character-set selector.
+- Component descriptor text honours the EN 300 468 Annex A character-set selector. The multi-byte selectors (0x11 ISO/IEC 10646, 0x12 KS X 1001, 0x13 GB-2312, 0x14 Big5) are not transcoded: the label comes from the next descriptor.
 - Aggregate PES overflow reports a discontinuity for every PID it drops.
 - DVB subtitle and teletext PES envelopes are checked and reported.
 
@@ -63,8 +63,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-core
 
-- A PES the demuxer finds damaged (a continuity gap, a short or gapped PES cut off by the next PUSI) is now announced by `NonConformantIssue::MalformedPes` in wire order, before the next sample, instead of being discarded silently. Strict modes drop the damaged PES; it still updates the PTS baseline and spacing run, so damage costs delivery, not timing.
-- `MissingRequiredPts` now means a PTS-less run longer than 0.7 s on audio and video, and a missing PTS on a single PES for DVB subtitles and synchronous KLV. Its message text covers both rules.
+- A PES the demuxer finds damaged (a continuity gap, a short or gapped PES cut off by the next PUSI) is now announced by `NonConformantIssue::MalformedPes` in wire order; it was delivered silently before. Lenient mode (`Off`) still delivers it, with the marker immediately before that PES's own first sample. `TimingOnly` and `DescriptorsOnly` queue the marker and drop the sample; the PES still updates the PTS baseline and spacing run, so damage costs delivery, not timing. `Full` makes `feed` return `DemuxError::MalformedPes`.
+- Under `StrictMode::Full`, a continuity gap inside a PES now fails `feed` with `DemuxError::MalformedPes`. A receiver on a lossy link that runs `Full` sees an error where it used to get a damaged sample.
+- `MissingRequiredPts` now means a PTS-less run longer than 0.7 s on audio and video, and a missing PTS on a single PES for DVB subtitles and synchronous KLV. Its message text covers both rules. A PTS-less run is measured by the coded PTS that closes it and, until one does, by the program's PCR, so a stream that never stamps a PTS is reported once 0.7 s of program time has passed.
 - A signalled time-base discontinuity reseeds the PCR check and resets the PTS baselines. A PES in flight when it arrives is judged on the old clock and the PTS baseline clears when it completes, so ordinary unbounded video no longer raises `PtsAnomaly` across a legal splice.
 - LATM: with the record position unknown (stream start, after a continuity gap) the demuxer resyncs on a confirmed LOAS syncword and raises `LatmFraming { MissingSyncword }` only after two consecutive PES without a confirmed record. `Truncated` and `AudioMuxLengthOverrun` are no longer reported for a record that continues into the next PES.
 - AU cells are reassembled per (PID, `metadata_service_id`) with one per-PID `sequence_number` counter (H.222.0 §2.12.4.2). A sequence gap drops every in-flight service's AU on that PID and reports one `MultiCellAu { SequenceGap }`; a First or Complete cell whose number jumps while an AU is in flight reports `SequenceGap` instead of `ConcurrentFirst`.
