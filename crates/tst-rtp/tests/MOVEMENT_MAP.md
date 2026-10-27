@@ -8,6 +8,18 @@ its members from `tests/<domain>/`. A fourth, single-file binary,
 probes: a thread-count delta is only reliable with no sibling test building a
 server in the same process, so it keeps its own binary.
 
+## Current binaries
+
+- `deprecated_aliases`
+- `net_conformance`
+- `net_h264`
+- `net_rtp`
+- `net_rtsp_client`
+- `net_rtsp_server`
+- `net_rtsp_server_runtime`
+
+The rest of this file records the consolidation that produced them; it is history, and the list above is the current layout.
+
 ## What changed (and what did not)
 
 - **Test bodies are unchanged.** Pure relocation.

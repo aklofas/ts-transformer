@@ -106,7 +106,8 @@ pub struct RistConfig {
     pub encryption: Option<EncryptionKey>,
     /// RTCP CNAME.
     pub cname: Option<String>,
-    /// Retransmit bandwidth cap, kbps (librist `recovery_maxbitrate`).
+    /// Ceiling on payload plus retransmissions, kbps (librist
+    /// `recovery_maxbitrate`).
     /// [`Self::bandwidth_kbps`] is an alias.
     pub recovery_maxbitrate_kbps: Option<u32>,
     /// Receiver session timeout.

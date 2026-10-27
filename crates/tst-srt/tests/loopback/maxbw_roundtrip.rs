@@ -3,8 +3,9 @@
 //!
 //! libsrt rejects any `SRTO_MAXBW < -1` with `MJ_NOTSUP / MN_INVAL` (see
 //! `socketconfig.cpp`), so the previous `Infinite` variant always errored at
-//! runtime. This test pins the only correct way to express "no cap" — the
-//! `InputRelative` variant, which maps to libsrt's sentinel `0` — through a real
+//! runtime. libsrt's `0` derives the cap from the input rate rather than
+//! meaning "no cap". This test checks only that the `InputRelative` variant,
+//! which maps to that `0`, is accepted: the connection succeeds through a real
 //! handshake against a local listener.
 
 use std::time::Duration;

@@ -18,7 +18,7 @@ use std::time::Duration;
 /// `SrtSocketBuilder::new()` starts from libsrt defaults; each setter mutates the
 /// underlying [`SrtSocketConfig`] in place and returns `&mut Self` so calls can be
 /// chained. The terminal call is [`SrtSocketBuilder::connect`], which takes
-/// `&self` (clones the inner config) and opens the socket.
+/// `&self` (borrows the inner config) and opens the socket.
 ///
 /// The `&mut self -> &mut Self` shape translates directly to Kotlin's `apply`
 /// scope, Swift's `var b = …; b.x(); b.y();`, Java's chain on a fresh local,
@@ -240,11 +240,9 @@ impl SrtSocketBuilder {
 
     /// Terminal call: open and connect the socket.
     ///
-    /// Takes `&self` (not `self`) so the builder can be reused; clones the
-    /// inner config into [`SrtSocket::connect_with`]. Cloning is cheap — the
-    /// config is a flat `SrtSocketConfig` with at most three short heap
-    /// allocations (the optional `Passphrase`, `StreamId`, and
-    /// `PacketFilter`, all `String`-backed).
+    /// Takes `&self` (not `self`) so the builder can be reused; borrows the
+    /// inner config into [`SrtSocket::connect_with`] without copying it. Only
+    /// [`Self::config`] clones.
     ///
     /// # C ABI
     ///
@@ -269,7 +267,7 @@ impl SrtSocketBuilder {
 /// `SrtListenerBuilder::new()` starts from libsrt defaults; each setter mutates
 /// the underlying [`SrtListenerConfig`] in place and returns `&mut Self` so calls
 /// can be chained. The terminal call is [`SrtListenerBuilder::bind`], which takes
-/// `&self` (clones the inner config) and binds the listener.
+/// `&self` (borrows the inner config) and binds the listener.
 ///
 /// The `&mut self -> &mut Self` shape mirrors [`SrtSocketBuilder`] and translates
 /// directly to Kotlin's `apply` scope, Swift's `var b = …; b.x(); b.y();`,
@@ -406,11 +404,9 @@ impl SrtListenerBuilder {
 
     /// Terminal call: bind, listen, return the SrtListener.
     ///
-    /// Takes `&self` (not `self`) so the builder can be reused; clones the
-    /// inner config into [`SrtListener::bind_with`]. Cloning is cheap — the
-    /// config is a flat `SrtListenerConfig` with at most two short heap
-    /// allocations (the optional `Passphrase` and `PacketFilter`, both
-    /// `String`-backed).
+    /// Takes `&self` (not `self`) so the builder can be reused; borrows the
+    /// inner config into [`SrtListener::bind_with`] without copying it. Only
+    /// [`Self::config`] clones.
     ///
     /// # C ABI
     ///

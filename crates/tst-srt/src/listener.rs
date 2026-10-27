@@ -40,8 +40,8 @@ const SRT_EPOLL_IN: c_int = 0x1;
 ///    no `SRTO_LINGER` payload to drain.
 /// 2. **Explicit close** — call [`Self::close`] (consuming `self`). Same
 ///    `srt_close`, but it DOES latch `is_cancelled()` — a caller asked for
-///    it. Always returns `Ok(())` (the inner `srt_close` rc is currently
-///    swallowed; see method doc).
+///    it. Returns `()` (the inner `srt_close` rc is consumed by the
+///    cancel-handle closer; see method doc).
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
 ///    [`tst_core::ResourceCancel`] (clone-able, `Send + Sync`), then
 ///    `cancel()` from any thread. Closes the listening socket; a peer

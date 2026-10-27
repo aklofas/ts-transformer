@@ -5,15 +5,15 @@
 //!
 //! 1. **Port rotation.** Re-binding a port right after `rist_destroy` races
 //!    librist's socket teardown (the "ephemeral-bind + librist-rebind race"
-//!    `loopback.rs` documents), so every receiver factory call takes the
+//!    `net_loopback.rs` documents), so every receiver factory call takes the
 //!    NEXT even port from a private range (33050–33076; senders 33080–33096),
-//!    disjoint from `loopback.rs` 33010–33029, `cancel.rs` 33040–33048, the
+//!    disjoint from `net_loopback.rs` 33010–33029, `net_cancel.rs` 33040–33046, the
 //!    C test's 33100 and the pytest suite 34110–34150. Simple profile needs
 //!    EVEN ports (`rist.c:866`).
 //! 2. **Handshake warm-up inside `feed`.** A receiver parks at once (each
 //!    `recv_bytes` is a 100 ms tick), but DATA flows only after the ~500 ms
 //!    Simple-profile handshake and librist may drop the first packets while
-//!    it settles (`loopback.rs` accepts 3 of 5). `feed` therefore builds a
+//!    it settles (`net_loopback.rs` accepts 3 of 5). `feed` therefore builds a
 //!    sender to the current port, waits 600 ms, then sends the payload 10×
 //!    at 50 ms spacing (~1.1 s) — within the kit's `WATCHDOG` (10 s) for the
 //!    receive that follows. The kit's feed contract is "delivers SOMETHING

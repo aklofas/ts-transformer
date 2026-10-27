@@ -120,12 +120,12 @@ impl SrtTransport {
     /// Wrap an already-connected `SrtSocket`. Caller is responsible for
     /// configuring it (passphrase, latency, etc.) before passing in.
     ///
-    /// `max_payload` is read from the socket's negotiated `SRTO_PAYLOADSIZE`
-    /// (via [`SrtSocket::payload_limit`]). On a fresh post-handshake socket
-    /// this matches whatever both peers agreed during the SRT handshake —
-    /// libsrt's default of 1316 bytes for unconfigured sockets, or a
-    /// configured value like 1456 when the `payloadsize=` URL key (or
-    /// [`SrtSocketConfig::payload_size`]) was set on either side.
+    /// `max_payload` is this side's local send budget: the `SRTO_PAYLOADSIZE`
+    /// read back after the handshake (via [`SrtSocket::payload_limit`]). It is
+    /// not negotiated with the peer. It is libsrt's default of 1316 bytes for
+    /// unconfigured sockets, or the configured value (for example 1456) when
+    /// the `payloadsize=` URL key (or [`SrtSocketConfig::payload_size`]) was
+    /// set on this side.
     ///
     /// To send smaller messages, configure a smaller `payload_size` before
     /// connecting.

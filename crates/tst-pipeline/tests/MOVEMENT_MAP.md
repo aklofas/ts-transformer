@@ -6,6 +6,18 @@ member files from `tests/<domain>/`, plus `tests/conformance.rs`, the
 transport conformance kit over mock transports, which stays a binary of its
 own like the kit binary in every transport crate.
 
+## Current binaries
+
+- `conformance`
+- `deprecated_aliases`
+- `errors`
+- `managed`
+- `pairing`
+- `reconnect`
+- `shells`
+
+The rest of this file records the consolidation that produced them; it is history, and the list above is the current layout.
+
 ## What changed (and what did not)
 
 - **Test bodies are unchanged by the move.** Each member file lost only its
