@@ -51,8 +51,12 @@ const PORT_V6_SIMPLE_REFUSED: u16 = 33024;
 /// Sender-only (no receiver bound). EVEN, same rule as PORT_SIMPLE.
 const PORT_BURST: u16 = 33026;
 /// Even data port whose RTCP companion (port + 1) the child holds itself.
+/// Used only by the collision test, which does not run on Windows.
+#[cfg(not(windows))]
 const PORT_SIMPLE_RTCP_HELD: u16 = 33028;
+#[cfg(not(windows))]
 const RTCP_CHILD_ENV: &str = "TST_RIST_RTCP_COLLISION_CHILD";
+#[cfg(not(windows))]
 const RTCP_CHILD_OK: &str = "RTCP-COLLISION-REFUSED-THEN-BOUND";
 
 /// 188 bytes of arbitrary payload — one MPEG-TS packet's worth.
