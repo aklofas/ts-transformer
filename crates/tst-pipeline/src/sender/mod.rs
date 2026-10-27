@@ -262,8 +262,11 @@ impl<T: Transport> Sender<T> {
     /// this call's bytes (a "safe" retry would duplicate that tail once
     /// sync is eventually acquired). Either way, do not resend the same
     /// `bytes`. `Some(false)` means the failure happened before `bytes` was
-    /// touched (e.g. draining bundles retained by a PREVIOUS call), so
-    /// retrying the same input is safe. To recover after `Backpressure`,
+    /// touched (e.g. draining bundles retained by a PREVIOUS call, or
+    /// STRICT mode's [`TsFramingError::SyncLost`], which checks every
+    /// packet boundary of the call before taking any of it and leaves the
+    /// sender unchanged), so retrying the same input — or a corrected
+    /// version of it — is safe. To recover after `Backpressure`,
     /// back off and then call [`Self::flush`] (or the next `send_ts` with
     /// *new* data); the retained bundles drain first, exactly once, in
     /// order.
@@ -328,6 +331,8 @@ impl<T: Transport> Sender<T> {
                 .map(|(bundles, _stats)| bundles)
                 .map_err(|e| SenderError::from(e).with_input_consumed(true))?
         } else {
+            // push_strict validates the whole call before committing, so a
+            // SyncLost leaves `bytes` untouched.
             self.framing
                 .push_strict(bytes)
                 .map_err(|e| SenderError::from(e).with_input_consumed(false))?
@@ -593,7 +598,8 @@ mod tests {
         }
     }
 
-    /// Build N synthetic TS packets starting with 0x47.
+    /// Build N synthetic TS packets starting with 0x47 (the same bytes as
+    /// `framing::tests::synthetic_ts_stream`).
     fn ts_packets(n: usize) -> Vec<u8> {
         let mut buf = Vec::with_capacity(n * 188);
         for i in 0..n {
@@ -603,6 +609,28 @@ mod tests {
             }
         }
         buf
+    }
+
+    #[test]
+    fn strict_send_ts_error_is_unconsumed_and_a_fixed_retry_delivers() {
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cfg = SenderConfig {
+            framing_mode: TsFramingMode::Strict,
+            ..SenderConfig::default()
+        };
+        let mut s = Sender::new(Recorder(sent.clone()), cfg);
+        let good7 = ts_packets(7);
+        let mut bad = good7.clone();
+        bad.extend(ts_packets(7));
+        bad[(7 + 3) * 188] = 0x00;
+        let e = s.send_ts(&bad).unwrap_err();
+        assert_eq!(e.input_consumed, Some(false));
+        assert!(
+            sent.lock().unwrap().is_empty(),
+            "no bundle of a rejected call goes out"
+        );
+        s.send_ts(&good7).unwrap();
+        assert_eq!(*sent.lock().unwrap(), good7);
     }
 
     #[test]
