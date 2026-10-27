@@ -61,6 +61,9 @@ expected_sym() { # <trait method> -> required C symbol, or "SKIP:<reason>"
         segment_duration)           echo "SKIP:read by the MuxPublisher shell; the C builder already sets it" ;;
         # The MuxPublisher shell sends this signal itself on its first video AU.
         keyframe_driven)            echo "SKIP:sent by the MuxPublisher shell; no raw-C caller needs it" ;;
+        # The MuxPublisher shell cuts discontinuous segments from the media
+        # timeline it tracks; the raw-C push path has no such timeline.
+        cut_segment_discontinuous)  echo "SKIP:called by the MuxPublisher shell; raw C has no timeline signal (deferred)" ;;
         *)                          echo "" ;;
     esac
 }

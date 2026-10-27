@@ -12,11 +12,12 @@ RUST_FILE="$ROOT/crates/tst-core/src/publisher/mod.rs"
 JAVA_FILE="$ROOT/bindings/jvm/src/main/java/org/tstrans/hls/Publisher.java"
 
 # Rust trait methods, converted to camelCase.
-# Rust-only trait methods, left out of the comparison: `segment_duration` and
-# `keyframe_driven` are called inside the Rust mux publisher shell on the Rust
-# publisher it wraps; no Java object implements the trait for that shell, the
-# HLS builder already sets the duration, and the binding mux publishers wrap
-# that shell, which sends the signal.
+# Rust-only trait methods, left out of the comparison: `segment_duration`,
+# `keyframe_driven` and `cut_segment_discontinuous` are called inside the Rust
+# mux publisher shell on the Rust publisher it wraps; no Java object implements
+# the trait for that shell, the HLS builder already sets the duration, and the
+# binding mux publishers wrap that shell, which sends the signal and cuts from
+# the media timeline it tracks.
 rust_methods=$(awk '
   /^pub trait Publisher/ { in_trait = 1; next }
   in_trait && /^}/ { in_trait = 0 }
@@ -29,7 +30,7 @@ rust_methods=$(awk '
     for (i = 2; i <= n; i++) out = out toupper(substr(parts[i], 1, 1)) substr(parts[i], 2)
     print out
   }
-' "$RUST_FILE" | grep -vx -e segmentDuration -e keyframeDriven | sort -u)
+' "$RUST_FILE" | grep -vx -e segmentDuration -e keyframeDriven -e cutSegmentDiscontinuous | sort -u)
 
 # Java interface methods: `<Type> <name>(` lines inside the interface body,
 # skipping `close` (AutoCloseable, not a trait method) and comments.
