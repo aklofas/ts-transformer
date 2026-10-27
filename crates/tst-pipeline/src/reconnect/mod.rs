@@ -1079,9 +1079,9 @@ impl<T: Transport + 'static> Transport for ManagedTransport<T> {
 
     fn max_payload(&self) -> usize {
         // The cached ceiling — NEVER the `inner` lock (locking invariant
-        // 4). `RawSender::send` and `MuxSender`'s bundle sizing call this
-        // on every send (`Sender` does not — its framer emits fixed
-        // `SRT_BUNDLE_BYTES` bundles), and the background drain worker
+        // 4). `RawSender::send`, `MuxSender`'s bundle sizing and `Sender`'s
+        // per-bundle split call this on every send, and the background
+        // drain worker
         // holds `inner` across one inner send that is unbounded against a
         // peer which stops reading. Answering from `inner` therefore put
         // the producer straight back behind a stalled sink — the exact
