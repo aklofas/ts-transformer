@@ -3,6 +3,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// `tests/fixtures/<rel>` under the crate root.
+pub fn fixture_path(rel: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(rel)
+}
+
 /// `tests/fixtures/audio/<name>` under the crate root.
 pub fn audio_fixture_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
