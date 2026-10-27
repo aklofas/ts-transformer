@@ -180,8 +180,7 @@ impl super::demuxer::Demuxer {
                 if pes.has_pid(stream.pid) {
                     state.pts_baseline_clears_after_pes = true;
                 } else {
-                    state.last_pts = None;
-                    state.pts_less_since_pts = false;
+                    state.clear_pts_baseline();
                 }
             }
         }
@@ -193,8 +192,7 @@ impl super::demuxer::Demuxer {
         if let Some(state) = self.pid_state.get_mut(&pid)
             && core::mem::take(&mut state.pts_baseline_clears_after_pes)
         {
-            state.last_pts = None;
-            state.pts_less_since_pts = false;
+            state.clear_pts_baseline();
         }
     }
 

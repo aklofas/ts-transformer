@@ -53,8 +53,9 @@ pub(crate) const TELETEXT_DATA_FIELD_MALFORMED: &str =
 enum PtsRule {
     /// Every PES must carry a PTS.
     PerPes,
-    /// PES may omit the PTS, but the coded PTS around a PTS-less run must
-    /// stay within [`PTS_SPACING_LIMIT_90KHZ`].
+    /// PES may omit the PTS, but a PTS-less run must stay within
+    /// [`PTS_SPACING_LIMIT_90KHZ`], measured by the coded PTS around it or,
+    /// until one closes it, by the program's PCR.
     Spacing,
     /// No PTS requirement.
     None,
@@ -63,8 +64,11 @@ enum PtsRule {
 /// The PTS rule for a stream of `kind` declared with PMT `stream_type`.
 ///
 /// - Audio and video: H.222.0 §2.7.4 only bounds the spacing of coded PTS
-///   (0.7 s); a PES without one is fine as long as that bound holds. A gap
-///   between coded PTS with no PTS-less PES inside it is not diagnosed: the
+///   (0.7 s); a PES without one is fine as long as that bound holds. A run
+///   of PTS-less PES is judged by the coded PTS that closes it, and is also
+///   timed by the program's PCR from its first PES, so a run that never
+///   closes is caught once 0.7 s of program time passes. A gap between
+///   coded PTS with no PTS-less PES inside it is not diagnosed: the
 ///   still-picture and low-frame-rate exceptions of §2.7.4 cannot be told
 ///   apart from such a gap.
 /// - DVB subtitles: EN 300 743 requires a PTS on every subtitle PES.
@@ -203,7 +207,15 @@ impl super::demuxer::Demuxer {
                     // strict one returns the error here and the remaining
                     // outcomes of this packet go with it (strict is fatal
                     // for the stream anyway).
-                    self.surface_malformed_pes(pid, reason)?;
+                    if let Err(err) = self.surface_malformed_pes(pid, reason) {
+                        // The PUSI still ends the PES in flight: settle a
+                        // pending time-base reset first, so a caller that
+                        // keeps feeding is judged on the new clock.
+                        if settles {
+                            self.settle_pts_baseline(pkt.pid);
+                        }
+                        return Err(err);
+                    }
                     if is_damage_reason(reason) {
                         drop_next_complete = Some(pid);
                     }
@@ -220,7 +232,8 @@ impl super::demuxer::Demuxer {
     /// is the reason its payload is missing bytes: the `MalformedPes` marker
     /// is queued directly before the PES's first `Sample`/`Metadata`, after
     /// any other issue the PES raised, or on its own if the PES yields no
-    /// sample.
+    /// event (a damaged synchronous-KLV PES whose AU cells only buffer gets
+    /// a standalone marker).
     pub(super) fn handle_complete_pes(&mut self, pes: PesPayload, damage: Option<&'static str>) {
         let pid = pes.pid;
         let mut damage = damage;
@@ -279,13 +292,46 @@ impl super::demuxer::Demuxer {
                 stream,
                 NonConformantIssue::MissingRequiredPts { pid: pes.pid },
             ),
-            (PtsRule::Spacing, None) => self.pid_state_mut(pes.pid).pts_less_since_pts = true,
+            (PtsRule::Spacing, None) => {
+                // H.222.0 §2.7.4 bounds the interval between coded PTS. A
+                // run that never ends in a coded PTS (a stream that never
+                // stamps one, or stops stamping) breaks that bound once
+                // 0.7 s of program time has passed, and the PCR is the only
+                // clock left to measure it: the run is timed from the PCR
+                // seen at its first PES.
+                let pcr_now = self.program_pcr_90khz(stream.program_number);
+                let state = self.pid_state_mut(pes.pid);
+                state.pts_less_since_pts = true;
+                let overdue = match (state.pts_less_run_pcr, pcr_now) {
+                    _ if state.pts_less_run_reported => false,
+                    (None, now) => {
+                        state.pts_less_run_pcr = now;
+                        false
+                    }
+                    (Some(start), Some(now)) => {
+                        pts_diff_33bit(now, start) > PTS_SPACING_LIMIT_90KHZ
+                    }
+                    (Some(_), None) => false,
+                };
+                if overdue {
+                    state.pts_less_run_pcr = None;
+                    state.pts_less_run_reported = true;
+                    self.queue_nonconformant(
+                        stream,
+                        NonConformantIssue::MissingRequiredPts { pid: pes.pid },
+                    );
+                }
+            }
             (PtsRule::Spacing, Some(now)) => {
                 // A PTS-less run is closed by this PTS: judge the spacing of
-                // the coded PTS around it once, before this PES's sample.
+                // the coded PTS around it once, before this PES's sample,
+                // unless the PCR timer already reported the run.
                 let state = self.pid_state_mut(pes.pid);
                 let closes_run = core::mem::take(&mut state.pts_less_since_pts);
+                let reported = core::mem::take(&mut state.pts_less_run_reported);
+                state.pts_less_run_pcr = None;
                 if closes_run
+                    && !reported
                     && let Some(last) = state.last_pts
                     && pts_diff_33bit(now.as_ticks() as u64, last as u64) > PTS_SPACING_LIMIT_90KHZ
                 {
@@ -361,6 +407,13 @@ impl super::demuxer::Demuxer {
         } else {
             (pts, pes.dts)
         }
+    }
+
+    /// The last PCR of `program`'s PCR_PID as 33-bit 90 kHz ticks (the PCR
+    /// base, H.222.0 §2.4.3.5); `None` before its first PCR.
+    fn program_pcr_90khz(&self, program: u16) -> Option<u64> {
+        let pcr_pid = self.programs.get(&program)?.pcr_pid?;
+        self.pcr.last(pcr_pid).map(|pcr| pcr / 300)
     }
 
     /// A damaged PES a strict mode drops from delivery. Damage loses payload
@@ -1507,6 +1560,115 @@ mod tests {
         let ev = drain_all_events(&mut d);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// Audio PES on 0x101 with `pts`, each preceded by a PCR on 0x101 (the
+    /// program's PCR_PID) stepping evenly from 0 to `pcr_span_27mhz`.
+    fn audio_run_under_pcr(pts: &[Option<u64>], pcr_span_27mhz: u64) -> Vec<[u8; 188]> {
+        let steps = pts.len().saturating_sub(1).max(1) as u64;
+        let mut cc = 0;
+        let mut pkts = Vec::new();
+        for (i, p) in pts.iter().enumerate() {
+            pkts.push(ts_packet(&PktSpec {
+                pid: 0x101,
+                pcr: Some(pcr_span_27mhz * i as u64 / steps),
+                ..Default::default()
+            }));
+            pkts.extend(audio_pes(&mut cc, *p));
+        }
+        pkts
+    }
+
+    /// H.222.0 §2.7.4: an audio stream that never stamps a PTS breaks the
+    /// 0.7 s bound once 0.7 s of program time (the PCR) has passed.
+    #[test]
+    fn pts_less_stream_longer_than_0_7_s_of_pcr_raises_missing_required_pts_once() {
+        let pkts = audio_run_under_pcr(&[None; 11], 27_000_000);
+        let (result, ev) = feed_audio(StrictMode::Off, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
+    }
+
+    #[test]
+    fn pts_less_stream_within_0_7_s_of_pcr_raises_nothing() {
+        let pkts = audio_run_under_pcr(&[None; 11], 13_500_000);
+        let (result, ev) = feed_audio(StrictMode::TimingOnly, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// A run that follows a coded PTS and never closes is timed by the PCR
+    /// too; a PTS that closes it late does not report it a second time.
+    #[test]
+    fn unclosed_pts_less_run_after_a_coded_pts_is_timed_by_the_pcr() {
+        let mut pts = vec![Some(0)];
+        pts.extend([None; 10]);
+        let pkts = audio_run_under_pcr(&pts, 54_000_000);
+        let (result, ev) = feed_audio(StrictMode::Off, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
+
+        pts.push(Some(200_000));
+        let pkts = audio_run_under_pcr(&pts, 54_000_000);
+        let (result, ev) = feed_audio(StrictMode::Off, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
+    }
+
+    #[test]
+    fn one_fps_stream_with_every_pes_timestamped_under_a_pcr_raises_nothing() {
+        let pkts = audio_run_under_pcr(&[Some(0), Some(90_000), Some(180_000)], 54_000_000);
+        let (result, ev) = feed_audio(StrictMode::TimingOnly, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// Full mode returns the damage error at the PUSI that ends the PES
+    /// straddling a time-base reset; the PUSI still settles the old-clock
+    /// baseline, so a caller that keeps feeding is judged on the new clock.
+    #[test]
+    fn strict_damage_error_still_settles_a_pending_timebase_reset() {
+        let mut d = audio_demuxer(StrictMode::Full);
+        let pcr = |disc, v| {
+            ts_packet(&PktSpec {
+                pid: 0x101,
+                discontinuity: disc,
+                pcr: Some(v),
+                ..Default::default()
+            })
+        };
+        let mut cc = 0;
+        let mut pkts = vec![pcr(false, 0)];
+        pkts.extend(audio_pes(&mut cc, Some(900_000)));
+        let damaged = pes_to_packets(0x101, cc, &three_packet_pes(903_000));
+        pkts.push(damaged[0]);
+        // H.222.0 §2.4.3.5: a new system time base with the old-clock PES in
+        // flight; that PES then loses its middle packet.
+        pkts.push(pcr(true, 2_700_000_000));
+        pkts.push(damaged[2]);
+        cc = (cc + 3) & 0x0F;
+        // The next PES's PUSI ends the damaged one; it is still in flight
+        // when `feed` returns the error.
+        let next = pes_to_packets(0x101, cc, &three_packet_pes(90_000));
+        pkts.push(next[0]);
+        let err = feed_packets(&mut d, &pkts).unwrap_err();
+        assert!(
+            matches!(err, DemuxError::MalformedPes { pid: 0x101, .. }),
+            "{err:?}"
+        );
+        drain_all_events(&mut d);
+
+        let result = feed_packets(&mut d, &next[1..]);
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(sample_index(&ev, 0x101, 90_000).is_some(), "{ev:?}");
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
+            "{ev:?}"
+        );
     }
 
     /// EN 300 743: every DVB subtitle PES carries a PTS.

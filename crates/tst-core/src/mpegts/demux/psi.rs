@@ -412,10 +412,11 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 ///   1. Component descriptor (tag 0x50, ETSI EN 300 468 §6.2.8) — body
 ///      starting at offset 6 is free text. A leading character-table
 ///      selector (EN 300 468 Annex A.2, Table A.3) is consumed: 0x15
-///      selects UTF-8, and the ISO 8859 selectors are accepted only when
-///      the text is ASCII (no transcoding). Any other selector, or text
-///      the selector cannot be decoded as, falls through to the next
-///      source. Text starting at 0x20 or above is the default table,
+///      selects UTF-8, and the ISO 8859 selectors (0x01..=0x0B, 0x10) are
+///      accepted only when the text is ASCII (no transcoding). The
+///      multi-byte selectors 0x11..=0x14, any other selector, and text the
+///      selector cannot be decoded as fall through to the next source.
+///      Text starting at 0x20 or above is the default table,
 ///      read as UTF-8.
 ///   2. Stream Identifier descriptor (tag 0x52, ETSI EN 300 468 §6.2.40) —
 ///      single `component_tag` byte rendered as `"tag=NN"`.
@@ -472,9 +473,11 @@ pub fn extract_user_label(descs: &[RawDescriptor]) -> Option<String> {
     None
 }
 
-/// Decodes DVB text per the EN 300 468 Annex A.2 character-table selector.
-/// `None` when the selector is unsupported or the text cannot be decoded
-/// without transcoding.
+/// Decodes DVB text per the EN 300 468 Annex A.2 character-table selector:
+/// the default table and 0x15 as UTF-8, the ISO 8859 selectors (0x01..=0x0B,
+/// 0x10) when the text is ASCII. `None` for the multi-byte selectors
+/// 0x11..=0x14, any other selector, or text that cannot be decoded without
+/// transcoding.
 fn dvb_text(bytes: &[u8]) -> Option<String> {
     let (&first, rest) = bytes.split_first()?;
     let text = match first {
@@ -484,9 +487,14 @@ fn dvb_text(bytes: &[u8]) -> Option<String> {
             let text = bytes.get(3..)?;
             return text.is_ascii().then(|| ascii_string(text));
         }
-        0x01..=0x0B | 0x11..=0x14 => {
+        // ISO/IEC 8859-5..15: an ASCII remainder reads the same in each.
+        0x01..=0x0B => {
             return rest.is_ascii().then(|| ascii_string(rest));
         }
+        // Table A.3: 0x11 ISO/IEC 10646 (two bytes per character), 0x12
+        // KS X 1001, 0x13 GB-2312, 0x14 Big5. Multi-byte text is not
+        // transcoded; the label comes from the next source.
+        0x11..=0x14 => return None,
         _ => return None,
     };
     core::str::from_utf8(text).ok().map(str::to_string)
@@ -1114,6 +1122,25 @@ mod label_tests {
             &[0x1E, b'a'][..],
         ] {
             assert_eq!(extract_user_label(&with_lang(text)).as_deref(), Some("eng"));
+        }
+    }
+
+    /// EN 300 468 Table A.3: 0x11 selects ISO/IEC 10646 (two bytes per
+    /// character). Its bytes can all be ASCII without being ASCII text, so
+    /// the label comes from the next source rather than as "\0a\0b".
+    #[test]
+    fn component_text_with_a_two_byte_selector_falls_through() {
+        for selector in 0x11..=0x14 {
+            let mut descs = component_with_text(&[selector, 0x00, b'a', 0x00, b'b']);
+            descs.push(RawDescriptor {
+                tag: 0x0A,
+                data: vec![b'e', b'n', b'g', 0x00],
+            });
+            assert_eq!(
+                extract_user_label(&descs).as_deref(),
+                Some("eng"),
+                "selector 0x{selector:02X}"
+            );
         }
     }
 

@@ -39,6 +39,11 @@ pub(super) struct PidState {
     /// A PES without a PTS arrived since the last coded PTS on an audio or
     /// video PID; the next coded PTS judges the spacing around the run.
     pub(super) pts_less_since_pts: bool,
+    /// The program's PCR (as 90 kHz ticks) when the current PTS-less run
+    /// started on an audio or video PID; `None` before the first PCR.
+    pub(super) pts_less_run_pcr: Option<u64>,
+    /// The current PTS-less run already raised `MissingRequiredPts`.
+    pub(super) pts_less_run_reported: bool,
     /// Opt-in PTS/DTS unwrap accumulator.
     pub(super) unwrap: Option<UnwrapState>,
     /// AAC-LATM: bytes the last LOAS record still owes the next PES
@@ -68,13 +73,20 @@ impl PidState {
         self.last_pkt_raw = None;
     }
 
+    /// Forget the PTS baseline and any PTS-less run measured against it.
+    pub(super) fn clear_pts_baseline(&mut self) {
+        self.last_pts = None;
+        self.pts_less_since_pts = false;
+        self.pts_less_run_pcr = None;
+        self.pts_less_run_reported = false;
+    }
+
     /// Forget every timing baseline of the PID: continuity, PTS, unwrap,
     /// and the LATM record position.
     pub(super) fn clear_timing(&mut self) {
         self.clear_continuity();
-        self.last_pts = None;
+        self.clear_pts_baseline();
         self.pts_baseline_clears_after_pes = false;
-        self.pts_less_since_pts = false;
         self.unwrap = None;
         self.latm_carry = None;
         self.latm_unsynced = 0;
@@ -135,6 +147,8 @@ impl PidState {
             last_pts,
             pts_baseline_clears_after_pes,
             pts_less_since_pts,
+            pts_less_run_pcr,
+            pts_less_run_reported,
             unwrap,
             latm_carry,
             latm_unsynced,
@@ -155,6 +169,8 @@ impl PidState {
             && last_pts.is_none()
             && !pts_baseline_clears_after_pes
             && !pts_less_since_pts
+            && pts_less_run_pcr.is_none()
+            && !pts_less_run_reported
             && unwrap.is_none()
             && latm_carry.is_none()
             && *latm_unsynced == 0
