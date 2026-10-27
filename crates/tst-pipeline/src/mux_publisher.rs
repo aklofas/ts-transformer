@@ -26,7 +26,8 @@ tst_core::binding_record! {
         /// Total muxer drain calls that produced at least one chunk.
         pub drain_calls: u64,
         /// Total explicit segment cuts, plus the automatic cuts made before a
-        /// video access unit (on a keyframe, or forced to hold the target).
+        /// video access unit (on a keyframe, forced to hold the target, on a
+        /// forward gap, or on an encoder reset).
         pub cut_calls: u64,
     }
 }
@@ -49,21 +50,27 @@ tst_core::binding_record! {
 ///    it would round above `ceil(min)`, the advertised target (RFC 8216
 ///    §4.3.3.1), even when the GOP is longer than the target. The new
 ///    segment starts on this AU, a non-keyframe when the GOP is too long.
-/// 4. **An encoder reset**, an AU more than 1 s before the segment's start,
+/// 4. **An encoder reset** (an AU more than 1 s before the segment's start)
 ///    and, when `min` is `Some`, **an AU whose span already reaches
 ///    `min + 499 ms`** (a gap longer than rule 3 predicted) both close the
 ///    segment and mark the next one discontinuous
 ///    ([`Publisher::cut_segment_discontinuous`]). Raw 33-bit PTS are
 ///    compared modulo the PTS period, so a wrap is a small forward step,
-///    not a reset. A reset closes with the span up to the previous AU; a
+///    not a reset. A reset closes with the span up to the previous AU. A
 ///    gap closes at the previous AU plus its frame interval, held below
-///    `min + 499 ms`. The new segment starts on this AU.
+///    `min + 499 ms`; with no known interval (the segment's only AU opened
+///    the stream or followed a reset) it closes at that cap, the longest
+///    duration that still rounds to the target. A steady cadence slower
+///    than `min + 499 ms` therefore closes every segment at the cap and
+///    marks each discontinuous: the target is shorter than the frame
+///    interval. The new segment starts on this AU.
 ///
 /// A keyframe or forced cut closes the segment with EXTINF = the exact PTS
 /// span `segment_start..this AU`. Every cut asks the caller to re-emit
 /// PAT/PMT, so the new segment opens with PSI and, on a keyframe cut,
-/// PAT → PMT → IDR, independently decodable (RFC 8216 §3). The stream-head AU, with no open
-/// segment yet, opens the first segment without a zero-duration cut.
+/// PAT → PMT → IDR, independently decodable (RFC 8216 §3). The stream-head
+/// AU, with no open segment yet, opens the first segment without a
+/// zero-duration cut.
 ///
 /// When `min` is `Some`, the first video AU first calls
 /// [`Publisher::keyframe_driven`]: nothing is closed, and the publisher
@@ -252,13 +259,20 @@ impl<P: Publisher + Send> Transport for Segmented<P> {
                     Cut::Discontinuity => (ticks_duration(to_last), true),
                     // The segment ends one frame interval after its last AU,
                     // never at this AU, which would overshoot the target.
+                    // With no known interval (a lone AU after the stream
+                    // head or a reset) it ends at the cap: its AU displays
+                    // for at least that long, and zero would hide it.
                     Cut::Gap => {
-                        let closed = ticks_duration(to_last.saturating_add(self.last_gap_ticks));
-                        let cap = self.min_segment.map_or(closed, |min| {
+                        let cap = self.min_segment.map_or(Duration::ZERO, |min| {
                             min.saturating_add(FORCED_CUT_MARGIN)
                                 .saturating_sub(ticks_duration(1))
                         });
-                        (closed.min(cap), true)
+                        let closed = if self.last_gap_ticks == 0 {
+                            cap
+                        } else {
+                            ticks_duration(to_last.saturating_add(self.last_gap_ticks)).min(cap)
+                        };
+                        (closed, true)
                     }
                     Cut::Keyframe | Cut::Forced => (span, false),
                 };
@@ -380,9 +394,13 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     /// Push one video access unit (Annex-B framing required).
     ///
     /// When this AU begins a new segment, the closing segment is flushed
-    /// and cut before the AU is pushed (EXTINF = the exact PTS span
-    /// `segment_start..this AU`), then PSI (PAT/PMT) is re-emitted, so the
-    /// AU's bytes land at the head of a fresh segment that opens with PSI.
+    /// and cut before the AU is pushed, then PSI (PAT/PMT) is re-emitted, so
+    /// the AU's bytes land at the head of a fresh segment that opens with
+    /// PSI. A keyframe or forced cut closes the segment at the exact PTS span
+    /// `segment_start..this AU`. A forward gap closes it at the previous AU
+    /// plus its frame interval, held below `min + 499 ms`, and an encoder
+    /// reset closes it at the previous AU; both mark the next segment
+    /// discontinuous ([`Publisher::cut_segment_discontinuous`]).
     /// With the publisher's [`Publisher::segment_duration`] `min`, a keyframe
     /// begins a segment once the open one has reached `min`, and any AU does
     /// when the segment would otherwise reach `min + 499 ms` by the next AU
@@ -390,9 +408,8 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     /// target); without one, every keyframe does. An AU more than 1 s before
     /// the segment's start (a restarted timeline; a raw 33-bit PTS wrap is
     /// not one) also begins one, as does, with `min`, an AU already
-    /// `min + 499 ms` past it (a forward gap): both mark the new segment
-    /// discontinuous ([`Publisher::cut_segment_discontinuous`]). See
-    /// [`Segmented`] for the full rules. Keep the GOP at or under `min` and every segment opens
+    /// `min + 499 ms` past it (a forward gap). See [`Segmented`] for the
+    /// full rules. Keep the GOP at or under `min` and every segment opens
     /// PAT → PMT → IDR (RFC 8216 §3). The stream-head AU (no open segment
     /// yet) opens the first segment without a spurious zero-duration cut.
     pub fn push_video(
@@ -1802,6 +1819,39 @@ mod tests {
         assert_eq!(cuts, [ticks(111 * 3600 + 3600)]); // 4.480 s
         assert!(cuts.iter().all(|d| d.as_secs_f64().round() <= 4.0));
         assert_eq!(discontinuities_for_feed(TARGET, &feed), [0]);
+    }
+
+    /// The cap a gap cut closes at under `bound`: just below
+    /// `bound + FORCED_CUT_MARGIN`.
+    fn gap_cap(bound: Duration) -> Duration {
+        bound + FORCED_CUT_MARGIN - ticks(1)
+    }
+
+    #[test]
+    fn a_gap_after_the_stream_head_alone_closes_at_the_cap() {
+        // The segment's only AU is the stream head, so no frame interval is
+        // known: the cut closes at the cap, not at zero.
+        let feed = [(0, true), (180_000, false)];
+        let bound = Some(Duration::from_secs(1));
+        assert_eq!(
+            cuts_for_feed(bound, &feed),
+            [gap_cap(Duration::from_secs(1))]
+        );
+        assert_eq!(discontinuities_for_feed(bound, &feed), [0]);
+    }
+
+    #[test]
+    fn a_gap_after_a_lone_reset_unit_closes_at_the_cap() {
+        // The reset closes the one-AU segment at its previous AU (zero); the
+        // restart AU then stands alone, its backward step giving no
+        // interval, so the gap that follows closes at the cap.
+        let feed = [(900_000, true), (0, false), (180_000, false)];
+        let bound = Some(Duration::from_secs(1));
+        assert_eq!(
+            cuts_for_feed(bound, &feed),
+            [Duration::ZERO, gap_cap(Duration::from_secs(1))]
+        );
+        assert_eq!(discontinuities_for_feed(bound, &feed), [0, 1]);
     }
 
     #[test]
