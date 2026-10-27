@@ -74,6 +74,9 @@ pub enum LatmFramingKind {
     AudioMuxLengthOverrun,
     /// PES payload is shorter than the 3-byte LOAS header — cannot
     /// validate the sync word or read the length field.
+    ///
+    /// [`validate_latm_sync`] still returns it. The demuxer does not report
+    /// it: a LOAS header may be split across PES (ISO/IEC 14496-3 §1.7.2).
     Truncated,
 }
 
@@ -111,6 +114,20 @@ pub fn validate_latm_sync(pes_payload: &[u8]) -> Result<u16, LatmFramingKind> {
         return Err(LatmFramingKind::AudioMuxLengthOverrun);
     }
     Ok(audio_mux_length_bytes)
+}
+
+/// The longest LOAS record on the wire: the 3-byte header plus a 13-bit
+/// `audioMuxLengthBytes` of at most `0x1FFF`.
+pub(crate) const MAX_LOAS_RECORD_BYTES: usize = 3 + 0x1FFF;
+
+/// Offset of the first byte-aligned LOAS syncword candidate in `payload`,
+/// searched only within its first [`MAX_LOAS_RECORD_BYTES`] bytes: the tail
+/// of a record carried in from an earlier PES is never longer than that.
+pub(crate) fn find_loas_sync(payload: &[u8]) -> Option<usize> {
+    payload
+        .windows(2)
+        .take(MAX_LOAS_RECORD_BYTES)
+        .position(starts_with_loas_sync)
 }
 
 /// `true` when `bytes` begins with the 11-bit LOAS syncword `0x2B7`.
@@ -183,6 +200,15 @@ mod tests {
         assert_eq!(walk_loas(&buf, 0), Ok(None));
         buf.extend_from_slice(&[0x56, 0xE0]);
         assert_eq!(walk_loas(&buf, 0), Ok(None));
+    }
+
+    #[test]
+    fn find_loas_sync_looks_only_within_one_record() {
+        let mut buf = vec![0x00; MAX_LOAS_RECORD_BYTES - 1];
+        buf.extend_from_slice(&build_loas_record(0));
+        assert_eq!(find_loas_sync(&buf), Some(MAX_LOAS_RECORD_BYTES - 1));
+        buf.insert(0, 0x00);
+        assert_eq!(find_loas_sync(&buf), None);
     }
 
     #[test]
