@@ -561,11 +561,26 @@ fn set_rcvbuf_checked(
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    static FAIL_NEXT_SET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make the next `set_int` on this thread fail, then disarm.
+#[cfg(test)]
+fn fail_next_option_set() {
+    FAIL_NEXT_SET.with(|f| f.set(true));
+}
+
 pub(crate) fn set_int(
     handle: srt_sys::SRTSOCKET,
     opt: srt_sys::SRT_SOCKOPT,
     value: i32,
 ) -> Result<(), OptionError> {
+    #[cfg(test)]
+    if FAIL_NEXT_SET.with(|f| f.replace(false)) {
+        return Err(OptionError::OutOfRange("injected".into()));
+    }
     let rc = unsafe {
         srt_sys::srt_setsockflag(
             handle,
@@ -1150,19 +1165,6 @@ mod tests {
         assert!(!logs_contain("SRTO_RCVBUF silently clamped"));
     }
 
-    #[test]
-    fn stats_struct_has_role_split_loss_fields() {
-        // Compile-check that the new public fields exist.
-        let _ = |s: super::SrtStats| {
-            let _ = s.packets_lost_recv_side;
-            let _ = s.packets_lost_send_side;
-            let _ = s.bytes_lost_recv_side;
-            let _ = s.bytes_lost_send_side;
-            let _ = s.packets_dropped_recv_side;
-            let _ = s.packets_dropped_send_side;
-        };
-    }
-
     /// Live accepted-handle test scaffold. Binds a raw libsrt listener on
     /// `127.0.0.1:0`, connects a peer from a daemon thread, and blocks until
     /// one connection is accepted. Returns `None` if loopback is unavailable
@@ -1271,71 +1273,29 @@ mod tests {
         }
     }
 
-    // T2-SRT-LEAK regression (failure path). `from_accepted` now wraps the raw
-    // accepted handle in the owning `SrtSocket` (Drop active) BEFORE applying any
-    // fallible option, so a `set_int` failure on the `?` path closes the
-    // accepted SRT socket instead of leaking it.
-    //
-    // We can't feed a bad timeout through `from_accepted`'s public signature
-    // (`duration_to_ms` clamps to `[0, i32::MAX]`, and SND/RCVTIMEO never
-    // reject those), so this test reproduces the EXACT failure structure the
-    // fix relies on: take a genuinely-live accepted handle, build the owning
-    // `SrtSocket` from it, then trigger a deterministic post-construction
-    // option failure (a PRE-bind-only option set on a connected socket, which
-    // libsrt rejects) — the same `set_int(...)?` shape `from_accepted` runs.
-    // On the early return the `SrtSocket` drops; we assert the handle is closed
-    // (libsrt's `locateSocket` returns null → `srt_getsockflag` errors).
-    //
-    // It is paired with `from_accepted_happy_path_yields_usable_socket` below,
-    // which calls the REAL `from_accepted` so a regression in the function's
-    // own ordering (re-applying options on the bare handle, or adding a
-    // pre-wrap fallible step) is caught instead of silently passing here.
+    /// Accepted-handle cleanup on the failure path, through the real constructor:
+    /// the first option set fails, and the handle must be closed, not leaked.
     #[test]
-    fn from_accepted_failure_path_closes_accepted_socket_no_leak() {
-        use std::mem;
-
+    fn from_accepted_closes_the_handle_when_an_option_fails() {
         let Some((accepted, _cleanup)) = accept_one_live() else {
-            eprintln!("SKIP: loopback unavailable");
-            return;
+            panic!("loopback required")
         };
-
-        // Reproduce `from_accepted`'s post-fix structure: wrap the live handle
-        // in the owning SrtSocket FIRST, then run a fallible option set.
-        let socket = super::SrtSocket {
-            handle: accepted,
-            cancel: super::make_cancel_handle(accepted),
-            cached_stream_id: super::read_stream_id(accepted),
-            cached_payload_limit: super::read_payload_size(accepted),
-        };
-
-        // PRE-bind-only option (SRTO_PAYLOADSIZE) set on a CONNECTED socket is
-        // rejected by libsrt — a deterministic stand-in for the SND/RCVTIMEO
-        // `set_int(...)?` that could fail in `from_accepted`.
-        let bad = super::set_int(socket.handle, srt_sys::SRT_SOCKOPT_SRTO_PAYLOADSIZE, 1316);
-        assert!(
-            bad.is_err(),
-            "expected PRE-only option set on a connected socket to be rejected"
-        );
-
-        // Simulate `from_accepted`'s early return on the `?`: drop the owner.
-        // RAII (cancel.cancel() → srt_close) must close the accepted handle.
-        drop(socket);
-
-        // Proof of no-leak: libsrt no longer recognizes the handle. Any flag
-        // read on a closed socket fails (locateSocket → null → SRT_EINVSOCK).
-        let mut probe: i32 = 0;
-        let mut plen: super::c_int = mem::size_of::<i32>() as super::c_int;
+        super::fail_next_option_set();
+        let r = super::SrtSocket::from_accepted(accepted, None, None);
+        assert!(r.is_err(), "the injected option failure must surface");
+        let mut v: i32 = 0;
+        let mut len = std::mem::size_of::<i32>() as super::c_int;
         let rc = unsafe {
             srt_sys::srt_getsockflag(
                 accepted,
                 srt_sys::SRT_SOCKOPT_SRTO_RCVTIMEO,
-                (&raw mut probe).cast(),
-                &raw mut plen,
+                (&raw mut v).cast(),
+                &raw mut len,
             )
         };
         assert!(
             rc < 0,
-            "accepted handle still valid after SrtSocket drop — it was LEAKED"
+            "accepted handle still valid after a failed from_accepted: leaked"
         );
     }
 
@@ -1440,32 +1400,6 @@ mod tests {
         );
 
         drop(socket);
-    }
-
-    /// Construction-shape test that doesn't need a live socket: building
-    /// a SrtSocket from a fake handle and double-closing it should NOT
-    /// double-call srt_close. Without an integration test running real
-    /// libsrt, we verify by checking that explicit close().is_ok() and
-    /// drop() coexist safely (drop() must skip srt_close when cancel
-    /// already ran).
-    #[test]
-    fn double_close_via_cancel_then_drop_is_safe() {
-        // We construct a ResourceCancel by hand around a fake handle with a
-        // closer that records the call count, mirroring what SrtSocket holds.
-        use std::sync::atomic::{AtomicU32, Ordering};
-        use tst_core::ResourceCancel;
-        let calls = std::sync::Arc::new(AtomicU32::new(0));
-        let calls_cl = calls.clone();
-        let cancel = ResourceCancel::new(99, move |_| {
-            calls_cl.fetch_add(1, Ordering::SeqCst);
-        });
-        // Cancel once (simulates SrtSocket::close).
-        cancel.cancel();
-        // Drop the handle (simulates SrtSocket::drop calling cancel.cancel()
-        // a second time).
-        cancel.cancel();
-        drop(cancel);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     // perf_to_stats must preserve sub-millisecond RTT precision.

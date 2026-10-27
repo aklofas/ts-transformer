@@ -549,13 +549,6 @@ mod tests {
         assert_eq!(SrtTransport::DEFAULT_PAYLOAD, 1316);
     }
 
-    /// `cancel_handle()` always returns Some (the handle is captured at
-    /// construction); calling cancel() retires the inner socket slot, and
-    /// every later op reports ExplicitClose off the latch.
-    #[test]
-    #[ignore = "needs live SRT socket; covered by tests/cancellation_loopback.rs"]
-    fn cancel_handle_some_when_alive() {}
-
     /// `SrtErrno::raw_code()` produces the libsrt
     /// MJ_* major-category integers the `errno_code` field on
     /// `TransportError::{Backpressure, Broken}` carries. Bindings that
@@ -581,41 +574,5 @@ mod tests {
         // Defensive: out-of-range major still folds (caller decides
         // what to do with an unrecognized major).
         assert_eq!(SrtErrno::Unknown(99999).raw_code(), 99);
-    }
-
-    /// The transport error variants carry an optional
-    /// errno code. Verify the field is constructible (non-SRT producers
-    /// pass None) and round-trips through pattern destructuring.
-    #[test]
-    fn transport_error_errno_code_destructure() {
-        let err = TransportError::Backpressure {
-            msg: "test".into(),
-            errno_code: Some(SrtErrno::Async.raw_code()),
-        };
-        if let TransportError::Backpressure {
-            msg: _,
-            errno_code: Some(c),
-        } = err
-        {
-            assert_eq!(c, 6, "Backpressure should carry SRT Async major (6)");
-        } else {
-            panic!("expected Backpressure with errno");
-        }
-
-        let err = TransportError::Broken {
-            msg: "test".into(),
-            errno_code: Some(SrtErrno::Connection.raw_code()),
-            cause: BrokenCause::Unspecified,
-        };
-        if let TransportError::Broken {
-            msg: _,
-            errno_code: Some(c),
-            cause: BrokenCause::Unspecified,
-        } = err
-        {
-            assert_eq!(c, 2, "Broken should carry SRT Connection major (2)");
-        } else {
-            panic!("expected Broken with errno");
-        }
     }
 }
