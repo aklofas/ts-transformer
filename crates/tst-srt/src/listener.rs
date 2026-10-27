@@ -289,6 +289,8 @@ impl SrtListener {
             let mut readfds: [srt_sys::SRTSOCKET; 1] = [SRT_INVALID_SOCK];
             let mut rnum: c_int = 1;
 
+            #[cfg(test)]
+            run_hook(&BEFORE_WAIT, self.handle);
             let n = unsafe {
                 srt_sys::srt_epoll_wait(
                     eid,
@@ -316,11 +318,16 @@ impl SrtListener {
                     // that raced the timeout, then the zero remaining time
                     // returns TimedOut.
                     AcceptError::TimedOut => continue,
+                    // A cancel between the probe and the wait unsubscribes
+                    // the listener, and the wait fails on the emptied set.
+                    _ if self.closed_by_caller_or_exit() => {
+                        return Err(AcceptError::ListenerClosed);
+                    }
                     e => return Err(e),
                 }
             }
             #[cfg(test)]
-            run_after_readiness_hook(self.handle);
+            run_hook(&AFTER_READINESS, self.handle);
         }
     }
 
@@ -393,11 +400,17 @@ impl SrtListener {
         }
     }
 
+    /// The listener was closed by a cancel or by process exit, so a libsrt
+    /// failure now is that close, not a fault.
+    fn closed_by_caller_or_exit(&self) -> bool {
+        self.cancel.is_cancelled() || crate::exit_guard::is_exiting()
+    }
+
     /// The accept error for a failed `SRTO_RCVSYN` flip around the probe:
     /// a listener closed by a cancel or by process exit reports
     /// `ListenerClosed`, anything else names the step that failed.
     fn option_failure(&self, step: &str, e: OptionError) -> AcceptError {
-        if self.cancel.is_cancelled() || crate::exit_guard::is_exiting() {
+        if self.closed_by_caller_or_exit() {
             return AcceptError::ListenerClosed;
         }
         match e {
@@ -589,17 +602,22 @@ impl Drop for SrtListener {
 pub type Listener = SrtListener;
 
 #[cfg(test)]
+type ListenerHook = std::cell::Cell<Option<fn(srt_sys::SRTSOCKET)>>;
+
+// Test hooks, called with the listener handle on the thread running
+// `accept_timeout`. One-shot: each is taken before it runs, so it fires
+// at its first opportunity only.
+#[cfg(test)]
 thread_local! {
-    /// Called with the listener handle right after `srt_epoll_wait` reports
-    /// readiness, on the thread running `accept_timeout`. One-shot: taken
-    /// before it runs, so a hook fires for the first readiness only.
-    static AFTER_READINESS: std::cell::Cell<Option<fn(srt_sys::SRTSOCKET)>> =
-        const { std::cell::Cell::new(None) };
+    /// Just before `srt_epoll_wait`, so after the first probe.
+    static BEFORE_WAIT: ListenerHook = const { std::cell::Cell::new(None) };
+    /// Right after `srt_epoll_wait` reports readiness.
+    static AFTER_READINESS: ListenerHook = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]
-fn run_after_readiness_hook(handle: srt_sys::SRTSOCKET) {
-    if let Some(hook) = AFTER_READINESS.with(std::cell::Cell::take) {
+fn run_hook(hook: &'static std::thread::LocalKey<ListenerHook>, handle: srt_sys::SRTSOCKET) {
+    if let Some(hook) = hook.with(std::cell::Cell::take) {
         hook(handle);
     }
 }
@@ -634,25 +652,52 @@ mod tests {
         }
     }
 
-    /// Lets the second connector of the re-wait test go once the first
-    /// connection has been stolen.
-    static SECOND_PEER_GO: Mutex<Option<mpsc::Sender<()>>> = Mutex::new(None);
+    type Go = Mutex<Option<mpsc::Sender<()>>>;
 
-    fn steal_queued_then_release_second_peer(listener: srt_sys::SRTSOCKET) {
-        steal_queued(listener);
-        if let Some(go) = SECOND_PEER_GO.lock().unwrap().take() {
+    fn send_go(go: &Go) {
+        if let Some(go) = go.lock().unwrap().take() {
             let _ = go.send(());
         }
     }
 
-    /// Connect to `port` and hold the socket until `release` fires (or the
-    /// watchdog passes), so the listener-side connection is never reaped
-    /// while a test still expects it queued.
+    fn arm(go: &Go) -> mpsc::Receiver<()> {
+        let (tx, rx) = mpsc::channel();
+        *go.lock().unwrap() = Some(tx);
+        rx
+    }
+
+    // Each test has its own signals: `cargo test` runs them in one process.
+    static STALE_FIRST_GO: Go = Mutex::new(None);
+    static REWAIT_FIRST_GO: Go = Mutex::new(None);
+    static REWAIT_SECOND_GO: Go = Mutex::new(None);
+
+    // The first peer connects only once the call is past its first probe,
+    // so its connection always arrives through the wait and the
+    // after-readiness hook sees it; never through the probe.
+    fn release_stale_first_peer(_: srt_sys::SRTSOCKET) {
+        send_go(&STALE_FIRST_GO);
+    }
+
+    fn release_rewait_first_peer(_: srt_sys::SRTSOCKET) {
+        send_go(&REWAIT_FIRST_GO);
+    }
+
+    fn steal_queued_then_release_second_peer(listener: srt_sys::SRTSOCKET) {
+        steal_queued(listener);
+        send_go(&REWAIT_SECOND_GO);
+    }
+
+    /// Once `go` fires, connect to `port` and hold the socket until
+    /// `release` fires (each wait bounded by the watchdog), so the
+    /// listener-side connection is never reaped while a test still expects
+    /// it queued.
     fn hold_peer(
         port: u16,
+        go: mpsc::Receiver<()>,
         release: mpsc::Receiver<()>,
     ) -> std::thread::JoinHandle<Option<SocketAddr>> {
         std::thread::spawn(move || {
+            go.recv_timeout(watchdog()).ok()?;
             let socket = SrtSocketBuilder::new()
                 .connect(format!("127.0.0.1:{port}"))
                 .ok()?;
@@ -662,19 +707,21 @@ mod tests {
         })
     }
 
-    /// Run `accept_timeout(timeout)` with `hook` installed on a worker; wait
+    /// Run `accept_timeout(timeout)` with the hooks installed on a worker; wait
     /// for it up to the watchdog, and on expiry fire the pre-obtained cancel
     /// handle and panic.
     fn accept_with_hook(
         listener: SrtListener,
         timeout: Duration,
-        hook: fn(srt_sys::SRTSOCKET),
+        before_wait: fn(srt_sys::SRTSOCKET),
+        after_readiness: fn(srt_sys::SRTSOCKET),
     ) -> Result<(SrtSocket, SocketAddr), AcceptError> {
         let cancel = listener.cancel_handle();
         let (done_tx, done_rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {
             let mut listener = listener;
-            AFTER_READINESS.with(|h| h.set(Some(hook)));
+            BEFORE_WAIT.with(|h| h.set(Some(before_wait)));
+            AFTER_READINESS.with(|h| h.set(Some(after_readiness)));
             let _ = done_tx.send(listener.accept_timeout(timeout));
         });
         match done_rx.recv_timeout(watchdog()) {
@@ -689,9 +736,12 @@ mod tests {
         }
     }
 
-    /// libsrt api.cpp:2928: the GC erases a queued socket independently of an
-    /// epoll waiter, so readiness can be stale by the time we accept. The hook
-    /// empties the queue between readiness and accept, deterministically.
+    /// libsrt's GC (api.cpp `checkBrokenSockets`) erases a queued socket
+    /// independently of an epoll waiter, so readiness can be stale by the
+    /// time we accept. The hook empties the queue between readiness and
+    /// accept, deterministically. Its own `srt_accept` also clears the
+    /// readiness bit, so that the probe clears a bit the GC left set is
+    /// covered by reading libsrt, not by this test.
     #[test]
     fn accept_timeout_returns_timed_out_when_readiness_goes_stale() {
         if !loopback_available() {
@@ -700,10 +750,16 @@ mod tests {
         }
         let listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
+        let go = arm(&STALE_FIRST_GO);
         let (release_tx, release_rx) = mpsc::channel();
-        let peer = hold_peer(port, release_rx);
+        let peer = hold_peer(port, go, release_rx);
 
-        let result = accept_with_hook(listener, scaled(Duration::from_secs(2)), steal_queued);
+        let result = accept_with_hook(
+            listener,
+            scaled(Duration::from_secs(2)),
+            release_stale_first_peer,
+            steal_queued,
+        );
         let _ = release_tx.send(());
         let _ = peer.join();
         assert!(
@@ -723,24 +779,17 @@ mod tests {
         }
         let listener = SrtListenerBuilder::new().bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
-        let (go_tx, go_rx) = mpsc::channel::<()>();
-        *SECOND_PEER_GO.lock().unwrap() = Some(go_tx);
+        let first_go = arm(&REWAIT_FIRST_GO);
+        let second_go = arm(&REWAIT_SECOND_GO);
         let (release_tx, release_rx) = mpsc::channel();
-        let first = hold_peer(port, release_rx);
+        let first = hold_peer(port, first_go, release_rx);
         let (release2_tx, release2_rx) = mpsc::channel();
-        let second = std::thread::spawn(move || {
-            go_rx.recv_timeout(watchdog()).ok()?;
-            let socket = SrtSocketBuilder::new()
-                .connect(format!("127.0.0.1:{port}"))
-                .ok()?;
-            let local = socket.local_addr().ok();
-            let _ = release2_rx.recv_timeout(watchdog());
-            local
-        });
+        let second = hold_peer(port, second_go, release2_rx);
 
         let result = accept_with_hook(
             listener,
             scaled(Duration::from_secs(5)),
+            release_rewait_first_peer,
             steal_queued_then_release_second_peer,
         );
         let accepted_port = result.as_ref().map(|(_, peer)| peer.port()).ok();
