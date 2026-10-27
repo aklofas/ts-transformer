@@ -319,9 +319,16 @@ impl TstError {
 thread_local! {
     static LAST_ERROR: RefCell<(i32, CString)> = RefCell::new((0, CString::new("").unwrap()));
 }
+/// Run `f` on this thread's slot, or return `None` when the slot is
+/// unreachable: its TLS destructor already ran (a host TLS destructor calling
+/// tst-c late in thread exit) or it is already borrowed (re-entrant call).
+/// Panicking there would escape `ffi_catch`'s recording path and abort.
 #[cfg(feature = "std")]
-fn with_last_error<R>(f: impl FnOnce(&mut (i32, CString)) -> R) -> R {
-    LAST_ERROR.with(|cell| f(&mut cell.borrow_mut()))
+fn with_last_error<R>(f: impl FnOnce(&mut (i32, CString)) -> R) -> Option<R> {
+    LAST_ERROR
+        .try_with(|cell| cell.try_borrow_mut().ok().map(|mut slot| f(&mut slot)))
+        .ok()
+        .flatten()
 }
 
 // Under no_std (bare-metal, single-core): use critical-section to
@@ -333,11 +340,11 @@ fn with_last_error<R>(f: impl FnOnce(&mut (i32, CString)) -> R) -> R {
 static LAST_ERROR: critical_section::Mutex<RefCell<Option<(i32, CString)>>> =
     critical_section::Mutex::new(RefCell::new(None));
 #[cfg(not(feature = "std"))]
-fn with_last_error<R>(f: impl FnOnce(&mut (i32, CString)) -> R) -> R {
+fn with_last_error<R>(f: impl FnOnce(&mut (i32, CString)) -> R) -> Option<R> {
     critical_section::with(|cs| {
         let mut slot = LAST_ERROR.borrow(cs).borrow_mut();
         let inner = slot.get_or_insert_with(|| (0, CString::new("").unwrap()));
-        f(inner)
+        Some(f(inner))
     })
 }
 
@@ -386,7 +393,9 @@ pub(crate) fn clear_last_error_for_test() {
 /// tst-c call from anywhere.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_get_last_error() -> crate::c_types::c_int {
-    crate::panic::ffi_catch(TstError::Internal as i32, || with_last_error(|slot| slot.0))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        with_last_error(|slot| slot.0).unwrap_or(TstError::Internal as i32)
+    })
 }
 
 /// Pointer to the most recent error message on this thread. Valid until
@@ -405,13 +414,14 @@ pub unsafe extern "C" fn tst_get_last_error() -> crate::c_types::c_int {
 /// another task can make a tst-c call if it must be retained.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_get_last_error_str() -> *const crate::c_types::c_char {
-    // The thread-local CString stays alive for the thread's lifetime, but
-    // if `borrow()` panicked (reentrant Drop double-borrow), the happy-path
-    // pointer is unreachable. Fall back to a static empty C string so the
-    // never-NULL contract above is preserved.
+    // The thread-local CString is unreachable after this thread's TLS
+    // teardown or during a re-entrant borrow. Fall back to a static empty C
+    // string so the never-NULL contract above is preserved.
     static EMPTY: &[u8] = b"\0";
     let fallback = EMPTY.as_ptr() as *const crate::c_types::c_char;
-    crate::panic::ffi_catch(fallback, || with_last_error(|slot| slot.1.as_ptr()))
+    crate::panic::ffi_catch(fallback, || {
+        with_last_error(|slot| slot.1.as_ptr()).unwrap_or(fallback)
+    })
 }
 
 /// Clears the thread-local last-error slot, resetting it to
@@ -697,13 +707,14 @@ where
 /// `tst_get_last_error()` but callable without `unsafe`. Not `extern "C"`;
 /// does not appear in the C header.
 pub fn test_last_error_code() -> i32 {
-    with_last_error(|slot| slot.0)
+    with_last_error(|slot| slot.0).unwrap_or(TstError::Internal as i32)
 }
 
 /// Read the thread-local last-error message string for test assertions. Not
 /// `extern "C"`; does not appear in the C header.
 pub fn test_last_error_msg() -> alloc::string::String {
     with_last_error(|slot| slot.1.to_str().unwrap_or("<invalid utf8>").to_owned())
+        .unwrap_or_default()
 }
 
 /// Clear the thread-local last-error for test isolation. Not `extern "C"`;
@@ -1183,5 +1194,27 @@ mod tests {
             "last-error message did not overwrite; got: {:?}",
             test_last_error_msg()
         );
+    }
+
+    /// A host thread whose TLS destructor runs after ours calls into tst-c: the
+    /// record must be dropped, not panic outside ffi_catch (which aborts).
+    #[cfg(all(feature = "std", target_os = "linux"))]
+    #[test]
+    fn last_error_after_tls_teardown_is_best_effort() {
+        struct LateCaller;
+        impl Drop for LateCaller {
+            fn drop(&mut self) {
+                let rc: i32 = crate::panic::ffi_catch(-10, || panic!("late"));
+                assert_eq!(rc, -10);
+                assert_eq!(unsafe { tst_get_last_error() }, TstError::Internal as i32);
+            }
+        }
+        thread_local!(static LATE: LateCaller = const { LateCaller });
+        std::thread::spawn(|| {
+            LATE.with(|_| {}); // registered first → destroyed after LAST_ERROR
+            set_last_error(TstError::Closed, "x");
+        })
+        .join()
+        .expect("thread exited cleanly");
     }
 }
