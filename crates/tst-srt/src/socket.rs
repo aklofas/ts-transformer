@@ -37,8 +37,8 @@ const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
 ///    sender preset 5 s, configurable via `SrtSocketBuilder::linger` before construction).
 /// 2. **Explicit close** — call [`Self::close`] (consuming `self`). Same
 ///    `srt_close`, but it DOES latch `is_cancelled()` — a caller asked for
-///    it. Always returns `Ok(())` (the inner `srt_close` rc is currently
-///    swallowed; see method doc).
+///    it. Returns `()` (the inner `srt_close` rc is consumed by the
+///    cancel-handle closer; see method doc).
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
 ///    [`tst_core::ResourceCancel`] (clone-able, `Send + Sync`), then
 ///    `cancel()` from any thread. Closes the libsrt socket; a peer
@@ -404,11 +404,12 @@ impl SrtSocket {
 
     /// Post-handshake `SRTO_PAYLOADSIZE`, cached at construction.
     ///
-    /// Returned in bytes. After the SRT handshake completes, both peers
-    /// have agreed on a payload size (the smaller of the two configured
-    /// values). This is the upper bound on the per-message length passed
-    /// to [`Self::send`] in live mode — exceeding it causes
-    /// [`SendError::PayloadTooLarge`].
+    /// Returned in bytes. This is this side's local send budget: the
+    /// `SRTO_PAYLOADSIZE` option read back once the handshake completed. It is
+    /// not negotiated with the peer. It is the upper bound on the per-message
+    /// length passed to [`Self::send`] in live mode — exceeding it causes
+    /// [`SendError::PayloadTooLarge`]. The receive ceiling is documented on
+    /// `RecvTransport::max_payload` for `SrtRecvTransport`.
     ///
     /// Defaults to libsrt's `SRT_LIVE_DEF_PLSIZE` (1316 bytes — i.e.
     /// [`tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES`]) when libsrt's

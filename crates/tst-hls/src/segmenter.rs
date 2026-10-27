@@ -225,7 +225,8 @@ impl Segmenter {
         self.config.segment_duration
     }
 
-    /// Number of segments completed in this run.
+    /// Number of segment sequence numbers allocated in this run, including
+    /// the segment that is still open.
     pub(crate) fn segments_written(&self) -> u64 {
         self.next_seq
     }

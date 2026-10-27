@@ -11,6 +11,18 @@ Two changes landed together:
    second table). Their imports proved they only touch `tst_core` /
    `tst_pipeline`, so they did not belong in the SRT transport crate.
 
+## Current binaries
+
+- `deprecated_aliases`
+- `net_builder`
+- `net_conformance`
+- `net_loopback`
+- `net_pipeline`
+- `net_stats`
+- `url`
+
+The rest of this file records the consolidation that produced them; it is history, and the list above is the current layout.
+
 ## What changed (and what did not)
 
 - **Test bodies are unchanged.** Pure relocation.

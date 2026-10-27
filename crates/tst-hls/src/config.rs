@@ -61,8 +61,9 @@ pub struct HlsConfig {
     pub segment_duration: Duration,
     /// Hard upper bound on an open segment's wall-clock age.
     ///
-    /// Only consulted once the stream has driven at least one explicit
-    /// (keyframe) cut: in that flow the `MuxPublisher` shell bounds segments
+    /// Only consulted once the stream has signalled keyframe-driven cutting
+    /// (the first keyframe-driven signal, or an explicit cut, whichever comes
+    /// first): in that flow the `MuxPublisher` shell bounds segments
     /// in media time, and this cap only force-cuts when the producer stalls,
     /// so a segment never grows unbounded. `None` defaults to
     /// `2 × segment_duration`. Must be `≥ segment_duration`.

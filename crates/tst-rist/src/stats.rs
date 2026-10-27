@@ -79,11 +79,9 @@ tst_core::binding_record! {
 impl RistStats {
     /// Project to the workspace-uniform [`SocketStats`].
     ///
-    /// `SocketStats` is `#[non_exhaustive]`. Both the struct-expression-with-
-    /// `..Default::default()` form and the bare default-and-field-assign form
-    /// work from this crate (we're outside `tst-core`'s defining scope, but
-    /// `..Default::default()` is still permitted at the boundary). The
-    /// default-and-assign form is more concise here.
+    /// `SocketStats` is `#[non_exhaustive]`, so a struct expression (even with
+    /// `..Default::default()`) is rejected outside `tst-core` (E0639). Build it
+    /// with default-and-assign instead.
     pub fn to_socket_stats(&self) -> SocketStats {
         let mut s = SocketStats::default();
         s.bytes_sent = self.bytes_sent;

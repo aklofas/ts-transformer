@@ -281,6 +281,9 @@ fn flap_cycles_never_wedge_or_hang() {
             managed
                 .send_bytes(&idx.to_le_bytes())
                 .expect("background mode always accepts, direct or into the gap");
+            // Hang guard only, not widened to a 60 s discriminator: the short backoff must
+            // stay short for the reconnect to finish inside the test, and the quiescence /
+            // `calls >= 2` asserts are what tell a join from a detach.
             assert!(
                 t0.elapsed() < scaled(Duration::from_secs(1)),
                 "send_bytes blocked for {:?} on message {idx} — possible join() wedge",
@@ -354,6 +357,9 @@ fn flap_cycles_never_wedge_or_hang() {
             managed2
                 .send_bytes(&idx.to_le_bytes())
                 .expect("background mode always accepts, direct or into the gap");
+            // Hang guard only, not widened to a 60 s discriminator: the short backoff must
+            // stay short for the reconnect to finish inside the test, and the quiescence /
+            // `calls >= 2` asserts are what tell a join from a detach.
             assert!(
                 t0.elapsed() < scaled(Duration::from_secs(1)),
                 "send_bytes blocked for {:?} on message {idx} (persisting-outage cycle) — possible join() wedge",
@@ -494,6 +500,9 @@ fn drop_detaches_without_blocking_and_worker_quiesces() {
     });
     let t0 = Instant::now();
     drop(managed);
+    // Hang guard only, not widened to a 60 s discriminator: the short backoff must
+    // stay short for the reconnect to finish inside the test, and the quiescence /
+    // `calls >= 2` asserts are what tell a join from a detach.
     assert!(
         t0.elapsed() < scaled(Duration::from_secs(1)),
         "Drop must signal-and-detach, never join: {:?}",

@@ -40,8 +40,9 @@ impl TcpTransportBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`UrlError`] if the URL is malformed or uses `?listen=1`
-    /// (listeners must use [`TcpListenerBuilder`] instead).
+    /// Returns [`UrlError`] if the URL is malformed, or [`UrlError::Rejected`]
+    /// if it carries `?listen=1` (listeners must use [`TcpListenerBuilder`]
+    /// instead).
     pub fn from_url(url: &str) -> Result<Self, UrlError> {
         let url = TcpUrl::parse(url)?;
         if url.listen {
@@ -56,7 +57,7 @@ impl TcpTransportBuilder {
     /// Enable or disable TCP_NODELAY (Nagle's algorithm).
     ///
     /// `true` is typically preferred for low-latency streaming.
-    /// Default (if not set): OS-dependent.
+    /// Default (if not set): enabled (`Some(true)`, from `TcpConfig::default`).
     pub fn nodelay(&mut self, on: bool) -> &mut Self {
         self.config.nodelay = Some(on);
         self

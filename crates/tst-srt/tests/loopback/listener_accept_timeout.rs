@@ -25,8 +25,7 @@ fn accept_timeout_returns_timed_out_when_no_connection() {
     // But not absurdly long. The lower bound is the real assertion; this
     // one only guards against the timeout being ignored outright, so it
     // is deliberately loose: a loaded macOS runner took 1.17 s for this
-    // 200 ms wait (2026-10-06), and the old `< 1 s` bound read that as
-    // a failure.
+    // 200 ms wait, and the old `< 1 s` bound read that as a failure.
     assert!(
         elapsed < scaled(Duration::from_secs(5)),
         "elapsed={elapsed:?}"
@@ -97,7 +96,8 @@ fn accept_timeout_drains_connection_queued_before_subscribe() {
 
     let start = std::time::Instant::now();
     // 30 s: a missed probe waits the whole timeout, so the half-way bound
-    // below separates the two behaviours however slow the host is.
+    // below separates the two behaviours however slow the host is. Under
+    // nextest the group's kill window is the effective bound.
     let result = listener.accept_timeout(Duration::from_secs(30));
     let elapsed = start.elapsed();
 

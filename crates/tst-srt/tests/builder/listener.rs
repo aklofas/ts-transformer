@@ -27,11 +27,6 @@ fn bind_address_in_use() {
     }
 }
 
-// `accept_unblocks_when_listener_closed` was removed: srt_accept does not honor
-// SRTO_RCVTIMEO, and the test as planned would hang because the listener is
-// moved into the spawned thread (no inter-thread close coordination). Revisit
-// when typed close-from-other-thread coordination is added.
-
 /// Peer latency set on the listener is inherited by the accepted socket.
 #[test]
 fn accepted_socket_inherits_listener_peer_latency() {

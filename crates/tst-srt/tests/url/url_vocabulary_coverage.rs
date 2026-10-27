@@ -6,8 +6,6 @@
 //!   2. Every Group 2 key parses and changes the config.
 //!   3. All 24 Group 3 keys reject with `UnsupportedKey` carrying a
 //!      non-empty `SRTO_*` static string.
-//!   4. The honored-key count matches what's documented in
-//!      `docs/guides/srt.md` (drift between code and docs).
 
 use std::time::Duration;
 use tst_srt::{Congestion, KeyLength, MaxBandwidth, SrtSocketConfig, SrtUrl, SrtUrlError};
