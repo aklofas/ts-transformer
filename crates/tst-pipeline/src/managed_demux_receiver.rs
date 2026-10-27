@@ -708,12 +708,13 @@ mod tests {
     /// connection's partial access unit may not leak into a sample, and
     /// the fresh connection's stream decodes from its own PSI.
     #[test]
-    fn reconnect_clears_syncer_buffer_and_demux_state() {
+    fn reconnect_discards_the_dead_connections_partial_pes() {
         let pid_of = |p: &[u8; 188]| (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
         // Connection 1: PAT, PMT and only the first three packets of a PES
         // carrying a 2000-byte 0xAA access unit, then the first 100 bytes
-        // of its fourth packet: the connection dies mid-packet, leaving a
-        // partial packet in the syncer.
+        // of its fourth packet: the connection dies mid-packet. This test
+        // observes the demuxer's reset; the syncer's is not observable here
+        // because the syncer re-locks by itself.
         let mut m1 = h264_muxer();
         let mut conn1 = Vec::new();
         let mut pes_packets = 0;
@@ -748,6 +749,9 @@ mod tests {
             broken_after_exhaust: true,
         };
         // One rebuild serves connection 2; the next fails and ends the run.
+        // The factory caps its own calls because the `max_attempts` budget
+        // resets on every `recv_bytes` call, so an uncapped factory would
+        // loop forever.
         let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let calls_cl = calls.clone();
         let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
