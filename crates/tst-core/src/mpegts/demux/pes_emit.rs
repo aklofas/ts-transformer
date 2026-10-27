@@ -254,17 +254,6 @@ impl super::demuxer::Demuxer {
         self.queue.push_back(event);
     }
 
-    /// The PMT `stream_type` byte declared for `pid` by its owning program.
-    fn pmt_stream_type(&self, pid: u16) -> Option<u8> {
-        let program = self.program_of(pid)?;
-        self.programs
-            .values()
-            .filter(|t| t.program_number == program)
-            .flat_map(|t| &t.streams)
-            .find(|s| s.pid == pid)
-            .map(|s| s.stream_type.as_byte())
-    }
-
     /// The timing step of one completed PES: the PTS checks (backward step,
     /// spacing, per-PES rules, the synchronous-metadata DTS) and the
     /// `last_pts` and unwrap baselines. Returns the `(pts, dts)` the PES's
@@ -280,7 +269,11 @@ impl super::demuxer::Demuxer {
         let pts = pes.pts.unwrap_or(Pts90khz::new(0));
         // The stream_type byte comes from the PMT: KLV's PTS contract hangs
         // on the declared type (0x15), not on the payload shape.
-        let stream_type = self.pmt_stream_type(pes.pid).unwrap_or(0);
+        let stream_type = self
+            .pid_state
+            .get(&pes.pid)
+            .and_then(|s| s.stream_type)
+            .unwrap_or(0);
         match (pts_rule(&stream.kind, stream_type), pes.pts) {
             (PtsRule::PerPes, None) => self.queue_nonconformant(
                 stream,

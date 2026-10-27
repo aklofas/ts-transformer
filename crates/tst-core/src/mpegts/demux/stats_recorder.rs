@@ -41,7 +41,10 @@ impl super::demuxer::Demuxer {
         program_number: u16,
     ) -> &mut crate::mpegts::stats::StreamStats {
         use crate::mpegts::common::StreamTypeCode;
-        self.pid_state_mut(pid)
+        let state = self.pid_state_mut(pid);
+        // The PMT byte wins; the kind-derived byte covers PIDs no PMT declared.
+        let stream_type = state.stream_type.unwrap_or(stream_type);
+        state
             .stats
             .get_or_insert_with(|| crate::mpegts::stats::StreamStats {
                 pid,
