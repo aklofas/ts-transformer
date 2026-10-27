@@ -141,9 +141,16 @@ Baselines are rendered by `cargo public-api` on the **pinned nightly toolchain**
 declared in the CI public-api step (see `.github/workflows/ci.yml`, currently
 `nightly-2026-07-03`). Nightly rustdoc occasionally changes how re-exported
 `std`/`core` paths render, which shows up as spurious whole-baseline drift, so
-an unpinned nightly cannot be trusted for rendering. To regenerate:
+an unpinned nightly cannot be trusted for rendering. Each crate renders
+with its declared feature envelope, the `features` list under
+`[package.metadata.public-api]` in its `Cargo.toml` (tst-core: `tls`;
+tst-rtp: `rtsp-server-tls`; the others: none), so optional surfaces are
+ratcheted too. `bash scripts/lib/roster.sh public-api-features` prints
+each crate's envelope (`-` for none) and is what CI reads. To regenerate:
 
-    cargo +nightly-2026-07-03 public-api -p <package> --simplified > crates/<dir>/public-api.txt
+    cargo +nightly-2026-07-03 public-api -p <package> --features <envelope> --simplified > crates/<dir>/public-api.txt
+
+Leave `--features` out for a crate whose envelope is `-`.
 
 `<package>` is the Cargo package name and `<dir>` the crate's directory under
 `crates/`; they differ for the two source-provider crates
