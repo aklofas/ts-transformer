@@ -14,12 +14,15 @@
 //!
 //! # Rules (each pinned by a unit test below)
 //!
-//! - **Lock inside**: `with_mut` is the only site that holds the lock
-//!   ACROSS CALLER CODE. `with_ref_blocking`, `take` and `close` take it too, but
-//!   only for the moment they need it, and `is_closed` / `try_with_ref`
-//!   never wait for it at all. The binding holds no mutex of its own around
-//!   `with_mut`, and takes the lock with the GIL released / outside the JNI
-//!   critical region.
+//! - **Lock inside**: `with_mut`, `with_ref_blocking` and a `try_with_ref`
+//!   that acquires the slot all hold the lock WHILE THE CALLER'S CLOSURE
+//!   RUNS, so another thread's call can wait behind any of them. `take` and
+//!   `close` hold it only to move the value out (`close` runs
+//!   `Close::close` after releasing it). "Non-blocking" (`is_closed`,
+//!   `try_with_ref`, `alive`) describes acquiring the slot: they never wait
+//!   for it, but the closure `try_with_ref` / `alive` take still runs under
+//!   it. The binding holds no mutex of its own around these calls, and
+//!   takes the lock with the GIL released / outside the JNI critical region.
 //! - **Poison policy**: readers (`with_ref_blocking`, `take`, `is_closed`, `close`)
 //!   RECOVER a poisoned mutex; the mutator `with_mut` REFUSES with
 //!   [`HandleState::Poisoned`]: a reader only observes, while a mutator
@@ -230,8 +233,9 @@ impl<T, S> Owned<T, S> {
         self.end_reason.as_ref().and_then(EndReasonHandle::get)
     }
 
-    /// Run `f` on `&mut T` — the only site that holds the lock ACROSS CALLER
-    /// CODE, and so the only one another thread can be made to wait behind.
+    /// Run `f` on `&mut T` with the lock held while `f` runs (as
+    /// [`Self::with_ref_blocking`] and a successful [`Self::try_with_ref`]
+    /// also do), so another thread's call on the slot waits behind it.
     /// Bindings call this with the GIL released / outside the JNI critical
     /// region, and hold no mutex of their own around it.
     ///
@@ -314,7 +318,8 @@ impl<T, S> Owned<T, S> {
     /// the slot — the caller decides what "busy" means (Python's
     /// `is_alive()` reports `True`, a `repr()` prints "busy"); otherwise
     /// exactly `Some(with_ref_blocking(_, f))`: `Err(Closed)` on an empty slot,
-    /// `Err(Panicked)` if `f` panics, poison recovered.
+    /// `Err(Panicked)` if `f` panics, poison recovered. Only acquiring the
+    /// slot is non-blocking: `f` runs with the lock held.
     pub fn try_with_ref<R>(&self, f: impl FnOnce(&T) -> R) -> Option<Result<R, HandleState>> {
         let guard = match self.inner.try_lock() {
             Ok(guard) => guard,

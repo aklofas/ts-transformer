@@ -21,7 +21,6 @@
 //! | `()` (void natives)                 | `()`                   |
 
 use crate::jutil::FindClass;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use jni::strings::JNIString;
 use jni::{Env, EnvUnowned, Outcome, jni_str};
@@ -30,8 +29,9 @@ use jni::{Env, EnvUnowned, Outcome, jni_str};
 /// (unless a Java exception is already pending) and return `default`. On
 /// success, return `f`'s value unchanged.
 ///
-/// `AssertUnwindSafe` is sound here for the same reason as `tst-c`'s
-/// `ffi_catch`: the panic arm only *throws + returns a default*; it never
+/// The boundary is `tst_pipeline::binding::panic::catch`, shared with
+/// `tst-c`'s `ffi_catch`. Its `AssertUnwindSafe` is sound here for the same
+/// reason as there: the panic arm only *throws + returns a default*; it never
 /// observes potentially-broken state behind the `&mut Env` or any captured
 /// handle. A panic mid-body either drops an in-progress `Box` (leaking
 /// nothing) or leaves the registry entry usable — the lock simply unlocks
@@ -44,12 +44,11 @@ where
     // so the thrown message stays what it was. The closure never returns
     // `Err`; `None` means the body panicked and the exception is thrown.
     let outcome = env.with_env_no_catch(|env| -> jni::errors::Result<Option<R>> {
-        match catch_unwind(AssertUnwindSafe(|| f(env))) {
+        match tst_pipeline::binding::panic::catch(|| f(env)) {
             Ok(value) => Ok(Some(value)),
-            Err(payload) => {
+            Err(detail) => {
                 // Do not clobber an exception the body already raised before panicking.
                 if !env.exception_check() {
-                    let detail = panic_payload_message(&*payload);
                     let _ = env.throw_new(
                         FindClass(jni_str!("java/lang/RuntimeException")),
                         JNIString::from(format!("native panic in tst-jni: {detail}")),
@@ -126,15 +125,3 @@ macro_rules! jni_native {
     };
 }
 pub(crate) use jni_native;
-
-/// Best-effort detail string from a `catch_unwind` payload. Mirrors
-/// `tst-c`'s `panic_payload_message`.
-fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        String::from(*s)
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        String::from("non-string panic payload")
-    }
-}
