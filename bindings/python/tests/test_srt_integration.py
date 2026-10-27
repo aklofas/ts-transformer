@@ -288,13 +288,13 @@ def test_encrypted_loopback_round_trip() -> None:
     handshake (HSv5 KMREQ/KMRSP). Both ends must carry the same
     passphrase or the handshake fails with REJ_BADSECRET.
 
-    libsrt enforces a 10..=79 char passphrase length; this test uses a
-    24-character passphrase. We pair a `Builder(...).passphrase(...)
+    libsrt accepts a passphrase of 10 to 80 bytes of UTF-8; this test
+    uses a 24-character passphrase. We pair a `Builder(...).passphrase(...)
     .listener().listen()` with a `Builder(...).passphrase(...).caller()
     .connect()`, run a one-bundle TS send through the resulting Socket
     pair (via `into_sender` / `into_receiver`), and observe the round
     trip."""
-    # 24 chars — well within libsrt's 10..=79 range.
+    # 24 bytes, well within libsrt's 10 to 80 byte range.
     passphrase = "hunter-too-long-thanks!!"
 
     port = _free_tcp_port()

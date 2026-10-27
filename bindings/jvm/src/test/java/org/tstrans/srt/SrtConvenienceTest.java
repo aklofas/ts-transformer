@@ -68,6 +68,26 @@ class SrtConvenienceTest {
     }
 
     /**
+     * libsrt takes a passphrase of 10 to 80 bytes: 80 is the top of the range, so a
+     * listener carrying one opens; 9 is below it, so the same listener is refused
+     * with {@code CONFIG_INVALID} before any socket exists. A listener on port 0 is
+     * the offline way to reach the passphrase check — {@code Builder} validates only
+     * in its finalizers.
+     */
+    @Test
+    void passphraseOf80BytesIsAccepted() throws SrtException {
+        String url = "srt://127.0.0.1:0?mode=listener";
+        try (Listener l = new Builder(url).listener().passphrase("a".repeat(80)).listen()) {
+            assertNotNull(l);
+        }
+        var e = assertThrows(
+            SrtException.class,
+            () -> new Builder(url).listener().passphrase("a".repeat(9)).listen()
+        );
+        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
+    }
+
+    /**
      * A URL with no supported scheme is rejected before any transport opens, as an
      * {@code IllegalArgumentException}.
      */
