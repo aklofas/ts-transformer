@@ -25,3 +25,5 @@ crates/tst-srt/tests/loopback/url_open.rs	spawn_connector	pipeline and transport
 crates/tst-srt/tests/pipeline/pipeline_receiver_live.rs	minimal_klv	pipeline and transport tests: shared tests/common not yet written
 crates/tst-srt/tests/pipeline/pipeline_receiver_live_corpus.rs	fixtures_dir	pipeline and transport tests: shared tests/common not yet written
 crates/tst-udp/tests/net_zero_length.rs	null_ts_packet	pipeline and transport tests: shared tests/common not yet written
+bindings/c/tests/common/mod.rs	scaled	the C test crate cannot depend on tst-rtp's test fixtures; both copies go when a shared test-helper crate carries the timing helper
+crates/tst-rtp/tests/fixtures/raw_rtsp.rs	scaled	the C test crate cannot depend on tst-rtp's test fixtures; both copies go when a shared test-helper crate carries the timing helper

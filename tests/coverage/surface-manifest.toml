@@ -2509,6 +2509,18 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# from_url: builder from an already parsed RtspUrl; keeps URL userinfo and
+# every query option. Unit test in builder.rs; the C connect path builds
+# through it, tested in the C-binding connect tests.
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::from_url"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/builder.rs", "bindings/c/tests/transports/rtsp_client_connect.rs"]
+bindings = ["c:tst_rtsp_client_builder_connect", "python:deferred(bindings take URL strings)", "java:deferred(bindings take URL strings)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_rtp::rtsp::server::mount::MountHandle::push_video_to_with_dts"
 reason = "unit-covered (mount.rs push_video_to_with_dts_serves_distinct_dts); Rust-only by design (bindings parity deferred — see deferred-features); graduate with the mount push family"
