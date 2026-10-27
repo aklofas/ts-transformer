@@ -48,7 +48,7 @@ Running `cargo` inside the workspace auto-uses 1.93 via rustup.
 A clean rebuild compiles libsrt 1.5.7 and mbedTLS 3.6.7 from vendored
 submodules — expect **3–5 minutes** on a cold cache, seconds when warm.
 Force the vendored path with `SRT_FORCE_VENDORED=1` (otherwise the build
-script tries `pkg-config --static srt` first and keeps a host libsrt only at 1.5.7 or newer and, with `mbedtls` on, built against mbedTLS).
+script tries `pkg-config --static srt` first). A host libsrt is kept only at 1.5.7 or newer and, with `mbedtls` on, built against mbedTLS.
 
 For the per-target support matrix, see
 [`/docs/reference/compatibility.md`](/docs/reference/compatibility.md).

@@ -89,7 +89,7 @@ Fix: build the `Passphrase` through `Passphrase::new` and let the constructor va
 
 An encryption key is set together with `RistProfile::Simple`. The Simple profile sends RTP straight to UDP, so a key would go unused, and the connect or listen is refused before librist is called. This happens when `.profile(RistProfile::Simple)` follows `.encryption(...)`, and when a `RistConfig` sets both fields.
 
-Fix: use `RistProfile::Main` with the key, or drop the key for Simple. A URL with `secret=` or `aes-type=` selects Main by itself, in either parameter order.
+Fix: use `RistProfile::Main` with the key, or drop the key for Simple. A URL with `secret=` (optionally with `aes-type=`) selects Main by itself, in either parameter order.
 
 **`SrtConnectError::Rejected { reason: RejectReason::BadSecret, .. }`**
 
