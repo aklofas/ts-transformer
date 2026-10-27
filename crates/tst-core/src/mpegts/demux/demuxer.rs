@@ -82,8 +82,10 @@ pub struct Demuxer {
     /// Programs found in the current PAT, keyed by `pmt_pid`.
     /// O(1) lookup when routing PMT-bound packets.
     pub(super) programs: HashMap<u16, ProgramTracker>,
-    /// Latest PAT version. Bump triggers PAT diff (programs added/removed).
-    pub(super) pat_version: Option<u8>,
+    /// Identity of the last applied PAT: `(transport_stream_id,
+    /// version_number, CRC_32 of the completing section)`. A PAT that
+    /// differs in any of the three triggers the diff (programs added/removed).
+    pub(super) pat_identity: Option<(u16, u8, u32)>,
     /// Everything remembered per PID (kind, owner, continuity, timing,
     /// unwrap, counters, once-flags) in one map. See `pid_state.rs`.
     pub(super) pid_state: HashMap<u16, PidState>,
@@ -183,7 +185,7 @@ impl Demuxer {
             sync_consumed: 0,
             psi_assemblers,
             programs: HashMap::new(),
-            pat_version: None,
+            pat_identity: None,
             pid_state: HashMap::new(),
             last_psi_cc_jump: None,
             pcr: PcrHistory::default(),
@@ -869,7 +871,7 @@ impl Demuxer {
         self.psi_assemblers
             .insert(0x0000, PsiSectionAssembler::new());
         self.programs.clear();
-        self.pat_version = None;
+        self.pat_identity = None;
         // Per-PID state resets entry by entry: counters and the
         // subtitle-seen flag survive a reconnect (`reset_stats` owns them).
         for state in self.pid_state.values_mut() {

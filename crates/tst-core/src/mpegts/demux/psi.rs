@@ -1,6 +1,7 @@
 //! Program-specific information (PAT, PMT, descriptors).
 
 use crate::mpegts::common::crc32::crc32_mpeg2;
+use crate::mpegts::demux::event::PsiSyntaxKind;
 use crate::mpegts::descriptors::RawDescriptor;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -198,10 +199,65 @@ pub fn parse_pat(section: &[u8]) -> Result<Pat, PsiParseError> {
     })
 }
 
+/// Fixed and reserved PSI syntax fields a PAT or PMT section violates
+/// (H.222.0 §2.4.4.3, §2.4.4.8). The demuxer runs the same checks on every
+/// CRC-valid section it accepts.
+///
+/// `section_syntax_indicator` and a non-zero `section_number` on a
+/// single-section table are always checked; reserved bits only when
+/// `check_reserved_bits` is set. A section whose `table_id` is `0x02` also
+/// has its PMT-only reserved bits checked. A section too short for a field
+/// skips that field's check, so this never panics.
+pub fn psi_section_syntax_issues(section: &[u8], check_reserved_bits: bool) -> Vec<PsiSyntaxKind> {
+    let mut issues = Vec::new();
+    let byte = |i: usize| section.get(i).copied();
+    // section_syntax_indicator (byte 1 bit 0x80) must be 1.
+    if byte(1).is_some_and(|b| b & 0x80 == 0) {
+        issues.push(PsiSyntaxKind::SectionSyntaxIndicatorUnset);
+    }
+    // section_number (byte 6) must be 0 only on a single-section table
+    // (last_section_number, byte 7, == 0). Multi-section PATs legitimately
+    // carry section_number 1..=last_section_number.
+    if let (Some(number), Some(0)) = (byte(6), byte(7))
+        && number != 0
+    {
+        issues.push(PsiSyntaxKind::SectionNumberNonZero { observed: number });
+    }
+    if check_reserved_bits {
+        // byte 1 bit 0x40 = reserved-zero (must be 0);
+        // byte 1 bits 0x30 = reserved (must be 1);
+        // byte 5 bits 0xC0 = reserved (must be 1).
+        let mut bad = byte(1).is_some_and(|b| b & 0x40 != 0 || b & 0x30 != 0x30)
+            || byte(5).is_some_and(|b| b & 0xC0 != 0xC0);
+        if byte(0) == Some(0x02) {
+            // PMT additionally: byte 8 bits 0xE0 = reserved (must be 1);
+            // byte 10 bits 0x30 = reserved (must be 1).
+            bad = bad
+                || byte(8).is_some_and(|b| b & 0xE0 != 0xE0)
+                || byte(10).is_some_and(|b| b & 0x30 != 0x30);
+        }
+        if bad {
+            issues.push(PsiSyntaxKind::ReservedBits);
+        }
+    }
+    issues
+}
+
 #[cfg(test)]
 mod pat_tests {
     use super::*;
-    use crate::mpegts::demux::test_support::build_pat_section;
+    use crate::mpegts::demux::test_support::{build_pat_section, recrc};
+
+    #[test]
+    fn public_syntax_helper_matches_the_demuxer_checks() {
+        let mut s = build_pat_section(1, 0, &[(1, 0x1000)]);
+        s[1] &= 0x7F;
+        recrc(&mut s);
+        assert_eq!(
+            psi_section_syntax_issues(&s, false),
+            vec![PsiSyntaxKind::SectionSyntaxIndicatorUnset]
+        );
+    }
 
     #[test]
     fn parses_minimal_pat() {

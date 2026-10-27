@@ -1,6 +1,6 @@
 //! PSI section dispatch + PAT/PMT topology tracking.
 //!
-//! Hosts 10 helper methods on `Demuxer`:
+//! Hosts 12 helper methods on `Demuxer`:
 //!
 //! - `handle_psi` — router from `process_packet` into PAT vs PMT
 //!   continuation logic, including strict-mode CC-discontinuity drop.
@@ -24,6 +24,8 @@
 //! - `check_psi_syntax` — validates fixed/reserved PSI syntax fields
 //!   (section_syntax_indicator, section_number, reserved bits) on a
 //!   section whose CRC already passed; shared by both section handlers.
+//! - `queue_psi_cc_discontinuity` / `queue_psi_malformed` — queue the
+//!   continuity-gap and unparseable-section diagnostics.
 //! - `klv_mismatch_insert` — per-program coalesce-set helper for KLV
 //!   stream-type-mismatch event deduplication.
 //!
@@ -39,7 +41,9 @@ use crate::mpegts::demux::event::{
 };
 use crate::mpegts::demux::pat_reassemble::PatReassemblyOutcome;
 use crate::mpegts::demux::pid_state::{TopologyDiff, set_once};
-use crate::mpegts::demux::psi::{PatEntry, Pmt, PsiParseError, parse_pat_section, parse_pmt};
+use crate::mpegts::demux::psi::{
+    PatEntry, Pmt, PsiParseError, parse_pat_section, parse_pmt, psi_section_syntax_issues,
+};
 use crate::mpegts::demux::psi_assembler::AssemblerError;
 use crate::mpegts::demux::strict::StrictMode;
 use crate::mpegts::demux::types::ProgramTracker;
@@ -84,34 +88,20 @@ impl super::demuxer::Demuxer {
             if let Some(assembler) = self.psi_assemblers.get_mut(&pid) {
                 assembler.reset();
             }
-            let (expected, observed) = match self.last_psi_cc_jump.take() {
-                Some(pair) => pair,
-                None => {
-                    // Invariant violation: `check_continuity` must populate
-                    // `last_psi_cc_jump` before reaching this arm. Defense-in-depth:
-                    // drop the event silently rather than panicking, so a future
-                    // refactor that decouples `check_continuity` from `handle_psi`
-                    // can't crash the demuxer in production. `debug_assert!` still
-                    // catches regressions in test runs.
-                    debug_assert!(
-                        false,
-                        "check_continuity invariant: last_psi_cc_jump should be populated"
-                    );
-                    return Ok(());
-                }
-            };
-            let stream = self
-                .lookup_stream(pid)
-                .unwrap_or_else(|| StreamId::anonymous(pid, 0));
-            self.queue_nonconformant(
-                stream,
-                NonConformantIssue::PsiCcDiscontinuity {
-                    pid,
-                    expected,
-                    observed,
-                },
-            );
+            self.queue_psi_cc_discontinuity(pid);
             return Ok(());
+        }
+        // H.222.0 §2.4.4.2: after a continuity gap, the bytes before the
+        // section pointer_field points at are the tail of a section whose
+        // middle was lost. Drop the partial instead of splicing that tail onto
+        // it; report the gap only when a partial was actually discarded.
+        let tail_lost = pusi && cc_jumped && !self.options.lenient_psi_reassembly;
+        if tail_lost
+            && let Some(assembler) = self.psi_assemblers.get_mut(&pid)
+            && assembler.has_partial()
+        {
+            assembler.reset();
+            self.queue_psi_cc_discontinuity(pid);
         }
 
         // Per ISO/IEC 13818-1 §2.4.4.1, PUSI with `pointer_field > 0`
@@ -150,7 +140,7 @@ impl super::demuxer::Demuxer {
             // still run to start the NEW section at `payload[1+pf..]`.
             // Bailing on `Ok(false)` here would silently discard the new
             // section header in the mid-stream-join scenario.
-            if pointer_field > 0 {
+            if pointer_field > 0 && !tail_lost {
                 let cont = &payload[1..1 + pointer_field];
                 let assembler = self.psi_assemblers.entry(pid).or_default();
                 let res = assembler.append_continuation(cont);
@@ -194,6 +184,35 @@ impl super::demuxer::Demuxer {
             );
         }
         Ok(())
+    }
+
+    /// Queue `PsiCcDiscontinuity` for the CC jump `check_continuity`
+    /// recorded on the packet being routed.
+    fn queue_psi_cc_discontinuity(&mut self, pid: u16) {
+        let Some((expected, observed)) = self.last_psi_cc_jump.take() else {
+            // Invariant violation: `check_continuity` must populate
+            // `last_psi_cc_jump` before a jumped packet reaches `handle_psi`.
+            // Defense-in-depth: drop the event silently rather than panicking,
+            // so a future refactor that decouples the two can't crash the
+            // demuxer in production. `debug_assert!` still catches regressions
+            // in test runs.
+            debug_assert!(
+                false,
+                "check_continuity invariant: last_psi_cc_jump should be populated"
+            );
+            return;
+        };
+        let stream = self
+            .lookup_stream(pid)
+            .unwrap_or_else(|| StreamId::anonymous(pid, 0));
+        self.queue_nonconformant(
+            stream,
+            NonConformantIssue::PsiCcDiscontinuity {
+                pid,
+                expected,
+                observed,
+            },
+        );
     }
 
     /// Centralized PSI section dispatch + overflow handling.
@@ -256,7 +275,12 @@ impl super::demuxer::Demuxer {
                 );
                 return;
             }
-            Err(_) => return,
+            // H.222.0 §2.4.4.4: a future-staged table is not in effect yet.
+            Err(PsiParseError::FuturePsiSection) => return,
+            Err(_) => {
+                self.queue_psi_malformed(0x0000, 0x00, 0);
+                return;
+            }
         };
         // Validate fixed/reserved PSI syntax fields. This runs per-section
         // for multi-section PATs too (intentional).
@@ -271,6 +295,17 @@ impl super::demuxer::Demuxer {
             match self.pat_reassembler.accept(&parsed) {
                 PatReassemblyOutcome::Pending => return,
                 PatReassemblyOutcome::Complete(programs) => (parsed.version, programs),
+                PatReassemblyOutcome::OutOfRange { observed } => {
+                    self.queue_nonconformant(
+                        StreamId::anonymous(0x0000, 0),
+                        NonConformantIssue::PsiSyntax {
+                            pid: 0x0000,
+                            table_id: 0x00,
+                            kind: PsiSyntaxKind::SectionNumberOutOfRange { observed },
+                        },
+                    );
+                    return;
+                }
                 PatReassemblyOutcome::Broken => {
                     self.queue_nonconformant(
                         StreamId::anonymous(0x0000, 0),
@@ -285,11 +320,15 @@ impl super::demuxer::Demuxer {
             }
         };
 
-        // Same version — nothing changed, skip the diff.
-        if Some(version) == self.pat_version {
+        // A repeat of the applied table — nothing changed, skip the diff. The
+        // identity includes transport_stream_id and CRC_32, not just
+        // version_number: a new transport stream may restart at the same
+        // version (H.222.0 §2.4.4.5).
+        let identity = (parsed.transport_stream_id, version, section_crc(section));
+        if Some(identity) == self.pat_identity {
             return;
         }
-        self.pat_version = Some(version);
+        self.pat_identity = Some(identity);
         self.apply_pat_programs(&programs);
     }
 
@@ -444,7 +483,15 @@ impl super::demuxer::Demuxer {
                 );
                 return;
             }
-            Err(_) => return,
+            // H.222.0 §2.4.4.4: a future-staged table is not in effect yet.
+            Err(PsiParseError::FuturePsiSection) => return,
+            // Private sections may share a PMT PID (H.222.0 §2.4.4.8); only a
+            // section that claims to be a PMT can be malformed as one.
+            Err(_) if section.first() != Some(&0x02) => return,
+            Err(_) => {
+                self.queue_psi_malformed(pmt_pid, 0x02, pmt_program_number);
+                return;
+            }
         };
 
         // Look up the tracker — must exist if PAT pre-populated us.
@@ -746,63 +793,37 @@ impl super::demuxer::Demuxer {
     }
 
     /// Validate fixed/reserved PSI syntax fields on a section
-    /// whose CRC already passed. `section_syntax_indicator`/`section_number`
-    /// are checked in every mode; reserved-bit checks are gated behind
-    /// `strict != Off`. `pid` is the PID the section arrived on (0x0000 for
-    /// PAT), `table_id` is 0x00 (PAT) or 0x02 (PMT).
+    /// whose CRC already passed, through [`psi_section_syntax_issues`].
+    /// `section_syntax_indicator`/`section_number` are checked in every mode;
+    /// reserved-bit checks are gated behind `strict != Off`. `pid` is the PID
+    /// the section arrived on (0x0000 for PAT), `table_id` is 0x00 (PAT) or
+    /// 0x02 (PMT).
     fn check_psi_syntax(&mut self, pid: u16, table_id: u8, section: &[u8]) {
-        let stream = || StreamId::anonymous(pid, 0);
-        // Always: section_syntax_indicator (byte 1 bit 0x80) must be 1.
-        if section[1] & 0x80 == 0 {
+        // Reserved bits are gated: false positives are common in lenient mode.
+        let check_reserved_bits = self.options.strict != StrictMode::Off;
+        for kind in psi_section_syntax_issues(section, check_reserved_bits) {
             self.queue_nonconformant(
-                stream(),
+                StreamId::anonymous(pid, 0),
                 NonConformantIssue::PsiSyntax {
                     pid,
                     table_id,
-                    kind: PsiSyntaxKind::SectionSyntaxIndicatorUnset,
+                    kind,
                 },
             );
         }
-        // section_number (byte 6) must be 0 only on a single-section table
-        // (last_section_number, byte 7, == 0). Multi-section PATs
-        // legitimately carry section_number 1..=last_section_number, so a
-        // non-zero section_number there is valid, not a syntax violation.
-        if section[7] == 0 && section[6] != 0 {
-            self.queue_nonconformant(
-                stream(),
-                NonConformantIssue::PsiSyntax {
-                    pid,
-                    table_id,
-                    kind: PsiSyntaxKind::SectionNumberNonZero {
-                        observed: section[6],
-                    },
-                },
-            );
-        }
-        // Gated: reserved bits (false-positives common in lenient mode).
-        if self.options.strict != StrictMode::Off {
-            // byte 1 bit 0x40 = reserved-zero (must be 0);
-            // byte 1 bits 0x30 = reserved (must be 1);
-            // byte 5 bits 0xC0 = reserved (must be 1).
-            let mut bad = (section[1] & 0x40) != 0
-                || (section[1] & 0x30) != 0x30
-                || (section[5] & 0xC0) != 0xC0;
-            if table_id == 0x02 {
-                // PMT additionally: byte 8 bits 0xE0 = reserved (must be 1);
-                // byte 10 bits 0x30 = reserved (must be 1).
-                bad = bad || (section[8] & 0xE0) != 0xE0 || (section[10] & 0x30) != 0x30;
-            }
-            if bad {
-                self.queue_nonconformant(
-                    stream(),
-                    NonConformantIssue::PsiSyntax {
-                        pid,
-                        table_id,
-                        kind: PsiSyntaxKind::ReservedBits,
-                    },
-                );
-            }
-        }
+    }
+
+    /// Queue `PsiSyntax { kind: Malformed }` for a section the parser
+    /// rejected; the section is ignored.
+    fn queue_psi_malformed(&mut self, pid: u16, table_id: u8, program_number: u16) {
+        self.queue_nonconformant(
+            StreamId::anonymous(pid, program_number),
+            NonConformantIssue::PsiSyntax {
+                pid,
+                table_id,
+                kind: PsiSyntaxKind::Malformed,
+            },
+        );
     }
 
     pub(super) fn klv_mismatch_insert(&mut self, pid: u16) -> bool {
@@ -815,6 +836,18 @@ impl super::demuxer::Demuxer {
         // No tracker found — no suppression.
         true
     }
+}
+
+/// The CRC_32 trailer of a section that already parsed, so its
+/// `section_length` is known to fit the slice.
+fn section_crc(section: &[u8]) -> u32 {
+    let total = 3 + ((((section[1] & 0x0F) as usize) << 8) | section[2] as usize);
+    u32::from_be_bytes([
+        section[total - 4],
+        section[total - 3],
+        section[total - 2],
+        section[total - 1],
+    ])
 }
 
 #[cfg(test)]
@@ -833,7 +866,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use crate::mpegts::demux::test_support::{
-        build_pat_section, build_pmt_section as build_pmt_section_with,
+        build_pat_section, build_pmt_section as build_pmt_section_with, issues, psi_packet, recrc,
     };
 
     /// `streams` is `(stream_type, elementary_pid)`, no descriptors.
@@ -2397,6 +2430,152 @@ mod tests {
             demuxer.pes.buffered_bytes(),
             0,
             "PES reassembler total_buffered must reflect dropped PID's bytes"
+        );
+    }
+
+    #[test]
+    fn pat_with_same_version_and_new_transport_stream_id_is_applied() {
+        let mut d = Demuxer::new();
+        d.feed(&psi_packet(0, &build_pat_section(1, 0, &[(1, 0x1000)]), 0))
+            .unwrap();
+        d.feed(&psi_packet(0, &build_pat_section(2, 0, &[(2, 0x1100)]), 1))
+            .unwrap();
+        let progs = d.programs_for_test();
+        assert!(
+            progs.values().any(|t| t.program_number == 2)
+                && !progs.values().any(|t| t.program_number == 1),
+            "a new transport_stream_id is a new table even at the same version"
+        );
+    }
+
+    #[test]
+    fn identical_pat_repeat_is_deduplicated() {
+        let mut d = Demuxer::new();
+        let pat = build_pat_section(1, 0, &[(1, 0x1000)]);
+        d.feed(&psi_packet(0, &pat, 0)).unwrap();
+        d.feed(&pmt_packet_for_test(
+            0x1000,
+            1,
+            0x1001,
+            &[(0x1B, 0x1001)],
+            0,
+        ))
+        .unwrap();
+        drain_all_events(&mut d);
+        d.feed(&psi_packet(0, &pat, 1)).unwrap();
+        let progs = d.programs_for_test();
+        assert_eq!(progs.len(), 1);
+        assert_eq!(
+            progs.get(&0x1000).and_then(|t| t.pmt_version),
+            Some(0),
+            "a repeated PAT must not rebuild the program tracker"
+        );
+        assert!(drain_all_events(&mut d).is_empty());
+    }
+
+    #[test]
+    fn crc_valid_unparseable_pmt_raises_psi_syntax_malformed() {
+        let mut d = Demuxer::new();
+        d.feed(&psi_packet(0, &build_pat_section(1, 0, &[(1, 0x1000)]), 0))
+            .unwrap();
+        let mut pmt = build_pmt_section(1, 0x1001, 0, &[(0x1B, 0x1001)]);
+        // program_info_length = 0x3FF overruns the section.
+        pmt[10] = 0xF3;
+        pmt[11] = 0xFF;
+        recrc(&mut pmt);
+        d.feed(&psi_packet(0x1000, &pmt, 0)).unwrap();
+        assert!(
+            issues(&drain_all_events(&mut d)).contains(&NonConformantIssue::PsiSyntax {
+                pid: 0x1000,
+                table_id: 0x02,
+                kind: PsiSyntaxKind::Malformed,
+            })
+        );
+    }
+
+    #[test]
+    fn future_and_private_sections_on_the_pmt_pid_stay_silent() {
+        let mut d = Demuxer::new();
+        d.feed(&psi_packet(0, &build_pat_section(1, 0, &[(1, 0x1000)]), 0))
+            .unwrap();
+        let mut future = build_pmt_section(1, 0x1001, 0, &[(0x1B, 0x1001)]);
+        future[5] &= 0xFE; // current_next_indicator = 0
+        recrc(&mut future);
+        d.feed(&psi_packet(0x1000, &future, 0)).unwrap();
+        let mut private = build_pmt_section(1, 0x1001, 0, &[(0x1B, 0x1001)]);
+        private[0] = 0x80; // user-private table_id sharing the PMT PID
+        recrc(&mut private);
+        d.feed(&psi_packet(0x1000, &private, 1)).unwrap();
+        assert_eq!(issues(&drain_all_events(&mut d)), Vec::new());
+    }
+
+    /// H.222.0 §2.4.4.2: after a continuity gap the bytes before pointer_field's
+    /// target belong to a section whose middle was lost.
+    #[test]
+    fn pusi_after_cc_gap_drops_the_pre_gap_partial_section() {
+        // Two 212-byte PAT sections (50 programs each): A starts in CC 0; the
+        // lost CC 1 carries A's tail and B's head; CC 2 carries B's tail
+        // (pointer_field = 58) and then a fresh complete PAT C.
+        let a_progs: Vec<(u16, u16)> = (1..=50).map(|n| (n, 0x1000 + n)).collect();
+        let b_progs: Vec<(u16, u16)> = (1..=50).map(|n| (n, 0x1100 + n)).collect();
+        let a = build_pat_section(1, 0, &a_progs);
+        let b = build_pat_section(1, 1, &b_progs);
+        let c = build_pat_section(1, 2, &[(7, 0x1700)]);
+        assert_eq!((a.len(), b.len()), (212, 212));
+
+        let mut cc0 = vec![0x47, 0x40, 0x00, 0x10, 0x00];
+        cc0.extend_from_slice(&a[..183]);
+        // B's first 154 bytes rode the lost CC 1 packet.
+        let b_tail = &b[154..];
+        let mut cc2 = vec![0x47, 0x40, 0x00, 0x12, b_tail.len() as u8];
+        cc2.extend_from_slice(b_tail);
+        cc2.extend_from_slice(&c);
+        cc2.resize(188, 0xFF);
+
+        let mut d = Demuxer::new();
+        d.feed(&cc0).unwrap();
+        d.feed(&cc2).unwrap();
+        let got = issues(&drain_all_events(&mut d));
+        assert!(
+            got.contains(&NonConformantIssue::PsiCcDiscontinuity {
+                pid: 0,
+                expected: 1,
+                observed: 2,
+            }),
+            "{got:?}"
+        );
+        assert!(
+            !got.iter()
+                .any(|i| matches!(i, NonConformantIssue::PsiChecksumMismatch { .. })),
+            "the spliced partial must not be parsed: {got:?}"
+        );
+        let progs = d.programs_for_test();
+        assert!(progs.get(&0x1700).is_some_and(|t| t.program_number == 7));
+        assert_eq!(progs.len(), 1);
+    }
+
+    #[test]
+    fn pat_section_number_beyond_last_section_number_is_ignored_and_reported() {
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_multi_section_cc(0, 1, &[(1, 0x100)], 0))
+            .unwrap();
+        d.feed(&pat_packet_with_multi_section_cc(2, 1, &[(3, 0x300)], 1))
+            .unwrap();
+        d.feed(&pat_packet_with_multi_section_cc(1, 1, &[(2, 0x200)], 2))
+            .unwrap();
+        let mut numbers: Vec<u16> = d
+            .programs_for_test()
+            .values()
+            .map(|t| t.program_number)
+            .collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, vec![1, 2]);
+        assert!(
+            issues(&drain_all_events(&mut d)).contains(&NonConformantIssue::PsiSyntax {
+                pid: 0,
+                table_id: 0,
+                kind: PsiSyntaxKind::SectionNumberOutOfRange { observed: 2 },
+            })
         );
     }
 }
