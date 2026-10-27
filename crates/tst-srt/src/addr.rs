@@ -59,9 +59,23 @@ pub(crate) fn from_sockaddr(os_addr: &OsSocketAddr) -> Result<SocketAddr, AddrEr
 /// for every open path of the C, Python and JVM bindings. An
 /// already-bracketed host, an IPv4 literal and a hostname pass through
 /// unchanged.
+///
+/// An IPv6 host with a named zone (`fe80::1%eth0`) is joined WITHOUT
+/// brackets: std parses only a numeric scope id, and its lookup fallback
+/// would hand `[fe80::1%eth0]` to `getaddrinfo` brackets and all. Unbracketed,
+/// the lookup splits at the last `':'` (a zone name holds none) and
+/// `getaddrinfo` resolves the zone to its interface index. A numeric zone
+/// keeps the brackets and parses directly.
 pub fn join_host_port(host: &str, port: u16) -> String {
     if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]:{port}")
+        let named_zone = host
+            .split_once('%')
+            .is_some_and(|(_, zone)| !zone.bytes().all(|b| b.is_ascii_digit()));
+        if named_zone {
+            format!("{host}:{port}")
+        } else {
+            format!("[{host}]:{port}")
+        }
     } else {
         format!("{host}:{port}")
     }
@@ -160,7 +174,8 @@ mod tests {
     #[test]
     fn join_host_port_brackets_bare_ipv6_only() {
         assert_eq!(join_host_port("::1", 9000), "[::1]:9000");
-        assert_eq!(join_host_port("fe80::1%eth0", 7000), "[fe80::1%eth0]:7000");
+        assert_eq!(join_host_port("fe80::1%3", 7000), "[fe80::1%3]:7000");
+        assert_eq!(join_host_port("fe80::1%eth0", 7000), "fe80::1%eth0:7000");
         assert_eq!(join_host_port("[::1]", 9000), "[::1]:9000");
         assert_eq!(join_host_port("127.0.0.1", 9000), "127.0.0.1:9000");
         assert_eq!(join_host_port("0.0.0.0", 7000), "0.0.0.0:7000");

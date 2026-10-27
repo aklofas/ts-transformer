@@ -481,14 +481,10 @@ pub fn read_nullable_int(
     Ok(Some(v))
 }
 
-/// Join `host:port`, bracketing bare IPv6 literals so `Socket::connect_with` /
-/// `Listener::bind_with` accept them.
+/// Join `host:port` in the form `Socket::connect_with` /
+/// `Listener::bind_with` resolve: [`tst_srt::addr::join_host_port`].
 pub fn join_host_port(host: &str, port: u16) -> String {
-    if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
+    tst_srt::addr::join_host_port(host, port)
 }
 
 /// Read a Java `byte[]` argument, or throw `RuntimeException` + return `None`.
