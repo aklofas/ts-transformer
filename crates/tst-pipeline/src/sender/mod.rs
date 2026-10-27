@@ -414,7 +414,10 @@ impl<T: Transport> Sender<T> {
     /// On a failed slice the unsent remainder, starting at that slice's first
     /// byte, goes back to the front of the pending queue.
     fn send_fitted(&mut self, bundle: Vec<u8>) -> Result<(), TransportError> {
-        self.check_ceiling()?;
+        if let Err(e) = self.check_ceiling() {
+            self.pending_bundles.push_front(bundle);
+            return Err(e);
+        }
         let step = self.transport.max_payload() / TS_PACKET_SIZE * TS_PACKET_SIZE;
         let mut sent = 0;
         while sent < bundle.len() {
