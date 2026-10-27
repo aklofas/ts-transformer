@@ -2,11 +2,15 @@
 //!
 //! Realtime mode: video events trigger immediate pairing against KLV
 //! history. Buffered mode adds a bounded video buffer with lookahead
-//! drain.
+//! drain, and releases that buffer when the raw 33-bit PTS wraps.
 
 use super::types::{KlvSample, PairerOutput, VideoSample};
 use std::collections::VecDeque;
 use tst_core::mpegts::demux::DemuxEvent;
+
+/// A PTS this far below the newest one seen is a raw 33-bit wrap, not
+/// reordering: half the `2^33` PTS range.
+const WRAP_JUMP_TICKS: i64 = 1 << 32;
 
 /// Internal mode shape. The public [`super::PairerMode`]'s `Buffered`
 /// variant carries a `Duration` (max arrival skew); we still pair
@@ -36,6 +40,9 @@ pub(super) struct NearestState {
     mode: InternalMode,
     klv_history: VecDeque<KlvEntry>,
     video_buffer: VecDeque<VideoSample>,
+    /// Largest PTS fed on either route since the last wrap (Buffered
+    /// mode only).
+    newest_pts: Option<i64>,
 }
 
 struct KlvEntry {
@@ -59,18 +66,58 @@ impl NearestState {
             mode,
             klv_history: VecDeque::with_capacity(max_klv_history),
             video_buffer: VecDeque::new(),
+            newest_pts: None,
         }
     }
 
     pub(super) fn feed(&mut self, event: DemuxEvent) -> Vec<PairerOutput> {
         match super::classify(event, self.video_pid, self.klv_pid) {
-            super::EventClass::Video(v) => self.handle_video(v),
-            super::EventClass::Klv(k) => self.handle_klv(k),
+            super::EventClass::Video(v) => {
+                let mut out = self.observe_pts(v.pts.as_ticks());
+                out.extend(self.handle_video(v));
+                out
+            }
+            super::EventClass::Klv(k) => {
+                let mut out = self.observe_pts(k.pts.as_ticks());
+                out.extend(self.handle_klv(k));
+                out
+            }
             super::EventClass::Other(other) => vec![PairerOutput::PassThrough(other)],
         }
     }
 
+    /// Buffered mode: track the newest PTS and, when `pts` lies more
+    /// than [`WRAP_JUMP_TICKS`] below it (both raw 33-bit values), close
+    /// out the pre-wrap state before the event is handled. Without this
+    /// a buffered pre-wrap video is never released: every post-wrap KLV
+    /// sits far below it, so neither the match nor the wait window
+    /// closes. Realtime buffers no video and is left alone.
+    fn observe_pts(&mut self, pts: i64) -> Vec<PairerOutput> {
+        if matches!(self.mode, InternalMode::Realtime) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        if let Some(newest) = self.newest_pts
+            && (0..1 << 33).contains(&pts)
+            && (0..1 << 33).contains(&newest)
+            && newest - pts > WRAP_JUMP_TICKS
+        {
+            while let Some(v) = self.video_buffer.pop_front() {
+                out.extend(self.match_video_against_history(v));
+            }
+            while let Some(entry) = self.klv_history.pop_front() {
+                if !entry.used {
+                    out.push(PairerOutput::UnpairedKlv(entry.sample));
+                }
+            }
+            self.newest_pts = None;
+        }
+        self.newest_pts = Some(self.newest_pts.map_or(pts, |n| n.max(pts)));
+        out
+    }
+
     pub(super) fn flush(&mut self) -> Vec<PairerOutput> {
+        self.newest_pts = None;
         let mut out = self.drain_buffered(true);
         // Drain remaining KLV history; emit UnpairedKlv for any !used.
         while let Some(entry) = self.klv_history.pop_front() {
@@ -384,6 +431,80 @@ mod tests {
                 max_lag_ticks,
             },
         )
+    }
+
+    fn buffered_pairer(tolerance_ticks: i64, max_lag_ticks: i64) -> NearestState {
+        NearestState::new(
+            VIDEO_PID,
+            KLV_PID,
+            tolerance_ticks,
+            4,
+            InternalMode::Buffered {
+                max_video_buffer: 8,
+                max_lag_ticks,
+            },
+        )
+    }
+
+    #[test]
+    fn a_raw_wrap_releases_the_frame_buffered_before_it() {
+        let mut p = buffered_pairer(/*tolerance*/ 0, /*max_lag*/ 9000);
+        p.feed(video_event((1 << 33) - 1000));
+        // The post-wrap KLV arrives first: the wrap is seen on it.
+        let mut out = p.feed(klv_event(0));
+        out.extend(p.feed(video_event(0)));
+        assert!(out.iter().any(
+            |o| matches!(o, PairerOutput::UnpairedVideo(v) if v.pts.as_ticks() == (1 << 33) - 1000)
+        ));
+        assert!(
+            out.iter().any(
+                |o| matches!(o, PairerOutput::Paired { video, .. } if video.pts.as_ticks() == 0)
+            )
+        );
+    }
+
+    #[test]
+    fn a_raw_wrap_seen_on_video_releases_the_pre_wrap_frame() {
+        let mut p = buffered_pairer(0, 9000);
+        p.feed(video_event((1 << 33) - 1000));
+        let out = p.feed(video_event(0));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedVideo(v)] if v.pts.as_ticks() == (1 << 33) - 1000),
+            "the post-wrap video must release the pre-wrap one, got {:?}",
+            out
+        );
+        let out = p.feed(klv_event(0));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { video, .. }] if video.pts.as_ticks() == 0),
+            "the post-wrap video must stay buffered and pair, got {:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn a_raw_wrap_clears_the_history() {
+        let mut p = buffered_pairer(100, 9000);
+        p.feed(klv_event((1 << 33) - 5000)); // never used
+        p.feed(klv_event((1 << 33) - 950)); // pairs the buffered video at the wrap
+        p.feed(video_event((1 << 33) - 1000)); // pairs at once
+        p.feed(video_event((1 << 33) - 500)); // buffered: 450 from the newest KLV
+        let out = p.feed(klv_event(0));
+        let unpaired_klv: Vec<i64> = out
+            .iter()
+            .filter_map(|o| match o {
+                PairerOutput::UnpairedKlv(k) => Some(k.pts.as_ticks()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(unpaired_klv, vec![(1 << 33) - 5000], "got {:?}", out);
+        assert!(out.iter().any(|o| matches!(o, PairerOutput::UnpairedVideo(v) if v.pts.as_ticks() == (1 << 33) - 500)), "got {:?}", out);
+        // Only the post-wrap KLV is left.
+        let out = p.flush();
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == 0),
+            "got {:?}",
+            out
+        );
     }
 
     #[test]
