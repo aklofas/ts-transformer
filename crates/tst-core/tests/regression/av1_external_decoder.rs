@@ -201,11 +201,11 @@ fn tool_available(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Materialize TS bytes to a temp file. Uses `std::env::temp_dir()` per
-/// the workspace cross-platform-paths rule (Rust tests must NOT hard
-/// code `/tmp/`).
-fn write_temp_ts(bytes: &[u8], name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("wave_i2_av1_{name}.ts"));
+/// Materialize TS bytes under `dir`, a per-test `TempDir` the caller keeps
+/// alive until every child process has exited (tests must NOT hard code
+/// `/tmp/` or share fixed names there).
+fn write_temp_ts(dir: &Path, bytes: &[u8], name: &str) -> PathBuf {
+    let path = dir.join(format!("wave_i2_av1_{name}.ts"));
     std::fs::write(&path, bytes).unwrap_or_else(|e| {
         panic!("write {}: {e}", path.display());
     });
@@ -336,7 +336,8 @@ fn ffprobe_recognizes_av01_tag_in_binding_mode() {
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
-    let path = write_temp_ts(&ts, "binding");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let path = write_temp_ts(dir.path(), &ts, "binding");
     let out = run(Command::new("ffprobe").args([
         "-v",
         "error",
@@ -358,7 +359,6 @@ fn ffprobe_recognizes_av01_tag_in_binding_mode() {
         "expected exactly one AV01-tagged stream, got {av01_count}:\n{stdout}"
     );
     // Cleanup
-    let _ = std::fs::remove_file(path);
 }
 
 /// tsanalyze probe: when tsduck's `tsanalyze` is installed, confirm
@@ -375,7 +375,8 @@ fn tsanalyze_reports_stream_id_0xbd_in_binding_mode() {
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
-    let path = write_temp_ts(&ts, "binding_tsa");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let path = write_temp_ts(dir.path(), &ts, "binding_tsa");
     let out = run(Command::new("tsanalyze").args(["--pid-analysis", path.to_str().unwrap()]));
     assert!(
         out.status.success(),
@@ -394,7 +395,6 @@ fn tsanalyze_reports_stream_id_0xbd_in_binding_mode() {
         !stdout.contains("PES stream id: 0xE0"),
         "found unexpected 0xE0 stream_id in binding-mode tsanalyze output:\n{stdout}"
     );
-    let _ = std::fs::remove_file(path);
 }
 
 /// tsanalyze cross-mode: in InteropRawObu mode the AV1 PES SHOULD use
@@ -407,7 +407,8 @@ fn tsanalyze_reports_stream_id_0xe0_in_interop_mode() {
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::InteropRawObu);
-    let path = write_temp_ts(&ts, "interop_tsa");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let path = write_temp_ts(dir.path(), &ts, "interop_tsa");
     let out = run(Command::new("tsanalyze").args(["--pid-analysis", path.to_str().unwrap()]));
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -415,7 +416,6 @@ fn tsanalyze_reports_stream_id_0xe0_in_interop_mode() {
         stdout.contains("PES stream id: 0xE0"),
         "expected interop-mode PES stream_id 0xE0 in tsanalyze output:\n{stdout}"
     );
-    let _ = std::fs::remove_file(path);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -451,8 +451,9 @@ fn ffprobe_deep_classification_diff_binding_vs_interop() {
     }
     let binding_ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
     let interop_ts = build_av1_ts(Av1CarriageMode::InteropRawObu);
-    let binding_path = write_temp_ts(&binding_ts, "binding_deep");
-    let interop_path = write_temp_ts(&interop_ts, "interop_deep");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let binding_path = write_temp_ts(dir.path(), &binding_ts, "binding_deep");
+    let interop_path = write_temp_ts(dir.path(), &interop_ts, "interop_deep");
 
     let binding_out = run(Command::new("ffprobe").args([
         "-v",
@@ -484,9 +485,6 @@ fn ffprobe_deep_classification_diff_binding_vs_interop() {
     // with `cargo test -- --ignored --nocapture`.
     eprintln!("=== ffprobe BINDING (stream_id=0xBD) ===\n{binding_stdout}");
     eprintln!("=== ffprobe INTEROP (stream_id=0xE0) ===\n{interop_stdout}");
-
-    let _ = std::fs::remove_file(binding_path);
-    let _ = std::fs::remove_file(interop_path);
 }
 
 /// ffmpeg-copy bitstream extraction: dumps the AV1 elementary stream
@@ -502,8 +500,9 @@ fn ffmpeg_copy_extracts_ts_obu_framed_bitstream_from_binding_mode() {
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
-    let ts_path = write_temp_ts(&ts, "binding_copy");
-    let dump_path = std::env::temp_dir().join("wave_i2_av1_dump.bin");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let ts_path = write_temp_ts(dir.path(), &ts, "binding_copy");
+    let dump_path = dir.path().join("wave_i2_av1_dump.bin");
     // `-map 0:d:0` selects the first data stream (ffmpeg classifies
     // the AV1 binding PID as `data` because stream_id=0xBD isn't on
     // its video-dispatch path).
@@ -546,8 +545,6 @@ fn ffmpeg_copy_extracts_ts_obu_framed_bitstream_from_binding_mode() {
         n >= 92,
         "expected ≥92 start codes in extracted binding bitstream (per-OBU framing), got {n}"
     );
-    let _ = std::fs::remove_file(ts_path);
-    let _ = std::fs::remove_file(dump_path);
 }
 
 /// dav1d-on-extracted-stream best-effort probe: dav1d expects an AV1
@@ -567,8 +564,9 @@ fn dav1d_handles_extracted_binding_bitstream_without_crashing() {
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
-    let ts_path = write_temp_ts(&ts, "binding_dav1d");
-    let dump_path = std::env::temp_dir().join("wave_i2_av1_dav1d_dump.obu");
+    let dir = tempfile::TempDir::new().expect("private temp dir");
+    let ts_path = write_temp_ts(dir.path(), &ts, "binding_dav1d");
+    let dump_path = dir.path().join("wave_i2_av1_dav1d_dump.obu");
     let out = run(Command::new("ffmpeg").args([
         "-y",
         "-v",
@@ -600,9 +598,6 @@ fn dav1d_handles_extracted_binding_bitstream_without_crashing() {
         code,
         String::from_utf8_lossy(&dav1d_out.stderr),
     );
-
-    let _ = std::fs::remove_file(ts_path);
-    let _ = std::fs::remove_file(dump_path);
 }
 
 /// Diagnostic dump for the results doc — writes both binding and

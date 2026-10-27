@@ -289,6 +289,105 @@ use tst_core::klv::st0601::{self, UasDatalinkLs};
 // through `encode_to_vec` + `decode` but with a different comparison
 // shape, so we keep them as distinct proptests for readable failures.
 
+/// One ranged ST 0601 tag: its wire width in bytes, IMAPB range, and
+/// accessors for the typed field.
+struct ImapbTag {
+    id: u8,
+    width: usize,
+    min: f64,
+    max: f64,
+    set: fn(&mut UasDatalinkLs, f64),
+    get: fn(&UasDatalinkLs) -> Option<f64>,
+}
+
+/// Eight representative tags covering signed/unsigned and 2- and 4-byte widths.
+fn imapb_tags() -> [ImapbTag; 8] {
+    [
+        // Tag 5: platform_heading_angle 0..360 (u16 → 2 bytes, ST 0601 §item5)
+        ImapbTag {
+            id: 5,
+            width: 2,
+            min: 0.0,
+            max: 360.0,
+            set: |r, v| r.platform_heading_deg = Some(v),
+            get: |r| r.platform_heading_deg,
+        },
+        // Tag 6: platform_pitch_angle ±20° (i16 → 2 bytes)
+        ImapbTag {
+            id: 6,
+            width: 2,
+            min: -20.0,
+            max: 20.0,
+            set: |r, v| r.platform_pitch_deg = Some(v),
+            get: |r| r.platform_pitch_deg,
+        },
+        // Tag 13: sensor_latitude ±90° (i32 → 4 bytes)
+        ImapbTag {
+            id: 13,
+            width: 4,
+            min: -90.0,
+            max: 90.0,
+            set: |r, v| r.sensor_lat_deg = Some(v),
+            get: |r| r.sensor_lat_deg,
+        },
+        // Tag 14: sensor_longitude ±180° (i32 → 4 bytes)
+        ImapbTag {
+            id: 14,
+            width: 4,
+            min: -180.0,
+            max: 180.0,
+            set: |r, v| r.sensor_lon_deg = Some(v),
+            get: |r| r.sensor_lon_deg,
+        },
+        // Tag 15: sensor_altitude_m -900..19000 (u16 → 2 bytes, asymmetric range)
+        ImapbTag {
+            id: 15,
+            width: 2,
+            min: -900.0,
+            max: 19000.0,
+            set: |r, v| r.sensor_alt_m = Some(v),
+            get: |r| r.sensor_alt_m,
+        },
+        // Tag 21: slant_range 0..5,000,000 m (u32 → 4 bytes, large unsigned range)
+        ImapbTag {
+            id: 21,
+            width: 4,
+            min: 0.0,
+            max: 5_000_000.0,
+            set: |r, v| r.slant_range_m = Some(v),
+            get: |r| r.slant_range_m,
+        },
+        // Tag 90: platform_pitch_full ±90° (i32 → 4 bytes)
+        ImapbTag {
+            id: 90,
+            width: 4,
+            min: -90.0,
+            max: 90.0,
+            set: |r, v| r.platform_pitch_full_deg = Some(v),
+            get: |r| r.platform_pitch_full_deg,
+        },
+        // Tag 50: platform_angle_of_attack ±20° (i16 → 2 bytes)
+        ImapbTag {
+            id: 50,
+            width: 2,
+            min: -20.0,
+            max: 20.0,
+            set: |r, v| r.platform_angle_of_attack_deg = Some(v),
+            get: |r| r.platform_angle_of_attack_deg,
+        },
+    ]
+}
+
+#[test]
+fn a_two_byte_grid_value_fails_the_four_byte_latitude_tolerance() {
+    let tag = imapb_tags().into_iter().find(|t| t.id == 13).unwrap();
+    let tol = imapb_tol(tag.min, tag.max, tag.width).tol;
+    assert!(
+        0.0078125 > tol,
+        "latitude tolerance {tol} must be the 4-byte step"
+    );
+}
+
 proptest! {
     /// Exact-equality tags (strings, opaque bytes, integer types).
     ///
@@ -401,49 +500,7 @@ proptest! {
         which in 0usize..8,
         t in 0.0f64..=1.0,
     ) {
-        // (tag_id, min, max, field-getter). Eight representative tags
-        // covering signed/unsigned and the integer-width spectrum.
-        struct ImapbTag {
-            id: u8,
-            min: f64,
-            max: f64,
-            set: fn(&mut UasDatalinkLs, f64),
-            get: fn(&UasDatalinkLs) -> Option<f64>,
-        }
-        let tags: [ImapbTag; 8] = [
-            // Tag 5: platform_heading_angle 0..360 (u16 → 2 bytes, ST 0601 §item5)
-            ImapbTag { id: 5, min: 0.0, max: 360.0,
-                set: |r, v| r.platform_heading_deg = Some(v),
-                get: |r| r.platform_heading_deg },
-            // Tag 6: platform_pitch_angle ±20° (i16 → 2 bytes)
-            ImapbTag { id: 6, min: -20.0, max: 20.0,
-                set: |r, v| r.platform_pitch_deg = Some(v),
-                get: |r| r.platform_pitch_deg },
-            // Tag 13: sensor_latitude ±90° (i32 → 4 bytes)
-            ImapbTag { id: 13, min: -90.0, max: 90.0,
-                set: |r, v| r.sensor_lat_deg = Some(v),
-                get: |r| r.sensor_lat_deg },
-            // Tag 14: sensor_longitude ±180° (i32 → 4 bytes)
-            ImapbTag { id: 14, min: -180.0, max: 180.0,
-                set: |r, v| r.sensor_lon_deg = Some(v),
-                get: |r| r.sensor_lon_deg },
-            // Tag 15: sensor_altitude_m -900..19000 (u16 → 2 bytes, asymmetric range)
-            ImapbTag { id: 15, min: -900.0, max: 19000.0,
-                set: |r, v| r.sensor_alt_m = Some(v),
-                get: |r| r.sensor_alt_m },
-            // Tag 21: slant_range 0..5,000,000 m (u32 → 4 bytes, large unsigned range)
-            ImapbTag { id: 21, min: 0.0, max: 5_000_000.0,
-                set: |r, v| r.slant_range_m = Some(v),
-                get: |r| r.slant_range_m },
-            // Tag 90: platform_pitch_full ±90° (i32 → 4 bytes)
-            ImapbTag { id: 90, min: -90.0, max: 90.0,
-                set: |r, v| r.platform_pitch_full_deg = Some(v),
-                get: |r| r.platform_pitch_full_deg },
-            // Tag 50: platform_angle_of_attack ±20° (i16 → 2 bytes)
-            ImapbTag { id: 50, min: -20.0, max: 20.0,
-                set: |r, v| r.platform_angle_of_attack_deg = Some(v),
-                get: |r| r.platform_angle_of_attack_deg },
-        ];
+        let tags = imapb_tags();
         let tag = &tags[which];
         let value = tag.min + t * (tag.max - tag.min);
 
@@ -454,12 +511,10 @@ proptest! {
         let decoded = st0601::decode(&buf).expect("decode");
         let got = (tag.get)(&decoded).expect("field must be present after round-trip");
 
-        // IMAPB tolerance derivation: see the `imapb_tol` helper at the
-        // bottom of this file (formula mirrored from
-        // klv_proptest.rs::imapb_roundtrip lines 73-94). Conservative
-        // `length=2` keeps the bound safe for 4-byte tags too.
-        let length = 2usize;
-        let tol = imapb_tol(tag.min, tag.max, length).tol;
+        // IMAPB tolerance derivation: see the `imapb_tol` helper in
+        // `common`; each row carries its own wire width so a 4-byte tag is
+        // held to the 4-byte step.
+        let tol = imapb_tol(tag.min, tag.max, tag.width).tol;
 
         prop_assert!(
             (got - value).abs() <= tol,

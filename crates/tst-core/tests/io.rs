@@ -6,5 +6,6 @@
 //! module path gained a `io::<file>::` prefix.
 #[path = "io/io_file_smoke.rs"]
 mod io_file_smoke;
+#[cfg(feature = "std")]
 #[path = "io/timing_smoke.rs"]
 mod timing_smoke;
