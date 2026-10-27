@@ -24,8 +24,9 @@ use crate::mpegts::demux::event::{
 use crate::mpegts::demux::payload::{
     DvbSubStripResult, KlvShape, classify_klv, iter_au_cells, strip_dvb_sub_envelope,
 };
-use crate::mpegts::demux::pes::{PesPayload, ReassemblyOutcome};
+use crate::mpegts::demux::pes::{PesPayload, ReassemblyOutcome, is_damage_reason};
 use crate::mpegts::demux::pid_state::set_once;
+use crate::mpegts::demux::strict::StrictMode;
 use crate::mpegts::demux::timestamp::TimestampUnwrapper;
 use crate::mpegts::stats::CodecKind;
 use crate::shared::SharedBytes;
@@ -99,9 +100,16 @@ impl super::demuxer::Demuxer {
             pkt.random_access_indicator,
             is_video,
         );
+        // A strict mode drops the damaged PES its marker announces; the
+        // marker is always the outcome right before that `Complete`.
+        let mut drop_next_complete: Option<u16> = None;
         for outcome in outcomes {
             match outcome {
                 ReassemblyOutcome::Complete(pes) => {
+                    if drop_next_complete == Some(pes.pid) {
+                        drop_next_complete = None;
+                        continue;
+                    }
                     self.handle_complete_pes(pes);
                 }
                 ReassemblyOutcome::Overflow { pid } => {
@@ -110,8 +118,12 @@ impl super::demuxer::Demuxer {
                     }
                 }
                 ReassemblyOutcome::OverflowTotal => {
-                    if let Some(stream) = self.lookup_stream(pkt.pid) {
-                        self.record_discontinuity(stream, DiscontinuityKind::PesTotalOversize);
+                    // The aggregate cap drops the partials of every PID, so
+                    // each of them lost a PES.
+                    for pid in self.pes.take_total_overflow_pids() {
+                        if let Some(stream) = self.lookup_stream(pid) {
+                            self.record_discontinuity(stream, DiscontinuityKind::PesTotalOversize);
+                        }
                     }
                 }
                 ReassemblyOutcome::ZeroLengthNonVideo { pid, stream_id } => {
@@ -130,6 +142,9 @@ impl super::demuxer::Demuxer {
                     // outcomes of this packet go with it (strict is fatal
                     // for the stream anyway).
                     self.surface_malformed_pes(pid, reason)?;
+                    if is_damage_reason(reason) && self.options.strict != StrictMode::Off {
+                        drop_next_complete = Some(pid);
+                    }
                 }
             }
         }
@@ -694,6 +709,13 @@ impl super::demuxer::Demuxer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::DemuxError;
+    use crate::mpegts::demux::Demuxer;
+    use crate::mpegts::demux::pes::{DAMAGE_CC_GAP, DAMAGE_SHORT_PES};
+    use crate::mpegts::demux::test_support::{
+        demuxer_with_streams, drain_all_events, feed_packets, issues, pes_bytes, pes_to_packets,
+    };
+    use crate::mpegts::demux::types::DemuxerConfig;
 
     /// Build a minimal-valid sync-KLV body: 16-byte SMPTE UAS Datalink UL,
     /// 1-byte BER short-form length, then `value_len` value bytes
@@ -760,5 +782,150 @@ mod tests {
         buf.push(value_len as u8);
         buf.extend(core::iter::repeat_n(0x00u8, value_len));
         assert!(orphan_validates_as_complete_klv(&buf));
+    }
+
+    fn audio_demuxer(mode: StrictMode) -> Demuxer {
+        let mut b = DemuxerConfig::builder();
+        b.strict(mode);
+        demuxer_with_streams(b.build(), 0x101, &[(0x0F, 0x101, &[])])
+    }
+
+    fn three_packet_pes(pts: u64) -> Vec<u8> {
+        pes_bytes(0xC0, Some(pts), None, true, &[0xAA; 400], true)
+    }
+
+    /// Two bounded audio PES on 0x101; the first loses its middle packet
+    /// (CC 0, 2), the second arrives whole (CC 3..5).
+    fn cc_gap_packets() -> Vec<[u8; 188]> {
+        let mut pkts = pes_to_packets(0x101, 0, &three_packet_pes(90_000));
+        pkts.remove(1);
+        pkts.extend(pes_to_packets(0x101, 3, &three_packet_pes(92_000)));
+        pkts
+    }
+
+    fn marker_index(ev: &[DemuxEvent], want: &str) -> Option<usize> {
+        ev.iter().position(|e| {
+            matches!(e, DemuxEvent::NonConformant {
+                issue: NonConformantIssue::MalformedPes { pid: 0x101, reason }, ..
+            } if *reason == want)
+        })
+    }
+
+    fn sample_index(ev: &[DemuxEvent], pid: u16, want_pts: i64) -> Option<usize> {
+        ev.iter().position(|e| {
+            matches!(e, DemuxEvent::Sample { stream, pts, .. }
+                if stream.pid == pid && pts.as_ticks() == want_pts)
+        })
+    }
+
+    /// H.222.0 §2.4.3.3: a continuity_counter gap on a PES PID means packets were
+    /// lost. Lenient mode delivers the damaged PES, marked by MalformedPes.
+    #[test]
+    fn cc_gap_inside_pes_marks_the_sample_in_lenient_mode() {
+        let mut d = audio_demuxer(StrictMode::Off);
+        feed_packets(&mut d, &cc_gap_packets()).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        let marker = marker_index(&ev, DAMAGE_CC_GAP);
+        let sample = sample_index(&ev, 0x101, 90_000);
+        assert!(
+            matches!((marker, sample), (Some(m), Some(s)) if m + 1 == s),
+            "{ev:?}"
+        );
+        let samples = ev
+            .iter()
+            .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
+            .count();
+        assert_eq!(samples, 2, "lenient mode keeps every sample");
+    }
+
+    #[test]
+    fn damaged_pes_is_dropped_but_reported_in_timing_only() {
+        let mut d = audio_demuxer(StrictMode::TimingOnly);
+        feed_packets(&mut d, &cc_gap_packets()).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(marker_index(&ev, DAMAGE_CC_GAP).is_some(), "{ev:?}");
+        assert!(sample_index(&ev, 0x101, 90_000).is_none(), "{ev:?}");
+        assert!(sample_index(&ev, 0x101, 92_000).is_some(), "{ev:?}");
+    }
+
+    #[test]
+    fn damaged_pes_fails_feed_in_full_mode() {
+        let mut d = audio_demuxer(StrictMode::Full);
+        let err = feed_packets(&mut d, &cc_gap_packets()).unwrap_err();
+        assert!(
+            matches!(err, DemuxError::MalformedPes { pid: 0x101, reason } if reason == DAMAGE_CC_GAP),
+            "{err:?}"
+        );
+        let ev = drain_all_events(&mut d);
+        assert!(sample_index(&ev, 0x101, 90_000).is_none(), "{ev:?}");
+    }
+
+    #[test]
+    fn short_bounded_pes_at_flush_is_marked() {
+        let mut d = audio_demuxer(StrictMode::Off);
+        let pkts = pes_to_packets(0x101, 0, &three_packet_pes(90_000));
+        feed_packets(&mut d, &pkts[..2]).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        let marker = marker_index(&ev, DAMAGE_SHORT_PES);
+        let sample = sample_index(&ev, 0x101, 90_000);
+        assert!(
+            matches!((marker, sample), (Some(m), Some(s)) if m + 1 == s),
+            "{ev:?}"
+        );
+    }
+
+    #[test]
+    fn unbounded_video_pes_completing_at_pusi_is_not_marked() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x100,
+            &[(0x1B, 0x100, &[])],
+        );
+        let first = pes_bytes(0xE0, Some(90_000), None, true, &[0xAA; 400], false);
+        let second = pes_bytes(0xE0, Some(93_000), None, true, &[0xAA; 40], false);
+        let mut pkts = pes_to_packets(0x100, 0, &first);
+        assert_eq!(pkts.len(), 3);
+        pkts.extend(pes_to_packets(0x100, 3, &second));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(sample_index(&ev, 0x100, 90_000).is_some(), "{ev:?}");
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::MalformedPes { .. })),
+            "{ev:?}"
+        );
+    }
+
+    #[test]
+    fn aggregate_overflow_records_a_discontinuity_for_every_dropped_pid() {
+        let mut b = DemuxerConfig::builder();
+        b.pes_cap_total(400);
+        let mut d = demuxer_with_streams(
+            b.build(),
+            0x101,
+            &[(0x0F, 0x101, &[]), (0x0F, 0x102, &[]), (0x0F, 0x103, &[])],
+        );
+        let pkts: Vec<[u8; 188]> = [0x101, 0x102, 0x103]
+            .iter()
+            .map(|&pid| pes_to_packets(pid, 0, &three_packet_pes(90_000))[0])
+            .collect();
+        feed_packets(&mut d, &pkts).unwrap();
+        let ev = drain_all_events(&mut d);
+        let pids: Vec<u16> = ev
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Discontinuity {
+                    stream,
+                    kind: DiscontinuityKind::PesTotalOversize,
+                } => Some(stream.pid),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pids, vec![0x101, 0x102, 0x103], "{ev:?}");
     }
 }

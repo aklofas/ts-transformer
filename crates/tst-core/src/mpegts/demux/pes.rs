@@ -51,6 +51,9 @@ struct Partial {
     buf: Vec<u8>,
     /// Latched at PUSI=1; never overwritten by continuation packets.
     random_access_indicator: bool,
+    /// Why the buffered bytes are known to be incomplete; the first damage
+    /// recorded wins.
+    damage: Option<&'static str>,
 }
 
 /// Per-call output from `Reassembler::push`. A single TS payload chunk
@@ -77,7 +80,22 @@ pub enum ReassemblyOutcome {
     /// without losing a valid PES that completed in the same call. The
     /// demuxer turns it into a `NonConformant` event in
     /// lenient mode and into the error in strict mode.
+    ///
+    /// With a damage reason (a continuity gap inside the PES, or a bounded
+    /// PES that ended short of `PES_packet_length`) it is immediately
+    /// followed by the `Complete` it describes, so the caller can mark or
+    /// drop that payload.
     Malformed { pid: u16, reason: &'static str },
+}
+
+/// Damage reasons a [`ReassemblyOutcome::Malformed`] carries ahead of the
+/// `Complete` whose payload is missing bytes.
+pub(crate) const DAMAGE_CC_GAP: &str =
+    "continuity_counter gap inside the PES; payload bytes are missing";
+pub(crate) const DAMAGE_SHORT_PES: &str = "PES ended before PES_packet_length bytes arrived";
+
+pub(crate) fn is_damage_reason(reason: &str) -> bool {
+    reason == DAMAGE_CC_GAP || reason == DAMAGE_SHORT_PES
 }
 
 /// `parse_complete` constructs only `MalformedPes`; keep the PID and a fixed
@@ -95,6 +113,8 @@ fn malformed(pid: u16, e: DemuxError) -> ReassemblyOutcome {
 #[derive(Debug)]
 pub struct Reassembler {
     by_pid: HashMap<u16, Partial>,
+    /// PIDs whose partials the last aggregate-cap overflow dropped.
+    dropped_on_total: Vec<u16>,
     total_buffered: usize,
     cap_per_pid: usize,
     cap_total: usize,
@@ -104,6 +124,7 @@ impl Reassembler {
     pub fn new(cap_per_pid: usize, cap_total: usize) -> Self {
         Self {
             by_pid: HashMap::new(),
+            dropped_on_total: Vec::new(),
             total_buffered: 0,
             cap_per_pid,
             cap_total,
@@ -151,15 +172,12 @@ impl Reassembler {
                     declared_total_len: None,
                     buf: Vec::new(),
                     random_access_indicator,
+                    damage: None,
                 },
             );
             if let Some(prev) = prev {
                 self.total_buffered = self.total_buffered.saturating_sub(prev.buf.len());
-                match parse_complete(pid, &prev.buf, prev.random_access_indicator) {
-                    Ok(Some(pes)) => out.push(ReassemblyOutcome::Complete(pes)),
-                    Ok(None) => {}
-                    Err(e) => out.push(malformed(pid, e)),
-                }
+                self.finish(pid, prev, &mut out);
             }
         }
         // Append payload to whatever partial exists for this PID.
@@ -205,6 +223,9 @@ impl Reassembler {
         }
         // Aggregate cap check.
         if self.total_buffered > self.cap_total {
+            let mut dropped: Vec<u16> = self.by_pid.keys().copied().collect();
+            dropped.sort_unstable();
+            self.dropped_on_total = dropped;
             self.by_pid.clear();
             self.total_buffered = 0;
             out.push(ReassemblyOutcome::OverflowTotal);
@@ -229,51 +250,91 @@ impl Reassembler {
         // RAI value, neither of which is available at this completion site
         // — the next PUSI on this PID re-initializes cleanly. The next
         // PES start, if it landed in the residual, is reacquired then.
-        let mut completed_now = None;
-        let mut completed_rai = false;
-        if let Some(total) = part.declared_total_len
-            && part.buf.len() >= total
+        if part
+            .declared_total_len
+            .is_some_and(|total| part.buf.len() >= total)
         {
-            // Avoid the intermediate Vec allocation from
-            // `drain(..total).collect()`. Capture the residual count
-            // before truncating so the total_buffered accounting is
-            // correct, then take ownership of the (now-truncated) buf
-            // via mem::take — the buf becomes an empty Vec in-place,
-            // which is free to drop. NLL ends the borrow on `part` at
-            // the mem::take call, allowing the remove below to proceed.
-            let residual = part.buf.len() - total;
-            part.buf.truncate(total);
-            completed_rai = part.random_access_indicator;
-            // Decrement by `total` (body) + `residual` (discarded tail).
-            self.total_buffered = self.total_buffered.saturating_sub(total + residual);
-            let body = core::mem::take(&mut part.buf);
-            completed_now = Some(body);
-            self.by_pid.remove(&pid);
-        }
-        if let Some(buf) = completed_now {
-            match parse_complete(pid, &buf, completed_rai) {
-                Ok(Some(pes)) => out.push(ReassemblyOutcome::Complete(pes)),
-                Ok(None) => {}
-                Err(e) => out.push(malformed(pid, e)),
+            // Release the body and the discarded tail together.
+            self.total_buffered = self.total_buffered.saturating_sub(part.buf.len());
+            if let Some(mut done) = self.by_pid.remove(&pid) {
+                if let Some(total) = done.declared_total_len {
+                    done.buf.truncate(total);
+                }
+                self.finish(pid, done, &mut out);
             }
         }
         out
     }
 
+    /// Turn a closed partial into outcomes: a damage `Malformed` (if any)
+    /// immediately before its `Complete`, or the parse error alone.
+    fn finish(&mut self, pid: u16, mut part: Partial, out: &mut Vec<ReassemblyOutcome>) {
+        // A bounded PES closed (by the next PUSI or a flush) before
+        // `PES_packet_length` bytes arrived is missing its tail.
+        if part.damage.is_none()
+            && part
+                .declared_total_len
+                .is_some_and(|total| part.buf.len() < total)
+        {
+            part.damage = Some(DAMAGE_SHORT_PES);
+        }
+        match parse_complete(pid, &part.buf, part.random_access_indicator) {
+            Ok(Some(pes)) => {
+                if let Some(reason) = part.damage {
+                    out.push(ReassemblyOutcome::Malformed { pid, reason });
+                }
+                out.push(ReassemblyOutcome::Complete(pes));
+            }
+            Ok(None) => {}
+            Err(e) => out.push(malformed(pid, e)),
+        }
+    }
+
+    /// Release every partial PES (end of stream) and return the payloads
+    /// that parse, without damage markers or parse errors.
     pub fn drain_partial(&mut self) -> Vec<PesPayload> {
+        self.drain_partial_outcomes()
+            .into_iter()
+            .filter_map(|o| match o {
+                ReassemblyOutcome::Complete(pes) => Some(pes),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Release every partial PES (end of stream) as outcomes: each damaged
+    /// payload is preceded by its `Malformed` damage marker, and a payload
+    /// that fails to parse is reported as `Malformed` alone.
+    pub fn drain_partial_outcomes(&mut self) -> Vec<ReassemblyOutcome> {
         // PID order: the flush order is part of the observable event order,
         // so it must not depend on the hash map's per-process seed.
         let mut partials: Vec<(u16, Partial)> =
             core::mem::take(&mut self.by_pid).into_iter().collect();
         partials.sort_unstable_by_key(|(pid, _)| *pid);
+        self.total_buffered = 0;
         let mut out = Vec::new();
         for (pid, p) in partials {
-            if let Ok(Some(pes)) = parse_complete(pid, &p.buf, p.random_access_indicator) {
-                out.push(pes);
-            }
+            self.finish(pid, p, &mut out);
         }
-        self.total_buffered = 0;
         out
+    }
+
+    /// Record that payload bytes of the PES in flight on `pid` were lost
+    /// (H.222.0 §2.4.3.3: a continuity_counter gap). The PES still completes,
+    /// preceded by a `Malformed` carrying the damage reason. The first damage
+    /// recorded wins; with no PES in flight this does nothing.
+    pub fn mark_damaged(&mut self, pid: u16) {
+        if let Some(part) = self.by_pid.get_mut(&pid)
+            && part.damage.is_none()
+        {
+            part.damage = Some(DAMAGE_CC_GAP);
+        }
+    }
+
+    /// The PIDs, ascending, whose partials the last
+    /// `ReassemblyOutcome::OverflowTotal` dropped; empty once taken.
+    pub fn take_total_overflow_pids(&mut self) -> Vec<u16> {
+        core::mem::take(&mut self.dropped_on_total)
     }
 
     /// Drop any partial PES state buffered for `pid` without emitting it.
@@ -771,27 +832,107 @@ mod tests {
         let _ = pes_len;
     }
 
+    /// The residual of a length-completed PES on one PID is released, and
+    /// the bytes still held for another PID's partial stay counted.
     #[test]
     fn bounded_pes_total_buffered_decrements_by_exact_consumed_count() {
-        // Build two bounded PES on different PIDs; push the first followed
-        // by trailing bytes from a would-be next PES. After completion of
-        // PID A, the residual must NOT leak into total_buffered nor into
-        // PID A's emitted payload.
-        let pes_a = build_pes(0xE0, Some(0), b"hello");
-        let pes_a_total = pes_a.len();
-        let mut chunk_a = pes_a.clone();
-        chunk_a.extend_from_slice(&[0xAA; 7]); // simulate trailing bytes
         let mut r = Reassembler::new(1 << 20, 4 << 20);
+        // PID 0x201: a bounded PES with only its first packet's worth in.
+        let pes_b = build_pes(0xC0, Some(0), &[0xBB; 300]);
+        assert!(r.push(0x201, &pes_b[..184], true, false, false).is_empty());
+        // PID 0x200: a complete bounded PES followed by trailing bytes.
+        let mut chunk_a = build_pes(0xE0, Some(0), b"hello");
+        chunk_a.extend_from_slice(&[0xAA; 7]);
         let out = r.push(0x200, &chunk_a, true, false, true);
         assert_eq!(out.len(), 1);
         match &out[0] {
-            ReassemblyOutcome::Complete(p) => {
-                assert_eq!(p.payload, b"hello");
-            }
+            ReassemblyOutcome::Complete(p) => assert_eq!(p.payload, b"hello"),
             _ => panic!("expected Complete"),
         }
+        assert_eq!(r.buffered_bytes(), 184, "only PID 0x201's partial is held");
+        assert!(!r.has_pid(0x200));
+        assert!(r.has_pid(0x201));
+    }
+
+    #[test]
+    fn pusi_completion_of_a_short_bounded_pes_reports_damage_then_completes() {
+        let pes = build_pes(0xC0, Some(0), &[0xAA; 300]); // bounded
+        let mut r = Reassembler::new(1 << 20, 4 << 20);
+        assert!(r.push(0x101, &pes[..184], true, false, false).is_empty());
+        let out = r.push(
+            0x101,
+            &build_pes(0xC0, Some(3000), b"next"),
+            true,
+            false,
+            false,
+        );
+        assert!(
+            matches!(&out[0], ReassemblyOutcome::Malformed { pid: 0x101, reason } if *reason == DAMAGE_SHORT_PES)
+        );
+        assert!(matches!(&out[1], ReassemblyOutcome::Complete(p) if p.payload.len() == 184 - 14));
+    }
+
+    #[test]
+    fn marked_partial_reports_cc_gap_even_when_length_completes() {
+        let pes = build_pes(0xC0, Some(0), &[0xAA; 300]);
+        let mut r = Reassembler::new(1 << 20, 4 << 20);
+        r.push(0x101, &pes[..184], true, false, false);
+        r.mark_damaged(0x101);
+        let out = r.push(0x101, &pes[184..], false, false, false);
+        assert!(
+            matches!(&out[0], ReassemblyOutcome::Malformed { reason, .. } if *reason == DAMAGE_CC_GAP)
+        );
+        assert!(matches!(&out[1], ReassemblyOutcome::Complete(_)));
+    }
+
+    #[test]
+    fn drain_partial_outcomes_marks_short_bounded_and_keeps_unbounded_clean() {
+        let mut r = Reassembler::new(1 << 20, 4 << 20);
+        let short = build_pes(0xC0, Some(0), &[0xAA; 300]);
+        r.push(0x101, &short[..184], true, false, false);
+        let mut video = build_pes(0xE0, Some(0), b"vid");
+        video[4] = 0;
+        video[5] = 0;
+        r.push(0x100, &video, true, false, true);
+        let out = r.drain_partial_outcomes();
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert!(
+            matches!(&out[0], ReassemblyOutcome::Complete(p) if p.pid == 0x100 && p.payload == b"vid")
+        );
+        assert!(
+            matches!(&out[1], ReassemblyOutcome::Malformed { pid: 0x101, reason } if *reason == DAMAGE_SHORT_PES)
+        );
+        assert!(matches!(&out[2], ReassemblyOutcome::Complete(p) if p.pid == 0x101));
         assert_eq!(r.buffered_bytes(), 0);
-        let _ = pes_a_total;
+    }
+
+    #[test]
+    fn aggregate_overflow_reports_every_dropped_pid() {
+        let mut r = Reassembler::new(1 << 20, 400);
+        r.push(
+            0x101,
+            &build_pes(0xC0, Some(0), &[0; 300])[..184],
+            true,
+            false,
+            false,
+        );
+        r.push(
+            0x102,
+            &build_pes(0xC0, Some(0), &[0; 300])[..184],
+            true,
+            false,
+            false,
+        );
+        let out = r.push(
+            0x103,
+            &build_pes(0xC0, Some(0), &[0; 300])[..184],
+            true,
+            false,
+            false,
+        );
+        assert_eq!(out, vec![ReassemblyOutcome::OverflowTotal]);
+        assert_eq!(r.take_total_overflow_pids(), vec![0x101, 0x102, 0x103]);
+        assert!(r.take_total_overflow_pids().is_empty());
     }
 
     #[test]
