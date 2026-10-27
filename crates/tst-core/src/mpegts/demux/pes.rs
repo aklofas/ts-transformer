@@ -285,6 +285,8 @@ impl Reassembler {
                 }
                 out.push(ReassemblyOutcome::Complete(pes));
             }
+            // Shorter than a PES header: no `Complete`, so nothing to mark;
+            // the continuity `Discontinuity` already reports the loss.
             Ok(None) => {}
             Err(e) => out.push(malformed(pid, e)),
         }

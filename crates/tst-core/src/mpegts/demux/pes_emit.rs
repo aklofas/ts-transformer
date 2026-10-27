@@ -1,11 +1,13 @@
 //! PES reassembly dispatch + complete-PES-to-DemuxEvent conversion.
 //!
-//! Hosts 2 helper methods on `Demuxer`:
+//! Hosts these helper methods on `Demuxer`:
 //!
 //! - `handle_pes_packet` — feeds a TS packet's PES bytes into the
 //!   reassembler, surfaces oversize / total-cap discontinuities,
 //!   converts complete PES results into events.
-//! - `handle_complete_pes` — the central event-construction site.
+//! - `handle_complete_pes` — emits one completed PES, with its damage
+//!   marker (if any) directly before its first `Sample`/`Metadata`.
+//! - `emit_complete_pes` — the central event-construction site.
 //!   Dispatches by `StreamKind`; constructs `DemuxEvent::Sample` /
 //!   `DemuxEvent::Metadata` with codec-specific payload shapes
 //!   (raw AU pass-through for video — parsing into NAL/OBU units is the
@@ -13,7 +15,7 @@
 //!   AU cell peel for sync KLV; raw pass-through for audio / async KLV /
 //!   unknown).
 //!
-//! All items are `pub(super)`.
+//! `handle_pes_packet` and `handle_complete_pes` are `pub(super)`; the rest is private.
 
 use crate::codec::{AudioCodec, VideoCodec};
 use crate::mpegts::common::{Pts90khz, StreamTypeCode, pts_diff_33bit};
@@ -100,9 +102,11 @@ impl super::demuxer::Demuxer {
             pkt.random_access_indicator,
             is_video,
         );
-        // A strict mode drops the damaged PES its marker announces; the
-        // marker is always the outcome right before that `Complete`.
+        // A damage `Malformed` is always the outcome right before the
+        // `Complete` it describes. Lenient mode carries the reason into that
+        // PES's emission; a strict mode applies its verdict now and drops it.
         let mut drop_next_complete: Option<u16> = None;
+        let mut damage_next_complete: Option<(u16, &'static str)> = None;
         for outcome in outcomes {
             match outcome {
                 ReassemblyOutcome::Complete(pes) => {
@@ -110,7 +114,10 @@ impl super::demuxer::Demuxer {
                         drop_next_complete = None;
                         continue;
                     }
-                    self.handle_complete_pes(pes);
+                    let damage = damage_next_complete
+                        .take_if(|(pid, _)| *pid == pes.pid)
+                        .map(|(_, reason)| reason);
+                    self.handle_complete_pes(pes, damage);
                 }
                 ReassemblyOutcome::Overflow { pid } => {
                     if let Some(stream) = self.lookup_stream(pid) {
@@ -135,6 +142,11 @@ impl super::demuxer::Demuxer {
                         NonConformantIssue::ZeroLengthPesNonVideo { pid, stream_id },
                     );
                 }
+                ReassemblyOutcome::Malformed { pid, reason }
+                    if is_damage_reason(reason) && self.options.strict == StrictMode::Off =>
+                {
+                    damage_next_complete = Some((pid, reason));
+                }
                 ReassemblyOutcome::Malformed { pid, reason } => {
                     // Wire order with the completions beside it: a lenient
                     // demuxer queues the NonConformant and keeps going; a
@@ -142,7 +154,7 @@ impl super::demuxer::Demuxer {
                     // outcomes of this packet go with it (strict is fatal
                     // for the stream anyway).
                     self.surface_malformed_pes(pid, reason)?;
-                    if is_damage_reason(reason) && self.options.strict != StrictMode::Off {
+                    if is_damage_reason(reason) {
                         drop_next_complete = Some(pid);
                     }
                 }
@@ -151,7 +163,42 @@ impl super::demuxer::Demuxer {
         Ok(())
     }
 
-    pub(super) fn handle_complete_pes(&mut self, pes: PesPayload) {
+    /// Emit the events of one completed PES. `damage` (lenient mode only)
+    /// is the reason its payload is missing bytes: the `MalformedPes` marker
+    /// is queued directly before the PES's first `Sample`/`Metadata`, after
+    /// any other issue the PES raised, or on its own if the PES yields no
+    /// sample.
+    pub(super) fn handle_complete_pes(&mut self, pes: PesPayload, damage: Option<&'static str>) {
+        let pid = pes.pid;
+        let mut damage = damage;
+        self.emit_complete_pes(pes, &mut damage);
+        if let Some(reason) = damage {
+            let stream = self
+                .lookup_stream(pid)
+                .unwrap_or_else(|| StreamId::anonymous(pid, self.program_number_for_pid(pid)));
+            self.queue_nonconformant(stream, NonConformantIssue::MalformedPes { pid, reason });
+        }
+    }
+
+    /// Queue a PES's `Sample`/`Metadata`, preceded by its damage marker if
+    /// one is still pending.
+    fn push_pes_event(&mut self, damage: &mut Option<&'static str>, event: DemuxEvent) {
+        if let Some(reason) = damage.take()
+            && let DemuxEvent::Sample { stream, .. } | DemuxEvent::Metadata { stream, .. } = &event
+        {
+            let stream = *stream;
+            self.queue_nonconformant(
+                stream,
+                NonConformantIssue::MalformedPes {
+                    pid: stream.pid,
+                    reason,
+                },
+            );
+        }
+        self.queue.push_back(event);
+    }
+
+    fn emit_complete_pes(&mut self, pes: PesPayload, damage: &mut Option<&'static str>) {
         let kind = match self.stream_kind(pes.pid) {
             Some(k) => k,
             None => return,
@@ -283,21 +330,24 @@ impl super::demuxer::Demuxer {
                         .codec_mut(CodecKind::Video)
                         .add_video(0, ra_count);
                 }
-                self.queue.push_back(DemuxEvent::Sample {
-                    stream,
-                    pts,
-                    dts,
-                    payload: SamplePayload::Video {
-                        codec,
-                        raw,
-                        random_access_indicator: rai,
-                        av1_carriage: if codec == VideoCodec::Av1 {
-                            Some(self.options.av1_carriage)
-                        } else {
-                            None
+                self.push_pes_event(
+                    damage,
+                    DemuxEvent::Sample {
+                        stream,
+                        pts,
+                        dts,
+                        payload: SamplePayload::Video {
+                            codec,
+                            raw,
+                            random_access_indicator: rai,
+                            av1_carriage: if codec == VideoCodec::Av1 {
+                                Some(self.options.av1_carriage)
+                            } else {
+                                None
+                            },
                         },
                     },
-                });
+                );
             }
             StreamKind::KlvSync { .. } | StreamKind::KlvAsync => {
                 let shape = classify_klv(&pes.payload);
@@ -319,12 +369,15 @@ impl super::demuxer::Demuxer {
                     self.pid_state_mut(stream.pid)
                         .codec_mut(CodecKind::Klv)
                         .add_klv(1);
-                    self.queue.push_back(DemuxEvent::Metadata {
-                        stream,
-                        pts,
-                        kind: MetadataKind::KlvAsync,
-                        payload: klv,
-                    });
+                    self.push_pes_event(
+                        damage,
+                        DemuxEvent::Metadata {
+                            stream,
+                            pts,
+                            kind: MetadataKind::KlvAsync,
+                            payload: klv,
+                        },
+                    );
                     return;
                 }
 
@@ -334,15 +387,18 @@ impl super::demuxer::Demuxer {
                     let payload_len = pes.payload.len();
                     let raw = pes.payload;
                     self.record_item(&stream, program_number, payload_len);
-                    self.queue.push_back(DemuxEvent::Sample {
-                        stream,
-                        pts,
-                        dts,
-                        payload: SamplePayload::Unknown {
-                            stream_type: StreamTypeCode::from_byte(0x15),
-                            raw: SharedBytes::from_slice(&raw),
+                    self.push_pes_event(
+                        damage,
+                        DemuxEvent::Sample {
+                            stream,
+                            pts,
+                            dts,
+                            payload: SamplePayload::Unknown {
+                                stream_type: StreamTypeCode::from_byte(0x15),
+                                raw: SharedBytes::from_slice(&raw),
+                            },
                         },
-                    });
+                    );
                     return;
                 }
 
@@ -410,7 +466,7 @@ impl super::demuxer::Demuxer {
                                 self.pid_state_mut(stream.pid)
                                     .codec_mut(CodecKind::Klv)
                                     .add_klv(1);
-                                self.queue.push_back(DemuxEvent::Metadata {
+                                self.push_pes_event(damage, DemuxEvent::Metadata {
                                     stream,
                                     // PES PTS reused for every AU emitted
                                     // from this PES (documented limitation
@@ -473,25 +529,28 @@ impl super::demuxer::Demuxer {
                                     self.pid_state_mut(stream.pid)
                                         .codec_mut(CodecKind::Klv)
                                         .add_klv(1);
-                                    self.queue.push_back(DemuxEvent::Metadata {
-                                        stream,
-                                        pts,
-                                        kind: MetadataKind::KlvSyncAuCell {
-                                            metadata_service_id: h.metadata_service_id,
-                                            sequence_number: h.sequence_number,
-                                            // Substituted: the wire said
-                                            // Middle/Last, but we surface as
-                                            // Complete since the payload is
-                                            // self-consistent.
-                                            cell_fragment_indication:
-                                                CellFragmentIndication::Complete,
-                                            decoder_config_flag: h.decoder_config_flag,
-                                            random_access_indicator: h.random_access_indicator,
-                                            was_reassembled: false,
-                                            cell_count: 1,
+                                    self.push_pes_event(
+                                        damage,
+                                        DemuxEvent::Metadata {
+                                            stream,
+                                            pts,
+                                            kind: MetadataKind::KlvSyncAuCell {
+                                                metadata_service_id: h.metadata_service_id,
+                                                sequence_number: h.sequence_number,
+                                                // Substituted: the wire said
+                                                // Middle/Last, but we surface as
+                                                // Complete since the payload is
+                                                // self-consistent.
+                                                cell_fragment_indication:
+                                                    CellFragmentIndication::Complete,
+                                                decoder_config_flag: h.decoder_config_flag,
+                                                random_access_indicator: h.random_access_indicator,
+                                                was_reassembled: false,
+                                                cell_count: 1,
+                                            },
+                                            payload: payload_vec,
                                         },
-                                        payload: payload_vec,
-                                    });
+                                    );
                                     self.queue_nonconformant(
                                         stream,
                                         NonConformantIssue::CfiTolerated {
@@ -531,15 +590,18 @@ impl super::demuxer::Demuxer {
             StreamKind::Unknown(stream_type) => {
                 let payload_len = pes.payload.len();
                 self.record_item(&stream, program_number, payload_len);
-                self.queue.push_back(DemuxEvent::Sample {
-                    stream,
-                    pts,
-                    dts,
-                    payload: SamplePayload::Unknown {
-                        stream_type: StreamTypeCode::from_byte(stream_type),
-                        raw: SharedBytes::from_slice(&pes.payload),
+                self.push_pes_event(
+                    damage,
+                    DemuxEvent::Sample {
+                        stream,
+                        pts,
+                        dts,
+                        payload: SamplePayload::Unknown {
+                            stream_type: StreamTypeCode::from_byte(stream_type),
+                            raw: SharedBytes::from_slice(&pes.payload),
+                        },
                     },
-                });
+                );
             }
             StreamKind::Audio(codec) => {
                 let payload_len = pes.payload.len();
@@ -614,15 +676,18 @@ impl super::demuxer::Demuxer {
                     false
                 };
                 if !ac3_sync_rejected {
-                    self.queue.push_back(DemuxEvent::Sample {
-                        stream,
-                        pts,
-                        dts: None,
-                        payload: SamplePayload::Audio {
-                            codec,
-                            frames: SharedBytes::from_slice(&pes.payload),
+                    self.push_pes_event(
+                        damage,
+                        DemuxEvent::Sample {
+                            stream,
+                            pts,
+                            dts: None,
+                            payload: SamplePayload::Audio {
+                                codec,
+                                frames: SharedBytes::from_slice(&pes.payload),
+                            },
                         },
-                    });
+                    );
                 }
             }
             StreamKind::Subtitle(codec) => {
@@ -691,15 +756,18 @@ impl super::demuxer::Demuxer {
                     }
                 };
                 if let Some(surfaced_payload) = surfaced_payload {
-                    self.queue.push_back(DemuxEvent::Sample {
-                        stream,
-                        pts,
-                        dts: None,
-                        payload: SamplePayload::Subtitle {
-                            codec,
-                            payload: SharedBytes::from_slice(&surfaced_payload),
+                    self.push_pes_event(
+                        damage,
+                        DemuxEvent::Sample {
+                            stream,
+                            pts,
+                            dts: None,
+                            payload: SamplePayload::Subtitle {
+                                codec,
+                                payload: SharedBytes::from_slice(&surfaced_payload),
+                            },
                         },
-                    });
+                    );
                 }
             }
         }
@@ -875,6 +943,55 @@ mod tests {
             matches!((marker, sample), (Some(m), Some(s)) if m + 1 == s),
             "{ev:?}"
         );
+    }
+
+    /// The marker sits directly before the damaged sample, after the other
+    /// issues that PES raised (here a backward PTS).
+    #[test]
+    fn damage_marker_follows_the_pes_own_issues_in_lenient_mode() {
+        let mut d = audio_demuxer(StrictMode::Off);
+        let mut pkts = pes_to_packets(0x101, 0, &three_packet_pes(900_000));
+        let mut damaged = pes_to_packets(0x101, 3, &three_packet_pes(90_000));
+        damaged.remove(1); // CC 3, 5
+        pkts.extend(damaged);
+        pkts.extend(pes_to_packets(0x101, 6, &three_packet_pes(92_000)));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        let anomaly = ev.iter().position(|e| {
+            matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::PtsAnomaly { .. },
+                    ..
+                }
+            )
+        });
+        let marker = marker_index(&ev, DAMAGE_CC_GAP);
+        let sample = sample_index(&ev, 0x101, 90_000);
+        assert!(
+            matches!((anomaly, marker, sample), (Some(a), Some(m), Some(s)) if a < m && m + 1 == s),
+            "{ev:?}"
+        );
+    }
+
+    #[test]
+    fn short_bounded_pes_at_flush_is_dropped_in_timing_only() {
+        for mode in [StrictMode::TimingOnly, StrictMode::DescriptorsOnly] {
+            let mut d = audio_demuxer(mode);
+            let pkts = pes_to_packets(0x101, 0, &three_packet_pes(90_000));
+            feed_packets(&mut d, &pkts[..2]).unwrap();
+            d.flush();
+            let ev = drain_all_events(&mut d);
+            assert!(
+                marker_index(&ev, DAMAGE_SHORT_PES).is_some(),
+                "{mode:?}: {ev:?}"
+            );
+            assert!(
+                sample_index(&ev, 0x101, 90_000).is_none(),
+                "{mode:?}: {ev:?}"
+            );
+        }
     }
 
     #[test]

@@ -507,11 +507,12 @@ impl Demuxer {
     ///
     /// `tst_demuxer_flush` — see `bindings/c/include/tstrans.h`.
     pub fn flush(&mut self) {
-        // Same marking as `handle_pes_packet`, but `flush` cannot fail: a
-        // damaged PES is queued as `MalformedPes` before its sample, and a
-        // strict mode drops the sample. A partial that fails to parse is
-        // dropped silently, as it always was at flush.
+        // Same marking as `handle_pes_packet`, but `flush` cannot fail:
+        // lenient mode queues `MalformedPes` directly before the damaged
+        // sample; a strict mode queues it and drops the sample. A partial
+        // that fails to parse is dropped silently, as it always was at flush.
         let mut drop_next_complete: Option<u16> = None;
+        let mut damage_next_complete: Option<(u16, &'static str)> = None;
         for outcome in self.pes.drain_partial_outcomes() {
             match outcome {
                 ReassemblyOutcome::Complete(pes) => {
@@ -519,7 +520,15 @@ impl Demuxer {
                         drop_next_complete = None;
                         continue;
                     }
-                    self.handle_complete_pes(pes);
+                    let damage = damage_next_complete
+                        .take_if(|(pid, _)| *pid == pes.pid)
+                        .map(|(_, reason)| reason);
+                    self.handle_complete_pes(pes, damage);
+                }
+                ReassemblyOutcome::Malformed { pid, reason }
+                    if is_damage_reason(reason) && self.options.strict == StrictMode::Off =>
+                {
+                    damage_next_complete = Some((pid, reason));
                 }
                 ReassemblyOutcome::Malformed { pid, reason } if is_damage_reason(reason) => {
                     let stream = self.lookup_stream(pid).unwrap_or_else(|| {
@@ -529,9 +538,7 @@ impl Demuxer {
                         stream,
                         NonConformantIssue::MalformedPes { pid, reason },
                     );
-                    if self.options.strict != StrictMode::Off {
-                        drop_next_complete = Some(pid);
-                    }
+                    drop_next_complete = Some(pid);
                 }
                 _ => {}
             }
