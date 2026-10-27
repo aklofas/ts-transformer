@@ -391,12 +391,26 @@ impl super::demuxer::Demuxer {
     /// Returns `true` when strict mode rejects a framing issue it raised.
     ///
     /// - Carry known (`Some(n)`): a PES of at most `n` bytes is still inside
-    ///   the record; a longer one is walked from `n`.
-    /// - Carry unknown: walked from 0 only when the PES announces a record
-    ///   start (`data_alignment_indicator`) or begins with a syncword.
+    ///   the record; a longer one is walked from `n`, and a missing syncword
+    ///   is flagged at once.
+    /// - Carry unknown, PES aligned (`data_alignment_indicator`, an explicit
+    ///   promise of a record start) or starting with a syncword: walked from
+    ///   0, a missing syncword flagged at once.
+    /// - Carry unknown otherwise (after a gap, or a PID's first PES with
+    ///   `data_alignment_indicator` = 0): the PES may open inside a record,
+    ///   so it resyncs on the first syncword candidate within one record's
+    ///   length and walks from there. A PES with no candidate, or whose walk
+    ///   fails, counts as unsynced; the second such PES in a row raises
+    ///   `MissingSyncword` once, re-armed only by a successful walk. A false
+    ///   positive needs two consecutive PES after a gap that both lie wholly
+    ///   inside one record (at most `3 + 0x1FFF` bytes between them).
     /// - A damaged PES lost bytes, so it is not walked and the carry is lost.
     fn check_latm_framing(&mut self, pes: &PesPayload, damaged: bool, stream: StreamId) -> bool {
-        use crate::codec::aac::latm::{starts_with_loas_sync, walk_loas};
+        use crate::codec::aac::latm::{
+            LatmFramingKind, find_loas_sync, starts_with_loas_sync, walk_loas,
+        };
+        /// Consecutive unsynced PES that raise `MissingSyncword`.
+        const UNSYNCED_LIMIT: u8 = 2;
         let state = self.pid_state_mut(pes.pid);
         let len = pes.payload.len();
         let start = match state.latm_carry.take() {
@@ -407,20 +421,45 @@ impl super::demuxer::Demuxer {
             }
             Some(n) => n,
             None if pes.data_alignment_indicator || starts_with_loas_sync(&pes.payload) => 0,
-            None => return false,
+            None => {
+                let resynced =
+                    find_loas_sync(&pes.payload).and_then(|at| walk_loas(&pes.payload, at).ok());
+                if let Some(carry) = resynced {
+                    state.latm_carry = carry;
+                    state.latm_unsynced = 0;
+                    return false;
+                }
+                if state.latm_unsynced >= UNSYNCED_LIMIT {
+                    return false;
+                }
+                state.latm_unsynced += 1;
+                if state.latm_unsynced < UNSYNCED_LIMIT {
+                    return false;
+                }
+                return self.raise_latm_framing(pes.pid, LatmFramingKind::MissingSyncword, stream);
+            }
         };
         match walk_loas(&pes.payload, start) {
             Ok(carry) => {
                 state.latm_carry = carry;
+                state.latm_unsynced = 0;
                 false
             }
-            Err(kind) => {
-                let issue = NonConformantIssue::LatmFraming { pid: pes.pid, kind };
-                let reject = self.options.strict.rejects(&issue);
-                self.queue_nonconformant(stream, issue);
-                reject
-            }
+            Err(kind) => self.raise_latm_framing(pes.pid, kind, stream),
         }
+    }
+
+    /// Queue a `LatmFraming` issue; `true` when strict mode rejects it.
+    fn raise_latm_framing(
+        &mut self,
+        pid: u16,
+        kind: crate::codec::aac::latm::LatmFramingKind,
+        stream: StreamId,
+    ) -> bool {
+        let issue = NonConformantIssue::LatmFraming { pid, kind };
+        let reject = self.options.strict.rejects(&issue);
+        self.queue_nonconformant(stream, issue);
+        reject
     }
 
     fn emit_complete_pes(&mut self, pes: PesPayload, damage: &mut Option<&'static str>) {

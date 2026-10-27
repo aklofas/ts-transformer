@@ -448,8 +448,10 @@ fn patch_dvb_sub_pes_clear_data_alignment(mut bytes: Vec<u8>) -> Vec<u8> {
 /// to drive LATM acceptance.
 ///
 /// The PES has `data_alignment_indicator` set: the muxer leaves it clear for
-/// LATM, and without it a PES may start mid-record (ISO/IEC 14496-3 §1.7.2),
-/// so the demuxer only checks the syncword of a PES that announces alignment.
+/// LATM, and without it a PES may start mid-record (ISO/IEC 14496-3 §1.7.2).
+/// The demuxer flags a missing syncword at once on a PES that announces
+/// alignment or starts with a syncword; any other PES it resyncs on, and only
+/// a second such PES in a row without a record raises the issue.
 fn build_ts_with_aac_latm_pes(payload: &[u8]) -> Vec<u8> {
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
@@ -582,6 +584,58 @@ fn demux_c11_latm_record_split_across_two_pes_is_not_flagged() {
     assert_eq!(
         samples, 2,
         "expected two Samples on PID 0x150, got {events:?}"
+    );
+}
+
+/// A LATM PID that never carries a LOAS syncword is flagged even with
+/// `data_alignment_indicator` = 0 (the muxer's LATM output): once, when a
+/// second PES in a row shows no record (ISO/IEC 14496-3 §1.7.2).
+#[test]
+fn demux_c11_latm_unaligned_pid_without_syncword_is_flagged_once() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
+        prog.add_video(0x101, VideoCodec::H264);
+        prog.add_audio(0x150, AudioCodec::AacLatm);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let audio_handle = mux.audio_handles()[0];
+    // ADTS frames shipped on a LATM PID.
+    let adts = [0xFFu8, 0xF1, 0x4C, 0x80, 0x00, 0x1F, 0xFC];
+    for i in 0..3 {
+        mux.push_audio_to(audio_handle, Pts90khz::new(90_000 + i * 1_920), &adts)
+            .unwrap();
+    }
+    let bytes = drain_all(&mut mux);
+
+    let mut demux = Demuxer::new();
+    demux.feed(&bytes).unwrap();
+    demux.flush();
+    let mut events = Vec::new();
+    while let Some(e) = demux.next_event() {
+        events.push(e);
+    }
+
+    let flagged = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::LatmFraming {
+                        pid: 0x150,
+                        kind: LatmFramingKind::MissingSyncword,
+                    },
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        flagged, 1,
+        "expected one MissingSyncword on PID 0x150, got {events:?}"
     );
 }
 

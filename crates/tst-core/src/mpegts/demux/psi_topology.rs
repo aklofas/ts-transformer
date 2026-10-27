@@ -1431,6 +1431,7 @@ mod tests {
                 last_unwrapped: 1,
             }),
             latm_carry: Some(7),
+            latm_unsynced: 1,
             stats: Some(StreamStats::default()),
             codec: Some(StreamCodecCounters::new(CodecKind::Video)),
             subtitle_missing_descriptor_emitted: true,
