@@ -6,7 +6,10 @@
 //! module-level free functions consumed across the demux module tree.
 //! All items are `pub(super)` — invisible outside `mpegts::demux` —
 //! except `classify_pmt_stream`, which is `pub(crate)` so the mux-side
-//! `StreamSpec::Data` acceptance rule can call it.
+//! `StreamSpec::Data` acceptance rule can call it. That rule therefore
+//! also accepts `stream_type` 0x15 when its `metadata_descriptor` names a
+//! non-KLV format (H.222.0 §2.6.60), since such a stream classifies as
+//! `Unknown(0x15)`.
 //!
 //! These stay free functions (not wrapped in a struct): they hold no state
 //! of their own, and the classifier's scope is PMT-specific.
@@ -15,6 +18,7 @@ use crate::codec::{AudioCodec, VideoCodec};
 use crate::mpegts::demux::event::{StreamKind, SubtitleCodec};
 use crate::mpegts::demux::psi::{
     classify_audio_stream_type, extract_metadata_link, has_klva_registration,
+    metadata_descriptor_fields,
 };
 use crate::mpegts::descriptors::RawDescriptor;
 use alloc::vec::Vec;
@@ -49,6 +53,7 @@ pub(crate) fn classify_pmt_stream(stream_type: u8, descriptors: &[RawDescriptor]
         0x24 => StreamKind::Video(VideoCodec::H265),
         0x33 => StreamKind::Video(VideoCodec::H266),
         0x06 => classify_0x06(descriptors),
+        0x15 if names_non_klv_metadata(descriptors) => StreamKind::Unknown(0x15),
         0x15 => StreamKind::KlvSync {
             declared_link: extract_metadata_link(descriptors),
         },
@@ -60,6 +65,23 @@ pub(crate) fn classify_pmt_stream(stream_type: u8, descriptors: &[RawDescriptor]
             }
         }
     }
+}
+
+/// True when the `metadata_descriptor` positively names a format other
+/// than KLV (H.222.0 §2.6.60 Table 2-86): `metadata_format` 0x10 (ISO/IEC
+/// 15938-1 TeM) or 0x11 (BiM), or 0xFF with a `metadata_format_identifier`
+/// other than `KLVA`. A missing, truncated or other-format descriptor does
+/// not, so the stream stays KLV.
+fn names_non_klv_metadata(descriptors: &[RawDescriptor]) -> bool {
+    descriptors
+        .iter()
+        .find(|d| d.tag == 0x26)
+        .and_then(|d| metadata_descriptor_fields(&d.data))
+        .is_some_and(|f| match f.format {
+            0x10 | 0x11 => true,
+            0xFF => f.format_identifier != Some(*b"KLVA"),
+            _ => false,
+        })
 }
 
 /// True if `stream_type` denotes a video elementary stream per ISO/IEC
@@ -242,6 +264,45 @@ pub(super) fn is_malformed_av1_registration(descriptors: &[RawDescriptor]) -> bo
 mod tests {
     use super::*;
     use alloc::vec;
+
+    /// H.222.0 §2.6.60: metadata_format 0xFF + metadata_format_identifier
+    /// names the format; "ID3 " is not KLV.
+    #[test]
+    fn stream_type_0x15_with_an_id3_metadata_descriptor_is_unknown() {
+        let body = [
+            0xFF, 0xFF, b'I', b'D', b'3', b' ', 0xFF, b'I', b'D', b'3', b' ', 0x00, 0x0F,
+        ];
+        assert_eq!(
+            classify_pmt_stream(
+                0x15,
+                &[RawDescriptor {
+                    tag: 0x26,
+                    data: body.to_vec(),
+                }]
+            ),
+            StreamKind::Unknown(0x15)
+        );
+    }
+
+    #[test]
+    fn stream_type_0x15_with_klva_or_without_descriptor_stays_klv_sync() {
+        let klva = RawDescriptor {
+            tag: 0x26,
+            data: crate::mpegts::descriptors::metadata_klva(0)[2..].to_vec(),
+        };
+        assert!(matches!(
+            classify_pmt_stream(0x15, &[klva]),
+            StreamKind::KlvSync {
+                declared_link: None
+            }
+        ));
+        assert!(matches!(
+            classify_pmt_stream(0x15, &[]),
+            StreamKind::KlvSync {
+                declared_link: None
+            }
+        ));
+    }
 
     #[test]
     fn is_video_stream_type_covers_iso_video_codes() {
