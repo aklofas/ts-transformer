@@ -224,14 +224,17 @@ fn hls_publisher_on_loopback(dir: &std::path::Path) -> (*mut TstPublisher, Socke
     (publisher, addr)
 }
 
-/// Polls until a connect to `addr` is refused (the listener is gone);
-/// `false` once `bound` has passed first.
+/// Polls until a connect to `addr` fails (the listener is gone); `false`
+/// once `bound` has passed first. Any connect error counts as closed: a live
+/// loopback listener accepts in milliseconds, while on Windows a connect to a
+/// closed port often fails only after 1–2 s of SYN retries, as `TimedOut`
+/// rather than `ConnectionRefused`, hence the long per-attempt timeout.
 fn listener_closes_within(addr: SocketAddr, bound: Duration) -> bool {
     let deadline = Instant::now() + bound;
     while Instant::now() < deadline {
-        match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
-            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => return true,
-            _ => std::thread::sleep(Duration::from_millis(50)),
+        match TcpStream::connect_timeout(&addr, scaled(Duration::from_secs(3))) {
+            Err(_) => return true,
+            Ok(_) => std::thread::sleep(Duration::from_millis(50)),
         }
     }
     false
