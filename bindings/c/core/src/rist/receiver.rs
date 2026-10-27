@@ -167,9 +167,10 @@ pub unsafe extern "C" fn tst_rist_receiver_cancel(p: *mut TstRistReceiver) -> li
 ///
 /// Returns:
 /// - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
-/// - `TST_E_END_OF_STREAM` (-12) on graceful peer close / EOF
+/// - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally (a datagram
+///   transport has no peer close to report)
 /// - `TST_E_CLOSED` (-7) if the handle was `_close`'d
-/// - `TST_E_TRANSPORT` (-8) on transport failure
+/// - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
 ///
 /// # Safety
