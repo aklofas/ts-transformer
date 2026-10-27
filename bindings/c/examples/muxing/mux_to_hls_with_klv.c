@@ -150,9 +150,11 @@ int main(void) {
      * ── Step 3: Construct the mux publisher ──────────────────────────────
      *
      * tst_mux_publisher_with_config_hls CONSUMES `pub` (the tst_publisher_t)
-     * — after this call do NOT free `pub`; ownership moved into the mux
-     * publisher. The mux config is borrowed; we still own it and free it
-     * below. Returns NULL on a config error (check last-error).
+     * on EVERY return, success or error — after this call do NOT free
+     * `pub`. The call takes ownership before it validates the config, so
+     * even a rejected config releases the publisher. The mux config is
+     * borrowed; we still own it and free it below. Returns NULL on a
+     * config error (check last-error).
      */
     TstMuxPublisher *mp = tst_mux_publisher_with_config_hls(pub, cfg);
     /* cfg is borrowed by the call but still owned by us — free it now. */
@@ -160,7 +162,7 @@ int main(void) {
     if (!mp) {
         fprintf(stderr, "[mux_to_hls] mux_publisher_with_config_hls failed: %s\n",
                 tst_get_last_error_str());
-        /* `pub` was consumed by the (failed) call — do not free it. */
+        /* `pub` was consumed before the config was validated — do not free it. */
         return 2;
     }
 

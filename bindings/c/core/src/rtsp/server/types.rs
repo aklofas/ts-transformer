@@ -37,8 +37,9 @@ use std::sync::{Arc, Mutex};
 /// graceful shutdown) via `tst_rtsp_server_stop` + `tst_rtsp_server_free`,
 /// or implicitly via Drop (hard cancel).
 ///
-/// The inner `Mutex<Option<…>>` gives close-idempotence: after `_stop` or
-/// `_free` the `Option` is `None` and subsequent calls return `TST_E_CLOSED`.
+/// The inner `Mutex<Option<…>>` gives close-idempotence: after `_stop` the
+/// `Option` is `None` and later calls return `TST_E_CLOSED`; `_free` releases
+/// the allocation, and any later call is undefined behaviour.
 /// This mirrors the `TstRtspSession` shape used in the client surface.
 ///
 /// The server is held in an `Arc` so the calls that block on it
