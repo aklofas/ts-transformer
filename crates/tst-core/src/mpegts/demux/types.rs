@@ -71,10 +71,10 @@ pub(super) const DEFAULT_PES_CAP_PER_PID: usize = 4 * 1024 * 1024;
 /// partial PES on every PID are dropped.
 pub(super) const DEFAULT_PES_CAP_TOTAL: usize = 64 * 1024 * 1024;
 
-/// Default per-PID AU cell reassembly buffer cap (1 MiB). Comfortable
-/// for any realistic MISB sync-metadata AU (ST 0903 VMTI with hundreds
-/// of target packs is ~hundreds of KB at most); well below the
-/// per-PES default. Configurable via
+/// Default AU cell reassembly cap per `(PID, metadata_service_id)`
+/// buffer (1 MiB). Comfortable for any realistic MISB sync-metadata AU
+/// (ST 0903 VMTI with hundreds of target packs is ~hundreds of KB at
+/// most); well below the per-PES default. Configurable via
 /// [`DemuxerConfigBuilder::au_cell_cap_per_pid`].
 pub(super) const DEFAULT_AU_CELL_CAP_PER_PID: usize = 1024 * 1024;
 
@@ -156,8 +156,8 @@ pub struct DemuxerConfig {
     /// `ts_open_bitstream_unit` framing (matches ffmpeg / libaom /
     /// hls.js / mediamtx today) and does not raise the binding issues.
     pub av1_carriage: crate::mpegts::common::Av1CarriageMode,
-    /// Per-PID cap on the in-flight AU cell reassembly buffer.
-    /// `None` uses `DEFAULT_AU_CELL_CAP_PER_PID` (1 MiB). When the
+    /// Cap on each in-flight AU cell reassembly buffer, one per
+    /// `(PID, metadata_service_id)`. `None` uses `DEFAULT_AU_CELL_CAP_PER_PID` (1 MiB). When the
     /// buffered inner-byte total would exceed this, the demuxer drops
     /// the buffer and emits
     /// [`crate::mpegts::demux::NonConformantIssue::MultiCellAu`] with
@@ -400,7 +400,7 @@ impl DemuxerConfigBuilder {
         self
     }
 
-    /// Set the per-PID AU cell reassembly buffer cap. See
+    /// Set the per-buffer AU cell reassembly cap. See
     /// [`DemuxerConfig::au_cell_cap_per_pid`].
     pub fn au_cell_cap_per_pid(&mut self, bytes: usize) -> &mut Self {
         self.options.au_cell_cap_per_pid = Some(bytes);

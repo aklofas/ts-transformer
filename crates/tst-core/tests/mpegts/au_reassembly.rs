@@ -401,11 +401,12 @@ fn concurrent_first_emits_nonconformant_then_buffers_new() {
     let off0 = locate_nth_au_cell_offset(KLV_PID, &ts, 0).expect("PUSI 0 found");
     let off1 = locate_nth_au_cell_offset(KLV_PID, &ts, 1).expect("PUSI 1 found");
     let off2 = locate_nth_au_cell_offset(KLV_PID, &ts, 2).expect("PUSI 2 found");
-    // First A (seq 10) → buffer. New First B (seq 20) → ConcurrentFirst
-    //   (drops A, re-buffers B). Last C (seq 21) → emit B+C, cell_count=2.
+    // First A (seq 10) → buffer. New First B (seq 11) → ConcurrentFirst
+    //   (drops A, re-buffers B). Last C (seq 12) → emit B+C, cell_count=2.
+    //   Consecutive numbers: a jump would also be a SequenceGap.
     patch_au_cell(&mut ts, off0, CellFragmentIndication::First, 10, a);
-    patch_au_cell(&mut ts, off1, CellFragmentIndication::First, 20, b);
-    patch_au_cell(&mut ts, off2, CellFragmentIndication::Last, 21, c);
+    patch_au_cell(&mut ts, off1, CellFragmentIndication::First, 11, b);
+    patch_au_cell(&mut ts, off2, CellFragmentIndication::Last, 12, c);
 
     let events = collect_events(&ts);
 
@@ -463,7 +464,7 @@ fn concurrent_first_emits_nonconformant_then_buffers_new() {
         } => {
             assert!(*was_reassembled, "second AU is 2-cell reassembly");
             assert_eq!(*cell_count, 2, "B + C contributed");
-            assert_eq!(*sequence_number, 20, "second AU's First seq surfaces");
+            assert_eq!(*sequence_number, 11, "second AU's First seq surfaces");
             assert_eq!(payload.as_slice(), b"BBBCCC", "inner = B + C concatenated");
         }
         _ => unreachable!(),
