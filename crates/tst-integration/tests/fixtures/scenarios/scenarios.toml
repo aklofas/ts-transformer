@@ -107,6 +107,24 @@ tier = "A"
 schema_version = 0
 
 [[scenario]]
+id = "damaged-pes-lenient"
+kind = "demux"
+input = "damaged-pes-lenient/input.ts"
+golden = "damaged-pes-lenient/golden.json"
+features = []
+tier = "A"
+schema_version = 0
+
+[[scenario]]
+id = "pts-spacing-exceeded"
+kind = "demux"
+input = "pts-spacing-exceeded/input.ts"
+golden = "pts-spacing-exceeded/golden.json"
+features = []
+tier = "A"
+schema_version = 0
+
+[[scenario]]
 id = "unknown-stream-type"
 kind = "demux"
 input = "unknown-stream-type/input.ts"

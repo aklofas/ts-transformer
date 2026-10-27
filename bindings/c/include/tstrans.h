@@ -50,13 +50,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 25` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 26` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 25
+#define TST_ABI_VERSION_MINOR 26
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -885,7 +885,8 @@ enum tst_nonconformant_code
    * PES header structural violation. Re-uses the
    * `table_id` field as the [`tst_core::mpegts::demux::PesHeaderMalformedKind`]
    * discriminator (0=ForbiddenPtsDtsFlags, 1=InvalidMarkerBits,
-   * 2=InvalidPtsPrefix, 3=InvalidDtsPrefix, 4=InvalidPtsDtsMarkerBits).
+   * 2=InvalidPtsPrefix, 3=InvalidDtsPrefix, 4=InvalidPtsDtsMarkerBits,
+   * 5=HeaderDataLengthTooShort).
    */
   TST_NONCONFORMANT_CODE_PES_HEADER_MALFORMED = 23,
   /**
@@ -907,7 +908,7 @@ enum tst_nonconformant_code
    * values match `TstVideoCodec` discriminants — H264=0, H265=1, H266=2,
    * Av1=3); `nal_header_kind` byte (`obu_type` carrier) encodes which
    * constraint variant (0=ForbiddenZeroBit, 1=ReservedBit,
-   * 2=ZeroTemporalIdPlus1, 3=LayerIdOutOfRange).
+   * 2=ZeroTemporalIdPlus1, 3=LayerIdOutOfRange, 4=Truncated).
    * `LayerIdOutOfRange.id` surfaces on `cc_observed` (the offending
    * `nuh_layer_id` byte).
    */
@@ -916,7 +917,8 @@ enum tst_nonconformant_code
    * AV1 OBU header constraint violation (obu_forbidden_bit /
    * obu_reserved_1bit / OBU extension reserved bits).
    * `obu_header_kind` byte (`obu_type` carrier) encodes which constraint
-   * variant (0=ForbiddenBit, 1=ReservedBit, 2=ExtensionReservedBits).
+   * variant (0=ForbiddenBit, 1=ReservedBit, 2=ExtensionReservedBits,
+   * 3=Truncated, 4=InvalidEmulationPrevention).
    */
   TST_NONCONFORMANT_CODE_AV1_OBU_HEADER = 27,
   /**
@@ -986,8 +988,9 @@ enum tst_nonconformant_code
    * PAT/PMT fixed/reserved syntax violation. `pid` = the PID;
    * `table_id` = the PSI table_id (0x00 PAT, 0x02 PMT); `obu_type` carries
    * the PsiSyntaxKind discriminator (0=SectionSyntaxIndicatorUnset,
-   * 1=SectionNumberNonZero, 2=ReservedBits, 0xFF=unknown); for
-   * SectionNumberNonZero, `cc_observed` carries the observed section_number.
+   * 1=SectionNumberNonZero, 2=ReservedBits, 3=SectionNumberOutOfRange,
+   * 4=Malformed, 0xFF=unknown); for SectionNumberNonZero and
+   * SectionNumberOutOfRange, `cc_observed` carries the observed section_number.
    */
   TST_NONCONFORMANT_CODE_PSI_SYNTAX = 37,
 };
