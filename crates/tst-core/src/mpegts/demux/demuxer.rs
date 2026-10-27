@@ -2844,4 +2844,79 @@ mod tests {
         );
         assert_eq!(d.stats().pmt_versions_seen, 0);
     }
+
+    // A First or Complete cell that reveals a lost cell fails the PID's
+    // in-flight AU, and the demuxer replays it: the Complete still emits.
+    #[test]
+    fn a_gap_on_a_complete_cell_reports_the_lost_au_and_still_emits_the_cell() {
+        use crate::mpegts::au_cell::{AuCellHeader, CellFragmentIndication};
+        use crate::mpegts::demux::event::{MetadataKind, MultiCellAuReason};
+        use crate::mpegts::demux::test_support::{au_cell_pes_packets, issues};
+        let cell = |service, seq, cfi| AuCellHeader {
+            metadata_service_id: service,
+            sequence_number: seq,
+            cell_fragment_indication: cfi,
+            decoder_config_flag: false,
+            random_access_indicator: true,
+        };
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        d.feed(&pmt_packet_for_test(
+            0x1000,
+            1,
+            0x1FFF,
+            &[(0x15, 0x0101)],
+            0,
+        ))
+        .unwrap();
+        drain_all_events(&mut d);
+
+        feed_packets(
+            &mut d,
+            &au_cell_pes_packets(0x0101, 0, cell(0, 0, CellFragmentIndication::First), b"ab"),
+        )
+        .unwrap();
+        // Cell 1 is lost; cell 2 is another service's Complete.
+        feed_packets(
+            &mut d,
+            &au_cell_pes_packets(
+                0x0101,
+                1,
+                cell(1, 2, CellFragmentIndication::Complete),
+                b"c",
+            ),
+        )
+        .unwrap();
+
+        let events = drain_all_events(&mut d);
+        assert!(
+            issues(&events).iter().any(|i| matches!(
+                i,
+                NonConformantIssue::MultiCellAu {
+                    reason: MultiCellAuReason::SequenceGap,
+                    dropped_bytes: 2,
+                    ..
+                }
+            )),
+            "events: {events:?}"
+        );
+        let metas: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Metadata {
+                    kind:
+                        MetadataKind::KlvSyncAuCell {
+                            metadata_service_id,
+                            cell_count,
+                            ..
+                        },
+                    payload,
+                    ..
+                } => Some((*metadata_service_id, *cell_count, payload.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(metas, vec![(1, 1, b"c".to_vec())], "events: {events:?}");
+    }
 }

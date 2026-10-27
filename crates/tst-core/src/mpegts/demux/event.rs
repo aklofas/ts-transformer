@@ -342,7 +342,7 @@ pub enum LinkSource {
 ///
 /// Surfaced via [`NonConformantIssue::MultiCellAu::reason`]. Each variant
 /// names a distinct wire-format or operational failure mode the
-/// per-PID `AuCellReassembler` can hit.
+/// `AuCellReassembler` can hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MultiCellAuReason {
@@ -350,9 +350,12 @@ pub enum MultiCellAuReason {
     /// `First`. Either the stream started mid-AU (e.g. seek into a recording)
     /// or a `First` cell was lost upstream.
     Orphan,
-    /// A continuation cell arrived but its `sequence_number` did not equal
-    /// `(first.sequence_number + cells_seen) mod 256`. Indicates a cell was
-    /// lost between the buffered `First`/`Middle` and the arriving cell.
+    /// A cell's `sequence_number` did not follow the previous cell on its
+    /// PID mod 256 while an AU was being buffered there. H.222.0
+    /// §2.12.4.2 numbers every cell on the PID independent of
+    /// `metadata_service_id`, so the lost cell may belong to any service:
+    /// every in-flight AU on the PID is dropped and `dropped_bytes` sums
+    /// them (plus the arriving cell when it is a continuation).
     SequenceGap,
     /// A new `First` cell arrived while the previous AU was still being
     /// buffered (i.e. its `Last` never appeared). The partial buffer is
@@ -360,7 +363,8 @@ pub enum MultiCellAuReason {
     ConcurrentFirst,
     /// The buffered AU's accumulated inner bytes would exceed
     /// [`crate::mpegts::demux::DemuxerConfig::au_cell_cap_per_pid`]
-    /// (default 1 MiB). The partial buffer is dropped.
+    /// (default 1 MiB), which bounds each `(PID, metadata_service_id)`
+    /// buffer. The partial buffer is dropped.
     Overflow,
     /// The aggregate in-flight AU-cell bytes across all PIDs would exceed
     /// [`crate::mpegts::demux::DemuxerConfig::au_cell_cap_total`]
