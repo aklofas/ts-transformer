@@ -195,3 +195,12 @@ golden = "cancelled-recv-kind/golden.json"
 features = ["srt"]
 tier = "A"
 schema_version = 0
+
+[[scenario]]
+id = "peer-reset-recv-kind"
+kind = "binding_contract"
+input = "peer-reset-recv-kind/input.bin"
+golden = "peer-reset-recv-kind/golden.json"
+features = ["tcp"]
+tier = "A"
+schema_version = 0

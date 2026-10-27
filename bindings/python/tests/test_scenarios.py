@@ -780,6 +780,61 @@ def _run_cancelled_recv_kind(scenario_id: str, rescue_frame: bytes) -> list[dict
     return [{"event": "error", "code": outcome["kind"]}]
 
 
+def _run_peer_reset_recv_kind(scenario_id: str, packet: bytes) -> list[dict[str, Any]]:
+    """One plain TCP receive whose peer resets the connection; the observed
+    kind name is the golden's code.
+
+    The peer listener on the test thread accepts the caller-mode ``Receiver``,
+    writes ``packet`` (the scenario's committed ``input.bin``) and closes with
+    ``SO_LINGER`` zero, which sends an RST.  The receive runs on a daemon
+    thread until its first error.  The wait is a 10 s FAILURE bound (scaled by
+    ``TST_TEST_TIMEOUT_SCALE``), never a duration assertion; on a miss the
+    pre-obtained cancel handle ends the receive before the test fails.
+    """
+    import os
+    import socket
+    import struct
+    import threading
+
+    from tstrans.exceptions import TcpError
+
+    scale = int(os.environ.get("TST_TEST_TIMEOUT_SCALE", "1") or "1")
+    deadline = 10.0 * max(scale, 1)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        receiver = shells.Receiver.open(f"tcp://127.0.0.1:{port}")
+        handle = receiver.cancel_handle()
+        conn, _ = server.accept()
+        conn.sendall(packet)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        conn.close()  # RST
+
+    outcome: dict[str, Any] = {}
+
+    def recv_worker() -> None:
+        try:
+            while True:
+                receiver.recv_bytes(max_len=1316)
+        except TcpError as exc:
+            outcome["kind"] = exc.kind.name
+        except BaseException as exc:  # noqa: BLE001
+            outcome["end"] = repr(exc)
+
+    w = threading.Thread(target=recv_worker, daemon=True, name="peer-reset-recv")
+    w.start()
+    w.join(timeout=deadline)
+    if w.is_alive():
+        handle.cancel()
+        w.join(timeout=5.0)
+        pytest.fail(f"[{scenario_id}] the receive did not fail within {deadline} s of the reset")
+    receiver.close()
+    assert "kind" in outcome, f"[{scenario_id}] recv ended without TcpError: {outcome}"
+    return [{"event": "error", "code": outcome["kind"]}]
+
+
 def _run_binding_contract(
     scenario_id: str,
     input_path: Path,
@@ -803,6 +858,8 @@ def _run_binding_contract(
         return _run_forged_handle(scenario_id, input_bytes)
     if scenario_id == "cancelled-recv-kind":
         return _run_cancelled_recv_kind(scenario_id, input_bytes)
+    if scenario_id == "peer-reset-recv-kind":
+        return _run_peer_reset_recv_kind(scenario_id, input_bytes)
 
     pytest.fail(f"unknown binding_contract scenario id: {scenario_id!r}")
 
