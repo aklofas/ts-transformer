@@ -632,15 +632,18 @@ impl super::demuxer::Demuxer {
                         }
                     };
 
-                    // ConcurrentFirst loop: process_cell may report
-                    // ConcurrentFirst (a new First/Complete arrived while
-                    // a buffer was already open for this PID). The
-                    // reassembler dropped its buffer and emitted Failure;
-                    // we surface the NonConformant and re-process the
-                    // triggering cell against the now-empty state. Bounded
-                    // to one re-entry per cell — after the re-entry the
-                    // state is empty, so the second call hits the
-                    // empty-state row of the table (Buffered or Emit).
+                    // Replay loop: process_cell may report ConcurrentFirst
+                    // (a new First/Complete arrived while a buffer was
+                    // already open for this PID and service) or a
+                    // SequenceGap on a First/Complete cell (a lost cell
+                    // dropped every buffer on the PID). The reassembler
+                    // dropped the buffers and emitted Failure; we surface
+                    // the NonConformant and re-process the triggering cell
+                    // against the now-empty state. Bounded to one re-entry
+                    // per cell — the replayed cell repeats the PID's last
+                    // sequence number (no gap) and finds its key empty, so
+                    // the second call hits the empty-state row of the table
+                    // (Buffered or Emit).
                     let mut to_process = Some((header, inner));
                     while let Some((h, current_inner)) = to_process.take() {
                         let outcome = self.au_reassembler.process_cell(pes.pid, h, current_inner);
@@ -769,15 +772,24 @@ impl super::demuxer::Demuxer {
                                             reason,
                                         },
                                     );
-                                    // ConcurrentFirst is the only Failure
-                                    // variant the spec says to re-process —
-                                    // the reassembler dropped the prior
-                                    // buffer and the caller must replay the
-                                    // triggering cell against the now-empty
-                                    // state. Other failures (Orphan /
+                                    // ConcurrentFirst, and a SequenceGap
+                                    // detected on a First or Complete cell,
+                                    // dropped only earlier buffers: replay
+                                    // the triggering cell against the
+                                    // now-empty state. Other failures
+                                    // (Orphan / continuation-cell
                                     // SequenceGap / Overflow) terminate the
                                     // AU outright.
-                                    if matches!(reason, MultiCellAuReason::ConcurrentFirst) {
+                                    let replay = match reason {
+                                        MultiCellAuReason::ConcurrentFirst => true,
+                                        MultiCellAuReason::SequenceGap => matches!(
+                                            observed_cfi,
+                                            CellFragmentIndication::First
+                                                | CellFragmentIndication::Complete
+                                        ),
+                                        _ => false,
+                                    };
+                                    if replay {
                                         to_process = Some((h, current_inner));
                                     }
                                 }

@@ -1,4 +1,4 @@
-//! Per-PID Metadata AU cell reassembler.
+//! Per-`(PID, metadata_service_id)` Metadata AU cell reassembler.
 //!
 //! State machine for accumulating fragmented sync-metadata AU cells per
 //! H.222.0 V9 §2.12.4.2 Table 2-157 (`cell_fragment_indication` =
@@ -67,14 +67,15 @@ pub(crate) struct AuCellReassembler {
     /// service.
     last_seq: HashMap<u16, u8>,
     cap_per_pid: usize,
-    /// Aggregate cap on the sum of all per-PID buffer bytes. Defends a
-    /// multi-PID flood where each PID stays under `cap_per_pid` but the
+    /// Aggregate cap on the sum of all buffer bytes. Defends a
+    /// multi-PID flood where each buffer stays under `cap_per_pid` but the
     /// total explodes (mirrors the PES `Reassembler::cap_total` shape).
     cap_total: usize,
     /// Ceiling on the number of in-flight (open `First`) reassemblies,
     /// counted per `(pid, metadata_service_id)`. Bounds active state when
     /// an adversary opens a `First` for thousands of distinct PIDs or
-    /// services and never sends `Last`.
+    /// services and never sends `Last`. One PID with many services can
+    /// take every slot; the total stays bounded.
     max_in_flight_pids: usize,
     /// Live sum of `per_pid[*].buf.len()`. Maintained on every
     /// insert/append/drop/emit path so the aggregate cap can be enforced
@@ -83,7 +84,7 @@ pub(crate) struct AuCellReassembler {
 }
 
 impl AuCellReassembler {
-    /// Construct with a per-PID cap and the aggregate-bound defaults
+    /// Construct with a per-buffer cap and the aggregate-bound defaults
     /// (`DEFAULT_AU_CELL_CAP_TOTAL`, `DEFAULT_AU_CELL_MAX_IN_FLIGHT_PIDS`).
     #[cfg(test)]
     pub(crate) fn new(cap_per_pid: usize) -> Self {
@@ -131,11 +132,17 @@ impl AuCellReassembler {
 
     /// Feed one AU cell into the reassembler. Returns the outcome.
     ///
-    /// For `ConcurrentFirst` failures the caller MUST emit the failure
-    /// event AND then re-call `process_cell` with the same cell — the
-    /// internal state is now empty so the second call follows the
-    /// empty-state row of the state table and either buffers (if the
-    /// new cell is `First`) or emits (if `Complete`).
+    /// For `ConcurrentFirst` failures, and for `SequenceGap` failures on a
+    /// `First` or `Complete` cell, the caller MUST emit the failure event
+    /// AND then re-call `process_cell` with the same cell — the internal
+    /// state is now empty so the second call follows the empty-state row
+    /// of the state table and either buffers (if the new cell is `First`)
+    /// or emits (if `Complete`).
+    ///
+    /// A sequence gap is a PID-level event: §2.12.4.2 numbers every cell
+    /// on the PID, so a lost cell may have belonged to any service. A gap
+    /// drops every in-flight reassembly on the PID and reports one
+    /// `SequenceGap` covering all of them.
     pub(crate) fn process_cell<'a>(
         &'a mut self,
         pid: u16,
@@ -143,10 +150,27 @@ impl AuCellReassembler {
         payload: &'a [u8],
     ) -> ReassembleOutcome<'a> {
         let key = (pid, header.metadata_service_id);
-        let seq_follows = self
+        let seq = header.sequence_number;
+        // A First or Complete cell is replayed by the caller after a
+        // failure, so its own number again is that replay, not a gap. A
+        // continuation cell is never replayed: a repeat is a gap.
+        let opens = matches!(
+            header.cell_fragment_indication,
+            CellFragmentIndication::First | CellFragmentIndication::Complete
+        );
+        let gap = self
             .last_seq
-            .insert(pid, header.sequence_number)
-            .is_some_and(|prev| prev.wrapping_add(1) == header.sequence_number);
+            .insert(pid, seq)
+            .is_some_and(|prev| prev.wrapping_add(1) != seq && !(opens && prev == seq));
+        if gap && let Some(dropped) = self.drop_pid_buffers(pid) {
+            // A continuation cell goes down with its AU; a First or
+            // Complete cell is replayed by the caller.
+            let own = if opens { 0 } else { payload.len() };
+            return ReassembleOutcome::Failure {
+                reason: MultiCellAuReason::SequenceGap,
+                dropped_bytes: dropped + own,
+            };
+        }
         match (
             self.per_pid.contains_key(&key),
             header.cell_fragment_indication,
@@ -227,17 +251,9 @@ impl AuCellReassembler {
                 }
             }
 
-            // Buffering + Middle → seq check + append.
+            // Buffering + Middle → append (the gap check ran above).
             (true, CellFragmentIndication::Middle) => {
                 let state = self.per_pid.get_mut(&key).unwrap();
-                if !seq_follows {
-                    let dropped = self.per_pid.remove(&key).unwrap();
-                    self.decrement_total(dropped.buf.len());
-                    return ReassembleOutcome::Failure {
-                        reason: MultiCellAuReason::SequenceGap,
-                        dropped_bytes: dropped.buf.len() + payload.len(),
-                    };
-                }
                 if state.buf.len() + payload.len() > self.cap_per_pid {
                     let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
@@ -246,8 +262,9 @@ impl AuCellReassembler {
                         dropped_bytes: dropped.buf.len() + payload.len(),
                     };
                 }
-                // Aggregate byte ceiling on append: drop this PID's buffer
-                // and surface OverflowTotal if appending would breach it.
+                // Aggregate byte ceiling on append: drop this service's
+                // buffer and surface OverflowTotal if appending would
+                // breach it.
                 if self.total_buffered + payload.len() > self.cap_total {
                     let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
@@ -271,17 +288,9 @@ impl AuCellReassembler {
                 ReassembleOutcome::Buffered
             }
 
-            // Buffering + Last → seq check + append + emit.
+            // Buffering + Last → append + emit (the gap check ran above).
             (true, CellFragmentIndication::Last) => {
                 let state = self.per_pid.get_mut(&key).unwrap();
-                if !seq_follows {
-                    let dropped = self.per_pid.remove(&key).unwrap();
-                    self.decrement_total(dropped.buf.len());
-                    return ReassembleOutcome::Failure {
-                        reason: MultiCellAuReason::SequenceGap,
-                        dropped_bytes: dropped.buf.len() + payload.len(),
-                    };
-                }
                 if state.buf.len() + payload.len() > self.cap_per_pid {
                     let dropped = self.per_pid.remove(&key).unwrap();
                     self.decrement_total(dropped.buf.len());
@@ -339,14 +348,22 @@ impl AuCellReassembler {
     /// PMT retires the PID or changes its stream kind.
     pub(crate) fn reset_pid(&mut self, pid: u16) {
         self.last_seq.remove(&pid);
-        let mut dropped_len = 0;
+        self.drop_pid_buffers(pid);
+    }
+
+    /// Drop every service's buffer on `pid`, keeping `total_buffered`
+    /// exact. Returns the dropped byte count, or `None` when nothing was
+    /// in flight.
+    fn drop_pid_buffers(&mut self, pid: u16) -> Option<usize> {
+        let mut dropped: Option<usize> = None;
         self.per_pid.retain(|&(p, _), state| {
             if p == pid {
-                dropped_len += state.buf.len();
+                *dropped.get_or_insert(0) += state.buf.len();
             }
             p != pid
         });
-        self.decrement_total(dropped_len);
+        self.decrement_total(dropped.unwrap_or(0));
+        dropped
     }
 
     /// On `Emit` of a multi-cell AU the caller drains the buffer via this
@@ -400,7 +417,102 @@ mod tests {
             ReassembleOutcome::Emit { payload, cell_count: 2, .. } if payload == b"a1a2"));
         r.clear_after_emit(0x101, 0);
         assert!(matches!(r.process_cell(0x101, svc_hdr(1, 3, Last), b"b2"),
-            ReassembleOutcome::Emit { payload, .. } if payload == b"b1b2"));
+            ReassembleOutcome::Emit { payload, cell_count: 2, .. } if payload == b"b1b2"));
+    }
+
+    /// The Last of one service then a Middle of another: the PID's count
+    /// runs on across the emit.
+    #[test]
+    fn a_service_continues_the_pid_sequence_after_another_emits() {
+        use CellFragmentIndication::{First, Last, Middle};
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.process_cell(0x101, svc_hdr(0, 0, First), b"a1");
+        r.process_cell(0x101, svc_hdr(1, 1, First), b"b1");
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(0, 2, Last), b"a2"),
+            ReassembleOutcome::Emit { cell_count: 2, .. }
+        ));
+        r.clear_after_emit(0x101, 0);
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(1, 3, Middle), b"b2"),
+            ReassembleOutcome::Buffered
+        ));
+        assert!(matches!(r.process_cell(0x101, svc_hdr(1, 4, Last), b"b3"),
+            ReassembleOutcome::Emit { payload, cell_count: 3, .. } if payload == b"b1b2b3"));
+    }
+
+    /// A lost cell may have been any service's, so the gap fails every
+    /// in-flight AU on the PID: none emits short.
+    #[test]
+    fn a_lost_cell_fails_every_in_flight_service_on_the_pid() {
+        use CellFragmentIndication::{First, Last, Middle};
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.process_cell(0x101, svc_hdr(0, 0, First), b"a1");
+        r.process_cell(0x101, svc_hdr(1, 1, First), b"b1");
+        // Cell 2 (B's Middle) is lost.
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(0, 3, Middle), b"a2"),
+            ReassembleOutcome::Failure {
+                reason: MultiCellAuReason::SequenceGap,
+                dropped_bytes: 6,
+            }
+        ));
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(1, 4, Last), b"b3"),
+            ReassembleOutcome::Failure {
+                reason: MultiCellAuReason::Orphan,
+                ..
+            }
+        ));
+        assert!(!r.has_pid(0x101));
+        assert_eq!(r.total_buffered, 0);
+    }
+
+    /// A continuation cell is never replayed, so its number repeated is a
+    /// gap, not a second copy appended.
+    #[test]
+    fn a_repeated_middle_cell_is_a_gap() {
+        use CellFragmentIndication::{First, Middle};
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.process_cell(0x101, svc_hdr(0, 0, First), b"a1");
+        r.process_cell(0x101, svc_hdr(0, 1, Middle), b"a2");
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(0, 1, Middle), b"a2"),
+            ReassembleOutcome::Failure {
+                reason: MultiCellAuReason::SequenceGap,
+                dropped_bytes: 6,
+            }
+        ));
+        assert_eq!(r.total_buffered, 0);
+    }
+
+    /// A gap detected on a Complete cell drops the in-flight AU; the
+    /// caller's replay of that cell then emits it normally.
+    #[test]
+    fn a_gap_on_a_complete_cell_fails_the_in_flight_au_then_the_replay_emits() {
+        use CellFragmentIndication::{Complete, First, Last};
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.process_cell(0x101, svc_hdr(0, 0, First), b"a1");
+        // Cell 1 is lost.
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(2, 2, Complete), b"c"),
+            ReassembleOutcome::Failure {
+                reason: MultiCellAuReason::SequenceGap,
+                dropped_bytes: 2,
+            }
+        ));
+        assert!(
+            matches!(r.process_cell(0x101, svc_hdr(2, 2, Complete), b"c"),
+            ReassembleOutcome::Emit { payload, cell_count: 1, .. } if payload == b"c")
+        );
+        assert!(matches!(
+            r.process_cell(0x101, svc_hdr(0, 3, Last), b"a2"),
+            ReassembleOutcome::Failure {
+                reason: MultiCellAuReason::Orphan,
+                ..
+            }
+        ));
+        assert_eq!(r.total_buffered, 0);
     }
 
     #[test]
@@ -417,6 +529,8 @@ mod tests {
                 ..
             }
         ));
+        assert!(!r.per_pid.contains_key(&(0x101, 0)));
+        assert_eq!(r.total_buffered, 0);
     }
 
     #[test]
@@ -534,7 +648,7 @@ mod tests {
     fn concurrent_first_drops_old_buffer() {
         let mut r = AuCellReassembler::new(1024);
         r.process_cell(0x100, hdr(CellFragmentIndication::First, 10), &[0x11; 5]);
-        let out = r.process_cell(0x100, hdr(CellFragmentIndication::First, 20), &[0x22; 5]);
+        let out = r.process_cell(0x100, hdr(CellFragmentIndication::First, 11), &[0x22; 5]);
         assert!(matches!(
             out,
             ReassembleOutcome::Failure {
@@ -543,7 +657,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            r.process_cell(0x100, hdr(CellFragmentIndication::First, 20), &[0x22; 5]),
+            r.process_cell(0x100, hdr(CellFragmentIndication::First, 11), &[0x22; 5]),
             ReassembleOutcome::Buffered
         ));
     }
@@ -555,7 +669,7 @@ mod tests {
         // (which then matches row 1 → Emit).
         let mut r = AuCellReassembler::new(1024);
         r.process_cell(0x100, hdr(CellFragmentIndication::First, 10), &[0x11; 5]);
-        let out = r.process_cell(0x100, hdr(CellFragmentIndication::Complete, 20), &[0x22; 5]);
+        let out = r.process_cell(0x100, hdr(CellFragmentIndication::Complete, 11), &[0x22; 5]);
         assert!(matches!(
             out,
             ReassembleOutcome::Failure {
@@ -564,14 +678,14 @@ mod tests {
             }
         ));
         // Re-entry: same Complete on now-empty state → Emit (cell_count=1).
-        let reentry = r.process_cell(0x100, hdr(CellFragmentIndication::Complete, 20), &[0x22; 5]);
+        let reentry = r.process_cell(0x100, hdr(CellFragmentIndication::Complete, 11), &[0x22; 5]);
         match reentry {
             ReassembleOutcome::Emit {
                 header,
                 payload,
                 cell_count,
             } => {
-                assert_eq!(header.sequence_number, 20);
+                assert_eq!(header.sequence_number, 11);
                 assert_eq!(payload, &[0x22; 5]);
                 assert_eq!(cell_count, 1);
             }
@@ -741,7 +855,7 @@ mod tests {
         // (The `(true, First)` arm drops and signals; it does NOT
         // re-buffer — a real caller re-enters the cell against the now-
         // empty state. So PID 0x30 is empty after this.)
-        let out = r.process_cell(0x30, hdr(CellFragmentIndication::First, 50), &[0xDD; 7]);
+        let out = r.process_cell(0x30, hdr(CellFragmentIndication::First, 1), &[0xDD; 7]);
         assert!(matches!(
             out,
             ReassembleOutcome::Failure {
@@ -756,7 +870,7 @@ mod tests {
         // Complete while it is still buffering → drop + signal.
         r.process_cell(0x35, hdr(CellFragmentIndication::First, 0), &[0xEE; 9]);
         assert_eq!(r.total_buffered, live_sum(&r));
-        let out = r.process_cell(0x35, hdr(CellFragmentIndication::Complete, 60), &[0xEF; 3]);
+        let out = r.process_cell(0x35, hdr(CellFragmentIndication::Complete, 1), &[0xEF; 3]);
         assert!(matches!(
             out,
             ReassembleOutcome::Failure {
