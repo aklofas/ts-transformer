@@ -150,7 +150,11 @@ impl crate::shell_error::ShellError for SenderError {
 /// 1. **Drop** — the [`Drop`] impl best-effort flushes any buffered
 ///    partial bundle and closes the underlying transport. Synchronous;
 ///    bounded by `SRTO_LINGER` (libsrt default off, sender preset 5 s, configurable via
-///    `SocketBuilder::linger`).
+///    `SocketBuilder::linger`). A binding object dropped without
+///    `close()` (a C handle freed, a JVM or Python object collected)
+///    cancels the transport first, so this flush fails fast instead of
+///    parking in a `ManagedTransport` reconnect loop against a
+///    lost peer; the buffered partial bundle is not sent.
 /// 2. **Explicit close** — call [`Self::close`]. Best-effort flushes
 ///    any buffered partial bundle (same as Drop), marks the sender
 ///    closed so subsequent `send_ts` / `flush` calls return
