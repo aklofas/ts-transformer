@@ -28,7 +28,7 @@ const RECEIVER_DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Configuration for a caller-side data socket.
 ///
 /// All `Option<T>` fields default to `None`, meaning "leave the libsrt default."
-/// `key_length` is only relevant when `passphrase` is set.
+/// An explicit `key_length` is applied even without a `passphrase`.
 #[must_use]
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
@@ -261,16 +261,16 @@ impl SrtSocketConfig {
 /// Configuration for a listener (passive) socket.
 ///
 /// The socket options are a [`SrtSocketConfig`] in [`socket`](Self::socket);
-/// the listener applies the ones that make sense on a passive socket:
-/// `passphrase`, `key_length`, `latency`, `recv_latency`, `mss`,
-/// `flow_window_packets`, `recv_buf_bytes`, `max_bandwidth`,
+/// the listener applies every option that means something on a passive
+/// socket: `passphrase`, `key_length`, `latency`, `peer_latency`,
+/// `recv_latency`, `mss`, `flow_window_packets`, `recv_buf_bytes`,
+/// `send_buf_bytes`, `max_bandwidth`, `input_bandwidth`,
 /// `overhead_bandwidth_pct`, `payload_size`, `udp_recv_buffer_bytes`,
-/// `loss_max_ttl`, `too_late_packet_drop`, `packet_filter`, `congestion`,
-/// `recv_timeout` and `linger`. The rest (`connect_timeout`,
-/// `peer_latency`, `stream_id`, the send-side buffers and bandwidth,
-/// `role`) are caller-side and are stored but not applied. `send_timeout`
-/// is not applied to the listener either, but accepted sockets inherit it
-/// and `recv_timeout` from this config.
+/// `udp_send_buffer_bytes`, `loss_max_ttl`, `too_late_packet_drop`,
+/// `packet_filter`, `congestion`, `recv_timeout` and `linger`. The rest
+/// (`connect_timeout`, `stream_id`, `role`) are caller-side and are stored
+/// but not applied. `send_timeout` is not applied to the listener either,
+/// but accepted sockets get it, and `recv_timeout`, from this config.
 /// Accepted sockets inherit the PRE options through libsrt.
 #[must_use]
 #[non_exhaustive]
