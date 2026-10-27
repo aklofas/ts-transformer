@@ -3554,6 +3554,7 @@ pub(crate) mod tests {
             stream_sha256: String::new(),
             discontinuities: 0,
             nonconformant: 0,
+            damaged_pes: 0,
             corruption: None,
             corruption_attribution: None,
             klv_rich: None,

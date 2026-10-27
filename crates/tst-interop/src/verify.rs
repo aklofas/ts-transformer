@@ -678,6 +678,16 @@ pub struct Tally {
     /// accumulates nothing here.
     discontinuities_by_pid: BTreeMap<u16, u64>,
     nonconformant_by_pid: BTreeMap<u16, u64>,
+    /// PIDs with a continuity jump not yet followed by media on that PID:
+    /// the PES in flight across the gap has not been emitted yet. The
+    /// demuxer reports that PES's missing bytes with a damage marker just
+    /// before its sample, and a marker on a PID in this set is the gap's
+    /// own consequence (see `Tally::is_gap_damage`).
+    cc_gap_open: BTreeSet<u16>,
+    /// Damage markers that followed a continuity jump on their PID —
+    /// counted here, not as `NonConformant`, because the jump already
+    /// reports the loss they describe.
+    damaged_pes: u64,
     /// Later-PES payload prefix mismatches per PID that an attributed
     /// corruption window explains (`Tally::note_prefix_mismatches`).
     prefix_excused_by_pid: BTreeMap<u16, u64>,
@@ -742,6 +752,19 @@ impl Default for Tally {
     }
 }
 
+/// The two reasons the demuxer gives a `MalformedPes` damage marker
+/// (`DAMAGE_CC_GAP` and `DAMAGE_SHORT_PES` in tst-core's
+/// `mpegts::demux::pes`, crate-private there): the PES still completes,
+/// but bytes are missing from it. Every other `MalformedPes` reason is a
+/// header that failed to parse.
+fn is_pes_damage_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "continuity_counter gap inside the PES; payload bytes are missing"
+            | "PES ended before PES_packet_length bytes arrived"
+    )
+}
+
 impl Tally {
     pub fn new() -> Self {
         Self {
@@ -765,6 +788,8 @@ impl Tally {
             nonconformant: 0,
             discontinuities_by_pid: BTreeMap::new(),
             nonconformant_by_pid: BTreeMap::new(),
+            cc_gap_open: BTreeSet::new(),
+            damaged_pes: 0,
             prefix_excused_by_pid: BTreeMap::new(),
             first_discontinuity: None,
             first_nonconformant: None,
@@ -865,6 +890,13 @@ impl Tally {
     /// stamping events with a monotonically growing packet count
     /// naturally produces.
     pub fn feed_at(&mut self, ev: &DemuxEvent, at: u64) {
+        if self.is_gap_damage(ev) {
+            self.damaged_pes += 1;
+            return;
+        }
+        if let DemuxEvent::Sample { stream, .. } | DemuxEvent::Metadata { stream, .. } = ev {
+            self.cc_gap_open.remove(&stream.pid);
+        }
         if self.attribution.is_some() {
             self.route_to_attribution(ev, at);
         }
@@ -964,6 +996,9 @@ impl Tally {
                 }
             }
             DemuxEvent::Discontinuity { stream, kind } => {
+                if matches!(kind, DiscontinuityKind::ContinuityJump { .. }) {
+                    self.cc_gap_open.insert(stream.pid);
+                }
                 self.discontinuities += 1;
                 let bucket = self.since_reconnect_bucket(at);
                 self.disc_since_reconnect[bucket] += 1;
@@ -992,6 +1027,8 @@ impl Tally {
             DemuxEvent::ReconnectDiscontinuity => {
                 self.last_reconnect_at = Some(at);
                 self.reconnects_fed += 1;
+                // The reset demuxer dropped every PES in flight.
+                self.cc_gap_open.clear();
                 // The managed receiver reset the demuxer: it declares
                 // nothing until it reports a program map again.
                 self.pcr_pids_declared.clear();
@@ -1235,6 +1272,33 @@ impl Tally {
     pub fn note_history_skipped(&mut self, n: u64) {
         if let Some(a) = self.attribution.as_mut() {
             a.note_history_skipped(n);
+        }
+    }
+
+    /// Whether `ev` is the demuxer's damage marker for a PES that lost
+    /// bytes to a continuity jump this tally already counted on the same
+    /// PID — and, if so, consume that jump so it explains one marker.
+    ///
+    /// Such a marker is not a second finding. The jump is the loss; the
+    /// marker only says which PES the loss landed in, and it arrives at
+    /// that PES's end, before its sample and after the jump. It is kept
+    /// out of `nonconformant` (both modes judge it through the jump:
+    /// `Strict` fails on the jump, `Lossy` counts it) and out of an
+    /// attached attribution, which has already judged the jump itself —
+    /// attributed to the injection that caused it, excused as transport
+    /// loss, or charged.
+    ///
+    /// Everything else stays a non-conformance: a `MalformedPes` with any
+    /// other reason, and a damage marker with no jump before it on its
+    /// PID since that PID's last media (a PES that ends short of its
+    /// declared length with no packet missing is the producer's error).
+    fn is_gap_damage(&mut self, ev: &DemuxEvent) -> bool {
+        match ev {
+            DemuxEvent::NonConformant {
+                stream,
+                issue: NonConformantIssue::MalformedPes { reason, .. },
+            } if is_pes_damage_reason(reason) => self.cc_gap_open.remove(&stream.pid),
+            _ => false,
         }
     }
 
@@ -1759,6 +1823,7 @@ impl Tally {
             stream_sha256: to_hex(&self.stream_hasher.finalize()),
             discontinuities: self.discontinuities,
             nonconformant: self.nonconformant,
+            damaged_pes: self.damaged_pes,
             // A verifier never runs the tap; it only judges its log.
             corruption: None,
             corruption_attribution: attribution,
@@ -4840,5 +4905,102 @@ mod tests {
         let e = KlvPlacementExpect::for_profile(profiles::by_name("klv-sync").unwrap(), 1).unwrap();
         assert_eq!(e.klv_step_ticks, 9_000);
         assert_eq!(e.expected_generations, 1);
+    }
+
+    /// A video-PID `MalformedPes` carrying `reason`.
+    fn malformed_pes_event(reason: &'static str) -> DemuxEvent {
+        DemuxEvent::NonConformant {
+            stream: StreamId {
+                pid: VIDEO_PID,
+                kind: StreamKind::Video(VideoCodec::H264),
+                program_number: PROGRAM,
+            },
+            issue: NonConformantIssue::MalformedPes {
+                pid: VIDEO_PID,
+                reason,
+            },
+        }
+    }
+
+    const CC_GAP_REASON: &str = "continuity_counter gap inside the PES; payload bytes are missing";
+
+    fn finish_lossy(t: Tally) -> VerifyReport {
+        t.finish(
+            profiles::by_name("baseline").unwrap(),
+            2.0,
+            NOMINAL_COUNT_SLACK,
+            VerifyMode::Lossy,
+            &wire_for("baseline", 2.0),
+        )
+    }
+
+    /// A damage marker after a continuity jump on its PID is that jump's
+    /// consequence: counted apart, and lossy judgement passes on the
+    /// jump alone.
+    #[test]
+    fn damage_marker_after_a_jump_on_its_pid_is_not_a_nonconformance() {
+        let mut t = healthy_baseline_tally();
+        t.feed(&discontinuity_event());
+        t.feed(&malformed_pes_event(CC_GAP_REASON));
+        let r = finish_lossy(t);
+        assert_eq!(
+            (
+                r.metrics.discontinuities,
+                r.metrics.nonconformant,
+                r.metrics.damaged_pes
+            ),
+            (1, 0, 1)
+        );
+        assert!(r.pass, "{:?}", r.failures);
+    }
+
+    /// Without a jump before it — or once media on its PID has closed the
+    /// gap's PES, or once one marker has used the gap — a damage marker
+    /// is a non-conformance, and so is a `MalformedPes` of any other
+    /// reason even right after a jump.
+    #[test]
+    fn damage_marker_without_an_open_gap_and_other_reasons_stay_findings() {
+        let short = "PES ended before PES_packet_length bytes arrived";
+        let cases: [(&str, Vec<DemuxEvent>); 4] = [
+            ("no jump", vec![malformed_pes_event(short)]),
+            (
+                "media closed the gap",
+                vec![
+                    discontinuity_event(),
+                    video_event(90 * FPS_STEP_TICKS, false),
+                    malformed_pes_event(CC_GAP_REASON),
+                ],
+            ),
+            (
+                "gap already used",
+                vec![
+                    discontinuity_event(),
+                    malformed_pes_event(CC_GAP_REASON),
+                    malformed_pes_event(CC_GAP_REASON),
+                ],
+            ),
+            (
+                "other reason",
+                vec![
+                    discontinuity_event(),
+                    malformed_pes_event("PES packet length overruns the payload"),
+                ],
+            ),
+        ];
+        for (name, events) in cases {
+            let mut t = healthy_baseline_tally();
+            for ev in &events {
+                t.feed(ev);
+            }
+            let r = finish_lossy(t);
+            assert_eq!(r.metrics.nonconformant, 1, "{name}: {:?}", r.failures);
+            assert!(
+                r.failures
+                    .iter()
+                    .any(|f| f.starts_with("nonconformant_event")),
+                "{name}: {:?}",
+                r.failures
+            );
+        }
     }
 }
