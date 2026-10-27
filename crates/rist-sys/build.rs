@@ -363,8 +363,10 @@ fn stage_vendored_source(vendor_dir: &Path, staged: &Path) {
 fn apply_source_fixups(vendor_dir: &Path, staged: &Path) {
     for fixup in SOURCE_FIXUPS {
         let src = vendor_dir.join(fixup.file);
+        // The Windows checkout rewrites line endings to CRLF; the fixup text is LF.
         let text = std::fs::read_to_string(&src)
-            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()));
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()))
+            .replace("\r\n", "\n");
         match text.matches(fixup.old).count() {
             1 => write_if_changed(
                 &staged.join(fixup.file),
