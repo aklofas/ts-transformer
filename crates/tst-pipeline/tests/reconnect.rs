@@ -1,5 +1,6 @@
 //! Domain harness: the send-side reconnect machinery — Background mode,
-//! Blocking-mode message ownership, cancelling a parked send, the Reject
+//! Blocking-mode message ownership, the stats observer during a
+//! Blocking-mode replay, cancelling a parked send, the Reject
 //! overflow policy, reconnect tracing (consolidated from the former
 //! per-file tests/*.rs — see tests/MOVEMENT_MAP.md).
 //!
@@ -17,6 +18,8 @@ mod common;
 mod reconnect_background;
 #[path = "reconnect/reconnect_blocking_send_ownership.rs"]
 mod reconnect_blocking_send_ownership;
+#[path = "reconnect/reconnect_blocking_stats_observer.rs"]
+mod reconnect_blocking_stats_observer;
 #[path = "reconnect/reconnect_cancel_parked_send.rs"]
 mod reconnect_cancel_parked_send;
 #[path = "reconnect/reconnect_reject_overflow.rs"]
