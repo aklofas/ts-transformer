@@ -2,6 +2,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "build/host_lib.rs"]
+mod host_lib;
+
 /// Sanitizer instrumentation for the vendored native builds.
 ///
 /// `TST_NATIVE_SANITIZER=address|thread` (set by the sanitizers workflow's
@@ -210,11 +213,34 @@ fn main() {
     let include_paths: Vec<PathBuf> = if force_vendored || no_pkg_config {
         build_vendored(feat_mbedtls, sanitizer.as_deref())
     } else {
+        // The floor is ours, not pkg-config's: an older host librist predates
+        // the fixes the vendored tree carries, and one built against another
+        // crypto backend would link a second TLS stack.
         match pkg_config::Config::new()
-            .atleast_version("0.2.10")
+            .cargo_metadata(false)
+            .statik(true)
             .probe("librist")
         {
-            Ok(lib) => lib.include_paths,
+            Ok(probe) => {
+                match host_lib::host_lib_verdict(
+                    &probe.version,
+                    (0, 2, 20),
+                    &probe.libs,
+                    feat_mbedtls,
+                ) {
+                    Ok(()) => pkg_config::Config::new()
+                        .probe("librist")
+                        .map(|lib| lib.include_paths)
+                        .unwrap_or_else(|_| build_vendored(feat_mbedtls, sanitizer.as_deref())),
+                    Err(reason) => {
+                        println!(
+                            "cargo:warning={}",
+                            host_lib::vendored_warning("librist", &reason)
+                        );
+                        build_vendored(feat_mbedtls, sanitizer.as_deref())
+                    }
+                }
+            }
             Err(_) => build_vendored(feat_mbedtls, sanitizer.as_deref()),
         }
     };
