@@ -652,6 +652,46 @@ pub(crate) fn strip_dvb_sub_envelope(bytes: &[u8]) -> DvbSubStripResult<'_> {
     }
 }
 
+/// `true` when a teletext PES payload keeps EN 300 472.
+///
+/// - §4.2: the PES header is 45 bytes and the PES is N × 184 bytes, so
+///   `payload.len() + 45` is a multiple of 184.
+/// - §4.3: `data_identifier` is 0x10..=0x1F (EBU data) or 0x80..=0xFF (user
+///   defined); each data unit has `data_unit_id` 0x02, 0x03 or 0xFF, with
+///   `data_unit_length` 0x2C for 0x02/0x03. The walk stops at the first 0xFF
+///   (stuffing) unit, so the stuffing that pads the PES is not inspected.
+pub(super) fn teletext_data_field_ok(payload: &[u8]) -> bool {
+    const PES_HEADER_BYTES: usize = 45;
+    const DATA_UNIT_LENGTH: u8 = 0x2C;
+    if !(payload.len() + PES_HEADER_BYTES).is_multiple_of(184) {
+        return false;
+    }
+    let Some((&data_identifier, mut units)) = payload.split_first() else {
+        return false;
+    };
+    if !matches!(data_identifier, 0x10..=0x1F | 0x80..=0xFF) {
+        return false;
+    }
+    while let Some((&data_unit_id, rest)) = units.split_first() {
+        match data_unit_id {
+            0xFF => return true,
+            0x02 | 0x03 => {}
+            _ => return false,
+        }
+        let Some((&data_unit_length, field)) = rest.split_first() else {
+            return false;
+        };
+        if data_unit_length != DATA_UNIT_LENGTH {
+            return false;
+        }
+        let Some(next) = field.get(usize::from(data_unit_length)..) else {
+            return false;
+        };
+        units = next;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

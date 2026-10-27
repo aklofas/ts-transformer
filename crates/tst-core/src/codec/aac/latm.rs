@@ -67,6 +67,10 @@ pub enum LatmFramingKind {
     MissingSyncword,
     /// The LOAS header parsed but its declared `audioMuxLengthBytes`
     /// runs past the end of the PES payload.
+    ///
+    /// [`validate_latm_sync`] still returns it. The demuxer does not report
+    /// it: ISO/IEC 14496-3 §1.7.2 lets an AudioSyncStream record continue
+    /// into the next PES, so a record running past its PES is not a fault.
     AudioMuxLengthOverrun,
     /// PES payload is shorter than the 3-byte LOAS header — cannot
     /// validate the sync word or read the length field.
@@ -109,6 +113,38 @@ pub fn validate_latm_sync(pes_payload: &[u8]) -> Result<u16, LatmFramingKind> {
     Ok(audio_mux_length_bytes)
 }
 
+/// `true` when `bytes` begins with the 11-bit LOAS syncword `0x2B7`.
+pub(crate) fn starts_with_loas_sync(bytes: &[u8]) -> bool {
+    matches!(bytes, [b0, b1, ..]
+        if *b0 == LOAS_SYNC_BYTE0 && (*b1 & LOAS_SYNC_BYTE1_MASK) == LOAS_SYNC_BYTE1_VALUE)
+}
+
+/// Walk the LOAS records (ISO/IEC 14496-3 §1.7.2 AudioSyncStream) of one PES
+/// payload, starting at the record boundary `start`.
+///
+/// - `Ok(Some(n))`: the last record continues into the next PES for `n`
+///   more bytes.
+/// - `Ok(None)`: the walk ended on a record boundary, or on a 3-byte header
+///   split across PES; the next PES's position in the stream is unknown.
+/// - `Err(MissingSyncword)`: a record boundary lacks the syncword.
+///
+/// Every record advances at least 3 bytes, so the walk is bounded by the
+/// payload length; `n` is at most one record (`3 + 0x1FFF` bytes).
+pub(crate) fn walk_loas(payload: &[u8], start: usize) -> Result<Option<usize>, LatmFramingKind> {
+    let mut pos = start;
+    while let Some(rest) = payload.get(pos..).filter(|r| !r.is_empty()) {
+        if rest.len() < 3 {
+            return Ok(None);
+        }
+        if !starts_with_loas_sync(rest) {
+            return Err(LatmFramingKind::MissingSyncword);
+        }
+        let audio_mux_length_bytes = (usize::from(rest[1] & 0x1F) << 8) | usize::from(rest[2]);
+        pos += 3 + audio_mux_length_bytes;
+    }
+    Ok(pos.checked_sub(payload.len()).filter(|&n| n > 0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +161,36 @@ mod tests {
         out.push((len & 0xFF) as u8);
         out.resize(3 + usize::from(len), 0);
         out
+    }
+
+    #[test]
+    fn walk_loas_reports_the_bytes_a_split_record_still_owes() {
+        let mut buf = build_loas_record(10);
+        buf.extend_from_slice(&build_loas_record(50)[..20]);
+        assert_eq!(walk_loas(&buf, 0), Ok(Some(33)));
+    }
+
+    #[test]
+    fn walk_loas_flags_a_missing_sync_at_a_record_boundary() {
+        let mut buf = build_loas_record(10);
+        buf.extend_from_slice(&[0x00, 0x11, 0x22, 0x33]);
+        assert_eq!(walk_loas(&buf, 0), Err(LatmFramingKind::MissingSyncword));
+    }
+
+    #[test]
+    fn walk_loas_ending_on_a_boundary_or_a_split_header_carries_nothing() {
+        let mut buf = build_loas_record(10);
+        assert_eq!(walk_loas(&buf, 0), Ok(None));
+        buf.extend_from_slice(&[0x56, 0xE0]);
+        assert_eq!(walk_loas(&buf, 0), Ok(None));
+    }
+
+    #[test]
+    fn walk_loas_starts_after_the_carried_bytes() {
+        let mut buf = vec![0xAA; 5];
+        buf.extend_from_slice(&build_loas_record(8));
+        assert_eq!(walk_loas(&buf, 5), Ok(None));
+        assert_eq!(walk_loas(&buf, 0), Err(LatmFramingKind::MissingSyncword));
     }
 
     #[test]

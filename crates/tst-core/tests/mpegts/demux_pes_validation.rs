@@ -18,10 +18,11 @@
 //!   a DVB-sub / teletext PES arrives with `data_alignment_indicator = 0`.
 //!
 //! - **AAC-LATM (stream_type 0x11) sync validation.** Per ISO/IEC
-//!   14496-3 §1.7 + H.222.0 Table 2-34 each LATM PES MUST begin with the
-//!   24-bit LOAS header (syncword 0x2B7 + 13-bit audioMuxLengthBytes). The
-//!   demuxer surfaces `LatmFraming` when the syncword is absent or the
-//!   declared length runs past the PES payload.
+//!   14496-3 §1.7 + H.222.0 Table 2-34 a LATM PES carries LOAS records,
+//!   each opening with a 24-bit header (syncword 0x2B7 + 13-bit
+//!   audioMuxLengthBytes); a record may continue into the next PES
+//!   (§1.7.2). The demuxer surfaces `LatmFraming` when a record boundary
+//!   lacks the syncword.
 
 use crate::common::mux_demux::drain_mux as drain_all;
 use crate::common::mux_demux::patch_pes_strip_pts;
@@ -445,6 +446,10 @@ fn patch_dvb_sub_pes_clear_data_alignment(mut bytes: Vec<u8>) -> Vec<u8> {
 /// "LATM frame" is `payload` — used in conjunction with a conformant
 /// (`build_loas_record`) or non-conformant (`bad_latm_payload`) shape
 /// to drive LATM acceptance.
+///
+/// The PES has `data_alignment_indicator` set: the muxer leaves it clear for
+/// LATM, and without it a PES may start mid-record (ISO/IEC 14496-3 §1.7.2),
+/// so the demuxer only checks the syncword of a PES that announces alignment.
 fn build_ts_with_aac_latm_pes(payload: &[u8]) -> Vec<u8> {
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
@@ -460,7 +465,14 @@ fn build_ts_with_aac_latm_pes(payload: &[u8]) -> Vec<u8> {
     // demuxer sees as the PES payload is precisely `payload`.
     mux.push_audio_to(audio_handle, Pts90khz::new(90_000), payload)
         .unwrap();
-    drain_all(&mut mux)
+    let mut bytes = drain_all(&mut mux);
+    let pes_start = bytes
+        .windows(4)
+        .position(|w| w == [0x00, 0x00, 0x01, 0xC0])
+        .expect("LATM PES start (00 00 01 C0) should appear in muxed TS");
+    // flags1 is at offset 6 from the start-code; bit 2 = data_alignment_indicator.
+    bytes[pes_start + 6] |= 0x04;
+    bytes
 }
 
 /// Build a 3-byte LOAS header + `len` body bytes (zeros). Matches the
@@ -514,16 +526,33 @@ fn demux_c11_latm_missing_syncword_emits_issue() {
     );
 }
 
-/// Overrun case: LOAS header parses but the declared
-/// `audioMuxLengthBytes` runs past the PES payload.
+/// ISO/IEC 14496-3 §1.7.2: an AudioSyncStream record may continue into the
+/// next PES, so a record whose `audioMuxLengthBytes` runs past its PES is
+/// not flagged when the next PES carries the rest of it.
 #[test]
-fn demux_c11_latm_audio_mux_length_overrun_emits_issue() {
-    // Construct a 3-byte LOAS header advertising 200 bytes followed by
-    // only 10 body bytes — overrun.
-    // LOAS header advertising audioMuxLengthBytes=200 (high-5 = 0, low-8 = 200).
-    let mut payload = vec![0x56u8, 0xE0, 200u8];
-    payload.resize(payload.len() + 10, 0u8);
-    let bytes = build_ts_with_aac_latm_pes(&payload);
+fn demux_c11_latm_record_split_across_two_pes_is_not_flagged() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
+        prog.add_video(0x101, VideoCodec::H264);
+        prog.add_audio(0x150, AudioCodec::AacLatm);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let audio_handle = mux.audio_handles()[0];
+    // PES 1: record A (10) + the first 20 bytes of record B (50);
+    // PES 2: the remaining 33 bytes of B + record C (8).
+    let record_b = build_valid_loas_record(50);
+    let mut pes1 = build_valid_loas_record(10);
+    pes1.extend_from_slice(&record_b[..20]);
+    let mut pes2 = record_b[20..].to_vec();
+    pes2.extend_from_slice(&build_valid_loas_record(8));
+    mux.push_audio_to(audio_handle, Pts90khz::new(90_000), &pes1)
+        .unwrap();
+    mux.push_audio_to(audio_handle, Pts90khz::new(91_920), &pes2)
+        .unwrap();
+    let bytes = drain_all(&mut mux);
 
     let mut demux = Demuxer::new();
     demux.feed(&bytes).unwrap();
@@ -537,17 +566,22 @@ fn demux_c11_latm_audio_mux_length_overrun_emits_issue() {
         matches!(
             e,
             DemuxEvent::NonConformant {
-                issue: NonConformantIssue::LatmFraming {
-                    pid: 0x150,
-                    kind: LatmFramingKind::AudioMuxLengthOverrun,
-                },
+                issue: NonConformantIssue::LatmFraming { .. },
                 ..
             }
         )
     });
     assert!(
-        issue_seen,
-        "expected LatmFraming::AudioMuxLengthOverrun on PID 0x150, got {events:?}"
+        !issue_seen,
+        "a LOAS record continuing into the next PES must not emit LatmFraming, got {events:?}"
+    );
+    let samples = events
+        .iter()
+        .filter(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x150))
+        .count();
+    assert_eq!(
+        samples, 2,
+        "expected two Samples on PID 0x150, got {events:?}"
     );
 }
 

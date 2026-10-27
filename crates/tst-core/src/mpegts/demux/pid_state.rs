@@ -39,6 +39,9 @@ pub(super) struct PidState {
     pub(super) pts_less_since_pts: bool,
     /// Opt-in PTS/DTS unwrap accumulator.
     pub(super) unwrap: Option<UnwrapState>,
+    /// AAC-LATM: bytes the last LOAS record still owes the next PES
+    /// (ISO/IEC 14496-3 §1.7.2); `None` = unknown.
+    pub(super) latm_carry: Option<usize>,
     /// Public per-stream counters, created on the first event.
     pub(super) stats: Option<StreamStats>,
     /// Codec counters, created on the first counted event.
@@ -60,13 +63,15 @@ impl PidState {
         self.last_pkt_raw = None;
     }
 
-    /// Forget every timing baseline of the PID: continuity, PTS, unwrap.
+    /// Forget every timing baseline of the PID: continuity, PTS, unwrap,
+    /// and the LATM record position.
     pub(super) fn clear_timing(&mut self) {
         self.clear_continuity();
         self.last_pts = None;
         self.pts_baseline_clears_after_pes = false;
         self.pts_less_since_pts = false;
         self.unwrap = None;
+        self.latm_carry = None;
     }
 
     /// What `Demuxer::reset_sync` clears. Counters (`stats`, `codec`) and
@@ -108,6 +113,7 @@ impl PidState {
             pts_baseline_clears_after_pes,
             pts_less_since_pts,
             unwrap,
+            latm_carry,
             stats,
             codec,
             subtitle_missing_descriptor_emitted,
@@ -125,6 +131,7 @@ impl PidState {
             && !pts_baseline_clears_after_pes
             && !pts_less_since_pts
             && unwrap.is_none()
+            && latm_carry.is_none()
             && stats.is_none()
             && codec.is_none()
             && !subtitle_missing_descriptor_emitted
