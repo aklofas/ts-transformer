@@ -30,6 +30,8 @@ mod demux;
 mod demux_audio;
 #[path = "mpegts/demux_caps.rs"]
 mod demux_caps;
+#[path = "mpegts/demux_fixture_strictness.rs"]
+mod demux_fixture_strictness;
 #[path = "mpegts/demux_local.rs"]
 mod demux_local;
 #[path = "mpegts/demux_psi_program_number.rs"]
