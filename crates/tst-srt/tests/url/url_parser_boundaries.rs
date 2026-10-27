@@ -200,3 +200,28 @@ fn pbkeylen_25_rejects() {
     let e = SrtUrl::parse("srt://1.2.3.4:9000?pbkeylen=25").unwrap_err();
     assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
 }
+
+#[test]
+fn udprcvbuf_above_i32_max_is_a_url_error() {
+    let e = SrtUrl::parse("srt://1.2.3.4:9000?udprcvbuf=2147483648").unwrap_err();
+    assert!(matches!(e, SrtUrlError::InvalidValue { ref key, .. } if key == "udprcvbuf"));
+}
+
+#[test]
+fn inputbw_above_i64_max_is_a_url_error() {
+    assert!(SrtUrl::parse("srt://1.2.3.4:9000?inputbw=9223372036854775808").is_err());
+}
+
+/// libsrt-URL tools parse integers base-0: `010` is 8 there. Refuse the forms
+/// whose meaning differs.
+#[test]
+fn leading_plus_and_leading_zero_integers_are_refused() {
+    for v in ["+120", "0120"] {
+        let e = SrtUrl::parse(&format!("srt://1.2.3.4:9000?latency={v}")).unwrap_err();
+        assert!(
+            matches!(e, SrtUrlError::InvalidValue { ref key, .. } if key == "latency"),
+            "{v}"
+        );
+    }
+    assert!(SrtUrl::parse("srt://1.2.3.4:9000?latency=0").is_ok());
+}

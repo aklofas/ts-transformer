@@ -981,12 +981,14 @@ const SRT_PARSE: &[Row] = &[
     ),
     (
         "srt://192.0.2.10:9000?conntimeo=-1",
-        R("invalid value for 'conntimeo': must be non-negative, got -1"),
+        R(
+            "invalid value for 'conntimeo': expected a decimal integer without sign or leading zeros, got '-1'",
+        ),
     ),
     (
         "srt://192.0.2.10:9000?conntimeo=soon",
         R(
-            "invalid value for 'conntimeo': expected i32 decimal, got 'soon': invalid digit found in string",
+            "invalid value for 'conntimeo': expected a decimal integer without sign or leading zeros, got 'soon'",
         ),
     ),
     ("srt://192.0.2.10:9000?fc=25600", A(&[("fc", "25600")])),
@@ -994,7 +996,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?fc=-1",
         R(
-            "invalid value for 'fc': expected non-negative decimal integer in range, got '-1': invalid digit found in string",
+            "invalid value for 'fc': expected a decimal integer without sign or leading zeros, got '-1'",
         ),
     ),
     (
@@ -1004,7 +1006,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?inputbw=x",
         R(
-            "invalid value for 'inputbw': expected non-negative decimal integer in range, got 'x': invalid digit found in string",
+            "invalid value for 'inputbw': expected a decimal integer without sign or leading zeros, got 'x'",
         ),
     ),
     (
@@ -1021,7 +1023,9 @@ const SRT_PARSE: &[Row] = &[
     ),
     (
         "srt://192.0.2.10:9000?latency=-1",
-        R("invalid value for 'latency': must be non-negative, got -1"),
+        R(
+            "invalid value for 'latency': expected a decimal integer without sign or leading zeros, got '-1'",
+        ),
     ),
     (
         "srt://192.0.2.10:9000?latency=2147483648",
@@ -1040,7 +1044,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?peerlatency=x",
         R(
-            "invalid value for 'peerlatency': expected i32 decimal, got 'x': invalid digit found in string",
+            "invalid value for 'peerlatency': expected a decimal integer without sign or leading zeros, got 'x'",
         ),
     ),
     (
@@ -1049,12 +1053,16 @@ const SRT_PARSE: &[Row] = &[
     ),
     (
         "srt://192.0.2.10:9000?rcvlatency=-3",
-        R("invalid value for 'rcvlatency': must be non-negative, got -3"),
+        R(
+            "invalid value for 'rcvlatency': expected a decimal integer without sign or leading zeros, got '-3'",
+        ),
     ),
     ("srt://192.0.2.10:9000?linger=5", A(&[("linger", "5")])),
     (
         "srt://192.0.2.10:9000?linger=-1",
-        R("invalid value for 'linger': must be non-negative, got -1"),
+        R(
+            "invalid value for 'linger': expected a decimal integer without sign or leading zeros, got '-1'",
+        ),
     ),
     (
         "srt://192.0.2.10:9000?lossmaxttl=50",
@@ -1063,7 +1071,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?lossmaxttl=-1",
         R(
-            "invalid value for 'lossmaxttl': expected non-negative decimal integer in range, got '-1': invalid digit found in string",
+            "invalid value for 'lossmaxttl': expected a decimal integer without sign or leading zeros, got '-1'",
         ),
     ),
     (
@@ -1077,7 +1085,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?maxbw=-1",
         R(
-            "invalid value for 'maxbw': expected non-negative decimal integer in range, got '-1': invalid digit found in string",
+            "invalid value for 'maxbw': expected a decimal integer without sign or leading zeros, got '-1'",
         ),
     ),
     ("srt://192.0.2.10:9000?mss=1500", A(&[("mss", "1500")])),
@@ -1103,7 +1111,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?oheadbw=-5",
         R(
-            "invalid value for 'oheadbw': expected non-negative decimal integer in range, got '-5': invalid digit found in string",
+            "invalid value for 'oheadbw': expected a decimal integer without sign or leading zeros, got '-5'",
         ),
     ),
     (
@@ -1213,7 +1221,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?udprcvbuf=8M",
         R(
-            "invalid value for 'udprcvbuf': expected non-negative decimal integer in range, got '8M': invalid digit found in string",
+            "invalid value for 'udprcvbuf': expected a decimal integer without sign or leading zeros, got '8M'",
         ),
     ),
     (
@@ -1227,7 +1235,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?udpsndbuf=-1",
         R(
-            "invalid value for 'udpsndbuf': expected non-negative decimal integer in range, got '-1': invalid digit found in string",
+            "invalid value for 'udpsndbuf': expected a decimal integer without sign or leading zeros, got '-1'",
         ),
     ),
     (
@@ -1236,7 +1244,9 @@ const SRT_PARSE: &[Row] = &[
     ),
     (
         "srt://192.0.2.10:9000?x-recvtimeout=-1",
-        R("invalid value for 'x-recvtimeout': must be non-negative, got -1"),
+        R(
+            "invalid value for 'x-recvtimeout': expected a decimal integer without sign or leading zeros, got '-1'",
+        ),
     ),
     (
         "srt://192.0.2.10:9000?x-sendtimeout=2000",
@@ -1245,7 +1255,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?x-sendtimeout=x",
         R(
-            "invalid value for 'x-sendtimeout': expected i32 decimal, got 'x': invalid digit found in string",
+            "invalid value for 'x-sendtimeout': expected a decimal integer without sign or leading zeros, got 'x'",
         ),
     ),
     // libsrt keys this library recognises but does not expose.
@@ -1421,18 +1431,20 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?connect_timeout=soon",
         R(
-            "invalid value for 'conntimeo': expected i32 decimal, got 'soon': invalid digit found in string",
+            "invalid value for 'conntimeo': expected a decimal integer without sign or leading zeros, got 'soon'",
         ),
     ),
     (
         "srt://192.0.2.10:9000?ffs=-1",
         R(
-            "invalid value for 'fc': expected non-negative decimal integer in range, got '-1': invalid digit found in string",
+            "invalid value for 'fc': expected a decimal integer without sign or leading zeros, got '-1'",
         ),
     ),
     (
         "srt://192.0.2.10:9000?tsbpddelay=-1",
-        R("invalid value for 'latency': must be non-negative, got -1"),
+        R(
+            "invalid value for 'latency': expected a decimal integer without sign or leading zeros, got '-1'",
+        ),
     ),
     (
         "srt://192.0.2.10:9000?pkt_size=1457",
@@ -1455,13 +1467,13 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?recv_buffer_size=8M",
         R(
-            "invalid value for 'udprcvbuf': expected non-negative decimal integer in range, got '8M': invalid digit found in string",
+            "invalid value for 'udprcvbuf': expected a decimal integer without sign or leading zeros, got '8M'",
         ),
     ),
     (
         "srt://192.0.2.10:9000?send_buffer_size=-1",
         R(
-            "invalid value for 'udpsndbuf': expected non-negative decimal integer in range, got '-1': invalid digit found in string",
+            "invalid value for 'udpsndbuf': expected a decimal integer without sign or leading zeros, got '-1'",
         ),
     ),
 ];
