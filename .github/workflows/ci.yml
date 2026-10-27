@@ -1152,21 +1152,33 @@ jobs:
       - name: Compile-check tst-core fuzz targets
         run: |
           cd crates/tst-core/fuzz
+          # The committed lockfile is the resolution the record attests: fail
+          # here, with cargo's own message, if it would need re-resolving.
+          cargo +nightly metadata --locked --format-version 1 > /dev/null
           cargo +nightly fuzz check
 
       - name: Compile-check tst-srt fuzz targets
         run: |
           cd crates/tst-srt/fuzz
+          # The committed lockfile is the resolution the record attests: fail
+          # here, with cargo's own message, if it would need re-resolving.
+          cargo +nightly metadata --locked --format-version 1 > /dev/null
           cargo +nightly fuzz check
 
       - name: Compile-check tst-rtp fuzz targets
         run: |
           cd crates/tst-rtp/fuzz
+          # The committed lockfile is the resolution the record attests: fail
+          # here, with cargo's own message, if it would need re-resolving.
+          cargo +nightly metadata --locked --format-version 1 > /dev/null
           cargo +nightly fuzz check
 
       - name: Compile-check tst-webrtc fuzz targets
         run: |
           cd crates/tst-webrtc/fuzz
+          # The committed lockfile is the resolution the record attests: fail
+          # here, with cargo's own message, if it would need re-resolving.
+          cargo +nightly metadata --locked --format-version 1 > /dev/null
           cargo +nightly fuzz check
 
   python-core:

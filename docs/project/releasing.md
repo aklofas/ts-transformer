@@ -87,6 +87,13 @@ merge commit, and the qualification run checks that nothing under
      `embedded/freertos-srt/example/host/Cargo.lock`) — all record workspace
      crate versions, and the embedded QEMU gates build `--locked`, so a stale
      one fails CI loudly (a `cargo metadata` run in each directory re-syncs);
+   - **the four fuzz lockfiles** (`crates/{tst-core,tst-srt,tst-rtp,
+     tst-webrtc}/fuzz/Cargo.lock`) — they record the workspace crates'
+     versions too, and CI's fuzz compile step and release-qualify both run
+     `cargo metadata --locked` there. Refresh each with
+     `(cd crates/<c>/fuzz && cargo +nightly metadata --format-version 1 >/dev/null)`
+     — unlocked metadata updates only the path dependencies' versions and
+     leaves the registry pins alone — and commit them with the sweep;
    - the regenerated committed `tstrans.h` (regeneration picks up the new
      `TST_VERSION_*` values);
    - the `#define TST_VERSION_*` snippet in `docs/languages/c.md` — the
