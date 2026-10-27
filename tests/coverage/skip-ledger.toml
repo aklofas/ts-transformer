@@ -146,9 +146,3 @@ note = "Prints the subtitle-interop tool matrix for a human; asserts nothing. Ru
 
 # --- Environmental / live-resource unit tests -------------------------------
 
-[[skip]]
-test = "cancel_handle_some_when_alive"
-crate = "tst-srt"
-path = "crates/tst-srt/src/transport.rs"
-class = "environmental"
-note = "Unit-test placeholder needing a live SRT socket; behavior is covered by tests/cancellation_loopback.rs."
