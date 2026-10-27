@@ -31,6 +31,7 @@ use crate::mpegts::demux::types::{
     DEFAULT_AU_CELL_CAP_PER_PID, DEFAULT_AU_CELL_CAP_TOTAL, DEFAULT_AU_CELL_MAX_IN_FLIGHT_PIDS,
     DEFAULT_PES_CAP_PER_PID, DEFAULT_PES_CAP_TOTAL, DemuxerConfig, DemuxerStats, ProgramTracker,
 };
+use crate::mpegts::stats::CodecKind;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use hashbrown::{HashMap, HashSet};
@@ -741,12 +742,6 @@ impl Demuxer {
             if let Some(state) = self.pid_state.get_mut(&pid) {
                 state.clear_timing();
                 state.codec = None;
-                if let (Some(stats), Some(&(_, _, _, byte))) = (
-                    state.stats.as_mut(),
-                    diff.added.iter().find(|(p, ..)| *p == pid),
-                ) {
-                    stats.stream_type = StreamTypeCode::from_byte(byte);
-                }
             }
         }
         for (pid, kind, program, stream_type) in diff.added {
@@ -754,6 +749,20 @@ impl Demuxer {
             state.stream_kind = Some(kind);
             state.program = Some(program);
             state.stream_type = Some(stream_type);
+            // Counters outlive retirement, so a re-declared or retyped PID
+            // may carry a stale byte or a counter family of another kind.
+            if let Some(stats) = state.stats.as_mut() {
+                stats.stream_type = StreamTypeCode::from_byte(stream_type);
+            }
+            let family = match kind {
+                StreamKind::Video(_) => Some(CodecKind::Video),
+                StreamKind::Audio(_) => Some(CodecKind::Audio),
+                StreamKind::KlvSync { .. } | StreamKind::KlvAsync => Some(CodecKind::Klv),
+                StreamKind::Subtitle(_) | StreamKind::Unknown(_) => None,
+            };
+            if state.codec.is_some_and(|c| Some(c.kind) != family) {
+                state.codec = None;
+            }
         }
         if !diff.pcr_pid_changes.is_empty() {
             self.retire_undeclared_pcr_history();
@@ -931,8 +940,9 @@ impl Demuxer {
     /// Reset all stats counters to zero and clear per-stream entries.
     ///
     /// Counters of PIDs that left the topology are kept until this call, so
-    /// their entries clear here too. Per-PID entries are dropped (both the unified `stats_per_stream`
-    /// and the codec-counter side table); the next event for a
+    /// their entries clear here too. Per-PID entries are dropped (both the
+    /// unified `stats_per_stream` and the codec-counter side table); the
+    /// next event for a
     /// previously-seen PID re-materializes both entries with the kind
     /// discriminator derived from the current `stream_type`. This keeps
     /// the 3-state [`Self::stream_codec_stats`] accessor symmetric across
@@ -1706,6 +1716,52 @@ mod tests {
             d.stats().per_stream[&0x101].stream_type,
             StreamTypeCode::from_byte(0x1B)
         );
+    }
+
+    #[test]
+    fn retired_then_redeclared_pid_rederives_codec_and_stream_type() {
+        use crate::mpegts::stats::StreamCodecStats;
+        let mut d = demuxer_with_pat();
+        feed_pmt(&mut d, 0, &[(0x0F, 0x101), (0x0F, 0x102)]);
+        feed_one_pes(&mut d, 0x101, 0, 0xC0, &ADTS_FRAME);
+        feed_pmt(&mut d, 1, &[(0x0F, 0x102)]);
+        feed_pmt(&mut d, 2, &[(0x1B, 0x101), (0x0F, 0x102)]);
+        let idr = [0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00, 0x00];
+        let pes = pes_bytes(0xE0, Some(90_000), None, true, &idr, true);
+        let pkt = ts_packet(&PktSpec {
+            pid: 0x101,
+            cc: 1,
+            pusi: true,
+            rai: true,
+            payload: &pes,
+            ..Default::default()
+        });
+        d.feed_aligned(&pkt).unwrap();
+        d.flush();
+        assert!(matches!(
+            d.stream_codec_stats(0x101),
+            Some(StreamCodecStats::Video { .. })
+        ));
+        let st = d.stats();
+        assert_eq!(
+            st.per_stream[&0x101].stream_type,
+            StreamTypeCode::from_byte(0x1B)
+        );
+        assert_eq!(st.per_stream[&0x101].items, 2);
+    }
+
+    #[test]
+    fn same_kind_retype_updates_stats_stream_type_and_keeps_totals() {
+        let mut d = demuxer_with_pat();
+        feed_pmt(&mut d, 0, &[(0x03, 0x101)]);
+        feed_one_pes(&mut d, 0x101, 0, 0xC0, &ADTS_FRAME);
+        feed_pmt(&mut d, 1, &[(0x04, 0x101)]);
+        feed_one_pes(&mut d, 0x101, 1, 0xC0, &ADTS_FRAME);
+        assert_eq!(
+            d.stats().per_stream[&0x101].stream_type,
+            StreamTypeCode::from_byte(0x04)
+        );
+        assert_eq!(d.stats().per_stream[&0x101].items, 2);
     }
 
     #[test]
