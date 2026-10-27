@@ -86,7 +86,7 @@ fn udp_recv_open_unicast_zero_port_returns_handle() {
 fn udp_mux_sender_open_returns_handle() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new("udp://127.0.0.1:54402").unwrap();
     let handle = unsafe { tst_udp_mux_sender_open(url.as_ptr(), cfg as *const _) };
@@ -165,7 +165,7 @@ fn udp_demux_receiver_open_malformed_url_returns_null_with_udp_config() {
 fn udp_mux_sender_multicast_iface_lo_is_lenient() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new("udp://239.10.0.1:54403?iface=lo").unwrap();
     let handle = unsafe { tst_udp_mux_sender_open(url.as_ptr(), cfg as *const _) };
@@ -245,7 +245,7 @@ fn udp_receiver_stats_and_reset() {
 fn udp_mux_sender_stats_and_reset() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new("udp://127.0.0.1:54406").unwrap();
     let h = unsafe { tst_udp_mux_sender_open(url.as_ptr(), cfg as *const _) };
@@ -341,7 +341,7 @@ fn null_next_event_returns_invalid_config() {
 fn udp_mux_sender_finish_then_close() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new("udp://127.0.0.1:54407").unwrap();
     let h = unsafe { tst_udp_mux_sender_open(url.as_ptr(), cfg as *const _) };

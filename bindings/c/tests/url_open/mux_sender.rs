@@ -47,8 +47,14 @@ fn variant_mux_sender_open_with_url() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-        tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x1031,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         let s = tst_mux_sender_open(url.as_ptr(), cfg);
         assert!(!s.is_null(), "open failed: {}", last_error_msg());
 
@@ -95,8 +101,14 @@ fn variant_managed_mux_sender_open_with_url() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-        tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x1031,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         let s = tst_managed_mux_sender_open(url.as_ptr(), cfg, std::ptr::null());
         assert!(!s.is_null(), "open failed: {}", last_error_msg());
 
@@ -140,8 +152,14 @@ fn variant_managed_mux_sender_get_reconnect_stats() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-        tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x1031,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         let s = tst_managed_mux_sender_open(url.as_ptr(), cfg, std::ptr::null());
         assert!(!s.is_null(), "open failed: {}", last_error_msg());
 
@@ -295,7 +313,7 @@ unsafe fn finish_test_config() -> *mut tstrans::config::TstMuxConfig {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         cfg
     }
 }

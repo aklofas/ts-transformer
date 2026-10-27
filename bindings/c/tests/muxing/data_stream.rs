@@ -134,7 +134,8 @@ fn set_stream_descriptors_for_data_set_then_clear_roundtrip() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_data = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
         assert_ne!(h_video, TST_INVALID_STREAM_HANDLE);
         assert_ne!(h_data, TST_INVALID_STREAM_HANDLE);
@@ -171,7 +172,8 @@ fn add_data_descriptor_accumulates() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_data = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
         assert_ne!(h_data, TST_INVALID_STREAM_HANDLE);
 
@@ -373,7 +375,8 @@ fn offline_round_trip_two_data_streams() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_a = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
         let h_b = tst_mux_config_add_data_stream(cfg, prog, 0x1042, 0x06, true);
         assert_ne!(h_a, TST_INVALID_STREAM_HANDLE);
@@ -478,7 +481,8 @@ fn push_data_single_stream_routes_without_handle() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_data = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
         assert_ne!(h_data, TST_INVALID_STREAM_HANDLE);
         let mux = tst_muxer_open(cfg);
@@ -520,7 +524,7 @@ fn push_data_zero_data_streams_returns_invalid_usage() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let mux = tst_muxer_open(cfg);
         assert!(!mux.is_null());
         tst_mux_config_free(cfg);
@@ -544,7 +548,7 @@ fn push_data_two_data_streams_returns_ambiguous_target() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
         tst_mux_config_add_data_stream(cfg, prog, 0x1042, 0xF1, true);
         let mux = tst_muxer_open(cfg);
@@ -571,7 +575,7 @@ fn push_data_oversized_payload_returns_data_too_large() {
         // carries_pts = true → PES overhead 8 bytes → ceiling 65527.
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
         let mux = tst_muxer_open(cfg);
         assert!(!mux.is_null());
@@ -597,7 +601,7 @@ fn push_data_oversized_payload_returns_data_too_large() {
         // carries_pts = false → PES overhead 3 bytes → ceiling 65532.
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, false);
         let mux = tst_muxer_open(cfg);
         assert!(!mux.is_null());
@@ -622,7 +626,7 @@ fn push_data_to_forged_high_bit_handle_rejected() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_data = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
         assert_ne!(h_data, TST_INVALID_STREAM_HANDLE);
         let mux = tst_muxer_open(cfg);
@@ -673,12 +677,13 @@ fn offline_round_trip_klv_and_data_coexist() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_klv = tst_mux_config_add_klv_stream(
             cfg,
             prog,
             0x1031,
-            TstKlvStreamType::SynchronousMetadata,
+            TstKlvStreamType::SynchronousMetadata as i32,
             true,
         );
         let h_data = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
@@ -770,7 +775,8 @@ fn offline_round_trip_no_pts_data_stream_surfaces_pts_zero() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_data = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, false);
         assert_ne!(h_data, TST_INVALID_STREAM_HANDLE);
 
@@ -817,7 +823,7 @@ fn open_rejects_data_stream_with_typed_stream_type() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         // 0x1B is the H.264 stream_type byte — add succeeds (validation is
         // deferred to open).
         let h = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0x1B, true);

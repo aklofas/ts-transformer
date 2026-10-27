@@ -1181,7 +1181,12 @@ mod open_guard_tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, crate::config::TstVideoCodec::H264);
+            tst_mux_config_add_video_stream(
+                cfg,
+                prog,
+                0x1011,
+                crate::config::TstVideoCodec::H264 as i32,
+            );
             cfg
         }
     }

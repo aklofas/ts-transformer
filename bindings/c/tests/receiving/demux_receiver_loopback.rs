@@ -106,8 +106,9 @@ fn loopback_mux_sender_to_demux_receiver_delivers_pmt_and_sample_and_eos() {
         // Add a video stream on PID 0x1011; the returned handle is only
         // needed for multi-stream _send_video_to calls — tst_mux_sender_send_video
         // targets the single video stream automatically.
-        let _video =
-            unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+        let _video = unsafe {
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32)
+        };
 
         // Retry loop: the receiver's open_listener is blocking on accept,
         // so the listener socket may not be bound yet when this thread
@@ -274,8 +275,9 @@ fn loopback_last_seen_micros_reports_after_sample_and_zero_for_unknown_pid() {
 
         let cfg = unsafe { tst_mux_config_new() };
         let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x0100) };
-        let _video =
-            unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+        let _video = unsafe {
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32)
+        };
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let tx = loop {

@@ -14,6 +14,14 @@
 [suppress_variable]
   name_not_regexp = ^(tst_|TST_)
 
+# The eight enum-valued parameters were retyped from the Rust enum to i32 so an
+# out-of-range value is validated instead of being an invalid discriminant.
+# The C prototype already declared int32_t (or an int-sized C enum), so callers
+# are unaffected; only the library's DWARF parameter type changed.
+[suppress_function]
+  change_kind = function-subtype-change
+  name_regexp = ^tst_(mux_config_add_(video|klv|audio)_stream|mux_config_add_audio_stream_with_language|sender_config_set_framing_mode|reconnect_policy_set_(overflow_policy|mode)|misp_time_extract)$
+
 # Opaque handle types (`typedef struct X X;` in the header) are not listed here:
 # scripts/check/c/abi-compat.sh derives that block from the header on every run
 # and appends it to this file's contents.

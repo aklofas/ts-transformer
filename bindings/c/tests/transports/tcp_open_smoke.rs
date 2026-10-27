@@ -135,7 +135,7 @@ fn tcp_mux_sender_open_returns_handle() {
 
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let handle = unsafe { tst_tcp_mux_sender_open(url.as_ptr(), cfg as *const _) };
     unsafe { tst_mux_config_free(cfg) };
@@ -363,7 +363,7 @@ fn tcp_mux_sender_stats_and_reset() {
 
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let h = unsafe { tst_tcp_mux_sender_open(url.as_ptr(), cfg as *const _) };
     unsafe { tst_mux_config_free(cfg) };
@@ -475,7 +475,7 @@ fn tcp_mux_sender_finish_then_close() {
 
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let h = unsafe { tst_tcp_mux_sender_open(url.as_ptr(), cfg as *const _) };
     unsafe { tst_mux_config_free(cfg) };
@@ -742,7 +742,7 @@ fn tcp_mux_sender_finish_reports_the_drain_error() {
     let url = CString::new(format!("tcp://127.0.0.1:{port}")).unwrap();
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
     let h = unsafe { tst_tcp_mux_sender_open(url.as_ptr(), cfg as *const _) };
     unsafe { tst_mux_config_free(cfg) };
     assert!(!h.is_null(), "tst_tcp_mux_sender_open returned null");

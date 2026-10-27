@@ -1,7 +1,7 @@
 //! ST 0604 MISP-timestamp extraction helper (`tst_misp_time_extract`).
 
 use crate::config::streams::TstVideoCodec;
-use crate::error::{TstError, set_last_error};
+use crate::error::{TstError, record_bad_enum, set_last_error};
 
 /// Scan an Annex-B access unit for an ST 0604 MISP timestamp SEI.
 ///
@@ -10,11 +10,12 @@ use crate::error::{TstError, set_last_error};
 /// or a malformed MISP payload. `out_kind`: 0 = micro, 1 = nano.
 ///
 /// `au` must point to `len` bytes of an Annex-B access unit. The `codec`
-/// argument selects how SEI NAL units are located (H.264 vs H.265 NAL
-/// structure); once an SEI payload is found, extraction accepts any known
-/// ST 0604 MISP UUID (microsecond or nanosecond) regardless of codec. AV1
-/// and H.266 always return 1 (absent) because ST 0604 defines no SEI
-/// carriage for them.
+/// argument is one of the `TST_VIDEO_CODEC_*` constants (any other value
+/// returns `TST_E_INVALID_CONFIG`) and selects how SEI NAL units are
+/// located (H.264 vs H.265 NAL structure); once an SEI payload is found,
+/// extraction accepts any known ST 0604 MISP UUID (microsecond or
+/// nanosecond) regardless of codec. AV1 and H.266 always return 1 (absent)
+/// because ST 0604 defines no SEI carriage for them.
 ///
 /// # Safety
 ///
@@ -26,12 +27,16 @@ use crate::error::{TstError, set_last_error};
 pub unsafe extern "C" fn tst_misp_time_extract(
     au: *const u8,
     len: usize,
-    codec: TstVideoCodec,
+    codec: i32,
     out_kind: *mut u8,
     out_time_status: *mut u8,
     out_value: *mut u64,
 ) -> crate::c_types::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(codec) = TstVideoCodec::from_c_int(codec) else {
+            record_bad_enum("codec", codec, "TST_VIDEO_CODEC_*");
+            return TstError::InvalidConfig as i32;
+        };
         let slice = match unsafe { crate::ffi_slice::ffi_slice(au, len, "au") } {
             Ok(s) => s,
             Err(code) => return code,

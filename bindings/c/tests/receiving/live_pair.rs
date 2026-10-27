@@ -60,8 +60,14 @@ fn mux_sender_to_listener_roundtrip() {
     unsafe {
         let cfg: *mut TstMuxConfig = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-        tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x1031,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
 
         let s = tst_mux_sender_open(url.as_ptr(), cfg);
         assert!(!s.is_null(), "open failed: {}", last_error_msg());
@@ -141,10 +147,15 @@ fn managed_mux_sender_multi_stream_loopback() {
         // Add two video streams (EO + IR) and one KLV stream, capturing the
         // handles returned by the _stream variants so we can fan out later.
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_eo = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-        let h_ir = tst_mux_config_add_video_stream(cfg, prog, 0x1012, TstVideoCodec::H264);
-        let h_klv =
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+        let h_eo = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        let h_ir = tst_mux_config_add_video_stream(cfg, prog, 0x1012, TstVideoCodec::H264 as i32);
+        let h_klv = tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x1031,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
 
         // Use a default reconnect policy (no forced backoff — connect immediately).
         let policy = tst_reconnect_policy_new();
@@ -295,7 +306,7 @@ fn mux_sender_data_stream_loopback() {
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
         // One video stream (PCR anchor) + one data stream (stream_type 0xF0,
         // carries_pts = true so the PTS we pass lands in the PES header).
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_data = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
 
         let s = tst_mux_sender_open(url.as_ptr(), cfg);
@@ -422,7 +433,8 @@ fn managed_mux_sender_data_stream_loopback() {
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
         // Capture both handles before the config is freed — they are stable
         // integer indices (not pointers) and survive config teardown.
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         // One data stream (stream_type 0xF0, carries_pts = true).
         let h_data = tst_mux_config_add_data_stream(cfg, prog, 0x1041, 0xF0, true);
 

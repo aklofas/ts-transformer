@@ -1311,8 +1311,14 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+            tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x1031,
+                TstKlvStreamType::PrivateData as i32,
+                false,
+            );
             let bad = CString::new("not-an-srt-url").unwrap();
             let p = tst_mux_sender_open(bad.as_ptr(), cfg);
             assert!(p.is_null());
@@ -1329,8 +1335,14 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+            tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x1031,
+                TstKlvStreamType::PrivateData as i32,
+                false,
+            );
             // Reserved-for-documentation address that should reject quickly.
             let url = CString::new("srt://192.0.2.1:9").unwrap();
             let p = tst_mux_sender_open(url.as_ptr(), cfg);
@@ -1355,7 +1367,7 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
             let url = std::ffi::CString::new("srt://127.0.0.1:1?mode=listener").unwrap();
             let p = tst_mux_sender_open(url.as_ptr(), cfg);
             assert!(p.is_null());

@@ -22,10 +22,15 @@ fn muxer_push_video_to_routes_to_correct_handle() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_eo = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-        let h_ir = tst_mux_config_add_video_stream(cfg, prog, 0x1012, TstVideoCodec::H264);
-        let h_klv =
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+        let h_eo = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        let h_ir = tst_mux_config_add_video_stream(cfg, prog, 0x1012, TstVideoCodec::H264 as i32);
+        let h_klv = tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x1031,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         assert_ne!(h_eo, TST_INVALID_STREAM_HANDLE);
         assert_ne!(h_ir, TST_INVALID_STREAM_HANDLE);
         assert_ne!(h_klv, TST_INVALID_STREAM_HANDLE);
@@ -52,7 +57,7 @@ fn muxer_push_video_to_invalid_handle_returns_invalid_usage() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);
         assert!(!mux.is_null());
@@ -76,7 +81,8 @@ fn muxer_push_video_to_forged_high_bit_handle_returns_invalid_usage() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         assert_ne!(h_video, TST_INVALID_STREAM_HANDLE);
 
         let mux = tst_muxer_open(cfg);
@@ -109,8 +115,12 @@ fn add_program_invalid_handle_returns_sentinel() {
     unsafe {
         let cfg = tst_mux_config_new();
         // No programs added — TstProgramHandle(0) is invalid.
-        let h =
-            tst_mux_config_add_video_stream(cfg, TstProgramHandle(0), 0x1011, TstVideoCodec::H264);
+        let h = tst_mux_config_add_video_stream(
+            cfg,
+            TstProgramHandle(0),
+            0x1011,
+            TstVideoCodec::H264 as i32,
+        );
         assert_eq!(h, TST_INVALID_STREAM_HANDLE);
         tst_mux_config_free(cfg);
     }

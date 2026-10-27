@@ -42,7 +42,7 @@ fn add_audio_stream_returns_valid_handle() {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
         // First audio stream in a program — packed handle is 0.
-        let h = tst_mux_config_add_audio_stream(cfg, prog, 0x1041, TstAudioCodec::Aac);
+        let h = tst_mux_config_add_audio_stream(cfg, prog, 0x1041, TstAudioCodec::Aac as i32);
         assert_ne!(h, TST_INVALID_STREAM_HANDLE);
         assert_eq!(h, 0);
         tst_mux_config_free(cfg);
@@ -59,7 +59,7 @@ fn add_audio_stream_with_language_returns_valid_handle() {
             cfg,
             prog,
             0x1041,
-            TstAudioCodec::Mp2,
+            TstAudioCodec::Mp2 as i32,
             lang.as_ptr(),
         );
         assert_ne!(h, TST_INVALID_STREAM_HANDLE);
@@ -76,7 +76,7 @@ fn add_audio_stream_with_language_null_lang_returns_sentinel() {
             cfg,
             prog,
             0x1041,
-            TstAudioCodec::Aac,
+            TstAudioCodec::Aac as i32,
             std::ptr::null(),
         );
         assert_eq!(h, TST_INVALID_STREAM_HANDLE);
@@ -94,7 +94,7 @@ fn add_audio_stream_null_cfg_returns_sentinel() {
             std::ptr::null_mut(),
             TstProgramHandle(0),
             0x1041,
-            TstAudioCodec::Aac,
+            TstAudioCodec::Aac as i32,
         );
         assert_eq!(h, TST_INVALID_STREAM_HANDLE);
     }
@@ -198,8 +198,9 @@ fn push_audio_to_emits_ts_bytes() {
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
         // Video is needed to satisfy PCR-source resolution; audio cadence
         // alone isn't always enough.
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-        let h_audio = tst_mux_config_add_audio_stream(cfg, prog, 0x1041, TstAudioCodec::Aac);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        let h_audio = tst_mux_config_add_audio_stream(cfg, prog, 0x1041, TstAudioCodec::Aac as i32);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);
         assert!(!mux.is_null());
@@ -230,7 +231,8 @@ fn push_subtitle_to_emits_ts_bytes() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         let h_sub = tst_mux_config_add_subtitle_stream_webvtt(cfg, prog, 0x1054);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);
@@ -262,8 +264,9 @@ fn push_audio_emits_ts_bytes() {
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
         // Video is needed to satisfy PCR-source resolution; audio cadence
         // alone isn't always enough.
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-        tst_mux_config_add_audio_stream(cfg, prog, 0x1041, TstAudioCodec::Aac);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        tst_mux_config_add_audio_stream(cfg, prog, 0x1041, TstAudioCodec::Aac as i32);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);
         assert!(!mux.is_null());
@@ -290,7 +293,8 @@ fn push_subtitle_emits_ts_bytes() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         tst_mux_config_add_subtitle_stream_webvtt(cfg, prog, 0x1054);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);
@@ -317,10 +321,11 @@ fn push_audio_to_invalid_handle_returns_invalid_usage() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         // Add audio so push_audio_to with handle 99 fails at handle lookup
         // (not at "no audio streams configured").
-        tst_mux_config_add_audio_stream(cfg, prog, 0x1041, TstAudioCodec::Aac);
+        tst_mux_config_add_audio_stream(cfg, prog, 0x1041, TstAudioCodec::Aac as i32);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);
         assert!(!mux.is_null());
@@ -341,7 +346,8 @@ fn push_subtitle_to_invalid_handle_returns_invalid_usage() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        let h_video = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+        let h_video =
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
         tst_mux_config_add_subtitle_stream_webvtt(cfg, prog, 0x1054);
         let mux = tst_muxer_open(cfg);
         tst_mux_config_free(cfg);

@@ -7,7 +7,7 @@
 //! setters live alongside the builders since they are referenced nowhere
 //! else.
 
-use crate::error::{TstError, set_last_error};
+use crate::error::{TstError, record_bad_enum, set_last_error};
 use crate::panic::ffi_catch;
 use core::time::Duration;
 use tst_pipeline::{
@@ -53,12 +53,31 @@ pub enum TstTsFramingMode {
     Strict = 1,
 }
 
+impl TstTsFramingMode {
+    /// Validate a raw C `int32_t` against the known discriminants (same
+    /// shape as `TstVideoCodec::from_c_int`).
+    pub(crate) fn from_c_int(v: i32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Recover),
+            1 => Some(Self::Strict),
+            _ => None,
+        }
+    }
+}
+
+/// Set the sender's TS framing mode. `mode` is one of the
+/// `TST_TS_FRAMING_MODE_*` constants; any other value returns
+/// `TST_E_INVALID_CONFIG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_sender_config_set_framing_mode(
     p: *mut TstSenderConfig,
-    mode: TstTsFramingMode,
+    mode: i32,
 ) -> crate::c_types::c_int {
     ffi_catch(TstError::Internal as i32, || {
+        let Some(mode) = TstTsFramingMode::from_c_int(mode) else {
+            record_bad_enum("mode", mode, "TST_TS_FRAMING_MODE_*");
+            return TstError::InvalidConfig as i32;
+        };
         let Some(cfg) = (unsafe { p.as_mut() }) else {
             set_last_error(TstError::InvalidConfig, "null config pointer");
             return TstError::InvalidConfig as i32;
@@ -223,12 +242,31 @@ pub enum TstOverflowPolicy {
     Reject = 1,
 }
 
+impl TstOverflowPolicy {
+    /// Validate a raw C `int32_t` against the known discriminants (same
+    /// shape as `TstVideoCodec::from_c_int`).
+    pub(crate) fn from_c_int(v: i32) -> Option<Self> {
+        match v {
+            0 => Some(Self::DropOldest),
+            1 => Some(Self::Reject),
+            _ => None,
+        }
+    }
+}
+
+/// Set the gap buffer's overflow policy. `policy` is one of the
+/// `TST_OVERFLOW_POLICY_*` constants; any other value returns
+/// `TST_E_INVALID_CONFIG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_reconnect_policy_set_overflow_policy(
     p: *mut TstReconnectPolicy,
-    policy: TstOverflowPolicy,
+    policy: i32,
 ) -> crate::c_types::c_int {
     ffi_catch(TstError::Internal as i32, || {
+        let Some(policy) = TstOverflowPolicy::from_c_int(policy) else {
+            record_bad_enum("policy", policy, "TST_OVERFLOW_POLICY_*");
+            return TstError::InvalidConfig as i32;
+        };
         let Some(cfg) = (unsafe { p.as_mut() }) else {
             set_last_error(TstError::InvalidConfig, "null config pointer");
             return TstError::InvalidConfig as i32;
@@ -259,14 +297,32 @@ pub enum TstReconnectMode {
     Background = 1,
 }
 
-/// Set the reconnect-loop placement. See `TstReconnectMode` for the
-/// semantics of each mode. Default: `Blocking`.
+impl TstReconnectMode {
+    /// Validate a raw C `int32_t` against the known discriminants (same
+    /// shape as `TstVideoCodec::from_c_int`).
+    pub(crate) fn from_c_int(v: i32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Blocking),
+            1 => Some(Self::Background),
+            _ => None,
+        }
+    }
+}
+
+/// Set the reconnect-loop placement. `mode` is one of the
+/// `TST_RECONNECT_MODE_*` constants (see `TstReconnectMode` for the
+/// semantics of each); any other value returns `TST_E_INVALID_CONFIG`.
+/// Default: `Blocking`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_reconnect_policy_set_mode(
     p: *mut TstReconnectPolicy,
-    mode: TstReconnectMode,
+    mode: i32,
 ) -> crate::c_types::c_int {
     ffi_catch(TstError::Internal as i32, || {
+        let Some(mode) = TstReconnectMode::from_c_int(mode) else {
+            record_bad_enum("mode", mode, "TST_RECONNECT_MODE_*");
+            return TstError::InvalidConfig as i32;
+        };
         let Some(cfg) = (unsafe { p.as_mut() }) else {
             set_last_error(TstError::InvalidConfig, "null config pointer");
             return TstError::InvalidConfig as i32;
@@ -290,7 +346,7 @@ mod tests {
 
     null_entry_tests! {
         reconnect_policy_set_mode_null_returns_invalid_config => negative {
-            tst_reconnect_policy_set_mode(core::ptr::null_mut(), TstReconnectMode::Background)
+            tst_reconnect_policy_set_mode(core::ptr::null_mut(), TstReconnectMode::Background as i32)
         };
     }
 
@@ -299,7 +355,7 @@ mod tests {
         unsafe {
             let p = tst_sender_config_new();
             assert_eq!(
-                tst_sender_config_set_framing_mode(p, TstTsFramingMode::Strict),
+                tst_sender_config_set_framing_mode(p, TstTsFramingMode::Strict as i32),
                 0,
             );
             assert_eq!(tst_sender_config_set_max_unsynced_bytes(p, 1024), 0);
@@ -318,11 +374,11 @@ mod tests {
             );
             assert_eq!(tst_reconnect_policy_set_gap_buffer_capacity(p, 128), 0);
             assert_eq!(
-                tst_reconnect_policy_set_overflow_policy(p, TstOverflowPolicy::Reject),
+                tst_reconnect_policy_set_overflow_policy(p, TstOverflowPolicy::Reject as i32),
                 0,
             );
             assert_eq!(
-                tst_reconnect_policy_set_mode(p, TstReconnectMode::Background),
+                tst_reconnect_policy_set_mode(p, TstReconnectMode::Background as i32),
                 0,
             );
             tst_reconnect_policy_free(p);
@@ -336,7 +392,7 @@ mod tests {
             // Default is Blocking (mirrors tst_pipeline::ReconnectPolicy::default()).
             assert_eq!((*p).inner.mode, tst_pipeline::ReconnectMode::Blocking);
             assert_eq!(
-                tst_reconnect_policy_set_mode(p, TstReconnectMode::Background),
+                tst_reconnect_policy_set_mode(p, TstReconnectMode::Background as i32),
                 0,
             );
             assert_eq!((*p).inner.mode, tst_pipeline::ReconnectMode::Background);

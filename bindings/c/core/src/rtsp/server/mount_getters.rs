@@ -227,7 +227,7 @@ mod tests {
                 p,
                 prog,
                 0x1011,
-                TstVideoCodec::H264,
+                TstVideoCodec::H264 as i32,
             );
             p
         }

@@ -348,6 +348,16 @@ pub(crate) fn set_last_error(code: TstError, msg: &str) {
     with_last_error(|slot| *slot = (code as i32, cstr));
 }
 
+/// Record `TST_E_INVALID_CONFIG` for an enum-valued `int32_t` argument
+/// outside its constant family, e.g.
+/// `"codec 99 is not a TST_VIDEO_CODEC_* value"`.
+pub(crate) fn record_bad_enum(name: &str, value: i32, family: &str) {
+    set_last_error(
+        TstError::InvalidConfig,
+        &alloc::format!("{name} {value} is not a {family} value"),
+    );
+}
+
 #[cfg(test)]
 pub(crate) fn clear_last_error_for_test() {
     with_last_error(|slot| *slot = (0, CString::new("").unwrap()));

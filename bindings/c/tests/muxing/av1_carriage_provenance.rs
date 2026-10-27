@@ -209,7 +209,7 @@ fn av1_binding_remux_fixpoint_via_wire_push_to() {
         assert!(!cfg.is_null());
         let prog = tst_mux_config_add_program(cfg, 1, 0x100);
         // hv is the video stream handle returned by add_video_stream.
-        let hv = tst_mux_config_add_video_stream(cfg, prog, 0x101, TstVideoCodec::Av1);
+        let hv = tst_mux_config_add_video_stream(cfg, prog, 0x101, TstVideoCodec::Av1 as i32);
         let rc = tst_mux_config_set_av1_carriage(cfg, TstAv1CarriageMode::Mpeg2TsBinding as i32);
         assert_eq!(rc, 0, "tst_mux_config_set_av1_carriage failed");
         let mux = tst_muxer_open(cfg);
@@ -286,7 +286,7 @@ fn av1_binding_remux_fixpoint_via_wire_push_single_stream() {
         let cfg = tst_mux_config_new();
         assert!(!cfg.is_null());
         let prog = tst_mux_config_add_program(cfg, 1, 0x100);
-        tst_mux_config_add_video_stream(cfg, prog, 0x101, TstVideoCodec::Av1);
+        tst_mux_config_add_video_stream(cfg, prog, 0x101, TstVideoCodec::Av1 as i32);
         let rc = tst_mux_config_set_av1_carriage(cfg, TstAv1CarriageMode::Mpeg2TsBinding as i32);
         assert_eq!(rc, 0);
         let mux = tst_muxer_open(cfg);
@@ -358,7 +358,7 @@ fn av1_interop_remux_fixpoint_via_wire_push_single_stream() {
         let cfg = tst_mux_config_new();
         assert!(!cfg.is_null());
         let prog = tst_mux_config_add_program(cfg, 1, 0x100);
-        tst_mux_config_add_video_stream(cfg, prog, 0x101, TstVideoCodec::Av1);
+        tst_mux_config_add_video_stream(cfg, prog, 0x101, TstVideoCodec::Av1 as i32);
         let rc = tst_mux_config_set_av1_carriage(cfg, TstAv1CarriageMode::InteropRawObu as i32);
         assert_eq!(rc, 0, "tst_mux_config_set_av1_carriage failed");
         let mux = tst_muxer_open(cfg);

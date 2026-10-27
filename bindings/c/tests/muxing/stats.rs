@@ -56,8 +56,14 @@ fn muxer_get_stats_after_push() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264);
-        tst_mux_config_add_klv_stream(cfg, prog, 0x0101, TstKlvStreamType::PrivateData, false);
+        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264 as i32);
+        tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x0101,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         let m = tst_muxer_open(cfg);
         assert!(!m.is_null());
         // Fresh muxer: stats start zero, but per_stream_count == 2 (eager).
@@ -130,8 +136,14 @@ fn mux_sender_stats_round_trip() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264);
-        tst_mux_config_add_klv_stream(cfg, prog, 0x0101, TstKlvStreamType::PrivateData, false);
+        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264 as i32);
+        tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x0101,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         let url = CString::new(format!("srt://127.0.0.1:{port}?latency=120")).unwrap();
         let s = tst_mux_sender_open(url.as_ptr(), cfg);
         assert!(!s.is_null());
@@ -216,8 +228,14 @@ fn mux_sender_socket_stats_round_trip() {
     unsafe {
         let cfg = tst_mux_config_new();
         let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264);
-        tst_mux_config_add_klv_stream(cfg, prog, 0x0101, TstKlvStreamType::PrivateData, false);
+        tst_mux_config_add_video_stream(cfg, prog, 0x0100, TstVideoCodec::H264 as i32);
+        tst_mux_config_add_klv_stream(
+            cfg,
+            prog,
+            0x0101,
+            TstKlvStreamType::PrivateData as i32,
+            false,
+        );
         let url = CString::new(format!("srt://127.0.0.1:{port}?latency=120")).unwrap();
         let s = tst_mux_sender_open(url.as_ptr(), cfg);
         assert!(!s.is_null());

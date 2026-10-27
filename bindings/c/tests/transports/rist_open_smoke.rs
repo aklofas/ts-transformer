@@ -242,7 +242,7 @@ fn null_next_event_returns_invalid_config() {
 fn rist_mux_sender_finish_then_close() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new("rist://127.0.0.1:33106").unwrap();
     let h = unsafe { tst_rist_mux_sender_open(url.as_ptr(), cfg as *const _) };

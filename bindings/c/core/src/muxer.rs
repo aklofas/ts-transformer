@@ -861,8 +861,14 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+            tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x1031,
+                TstKlvStreamType::PrivateData as i32,
+                false,
+            );
             let m = tst_muxer_open(cfg);
             assert!(!m.is_null());
             tst_muxer_close(m);
@@ -876,8 +882,14 @@ mod tests {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
             // Single-stream muxer: push_video (no handle) is unambiguous.
-            let hv = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+            let hv = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+            tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x1031,
+                TstKlvStreamType::PrivateData as i32,
+                false,
+            );
             let m = tst_muxer_open(cfg);
             tst_mux_config_free(cfg);
 
@@ -900,8 +912,14 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+            tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x1031,
+                TstKlvStreamType::PrivateData as i32,
+                false,
+            );
             let m = tst_muxer_open(cfg);
             tst_mux_config_free(cfg);
 
@@ -1015,8 +1033,14 @@ mod tests {
         let (cfg, m) = unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+            tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x1031,
+                TstKlvStreamType::PrivateData as i32,
+                false,
+            );
             (cfg, tst_muxer_open(cfg))
         };
         unsafe { tst_mux_config_free(cfg) };
@@ -1066,8 +1090,14 @@ mod tests {
         let (cfg, m) = unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-            tst_mux_config_add_klv_stream(cfg, prog, 0x1031, TstKlvStreamType::PrivateData, false);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+            tst_mux_config_add_klv_stream(
+                cfg,
+                prog,
+                0x1031,
+                TstKlvStreamType::PrivateData as i32,
+                false,
+            );
             (cfg, tst_muxer_open(cfg))
         };
         unsafe { tst_mux_config_free(cfg) };
@@ -1103,8 +1133,8 @@ mod tests {
         let (cfg, m2) = unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
-            tst_mux_config_add_video_stream(cfg, prog, 0x1012, TstVideoCodec::H264);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+            tst_mux_config_add_video_stream(cfg, prog, 0x1012, TstVideoCodec::H264 as i32);
             (cfg, tst_muxer_open(cfg))
         };
         unsafe { tst_mux_config_free(cfg) };

@@ -261,7 +261,7 @@ fn rtp_receiver_stats_and_reset() {
 fn rtp_mux_sender_push_video_reflects_in_stats() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new("rtp://127.0.0.1:54324").unwrap();
     let h = unsafe { tst_rtp_mux_sender_open(url.as_ptr(), cfg as *const _) };
@@ -314,7 +314,7 @@ fn rtp_mux_sender_push_video_reflects_in_stats() {
 fn rtp_mux_sender_push_klv_does_not_crash() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new("rtp://127.0.0.1:54325").unwrap();
     let h = unsafe { tst_rtp_mux_sender_open(url.as_ptr(), cfg as *const _) };
@@ -336,7 +336,7 @@ fn rtp_mux_sender_push_klv_does_not_crash() {
 fn rtp_mux_sender_cancel_returns_ok() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new("rtp://127.0.0.1:54326").unwrap();
     let h = unsafe { tst_rtp_mux_sender_open(url.as_ptr(), cfg as *const _) };
@@ -467,7 +467,7 @@ fn rtp_demux_receiver_get_stream_last_seen_micros_reports_after_sample() {
 
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
     let send_url = CString::new(format!("rtp://127.0.0.1:{port}")).unwrap();
     let tx = unsafe { tst_rtp_mux_sender_open(send_url.as_ptr(), cfg as *const _) };
     unsafe { tst_mux_config_free(cfg) };
@@ -577,7 +577,7 @@ fn null_next_event_returns_invalid_config() {
 fn rtp_mux_sender_finish_then_close() {
     let cfg = unsafe { tst_mux_config_new() };
     let prog = unsafe { tst_mux_config_add_program(cfg, 1, 0x1000) };
-    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264) };
+    unsafe { tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32) };
 
     let url = CString::new(format!("rtp://127.0.0.1:{}", pick_port())).unwrap();
     let h = unsafe { tst_rtp_mux_sender_open(url.as_ptr(), cfg as *const _) };

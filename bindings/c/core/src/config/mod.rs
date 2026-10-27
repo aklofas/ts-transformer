@@ -169,7 +169,7 @@ mod tests {
                 core::ptr::null_mut(),
                 TstProgramHandle(0),
                 0,
-                TstVideoCodec::H264,
+                TstVideoCodec::H264 as i32,
             )
         };
         add_program_null_returns_sentinel => eq(TST_INVALID_PROGRAM_HANDLE) {
@@ -195,7 +195,7 @@ mod tests {
             let prog = tst_mux_config_add_program(p, 1, 0x1000);
             assert_ne!(prog, TST_INVALID_PROGRAM_HANDLE);
             assert_eq!(
-                tst_mux_config_add_video_stream(p, prog, 0x1011, TstVideoCodec::H264),
+                tst_mux_config_add_video_stream(p, prog, 0x1011, TstVideoCodec::H264 as i32),
                 // VideoStreamHandle::pack(0, 0) = 0
                 0,
             );
@@ -204,7 +204,7 @@ mod tests {
                     p,
                     prog,
                     0x1031,
-                    TstKlvStreamType::PrivateData,
+                    TstKlvStreamType::PrivateData as i32,
                     false
                 ),
                 TST_INVALID_STREAM_HANDLE,
@@ -230,9 +230,9 @@ mod tests {
             let p = tst_mux_config_new();
             let prog = tst_mux_config_add_program(p, 1, 0x1000);
             // VideoStreamHandle::pack(0, 0) = (0<<4)|0 = 0
-            let h0 = tst_mux_config_add_video_stream(p, prog, 0x1011, TstVideoCodec::H264);
+            let h0 = tst_mux_config_add_video_stream(p, prog, 0x1011, TstVideoCodec::H264 as i32);
             // VideoStreamHandle::pack(0, 1) = (0<<4)|1 = 1
-            let h1 = tst_mux_config_add_video_stream(p, prog, 0x1012, TstVideoCodec::H265);
+            let h1 = tst_mux_config_add_video_stream(p, prog, 0x1012, TstVideoCodec::H265 as i32);
             assert_eq!(h0, 0);
             assert_eq!(h1, 1);
             tst_mux_config_free(p);
@@ -249,7 +249,7 @@ mod tests {
                 p,
                 prog,
                 0x1031,
-                TstKlvStreamType::PrivateData,
+                TstKlvStreamType::PrivateData as i32,
                 false,
             );
             // KlvStreamHandle::pack(0, 1) = 1
@@ -257,7 +257,7 @@ mod tests {
                 p,
                 prog,
                 0x1032,
-                TstKlvStreamType::SynchronousMetadata,
+                TstKlvStreamType::SynchronousMetadata as i32,
                 true,
             );
             assert_eq!(h0, 0);
@@ -275,7 +275,7 @@ mod tests {
                 p,
                 TstProgramHandle(0),
                 0x1011,
-                TstVideoCodec::H264,
+                TstVideoCodec::H264 as i32,
             );
             assert_eq!(h, TST_INVALID_STREAM_HANDLE);
             tst_mux_config_free(p);
@@ -292,8 +292,8 @@ mod tests {
             assert_eq!(prog2, TstProgramHandle(1));
 
             // VideoStreamHandle::pack(0, 0) = 0, pack(1, 0) = 0x10
-            let v1 = tst_mux_config_add_video_stream(p, prog1, 0x1011, TstVideoCodec::H264);
-            let v2 = tst_mux_config_add_video_stream(p, prog2, 0x1111, TstVideoCodec::H265);
+            let v1 = tst_mux_config_add_video_stream(p, prog1, 0x1011, TstVideoCodec::H264 as i32);
+            let v2 = tst_mux_config_add_video_stream(p, prog2, 0x1111, TstVideoCodec::H265 as i32);
             assert_ne!(v1, v2);
             assert_ne!(v1, TST_INVALID_STREAM_HANDLE);
             assert_ne!(v2, TST_INVALID_STREAM_HANDLE);
@@ -306,7 +306,8 @@ mod tests {
         unsafe {
             let cfg = tst_mux_config_new();
             let prog = tst_mux_config_add_program(cfg, 1, 0x100);
-            let stream = tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264);
+            let stream =
+                tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
             assert_ne!(stream, TST_INVALID_STREAM_HANDLE);
             // Synthetic registration descriptor body: "VIDX" (4 bytes).
             let body = b"VIDX";
@@ -339,7 +340,7 @@ mod tests {
                 cfg,
                 prog,
                 0x1031,
-                TstKlvStreamType::PrivateData,
+                TstKlvStreamType::PrivateData as i32,
                 false,
             );
             assert_ne!(stream, TST_INVALID_STREAM_HANDLE);
