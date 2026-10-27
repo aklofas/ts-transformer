@@ -404,7 +404,7 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
             use std::net::TcpListener;
             use std::sync::mpsc;
             use std::time::Duration;
-            use tst_core::transport::{RecvTransport, TransportError};
+            use tst_core::transport::{BrokenCause, RecvTransport, TransportError};
             use tst_pipeline::binding::BindingError;
             use tst_test_helpers::timing::scaled;
 
@@ -443,6 +443,13 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
                     );
                 }
             };
+            // tst-tcp reports a clean FIN as `Broken { cause: CleanEof }` too, and
+            // the transport-level projection below names both BROKEN; only a
+            // reset may pass.
+            match &err {
+                TransportError::Broken { cause, .. } if *cause != BrokenCause::CleanEof => {}
+                other => panic!("peer-reset-recv-kind: expected a reset, got {other:?}"),
+            }
             let projected = BindingError::from(err);
             vec![CoreEvent::Error {
                 code: projected.kind.name().to_string(),
