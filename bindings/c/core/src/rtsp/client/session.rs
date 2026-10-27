@@ -53,7 +53,9 @@
 //! once `into_demux_receiver` has been called, cancel on the returned
 //! `TstRtpDemuxReceiver` governs data-plane shutdown.
 
-use std::sync::Mutex;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Mutex, TryLockError};
+use std::time::Duration;
 
 use secrecy::SecretString;
 use tst_core::RecvTransport;
@@ -307,12 +309,18 @@ pub unsafe extern "C" fn tst_rtsp_session_pause(session: *mut TstRtspSession) ->
 // Teardown + free
 // ---------------------------------------------------------------------------
 
+/// Upper bound on waiting for the TEARDOWN reply, the same bound
+/// `RtspClient`'s destructor uses.
+const TEARDOWN_REPLY_BOUND: Duration = Duration::from_millis(500);
+
 /// Send TEARDOWN and free the session handle.
 ///
 /// Sends an RTSP TEARDOWN request, then unconditionally drops the session
 /// and its `RtspClient` regardless of whether TEARDOWN succeeded (network
 /// errors at teardown time are recorded in last-error but do not prevent
-/// the handle from being freed).
+/// the handle from being freed). A healthy peer's 200 returns 0; a peer
+/// that does not answer within 500 ms, or a call parked on another thread,
+/// ends the TEARDOWN early and the handle is still freed.
 ///
 /// After this call the `session` pointer is invalid; any further use is
 /// undefined behavior. NULL is a no-op.
@@ -334,37 +342,82 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
         }
         // SAFETY: caller guarantees valid, unaliased, un-freed pointer.
         let boxed = unsafe { Box::from_raw(session) };
-        // Signal cancel so any concurrent blocking I/O wakes up.
-        boxed.rtsp_cancel.cancel();
-        // Attempt TEARDOWN; surface last-error but don't block the free.
-        let rc = {
-            let mut guard = match boxed.pair.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    // Mutex poisoned — skip teardown, still free.
-                    set_last_error(TstError::Internal, "rtsp session mutex poisoned");
-                    return TstError::Internal as i32;
-                }
-            };
-            match guard.as_mut() {
-                None => 0, // already consumed
-                Some(pair) => {
-                    let (client, _session) = pair.as_mut();
-                    match client.teardown() {
-                        Ok(()) => 0,
-                        Err(e) => crate::error::record_with_context(
-                            e,
-                            "RTSP TEARDOWN failed (continuing free)",
-                        ),
-                    }
+        let rc = match boxed.pair.try_lock() {
+            // Nobody holds the session: send TEARDOWN and read the reply,
+            // with a timer that cancels the read if the peer stays silent.
+            Ok(mut guard) => bounded_teardown(&mut guard, &boxed.rtsp_cancel),
+            // A call is parked on another thread: wake it first, then send
+            // TEARDOWN as best effort on the cancelled session.
+            Err(TryLockError::WouldBlock) => {
+                boxed.rtsp_cancel.cancel();
+                match boxed.pair.lock() {
+                    Ok(mut guard) => teardown(&mut guard),
+                    Err(_) => poisoned(),
                 }
             }
-            // guard released; pair is still in the Mutex but boxed drops next.
+            Err(TryLockError::Poisoned(_)) => {
+                boxed.rtsp_cancel.cancel();
+                poisoned()
+            }
         };
+        // Nothing may stay parked on the control channel once the handle is
+        // gone.
+        boxed.rtsp_cancel.cancel();
         // Drop the box (drops RtspClient + RtspSession).
         drop(boxed);
         rc
     })
+}
+
+/// TEARDOWN with the reply wait bounded by [`TEARDOWN_REPLY_BOUND`]: a
+/// scoped timer thread fires the session cancel unless the TEARDOWN
+/// finishes first, and is joined before this returns.
+fn bounded_teardown(
+    pair: &mut Option<Box<(RtspClient, RtspSession)>>,
+    rtsp_cancel: &RtspCancelHandle,
+) -> libc::c_int {
+    if pair.is_none() {
+        return 0; // already consumed
+    }
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    std::thread::scope(|s| {
+        let timer = std::thread::Builder::new()
+            .name("tst-rtsp-teardown".into())
+            .spawn_scoped(s, move || {
+                if let Err(RecvTimeoutError::Timeout) = done_rx.recv_timeout(TEARDOWN_REPLY_BOUND) {
+                    rtsp_cancel.cancel();
+                }
+            });
+        if timer.is_err() {
+            // No timer, no bound on the reply: fall back to cancelling first.
+            rtsp_cancel.cancel();
+        }
+        let rc = teardown(pair);
+        // Disarms the timer; the scope joins it.
+        drop(done_tx);
+        rc
+    })
+}
+
+fn teardown(pair: &mut Option<Box<(RtspClient, RtspSession)>>) -> libc::c_int {
+    match pair.as_mut() {
+        None => 0, // already consumed
+        Some(pair) => {
+            let (client, _session) = pair.as_mut();
+            match client.teardown() {
+                Ok(()) => 0,
+                Err(e) => {
+                    crate::error::record_with_context(e, "RTSP TEARDOWN failed (continuing free)")
+                }
+            }
+        }
+    }
+}
+
+fn poisoned() -> libc::c_int {
+    // Mutex poisoned: skip teardown, still free.
+    set_last_error(TstError::Internal, "rtsp session mutex poisoned");
+    TstError::Internal as i32
 }
 
 // ---------------------------------------------------------------------------

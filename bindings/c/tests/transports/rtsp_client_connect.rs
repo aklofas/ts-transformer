@@ -23,14 +23,16 @@ use tstrans::rtp::{
     TstRtpDemuxReceiver, tst_rtp_demux_receiver_cancel, tst_rtp_demux_receiver_close,
     tst_rtp_demux_receiver_next_event,
 };
+use tstrans::stats::TstServerStats;
 use tstrans::{
     TstRtspMountHandle, TstRtspServer, TstRtspSession, tst_rtsp_client_builder_auth_basic,
     tst_rtsp_client_builder_connect, tst_rtsp_client_builder_keepalive,
     tst_rtsp_client_builder_new, tst_rtsp_client_builder_transport_pref,
     tst_rtsp_mount_handle_free, tst_rtsp_mount_push_video, tst_rtsp_server_add_unicast_mount,
     tst_rtsp_server_builder_new, tst_rtsp_server_builder_start, tst_rtsp_server_free,
-    tst_rtsp_server_local_addr, tst_rtsp_server_stop, tst_rtsp_session_into_demux_receiver,
-    tst_rtsp_session_play, tst_rtsp_session_teardown_and_free,
+    tst_rtsp_server_get_stats, tst_rtsp_server_local_addr, tst_rtsp_server_stop,
+    tst_rtsp_session_into_demux_receiver, tst_rtsp_session_play,
+    tst_rtsp_session_teardown_and_free,
 };
 
 use crate::common::{last_error_msg, scaled};
@@ -549,4 +551,77 @@ fn url_recv_timeout_bounds_a_silent_bridged_stream() {
     assert_eq!(rc, TstError::BufferFull as i32, "{}", last_error_msg());
     unsafe { tst_rtp_demux_receiver_close(rx) };
     peer.join().unwrap();
+}
+
+/// A healthy session's TEARDOWN is answered 200; the call must report it.
+/// Before the fix the call cancelled its own reader first, so the reply read
+/// ended in a local cancel and a 200 reported `TST_E_CLOSED`.
+#[test]
+fn teardown_of_a_healthy_session_returns_success() {
+    let (server, mount, port) = c_server();
+    let session = unsafe {
+        tst_rtsp_client_builder_connect(builder(&format!("rtsp://127.0.0.1:{port}/live")))
+    };
+    assert!(!session.is_null(), "{}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_rtsp_session_play(session) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    assert_eq!(
+        unsafe { tst_rtsp_session_teardown_and_free(session) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    // The server saw the TEARDOWN: its session count drops to zero.
+    let deadline = Instant::now() + scaled(Duration::from_secs(2));
+    loop {
+        let mut ss = TstServerStats::default();
+        assert_eq!(unsafe { tst_rtsp_server_get_stats(server, &mut ss) }, 0);
+        if ss.active_sessions == 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "server still reports {} active sessions",
+            ss.active_sessions
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    unsafe {
+        tst_rtsp_mount_handle_free(mount);
+        tst_rtsp_server_stop(server, 0);
+        tst_rtsp_server_free(server);
+    }
+}
+
+/// A server that stopped without answering cannot hold the teardown: the call
+/// may report an error but returns promptly and frees the handle.
+#[test]
+fn teardown_after_server_stop_returns_promptly() {
+    let (server, mount, port) = c_server();
+    let session = unsafe {
+        tst_rtsp_client_builder_connect(builder(&format!("rtsp://127.0.0.1:{port}/live")))
+    };
+    assert!(!session.is_null(), "{}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_rtsp_session_play(session) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    unsafe { tst_rtsp_server_stop(server, 0) };
+    let t0 = Instant::now();
+    let _rc = unsafe { tst_rtsp_session_teardown_and_free(session) };
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < scaled(Duration::from_secs(3)),
+        "teardown after server stop took {elapsed:?}"
+    );
+    unsafe {
+        tst_rtsp_mount_handle_free(mount);
+        tst_rtsp_server_free(server);
+    }
 }
