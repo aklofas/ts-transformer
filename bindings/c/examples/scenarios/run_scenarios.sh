@@ -10,8 +10,8 @@
 #   WORKSPACE_ROOT=/path/to/ts-transformer bash bindings/c/examples/scenarios/run_scenarios.sh
 #
 # Env vars honoured:
-#   SRT_FORCE_VENDORED  — passed to cargo build (default "1")
-#   RIST_FORCE_VENDORED — passed to cargo build (default "1")
+#   SRT_FORCE_VENDORED  — passed to the package build (default "1")
+#   RIST_FORCE_VENDORED — passed to the package build (default "1")
 #
 # Exit code: 0 = all scenarios matched their goldens; non-zero = failure.
 
@@ -26,28 +26,32 @@ WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "$SCRIPT_DIR/../../../.." && pwd)}"
 
 echo "workspace root: $WORKSPACE_ROOT"
 
-# ── Build libtstrans ─────────────────────────────────────────────────────────
+# ── Stage one all-features package ───────────────────────────────────────────
 # --all-features, not the default build: the `cancelled-recv-kind` scenario
 # calls the srt-gated receiver/raw-sender entry points, and tst-c's transport
-# features are default-OFF, so a bare build would leave those symbols out of
-# the cdylib and the link below would fail. CI links the all-features cdylib
-# its earlier build step produced (ci.yml "C scenario adapter"), so this keeps
-# the local run and CI on the same surface.
-echo "building libtstrans..."
+# features are default-OFF. The header, tstrans_config.h and library must come
+# from the same build: the committed bindings/c/include/tstrans_config.h
+# defines no TST_HAS_*, so compiling against it hides those declarations.
+# c-package.sh builds and stages all three, as the ci.yml "C scenario adapter"
+# step does. It leaves the output read-only, hence the chmod before removal.
+PKG_PARENT="$(mktemp -d)"
+trap 'chmod -R u+w "$PKG_PARENT"; rm -rf "$PKG_PARENT"' EXIT
+PKG="$PKG_PARENT/pkg"
+
+echo "staging libtstrans package..."
 SRT_FORCE_VENDORED="${SRT_FORCE_VENDORED:-1}" \
 RIST_FORCE_VENDORED="${RIST_FORCE_VENDORED:-1}" \
-  cargo build -p tst-c --all-features --manifest-path "$WORKSPACE_ROOT/Cargo.toml"
+  bash "$WORKSPACE_ROOT/scripts/dev/c-package.sh" --all-features --out "$PKG"
 
-LIB_DIR="$WORKSPACE_ROOT/target/debug"
-INCLUDE_DIR="$WORKSPACE_ROOT/bindings/c/include"
 SOURCE="$SCRIPT_DIR/run_scenarios.c"
-BINARY="/tmp/run_scenarios_c_adapter"
+BINARY="$PKG_PARENT/run_scenarios_c_adapter"
 
 # ── Compile the C adapter ────────────────────────────────────────────────────
+# The rpath lets the adapter find the staged library without LD_LIBRARY_PATH.
 echo "compiling $SOURCE..."
 gcc \
-  -I "$INCLUDE_DIR" \
-  -L "$LIB_DIR" \
+  -I "$PKG/include" \
+  -L "$PKG/lib" -Wl,-rpath,"$PKG/lib" \
   -Wall -Werror \
   -o "$BINARY" \
   "$SOURCE" \
@@ -67,7 +71,7 @@ echo "scenarios dir: $SCENARIOS_DIR"
 
 # ── Run the adapter ──────────────────────────────────────────────────────────
 echo ""
-LD_LIBRARY_PATH="$LIB_DIR" "$BINARY" "$SCENARIOS_DIR"
-ADAPTER_EXIT=$?
+ADAPTER_EXIT=0
+timeout 60 "$BINARY" "$SCENARIOS_DIR" || ADAPTER_EXIT=$?
 echo "ADAPTER_EXIT=$ADAPTER_EXIT"
-exit $ADAPTER_EXIT
+exit "$ADAPTER_EXIT"
