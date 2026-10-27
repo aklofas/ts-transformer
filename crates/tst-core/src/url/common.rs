@@ -226,9 +226,24 @@ fn parse_query(q: &str) -> Result<Vec<QueryPair<'_>>, UrlError> {
             Some(i) => (&pair[..i], &pair[i + 1..]),
             None => (pair, ""),
         };
-        out.push((percent_decode(k)?, percent_decode(v)?));
+        // The value may be a passphrase, so the error names the key only.
+        let k = percent_decode(k).map_err(|e| with_detail_suffix(e, " in a query key"))?;
+        let v = percent_decode(v)
+            .map_err(|e| with_detail_suffix(e, &format!(" in the value of query key '{k}'")))?;
+        out.push((k, v));
     }
     Ok(out)
+}
+
+/// Append `suffix` to a percent-decoding error's detail; other errors pass through.
+fn with_detail_suffix(e: UrlError, suffix: &str) -> UrlError {
+    match e {
+        UrlError::BadPercentEncoding { mut detail } => {
+            detail.push_str(suffix);
+            UrlError::BadPercentEncoding { detail }
+        }
+        other => other,
+    }
 }
 
 /// Decode the RFC 6874 §2 zone delimiter of a bracket-stripped IPv6 literal.
@@ -270,13 +285,11 @@ pub fn percent_decode(s: &str) -> Result<Cow<'_, str>, UrlError> {
         if bytes[i] == b'%' {
             if i + 2 >= bytes.len() {
                 return Err(UrlError::BadPercentEncoding {
-                    detail: format!(
-                        "percent escape at offset {i} in '{s}' needs exactly 2 hex digits"
-                    ),
+                    detail: format!("percent escape at offset {i} needs exactly 2 hex digits"),
                 });
             }
-            let h = hex_nibble(bytes[i + 1])?;
-            let l = hex_nibble(bytes[i + 2])?;
+            let h = hex_nibble(bytes[i + 1], i)?;
+            let l = hex_nibble(bytes[i + 2], i)?;
             out.push((h << 4) | l);
             i += 3;
         } else {
@@ -287,17 +300,20 @@ pub fn percent_decode(s: &str) -> Result<Cow<'_, str>, UrlError> {
     String::from_utf8(out)
         .map(Cow::Owned)
         .map_err(|e| UrlError::BadPercentEncoding {
-            detail: format!("percent-decoded bytes in '{s}' are not valid UTF-8: {e}"),
+            detail: format!(
+                "percent-decoded bytes are not valid UTF-8 (first bad byte at offset {})",
+                e.utf8_error().valid_up_to()
+            ),
         })
 }
 
-fn hex_nibble(b: u8) -> Result<u8, UrlError> {
+fn hex_nibble(b: u8, escape_offset: usize) -> Result<u8, UrlError> {
     match b {
         b'0'..=b'9' => Ok(b - b'0'),
         b'a'..=b'f' => Ok(b - b'a' + 10),
         b'A'..=b'F' => Ok(b - b'A' + 10),
         _ => Err(UrlError::BadPercentEncoding {
-            detail: format!("non-hex char in escape: '{}' (byte 0x{b:02x})", b as char),
+            detail: format!("percent escape at offset {escape_offset} has a non-hex digit"),
         }),
     }
 }
@@ -428,6 +444,30 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn malformed_escapes_never_echo_the_value() {
+        for url in [
+            "srt://127.0.0.1:9000?passphrase=example-secret%",
+            "srt://127.0.0.1:9000?passphrase=example-secret%zz",
+            "srt://127.0.0.1:9000?passphrase=example-secret%FF",
+            "rtsp://user:example-secret%@127.0.0.1/x",
+        ] {
+            let e = super::parse_url(url)
+                .map(|p| {
+                    p.password
+                        .map(super::percent_decode)
+                        .transpose()
+                        .map(|_| ())
+                })
+                .and_then(|r| r);
+            let e = e.unwrap_err();
+            for text in [e.to_string(), format!("{e:?}")] {
+                assert!(!text.contains("example-secret"), "{text}");
+                assert!(!text.contains('z'), "{text}");
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

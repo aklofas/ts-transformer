@@ -357,6 +357,22 @@ mod tests {
     }
 
     #[test]
+    fn malformed_escape_never_echoes_the_secret() {
+        for url in [
+            "rist://127.0.0.1:9000?secret=example-secret%",
+            "rist://127.0.0.1:9000?secret=example-secret%zz",
+            "rist://127.0.0.1:9000?secret=example-secret%FF",
+        ] {
+            let e = RistUrl::parse(url).unwrap_err();
+            for text in [e.to_string(), format!("{e:?}")] {
+                assert!(!text.contains("example-secret"), "{text}");
+                assert!(!text.contains('z'), "{text}");
+                assert!(text.contains("secret"), "{text}");
+            }
+        }
+    }
+
+    #[test]
     fn empty_secret_is_rejected() {
         let e = RistUrl::parse("rist://127.0.0.1:9000?secret=").unwrap_err();
         assert!(
