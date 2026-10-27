@@ -26,7 +26,7 @@ pub use crate::mpegts::demux::pes::{PesPayload, Reassembler, ReassemblyOutcome};
 // and integration tests for descriptor introspection).
 pub use crate::mpegts::demux::psi::{
     Pat, PatEntry, Pmt, PmtStream, PsiParseError, extract_metadata_link, extract_user_label,
-    has_klva_registration, parse_pat, parse_pmt, walk_descriptors,
+    has_klva_registration, parse_pat, parse_pmt, psi_section_syntax_issues, walk_descriptors,
 };
 
 // Payload classification and AU-cell iteration (consumed by the integration

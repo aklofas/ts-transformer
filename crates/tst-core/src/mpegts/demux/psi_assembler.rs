@@ -44,6 +44,11 @@ impl PsiSectionAssembler {
         self.append(payload)
     }
 
+    /// Whether bytes of an unfinished section are buffered.
+    pub fn has_partial(&self) -> bool {
+        !self.buf.is_empty()
+    }
+
     /// Continuation packet on this PID (no PUSI) — append to the existing
     /// buffer. If we have no prior PUSI state, drop the bytes silently
     /// (continuation without preceding PUSI is invalid per §2.4.4.4).
