@@ -368,11 +368,12 @@ pub enum MultiCellAuReason {
     /// under its own per-PID cap but the total explodes. The offending
     /// PID's partial buffer is dropped.
     OverflowTotal,
-    /// A new `First` cell would open reassembly on a PID beyond
+    /// A new `First` cell would open a reassembly beyond
     /// [`crate::mpegts::demux::DemuxerConfig::au_cell_max_in_flight_pids`]
-    /// (default 64) concurrently in-flight PIDs. Bounds active-PID count
-    /// against an adversary that opens a `First` for thousands of distinct
-    /// PIDs and never sends `Last`. The new cell is rejected; existing
+    /// (default 64) concurrently in-flight `(PID, metadata_service_id)`
+    /// reassemblies. Bounds active state against an adversary that opens a
+    /// `First` for thousands of distinct PIDs or services and never sends
+    /// `Last`. The new cell is rejected; existing
     /// in-flight reassemblies are left intact.
     TooManyPids,
 }

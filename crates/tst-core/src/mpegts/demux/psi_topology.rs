@@ -558,15 +558,6 @@ impl super::demuxer::Demuxer {
                 state.sync_pes_shape_emitted = false;
             }
         }
-        // Drop any in-flight AU cell reassembly buffers wholesale on PMT
-        // version change. A PMT bump may have reassigned PIDs (sync ↔ async
-        // metadata, KLV ↔ video) and stale per-PID state would be
-        // ambiguous to interpret. Clearing all PIDs (not just the ones in
-        // this PMT) avoids any chance of cross-program leakage; the cost is
-        // dropping at most one partially-reassembled AU per active sync
-        // metadata PID — same shape as a reset_sync.
-        self.au_reassembler.reset_all();
-
         // Build StreamInfo list + check cross-program PID collisions.
         // Collect work to do before mutating self — satisfies borrow checker.
         let mut stream_infos: Vec<StreamInfo> = Vec::with_capacity(pmt.streams.len());
@@ -1514,6 +1505,166 @@ mod tests {
             sync_pes_shape_emitted: true,
             subtitle_seen: true,
         }
+    }
+
+    fn au_cell(
+        seq: u8,
+        cfi: crate::mpegts::au_cell::CellFragmentIndication,
+    ) -> crate::mpegts::au_cell::AuCellHeader {
+        crate::mpegts::au_cell::AuCellHeader {
+            metadata_service_id: 0,
+            sequence_number: seq,
+            cell_fragment_indication: cfi,
+            decoder_config_flag: false,
+            random_access_indicator: true,
+        }
+    }
+
+    fn feed_cell(
+        d: &mut Demuxer,
+        pid: u16,
+        cc: u8,
+        seq: u8,
+        cfi: crate::mpegts::au_cell::CellFragmentIndication,
+        payload: &[u8],
+    ) {
+        for pkt in crate::mpegts::demux::test_support::au_cell_pes_packets(
+            pid,
+            cc,
+            au_cell(seq, cfi),
+            payload,
+        ) {
+            d.feed(&pkt).unwrap();
+        }
+    }
+
+    fn multi_cell_failures(events: &[DemuxEvent]) -> Vec<NonConformantIssue> {
+        issues(events)
+            .into_iter()
+            .filter(|i| matches!(i, NonConformantIssue::MultiCellAu { .. }))
+            .collect()
+    }
+
+    /// Two programs: program 1 carries sync KLV (stream_type 0x15) on
+    /// 0x0101, program 2 carries video on 0x0201.
+    fn two_program_klv_demuxer() -> Demuxer {
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        d.feed(&pmt_packet_for_test(
+            0x1000,
+            1,
+            0x1FFF,
+            &[(0x15, 0x0101)],
+            0,
+        ))
+        .unwrap();
+        d.feed(&pmt_packet_for_test(
+            0x1100,
+            2,
+            0x0201,
+            &[(0x1B, 0x0201)],
+            0,
+        ))
+        .unwrap();
+        drain_all_events(&mut d);
+        d
+    }
+
+    // H.222.0 §2.12.4.2: a PMT version change of one program says nothing
+    // about another program's PIDs, so their in-flight AU cells survive it.
+    #[test]
+    fn pmt_bump_of_another_program_keeps_an_in_flight_au() {
+        use crate::mpegts::au_cell::CellFragmentIndication::{First, Last};
+        use crate::mpegts::demux::event::MetadataKind;
+        let mut d = two_program_klv_demuxer();
+        feed_cell(&mut d, 0x0101, 0, 0, First, b"ab");
+        d.feed(&pmt_packet_for_test_cc(
+            0x1100,
+            2,
+            0x0201,
+            &[(0x1B, 0x0201)],
+            1,
+            1,
+        ))
+        .unwrap();
+        feed_cell(&mut d, 0x0101, 1, 1, Last, b"cd");
+
+        let events = drain_all_events(&mut d);
+        let metas: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Metadata {
+                    kind:
+                        MetadataKind::KlvSyncAuCell {
+                            was_reassembled,
+                            cell_count,
+                            ..
+                        },
+                    payload,
+                    ..
+                } => Some((*was_reassembled, *cell_count, payload.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            metas,
+            vec![(true, 2, b"abcd".to_vec())],
+            "events: {events:?}"
+        );
+        assert_eq!(multi_cell_failures(&events), vec![], "events: {events:?}");
+    }
+
+    // A PMT bump that retypes the PID drops that PID's in-flight AU: the
+    // cells before the retype belong to a different elementary stream.
+    #[test]
+    fn pmt_bump_that_retypes_the_pid_drops_its_in_flight_au() {
+        use crate::mpegts::au_cell::CellFragmentIndication::{First, Last};
+        use crate::mpegts::demux::event::MultiCellAuReason;
+        let mut d = two_program_klv_demuxer();
+        feed_cell(&mut d, 0x0101, 0, 0, First, b"ab");
+        // v1 retypes 0x0101 to private data; v2 declares it sync KLV again.
+        d.feed(&pmt_packet_for_test_cc(
+            0x1000,
+            1,
+            0x1FFF,
+            &[(0x06, 0x0101)],
+            1,
+            1,
+        ))
+        .unwrap();
+        assert!(
+            !d.au_reassembler.has_pid(0x0101),
+            "the retype must drop the PID's in-flight AU"
+        );
+        d.feed(&pmt_packet_for_test_cc(
+            0x1000,
+            1,
+            0x1FFF,
+            &[(0x15, 0x0101)],
+            2,
+            2,
+        ))
+        .unwrap();
+        feed_cell(&mut d, 0x0101, 1, 1, Last, b"cd");
+
+        let events = drain_all_events(&mut d);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Metadata { .. })),
+            "events: {events:?}"
+        );
+        assert!(
+            matches!(
+                multi_cell_failures(&events).as_slice(),
+                [NonConformantIssue::MultiCellAu {
+                    reason: MultiCellAuReason::Orphan,
+                    ..
+                }]
+            ),
+            "events: {events:?}"
+        );
     }
 
     // The invariant the four teardown fixes restored by hand: once a PMT
