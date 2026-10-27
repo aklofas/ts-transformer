@@ -75,14 +75,15 @@ pub fn bind_udp_socket_multicast(local: SocketAddr) -> io::Result<UdpSocket> {
 /// `local_addr()`.
 ///
 /// On non-Windows targets an IPv4 socket binds `group:port`, so the kernel
-/// drops unicast datagrams to the port. An IPv6 socket binds `group:port` with
-/// the interface's scope id when `iface` gives one; without `iface` it binds
-/// `[::]:port`, because Linux refuses to bind a link-local group (`ff02::`)
-/// without a scope id. Such a receiver also sees unicast sent to the port and,
-/// outside Linux, other groups' traffic on the port. On Linux the socket also
-/// clears `IP_MULTICAST_ALL` (`IPV6_MULTICAST_ALL` for IPv6): per ip(7) a
-/// member socket otherwise receives every group any socket on the host joined
-/// on that port.
+/// drops unicast datagrams to the port. `?iface=` is not supported yet for
+/// IPv6, so an IPv6 socket binds `[::]:port`: Linux refuses to bind a
+/// link-local group (`ff02::`) without a scope id. Such a receiver also sees
+/// unicast sent to the port and, outside Linux, other groups' traffic on the
+/// port. On Linux the socket also clears `IP_MULTICAST_ALL`
+/// (`IPV6_MULTICAST_ALL` for IPv6): per ip(7) a member socket otherwise
+/// receives every group any socket on the host joined on that port. A kernel
+/// older than 4.20 lacks `IPV6_MULTICAST_ALL`; its IPv6 receivers stay
+/// unfiltered.
 ///
 /// Windows cannot bind a multicast address, so the socket binds the wildcard
 /// of the group's family there; a Windows receiver also sees other groups'
@@ -111,7 +112,13 @@ pub fn bind_udp_socket_multicast_group(
         let sock = socket2::SockRef::from(&socket);
         match group {
             IpAddr::V4(_) => sock.set_multicast_all_v4(false)?,
-            IpAddr::V6(_) => sock.set_multicast_all_v6(false)?,
+            // IPV6_MULTICAST_ALL arrived in Linux 4.20; an older kernel
+            // answers ENOPROTOOPT, and its receiver keeps the unfiltered
+            // behaviour rather than failing to open.
+            IpAddr::V6(_) => match sock.set_multicast_all_v6(false) {
+                Err(e) if e.raw_os_error() == Some(libc::ENOPROTOOPT) => {}
+                r => r?,
+            },
         }
     }
     apply_multicast_recv_join(&socket, group, iface)?;
@@ -469,8 +476,7 @@ mod multicast_group_tests {
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 
-    /// An IPv6 `iface` gets the join's answer before any bind: a link-local
-    /// group never reaches the kernel's scope-id bind check (EINVAL).
+    /// An IPv6 `iface` gets the join's answer, before any socket is created.
     #[test]
     fn v6_group_iface_gets_the_join_error() {
         let group = IpAddr::V6("ff02::1".parse().unwrap());
