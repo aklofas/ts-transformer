@@ -349,9 +349,8 @@ impl super::demuxer::Demuxer {
         // whose PMT PID moved. A moved program gets a fresh tracker so its
         // PMT on the new PID is adopted cleanly.
         // Per-PID cleanup is shared with the PMT-version path through the
-        // `TopologyDiff`: a PID's state entry is otherwise unreachable and
-        // stays behind. Its lifetime counters stay until `reset_stats`,
-        // bounded by the 8192-PID space.
+        // `TopologyDiff`: the diff retires each PID's state; its lifetime
+        // counters stay until `reset_stats`, bounded by the 8192-PID space.
         let removed: Vec<u16> = self
             .programs
             .iter()
@@ -1476,11 +1475,14 @@ mod tests {
             .get(&pid)
             .expect("a retired PID keeps its counters");
         assert!(state.stats.is_some() && state.codec.is_some() && state.subtitle_seen);
-        let mut expected = fully_populated_state();
-        expected.retire();
         assert!(state.stream_kind.is_none() && state.program.is_none());
         assert!(state.stream_type.is_none() && state.cc.is_none() && state.last_pts.is_none());
-        assert!(!state.sync_pes_shape_emitted && !expected.sync_pes_shape_emitted);
+        assert!(!state.dup && state.last_pkt_raw.is_none() && state.unwrap.is_none());
+        assert!(state.latm_carry.is_none() && state.latm_unsynced == 0);
+        assert!(!state.pts_baseline_clears_after_pes && !state.pts_less_since_pts);
+        assert!(!state.sync_pes_shape_emitted && !state.subtitle_missing_descriptor_emitted);
+        assert!(!state.av1_registration_malformed_emitted);
+        assert!(!state.subtitle_descriptor_ambiguous_emitted);
     }
 
     /// A fully populated `PidState` for `pid`. Written as an exhaustive
