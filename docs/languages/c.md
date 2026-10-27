@@ -329,6 +329,8 @@ The ABI-19 additions carry MISB ST 0604 MISP timestamps through the C ABI:
 
 On the decode side the C ABI carries one typed KLV set: ST 0601, through `tst_st0601_decode`, the curated `tst_st0601_geometry` getter and the per-tag `tst_st0601_get_f64` / `_get_u64` / `_state` accessors (ABI 21). Every other typed set (including the ST 1204 Core ID codec) and all typed encode stay out of the C ABI — C carries raw KLV bytes via the `push_klv` families; see the [STANAG 4609 reference](/docs/reference/stanag-4609.md).
 
+`tst_mux_publisher_with_config_hls` consumes `hls` on every return, including when it returns NULL for a rejected or null mux config; do not free `hls` afterwards.
+
 See the [HLS guide](/docs/guides/hls.md) for serving guidance, the KLV ride-along carriage modes, and latency tuning.
 
 ## RTSP publisher ingest (`TST_HAS_RTP`)
@@ -397,6 +399,10 @@ ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's `rtsp
 - Concurrent close-from-multiple-threads on the same live pointer is also UB. Bindings must coordinate close against data-path use.
 
 Treat handles as moved-into the close call: set your local variable to `NULL` immediately after, or wrap close in an `if (handle) { ...close...; handle = NULL; }` guard.
+
+**C++.** `tstrans.h` compiles as C++ (C++11 and later) and carries its own `extern "C"` guards, so `#include "tstrans.h"` is all a C++ translation unit needs.
+
+**End of stream versus failure.** `TST_E_END_OF_STREAM` means a clean close. On TCP, a reset is `TST_E_TRANSPORT`.
 
 **Configs are copied, not consumed, by `_open`.** `tst_mux_sender_open(url, cfg)`, `tst_muxer_open(cfg)`, and their managed variants copy what they need from the config; the caller still owns it and frees it with `tst_mux_config_free(cfg)`, right after the open or after reusing it for further opens.
 
