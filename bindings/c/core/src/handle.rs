@@ -186,9 +186,9 @@ pub struct TstRtspClientBuilder {
     pub(crate) transport_pref: Option<tst_rtp::url::RtspTransportPref>,
     /// Credentials supplied via any `_auth_*` entry point.
     pub(crate) username: Option<String>,
-    /// Password in plain text; wrapped in `secrecy::SecretString` at
-    /// `connect` time so it is zeroed when the builder is consumed.
-    pub(crate) password: Option<String>,
+    /// Held as a `SecretString` from the setter on: zeroed when the builder
+    /// is freed, replaced or consumed by `connect`.
+    pub(crate) password: Option<secrecy::SecretString>,
     /// When `true` (the default), `connect` spawns an auto-keepalive
     /// thread.  Set to `false` by `tst_rtsp_client_builder_keepalive(b, false)`.
     pub(crate) auto_keepalive: bool,
@@ -262,9 +262,9 @@ pub struct TstRtspServerBuilder {
     pub(crate) auth_realm: String,
     /// Username supplied via any `_auth_*` entry point.
     pub(crate) auth_username: Option<String>,
-    /// Password in plain text; wrapped in `secrecy::SecretString` at
-    /// `start` time so it is zeroed when the builder is consumed.
-    pub(crate) auth_password: Option<String>,
+    /// Held as a `SecretString` from the setter on: zeroed when the builder
+    /// is freed, replaced or consumed by `start`.
+    pub(crate) auth_password: Option<secrecy::SecretString>,
     /// Cap on concurrent client sessions. Floored to 1. Default: 64.
     pub(crate) max_sessions: u32,
     /// Session timeout in seconds. Default: 60.
@@ -351,10 +351,9 @@ impl TstRtspServerBuilder {
 
         let mut b = tst_rtp::RtspServerBuilder::with_url(self.bind_url);
 
-        if let (Some(scheme), Some(user), Some(pass)) =
+        if let (Some(scheme), Some(user), Some(secret)) =
             (self.auth_scheme, self.auth_username, self.auth_password)
         {
-            let secret = secrecy::SecretString::new(pass.into());
             let realm = if self.auth_realm.is_empty() {
                 "tst-rtp"
             } else {
@@ -690,6 +689,40 @@ mod tests {
             let c = cancel_or_latch(some);
             c.cancel();
             assert!(flag.0.load(Ordering::SeqCst));
+        }
+    }
+}
+
+#[cfg(all(test, feature = "rtp"))]
+mod secret_password_tests {
+    use crate::rtsp::client::auth::tst_rtsp_client_builder_auth_basic;
+    use crate::rtsp::client::builder::{tst_rtsp_client_builder_free, tst_rtsp_client_builder_new};
+    use crate::rtsp::server::builder::{
+        tst_rtsp_server_builder_auth_basic, tst_rtsp_server_builder_free,
+        tst_rtsp_server_builder_new,
+    };
+
+    /// A dropped or replaced password must go through secrecy's zeroizing drop:
+    /// the field's type is the contract (no test can read freed memory).
+    #[test]
+    fn builder_passwords_are_secret_strings() {
+        use secrecy::ExposeSecret;
+        fn is_secret(_: &Option<secrecy::SecretString>) {}
+        unsafe {
+            let b = tst_rtsp_client_builder_new(c"rtsp://127.0.0.1:1/x".as_ptr());
+            tst_rtsp_client_builder_auth_basic(b, c"u".as_ptr(), c"p".as_ptr());
+            is_secret(&(*b).password);
+            assert_eq!((*b).password.as_ref().map(|s| s.expose_secret()), Some("p"));
+            tst_rtsp_client_builder_free(b);
+
+            let s = tst_rtsp_server_builder_new(c"rtsp://127.0.0.1:0/".as_ptr());
+            tst_rtsp_server_builder_auth_basic(s, c"u".as_ptr(), c"q".as_ptr());
+            is_secret(&(*s).auth_password);
+            assert_eq!(
+                (*s).auth_password.as_ref().map(|s| s.expose_secret()),
+                Some("q")
+            );
+            tst_rtsp_server_builder_free(s);
         }
     }
 }
