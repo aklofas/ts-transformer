@@ -13,15 +13,16 @@
 //!
 //! # In-flight marking
 //!
-//! The background drain worker must not hold the buffer's lock across the
-//! inner transport's `send_bytes` — that one call is unbounded against a
-//! peer that stops draining, and holding the lock there stalls both the
-//! producer and the stats observer. Instead the worker *marks* the front
+//! Neither drain — the background worker nor the `Blocking` replay after a
+//! reconnect — may hold the buffer's lock across the inner transport's
+//! `send_bytes`: that one call is unbounded against a peer that stops
+//! draining, and holding the lock there stalls the stats observer (and,
+//! in `Background`, the producer). Instead the drain *marks* the front
 //! entry in flight ([`GapBuffer::begin_send`]), releases the lock, sends,
 //! and then re-takes the lock to either [`GapBuffer::finish_send`] (pop
 //! it) or [`GapBuffer::abort_send`] (leave it at the front for the
 //! retry). Each entry carries a monotonic sequence number so those two
-//! calls name exactly the message the worker sent, and `DropOldest`
+//! calls name exactly the message the drain sent, and `DropOldest`
 //! eviction skips the in-flight entry so it is still at the front when
 //! the send returns.
 
@@ -147,9 +148,10 @@ impl GapBuffer {
     /// Panics in **all** builds if `seq` is the in-flight entry: those
     /// bytes are already in the transport's hands, and taking the entry
     /// out would leave the worker's `finish_send` to pop whatever message
-    /// came after it. Only the `Blocking` path reclaims, and it runs no
-    /// worker, so nothing is in flight there; the check is for the change
-    /// that one day calls this with a worker running.
+    /// came after it. Only the `Blocking` path reclaims, and only after
+    /// its drain has settled its last send, so nothing is in flight there;
+    /// the check is for the change that one day calls this with a drain
+    /// still running.
     pub(crate) fn reclaim(&mut self, seq: u64) -> Option<Vec<u8>> {
         assert_ne!(
             self.in_flight,
@@ -164,12 +166,12 @@ impl GapBuffer {
     ///
     /// # Panics
     ///
-    /// Debug builds assert that no send is in flight: the drain worker
-    /// settles its own entry with `finish_send` (crate-internal), and
-    /// popping out from under a live in-flight mark would leave that mark
-    /// pointing at a message the buffer no longer holds. (The inline
-    /// `Blocking` drain and any outside-crate caller run with no worker,
-    /// so the mark is `None` for them.)
+    /// Debug builds assert that no send is in flight: both drains settle
+    /// their own entry with `finish_send` (crate-internal), and popping
+    /// out from under a live in-flight mark would leave that mark
+    /// pointing at a message the buffer no longer holds. (An
+    /// outside-crate caller runs with no drain, so the mark is `None` for
+    /// it.)
     pub fn pop_front(&mut self) -> Option<Vec<u8>> {
         debug_assert!(
             self.in_flight.is_none(),
@@ -195,9 +197,10 @@ impl GapBuffer {
     ///
     /// # Panics
     ///
-    /// Debug builds assert that no send is already in flight — the drain
-    /// worker is the single caller and is single-threaded, so a second
-    /// `begin_send` would mean a lost settle call.
+    /// Debug builds assert that no send is already in flight — one drain
+    /// runs at a time (the background worker, or the `Blocking` drain
+    /// under the transport lock) and settles each send before the next,
+    /// so a second `begin_send` would mean a lost settle call.
     pub(crate) fn begin_send(&mut self) -> Option<(u64, Vec<u8>)> {
         debug_assert!(
             self.in_flight.is_none(),

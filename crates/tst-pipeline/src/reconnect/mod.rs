@@ -191,10 +191,11 @@ impl ManagedStatsHandle {
     /// (matches `socket_stats`'s None-on-poison shape — a read-only
     /// telemetry path must not panic).
     ///
-    /// Takes only the gap-buffer lock, and the background worker never
-    /// holds that across an inner send (locking invariant 4), so a
-    /// snapshot is never queued behind a stalled sink. `gap_len` counts a
-    /// message the worker is currently sending: it is queued until the
+    /// Takes only the gap-buffer lock, and neither the background worker
+    /// nor the `Blocking` replay that follows a reconnect holds that
+    /// across an inner send (locking invariant 4), so a snapshot is never
+    /// queued behind a stalled sink in either mode. `gap_len` counts a
+    /// message the drain is currently sending: it is queued until the
     /// send is acknowledged.
     ///
     /// # C ABI
@@ -831,18 +832,37 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         let Some(transport) = transport_guard.as_mut() else {
             return Ok(()); // can't drain without a transport
         };
+        // `inner` stays held for the whole drain; `gap` is taken only to
+        // mark the front message in flight and, after the send, to settle
+        // it (locking invariant 4, the same protocol as the background
+        // worker). The message stays queued — counted in `gap_len` — until
+        // it is settled, and every arm below settles before it returns.
+        //
+        // A panic inside the inner send leaves the mark set, but it also
+        // poisons `inner`: every later path to this drain (here, the
+        // in-line send, the reconnect install) reads the poison as
+        // `Broken` before it could mark another message, so the stale mark
+        // is never met.
+        //
         // The gap-accumulator is invariant-critical. See send_managed's
         // `# Panics` rustdoc for the rationale.
-        let mut gap = self
-            .gap
-            .lock()
-            .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
-        while let Some(msg) = gap.front() {
-            match transport.send_bytes(msg) {
+        let lock_gap = || {
+            self.gap
+                .lock()
+                .expect("BUG: gap lock poisoned — gap buffer is invariant-critical")
+        };
+        loop {
+            let Some((seq, msg)) = lock_gap().begin_send() else {
+                return Ok(());
+            }; // gap lock dropped — never held across the send below
+            let outcome = transport.send_bytes(&msg);
+            let mut gap = lock_gap();
+            match outcome {
                 Ok(()) => {
-                    gap.pop_front();
+                    gap.finish_send(seq);
                 }
                 Err(TransportError::Backpressure { errno_code, .. }) => {
+                    gap.abort_send(seq);
                     // Forward the inner errno_code.
                     return Err(TransportError::Backpressure {
                         msg: "drain backpressure".into(),
@@ -852,6 +872,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 Err(TransportError::Broken {
                     errno_code, cause, ..
                 }) => {
+                    gap.abort_send(seq);
+                    drop(gap);
                     // Forward the inner errno_code (and its cause);
                     // the wrapper doesn't have its own SRT origin.
                     // Un-publish the dead inner's wake handle along with the
@@ -866,6 +888,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     });
                 }
                 Err(TransportError::Closed) => {
+                    gap.abort_send(seq);
+                    drop(gap);
                     // Inner reported Closed (no errno surface) — surface as
                     // Broken so the caller's shell maps to TransportBroken.
                     *transport_guard = None;
@@ -878,16 +902,19 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 }
                 Err(TransportError::ExplicitClose) => {
                     // The inner was cancelled: terminal for the wrapper.
-                    // Both locks go first, so the wake handle is never
-                    // fired under `inner`.
+                    // Settle, then both locks go, so the wake handle is
+                    // never fired under `inner`.
+                    gap.abort_send(seq);
                     drop(gap);
                     drop(transport_guard);
                     return Err(self.inner_cancelled());
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    gap.abort_send(seq);
+                    return Err(e);
+                }
             }
         }
-        Ok(())
     }
 
     fn reconnect_and_drain(&self) -> Result<(), TransportError> {
