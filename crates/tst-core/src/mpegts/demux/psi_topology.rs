@@ -1430,6 +1430,7 @@ mod tests {
                 last_raw: 1,
                 last_unwrapped: 1,
             }),
+            latm_carry: Some(7),
             stats: Some(StreamStats::default()),
             codec: Some(StreamCodecCounters::new(CodecKind::Video)),
             subtitle_missing_descriptor_emitted: true,
