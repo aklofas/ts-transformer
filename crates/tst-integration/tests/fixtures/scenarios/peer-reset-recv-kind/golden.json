@@ -1,0 +1,14 @@
+{
+  "schema_version": 0,
+  "lossy": false,
+  "core": [
+    {
+      "event": "error",
+      "code": "BROKEN"
+    }
+  ],
+  "extensions": {
+    "c_code": -8,
+    "contract": "peer_reset_recv_kind"
+  }
+}

@@ -2021,6 +2021,180 @@ static int contract_cancelled_recv_kind(const char *scenarios_dir_path,
     return 0;
 }
 
+/* peer-reset-recv-kind - one plain TCP receive whose peer resets the
+ * connection: the observed code must be TST_E_TRANSPORT (-8), which is the
+ * golden's extensions.c_code and maps to its core code "BROKEN". A reset is a
+ * failure; TST_E_END_OF_STREAM (-12) is reserved for a clean FIN.
+ *
+ * The peer is a plain socket on this thread: listen on 127.0.0.1:0, open the
+ * receiver as caller to that port (the kernel completes the connect from the
+ * listen backlog), accept, write the committed input.bin, set SO_LINGER
+ * {on, 0} and close, which sends an RST. The receive then runs on a worker
+ * until its first non-zero return. The wait is a 10 s FAILURE bound scaled by
+ * TST_TEST_TIMEOUT_SCALE; on a miss tst_tcp_receiver_cancel (lock-free, safe
+ * while the worker holds the handle) ends the receive before the verdict. */
+typedef struct {
+    struct TstTcpReceiver *rx;
+    _Atomic int rc;
+    _Atomic int done;
+    char detail[256];
+} peer_reset_state_t;
+
+static void *peer_reset_worker(void *arg) {
+    peer_reset_state_t *st = arg;
+    uint8_t buf[1316];
+    size_t n = 0;
+    int rc;
+    do {
+        rc = tst_tcp_receiver_recv_ts(st->rx, buf, sizeof buf, &n);
+    } while (rc == 0);
+    /* thread-local last error: read it HERE, on the calling thread */
+    snprintf(st->detail, sizeof st->detail, "%s", tst_get_last_error_str());
+    atomic_store(&st->rc, rc);
+    atomic_store(&st->done, 1);
+    return NULL;
+}
+
+/* The scale the Rust tests' `scaled()` helper reads: a whole number >= 1,
+ * default 1. */
+static unsigned timeout_scale(void) {
+    const char *v = getenv("TST_TEST_TIMEOUT_SCALE");
+    if (!v || !*v) {
+        return 1;
+    }
+    char *end = NULL;
+    unsigned long n = strtoul(v, &end, 10);
+    return (end && *end == '\0' && n >= 1 && n <= 1000) ? (unsigned)n : 1;
+}
+
+static int contract_peer_reset_recv_kind(const char *scenarios_dir_path,
+                                         const scenario_entry_t *entry,
+                                         core_event_list_t *out_events) {
+    char *input_path = path_join(scenarios_dir_path, entry->input);
+    if (!input_path) return -1;
+    size_t input_len = 0;
+    uint8_t *input_data = read_file(input_path, &input_len);
+    free(input_path);
+    if (!input_data) return -1;
+
+    /* The peer's listener: loopback, kernel-picked port, read back. */
+    int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = 0;
+    socklen_t alen = sizeof a;
+    if (lfd < 0 || bind(lfd, (struct sockaddr *)&a, sizeof a) != 0 || listen(lfd, 1) != 0
+        || getsockname(lfd, (struct sockaddr *)&a, &alen) != 0) {
+        perror("peer-reset-recv-kind: listen on 127.0.0.1:0");
+        free(input_data);
+        if (lfd >= 0) close(lfd);
+        return -1;
+    }
+    char url[64];
+    snprintf(url, sizeof url, "tcp://127.0.0.1:%u", (unsigned)ntohs(a.sin_port));
+    struct TstTcpReceiver *rx = tst_tcp_recv_open(url);
+    if (!rx) {
+        fprintf(stderr, "FAIL [%s]: tst_tcp_recv_open: %s\n", entry->id,
+                tst_get_last_error_str());
+        free(input_data);
+        close(lfd);
+        return -1;
+    }
+
+    /* Accept, write the packet, then close with an RST. */
+    int cfd = accept(lfd, NULL, NULL);
+    close(lfd);
+    if (cfd < 0) {
+        perror("peer-reset-recv-kind: accept");
+        free(input_data);
+        tst_tcp_receiver_close(rx);
+        return -1;
+    }
+    size_t off = 0;
+    while (off < input_len) {
+        ssize_t w = write(cfd, input_data + off, input_len - off);
+        if (w <= 0) {
+            perror("peer-reset-recv-kind: write");
+            free(input_data);
+            close(cfd);
+            tst_tcp_receiver_close(rx);
+            return -1;
+        }
+        off += (size_t)w;
+    }
+    free(input_data);
+    struct linger lg = { .l_onoff = 1, .l_linger = 0 };
+    if (setsockopt(cfd, SOL_SOCKET, SO_LINGER, &lg, sizeof lg) != 0) {
+        perror("peer-reset-recv-kind: SO_LINGER");
+        close(cfd);
+        tst_tcp_receiver_close(rx);
+        return -1;
+    }
+    close(cfd); /* RST */
+
+    /* HEAP, for the same reason as cancelled-recv-kind: the detached worker
+     * writes into it until its receive returns, and a failed verdict leaks it
+     * rather than free memory the worker may still touch. */
+    peer_reset_state_t *st = calloc(1, sizeof *st);
+    if (!st) {
+        perror("calloc");
+        tst_tcp_receiver_close(rx);
+        return -1;
+    }
+    st->rx = rx;
+    pthread_t th;
+    if (pthread_create(&th, NULL, peer_reset_worker, st) != 0) {
+        perror("pthread_create");
+        free(st);
+        tst_tcp_receiver_close(rx);
+        return -1;
+    }
+    pthread_detach(th);
+
+    unsigned polls = 200 * timeout_scale(); /* 10 s x scale, 50 ms each */
+    for (unsigned i = 0; i < polls && !atomic_load(&st->done); i++) {
+        usleep(50 * 1000);
+    }
+    if (!atomic_load(&st->done)) {
+        tst_tcp_receiver_cancel(rx);
+        for (int i = 0; i < 100 && !atomic_load(&st->done); i++) { /* <= 5 s */
+            usleep(50 * 1000);
+        }
+        fprintf(stderr, "FAIL [%s]: the receive did not fail within %u s of the reset\n",
+                entry->id, 10 * timeout_scale());
+        if (atomic_load(&st->done)) {
+            tst_tcp_receiver_close(rx);
+            free(st);
+        } /* else: worker still parked - leak both */
+        return -1;
+    }
+    tst_tcp_receiver_close(rx);
+
+    int rc = atomic_load(&st->rc);
+    char detail[sizeof st->detail];
+    snprintf(detail, sizeof detail, "%s", st->detail);
+    free(st);
+
+    if (rc != TST_E_TRANSPORT) {
+        fprintf(stderr,
+                "FAIL [%s]: expected TST_E_TRANSPORT (%d) after a peer reset, got %d (%s)\n",
+                entry->id, (int)TST_E_TRANSPORT, rc, detail);
+        return -1;
+    }
+    fprintf(stdout,
+            "  [peer-reset-recv-kind] recv_ts after a peer reset -> TST_E_TRANSPORT (last "
+            "error: \"%s\") - maps to BROKEN\n",
+            detail);
+    core_event_t ev;
+    memset(&ev, 0, sizeof ev);
+    ev.kind = CE_ERROR;
+    strncpy(ev.code, "BROKEN", sizeof(ev.code) - 1);
+    core_event_list_push(out_events, &ev);
+    return 0;
+}
+
 static int run_binding_contract(const char *scenarios_dir_path,
                                 const scenario_entry_t *entry,
                                 core_event_list_t *out_events) {
@@ -2039,6 +2213,9 @@ static int run_binding_contract(const char *scenarios_dir_path,
     }
     if (strcmp(entry->id, "cancelled-recv-kind") == 0) {
         return contract_cancelled_recv_kind(scenarios_dir_path, entry, out_events);
+    }
+    if (strcmp(entry->id, "peer-reset-recv-kind") == 0) {
+        return contract_peer_reset_recv_kind(scenarios_dir_path, entry, out_events);
     }
     fprintf(stderr, "ERROR: unknown binding_contract scenario: %s\n", entry->id);
     return -1;

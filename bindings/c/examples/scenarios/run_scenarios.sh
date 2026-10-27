@@ -27,9 +27,9 @@ WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "$SCRIPT_DIR/../../../.." && pwd)}"
 echo "workspace root: $WORKSPACE_ROOT"
 
 # ── Stage one all-features package ───────────────────────────────────────────
-# --all-features, not the default build: the `cancelled-recv-kind` scenario
-# calls the srt-gated receiver/raw-sender entry points, and tst-c's transport
-# features are default-OFF. The header, tstrans_config.h and library must come
+# --all-features, not the default build: the `cancelled-recv-kind` and
+# `peer-reset-recv-kind` scenarios call the srt- and tcp-gated receiver
+# entry points, and tst-c's transport features are default-OFF. The header, tstrans_config.h and library must come
 # from the same build: the committed bindings/c/include/tstrans_config.h
 # defines no TST_HAS_*, so compiling against it hides those declarations.
 # c-package.sh builds and stages all three, as the ci.yml "C scenario adapter"

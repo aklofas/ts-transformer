@@ -411,6 +411,7 @@ class ScenarioReproductionTest {
     /** binding_contract ids and the JUnit test that covers each on the JVM, or why none does. */
     static final Map<String, String> BINDING_CONTRACT = Map.of(
         "cancelled-recv-kind", "covered: CancelledRecvKindGoldenTest",
+        "peer-reset-recv-kind", "covered: PeerResetRecvKindGoldenTest",
         "strict-rejection", "covered: DemuxerConfigTest.strictFullRejectsGarbageAsUnrecoverable "
             + "(the JVM kind is UNRECOVERABLE; STRICT_REJECTION is the golden's umbrella code)",
         "malformed-psi-strict", "covered: DemuxerConfigTest.strictFullRejectsNonConformantInput",

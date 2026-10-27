@@ -64,6 +64,7 @@ pub fn all_scenarios() -> Vec<Box<dyn Scenario>> {
         Box::new(ForgedHandle),
         Box::new(ExceptionKindStability),
         Box::new(CancelledRecvKind),
+        Box::new(PeerResetRecvKind),
     ]
 }
 
@@ -2202,6 +2203,59 @@ impl Scenario for CancelledRecvKind {
                 "contract": "cancelled_recv_kind",
                 "detail": "cancelled from another thread",
                 "c_code": -7
+            }),
+        };
+        (artifact_rel, golden)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Scenario 21 - peer-reset-recv-kind (binding_contract)
+// -----------------------------------------------------------------------------
+
+/// `kind = "binding_contract"`, `features = ["tcp"]`: a plain TCP receive whose
+/// peer writes one packet and then resets the connection (`SO_LINGER` zero)
+/// must surface the SAME kind in every binding - Rust `BindingErrorKind::Broken`
+/// ("BROKEN"), C `TST_E_TRANSPORT` (-8), Python `TcpErrorKind.BROKEN`, JVM
+/// `TcpException.Kind.BROKEN`. A reset is a failure, not a clean end of stream
+/// (-12 is reserved for a FIN). The generator is socket-free: it writes the
+/// one TS null packet the adapters' peer sends before the reset and returns
+/// the expected envelope; the live reset runs inside each adapter.
+///
+/// This generator NEVER reads from testfiles/ or local/ directories.
+struct PeerResetRecvKind;
+
+impl Scenario for PeerResetRecvKind {
+    fn id(&self) -> &'static str {
+        "peer-reset-recv-kind"
+    }
+    fn kind(&self) -> &'static str {
+        "binding_contract"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec!["tcp"]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        // One TS null packet (PID 0x1FFF): what the peer writes before the
+        // reset, so the receive sees data first and the reset second.
+        let pkt = ts_packet(0x1FFF, false, &[]);
+
+        let artifact_rel = PathBuf::from(self.id()).join("input.bin");
+        write_file(&out_dir.join(&artifact_rel), &pkt);
+
+        let golden = Golden {
+            schema_version: 0,
+            lossy: false,
+            core: vec![CoreEvent::Error {
+                code: "BROKEN".to_string(),
+            }],
+            extensions: serde_json::json!({
+                "contract": "peer_reset_recv_kind",
+                "c_code": -8
             }),
         };
         (artifact_rel, golden)
