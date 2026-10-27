@@ -1,0 +1,35 @@
+{
+  "schema_version": 0,
+  "lossy": false,
+  "core": [
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 0,
+      "payload_sha256": "24a4cccc3d35fc377c02db3bfa4ed15b184672eb3e0b205412393cda38888973"
+    },
+    {
+      "event": "error",
+      "code": "MALFORMED_PES"
+    },
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 1920,
+      "payload_sha256": "04857d233d04132ca3fce1779210a9a47ee8f2c88098514c6eea7e00be720a09"
+    },
+    {
+      "event": "audio",
+      "program": 1,
+      "pid": 257,
+      "stream_type": "0x0f",
+      "pts": 3840,
+      "payload_sha256": "24a4cccc3d35fc377c02db3bfa4ed15b184672eb3e0b205412393cda38888973"
+    }
+  ],
+  "extensions": null
+}

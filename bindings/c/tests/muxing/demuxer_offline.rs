@@ -169,3 +169,86 @@ fn demuxer_feed_null_data_pointer_returns_error() {
         tst_demuxer_close(d);
     }
 }
+
+// ── Test: PES header kinds reach the C discriminator ────────────────────────
+
+/// A PES with `PTS_DTS_flags = '10'` but `PES_header_data_length = 0` has no
+/// room for its PTS (H.222.0 §2.4.3.7). The C event carries the
+/// `HeaderDataLengthTooShort` kind as `table_id = 5`.
+#[test]
+fn demuxer_reports_header_data_length_too_short_as_table_id_5() {
+    use tst_core::mpegts::common::Pts90khz;
+    use tst_core::mpegts::mux::{AudioCodec, Muxer, MuxerConfig, MuxerProgramConfigBuilder};
+    use tstrans::event::{TstEventKind, TstNonConformantCode};
+
+    const AUDIO_PID: u16 = 0x101;
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_audio(AUDIO_PID, AudioCodec::Aac);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().expect("valid muxer config")
+    };
+    let mut mux = Muxer::new(cfg).expect("muxer init");
+    // A 15-byte ADTS frame: 7-byte header + 8 payload bytes.
+    let adts = [
+        0xFF, 0xF1, 0x50, 0x80, 0x01, 0xFF, 0xFC, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
+    ];
+    mux.push_audio(&adts, Pts90khz::new(90_000))
+        .expect("push_audio");
+    let mut ts = Vec::new();
+    let mut buf = vec![0u8; 7 * 188];
+    loop {
+        let n = mux.pull(&mut buf);
+        if n == 0 {
+            break;
+        }
+        ts.extend_from_slice(&buf[..n]);
+    }
+
+    // Zero PES_header_data_length on the audio PES; the flags still say PTS.
+    let mut patched = false;
+    for pkt in ts.chunks_exact_mut(188) {
+        let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
+        let pusi = pkt[1] & 0x40 != 0;
+        if pid != AUDIO_PID || !pusi {
+            continue;
+        }
+        let payload = if pkt[3] & 0x20 != 0 {
+            5 + usize::from(pkt[4])
+        } else {
+            4
+        };
+        let pes = &mut pkt[payload..];
+        assert_eq!(&pes[..3], &[0x00, 0x00, 0x01], "PES start code");
+        assert_eq!(pes[7] >> 6, 0b10, "muxer wrote PTS only");
+        pes[8] = 0;
+        patched = true;
+        break;
+    }
+    assert!(patched, "no PES start on the audio PID");
+
+    unsafe {
+        let d = tst_demuxer_open();
+        assert!(!d.is_null());
+        assert_eq!(tst_demuxer_feed(d, ts.as_ptr(), ts.len()), 0);
+        assert_eq!(tst_demuxer_flush(d), 0);
+        let mut table_ids = Vec::new();
+        loop {
+            let mut out = TstEvent::default();
+            let rc = tst_demuxer_next_event(d, &mut out);
+            if rc == TstError::NotAvailable as i32 {
+                break;
+            }
+            assert_eq!(rc, 0, "tst_demuxer_next_event returned unexpected {rc}");
+            if out.kind == TstEventKind::NonConformant as i32
+                && out.u.nonconformant.issue_code == TstNonConformantCode::PesHeaderMalformed as i32
+            {
+                assert_eq!(out.u.nonconformant.pid, AUDIO_PID);
+                table_ids.push(out.u.nonconformant.table_id);
+            }
+        }
+        tst_demuxer_close(d);
+        assert_eq!(table_ids, vec![5], "HeaderDataLengthTooShort discriminator");
+    }
+}

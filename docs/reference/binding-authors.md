@@ -378,7 +378,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **25** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **26** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -652,6 +652,13 @@ baseline (by design)" for the full rationale.
       name and a name in another case answer 0. A program that loads
       libtstrans at run time asks before resolving a feature's symbols. No
       existing symbol, layout, enum value or error code changed.
+    - `26` — new discriminator values on existing `TstNonConformantCode`
+      kinds (no struct layout change — all reuse existing carriers):
+      `PesHeaderMalformed` `table_id` 5 = `HeaderDataLengthTooShort`;
+      `PsiSyntax` `obu_type` 3 = `SectionNumberOutOfRange` (`cc_observed` =
+      the observed section_number), 4 = `Malformed`; `NalHeader` `obu_type`
+      4 = `Truncated`; `Av1ObuHeader` `obu_type` 3 = `Truncated`,
+      4 = `InvalidEmulationPrevention`.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 

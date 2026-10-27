@@ -13,7 +13,7 @@
 //! transport surfaces are gated on the `rtp` cargo feature. The
 //! offline byte-feeding `tst_demuxer_*` surface is unconditional (no
 //! feature gate), as is the offline `tst_muxer_*` surface (un-gated from
-//! `srt` in ABI 0.9). ABI minor is `0.25` (see [`TST_ABI_VERSION_MINOR`]).
+//! `srt` in ABI 0.9). ABI minor is `0.26` (see [`TST_ABI_VERSION_MINOR`]).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // every extern "C" fn has a /// header documenting the contract
@@ -256,12 +256,12 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 /// Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
 /// for the bump policy.
 ///
-/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 25` in the
+/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 26` in the
 /// generated header. Runtime accessor: [`tst_get_abi_version_minor`].
 ///
 /// What each minor added is recorded once, in the repository's
 /// `docs/reference/binding-authors.md` § "Versioning".
-pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 25;
+pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 26;
 
 // =========================================================================
 // Runtime version accessors
