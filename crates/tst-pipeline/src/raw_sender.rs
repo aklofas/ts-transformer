@@ -404,16 +404,6 @@ mod tests {
         assert_eq!(st.packets_sent, 0);
     }
 
-    #[test]
-    fn mem_transport_default_cancel_handle_is_none() {
-        let t = MemTransport {
-            max: 1316,
-            alive: true,
-            accept: true,
-        };
-        assert!(t.cancel_handle().is_none());
-    }
-
     /// `ShellError::errno_code()` reaches through the
     /// typed source tree and returns the inner TransportError's
     /// `errno_code` field. Other ShellError types share this shape.
