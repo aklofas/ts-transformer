@@ -674,11 +674,13 @@ pub enum NonConformantIssue {
     },
 
     /// PSI section reassembly observed a continuity-counter jump on a
-    /// continuation packet. Per ISO/IEC 13818-1 §2.4.3.3 PSI continuation
+    /// continuation packet, or on a PUSI packet while a partial section was
+    /// buffered. Per ISO/IEC 13818-1 §2.4.3.3 PSI continuation
     /// packets must increment the CC; a jump means an upstream packet drop.
     /// Strict reassembly (`DemuxerConfig::lenient_psi_reassembly = false`, the
     /// default) drops the partial section and emits this issue, matching
-    /// ffmpeg's `mpegts.c:3118-3142` behavior. Lenient mode feeds the bytes
+    /// ffmpeg's `mpegts.c:3118-3142` behavior; on a PUSI packet the bytes
+    /// before the pointer_field target are dropped with it (§2.4.4.2). Lenient mode feeds the bytes
     /// through; the section then either passes by luck or surfaces as
     /// `PsiChecksumMismatch`.
     #[error(
@@ -946,6 +948,13 @@ pub enum PsiSyntaxKind {
     /// A reserved/fixed bit field held a non-spec value. Surfaced only when
     /// `StrictMode != Off` (gated to avoid lenient-mode false positives).
     ReservedBits,
+    /// `section_number` exceeded `last_section_number` (H.222.0 §2.4.4.5).
+    /// The section is ignored; an in-progress multi-section table is kept.
+    SectionNumberOutOfRange { observed: u8 },
+    /// The section claims to be a PAT or PMT but the parser rejected it: a
+    /// length field or loop is inconsistent (for example a descriptor loop
+    /// or program loop that overruns the section). The section is ignored.
+    Malformed,
 }
 
 /// Spec-clause that a NAL header byte violated. Carried inside
@@ -1232,6 +1241,13 @@ fn fmt_psi_syntax(
             write!(f, "section_number={observed} != 0 on single-section table")?
         }
         PsiSyntaxKind::ReservedBits => write!(f, "reserved bits not at spec values")?,
+        PsiSyntaxKind::SectionNumberOutOfRange { observed } => {
+            return write!(
+                f,
+                "section_number={observed} > last_section_number (H.222.0 §2.4.4.5)"
+            );
+        }
+        PsiSyntaxKind::Malformed => write!(f, "malformed section rejected by the parser")?,
     }
     write!(f, " (H.222.0 §2.4.4)")
 }
@@ -1311,8 +1327,10 @@ mod tests {
             (I::PsiSyntax { pid: 0, table_id: 2, kind: PsiSyntaxKind::SectionSyntaxIndicatorUnset }, "PSI syntax violation on PID 0x0000 (table_id=0x02): section_syntax_indicator != 1 (H.222.0 §2.4.4)".into()),
             (I::PsiSyntax { pid: 0, table_id: 2, kind: PsiSyntaxKind::SectionNumberNonZero { observed: 3 } }, "PSI syntax violation on PID 0x0000 (table_id=0x02): section_number=3 != 0 on single-section table (H.222.0 §2.4.4)".into()),
             (I::PsiSyntax { pid: 0, table_id: 2, kind: PsiSyntaxKind::ReservedBits }, "PSI syntax violation on PID 0x0000 (table_id=0x02): reserved bits not at spec values (H.222.0 §2.4.4)".into()),
+            (I::PsiSyntax { pid: 0, table_id: 0, kind: PsiSyntaxKind::SectionNumberOutOfRange { observed: 2 } }, "PSI syntax violation on PID 0x0000 (table_id=0x00): section_number=2 > last_section_number (H.222.0 §2.4.4.5)".into()),
+            (I::PsiSyntax { pid: 0x100, table_id: 2, kind: PsiSyntaxKind::Malformed }, "PSI syntax violation on PID 0x0100 (table_id=0x02): malformed section rejected by the parser (H.222.0 §2.4.4)".into()),
         ];
-        assert_eq!(cases.len(), 59);
+        assert_eq!(cases.len(), 61);
         for (issue, want) in &cases {
             assert_eq!(&issue.to_string(), want, "{issue:?}");
         }

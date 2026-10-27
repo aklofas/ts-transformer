@@ -36,6 +36,9 @@ pub(super) enum PatReassemblyOutcome {
     /// section disagreed on `last_section_number` for the same table. Caller
     /// emits `PsiMultiSectionUnsupported`. Buffer is reset.
     Broken,
+    /// `section_number > last_section_number` (H.222.0 §2.4.4.5). The
+    /// section is ignored and the in-progress table is kept.
+    OutOfRange { observed: u8 },
 }
 
 impl PatReassembler {
@@ -49,6 +52,14 @@ impl PatReassembler {
     /// Feed one section of a multi-section PAT (caller guarantees
     /// `s.last_section_number != 0`).
     pub(super) fn accept(&mut self, s: &PatSection) -> PatReassemblyOutcome {
+        // H.222.0 §2.4.4.5: section_number never exceeds last_section_number.
+        // Such a section could never complete the table; ignore it before it
+        // can disturb the table in progress.
+        if s.section_number > s.last_section_number {
+            return PatReassemblyOutcome::OutOfRange {
+                observed: s.section_number,
+            };
+        }
         let key = (s.transport_stream_id, s.version, s.current_next_indicator);
         match self.key {
             Some(k) if k != key => {
@@ -148,6 +159,24 @@ mod tests {
             }
             other => panic!("expected Complete, got {other:?}"),
         }
+    }
+
+    /// H.222.0 §2.4.4.5: section_number never exceeds last_section_number.
+    #[test]
+    fn out_of_range_section_is_ignored_and_keeps_the_table() {
+        let mut r = PatReassembler::default();
+        assert_eq!(
+            r.accept(&make_section(1, 0, 0, 1, &[(1, 0x100)])),
+            PatReassemblyOutcome::Pending
+        );
+        assert_eq!(
+            r.accept(&make_section(1, 0, 2, 1, &[(3, 0x300)])),
+            PatReassemblyOutcome::OutOfRange { observed: 2 }
+        );
+        assert!(matches!(
+            r.accept(&make_section(1, 0, 1, 1, &[(2, 0x200)])),
+            PatReassemblyOutcome::Complete(p) if p.len() == 2
+        ));
     }
 
     #[test]
