@@ -130,6 +130,24 @@ pub(crate) fn find_loas_sync(payload: &[u8]) -> Option<usize> {
         .position(starts_with_loas_sync)
 }
 
+/// Resync on a PES that may open inside a record: walk from the first
+/// [`find_loas_sync`] candidate, trusting it only when a whole record
+/// follows it inside the payload. A false `0x56 0b111x_xxxx` pair in a
+/// record's tail carries a bogus length that usually runs past the PES, so
+/// an unconfirmed candidate is never turned into a carry.
+///
+/// Returns the walk's carry (see [`walk_loas`]) when confirmed; `None` when
+/// there is no candidate, the first record does not fit, or the walk fails.
+pub(crate) fn resync_loas(payload: &[u8]) -> Option<Option<usize>> {
+    let at = find_loas_sync(payload)?;
+    let header = payload.get(at..at + 3)?;
+    let first_record_end = at + 3 + ((usize::from(header[1] & 0x1F) << 8) | usize::from(header[2]));
+    if first_record_end > payload.len() {
+        return None;
+    }
+    walk_loas(payload, at).ok()
+}
+
 /// `true` when `bytes` begins with the 11-bit LOAS syncword `0x2B7`.
 pub(crate) fn starts_with_loas_sync(bytes: &[u8]) -> bool {
     matches!(bytes, [b0, b1, ..]
@@ -209,6 +227,21 @@ mod tests {
         assert_eq!(find_loas_sync(&buf), Some(MAX_LOAS_RECORD_BYTES - 1));
         buf.insert(0, 0x00);
         assert_eq!(find_loas_sync(&buf), None);
+    }
+
+    #[test]
+    fn resync_loas_trusts_a_candidate_only_when_a_whole_record_follows() {
+        let mut buf = vec![0x00; 4];
+        buf.extend_from_slice(&build_loas_record(8));
+        assert_eq!(resync_loas(&buf), Some(None));
+        buf.extend_from_slice(&build_loas_record(50)[..20]);
+        assert_eq!(resync_loas(&buf), Some(Some(33)));
+        // False pair whose length (0xFF) runs past the payload.
+        let mut tail = vec![0x00; 4];
+        tail.extend_from_slice(&[0x56, 0xE0, 0xFF, 0x00]);
+        tail.extend_from_slice(&build_loas_record(8));
+        assert_eq!(resync_loas(&tail), None);
+        assert_eq!(resync_loas(&[0x00, 0x56, 0xE0]), None);
     }
 
     #[test]

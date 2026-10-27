@@ -380,6 +380,7 @@ impl super::demuxer::Demuxer {
             let _ = self.record_pes_timing(&pes, stream);
         }
         // Its payload is not walked, so the LOAS record position is lost.
+        // `latm_unsynced` stays: lost bytes are more evidence of trouble.
         if let Some(state) = self.pid_state.get_mut(&pes.pid) {
             state.latm_carry = None;
         }
@@ -399,15 +400,18 @@ impl super::demuxer::Demuxer {
     /// - Carry unknown otherwise (after a gap, or a PID's first PES with
     ///   `data_alignment_indicator` = 0): the PES may open inside a record,
     ///   so it resyncs on the first syncword candidate within one record's
-    ///   length and walks from there. A PES with no candidate, or whose walk
-    ///   fails, counts as unsynced; the second such PES in a row raises
+    ///   length, trusted only when a whole record follows it inside the PES
+    ///   (`resync_loas`). A PES without a confirmed resync stores no carry
+    ///   and counts as unsynced; the second such PES in a row raises
     ///   `MissingSyncword` once, re-armed only by a successful walk. A false
-    ///   positive needs two consecutive PES after a gap that both lie wholly
-    ///   inside one record (at most `3 + 0x1FFF` bytes between them).
+    ///   positive needs two consecutive carry-unknown PES that both fail to
+    ///   confirm: each lies wholly inside one record (at most `3 + 0x1FFF`
+    ///   bytes) or opens a record's tail whose first candidate is a false
+    ///   syncword.
     /// - A damaged PES lost bytes, so it is not walked and the carry is lost.
     fn check_latm_framing(&mut self, pes: &PesPayload, damaged: bool, stream: StreamId) -> bool {
         use crate::codec::aac::latm::{
-            LatmFramingKind, find_loas_sync, starts_with_loas_sync, walk_loas,
+            LatmFramingKind, resync_loas, starts_with_loas_sync, walk_loas,
         };
         /// Consecutive unsynced PES that raise `MissingSyncword`.
         const UNSYNCED_LIMIT: u8 = 2;
@@ -422,9 +426,7 @@ impl super::demuxer::Demuxer {
             Some(n) => n,
             None if pes.data_alignment_indicator || starts_with_loas_sync(&pes.payload) => 0,
             None => {
-                let resynced =
-                    find_loas_sync(&pes.payload).and_then(|at| walk_loas(&pes.payload, at).ok());
-                if let Some(carry) = resynced {
+                if let Some(carry) = resync_loas(&pes.payload) {
                     state.latm_carry = carry;
                     state.latm_unsynced = 0;
                     return false;
@@ -1812,6 +1814,40 @@ mod tests {
         let ev = drain_all_events(&mut d);
         assert_eq!(latm_framing_count(&ev), 0, "{ev:?}");
         assert_eq!(sample_count(&ev, 0x104), 2, "{ev:?}");
+    }
+
+    /// A syncword candidate scanned after a gap is trusted only when a whole
+    /// record follows it inside the PES: a false `56 E0` pair in a record's
+    /// tail, whose bogus length runs past the PES, must not become the carry.
+    #[test]
+    fn false_sync_in_a_continuation_after_a_cc_gap_is_not_trusted() {
+        let mut d = latm_demuxer();
+        let mut es1 = loas_record(10);
+        es1.extend_from_slice(&loas_record(200)[..20]);
+        // PES 2 (after the lost CC 1): 30-byte tail of a record whose start
+        // was lost, holding a false sync pair (length 0xFF), then a record.
+        let mut es2 = vec![0x00; 30];
+        es2[5..8].copy_from_slice(&[0x56, 0xE0, 0xFF]);
+        es2.extend_from_slice(&loas_record(8));
+        let es3 = loas_record(300);
+        let es4 = loas_record(8);
+        let mut pkts = pes_to_packets(
+            0x104,
+            0,
+            &pes_bytes(0xC0, Some(90_000), None, true, &es1, true),
+        );
+        for (cc, es) in [(2, &es2), (3, &es3), (5, &es4)] {
+            pkts.extend(pes_to_packets(
+                0x104,
+                cc,
+                &pes_bytes(0xC0, None, None, false, es, true),
+            ));
+        }
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(latm_framing_count(&ev), 0, "{ev:?}");
+        assert_eq!(sample_count(&ev, 0x104), 4, "{ev:?}");
     }
 
     #[test]
