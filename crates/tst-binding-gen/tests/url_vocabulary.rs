@@ -1131,7 +1131,7 @@ const SRT_PARSE: &[Row] = &[
     (
         "srt://192.0.2.10:9000?passphrase=short",
         R(
-            "option validation failed for 'passphrase': invalid passphrase: passphrase length must be 10-79 chars (got 5)",
+            "option validation failed for 'passphrase': invalid passphrase: passphrase length must be 10-80 bytes (got 5)",
         ),
     ),
     (
@@ -1190,9 +1190,7 @@ const SRT_PARSE: &[Row] = &[
     ),
     (
         "srt://192.0.2.10:9000?streamid=%E2%82%AC",
-        R(
-            "option validation failed for 'streamid': invalid stream id: stream ID contains non-ASCII characters",
-        ),
+        A(&[("streamid", "€")]),
     ),
     (
         "srt://192.0.2.10:9000?tlpktdrop=0",
@@ -1460,9 +1458,7 @@ const SRT_PARSE: &[Row] = &[
     ),
     (
         "srt://192.0.2.10:9000?srt_streamid=%E2%82%AC",
-        R(
-            "option validation failed for 'streamid': invalid stream id: stream ID contains non-ASCII characters",
-        ),
+        A(&[("streamid", "€")]),
     ),
     (
         "srt://192.0.2.10:9000?recv_buffer_size=8M",

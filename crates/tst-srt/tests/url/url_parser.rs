@@ -108,9 +108,14 @@ fn streamid_with_embedded_equals() {
 }
 
 #[test]
-fn streamid_non_ascii_rejects() {
-    let e = SrtUrl::parse("srt://1.2.3.4:9000?streamid=h%C3%A9llo").unwrap_err();
-    assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
+fn streamid_utf8_is_accepted_up_to_512_bytes() {
+    let u = SrtUrl::parse("srt://1.2.3.4:9000?streamid=%23!::r=caf%C3%A9,m=publish").unwrap();
+    assert_eq!(u.config.stream_id.unwrap().as_str(), "#!::r=café,m=publish");
+    assert!(tst_srt::StreamId::new("é".repeat(256)).is_ok()); // 512 bytes
+    assert!(matches!(
+        tst_srt::StreamId::new(format!("{}a", "é".repeat(256))),
+        Err(tst_srt::error::StreamIdError::TooLong(513))
+    ));
 }
 
 #[test]

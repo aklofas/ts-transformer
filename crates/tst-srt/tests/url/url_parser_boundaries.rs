@@ -127,20 +127,26 @@ fn passphrase_min_length_10() {
     assert!(u.config.passphrase.is_some());
 }
 
+/// libsrt socketconfig.cpp: SRTO_PASSPHRASE accepts optlen 10..=80 bytes.
 #[test]
-fn passphrase_max_length_79() {
-    let p79 = "a".repeat(79);
-    let url = format!("srt://1.2.3.4:9000?passphrase={p79}");
-    let u = SrtUrl::parse(&url).unwrap();
-    assert!(u.config.passphrase.is_some());
+fn passphrase_max_length_80_bytes() {
+    let url = format!("srt://1.2.3.4:9000?passphrase={}", "a".repeat(80));
+    assert!(SrtUrl::parse(&url).is_ok());
 }
 
 #[test]
-fn passphrase_too_long_80() {
-    let p80 = "a".repeat(80);
-    let url = format!("srt://1.2.3.4:9000?passphrase={p80}");
+fn passphrase_too_long_81() {
+    let url = format!("srt://1.2.3.4:9000?passphrase={}", "a".repeat(81));
     let e = SrtUrl::parse(&url).unwrap_err();
     assert!(matches!(e, SrtUrlError::OptionValidation { .. }));
+}
+
+#[test]
+fn passphrase_counts_bytes_and_accepts_utf8() {
+    assert!(tst_srt::Passphrase::new("é".repeat(5)).is_ok()); // 10 bytes
+    assert!(tst_srt::Passphrase::new("é".repeat(40)).is_ok()); // 80 bytes
+    assert!(tst_srt::Passphrase::new("é".repeat(41)).is_err()); // 82 bytes
+    assert!(tst_srt::Passphrase::new("é".repeat(4)).is_err()); // 8 bytes
 }
 
 #[test]

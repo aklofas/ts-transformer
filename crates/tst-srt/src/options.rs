@@ -18,13 +18,12 @@ use std::path::Path;
 pub struct Passphrase(SecretString);
 
 impl Passphrase {
-    /// Construct from any string. Validates length (10–79) and ASCII-printable charset.
+    /// Construct from any string. Validates the UTF-8 byte length against
+    /// libsrt's own limit (10..=80 bytes, `HAICRYPT_SECRET_MAX_SZ`).
     ///
     /// # Errors
-    /// - [`PassphraseError::InvalidLength`] if the character count is
-    ///   outside the SRT-mandated 10..=79 range.
-    /// - [`PassphraseError::InvalidCharset`] if any byte is outside
-    ///   printable ASCII (`0x20..=0x7E`).
+    /// - [`PassphraseError::InvalidLength`] if the byte count is
+    ///   outside 10..=80.
     pub fn new(s: impl Into<String>) -> Result<Self, PassphraseError> {
         let s = s.into();
         Self::validate(&s)?;
@@ -36,8 +35,8 @@ impl Passphrase {
     /// # Errors
     /// - [`PassphraseError::EnvUnset`] if the named variable is unset
     ///   or empty.
-    /// - Length / charset errors from [`Self::new`] propagate as
-    ///   [`PassphraseError::InvalidLength`] / [`PassphraseError::InvalidCharset`].
+    /// - Length errors from [`Self::new`] propagate as
+    ///   [`PassphraseError::InvalidLength`].
     pub fn from_env(var: &str) -> Result<Self, PassphraseError> {
         let val = std::env::var(var).map_err(|_| PassphraseError::EnvUnset(var.to_string()))?;
         if val.is_empty() {
@@ -50,8 +49,8 @@ impl Passphrase {
     ///
     /// # Errors
     /// - [`PassphraseError::Io`] if the file cannot be read.
-    /// - Length / charset errors from [`Self::new`] propagate as
-    ///   [`PassphraseError::InvalidLength`] / [`PassphraseError::InvalidCharset`].
+    /// - Length errors from [`Self::new`] propagate as
+    ///   [`PassphraseError::InvalidLength`].
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, PassphraseError> {
         let s = std::fs::read_to_string(path.as_ref())?;
         let s = s.trim_end_matches(['\n', '\r']).to_string();
@@ -69,12 +68,9 @@ impl Passphrase {
     }
 
     fn validate(s: &str) -> Result<(), PassphraseError> {
-        let len = s.chars().count();
-        if !(10..=79).contains(&len) {
+        let len = s.len();
+        if !(10..=80).contains(&len) {
             return Err(PassphraseError::InvalidLength(len));
-        }
-        if !s.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
-            return Err(PassphraseError::InvalidCharset);
         }
         Ok(())
     }
@@ -206,13 +202,14 @@ impl Congestion {
 pub struct StreamId(String);
 
 impl StreamId {
+    /// Accepts any UTF-8 string of at most 512 bytes (the SRT draft's limit).
+    ///
+    /// # Errors
+    /// - [`StreamIdError::TooLong`] if the byte count exceeds 512.
     pub fn new(s: impl Into<String>) -> Result<Self, StreamIdError> {
         let s = s.into();
         if s.len() > 512 {
             return Err(StreamIdError::TooLong(s.len()));
-        }
-        if !s.is_ascii() {
-            return Err(StreamIdError::NonAscii);
         }
         Ok(Self(s))
     }
@@ -323,21 +320,17 @@ mod tests {
 
     #[test]
     fn passphrase_too_long() {
-        let s = "a".repeat(80);
+        let s = "a".repeat(81);
         assert!(matches!(
             Passphrase::new(s).unwrap_err(),
-            PassphraseError::InvalidLength(80)
+            PassphraseError::InvalidLength(81)
         ));
     }
 
     #[test]
-    fn passphrase_non_ascii() {
-        // 10+ chars, but contains non-printable
-        let s = "0123\x01abcdef";
-        assert!(matches!(
-            Passphrase::new(s).unwrap_err(),
-            PassphraseError::InvalidCharset
-        ));
+    fn passphrase_accepts_any_utf8_within_byte_range() {
+        assert!(Passphrase::new("0123\x01abcdef").is_ok());
+        assert!(Passphrase::new("a".repeat(80)).is_ok());
     }
 
     #[test]
@@ -415,11 +408,8 @@ mod tests {
     }
 
     #[test]
-    fn stream_id_non_ascii() {
-        assert!(matches!(
-            StreamId::new("café").unwrap_err(),
-            StreamIdError::NonAscii
-        ));
+    fn stream_id_utf8_accepted() {
+        assert_eq!(StreamId::new("café").unwrap().as_str(), "café");
     }
 
     #[test]
