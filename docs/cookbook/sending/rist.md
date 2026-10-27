@@ -64,7 +64,7 @@ clear.
 | `aes-type=128\|192\|256` | AES key size; needs `secret` too (else rejected)     |
 | `secret=...`             | AES PSK (URL-encoded); alone selects AES-256         |
 | `cname=...`              | RTCP CNAME identifier                                |
-| `recovery_maxbitrate=N`  | Retransmit bandwidth cap, kbps (librist `recovery_maxbitrate`) |
+| `recovery_maxbitrate=N`  | Bandwidth cap, kbps, payload plus retransmissions (librist `recovery_maxbitrate`) |
 | `session_timeout=N`      | Receiver session timeout (ms)                        |
 | `compression=1`          | Enable NULL-packet deletion                          |
 
