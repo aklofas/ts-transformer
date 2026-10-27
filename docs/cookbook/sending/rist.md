@@ -50,7 +50,9 @@ let tx = RistTransportBuilder::new("rist://video.example.com:9000")?
 ```
 
 Calling `.encryption(...)` automatically promotes profile to Main; Simple
-doesn't carry encryption.
+doesn't carry encryption, so a later `.profile(RistProfile::Simple)` makes
+`connect()` fail with `RistError::InvalidConfig` instead of sending in the
+clear.
 
 ## URL parameters
 
@@ -58,7 +60,7 @@ doesn't carry encryption.
 | ------------------------ | ---------------------------------------------------- |
 | `profile=simple\|main`   | RIST profile override                                |
 | `bandwidth=N`            | Alias of `recovery_maxbitrate=N` (same librist field; both with different values → parse error) |
-| `buffer=N`               | Recovery buffer in milliseconds                      |
+| `buffer=N`               | Recovery window in milliseconds, fixed at N (N >= 1) |
 | `aes-type=128\|192\|256` | AES key size; needs `secret` too (else rejected)     |
 | `secret=...`             | AES PSK (URL-encoded); alone selects AES-256         |
 | `cname=...`              | RTCP CNAME identifier                                |

@@ -382,7 +382,7 @@ Caller mode is the default when `?mode=` is omitted. URL query parameters
 (`passphrase`, `latency`, `streamid`, `mss`, `payloadsize`, …) apply
 from the SRT URL:
 
-A passphrase must be 10 to 79 characters, and the receiver must be
+A passphrase must be 10 to 80 bytes, and the receiver must be
 configured with the same one (`example-shared-secret` here):
 
 ```python

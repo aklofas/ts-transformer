@@ -400,7 +400,7 @@ Treat handles as moved-into the close call: set your local variable to `NULL` im
 
 **Configs are copied, not consumed, by `_open`.** `tst_mux_sender_open(url, cfg)`, `tst_muxer_open(cfg)`, and their managed variants copy what they need from the config; the caller still owns it and frees it with `tst_mux_config_free(cfg)`, right after the open or after reusing it for further opens.
 
-**`?pkt_size=` on `tcp://` and `rist://`.** A `tcp://` or `tcps://` URL accepts `?pkt_size=` (bytes, with the `K` and `M` suffixes) as the largest payload chunk one send takes, as a `udp://` URL does. A `rist://` sender URL accepts it as its per-send payload cap; a receiver ignores it.
+**`?pkt_size=` on `tcp://` and `rist://`.** A `tcp://` or `tcps://` URL accepts `?pkt_size=` (bytes, with the `K` and `M` suffixes) as the largest payload chunk one send takes, as a `udp://` URL does. A `rist://` sender URL accepts it as its per-send payload cap, from 1 to 9968 bytes; a receiver ignores it.
 
 **Error surface.** Errors are flat negative `TST_E_*` integers returned directly by the function. The most recent error is also written to a thread-local slot:
 

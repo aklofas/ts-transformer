@@ -24,7 +24,7 @@ Fix: `sudo apt-get install cmake` on Debian/Ubuntu, `brew install cmake` on macO
 
 **"could not find pkg-config"**
 
-By default the build script tries `pkg-config srt` first to detect a system libsrt before falling back to the vendored build. The pkg-config probe itself needs the `pkg-config` binary on PATH.
+By default the build script tries `pkg-config --static srt` first to detect a system libsrt before falling back to the vendored build. The pkg-config probe itself needs the `pkg-config` binary on PATH.
 
 Fix: install pkg-config, or set `SRT_FORCE_VENDORED=1` to skip the probe and go straight to the vendored compile.
 
@@ -81,9 +81,15 @@ matching-sizes advice is about send-path MTU fit, not receiver limits.)
 
 **`SrtConnectError::BadEncryption`**
 
-Encryption configuration was rejected before the handshake even ran. Usually one side has a malformed passphrase (the `Passphrase::new` constructor enforces 10-79 ASCII-printable bytes, but raw FFI users can sometimes bypass that).
+Encryption configuration was rejected before the handshake even ran. Usually one side has a malformed passphrase (the `Passphrase::new` constructor enforces 10 to 80 bytes of UTF-8, but raw FFI users can sometimes bypass that).
 
 Fix: build the `Passphrase` through `Passphrase::new` and let the constructor validate.
+
+**RIST: `RistError::InvalidConfig` "encryption needs the Main profile"**
+
+An encryption key is set together with `RistProfile::Simple`. The Simple profile sends RTP straight to UDP, so a key would go unused, and the connect or listen is refused before librist is called. This happens when `.profile(RistProfile::Simple)` follows `.encryption(...)`, and when a `RistConfig` sets both fields.
+
+Fix: use `RistProfile::Main` with the key, or drop the key for Simple. A URL with `secret=` or `aes-type=` selects Main by itself, in either parameter order.
 
 **`SrtConnectError::Rejected { reason: RejectReason::BadSecret, .. }`**
 
@@ -256,7 +262,7 @@ Fix: poll `ManagedTransport::stats_handle()`. `reconnecting: true` means a worke
 
 **Want to use a system libsrt instead of the vendored copy**
 
-Leave `SRT_FORCE_VENDORED` unset (the default) and ensure `pkg-config srt --modversion` returns 1.5.0 or newer. The build script probes pkg-config first and uses the system copy when available. If the probe fails or the version is too old, it transparently falls back to the vendored build.
+Leave `SRT_FORCE_VENDORED` unset (the default) and ensure `pkg-config --static srt` resolves and `pkg-config srt --modversion` returns 1.5.7 or newer (librist: `librist`, 0.2.20 or newer). With the `mbedtls` feature on, the library must also be built against mbedTLS (`mbedcrypto` in its static link set). The build script probes pkg-config first and uses the system copy when all of that holds. If the probe fails (a `Requires.private` entry without a `.pc`, as mbedTLS often ships, fails it), the version is too old or the crypto backend differs, it falls back to the vendored build; a refusal for version or backend prints a build warning naming the reason.
 
 **Want to force the vendored build for reproducibility**
 

@@ -136,7 +136,7 @@ pub const URL_KEYS: &[QueryKey<RistUrl>] = &[
     QueryKey::new(
         "recovery_maxbitrate",
         &["recovery-maxbitrate"],
-        "Retransmit bandwidth cap",
+        "Bandwidth cap (payload plus retransmissions)",
         "kilobits per second",
         set_recovery_maxbitrate,
     ),

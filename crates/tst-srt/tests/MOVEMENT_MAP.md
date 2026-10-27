@@ -11,6 +11,10 @@ Two changes landed together:
    second table). Their imports proved they only touch `tst_core` /
    `tst_pipeline`, so they did not belong in the SRT transport crate.
 
+This history predates the binaries added later (for example
+`deprecated_aliases`), so the counts above describe the consolidation as it
+happened; the "Current binaries" list is the authority.
+
 ## Current binaries
 
 - `deprecated_aliases`
