@@ -138,7 +138,8 @@ impl super::demuxer::Demuxer {
         );
         // A damage `Malformed` is always the outcome right before the
         // `Complete` it describes. Lenient mode carries the reason into that
-        // PES's emission; a strict mode applies its verdict now and drops it.
+        // PES's emission; a strict mode applies its verdict now and drops
+        // the PES's events (its timing still counts).
         // A PUSI ends whatever PES was in flight on the PID, completed or
         // dropped (cap, damage), so a reset that waited on it settles after
         // this packet's outcomes.
@@ -150,6 +151,7 @@ impl super::demuxer::Demuxer {
                 ReassemblyOutcome::Complete(pes) => {
                     if drop_next_complete == Some(pes.pid) {
                         drop_next_complete = None;
+                        self.drop_damaged_pes(pes);
                         continue;
                     }
                     let damage = damage_next_complete
@@ -253,31 +255,15 @@ impl super::demuxer::Demuxer {
             .map(|s| s.stream_type.as_byte())
     }
 
-    fn emit_complete_pes(&mut self, pes: PesPayload, damage: &mut Option<&'static str>) {
-        let kind = match self.stream_kind(pes.pid) {
-            Some(k) => k,
-            None => return,
-        };
-        let program_number = self.program_number_for_pid(pes.pid);
-        let stream = StreamId {
-            pid: pes.pid,
-            kind,
-            program_number,
-        };
-        // Surface PES header structural issues collected during
-        // parse_complete. These travel through the strict-mode cascade
-        // like any other NonConformantIssue. We process them BEFORE the
-        // PTS / DTS dispatch so consumers see the issue alongside the
-        // (possibly-truncated) sample event.
-        for kind_violation in &pes.header_issues {
-            self.queue_nonconformant(
-                stream,
-                NonConformantIssue::PesHeaderMalformed {
-                    pid: pes.pid,
-                    kind: *kind_violation,
-                },
-            );
-        }
+    /// The timing step of one completed PES: the PTS checks (backward step,
+    /// spacing, per-PES rules, the synchronous-metadata DTS) and the
+    /// `last_pts` and unwrap baselines. Returns the `(pts, dts)` the PES's
+    /// events carry. The caller settles a pending time-base reset after it.
+    fn record_pes_timing(
+        &mut self,
+        pes: &PesPayload,
+        stream: StreamId,
+    ) -> (Pts90khz, Option<Pts90khz>) {
         // PTS distinct from PCR. Only update `last_pts` when an actual PTS
         // arrived; never write 0 as a fallback (that corrupts the
         // monotonicity check for streams that omit PTS sporadically).
@@ -285,7 +271,7 @@ impl super::demuxer::Demuxer {
         // The stream_type byte comes from the PMT: KLV's PTS contract hangs
         // on the declared type (0x15), not on the payload shape.
         let stream_type = self.pmt_stream_type(pes.pid).unwrap_or(0);
-        match (pts_rule(&kind, stream_type), pes.pts) {
+        match (pts_rule(&stream.kind, stream_type), pes.pts) {
             (PtsRule::PerPes, None) => self.queue_nonconformant(
                 stream,
                 NonConformantIssue::MissingRequiredPts { pid: pes.pid },
@@ -310,8 +296,10 @@ impl super::demuxer::Demuxer {
         }
         // ST 1402-08: synchronous metadata PES carry a PTS only
         // (PTS_DTS_flags = '10'). Reported once per PID.
-        if matches!(kind, StreamKind::KlvSync { .. } | StreamKind::KlvAsync)
-            && stream_type == 0x15
+        if matches!(
+            stream.kind,
+            StreamKind::KlvSync { .. } | StreamKind::KlvAsync
+        ) && stream_type == 0x15
             && pes.dts.is_some()
             && set_once(&mut self.pid_state_mut(pes.pid).sync_pes_shape_emitted)
         {
@@ -338,14 +326,11 @@ impl super::demuxer::Demuxer {
         // Opt-in PTS/DTS unwrap (`DemuxerConfig::unwrap_timestamps`,
         // default off — the branch below is skipped entirely and `pts`/`dts`
         // stay exactly as computed above, so the default emit path is
-        // byte-for-byte unchanged). `pts` and `dts` are shadowed here, once,
-        // rather than at each event-construction site below — every event
-        // this function pushes (`Sample` for every `StreamKind`, and every
-        // `Metadata` KLV shape) reads from these same two locals, so shadowing
-        // them here covers all of it. A synthesized `pts = 0` from the
-        // missing-PTS branch above (`pes.pts.is_none()`) is never fed to the
-        // accumulator and is left as 0.
-        let (pts, dts) = if self.options.unwrap_timestamps {
+        // byte-for-byte unchanged). Every event of the PES (`Sample` for
+        // every `StreamKind`, and every `Metadata` KLV shape) carries the
+        // pair returned here. A synthesized `pts = 0` for a PES without a
+        // PTS is never fed to the accumulator and is left as 0.
+        if self.options.unwrap_timestamps {
             let unwrapped_pts = match pes.pts {
                 Some(raw) => self.unwrap_pts(pes.pid, raw),
                 None => pts,
@@ -372,7 +357,47 @@ impl super::demuxer::Demuxer {
             (unwrapped_pts, unwrapped_dts)
         } else {
             (pts, pes.dts)
+        }
+    }
+
+    /// A damaged PES a strict mode drops from delivery. Damage loses payload
+    /// bytes; the header and its PTS arrived, so the stream's timeline
+    /// includes the PES. It takes the same timing step as a delivered PES,
+    /// and only its events are skipped.
+    pub(super) fn drop_damaged_pes(&mut self, pes: PesPayload) {
+        if let Some(stream) = self.lookup_stream(pes.pid) {
+            // No events to stamp: the returned timestamps go unused.
+            let _ = self.record_pes_timing(&pes, stream);
+        }
+        self.settle_pts_baseline(pes.pid);
+    }
+
+    fn emit_complete_pes(&mut self, pes: PesPayload, damage: &mut Option<&'static str>) {
+        let kind = match self.stream_kind(pes.pid) {
+            Some(k) => k,
+            None => return,
         };
+        let program_number = self.program_number_for_pid(pes.pid);
+        let stream = StreamId {
+            pid: pes.pid,
+            kind,
+            program_number,
+        };
+        // Surface PES header structural issues collected during
+        // parse_complete. These travel through the strict-mode cascade
+        // like any other NonConformantIssue. We process them BEFORE the
+        // PTS / DTS dispatch so consumers see the issue alongside the
+        // (possibly-truncated) sample event.
+        for kind_violation in &pes.header_issues {
+            self.queue_nonconformant(
+                stream,
+                NonConformantIssue::PesHeaderMalformed {
+                    pid: pes.pid,
+                    kind: *kind_violation,
+                },
+            );
+        }
+        let (pts, dts) = self.record_pes_timing(&pes, stream);
         match kind {
             StreamKind::Video(codec) => {
                 // Raw-first: the demuxer no longer parses the video elementary
@@ -1494,6 +1519,72 @@ mod tests {
         assert!(sample_index(&ev, 0x101, 90_000).is_some(), "{ev:?}");
         assert!(
             !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
+            "{ev:?}"
+        );
+    }
+
+    /// A three-packet audio PES on 0x101 that loses its middle packet (a CC
+    /// gap); `cc` advances past all three.
+    fn damaged_audio_pes(cc: &mut u8, pts: Option<u64>) -> Vec<[u8; 188]> {
+        let mut pkts = pes_to_packets(
+            0x101,
+            *cc,
+            &pes_bytes(0xC0, pts, None, true, &[0xAA; 400], true),
+        );
+        assert_eq!(pkts.len(), 3);
+        pkts.remove(1);
+        *cc = cc.wrapping_add(3) & 0x0F;
+        pkts
+    }
+
+    fn feed_audio(
+        mode: StrictMode,
+        pkts: &[[u8; 188]],
+    ) -> (Result<(), DemuxError>, Vec<DemuxEvent>) {
+        let mut d = audio_demuxer(mode);
+        let result = feed_packets(&mut d, pkts);
+        d.flush();
+        (result, drain_all_events(&mut d))
+    }
+
+    /// A damaged PES a strict mode drops still carried its PTS on the wire:
+    /// the spacing is measured from it, not from the PTS before it.
+    #[test]
+    fn dropped_damaged_pes_pts_counts_for_the_spacing_rule() {
+        let mut cc = 0;
+        let mut pkts = audio_pes(&mut cc, Some(0));
+        pkts.extend(damaged_audio_pes(&mut cc, Some(60_000)));
+        pkts.extend(audio_pes(&mut cc, None));
+        pkts.extend(audio_pes(&mut cc, Some(70_000)));
+        let (result, ev) = feed_audio(StrictMode::TimingOnly, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+        assert!(sample_index(&ev, 0x101, 60_000).is_none(), "{ev:?}");
+    }
+
+    #[test]
+    fn dropped_damaged_pts_less_pes_opens_a_pts_less_run() {
+        let mut cc = 0;
+        let mut pkts = audio_pes(&mut cc, Some(0));
+        pkts.extend(damaged_audio_pes(&mut cc, None));
+        pkts.extend(audio_pes(&mut cc, Some(63_001)));
+        let (result, ev) = feed_audio(StrictMode::DescriptorsOnly, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
+    }
+
+    #[test]
+    fn dropped_damaged_pes_with_backward_pts_raises_pts_anomaly() {
+        let mut cc = 0;
+        let mut pkts = audio_pes(&mut cc, Some(900_000));
+        pkts.extend(damaged_audio_pes(&mut cc, Some(90_000)));
+        let (result, ev) = feed_audio(StrictMode::DescriptorsOnly, &pkts);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(sample_index(&ev, 0x101, 90_000).is_none(), "{ev:?}");
+        assert!(
+            issues(&ev)
                 .iter()
                 .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
             "{ev:?}"
