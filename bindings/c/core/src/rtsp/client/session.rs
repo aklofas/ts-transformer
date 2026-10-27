@@ -57,7 +57,6 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Mutex, TryLockError};
 use std::time::Duration;
 
-use secrecy::SecretString;
 use tst_core::RecvTransport;
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::{RtspCancelHandle, RtspClient, RtspClientBuilder, RtspSession};
@@ -141,7 +140,7 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
             return std::ptr::null_mut();
         }
         // SAFETY: caller guarantees valid, unaliased pointer from _new.
-        let b = unsafe { TstRtspClientBuilder::from_raw(builder) };
+        let mut b = unsafe { TstRtspClientBuilder::from_raw(builder) };
 
         // Start from the parsed URL itself: re-rendering it would drop the
         // userinfo and every query option. The explicit setters below then
@@ -152,8 +151,8 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
         }
 
         // Apply auth credentials if set by any _auth_* setter.
-        if let (Some(user), Some(pass)) = (b.username.clone(), b.password.clone()) {
-            rust_builder = rust_builder.auth(user, SecretString::from(pass));
+        if let (Some(user), Some(secret)) = (b.username.clone(), b.password.take()) {
+            rust_builder = rust_builder.auth(user, secret);
         }
 
         // Apply keepalive preference: builder default is auto-keepalive enabled.
