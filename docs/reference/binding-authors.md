@@ -566,7 +566,9 @@ baseline (by design)" for the full rationale.
         (SPS/PPS/VPS extraction from a parameter-set NAL stream). The
         conversion uses the two-call sizing idiom; no new error codes
         (`TST_E_BUFFER_FULL` / `TST_E_INVALID_CONFIG` / `TST_E_TOO_LARGE` /
-        `TST_E_NOT_FOUND` are reused). Unconditional, like the ST 0601
+        `TST_E_NOT_FOUND` are reused). `annexb` and `out` must not overlap;
+        `tst_annexb_to_length_prefixed` refuses overlap with
+        `TST_E_INVALID_CONFIG`. Unconditional, like the ST 0601
         surface.
       - **Managed-receiver lifecycle:** `tst_managed_demux_receiver_end_reason`
         (`TST_HAS_SRT`) reuses the existing (ABI 20) `TstStreamEndReason`

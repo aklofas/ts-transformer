@@ -1810,7 +1810,7 @@ and the two below.
   `cause: BrokenCause` (`CleanEof` for a peer FIN / TLS `close_notify`
   observed as a zero-length read on `tst-tcp`, `Unspecified` otherwise)
   in Rust only. The C ABI folds `Broken` into `TST_E_TRANSPORT` with the
-  message in the last-error string, and the Python / JVM `BROKEN` kinds
+  message in the last-error string. The exception is plain SRT receivers, which report `TST_E_END_OF_STREAM`. The Python / JVM `BROKEN` kinds
   carry only the message, so a binding caller still cannot tell a clean
   peer close from a read error without parsing that string. The Rust binding envelope carries it since 0.9.0 (`BindingError::diagnostics`); exposing it is a host change only.
 - **Why deferred:** the field was added additively so the Rust surface
