@@ -301,6 +301,10 @@ impl SrtListenerBuilder {
     pub fn latency_ms(&mut self, ms: u64) -> &mut Self {
         self.latency(Duration::from_millis(ms))
     }
+    pub fn peer_latency(&mut self, d: Duration) -> &mut Self {
+        self.config.socket.peer_latency = Some(d);
+        self
+    }
     pub fn recv_latency(&mut self, d: Duration) -> &mut Self {
         self.config.socket.recv_latency = Some(d);
         self
@@ -318,8 +322,17 @@ impl SrtListenerBuilder {
         self.config.socket.udp_recv_buffer_bytes = Some(n);
         self
     }
+    /// See `SrtSocketBuilder::udp_send_buffer_bytes`.
+    pub fn udp_send_buffer_bytes(&mut self, n: u32) -> &mut Self {
+        self.config.socket.udp_send_buffer_bytes = Some(n);
+        self
+    }
     pub fn max_bandwidth(&mut self, bw: MaxBandwidth) -> &mut Self {
         self.config.socket.max_bandwidth = Some(bw);
+        self
+    }
+    pub fn input_bandwidth(&mut self, bw: u64) -> &mut Self {
+        self.config.socket.input_bandwidth = Some(bw);
         self
     }
     pub fn overhead_bandwidth_pct(&mut self, pct: u8) -> &mut Self {
@@ -332,6 +345,11 @@ impl SrtListenerBuilder {
     /// sizing guidance.
     pub fn recv_buf_bytes(&mut self, n: u32) -> &mut Self {
         self.config.socket.recv_buf_bytes = Some(n);
+        self
+    }
+    /// See [`SrtSocketBuilder::send_buf_bytes`].
+    pub fn send_buf_bytes(&mut self, n: u32) -> &mut Self {
+        self.config.socket.send_buf_bytes = Some(n);
         self
     }
     pub fn loss_max_ttl(&mut self, n: u32) -> &mut Self {
