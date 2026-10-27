@@ -512,6 +512,14 @@ fn buf_bytes_to_i32(name: &str, n: u32) -> Result<i32, OptionError> {
     })
 }
 
+/// `SRTO_INPUTBW` takes an `i64`; a `u64` above `i64::MAX` would wrap negative
+/// through `as`, which libsrt reads as a different rate, so reject it instead.
+fn bw_to_i64(name: &str, n: u64) -> Result<i64, OptionError> {
+    i64::try_from(n).map_err(|_| {
+        OptionError::OutOfRange(format!("{name} must be at most {}, got {n}", i64::MAX))
+    })
+}
+
 /// Set `SRTO_RCVBUF` and warn if libsrt silently clamped it.
 ///
 /// libsrt accepts any positive value but stores
@@ -785,7 +793,8 @@ fn apply_common_options(
         set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_PAYLOADSIZE, n as i32)?;
     }
     if let Some(n) = opts.udp_recv_buffer_bytes {
-        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_UDP_RCVBUF, n as i32)?;
+        let bytes = buf_bytes_to_i32("udp_recv_buffer_bytes", n)?;
+        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_UDP_RCVBUF, bytes)?;
     }
     if let Some(n) = opts.loss_max_ttl {
         set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_LOSSMAXTTL, n as i32)?;
@@ -821,10 +830,12 @@ fn apply_common_options(
         set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_SNDBUF, bytes)?;
     }
     if let Some(bw) = opts.input_bandwidth {
-        set_i64(handle, srt_sys::SRT_SOCKOPT_SRTO_INPUTBW, bw as i64)?;
+        let bw = bw_to_i64("input_bandwidth", bw)?;
+        set_i64(handle, srt_sys::SRT_SOCKOPT_SRTO_INPUTBW, bw)?;
     }
     if let Some(n) = opts.udp_send_buffer_bytes {
-        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_UDP_SNDBUF, n as i32)?;
+        let bytes = buf_bytes_to_i32("udp_send_buffer_bytes", n)?;
+        set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_UDP_SNDBUF, bytes)?;
     }
     Ok(())
 }
@@ -1483,6 +1494,33 @@ mod tests {
         p.msRTT = -1.0;
         let stats3 = super::perf_to_stats(&p);
         assert_eq!(stats3.rtt, std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn udp_buffers_and_inputbw_above_signed_max_are_out_of_range() {
+        super::ensure_initialized();
+        for cfg in [
+            super::SrtSocketConfig {
+                udp_recv_buffer_bytes: Some(i32::MAX as u32 + 1),
+                ..Default::default()
+            },
+            super::SrtSocketConfig {
+                udp_send_buffer_bytes: Some(i32::MAX as u32 + 1),
+                ..Default::default()
+            },
+            super::SrtSocketConfig {
+                input_bandwidth: Some(i64::MAX as u64 + 1),
+                ..Default::default()
+            },
+        ] {
+            let h = unsafe { srt_sys::srt_create_socket() };
+            let r = super::apply_socket_config(h, &cfg);
+            unsafe { srt_sys::srt_close(h) };
+            assert!(
+                matches!(r, Err(crate::error::OptionError::OutOfRange(_))),
+                "{r:?}"
+            );
+        }
     }
 
     // SRTO_RCVBUF/SNDBUF take an i32: a byte count above i32::MAX must be

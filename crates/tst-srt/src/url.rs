@@ -369,6 +369,25 @@ impl SrtUrl {
     }
 }
 
+/// Integers are bare canonical decimals: libsrt-URL tools parse base-0, where
+/// `010` is 8 and `+5` is accepted, so a form whose meaning differs is refused.
+fn check_decimal(key: &str, value: &str) -> Result<(), SrtUrlError> {
+    let canonical = value == "0"
+        || (!value.starts_with('0')
+            && !value.is_empty()
+            && value.bytes().all(|b| b.is_ascii_digit()));
+    if canonical {
+        Ok(())
+    } else {
+        Err(SrtUrlError::InvalidValue {
+            key: key.to_string(),
+            detail: format!(
+                "expected a decimal integer without sign or leading zeros, got '{value}'"
+            ),
+        })
+    }
+}
+
 fn parse_int_nonneg<T>(key: &str, value: &str) -> Result<T, SrtUrlError>
 where
     T: std::str::FromStr<Err = std::num::ParseIntError>,
@@ -376,6 +395,7 @@ where
     // Strict-A: bare decimal, no suffix, non-negative. We rely on T's
     // from_str to enforce range. Use this for unsigned T (u8/u16/u32/u64);
     // signed callers go through parse_i32_nonneg, which adds the sign check.
+    check_decimal(key, value)?;
     value.parse::<T>().map_err(|e| SrtUrlError::InvalidValue {
         key: key.to_string(),
         detail: format!("expected non-negative decimal integer in range, got '{value}': {e}"),
@@ -383,6 +403,7 @@ where
 }
 
 fn parse_i32_nonneg(key: &str, value: &str) -> Result<i32, SrtUrlError> {
+    check_decimal(key, value)?;
     let n: i32 = value.parse().map_err(|e| SrtUrlError::InvalidValue {
         key: key.to_string(),
         detail: format!("expected i32 decimal, got '{value}': {e}"),
@@ -448,7 +469,13 @@ fn set_flow_window(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied 
 }
 
 fn set_input_bandwidth(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
-    c.input_bandwidth = Some(parse_int_nonneg("inputbw", value)?);
+    // The socket option is an i64, so the accepted range is 0..=i64::MAX.
+    check_decimal("inputbw", value)?;
+    let n: i64 = value.parse().map_err(|e| SrtUrlError::InvalidValue {
+        key: "inputbw".to_string(),
+        detail: format!("expected non-negative decimal integer in range, got '{value}': {e}"),
+    })?;
+    c.input_bandwidth = Some(n as u64);
     Ok(())
 }
 
@@ -585,12 +612,12 @@ fn set_too_late_drop(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applie
 fn set_udp_recv_buffer(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `udprcvbuf`; `recv_buffer_size` is the
     // ffmpeg-style alias.
-    c.udp_recv_buffer_bytes = Some(parse_int_nonneg("udprcvbuf", value)?);
+    c.udp_recv_buffer_bytes = Some(parse_i32_nonneg("udprcvbuf", value)? as u32);
     Ok(())
 }
 
 fn set_udp_send_buffer(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
-    c.udp_send_buffer_bytes = Some(parse_int_nonneg("udpsndbuf", value)?);
+    c.udp_send_buffer_bytes = Some(parse_i32_nonneg("udpsndbuf", value)? as u32);
     Ok(())
 }
 
