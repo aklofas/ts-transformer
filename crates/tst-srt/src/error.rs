@@ -19,8 +19,10 @@ use tst_core::mpegts::mux::MuxStreamKind;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PassphraseError {
-    #[error("passphrase length must be 10-79 chars (got {0})")]
+    #[error("passphrase length must be 10-80 bytes (got {0})")]
     InvalidLength(usize),
+    /// No longer returned: any UTF-8 passphrase of valid length is accepted.
+    /// Will be removed in the next breaking release.
     #[error("passphrase contains non-printable ASCII")]
     InvalidCharset,
     #[error("environment variable '{0}' is unset or empty")]
@@ -32,8 +34,10 @@ pub enum PassphraseError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum StreamIdError {
-    #[error("stream ID exceeds 512 chars (got {0})")]
+    #[error("stream ID exceeds 512 bytes (got {0})")]
     TooLong(usize),
+    /// No longer returned: stream IDs are UTF-8. Will be removed in the
+    /// next breaking release.
     #[error("stream ID contains non-ASCII characters")]
     NonAscii,
 }
@@ -704,7 +708,7 @@ mod tests {
         let e = PassphraseError::InvalidLength(5);
         assert_eq!(
             e.to_string(),
-            "passphrase length must be 10-79 chars (got 5)"
+            "passphrase length must be 10-80 bytes (got 5)"
         );
     }
 
