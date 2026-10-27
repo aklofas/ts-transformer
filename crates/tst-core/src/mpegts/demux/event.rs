@@ -580,10 +580,14 @@ pub enum NonConformantIssue {
     ///   most 0.7 s apart. A PES may omit its PTS; when the coded PTS on
     ///   either side of a run of PTS-less PES differ by more than 0.7 s,
     ///   this is raised once, just before the sample whose PTS closes the
-    ///   run. A gap between coded PTS with no PTS-less PES inside it is not
-    ///   diagnosed (the still-picture and low-frame-rate exceptions of
-    ///   §2.7.4 cannot be told apart from it), nor is a run with no coded
-    ///   PTS before it.
+    ///   run. A run is also timed by the program's PCR from its first PES:
+    ///   once the PCR has advanced more than 0.7 s with no coded PTS (a
+    ///   stream that never stamps one, or stops stamping), this is raised
+    ///   once for the run, before that PES's sample, and the PTS that later
+    ///   closes the run does not raise it again. A gap between coded PTS
+    ///   with no PTS-less PES inside it is not diagnosed (the still-picture
+    ///   and low-frame-rate exceptions of §2.7.4 cannot be told apart from
+    ///   it).
     /// - DVB subtitles (EN 300 743): raised for every PES without a PTS.
     /// - Synchronous KLV on a `stream_type` 0x15 PID (ST 1402-07): raised
     ///   for every PES without a PTS.
@@ -965,6 +969,8 @@ pub enum PsiSyntaxKind {
     /// The section claims to be a PAT or PMT but the parser rejected it: a
     /// length field or loop is inconsistent (for example a descriptor loop
     /// or program loop that overruns the section). The section is ignored.
+    /// A damaged `section_length` lands here rather than in
+    /// [`NonConformantIssue::PsiChecksumMismatch`].
     Malformed,
 }
 

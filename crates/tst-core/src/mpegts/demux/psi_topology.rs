@@ -275,7 +275,8 @@ impl super::demuxer::Demuxer {
                 );
                 return;
             }
-            // H.222.0 §2.4.4.4: a future-staged table is not in effect yet.
+            // H.222.0 §2.4.4.5 (current_next_indicator): a future-staged
+            // table is not in effect yet.
             Err(PsiParseError::FuturePsiSection) => return,
             Err(_) => {
                 self.queue_psi_malformed(0x0000, 0x00, 0);
@@ -504,9 +505,10 @@ impl super::demuxer::Demuxer {
                 );
                 return;
             }
-            // H.222.0 §2.4.4.4: a future-staged table is not in effect yet.
+            // H.222.0 §2.4.4.9 (current_next_indicator): a future-staged
+            // table is not in effect yet.
             Err(PsiParseError::FuturePsiSection) => return,
-            // Private sections may share a PMT PID (H.222.0 §2.4.4.8); only a
+            // Private sections may share a PMT PID (H.222.0 §2.4.4.10); only a
             // section that claims to be a PMT can be malformed as one.
             Err(_) if section.first() != Some(&0x02) => return,
             Err(_) => {
@@ -1476,6 +1478,7 @@ mod tests {
         assert!(!state.dup && state.last_pkt_raw.is_none() && state.unwrap.is_none());
         assert!(state.latm_carry.is_none() && state.latm_unsynced == 0);
         assert!(!state.pts_baseline_clears_after_pes && !state.pts_less_since_pts);
+        assert!(state.pts_less_run_pcr.is_none() && !state.pts_less_run_reported);
         assert!(!state.sync_pes_shape_emitted && !state.subtitle_missing_descriptor_emitted);
         assert!(!state.av1_registration_malformed_emitted);
         assert!(!state.subtitle_descriptor_ambiguous_emitted);
@@ -1496,6 +1499,8 @@ mod tests {
             last_pts: Some(90_000),
             pts_baseline_clears_after_pes: true,
             pts_less_since_pts: true,
+            pts_less_run_pcr: Some(0),
+            pts_less_run_reported: true,
             unwrap: Some(super::super::timestamp::UnwrapState {
                 last_raw: 1,
                 last_unwrapped: 1,
