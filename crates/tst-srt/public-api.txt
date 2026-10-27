@@ -11,6 +11,7 @@ pub fn tst_srt::builder::SrtListenerBuilder::bind(&self, impl std::net::socket_a
 pub fn tst_srt::builder::SrtListenerBuilder::config(&self) -> tst_srt::config::SrtListenerConfig
 pub fn tst_srt::builder::SrtListenerBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::flow_window_packets(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::input_bandwidth(&mut self, u64) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::latency_ms(&mut self, u64) -> &mut Self
@@ -23,13 +24,16 @@ pub fn tst_srt::builder::SrtListenerBuilder::overhead_bandwidth_pct(&mut self, u
 pub fn tst_srt::builder::SrtListenerBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::reuse_addr(&mut self, bool) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::send_buf_bytes(&mut self, u32) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::udp_send_buffer_bytes(&mut self, u32) -> &mut Self
 impl core::default::Default for tst_srt::builder::SrtListenerBuilder
 pub fn tst_srt::builder::SrtListenerBuilder::default() -> tst_srt::builder::SrtListenerBuilder
 impl core::marker::Freeze for tst_srt::builder::SrtListenerBuilder
@@ -1343,6 +1347,7 @@ pub fn tst_srt::builder::SrtListenerBuilder::bind(&self, impl std::net::socket_a
 pub fn tst_srt::builder::SrtListenerBuilder::config(&self) -> tst_srt::config::SrtListenerConfig
 pub fn tst_srt::builder::SrtListenerBuilder::congestion(&mut self, tst_srt::options::Congestion) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::flow_window_packets(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::input_bandwidth(&mut self, u64) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::key_length(&mut self, tst_srt::options::KeyLength) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::latency_ms(&mut self, u64) -> &mut Self
@@ -1355,13 +1360,16 @@ pub fn tst_srt::builder::SrtListenerBuilder::overhead_bandwidth_pct(&mut self, u
 pub fn tst_srt::builder::SrtListenerBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::reuse_addr(&mut self, bool) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::send_buf_bytes(&mut self, u32) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::send_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::too_late_packet_drop(&mut self, bool) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::udp_recv_buffer_bytes(&mut self, u32) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::udp_send_buffer_bytes(&mut self, u32) -> &mut Self
 impl core::default::Default for tst_srt::builder::SrtListenerBuilder
 pub fn tst_srt::builder::SrtListenerBuilder::default() -> tst_srt::builder::SrtListenerBuilder
 impl core::marker::Freeze for tst_srt::builder::SrtListenerBuilder
