@@ -7108,6 +7108,7 @@ pub fn tst_core::net::udp_socket::apply_multicast_recv_join(&std::net::udp::UdpS
 pub fn tst_core::net::udp_socket::apply_multicast_send_knobs(&std::net::udp::UdpSocket, core::net::ip_addr::IpAddr, core::option::Option<u8>, core::option::Option<&str>) -> core::io::error::Result<()>
 pub fn tst_core::net::udp_socket::bind_udp_socket(core::net::socket_addr::SocketAddr) -> core::io::error::Result<std::net::udp::UdpSocket>
 pub fn tst_core::net::udp_socket::bind_udp_socket_multicast(core::net::socket_addr::SocketAddr) -> core::io::error::Result<std::net::udp::UdpSocket>
+pub fn tst_core::net::udp_socket::bind_udp_socket_multicast_group(core::net::ip_addr::IpAddr, u16, core::option::Option<&str>) -> core::io::error::Result<std::net::udp::UdpSocket>
 pub fn tst_core::net::udp_socket::set_multicast_hops_v6(&std::net::udp::UdpSocket, u8) -> core::io::error::Result<()>
 pub fn tst_core::net::udp_socket::set_multicast_if_v4(&std::net::udp::UdpSocket, core::net::ip_addr::Ipv4Addr) -> core::io::error::Result<()>
 pub fn tst_core::net::udp_socket::set_socket_buffers<S: std::os::fd::owned::AsFd>(&S, core::option::Option<usize>, core::option::Option<usize>) -> core::io::error::Result<()>
@@ -7482,6 +7483,7 @@ impl<'a> core::marker::UnsafeUnpin for tst_core::url::common::ParsedUrl<'a>
 impl<'a> core::panic::unwind_safe::RefUnwindSafe for tst_core::url::common::ParsedUrl<'a>
 impl<'a> core::panic::unwind_safe::UnwindSafe for tst_core::url::common::ParsedUrl<'a>
 pub const tst_core::url::common::MAX_BYTE_SIZE: usize
+pub fn tst_core::url::common::decode_ipv6_zone(&str) -> alloc::borrow::Cow<'_, str>
 pub fn tst_core::url::common::is_multicast_v4(core::net::ip_addr::Ipv4Addr) -> bool
 pub fn tst_core::url::common::is_multicast_v6(core::net::ip_addr::Ipv6Addr) -> bool
 pub fn tst_core::url::common::parse_bool(&str, &str) -> core::result::Result<bool, tst_core::url::common::UrlError>
