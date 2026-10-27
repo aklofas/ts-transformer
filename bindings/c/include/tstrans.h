@@ -1373,8 +1373,8 @@ typedef struct tst_rtsp_client_builder_t tst_rtsp_client_builder_t;
 /**
  * Opaque handle for an RTSP mount.
  *
- * Obtained from [`super::mount::tst_rtsp_server_add_unicast_mount`] or
- * [`super::mount::tst_rtsp_server_add_multicast_mount`]. Push methods
+ * Obtained from `tst_rtsp_server_add_unicast_mount` or
+ * `tst_rtsp_server_add_multicast_mount`. Push methods
  * (`push_video`, `push_klv`, etc.) live in `mount.rs`. Freed with
  * `tst_rtsp_mount_handle_free`.
  *
