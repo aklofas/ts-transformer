@@ -202,3 +202,51 @@ fn a_ceiling_that_shrinks_while_bundles_are_queued_splits_them() {
     assert!(wire_sizes(&t).iter().all(|&n| n <= 376));
     assert_eq!(t.wire_bytes(), ts);
 }
+
+/// A ceiling another thread republishes (a Background-mode reconnect) can
+/// drop below one packet between two reads; the sender must size its
+/// slices from the value it validated, never a second read.
+#[test]
+fn a_ceiling_that_shrinks_between_reads_cannot_stall_the_send() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tst_pipeline::Transport;
+
+    // `send_ts` reads the ceiling on entry and again per bundle; the
+    // shrink lands after the per-bundle validation.
+    struct ShrinkAfterTwoReads {
+        reads: AtomicUsize,
+        sends: usize,
+        wire: Vec<u8>,
+    }
+    impl Transport for ShrinkAfterTwoReads {
+        fn send_bytes(&mut self, b: &[u8]) -> Result<(), TransportError> {
+            // An empty send succeeds, as an enqueue does; the cap turns a
+            // zero-step loop into a failure instead of a hang.
+            self.sends += 1;
+            assert!(self.sends <= 16, "sender is looping on empty slices");
+            self.wire.extend_from_slice(b);
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            if self.reads.fetch_add(1, Ordering::Relaxed) < 2 {
+                1316
+            } else {
+                100
+            }
+        }
+        fn close(&mut self) {}
+        fn is_alive(&self) -> bool {
+            true
+        }
+    }
+
+    let t = ShrinkAfterTwoReads {
+        reads: AtomicUsize::new(0),
+        sends: 0,
+        wire: Vec::new(),
+    };
+    let mut s = Sender::new(t, SenderConfig::default());
+    let ts = synthetic_ts_packets(7);
+    s.send_ts(&ts).unwrap();
+    assert_eq!(s.transport().wire, ts);
+}
