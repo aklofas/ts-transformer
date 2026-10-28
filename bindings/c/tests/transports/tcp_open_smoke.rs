@@ -887,7 +887,8 @@ fn first_failure(
             .to_string_lossy()
             .into_owned()
     };
-    let (worker, cancel): (thread::JoinHandle<()>, Box<dyn Fn()>) = if demux {
+    type Hook = Box<dyn Fn()>;
+    let (worker, cancel, close): (thread::JoinHandle<()>, Hook, Hook) = if demux {
         let h = unsafe { tst_tcp_demux_receiver_open(url.as_ptr(), std::ptr::null()) };
         assert!(!h.is_null(), "open failed: {}", msg_of());
         let p = SendPtr(h);
@@ -903,10 +904,14 @@ fn first_failure(
             let _ = done_tx.send((rc, msg_of()));
         });
         let c = SendPtr(h);
+        let f = SendPtr(h);
         (
             w,
             Box::new(move || unsafe {
                 tst_tcp_demux_receiver_cancel(c.0);
+            }),
+            Box::new(move || unsafe {
+                tst_tcp_demux_receiver_close(f.0);
             }),
         )
     } else {
@@ -927,10 +932,14 @@ fn first_failure(
             let _ = done_tx.send((rc, msg_of()));
         });
         let c = SendPtr(h);
+        let f = SendPtr(h);
         (
             w,
             Box::new(move || unsafe {
                 tst_tcp_receiver_cancel(c.0);
+            }),
+            Box::new(move || unsafe {
+                tst_tcp_receiver_close(f.0);
             }),
         )
     };
@@ -942,7 +951,10 @@ fn first_failure(
     }
     worker.join().unwrap();
     peer.join().unwrap();
-    // The handle is intentionally not freed: the test process exits next.
+    // Freed only once the worker has returned the handle: on the deadline
+    // path above the worker may still be parked in it, so that path
+    // cancels and panics without freeing.
+    close();
     out.unwrap()
 }
 
