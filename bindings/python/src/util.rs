@@ -162,7 +162,30 @@ where
 static LIVE_CANCEL_SOURCES: Mutex<Vec<Weak<CancelSource>>> = Mutex::new(Vec::new());
 
 impl CancelSource {
+    /// Register a source for a shell. Every caller holds the GIL: shells
+    /// build their source in the method body after the parking open
+    /// returned.
     pub(crate) fn new(inner: Arc<dyn TransportCancel>) -> Arc<Self> {
+        let me = Self::registered(inner);
+        if INTERPRETER_EXITING.load(Ordering::Acquire) {
+            // Born after the hook's drain (see `registered`). The cancel can
+            // reach native teardown (libsrt's `srt_close`), so release the
+            // GIL for it as the hook's own walk does. `attach` is re-entrant
+            // on a thread that already holds the GIL and acquires nothing.
+            Python::attach(|py| allow_threads_parking(py, || me.latch.cancel()));
+        }
+        me
+    }
+
+    /// Add a source to the exit registry. A caller that reads
+    /// `INTERPRETER_EXITING` as set after this returns must cancel the
+    /// source itself.
+    ///
+    /// The exit hook drains the registry once. It stores the flag before it
+    /// locks and drains, so a push that lands after the drain sees the flag
+    /// afterwards, and a push before it is fired by the hook's walk. A
+    /// source caught by both is cancelled twice, which is a no-op.
+    fn registered(inner: Arc<dyn TransportCancel>) -> Arc<Self> {
         let me = Arc::new(Self {
             latch: CancelLatch::new(inner),
         });
@@ -182,13 +205,6 @@ impl CancelSource {
         }
         reg.push(Arc::downgrade(&me));
         drop(reg);
-        // The exit hook drains the registry once. It stores the flag before
-        // it locks and drains, so a push that lands after the drain sees the
-        // flag here, and a push before it is fired by the hook's walk. A
-        // source caught by both is cancelled twice, which is a no-op.
-        if INTERPRETER_EXITING.load(Ordering::Acquire) {
-            me.latch.cancel();
-        }
         me
     }
 
@@ -356,7 +372,14 @@ impl TransportCancel for SlotCancel {
 /// holds only a `Weak`, so dropping it de-registers the slot.
 #[allow(dead_code)] // srt-feature-gated callers
 pub(crate) fn register_accept_slot(slot: &Arc<tst_core::cancel::CancelSlot>) -> Arc<CancelSource> {
-    CancelSource::new(Arc::new(SlotCancel(Arc::clone(slot))))
+    let me = CancelSource::registered(Arc::new(SlotCancel(Arc::clone(slot))));
+    if INTERPRETER_EXITING.load(Ordering::Acquire) {
+        // Born after the hook's drain. This runs inside a parking closure
+        // without the GIL, and must not re-acquire it at exit; a slot cancel
+        // only sets a flag and wakes the accept, so it runs in place.
+        me.latch.cancel();
+    }
+    me
 }
 
 /// Emit one `DeprecationWarning` attributed to the caller's line (stacklevel 1:
