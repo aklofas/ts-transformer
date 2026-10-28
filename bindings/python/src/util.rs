@@ -276,11 +276,14 @@ where
     }
 }
 
-/// The implicit drop of every converted class: the same cancel-first close
-/// as `close()`. Without it the value drops with the GIL held, and a
-/// `Sender` flushing into a managed reconnect loop whose peer is gone would
-/// stall the interpreter for the whole retry policy. `close_owned` takes the
-/// slot, so `Owned`'s own `Drop` then finds it empty and fires nothing.
+/// The implicit drop of every class holding an `Owned`: the same
+/// cancel-first close as `close()`. `Owned`'s own `Drop` already cancels a
+/// slot that still holds a value, which keeps a `Sender` flushing into a
+/// dead peer's reconnect loop from stalling, but the value then closes and
+/// drops with the GIL held. Routing the drop through `close_owned` runs that
+/// close with the GIL released, under the same exit park as `close()`.
+/// `close_owned` takes the slot, so `Owned`'s own `Drop` then finds it empty
+/// and fires nothing.
 ///
 /// `tp_dealloc` already holds the GIL, so `attach` hands back the current
 /// token. A `PanicException` from the inner close is dropped: there is no
