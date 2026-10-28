@@ -505,8 +505,9 @@ the reconnect policy.
 exit `tstrans` cancels every shell that is still open before libsrt's own
 teardown runs. Without that, a thread left parked in `accept()` or
 `recv_bytes()` deadlocks `srt_cleanup`, which joins libsrt's GC thread —
-the process hangs instead of exiting. The hook also reaches the first accept of a managed receiver and any shell
-opened after the hook ran, which is born cancelled. A program that closed everything
+the process hangs instead of exiting. The hook also reaches the first
+accept of a managed receiver and any shell opened after the hook ran
+(such a shell is born cancelled). A program that closed everything
 pays nothing: shells whose cancel already latched are skipped, so neither
 the cancel walk nor the settle window runs. Only a shell left open costs
 the short settle window (woken threads need a moment to unwind before the
@@ -726,7 +727,8 @@ raises `SrtError(CLOSED)` promptly in all three). `ManagedReceiver`, the
 raw-bytes sibling, covers the same three phases — a parked `recv_bytes`
 raises `SrtError(CLOSED)` just as promptly. The first accept, inside
 `from_url`, is reached by the interpreter-exit hook; a user cancel handle
-exists once `from_url` returns. `cancel_handle()` can be obtained at any time, including while another
+exists once `from_url` returns.
+`cancel_handle()` can be obtained at any time, including while another
 thread is parked in `recv_bytes` — every method borrows the object
 immutably — and `close()` from that other thread is equivalent to
 `cancel()` followed by freeing the shell.
