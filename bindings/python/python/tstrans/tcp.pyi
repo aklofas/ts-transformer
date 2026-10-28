@@ -23,6 +23,9 @@ from tstrans.shells import CancelHandle as CancelHandle
 # happens in Rust via a two-path fast/fallback pattern.
 _BytesLike = Union[bytes, bytearray, memoryview, Any]
 
+from .exceptions import TcpError as TcpError
+from .exceptions import TcpErrorKind as TcpErrorKind
+
 __all__: list[str] = [
     "Transport",
     "TransportBuilder",
@@ -39,39 +42,6 @@ __all__: list[str] = [
 # ---------------------------------------------------------------------------
 # TcpErrorKind / TcpError -- re-exported from tstrans.exceptions
 # ---------------------------------------------------------------------------
-
-
-class TcpErrorKind(IntEnum):
-    """Discriminator for ``TcpError.kind``. The ``tstrans.tcp`` subset of the
-    Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
-    ``CLOSED`` / ``CONNECT_TIMEOUT`` / ``INVALID_CONFIG`` / ``TLS`` /
-    ``TLS_DISABLED`` from ``tst_tcp::TcpError``, ``BROKEN`` /
-    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport, and
-    ``INPUT_MALFORMED`` / ``END_OF_STREAM`` / ``CONFIG_INVALID`` shared with
-    every pipeline shell."""
-
-    URL = 0
-    IO = 1
-    TOO_LARGE = 2
-    CLOSED = 3
-    CONNECT_TIMEOUT = 4
-    INVALID_CONFIG = 5
-    TLS = 6
-    TLS_DISABLED = 7
-    BACKPRESSURE = 8
-    BROKEN = 9
-    INPUT_MALFORMED = 10
-    END_OF_STREAM = 11
-    CONFIG_INVALID = 12
-
-
-class TcpError(Exception):
-    """Raised by ``tstrans.tcp`` operations."""
-
-    kind: TcpErrorKind
-    message: str
-
-    def __init__(self, *, kind: TcpErrorKind, message: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------

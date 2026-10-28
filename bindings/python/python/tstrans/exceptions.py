@@ -596,6 +596,9 @@ class UdpError(_KindMessageError):
 
     kind: UdpErrorKind
 
+    def __init__(self, *, kind: UdpErrorKind, message: str) -> None:
+        super().__init__(kind=kind, message=message)
+
 
 class TcpErrorKind(enum.IntEnum):
     """`TcpError.kind` — the `tstrans.tcp` subset of the Rust
@@ -651,6 +654,9 @@ class TcpError(_KindMessageError):
 
     kind: TcpErrorKind
 
+    def __init__(self, *, kind: TcpErrorKind, message: str) -> None:
+        super().__init__(kind=kind, message=message)
+
 
 class HlsErrorKind(enum.IntEnum):
     """`HlsError.kind` — the `tstrans.hls` subset of the Rust
@@ -693,6 +699,9 @@ class HlsError(_KindMessageError):
     """Raised by `tstrans.hls` operations. Discriminate via `.kind`."""
 
     kind: HlsErrorKind
+
+    def __init__(self, *, kind: HlsErrorKind, message: str) -> None:
+        super().__init__(kind=kind, message=message)
 
 
 class RistErrorKind(enum.IntEnum):

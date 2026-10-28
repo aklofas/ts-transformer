@@ -23,6 +23,9 @@ from tstrans.shells import CancelHandle as CancelHandle
 # happens in Rust via a two-path fast/fallback pattern.
 _BytesLike = Union[bytes, bytearray, memoryview, Any]
 
+from .exceptions import UdpError as UdpError
+from .exceptions import UdpErrorKind as UdpErrorKind
+
 __all__: list[str] = [
     "Transport",
     "RecvTransport",
@@ -37,35 +40,6 @@ __all__: list[str] = [
 # ---------------------------------------------------------------------------
 # UdpErrorKind / UdpError — re-exported from tstrans.exceptions
 # ---------------------------------------------------------------------------
-
-
-class UdpErrorKind(IntEnum):
-    """Discriminator for ``UdpError.kind``. The ``tstrans.udp`` subset of the
-    Rust ``tst_pipeline::binding::BindingErrorKind`` table: ``URL`` / ``IO`` /
-    ``INVALID_CONFIG`` from ``tst_udp::UdpError``, ``CLOSED`` / ``BROKEN`` /
-    ``BACKPRESSURE`` / ``TOO_LARGE`` from the transport, and
-    ``INPUT_MALFORMED`` / ``END_OF_STREAM`` / ``CONFIG_INVALID`` shared with
-    every pipeline shell."""
-
-    URL = 0
-    IO = 2
-    TOO_LARGE = 4
-    CLOSED = 5
-    INVALID_CONFIG = 6
-    BACKPRESSURE = 7
-    BROKEN = 8
-    INPUT_MALFORMED = 9
-    END_OF_STREAM = 10
-    CONFIG_INVALID = 11
-
-
-class UdpError(Exception):
-    """Raised by ``tstrans.udp`` operations."""
-
-    kind: UdpErrorKind
-    message: str
-
-    def __init__(self, *, kind: UdpErrorKind, message: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------
