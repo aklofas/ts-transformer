@@ -405,3 +405,87 @@ def test_rtp_add_byte_sink_on_closed_raises() -> None:
     with pytest.raises(RtpError) as exc_info:
         rx.add_byte_sink(lambda _pkt: None)
     assert exc_info.value.kind == RtpErrorKind.CLOSED
+
+
+# --------------------------------------------------------------------------- #
+# Same-thread re-entry from a receiver's own byte sink                         #
+# --------------------------------------------------------------------------- #
+#
+# The sink runs while `__next__` holds the receiver's slot, so a pre-fix
+# re-entry deadlocks the interpreter. Each case runs in a child interpreter
+# so a regression is a named timeout, not a wedged test session.
+
+from test_exit_with_parked_shell import _run  # noqa: E402
+
+PREFIX = """
+    import threading, time
+    import tstrans.srt as srt
+    from tstrans import shells
+    from tstrans.mpegts import MuxerProgramConfigBuilder, Pts90khz, VideoCodec
+
+    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+    port = lst.local_addr()[1]
+    program = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
+
+    def send():
+        tx = shells.MuxSender.open(f"srt://127.0.0.1:{port}?mode=caller", program)
+        try:
+            for i in range(20):
+                tx.send_video(b"\\x00\\x00\\x00\\x01\\x09\\xF0", pts=Pts90khz.from_raw(i * 3000), key_frame=True)
+            time.sleep(0.5)
+        finally:
+            tx.close()
+
+    threading.Thread(target=send, daemon=True).start()
+    rx = lst.accept().into_demux_receiver()
+"""
+
+
+@pytest.mark.parametrize("call", ["socket_stats", "stats", "add_byte_sink", "next"])
+def test_reentrant_call_from_own_byte_sink_raises_runtime_error(call: str) -> None:
+    body = {
+        "socket_stats": "rx.socket_stats()",
+        "stats": "rx.stats()",
+        "add_byte_sink": "rx.add_byte_sink(lambda p: None)",
+        "next": "next(rx)",
+    }[call]
+    script = PREFIX + f"""
+    def sink(pkt):
+        {body}
+    rx.add_byte_sink(sink)
+    try:
+        next(rx)
+        print("NO-ERROR")
+    except RuntimeError as e:
+        print("REFUSED", "byte-sink" in str(e))
+    rx.close()
+    """
+    r = _run(script, timeout=30.0, what=f" re-entering {call} from a byte sink")
+    assert "REFUSED True" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+
+
+def test_close_from_own_byte_sink_ends_iteration() -> None:
+    script = PREFIX + """
+    rx.add_byte_sink(lambda pkt: rx.close())
+    events = list(rx)
+    print("ENDED", rx.is_alive())
+    """
+    r = _run(script, timeout=30.0, what=" closing a receiver from its own byte sink")
+    assert "ENDED False" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+
+
+def test_own_sink_may_use_lock_free_accessors_and_another_receiver() -> None:
+    script = PREFIX + """
+    other = shells.DemuxReceiver.open("udp://127.0.0.1:0")
+    seen = []
+    def sink(pkt):
+        other.stats()
+        seen.append((rx.is_alive(), rx.cancel_handle().is_cancelled(), rx.end_reason()))
+    rx.add_byte_sink(sink)
+    next(rx)
+    print("OK", seen[0] == (True, False, None))
+    rx.close()
+    other.close()
+    """
+    r = _run(script, timeout=30.0, what=" lock-free accessors from a byte sink")
+    assert "OK True" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
