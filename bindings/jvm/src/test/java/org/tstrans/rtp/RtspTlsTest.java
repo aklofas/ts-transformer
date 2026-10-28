@@ -95,7 +95,7 @@ class RtspTlsTest {
     @Test
     void peerClosingMidHandshakeThrowsTls() throws Exception {
         assumeTrue(isLinux(), "live RTSP tests gated to Linux");
-        try (ServerSocket listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+        try (ServerSocket listener = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
             Thread peer = new Thread(() -> {
                 try (Socket s = listener.accept()) {
                     s.setSoTimeout(5000);
