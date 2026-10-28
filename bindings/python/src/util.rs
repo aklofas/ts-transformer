@@ -337,7 +337,7 @@ pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
     // instead of re-taking the GIL of an interpreter about to finalise.
     let _ = EXIT_HOOK_THREAD.set(std::thread::current().id());
     INTERPRETER_EXITING.store(true, Ordering::Release);
-    // Poison recovered for the same reason as in `CancelSource::new`: a
+    // Poison recovered for the same reason as in `CancelSource::registered`: a
     // hook that no-ops after an unrelated panic is exactly the hang this
     // exists to prevent, and `drain` on a `Vec<Weak<_>>` cannot observe a
     // torn state.

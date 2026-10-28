@@ -296,8 +296,9 @@ impl PyDemuxReceiver {
     ///
     /// Inside a sink, calls on the same receiver are limited (also when
     /// reached through another receiver the sink drives): `close()`
-    /// cancels, the in-flight pull still delivers its event, and the
-    /// iteration ends with `StopIteration` on the following pull;
+    /// cancels; the in-flight pull delivers its event, if any, and the
+    /// iteration ends with `StopIteration` on the next pull (at once when
+    /// there was no event);
     /// `__next__`, `add_byte_sink`, `stats`, `socket_stats` and
     /// `last_seen_micros` raise `RuntimeError`. `cancel_handle`,
     /// `is_alive`, `end_reason`, `end_detail` and other receivers work.
@@ -524,7 +525,8 @@ impl PyDemuxReceiver {
     /// From this receiver's own byte sink, the slot is held by the
     /// `__next__` the sink runs under: the close cancels and returns; that
     /// `__next__` still delivers an event it pulled, and the close
-    /// completes with `StopIteration` on the following pull. A plain
+    /// completes with `StopIteration` on the next pull (at once when it
+    /// pulled none). A plain
     /// close supersedes a deferred one.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         if self.in_own_sink() {
