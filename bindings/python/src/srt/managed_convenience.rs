@@ -1,8 +1,8 @@
 //! `ManagedMuxSender` + `ManagedDemuxReceiver` for SRT.
 //!
 //! Auto-reconnect convenience wrappers paralleling
-//! [`crate::srt::mux_sender::PyMuxSender`] +
-//! [`crate::srt::demux_receiver::PyDemuxReceiver`] one-for-one, but with
+//! [`crate::shells::mux_sender::PyMuxSender`] +
+//! [`crate::shells::demux_receiver::PyDemuxReceiver`] one-for-one, but with
 //! a [`tst_pipeline::reconnect::ManagedTransport`] (sender) or a
 //! [`tst_pipeline::ManagedRecvTransport`] (receiver) underneath. URL +
 //! socket config are captured at construction and replayed by the
@@ -625,7 +625,8 @@ impl PyManagedMuxSender {
 ///         match event:
 ///             case DemuxEvent.ReconnectDiscontinuity():
 ///                 cache = {}  # rebuild on next ProgramMap
-///             case DemuxEvent.Sample(...): ...
+///             case DemuxEvent.Video(...): ...
+///             case DemuxEvent.Metadata(...): ...
 /// ```
 #[pyclass(name = "ManagedDemuxReceiver", module = "tstrans.srt")]
 pub(crate) struct PyManagedDemuxReceiver {

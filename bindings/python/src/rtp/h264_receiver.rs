@@ -7,7 +7,7 @@
 //! - `H264DepayStats`        — frozen pyclass, get_all 9 counters
 //! - `RtpStats`              — frozen pyclass, get_all (malformed_packets, source_rejected)
 //! - `H264Receiver`          — blocking receiver; GIL released in recv_au
-//!   (`end_reason()` / `end_detail()` — see `crate::rtp::end_reason`)
+//!   (`end_reason()` / `end_detail()` — see `crate::shells::end_reason`)
 //!
 //! # GIL release discipline
 //!

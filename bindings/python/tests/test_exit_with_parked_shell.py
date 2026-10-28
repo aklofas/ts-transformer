@@ -50,7 +50,7 @@ def _run(script: str, timeout: float = 30.0, what: str = "") -> subprocess.Compl
     except subprocess.TimeoutExpired:
         pytest.fail(
             f"interpreter did not exit within {timeout}s{what} — "
-            "the R-EXIT atexit guard is not firing"
+            "a parked native call was not released before exit"
         )
 
 

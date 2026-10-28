@@ -16,7 +16,7 @@ TransportBuilder
     ``sndbuf``, ``ttl`` knobs before ``build()``.
 RecvTransportBuilder
     Builder for ``RecvTransport`` — supports ``bind_url``, ``rcvbuf``,
-    ``pkt_size``, ``iface`` knobs before ``build()``.
+    ``iface`` knobs before ``build()``.
 SocketStats
     Frozen stats snapshot returned by ``Transport.stats()`` /
     ``RecvTransport.stats()``.

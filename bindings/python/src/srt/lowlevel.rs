@@ -1,6 +1,6 @@
 //! `Builder`, `Socket`, `Listener` (the low-level SRT primitives).
 //!
-//! Layered atop `transport`:
+//! Layered atop the shell and stats types:
 //! - `Builder` is a hybrid fluent + kwargs SRT URL constructor.
 //!   URL-provided values WIN over kwargs — we accumulate kwargs
 //!   into a `SrtSocketConfig` / `SrtListenerConfig` FIRST, then call

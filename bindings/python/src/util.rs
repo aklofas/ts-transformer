@@ -244,7 +244,7 @@ impl TransportCancel for CancelSource {
     }
 }
 
-/// `close()` for every converted class: `Owned::close` = cancel → lock
+/// `close()` for every class holding an `Owned`: `Owned::close` = cancel → lock
 /// (recover) → take → `T::close`, outside the GIL. A transport whose own
 /// close fails (`Listener::close` → `IoError`) is logged, not raised —
 /// `close()` is documented infallible and idempotent; a panic inside the

@@ -198,7 +198,7 @@ impl PyMuxSender {
     }
     // ── Push family — single-stream variants ──────────────────────────────
     //
-    // Mirror `bindings/python/src/rtp/mux_sender.rs` 1:1 for surface
+    // Mirror `bindings/python/src/shells/mux_sender.rs` 1:1 for surface
     // consistency. Each method:
     //   - takes the payload bytes-like as the first positional arg,
     //   - takes `pts` keyword-only,
