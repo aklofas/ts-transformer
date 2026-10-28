@@ -30,6 +30,7 @@ from tstrans.mpegts import DemuxEvent, Muxer, MuxerConfigBuilder, Pts90khz
 from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port as _free_udp_port
+from test_exit_with_parked_shell import _run
 
 
 NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
@@ -415,29 +416,31 @@ def test_rtp_add_byte_sink_on_closed_raises() -> None:
 # re-entry deadlocks the interpreter. Each case runs in a child interpreter
 # so a regression is a named timeout, not a wedged test session.
 
-from test_exit_with_parked_shell import _run  # noqa: E402
-
 PREFIX = """
     import threading, time
     import tstrans.srt as srt
     from tstrans import shells
     from tstrans.mpegts import MuxerProgramConfigBuilder, Pts90khz, VideoCodec
 
-    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
-    port = lst.local_addr()[1]
     program = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
 
-    def send():
-        tx = shells.MuxSender.open(f"srt://127.0.0.1:{port}?mode=caller", program)
-        try:
-            for i in range(20):
-                tx.send_video(b"\\x00\\x00\\x00\\x01\\x09\\xF0", pts=Pts90khz.from_raw(i * 3000), key_frame=True)
-            time.sleep(0.5)
-        finally:
-            tx.close()
+    def pair():
+        lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+        port = lst.local_addr()[1]
 
-    threading.Thread(target=send, daemon=True).start()
-    rx = lst.accept().into_demux_receiver()
+        def send():
+            tx = shells.MuxSender.open(f"srt://127.0.0.1:{port}?mode=caller", program)
+            try:
+                for i in range(20):
+                    tx.send_video(b"\\x00\\x00\\x00\\x01\\x09\\xF0", pts=Pts90khz.from_raw(i * 3000), key_frame=True)
+                time.sleep(0.5)
+            finally:
+                tx.close()
+
+        threading.Thread(target=send, daemon=True).start()
+        return lst.accept().into_demux_receiver()
+
+    rx = pair()
 """
 
 
@@ -465,13 +468,68 @@ def test_reentrant_call_from_own_byte_sink_raises_runtime_error(call: str) -> No
 
 
 def test_close_from_own_byte_sink_ends_iteration() -> None:
+    # The pull the close ran inside still delivers its event; the
+    # iteration ends on the following pull.
     script = PREFIX + """
-    rx.add_byte_sink(lambda pkt: rx.close())
+    closed = []
+    def sink(pkt):
+        rx.close()
+        closed.append(True)
+    rx.add_byte_sink(sink)
     events = list(rx)
-    print("ENDED", rx.is_alive())
+    print("ENDED", rx.is_alive(), bool(closed), len(events) >= 1)
     """
     r = _run(script, timeout=30.0, what=" closing a receiver from its own byte sink")
-    assert "ENDED False" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+    assert "ENDED False True True" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+
+
+def test_close_through_another_receivers_sink_is_deferred() -> None:
+    # A's sink pulls B; B's sink then closes A. A's slot is held further up
+    # this thread, so the close must defer exactly as from A's own sink.
+    script = PREFIX + """
+    a, b = rx, pair()
+    pulled = []
+    def a_sink(pkt):
+        if not pulled:
+            pulled.append(next(b))
+    b.add_byte_sink(lambda pkt: a.close())
+    a.add_byte_sink(a_sink)
+    events = list(a)
+    print("ENDED", a.is_alive(), len(pulled))
+    b.close()
+    """
+    r = _run(script, timeout=30.0, what=" closing a receiver through another receiver's sink")
+    assert "ENDED False 1" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+
+
+def test_plain_close_supersedes_a_deferred_close() -> None:
+    # The sink's close is deferred, then the sink raises: the error wins and
+    # the deferral is still pending. A plain close() replaces it, so the
+    # next pull reports the closed receiver instead of ending the iteration.
+    script = PREFIX + """
+    from tstrans.exceptions import SrtError, SrtErrorKind
+    def sink(pkt):
+        rx.close()
+        raise ValueError("boom")
+    rx.add_byte_sink(sink)
+    try:
+        next(rx)
+        print("NO-ERROR")
+    except ValueError:
+        print("SINK-ERROR")
+    rx.close()
+    try:
+        next(rx)
+        print("STOP-OR-EVENT")
+    except StopIteration:
+        print("STOP-OR-EVENT")
+    except SrtError as e:
+        print("CLOSED", e.kind == SrtErrorKind.CLOSED)
+    """
+    r = _run(script, timeout=30.0, what=" a plain close after a deferred one")
+    assert "SINK-ERROR" in r.stdout and "CLOSED True" in r.stdout, (
+        f"{r.stdout}\n{r.stderr[-800:]}"
+    )
 
 
 def test_own_sink_may_use_lock_free_accessors_and_another_receiver() -> None:
