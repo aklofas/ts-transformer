@@ -52,7 +52,8 @@ pub struct CellMetrics {
     #[serde(default)]
     pub nonconformant: u64,
     /// `MalformedPes` damage markers (a PES that completed with bytes
-    /// missing) that followed a continuity jump on their PID. Counted
+    /// missing to a continuity gap) that followed a continuity jump on
+    /// their PID. Counted
     /// apart from `nonconformant`: the jump in `discontinuities` already
     /// reports that loss, so these are judged through it, never on their
     /// own. A damage marker with no jump before it stays in
