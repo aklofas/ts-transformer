@@ -754,14 +754,19 @@ above its rows. The grammar is in `tests/coverage/README.md`, and the rail
 the binding sources.
 
 **URL semantics.** The URL corpus,
-`crates/tst-integration/tests/fixtures/scenarios/url-corpus/corpus.toml`, is the
-parity proof for URL handling. Each row is one URL and the record every binding
-must agree on: the parsed endpoint and canonical keys, or the error kind that
-refuses it. The Rust leg parses every row and compares the whole record; the C
-and Python legs open it through the entry point the file's header names and
-compare the outcome. A binding or scheme that adds a URL key adds its rows; the
-Rust leg fails while a documented key lacks an `explicit`, `alias` or `invalid`
-row.
+`crates/tst-integration/tests/fixtures/scenarios/url-corpus/corpus.toml`, holds
+one URL per row with the record every binding must agree on: the parsed
+endpoint and canonical keys, or the error kind that refuses it. The Rust leg
+parses every row and compares the whole record. The C and Python legs prove
+refusal parity for every scheme: each row is opened through the entry point
+the file's header names, and only the outcome is compared. For `rtsp://` they
+also prove option survival on the wire: a valid row is connected to a
+recording peer, and the credentials, version, transport and path in the
+requests must match the record. For the other RTSP calls,
+`bindings/c/tests/transports/rtsp_client_connect.rs` pins the regression where
+the URL's credentials and options were dropped. A binding or scheme that adds a
+URL key adds its rows; the Rust leg fails while a documented key lacks an
+`explicit`, `alias` or `invalid` row.
 
 **Rule for new capabilities.** A ship-now cell must be under a day per binding
 (a `with_ref_blocking`/`with_mut` body plus one error projection, with a red-first

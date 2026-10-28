@@ -986,6 +986,48 @@ mod url_corpus_leg {
                 }
             }
         }
+        // A wire probe accounts for every field of its family's records: each
+        // is compared (`wire`) or says why not (`unobserved`, `name: reason`).
+        for (leg, families) in &corpus.legs {
+            for (family, table) in families {
+                let Some(wire) = table.get("wire") else {
+                    continue;
+                };
+                let unobserved = table.get("unobserved").map(String::as_str).unwrap_or("");
+                let named: Vec<&str> = wire
+                    .split_whitespace()
+                    .chain(
+                        unobserved
+                            .split(';')
+                            .filter_map(|e| e.split_once(':'))
+                            .map(|(n, _)| n.trim()),
+                    )
+                    .collect();
+                let mut fields: Vec<String> =
+                    ["scheme", "host", "port", "path", "username", "password_set"]
+                        .map(String::from)
+                        .to_vec();
+                fields.extend(
+                    tables[family.as_str()]
+                        .iter()
+                        .map(|d| format!("keys.{}", d.canonical)),
+                );
+                for f in &fields {
+                    if !named.contains(&f.as_str()) {
+                        gaps.push(format!(
+                            "{leg} {family}: wire probe neither compares nor explains {f}"
+                        ));
+                    }
+                }
+                for n in &named {
+                    if !fields.iter().any(|f| f == n) {
+                        gaps.push(format!(
+                            "{leg} {family}: wire probe names unknown field {n}"
+                        ));
+                    }
+                }
+            }
+        }
         for row in &corpus.url {
             const CASES: [&str; 6] = [
                 "default",
