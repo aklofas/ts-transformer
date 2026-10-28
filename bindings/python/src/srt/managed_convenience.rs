@@ -658,8 +658,8 @@ impl PyManagedDemuxReceiver {
     /// it now shares `SrtUrl::accept_one` with the C ABI, which classifies
     /// both as transport faults.
     ///
-    /// The first accept is not cancellable — no handle exists until this
-    /// returns.
+    /// No handle exists until this returns, so the caller cannot cancel the
+    /// first accept; interpreter exit still wakes it.
     #[staticmethod]
     #[pyo3(signature = (url, *, demux_config = None, policy = None))]
     fn from_url(
@@ -675,16 +675,20 @@ impl PyManagedDemuxReceiver {
             Some(cfg_obj) => Some(crate::mpegts::build_demuxer_config(py, cfg_obj)?),
         };
         let policy_inner = policy.map(|p| p.inner).unwrap_or_default();
-        // `tst_srt::shells` dispatches on `url.mode` (both modes are legal here), owns the
-        // re-accept `FactoryCancel` slot the cancel handle fires, and
-        // snapshots the end-reason handle before the shell move. The FIRST
-        // accept stays uncancellable: no cancel handle exists until the
-        // constructor returns (documented in python.md).
+        // `tst_srt::shells` dispatches on `url.mode` (both modes are legal
+        // here) and snapshots the end-reason handle before the shell move.
+        // The re-accept slot is ours so it can be registered with the exit
+        // hook before the first accept parks: no caller handle exists until
+        // this constructor returns, so without the registration an exit
+        // joining this thread would hang.
         let (receiver, handles) = crate::util::allow_threads_parking(py, || {
-            tst_srt::shells::managed_demux_receiver_from_url(
+            let slot = std::sync::Arc::new(tst_pipeline::FactoryCancel::new());
+            let _accept_guard = crate::util::register_accept_slot(&slot);
+            tst_srt::shells::managed_demux_receiver_from_url_with_cancel(
                 &parsed,
                 policy_inner,
                 demux_opts.unwrap_or_default(),
+                std::sync::Arc::clone(&slot),
             )
         })
         .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;

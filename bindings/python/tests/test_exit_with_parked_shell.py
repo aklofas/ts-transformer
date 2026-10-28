@@ -295,3 +295,71 @@ def test_an_earlier_registered_atexit_join_of_a_woken_worker_completes() -> None
         what=" with an earlier-registered atexit joining a woken worker",
     )
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"
+
+
+# A managed `from_url` parks in its first accept before any Python handle
+# exists. The exit hook must still reach that accept, or an earlier
+# `atexit` handler joining the worker hangs the exit.
+SCRIPT_EARLIER_ATEXIT_JOINS_MANAGED_FIRST_ACCEPT = """
+    import atexit, threading
+
+    workers = []
+    atexit.register(lambda: [t.join() for t in workers])
+
+    import tstrans.srt as srt
+
+    entered = threading.Event()
+
+    def park():
+        entered.set()
+        try:
+            srt.{cls}.from_url("srt://127.0.0.1:0?mode=listener")
+        except Exception:
+            pass
+
+    t = threading.Thread(target=park, daemon=True)
+    workers.append(t)
+    t.start()
+    entered.wait()
+    for _ in range(20):
+        threading.Event().wait(0.01)  # hand the GIL over so the accept parks
+"""
+
+
+@pytest.mark.parametrize("cls", ["ManagedReceiver", "ManagedDemuxReceiver"])
+def test_an_earlier_atexit_join_of_a_managed_first_accept_completes(cls: str) -> None:
+    """The exit hook wakes a managed `from_url` parked in its first accept;
+    an earlier `atexit` handler then joins the worker and the process exits 0."""
+    r = _run(
+        SCRIPT_EARLIER_ATEXIT_JOINS_MANAGED_FIRST_ACCEPT.replace("{cls}", cls),
+        timeout=20.0,
+        what=f" with {cls}.from_url parked in its first accept",
+    )
+    assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"
+
+
+# The hook drains the registry once. A shell opened after that drain must be
+# born cancelled, or nothing ever fires it. The hook runs on the main thread
+# here, so `accept()` raises instead of parking for the bounded exit window.
+SCRIPT_SOURCE_REGISTERED_AFTER_THE_HOOK = """
+    from tstrans._native import _fire_cancel_sources_at_exit
+    import tstrans.srt as srt
+
+    _fire_cancel_sources_at_exit()  # the hook has run
+    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+    try:
+        lst.accept()  # must not park: born cancelled
+        print("ACCEPTED")
+    except Exception as e:
+        print("REFUSED", type(e).__name__)
+"""
+
+
+def test_a_source_registered_after_the_exit_hook_is_born_cancelled() -> None:
+    r = _run(
+        SCRIPT_SOURCE_REGISTERED_AFTER_THE_HOOK,
+        timeout=20.0,
+        what=" with a listener opened after the exit hook ran",
+    )
+    assert "REFUSED" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+    assert r.returncode == 0
