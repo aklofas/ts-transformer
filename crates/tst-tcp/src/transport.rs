@@ -380,8 +380,10 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
             // them in the opposite order (latch, then liveness): a dead flag
             // seen here guarantees a cancel's latch is visible, while reading
             // the latch first lets a cancel land between the two loads and
-            // pass for a plain close.
-            Err(_) if !alive.load(Ordering::Acquire) => {
+            // pass for a plain close. The latch is also consulted on its own
+            // so a cancel caught between its two stores (latched, still
+            // live) wins too.
+            Err(_) if !alive.load(Ordering::Acquire) || cancel.is_cancelled() => {
                 let err = if cancel.is_cancelled() {
                     TransportError::ExplicitClose
                 } else {
@@ -743,6 +745,39 @@ mod write_loop_tests {
             cancel.cancel();
             alive.store(false, Ordering::Release);
             Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        });
+        assert!(
+            matches!(r, Err((TransportError::ExplicitClose, false))),
+            "{r:?}"
+        );
+    }
+
+    /// A cancel caught between its two stores (latch set, liveness not yet
+    /// dropped) still wins over a hard error: the send reports the cancel,
+    /// not a `Broken` a managed wrapper would treat as a reconnect cause.
+    #[test]
+    fn hard_error_with_cancel_latched_but_still_live_is_explicit_close() {
+        let alive = live();
+        let cancel = FlagCancel::new();
+        let r = write_loop(&[0u8; 188], &alive, &cancel, |_| {
+            cancel.cancel();
+            Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        });
+        assert!(
+            matches!(r, Err((TransportError::ExplicitClose, false))),
+            "{r:?}"
+        );
+    }
+
+    /// The same window with a zero-progress deadline tick reports the
+    /// cancel, not a retryable `Backpressure`.
+    #[test]
+    fn zero_progress_timeout_with_cancel_latched_but_still_live_is_explicit_close() {
+        let alive = live();
+        let cancel = FlagCancel::new();
+        let r = write_loop(&[0u8; 188], &alive, &cancel, |_| {
+            cancel.cancel();
+            Err(io::Error::from(io::ErrorKind::WouldBlock))
         });
         assert!(
             matches!(r, Err((TransportError::ExplicitClose, false))),
