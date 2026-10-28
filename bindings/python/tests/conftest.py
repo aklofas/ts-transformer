@@ -67,8 +67,8 @@ def _load_manifest() -> list[dict[str, Any]]:
 def require_scenario(scenario_id: str) -> tuple[dict[str, Any], Path]:
     """Return ``(manifest_entry, scenario_path)`` for *scenario_id*.
 
-    Calls ``pytest.skip`` with a clear message if the scenario is not listed
-    in ``scenarios.toml`` or its directory is missing from the fixture tree.
+    Skips if the scenario is not listed in ``scenarios.toml``; fails if its
+    directory is missing from the fixture tree.
     The scenario directory is the parent directory of the scenario's ``input``
     artifact.
     """
@@ -82,7 +82,7 @@ def require_scenario(scenario_id: str) -> tuple[dict[str, Any], Path]:
     input_rel = Path(matched["input"])
     scenario_path = (sdir / input_rel.parts[0]).resolve()
     if not scenario_path.is_dir():
-        pytest.skip(
+        pytest.fail(
             f"scenario directory missing: {scenario_path} "
             f"(scenario '{scenario_id}')"
         )

@@ -364,6 +364,7 @@ def test_cancel_ends_a_parked_recv_with_closed(shell: str, scheme: str) -> None:
 @pytest.mark.parametrize(("shell", "scheme"), _cases(RECEIVERS, 4))
 def test_accessors_do_not_wait_behind_a_parked_recv(shell: str, scheme: str) -> None:
     with _receiver_with_peer(shell, scheme) as rx:
+        rescue = rx.cancel_handle()
         t, outcome = _park_recv(shell, rx)
         try:
             results = {
@@ -374,7 +375,7 @@ def test_accessors_do_not_wait_behind_a_parked_recv(shell: str, scheme: str) -> 
                 )
             }
         finally:
-            rx.cancel_handle().cancel()
+            rescue.cancel()
             t.join(5.0)
         for name, (blocked, got) in results.items():
             assert not blocked, f"{name}() waited behind the parked recv"

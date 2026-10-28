@@ -2,6 +2,8 @@
 Integration via `UasDatalinkLs.sensor_position()` etc. is tested in
 test_klv_st0601.py."""
 
+import dataclasses
+
 import pytest
 
 from tstrans.klv import Attitude, Corners, FieldOfView, GeoPoint
@@ -38,14 +40,16 @@ def test_corners_construction():
     assert c.p4 == (34.0, -118.1)
 
 
-def test_all_composites_frozen():
-    g = GeoPoint(lat_deg=0.0, lon_deg=0.0, alt_m=0.0)
-    a = Attitude(heading_deg=0.0, pitch_deg=0.0, roll_deg=0.0)
-    f = FieldOfView(horizontal_deg=0.0, vertical_deg=0.0)
-    c = Corners(p1=(0, 0), p2=(0, 0), p3=(0, 0), p4=(0, 0))
-    for obj in (g, a, f, c):
-        with pytest.raises((AttributeError, TypeError)):
-            setattr(obj, "lat_deg" if hasattr(obj, "lat_deg") else "heading_deg", 999)
+@pytest.mark.parametrize(("obj", "field", "value"), [
+    (GeoPoint(lat_deg=0.0, lon_deg=0.0, alt_m=0.0), "lat_deg", 1.0),
+    (Attitude(heading_deg=0.0, pitch_deg=0.0, roll_deg=0.0), "heading_deg", 1.0),
+    (FieldOfView(horizontal_deg=0.0, vertical_deg=0.0), "horizontal_deg", 1.0),
+    (Corners(p1=(0, 0), p2=(0, 0), p3=(0, 0), p4=(0, 0)), "p1", (1.0, 1.0)),
+])
+def test_all_composites_frozen(obj, field, value):
+    assert field in type(obj).__dataclass_fields__
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(obj, field, value)
 
 
 def test_geopoint_equality():

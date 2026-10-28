@@ -936,9 +936,9 @@ def test_scenario_matches_committed_golden(scenario_id: str) -> None:
     golden_path = (sd / golden_rel).resolve()
 
     if not input_path.is_file():
-        pytest.skip(f"input artifact missing: {input_path}")
+        pytest.fail(f"scenario {scenario_id!r}: committed input missing: {input_path}")
     if not golden_path.is_file():
-        pytest.skip(f"golden missing: {golden_path}")
+        pytest.fail(f"scenario {scenario_id!r}: committed golden missing: {golden_path}")
 
     with open(golden_path) as fh:
         committed = json.load(fh)

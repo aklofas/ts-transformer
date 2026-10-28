@@ -124,10 +124,6 @@ def _find_tag_value_bytes(encoded: bytes, tag: int) -> bytes | None:
     return None
 
 
-def _find_all_tag_value_bytes(encoded: bytes, tag: int) -> list[bytes]:
-    return [v for t, v in _iter_tlvs(encoded) if t == tag]
-
-
 def _reencoded_tag_value(tag: int, record: UasDatalinkLs) -> bytes | None:
     """Re-encode `record` (typically the direct output of
     `_decode_single_tlv`) and return `tag`'s TLV value bytes — the
