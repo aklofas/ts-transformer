@@ -26,9 +26,6 @@
 // here exactly as in the sibling modules (codec.rs, mpegts.rs, mux.rs).
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -101,15 +98,11 @@ impl RawBytes {
         }
     }
 
-    /// Content hash derived from the raw bytes — a stable Rust hash, NOT equal
-    /// to Python's `hash(bytes)`. Equal-content `RawBytes` hash equal, so the
-    /// events embedding them satisfy the hash/eq invariant. PyO3 maps the
-    /// returned `u64` to `Py_hash_t` with a wrapping `as isize` cast (the value
-    /// may be negative; it never raises `OverflowError`).
-    fn __hash__(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.shared.as_slice().hash(&mut hasher);
-        hasher.finish()
+    /// Hash of the materialised `bytes`, so a `RawBytes` and the equal `bytes`
+    /// are interchangeable as dict/set keys; hashing materialises the cached
+    /// value.
+    fn __hash__(&self, py: Python<'_>) -> PyResult<isize> {
+        self.value(py).bind(py).hash()
     }
 
     /// Test-only: whether the Python `bytes` has been materialized yet. Used by
