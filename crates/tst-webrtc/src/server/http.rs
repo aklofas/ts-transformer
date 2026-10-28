@@ -214,21 +214,27 @@ pub enum Route {
 /// segments name nothing; whether the mount or session exists is the
 /// server's question, not the router's. A method the target does not take
 /// is refused by the target's shape alone, before any lookup or bearer
-/// check.
+/// check: `add_mount` refuses a path with a session resource's shape.
 pub fn route(req: &Request) -> Route {
     let segments = path_segments(&req.path);
     let session = segments.as_deref().and_then(session_target);
     match req.method {
         Method::Options => Route::Preflight,
-        Method::Post => match segments {
-            Some(segments) => Route::CreateSession {
+        Method::Post => match (segments, session) {
+            (Some(_), Some(_)) => Route::MethodNotAllowed {
+                allow: SESSION_ALLOW,
+            },
+            (Some(segments), None) => Route::CreateSession {
                 mount: format!("/{}", segments.join("/")),
             },
-            None => Route::NotFound,
+            (None, _) => Route::NotFound,
         },
-        Method::Delete => match session {
-            Some((mount, id)) => Route::DeleteSession { mount, id },
-            None => Route::NotFound,
+        Method::Delete => match (segments, session) {
+            (_, Some((mount, id))) => Route::DeleteSession { mount, id },
+            (Some(_), None) => Route::MethodNotAllowed {
+                allow: ENDPOINT_ALLOW,
+            },
+            (None, None) => Route::NotFound,
         },
         Method::Other => Route::MethodNotAllowed {
             allow: if session.is_some() {
@@ -248,6 +254,15 @@ fn session_target(segments: &[&str]) -> Option<(String, String)> {
         }
         _ => None,
     }
+}
+
+/// Whether `path` has the shape of a session resource,
+/// `/<mount>/sessions/<id>`.
+pub(crate) fn is_session_target(path: &str) -> bool {
+    path_segments(path)
+        .as_deref()
+        .and_then(session_target)
+        .is_some()
 }
 
 /// The path's segments without the leading `/` or a trailing one; `None`

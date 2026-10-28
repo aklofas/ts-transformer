@@ -53,8 +53,9 @@ public final class WhepServer extends NativeHandle {
 
     /**
      * Add a mount at {@code path} and return its push handle. A path starts with
-     * {@code /}, has no empty segment and holds printable ASCII other than {@code ?}
-     * and {@code #}. Viewers POST their offer to that path.
+     * {@code /}, has no empty segment, holds printable ASCII other than {@code ?}
+     * and {@code #}, and its next-to-last segment is not {@code sessions} (that
+     * shape names a session). Viewers POST their offer to that path.
      *
      * @throws WebrtcException {@code MOUNT} for an invalid or already mounted path or
      *     a configuration the server refuses (H.266 or AV1 video, an SEI budget

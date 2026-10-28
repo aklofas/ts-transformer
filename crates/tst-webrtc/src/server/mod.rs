@@ -289,8 +289,9 @@ impl WhepServer {
     /// A path starts with `/`, names at least one segment, has no empty
     /// segment (no `//`, no trailing `/`), and holds printable ASCII other
     /// than `?` and `#`: the bytes a request target can carry, routed
-    /// without decoding. These rules are a subset of the RTSP server's
-    /// mount-path rules (printable ASCII, no empty segment).
+    /// without decoding. Its next-to-last segment is not `sessions`, since
+    /// `/<mount>/sessions/<id>` names a session. These rules are a subset of
+    /// the RTSP server's mount-path rules (printable ASCII, no empty segment).
     ///
     /// # Errors
     ///
@@ -523,7 +524,8 @@ fn load_tls(url: &WhepUrl) -> Result<Arc<rustls::ServerConfig>, WhepServerError>
 /// detail does not echo such a path). The last two follow from how a WHEP
 /// request reaches a mount: a request target is printable ASCII and is
 /// routed by segment without decoding, so a space, a non-ASCII byte or an
-/// empty segment would name a mount no request can reach.
+/// empty segment would name a mount no request can reach, and a path shaped
+/// `/<mount>/sessions/<id>` would be read as a session resource.
 pub(crate) fn validate_mount_path(path: &str) -> Result<(), WhepServerError> {
     let invalid = |detail: String| Err(WhepServerError::InvalidMountPath { detail });
     if path.is_empty() || !path.starts_with('/') {
@@ -542,6 +544,11 @@ pub(crate) fn validate_mount_path(path: &str) -> Result<(), WhepServerError> {
     }
     if path[1..].split('/').any(str::is_empty) {
         return invalid(format!("path has an empty segment: '{path}'"));
+    }
+    if http::is_session_target(path) {
+        return invalid(format!(
+            "path has a session resource's shape (`/<mount>/sessions/<id>`): '{path}'"
+        ));
     }
     Ok(())
 }

@@ -463,17 +463,29 @@ fn patch_on_a_live_session_is_405_and_the_session_survives() {
 /// The method check comes before the bearer check: a PATCH is refused for
 /// what it is, and does not count as a failed authentication.
 #[test]
-fn patch_is_refused_before_auth() {
+fn a_method_the_target_does_not_take_is_refused_before_auth() {
     let srv = WhepServer::bind("whep://127.0.0.1:0?token=abc").unwrap();
     srv.add_mount("/cam", MountConfig::default()).unwrap();
     let offer = TestViewer::new().offer(true);
     let (status, headers, _) = whep_post(srv.local_addr(), "/cam", &offer, Some("abc"));
     assert_eq!(status, 201);
     let location = &headers["location"];
-    let (none, headers, _) = http(srv.local_addr(), "PATCH", location, &[], SDP_FRAG);
-    assert_eq!(none, 405);
-    assert_eq!(headers["allow"], "DELETE, OPTIONS");
+    for (method, target, body, allow) in [
+        ("PATCH", location.as_str(), SDP_FRAG, "DELETE, OPTIONS"),
+        (
+            "POST",
+            location.as_str(),
+            offer.as_bytes(),
+            "DELETE, OPTIONS",
+        ),
+        ("DELETE", "/cam", &b""[..], "POST, OPTIONS"),
+    ] {
+        let (status, headers, _) = http(srv.local_addr(), method, target, &[], body);
+        assert_eq!(status, 405, "{method} {target}");
+        assert_eq!(headers["allow"], allow, "{method} {target}");
+    }
     assert_eq!(srv.stats().sessions_rejected_auth, 0);
+    assert_eq!(srv.stats().active_sessions, 1);
 }
 
 #[test]
@@ -672,6 +684,8 @@ fn mount_paths_are_checked_and_removal_closes_the_mount() {
         "/a/",
         "/a b",
         "/caf\u{e9}",
+        // The URL of session `source` on mount `/cam`.
+        "/cam/sessions/source",
     ] {
         assert!(
             matches!(

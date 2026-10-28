@@ -362,7 +362,7 @@ ask the media thread and can wait up to 2 s for its reply; a mount's
 | `DELETE /<mount>/sessions/<id>` | `200 OK`; `404` for an unknown session |
 | `PATCH` (any target) | `405`, `Allow: DELETE, OPTIONS` on a session resource, `POST, OPTIONS` elsewhere; trickle ICE and ICE restart are not supported |
 | `OPTIONS` on any target | `204` with the CORS headers |
-| other methods | `405` with the target's `Allow` |
+| other methods, `POST` on a session resource, `DELETE` elsewhere | `405` with the target's `Allow`, before the bearer check |
 | unknown mount | `404` |
 | server at `max_viewers` (all mounts together) | `503`, `Retry-After: 5` |
 | body not an SDP offer, or an offer whose payload types are inconsistent: one payload number mapped to two formats (also twice inside one media section), or an `a=rtpmap` or `a=fmtp` line for a number the section's `m=` line does not list, or one number given the same `a=rtpmap` or `a=fmtp` line twice in a section | `400` with a plain-text reason |
