@@ -197,7 +197,9 @@ fn idle_publisher_is_reaped_but_media_only_publisher_is_not() {
         "a publisher sending only RTP media was reaped"
     );
 
-    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    // Not scaled: the poll must end before a fixed 30 s reaper would fire
+    // (≈20 s after RECORD here), and the 4 s bound is long past.
+    let deadline = Instant::now() + Duration::from_secs(15);
     while idle.publisher().is_some() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }

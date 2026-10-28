@@ -81,7 +81,9 @@ fn rtsps_trickled_handshake_hits_the_connect_timeout() {
         .unwrap()
         .no_auto_keepalive(true)
         .connect_timeout(Duration::from_millis(500));
-    let got = connect_with_watchdog(b, scaled(Duration::from_secs(10)))
+    // Not scaled: a handshake that ignored the 500 ms budget and fell back
+    // to the builder's 10 s default must miss this watchdog at any scale.
+    let got = connect_with_watchdog(b, Duration::from_secs(8))
         .expect("connect did not return: no overall handshake deadline");
     let _ = done_tx.send(());
     assert!(
