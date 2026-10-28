@@ -336,8 +336,8 @@ impl PyManagedReceiver {
     /// `ACCEPT_FAILED` / `TIMEOUT` for accept); it now shares
     /// `SrtUrl::accept_one` with the C ABI.
     ///
-    /// The first accept is not cancellable — no handle exists until this
-    /// returns.
+    /// No handle exists until this returns, so the caller cannot cancel the
+    /// first accept; interpreter exit still wakes it.
     #[staticmethod]
     #[pyo3(signature = (url, *, policy=None))]
     fn from_url(py: Python<'_>, url: &str, policy: Option<PyReconnectPolicy>) -> PyResult<Self> {
@@ -356,13 +356,19 @@ impl PyManagedReceiver {
             ));
         }
         let policy_inner = policy.map(|p| p.inner.clone()).unwrap_or_default();
-        // `tst_srt::shells` owns the bind+accept, the re-accept factory, the
-        // `FactoryCancel` slot that wakes a parked re-accept, and the
-        // handle snapshots. The INITIAL accept is still uncancellable in
-        // practice: the handle that could fire it does not exist until
-        // this constructor returns (documented in python.md).
+        // `tst_srt::shells` owns the bind+accept, the re-accept factory and
+        // the handle snapshots. The slot is ours so it can be registered
+        // with the exit hook before the first accept parks: no caller
+        // handle exists until this constructor returns, so without the
+        // registration an exit joining this thread would hang.
         let (inner, handles) = crate::util::allow_threads_parking(py, || {
-            tst_srt::shells::managed_receiver_from_url(&parsed, policy_inner)
+            let slot = std::sync::Arc::new(tst_pipeline::FactoryCancel::new());
+            let _accept_guard = crate::util::register_accept_slot(&slot);
+            tst_srt::shells::managed_receiver_from_url_with_cancel(
+                &parsed,
+                policy_inner,
+                std::sync::Arc::clone(&slot),
+            )
         })
         .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         let reconnects = handles.reconnects.clone();

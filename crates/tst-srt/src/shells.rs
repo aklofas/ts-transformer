@@ -145,7 +145,25 @@ pub fn managed_demux_receiver_from_url(
     policy: ReconnectPolicy,
     demux: DemuxerConfig,
 ) -> Result<(ManagedDemuxReceiver<SrtTransport>, ManagedHandles), SrtError> {
-    let managed = managed_recv_transport_from_url(url, policy, Arc::new(FactoryCancel::new()))?;
+    managed_demux_receiver_from_url_with_cancel(url, policy, demux, Arc::new(FactoryCancel::new()))
+}
+
+/// [`managed_demux_receiver_from_url`] with the caller's `factory_cancel`
+/// slot, shared before the call so the first accept is reachable too: a
+/// cancel of `factory_cancel` before or during the first accept returns
+/// `Err(SrtError::Transport(TransportError::ExplicitClose))`. The same slot
+/// then wakes every parked re-accept.
+///
+/// # Errors
+///
+/// The initial open's error (see [`managed_recv_transport_from_url`]).
+pub fn managed_demux_receiver_from_url_with_cancel(
+    url: &SrtUrl,
+    policy: ReconnectPolicy,
+    demux: DemuxerConfig,
+    factory_cancel: Arc<FactoryCancel>,
+) -> Result<(ManagedDemuxReceiver<SrtTransport>, ManagedHandles), SrtError> {
+    let managed = managed_recv_transport_from_url(url, policy, factory_cancel)?;
     let mut handles = recv_handles(&managed);
     let rx = ManagedDemuxReceiver::with_demux_options(
         managed,
@@ -167,7 +185,24 @@ pub fn managed_receiver_from_url(
     url: &SrtUrl,
     policy: ReconnectPolicy,
 ) -> Result<(Receiver<ManagedRecvTransport<SrtTransport>>, ManagedHandles), SrtError> {
-    let managed = managed_recv_transport_from_url(url, policy, Arc::new(FactoryCancel::new()))?;
+    managed_receiver_from_url_with_cancel(url, policy, Arc::new(FactoryCancel::new()))
+}
+
+/// [`managed_receiver_from_url`] with the caller's `factory_cancel` slot,
+/// shared before the call so the first accept is reachable too: a cancel of
+/// `factory_cancel` before or during the first accept returns
+/// `Err(SrtError::Transport(TransportError::ExplicitClose))`. The same slot
+/// then wakes every parked re-accept.
+///
+/// # Errors
+///
+/// The initial open's error (see [`managed_recv_transport_from_url`]).
+pub fn managed_receiver_from_url_with_cancel(
+    url: &SrtUrl,
+    policy: ReconnectPolicy,
+    factory_cancel: Arc<FactoryCancel>,
+) -> Result<(Receiver<ManagedRecvTransport<SrtTransport>>, ManagedHandles), SrtError> {
+    let managed = managed_recv_transport_from_url(url, policy, factory_cancel)?;
     let handles = recv_handles(&managed);
     Ok((Receiver::new(managed, ReceiverConfig::default()), handles))
 }

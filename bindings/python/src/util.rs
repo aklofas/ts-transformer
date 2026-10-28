@@ -182,6 +182,13 @@ impl CancelSource {
         }
         reg.push(Arc::downgrade(&me));
         drop(reg);
+        // The exit hook drains the registry once. It stores the flag before
+        // it locks and drains, so a push that lands after the drain sees the
+        // flag here, and a push before it is fired by the hook's walk. A
+        // source caught by both is cancelled twice, which is a no-op.
+        if INTERPRETER_EXITING.load(Ordering::Acquire) {
+            me.latch.cancel();
+        }
         me
     }
 
