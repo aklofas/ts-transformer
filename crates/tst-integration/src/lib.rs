@@ -12,9 +12,13 @@
 //!
 //! # C and Python adapters
 //!
-//! The `c` and `python` cargo features gate future adapter code that requires
-//! the `libtstrans` cdylib or the `tstrans` Python wheel to be present.
-//! Those adapters are a separate later phase and are NOT implemented here.
+//! The C and Python adapters live in their bindings and read the fixtures
+//! from this crate: the scenarios through
+//! `bindings/c/examples/scenarios/run_scenarios.c` and
+//! `bindings/python/tests/test_scenarios.py`, the URL corpus through
+//! `bindings/c/tests/net_url_corpus.rs` and
+//! `bindings/python/tests/test_url_corpus.py`. The `c` and `python` cargo
+//! features gate no code.
 //!
 //! # Synthetic data only
 //!

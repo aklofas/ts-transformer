@@ -440,7 +440,7 @@ sha256 = "75e9bd9ed769e10b26233d8013064a56e139da071ef6d9213773416282a600bd"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/url-corpus/corpus.toml"
-sha256 = "b85734171515218cc129ea87f7a1f0ee7d47575499e728f1dd869d6b0b200b1d"
+sha256 = "9bcdd7208205e4bbed4c80788aeacb7ed43345b57db6f17dc7ba035259ed56c9"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/url-corpus/golden.json"

@@ -103,9 +103,23 @@ no_invalid = ["cors_origin", "cert", "key"]
 #
 #   record        Rust: parse, compare the whole record
 #   open-refused  open against a closed loopback port (or bind port 0)
-#   open-peer     srt: a loopback peer answers, so the open returns at once
+#   open-peer     a loopback peer answers, so the open returns at once
 #   build         a builder that parses the URL without touching the network
 #   absent        the leg has no URL-taking entry point for this role
+#
+# Refusals alone cannot catch a binding that parses a URL and then drops part
+# of it before use. For the schemes in `wire_schemes`, a valid row's URL is
+# also connected to a recording loopback peer (its port replaces the URL's at
+# run time) and the request heads are projected into the record: the fields
+# listed in `wire` are compared, and `unobserved` says why each other field is
+# not. The peer runs twice: once answering 461 to a UDP SETUP (the SETUP
+# sequence shows the transport choice: TCP alone is `tcp`, UDP then TCP is no
+# key, UDP alone is `udp`), once answering 401 to a DESCRIBE without
+# credentials (the retry's Basic `Authorization` shows the user name and
+# whether a password was sent).
+#
+# The srt rows bind loopback ports 47101-47177 and the rist receive rows
+# 47650-47651, so another process holding one of them fails its row.
 
 [legs.rust]
 srt = { caller = "tst_srt::SrtUrl::parse", listener = "tst_srt::SrtUrl::parse", probe = "record" }
@@ -120,7 +134,7 @@ whep = { server = "tst_webrtc::WhepUrl::parse", probe = "record" }
 [legs.c]
 srt = { caller = "tst_sender_open", listener = "tst_receiver_open_listener", probe = "open-peer" }
 rtp = { send = "tst_rtp_sender_open", recv = "tst_rtp_recv_open", h264 = "absent", probe = "open-refused" }
-rtsp = { client = "tst_rtsp_client_builder_new", probe = "build" }
+rtsp = { client = "tst_rtsp_client_builder_new", probe = "build", wire_schemes = "rtsp", wire = "host path username password_set keys.rtsp_version keys.transport", unobserved = "scheme: the peer speaks no TLS, so rtsps rows are refusal-only; port: the peer's port replaces the URL's; keys.tcp_keepalive: a socket option the peer cannot see; keys.recv_timeout: a read deadline the peer cannot see" }
 udp = { send = "tst_udp_sender_open", recv = "tst_udp_recv_open", probe = "open-refused" }
 tcp = { caller = "tst_tcp_sender_open", listener = "tst_tcp_listener_from_url", probe = "open-refused" }
 hls = { publisher = "tst_hls_publisher_builder_from_url", probe = "build" }
@@ -130,7 +144,7 @@ whep = { server = "absent", probe = "absent" }
 [legs.python]
 srt = { caller = "shells.Sender.open", listener = "shells.Receiver.open", probe = "open-peer" }
 rtp = { send = "shells.Sender.open", recv = "shells.Receiver.open", h264 = "rtp.H264Receiver.listen", probe = "open-refused" }
-rtsp = { client = "rtp.RtspClient.connect", probe = "open-refused" }
+rtsp = { client = "rtp.RtspClient.connect", probe = "open-peer", wire_schemes = "rtsp", wire = "host path username password_set keys.rtsp_version keys.transport", unobserved = "scheme: the peer speaks no TLS, so rtsps rows are refusal-only; port: the peer's port replaces the URL's; keys.tcp_keepalive: a socket option the peer cannot see; keys.recv_timeout: a read deadline the peer cannot see" }
 udp = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
 tcp = { caller = "shells.Sender.open", listener = "absent", probe = "open-refused" }
 hls = { publisher = "hls.HlsPublisherBuilder.from_url", probe = "build" }
@@ -991,8 +1005,11 @@ url = "rtp://127.0.0.1"
 expect = { error_kind = "URL" }
 
 # ══ rtsp(s) ═══════════════════════════════════════════════════════════════════
-# The client opens against a closed loopback port; the default-port rows
-# assume nothing serves 554 / 322 on loopback.
+# Valid rtsp rows reach the recording peer; refused rows and rtsps rows open
+# against a closed loopback port (the rtsps default row assumes nothing serves
+# 322 on loopback). An undocumented key is refused today; once the client
+# passes such keys through to the resource URL, these rows gain passthrough
+# rows in their place.
 
 [[url]]
 scheme = "rtsp"
@@ -1047,12 +1064,22 @@ case = "credentials"
 url = "rtsp://admin:p%40ss@127.0.0.1:47501/live?transport=udp"
 expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", username = "admin", password_set = true, keys = { rtsp_version = "1.0", transport = "udp" } }
 
+# The parser keeps a user name without a password, but the client answers a
+# challenge only when the URL also has a password, so nothing reaches the wire.
 [[url]]
 scheme = "rtsp"
 role = "client"
 case = "credentials"
+wire_absent = "username password_set"
 url = "rtsp://admin@127.0.0.1:47501/live"
 expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", username = "admin", password_set = false, keys = { rtsp_version = "1.0" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "credentials"
+url = "rtsp://admin:@127.0.0.1:47501/live"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", username = "admin", password_set = true, keys = { rtsp_version = "1.0" } }
 
 [[url]]
 scheme = "rtsp"

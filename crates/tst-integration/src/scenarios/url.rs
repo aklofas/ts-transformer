@@ -51,6 +51,9 @@ pub struct Row {
     pub key: Option<String>,
     /// `open` when the parser accepts the URL and the role's opener refuses it.
     pub stage: Option<String>,
+    /// Record fields the wire legs must see absent from the requests, though
+    /// the parser holds them (space-separated, the row's comment says why).
+    pub wire_absent: Option<String>,
     pub url: String,
     pub expect: Record,
 }
@@ -249,6 +252,58 @@ pub fn check_probe_code(corpus: &Corpus, row: &Row, observed: Option<i32>) -> Re
                 )),
                 None => Ok(()),
             }
+        }
+    }
+}
+
+/// One field of a record by its corpus name: a top-level field (`host`,
+/// `path`, `username`, ...) or `keys.<key>`. The wire legs compare the fields
+/// their header lists through this one accessor.
+pub fn field(rec: &Record, name: &str) -> Option<String> {
+    match name {
+        "error_kind" => rec.error_kind.clone(),
+        "scheme" => rec.scheme.clone(),
+        "host" => rec.host.clone(),
+        "port" => rec.port.map(|p| p.to_string()),
+        "path" => rec.path.clone(),
+        "bind" => rec.bind.map(|b| b.to_string()),
+        "username" => rec.username.clone(),
+        "password_set" => rec.password_set.map(|b| b.to_string()),
+        other => match other.strip_prefix("keys.") {
+            Some(k) => rec.keys.as_ref().and_then(|m| m.get(k).cloned()),
+            None => panic!("url corpus: unknown record field {other:?}"),
+        },
+    }
+}
+
+impl Corpus {
+    /// The record fields `leg` observes on the wire for `row`, when the leg
+    /// declares a wire probe for the row's scheme (`wire_schemes`).
+    pub fn wire_fields(&self, leg: &str, row: &Row) -> Option<Vec<String>> {
+        let table = self.legs.get(leg)?.get(row.family())?;
+        let schemes = table.get("wire_schemes")?;
+        if !schemes.split_whitespace().any(|s| s == row.scheme) {
+            return None;
+        }
+        let wire = table
+            .get("wire")
+            .unwrap_or_else(|| panic!("url corpus: leg {leg} has wire_schemes but no wire"));
+        Some(wire.split_whitespace().map(str::to_string).collect())
+    }
+}
+
+impl Row {
+    /// What a wire leg must observe for `name`: the record's value, or
+    /// nothing for a field the row lists in `wire_absent`.
+    pub fn wire_expect(&self, name: &str) -> Option<String> {
+        let absent = self
+            .wire_absent
+            .as_deref()
+            .is_some_and(|a| a.split_whitespace().any(|f| f == name));
+        if absent {
+            None
+        } else {
+            field(&self.expect, name)
         }
     }
 }
