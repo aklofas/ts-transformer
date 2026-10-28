@@ -14,6 +14,7 @@
 //! the scenarios are hermetic and reproducible on any machine.
 
 pub mod golden;
+pub mod url;
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +31,7 @@ use golden::{CoreEvent, Golden};
 /// Trait every scenario implements.
 pub trait Scenario {
     fn id(&self) -> &'static str;
-    fn kind(&self) -> &'static str; // "demux" | "roundtrip" | "binding_contract"
+    fn kind(&self) -> &'static str; // "demux" | "roundtrip" | "binding_contract" | "url-corpus"
     fn features(&self) -> Vec<&'static str>; // empty for Tier A
     fn tier(&self) -> &'static str; // "A"
 
@@ -65,6 +66,7 @@ pub fn all_scenarios() -> Vec<Box<dyn Scenario>> {
         Box::new(ExceptionKindStability),
         Box::new(CancelledRecvKind),
         Box::new(PeerResetRecvKind),
+        Box::new(UrlCorpus),
     ]
 }
 
@@ -2466,4 +2468,40 @@ fn synthetic_ts_unknown_stream_type() -> Vec<u8> {
     let pes2 = build_pes_unknown();
     out.extend(ts_packet(0x0201, /*pusi=*/ true, &pes2));
     out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// url-corpus
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `kind = "url-corpus"`: the hand-written URL corpus (see [`url`]). The
+/// input is the corpus itself, so nothing is generated; each row carries its
+/// own expected record and the golden holds no events.
+struct UrlCorpus;
+
+impl Scenario for UrlCorpus {
+    fn id(&self) -> &'static str {
+        "url-corpus"
+    }
+    fn kind(&self) -> &'static str {
+        "url-corpus"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec!["srt", "rtp", "udp", "tcp", "hls", "rist"]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        // The corpus and its golden share the scenario's directory.
+        std::fs::create_dir_all(out_dir.join(self.id())).expect("create scenario dir");
+        let golden = Golden {
+            schema_version: 0,
+            lossy: false,
+            core: vec![],
+            extensions: serde_json::Value::Null,
+        };
+        (PathBuf::from(self.id()).join("corpus.toml"), golden)
+    }
 }

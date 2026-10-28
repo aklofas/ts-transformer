@@ -159,6 +159,10 @@ pub use error::{test_record_mux_error, test_record_recv_error, test_record_shell
 pub use rtp::{tst_rtp_mux_sender_open, tst_rtp_sender_open};
 #[cfg(feature = "rtp")]
 pub use rtsp::client::builder::tst_rtsp_client_builder_new;
+// Re-exported flat for the `net_url_corpus` integration test, which builds and
+// frees one client builder per RTSP corpus row.
+#[cfg(feature = "rtp")]
+pub use rtsp::client::builder::tst_rtsp_client_builder_free;
 // RTSP client connect, re-exported flat for the
 // `transports::rtsp_client_connect` integration test.
 #[cfg(feature = "rtp")]

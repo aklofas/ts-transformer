@@ -955,6 +955,14 @@ def test_scenario_matches_committed_golden(scenario_id: str) -> None:
         )
     elif kind == "binding_contract":
         observed_core = _run_binding_contract(scenario_id, input_path)
+    elif kind == "url-corpus":
+        # Every row carries its own record; test_url_corpus checks them one
+        # by one, this runs the same check over the whole corpus.
+        from test_url_corpus import CORPUS, check_row
+
+        for row in CORPUS["url"]:
+            check_row(row)
+        observed_core = []
     else:
         pytest.fail(
             f"unknown scenario kind {kind!r} for scenario {scenario_id!r}"

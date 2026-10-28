@@ -479,6 +479,10 @@ fn all_scenarios_match_committed_goldens() {
             "demux" => run_demux(&input),
             "roundtrip" => run_roundtrip(&entry.id, &input, &committed),
             "binding_contract" => run_binding_contract(&entry.id, &input),
+            "url-corpus" => {
+                url_corpus_leg::run();
+                vec![]
+            }
             other => panic!("unknown scenario kind '{}' in manifest", other),
         };
 
@@ -493,6 +497,531 @@ fn all_scenarios_match_committed_goldens() {
             observed, committed,
             "scenario '{}': observed golden differs from committed",
             entry.id
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// URL corpus: the Rust leg
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn url_corpus_rows_match_their_records() {
+    url_corpus_leg::run();
+}
+
+#[test]
+fn url_corpus_covers_every_documented_key() {
+    url_corpus_leg::check_coverage();
+}
+
+mod url_corpus_leg {
+    use tst_integration::scenarios::url::{self, Record, Row};
+
+    /// Parse every row through its scheme's parser and compare the record.
+    pub(super) fn run() {
+        let corpus = url::load();
+        let mut mismatches = Vec::new();
+        for row in &corpus.url {
+            let observed = observe(row);
+            if observed != row.expect {
+                mismatches.push(format!(
+                    "{}\n    expected {:?}\n    observed {:?}",
+                    row.label(),
+                    row.expect,
+                    observed
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "{} of {} URL corpus rows differ from their records:\n{}",
+            mismatches.len(),
+            corpus.url.len(),
+            mismatches.join("\n")
+        );
+    }
+
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+
+    use tst_core::url::query::{KeyDoc, docs};
+    use tst_pipeline::binding::{BindingError, BindingErrorKind};
+
+    type Keys = BTreeMap<String, String>;
+
+    fn record(scheme: &str, host: &str, port: u16, keys: Keys) -> Record {
+        Record {
+            scheme: Some(scheme.to_string()),
+            host: Some(host.to_string()),
+            port: Some(port),
+            keys: Some(keys),
+            ..Record::default()
+        }
+    }
+
+    fn put(keys: &mut Keys, key: &str, value: impl ToString) {
+        keys.insert(key.to_string(), value.to_string());
+    }
+
+    fn put_opt(keys: &mut Keys, key: &str, value: Option<impl ToString>) {
+        if let Some(v) = value {
+            put(keys, key, v);
+        }
+    }
+
+    fn ms(d: Duration) -> u128 {
+        d.as_millis()
+    }
+
+    fn bit(b: bool) -> &'static str {
+        if b { "1" } else { "0" }
+    }
+
+    fn refused(kind: BindingErrorKind) -> Record {
+        Record::error(kind)
+    }
+
+    /// The row's outcome through its scheme's parser; for `stage = "open"`
+    /// the parse must succeed and the role's opener decides.
+    fn observe(row: &Row) -> Record {
+        let parsed = match row.family() {
+            "srt" => observe_srt(&row.url),
+            "rtp" => observe_rtp(&row.url),
+            "rtsp" => observe_rtsp(&row.url),
+            "udp" => observe_udp(&row.url),
+            "tcp" => observe_tcp(&row.url),
+            "hls" => observe_hls(&row.url),
+            "rist" => observe_rist(&row.url),
+            "whep" => observe_whep(&row.url),
+            other => panic!("no Rust parser for {other}"),
+        };
+        if row.stage.as_deref() != Some("open") {
+            return parsed;
+        }
+        assert!(
+            !parsed.is_error(),
+            "{}: a stage = \"open\" row must parse, got {parsed:?}",
+            row.label()
+        );
+        match open(row) {
+            Ok(()) => parsed,
+            Err(e) => refused(e.kind),
+        }
+    }
+
+    /// The role's shared opener, for the role checks that run at open.
+    fn open(row: &Row) -> Result<(), BindingError> {
+        match (row.family(), row.role.as_str()) {
+            ("rtp", "send") => tst_rtp::opener::open_sender(&row.url).map(drop),
+            ("rtp", "recv") => tst_rtp::opener::open_recv(&row.url).map(drop),
+            ("udp", "recv") => tst_udp::opener::open_recv(&row.url).map(drop),
+            (f, r) => panic!("{}: no opener for {f} {r}", row.label()),
+        }
+    }
+
+    fn observe_srt(url: &str) -> Record {
+        use tst_srt::options::{Congestion, KeyLength, MaxBandwidth};
+        use tst_srt::url::Mode;
+        let u = match tst_srt::SrtUrl::parse(url) {
+            Ok(u) => u,
+            Err(e) => return refused(BindingError::from(e).kind),
+        };
+        let c = &u.config;
+        let mut k = Keys::new();
+        put(
+            &mut k,
+            "mode",
+            match u.mode {
+                Mode::Caller => "caller",
+                Mode::Listener => "listener",
+            },
+        );
+        put_opt(
+            &mut k,
+            "congestion",
+            c.congestion.map(|v| match v {
+                Congestion::Live => "live",
+                Congestion::File => "file",
+            }),
+        );
+        put_opt(&mut k, "conntimeo", c.connect_timeout.map(ms));
+        put_opt(&mut k, "fc", c.flow_window_packets);
+        put_opt(&mut k, "inputbw", c.input_bandwidth);
+        put_opt(&mut k, "latency", c.latency.map(ms));
+        put_opt(&mut k, "linger", c.linger.map(|d| d.as_secs()));
+        put_opt(&mut k, "lossmaxttl", c.loss_max_ttl);
+        put_opt(
+            &mut k,
+            "maxbw",
+            c.max_bandwidth.map(|v| match v {
+                MaxBandwidth::Limited(n) => n.to_string(),
+                other => format!("{other:?}"),
+            }),
+        );
+        put_opt(&mut k, "mss", c.mss);
+        put_opt(&mut k, "oheadbw", c.overhead_bandwidth_pct);
+        put_opt(
+            &mut k,
+            "packetfilter",
+            c.packet_filter.as_ref().map(|v| v.as_str()),
+        );
+        put_opt(
+            &mut k,
+            "passphrase",
+            c.passphrase.as_ref().map(|v| v.as_str()),
+        );
+        put_opt(&mut k, "payloadsize", c.payload_size);
+        put_opt(
+            &mut k,
+            "pbkeylen",
+            c.key_length.map(|v| match v {
+                KeyLength::Aes128 => "16",
+                KeyLength::Aes192 => "24",
+                KeyLength::Aes256 => "32",
+            }),
+        );
+        put_opt(&mut k, "peerlatency", c.peer_latency.map(ms));
+        put_opt(&mut k, "rcvlatency", c.recv_latency.map(ms));
+        put_opt(&mut k, "streamid", c.stream_id.as_ref().map(|v| v.as_str()));
+        put_opt(&mut k, "tlpktdrop", c.too_late_packet_drop.map(bit));
+        put_opt(&mut k, "udprcvbuf", c.udp_recv_buffer_bytes);
+        put_opt(&mut k, "udpsndbuf", c.udp_send_buffer_bytes);
+        put_opt(&mut k, "x-recvtimeout", c.recv_timeout.map(ms));
+        put_opt(&mut k, "x-sendtimeout", c.send_timeout.map(ms));
+        record("srt", &u.host, u.port, k)
+    }
+
+    fn observe_rtp(url: &str) -> Record {
+        let u = match tst_rtp::RtpUrl::parse(url) {
+            Ok(u) => u,
+            Err(e) => {
+                return refused(BindingError::from(tst_rtp::RtpConnectError::Url(e)).kind);
+            }
+        };
+        let mut k = Keys::new();
+        put_opt(&mut k, "ttl", u.ttl);
+        put_opt(&mut k, "iface", u.iface.as_deref());
+        put_opt(&mut k, "pkt_size", u.pkt_size);
+        put_opt(&mut k, "ssrc", u.ssrc);
+        put_opt(&mut k, "pt", u.pt);
+        put_opt(&mut k, "recv_timeout", u.recv_timeout.map(ms));
+        put_opt(&mut k, "rcvbuf", u.rcvbuf);
+        put_opt(&mut k, "sndbuf", u.sndbuf);
+        put_opt(&mut k, "source", u.source);
+        record("rtp", &u.host, u.port, k)
+    }
+
+    fn observe_rtsp(url: &str) -> Record {
+        use tst_rtp::{RtspScheme, RtspTransportPref, RtspVersion};
+        let u = match tst_rtp::RtspUrl::parse(url) {
+            Ok(u) => u,
+            Err(e) => return refused(BindingError::from(tst_rtp::RtspError::Url(e)).kind),
+        };
+        let scheme = match u.scheme() {
+            RtspScheme::Rtsp => "rtsp",
+            RtspScheme::Rtsps => "rtsps",
+            _ => "other",
+        };
+        let mut k = Keys::new();
+        put(
+            &mut k,
+            "rtsp_version",
+            match u.rtsp_version {
+                RtspVersion::V1_0 => "1.0",
+                RtspVersion::V2_0 => "2.0",
+                _ => "other",
+            },
+        );
+        // Prefer-UDP is the absent key's behaviour; no URL value spells it.
+        put_opt(
+            &mut k,
+            "transport",
+            match u.transport_preference {
+                RtspTransportPref::PreferUdp => None,
+                RtspTransportPref::ForceUdp => Some("udp"),
+                RtspTransportPref::ForceTcp => Some("tcp"),
+                _ => Some("other"),
+            },
+        );
+        put_opt(
+            &mut k,
+            "tcp_keepalive",
+            u.tcp_keepalive.map(|d| d.as_secs()),
+        );
+        put_opt(&mut k, "recv_timeout", u.recv_timeout.map(ms));
+        Record {
+            path: Some(u.path.clone()),
+            username: u.username.clone(),
+            password_set: u.username.as_ref().map(|_| u.password.is_some()),
+            ..record(scheme, &u.host, u.port, k)
+        }
+    }
+
+    fn observe_udp(url: &str) -> Record {
+        let u = match tst_udp::UdpUrl::parse(url) {
+            Ok(u) => u,
+            Err(e) => return refused(BindingError::from(tst_udp::UdpError::Url(e)).kind),
+        };
+        let c = &u.config;
+        let mut k = Keys::new();
+        put_opt(&mut k, "iface", c.iface.as_deref());
+        put_opt(&mut k, "localaddr", c.localaddr);
+        put_opt(&mut k, "ttl", c.ttl);
+        put_opt(&mut k, "tos", c.tos);
+        put_opt(&mut k, "rcvbuf", c.rcvbuf);
+        put_opt(&mut k, "sndbuf", c.sndbuf);
+        put_opt(&mut k, "pkt_size", c.pkt_size);
+        Record {
+            bind: u.recv_bind.then_some(true),
+            ..record("udp", &u.addr.to_string(), u.port, k)
+        }
+    }
+
+    fn observe_tcp(url: &str) -> Record {
+        let u = match tst_tcp::url::TcpUrl::parse(url) {
+            Ok(u) => u,
+            Err(e) => return refused(BindingError::from(tst_tcp::error::TcpError::Url(e)).kind),
+        };
+        let c = &u.config;
+        let path = |p: &Option<std::path::PathBuf>| p.as_ref().map(|p| p.display().to_string());
+        let mut k = Keys::new();
+        put(&mut k, "listen", bit(u.listen));
+        put_opt(&mut k, "nodelay", c.nodelay.map(bit));
+        put_opt(&mut k, "keepalive", c.keepalive.map(|d| d.as_secs()));
+        put_opt(&mut k, "rcvbuf", c.rcvbuf);
+        put_opt(&mut k, "sndbuf", c.sndbuf);
+        put_opt(&mut k, "pkt_size", c.pkt_size);
+        put_opt(
+            &mut k,
+            "connect_timeout",
+            c.connect_timeout.map(|d| d.as_secs()),
+        );
+        put_opt(&mut k, "cert", path(&c.cert));
+        put_opt(&mut k, "key", path(&c.key));
+        put_opt(&mut k, "ca", path(&c.ca));
+        record(if u.tls { "tcps" } else { "tcp" }, &u.host, u.port, k)
+    }
+
+    fn observe_hls(url: &str) -> Record {
+        use tst_hls::config::{HlsConfig, HlsMode};
+        // HlsError has no URL variant: `from_url`'s refusal is the domain's
+        // URL kind in every binding.
+        let c = match tst_hls::HlsUrl::parse(url) {
+            Ok(u) => u.config,
+            Err(_) => return refused(BindingErrorKind::HlsUrl),
+        };
+        let path = |p: &Option<std::path::PathBuf>| p.as_ref().map(|p| p.display().to_string());
+        let mut k = Keys::new();
+        if c.output_dir != HlsConfig::default().output_dir {
+            put(&mut k, "output_dir", c.output_dir.display());
+        }
+        put(&mut k, "segment_duration", c.segment_duration.as_secs());
+        put(&mut k, "playlist_window", c.playlist_window);
+        put(
+            &mut k,
+            "mode",
+            match c.mode {
+                HlsMode::Live => "live",
+                HlsMode::Event => "event",
+                HlsMode::Vod => "vod",
+            },
+        );
+        if let Some((user, pass)) = &c.basic_auth {
+            put(&mut k, "auth_user", user);
+            put(&mut k, "auth_pass", pass);
+        }
+        put_opt(&mut k, "cert", path(&c.tls_cert));
+        put_opt(&mut k, "key", path(&c.tls_key));
+        record(
+            if c.tls { "hlss" } else { "hls" },
+            &c.bind.ip().to_string(),
+            c.bind.port(),
+            k,
+        )
+    }
+
+    fn observe_rist(url: &str) -> Record {
+        use tst_rist::config::RistProfile;
+        let u = match tst_rist::RistUrl::parse(url) {
+            Ok(u) => u,
+            Err(e) => return refused(BindingError::from(tst_rist::RistError::Url(e)).kind),
+        };
+        let c = &u.config;
+        let mut k = Keys::new();
+        put(
+            &mut k,
+            "profile",
+            match c.profile {
+                RistProfile::Simple => "simple",
+                RistProfile::Main => "main",
+                #[allow(unreachable_patterns)]
+                _ => "other",
+            },
+        );
+        put_opt(&mut k, "recovery_maxbitrate", c.recovery_maxbitrate_kbps);
+        put_opt(&mut k, "bandwidth", c.bandwidth_kbps);
+        put(&mut k, "buffer", ms(c.buffer));
+        put_opt(&mut k, "session_timeout", c.session_timeout.map(ms));
+        if let Some(key) = &c.encryption {
+            put(&mut k, "aes-type", key.size_bits);
+            put(&mut k, "secret", key.secret.expose());
+        }
+        put_opt(&mut k, "cname", c.cname.as_deref());
+        put(&mut k, "compression", bit(c.compression));
+        put(&mut k, "pkt_size", c.pkt_size);
+        Record {
+            bind: u.is_recv_bind.then_some(true),
+            ..record("rist", &u.addr.to_string(), u.port, k)
+        }
+    }
+
+    fn observe_whep(url: &str) -> Record {
+        let u = match tst_webrtc::url::WhepUrl::parse(url) {
+            Ok(u) => u,
+            Err(e) => {
+                return refused(
+                    BindingError::from(tst_webrtc::WhepServerError::InvalidUrl(e)).kind,
+                );
+            }
+        };
+        let mut k = Keys::new();
+        put(&mut k, "media_port", u.media_port);
+        put_opt(&mut k, "advertise", u.advertise);
+        put(&mut k, "max_viewers", u.max_viewers);
+        put_opt(&mut k, "token", u.token.as_deref());
+        put(&mut k, "cors_origin", &u.cors_origin);
+        put_opt(&mut k, "cert", u.cert.as_deref());
+        put_opt(&mut k, "key", u.key.as_deref());
+        record(
+            if u.tls { "wheps" } else { "whep" },
+            &u.addr.to_string(),
+            u.port,
+            k,
+        )
+    }
+
+    /// Every family's documented keys, from the parsers' own tables.
+    fn tables() -> BTreeMap<&'static str, Vec<KeyDoc>> {
+        let mut t: BTreeMap<&'static str, Vec<KeyDoc>> = BTreeMap::new();
+        let mut srt: Vec<KeyDoc> = docs("srt", tst_srt::url::URL_KEYS).collect();
+        srt.extend(tst_srt::url::URL_LEVEL_KEYS.iter().cloned());
+        t.insert("srt", srt);
+        t.insert("rtp", docs("rtp", tst_rtp::url::URL_KEYS_RTP).collect());
+        t.insert("rtsp", docs("rtsp", tst_rtp::url::URL_KEYS_RTSP).collect());
+        t.insert("udp", docs("udp", tst_udp::url::URL_KEYS).collect());
+        t.insert("tcp", docs("tcp", tst_tcp::url::URL_KEYS).collect());
+        t.insert("hls", docs("hls", tst_hls::url::URL_KEYS).collect());
+        t.insert("rist", docs("rist", tst_rist::url::URL_KEYS).collect());
+        t.insert("whep", docs("whep", tst_webrtc::url::URL_KEYS).collect());
+        t
+    }
+
+    /// Whether `url`'s query names `key` (as `key=`).
+    fn query_names(url: &str, key: &str) -> bool {
+        url.split_once('?').is_some_and(|(_, q)| {
+            q.split('&')
+                .any(|pair| pair.split_once('=').map_or(pair, |(k, _)| k) == key)
+        })
+    }
+
+    pub(super) fn check_coverage() {
+        let corpus = url::load();
+        let tables = tables();
+        let mut gaps = Vec::new();
+        assert_eq!(
+            corpus
+                .schemes
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            tables.keys().copied().collect::<Vec<_>>(),
+            "the header lists a different set of scheme families than the parsers"
+        );
+        for (family, table) in &tables {
+            let header = corpus
+                .schemes
+                .get(*family)
+                .unwrap_or_else(|| panic!("the header has no [schemes.{family}]"));
+            let aliases: usize = table.iter().map(|d| d.aliases.len()).sum();
+            assert_eq!(
+                (header.keys, header.aliases),
+                (table.len(), aliases),
+                "[schemes.{family}] counts differ from the parser's table"
+            );
+            let rows: Vec<&Row> = corpus
+                .url
+                .iter()
+                .filter(|r| r.family() == *family)
+                .collect();
+            let has = |case: &str, key: &str, spelled: &str| {
+                rows.iter().any(|r| {
+                    r.case == case
+                        && r.key.as_deref() == Some(key)
+                        && (spelled.is_empty() || query_names(&r.url, spelled))
+                })
+            };
+            for d in table {
+                if !has("explicit", d.canonical, d.canonical) {
+                    gaps.push(format!("{family}: no explicit row for {}", d.canonical));
+                }
+                for alias in d.aliases {
+                    if !has("alias", d.canonical, alias) {
+                        gaps.push(format!("{family}: no alias row spelling {alias}"));
+                    }
+                }
+                let exempt = header.no_invalid.iter().any(|k| k == d.canonical);
+                if !exempt && !has("invalid", d.canonical, "") {
+                    gaps.push(format!("{family}: no invalid row for {}", d.canonical));
+                }
+            }
+            for k in &header.no_invalid {
+                if !table.iter().any(|d| d.canonical == k) {
+                    gaps.push(format!("{family}: no_invalid names unknown key {k}"));
+                }
+            }
+            for case in ["default", "credentials", "invalid", "conflict"] {
+                if !rows.iter().any(|r| r.case == case) {
+                    gaps.push(format!("{family}: no {case} row"));
+                }
+            }
+        }
+        for row in &corpus.url {
+            const CASES: [&str; 6] = [
+                "default",
+                "explicit",
+                "alias",
+                "credentials",
+                "invalid",
+                "conflict",
+            ];
+            if !CASES.contains(&row.case.as_str()) {
+                gaps.push(format!("{}: unknown case", row.label()));
+            }
+            if let Some(key) = &row.key
+                && !tables[row.family()].iter().any(|d| d.canonical == key)
+            {
+                gaps.push(format!("{}: key {key} is not documented", row.label()));
+            }
+            let bare = Record {
+                error_kind: row.expect.error_kind.clone(),
+                ..Record::default()
+            };
+            if row.expect.is_error() && row.expect != bare {
+                gaps.push(format!(
+                    "{}: an error record carries other fields",
+                    row.label()
+                ));
+            }
+            // Every leg must declare the row's role.
+            for leg in corpus.legs.keys() {
+                let _ = corpus.entry(leg, row);
+            }
+        }
+        assert!(
+            gaps.is_empty(),
+            "URL corpus coverage gaps:\n{}",
+            gaps.join("\n")
         );
     }
 }

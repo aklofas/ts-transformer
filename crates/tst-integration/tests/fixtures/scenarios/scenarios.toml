@@ -204,3 +204,12 @@ golden = "peer-reset-recv-kind/golden.json"
 features = ["tcp"]
 tier = "A"
 schema_version = 0
+
+[[scenario]]
+id = "url-corpus"
+kind = "url-corpus"
+input = "url-corpus/corpus.toml"
+golden = "url-corpus/golden.json"
+features = ["srt", "rtp", "udp", "tcp", "hls", "rist"]
+tier = "A"
+schema_version = 0

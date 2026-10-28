@@ -4,6 +4,8 @@
 //!
 //! - `scenarios/` — the scenario trait + pilot scenario implementations.
 //! - `scenarios/golden.rs` — the golden envelope + `CoreEvent` types.
+//! - `scenarios/url.rs` — the URL corpus's record and loader, shared by the
+//!   Rust leg and the C ABI leg.
 //! - `bin/gen_scenarios.rs` — generator binary (default mode: write fixtures;
 //!   `--check` mode: diff against committed).
 //! - `tests/net_rust_scenarios.rs` — Rust adapter integration tests.

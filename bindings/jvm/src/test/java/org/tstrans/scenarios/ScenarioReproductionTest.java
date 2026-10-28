@@ -430,6 +430,10 @@ class ScenarioReproductionTest {
                 assertNotNull(how, id + " is a binding_contract scenario with no JVM coverage declared");
                 assertTrue(how.startsWith("covered:") || how.startsWith("skip:"), how);
             }
+            // The corpus rows carry their own records; the JVM has no leg that
+            // opens them, so the scenario is reported as skipped, not passed.
+            case "url-corpus" -> org.junit.jupiter.api.Assumptions.abort(
+                "the URL corpus (" + id + "/corpus.toml) has no JVM leg");
             default -> fail("scenario kind " + kind + " (" + id + ") has no JVM adapter");
         }
     }

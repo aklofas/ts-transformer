@@ -2536,6 +2536,7 @@ int main(int argc, char **argv) {
 
     /* Run each scenario and compare against its golden. */
     int failures = 0;
+    int skipped = 0;
     for (int s = 0; s < scenario_count; s++) {
         const scenario_entry_t *entry = &entries[s];
         fprintf(stdout, "--- scenario '%s' (kind=%s)\n", entry->id, entry->kind);
@@ -2561,6 +2562,15 @@ int main(int argc, char **argv) {
             run_rc = run_roundtrip(scenarios_dir_path, entry, golden_json, &observed);
         } else if (strcmp(entry->kind, "binding_contract") == 0) {
             run_rc = run_binding_contract(scenarios_dir_path, entry, &observed);
+        } else if (strcmp(entry->kind, "url-corpus") == 0) {
+            /* The URL corpus is a table of URLs, each with its own expected
+             * record, not a stream to demux; the C leg that opens every row
+             * through the C ABI is bindings/c/tests/net_url_corpus.rs. */
+            fprintf(stdout, "SKIP [%s]: run by bindings/c/tests/net_url_corpus.rs\n\n",
+                    entry->id);
+            free(golden_data);
+            skipped++;
+            continue;
         } else {
             fprintf(stderr, "ERROR: unknown scenario kind '%s'\n", entry->kind);
             run_rc = -1;
@@ -2594,9 +2604,10 @@ int main(int argc, char **argv) {
     }
 
     /* Summary. */
-    fprintf(stdout, "=== %d scenario(s): %d passed, %d failed ===\n",
+    fprintf(stdout, "=== %d scenario(s): %d passed, %d skipped, %d failed ===\n",
             scenario_count,
-            scenario_count - failures,
+            scenario_count - failures - skipped,
+            skipped,
             failures);
 
     return failures > 0 ? 1 : 0;

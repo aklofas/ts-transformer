@@ -1,0 +1,2018 @@
+# Canonical URL corpus: one URL per row, each with the normalised record every
+# binding must agree on. The Rust, C and Python legs read this file; a binding
+# that adds a URL key adds a row here.
+#
+# ── The record ────────────────────────────────────────────────────────────────
+#
+# A valid row's `expect` is what the scheme's parser produced:
+#   scheme, host, port      the parsed endpoint (host without IPv6 brackets)
+#   path                    rtsp(s) only: the resource path
+#   bind                    udp / rist only, when the `@host` receive-bind form
+#                           (or any userinfo) is present
+#   username, password_set  rtsp(s) only, the one scheme that keeps userinfo
+#   keys                    every documented key the parsed form holds a value
+#                           for, under its canonical name after alias
+#                           resolution, rendered as decimal integers in the
+#                           key's documented unit (`K`/`M` sizes in bytes,
+#                           booleans as `1`/`0`), lowercase enum spellings,
+#                           and text as written. A key with a built-in default
+#                           (srt `mode`, rtsp `rtsp_version`, rist `profile`,
+#                           `buffer`, `compression`, `pkt_size`, hls
+#                           `segment_duration`, `playlist_window`, `mode`,
+#                           tcp `listen`, `nodelay`, whep `media_port`,
+#                           `max_viewers`, `cors_origin`) always appears; hls
+#                           `output_dir` appears only when the URL sets it,
+#                           because its default is the platform's temp dir.
+# An invalid row's `expect` is `{ error_kind = "..." }`: the binding-neutral
+# kind name (`BindingErrorKind::name()`, `exc.kind.name` in Python) inside the
+# scheme's error domain. C compares `TST_E_*` codes: the expected kind's
+# `c_projection()`.
+#
+# `stage = "open"` marks a URL the parser accepts but the role's entry point
+# refuses (a send-only key on a receive URL, `?pt=` on an MP2T open); the Rust
+# leg proves the parse succeeds, then runs the role's opener.
+#
+# A key the scheme does not document is an error for srt, rtp, rtsp(s) and
+# whep(s); udp, tcp(s), hls(s) and rist ignore it, so those rows expect a
+# record without it.
+#
+# ── Cases ─────────────────────────────────────────────────────────────────────
+#
+#   default      the scheme's bare URL; covers every key with a built-in default
+#   explicit     one documented key set to a valid value (`key` names it)
+#   alias        the key spelled by one of its aliases
+#   credentials  `user:pass@` userinfo
+#   invalid      a refused value, an undocumented key, or a malformed URL
+#   conflict     the same key twice (the later wins), a canonical name and its
+#                alias (the later wins), or two keys the parser checks together
+#
+# The Rust leg checks the corpus against the parsers' key tables: every
+# documented key has an `explicit` row, every alias an `alias` row, and every
+# key outside `no_invalid` an `invalid` row.
+#
+# ── Documented keys per scheme (the parsers' tables) ──────────────────────────
+
+schema_version = 0
+
+[schemes.srt]
+keys = 23        # 22 table keys + `mode`, which the URL level consumes
+aliases = 9
+no_invalid = []
+
+[schemes.rtp]
+keys = 9
+aliases = 0
+no_invalid = []
+
+[schemes.rtsp]   # rtsp and rtsps share one table
+keys = 4
+aliases = 0
+no_invalid = []
+
+[schemes.udp]
+keys = 7
+aliases = 0
+no_invalid = ["iface"]                    # any text names an interface
+
+[schemes.tcp]    # tcp and tcps share one table
+keys = 10
+aliases = 0
+no_invalid = ["cert", "key", "ca"]        # paths; a missing file fails at open
+
+[schemes.hls]    # hls and hlss share one table
+keys = 8
+aliases = 0
+no_invalid = ["output_dir", "auth_user", "auth_pass", "cert", "key"]
+
+[schemes.rist]
+keys = 10
+aliases = 2
+no_invalid = ["cname"]
+
+[schemes.whep]   # whep and wheps share one table
+keys = 7
+aliases = 0
+no_invalid = ["cors_origin", "cert", "key"]
+
+# ── Entry points per leg ──────────────────────────────────────────────────────
+#
+# Neither C nor Python exposes a parsed URL, so only the Rust leg compares the
+# whole record. The C and Python legs open the role's entry point and compare
+# the outcome: an invalid row must fail with the expected kind; a valid row
+# must not fail with the scheme's URL kinds (a refused connect is fine).
+#
+#   record        Rust: parse, compare the whole record
+#   open-refused  open against a closed loopback port (or bind port 0)
+#   open-peer     srt: a loopback peer answers, so the open returns at once
+#   build         a builder that parses the URL without touching the network
+#   absent        the leg has no URL-taking entry point for this role
+
+[legs.rust]
+srt = { caller = "tst_srt::SrtUrl::parse", listener = "tst_srt::SrtUrl::parse", probe = "record" }
+rtp = { send = "tst_rtp::RtpUrl::parse", recv = "tst_rtp::RtpUrl::parse", h264 = "tst_rtp::RtpUrl::parse", probe = "record" }
+rtsp = { client = "tst_rtp::url::RtspUrl::parse", probe = "record" }
+udp = { send = "tst_udp::UdpUrl::parse", recv = "tst_udp::UdpUrl::parse", probe = "record" }
+tcp = { caller = "tst_tcp::TcpUrl::parse", listener = "tst_tcp::TcpUrl::parse", probe = "record" }
+hls = { publisher = "tst_hls::HlsUrl::parse", probe = "record" }
+rist = { send = "tst_rist::RistUrl::parse", recv = "tst_rist::RistUrl::parse", probe = "record" }
+whep = { server = "tst_webrtc::WhepUrl::parse", probe = "record" }
+
+[legs.c]
+srt = { caller = "tst_sender_open", listener = "tst_receiver_open_listener", probe = "open-peer" }
+rtp = { send = "tst_rtp_sender_open", recv = "tst_rtp_recv_open", h264 = "absent", probe = "open-refused" }
+rtsp = { client = "tst_rtsp_client_builder_new", probe = "build" }
+udp = { send = "tst_udp_sender_open", recv = "tst_udp_recv_open", probe = "open-refused" }
+tcp = { caller = "tst_tcp_sender_open", listener = "tst_tcp_listener_from_url", probe = "open-refused" }
+hls = { publisher = "tst_hls_publisher_builder_from_url", probe = "build" }
+rist = { send = "tst_rist_sender_open", recv = "tst_rist_recv_open", probe = "open-refused" }
+whep = { server = "absent", probe = "absent" }
+
+[legs.python]
+srt = { caller = "shells.Sender.open", listener = "shells.Receiver.open", probe = "open-peer" }
+rtp = { send = "shells.Sender.open", recv = "shells.Receiver.open", h264 = "rtp.H264Receiver.listen", probe = "open-refused" }
+rtsp = { client = "rtp.RtspClient.connect", probe = "open-refused" }
+udp = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
+tcp = { caller = "shells.Sender.open", listener = "absent", probe = "open-refused" }
+hls = { publisher = "hls.HlsPublisherBuilder.from_url", probe = "build" }
+rist = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
+whep = { server = "webrtc.WhepServer.bind", probe = "open-refused" }
+
+# ══ srt ═══════════════════════════════════════════════════════════════════════
+# Every port is distinct: the C and Python legs put a loopback peer on it.
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "default"
+url = "srt://127.0.0.1:47101"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47101, keys = { mode = "caller" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "default"
+url = "srt://[::1]:47102"
+expect = { scheme = "srt", host = "::1", port = 47102, keys = { mode = "caller" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "congestion"
+url = "srt://127.0.0.1:47103?congestion=live"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47103, keys = { mode = "caller", congestion = "live" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "conntimeo"
+url = "srt://127.0.0.1:47104?conntimeo=1500"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47104, keys = { mode = "caller", conntimeo = "1500" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "fc"
+url = "srt://127.0.0.1:47105?fc=25600"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47105, keys = { mode = "caller", fc = "25600" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "inputbw"
+url = "srt://127.0.0.1:47106?inputbw=1000000"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47106, keys = { mode = "caller", inputbw = "1000000" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "latency"
+url = "srt://127.0.0.1:47107?latency=120"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47107, keys = { mode = "caller", latency = "120" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "linger"
+url = "srt://127.0.0.1:47108?linger=0"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47108, keys = { mode = "caller", linger = "0" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "lossmaxttl"
+url = "srt://127.0.0.1:47109?lossmaxttl=4"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47109, keys = { mode = "caller", lossmaxttl = "4" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "maxbw"
+url = "srt://127.0.0.1:47110?maxbw=5000000"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47110, keys = { mode = "caller", maxbw = "5000000" } }
+
+[[url]]
+scheme = "srt"
+role = "listener"
+case = "explicit"
+key = "mode"
+url = "srt://127.0.0.1:47111?mode=listener"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47111, keys = { mode = "listener" } }
+
+[[url]]
+scheme = "srt"
+role = "listener"
+case = "explicit"
+key = "mode"
+url = "srt://:47112?mode=listener"
+expect = { scheme = "srt", host = "", port = 47112, keys = { mode = "listener" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "mss"
+url = "srt://127.0.0.1:47113?mss=1360"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47113, keys = { mode = "caller", mss = "1360" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "oheadbw"
+url = "srt://127.0.0.1:47114?oheadbw=25"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47114, keys = { mode = "caller", oheadbw = "25" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "packetfilter"
+url = "srt://127.0.0.1:47115?packetfilter=fec,cols:4,rows:2"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47115, keys = { mode = "caller", packetfilter = "fec,cols:4,rows:2" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "passphrase"
+url = "srt://127.0.0.1:47116?passphrase=correcthorse"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47116, keys = { mode = "caller", passphrase = "correcthorse" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "payloadsize"
+url = "srt://127.0.0.1:47117?payloadsize=1316"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47117, keys = { mode = "caller", payloadsize = "1316" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "pbkeylen"
+url = "srt://127.0.0.1:47118?pbkeylen=32"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47118, keys = { mode = "caller", pbkeylen = "32" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "peerlatency"
+url = "srt://127.0.0.1:47119?peerlatency=120"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47119, keys = { mode = "caller", peerlatency = "120" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "rcvlatency"
+url = "srt://127.0.0.1:47120?rcvlatency=120"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47120, keys = { mode = "caller", rcvlatency = "120" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "streamid"
+url = "srt://127.0.0.1:47121?streamid=front-camera"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47121, keys = { mode = "caller", streamid = "front-camera" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "tlpktdrop"
+url = "srt://127.0.0.1:47122?tlpktdrop=0"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47122, keys = { mode = "caller", tlpktdrop = "0" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "udprcvbuf"
+url = "srt://127.0.0.1:47123?udprcvbuf=1048576"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47123, keys = { mode = "caller", udprcvbuf = "1048576" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "udpsndbuf"
+url = "srt://127.0.0.1:47124?udpsndbuf=1048576"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47124, keys = { mode = "caller", udpsndbuf = "1048576" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "x-recvtimeout"
+url = "srt://127.0.0.1:47125?x-recvtimeout=2000"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47125, keys = { mode = "caller", x-recvtimeout = "2000" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "x-sendtimeout"
+url = "srt://127.0.0.1:47126?x-sendtimeout=2000"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47126, keys = { mode = "caller", x-sendtimeout = "2000" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "streamid"
+url = "srt://127.0.0.1:47127?streamid=%23%21%3A%3Ar%3Dcam1"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47127, keys = { mode = "caller", streamid = "#!::r=cam1" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "congestion"
+url = "srt://127.0.0.1:47128?smoother=live"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47128, keys = { mode = "caller", congestion = "live" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "conntimeo"
+url = "srt://127.0.0.1:47129?connect_timeout=1500"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47129, keys = { mode = "caller", conntimeo = "1500" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "fc"
+url = "srt://127.0.0.1:47130?ffs=25600"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47130, keys = { mode = "caller", fc = "25600" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "latency"
+url = "srt://127.0.0.1:47131?tsbpddelay=120"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47131, keys = { mode = "caller", latency = "120" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "payloadsize"
+url = "srt://127.0.0.1:47132?pkt_size=1316"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47132, keys = { mode = "caller", payloadsize = "1316" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "payloadsize"
+url = "srt://127.0.0.1:47133?payload_size=1316"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47133, keys = { mode = "caller", payloadsize = "1316" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "streamid"
+url = "srt://127.0.0.1:47134?srt_streamid=front-camera"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47134, keys = { mode = "caller", streamid = "front-camera" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "udprcvbuf"
+url = "srt://127.0.0.1:47135?recv_buffer_size=1048576"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47135, keys = { mode = "caller", udprcvbuf = "1048576" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "alias"
+key = "udpsndbuf"
+url = "srt://127.0.0.1:47136?send_buffer_size=1048576"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47136, keys = { mode = "caller", udpsndbuf = "1048576" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "latency"
+url = "srt://127.0.0.1:47137?latency=100&latency=150"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47137, keys = { mode = "caller", latency = "150" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "latency"
+url = "srt://127.0.0.1:47138?latency=100&tsbpddelay=200"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47138, keys = { mode = "caller", latency = "200" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "congestion"
+url = "srt://127.0.0.1:47139?smoother=file&congestion=live"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47139, keys = { mode = "caller", congestion = "live" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "conntimeo"
+url = "srt://127.0.0.1:47140?conntimeo=1000&connect_timeout=1500"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47140, keys = { mode = "caller", conntimeo = "1500" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "fc"
+url = "srt://127.0.0.1:47141?fc=8192&ffs=25600"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47141, keys = { mode = "caller", fc = "25600" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "payloadsize"
+url = "srt://127.0.0.1:47142?payloadsize=1200&pkt_size=1316"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47142, keys = { mode = "caller", payloadsize = "1316" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "payloadsize"
+url = "srt://127.0.0.1:47143?pkt_size=1200&payload_size=1316"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47143, keys = { mode = "caller", payloadsize = "1316" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "streamid"
+url = "srt://127.0.0.1:47144?streamid=a&srt_streamid=front-camera"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47144, keys = { mode = "caller", streamid = "front-camera" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "udprcvbuf"
+url = "srt://127.0.0.1:47145?udprcvbuf=65536&recv_buffer_size=1048576"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47145, keys = { mode = "caller", udprcvbuf = "1048576" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "udpsndbuf"
+url = "srt://127.0.0.1:47146?udpsndbuf=65536&send_buffer_size=1048576"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47146, keys = { mode = "caller", udpsndbuf = "1048576" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "mode"
+url = "srt://127.0.0.1:47147?mode=listener&mode=caller"
+expect = { scheme = "srt", host = "127.0.0.1", port = 47147, keys = { mode = "caller" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "conflict"
+key = "latency"
+url = "srt://127.0.0.1:47148?latency=abc&latency=120"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "credentials"
+url = "srt://user:secret@127.0.0.1:47149"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "congestion"
+url = "srt://127.0.0.1:47150?congestion=fast"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "conntimeo"
+url = "srt://127.0.0.1:47151?conntimeo=-1"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "fc"
+url = "srt://127.0.0.1:47152?fc=abc"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "inputbw"
+url = "srt://127.0.0.1:47153?inputbw=-5"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "latency"
+url = "srt://127.0.0.1:47154?latency=0120"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "linger"
+url = "srt://127.0.0.1:47155?linger=x"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "lossmaxttl"
+url = "srt://127.0.0.1:47156?lossmaxttl=x"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "maxbw"
+url = "srt://127.0.0.1:47157?maxbw=-1"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "mode"
+url = "srt://127.0.0.1:47158?mode=rendezvous"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "mss"
+url = "srt://127.0.0.1:47159?mss=70000"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "oheadbw"
+url = "srt://127.0.0.1:47160?oheadbw=200"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "packetfilter"
+url = "srt://127.0.0.1:47161?packetfilter=fec;cols:4"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "passphrase"
+url = "srt://127.0.0.1:47162?passphrase=short"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "payloadsize"
+url = "srt://127.0.0.1:47163?payloadsize=2000"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "pbkeylen"
+url = "srt://127.0.0.1:47164?pbkeylen=20"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "peerlatency"
+url = "srt://127.0.0.1:47165?peerlatency=x"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "rcvlatency"
+url = "srt://127.0.0.1:47166?rcvlatency=x"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "streamid"
+url = "srt://127.0.0.1:47167?streamid=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "tlpktdrop"
+url = "srt://127.0.0.1:47168?tlpktdrop=2"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "udprcvbuf"
+url = "srt://127.0.0.1:47169?udprcvbuf=-1"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "udpsndbuf"
+url = "srt://127.0.0.1:47170?udpsndbuf=-1"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "x-recvtimeout"
+url = "srt://127.0.0.1:47171?x-recvtimeout=x"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "x-sendtimeout"
+url = "srt://127.0.0.1:47172?x-sendtimeout=x"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+url = "srt://127.0.0.1:47173?foo=1"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+url = "srt://127.0.0.1:47174?rcvbuf=1048576"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+url = "srt://127.0.0.1:47175?timeout=1000"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+url = "srt://127.0.0.1"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+url = "srt://:47176"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+url = "srt://127.0.0.1:47177?latency=%zz"
+expect = { error_kind = "CONFIG_INVALID" }
+
+# ══ rtp ═══════════════════════════════════════════════════════════════════════
+# Send rows aim at a closed loopback port; receive rows bind port 0.
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "default"
+url = "rtp://127.0.0.1:47201"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 47201, keys = {} }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "default"
+url = "rtp://127.0.0.1:0"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 0, keys = {} }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "explicit"
+key = "ttl"
+url = "rtp://127.0.0.1:47201?ttl=4"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 47201, keys = { ttl = "4" } }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "explicit"
+key = "iface"
+url = "rtp://127.0.0.1:47201?iface=127.0.0.1"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 47201, keys = { iface = "127.0.0.1" } }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "explicit"
+key = "pkt_size"
+url = "rtp://127.0.0.1:47201?pkt_size=1316"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 47201, keys = { pkt_size = "1316" } }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "explicit"
+key = "ssrc"
+url = "rtp://127.0.0.1:47201?ssrc=0xCAFEBABE"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 47201, keys = { ssrc = "3405691582" } }
+
+[[url]]
+scheme = "rtp"
+role = "h264"
+case = "explicit"
+key = "pt"
+url = "rtp://127.0.0.1:0?pt=96"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 0, keys = { pt = "96" } }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "explicit"
+key = "recv_timeout"
+url = "rtp://127.0.0.1:0?recv_timeout=500"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 0, keys = { recv_timeout = "500" } }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "explicit"
+key = "rcvbuf"
+url = "rtp://127.0.0.1:0?rcvbuf=1M"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 0, keys = { rcvbuf = "1048576" } }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "explicit"
+key = "sndbuf"
+url = "rtp://127.0.0.1:47201?sndbuf=256K"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 47201, keys = { sndbuf = "262144" } }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "explicit"
+key = "source"
+url = "rtp://127.0.0.1:0?source=10.0.0.5"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 0, keys = { source = "10.0.0.5" } }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "credentials"
+url = "rtp://user:secret@127.0.0.1:47201"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 47201, keys = {} }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "conflict"
+key = "ttl"
+url = "rtp://127.0.0.1:47201?ttl=2&ttl=3"
+expect = { scheme = "rtp", host = "127.0.0.1", port = 47201, keys = { ttl = "3" } }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+key = "ttl"
+url = "rtp://127.0.0.1:47201?ttl=0"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+key = "iface"
+url = "rtp://127.0.0.1:47201?iface="
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+key = "pkt_size"
+url = "rtp://127.0.0.1:47201?pkt_size=100"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+key = "ssrc"
+url = "rtp://127.0.0.1:47201?ssrc=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "h264"
+case = "invalid"
+key = "pt"
+url = "rtp://127.0.0.1:0?pt=33"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "invalid"
+key = "recv_timeout"
+url = "rtp://127.0.0.1:0?recv_timeout=0"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "invalid"
+key = "rcvbuf"
+url = "rtp://127.0.0.1:0?rcvbuf=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+key = "sndbuf"
+url = "rtp://127.0.0.1:47201?sndbuf=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "invalid"
+key = "source"
+url = "rtp://127.0.0.1:0?source=camera.local"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "invalid"
+key = "pkt_size"
+stage = "open"
+url = "rtp://127.0.0.1:0?pkt_size=1316"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "recv"
+case = "invalid"
+key = "sndbuf"
+stage = "open"
+url = "rtp://127.0.0.1:0?sndbuf=256K"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+key = "rcvbuf"
+stage = "open"
+url = "rtp://127.0.0.1:47201?rcvbuf=1M"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+key = "source"
+stage = "open"
+url = "rtp://127.0.0.1:47201?source=10.0.0.5"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+key = "pt"
+stage = "open"
+url = "rtp://127.0.0.1:47201?pt=96"
+expect = { error_kind = "PAYLOAD_TYPE_PARAM" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+url = "rtp://127.0.0.1:47201?foo=1"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rtp"
+role = "send"
+case = "invalid"
+url = "rtp://127.0.0.1"
+expect = { error_kind = "URL" }
+
+# ══ rtsp(s) ═══════════════════════════════════════════════════════════════════
+# The client opens against a closed loopback port; the default-port rows
+# assume nothing serves 554 / 322 on loopback.
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "default"
+url = "rtsp://127.0.0.1/live"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 554, path = "/live", keys = { rtsp_version = "1.0" } }
+
+[[url]]
+scheme = "rtsps"
+role = "client"
+case = "default"
+url = "rtsps://127.0.0.1/live"
+expect = { scheme = "rtsps", host = "127.0.0.1", port = 322, path = "/live", keys = { rtsp_version = "1.0" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "explicit"
+key = "transport"
+url = "rtsp://127.0.0.1:47501/live?transport=tcp"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", keys = { rtsp_version = "1.0", transport = "tcp" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "explicit"
+key = "rtsp_version"
+url = "rtsp://127.0.0.1:47501/live?rtsp_version=2.0"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", keys = { rtsp_version = "2.0" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "explicit"
+key = "tcp_keepalive"
+url = "rtsp://127.0.0.1:47501/live?tcp_keepalive=30"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", keys = { rtsp_version = "1.0", tcp_keepalive = "30" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "explicit"
+key = "recv_timeout"
+url = "rtsp://127.0.0.1:47501/live?recv_timeout=5000"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", keys = { rtsp_version = "1.0", recv_timeout = "5000" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "credentials"
+url = "rtsp://admin:p%40ss@127.0.0.1:47501/live?transport=udp"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", username = "admin", password_set = true, keys = { rtsp_version = "1.0", transport = "udp" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "credentials"
+url = "rtsp://admin@127.0.0.1:47501/live"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", username = "admin", password_set = false, keys = { rtsp_version = "1.0" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "conflict"
+key = "transport"
+url = "rtsp://127.0.0.1:47501/live?transport=udp&transport=tcp"
+expect = { scheme = "rtsp", host = "127.0.0.1", port = 47501, path = "/live", keys = { rtsp_version = "1.0", transport = "tcp" } }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "invalid"
+key = "transport"
+url = "rtsp://127.0.0.1:47501/live?transport=quic"
+expect = { error_kind = "PROTOCOL" }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "invalid"
+key = "rtsp_version"
+url = "rtsp://127.0.0.1:47501/live?rtsp_version=3.0"
+expect = { error_kind = "PROTOCOL" }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "invalid"
+key = "tcp_keepalive"
+url = "rtsp://127.0.0.1:47501/live?tcp_keepalive=x"
+expect = { error_kind = "PROTOCOL" }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "invalid"
+key = "recv_timeout"
+url = "rtsp://127.0.0.1:47501/live?recv_timeout=0"
+expect = { error_kind = "PROTOCOL" }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "invalid"
+url = "rtsp://127.0.0.1:47501/live?channel=1"
+expect = { error_kind = "PROTOCOL" }
+
+[[url]]
+scheme = "rtsp"
+role = "client"
+case = "invalid"
+url = "rtsp://admin:p%zz@127.0.0.1:47501/live"
+expect = { error_kind = "PROTOCOL" }
+
+# ══ udp ═══════════════════════════════════════════════════════════════════════
+# Send rows aim at a closed loopback port; receive rows bind port 0. Any
+# userinfo, like the `@host` form, marks a receive bind.
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "default"
+url = "udp://127.0.0.1:47301"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = {} }
+
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "default"
+url = "udp://@127.0.0.1:0"
+expect = { scheme = "udp", host = "127.0.0.1", port = 0, bind = true, keys = {} }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "explicit"
+key = "iface"
+url = "udp://127.0.0.1:47301?iface=127.0.0.1"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = { iface = "127.0.0.1" } }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "explicit"
+key = "localaddr"
+url = "udp://127.0.0.1:47301?localaddr=127.0.0.1"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = { localaddr = "127.0.0.1" } }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "explicit"
+key = "ttl"
+url = "udp://127.0.0.1:47301?ttl=16"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = { ttl = "16" } }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "explicit"
+key = "tos"
+url = "udp://127.0.0.1:47301?tos=0xB8"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = { tos = "184" } }
+
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "explicit"
+key = "rcvbuf"
+url = "udp://@127.0.0.1:0?rcvbuf=2M"
+expect = { scheme = "udp", host = "127.0.0.1", port = 0, bind = true, keys = { rcvbuf = "2097152" } }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "explicit"
+key = "sndbuf"
+url = "udp://127.0.0.1:47301?sndbuf=512K"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = { sndbuf = "524288" } }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "explicit"
+key = "pkt_size"
+url = "udp://127.0.0.1:47301?pkt_size=1316"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = { pkt_size = "1316" } }
+
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "credentials"
+url = "udp://user:secret@127.0.0.1:0"
+expect = { scheme = "udp", host = "127.0.0.1", port = 0, bind = true, keys = {} }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "conflict"
+key = "ttl"
+url = "udp://127.0.0.1:47301?ttl=2&ttl=3"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = { ttl = "3" } }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "conflict"
+key = "localaddr"
+url = "udp://127.0.0.1:47301?localaddr=::1"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "invalid"
+key = "localaddr"
+url = "udp://127.0.0.1:47301?localaddr=nowhere"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "invalid"
+key = "ttl"
+url = "udp://127.0.0.1:47301?ttl=300"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "invalid"
+key = "tos"
+url = "udp://127.0.0.1:47301?tos=0x1FF"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "invalid"
+key = "rcvbuf"
+url = "udp://@127.0.0.1:0?rcvbuf=512M"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "invalid"
+key = "sndbuf"
+url = "udp://127.0.0.1:47301?sndbuf=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "invalid"
+key = "pkt_size"
+url = "udp://127.0.0.1:47301?pkt_size=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "invalid"
+key = "pkt_size"
+stage = "open"
+url = "udp://@127.0.0.1:0?pkt_size=1316"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "invalid"
+url = "udp://127.0.0.1:47301?foo=1"
+expect = { scheme = "udp", host = "127.0.0.1", port = 47301, keys = {} }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "invalid"
+url = "udp://127.0.0.1"
+expect = { error_kind = "URL" }
+
+# ══ tcp(s) ════════════════════════════════════════════════════════════════════
+# Callers dial a closed loopback port; listeners bind port 0. A tcps listener
+# names both `cert` and `key`: one alone is refused at open by a config rule
+# whose C code is also the URL kind's, so the row could not tell them apart.
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "default"
+url = "tcp://127.0.0.1:47401"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1" } }
+
+[[url]]
+scheme = "tcps"
+role = "caller"
+case = "default"
+url = "tcps://127.0.0.1:47401"
+expect = { scheme = "tcps", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1" } }
+
+[[url]]
+scheme = "tcp"
+role = "listener"
+case = "explicit"
+key = "listen"
+url = "tcp://127.0.0.1:0?listen=1"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 0, keys = { listen = "1", nodelay = "1" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "explicit"
+key = "nodelay"
+url = "tcp://127.0.0.1:47401?nodelay=false"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "0" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "explicit"
+key = "keepalive"
+url = "tcp://127.0.0.1:47401?keepalive=30"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1", keepalive = "30" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "explicit"
+key = "rcvbuf"
+url = "tcp://127.0.0.1:47401?rcvbuf=1M"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1", rcvbuf = "1048576" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "explicit"
+key = "sndbuf"
+url = "tcp://127.0.0.1:47401?sndbuf=1M"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1", sndbuf = "1048576" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "explicit"
+key = "pkt_size"
+url = "tcp://127.0.0.1:47401?pkt_size=64K"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1", pkt_size = "65536" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "explicit"
+key = "connect_timeout"
+url = "tcp://127.0.0.1:47401?connect_timeout=5"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1", connect_timeout = "5" } }
+
+[[url]]
+scheme = "tcps"
+role = "listener"
+case = "explicit"
+key = "cert"
+url = "tcps://127.0.0.1:0?listen=1&cert=server.crt&key=server.key"
+expect = { scheme = "tcps", host = "127.0.0.1", port = 0, keys = { listen = "1", nodelay = "1", cert = "server.crt", key = "server.key" } }
+
+[[url]]
+scheme = "tcps"
+role = "listener"
+case = "explicit"
+key = "key"
+url = "tcps://127.0.0.1:0?listen=1&key=server.key&cert=server.crt"
+expect = { scheme = "tcps", host = "127.0.0.1", port = 0, keys = { listen = "1", nodelay = "1", cert = "server.crt", key = "server.key" } }
+
+[[url]]
+scheme = "tcps"
+role = "caller"
+case = "explicit"
+key = "ca"
+url = "tcps://127.0.0.1:47401?ca=roots.pem"
+expect = { scheme = "tcps", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1", ca = "roots.pem" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "credentials"
+url = "tcp://user:secret@127.0.0.1:47401"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "conflict"
+key = "keepalive"
+url = "tcp://127.0.0.1:47401?keepalive=10&keepalive=30"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1", keepalive = "30" } }
+
+[[url]]
+scheme = "tcp"
+role = "listener"
+case = "conflict"
+key = "listen"
+url = "tcp://localhost:0?listen=1"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "tcp"
+role = "listener"
+case = "invalid"
+key = "listen"
+url = "tcp://127.0.0.1:0?listen=maybe"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "invalid"
+key = "nodelay"
+url = "tcp://127.0.0.1:47401?nodelay=2"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "invalid"
+key = "keepalive"
+url = "tcp://127.0.0.1:47401?keepalive=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "invalid"
+key = "rcvbuf"
+url = "tcp://127.0.0.1:47401?rcvbuf=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "invalid"
+key = "sndbuf"
+url = "tcp://127.0.0.1:47401?sndbuf=512M"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "invalid"
+key = "pkt_size"
+url = "tcp://127.0.0.1:47401?pkt_size=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "invalid"
+key = "connect_timeout"
+url = "tcp://127.0.0.1:47401?connect_timeout=-1"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "invalid"
+url = "tcp://127.0.0.1:47401?foo=1"
+expect = { scheme = "tcp", host = "127.0.0.1", port = 47401, keys = { listen = "0", nodelay = "1" } }
+
+[[url]]
+scheme = "tcp"
+role = "caller"
+case = "invalid"
+url = "tcp://127.0.0.1"
+expect = { error_kind = "URL" }
+
+# ══ hls(s) ════════════════════════════════════════════════════════════════════
+# Every leg parses through a builder; nothing binds.
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "default"
+url = "hls://127.0.0.1:47701"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live" } }
+
+[[url]]
+scheme = "hlss"
+role = "publisher"
+case = "default"
+url = "hlss://127.0.0.1:47701"
+expect = { scheme = "hlss", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "explicit"
+key = "output_dir"
+url = "hls://127.0.0.1:47701?output_dir=segments"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { output_dir = "segments", segment_duration = "4", playlist_window = "6", mode = "live" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "explicit"
+key = "segment_duration"
+url = "hls://127.0.0.1:47701?segment_duration=2"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "2", playlist_window = "6", mode = "live" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "explicit"
+key = "playlist_window"
+url = "hls://127.0.0.1:47701?playlist_window=10"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "10", mode = "live" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "explicit"
+key = "mode"
+url = "hls://127.0.0.1:47701?mode=event"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "event" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "explicit"
+key = "auth_user"
+url = "hls://127.0.0.1:47701?auth_user=viewer&auth_pass=hunter2"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live", auth_user = "viewer", auth_pass = "hunter2" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "explicit"
+key = "auth_pass"
+url = "hls://127.0.0.1:47701?auth_pass=hunter2&auth_user=viewer"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live", auth_user = "viewer", auth_pass = "hunter2" } }
+
+[[url]]
+scheme = "hlss"
+role = "publisher"
+case = "explicit"
+key = "cert"
+url = "hlss://127.0.0.1:47701?cert=server.crt&key=server.key"
+expect = { scheme = "hlss", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live", cert = "server.crt", key = "server.key" } }
+
+[[url]]
+scheme = "hlss"
+role = "publisher"
+case = "explicit"
+key = "key"
+url = "hlss://127.0.0.1:47701?key=server.key"
+expect = { scheme = "hlss", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live", key = "server.key" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "credentials"
+url = "hls://user:secret@127.0.0.1:47701"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "conflict"
+key = "auth_user"
+url = "hls://127.0.0.1:47701?auth_user=viewer"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "conflict"
+key = "mode"
+url = "hls://127.0.0.1:47701?mode=vod&mode=event"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "event" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "invalid"
+key = "segment_duration"
+url = "hls://127.0.0.1:47701?segment_duration=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "invalid"
+key = "playlist_window"
+url = "hls://127.0.0.1:47701?playlist_window=-1"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "invalid"
+key = "mode"
+url = "hls://127.0.0.1:47701?mode=archive"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "invalid"
+url = "hls://127.0.0.1:47701?foo=1"
+expect = { scheme = "hls", host = "127.0.0.1", port = 47701, keys = { segment_duration = "4", playlist_window = "6", mode = "live" } }
+
+[[url]]
+scheme = "hls"
+role = "publisher"
+case = "invalid"
+url = "hls://localhost:47701"
+expect = { error_kind = "URL" }
+
+# ══ rist ══════════════════════════════════════════════════════════════════════
+# Send rows aim at a closed loopback port; receive rows bind distinct ports.
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "default"
+url = "rist://127.0.0.1:47601"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316" } }
+
+[[url]]
+scheme = "rist"
+role = "recv"
+case = "default"
+url = "rist://@127.0.0.1:47650"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47650, bind = true, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "profile"
+url = "rist://127.0.0.1:47601?profile=simple"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "simple", buffer = "200", compression = "0", pkt_size = "1316" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "recovery_maxbitrate"
+url = "rist://127.0.0.1:47601?recovery_maxbitrate=10000"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", recovery_maxbitrate = "10000" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "bandwidth"
+url = "rist://127.0.0.1:47601?bandwidth=10000"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", bandwidth = "10000" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "buffer"
+url = "rist://127.0.0.1:47601?buffer=500"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "500", compression = "0", pkt_size = "1316" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "session_timeout"
+url = "rist://127.0.0.1:47601?session_timeout=3000"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", session_timeout = "3000" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "aes-type"
+url = "rist://127.0.0.1:47601?aes-type=128&secret=topsecret"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", aes-type = "128", secret = "topsecret" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "secret"
+url = "rist://127.0.0.1:47601?secret=topsecret"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", aes-type = "256", secret = "topsecret" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "cname"
+url = "rist://127.0.0.1:47601?cname=uav-12"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", cname = "uav-12" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "compression"
+url = "rist://127.0.0.1:47601?compression=1"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "1", pkt_size = "1316" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "explicit"
+key = "pkt_size"
+url = "rist://127.0.0.1:47601?pkt_size=1K"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1024" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "alias"
+key = "recovery_maxbitrate"
+url = "rist://127.0.0.1:47601?recovery-maxbitrate=10000"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", recovery_maxbitrate = "10000" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "alias"
+key = "session_timeout"
+url = "rist://127.0.0.1:47601?session-timeout=3000"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", session_timeout = "3000" } }
+
+[[url]]
+scheme = "rist"
+role = "recv"
+case = "credentials"
+url = "rist://user:secret@127.0.0.1:47651"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47651, bind = true, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "conflict"
+key = "recovery_maxbitrate"
+url = "rist://127.0.0.1:47601?recovery_maxbitrate=5000&recovery-maxbitrate=10000"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", recovery_maxbitrate = "10000" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "conflict"
+key = "session_timeout"
+url = "rist://127.0.0.1:47601?session_timeout=1000&session-timeout=3000"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", session_timeout = "3000" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "conflict"
+key = "bandwidth"
+url = "rist://127.0.0.1:47601?bandwidth=10000&recovery_maxbitrate=10000"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", bandwidth = "10000", recovery_maxbitrate = "10000" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "conflict"
+key = "bandwidth"
+url = "rist://127.0.0.1:47601?bandwidth=5000&recovery_maxbitrate=10000"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "conflict"
+key = "aes-type"
+url = "rist://127.0.0.1:47601?aes-type=256"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "conflict"
+key = "profile"
+url = "rist://127.0.0.1:47601?profile=simple&secret=topsecret"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", aes-type = "256", secret = "topsecret" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "profile"
+url = "rist://127.0.0.1:47601?profile=advanced"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "recovery_maxbitrate"
+url = "rist://127.0.0.1:47601?recovery_maxbitrate=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "bandwidth"
+url = "rist://127.0.0.1:47601?bandwidth=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "buffer"
+url = "rist://127.0.0.1:47601?buffer=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "session_timeout"
+url = "rist://127.0.0.1:47601?session_timeout=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "aes-type"
+url = "rist://127.0.0.1:47601?aes-type=64&secret=topsecret"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "secret"
+url = "rist://127.0.0.1:47601?secret="
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "compression"
+url = "rist://127.0.0.1:47601?compression=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "pkt_size"
+url = "rist://127.0.0.1:47601?pkt_size=x"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+url = "rist://127.0.0.1:47601?foo=1"
+expect = { scheme = "rist", host = "127.0.0.1", port = 47601, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316" } }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+url = "rist://localhost:47601"
+expect = { error_kind = "URL" }
+
+# ══ whep(s) ═══════════════════════════════════════════════════════════════════
+# Valid rows bind port 0 (the media port follows the URL's port). A wheps URL
+# needs both `cert` and `key` and a whep URL takes neither; the files named do
+# not exist, which fails at bind, not parse.
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "default"
+url = "whep://127.0.0.1:0"
+expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "10", cors_origin = "*" } }
+
+[[url]]
+scheme = "wheps"
+role = "server"
+case = "conflict"
+key = "cert"
+url = "wheps://127.0.0.1:0"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "conflict"
+key = "cert"
+url = "whep://127.0.0.1:0?cert=server.crt&key=server.key"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "explicit"
+key = "media_port"
+url = "whep://127.0.0.1:0?media_port=47801"
+expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "47801", max_viewers = "10", cors_origin = "*" } }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "explicit"
+key = "advertise"
+url = "whep://127.0.0.1:0?advertise=192.0.2.10"
+expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "10", cors_origin = "*", advertise = "192.0.2.10" } }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "explicit"
+key = "max_viewers"
+url = "whep://127.0.0.1:0?max_viewers=4"
+expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "4", cors_origin = "*" } }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "explicit"
+key = "token"
+url = "whep://127.0.0.1:0?token=s3cret"
+expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "10", cors_origin = "*", token = "s3cret" } }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "explicit"
+key = "cors_origin"
+url = "whep://127.0.0.1:0?cors_origin=https%3A%2F%2Fviewer.example"
+expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "10", cors_origin = "https://viewer.example" } }
+
+[[url]]
+scheme = "wheps"
+role = "server"
+case = "explicit"
+key = "cert"
+url = "wheps://127.0.0.1:0?cert=server.crt&key=server.key"
+expect = { scheme = "wheps", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "10", cors_origin = "*", cert = "server.crt", key = "server.key" } }
+
+[[url]]
+scheme = "wheps"
+role = "server"
+case = "explicit"
+key = "key"
+url = "wheps://127.0.0.1:0?key=server.key&cert=server.crt"
+expect = { scheme = "wheps", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "10", cors_origin = "*", cert = "server.crt", key = "server.key" } }
+
+[[url]]
+scheme = "wheps"
+role = "server"
+case = "conflict"
+key = "key"
+url = "wheps://127.0.0.1:0?key=server.key"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "credentials"
+url = "whep://user:secret@127.0.0.1:0"
+expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "10", cors_origin = "*" } }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "conflict"
+key = "max_viewers"
+url = "whep://127.0.0.1:0?max_viewers=2&max_viewers=8"
+expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "8", cors_origin = "*" } }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "invalid"
+key = "media_port"
+url = "whep://127.0.0.1:0?media_port=70000"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "invalid"
+key = "advertise"
+url = "whep://127.0.0.1:0?advertise=viewer.example"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "invalid"
+key = "max_viewers"
+url = "whep://127.0.0.1:0?max_viewers=65"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "invalid"
+key = "token"
+url = "whep://127.0.0.1:0?token="
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "invalid"
+url = "whep://127.0.0.1:0?foo=1"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "whep"
+role = "server"
+case = "invalid"
+url = "whep://127.0.0.1:0/live"
+expect = { error_kind = "URL" }

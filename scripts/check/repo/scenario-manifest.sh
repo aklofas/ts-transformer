@@ -3,7 +3,7 @@
 #
 # Enforced (fails the build on violation):
 #   1. Duplicate scenario id.
-#   2. A `kind` value not in {demux, roundtrip, binding_contract}.
+#   2. A `kind` value not in {demux, roundtrip, binding_contract, url-corpus}.
 #   3. A feature token not in {srt, rtp, udp, tcp, hls, rist}.
 #   4. An `input` path that does not resolve on disk relative to the manifest dir.
 #   5. A `golden` path that does not resolve on disk relative to the manifest dir.
@@ -19,7 +19,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCENARIO_MANIFEST="${SCENARIO_MANIFEST:-$ROOT/crates/tst-integration/tests/fixtures/scenarios/scenarios.toml}"
 
 # Source-of-truth allow-sets. Extend when a new scenario kind/feature is added to scenarios.toml.
-KNOWN_KINDS="demux roundtrip binding_contract"
+KNOWN_KINDS="demux roundtrip binding_contract url-corpus"
 KNOWN_FEATURES="srt rtp udp tcp hls rist"
 
 # ---------------------------------------------------------------------------
