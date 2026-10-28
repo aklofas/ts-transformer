@@ -376,9 +376,18 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
             Ok(n) => written += n,
             // A cancel or close that landed while the write was parked wins
             // over whatever the interrupted syscall reported, at any progress.
-            Err(_) if cancel.is_cancelled() => return Err((TransportError::ExplicitClose, false)),
+            // Liveness is read BEFORE the latch because the canceller stores
+            // them in the opposite order (latch, then liveness): a dead flag
+            // seen here guarantees a cancel's latch is visible, while reading
+            // the latch first lets a cancel land between the two loads and
+            // pass for a plain close.
             Err(_) if !alive.load(Ordering::Acquire) => {
-                return Err((TransportError::Closed, false));
+                let err = if cancel.is_cancelled() {
+                    TransportError::ExplicitClose
+                } else {
+                    TransportError::Closed
+                };
+                return Err((err, false));
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { /* EINTR: retry */ }
             Err(e) if classify_send_error(&e) == SendClass::Transient => {
@@ -706,6 +715,11 @@ mod write_loop_tests {
         }
     }
 
+    /// A cancel that fully landed (latch, then liveness, in
+    /// `TcpCancelHandle::cancel`'s order) before the write woke reports
+    /// `ExplicitClose`. With `zero_progress_timeout_after_close_is_closed`
+    /// this pins the two outcomes the loop's liveness-then-latch read order
+    /// must preserve.
     #[test]
     fn zero_progress_timeout_after_cancel_is_explicit_close() {
         let alive = AtomicBool::new(true);
@@ -734,6 +748,18 @@ mod write_loop_tests {
             matches!(r, Err((TransportError::ExplicitClose, false))),
             "{r:?}"
         );
+    }
+
+    /// The transport's own `close()` drops liveness only, so a write it
+    /// wakes reports `Closed`, never the cancel's `ExplicitClose`.
+    #[test]
+    fn zero_progress_timeout_after_close_is_closed() {
+        let alive = AtomicBool::new(true);
+        let r = write_loop(&[0u8; 188], &alive, &uncancelled(), |_| {
+            alive.store(false, Ordering::Release);
+            Err(io::Error::from(io::ErrorKind::WouldBlock))
+        });
+        assert!(matches!(r, Err((TransportError::Closed, false))), "{r:?}");
     }
 
     #[test]
