@@ -30,6 +30,7 @@ import pytest
 import tstrans.rtp
 from tstrans.mpegts import (
     DemuxEvent,
+    DemuxerConfig,
     MuxerProgramConfigBuilder,
     Pts90khz,
     VideoCodec,
@@ -223,6 +224,12 @@ def test_full_pipeline_rtsp_server_to_rtsp_client() -> None:
                 # The bridge: consume the SETUP-time RtspSession
                 # into a DemuxReceiver that reads from the RTP
                 # socket pair (UDP) or the TCP-interleaved mpsc rx.
+                # A demux config that fails to convert raises before the
+                # data plane is taken, so the take below still delivers.
+                with pytest.raises(OverflowError):
+                    session.into_demux_receiver(
+                        DemuxerConfig(pes_cap_per_pid=1 << 100)
+                    )
                 demux = session.into_demux_receiver()
 
                 # 0.7.0: the data plane is a consumable handle, so a

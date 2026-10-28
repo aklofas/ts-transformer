@@ -87,12 +87,34 @@ pub(crate) struct PyMuxSender {
 
 impl PyMuxSender {
     /// Wrap an already-opened transport with a muxer built from
-    /// `program_config` (the `open` and `Socket.into_mux_sender()` paths
-    /// meet here).
+    /// `program_config` (the `open` path).
     pub(crate) fn from_opened(
         py: Python<'_>,
         opened: Opened<Box<dyn Transport>>,
         program_config: &PyMuxerProgramConfig,
+    ) -> PyResult<Self> {
+        let muxer_cfg = Self::muxer_config_for(py, program_config)?;
+        Self::from_opened_with_config(py, opened, muxer_cfg)
+    }
+
+    /// Build the single-program `MuxerConfig` for `program_config`. A
+    /// consuming conversion calls this before it takes its source handle,
+    /// so a refused config leaves the source usable.
+    pub(crate) fn muxer_config_for(
+        py: Python<'_>,
+        program_config: &PyMuxerProgramConfig,
+    ) -> PyResult<tst_core::mpegts::mux::MuxerConfig> {
+        let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
+        cfg_builder.add_program(program_config.inner.clone());
+        cfg_builder.build().map_err(|e| mux_error_to_pyerr(py, e))
+    }
+
+    /// Wrap an already-opened transport with a muxer built from an
+    /// already-validated `muxer_cfg` (the `Socket.into_mux_sender()` path).
+    pub(crate) fn from_opened_with_config(
+        py: Python<'_>,
+        opened: Opened<Box<dyn Transport>>,
+        muxer_cfg: tst_core::mpegts::mux::MuxerConfig,
     ) -> PyResult<Self> {
         let Opened {
             transport,
@@ -100,9 +122,6 @@ impl PyMuxSender {
             domain,
             ..
         } = opened;
-        let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
-        cfg_builder.add_program(program_config.inner.clone());
-        let muxer_cfg = cfg_builder.build().map_err(|e| mux_error_to_pyerr(py, e))?;
         let cancel = cancel_source(&cancel);
         let sender =
             RustMuxSender::new(transport, muxer_cfg).map_err(|e| mux_error_to_pyerr(py, e))?;

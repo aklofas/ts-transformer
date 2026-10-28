@@ -25,6 +25,19 @@ def video_only_program(pid_video: int = 0x101) -> object:
     )
 
 
+def masquerade_program() -> object:
+    """Video + a 0x06 data stream carrying the KLVA registration
+    descriptor: passes the program builder, but `MuxerConfig.build()`
+    refuses it with `CONFIG_INVALID` (the data stream classifies as KLV)."""
+    return (
+        MuxerProgramConfigBuilder(1, 0x100)
+        .add_video(0x101, VideoCodec.H264)
+        .add_data(0x1F0, 0x06, carries_pts=True)
+        .stream_descriptors_for_data(0, [b"\x05\x04KLVA"])
+        .build()
+    )
+
+
 def video_klv_program() -> object:
     """Video PID 0x101 + synchronous KLV PID 0x102 (program 1, PMT 0x100)."""
     return (

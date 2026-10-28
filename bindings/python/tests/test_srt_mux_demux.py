@@ -31,6 +31,7 @@ from tstrans.mpegts import (
     StrictMode,
 )
 
+from _builders.mux_programs import masquerade_program as _masquerade_program
 from _builders.mux_programs import video_data_program as _video_data_program
 from _builders.mux_programs import video_klv_program as _video_klv_program
 from _builders.mux_programs import video_only_program as _video_only_program
@@ -527,6 +528,74 @@ def test_socket_into_demux_receiver_promotion() -> None:
         sender_box[0].close()
     receiver.close()
     listener.close()
+
+
+def _connected_pair() -> Tuple[tstrans.srt.Socket, tstrans.srt.Socket, object]:
+    """A caller socket connected to a listener on a kernel-picked port,
+    plus the listener's accepted socket. The caller's handshake completes
+    against the listen backlog, so both ends come up on the test thread
+    with no worker. Returns (caller, accepted, cleanup)."""
+    lst = tstrans.srt.Builder("srt://127.0.0.1:0?mode=listener").listener().listen()
+    _, port = lst.local_addr()
+    socks: list[tstrans.srt.Socket] = []
+
+    def cleanup() -> None:
+        for s in socks:
+            s.close()
+        lst.close()
+
+    try:
+        socks.append(
+            tstrans.srt.Builder(f"srt://127.0.0.1:{port}?mode=caller")
+            .caller()
+            .connect()
+        )
+        socks.append(lst.accept(timeout_ms=5000))
+    except BaseException:
+        cleanup()
+        raise
+    return socks[0], socks[1], cleanup
+
+
+def _connected_caller_socket() -> Tuple[tstrans.srt.Socket, object]:
+    caller, _, cleanup = _connected_pair()
+    return caller, cleanup
+
+
+def _accepted_listener_socket() -> Tuple[tstrans.srt.Socket, object]:
+    _, accepted, cleanup = _connected_pair()
+    return accepted, cleanup
+
+
+def test_rejected_mux_config_leaves_the_socket_usable() -> None:
+    """A program config the muxer refuses raises before the socket is
+    taken, so the corrected retry promotes the same live socket."""
+    sock, cleanup = _connected_caller_socket()
+    try:
+        with pytest.raises(MuxError) as ei:
+            sock.into_mux_sender(_masquerade_program())
+        assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
+        assert sock.is_alive()
+        sender = sock.into_mux_sender(_video_only_program())
+        assert not sock.is_alive()
+        sender.send_video(NAL_AUD, pts=Pts90khz.from_raw(0))
+        sender.close()
+    finally:
+        cleanup()
+
+
+def test_rejected_demux_config_leaves_the_socket_usable() -> None:
+    """A demux config that fails to convert raises before the socket is
+    taken, so the corrected retry promotes the same live socket."""
+    sock, cleanup = _accepted_listener_socket()
+    try:
+        with pytest.raises(OverflowError):
+            sock.into_demux_receiver(demux_config=DemuxerConfig(pes_cap_per_pid=1 << 100))
+        assert sock.is_alive()
+        rx = sock.into_demux_receiver(demux_config=DemuxerConfig())
+        rx.close()
+    finally:
+        cleanup()
 
 
 # --------------------------------------------------------------------------- #
