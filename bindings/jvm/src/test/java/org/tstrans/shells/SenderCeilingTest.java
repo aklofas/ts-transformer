@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -22,7 +22,7 @@ class SenderCeilingTest {
 
     @Test
     void senderSplitsBundleAtPktSizeCeiling() throws Exception {
-        try (DatagramSocket rx = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
+        try (DatagramSocket rx = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
             rx.setSoTimeout(5000);
             int port = rx.getLocalPort();
 
