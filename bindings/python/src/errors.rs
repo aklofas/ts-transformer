@@ -58,6 +58,26 @@ pub(crate) fn make_kinded_error(
     kind_variant: &str,
     message: &str,
 ) -> PyErr {
+    make_kinded_error_with_pid(
+        py,
+        error_class,
+        kind_enum_class,
+        kind_variant,
+        message,
+        None,
+    )
+}
+
+/// [`make_kinded_error`] plus the PID the native error names; `pid` reaches
+/// the exception's keyword only when present, so other errors keep `None`.
+pub(crate) fn make_kinded_error_with_pid(
+    py: Python<'_>,
+    error_class: &str,
+    kind_enum_class: &str,
+    kind_variant: &str,
+    message: &str,
+    pid: Option<u16>,
+) -> PyErr {
     let exceptions = match py.import("tstrans.exceptions") {
         Ok(m) => m,
         Err(e) => return e,
@@ -79,6 +99,11 @@ pub(crate) fn make_kinded_error(
         return e;
     }
     if let Err(e) = kwargs.set_item("message", message) {
+        return e;
+    }
+    if let Some(pid) = pid
+        && let Err(e) = kwargs.set_item("pid", pid)
+    {
         return e;
     }
     match cls.call((), Some(&kwargs)) {
@@ -210,7 +235,6 @@ pub(crate) fn mux_error_to_pyerr(py: Python<'_>, e: tst_core::MuxError) -> PyErr
     // `INVALID_NAL` / `KLV_TOO_LARGE` / `INVALID_AV1_OBU` / `MISP_TIME` are
     // precise kinds — the five coarse buckets of `MuxErrorKind` do not
     // flatten them.
-    let kind_str = tst_pipeline::binding::kind::kind_of_mux(&e).name();
     // BufferFull gets a Python-only breadcrumb: the most common way to
     // hit it is pushing on the original Muxer inside an active
     // `Muxer.write_file(...)` block — those pushes bypass the drain
@@ -225,7 +249,15 @@ pub(crate) fn mux_error_to_pyerr(py: Python<'_>, e: tst_core::MuxError) -> PyErr
         ),
         _ => e.to_string(),
     };
-    make_kinded_error(py, "MuxError", "MuxErrorKind", kind_str, &msg)
+    let b = tst_pipeline::binding::BindingError::from(e);
+    make_kinded_error_with_pid(
+        py,
+        "MuxError",
+        "MuxErrorKind",
+        b.kind.name(),
+        &msg,
+        b.diagnostics.pid,
+    )
 }
 
 /// Map a Rust `CodecParseError` to a Python `CodecError` instance.
