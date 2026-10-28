@@ -138,7 +138,7 @@ pub(crate) fn find_loas_sync(payload: &[u8]) -> Option<usize> {
 ///
 /// Returns the walk's carry (see [`walk_loas`]) when confirmed; `None` when
 /// there is no candidate, the first record does not fit, or the walk fails.
-pub(crate) fn resync_loas(payload: &[u8]) -> Option<Option<usize>> {
+pub(crate) fn resync_loas(payload: &[u8]) -> Option<Option<LoasCarry>> {
     let at = find_loas_sync(payload)?;
     let header = payload.get(at..at + 3)?;
     let first_record_end = at + 3 + ((usize::from(header[1] & 0x1F) << 8) | usize::from(header[2]));
@@ -154,22 +154,76 @@ pub(crate) fn starts_with_loas_sync(bytes: &[u8]) -> bool {
         if *b0 == LOAS_SYNC_BYTE0 && (*b1 & LOAS_SYNC_BYTE1_MASK) == LOAS_SYNC_BYTE1_VALUE)
 }
 
+/// What the last LOAS record of a PES still owes the next PES
+/// (ISO/IEC 14496-3 §1.7.2: both a record and its header may be split).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoasCarry {
+    /// The record continues for this many more bytes.
+    Body(usize),
+    /// The PES ended inside the 3-byte header; its first `len` (1 or 2)
+    /// bytes, already checked against the syncword.
+    Header { bytes: [u8; 2], len: u8 },
+}
+
+impl LoasCarry {
+    /// Apply the carry to the next PES payload: `Body(n)` when the record
+    /// owes `n` bytes of it, `Header` when the header is still incomplete,
+    /// `MissingSyncword` when the completed header lacks the syncword.
+    pub(crate) fn resolve(self, payload: &[u8]) -> Result<LoasCarry, LatmFramingKind> {
+        let Self::Header { bytes, len } = self else {
+            return Ok(self);
+        };
+        let have = usize::from(len);
+        let take = payload.len().min(3 - have);
+        let mut header = [0u8; 3];
+        header[..have].copy_from_slice(&bytes[..have]);
+        header[have..have + take].copy_from_slice(&payload[..take]);
+        // The record's body starts in `payload` right after the header bytes.
+        Ok(match walk_loas(&header[..have + take], 0)? {
+            Some(Self::Body(n)) => Self::Body(take + n),
+            Some(header) => header,
+            None => Self::Body(take),
+        })
+    }
+}
+
+/// The `Header` carry for a record boundary closer than 3 bytes to the end
+/// of the PES, or `MissingSyncword` when those bytes cannot open a header.
+fn split_header_carry(rest: &[u8]) -> Result<Option<LoasCarry>, LatmFramingKind> {
+    let prefix_ok = rest[0] == LOAS_SYNC_BYTE0
+        && rest
+            .get(1)
+            .is_none_or(|b1| (b1 & LOAS_SYNC_BYTE1_MASK) == LOAS_SYNC_BYTE1_VALUE);
+    if !prefix_ok {
+        return Err(LatmFramingKind::MissingSyncword);
+    }
+    let mut bytes = [0u8; 2];
+    bytes[..rest.len()].copy_from_slice(rest);
+    Ok(Some(LoasCarry::Header {
+        bytes,
+        len: rest.len() as u8,
+    }))
+}
+
 /// Walk the LOAS records (ISO/IEC 14496-3 §1.7.2 AudioSyncStream) of one PES
 /// payload, starting at the record boundary `start`.
 ///
-/// - `Ok(Some(n))`: the last record continues into the next PES for `n`
-///   more bytes.
-/// - `Ok(None)`: the walk ended on a record boundary, or on a 3-byte header
-///   split across PES; the next PES's position in the stream is unknown.
+/// - `Ok(Some(carry))`: the last record, or its header, continues into the
+///   next PES.
+/// - `Ok(None)`: the walk ended on a record boundary; the next PES's
+///   position in the stream is unknown.
 /// - `Err(MissingSyncword)`: a record boundary lacks the syncword.
 ///
 /// Every record advances at least 3 bytes, so the walk is bounded by the
-/// payload length; `n` is at most one record (`3 + 0x1FFF` bytes).
-pub(crate) fn walk_loas(payload: &[u8], start: usize) -> Result<Option<usize>, LatmFramingKind> {
+/// payload length; a `Body` carry is at most one record (`3 + 0x1FFF` bytes).
+pub(crate) fn walk_loas(
+    payload: &[u8],
+    start: usize,
+) -> Result<Option<LoasCarry>, LatmFramingKind> {
     let mut pos = start;
     while let Some(rest) = payload.get(pos..).filter(|r| !r.is_empty()) {
         if rest.len() < 3 {
-            return Ok(None);
+            return split_header_carry(rest);
         }
         if !starts_with_loas_sync(rest) {
             return Err(LatmFramingKind::MissingSyncword);
@@ -177,7 +231,10 @@ pub(crate) fn walk_loas(payload: &[u8], start: usize) -> Result<Option<usize>, L
         let audio_mux_length_bytes = (usize::from(rest[1] & 0x1F) << 8) | usize::from(rest[2]);
         pos += 3 + audio_mux_length_bytes;
     }
-    Ok(pos.checked_sub(payload.len()).filter(|&n| n > 0))
+    Ok(pos
+        .checked_sub(payload.len())
+        .filter(|&n| n > 0)
+        .map(LoasCarry::Body))
 }
 
 #[cfg(test)]
@@ -202,7 +259,7 @@ mod tests {
     fn walk_loas_reports_the_bytes_a_split_record_still_owes() {
         let mut buf = build_loas_record(10);
         buf.extend_from_slice(&build_loas_record(50)[..20]);
-        assert_eq!(walk_loas(&buf, 0), Ok(Some(33)));
+        assert_eq!(walk_loas(&buf, 0), Ok(Some(LoasCarry::Body(33))));
     }
 
     #[test]
@@ -213,11 +270,53 @@ mod tests {
     }
 
     #[test]
-    fn walk_loas_ending_on_a_boundary_or_a_split_header_carries_nothing() {
+    fn walk_loas_ending_on_a_boundary_carries_nothing() {
+        let buf = build_loas_record(10);
+        assert_eq!(walk_loas(&buf, 0), Ok(None));
+    }
+
+    #[test]
+    fn walk_loas_carries_a_split_header_and_resolves_it_on_the_next_pes() {
+        let record = build_loas_record(50);
         let mut buf = build_loas_record(10);
-        assert_eq!(walk_loas(&buf, 0), Ok(None));
-        buf.extend_from_slice(&[0x56, 0xE0]);
-        assert_eq!(walk_loas(&buf, 0), Ok(None));
+        buf.push(record[0]);
+        let carry = walk_loas(&buf, 0).unwrap().unwrap();
+        assert_eq!(
+            carry,
+            LoasCarry::Header {
+                bytes: [0x56, 0],
+                len: 1
+            }
+        );
+        // One more header byte still leaves the header split.
+        let carry = carry.resolve(&record[1..2]).unwrap();
+        assert!(
+            matches!(carry, LoasCarry::Header { len: 2, .. }),
+            "{carry:?}"
+        );
+        // The last header byte, then 50 body bytes owed from that PES.
+        assert_eq!(carry.resolve(&record[2..23]), Ok(LoasCarry::Body(51)));
+        assert_eq!(LoasCarry::Body(7).resolve(&[0; 3]), Ok(LoasCarry::Body(7)));
+    }
+
+    #[test]
+    fn walk_loas_flags_a_split_header_without_sync() {
+        let mut buf = build_loas_record(10);
+        buf.extend_from_slice(&[0x56, 0x00]);
+        assert_eq!(walk_loas(&buf, 0), Err(LatmFramingKind::MissingSyncword));
+        let carry = LoasCarry::Header {
+            bytes: [0x56, 0xE0],
+            len: 2,
+        };
+        assert_eq!(carry.resolve(&[0x05]), Ok(LoasCarry::Body(6)));
+        let carry = LoasCarry::Header {
+            bytes: [0x56, 0],
+            len: 1,
+        };
+        assert_eq!(
+            carry.resolve(&[0x00, 0x05]),
+            Err(LatmFramingKind::MissingSyncword)
+        );
     }
 
     #[test]
@@ -235,7 +334,7 @@ mod tests {
         buf.extend_from_slice(&build_loas_record(8));
         assert_eq!(resync_loas(&buf), Some(None));
         buf.extend_from_slice(&build_loas_record(50)[..20]);
-        assert_eq!(resync_loas(&buf), Some(Some(33)));
+        assert_eq!(resync_loas(&buf), Some(Some(LoasCarry::Body(33))));
         // False pair whose length (0xFF) runs past the payload.
         let mut tail = vec![0x00; 4];
         tail.extend_from_slice(&[0x56, 0xE0, 0xFF, 0x00]);

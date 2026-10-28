@@ -447,7 +447,8 @@ impl super::demuxer::Demuxer {
     ///
     /// - Carry known (`Some(n)`): a PES of at most `n` bytes is still inside
     ///   the record; a longer one is walked from `n`, and a missing syncword
-    ///   is flagged at once.
+    ///   is flagged at once. A header split across PES is completed from the
+    ///   next PES first.
     /// - Carry unknown, PES aligned (`data_alignment_indicator`, an explicit
     ///   promise of a record start) or starting with a syncword: walked from
     ///   0, a missing syncword flagged at once.
@@ -465,7 +466,7 @@ impl super::demuxer::Demuxer {
     /// - A damaged PES lost bytes, so it is not walked and the carry is lost.
     fn check_latm_framing(&mut self, pes: &PesPayload, damaged: bool, stream: StreamId) -> bool {
         use crate::codec::aac::latm::{
-            LatmFramingKind, resync_loas, starts_with_loas_sync, walk_loas,
+            LatmFramingKind, LoasCarry, resync_loas, starts_with_loas_sync, walk_loas,
         };
         /// Consecutive unsynced PES that raise `MissingSyncword`.
         const UNSYNCED_LIMIT: u8 = 2;
@@ -473,11 +474,18 @@ impl super::demuxer::Demuxer {
         let len = pes.payload.len();
         let start = match state.latm_carry.take() {
             _ if damaged => return false,
-            Some(n) if len <= n => {
-                state.latm_carry = Some(n - len);
-                return false;
-            }
-            Some(n) => n,
+            Some(carry) => match carry.resolve(&pes.payload) {
+                Ok(LoasCarry::Body(n)) if len <= n => {
+                    state.latm_carry = Some(LoasCarry::Body(n - len));
+                    return false;
+                }
+                Ok(LoasCarry::Body(n)) => n,
+                Ok(header) => {
+                    state.latm_carry = Some(header);
+                    return false;
+                }
+                Err(kind) => return self.raise_latm_framing(pes.pid, kind, stream),
+            },
             None if pes.data_alignment_indicator || starts_with_loas_sync(&pes.payload) => 0,
             None => {
                 if let Some(carry) = resync_loas(&pes.payload) {
@@ -2103,6 +2111,33 @@ mod tests {
         let ev = drain_all_events(&mut d);
         assert_eq!(latm_framing_count(&ev), 0, "{ev:?}");
         assert_eq!(sample_count(&ev, 0x104), 4, "{ev:?}");
+    }
+
+    /// ISO/IEC 14496-3 §1.7.2: the 3-byte LOAS header itself may be split
+    /// across PES; the record it opens still owes the following PES.
+    #[test]
+    fn latm_header_split_across_pes_is_not_flagged() {
+        let mut b = DemuxerConfig::builder();
+        b.strict(StrictMode::Full);
+        let mut d = demuxer_with_streams(b.build(), 0x104, &[(0x11, 0x104, &[])]);
+        let record = loas_record(50);
+        let mut pkts = pes_to_packets(
+            0x104,
+            0,
+            &pes_bytes(0xC0, Some(90_000), None, true, &record[..2], true),
+        );
+        for (cc, es) in [(1, &record[2..23]), (2, &record[23..])] {
+            pkts.extend(pes_to_packets(
+                0x104,
+                cc,
+                &pes_bytes(0xC0, None, None, false, es, true),
+            ));
+        }
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(latm_framing_count(&ev), 0, "{ev:?}");
+        assert_eq!(sample_count(&ev, 0x104), 3, "{ev:?}");
     }
 
     #[test]

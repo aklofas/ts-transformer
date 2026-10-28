@@ -46,9 +46,9 @@ pub(super) struct PidState {
     pub(super) pts_less_run_reported: bool,
     /// Opt-in PTS/DTS unwrap accumulator.
     pub(super) unwrap: Option<UnwrapState>,
-    /// AAC-LATM: bytes the last LOAS record still owes the next PES
+    /// AAC-LATM: what the last LOAS record still owes the next PES
     /// (ISO/IEC 14496-3 §1.7.2); `None` = unknown.
-    pub(super) latm_carry: Option<usize>,
+    pub(super) latm_carry: Option<crate::codec::aac::latm::LoasCarry>,
     /// AAC-LATM: consecutive carry-unknown PES that showed no LOAS record,
     /// saturating at the count that raised the issue.
     pub(super) latm_unsynced: u8,
