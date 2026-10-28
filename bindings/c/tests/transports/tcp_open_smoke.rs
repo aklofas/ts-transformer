@@ -877,7 +877,14 @@ fn first_failure(
     after_accept: impl FnOnce(std::net::TcpStream) + Send + 'static,
 ) -> (i32, String) {
     let (port_tx, port_rx) = mpsc::channel();
-    let peer = peer_that(port_tx, after_accept);
+    // The peer acts only once the open has returned: a reset that lands
+    // while `connect_timeout` is still reading `SO_ERROR` fails the open
+    // itself (seen on macOS), and the test is about the first receive.
+    let (go_tx, go_rx) = mpsc::channel::<()>();
+    let peer = peer_that(port_tx, move |conn| {
+        let _ = go_rx.recv();
+        after_accept(conn);
+    });
     let port = port_rx.recv().unwrap();
     let url = CString::new(format!("tcp://127.0.0.1:{port}")).unwrap();
 
@@ -943,6 +950,7 @@ fn first_failure(
             }),
         )
     };
+    go_tx.send(()).unwrap();
 
     let out = done_rx.recv_timeout(crate::common::scaled(Duration::from_secs(10)));
     if out.is_err() {
