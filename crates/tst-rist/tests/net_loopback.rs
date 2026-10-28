@@ -455,9 +455,16 @@ fn send_burst_without_receiver_never_latches_broken() {
 /// Runs in a child process so a crash shows up as the child's wait status
 /// instead of killing the whole test binary.
 ///
+/// Ignored when pkg-config linked a system librist, which still has the
+/// null dereference (see `rist-sys`'s source fixup).
+///
 /// Not on Windows: librist sets SO_REUSEADDR, which on Windows lets its bind
 /// take over the held port instead of failing.
 #[cfg(not(windows))]
+#[cfg_attr(
+    not(librist_source_fixups),
+    ignore = "needs the vendored librist build: a system librist lacks the RTCP null check"
+)]
 #[test]
 fn simple_profile_rtcp_port_collision_is_an_error_not_a_crash() {
     if std::env::var_os(RTCP_CHILD_ENV).is_some() {
