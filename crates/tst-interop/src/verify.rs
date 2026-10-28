@@ -752,17 +752,13 @@ impl Default for Tally {
     }
 }
 
-/// The two reasons the demuxer gives a `MalformedPes` damage marker
-/// (`DAMAGE_CC_GAP` and `DAMAGE_SHORT_PES` in tst-core's
-/// `mpegts::demux::pes`, crate-private there): the PES still completes,
-/// but bytes are missing from it. Every other `MalformedPes` reason is a
-/// header that failed to parse.
-fn is_pes_damage_reason(reason: &str) -> bool {
-    matches!(
-        reason,
-        "continuity_counter gap inside the PES; payload bytes are missing"
-            | "PES ended before PES_packet_length bytes arrived"
-    )
+/// The reason the demuxer gives a `MalformedPes` damage marker for a PES
+/// that a continuity gap cut into (`DAMAGE_CC_GAP` in tst-core's
+/// `mpegts::demux::pes`, crate-private there). The demuxer gives the
+/// short-PES reason only to a PES with no gap inside it, so that one is the
+/// producer's error.
+fn is_cc_gap_damage_reason(reason: &str) -> bool {
+    reason == "continuity_counter gap inside the PES; payload bytes are missing"
 }
 
 impl Tally {
@@ -1289,15 +1285,16 @@ impl Tally {
     /// loss, or charged.
     ///
     /// Everything else stays a non-conformance: a `MalformedPes` with any
-    /// other reason, and a damage marker with no jump before it on its
-    /// PID since that PID's last media (a PES that ends short of its
-    /// declared length with no packet missing is the producer's error).
+    /// other reason (a PES that ends short of its declared length with no
+    /// gap inside it is the producer's error, even right after a jump),
+    /// and a gap marker with no jump before it on its PID since that PID's
+    /// last media.
     fn is_gap_damage(&mut self, ev: &DemuxEvent) -> bool {
         match ev {
             DemuxEvent::NonConformant {
                 stream,
                 issue: NonConformantIssue::MalformedPes { reason, .. },
-            } if is_pes_damage_reason(reason) => self.cc_gap_open.remove(&stream.pid),
+            } if is_cc_gap_damage_reason(reason) => self.cc_gap_open.remove(&stream.pid),
             _ => false,
         }
     }
@@ -4961,8 +4958,14 @@ mod tests {
     #[test]
     fn damage_marker_without_an_open_gap_and_other_reasons_stay_findings() {
         let short = "PES ended before PES_packet_length bytes arrived";
-        let cases: [(&str, Vec<DemuxEvent>); 4] = [
+        let cases: [(&str, Vec<DemuxEvent>); 5] = [
             ("no jump", vec![malformed_pes_event(short)]),
+            // The demuxer reports a gap inside a PES as the gap reason; a
+            // short PES after a jump between PESes is the producer's error.
+            (
+                "short after a jump",
+                vec![discontinuity_event(), malformed_pes_event(short)],
+            ),
             (
                 "media closed the gap",
                 vec![
