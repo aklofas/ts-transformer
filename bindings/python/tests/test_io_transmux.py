@@ -7,6 +7,7 @@ lifecycle misuse errors.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,29 @@ def _write_video_klv_src(path: Path, lat: float = 47.6097) -> None:
             pts = Pts90khz.from_raw(PTS0 + i * PTS_STEP)
             proxy.push_video(au, pts=pts, key_frame=key)
             proxy.push_klv(_make_klv_bytes(lat), pts=pts)
+
+
+def _write_large_src(path: Path) -> None:
+    """Same program as `_write_video_klv_src`, 400 AUs of 512-byte NALs:
+    well over two 64 KiB feed chunks."""
+    cfg = (
+        MuxerConfigBuilder()
+        .add_program(
+            MuxerProgramConfigBuilder(1, 0x100)
+            .add_video(0x101, VideoCodec.H264)
+            .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+            .build()
+        )
+        .build()
+    )
+    mux = Muxer(cfg)
+    with mux.write_file(path) as proxy:
+        for i in range(400):
+            pts = Pts90khz.from_raw(PTS0 + i * PTS_STEP)
+            head = b"\x00\x00\x00\x01\x65" if i == 0 else b"\x00\x00\x00\x01\x41"
+            proxy.push_video(head + bytes([i % 251]) * 507, pts=pts, key_frame=(i == 0))
+            proxy.push_klv(_make_klv_bytes(47.6097), pts=pts)
+    assert path.stat().st_size > 2 * 65536
 
 
 def _collect(path: Path):
@@ -683,3 +707,34 @@ def test_av1_parse_interop_mode_no_spurious_issues(tmp_path: Path) -> None:
             break
     else:
         pytest.fail("no Video event found in interop-mode AV1 source")
+
+
+@pytest.mark.parametrize("alias", ["same", "hardlink", "symlink"])
+def test_transmux_non_atomic_refuses_dst_that_is_src(tmp_path, alias):
+    src = tmp_path / "src.ts"
+    _write_large_src(src)
+    original = src.read_bytes()
+    if alias == "same":
+        dst = src
+    elif alias == "hardlink":
+        dst = tmp_path / "h.ts"
+        os.link(src, dst)
+    else:
+        dst = tmp_path / "s.ts"
+        try:
+            dst.symlink_to(src)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="same file"):
+        tio.transmux(src, dst)
+    assert src.read_bytes() == original
+
+
+def test_transmux_atomic_in_place_rewrite_is_allowed(tmp_path):
+    src = tmp_path / "src.ts"
+    _write_large_src(src)
+    before = _collect(src)
+    with tio.transmux(src, src, atomic=True) as tx:
+        for ev in tx:
+            tx.write(ev)
+    assert _collect(src) == before

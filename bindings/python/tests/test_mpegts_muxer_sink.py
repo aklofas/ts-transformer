@@ -320,3 +320,14 @@ def test_drain_proxy_push_methods_match_muxer_surface():
     assert {
         n for n in dir(Muxer) if n.startswith("push_")
     } == MuxerDrainProxy._PUSH_METHODS
+
+
+def test_atomic_sink_removes_partial_when_promotion_fails(tmp_path):
+    dst = tmp_path / "out.ts"
+    dst.mkdir()  # os.replace(file, existing dir) fails
+    m = Muxer(_cfg())
+    with pytest.raises(OSError):
+        with m.write_file(dst, atomic=True) as proxy:
+            proxy.push_video(_nal_aud(), pts=Pts90khz.from_raw(0), key_frame=True)
+    assert dst.is_dir()
+    assert list(tmp_path.glob("*.partial")) == []

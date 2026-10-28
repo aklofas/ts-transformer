@@ -15,6 +15,7 @@ The write-side `Muxer.write_file(path)` context manager lives on the
 `Muxer` class in `tstrans.mpegts`.
 """
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional, Sequence, Union
@@ -356,6 +357,10 @@ def transmux(
     second program (or a mid-stream layout change) raises
     `ValueError`.
 
+    With `atomic=False`, `dst` must not be the same file as `src`
+    (including via a symlink or hard link): that raises `ValueError`
+    before anything is opened. `atomic=True` allows an in-place rewrite.
+
     `atomic=True` routes the output through the `MuxerFileSink`
     temp-file machinery: `dst` appears only on clean exit (`os.replace`
     from a same-directory `*.partial`); on an exception nothing is left
@@ -449,6 +454,17 @@ class Transmuxer:
     ) -> None:
         self._src = Path(src)
         self._dst = Path(dst)
+        # Non-atomic output opens dst "wb" on the first ProgramMap while
+        # src is still being read, which would truncate the capture.
+        if (
+            not atomic
+            and self._dst.exists()
+            and os.path.samefile(self._src, self._dst)
+        ):
+            raise ValueError(
+                "transmux: src and dst are the same file; "
+                "pass atomic=True to rewrite it in place"
+            )
         self._drop = tuple(drop)
         self._atomic = atomic
         self._config = config
