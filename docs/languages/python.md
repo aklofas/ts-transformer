@@ -343,7 +343,8 @@ with tio.transmux("in.ts", "out.ts", atomic=True) as tx:
 ```
 
 Strict by default: streams the muxer cannot represent (DVB
-subtitling/teletext) raise `MuxError` naming the offenders.
+subtitling/teletext) raise `MuxError` naming the offenders; a config
+error tied to one PID also sets `MuxError.pid`.
 Private/application data streams (unknown stream types) pass through
 byte-faithfully: `MuxerConfig.from_program_map` reproduces their PMT
 entry (raw stream_type byte + descriptor loop verbatim) and each
@@ -357,7 +358,9 @@ single-program sources are supported (a second program raises
 `ValueError`).
 `atomic=True` writes through a same-directory `*.partial` temp file and
 `os.replace`s it into place only on clean exit, so no partial output can
-appear at the destination.
+appear at the destination. A failed promotion removes the `*.partial`.
+Without `atomic=True`, a `dst` that is `src` (or a link to it) raises
+`ValueError` instead of truncating the source.
 
 ## SRT transport (`tstrans.srt`)
 
@@ -493,14 +496,17 @@ A cancel-first `close()` is abortive by design: for the raw-bytes
 `Sender`, a partial 7-packet bundle still in the framing buffer is not
 delivered — call `flush()` first when the tail matters (`MuxSender`
 already closed cancel-first; on the Rust side `finish()` is the lossless
-alternative).
+alternative). Dropping a `Managed*` shell without `close()` is abortive
+too: the drop cancels first, with the GIL released, rather than retrying
+the reconnect policy.
 
 **Exit with a shell still open.** You should still `close()` (or use
 `with`) every shell, but forgetting to is no longer fatal: at interpreter
 exit `tstrans` cancels every shell that is still open before libsrt's own
 teardown runs. Without that, a thread left parked in `accept()` or
 `recv_bytes()` deadlocks `srt_cleanup`, which joins libsrt's GC thread —
-the process hangs instead of exiting. A program that closed everything
+the process hangs instead of exiting. The hook also reaches the first accept of a managed receiver and any shell
+opened after the hook ran, which is born cancelled. A program that closed everything
 pays nothing: shells whose cancel already latched are skipped, so neither
 the cancel walk nor the settle window runs. Only a shell left open costs
 the short settle window (woken threads need a moment to unwind before the
@@ -637,7 +643,10 @@ with DemuxReceiver.open("srt://:9000?mode=listener") as rx:
 to a callback BEFORE demuxing — register it before iterating. If the
 callback raises, the error re-raises from the next iteration step and
 iteration stops. Keep the sink cheap (it runs on the recv-loop thread) and
-never re-enter the receiver from it.
+never re-enter the receiver from it: a same-receiver call from the sink
+raises `RuntimeError` (so does a cycle through another receiver's sink),
+except `close()`, which delivers the event in flight and ends the
+iteration on the following pull.
 
 `rx.last_seen_micros(pid)` returns the epoch-microsecond timestamp of
 the most recent item this receiver emitted for `pid`, or `None` if
@@ -715,9 +724,9 @@ phase of that reconnect: a live receive, the backoff wait between
 attempts, and a re-accept parked with no peer in sight (the iterator
 raises `SrtError(CLOSED)` promptly in all three). `ManagedReceiver`, the
 raw-bytes sibling, covers the same three phases — a parked `recv_bytes`
-raises `SrtError(CLOSED)` just as promptly. The one accept neither class
-can cancel is the *first* one, inside `from_url` itself: the handle that
-would fire it does not exist until the constructor returns. `cancel_handle()` can be obtained at any time, including while another
+raises `SrtError(CLOSED)` just as promptly. The first accept, inside
+`from_url`, is reached by the interpreter-exit hook; a user cancel handle
+exists once `from_url` returns. `cancel_handle()` can be obtained at any time, including while another
 thread is parked in `recv_bytes` — every method borrows the object
 immutably — and `close()` from that other thread is equivalent to
 `cancel()` followed by freeing the shell.

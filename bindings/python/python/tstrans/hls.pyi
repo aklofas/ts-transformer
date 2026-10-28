@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import abc
 
-from enum import IntEnum
 from typing import Any, Union, final
 
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8, or

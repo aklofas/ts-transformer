@@ -10,7 +10,7 @@
 //! (the only publisher impl that exists) instead of adapting *any* Python
 //! `Publisher` subclass back to the Rust `Publisher` trait via per-call GIL
 //! acquisition. This matches tst-c (handles are concrete per-transport,
-//! never `Box<dyn ...>`) and the `rtp/mux_sender.rs::PyMuxSender` template
+//! never `Box<dyn ...>`) and the `shells/mux_sender.rs::PyMuxSender` template
 //! (concrete `MuxSender<RtpTransport>`).
 //!
 //! `with_config_hls(publisher, program_config)` *consumes* the

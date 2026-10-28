@@ -4,10 +4,11 @@
 //! same bytes-like extraction, same error mapping shape.
 //!
 //! Submodules:
-//! - `transport`:      SrtStats (the shell classes live in `tstrans.shells`)
-//! - `lowlevel`:       Socket, Listener, Builder
-//! - `policy`:         ReconnectPolicy, BackoffStrategy, OverflowPolicy
-//! - `managed`:        ManagedSender, ManagedReceiver, ManagedMuxSender, ManagedDemuxReceiver
+//! - `generated::stats_srt`: SrtStats (the shell classes live in `tstrans.shells`)
+//! - `lowlevel`:             Socket, Listener, Builder
+//! - `policy`:               ReconnectPolicy, BackoffStrategy, OverflowPolicy
+//! - `managed_basic`:        ManagedSender, ManagedReceiver
+//! - `managed_convenience`:  ManagedMuxSender, ManagedDemuxReceiver
 //!
 //! Error mapping goes through `crate::raise`: every Rust error
 //! type in this surface has a `From<…> for tst_pipeline::binding::BindingError`

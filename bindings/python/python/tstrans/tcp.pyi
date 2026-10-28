@@ -12,7 +12,6 @@ mypy --strict clean.
 
 from __future__ import annotations
 
-from enum import IntEnum
 from types import TracebackType
 from typing import Any, Optional, Type, Union, final
 

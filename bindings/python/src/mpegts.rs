@@ -7,9 +7,9 @@
 //! Python-side dataclasses defined in `tstrans/mpegts.py`.
 //!
 //! Ships the `Demuxer` PyClass + event conversion for all
-//! `DemuxEvent` variants. `Sample.payload` is typed (NAL/OBU lists
-//! for video, ADTS / MPEG-2 audio frame lists for audio, bytes
-//! fallback for the rest).
+//! `DemuxEvent` variants. `Video` / `Audio` carry `.raw` bytes plus an
+//! opt-in `.parse()` (NAL/OBU lists for video, ADTS / MPEG-2 audio frame
+//! lists for audio).
 //!
 //! `#![allow(...)]` mirrors the pattern in `errors.rs` — PyO3's macro
 //! expansions under Rust 2024 trip these lints. Hand-written code in

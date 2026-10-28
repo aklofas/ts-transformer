@@ -47,6 +47,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-py
 
 - A Python shell object dropped without `close()` now cancels its transport first, so a lost peer can no longer hold the drop in a reconnect loop. (C's `tst_*_close` and the JVM's `close()` already cancel first.)
+- Python: `CancelHandle.cancel()` and the raw `udp` builders release the GIL (an SRT close with linger, a hostname lookup).
+- Python: dropping a `Managed*` SRT shell without `close()` cancels first and releases the GIL instead of retrying the reconnect policy with the interpreter stalled.
+- Python: a refused mux/demux config passed to `Socket.into_mux_sender`/`into_demux_receiver`, `RtspSession.into_demux_receiver` or `MuxPublisher.with_config_hls` leaves the source handle usable.
+- Python: the interpreter-exit hook reaches a `ManagedReceiver`/`ManagedDemuxReceiver` first accept and shells opened after it ran.
+- Python: a cancel source created after the interpreter-exit hook ran is born cancelled, so a shell opened in an `atexit` handler cannot park.
+- Python: a byte sink calling its own receiver raises `RuntimeError` instead of deadlocking; `close()` from the sink delivers the event in flight and ends the iteration on the next pull; a cycle through another receiver's sink is refused the same way.
+- Python: `RawBytes` hashes as the `bytes` it equals; `MuxError.pid` is populated; `udp`/`tcp`/`hls` stubs name the canonical exception classes.
+- Python: `transmux(src, src)` without `atomic=True` raises `ValueError` instead of truncating the source; a failed atomic promotion removes its `*.partial`.
 
 ### Fixed — tst-core
 
@@ -168,6 +176,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added — tst-srt
 
 - `SrtListenerBuilder::{peer_latency, send_buf_bytes, udp_send_buffer_bytes, input_bandwidth}`.
+- `tst_srt::shells::managed_receiver_from_url_with_cancel` and `managed_demux_receiver_from_url_with_cancel`.
 
 ### Added — tst-rist
 

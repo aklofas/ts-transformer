@@ -3,7 +3,7 @@
 //! All codec PyO3 wraps for H.264/H.265/H.266/AV1/AAC/MPEG-2 audio,
 //! plus shared types (ChromaFormat, Rational, ColorInfo, primaries/transfer/
 //! matrix enums), plus NalUnit / Obu / ObuExtension typed wrappers used by
-//! `Sample.payload`.
+//! returned by `DemuxEvent.Video/Audio.parse()`.
 
 #![expect(
     clippy::disallowed_methods,
@@ -1699,7 +1699,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MatrixCoefficientsPy>()?;
     // The records (generated)
     crate::generated::codec::register(m)?;
-    // Typed NAL / OBU wrappers (used on Sample.payload)
+    // Typed NAL / OBU wrappers (returned by DemuxEvent.Video/Audio.parse())
     m.add_class::<NalUnitPy>()?;
     // H.264 enums
     m.add_class::<EntropyCodingModePy>()?;

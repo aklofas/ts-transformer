@@ -11,7 +11,7 @@ Generates two files:
     (test_demux_audio_gil.py::test_next_event_audio_typed_payload_unchanged).
     10 separate PES packets, one frame each.
 
-  - audio_aac_large.ts (~650 KB) — 10 large PES packets, each carrying 4095
+  - audio_aac_large.ts (~1.3 MB) — 20 large PES packets, each carrying 4095
     ADTS frames (~65 KB per PES). For the GIL progress test
     (test_demux_audio_gil.py::test_next_event_releases_gil_during_aac_parse).
 
