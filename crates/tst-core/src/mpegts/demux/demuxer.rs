@@ -751,9 +751,10 @@ impl Demuxer {
             state.program = Some(program);
             state.stream_type = Some(stream_type);
             // Counters outlive retirement, so a re-declared or retyped PID
-            // may carry a stale byte or a counter family of another kind.
+            // may carry a stale byte, owning program or counter family.
             if let Some(stats) = state.stats.as_mut() {
                 stats.stream_type = StreamTypeCode::from_byte(stream_type);
+                stats.program_number = program;
             }
             let family = match kind {
                 StreamKind::Video(_) => Some(CodecKind::Video),
@@ -1744,6 +1745,22 @@ mod tests {
             st.per_stream[&0x101].stream_type,
             StreamTypeCode::from_byte(0x1B)
         );
+        assert_eq!(st.per_stream[&0x101].items, 2);
+    }
+
+    #[test]
+    fn pid_retired_by_one_program_and_reused_by_another_moves_its_stats() {
+        let mut d = Demuxer::new();
+        d.feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1010)], 0))
+            .unwrap();
+        feed_pmt(&mut d, 0, &[(0x0F, 0x101)]);
+        feed_one_pes(&mut d, 0x101, 0, 0xC0, &ADTS_FRAME);
+        feed_pmt(&mut d, 1, &[]);
+        d.feed(&pmt_packet_for_test(0x1010, 2, 0x100, &[(0x0F, 0x101)], 0))
+            .unwrap();
+        feed_one_pes(&mut d, 0x101, 1, 0xC0, &ADTS_FRAME);
+        let st = d.stats();
+        assert_eq!(st.per_stream[&0x101].program_number, 2);
         assert_eq!(st.per_stream[&0x101].items, 2);
     }
 
