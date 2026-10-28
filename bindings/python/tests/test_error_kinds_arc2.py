@@ -1,7 +1,8 @@
 """Every Python *ErrorKind is a per-domain subset of
 `tst_pipeline::binding::BindingErrorKind`, spelled as
 `BindingErrorKind::name()`. Pins the
-canonical member sets, the deprecated aliases and the two removals; the
+deprecated aliases and the removals (the canonical table lives in
+test_error_kind_values.py); the
 Rust↔Python consistency itself is checked at `import tstrans`
 and by the kind-equivalence rail."""
 
@@ -10,13 +11,6 @@ from __future__ import annotations
 import pytest
 
 from tstrans import exceptions as exc
-
-from test_error_kind_values import EXPECTED as VALUES
-
-# One source for the values: the literal table in test_error_kind_values.py.
-EXPECTED = {
-    getattr(exc, name): dict(members) for name, members in VALUES.items()
-}
 
 # alias name → the member it aliased; kept for 0.7.x, removed in 0.8.0
 REMOVED_ALIASES = {
@@ -47,12 +41,6 @@ REMOVED = {
     exc.KlvErrorKind: ["UNKNOWN_SET"],
     exc.CodecErrorKind: ["DANGLING_SPS_REFERENCE", "DANGLING_VPS_REFERENCE"],
 }
-
-
-@pytest.mark.parametrize("enum_cls", list(EXPECTED), ids=lambda e: e.__name__)
-def test_canonical_member_set_is_exactly_the_arc2_table(enum_cls) -> None:
-    canonical = {m.name: m.value for m in enum_cls}  # iteration excludes aliases
-    assert canonical == EXPECTED[enum_cls], f"{enum_cls.__name__} drifted from the canonical kind table"
 
 
 @pytest.mark.parametrize("enum_cls", list(REMOVED_ALIASES), ids=lambda e: e.__name__)
