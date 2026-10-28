@@ -346,10 +346,13 @@ def test_managed_sender_recovers_after_listener_restart() -> None:
 
 
 # An implicit drop (no `close()`) must be abortive: it cancels first, then
-# closes with the GIL released, exactly as `close()` does. Without that the
-# drop flushes the buffered bundle through the reconnect loop with the GIL
-# held, and a peer that never comes back stalls the interpreter for the
-# whole retry policy — unlimited attempts here, so forever.
+# closes with the GIL released, exactly as `close()` does. Two layers cancel
+# first: the binding's drop and the slot's own. If both are lost, the drop
+# flushes the buffered bundle through the reconnect loop with the GIL held,
+# and a peer that never comes back stalls the interpreter for the whole retry
+# policy (unlimited attempts here, so forever). That stall is what the sender
+# test catches; it cannot tell which layer cancelled, nor whether the close
+# ran with the GIL released.
 #
 # The script waits out libsrt's default peer idle timeout (5 s) before the
 # drop: until the caller has seen the break, a flush lands in libsrt's send
