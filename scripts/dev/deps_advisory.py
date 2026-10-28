@@ -172,15 +172,28 @@ _BOUND_RE = re.compile(r"(<=|>=|<|>|=)\s*([^\s,]+)")
 
 
 def range_affects(rng: str, pin: tuple[int, ...]) -> bool:
-    """Evaluate a GHSA `vulnerable_version_range` (`>= V7.4.0 AND <= V11.3.0`, `< 1.5.6`).
+    """Evaluate a GHSA `vulnerable_version_range` (`>= V7.4.0 AND <= V11.3.0`, `< 1.5.6`,
+    or an enumerated list `V11.3.0, V11.3.1`).
 
     Unparsable or empty ranges count as affecting: the advisory is then
     surfaced for a human to read, which is the safe direction.
     """
     bounds = _BOUND_RE.findall(rng or "")
-    if not bounds:
-        return True
     p = _pad(pin)
+    if not bounds:
+        # No operator: GHSA also publishes a comma-separated list of the exact
+        # versions affected. The pin is affected only when it is one of them;
+        # an item that does not parse keeps the conservative answer.
+        items = [i.strip() for i in (rng or "").split(",") if i.strip()]
+        if not items:
+            return True
+        for raw in items:
+            parsed = parse_version(raw)
+            if parsed is None:
+                return True
+            if _pad(parsed[0]) == p:
+                return True
+        return False
     for op, raw in bounds:
         parsed = parse_version(raw)
         if parsed is None:

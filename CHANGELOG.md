@@ -149,6 +149,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The public-api baselines now ratchet the optional TLS surfaces: `tst-core` is rendered with `tls` and `tst-rtp` with `rtsp-server-tls`.
 - The fuzz workspaces' `Cargo.lock` files are committed, and the qualification run's fuzz job refuses to re-resolve them (`cargo metadata --locked`) and records the nightly it fuzzed with.
+- The weekly advisory check reads an enumerated GHSA version list (`V11.3.0, V11.3.1`) as exactly those versions, so a pin at the patched version is no longer reported as inside the range; the pin was reported twice for the FreeRTOS kernel at `V11.3.2`.
 
 ### Added — tst-core
 
