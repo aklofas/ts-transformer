@@ -14,7 +14,7 @@ schema_version = 0
 # derived re-encodes beside the notebooks excluded). A release-mode corpus row must have
 # swept exactly this many files.
 [corpus]
-expected_files = 253
+expected_files = 251
 
 [[archive]]
 id = "soak-rc070-2026-10-04"
@@ -42,6 +42,16 @@ overall_pass = true
 note = "The first one-hour run with the whep leg: six browser connections, every verdict on every leg passed, and no KLV record was seen on one carriage only; the RSS slopes are provisional below 72 hours."
 date = "2026-10-21"
 expected_duration_s = 3600
+
+[[archive]]
+id = "soak-0.9.0-2026-10-27"
+kind = "soak"
+tree = "9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234"
+overall_pass = false
+note = "The 0.9.0 release soak: 72 hours with all five legs, 89 of 93 verdicts passed and the SRT receiver reconnected across all 12 outage windows; the four failures are one harness oracle gap (the AV1 carriage check does not excuse attributed corruption), one external-publisher teardown race in 432 generations, and a 2.3 ms KLV placement excursion over one sender-report interval on the ES leg, none a library defect, ruled by the maintainer on 2026-10-28."
+date = "2026-10-27"
+expected_duration_s = 259200
+legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
 
 [[archive]]
 id = "stress-2026-10-02"
@@ -82,3 +92,19 @@ tree = "effc7f9c4d4d20bef0e9ad172b8ed80b60432318"
 overall_pass = true
 note = "The demuxer output was byte-identical before and after the KLV classification change on all 260 real captures (41.5 GB); no real producer trips the reserved-nibble rule."
 date = "2026-10-03"
+
+[[archive]]
+id = "corpus-0.9.0-2026-10-24"
+kind = "corpus"
+tree = "9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234"
+overall_pass = true
+note = "The 0.9.0 release corpus run: 251 real captures (39.8 GB) swept with no parse or invariant failure, the first baseline on this tree; four captures replayed over all five paths with no failure; receiver RSS recorded, not gated."
+date = "2026-10-24"
+files = 251
+identical = 0
+changed_explained = 0
+invariant_failures = 0
+parse_failures = 0
+replay_files = 4
+replay_paths = 5
+replay_failed = 0
