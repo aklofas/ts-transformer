@@ -111,7 +111,9 @@ impl super::demuxer::Demuxer {
         // the next PCR on that PID samples a new system time clock. That PCR
         // may ride this packet or a later one, so the expectation is held
         // until it arrives.
-        if declared && pkt.discontinuity_indicator {
+        // A spec-legal duplicate repeats the original's indicator, not its
+        // reset: the PES the original opened is already on the new clock.
+        if declared && pkt.discontinuity_indicator && !self.is_spec_duplicate(pkt) {
             self.pcr.expect_new_timebase(pkt.pid);
         }
         if let Some(now) = pkt.pcr_27mhz {
@@ -201,6 +203,26 @@ impl super::demuxer::Demuxer {
         }
     }
 
+    /// `true` when `pkt` repeats the last payload packet of its PID: same CC
+    /// and identical bytes apart from the PCR (H.222.0 §2.4.3.3).
+    fn is_identical_repeat(&self, pkt: &crate::mpegts::demux::ts::TsPacket<'_>) -> bool {
+        self.pid_state.get(&pkt.pid).is_some_and(|s| {
+            s.cc == Some(pkt.continuity_counter)
+                && s.last_pkt_raw
+                    .as_ref()
+                    .is_some_and(|prev| pcr_masked_identical(prev, pkt.raw))
+        })
+    }
+
+    /// `true` when `check_continuity` will suppress `pkt` as the one allowed
+    /// duplicate of the previous packet.
+    fn is_spec_duplicate(&self, pkt: &crate::mpegts::demux::ts::TsPacket<'_>) -> bool {
+        pkt.pid != pid::NULL
+            && pkt.has_payload
+            && self.is_identical_repeat(pkt)
+            && !self.pid_state.get(&pkt.pid).is_some_and(|s| s.dup)
+    }
+
     /// Returns `(cc_jumped, is_duplicate)`.
     ///
     /// `cc_jumped` is `true` when a CC gap was observed AND not suppressed by
@@ -266,13 +288,7 @@ impl super::demuxer::Demuxer {
             // refreshed PCR is still tracked.) Only one duplicate is allowed
             // ("only-two" rule). A third identical packet with the same CC IS
             // a real discontinuity — treat it like a CC jump.
-            let is_identical_dup = pkt.continuity_counter == prev_cc
-                && self
-                    .pid_state
-                    .get(&pkt.pid)
-                    .and_then(|s| s.last_pkt_raw.as_ref())
-                    .is_some_and(|prev| pcr_masked_identical(prev, pkt.raw));
-            if is_identical_dup {
+            if self.is_identical_repeat(pkt) {
                 if prev_was_dup {
                     // Third (or later) identical packet with the same CC —
                     // beyond the spec's only-two allowance. Surface exactly

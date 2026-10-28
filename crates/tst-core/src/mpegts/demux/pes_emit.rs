@@ -1420,6 +1420,47 @@ mod tests {
         );
     }
 
+    /// H.222.0 §2.4.3.3: a duplicate of the packet carrying the new time base
+    /// repeats the signal, not the reset; the PES the original opened keeps
+    /// its baseline, so a backward PTS after it is still an anomaly.
+    #[test]
+    fn duplicate_of_a_timebase_reset_packet_does_not_reset_again() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x100,
+            &[(0x1B, 0x100, &[])],
+        );
+        let before = pes_bytes(0xE0, Some(900_000), None, true, &[0xAA; 300], false);
+        let after = pes_bytes(0xE0, Some(270_000), None, true, &[0xAA; 40], false);
+        let backward = pes_bytes(0xE0, Some(90_000), None, true, &[0xAA; 40], false);
+        let mut pkts = vec![ts_packet(&PktSpec {
+            pid: 0x100,
+            pcr: Some(0),
+            ..Default::default()
+        })];
+        pkts.extend(pes_to_packets(0x100, 0, &before));
+        let reset = ts_packet(&PktSpec {
+            pid: 0x100,
+            cc: 2,
+            pusi: true,
+            discontinuity: true,
+            pcr: Some(2_700_000_000),
+            payload: &after,
+            ..Default::default()
+        });
+        pkts.extend([reset, reset]);
+        pkts.extend(pes_to_packets(0x100, 3, &backward));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(
+            issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
+            "{ev:?}"
+        );
+    }
+
     /// H.222.0 §2.4.3.5: in the discontinuity state the second of two identical
     /// same-CC packets may be discarded; its payload must not be appended twice.
     #[test]
