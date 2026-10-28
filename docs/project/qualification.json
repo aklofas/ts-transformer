@@ -1,8 +1,8 @@
 {
   "schema_version": 0,
-  "label": "main at 7ee7db98",
+  "label": "main at 4a3a0b96",
   "source": {
-    "sha": "7ee7db98b5dcc9ecc538edb15974a47a8a3d23ac",
+    "sha": "4a3a0b963431e2e441206331983ef92a4752f521",
     "ref": "refs/heads/main",
     "dirty": false,
     "submodules": {
@@ -21,7 +21,7 @@
     }
   },
   "toolchain": {
-    "rust": "rustc 1.85.1",
+    "rust": "rustc 1.93.1",
     "nightly_public_api": "nightly-2026-07-03",
     "cbindgen": "0.29.2",
     "tools": {
@@ -45,90 +45,98 @@
     "tsp": "tsp: TSDuck - The MPEG Transport Stream Toolkit - version 3.44-4676",
     "gst-launch-1.0": "gst-launch-1.0 version 1.24.2",
     "vlc": "VLC version 3.0.20 Vetinari (3.0.20-0-g6f0d0ab126b)",
-    "mpv": "mpv 0.37.0 Copyright \u00a9 2000-2023 mpv/MPlayer/mplayer2 projects"
+    "mpv": "mpv 0.37.0 Copyright \u00a9 2000-2023 mpv/MPlayer/mplayer2 projects",
+    "google-chrome": "Google Chrome 155.0.8059.39 ",
+    "chromium": "Chromium 155.0.8059.0 "
   },
   "legs": [
     {
       "name": "interop",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "sanitizers/asan",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "sanitizers/asan-native",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "sanitizers/tsan",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "sanitizers/tsan-native",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
+    },
+    {
+      "name": "sanitizers",
+      "required": true,
+      "conclusion": "success",
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "fuzz",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "jvm-jar",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "python-wheels",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "c-abi",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     },
     {
       "name": "ci (on this sha)",
       "required": true,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39173975979"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626603941"
     },
     {
       "name": "semver-checks",
       "required": false,
       "conclusion": "success",
-      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/39174163933"
+      "run_url": "https://github.com/aklofas/ts-transformer/actions/runs/40626631867"
     }
   ],
   "interop": {
-    "shape": "full-159",
-    "total": 159,
-    "pass": 94,
+    "shape": "full-161",
+    "total": 161,
+    "pass": 96,
     "fail": 0,
     "expected_unsupported": 65,
     "skipped": 0,
     "stale": 0,
-    "expected_full_cells": 159,
+    "expected_full_cells": 161,
     "au_sizes": "realistic"
   },
   "fuzz": {
-    "targets_declared": 37,
-    "targets_run": 37,
+    "targets_declared": 40,
+    "targets_run": 40,
     "seconds_per_target": 60,
     "crashes": 0
   },
@@ -192,6 +200,12 @@
       "analysed": true
     },
     {
+      "crate": "tst-webrtc",
+      "breaking": 0,
+      "exit": 101,
+      "analysed": false
+    },
+    {
       "crate": "tstrans-mbedtls-src",
       "breaking": 0,
       "exit": 0,
@@ -199,8 +213,8 @@
     },
     {
       "crate": "tstrans-rist-sys",
-      "breaking": 0,
-      "exit": 0,
+      "breaking": 1,
+      "exit": 100,
       "analysed": true
     }
   ],
@@ -211,7 +225,8 @@
       "tree": "e86dd9ea6d1a3ad8d24af20377b9d5317708f273",
       "overall_pass": false,
       "note": "The SRT leg passed every gating verdict; the RIST leg failed corruption attribution, and all eight of its unexplained events were harness attribution defects, not library defects.",
-      "date": "2026-10-04"
+      "date": "2026-10-04",
+      "expected_duration_s": 259200
     },
     {
       "id": "soak-rtsp-publish-2026-10-08",
@@ -219,7 +234,33 @@
       "tree": "b6545e6004ae2461893779e246938dc293b24e84",
       "overall_pass": false,
       "note": "The publisher leg passed every verdict it owns; the three failures were on the SRT leg's receiver and were harness defects.",
-      "date": "2026-10-09"
+      "date": "2026-10-09",
+      "expected_duration_s": 3600
+    },
+    {
+      "id": "soak-whep-2026-10-21",
+      "kind": "soak",
+      "tree": "a5c0e9d7a6afe70cd79351dca7604d322150382e",
+      "overall_pass": true,
+      "note": "The first one-hour run with the whep leg: six browser connections, every verdict on every leg passed, and no KLV record was seen on one carriage only; the RSS slopes are provisional below 72 hours.",
+      "date": "2026-10-21",
+      "expected_duration_s": 3600
+    },
+    {
+      "id": "soak-0.9.0-2026-10-27",
+      "kind": "soak",
+      "tree": "9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234",
+      "overall_pass": true,
+      "note": "The 0.9.0 release soak: 72 hours with all five legs, 89 of 93 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The harness reported overall_pass=false on four verdicts: recv_invariants_rist from the rist leg's AV1 carriage check (a harness oracle gap: it does not excuse corruption the impairment schedule attributes), worker_exits from one external-publisher teardown race in 432 generations on the rtsp-publish leg, and recv_invariants_rtsp-publish-es with klv_placement_rtsp-publish-es from a 2.3 ms KLV placement excursion over one sender-report interval on the ES leg. None is a library defect; the maintainer re-judged the run as a pass on 2026-10-28, and the harness fixes are queued for 0.9.1. The run's own report, with the harness verdict, is retained offline.",
+      "date": "2026-10-27",
+      "expected_duration_s": 259200,
+      "legs": [
+        "rist",
+        "rtsp-publish",
+        "rtsp-publish-es",
+        "srt",
+        "whep"
+      ]
     },
     {
       "id": "stress-2026-10-02",
@@ -227,7 +268,8 @@
       "tree": "a647024592990feb9a74e1cb26d72339e498b417",
       "overall_pass": false,
       "note": "The sweep ended early and the hold was refused for harness calibration findings; it is not a measurement and no ceiling is published from it.",
-      "date": "2026-10-02"
+      "date": "2026-10-02",
+      "expected_duration_s": null
     },
     {
       "id": "stress-2026-10-02b",
@@ -235,7 +277,8 @@
       "tree": "f86f4406b86e2c4434f714c6a84796dd33e76334",
       "overall_pass": false,
       "note": "The sweep completed; the hold was killed by the kernel for memory because it was sized from CPU alone, so the sweep is valid and the hold is not.",
-      "date": "2026-10-03"
+      "date": "2026-10-03",
+      "expected_duration_s": null
     },
     {
       "id": "stress-2026-10-03",
@@ -243,7 +286,8 @@
       "tree": "3a3f964f5c6b19c1841b7756493dbf73cc502dbb",
       "overall_pass": false,
       "note": "The sweep passed; the hold ended at 58 081 of 86 400 s on a harness artefact in the receiver restart path, not a library defect.",
-      "date": "2026-10-04"
+      "date": "2026-10-04",
+      "expected_duration_s": null
     },
     {
       "id": "stress-2026-10-06",
@@ -251,7 +295,8 @@
       "tree": "9bb728e1484b551802c44af6a736c24f69d157f2",
       "overall_pass": false,
       "note": "The sweep and the full 24 h hold ran; resource and liveness verdicts passed and the hold verdict is FAIL on corruption attribution gaps, a harness attribution artefact.",
-      "date": "2026-10-08"
+      "date": "2026-10-08",
+      "expected_duration_s": null
     },
     {
       "id": "2026-10-04-wp1-corpus-evidence",
@@ -259,11 +304,63 @@
       "tree": "effc7f9c4d4d20bef0e9ad172b8ed80b60432318",
       "overall_pass": true,
       "note": "The demuxer output was byte-identical before and after the KLV classification change on all 260 real captures (41.5 GB); no real producer trips the reserved-nibble rule.",
-      "date": "2026-10-03"
+      "date": "2026-10-03",
+      "expected_duration_s": null
+    },
+    {
+      "id": "corpus-0.9.0-2026-10-24",
+      "kind": "corpus",
+      "tree": "9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234",
+      "overall_pass": true,
+      "note": "The 0.9.0 release corpus run: 251 real captures (39.8 GB) swept with no parse or invariant failure, the first baseline on this tree; four captures replayed over all five paths with no failure; receiver RSS recorded, not gated.",
+      "date": "2026-10-24",
+      "expected_duration_s": null,
+      "files": 251,
+      "identical": 0,
+      "changed_explained": 0,
+      "invariant_failures": 0,
+      "parse_failures": 0,
+      "replay_files": 4,
+      "replay_paths": 5,
+      "replay_failed": 0
     }
   ],
+  "release_vm": {
+    "release_mode": true,
+    "soak": {
+      "id": "soak-0.9.0-2026-10-27",
+      "tree": "9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234",
+      "date": "2026-10-27",
+      "overall_pass": true,
+      "expected_duration_s": 259200,
+      "legs": [
+        "rist",
+        "rtsp-publish",
+        "rtsp-publish-es",
+        "srt",
+        "whep"
+      ],
+      "changed_paths": 0,
+      "git_error": null
+    },
+    "corpus": {
+      "id": "corpus-0.9.0-2026-10-24",
+      "tree": "9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234",
+      "date": "2026-10-24",
+      "overall_pass": true,
+      "note": "The 0.9.0 release corpus run: 251 real captures (39.8 GB) swept with no parse or invariant failure, the first baseline on this tree; four captures replayed over all five paths with no failure; receiver RSS recorded, not gated.",
+      "files": 251,
+      "identical": 0,
+      "changed_explained": 0,
+      "invariant_failures": 0,
+      "parse_failures": 0,
+      "replay_files": 4,
+      "replay_paths": 5,
+      "replay_failed": 0
+    },
+    "reasons": []
+  },
   "maintainer_local": [
-    "real-capture corpus cross-check (cargo test -p tst-core --test mpegts mux_local)",
     "long fuzz runs (10 min per target)",
     "bench regression",
     "one-hour synthetic soak"
