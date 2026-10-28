@@ -103,6 +103,20 @@ class GhsaRange(unittest.TestCase):
         self.assertTrue(da.range_affects("all versions", (1, 0, 0)))
         self.assertTrue(da.range_affects("", (1, 0, 0)))
 
+    def test_an_enumerated_range_affects_only_the_listed_versions(self):
+        # GHSA-qf4j-6f5j-876g lists the vulnerable FreeRTOS kernel versions
+        # one by one, with the patched V11.3.2 outside the list.
+        rng = "V11.3.0, V11.3.1"
+        self.assertTrue(da.range_affects(rng, (11, 3, 0)))
+        self.assertTrue(da.range_affects(rng, (11, 3, 1)))
+        self.assertFalse(da.range_affects(rng, (11, 3, 2)))
+        self.assertFalse(da.range_affects(rng, (11, 2, 9)))
+        self.assertTrue(da.range_affects("= 1.5.6", (1, 5, 6)))
+        self.assertFalse(da.range_affects("= 1.5.6", (1, 5, 7)))
+
+    def test_an_enumerated_range_with_an_unparsable_item_is_conservative(self):
+        self.assertTrue(da.range_affects("V11.3.0, latest", (11, 3, 2)))
+
     def test_advisory_affects_pin_uses_any_vulnerability_entry(self):
         adv = {"vulnerabilities": [
             {"vulnerable_version_range": "< 1.0.0"},
