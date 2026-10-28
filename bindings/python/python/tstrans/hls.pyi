@@ -22,6 +22,9 @@ from typing import Any, Union, final
 # in Rust via a two-path fast/fallback pattern.
 _BytesLike = Union[bytes, bytearray, memoryview, Any]
 
+from .exceptions import HlsError as HlsError
+from .exceptions import HlsErrorKind as HlsErrorKind
+
 __all__: list[str] = [
     "Publisher",
     "PublisherStats",
@@ -39,32 +42,6 @@ __all__: list[str] = [
 # ---------------------------------------------------------------------------
 # HlsErrorKind / HlsError — re-exported from tstrans.exceptions
 # ---------------------------------------------------------------------------
-
-
-class HlsErrorKind(IntEnum):
-    """Discriminator for ``HlsError.kind``. The ``tst_hls::HlsError``
-    variants plus ``CLOSED`` (0.7.0: ``MuxPublisherError::Closed`` — a call
-    after the publisher was taken)."""
-
-    URL = 0
-    IO = 1
-    BIND_FAILED = 2
-    INVALID_CONFIG = 3
-    UNALIGNED_PUSH_TS = 4
-    FINISHED = 5
-    TLS_DISABLED = 6
-    TLS = 7
-    INTERNAL = 8
-    CLOSED = 9
-
-
-class HlsError(Exception):
-    """Raised by ``tstrans.hls`` operations. Discriminate via ``.kind``."""
-
-    kind: HlsErrorKind
-    message: str
-
-    def __init__(self, *, kind: HlsErrorKind, message: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------

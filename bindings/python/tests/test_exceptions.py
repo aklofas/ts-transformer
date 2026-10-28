@@ -129,3 +129,15 @@ def test_klv_encode_error_kind_default_when_no_tag():
     )
     assert e.kind is KlvEncodeErrorKind.BUFFER_TOO_SMALL
     assert e.tag is None
+
+
+def test_transport_modules_reexport_the_canonical_exception_classes():
+    import tstrans.exceptions as exc
+    import tstrans.hls, tstrans.tcp, tstrans.udp
+    assert tstrans.udp.UdpError is exc.UdpError
+    assert tstrans.udp.UdpErrorKind is exc.UdpErrorKind
+    assert tstrans.tcp.TcpError is exc.TcpError
+    assert tstrans.tcp.TcpErrorKind is exc.TcpErrorKind
+    assert tstrans.hls.HlsError is exc.HlsError
+    assert tstrans.hls.HlsErrorKind is exc.HlsErrorKind
+    assert issubclass(tstrans.udp.UdpError, exc.TstError)
