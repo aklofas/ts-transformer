@@ -220,24 +220,30 @@ impl PyUdpTransportBuilder {
         let url_str = self
             .url
             .as_ref()
-            .ok_or_else(|| PyValueError::new_err("url(...) is required before build()"))?;
-        let mut b = tst_udp::UdpTransportBuilder::from_url(url_str)
-            .map_err(|e| raise(py, &UDP, BindingError::from(tst_udp::UdpError::Url(e))))?;
-        if let Some(v) = self.pkt_size {
-            b.pkt_size(v);
-        }
-        if let Some(v) = self.tos {
-            b.tos(v);
-        }
-        if let Some(v) = self.sndbuf {
-            b.sndbuf(v);
-        }
-        if let Some(v) = self.ttl {
-            b.ttl(v);
-        }
-        let t = b
-            .build()
-            .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
+            .ok_or_else(|| PyValueError::new_err("url(...) is required before build()"))?
+            .clone();
+        let (pkt_size, tos, sndbuf, ttl) = (self.pkt_size, self.tos, self.sndbuf, self.ttl);
+
+        // Hostname resolution and the bind/connect can block, so they run
+        // without the GIL; errors are raised once it is back.
+        let built = crate::util::allow_threads_parking(py, || {
+            let mut b =
+                tst_udp::UdpTransportBuilder::from_url(&url_str).map_err(tst_udp::UdpError::Url)?;
+            if let Some(v) = pkt_size {
+                b.pkt_size(v);
+            }
+            if let Some(v) = tos {
+                b.tos(v);
+            }
+            if let Some(v) = sndbuf {
+                b.sndbuf(v);
+            }
+            if let Some(v) = ttl {
+                b.ttl(v);
+            }
+            b.build()
+        });
+        let t = built.map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
         // Obtain-before-move: the transport's real cancel handle, captured
         // before `SendHalf` takes ownership. `CancelSource` latches its own
         // flag and forwards into it, so `close()` and `cancel_handle()`
@@ -504,18 +510,25 @@ impl PyUdpRecvTransportBuilder {
         let url_str = self
             .url
             .as_ref()
-            .ok_or_else(|| PyValueError::new_err("bind_url(...) is required before build()"))?;
-        let mut b = tst_udp::UdpRecvTransportBuilder::from_url(url_str)
-            .map_err(|e| raise(py, &UDP, BindingError::from(tst_udp::UdpError::Url(e))))?;
-        if let Some(v) = self.rcvbuf {
-            b.rcvbuf(v);
-        }
-        if let Some(ref s) = self.iface {
-            b.iface(s.as_str());
-        }
-        let t = b
-            .build()
-            .map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
+            .ok_or_else(|| PyValueError::new_err("bind_url(...) is required before build()"))?
+            .clone();
+        let rcvbuf = self.rcvbuf;
+        let iface = self.iface.clone();
+
+        // Hostname resolution and the bind can block, so they run without
+        // the GIL; errors are raised once it is back.
+        let built = crate::util::allow_threads_parking(py, || {
+            let mut b = tst_udp::UdpRecvTransportBuilder::from_url(&url_str)
+                .map_err(tst_udp::UdpError::Url)?;
+            if let Some(v) = rcvbuf {
+                b.rcvbuf(v);
+            }
+            if let Some(ref s) = iface {
+                b.iface(s.as_str());
+            }
+            b.build()
+        });
+        let t = built.map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
         // Size the scratch buffer to hold the largest legal datagram.
         // Recv max_payload() is a flat 65535 deliverable ceiling; 65_536
         // keeps the historical scratch size.

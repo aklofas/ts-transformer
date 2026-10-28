@@ -25,6 +25,8 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<receiver::PyReceiver>()?;
     m.add_class::<mux_sender::PyMuxSender>()?;
     m.add_class::<demux_receiver::PyDemuxReceiver>()?;
+    #[cfg(feature = "py-test-hooks")]
+    m.add_function(wrap_pyfunction!(cancel::slow_cancel_handle_for_test, &m)?)?;
     parent.add_submodule(&m)?;
     Ok(())
 }
