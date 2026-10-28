@@ -85,3 +85,9 @@ fi
 
 PYTHONPATH="$PKG" "$PY" -m mypy.stubtest "${MODULES[@]}" --allowlist "$ALLOWLIST"
 echo "stubtest: all ${#MODULES[@]} tstrans modules OK ($native)"
+
+# The consumer-side smoke files pin the stubs' return types under --strict; a
+# stub widening to Any would otherwise pass stubtest unnoticed.
+echo "typing smoke: tests/typing/smoke_*.py"
+MYPYPATH="$PKG" "$PY" -m mypy --config-file "$ROOT/bindings/python/tests/typing/mypy.ini" "$ROOT"/bindings/python/tests/typing/smoke_*.py
+echo "typing smoke: OK"

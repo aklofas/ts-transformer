@@ -2,7 +2,7 @@
 split_units/parse_audio signatures plus a few representative members across
 the module, and confirms codec_parse_error is gone.
 Not collected by pytest (no test_*); checked statically by tests/typing/mypy.ini."""
-from typing import Any, assert_type
+from typing import Any, List, Tuple, Union, assert_type
 
 from tstrans.codec import (
     AdtsFrame,
@@ -16,9 +16,10 @@ from tstrans.codec import (
     split_units,
 )
 
-units, issues = split_units(b"\x00\x00\x00\x01\x67", "H264")
-assert_type(units, list[Any])
-assert_type(issues, list[str])
+# split_units() is mode-polymorphic (strict flag), so the stub declares the
+# union of the (units, issues) tuple and the bare unit list.
+split = split_units(b"\x00\x00\x00\x01\x67", "H264")
+assert_type(split, Union[Tuple[List[Any], List[str]], List[Any]])
 frames = parse_audio(b"\xff\xf1", "AAC")
 assert_type(frames, list[Any])
 
