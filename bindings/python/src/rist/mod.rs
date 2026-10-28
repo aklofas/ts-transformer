@@ -48,7 +48,7 @@ use tst_rist::{RistRecvTransportBuilder, RistTransportBuilder};
 
 use crate::generated::stats_rist::RistStats;
 use crate::raise::{RIST, pyok, pyres, raise};
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
 // PyEncryptionKey — AES PSK with SecretString discipline
@@ -191,6 +191,12 @@ pub(crate) struct PyRistTransport {
     /// Held beside the slot so `cancel_handle()` never waits
     /// behind an in-flight `send`.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyRistTransport {
+    fn drop(&mut self) {
+        drop_owned(&RIST, &self.owned);
+    }
 }
 
 #[pymethods]
@@ -458,6 +464,12 @@ pub(crate) struct PyRistRecvTransport {
     /// `close()` and `cancel_handle().cancel()` both latch it
     /// and the poll loop checks it between librist's 100 ms windows.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyRistRecvTransport {
+    fn drop(&mut self) {
+        drop_owned(&RIST, &self.owned);
+    }
 }
 
 #[pymethods]

@@ -69,7 +69,7 @@ use crate::generated::stats_srt::{ManagedTransportStats, SrtStats};
 use crate::raise::{SRT, pyok, pyres, raise};
 use crate::shells::cancel::PyCancelHandle;
 use crate::srt::policy::PyReconnectPolicy;
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
 // PyManagedSender — wraps PlSender<ManagedTransport<SrtTransport>>
@@ -104,6 +104,12 @@ pub(crate) struct PyManagedSender {
     /// pattern as `cancel_handle` above — the handle keeps reading live
     /// counters after the shell takes ownership).
     stats_handle: tst_pipeline::ManagedStatsHandle,
+}
+
+impl Drop for PyManagedSender {
+    fn drop(&mut self) {
+        drop_owned(&SRT, &self.owned);
+    }
 }
 
 #[pymethods]
@@ -321,6 +327,12 @@ pub(crate) struct PyManagedReceiver {
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyManagedReceiver {
+    fn drop(&mut self) {
+        drop_owned(&SRT, &self.owned);
+    }
 }
 
 #[pymethods]

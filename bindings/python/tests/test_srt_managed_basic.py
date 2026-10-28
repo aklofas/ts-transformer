@@ -31,6 +31,7 @@ from tstrans.exceptions import SrtError, SrtErrorKind
 from tstrans.srt import ManagedTransportStats
 
 from _builders.ports import free_tcp_port as _free_tcp_port
+from test_exit_with_parked_shell import _run
 
 
 def _make_managed_pair(
@@ -342,3 +343,69 @@ def test_managed_sender_reconnect_stats_closed_raises() -> None:
 def test_managed_sender_recovers_after_listener_restart() -> None:
     """Listener teardown + restart should trigger the reconnect path."""
     raise NotImplementedError
+
+
+# An implicit drop (no `close()`) must be abortive: it cancels first, then
+# closes with the GIL released, exactly as `close()` does. Without that the
+# drop flushes the buffered bundle through the reconnect loop with the GIL
+# held, and a peer that never comes back stalls the interpreter for the
+# whole retry policy — unlimited attempts here, so forever.
+#
+# The script waits out libsrt's default peer idle timeout (5 s) before the
+# drop: until the caller has seen the break, a flush lands in libsrt's send
+# buffer and succeeds, and the test would pass whatever the drop does. Four
+# packets fill less than one seven-packet bundle and are enough for the
+# framing to lock, so they stay buffered for the drop to flush.
+SCRIPT_DROP_MANAGED_SENDER_WITH_PEER_GONE = """
+    import gc, threading, time
+    import tstrans.srt as srt
+    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+    port = lst.local_addr()[1]
+    box = []
+    t = threading.Thread(target=lambda: box.append(lst.accept()), daemon=True); t.start()
+    tx = srt.ManagedSender.from_url(f"srt://127.0.0.1:{port}?mode=caller",
+                                    policy=srt.ReconnectPolicy(max_attempts=None))
+    t.join(10.0); box[0].close(); lst.close()      # the peer is gone for good
+    tx.send_bytes((b"\\x47" + b"\\x00" * 187) * 4)  # a partial bundle is buffered
+    time.sleep(8.0)                                # past the peer idle timeout
+    del tx; gc.collect()
+    print("DROPPED")
+"""
+
+
+def test_dropping_a_managed_sender_without_close_is_abortive() -> None:
+    r = _run(
+        SCRIPT_DROP_MANAGED_SENDER_WITH_PEER_GONE,
+        timeout=30.0,
+        what=" dropping a ManagedSender whose peer is gone",
+    )
+    assert "DROPPED" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+    assert r.returncode == 0
+
+
+# The receive side: opened, peer connected, never iterated. Nothing is
+# parked, so the drop only has to release the slot without the GIL held.
+SCRIPT_DROP_MANAGED_DEMUX_RECEIVER_NEVER_ITERATED = """
+    import gc, threading
+    import tstrans.srt as srt
+    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+    port = lst.local_addr()[1]
+    box = []
+    t = threading.Thread(target=lambda: box.append(lst.accept()), daemon=True); t.start()
+    rx = srt.ManagedDemuxReceiver.from_url(f"srt://127.0.0.1:{port}?mode=caller",
+                                           policy=srt.ReconnectPolicy(max_attempts=None))
+    t.join(10.0)
+    del rx; gc.collect()
+    box[0].close(); lst.close()
+    print("DROPPED")
+"""
+
+
+def test_dropping_a_managed_demux_receiver_without_close_is_abortive() -> None:
+    r = _run(
+        SCRIPT_DROP_MANAGED_DEMUX_RECEIVER_NEVER_ITERATED,
+        timeout=30.0,
+        what=" dropping a ManagedDemuxReceiver that was never iterated",
+    )
+    assert "DROPPED" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+    assert r.returncode == 0
