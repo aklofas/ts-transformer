@@ -13,8 +13,7 @@ Nothing yet.
 
 ---
 
-## [0.9.0] — 2026-10-21
-<!-- TODO(release): set the release date -->
+## [0.9.0] — 2026-10-28
 
 Post-v0.8.0: the refactor arc and WebRTC playback. The refactor rebuilds the
 binding layer on one error-kind table and on records generated from their Rust
