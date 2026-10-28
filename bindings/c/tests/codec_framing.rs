@@ -337,6 +337,18 @@ fn annexb_overlapping_out_is_rejected_without_touching_out_len() {
         assert!(last_error_msg().contains("overlap"), "{}", last_error_msg());
         assert_eq!(&buf[..5], &au); // input untouched
     }
+    // Too small for the 6 bytes needed AND overlapping: overlap wins, so
+    // the caller is not told a size for a buffer it may never use.
+    let mut out_len: usize = 0xDEAD;
+    let rc = unsafe { tst_annexb_to_length_prefixed(base, 5, 4, base, 5, &mut out_len) };
+    assert_eq!(rc, TstError::InvalidConfig as i32);
+    assert_eq!(out_len, 0xDEAD);
+    assert!(last_error_msg().contains("overlap"), "{}", last_error_msg());
+    // The NULL sizing query is unaffected by any overlap rule.
+    let rc =
+        unsafe { tst_annexb_to_length_prefixed(base, 5, 4, std::ptr::null_mut(), 0, &mut out_len) };
+    assert_eq!(rc, TstError::BufferFull as i32);
+    assert_eq!(out_len, 6);
 }
 
 /// A touching range, or an overlap with only the bytes the call does not

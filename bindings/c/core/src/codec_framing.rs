@@ -116,15 +116,18 @@ pub unsafe extern "C" fn tst_annexb_to_length_prefixed(
             Err(e) => return record_nal_framing_error(&e),
         };
 
+        // A `&[u8]` and a `&mut [u8]` over the same bytes is undefined
+        // behaviour, so refuse before forming either. Checked before the
+        // capacity answer so an overlapping `out` is refused the same way
+        // whether or not it is large enough; the NULL sizing query has no
+        // output range to overlap.
+        if !out.is_null() && ranges_overlap(annexb, annexb_len, out, needed) {
+            set_last_error(TstError::InvalidConfig, "annexb and out overlap");
+            return TstError::InvalidConfig as i32;
+        }
         if out.is_null() || out_cap < needed {
             *out_len_ref = needed;
             return TstError::BufferFull as i32;
-        }
-        // A `&[u8]` and a `&mut [u8]` over the same bytes is undefined
-        // behaviour, so refuse before forming either.
-        if ranges_overlap(annexb, annexb_len, out, needed) {
-            set_last_error(TstError::InvalidConfig, "annexb and out overlap");
-            return TstError::InvalidConfig as i32;
         }
         // Only the `needed` bytes this call will actually write are
         // materialized as a slice, even when the caller offers more.
