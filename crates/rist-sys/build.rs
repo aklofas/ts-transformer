@@ -423,6 +423,9 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
     let source_dir = out_dir.join("librist-src");
     stage_vendored_source(&vendor_dir, &source_dir);
     apply_source_fixups(&vendor_dir, &source_dir);
+    // `DEP_RIST_SOURCE_FIXUPS` for dependents' build scripts: tests that need
+    // the corrected behaviour gate on it, since a system librist lacks it.
+    println!("cargo:source_fixups=1");
 
     // ===== meson setup =====
     //
