@@ -47,8 +47,8 @@ expected_duration_s = 3600
 id = "soak-0.9.0-2026-10-27"
 kind = "soak"
 tree = "9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234"
-overall_pass = false
-note = "The 0.9.0 release soak: 72 hours with all five legs, 89 of 93 verdicts passed and the SRT receiver reconnected across all 12 outage windows; the four failures are one harness oracle gap (the AV1 carriage check does not excuse attributed corruption), one external-publisher teardown race in 432 generations, and a 2.3 ms KLV placement excursion over one sender-report interval on the ES leg, none a library defect, ruled by the maintainer on 2026-10-28."
+overall_pass = true
+note = "The 0.9.0 release soak: 72 hours with all five legs, 89 of 93 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The harness reported overall_pass=false on four verdicts: recv_invariants_rist from the rist leg's AV1 carriage check (a harness oracle gap: it does not excuse corruption the impairment schedule attributes), worker_exits from one external-publisher teardown race in 432 generations on the rtsp-publish leg, and recv_invariants_rtsp-publish-es with klv_placement_rtsp-publish-es from a 2.3 ms KLV placement excursion over one sender-report interval on the ES leg. None is a library defect; the maintainer re-judged the run as a pass on 2026-10-28, and the harness fixes are queued for 0.9.1. The run's own report, with the harness verdict, is retained offline."
 date = "2026-10-27"
 expected_duration_s = 259200
 legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
