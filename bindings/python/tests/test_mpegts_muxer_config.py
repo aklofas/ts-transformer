@@ -355,3 +355,21 @@ def test_stream_descriptors_for_data_out_of_range_raises():
     with pytest.raises(MuxError) as ei:
         b.stream_descriptors_for_data(0, [b"\xff\x04demo"])
     assert ei.value.kind is MuxErrorKind.INVALID_USAGE
+
+
+def test_mux_error_carries_the_pid_of_a_duplicate_pmt_pid():
+    a = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
+    b = MuxerProgramConfigBuilder(2, 0x100).add_video(0x201, VideoCodec.H264).build()
+    with pytest.raises(MuxError) as ei:
+        MuxerConfigBuilder().add_program(a).add_program(b).build()
+    assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
+    assert ei.value.pid == 0x100
+
+
+def test_mux_error_without_a_pid_keeps_pid_none():
+    b = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264)
+    for i in range(17):
+        b = b.add_data(0x200 + i, 0xF0, carries_pts=True)
+    with pytest.raises(MuxError) as ei:
+        MuxerConfigBuilder().add_program(b.build()).build()
+    assert ei.value.pid is None
