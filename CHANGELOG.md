@@ -30,6 +30,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-webrtc
 
 - WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
+- A POST on a session resource answers `405` with `Allow: DELETE, OPTIONS`, and a DELETE on a mount path `405` with `Allow: POST, OPTIONS`, both before the bearer check (they were `401`, or `404` past it).
+
+### Changed — tst-webrtc (BREAKING)
+
+- `WhepServer::add_mount` refuses a path whose next-to-last segment is `sessions` (`/cam/sessions/x`) with `InvalidMountPath`: that is the URL of a session on the parent mount, so a 405 can be chosen by the target's shape alone.
 
 ### Changed — tstrans-rist-sys
 

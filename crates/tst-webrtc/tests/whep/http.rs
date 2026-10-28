@@ -79,6 +79,10 @@ fn patch_and_other_methods_route_to_405_with_the_targets_allow() {
         (b"PATCH /cam1/sessions HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
         (b"PATCH * HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
         (b"GET /cam1 HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
+        (b"POST /cam1/sessions/1 HTTP/1.1\r\n\r\n", SESSION_ALLOW),
+        (b"DELETE /cam1 HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
+        (b"DELETE /sessions/7 HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
+        (b"DELETE /cam1/sessions HTTP/1.1\r\n\r\n", ENDPOINT_ALLOW),
     ] {
         let HeadParse::Done { request, .. } = parse_head(raw) else {
             panic!()
@@ -116,8 +120,7 @@ fn routing_edges() {
     for raw in [
         &b"POST / HTTP/1.1\r\n\r\n"[..],
         b"POST //cam1 HTTP/1.1\r\n\r\n",
-        b"DELETE /cam1 HTTP/1.1\r\n\r\n",
-        b"DELETE /sessions/7 HTTP/1.1\r\n\r\n",
+        b"DELETE //cam1 HTTP/1.1\r\n\r\n",
         b"POST * HTTP/1.1\r\n\r\n",
     ] {
         assert_eq!(
