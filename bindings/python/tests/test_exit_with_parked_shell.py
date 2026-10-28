@@ -314,8 +314,9 @@ SCRIPT_EARLIER_ATEXIT_JOINS_MANAGED_FIRST_ACCEPT = """
         entered.set()
         try:
             srt.{cls}.from_url("srt://127.0.0.1:0?mode=listener")
-        except Exception:
-            pass
+            print("OPENED", flush=True)
+        except Exception as e:
+            print("RAISED", type(e).__name__, e.kind.name, flush=True)
 
     t = threading.Thread(target=park, daemon=True)
     workers.append(t)
@@ -336,6 +337,7 @@ def test_an_earlier_atexit_join_of_a_managed_first_accept_completes(cls: str) ->
         what=f" with {cls}.from_url parked in its first accept",
     )
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"
+    assert "RAISED SrtError CLOSED" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
 
 
 # The hook drains the registry once. A shell opened after that drain must be
@@ -347,6 +349,7 @@ SCRIPT_SOURCE_REGISTERED_AFTER_THE_HOOK = """
 
     _fire_cancel_sources_at_exit()  # the hook has run
     lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+    print("LATCHED", lst.cancel_handle().is_cancelled())
     try:
         lst.accept()  # must not park: born cancelled
         print("ACCEPTED")
@@ -361,5 +364,7 @@ def test_a_source_registered_after_the_exit_hook_is_born_cancelled() -> None:
         timeout=20.0,
         what=" with a listener opened after the exit hook ran",
     )
-    assert "REFUSED" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+    # The latch, not just any accept() error, is what refused the call.
+    assert "LATCHED True" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+    assert "REFUSED SrtError" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
     assert r.returncode == 0
