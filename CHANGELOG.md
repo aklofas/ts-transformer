@@ -87,7 +87,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `from_url` refuses `?listen=1` on the caller builder, as documented.
 - A TLS receive sees a cancel between socket reads, even when a peer drips a record.
 - A send that fails after a cancel reports `ExplicitClose`.
-- A `cancel()` that lands while `send_bytes` is parked on a partial write now always reports `ExplicitClose`; a window between the loop's two flag reads could report `Closed`.
+- A `cancel()` that wakes a parked `send_bytes` always reports `ExplicitClose`; it could report `Closed`.
 
 ### Fixed — tst-udp
 
