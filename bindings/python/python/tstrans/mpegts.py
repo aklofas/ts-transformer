@@ -1529,7 +1529,15 @@ class MuxerFileSink:
         finally:
             # Only on the success path: promote .partial → final dest.
             if self._atomic and exc_type is None and not drain_or_close_failed:
-                os.replace(self._tmp_path, self._path)
+                try:
+                    os.replace(self._tmp_path, self._path)
+                except BaseException:
+                    # A failed promotion must not strand the temp file.
+                    try:
+                        os.unlink(self._tmp_path)
+                    except FileNotFoundError:
+                        pass
+                    raise
             elif self._atomic and exc_type is not None and not drain_or_close_failed:
                 # User-body exception (drain succeeded): discard partial.
                 try:

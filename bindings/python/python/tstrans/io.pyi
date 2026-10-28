@@ -65,7 +65,10 @@ class Transmuxer:
         drop: Sequence[StreamKindTag] = ...,
         atomic: bool = ...,
         config: Optional[DemuxerConfig] = ...,
-    ) -> None: ...
+    ) -> None:
+        """With `atomic=False`, raises `ValueError` when `dst` is the same file
+        as `src` (symlinks and hard links included); `atomic=True` allows an
+        in-place rewrite."""
     def __enter__(self) -> Transmuxer: ...
     def __exit__(
         self,
@@ -86,7 +89,10 @@ def transmux(
     drop: Sequence[StreamKindTag] = ...,
     atomic: bool = ...,
     config: Optional[DemuxerConfig] = ...,
-) -> Transmuxer: ...
+) -> Transmuxer:
+    """With `atomic=False`, raises `ValueError` when `dst` is the same file
+    as `src` (symlinks and hard links included); `atomic=True` allows an
+    in-place rewrite."""
 
 __all__ = [
     "parse_file",
