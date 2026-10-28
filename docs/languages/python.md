@@ -646,8 +646,8 @@ callback raises, the error re-raises from the next iteration step and
 iteration stops. Keep the sink cheap (it runs on the recv-loop thread) and
 never re-enter the receiver from it: a same-receiver call from the sink
 raises `RuntimeError` (so does a cycle through another receiver's sink),
-except `close()`, which delivers the event in flight and ends the
-iteration on the following pull.
+except `close()`, which delivers the event in flight, if any, and ends
+the iteration on the next pull (at once when there was no event).
 
 `rx.last_seen_micros(pid)` returns the epoch-microsecond timestamp of
 the most recent item this receiver emitted for `pid`, or `None` if

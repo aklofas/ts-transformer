@@ -362,8 +362,9 @@ class DemuxReceiver:
     # `__next__` and iteration stops. Append-only for the receiver's life.
     # Inside the callback (also when reached through another receiver the
     # callback drives), `close()` on this same receiver is deferred: it
-    # cancels, the in-flight `__next__` still delivers its event, and the
-    # iteration ends with `StopIteration` on the following pull.
+    # cancels; the in-flight `__next__` delivers its event, if any, and the
+    # iteration ends with `StopIteration` on the next pull (at once when
+    # there was no event).
     # `__next__`, `add_byte_sink`, `stats`, `socket_stats` and
     # `last_seen_micros` on this receiver raise `RuntimeError` there;
     # `cancel_handle`, `is_alive`, `end_reason`, `end_detail` and other
