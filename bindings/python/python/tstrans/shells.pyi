@@ -360,10 +360,12 @@ class DemuxReceiver:
     # (as `bytes`) BEFORE demuxing, in registration order. If the
     # callback raises, the exception is re-raised fail-loud from the next
     # `__next__` and iteration stops. Append-only for the receiver's life.
-    # Inside the callback, `close()` on this same receiver is deferred: it
-    # cancels, and the in-flight `__next__` finishes the close and raises
-    # `StopIteration`. `__next__`, `add_byte_sink`, `stats`, `socket_stats`
-    # and `last_seen_micros` on this receiver raise `RuntimeError` there;
+    # Inside the callback (also when reached through another receiver the
+    # callback drives), `close()` on this same receiver is deferred: it
+    # cancels, the in-flight `__next__` still delivers its event, and the
+    # iteration ends with `StopIteration` on the following pull.
+    # `__next__`, `add_byte_sink`, `stats`, `socket_stats` and
+    # `last_seen_micros` on this receiver raise `RuntimeError` there;
     # `cancel_handle`, `is_alive`, `end_reason`, `end_detail` and other
     # receivers are unaffected.
     def add_byte_sink(self, callback: Callable[[bytes], None]) -> None: ...
