@@ -58,7 +58,7 @@ use tst_tcp::{TcpListener, TcpTransport};
 
 use crate::generated::stats_tcp::SocketStats;
 use crate::raise::{TCP, pyok, pyres, raise};
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
 // PyTcpTransport -- wraps tst_tcp::TcpTransport (dual-trait send+recv)
@@ -93,6 +93,12 @@ pub(crate) struct PyTcpTransport {
     /// Shared cancel state beside the slot so `cancel_handle()` never waits
     /// behind an in-flight call — the udp shape.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyTcpTransport {
+    fn drop(&mut self) {
+        drop_owned(&TCP, &self.owned);
+    }
 }
 
 #[pymethods]
@@ -455,6 +461,12 @@ pub(crate) struct PyTcpListener {
     /// Shared cancel state beside the slot so `cancel_handle()` never waits
     /// behind a parked `accept_blocking()` — the udp shape.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyTcpListener {
+    fn drop(&mut self) {
+        drop_owned(&TCP, &self.owned);
+    }
 }
 
 #[pymethods]

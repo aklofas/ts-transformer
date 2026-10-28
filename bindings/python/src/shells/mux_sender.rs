@@ -40,7 +40,7 @@ use crate::mux::{
 };
 use crate::raise::{pyok, raise};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 /// Mux-sourced failures keep `mux_error_to_pyerr`; everything else is a
 /// `BindingError` raised in `domain`.
@@ -83,6 +83,12 @@ pub(crate) struct PyMuxSender {
     owned: Owned<RustMuxSender<Box<dyn Transport>>, Snapshot<StreamHandles>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyMuxSender {
+    fn drop(&mut self) {
+        drop_owned(&self.owned.snapshot().domain, &self.owned);
+    }
 }
 
 impl PyMuxSender {

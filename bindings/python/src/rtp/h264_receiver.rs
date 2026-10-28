@@ -62,7 +62,7 @@ use crate::generated::stats_rtp::{H264DepayStats, RtpStats};
 use crate::generated::stats_shells::SocketStats;
 use crate::raise::{RTP, pyok, pyres, raise};
 use crate::shells::cancel::PyCancelHandle;
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
 // ParameterSetInjection — IntEnum-shaped PyClass
@@ -332,6 +332,12 @@ pub struct PyH264Receiver {
     /// `Close::close`, which is the only moment the reason can be read
     /// before the receiver drops. Shared with the held value.
     closed_end_reason: Arc<Mutex<Option<EndReason>>>,
+}
+
+impl Drop for PyH264Receiver {
+    fn drop(&mut self) {
+        drop_owned(&RTP, &self.owned);
+    }
 }
 
 /// `H264Receiver` plus the end-reason snapshot its `close()` takes —

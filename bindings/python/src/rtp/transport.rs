@@ -37,7 +37,7 @@ use tst_rtp::{RtpRecvTransport, RtpTransport, RtpUrl};
 use crate::generated::stats_shells::SocketStats;
 use crate::raise::{RTP, pyok, pyres, raise};
 use crate::shells::cancel::PyCancelHandle;
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
 // Error mapping
@@ -103,6 +103,12 @@ pub(crate) struct PyRtpTransport {
     owned: Owned<SendHalf<RtpTransport>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyRtpTransport {
+    fn drop(&mut self) {
+        drop_owned(&RTP, &self.owned);
+    }
 }
 
 #[pymethods]
@@ -260,6 +266,12 @@ pub(crate) struct PyRtpRecvTransport {
     /// handle shares the same underlying cell). Lock-free: never touches
     /// the slot, so a watchdog can read it while a recv is parked.
     end_reason: EndReasonHandle,
+}
+
+impl Drop for PyRtpRecvTransport {
+    fn drop(&mut self) {
+        drop_owned(&RTP, &self.owned);
+    }
 }
 
 #[pymethods]

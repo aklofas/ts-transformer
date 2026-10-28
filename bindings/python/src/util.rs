@@ -276,6 +276,27 @@ where
     }
 }
 
+/// The implicit drop of every converted class: the same cancel-first close
+/// as `close()`. Without it the value drops with the GIL held, and a
+/// `Sender` flushing into a managed reconnect loop whose peer is gone would
+/// stall the interpreter for the whole retry policy. `close_owned` takes the
+/// slot, so `Owned`'s own `Drop` then finds it empty and fires nothing.
+///
+/// `tp_dealloc` already holds the GIL, so `attach` hands back the current
+/// token. A `PanicException` from the inner close is dropped: there is no
+/// caller to raise it to.
+#[allow(dead_code)] // dead only in a transport-less build, as `close_owned`.
+pub(crate) fn drop_owned<T, S>(d: &crate::raise::Domain, owned: &Owned<T, S>)
+where
+    T: Close + Send,
+    T::Error: Send,
+    S: Send + Sync,
+{
+    Python::attach(|py| {
+        let _ = close_owned(py, d, owned);
+    });
+}
+
 /// Cancel every still-live shell at interpreter exit.
 ///
 /// A thread parked inside libsrt when the process exits deadlocks teardown:

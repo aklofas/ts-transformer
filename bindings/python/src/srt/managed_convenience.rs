@@ -54,7 +54,7 @@ use crate::shells::cancel::PyCancelHandle;
 use crate::shells::demux_receiver::demux_recv_err;
 use crate::shells::mux_sender::mux_sender_err;
 use crate::srt::policy::PyReconnectPolicy;
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
 // PyManagedMuxSender — wraps MuxSender<ManagedTransport<SrtTransport>>.
@@ -110,6 +110,12 @@ pub(crate) struct PyManagedMuxSender {
     /// `ManagedTransport` BEFORE it moves into `RustMuxSender::new`
     /// (same precedent as `cancel_handle()` on the basic-bytes shells).
     stats_handle: tst_pipeline::ManagedStatsHandle,
+}
+
+impl Drop for PyManagedMuxSender {
+    fn drop(&mut self) {
+        drop_owned(&SRT, &self.owned);
+    }
 }
 
 #[pymethods]
@@ -639,6 +645,12 @@ pub(crate) struct PyManagedDemuxReceiver {
     /// `ManagedHandles.attempts` — the core's factory-invocation counter.
     /// Symmetric with `PyManagedMuxSender`.
     attempts: Arc<AtomicU64>,
+}
+
+impl Drop for PyManagedDemuxReceiver {
+    fn drop(&mut self) {
+        drop_owned(&SRT, &self.owned);
+    }
 }
 
 #[pymethods]

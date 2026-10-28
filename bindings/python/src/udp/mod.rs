@@ -49,7 +49,7 @@ use tst_udp::{UdpError, UdpRecvTransport, UdpTransport};
 
 use crate::generated::stats_udp::SocketStats;
 use crate::raise::{UDP, pyok, pyres, raise};
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
 // PyUdpTransport — wraps tst_udp::UdpTransport
@@ -74,6 +74,12 @@ pub(crate) struct PyUdpTransport {
     /// Held beside the slot so `cancel_handle()` never waits
     /// behind an in-flight `send`.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyUdpTransport {
+    fn drop(&mut self) {
+        drop_owned(&UDP, &self.owned);
+    }
 }
 
 #[pymethods]
@@ -314,6 +320,12 @@ pub(crate) struct PyUdpRecvTransport {
     /// and the poll loop checks it between slices, so a parked `recv()`
     /// ends within about one slice.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyUdpRecvTransport {
+    fn drop(&mut self) {
+        drop_owned(&UDP, &self.owned);
+    }
 }
 
 #[pymethods]

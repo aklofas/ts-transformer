@@ -29,7 +29,7 @@ use crate::generated::stats_shells::SocketStats;
 use crate::raise::raise;
 use crate::raise::{pyok, pyres};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 /// Python sender over any transport — wraps
 /// `tst_pipeline::Sender<Box<dyn Transport>>`.
@@ -43,6 +43,12 @@ pub(crate) struct PySender {
     owned: Owned<PlSender<Box<dyn Transport>>, Snapshot<()>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PySender {
+    fn drop(&mut self) {
+        drop_owned(&self.owned.snapshot().domain, &self.owned);
+    }
 }
 
 impl PySender {

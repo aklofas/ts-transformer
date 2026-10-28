@@ -41,7 +41,7 @@ use crate::mpegts::demux_error_to_pyerr;
 use crate::raise::{pyok, raise};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::end_reason::{end_detail, end_reason_to_py};
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 /// Demux-sourced failures keep `demux_error_to_pyerr` (a `DemuxError`);
 /// transport-sourced ones are `BindingError`s raised in `domain`, and the
@@ -93,6 +93,12 @@ pub(crate) struct PyDemuxReceiver {
     /// re-raises fail-loud. Separate from the slot so the closure never
     /// touches the lock it runs underneath.
     sink_error: Arc<Mutex<Option<PyErr>>>,
+}
+
+impl Drop for PyDemuxReceiver {
+    fn drop(&mut self) {
+        drop_owned(&self.owned.snapshot().domain, &self.owned);
+    }
 }
 
 impl PyDemuxReceiver {

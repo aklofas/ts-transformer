@@ -56,7 +56,7 @@ use crate::shells::demux_receiver::PyDemuxReceiver as PyShellDemuxReceiver;
 use crate::shells::mux_sender::PyMuxSender as PyShellMuxSender;
 use crate::shells::receiver::PyReceiver as PyShellReceiver;
 use crate::shells::sender::PySender as PyShellSender;
-use crate::util::close_owned;
+use crate::util::{close_owned, drop_owned};
 
 /// A connected socket as an opened shell transport. The transport's own
 /// cancel handle is taken before it is boxed, the way `tst_srt::opener`
@@ -674,6 +674,12 @@ pub(crate) struct PyListener {
     owned: Owned<ListenerHeld, Option<SocketAddr>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<crate::util::CancelSource>,
+}
+
+impl Drop for PyListener {
+    fn drop(&mut self) {
+        drop_owned(&SRT, &self.owned);
+    }
 }
 
 impl PyListener {

@@ -26,7 +26,7 @@ use crate::raise::raise;
 use crate::raise::{pyok, pyres};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::end_reason::{end_detail, end_reason_to_py};
-use crate::util::{CancelSource, close_owned};
+use crate::util::{CancelSource, close_owned, drop_owned};
 
 /// Python receiver over any transport — wraps
 /// `tst_pipeline::Receiver<Box<dyn RecvTransport>>`.
@@ -37,6 +37,12 @@ use crate::util::{CancelSource, close_owned};
 pub(crate) struct PyReceiver {
     owned: Owned<PlReceiver<Box<dyn RecvTransport>>, Snapshot<()>>,
     cancel: Arc<CancelSource>,
+}
+
+impl Drop for PyReceiver {
+    fn drop(&mut self) {
+        drop_owned(&self.owned.snapshot().domain, &self.owned);
+    }
 }
 
 impl PyReceiver {
