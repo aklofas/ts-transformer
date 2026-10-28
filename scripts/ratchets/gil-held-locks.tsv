@@ -35,5 +35,5 @@ bindings/python/src/srt/lowlevel.rs	PySocket::local_addr	inner: no Socket method
 bindings/python/src/srt/lowlevel.rs	PySocket::peer_addr	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
 bindings/python/src/srt/lowlevel.rs	PySocket::stream_id	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
 bindings/python/src/srt/lowlevel.rs	PySocket::take_socket	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
-bindings/python/src/util.rs	CancelSource::new	exit registry: held for one push/retain of Weak pointers; no holder releases or needs the GIL while it has the guard
+bindings/python/src/util.rs	CancelSource::registered	exit registry: held for one push/retain of Weak pointers; no holder releases or needs the GIL while it has the guard
 bindings/python/src/util.rs	fire_cancel_sources_at_exit	exit registry: the guard is a temporary dropped at the end of the drain statement, before detach
