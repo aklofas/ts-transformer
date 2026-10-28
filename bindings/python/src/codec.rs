@@ -2,7 +2,7 @@
 //!
 //! All codec PyO3 wraps for H.264/H.265/H.266/AV1/AAC/MPEG-2 audio,
 //! plus shared types (ChromaFormat, Rational, ColorInfo, primaries/transfer/
-//! matrix enums), plus NalUnit / Obu / ObuExtension typed wrappers used by
+//! matrix enums), plus NalUnit / Obu / ObuExtension typed wrappers
 //! returned by `DemuxEvent.Video/Audio.parse()`.
 
 #![expect(

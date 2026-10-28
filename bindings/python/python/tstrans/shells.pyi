@@ -209,8 +209,8 @@ class MuxSender:
 
     Construct via `MuxSender.open(url, program_config)`. Send methods accept any
     bytes-like input (`bytes`, `bytearray`, `memoryview`, NumPy `uint8`).
-    `pts` is keyword-only on every send method. The GIL is released
-    around the muxer + transport work with the GIL released.
+    `pts` is keyword-only on every send method. The muxer + transport work
+    runs with the GIL released.
     """
 
     @classmethod
