@@ -176,27 +176,51 @@ def test_demux_does_not_materialize_raw_until_first_access():
     assert saw_audio
 
 
-def test_video_event_value_equality_and_hash_over_raw_content():
-    """Two Video events built with equal `raw` compare equal and hash equal;
-    a Video built from a `bytes` and one built from the holder are equal."""
+_VIDEO_RAW = b"\x00\x00\x00\x01\x65payload"
+
+
+def _mk_video(raw_arg):
     stream = StreamId(
         pid=256, kind=StreamKindTag.VIDEO, codec=VideoCodec.H264, program_number=1
     )
-    pts = Pts90khz.from_ms(100)
-    raw = b"\x00\x00\x00\x01\x65payload"
+    return DemuxEvent.Video(
+        stream=stream,
+        pts=Pts90khz.from_ms(100),
+        dts=None,
+        codec=VideoCodec.H264,
+        raw=raw_arg,
+        random_access_indicator=True,
+    )
 
-    def _mk(raw_arg):
-        return DemuxEvent.Video(
-            stream=stream,
-            pts=pts,
-            dts=None,
-            codec=VideoCodec.H264,
-            raw=raw_arg,
-            random_access_indicator=True,
-        )
 
-    a = _mk(raw)
-    b = _mk(bytes(raw))  # distinct bytes object, same content
+def _two_equal_video_events():
+    # The second raw is a distinct bytes object with the same content.
+    return _mk_video(_VIDEO_RAW), _mk_video(bytes(_VIDEO_RAW))
+
+
+def test_raw_bytes_hash_matches_bytes_it_compares_equal_to():
+    r = _native.RawBytes(b"payload")
+    assert r == b"payload"
+    assert hash(r) == hash(b"payload")
+    assert {r: 1}[b"payload"] == 1
+    assert {b"payload": 1}[r] == 1
+    assert len({r, b"payload"}) == 1
+    assert len({b"payload", r}) == 1
+
+
+def test_equal_video_events_still_hash_equal_and_dedupe():
+    a, b = _two_equal_video_events()
+    assert hash(a) == hash(b)
+    assert len({a, b}) == 1
+
+
+def test_video_event_value_equality_and_hash_over_raw_content():
+    """Two Video events built with equal `raw` compare equal and hash equal;
+    a Video built from a `bytes` and one built from the holder are equal."""
+    raw = _VIDEO_RAW
+    _mk = _mk_video
+
+    a, b = _two_equal_video_events()
     assert a == b
     assert hash(a) == hash(b)
 
