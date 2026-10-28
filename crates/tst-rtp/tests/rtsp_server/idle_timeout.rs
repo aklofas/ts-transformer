@@ -22,7 +22,7 @@ fn interleaved_session(timeout_secs: u64) -> (tst_rtp::RtspServer, TcpStream, St
     let port = server.local_addr().unwrap().port();
     let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     // Per-response read bound only — generous for the slow macOS/Windows
-    // runners; no test below asserts anything through its duration.
+    // runners; the reap test replaces it before it times anything.
     tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     let url = format!("rtsp://127.0.0.1:{port}/live");
@@ -50,10 +50,12 @@ fn interleaved_session(timeout_secs: u64) -> (tst_rtp::RtspServer, TcpStream, St
 #[test]
 fn an_idle_session_is_reaped_at_the_advertised_timeout_plus_grace() {
     let (server, mut tcp, _url, _sid) = interleaved_session(1);
-    // No keepalive. The bound is 1 s + max(0.5 s, 2 s) = 3 s; the 10 s
-    // deadline (checked at each 5 s read timeout) is far above it and far
-    // below a fixed 30 s, so no timing is asserted.
-    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    // No keepalive. The bound is 1 s + max(0.5 s, 2 s) = 3 s; the 20 s
+    // deadline (checked at each 1 s read timeout) is far above it and below
+    // a fixed 30 s. Neither is scaled: both must stay under the 30 s they
+    // tell apart.
+    tcp.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
     let mut buf = [0u8; 4096];
     loop {
         match tcp.read(&mut buf) {
@@ -72,7 +74,7 @@ fn an_idle_session_is_reaped_at_the_advertised_timeout_plus_grace() {
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                 assert!(
                     Instant::now() < deadline,
-                    "connection still open 10 s after PLAY with no keepalive (advertised timeout 1 s)"
+                    "connection still open 20 s after PLAY with no keepalive (advertised timeout 1 s)"
                 );
             }
             Err(e) => panic!("unexpected read error: {e}"),

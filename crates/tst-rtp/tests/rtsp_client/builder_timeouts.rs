@@ -5,7 +5,6 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
-use tst_test_helpers::timing::scaled;
 
 /// `connect_timeout` must be honored: a 1-second limit on a blackhole
 /// address must return an error in well under the old hardcoded 10 s.
@@ -26,9 +25,12 @@ fn connect_timeout_is_honored() {
         result.is_err(),
         "expected connection to blackhole to fail, but it succeeded"
     );
+    // Not scaled: an ignored setting falls back to the builder's 10 s
+    // default, so the bound must stay under 10 s at any scale. The connect
+    // itself is bounded either way, so there is no hang to guard.
     assert!(
-        elapsed < scaled(Duration::from_secs(4)),
-        "connect_timeout of 1 s was ignored — elapsed {elapsed:?} exceeds 4 s"
+        elapsed < Duration::from_secs(8),
+        "connect_timeout of 1 s was ignored — elapsed {elapsed:?} exceeds 8 s"
     );
 }
 
