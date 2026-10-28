@@ -205,3 +205,17 @@ def test_udp_recv_deadline_is_backpressure_and_keeps_the_handle_open() -> None:
         assert payload == b"\x47" * 188
     finally:
         rx.close()
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+def test_udp_builders_build_literal_and_hostname_urls(host) -> None:
+    rx = udp.RecvTransport.builder().bind_url(f"udp://{host}:0").build()
+    tx = udp.Transport.builder().url(f"udp://{host}:{rx.local_addr_port()}").build()
+    tx.close()
+    rx.close()
+
+
+def test_udp_builder_bad_url_still_raises_url_kind() -> None:
+    with pytest.raises(UdpError) as ei:
+        udp.Transport.builder().url("udp://[::1").build()
+    assert ei.value.kind == UdpErrorKind.URL
