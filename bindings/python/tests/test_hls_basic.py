@@ -52,6 +52,7 @@ from tstrans.mpegts import (
     VideoCodec,
 )
 
+from _builders.mux_programs import masquerade_program as _masquerade_program
 from _builders.mux_programs import video_klv_program as _video_klv_program
 
 # 376 bytes = 2 × 188-byte TS packets (aligned).
@@ -306,6 +307,20 @@ def test_mux_publisher_video_then_finish_into_publisher() -> None:
         with pytest.raises(HlsError) as ei2:
             mp.finish_into_publisher()
         assert ei2.value.kind == HlsErrorKind.CLOSED
+
+
+def test_with_config_hls_rejected_config_leaves_the_publisher_usable() -> None:
+    """A program config the muxer refuses raises before the publisher is
+    taken, so the publisher still accepts pushes and a corrected retry
+    wraps it."""
+    with tempfile.TemporaryDirectory() as d:
+        pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir(d).build()
+        with pytest.raises(HlsError) as ei:
+            MuxPublisher.with_config_hls(pub, _masquerade_program())
+        assert ei.value.kind == HlsErrorKind.INVALID_CONFIG
+        pub.push_ts(TS_TWO_PACKETS)  # not FINISHED
+        mp = MuxPublisher.with_config_hls(pub, _video_program())
+        mp.finish_into_publisher().finish()
 
 
 def test_with_config_hls_racing_push_ts_never_panics() -> None:

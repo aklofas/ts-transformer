@@ -847,7 +847,8 @@ impl PyRtspSession {
     ///
     /// `demux_config` accepts the same `tstrans.mpegts.DemuxerConfig`
     /// dataclass the Python `Demuxer(config=...)` constructor takes;
-    /// `None` defers to the demuxer defaults.
+    /// `None` defers to the demuxer defaults. A rejected config raises and
+    /// leaves the source unconsumed.
     ///
     /// `into_*` naming matches the Rust convention; the
     /// `wrong_self_convention` lint is muted because the consumed
@@ -881,6 +882,12 @@ impl PyRtspSession {
                 ));
             }
         }
+        // Validate before the take: a refused config must not consume the
+        // data plane.
+        let opts = match demux_config {
+            None => None,
+            Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
+        };
         // Take the SETUP-time RtspSession; double-consume = CLOSED.
         let session = {
             let mut guard = self
@@ -901,11 +908,6 @@ impl PyRtspSession {
         // tst-rtp release flips this to fallible we'll switch to
         // map_err.
         let transport = session.into_recv_transport();
-        // Optionally lift demux config; build with defaults otherwise.
-        let opts = match demux_config {
-            None => None,
-            Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
-        };
         PyDemuxReceiver::from_opened(py, crate::rtp::transport::opened_recv(transport), opts)
     }
 

@@ -514,31 +514,36 @@ impl PySocket {
     /// `SrtError(kind=CLOSED)`.
     ///
     /// Raises `MuxError(CONFIG_INVALID)` if the program config fails the
-    /// muxer's validation.
+    /// muxer's validation; a rejected config raises and leaves the source
+    /// unconsumed.
     fn into_mux_sender(
         &self,
         py: Python<'_>,
         program_config: PyRef<'_, crate::mux::PyMuxerProgramConfig>,
     ) -> PyResult<PyShellMuxSender> {
+        // Validate before the take: a refused config must not close the socket.
+        let muxer_cfg = PyShellMuxSender::muxer_config_for(py, &program_config)?;
         let t = SrtTransport::new(self.take_socket(py)?);
-        PyShellMuxSender::from_opened(py, opened_send(t), &program_config)
+        PyShellMuxSender::from_opened_with_config(py, opened_send(t), muxer_cfg)
     }
 
     /// Consume this socket and produce a `DemuxReceiver`. Optional
     /// `demux_config` is a `tstrans.mpegts.DemuxerConfig` dataclass; if
     /// `None`, defaults are used. Same consumption semantics as
-    /// `into_mux_sender`.
+    /// `into_mux_sender`; a rejected config raises and leaves the source
+    /// unconsumed.
     #[pyo3(signature = (*, demux_config = None))]
     fn into_demux_receiver(
         &self,
         py: Python<'_>,
         demux_config: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyShellDemuxReceiver> {
-        let t = SrtTransport::new(self.take_socket(py)?);
+        // Validate before the take: a refused config must not close the socket.
         let opts = match demux_config {
             None => None,
             Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
         };
+        let t = SrtTransport::new(self.take_socket(py)?);
         PyShellDemuxReceiver::from_opened(py, opened_recv(t), opts)
     }
 

@@ -124,14 +124,27 @@ impl PyMuxPublisher {
     ///
     /// Raises `HlsError(INVALID_CONFIG)` if the muxer rejects the program
     /// config, or `HlsError(FINISHED)` if `publisher` was already
-    /// consumed / finished.
+    /// consumed / finished. A rejected config raises and leaves the source
+    /// unconsumed.
     #[staticmethod]
     fn with_config_hls(
         py: Python<'_>,
         publisher: &Bound<'_, PyHlsPublisher>,
         program_config: PyRef<'_, PyMuxerProgramConfig>,
     ) -> PyResult<Self> {
-        // 1. Take ownership of the inner HlsPublisher (consumes the handle).
+        // 1. Wrap the single MuxerProgramConfig in a MuxerConfig before the
+        //    take, so a refused config leaves the publisher usable.
+        let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
+        cfg_builder.add_program(program_config.inner.clone());
+        let muxer_cfg = cfg_builder.build().map_err(|e| {
+            raise(
+                py,
+                &HLS,
+                BindingError::new(BindingErrorKind::HlsInvalidConfig, e.to_string()),
+            )
+        })?;
+
+        // 2. Take ownership of the inner HlsPublisher (consumes the handle).
         //    Through the publisher's own mutex with the GIL released — a
         //    PyO3 `borrow_mut()` here would panic ("Already borrowed") while
         //    another thread is inside `push_ts`.
@@ -148,18 +161,6 @@ impl PyMuxPublisher {
                 )
             })?
         };
-
-        // 2. Wrap the single MuxerProgramConfig in a MuxerConfig (mirror
-        //    rtp/mux_sender.rs::PyMuxSender::new).
-        let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
-        cfg_builder.add_program(program_config.inner.clone());
-        let muxer_cfg = cfg_builder.build().map_err(|e| {
-            raise(
-                py,
-                &HLS,
-                BindingError::new(BindingErrorKind::HlsInvalidConfig, e.to_string()),
-            )
-        })?;
 
         // 3. Hand publisher + config to the pipeline shell.
         let mp = RustMuxPublisher::with_config(hls, muxer_cfg)

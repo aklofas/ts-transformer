@@ -385,7 +385,8 @@ class MuxPublisher:
         """Build from a single-program config + an ``HlsPublisher`` (consumed).
 
         ``program_config`` is a ``tstrans.mpegts.MuxerProgramConfig``.
-        Raises ``HlsError(kind=INVALID_CONFIG)`` if the muxer rejects it.
+        Raises ``HlsError(kind=INVALID_CONFIG)`` if the muxer rejects it;
+        a rejected config raises and leaves the source unconsumed.
         """
         ...
 
