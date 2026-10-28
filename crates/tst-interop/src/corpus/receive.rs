@@ -373,13 +373,14 @@ struct Child<'a> {
 impl Child<'_> {
     fn verdict(&mut self, v: &FileVerdict) {
         let json = serde_json::to_string(v).expect("a verdict is plain data");
+        // The record is on disk before the line announces it.
+        let _ = writeln!(self.out, "{json}");
+        let _ = self.out.flush();
         say(&format!(
             "verdict {} {} {json}",
             v.sha256,
             if v.pass { "PASS" } else { "FAIL" }
         ));
-        let _ = writeln!(self.out, "{json}");
-        let _ = self.out.flush();
         self.last_verdict = Some(v.sha256.clone());
         self.verdicts += 1;
         if self.die_after == Some(self.verdicts) {
