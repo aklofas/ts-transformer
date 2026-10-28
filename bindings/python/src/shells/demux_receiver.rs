@@ -22,6 +22,8 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
+use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pyo3::Py;
@@ -62,6 +64,30 @@ pub(crate) fn demux_recv_err(py: Python<'_>, domain: &Domain, e: DemuxReceiverEr
     }
 }
 
+thread_local! {
+    /// The receiver whose byte sink is running on this thread (its
+    /// `sink_key`), or 0. The sink runs while `__next__` holds the
+    /// receiver's slot, so a slot-taking call on the SAME receiver from the
+    /// callback would re-lock it on this thread and deadlock.
+    static IN_SINK: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Restores the previous `IN_SINK` value on scope exit, unwind included, so
+/// a nested sink (a sink driving another receiver) unwinds to the outer key.
+struct InSinkGuard(usize);
+
+impl InSinkGuard {
+    fn enter(key: usize) -> Self {
+        Self(IN_SINK.with(|c| c.replace(key)))
+    }
+}
+
+impl Drop for InSinkGuard {
+    fn drop(&mut self) {
+        IN_SINK.with(|c| c.set(self.0));
+    }
+}
+
 /// Python demux receiver over any transport: owns a `Demuxer` and a
 /// transport. Open it with a URL (`srt://:7000?mode=listener`,
 /// `udp://127.0.0.1:5000`, ...) and iterate the emitted `DemuxEvent`s.
@@ -93,6 +119,10 @@ pub(crate) struct PyDemuxReceiver {
     /// re-raises fail-loud. Separate from the slot so the closure never
     /// touches the lock it runs underneath.
     sink_error: Arc<Mutex<Option<PyErr>>>,
+    /// Set by a `close()` called from this receiver's own byte sink: the
+    /// slot is held by the `__next__` the sink runs under, so the close
+    /// only cancels there and that `__next__` finishes it.
+    close_pending: AtomicBool,
 }
 
 impl Drop for PyDemuxReceiver {
@@ -138,7 +168,30 @@ impl PyDemuxReceiver {
             owned,
             cancel,
             sink_error: Arc::new(Mutex::new(None)),
+            close_pending: AtomicBool::new(false),
         })
+    }
+
+    /// This receiver's `IN_SINK` key: the address of its `sink_error`,
+    /// unique while the receiver lives and shared with its sink closures.
+    fn sink_key(&self) -> usize {
+        Arc::as_ptr(&self.sink_error) as usize
+    }
+
+    /// `true` when called from one of this receiver's own byte sinks.
+    fn in_own_sink(&self) -> bool {
+        IN_SINK.with(|c| c.get()) == self.sink_key()
+    }
+
+    /// Refuse a slot-taking call from this receiver's own byte sink, which
+    /// would otherwise deadlock on the slot its `__next__` holds.
+    fn refuse_reentry(&self, method: &str) -> PyResult<()> {
+        if self.in_own_sink() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "DemuxReceiver.{method}() cannot be called from this receiver's own byte-sink callback; only close() is allowed there"
+            )));
+        }
+        Ok(())
     }
 
     /// The one open path: translate the config dataclass with the GIL held,
@@ -229,17 +282,27 @@ impl PyDemuxReceiver {
     /// so it simply blocks until the in-flight `recv_event` yields,
     /// rather than deadlocking against a sink firing under the GIL.
     ///
+    /// Inside a sink, calls on the same receiver are limited: `close()`
+    /// cancels and the in-flight `__next__` finishes the close and ends
+    /// iteration; `__next__`, `add_byte_sink`, `stats`, `socket_stats`
+    /// and `last_seen_micros` raise `RuntimeError`. `cancel_handle`,
+    /// `is_alive`, `end_reason`, `end_detail` and other receivers work.
+    ///
     /// Cost: each registered sink re-acquires the GIL once per packet
     /// inside the recv loop, so on high-bitrate streams a slow sink (or
     /// many sinks) throttles the receiver. Keep sink bodies cheap.
     ///
     /// Raises the transport's `CLOSED` kind if the receiver is already closed.
     fn add_byte_sink(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<()> {
+        self.refuse_reentry("add_byte_sink")?;
         // The closure runs inside `recv_event` (under `detach`),
-        // re-acquires the GIL per packet, and only ever touches
-        // `callback` + `sink_error` — never `inner` (whose guard is held
-        // by the parked `__next__`), so it cannot deadlock.
+        // re-acquires the GIL per packet, and itself only touches
+        // `callback` + `sink_error`, never the slot the parked `__next__`
+        // holds. The callback may call back into this receiver; `IN_SINK`
+        // marks that so the slot-taking methods refuse instead of
+        // re-locking the slot on this thread.
         let sink_error = self.sink_error.clone();
+        let key = self.sink_key();
         // Take the slot with the GIL RELEASED (matching `close()` /
         // `socket_stats()`). If we held the GIL here while a concurrent
         // `__next__` held the slot inside `recv_event`, a sink firing on
@@ -257,6 +320,7 @@ impl PyDemuxReceiver {
                     }
                     Python::attach(|py| {
                         let b = PyBytes::new(py, pkt);
+                        let _in_sink = InSinkGuard::enter(key);
                         if let Err(e) = callback.call1(py, (b,)) {
                             // First error wins; later packet errors are dropped.
                             if let Ok(mut slot) = sink_error.lock()
@@ -281,6 +345,7 @@ impl PyDemuxReceiver {
     /// malformed PMT/PES); or any exception raised by a registered
     /// byte sink (see `add_byte_sink`), re-raised fail-loud.
     fn __next__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.refuse_reentry("__next__")?;
         let res =
             crate::util::allow_threads_parking(py, || self.owned.with_mut(|rx| rx.recv_event()));
         // Fail-loud: surface any sink exception captured during this
@@ -291,6 +356,12 @@ impl PyDemuxReceiver {
             && let Some(err) = slot.take()
         {
             return Err(err);
+        }
+        // A `close()` from this receiver's own sink only cancelled; finish
+        // it now the slot is free, and end iteration whatever was pulled.
+        if self.close_pending.swap(false, Ordering::AcqRel) {
+            close_owned(py, &self.owned.snapshot().domain, &self.owned)?;
+            return Err(pyo3::exceptions::PyStopIteration::new_err(()));
         }
         match res {
             Err(state) => Err(raise(
@@ -312,6 +383,7 @@ impl PyDemuxReceiver {
 
     /// Snapshot of the scheme-neutral 16-field wire stats.
     fn socket_stats(&self, py: Python<'_>) -> PyResult<Py<SocketStats>> {
+        self.refuse_reentry("socket_stats")?;
         // Release the GIL before taking the inner lock. A registered byte
         // sink fires `Python::attach` inside `recv_event` while holding
         // this same lock; if we held the GIL here we would deadlock
@@ -339,6 +411,7 @@ impl PyDemuxReceiver {
     ///
     /// Returns the transport's `CLOSED` kind if the receiver has been closed.
     fn stats(&self, py: Python<'_>) -> PyResult<(Py<SocketStats>, Py<MuxerStats>)> {
+        self.refuse_reentry("stats")?;
         // Release the GIL before taking the inner lock — same rationale
         // as `socket_stats` above (GIL↔mutex ABBA deadlock with byte
         // sinks). Extract plain Rust values under the lock, then build
@@ -361,7 +434,8 @@ impl PyDemuxReceiver {
                     let mux_stats = tst_core::mpegts::mux::MuxerStats {
                         ts_packets_emitted: combined.packets_received,
                         ts_bytes_emitted: combined.bytes_received,
-                        programs_configured: combined.program_maps_seen as u32,
+                        programs_configured: u32::try_from(combined.program_maps_seen)
+                            .unwrap_or(u32::MAX),
                         subtitle_streams_configured: 0,
                         per_stream: combined.per_stream,
                     };
@@ -388,6 +462,7 @@ impl PyDemuxReceiver {
     /// Raises the transport's `CLOSED` kind if the receiver has been closed — same
     /// lock discipline as `stats()`.
     fn last_seen_micros(&self, py: Python<'_>, pid: u16) -> PyResult<Option<u64>> {
+        self.refuse_reentry("last_seen_micros")?;
         // Same GIL-released lock-then-extract shape as `stats()` above.
         let raw = crate::util::allow_threads_parking(py, || {
             self.owned
@@ -422,7 +497,20 @@ impl PyDemuxReceiver {
     /// Close the receiver. Idempotent. Fires the cancel handle BEFORE
     /// acquiring the mutex so a concurrent `__next__` parked in
     /// `recv_event` unparks promptly.
+    ///
+    /// From this receiver's own byte sink, the slot is held by the
+    /// `__next__` the sink runs under: the close cancels, returns, and that
+    /// `__next__` completes it and raises `StopIteration`.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
+        if self.in_own_sink() {
+            // The cancel can reach native teardown; release the GIL for it.
+            let cancel = &*self.cancel;
+            crate::util::allow_threads_parking(py, || {
+                tst_core::transport::TransportCancel::cancel(cancel)
+            });
+            self.close_pending.store(true, Ordering::Release);
+            return Ok(());
+        }
         close_owned(py, &self.owned.snapshot().domain, &self.owned)
     }
 
