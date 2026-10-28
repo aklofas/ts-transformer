@@ -26,11 +26,8 @@ assert_type(v.random_access_indicator, bool)
 assert_type(v.pts, Pts90khz)
 assert_type(v.dts, Optional[Pts90khz])
 assert_type(v.codec, VideoCodec)
-# parse() is mode-polymorphic: strict=False → bare unit list; strict=True →
-# (units, issues) tuple. The stub declares the union of both, so just pin the
-# declared return type rather than a single concrete shape.
 parsed = v.parse(strict=False)
-assert_type(parsed, Union[List[Any], Tuple[List[Any], List[str]]])
+assert_type(parsed, List[Any])
 
 a: DemuxEvent.Audio
 assert_type(a.raw, bytes)
