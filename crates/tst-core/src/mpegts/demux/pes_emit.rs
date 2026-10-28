@@ -2181,6 +2181,40 @@ mod tests {
         assert_eq!(sample_count(&ev, 0x104), 3, "{ev:?}");
     }
 
+    /// A record-boundary tail that cannot open a LOAS header is a framing
+    /// error; outside `Full` it is reported and the next PES resyncs.
+    #[test]
+    fn latm_tail_without_sync_is_reported_and_resynced_outside_full() {
+        for mode in [
+            StrictMode::Off,
+            StrictMode::TimingOnly,
+            StrictMode::DescriptorsOnly,
+        ] {
+            let mut b = DemuxerConfig::builder();
+            b.strict(mode);
+            let mut d = demuxer_with_streams(b.build(), 0x104, &[(0x11, 0x104, &[])]);
+            let mut es1 = loas_record(10);
+            es1.extend_from_slice(&[0x56, 0x00]);
+            let mut es2 = loas_record(8);
+            es2.extend_from_slice(&loas_record(4));
+            let mut pkts = pes_to_packets(
+                0x104,
+                0,
+                &pes_bytes(0xC0, Some(90_000), None, true, &es1, true),
+            );
+            pkts.extend(pes_to_packets(
+                0x104,
+                1,
+                &pes_bytes(0xC0, None, None, false, &es2, true),
+            ));
+            feed_packets(&mut d, &pkts).unwrap();
+            d.flush();
+            let ev = drain_all_events(&mut d);
+            assert_eq!(latm_framing_count(&ev), 1, "{mode:?}: {ev:?}");
+            assert_eq!(sample_count(&ev, 0x104), 2, "{mode:?}: {ev:?}");
+        }
+    }
+
     #[test]
     fn latm_aligned_pes_without_sync_is_still_flagged() {
         let mut d = latm_demuxer();
