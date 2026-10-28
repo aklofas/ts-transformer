@@ -26,10 +26,7 @@ pub(crate) unsafe fn parse_url(url_ptr: *const c_char) -> Option<RtpUrl> {
     match RtpUrl::parse(url_str) {
         Ok(u) => Some(u),
         Err(e) => {
-            set_last_error(
-                TstError::InvalidConfig,
-                &format!("rtp url parse error: {e}"),
-            );
+            set_last_error(TstError::RtpTransport, &format!("rtp url parse error: {e}"));
             None
         }
     }

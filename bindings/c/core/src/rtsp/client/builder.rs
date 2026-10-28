@@ -91,7 +91,7 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_new(
         match TstRtspClientBuilder::from_url(url_str) {
             Ok(b) => TstRtspClientBuilder::into_raw(Box::new(b)),
             Err(e) => {
-                set_last_error(TstError::InvalidConfig, &format!("URL parse error: {e}"));
+                set_last_error(TstError::RtspProtocol, &format!("URL parse error: {e}"));
                 ptr::null_mut()
             }
         }

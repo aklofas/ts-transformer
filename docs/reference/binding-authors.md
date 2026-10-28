@@ -753,6 +753,16 @@ above its rows. The grammar is in `tests/coverage/README.md`, and the rail
 `scripts/check/repo/surface-manifest.sh` resolves every named symbol against
 the binding sources.
 
+**URL semantics.** The URL corpus,
+`crates/tst-integration/tests/fixtures/scenarios/url-corpus/corpus.toml`, is the
+parity proof for URL handling. Each row is one URL and the record every binding
+must agree on: the parsed endpoint and canonical keys, or the error kind that
+refuses it. The Rust leg parses every row and compares the whole record; the C
+and Python legs open it through the entry point the file's header names and
+compare the outcome. A binding or scheme that adds a URL key adds its rows; the
+Rust leg fails while a documented key lacks an `explicit`, `alias` or `invalid`
+row.
+
 **Rule for new capabilities.** A ship-now cell must be under a day per binding
 (a `with_ref_blocking`/`with_mut` body plus one error projection, with a red-first
 test); anything larger is deferred WITH a trigger in

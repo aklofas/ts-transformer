@@ -35,6 +35,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - C: TCP, UDP, RIST and RTP plain receivers report a reset or read failure as `TST_E_TRANSPORT` (-8) with the transport's message. They used to report `TST_E_END_OF_STREAM`. A clean TCP FIN is still -12. Plain SRT receivers keep -12 for a lost connection, because libsrt cannot tell a peer close from an abort.
 - C: `tstrans.h` compiles as C++ with g++ (the ABI asserts use `static_assert` under `__cplusplus`).
 - C: `tst_rtsp_session_teardown_and_free` returns 0 when the server answers TEARDOWN. It used to report `TST_E_CLOSED`.
+- C: a malformed `rtp://` URL fails with `TST_E_RTP_TRANSPORT` (-15), the code the same opens already returned for a receive-only key on a send URL, and `tst_rtsp_client_builder_new` refuses a malformed `rtsp://` or `rtsps://` URL with `TST_E_RTSP_PROTOCOL` (-16). Both used to return `TST_E_INVALID_CONFIG`. Python already raised the matching kinds.
 - C: `tst_annexb_to_length_prefixed` refuses overlapping `annexb`/`out` with `TST_E_INVALID_CONFIG`.
 - C: an out-of-range value for a codec, KLV stream type, framing mode, overflow policy or reconnect mode argument returns `TST_E_INVALID_CONFIG`. It used to be undefined behaviour.
 - C: a host thread-local destructor that calls into the library after the library's own last-error slot is destroyed no longer aborts the process; such a call reads `TST_E_INTERNAL` from `tst_get_last_error` and `""` from `tst_get_last_error_str`, and its error record is dropped.

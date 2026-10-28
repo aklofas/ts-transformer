@@ -67,6 +67,8 @@ tst-test-helpers = { path = "../../crates/tst-test-helpers" }
 libc             = { workspace = true }
 # Self-signed certificates for the tcps:// / rtsps:// loopback tests (`tls` builds).
 rcgen            = "0.14"
+# The URL corpus and its record (tests/net_url_corpus.rs).
+tst-integration  = { path = "../../crates/tst-integration" }
 
 # Folder-shaped integration test: Cargo's auto-discovery only walks tests/*.rs
 # at the top level, not tests/<dir>/mod.rs. The explicit entry below points it
