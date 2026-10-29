@@ -27,10 +27,12 @@
 //! ## Threading model
 //!
 //! Single-threaded boxes (NO inner `Arc<Mutex>`) — the JVM follows the shipped
-//! single-thread `MuxSender`/`DemuxReceiver` model. `MuxSender` push methods
-//! reconstitute as a SHARED `&*ptr` (every `send_*` takes `&self` + internal
-//! mutex; concurrent pushes are sound). `ManagedDemuxReceiver::nNext` uses
-//! `&mut *ptr` (`recv_event` is `&mut self`). The receiver has NO byte sink.
+//! single-thread `MuxSender`/`DemuxReceiver` model. Constructors return opaque
+//! registry keys; every native reaches its shell through the registry (leases and
+//! `OwnedRegistry::with_mut`), never a dereferenced address. `MuxSender` push methods
+//! share the slot (every `send_*` takes `&self` + internal mutex; concurrent
+//! pushes are sound). `ManagedDemuxReceiver::nNext` takes it mutably
+//! (`recv_event` is `&mut self`). The receiver has NO byte sink.
 //!
 //! ## Stats drift
 //!

@@ -361,8 +361,8 @@ jni_native! {
     /// the flag. Ports `PyRtspSession::teardown`.
     fn Java_org_tstrans_rtp_RtspSession_nTeardown(env, _class, handle: jlong) = () => {
         // Lease the session and clone the `client`/`torn_down` Arcs out. The registry
-        // lease replaces the round-1 `&*ptr` deref (which raced `nClose`'s free);
-        // `close` now atomically takes the resource so a fresh entry here either sees
+        // lease keeps a racing close from freeing the client during the call;
+        // `close` atomically takes the resource so a fresh entry here either sees
         // it (Some) or finds it gone (None → IllegalStateException).
         let Some((client, torn)) =
             REGISTRY_SESSION.with(handle as u64, |s| (s.client.clone(), s.torn_down.clone()))

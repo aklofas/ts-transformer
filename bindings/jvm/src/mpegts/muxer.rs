@@ -2,8 +2,8 @@
 //!
 //! Wraps `tst_core::mpegts::mux::Muxer`. `nOpen` marshals the parallel-array
 //! config description (one entry per elementary stream, decoded by Java enum
-//! ORDINAL) into a [`MuxerConfig`] via the `tst_core` builders, boxes the
-//! [`Muxer`], and returns the raw pointer as a `jlong` handle. The push family
+//! ORDINAL) into a [`MuxerConfig`] via the `tst_core` builders, registers
+//! the [`Muxer`], and returns its opaque registry key as a `jlong` handle. The push family
 //! (`nPushVideo` / `nPushVideoWire` / `nPushKlv` / `nPushAudio` / `nPushSubtitle` /
 //! `nPushData` / `nPushDataTo` / `nPushVideoTo` / `nPushVideoWireTo` /
 //! `nPushVideoToWithDts` / `nPushVideoWireToWithDts` /
@@ -14,7 +14,7 @@
 //! [`throw_mux_error`]. `nDataHandles` returns the configured data-stream
 //! handles as a `long[]` of packed raws. `nPull` drains TS
 //! packets into the caller's `byte[]`; `nPending` / `nCapacity` report queue
-//! depth; `nClose` reconstitutes + drops the box.
+//! depth; `nClose` removes the muxer from the registry and drops it.
 //!
 //! The `MuxError` → `MuxException.Kind` mapping mirrors tst-py's
 //! `mux_error_to_pyerr` decision-for-decision: it routes via the 5-variant
@@ -56,7 +56,7 @@ static REGISTRY: LazyLock<HandleRegistry<Muxer>> = LazyLock::new(HandleRegistry:
 
 jni_native! {
     /// `org.tstrans.mpegts.Muxer.nOpen(...)` — build a configured [`Muxer`] from the
-    /// parallel-array config description and hand the JVM its raw pointer as a
+    /// parallel-array config description and hand the JVM an opaque registry key as a
     /// `jlong` handle. Returns `0` (with a pending `MuxException`) on any config or
     /// marshalling failure.
     ///

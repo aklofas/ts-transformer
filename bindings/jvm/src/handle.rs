@@ -25,12 +25,13 @@
 //! 2. on `None` (absent / closed) throws `IllegalStateException` (the caller does
 //!    this; the registry just returns `None`).
 //!
-//! [`HandleRegistry::close`] is atomic + idempotent: it locks the registry, removes
-//! the entry (dropping the registry's strong ref), CASes `closed`, fires the entry's
-//! `cancel` hook to wake any parked op, and returns the *taken* resource so the
-//! per-type `nClose` can run its own teardown (e.g. `rx.close()`) and drop it. Any
-//! in-flight lease still holds its own `Arc` clone, so the resource's `Drop` runs
-//! only after the last lease releases. A second `close` finds the id gone → no-op.
+//! [`HandleRegistry::close`] is atomic + idempotent: removing the entry from the id
+//! table under the registry lock is the close gate (there is no `closed` flag). The
+//! winning `close` then fires the entry's `cancel` hook to wake any parked op,
+//! *before* it takes the resource, and returns the *taken* resource so the per-type
+//! `nClose` can run its own teardown (e.g. `rx.close()`) and drop it. An in-flight
+//! lease keeps only the now-empty entry alive; the resource itself is owned by the
+//! returned value. A second `close` finds the id gone → no-op.
 //!
 //! # Design decisions
 //!
@@ -51,11 +52,11 @@
 //!   a single hash lookup + `Arc` clone under a short-held lock.)
 //! - **Per-type registries.** [`HandleRegistry<T>`] is generic; each module
 //!   instantiates its own `static REGISTRY: LazyLock<HandleRegistry<ThatType>>`. Ids
-//!   are therefore per-type — a key minted by the srt-Sender registry is meaningless
-//!   to the rtp-DemuxReceiver registry, which is exactly the type-safety we want and
-//!   matches how the Java classes already keep separate `handle` fields. A single
-//!   type-erased registry would need `Box<dyn Any>` downcasts on every lease for no
-//!   benefit, so per-type is the deliberate choice.
+//!   are per table and may collide numerically across tables; type separation comes
+//!   from each Java wrapper routing its `handle` field to its own registry. A key
+//!   forged for the wrong table is not detected (it may lease another resource of
+//!   that table's type). A single type-erased registry would need `Box<dyn Any>`
+//!   downcasts on every lease for no benefit, so per-type is the deliberate choice.
 //! - **Two entry shapes.** [`Entry<T>`] (this registry): the registry owns a
 //!   `Mutex<Option<T>>`; [`with_poisoning`](HandleRegistry::with_poisoning) drops
 //!   the resource on a panic; the only side slot is an optional close-fired hook
@@ -350,9 +351,10 @@ impl<T> HandleRegistry<T> {
     /// at most once). `0` → `None`.
     ///
     /// The returned `Option<T>` is `Some` only for the winning `close`; the caller
-    /// runs e.g. `if let Some(mut r) = REGISTRY.close(id) { r.close(); }`. The
-    /// resource's own `Drop` runs when the caller drops the returned value AND every
-    /// in-flight lease has released its `Arc` clone (whichever is last).
+    /// runs e.g. `if let Some(mut r) = REGISTRY.close(id) { r.close(); }`. `close`
+    /// takes `T` out of the entry once any in-flight `with` has released the slot,
+    /// so the resource's `Drop` runs when the caller drops the returned value; a
+    /// bare lease keeps only the empty entry alive.
     pub(crate) fn close(&self, id: u64) -> Option<T> {
         // Remove under the registry lock — this is the single atomic gate that makes
         // double-close a no-op: only one caller gets the entry out of the table, so
@@ -607,7 +609,7 @@ mod tests {
     use std::thread;
 
     /// A resource that bumps a shared counter on `Drop`, so tests can assert the
-    /// resource's `Drop` runs exactly once and only after the last lease releases.
+    /// resource's `Drop` runs exactly once, when the value `close` returns is dropped.
     struct DropCounter {
         drops: Arc<AtomicUsize>,
         value: u64,
@@ -1071,8 +1073,8 @@ mod tests {
             Err(HandleState::Closed),
             "a mutator panic drops the slot"
         );
-        // The entry leaves the id table too (decision 3), so the lock-free side
-        // reads stop answering for the torn shell — not just the slot.
+        // The entry leaves the id table too, so the lock-free side reads stop
+        // answering for the torn shell — not just the slot.
         assert!(
             reg.cancel_view(id).is_none(),
             "the id is gone from the table: no cancel view for a torn shell"
@@ -1081,7 +1083,7 @@ mod tests {
         assert_eq!(
             reg.close(id),
             None,
-            "the entry is gone (decision 3); double close is quiet"
+            "the entry is gone; double close is quiet"
         );
     }
 

@@ -62,7 +62,7 @@ static REGISTRY: LazyLock<HandleRegistry<Demuxer>> = LazyLock::new(HandleRegistr
 
 jni_native! {
     /// `org.tstrans.mpegts.Demuxer.nOpen()` — allocate a [`Demuxer`] and hand the JVM
-    /// its raw pointer as a `jlong` handle.
+    /// an opaque registry key as a `jlong` handle.
     fn Java_org_tstrans_mpegts_Demuxer_nOpen<'local>(_env, _class) -> jlong = 0 => {
         REGISTRY.insert(Demuxer::new()) as jlong
     }
