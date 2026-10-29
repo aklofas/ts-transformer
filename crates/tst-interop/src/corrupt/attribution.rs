@@ -724,9 +724,9 @@ pub(super) fn ticks_ahead(a: u64, b: u64) -> u64 {
     a.wrapping_sub(b) & ((1 << 33) - 1)
 }
 
-/// Signals a conformant receiver must produce for a given injection.
-/// `true` for classes whose observable effect is not pinned to one signal
-/// (any event inside the window then counts as having noticed).
+/// Whether a given injection can produce `sig` at a conformant receiver.
+/// Every class has its own arm, and each arm follows what the real
+/// demuxer was measured to report for that class (`tests/corruption.rs`).
 fn expects(inj: &Tracked, sig: Signal) -> bool {
     match inj.class {
         // All three destroy packet framing: the reader resyncs, or the
@@ -771,9 +771,14 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         Class::BodyFlip if inj.psi => {
             matches!(sig, Signal::PsiChecksum | Signal::OtherNonConformant)
         }
-        // Everything else — a non-PSI body flip, a duplicate — is never
-        // `detectable`, so this arm only decides a flag nothing reads.
-        _ => true,
+        // A flip inside a media payload leaves the packet's framing and
+        // its header intact: the most a demuxer sees is a PES header it
+        // cannot parse, or another payload-level non-conformance.
+        Class::BodyFlip => matches!(sig, Signal::MalformedPes | Signal::OtherNonConformant),
+        // H.222.0 §2.4.3.3 allows one duplicate packet, and a receiver
+        // discards it unread: it changes no byte a decoder reads, so
+        // nothing inside its window is its doing.
+        Class::Dup => false,
     }
 }
 
@@ -1419,9 +1424,11 @@ impl Attribution {
     pub fn explains_damage(&mut self, at: u64, pid: u16) -> bool {
         self.advance(at);
         (self.lo..self.hi).rev().any(|i| {
-            self.window_contains(i, at)
-                && (self.tracked(i).pid == pid
-                    || matches!(self.tracked(i).class, Class::Truncate | Class::Garbage))
+            let inj = self.tracked(i);
+            // A legal duplicate damages nothing (see `expects`).
+            inj.class != Class::Dup
+                && self.window_contains(i, at)
+                && (inj.pid == pid || matches!(inj.class, Class::Truncate | Class::Garbage))
         })
     }
 
@@ -3393,6 +3400,37 @@ mod tests {
     /// `explains_damage` answers for a content oracle, records nothing,
     /// and covers exactly two cases: same PID any class, or Truncate/
     /// Garbage on any PID (both destroy framing multiplex-wide).
+    /// H.222.0 §2.4.3.3: one duplicate packet is legal and changes no byte a
+    /// decoder reads, so nothing inside its window is its doing.
+    #[test]
+    fn a_duplicate_explains_no_resync_no_malformed_pes_and_no_damage() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Dup, 0x1011, false)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5015, None, Signal::Resync);
+        a.on_signal(5016, Some(0x1011), Signal::MalformedPes);
+        assert!(!a.explains_damage(5017, 0x1011));
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 0, "{r:?}");
+        assert_eq!(r.unexplained_nonconformant, 1, "{r:?}");
+    }
+
+    /// The positive control: a media body flip on the same PID still
+    /// explains a malformed PES and the damage inside its window, and
+    /// nothing outside its class rule.
+    #[test]
+    fn a_media_body_flip_explains_a_malformed_pes_but_not_a_resync() {
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::BodyFlip, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(5015, None, Signal::Resync);
+        a.on_signal(5016, Some(0x1011), Signal::MalformedPes);
+        assert!(a.explains_damage(5017, 0x1011));
+        a.on_media(5100, 0x1011);
+        let r = a.finish(10_000);
+        assert_eq!(r.attributed_events, 1, "{r:?}");
+        assert_eq!(r.unexplained_nonconformant, 0, "{r:?}");
+    }
+
     #[test]
     fn explains_damage_covers_same_pid_any_class_and_framing_classes_anywhere() {
         let mut a = Attribution::strict(
