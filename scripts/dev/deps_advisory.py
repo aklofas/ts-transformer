@@ -16,8 +16,12 @@ each to its upstream tag, and reports three kinds of finding:
               when it carries no version bounds, was published after the pin's
               tag) — "deps: GHSA-… affects pinned libsrt v1.5.7 (critical)"
 
-Pre-release tags are ignored. A pin that is not a tag (FreeRTOS-POSIX) gets
-the advisory checks only and a commits-ahead note in the summary.
+Pre-release tags are ignored. A pin that is not a tag (FreeRTOS-POSIX) has no
+version to place in a range, so it gets no release or major-line finding, and
+every GitHub advisory published after the pinned commit is a "may affect"
+finding — "deps: GHSA-… may affect untagged freertos-posix pin 1a2b3c4d
+(high)"; the summary adds a commits-ahead note. A dependency with no advisory
+source (librist: GitLab-hosted, no NVD product) is printed as UNASSESSED.
 
 Findings become GitHub issues labelled `dependency-advisory`, deduplicated by
 exact title against every existing issue with that label, open OR closed: a
@@ -277,10 +281,40 @@ def _nvd_description(cve: dict) -> str:
     return ""
 
 
-def build_findings(dep: dict, pin_tag, pin_version, tags, advisories, cves, pin_date=None) -> list[Finding]:
+def advisory_sources(dep: dict) -> list[str]:
+    """The advisory databases this script consults for `dep` (empty = unassessed)."""
+    out = ["GHSA"] if dep.get("host") == "github" else []
+    if dep.get("cpe"):
+        out.append("NVD")
+    return out
+
+
+def _untagged_findings(dep: dict, advisories, pin_date, pin_sha) -> list[Finding]:
+    """Advisories for a pin that is not a tag: a range cannot be placed without
+    a version, so an advisory counts when it was published after the commit."""
+    out: list[Finding] = []
+    name, path, url = dep["name"], dep["path"], dep["url"]
+    short = pin_sha[:8] if pin_sha else "?"
+    for adv in advisories:
+        if not _after(adv.get("published_at"), pin_date):
+            continue
+        gid = adv.get("ghsa_id", "GHSA-?")
+        sev = adv.get("severity") or "unrated"
+        out.append(Finding("advisory", f"deps: {gid} may affect untagged {name} pin {short} ({sev})",
+                           f"**{adv.get('summary', '')}**\n\n{gid}" + (f" / {adv['cve_id']}" if adv.get("cve_id") else "")
+                           + f"\nSeverity: {sev}\nPublished: {adv.get('published_at')}\n"
+                           f"Advisory: {adv.get('html_url', url + '/security/advisories')}\n\n"
+                           f"Submodule `{path}` is pinned at commit `{pin_sha or '?'}` (committed {pin_date or '?'}), "
+                           f"which is not a tag, so the advisory's version range cannot be placed. It was "
+                           f"published after the pinned commit: check whether the pin carries the fix."))
+    return out
+
+
+def build_findings(dep: dict, pin_tag, pin_version, tags, advisories, cves, pin_date=None,
+                   pin_sha=None) -> list[Finding]:
     out: list[Finding] = []
     if pin_version is None:
-        return out
+        return _untagged_findings(dep, advisories, pin_date, pin_sha)
     name, path, url = dep["name"], dep["path"], dep["url"]
     pinned = f"(pinned {pin_tag})"
     newest = newest_in_line(tags, pin_version)
@@ -485,12 +519,13 @@ def main(argv=None) -> int:
         pin_date = next((d for t, _, d in tags if t == pin_tag and d), None) or fetch_commit_date(dep, sha)
         advisories = fetch_advisories(dep)
         cves = fetch_cves(dep["cpe"]) if dep.get("cpe") else []
-        found = build_findings(dep, pin_tag, pin_version, versions, advisories, cves, pin_date)
+        found = build_findings(dep, pin_tag, pin_version, versions, advisories, cves, pin_date, sha)
         findings += found
         ahead = fetch_commits_ahead(dep, sha) if pin_version is None else None
         newest = newest_in_line(versions, pin_version) if pin_version else None
         rows.append((dep["name"], pin_tag or f"{sha[:8]} (untagged)", pin_date or "?",
                      newest[1] if newest else ("current" if pin_version else f"{ahead} commit(s) ahead upstream"),
+                     ", ".join(advisory_sources(dep)) or "UNASSESSED",
                      len(advisories), len(cves), len(found)))
 
     existing = set() if args.dry_run else existing_issue_titles(repo)
@@ -501,8 +536,8 @@ def main(argv=None) -> int:
         created = [create_issue(repo, f) for f in fresh]
 
     lines = ["## Native dependency advisory check", "",
-             "| dependency | pinned | tag date | newest in line | GHSA | NVD CVEs | findings |",
-             "|---|---|---|---|---|---|---|"]
+             "| dependency | pinned | tag date | newest in line | advisory sources | GHSA | NVD CVEs | findings |",
+             "|---|---|---|---|---|---|---|---|"]
     lines += ["| " + " | ".join(str(c) for c in r) + " |" for r in rows]
     lines += ["", f"**{len(findings)} finding(s)**, {len(fresh)} new"
               + (" (dry run: issues not consulted or created)" if args.dry_run else
