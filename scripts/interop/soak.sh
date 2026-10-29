@@ -1275,7 +1275,9 @@ record_pid rist-send $!
 # by design at the end of its generation, so the tool is never a worker
 # itself; a generation that exits nonzero (or overruns its segment by 60 s
 # and is killed) is logged and makes the loop exit 1 at the end of the run,
-# which fails `worker_exits`. After the last generation the loop idles
+# which fails `worker_exits`. A nonzero exit after the pipeline's `Got EOS`
+# is a send failure while closing a delivered stream, counted as a clean
+# end (lib.sh's publish_generation). After the last generation the loop idles
 # until TOTAL_SECONDS after its own start, so the sampler and supervisor
 # see it alive for the whole run like every other worker.
 if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
@@ -1289,23 +1291,19 @@ if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
   sleep "$SETTLE"
 
   publisher_loop() {
-    local end=$(($(date +%s) + TOTAL_SECONDS)) k=0 failed=0 rc seg gst_pid=""
-    trap '[[ -z "$gst_pid" ]] || kill "$gst_pid" 2>/dev/null; exit 143' TERM
+    local end=$(($(date +%s) + TOTAL_SECONDS)) k=0 failed=0 seg gst_pid=""
+    PUBLISH_GEN_PID=""
+    trap '[[ -z "$gst_pid$PUBLISH_GEN_PID" ]] || kill $gst_pid $PUBLISH_GEN_PID 2>/dev/null; exit 143' TERM
     echo "publisher: ${#PUBLISH_SEGMENTS[@]} generation(s) of ~${PUBLISH_SEGMENT_S}s into $RTSP_PUBLISH_URL"
     for seg in "${PUBLISH_SEGMENTS[@]}"; do
       k=$((k + 1))
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ANNOUNCE ($seg)"
       # In the background and reaped with `wait`, so the TERM trap above
       # runs at once on a fail-fast kill instead of after the generation.
-      timeout --kill-after=5 "$((PUBLISH_SEGMENT_S + 60))" \
+      publish_generation "$k" "$OUTDIR/logs/rtsp-publish-generation.log" -- \
+        timeout --kill-after=5 "$((PUBLISH_SEGMENT_S + 60))" \
         gst-launch-1.0 filesrc "location=$seg" ! tsparse set-timestamps=true ! \
-        rtspclientsink "location=$RTSP_PUBLISH_URL" protocols=tcp &
-      gst_pid=$!
-      rc=0
-      wait "$gst_pid" || rc=$?
-      gst_pid=""
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ended rc=$rc"
-      [[ "$rc" -eq 0 ]] || failed=$((failed + 1))
+        rtspclientsink "location=$RTSP_PUBLISH_URL" protocols=tcp || failed=$((failed + 1))
       rm -f "$seg"
     done
     until [[ $(date +%s) -ge $end ]]; do
@@ -1345,7 +1343,8 @@ fi
 # Worker roles `rtsp-publish-es-recv` and `rtsp-publish-es-publisher`,
 # with the MPEG-TS leg's lifecycle: one gst-launch-1.0 per generation, a
 # failed or overrun generation makes the loop exit 1 at the end of the
-# run, and the loop idles to TOTAL_SECONDS. The source is never deleted:
+# run (a post-EOS send failure is a clean end), and the loop idles to
+# TOTAL_SECONDS. The source is never deleted:
 # every generation replays it.
 if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
   RTSP_PUBLISH_ES_PORT=$(free_port tcp)
@@ -1358,22 +1357,18 @@ if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
   sleep "$SETTLE"
 
   publisher_es_loop() {
-    local end=$(($(date +%s) + TOTAL_SECONDS)) k=0 failed=0 rc gst_pid=""
-    trap '[[ -z "$gst_pid" ]] || kill "$gst_pid" 2>/dev/null; exit 143' TERM
+    local end=$(($(date +%s) + TOTAL_SECONDS)) k=0 failed=0 gst_pid=""
+    PUBLISH_GEN_PID=""
+    trap '[[ -z "$gst_pid$PUBLISH_GEN_PID" ]] || kill $gst_pid $PUBLISH_GEN_PID 2>/dev/null; exit 143' TERM
     echo "publisher: $PUBLISH_GENERATIONS generation(s) of ${PUBLISH_SEGMENT_S}s, each replaying $PUBLISH_ES_SOURCE, into $RTSP_PUBLISH_ES_URL"
     for ((k = 1; k <= PUBLISH_GENERATIONS; k++)); do
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ANNOUNCE"
-      timeout --kill-after=5 "$((PUBLISH_SEGMENT_S + 60))" \
+      publish_generation "$k" "$OUTDIR/logs/rtsp-publish-es-generation.log" -- \
+        timeout --kill-after=5 "$((PUBLISH_SEGMENT_S + 60))" \
         gst-launch-1.0 filesrc "location=$PUBLISH_ES_SOURCE" ! tsdemux name=d \
         d. ! queue ! h264parse ! s.sink_0 \
         d. ! queue ! meta/x-klv ! s.sink_1 \
-        rtspclientsink name=s "location=$RTSP_PUBLISH_ES_URL" protocols=tcp &
-      gst_pid=$!
-      rc=0
-      wait "$gst_pid" || rc=$?
-      gst_pid=""
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ended rc=$rc"
-      [[ "$rc" -eq 0 ]] || failed=$((failed + 1))
+        rtspclientsink name=s "location=$RTSP_PUBLISH_ES_URL" protocols=tcp || failed=$((failed + 1))
     done
     k=$((k - 1))
     until [[ $(date +%s) -ge $end ]]; do

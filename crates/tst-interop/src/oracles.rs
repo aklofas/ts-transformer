@@ -102,7 +102,7 @@ pub fn check(
     f.extend(pmt_streams(p, inv, wire, layout));
     if layout == WireLayout::Generator {
         f.extend(audio(inv, wire, seconds, explained));
-        f.extend(av1_carriage(inv, wire));
+        f.extend(av1_carriage(inv, wire, explained));
         f.extend(pts_wrap(p, inv, wire, seconds));
         f.extend(wire_vs_demux(p, inv, wire, per_program, mode, explained));
     }
@@ -380,7 +380,7 @@ fn pcr_lead(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
 /// (`00 00 01` prefix); mode A (`InteropRawObu`) carries `stream_id=
 /// 0xE0` with a raw OBU header (forbidden bit clear, `obu_type` a
 /// temporal delimiter / sequence header / frame header).
-fn av1_carriage(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
+fn av1_carriage(inv: &Invariants, wire: &WireSummary, explained: &Explained) -> Vec<String> {
     let Some(mode) = inv.av1_mode else {
         return Vec::new();
     };
@@ -412,10 +412,13 @@ fn av1_carriage(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
     // later one to the same opening bytes (`00 00` for the binding's
     // `ts_open_bitstream_unit`, `12 00` for a raw-OBU temporal
     // delimiter), so carriage that degrades mid-capture is caught too.
-    if shape.prefix_mismatches > 0 {
+    // As for ADTS, a mismatch inside an attributed corruption window is the
+    // tap's damage and is excused (reported as `av1_prefix_excused`).
+    let excused = explained.prefix_excused.get(&pid).copied().unwrap_or(0);
+    let n = shape.prefix_mismatches.saturating_sub(excused);
+    if n > 0 {
         f.push(format!(
-            "av1_carriage_wire: {} later PES payload(s) on PID {pid} do not start like the first",
-            shape.prefix_mismatches
+            "av1_carriage_wire: {n} later PES payload(s) on PID {pid} do not start like the first"
         ));
     }
     f
@@ -1080,9 +1083,9 @@ mod tests {
     fn av1_carriage_wire_checks_stream_id_and_prefix_per_mode() {
         let inv_b = profiles::invariants(profiles::by_name("av1-klv-b").unwrap());
         let pass_b = wire_with_pes(0x1011, 0xBD, [0, 0, 1, 0x12]);
-        assert!(av1_carriage(&inv_b, &pass_b).is_empty());
+        assert!(av1_carriage(&inv_b, &pass_b, &Explained::default()).is_empty());
         let fail_b = wire_with_pes(0x1011, 0xE0, [0x12, 0, 0, 0]);
-        let f = av1_carriage(&inv_b, &fail_b);
+        let f = av1_carriage(&inv_b, &fail_b, &Explained::default());
         assert!(
             f.iter().any(|s| s.starts_with("av1_carriage_wire")),
             "{f:?}"
@@ -1090,12 +1093,36 @@ mod tests {
 
         let inv_a = profiles::invariants(profiles::by_name("av1-klv-a").unwrap());
         let pass_a = wire_with_pes(0x1011, 0xE0, [0x12, 0, 0, 0]);
-        assert!(av1_carriage(&inv_a, &pass_a).is_empty());
+        assert!(av1_carriage(&inv_a, &pass_a, &Explained::default()).is_empty());
         let fail_a = wire_with_pes(0x1011, 0xBD, [0, 0, 1, 0x12]);
-        let f = av1_carriage(&inv_a, &fail_a);
+        let f = av1_carriage(&inv_a, &fail_a, &Explained::default());
         assert!(
             f.iter().any(|s| s.starts_with("av1_carriage_wire")),
             "{f:?}"
+        );
+    }
+
+    #[test]
+    fn av1_carriage_excuses_attributed_prefix_damage() {
+        let inv = profiles::invariants(profiles::by_name("av1-klv-b").unwrap());
+        let pid = 0x1011;
+        let mut wire = wire_with_pes(pid, 0xBD, [0, 0, 1, 0x12]);
+        wire.pes.get_mut(&pid).unwrap().prefix_mismatches = 1;
+        let unattributed = av1_carriage(&inv, &wire, &Explained::default());
+        assert_eq!(
+            unattributed,
+            ["av1_carriage_wire: 1 later PES payload(s) on PID 4113 do not start like the first"]
+        );
+        let attributed = Explained {
+            prefix_excused: BTreeMap::from([(pid, 1)]),
+            ..Default::default()
+        };
+        assert!(av1_carriage(&inv, &wire, &attributed).is_empty());
+        // One excused of two leaves the other charged.
+        wire.pes.get_mut(&pid).unwrap().prefix_mismatches = 2;
+        assert_eq!(
+            av1_carriage(&inv, &wire, &attributed),
+            ["av1_carriage_wire: 1 later PES payload(s) on PID 4113 do not start like the first"]
         );
     }
 

@@ -759,6 +759,7 @@ fn profile_declared_verdict(
         name: format!("profile_declared_{leg_name}"),
         pass: profile_pass,
         provisional: false,
+        excused: false,
         detail: profile_detail,
     }
 }
@@ -813,6 +814,7 @@ fn klv_declared_verdict(
         name: format!("klv_declared_{leg_name}"),
         pass: klv_pass,
         provisional: false,
+        excused: false,
         detail: klv_detail,
     }
 }
@@ -993,6 +995,11 @@ pub struct SoakVerdict {
     /// doc's "Known telemetry limitations" section.
     pub provisional: bool,
     pub detail: String,
+    /// A passing row that records something the judge excused (a placement
+    /// excursion within the sender-report jitter rule), so the evidence of
+    /// it survives in the results.
+    #[serde(default)]
+    pub excused: bool,
 }
 
 /// Computed numbers for one leg (`"srt"` or `"rist"`).
@@ -1389,6 +1396,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: "duration_coverage".to_string(),
             pass: run_duration_s >= min_span_s,
             provisional: false,
+            excused: false,
             detail: format!(
                 "observed RSS span {run_duration_s:.0}s against a configured {:.0}s run \
                  (achievable {achievable_span_s:.0}s after the sampler's {:.0}s end slack; \
@@ -1499,6 +1507,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("rss_sample_coverage_{leg}_{process}"),
             pass,
             provisional: false,
+            excused: false,
             detail: format!(
                 "{} post-warmup sample(s) ({} distinct timestamps) against {expected_samples} \
                  expected at a {:.0}s cadence (minimum {min_samples}); largest gap {largest_gap_s:.0}s \
@@ -1542,6 +1551,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("rss_data_present_{leg}_{process}"),
             pass: false,
             provisional: false,
+            excused: false,
             detail: format!(
                 "no post-warmup RSS samples for {leg}/{process} — either this process never \
                  appears in rss.csv at all, or every sample for it fell before the \
@@ -1560,6 +1570,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("rss_slope_{}_{}", slope.leg, slope.process),
             pass,
             provisional,
+            excused: false,
             detail: format!(
                 "{:.1} KiB/h over {} post-warmup sample(s)",
                 slope.slope_kb_per_hour, slope.samples_used
@@ -1571,6 +1582,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         name: "zero_process_exits".to_string(),
         pass: process_exits.is_empty(),
         provisional: false,
+        excused: false,
         detail: if process_exits.is_empty() {
             "no process disappeared from /proc before the runner's own shutdown".to_string()
         } else {
@@ -1630,6 +1642,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         name: "worker_exits".to_string(),
         pass: exit_problems.is_empty(),
         provisional: false,
+        excused: false,
         detail: if exit_problems.is_empty() {
             "every worker exited with its expected status".to_string()
         } else {
@@ -1825,6 +1838,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("drop_rate_consistent_with_impairment_{leg_name}"),
             pass: drop_pass,
             provisional: false,
+            excused: false,
             detail: drop_detail,
         });
 
@@ -1833,6 +1847,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("reconnect_count_matches_outage_count_{leg_name}"),
             pass: observed_reconnects.is_none_or(|n| n == outage_windows),
             provisional: true,
+            excused: false,
             detail: match observed_reconnects {
                 Some(observed) => format!(
                     "{leg_name}: recv --managed observed {observed} successful receive-side \
@@ -1861,6 +1876,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("recv_invariants_{leg_name}"),
             pass: artifacts.recv_report.pass,
             provisional: false,
+            excused: false,
             detail: if artifacts.recv_report.pass {
                 "final tallies within expected loss bounds".to_string()
             } else {
@@ -1942,6 +1958,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("schedule_declared_{leg_name}"),
             pass: schedule_pass,
             provisional: false,
+            excused: false,
             detail: schedule_detail,
         });
 
@@ -2016,6 +2033,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("reconnect_mode_declared_{leg_name}"),
             pass: mode_pass,
             provisional: false,
+            excused: false,
             detail: mode_detail,
         });
 
@@ -2038,6 +2056,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("{name}_{leg_name}"),
             pass,
             provisional: false,
+            excused: false,
             detail,
         };
         if !config.corruption {
@@ -2352,6 +2371,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("recv_invariants_{leg_name}"),
             pass: recv.pass,
             provisional: false,
+            excused: false,
             detail: if recv.pass {
                 "final tallies within expected bounds across every publisher generation".to_string()
             } else {
@@ -2366,6 +2386,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("schedule_declared_{leg_name}"),
             pass: schedule.is_none(),
             provisional: false,
+            excused: false,
             detail: match schedule {
                 None => format!(
                     "{leg_name}: not applicable — this leg has no impairment proxy (the \
@@ -2384,6 +2405,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("reconnect_mode_declared_{leg_name}"),
             pass: mode.is_none(),
             provisional: false,
+            excused: false,
             detail: match mode {
                 None => format!(
                     "{leg_name}: not applicable — the publisher is an external tool, not a \
@@ -2402,6 +2424,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                 name: format!("{n}_{leg_name}"),
                 pass: true,
                 provisional: false,
+                excused: false,
                 detail: format!(
                     "{leg_name}: not applicable — the publisher replays a generated stream \
                      with no corruption tap, so there is no injection log to judge against"
@@ -2452,6 +2475,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("publisher_generations_{leg_name}"),
             pass: gen_pass,
             provisional: false,
+            excused: false,
             detail: gen_detail,
         });
 
@@ -2482,6 +2506,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                 name: format!("delivery_complete_{leg_name}"),
                 pass: got == want,
                 provisional: false,
+                excused: false,
                 detail: format!(
                     "{leg_name}: recv stream_sha256 {got} against the source's {want} \
                      ({how}){}",
@@ -2496,6 +2521,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                 name: format!("delivery_complete_{leg_name}"),
                 pass: false,
                 provisional: false,
+                excused: false,
                 detail: format!(
                     "{leg_name}: no source digest declared (no legs.{leg_name}.source_sha256 \
                      in soak-config.json and no source.sha256 artefact), so nothing says \
@@ -2505,6 +2531,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         });
 
         verdicts.push(klv_placement_verdict(leg_name, declared, recv));
+        verdicts.extend(klv_placement_excursion_rows(leg_name, declared, recv));
 
         publish_leg_results.push(PublishLegResult {
             leg: leg_name.clone(),
@@ -2533,6 +2560,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("schedule_declared_{leg_name}"),
             pass: schedule.is_none(),
             provisional: false,
+            excused: false,
             detail: match schedule {
                 None => format!(
                     "{leg_name}: not applicable — this leg has no impairment proxy (the \
@@ -2550,6 +2578,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("reconnect_mode_declared_{leg_name}"),
             pass: mode.is_none(),
             provisional: false,
+            excused: false,
             detail: match mode {
                 None => format!(
                     "{leg_name}: not applicable — the server is fed in-process and the \
@@ -2567,6 +2596,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                 name: format!("{n}_{leg_name}"),
                 pass: true,
                 provisional: false,
+                excused: false,
                 detail: format!(
                     "{leg_name}: not applicable — the server is fed the generator's schedule \
                      in-process with no corruption tap, so there is no injection log to \
@@ -2579,6 +2609,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             name: format!("whep_counters_present_{leg_name}"),
             pass: serve.missing.is_empty(),
             provisional: false,
+            excused: false,
             detail: if serve.missing.is_empty() {
                 format!(
                     "{leg_name}: the server's report carries every counter the leg is judged on"
@@ -2628,6 +2659,7 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                 name: format!("leg_evidence_{leg}"),
                 pass: false,
                 provisional: false,
+                excused: false,
                 detail: format!(
                     "{leg}: declared in soak-config.json but no report supplied, so none of \
                      its verdicts ran"
@@ -2755,6 +2787,7 @@ fn remuxed_delivery_verdict(
             name,
             pass: false,
             provisional: false,
+            excused: false,
             detail: format!(
                 "{leg_name}: remuxed, but klv_records_per_generation or \
                  publisher_generations is not declared, so there is no KLV count to judge \
@@ -2767,6 +2800,7 @@ fn remuxed_delivery_verdict(
             name,
             pass: false,
             provisional: false,
+            excused: false,
             detail: format!(
                 "{leg_name}: the recv report carries no publish_mount block, so nothing \
                  says whether the mount dropped KLV units"
@@ -2780,6 +2814,7 @@ fn remuxed_delivery_verdict(
         name,
         pass,
         provisional: false,
+        excused: false,
         detail: format!(
             "{leg_name}: recv counted {got} KLV record(s) against {want} = {per} per \
              generation x {generations} declared generation(s); the mount reported \
@@ -2799,9 +2834,11 @@ fn remuxed_delivery_verdict(
 
 /// `klv_placement_<leg>` for a publish leg: when the leg declares
 /// [`LegDeclaration::klv_placement`], its receiver's placement block
-/// shows every record within tolerance, no unexpected reset, and one
-/// generation per declared publisher generation. A leg that does not
-/// declare the oracle passes as not applicable.
+/// shows every record within tolerance or inside an excused excursion
+/// (at most one per generation, within one sender-report interval, no
+/// error over 10 ms), no unexpected reset, and one generation per
+/// declared publisher generation. A leg that does not declare the oracle
+/// passes as not applicable.
 fn klv_placement_verdict(
     leg_name: &str,
     declared: Option<&LegDeclaration>,
@@ -2813,6 +2850,7 @@ fn klv_placement_verdict(
             name,
             pass: true,
             provisional: false,
+            excused: false,
             detail: format!(
                 "{leg_name}: not applicable — this leg does not declare the placement oracle"
             ),
@@ -2823,6 +2861,7 @@ fn klv_placement_verdict(
             name,
             pass: false,
             provisional: false,
+            excused: false,
             detail: format!(
                 "{leg_name}: the recv report carries no klv_placement block (recv ran \
                  without --klv-placement)"
@@ -2831,18 +2870,21 @@ fn klv_placement_verdict(
     };
     let generations = declared.and_then(|d| d.publisher_generations);
     let pass =
-        m.out_of_tolerance == 0 && m.unexpected_resets == 0 && Some(m.generations) == generations;
+        !m.has_unexcused_error() && m.unexpected_resets == 0 && Some(m.generations) == generations;
     SoakVerdict {
         name,
         pass,
         provisional: false,
+        excused: false,
         detail: format!(
-            "{leg_name}: {} record(s) placed, {} out of tolerance (max error {} ticks, \
-             tolerance {} ticks), {} unexpected reset(s), {} generation(s) seen against {} \
-             declared; the generation budget excused {} backward PTS step(s) and {} timing \
-             anomaly event(s){}",
+            "{leg_name}: {} record(s) placed, {} out of tolerance in {} excursion(s), {} \
+             excused (max error {} ticks, tolerance {} ticks), {} unexpected reset(s), {} \
+             generation(s) seen against {} declared; the generation budget excused {} backward \
+             PTS step(s) and {} timing anomaly event(s){}",
             m.records,
             m.out_of_tolerance,
+            m.excursions,
+            m.excused_excursions,
             m.max_abs_error_ticks,
             m.tolerance_ticks,
             m.unexpected_resets,
@@ -2855,6 +2897,32 @@ fn klv_placement_verdict(
                 .map_or_else(String::new, |p| format!("; first problem: {p}"))
         ),
     }
+}
+
+/// `klv_placement_excursion_<leg>`: one passing, excused row per
+/// placement excursion the receiver excused as sender-report jitter, so
+/// each stays visible in the results.
+fn klv_placement_excursion_rows(
+    leg_name: &str,
+    declared: Option<&LegDeclaration>,
+    recv: &VerifyReport,
+) -> Vec<SoakVerdict> {
+    if declared.and_then(|d| d.klv_placement) != Some(true) {
+        return Vec::new();
+    }
+    let Some(m) = recv.metrics.klv_placement.as_ref() else {
+        return Vec::new();
+    };
+    m.excused_excursion_details
+        .iter()
+        .map(|d| SoakVerdict {
+            name: format!("klv_placement_excursion_{leg_name}"),
+            pass: true,
+            provisional: false,
+            excused: true,
+            detail: format!("{leg_name}: {d}"),
+        })
+        .collect()
 }
 
 /// `profile_declared_whep`: the server's counters name the profile and
@@ -2872,6 +2940,7 @@ fn whep_profile_declared_verdict(
             name,
             pass: true,
             provisional: false,
+            excused: false,
             detail: format!(
                 "{leg_name}: no legs.{leg_name} declaration in soak-config.json (config \
                  predates the declaration) — nothing to check against"
@@ -2884,6 +2953,7 @@ fn whep_profile_declared_verdict(
             name,
             pass: false,
             provisional: false,
+            excused: false,
             detail: format!(
                 "{leg_name}: config declared profile {:?} / mount kind {:?}, but the server's \
                  counters name no profile or mount kind (written before serve-whep recorded \
@@ -2897,6 +2967,7 @@ fn whep_profile_declared_verdict(
         name,
         pass,
         provisional: false,
+        excused: false,
         detail: format!(
             "{leg_name}: config declared profile {:?} / mount kind {:?}; the server served \
              {profile:?} / {kind:?}",
@@ -2926,6 +2997,7 @@ fn whep_reconnects_verdict(
             name,
             pass: false,
             provisional: false,
+            excused: false,
             detail: format!(
                 "{leg_name}: no viewer_connections / viewer_reconnect_s declared for this \
                  leg, so there is no reconnect count to judge the {observed} connection(s) \
@@ -2940,6 +3012,7 @@ fn whep_reconnects_verdict(
         name,
         pass,
         provisional: false,
+        excused: false,
         detail: format!(
             "{leg_name}: {observed} browser connection(s) = {} reconnect(s) against {} \
              expected ({expected} declared connections); the server counted {sessions} \
@@ -3092,6 +3165,7 @@ fn whep_frames_verdict(
         name: format!("whep_frames_continuous_{leg_name}"),
         pass: problems.is_empty(),
         provisional: false,
+        excused: false,
         detail: if problems.is_empty() {
             let (k, floor, last) = lowest_margin.unwrap_or((0, 0.0, 0));
             format!(
@@ -3237,6 +3311,7 @@ fn whep_klv_verdict(
         name: format!("whep_klv_sei_equals_dc_{leg_name}"),
         pass: problems.is_empty(),
         provisional: false,
+        excused: false,
         detail: if problems.is_empty() {
             let (k, floor, fewest) = lowest_margin.unwrap_or((0, 0.0, 0));
             format!(
@@ -6589,6 +6664,7 @@ pub(crate) mod tests {
                 // and the two PTS anomalies the demuxer raises there.
                 generation_resets_excused: 2 * generations.saturating_sub(1),
                 timing_anomalies_excused: 3 * generations.saturating_sub(1),
+                ..KlvPlacementMetrics::default()
             });
             recv_report.publish_mount = generation.map(|generation| PublishMountReport {
                 generation,
@@ -6744,6 +6820,48 @@ pub(crate) mod tests {
         let v = verdict(&r, "klv_placement_rtsp-publish-es");
         assert!(!v.pass && !v.provisional, "{}", v.detail);
         assert!(v.detail.contains("2 out of tolerance"), "{}", v.detail);
+        assert!(!r.overall_pass);
+    }
+
+    #[test]
+    fn es_leg_placement_writes_an_excused_row_for_a_report_interval_excursion() {
+        let mut inputs = es_inputs(6);
+        let m = es_mut(&mut inputs).metrics.klv_placement.as_mut().unwrap();
+        m.out_of_tolerance = 56;
+        m.excursions = 1;
+        m.excused_excursions = 1;
+        m.max_excursion_ms = 205.0 / 90.0;
+        m.excused_excursion_details = vec![
+            "sr-jitter: 56 records over 5500 ms, max |error| 2.28 ms, generation 4".to_string(),
+        ];
+        let r = build_soak_results(inputs).unwrap();
+        let v = verdict(&r, "klv_placement_rtsp-publish-es");
+        assert!(v.pass && !v.excused, "{}", v.detail);
+        assert!(
+            v.detail.contains("1 excursion(s), 1 excused"),
+            "{}",
+            v.detail
+        );
+        let row = verdict(&r, "klv_placement_excursion_rtsp-publish-es");
+        assert!(
+            row.pass && row.excused && !row.provisional,
+            "{}",
+            row.detail
+        );
+        assert_eq!(
+            row.detail,
+            "rtsp-publish-es: sr-jitter: 56 records over 5500 ms, max |error| 2.28 ms, generation 4"
+        );
+        assert!(r.overall_pass);
+
+        // A second excursion the receiver did not excuse fails the verdict.
+        let mut inputs = es_inputs(6);
+        let m = es_mut(&mut inputs).metrics.klv_placement.as_mut().unwrap();
+        m.out_of_tolerance = 60;
+        m.excursions = 2;
+        m.excused_excursions = 1;
+        let r = build_soak_results(inputs).unwrap();
+        assert!(!verdict(&r, "klv_placement_rtsp-publish-es").pass);
         assert!(!r.overall_pass);
     }
 

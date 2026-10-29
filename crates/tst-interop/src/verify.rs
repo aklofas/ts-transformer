@@ -130,6 +130,25 @@ impl Default for KlvExpect {
 /// sender-report offset rounding.
 pub const KLV_PLACEMENT_TOLERANCE_TICKS: i64 = 91;
 
+/// The largest error an excursion may carry and still be excused as
+/// sender-report jitter: 10 ms.
+const KLV_EXCURSION_MAX_TICKS: i64 = 900;
+
+/// The longest excursion excused as sender-report jitter, first record to
+/// last: one RTCP sender-report interval. The nominal 5 s interval is
+/// randomised up to 1.5 times its value (RFC 3550 section 6.3.1), so the
+/// 0.9.0 soak's 5.5 s excursion was one interval.
+const KLV_EXCURSION_MAX_SPAN_TICKS: i64 = 675_000;
+
+/// A run of consecutive out-of-tolerance records within one generation.
+struct Excursion {
+    generation: u64,
+    records: u64,
+    first_pts: i64,
+    last_pts: i64,
+    max_abs_error: i64,
+}
+
 /// What the KLV placement oracle holds a synchronous-KLV capture to: the
 /// KLV period and how many generations the
 /// source is expected to produce (a source that loops its input starts a
@@ -201,6 +220,11 @@ struct PlacementState {
     /// The first held timing issue that turned out NOT to be a boundary's
     /// signature — the tally's `first_nonconformant` candidate.
     rejected: Option<String>,
+    /// The excursion the last judged record belongs to, if it was out of
+    /// tolerance.
+    excursion: Option<Excursion>,
+    /// The generation of the last excursion closed, excused or not.
+    last_excursion_generation: Option<u64>,
     metrics: KlvPlacementMetrics,
 }
 
@@ -242,6 +266,8 @@ impl PlacementState {
             pending_pts: BTreeMap::new(),
             pending_pcr: None,
             rejected: None,
+            excursion: None,
+            last_excursion_generation: None,
             metrics: KlvPlacementMetrics {
                 tolerance_ticks: KLV_PLACEMENT_TOLERANCE_TICKS,
                 ..KlvPlacementMetrics::default()
@@ -458,19 +484,73 @@ impl PlacementState {
         );
         let m = &mut self.metrics;
         m.max_abs_error_ticks = m.max_abs_error_ticks.max(error.abs());
-        if error.abs() > m.tolerance_ticks {
-            m.out_of_tolerance += 1;
-            let g = m.generations;
-            m.first_problem
-                .get_or_insert_with(|| format!("record {k}: error {error} ticks (generation {g})"));
+        let g = m.generations;
+        if error.abs() <= m.tolerance_ticks {
+            self.close_excursion();
+            return;
+        }
+        m.out_of_tolerance += 1;
+        m.first_problem
+            .get_or_insert_with(|| format!("record {k}: error {error} ticks (generation {g})"));
+        match self.excursion.as_mut() {
+            Some(e) if e.generation == g => {
+                e.records += 1;
+                e.last_pts = pts;
+                e.max_abs_error = e.max_abs_error.max(error.abs());
+            }
+            _ => {
+                self.close_excursion();
+                self.excursion = Some(Excursion {
+                    generation: g,
+                    records: 1,
+                    first_pts: pts,
+                    last_pts: pts,
+                    max_abs_error: error.abs(),
+                });
+            }
+        }
+    }
+
+    /// Count the open excursion, excusing it as sender-report jitter when it
+    /// is the first of its generation, spans at most one report interval
+    /// and no record in it is off by more than 10 ms. A second excursion in
+    /// a generation is never excused, even when the first was not.
+    fn close_excursion(&mut self) {
+        let Some(e) = self.excursion.take() else {
+            return;
+        };
+        let m = &mut self.metrics;
+        m.excursions += 1;
+        let max_ms = e.max_abs_error as f64 / 90.0;
+        m.max_excursion_ms = m.max_excursion_ms.max(max_ms);
+        let span = e.last_pts - e.first_pts;
+        let first_in_generation = self.last_excursion_generation != Some(e.generation);
+        self.last_excursion_generation = Some(e.generation);
+        if first_in_generation
+            && e.max_abs_error <= KLV_EXCURSION_MAX_TICKS
+            && span <= KLV_EXCURSION_MAX_SPAN_TICKS
+        {
+            m.excused_excursions += 1;
+            m.excused_excursion_details.push(format!(
+                "sr-jitter: {} records over {} ms, max |error| {max_ms:.2} ms, generation {}",
+                e.records,
+                span / 90,
+                e.generation
+            ));
         }
     }
 
     /// Close the oracle: records still held never met a video access unit
     /// of their generation, so each counts out of tolerance.
     fn finish(mut self) -> KlvPlacementMetrics {
+        self.close_excursion();
         let g = self.metrics.generations + 1;
-        for (k, _) in std::mem::take(&mut self.held) {
+        let held = std::mem::take(&mut self.held);
+        if !held.is_empty() {
+            // Never excused: there is no error to bound.
+            self.metrics.excursions += 1;
+        }
+        for (k, _) in held {
             self.metrics.out_of_tolerance += 1;
             self.metrics.first_problem.get_or_insert_with(|| {
                 format!("record {k}: no video to judge it against (generation {g})")
@@ -1513,21 +1593,25 @@ impl Tally {
             .map(|a| a.finish(wire.packets))
             .map(|mut rep| {
                 // Reported beside the other attribution counts: the audio
-                // PIDs' prefix mismatches the corruption log explains.
+                // PIDs' and the AV1 video PID's prefix mismatches the
+                // corruption log explains.
+                let excused = |pid: u16| {
+                    let seen = wire.pes.get(&pid).map_or(0, |s| s.prefix_mismatches);
+                    self.prefix_excused_by_pid
+                        .get(&pid)
+                        .copied()
+                        .unwrap_or(0)
+                        .min(seen)
+                };
                 rep.adts_prefix_excused = inv
                     .programs
                     .iter()
                     .filter_map(|ep| ep.audio_pid)
-                    .map(|pid| {
-                        let pid = &pid;
-                        let seen = wire.pes.get(pid).map_or(0, |s| s.prefix_mismatches);
-                        self.prefix_excused_by_pid
-                            .get(pid)
-                            .copied()
-                            .unwrap_or(0)
-                            .min(seen)
-                    })
+                    .map(excused)
                     .sum();
+                if inv.av1_mode.is_some() {
+                    rep.av1_prefix_excused = excused(inv.programs[0].video_pid);
+                }
                 rep
             })
             .inspect(|rep| {
@@ -1668,11 +1752,16 @@ impl Tally {
         self.take_rejected_timing_issue();
         let klv_placement = self.placement.take().map(PlacementState::finish);
         if let Some(m) = &klv_placement {
-            if m.out_of_tolerance > 0 {
+            if m.has_unexcused_error() {
                 failures.push(format!(
-                    "klv_placement: {} of {} records out of tolerance (max |error| {} ticks, \
-                     tolerance {})",
-                    m.out_of_tolerance, m.records, m.max_abs_error_ticks, m.tolerance_ticks
+                    "klv_placement: {} of {} records out of tolerance in {} excursion(s), {} \
+                     excused (max |error| {} ticks, tolerance {})",
+                    m.out_of_tolerance,
+                    m.records,
+                    m.excursions,
+                    m.excused_excursions,
+                    m.max_abs_error_ticks,
+                    m.tolerance_ticks
                 ));
             }
             if m.unexpected_resets > 0 {
@@ -4383,7 +4472,9 @@ mod tests {
 
     #[test]
     fn klv_placement_counts_a_record_outside_tolerance() {
-        // The 4th record (index 3) lands 92 ticks late.
+        // The 4th record (index 3) lands 92 ticks late: one excursion, excused
+        // as sender-report jitter. A second one (index 6) in the same
+        // generation fails the oracle.
         let mut t = Tally::new();
         t.set_klv_placement(placement_expect(1));
         feed_placement_generation(&mut t, 0, 30, &[0, 0, 0, 92]);
@@ -4393,21 +4484,143 @@ mod tests {
             .klv_placement
             .clone()
             .expect("placement block");
-        assert_eq!(m.records, 10);
-        assert_eq!(m.out_of_tolerance, 1);
+        assert_eq!((m.records, m.out_of_tolerance), (10, 1));
+        assert_eq!((m.excursions, m.excused_excursions), (1, 1));
         assert_eq!(m.max_abs_error_ticks, 92);
         assert_eq!(
             m.first_problem.as_deref(),
             Some("record 3: error 92 ticks (generation 1)")
         );
-        assert!(!report.pass);
         assert!(
-            report.failures.iter().any(|f| f
-                == "klv_placement: 1 of 10 records out of tolerance (max |error| 92 ticks, \
-                    tolerance 91)"),
+            placement_failures(&report).is_empty(),
             "{:?}",
             report.failures
         );
+
+        let mut t = Tally::new();
+        t.set_klv_placement(placement_expect(1));
+        feed_placement_generation(&mut t, 0, 30, &[0, 0, 0, 92, 0, 0, -93]);
+        let report = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
+        let m = report
+            .metrics
+            .klv_placement
+            .clone()
+            .expect("placement block");
+        assert_eq!(
+            (m.out_of_tolerance, m.excursions, m.excused_excursions),
+            (2, 2, 1)
+        );
+        assert!(!report.pass);
+        assert!(
+            report.failures.iter().any(|f| f
+                == "klv_placement: 2 of 10 records out of tolerance in 2 excursion(s), 1 \
+                    excused (max |error| 93 ticks, tolerance 91)"),
+            "{:?}",
+            report.failures
+        );
+    }
+
+    /// `n` records starting at index `from`, each `late` ticks late.
+    fn late_run(len: usize, from: usize, n: usize, late: i64) -> Vec<i64> {
+        let mut v = vec![0; len];
+        v[from..from + n].iter_mut().for_each(|x| *x = late);
+        v
+    }
+
+    #[test]
+    fn klv_placement_excuses_one_sr_interval_excursion_under_10_ms() {
+        // The 0.9.0 soak's shape: 56 records at 10 Hz, 205 ticks late, over
+        // 5.5 s — one sender-report interval of offset jitter.
+        let mut t = Tally::new();
+        t.set_klv_placement(placement_expect(1));
+        feed_placement_generation(&mut t, 0, 300, &late_run(100, 20, 56, 205));
+        let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
+        assert!(placement_failures(&r).is_empty(), "{:?}", r.failures);
+        let m = r.metrics.klv_placement.expect("placement block");
+        assert_eq!(
+            (
+                m.records,
+                m.out_of_tolerance,
+                m.excursions,
+                m.excused_excursions
+            ),
+            (100, 56, 1, 1)
+        );
+        assert!(
+            (m.max_excursion_ms - 205.0 / 90.0).abs() < 1e-9,
+            "{}",
+            m.max_excursion_ms
+        );
+        assert_eq!(
+            m.excused_excursion_details,
+            ["sr-jitter: 56 records over 5500 ms, max |error| 2.28 ms, generation 1"]
+        );
+        assert!(!m.has_unexcused_error());
+    }
+
+    #[test]
+    fn klv_placement_fails_a_second_excursion_or_an_excursion_over_10_ms() {
+        let judge = |late: &[i64], generations: u64| {
+            let mut t = Tally::new();
+            t.set_klv_placement(placement_expect(generations));
+            for _ in 0..generations {
+                feed_placement_generation(&mut t, 0, 300, late);
+            }
+            finish_baseline(t, VerifyMode::Lossy, &WireSummary::default())
+        };
+        // Two excursions in one generation: the second fails.
+        let mut two = late_run(100, 10, 5, 205);
+        two[50..55].iter_mut().for_each(|x| *x = 205);
+        let r = judge(&two, 1);
+        let m = r.metrics.klv_placement.clone().expect("placement block");
+        assert_eq!((m.excursions, m.excused_excursions), (2, 1));
+        assert!(!placement_failures(&r).is_empty(), "{:?}", r.failures);
+        // One record more than 10 ms (900 ticks) late is never excused.
+        let r = judge(&late_run(100, 10, 1, 901), 1);
+        let m = r.metrics.klv_placement.clone().expect("placement block");
+        assert_eq!((m.excursions, m.excused_excursions), (1, 0));
+        assert!((m.max_excursion_ms - 901.0 / 90.0).abs() < 1e-9);
+        assert!(!placement_failures(&r).is_empty(), "{:?}", r.failures);
+        // The second excursion of a generation is not excused even when the
+        // first, over 10 ms, was not either.
+        let mut big_then_small = late_run(100, 10, 1, 901);
+        big_then_small[50] = 205;
+        let r = judge(&big_then_small, 1);
+        let m = r.metrics.klv_placement.clone().expect("placement block");
+        assert_eq!((m.excursions, m.excused_excursions), (2, 0));
+        assert!(!placement_failures(&r).is_empty(), "{:?}", r.failures);
+        // A run longer than one sender-report interval (7.9 s) is not jitter.
+        let r = judge(&late_run(100, 10, 80, 205), 1);
+        let m = r.metrics.klv_placement.clone().expect("placement block");
+        assert_eq!((m.excursions, m.excused_excursions), (1, 0));
+        assert!(!placement_failures(&r).is_empty(), "{:?}", r.failures);
+        // One excursion in each of two generations: both excused.
+        let r = judge(&late_run(100, 10, 5, 205), 2);
+        let m = r.metrics.klv_placement.clone().expect("placement block");
+        assert_eq!(
+            (m.generations, m.excursions, m.excused_excursions),
+            (2, 2, 2)
+        );
+        assert_eq!(
+            m.excused_excursion_details,
+            [
+                "sr-jitter: 5 records over 400 ms, max |error| 2.28 ms, generation 1",
+                "sr-jitter: 5 records over 400 ms, max |error| 2.28 ms, generation 2"
+            ]
+        );
+        assert!(placement_failures(&r).is_empty(), "{:?}", r.failures);
+    }
+
+    #[test]
+    fn klv_placement_metrics_without_excursion_counts_read_as_unexcused() {
+        // A report written before excursions were counted: any record out
+        // of tolerance is an unexcused error.
+        let m = KlvPlacementMetrics {
+            out_of_tolerance: 3,
+            ..KlvPlacementMetrics::default()
+        };
+        assert!(m.has_unexcused_error());
+        assert!(!KlvPlacementMetrics::default().has_unexcused_error());
     }
 
     #[test]

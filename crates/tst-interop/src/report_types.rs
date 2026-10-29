@@ -258,6 +258,32 @@ pub struct KlvPlacementMetrics {
     /// raw `CellMetrics::nonconformant` count still includes them.
     #[serde(default)]
     pub timing_anomalies_excused: u64,
+    /// Runs of consecutive out-of-tolerance records, each one excursion;
+    /// records still held at the end (no video to judge them against)
+    /// are one more.
+    #[serde(default)]
+    pub excursions: u32,
+    /// Excursions excused as sender-report jitter: at most one per
+    /// publisher generation, spanning at most one sender-report interval,
+    /// with every error at most 10 ms.
+    #[serde(default)]
+    pub excused_excursions: u32,
+    /// The largest |error| inside any excursion, in milliseconds.
+    #[serde(default)]
+    pub max_excursion_ms: f64,
+    /// One `sr-jitter: …` line per excused excursion.
+    #[serde(default)]
+    pub excused_excursion_details: Vec<String>,
+}
+
+impl KlvPlacementMetrics {
+    /// Whether any record out of tolerance is not covered by an excused
+    /// excursion. A report written before excursions were counted carries
+    /// none, so its out-of-tolerance records all count.
+    pub fn has_unexcused_error(&self) -> bool {
+        self.out_of_tolerance > 0
+            && (self.excursions == 0 || self.excursions > self.excused_excursions)
+    }
 }
 
 /// Where a leg's error events sit relative to its reconnects — the

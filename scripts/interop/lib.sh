@@ -322,6 +322,36 @@ _tsanalyze_wrapped() {
   if [[ -n "$first" && -n "$last" ]] && (( last < first )); then echo 1; else echo 0; fi
 }
 
+# publish_generation <k> <log> -- <cmd...>
+#
+# One publisher generation of the soak's rtsp-publish legs: runs <cmd...>
+# (a gst-launch-1.0 pipeline under `timeout`) in the background with its
+# output in <log>, then copies <log> to stdout. PUBLISH_GEN_PID holds the
+# child's pid while it runs, so the caller's TERM trap can kill it at once.
+# Returns the generation's exit status, except that a nonzero exit after
+# the pipeline logged `Got EOS` is a send failure while closing a stream
+# whose media was already delivered (rtspclientsink's final message hitting
+# a closed connection): it is logged and counted as a clean end. A timeout
+# kill (124 or 137) still fails, EOS or not: the generation overran. The
+# delivery itself is judged by the receiver's generation count.
+publish_generation() {
+  local k=$1 log=$2 rc=0 last
+  shift 2
+  [[ "${1:-}" == "--" ]] && shift
+  "$@" >"$log" 2>&1 &
+  PUBLISH_GEN_PID=$!
+  wait "$PUBLISH_GEN_PID" || rc=$?
+  PUBLISH_GEN_PID=""
+  cat "$log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ended rc=$rc"
+  if [[ "$rc" -ne 0 && "$rc" -ne 124 && "$rc" -ne 137 ]] && grep -q 'Got EOS' "$log"; then
+    last=$(grep -v '^[[:space:]]*$' "$log" | tail -1)
+    echo "generation $k: post-EOS send failure ($last), counted as a clean end"
+    rc=0
+  fi
+  return "$rc"
+}
+
 # tsp_analyze_counters_zero <tsp -P analyze combined output>
 #
 # Same idea for `tsp -P analyze`'s "TRANSPORT STREAM ANALYSIS REPORT"
