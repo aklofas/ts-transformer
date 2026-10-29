@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The qualification record: one JSON file per qualified tree, rendered into the evidence page.
 
-  collect   --artifacts DIR --out FILE [--root DIR] [--release] [--allow-waiver] [--tag NAME]
+  collect   --artifacts DIR --out FILE [--root DIR] [--release] [--tag NAME]
             read a release-qualify run's artefacts; --release also requires the
             72-hour soak and the corpus archives for the qualified tree, each with
-            a raw pass unless --allow-waiver admits a maintainer's waiver; --tag names
+            a raw pass (a waived archive is recorded, never admitted); --tag names
             the tag a tag push qualified
   render    --json FILE (--write | --check) [--root DIR]   the generated blocks in
             docs/project/validation-evidence.md and docs/project/1.0-exit-criteria.md
@@ -287,23 +287,22 @@ def _check_sha(sha):
         raise QualificationError("context.json source.sha is not a 40-hex commit: %r" % (sha,))
 
 
-def _raw_verdict_reason(kind, entry, allow_waiver):
+def _raw_verdict_reason(kind, entry):
     """The reason a soak or corpus entry fails the gate on its verdict, or None."""
     if entry["disposition"] == "fail":
         return "%s: archive %s recorded overall_pass=false" % (kind, entry["id"])
-    if entry["disposition"] == "waived" and not allow_waiver:
+    if entry["disposition"] == "waived":
         return ("%s: archive %s is waived (%d verdicts), and a release needs a raw pass"
                 % (kind, entry["id"], len(entry["waiver"]["verdicts"])))
     return None
 
 
-def release_vm(root, sha, archives, release, expected_files, allow_waiver=False):
+def release_vm(root, sha, archives, release, expected_files):
     """The release gate: the chosen soak archive (see _pick_soak) must stand for
     `sha`, have passed and declared 72 hours, and a passing corpus archive must
-    exist for the soaked tree. A waived archive passes only with `allow_waiver`
-    (a mid-cycle dispatch); a release needs the harness's own pass. Outside
-    release mode the same entries are recorded for information and `reasons`
-    stays empty."""
+    exist for the soaked tree. A waived archive never passes: a release needs the
+    harness's own pass. Outside release mode the same entries, and their
+    dispositions, are recorded for information and `reasons` stays empty."""
     reasons = []
     soak, corpus = None, None
     soaks = [a for a in archives if a["kind"] == "soak"]
@@ -316,8 +315,9 @@ def release_vm(root, sha, archives, release, expected_files, allow_waiver=False)
             reasons.append("soak: git could not resolve %s: %s" % (soak["tree"], soak["git_error"]))
         else:
             # The record states what changed between the soaked and the qualified
-            # tree, not only that nothing outside the release documents did.
-            docs = []
+            # tree, not only that nothing outside the release documents did. A
+            # superseded soak has no such list: None, never an empty one.
+            docs = None if soak["changed_paths"] else []
             if soak["tree"] != sha and not soak["changed_paths"]:
                 docs = changed_release_documents(root, soak["tree"], sha)
             soak["equivalence"] = {"soaked": soak["tree"], "qualified": sha,
@@ -325,7 +325,7 @@ def release_vm(root, sha, archives, release, expected_files, allow_waiver=False)
             if soak["changed_paths"]:
                 reasons.append("soak: archive %s is superseded by %d changed path(s) outside the release documents"
                                % (soak["id"], soak["changed_paths"]))
-            r = _raw_verdict_reason("soak", soak, allow_waiver)
+            r = _raw_verdict_reason("soak", soak)
             if r:
                 reasons.append(r)
             # A failed run on the same tree after the chosen one, of any declared
@@ -334,8 +334,7 @@ def release_vm(root, sha, archives, release, expected_files, allow_waiver=False)
             chosen = next(a for a in soaks if a["id"] == soak["id"])
             key = lambda a: (a["date"], order[id(a)])
             for a in _by_date(soaks):
-                admitted = disposition(a) == "pass" or (allow_waiver and disposition(a) == "waived")
-                if a["tree"] == soak["tree"] and not admitted and key(a) > key(chosen):
+                if a["tree"] == soak["tree"] and disposition(a) != "pass" and key(a) > key(chosen):
                     reasons.append("soak: archive %s, a newer run on the same tree, recorded overall_pass=false"
                                    % a["id"])
             if soak["expected_duration_s"] != RELEASE_SOAK_S:
@@ -356,7 +355,7 @@ def release_vm(root, sha, archives, release, expected_files, allow_waiver=False)
                 if any(k not in c for k in CORPUS_COUNTS):
                     reasons.append("corpus: archive %s records no counts; the release gate needs the "
                                    "eight the corpus tool's archive row carries" % c["id"])
-                r = _raw_verdict_reason("corpus", corpus, allow_waiver)
+                r = _raw_verdict_reason("corpus", corpus)
                 if r:
                     reasons.append(r)
                 if all(k in c for k in CORPUS_COUNTS):
@@ -472,7 +471,7 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None):
     return ("GO" if not reasons else "NO-GO"), reasons
 
 
-def collect(art, root, release=False, allow_waiver=False, tag=None):
+def collect(art, root, release=False, tag=None):
     ctx = read_json(os.path.join(art, "context.json"))
     if ctx is None:
         die("context.json is missing from " + art)
@@ -544,8 +543,7 @@ def collect(art, root, release=False, allow_waiver=False, tag=None):
                    "exit": r["exit"], "analysed": r.get("analysed", False)})
     archives, expected_files = load_archives(root)
     try:
-        gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release,
-                          expected_files, allow_waiver=allow_waiver)
+        gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release, expected_files)
     except QualificationError as e:
         die(str(e))
     v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate)
@@ -803,7 +801,7 @@ def render_exit_criteria(rec, archives, census):
             out.append(_today(anchor, label, body))
     arm = next((c for c in census if c.get("arch") == "linux-aarch64"), None)
     if arm is None:
-        body = "Status: open: the interop workflow has no linux-aarch64 census."
+        body = "Status: open: the committed qualification record carries no linux-aarch64 census."
     else:
         body = "The linux-aarch64 census (%s) reads %d / %d / %d / %d: total, pass, fail, skipped. Status: %s." % (
             arm.get("shape", "unknown"), arm["total"], arm["pass"], arm["fail"], arm["skipped"],
@@ -905,8 +903,6 @@ def main(argv=None):
     c.add_argument("--root", default=".")
     c.add_argument("--release", action="store_true",
                    help="qualify as a release: require the 72-hour soak and corpus archives for this tree")
-    c.add_argument("--allow-waiver", action="store_true",
-                   help="admit a soak or corpus archive the maintainer waived (never for a release)")
     c.add_argument("--tag", help="the v* tag a tag push qualified; recorded as source.tag")
     r = sub.add_parser("render")
     r.add_argument("--json", required=True)
@@ -920,8 +916,7 @@ def main(argv=None):
     v.add_argument("--root", default=".")
     args = ap.parse_args(argv)
     if args.cmd == "collect":
-        rec = collect(args.artifacts, args.root, release=args.release, allow_waiver=args.allow_waiver,
-                      tag=args.tag)
+        rec = collect(args.artifacts, args.root, release=args.release, tag=args.tag)
         with open(args.out, "w") as f:
             json.dump(rec, f, indent=2)
             f.write("\n")

@@ -731,6 +731,15 @@ class ReleaseModeTests(unittest.TestCase):
         self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-old")
         self.assertEqual(rec["release_vm"]["corpus"]["id"], "corpus-old")
 
+    def test_a_superseded_soak_records_no_release_document_list(self):
+        newer = "a" * 40
+        rows = archives_toml(archive_row("soak-new", "soak", newer, legs=FIVE),
+                             archive_row("corpus-new", "corpus", newer, counts=COUNTS))
+        with mock.patch.object(q, "changed_paths", return_value=["crates/tst-core/src/lib.rs"]):
+            rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIsNone(rec["release_vm"]["soak"]["equivalence"]["changed_release_documents"])
+
     def test_only_short_soaks_name_the_declared_duration(self):
         rows = archives_toml(archive_row("soak-1h", "soak", SHA, duration=3600),
                              archive_row("soak-2h", "soak", SHA, date="2026-10-10", duration=7200),
@@ -837,7 +846,7 @@ class WaiverTests(unittest.TestCase):
             self.assertEqual(q.validate_archives([row]),
                              ["soak-x: waiver needs verdicts, reason, reviewer, date and fixed_in"], bad)
 
-    def test_release_mode_refuses_a_waived_soak_without_allow_waiver(self):
+    def test_release_mode_refuses_a_waived_soak(self):
         rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), CORPUS]
         gate = q.release_vm(self.root, self.sha, rows, True, 251)
         self.assertEqual(gate["soak"]["disposition"], "waived")
@@ -845,11 +854,20 @@ class WaiverTests(unittest.TestCase):
         self.assertIn("soak: archive soak-rel is waived (2 verdicts), and a release needs a raw pass",
                       gate["reasons"])
 
-    def test_a_mid_cycle_dispatch_may_allow_a_waiver(self):
+    def test_a_non_release_collect_reports_a_waived_soak_with_no_reasons(self):
         rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), CORPUS]
-        gate = q.release_vm(self.root, self.sha, rows, True, 251, allow_waiver=True)
+        gate = q.release_vm(self.root, self.sha, rows, False, 251)
         self.assertEqual(gate["reasons"], [])
+        self.assertEqual(gate["soak"]["disposition"], "waived")
         self.assertEqual(gate["disposition"], "waived")
+
+    def test_collect_has_no_flag_that_admits_a_waiver(self):
+        tmp = tempfile.mkdtemp()
+        art, root = build(tmp)
+        rc, _, err = RenderTests.run_cli(None, ["collect", "--artifacts", art, "--out", os.path.join(tmp, "q.json"),
+                                                "--root", root, "--release", "--allow-waiver"])
+        self.assertEqual(rc, 2)
+        self.assertIn("unrecognized arguments: --allow-waiver", err)
 
     def test_a_waived_corpus_row_needs_a_raw_pass_too(self):
         rows = [SOAK72, dict(CORPUS, overall_pass=False, waiver=WAIVER)]
@@ -857,16 +875,16 @@ class WaiverTests(unittest.TestCase):
         self.assertEqual(gate["corpus"]["disposition"], "waived")
         self.assertEqual(gate["reasons"],
                          ["corpus: archive corpus-rel is waived (2 verdicts), and a release needs a raw pass"])
-        self.assertEqual(q.release_vm(self.root, self.sha, rows, True, 251, allow_waiver=True)["reasons"], [])
+        self.assertEqual(q.release_vm(self.root, self.sha, rows, False, 251)["reasons"], [])
 
     def test_an_unwaived_failure_is_the_worse_disposition(self):
         rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), dict(CORPUS, overall_pass=False)]
-        gate = q.release_vm(self.root, self.sha, rows, True, 251, allow_waiver=True)
+        gate = q.release_vm(self.root, self.sha, rows, True, 251)
         self.assertEqual(gate["corpus"]["disposition"], "fail")
         self.assertEqual(gate["disposition"], "fail")
         self.assertEqual(q.release_vm(self.root, self.sha, [SOAK72, CORPUS], True, 251)["disposition"], "pass")
 
-    def test_collect_reads_the_waiver_and_the_flag(self):
+    def test_collect_records_the_waiver_in_both_modes(self):
         rows = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False, legs=FIVE)
                              + '[archive.waiver]\nverdicts = ["a", "b"]\nreason = "harness"\n'
                                'reviewer = "maintainer"\ndate = "2026-10-28"\nfixed_in = "0.9.1"\n',
@@ -875,12 +893,14 @@ class WaiverTests(unittest.TestCase):
         art, root = build(tmp, archives=rows)
         rec = q.collect(art, root, release=True)
         self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: archive soak-rel is waived (2 verdicts), and a release needs a raw pass",
+                      rec["verdict_reasons"])
         self.assertEqual(rec["archives"][0]["waiver"], WAIVER)
-        rec = q.collect(art, root, release=True, allow_waiver=True)
-        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         self.assertEqual(rec["release_vm"]["disposition"], "waived")
-        self.assertIn("Release gate: soak soak-rel (tree %s, 259200 s, legs srt, rist, rtsp-publish, "
-                      "rtsp-publish-es, whep, FAIL, waived)" % SHA[:12], q.render_block(rec))
+        rec = q.collect(art, root, release=False)
+        self.assertEqual(rec["release_vm"]["reasons"], [])
+        self.assertEqual(rec["release_vm"]["disposition"], "waived")
+        self.assertEqual(rec["archives"][0]["waiver"], WAIVER)
 
     def test_render_prints_the_waiver_on_the_archive_line(self):
         rec = self.record_with(archives=[dict(ROW, overall_pass=False, waiver=WAIVER)])
@@ -913,13 +933,19 @@ class ExitCriteriaTests(unittest.TestCase):
         self.assertTrue(corpus.endswith(" Status: met."), corpus)
 
     def waived_record(self, soak_id="soak-9.9.0-2026-10-27", tag=None):
-        """A release record whose soak was waived (admitted with allow_waiver)."""
-        rows = archives_toml(archive_row(soak_id, "soak", SHA, overall_pass=False, legs=FIVE)
-                             + '[archive.waiver]\nverdicts = ["a", "b"]\nreason = "harness"\n'
-                               'reviewer = "maintainer"\ndate = "2026-10-28"\nfixed_in = "9.9.1"\n',
-                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
-        art, root = build(tempfile.mkdtemp(), archives=rows)
-        return q.collect(art, root, release=True, allow_waiver=True, tag=tag)
+        """A release record collected on a raw pass whose soak the maintainer waived
+        afterwards; the record's archive list is the table as it stands now."""
+        corpus = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)
+        art, root = build(tempfile.mkdtemp(),
+                          archives=archives_toml(archive_row(soak_id, "soak", SHA, legs=FIVE), corpus))
+        rec = q.collect(art, root, release=True, tag=tag)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        put(os.path.join(root, "tests/coverage/evidence-archives.toml"),
+            archives_toml(archive_row(soak_id, "soak", SHA, overall_pass=False, legs=FIVE)
+                          + '[archive.waiver]\nverdicts = ["a", "b"]\nreason = "harness"\n'
+                            'reviewer = "maintainer"\ndate = "2026-10-28"\nfixed_in = "9.9.1"\n', corpus))
+        rec["archives"] = q.load_archives(root)[0]
+        return rec
 
     def test_a_waiver_names_the_release_its_soak_archive_stood_for(self):
         rec = self.waived_record()
@@ -967,7 +993,8 @@ class ExitCriteriaTests(unittest.TestCase):
 
     def test_the_arm64_subset_is_met_only_by_a_clean_aarch64_census(self):
         rec = self.release_record(RELEASE_OK)
-        self.assertIn("**The ARM64 subset today.** Status: open: the interop workflow has no linux-aarch64 census.",
+        self.assertIn("**The ARM64 subset today.** Status: open: the committed qualification record carries no "
+                      "linux-aarch64 census.",
                       q.render_exit_criteria(rec, rec["archives"], []))
         arm = {"arch": "linux-aarch64", "shape": "subset-arm64", "total": 80, "pass": 70, "fail": 0,
                "skipped": 10, "stale": 0}

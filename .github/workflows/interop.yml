@@ -314,13 +314,17 @@ jobs:
 
   interop-arm64:
     name: interop subset (linux-aarch64)
-    # Scheduled and called (release-qualify) runs only, never pull requests.
+    # Scheduled, dispatched and called (release-qualify) runs, never pull
+    # requests.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04-arm
     # Its census is recorded beside the x86_64 one (the qualification record
     # keeps both; the 1.0 exit criteria read this one) while the release
     # verdict reads the x86_64 census, so a red subset never fails the
-    # workflow a release-qualify run calls.
+    # workflow a release-qualify run calls. A census file that exists but is
+    # malformed does fail the qualification record: it is never read as absent.
+    # The job turns gating (this line is removed) once two scheduled runs are
+    # green; until then the arm runner's peer-tool set is still being measured.
     continue-on-error: true
     timeout-minutes: 90
     steps:
