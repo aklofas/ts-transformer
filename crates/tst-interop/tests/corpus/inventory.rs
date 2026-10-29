@@ -204,3 +204,40 @@ fn an_empty_corpus_directory_is_an_error() {
     assert!(e.contains("no captures found"), "{e}");
     assert!(!e.contains(&dir.display().to_string()), "{e}");
 }
+
+/// A `quarantine` directory, at the top or deeper, is neither walked nor
+/// inventoried; each one skipped is counted.
+#[test]
+fn a_quarantine_directory_is_not_inventoried() {
+    let dir = temp_dir_named("inventory-quarantine");
+    std::fs::write(dir.join("a.ts"), gen_profile_bytes("baseline", 2.0)).unwrap();
+    std::fs::create_dir_all(dir.join("quarantine")).unwrap();
+    std::fs::write(
+        dir.join("quarantine").join("bad.ts"),
+        gen_profile_bytes("klv-sync", 2.0),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("deeper").join("quarantine")).unwrap();
+    std::fs::write(
+        dir.join("deeper").join("quarantine").join("bad2.ts"),
+        gen_profile_bytes("baseline", 3.0),
+    )
+    .unwrap();
+    // The match is on the whole name.
+    std::fs::create_dir_all(dir.join("quarantined")).unwrap();
+    std::fs::write(
+        dir.join("quarantined").join("kept.ts"),
+        gen_profile_bytes("baseline", 4.0),
+    )
+    .unwrap();
+    let inv = inventory::build(&dir).unwrap();
+    assert_eq!(inv.files.len(), 2, "{inv:?}");
+    assert!(
+        inv.files
+            .iter()
+            .flat_map(|f| &f.paths)
+            .all(|p| !p.components().any(|c| c.as_os_str() == "quarantine")),
+        "{inv:?}"
+    );
+    assert_eq!(inv.skipped_dirs, 2);
+}

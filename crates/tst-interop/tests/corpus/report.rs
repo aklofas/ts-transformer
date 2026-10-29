@@ -433,6 +433,7 @@ fn a_failed_replay_retry_leaves_no_pass_behind() {
             feed_errors: 0,
             probe_error: None,
         }],
+        skipped_dirs: 0,
     };
     let run_dir = RunDir { root: run.clone() };
     inventory::write(&inv, &run_dir).unwrap();

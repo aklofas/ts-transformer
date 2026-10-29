@@ -1,6 +1,7 @@
 //! The inventory stage: hash every `.ts` under a directory, probe it
 //! through the demuxer, classify its PMT shape and merge identical content
-//! found under different names.
+//! found under different names. A directory named in [`SKIPPED_DIRS`] is
+//! never walked.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -68,7 +69,16 @@ pub struct Inventory {
     pub schema_version: u32,
     /// Sorted by sha256.
     pub files: Vec<FileEntry>,
+    /// Directories the walk did not enter (see [`SKIPPED_DIRS`]); absent
+    /// from older files.
+    #[serde(default)]
+    pub skipped_dirs: u64,
 }
+
+/// Directory names the walk never enters, at any depth, matched on the
+/// whole name and case-sensitively: a corpus keeps its set-aside captures
+/// there, and a sync that pulls them in must not put them in the run.
+pub const SKIPPED_DIRS: &[&str] = &["quarantine"];
 
 pub(super) fn kind_name(kind: &StreamKind) -> &'static str {
     match kind {
@@ -94,7 +104,9 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn collect_ts(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+/// Every `.ts` under `dir` into `out`; `skipped` counts the directories in
+/// [`SKIPPED_DIRS`] left out.
+fn collect_ts(dir: &Path, out: &mut Vec<PathBuf>, skipped: &mut u64) -> Result<(), String> {
     let rd = std::fs::read_dir(dir)
         .map_err(|e| format!("cannot read the corpus directory: {}", e.kind()))?;
     for entry in rd {
@@ -105,7 +117,11 @@ fn collect_ts(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
             .map_err(|e| format!("cannot stat a corpus entry: {}", e.kind()))?;
         // A symlinked directory is skipped so a link loop cannot recurse forever.
         if file_type.is_dir() {
-            collect_ts(&path, out)?;
+            if SKIPPED_DIRS.iter().any(|d| entry.file_name() == *d) {
+                *skipped += 1;
+                continue;
+            }
+            collect_ts(&path, out, skipped)?;
         } else if path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("ts"))
@@ -261,7 +277,8 @@ fn panicked_entry(path: &Path) -> Result<FileEntry, String> {
 /// must not pass.
 pub fn build(dir: &Path) -> Result<Inventory, String> {
     let mut paths = Vec::new();
-    collect_ts(dir, &mut paths)?;
+    let mut skipped_dirs = 0;
+    collect_ts(dir, &mut paths, &mut skipped_dirs)?;
     if paths.is_empty() {
         return Err("no captures found: the corpus directory holds no .ts file".to_string());
     }
@@ -304,6 +321,7 @@ pub fn build(dir: &Path) -> Result<Inventory, String> {
     Ok(Inventory {
         schema_version: 1,
         files,
+        skipped_dirs,
     })
 }
 

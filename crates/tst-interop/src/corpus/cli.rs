@@ -137,6 +137,7 @@ fn run_inventory(args: &[String]) -> ! {
         "inventory: {} distinct files, {bad} unprobeable",
         inv.files.len()
     );
+    println!("skipped directories: {}", inv.skipped_dirs);
     std::process::exit(0);
 }
 
