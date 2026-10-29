@@ -16,7 +16,9 @@ pub struct Annotations {
     /// PIDs on a 0x06 stream that carry private data which is not MISB KLV.
     pub non_misb_private_pids: Vec<u16>,
     /// The most undecoded records or unknown samples excused on each PID
-    /// of `non_misb_private_pids`.
+    /// of `non_misb_private_pids`. The same bound excuses the PID's
+    /// `klv-missing` row, which counts KLV PES on the wire, so it must also
+    /// cover the PID's PES count.
     pub max_private_records: Option<u64>,
     /// The capture is known to restart or jump its timeline.
     pub known_discontinuity: bool,

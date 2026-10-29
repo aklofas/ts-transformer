@@ -47,6 +47,24 @@ pub struct SweepFile {
     pub invariant_failures: Vec<InvariantFailure>,
 }
 
+/// What an `--accept` accepted about a capture's place in the baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Acceptance {
+    /// The baseline does not list the capture.
+    New,
+    /// The baseline lists the capture and the corpus no longer holds it.
+    Removed,
+}
+
+/// One accepted addition or removal, with the reviewed reason.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Accepted {
+    pub sha: Sha256Hex,
+    pub kind: Acceptance,
+    pub because: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SweepSummary {
     pub schema_version: u32,
@@ -86,6 +104,10 @@ pub struct SweepSummary {
     /// Of `baseline_only`, those an `--accept` names.
     #[serde(default)]
     pub baseline_only_explained: u64,
+    /// Every accepted addition or removal with its `--because` text: the
+    /// reason is the evidence, not only the count.
+    #[serde(default)]
+    pub accepted: Vec<Accepted>,
     pub per_file: Vec<SweepFile>,
     pub pass: bool,
 }
@@ -357,6 +379,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         new_unexplained: 0,
         baseline_only: Vec::new(),
         baseline_only_explained: 0,
+        accepted: Vec::new(),
         per_file: Vec::new(),
         pass: false,
     };
@@ -416,8 +439,13 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                     // release, accepted by name like a change.
                     Some(None) => {
                         summary.new_no_baseline += 1;
-                        if accept(&entry.sha256).is_some() {
+                        if let Some(because) = accept(&entry.sha256) {
                             summary.new_explained += 1;
+                            summary.accepted.push(Accepted {
+                                sha: entry.sha256.clone(),
+                                kind: Acceptance::New,
+                                because,
+                            });
                         } else {
                             summary.new_unexplained += 1;
                         }
@@ -450,8 +478,13 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
     if let Some(listed) = &listed {
         let held: BTreeSet<&Sha256Hex> = inv.files.iter().map(|f| &f.sha256).collect();
         for sha in listed.iter().filter(|s| !held.contains(s)) {
-            if accept(sha).is_some() {
+            if let Some(because) = accept(sha) {
                 summary.baseline_only_explained += 1;
+                summary.accepted.push(Accepted {
+                    sha: sha.clone(),
+                    kind: Acceptance::Removed,
+                    because,
+                });
             }
             summary.baseline_only.push(sha.clone());
         }
