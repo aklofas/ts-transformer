@@ -28,6 +28,16 @@ fn rules(f: &[InvariantFailure]) -> Vec<&str> {
 /// Thirty video AUs on 0x100; each is followed by a KLV payload on 0x101
 /// when `klv` is given (`Some(None)` pushes a real ST 0601 record).
 fn muxed(klv: Option<Option<&[u8]>>) -> Vec<u8> {
+    muxed_n(klv, 30)
+}
+
+/// `n` video AUs, each followed by `payload` on the KLV PID.
+pub fn muxed_klv_file(payload: &[u8], n: u32) -> Vec<u8> {
+    muxed_n(Some(Some(payload)), n)
+}
+
+/// [`muxed`] with `n` video AUs.
+fn muxed_n(klv: Option<Option<&[u8]>>, n: u32) -> Vec<u8> {
     let p = tst_interop::profiles::by_name("baseline").unwrap();
     let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
     prog.add_video(0x100, VideoCodec::H264);
@@ -38,7 +48,7 @@ fn muxed(klv: Option<Option<&[u8]>>) -> Vec<u8> {
     let (vh, kh) = (mux.video_handles()[0], mux.klv_handles()[0]);
     let mut out = Vec::new();
     let mut buf = [0u8; 1316];
-    for i in 0..30u32 {
+    for i in 0..n {
         let pts = Pts90khz::new(i64::from(i) * 3000);
         let (au, key) = video_au_sized(p.video, i, AuSizeMode::Compact);
         mux.push_video_to(vh, &au, pts, key).unwrap();

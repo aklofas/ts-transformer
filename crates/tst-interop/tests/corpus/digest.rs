@@ -578,3 +578,42 @@ fn a_record_cut_mid_body_is_truncated_and_a_foreign_ul_is_not() {
     assert!(!klv_record_digest(1, 0, &foreign_ul_item()).truncated);
     assert!(!klv_record_digest(1, 0, &ls).truncated);
 }
+
+/// An ST 0601 LS whose Item 2 (Precision Time Stamp, 8 bytes) carries 3
+/// bytes, then a valid Item 1 checksum.
+pub fn st0601_with_short_item2() -> Vec<u8> {
+    let mut out = tst_core::klv::UniversalLabel::ST_0601_LS.0.to_vec();
+    let body = [0x02, 0x03, 0x00, 0x01, 0x02];
+    // The body, then Tag 1 with its 2-byte checksum.
+    out.push((body.len() + 4) as u8);
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&[0x01, 0x02]);
+    let sum = checksum_running_sum_16(&out);
+    out.extend_from_slice(&sum.to_be_bytes());
+    out
+}
+
+#[test]
+fn a_record_with_a_field_error_is_decoded_and_counts_its_errors() {
+    // The lenient decoder records the short Item 2 as one field error and
+    // keeps the record.
+    let rec = klv_record_digest(1, 0, &st0601_with_short_item2());
+    assert!(rec.decoded, "{:?}", rec.unknown_reason);
+    assert_eq!(rec.field_errors, 1);
+    // A clean record has none.
+    let ls = klv_record_for(KlvSet::Compact, 0, 0).unwrap();
+    assert_eq!(klv_record_digest(1, 0, &ls).field_errors, 0);
+}
+
+#[test]
+fn field_errors_are_counted_per_pid_in_the_digest() {
+    let bytes = crate::invariants::muxed_klv_file(&st0601_with_short_item2(), 5);
+    let d = digest_config("default", &bytes, FEED_CHUNK);
+    let klv = d
+        .pids
+        .values()
+        .find(|p| p.metadata > 0 && p.kind.starts_with("klv"))
+        .unwrap();
+    assert_eq!(klv.klv_field_errors, Some(5), "{klv:?}");
+    assert_eq!(klv.klv_unknown, 0);
+}

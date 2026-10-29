@@ -211,6 +211,7 @@ pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest 
     let mut canonical = Vec::with_capacity(payload.len());
     let mut kinds = Vec::with_capacity(items.len());
     let mut tags = std::collections::BTreeSet::new();
+    let mut field_errors = 0u64;
     for (i, (ul, item)) in items.iter().enumerate() {
         let failed = |why: String| undecoded(format!("item {i} ({}): {why}", hex(&ul.0)), false);
         if *ul == UniversalLabel::PRECISION_TIMESTAMP_PACK_UL {
@@ -230,6 +231,7 @@ pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest 
                 Err(e) => return failed(format!("re-encode: {e}")),
             }
             tags.extend(crate::fixtures::observed_tags(&rec));
+            field_errors += rec.field_errors.len() as u64;
             kinds.push("st0601-ls".to_string());
         } else {
             return failed("not a registered MISB item".to_string());
@@ -244,7 +246,7 @@ pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest 
         decoded: true,
         unknown_reason: None,
         truncated: false,
-        field_errors: 0,
+        field_errors,
     }
 }
 
@@ -474,6 +476,10 @@ impl Pass {
                         self.klv_records += 1;
                         if rec.decoded {
                             self.klv_decoded += 1;
+                            if rec.field_errors > 0 {
+                                let d = &mut self.pid(stream.pid, kind_name(&stream.kind)).digest;
+                                *d.klv_field_errors.get_or_insert(0) += rec.field_errors;
+                            }
                         } else {
                             self.klv_unknown += 1;
                             let d = &mut self.pid(stream.pid, kind_name(&stream.kind)).digest;

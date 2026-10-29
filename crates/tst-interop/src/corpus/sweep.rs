@@ -61,6 +61,14 @@ pub struct SweepSummary {
     /// baseline. A baseline that matches no file fails the sweep.
     #[serde(default)]
     pub baseline_matched: Option<u64>,
+    /// ST 0601 field errors over every capture's `default` configuration:
+    /// a record the lenient decoder kept with fields it could not read.
+    /// Recorded, never gated.
+    #[serde(default)]
+    pub klv_field_error_records: u64,
+    /// Captures with at least one such field error.
+    #[serde(default)]
+    pub files_with_klv_field_errors: u64,
     pub per_file: Vec<SweepFile>,
     pub pass: bool,
 }
@@ -232,6 +240,8 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         invariant_failures: 0,
         unused_accepts: Vec::new(),
         baseline_matched: None,
+        klv_field_error_records: 0,
+        files_with_klv_field_errors: 0,
         per_file: Vec::new(),
         pass: false,
     };
@@ -245,6 +255,13 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
             Ok((d, walked)) => {
                 let ann = notes.get(&entry.sha256.0).cloned().unwrap_or_default();
                 failures = invariants::check(&d.configs["default"], &walked, &ann);
+                let field_errors: u64 = d.configs["default"]
+                    .pids
+                    .values()
+                    .filter_map(|p| p.klv_field_errors)
+                    .sum();
+                summary.klv_field_error_records += field_errors;
+                summary.files_with_klv_field_errors += u64::from(field_errors > 0);
                 if failures.iter().any(|f| !f.excused) {
                     summary.invariant_failures += 1;
                 }
