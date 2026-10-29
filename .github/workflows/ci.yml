@@ -735,6 +735,17 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/release/test_publish_crates_all.sh
 
+      - name: Previous C package verification self-test (scripts/dev/prev-c-library.sh)
+        # gh is stubbed: a package whose digest or attestation fails is never
+        # used for the ABI comparison.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/dev/test_prev_c_library.sh
+
+      - name: Release attach self-test (release-qualify.yml attach step)
+        # gh is stubbed: the attach step replaces assets only on a draft Release.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/release/test_attach_draft_only.sh
+
       - name: Public-API ratchet (no unintended SemVer breaks)
         # Checks every crate with a committed public-api.txt baseline
         # (scripts/lib/roster.sh public-api) against it. tst-c is excluded: its ABI surface is a
@@ -1423,6 +1434,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      # gh attestation verify reads the previous package's provenance.
+      attestations: read
     # abidiff of this tree's libtstrans against the previous release tag's.
     # The previous library comes from the tag's Release package when that
     # carries one; until then it is built from source at the tag (cold build
