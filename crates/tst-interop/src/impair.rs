@@ -3,9 +3,9 @@
 //! seed and [`ImpairConfig`], [`Engine::decide`] produces the exact same
 //! sequence of [`Action`]s for the exact same sequence of `elapsed_ms`
 //! inputs: determinism is the entire point, so nothing in this module
-//! reads wall-clock time itself (no `SystemTime`/`Instant`) — the caller
-//! supplies `elapsed_ms`, which is what lets a soak run be replayed and
-//! its evidence reproduced byte-for-byte from just the seed + config.
+//! reads wall-clock time itself (no `SystemTime`/`Instant`) — the proxy
+//! feeds each packet's real `elapsed_ms`, so a run's decisions are
+//! replayable from the seed, the config and the recorded elapsed times.
 
 /// Minimal xorshift64* PRNG (Vigna, "An experimental exploration of
 /// Marsaglia's xorshift generators, scrambled"). Chosen over the stdlib's

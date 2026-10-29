@@ -2,8 +2,9 @@
 # came from so a reviewer can confirm nothing private leaked in. Advisory:
 # scripts/check/repo/test-manifests.sh enforces that each `root` exists, each
 # `origin` is recognized, `no_private_corpus` is true, and no path is absolute
-# or escapes the repo (no leading `/`, no `..`). It does NOT re-hash files
-# (integrity enforcement is deferred).
+# or escapes the repo (no leading `/`, no `..`). Per-file SHA-256 integrity is
+# enforced separately: scripts/check/repo/fixture-hashes.sh checks every file
+# under each group root against tests/coverage/fixture-hashes.toml.
 #
 # origin ∈ { synthetic | public | derived }
 #   synthetic — generated from scratch by one of our tools / regen scripts

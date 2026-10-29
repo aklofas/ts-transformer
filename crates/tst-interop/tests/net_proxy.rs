@@ -6,52 +6,21 @@
 //!
 //! # nextest group placement
 //!
-//! This binary's name (`proxy`) doesn't match any of
-//! `.config/nextest.toml`'s `binary(...)` filter entries, so no test
-//! here lands in the capped `network` test-group by binary name alone.
-//! Following `tests/net_serve.rs`'s and `tests/net_loopback.rs`'s own convention
-//! (deliberately naming a timing-sensitive network test so its NAME
-//! matches one of the `test(...)` filter entries, opting it into the
-//! serialized group), only
-//! [`srt_round_trip_through_lossy_proxy_recovers_via_retransmission`]
-//! does that (via `round_trip`) — it's the one cell in this file where
-//! CPU/port contention from unrelated parallel tests could plausibly
-//! perturb a real SRT handshake + TSBPD delivery under injected loss.
-//! It therefore gets the `network` group's 10s-period/2-terminate (20s
-//! hard kill; 40s on Windows via the platform override) instead of the
-//! default profile's 30s/2 (60s) global safety net.
-//!
-//! [`srt_background_reconnect_keeps_producing_through_an_outage`] is in
-//! the group too, by the same mechanism (`reconnect`): a live SRT link
-//! whose break and re-dial are both libsrt timers. Its doc comment
-//! accounts for its ~13 s against that 20 s kill.
-//!
-//! Every other test here ([`transparent_relay_preserves_order_and_bytes`],
-//! [`outage_windows_produce_periodic_gaps`],
-//! [`scheduled_proxy_echoes_its_phase_table_and_per_phase_counters`],
-//! [`fixed_mode_proxy_records_one_phase_and_no_schedule`],
-//! [`a_failed_final_stats_write_is_an_error`],
-//! [`the_stats_file_written_at_exit_is_marked_final`], and the two
-//! subprocess argument-validation cells) is left unmatched
-//! (default group, full parallelism): they use ephemeral OS-assigned
-//! ports (no cross-test port contention) and are written with generous
-//! tolerances (or no wall-clock assertion at all) rather than tight
-//! timing checks, so ordinary CPU contention from sibling tests shouldn't
-//! flake them. (`transparent_relay_preserves_order_and_bytes` DID flake
-//! under macOS runner load in 2026-08/09 — its original fixed 3s windows
-//! vs. a sleep-paced send loop, see its own comment — and is now
-//! sender-completion-driven with an explicitly stopped proxy: THAT is
-//! the deterministic shape to copy, rather than promoting a test into
-//! the `network` group to hide a wall-clock dependency.)
-//! `outage_windows_produce_periodic_gaps` is the one with
-//! any real wall-clock-shape assertion (gap counts between arrivals) —
-//! if it's ever observed to flake under load, promoting it into the
-//! `network` group (rename to include e.g. `round_trip`, or add a
-//! `.config/nextest.toml` override) is the fix; nothing about that
-//! decision belongs in `proxy.rs` itself.
+//! The binary is `net_proxy`, so `.config/nextest.toml`'s `binary(/^net_/)`
+//! filter puts every test here in the single-threaded `network` group with
+//! its 10 s period / 2 terminate budget (20 s hard kill; 40 s on Windows via
+//! the platform override). The tests still use ephemeral OS-assigned ports
+//! and generous tolerances (or no wall-clock assertion at all): the group
+//! removes contention from sibling network tests, not CPU load from the
+//! parallel non-network ones. `transparent_relay_preserves_order_and_bytes`
+//! once flaked on a fixed 3 s window against a sleep-paced send loop; it is
+//! now sender-completion-driven with an explicitly stopped proxy, which is
+//! the deterministic shape to copy.
+//! [`srt_background_reconnect_keeps_producing_through_an_outage`]'s doc
+//! comment accounts for its ~13 s against the 20 s kill.
 //!
 //! Deterministic-test policy (mirrors `tests/net_loopback.rs`/`tests/
-//! serve.rs`): ports are ephemeral (OS-assigned via a throwaway bind);
+//! net_serve.rs`): ports are ephemeral (OS-assigned via a throwaway bind);
 //! `proxy::run`'s `on_bound` callback (not stdout-JSON parsing) is how
 //! these tests learn the proxy's actual listen port; every thread join
 //! is timeout-bounded, never a bare `.join()`.

@@ -17,8 +17,7 @@
 //! `bindings/c/examples/scenarios/run_scenarios.c` and
 //! `bindings/python/tests/test_scenarios.py`, the URL corpus through
 //! `bindings/c/tests/net_url_corpus.rs` and
-//! `bindings/python/tests/test_url_corpus.py`. The `c` and `python` cargo
-//! features gate no code.
+//! `bindings/python/tests/test_url_corpus.py`.
 //!
 //! # Synthetic data only
 //!

@@ -200,7 +200,7 @@ fn the_cli_writes_an_archive_row_that_round_trips_and_prints_the_note() {
 }
 
 #[test]
-fn a_run_without_a_replay_reports_and_exits_zero_but_fails_the_row() {
+fn a_run_without_a_replay_reports_but_fails_the_row() {
     let run = write_run("rep-noreplay", false);
     let r = report::run(&RunDir { root: run }, None, None).unwrap();
     assert!(!r.overall_pass);

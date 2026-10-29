@@ -38,10 +38,9 @@ Notes:
 
 The cross-binding scenario harness crate (`crates/tst-integration`) is
 Rust-canonical: Rust generates the goldens + `scenarios.toml`
-manifest, and all three bindings consume that same committed set. As shipped,
-the three adapters run in these places (the `c`/`python` cargo features on
-`tst-integration` are reserved for future in-crate adapters but are currently
-empty — the C/Python adapters live in their own crates' test/example surfaces):
+manifest, and all three bindings consume that same committed set. The
+C/Python adapters live in their own crates' test/example surfaces; the three
+adapters run in these places:
 
 - **Rust adapter** — `crates/tst-integration/tests/net_rust_scenarios.rs`; runs in the
   default workspace test (Tier A) + `scripts/check/repo/scenarios.sh` (`gen-scenarios

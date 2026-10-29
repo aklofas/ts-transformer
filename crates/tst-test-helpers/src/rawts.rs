@@ -1,8 +1,8 @@
 //! Deliberately naive raw MPEG-TS reader for the wire-level oracles.
 //!
-//! Independence is the point: `verify.rs`'s tally comes from tst-core's
-//! demuxer, i.e. the code under test. This reader shares nothing with it —
-//! it parses exactly the constructs this crate's generator emits (188-byte
+//! Independence is the point: tst-interop's `verify.rs` tally comes from
+//! tst-core's demuxer, i.e. the code under test. This reader shares nothing
+//! with it — it parses exactly the constructs the interop generator emits (188-byte
 //! packets, single-packet PAT/PMT, adaptation-field PCR, PES headers) and
 //! returns an error for anything else, so it can never quietly degrade into
 //! the demuxer's view of a stream. Spec references: ITU-T H.222.0 §2.4.3.2

@@ -134,11 +134,132 @@ pub fn every_demux_error() -> Vec<DemuxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tst_core::error::{DemuxErrorKind, MuxErrorKind};
+    use tst_core::transport::TransportErrorKind;
+
+    // The kind enums are exhaustive and these matches have no wildcard, so a
+    // new kind fails to compile here until it is given a covering sample. The
+    // tests check each listed kind's sample against `every_*_error()`, and
+    // that every kind those samples reach is listed.
+
+    const MUX_KINDS: [MuxErrorKind; 5] = [
+        MuxErrorKind::InputMalformed,
+        MuxErrorKind::ConfigInvalid,
+        MuxErrorKind::InvalidUsage,
+        MuxErrorKind::Backpressure,
+        MuxErrorKind::Internal,
+    ];
+    const TRANSPORT_KINDS: [TransportErrorKind; 5] = [
+        TransportErrorKind::Backpressure,
+        TransportErrorKind::Broken,
+        TransportErrorKind::Closed,
+        TransportErrorKind::TooLarge,
+        TransportErrorKind::ExplicitClose,
+    ];
+    const DEMUX_KINDS: [DemuxErrorKind; 4] = [
+        DemuxErrorKind::Unrecoverable,
+        DemuxErrorKind::StrictRejection,
+        DemuxErrorKind::MalformedPes,
+        DemuxErrorKind::SyncBufExhausted,
+    ];
+
+    fn mux_kind_sample(kind: MuxErrorKind) -> Option<MuxError> {
+        match kind {
+            MuxErrorKind::InputMalformed => Some(MuxError::InvalidNal),
+            MuxErrorKind::ConfigInvalid => Some(MuxError::InvalidConfig("bad")),
+            MuxErrorKind::InvalidUsage => Some(MuxError::NoKlvStreamsConfigured),
+            MuxErrorKind::Backpressure => Some(MuxError::BufferFull {
+                capacity_packets: 8,
+            }),
+            // Reserved: no `MuxError` variant maps here.
+            MuxErrorKind::Internal => None,
+        }
+    }
+
+    fn transport_kind_sample(kind: TransportErrorKind) -> TransportError {
+        match kind {
+            TransportErrorKind::Backpressure => TransportError::Backpressure {
+                msg: "full".into(),
+                errno_code: Some(6),
+            },
+            TransportErrorKind::Broken => TransportError::Broken {
+                msg: "reset".into(),
+                errno_code: Some(104),
+                cause: BrokenCause::Unspecified,
+            },
+            TransportErrorKind::Closed => TransportError::Closed,
+            TransportErrorKind::TooLarge => TransportError::TooLarge {
+                len: 2000,
+                max: 1316,
+            },
+            TransportErrorKind::ExplicitClose => TransportError::ExplicitClose,
+        }
+    }
+
+    fn demux_kind_sample(kind: DemuxErrorKind) -> DemuxError {
+        match kind {
+            DemuxErrorKind::Unrecoverable => DemuxError::Unrecoverable { after_bytes: 6016 },
+            DemuxErrorKind::StrictRejection => DemuxError::StrictRejection("strict".into()),
+            DemuxErrorKind::MalformedPes => DemuxError::MalformedPes {
+                pid: 0x100,
+                reason: "short",
+            },
+            DemuxErrorKind::SyncBufExhausted => DemuxError::SyncBufExhausted {
+                observed: 2,
+                max: 1,
+            },
+        }
+    }
 
     #[test]
-    fn lengths_match_the_enums() {
+    fn every_mux_kind_is_covered_by_every_mux_error() {
+        let all = every_mux_error();
+        for kind in MUX_KINDS {
+            match mux_kind_sample(kind) {
+                Some(sample) => {
+                    assert_eq!(sample.kind(), kind);
+                    assert!(all.contains(&sample), "{sample:?}");
+                }
+                None => assert!(all.iter().all(|e| e.kind() != kind), "{kind:?}"),
+            }
+        }
+        assert!(all.iter().all(|e| MUX_KINDS.contains(&e.kind())));
+    }
+
+    #[test]
+    fn every_transport_kind_is_covered_by_every_transport_error() {
+        let all = every_transport_error();
+        for kind in TRANSPORT_KINDS {
+            let sample = transport_kind_sample(kind);
+            assert_eq!(sample.kind(), kind);
+            assert!(all.contains(&sample), "{sample:?}");
+        }
+        assert!(all.iter().all(|e| TRANSPORT_KINDS.contains(&e.kind())));
+    }
+
+    #[test]
+    fn every_demux_kind_is_covered_by_every_demux_error() {
+        let all = every_demux_error();
+        for kind in DEMUX_KINDS {
+            let sample = demux_kind_sample(kind);
+            assert_eq!(sample.kind(), kind);
+            assert!(all.contains(&sample), "{sample:?}");
+        }
+        assert!(all.iter().all(|e| DEMUX_KINDS.contains(&e.kind())));
+    }
+
+    #[test]
+    fn every_mux_error_sample_count_is_pinned() {
         assert_eq!(every_mux_error().len(), 38);
+    }
+
+    #[test]
+    fn every_transport_error_sample_count_is_pinned() {
         assert_eq!(every_transport_error().len(), 5);
+    }
+
+    #[test]
+    fn every_demux_error_sample_count_is_pinned() {
         assert_eq!(every_demux_error().len(), 4);
     }
 }

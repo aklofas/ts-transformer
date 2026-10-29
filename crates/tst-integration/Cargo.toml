@@ -12,11 +12,6 @@ description = "Cross-binding scenario harness: golden-envelope contract + scenar
 name = "gen-scenarios"
 path = "src/bin/gen_scenarios.rs"
 
-[features]
-default = []
-c = []       # opt-in: exercises the C adapter (needs libtstrans built) — later phase
-python = []  # opt-in: exercises the Python adapter (needs the wheel) — later phase
-
 [dependencies]
 tst-core = { path = "../tst-core" }
 # The binding-neutral error kinds the URL corpus records name.

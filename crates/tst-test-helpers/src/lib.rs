@@ -1,8 +1,9 @@
 //! Test helpers shared across the workspace's `tests/` integration suites.
 //!
 //! The crate is `publish = false`; no shipping artifact contains it. It is a
-//! `[dev-dependencies]` entry everywhere except tst-interop (a test tool) and
-//! tst-jni, whose test-only `jni-test-hooks` feature builds `whep_viewer`.
+//! `[dev-dependencies]` entry everywhere except tst-interop (a test tool),
+//! tst-jni and tst-py, whose test-only `jni-test-hooks` and `py-test-hooks`
+//! features build `whep_viewer`.
 
 pub mod capability;
 pub mod errors;

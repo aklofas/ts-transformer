@@ -20,7 +20,7 @@
 #
 # MUST run on macOS with Xcode. On any other host it exits with a clear error —
 # Apple cross-compilation cannot run off a Mac; the CI gate is
-# .github/workflows/apple-ios.yml on a macos-14 runner.
+# .github/workflows/apple-ios.yml on a macos-15 runner.
 #
 # Env knobs: PROFILE (release|debug, default release), FEATURES (default srt),
 # IOS_DEPLOYMENT_TARGET (informational; the floor is pinned in srt-sys/build.rs

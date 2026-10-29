@@ -703,7 +703,9 @@ jobs:
         # a staged all-features libtstrans package (scripts/dev/c-package.sh).
         # Then runs the adapter against the committed goldens.
         #
-        # Exit 0 = all 3 scenarios matched committed goldens (C ABI parity).
+        # Exit 0 = every scenario in scenarios.toml matched its committed
+        # golden (C ABI parity); the URL-corpus kind is skipped here because
+        # bindings/c/tests/net_url_corpus.rs runs it.
         # Exit non-zero = C adapter output diverged from a golden — signals a
         # real C-binding bug or a golden that needs regeneration via gen-scenarios.
         #

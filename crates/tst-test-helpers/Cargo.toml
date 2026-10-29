@@ -4,7 +4,7 @@ version     = "0.0.0"
 edition     = "2024"
 rust-version.workspace = true
 publish     = false
-description = "Internal test helpers shared across tst-core, tst-pipeline, tst-srt. Not for external consumption."
+description = "Internal test helpers shared across the workspace's test suites and test tools. Not for external consumption."
 license     = "MIT OR Apache-2.0"
 repository.workspace = true
 

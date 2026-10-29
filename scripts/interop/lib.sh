@@ -854,7 +854,7 @@ write_provenance() {
 # `report soak` groups by (leg, process) and does not depend on it.
 #
 # A missing PID (process already gone) writes an empty rss_kb field,
-# which is exactly report/soak.rs's `soak::RssSample` crash signal — never
+# which is exactly report/rss.rs's `RssSample` crash signal — never
 # fails this loop itself, so one dead process doesn't stop sampling the
 # others. Three cases for an empty VmRSS read: /proc/<pid> absent = gone,
 # empty row; state Z (a zombie: exited, not yet reaped, has no VmRSS) =
