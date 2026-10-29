@@ -239,7 +239,14 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                 }
             }
             4 => {
-                prog.add_data(pid, type_codes[i] as u8, carries[i]);
+                let Ok(stream_type) = crate::jutil::checked_u8(
+                    env,
+                    type_codes[i] as i64,
+                    &format!("dataStreams[{data_idx}].streamType"),
+                ) else {
+                    return Err(());
+                };
+                prog.add_data(pid, stream_type, carries[i]);
                 // Fail closed on a negative length (a sign-cast would turn it
                 // into a huge usize) and on offset overflow — never panic
                 // across the FFI boundary, in any build profile.
