@@ -460,7 +460,7 @@ impl Watch {
     }
 }
 
-/// [`tcp_transport`], with each blocking stage's cancel handle held in
+/// `tcp_transport`, with each blocking stage's cancel handle held in
 /// `watch`. A `?listen=1` URL prints `tcp: listening on <addr>` to stderr
 /// once bound, so a `:0` port can be read back.
 pub fn tcp_transport_with(url: &str, watch: &Watch) -> Result<tst_tcp::TcpTransport, String> {
