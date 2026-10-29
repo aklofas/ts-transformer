@@ -190,14 +190,17 @@ val compileModuleSmoke = tasks.register<JavaCompile>("compileModuleSmoke") {
     javaCompiler.set(toolchains.compilerFor { languageVersion.set(JavaLanguageVersion.of(17)) })
     options.encoding = "UTF-8"
     options.compilerArgs.addAll(listOf("--module-path", jarFile.get().asFile.path))
-    dependsOn(tasks.named("jar"))
-    inputs.files(jarFile)
+    // The jar refuses a hooks build, so under the flag the smoke is skipped and the jar is not requested.
+    if (!jniTestHooks) dependsOn(tasks.named("jar"))
+    inputs.files(provider { jarFile.get().asFile })
+    onlyIf("the jar refuses to package a jni-test-hooks library") { !jniTestHooks }
 }
 
 val modulePathSmoke = tasks.register<JavaExec>("modulePathSmoke") {
     group = "verification"
     description = "Run a named module against the assembled jar on the module path"
     dependsOn(compileModuleSmoke)
+    onlyIf("the jar refuses to package a jni-test-hooks library") { !jniTestHooks }
     javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) })
     classpath = files()
     jvmArgs(

@@ -79,8 +79,8 @@ The jar is also a named module, `org.tstrans`. On the module path, add
 `requires org.tstrans;` to your `module-info.java` and run with
 `--module-path tstrans-jvm-<version>.jar:<your classes>` (use `;` as the
 separator on Windows). Every public package
-is exported, and CI runs a small named module against the assembled jar on each
-platform.
+is exported, and CI runs a small named module on the module path against the jar it
+builds, on each platform.
 
 ## Hello world
 
