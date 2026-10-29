@@ -1,6 +1,8 @@
 # Canonical URL corpus: one URL per row, each with the normalised record every
-# binding must agree on. The Rust, C and Python legs read this file; a binding
-# that adds a URL key adds a row here.
+# binding must agree on. The Rust, C and Python legs read this file; the JVM leg
+# reads its JSON twin (the scenario's golden.json `extensions.corpus`, which
+# `gen-scenarios` writes from this file). A binding that adds a URL key adds a
+# row here, then regenerates the twin.
 #
 # ── The record ────────────────────────────────────────────────────────────────
 #
@@ -94,10 +96,30 @@ keys = 7
 aliases = 0
 no_invalid = ["cors_origin", "cert", "key"]
 
+# ── Scheme families ───────────────────────────────────────────────────────────
+#
+# The family each written scheme belongs to: the key of its `[schemes.*]` and
+# leg tables. The Rust leg checks this table against its own map, so the other
+# legs can read it instead of keeping a copy.
+
+[families]
+srt = "srt"
+rtp = "rtp"
+rtsp = "rtsp"
+rtsps = "rtsp"
+udp = "udp"
+tcp = "tcp"
+tcps = "tcp"
+hls = "hls"
+hlss = "hls"
+rist = "rist"
+whep = "whep"
+wheps = "whep"
+
 # ── Entry points per leg ──────────────────────────────────────────────────────
 #
-# Neither C nor Python exposes a parsed URL, so only the Rust leg compares the
-# whole record. The C and Python legs open the role's entry point and compare
+# Neither C, Python nor the JVM exposes a parsed URL, so only the Rust leg
+# compares the whole record. The other legs open the role's entry point and compare
 # the outcome: an invalid row must fail with the expected kind; a valid row
 # must not fail with the scheme's URL kinds (a refused connect is fine).
 #
@@ -151,6 +173,21 @@ rtsp = { client = "rtp.RtspClient.connect", probe = "open-peer", wire_schemes = 
 udp = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
 tcp = { caller = "shells.Sender.open", listener = "absent", probe = "open-refused" }
 hls = { publisher = "hls.HlsPublisherBuilder.from_url", probe = "build" }
+rist = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
+whep = { server = "webrtc.WhepServer.bind", probe = "open-refused" }
+
+# The JVM's HLS builder parses its URL only in `build()`, which binds the HTTP
+# server, so the leg builds with a port-0 bind and a temporary output directory
+# overlaid (an overlay never changes how the URL parses). A tcp listener URL
+# binds port 0 and accepts one peer on a port the open never reports, so no
+# peer can reach it: the role is absent, as in Python.
+[legs.jvm]
+srt = { caller = "shells.Sender.open", listener = "shells.Receiver.open", probe = "open-peer" }
+rtp = { send = "shells.Sender.open", recv = "shells.Receiver.open", h264 = "rtp.H264Receiver.listen", probe = "open-refused" }
+rtsp = { client = "rtp.RtspClient.connect", probe = "open-peer", wire_schemes = "rtsp", wire = "host path username password_set keys.rtsp_version keys.transport", unobserved = "scheme: the peer speaks no TLS, so rtsps rows are refusal-only; port: the peer's port replaces the URL's; keys.tcp_keepalive: a socket option the peer cannot see; keys.recv_timeout: a read deadline the peer cannot see" }
+udp = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
+tcp = { caller = "shells.Sender.open", listener = "absent", probe = "open-refused" }
+hls = { publisher = "hls.HlsPublisherBuilder.build", probe = "open-refused" }
 rist = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
 whep = { server = "webrtc.WhepServer.bind", probe = "open-refused" }
 

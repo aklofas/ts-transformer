@@ -938,6 +938,24 @@ mod url_corpus_leg {
             tables.keys().copied().collect::<Vec<_>>(),
             "the header lists a different set of scheme families than the parsers"
         );
+        for (scheme, fam) in &corpus.families {
+            if url::family(scheme) != fam {
+                gaps.push(format!(
+                    "[families] maps {scheme} to {fam}, the parsers to {}",
+                    url::family(scheme)
+                ));
+            }
+        }
+        for row in &corpus.url {
+            if !corpus.families.contains_key(&row.scheme) {
+                gaps.push(format!("{}: [families] has no {}", row.label(), row.scheme));
+            }
+        }
+        for fam in tables.keys() {
+            if !corpus.families.values().any(|f| f == fam) {
+                gaps.push(format!("[families] maps no scheme to {fam}"));
+            }
+        }
         for (family, table) in &tables {
             let header = corpus
                 .schemes

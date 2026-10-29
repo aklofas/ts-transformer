@@ -3,8 +3,10 @@
 //! loader each Rust-side leg (the Rust parsers, the C ABI) reads it through.
 //!
 //! The record is binding-neutral: the Python leg reads the same TOML with
-//! `tomllib` and compares the same fields, and a JVM leg reads it the same way.
-//! See the file's header for the record's rules and the per-leg entry points.
+//! `tomllib` and compares the same fields; the JVM leg, which has no TOML
+//! reader, reads the JSON twin `gen-scenarios` writes into the scenario's
+//! golden. See the file's header for the record's rules and the per-leg entry
+//! points.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -19,6 +21,9 @@ pub struct Corpus {
     pub schema_version: u32,
     /// Documented-key counts per scheme family.
     pub schemes: BTreeMap<String, SchemeKeys>,
+    /// The family of each written scheme, for the legs outside Rust; the
+    /// coverage check holds it to [`family`].
+    pub families: BTreeMap<String, String>,
     /// Entry point per leg, per scheme family, per role (plus `probe`).
     pub legs: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     /// The rows, in file order.
