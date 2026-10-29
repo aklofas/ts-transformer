@@ -34,6 +34,7 @@ fn inv(files: Vec<FileEntry>) -> Inventory {
     Inventory {
         schema_version: 1,
         files,
+        skipped_dirs: 0,
     }
 }
 
