@@ -12,6 +12,7 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.tstrans.GoldenSupport;
 import org.tstrans.codec.MispTimeKind;
 import org.tstrans.codec.MispTimestamp;
 
@@ -44,7 +45,7 @@ class MuxRoundtripScenarioTest {
         String goldenJson = Files.readString(goldenPath, StandardCharsets.UTF_8);
         // Sanity backstop: this is the committed golden digest
         // (2aa000852931462b875ec9b2548dd8bf5846fef36e5a1084d149cdd636d09a24).
-        String expectedSha = extractString(goldenJson, "output_sha256");
+        String expectedSha = GoldenSupport.stringField(goldenJson, "output_sha256");
 
         byte[] tsOut = videoRoundtripMuxAndDrain();
         assertEquals(expectedSha, sha256Hex(tsOut),
@@ -89,7 +90,7 @@ class MuxRoundtripScenarioTest {
         assertTrue(Files.isRegularFile(goldenPath),
             "video-dts-roundtrip golden missing (expected committed fixture): " + goldenPath);
         String goldenJson = Files.readString(goldenPath, StandardCharsets.UTF_8);
-        String expectedSha = extractString(goldenJson, "output_sha256");
+        String expectedSha = GoldenSupport.stringField(goldenJson, "output_sha256");
 
         byte[] tsOut = videoDtsRoundtripMuxAndDrain();
         assertEquals(expectedSha, sha256Hex(tsOut),
@@ -148,10 +149,10 @@ class MuxRoundtripScenarioTest {
             "video-misp-roundtrip golden missing (expected committed fixture): " + goldenPath);
         String goldenJson = Files.readString(goldenPath, StandardCharsets.UTF_8);
 
-        String expectedSha = extractString(goldenJson, "output_sha256");
-        long goldenMispKind    = extractLong(goldenJson, "misp_kind");
-        long goldenTimeStatus  = extractLong(goldenJson, "misp_time_status");
-        long goldenMispValue   = extractLong(goldenJson, "misp_value");
+        String expectedSha = GoldenSupport.stringField(goldenJson, "output_sha256");
+        long goldenMispKind    = GoldenSupport.unsignedNumber(goldenJson, "misp_kind");
+        long goldenTimeStatus  = GoldenSupport.unsignedNumber(goldenJson, "misp_time_status");
+        long goldenMispValue   = GoldenSupport.unsignedNumber(goldenJson, "misp_value");
 
         byte[] tsOut = videoMispRoundtripMuxAndDrain();
 
@@ -219,38 +220,5 @@ class MuxRoundtripScenarioTest {
             sb.append(Character.forDigit(b & 0xF, 16));
         }
         return sb.toString();
-    }
-
-    /** Read a string-valued JSON field {@code "key": "<value>"} (minimal; junit-only classpath). */
-    private static String extractString(String json, String key) {
-        String needle = "\"" + key + "\"";
-        int k = json.indexOf(needle);
-        assertTrue(k >= 0, "golden missing field \"" + key + "\": " + json);
-        int firstQuote = json.indexOf('"', json.indexOf(':', k + needle.length()) + 1);
-        assertTrue(firstQuote >= 0, "malformed golden field \"" + key + "\"");
-        int lastQuote = json.indexOf('"', firstQuote + 1);
-        assertTrue(lastQuote > firstQuote, "unterminated golden string field \"" + key + "\"");
-        return json.substring(firstQuote + 1, lastQuote);
-    }
-
-    /** Read a numeric-valued JSON field {@code "key": <number>} (minimal; junit-only classpath). */
-    private static long extractLong(String json, String key) {
-        String needle = "\"" + key + "\"";
-        int k = json.indexOf(needle);
-        assertTrue(k >= 0, "golden missing numeric field \"" + key + "\": " + json);
-        int colon = json.indexOf(':', k + needle.length());
-        assertTrue(colon >= 0, "malformed golden field \"" + key + "\"");
-        int start = colon + 1;
-        while (start < json.length() && (json.charAt(start) == ' ' || json.charAt(start) == '\n'
-               || json.charAt(start) == '\r' || json.charAt(start) == '\t')) {
-            start++;
-        }
-        int end = start;
-        while (end < json.length() && (Character.isDigit(json.charAt(end))
-               || json.charAt(end) == '-')) {
-            end++;
-        }
-        assertTrue(end > start, "empty numeric value for field \"" + key + "\"");
-        return Long.parseUnsignedLong(json.substring(start, end));
     }
 }
