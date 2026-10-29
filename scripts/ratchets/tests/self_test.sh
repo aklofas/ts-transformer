@@ -38,6 +38,9 @@ expect() { # <desc> <want_rc> <cmd...>
     fi
 }
 
+# expect_out <desc> <text> : the last expect's output holds <text>.
+expect_out() { grep -qF -- "$2" "$tmp/out" || { echo "FAIL: $1: the output lacks: $2"; sed 's/^/    /' "$tmp/out"; fail=1; }; }
+
 # plant <file> <from> <to> : replace every <from> (a sed BRE, no `|`) with <to>
 # in <file>. Portable: no `sed -i`.
 plant() { sed "s|$2|$3|g" "$1" > "$1.new" && mv "$1.new" "$1"; }
@@ -584,6 +587,43 @@ printf '[[exempt]]\nitem = "demo::a"\n' > "$tmp/smf/m.toml"
 expect "surface manifest: without the rule the derive leaf is un-catalogued" 1 smf
 smf_count=0; smf_sha=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 printf 'pub fn demo::a()\npub struct demo::B\n' > "$tmp/smf/crates/demo/public-api.txt"
+# Binding cells resolve exactly. A c: cell is a whole word of the header, so a
+# prefix of a real function does not resolve. A java: cell names a class file
+# under its package directory and a member that is a whole word of it.
+smf_row_cells2() { # <c cell> <java cell>
+    printf '[[surface]]\nitem = "demo::a"\nowning_tests = ["tests/coverage/README.md"]\nbindings = ["c:%s", "python:deferred", "java:%s", "swift:deferred", "kotlin:deferred"]\n[[exempt]]\nitem = "demo::B"\n' \
+        "$1" "$2" > "$tmp/smf/m.toml"
+}
+smf_j() { SURFACE_JAVA_DIR="$tmp/smf/java" smf; }
+mkdir -p "$tmp/smf/java/org/tstrans/io"
+printf 'package org.tstrans.io;\npublic final class Io {\n    public static final class Options { public int depth; }\n    public static Object parseFile(String p) { return null; }\n}\n' > "$tmp/smf/java/org/tstrans/io/Io.java"
+printf 'int tst_demuxer_new(void);\n' > "$tmp/smf/h.h"
+smf_row_cells2 tst_demuxer_new org.tstrans.io.Io.parseFile
+expect "surface manifest: c: a whole header word, java: Class.member" 0 smf_j
+smf_row_cells2 deferred org.tstrans.io.Io
+expect "surface manifest: java: the class itself" 0 smf_j
+smf_row_cells2 deferred org.tstrans.io.Io.Options.depth
+expect "surface manifest: java: a nested class's member" 0 smf_j
+smf_row_cells2 deferred org.tstrans.io.parseFile
+expect "surface manifest: java: a member without its class" 1 smf_j
+expect_out "surface manifest: java no class" "FAIL: java symbol unresolved: org.tstrans.io.parseFile"
+smf_row_cells2 deferred org.tstrans.io.Io.parse
+expect "surface manifest: java: a member that is only a prefix of a real one" 1 smf_j
+smf_row_cells2 deferred tstrans.io.Io
+expect "surface manifest: java: a cell outside org.tstrans" 1 smf_j
+smf_row_cells2 tst_demux deferred
+expect "surface manifest: c: a prefix of a real function" 1 smf_j
+expect_out "surface manifest: c prefix" "FAIL: c symbol unresolved: tst_demux"
+: > "$tmp/smf/h.h"
+# Feature tags are a closed vocabulary: an unknown tag fails instead of
+# skipping as "not built".
+smf_pyi="$tmp/smf/py"
+smf_row "demo::a" "decode_thing [feature=srtt]" "demo::B"
+expect "surface manifest: an unknown feature tag" 1 smf
+expect_out "surface manifest: unknown tag" "FAIL: unknown feature tag srtt in python:decode_thing [feature=srtt]"
+smf_row "demo::a" "decode_thing [feature=webrtc]" "demo::B"
+expect "surface manifest: a known but unbuilt feature tag is skipped" 0 smf
+smf_pyi="$tmp/smf"
 
 # ---- platform capabilities (scripts/check/repo/platform-capabilities.sh) ----
 R_PC="$DIR/../check/repo/platform-capabilities.sh"
@@ -811,7 +851,6 @@ expect "abi-compat: the planted-library matrix" 0 bash scripts/check/c/tests/abi
 # top-level conjunct of its `if:`; any job with an environment is tag-only; a job holding
 # an environment or `id-token: write` pins every remote action to a commit sha.
 pg="$tmp/publish-guards"; mkdir -p "$pg"
-expect_out() { grep -qF -- "$2" "$tmp/out" || { echo "FAIL: $1: the output lacks: $2"; sed 's/^/    /' "$tmp/out"; fail=1; }; }
 NEG='its `if:` does not negate inputs.dry_run'
 TAGONLY="has an environment but its \`if:\` does not require github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
 cat > "$pg/bad.yml" <<'YML'
