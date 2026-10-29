@@ -36,6 +36,7 @@ use tst_pipeline::binding::BindingErrorKind;
 /// Returns `None` and throws `CodecParseException(ENGINE_ERROR)` for
 /// ordinals outside the valid range.
 fn java_video_codec_ordinal_to_rust(env: &mut Env, ordinal: jint) -> Option<VideoCodec> {
+    // Order pinned by OrdinalContractTest.
     match ordinal {
         0 => Some(VideoCodec::H264),
         1 => Some(VideoCodec::H265),

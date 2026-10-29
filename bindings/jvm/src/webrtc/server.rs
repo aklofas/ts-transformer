@@ -91,11 +91,13 @@ fn mount_config(
         None
     };
     let mut cfg = MountConfig::default();
+    // Order pinned by OrdinalContractTest.
     cfg.kind = match kind {
         0 => MountKind::Elementary,
         1 => MountKind::Mp2t,
         v => return refuse("MountKind", v),
     };
+    // Order pinned by OrdinalContractTest.
     cfg.video = match video {
         0 => VideoCodec::H264,
         1 => VideoCodec::H265,
@@ -103,11 +105,13 @@ fn mount_config(
         3 => VideoCodec::Av1,
         v => return refuse("VideoCodec", v),
     };
+    // Order pinned by OrdinalContractTest.
     cfg.audio = match audio {
         0 => AudioPolicy::Drop,
         1 => AudioPolicy::PassthroughOpus,
         v => return refuse("AudioPolicy", v),
     };
+    // Order pinned by OrdinalContractTest.
     cfg.klv = match klv {
         0 => KlvCarriage::SeiAndDataChannel,
         1 => KlvCarriage::SeiOnly,

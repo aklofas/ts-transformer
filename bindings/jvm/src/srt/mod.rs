@@ -70,6 +70,7 @@ pub(crate) fn build_reconnect_policy(
             return None;
         }
     };
+    // Order pinned by OrdinalContractTest.
     let overflow = match overflow_policy {
         0 => OverflowPolicy::DropOldest,
         1 => OverflowPolicy::Reject,
@@ -85,6 +86,7 @@ pub(crate) fn build_reconnect_policy(
     // Defensive default (not a throw, unlike backoff_kind/overflow_policy above):
     // an unrecognized ordinal falls back to Blocking rather than rejecting the
     // call, matching ReconnectMode's own #[default] Blocking arm.
+    // Order pinned by OrdinalContractTest.
     let recon_mode = match mode {
         1 => ReconnectMode::Background,
         _ => ReconnectMode::Blocking,
