@@ -27,7 +27,7 @@ thiserror = { workspace = true }
 # Single facade for diagnostics workspace-wide. `default-features = false`
 # keeps the macros usable under no_std+alloc; the `std` feature re-adds the
 # std subscriber integration.
-tracing   = { version = "0.1", default-features = false }
+tracing   = { workspace = true }
 # no_std lock backend (single-core embedded sender never contends). Referenced
 # only under cfg(not(feature = "std")) via crate::mutex.
 spin      = { version = "0.12", default-features = false, features = ["spin_mutex"] }

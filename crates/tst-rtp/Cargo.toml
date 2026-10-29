@@ -37,7 +37,7 @@ tokio        = { version = "1", features = ["rt-multi-thread", "net", "time", "i
 # CancellationToken for graceful-shutdown coordination across per-session tasks.
 tokio-util   = { version = "0.7", optional = true }
 # Single facade for diagnostics workspace-wide.
-tracing      = { version = "0.1", default-features = false, features = ["std"] }
+tracing      = { workspace = true, features = ["std"] }
 
 # Cross-platform setsockopt paths std doesn't expose at the workspace MSRV: SO_KEEPALIVE
 # with an idle time on the RTSP client's control socket (`?tcp_keepalive=`),

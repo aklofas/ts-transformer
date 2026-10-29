@@ -19,7 +19,7 @@ whep-viewer = ["dep:str0m", "dep:rustls", "tst-core/tls"]
 tst-core = { path = "../tst-core", default-features = false }
 # The same version and features tst-webrtc builds.
 str0m = { version = "0.24", default-features = false, features = ["rust-crypto"], optional = true }
-rustls = { version = "0.23", default-features = false, features = ["std", "ring"], optional = true }
+rustls = { workspace = true, optional = true }
 
 [lints]
 workspace = true
