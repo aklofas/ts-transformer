@@ -1321,8 +1321,9 @@ pub struct WhepUnpairedRecord {
 }
 
 /// `serve-whep --json`'s counters, the leg's server-side evidence.
-/// Every field defaults so a counter added later never fails an
-/// older report.
+/// Every field defaults so a counter no verdict reads never fails an
+/// older report; a counter a verdict reads is required by
+/// [`WHEP_REQUIRED_COUNTERS`] instead.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WhepServeReport {
@@ -1334,6 +1335,39 @@ pub struct WhepServeReport {
     pub viewer_connected_before_push: bool,
     pub mount: WhepMountCounters,
     pub server: WhepServerCounters,
+    /// The [`WHEP_REQUIRED_COUNTERS`] the file did not carry, filled by
+    /// the loader. The struct's defaults would read each of them as 0,
+    /// a measured "nothing dropped" the server never wrote.
+    #[serde(skip)]
+    pub missing: Vec<String>,
+}
+
+/// The serve-report counters a WHEP verdict reads, as dotted paths into
+/// `serve-whep --json`'s output. A report without one of them is not
+/// judged: its default of 0 is indistinguishable from a measured zero.
+const WHEP_REQUIRED_COUNTERS: [&str; 9] = [
+    "seconds",
+    "mount.frames_pushed",
+    "mount.klv_records_pushed",
+    "mount.klv_records_dropped_unbound",
+    "mount.klv_sei_dropped_oversize",
+    "mount.klv_dc_dropped_oversize",
+    "mount.viewer_packets_dropped_queue_full",
+    "mount.demux_nonconformant",
+    "server.sessions_total",
+];
+
+/// The [`WHEP_REQUIRED_COUNTERS`] absent (or `null`) in `raw`.
+fn whep_missing_counters(raw: &serde_json::Value) -> Vec<String> {
+    WHEP_REQUIRED_COUNTERS
+        .iter()
+        .filter(|path| {
+            path.split('.')
+                .try_fold(raw, |v, key| v.get(key))
+                .is_none_or(serde_json::Value::is_null)
+        })
+        .map(|path| path.to_string())
+        .collect()
 }
 
 /// The mount counters `serve-whep` writes (`tst_webrtc::MountStats`).
@@ -2673,6 +2707,22 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
             });
         }
 
+        verdicts.push(SoakVerdict {
+            name: format!("whep_counters_present_{leg_name}"),
+            pass: serve.missing.is_empty(),
+            provisional: false,
+            detail: if serve.missing.is_empty() {
+                format!(
+                    "{leg_name}: the server's report carries every counter the leg is judged on"
+                )
+            } else {
+                format!(
+                    "{leg_name}: the server's report lacks {}, so the verdicts that read them \
+                     would judge a zero the server never wrote",
+                    serve.missing.join(", ")
+                )
+            },
+        });
         verdicts.push(whep_reconnects_verdict(leg_name, declared, viewer, serve));
         let (frames_verdict, frames_decoded) = whep_frames_verdict(leg_name, viewer, serve);
         verdicts.push(frames_verdict);
@@ -3069,6 +3119,9 @@ fn whep_frames_verdict(
     if viewer.connections.is_empty() {
         problems.push("the viewer report lists no connection".to_string());
     }
+    if serve.mount.frames_pushed == 0 {
+        problems.push("the server pushed no frame".to_string());
+    }
     let frame_rate = whep_served_rate(serve, serve.mount.frames_pushed);
     if frame_rate.is_none() {
         problems.push(format!(
@@ -3218,6 +3271,11 @@ fn whep_klv_verdict(
     let mut lowest_margin: Option<(u64, f64, u64)> = None;
     if viewer.connections.is_empty() {
         problems.push("the viewer report lists no connection".to_string());
+    }
+    // Every profile muxes KLV (`KlvMode` has no "off"), so a served
+    // window with no record pushed is a server that fed nothing.
+    if serve.mount.klv_records_pushed == 0 {
+        problems.push("the server pushed no KLV record".to_string());
     }
     let klv_rate = whep_served_rate(serve, serve.mount.klv_records_pushed);
     if klv_rate.is_none() {
@@ -3373,6 +3431,18 @@ fn read_leg_artifacts(
 ///
 /// Errors on an unreadable or unparsable artifact, and on a publish
 /// leg name outside [`PUBLISH_LEGS`] or given twice.
+/// Reads `serve-whep --json`'s output, recording in
+/// [`WhepServeReport::missing`] every required counter the file lacks.
+fn read_whep_serve_report(path: &Path) -> Result<WhepServeReport, String> {
+    let raw: serde_json::Value = serde_json::from_str(&read_to_string(path)?)
+        .map_err(|e| format!("parse {}: {e}", path.display()))?;
+    let missing = whep_missing_counters(&raw);
+    let mut serve: WhepServeReport =
+        serde_json::from_value(raw).map_err(|e| format!("parse {}: {e}", path.display()))?;
+    serve.missing = missing;
+    Ok(serve)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     rss_path: &Path,
@@ -3442,8 +3512,7 @@ pub fn run(
     if let Some((viewer_path, serve_path)) = whep {
         let viewer: WhepViewerReport = serde_json::from_str(&read_to_string(viewer_path)?)
             .map_err(|e| format!("parse {}: {e}", viewer_path.display()))?;
-        let serve: WhepServeReport = serde_json::from_str(&read_to_string(serve_path)?)
-            .map_err(|e| format!("parse {}: {e}", serve_path.display()))?;
+        let serve = read_whep_serve_report(serve_path)?;
         whep_legs.push((WHEP_LEGS[0].to_string(), WhepLegArtifacts { viewer, serve }));
     }
 
@@ -7135,11 +7204,121 @@ pub(crate) mod tests {
                 sessions_total: connections,
                 ..Default::default()
             },
+            missing: Vec::new(),
         };
         inputs
             .whep_legs
             .push(("whep".to_string(), WhepLegArtifacts { viewer, serve }));
         inputs
+    }
+
+    /// [`whep_inputs`] with its serve report replaced by `raw`, read back
+    /// through the file loader so [`WhepServeReport::missing`] is filled
+    /// the way `report soak` fills it.
+    fn results_with_serve_json(raw: serde_json::Value) -> SoakResults {
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-soak-serve-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time moves forward")
+                .as_nanos()
+        ));
+        std::fs::write(&path, raw.to_string()).expect("write serve report");
+        let serve = read_whep_serve_report(&path).expect("read serve report");
+        let _ = std::fs::remove_file(&path);
+        let mut inputs = whep_inputs(6, Some(6));
+        inputs.whep_legs[0].1.serve = serve;
+        build_soak_results(inputs).unwrap()
+    }
+
+    /// The healthy serve report of [`whep_inputs`] as `serve-whep --json`
+    /// writes it: every counter present.
+    fn healthy_serve_json() -> serde_json::Value {
+        serde_json::to_value(&whep_inputs(6, Some(6)).whep_legs[0].1.serve).unwrap()
+    }
+
+    #[test]
+    fn a_serve_report_missing_a_push_counter_is_unjudgeable() {
+        let raw = serde_json::json!({"profile":"baseline","mount_kind":"mp2t","seconds":600.0,
+            "mount":{}, "server":{"sessions_total":2}});
+        assert!(whep_missing_counters(&raw).contains(&"mount.frames_pushed".to_string()));
+        let r = results_with_serve_json(raw);
+        let v = verdict(&r, "whep_counters_present_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail
+                .contains("mount.frames_pushed, mount.klv_records_pushed"),
+            "{}",
+            v.detail
+        );
+        assert!(!v.detail.contains("server.sessions_total"), "{}", v.detail);
+        assert!(!r.overall_pass);
+    }
+
+    #[test]
+    fn a_serve_report_missing_only_drop_counters_is_unjudgeable_too() {
+        let mut raw = healthy_serve_json();
+        let mount = raw["mount"].as_object_mut().unwrap();
+        for key in [
+            "klv_records_dropped_unbound",
+            "klv_sei_dropped_oversize",
+            "klv_dc_dropped_oversize",
+            "viewer_packets_dropped_queue_full",
+        ] {
+            assert!(mount.remove(key).is_some(), "{key}");
+        }
+        let r = results_with_serve_json(raw);
+        let v = verdict(&r, "whep_counters_present_whep");
+        assert!(!v.pass, "{}", v.detail);
+        assert!(
+            v.detail.contains(
+                "lacks mount.klv_records_dropped_unbound, mount.klv_sei_dropped_oversize, \
+                 mount.klv_dc_dropped_oversize, mount.viewer_packets_dropped_queue_full,"
+            ),
+            "{}",
+            v.detail
+        );
+        assert!(!r.overall_pass);
+    }
+
+    #[test]
+    fn a_measured_zero_drop_report_still_passes() {
+        let raw = healthy_serve_json();
+        assert!(whep_missing_counters(&raw).is_empty());
+        let r = results_with_serve_json(raw);
+        for name in [
+            "whep_counters_present_whep",
+            "whep_frames_continuous_whep",
+            "whep_klv_sei_equals_dc_whep",
+        ] {
+            let v = verdict(&r, name);
+            assert!(v.pass, "{name}: {}", v.detail);
+        }
+        assert!(r.overall_pass, "{:?}", r.verdicts);
+    }
+
+    /// A server that pushed nothing is not a healthy leg however the
+    /// viewer side reads: both push counters are measured, and zero.
+    #[test]
+    fn a_server_that_pushed_nothing_fails_the_frames_and_klv_verdicts() {
+        let mut raw = healthy_serve_json();
+        raw["mount"]["frames_pushed"] = 0.into();
+        raw["mount"]["klv_records_pushed"] = 0.into();
+        let r = results_with_serve_json(raw);
+        assert!(verdict(&r, "whep_counters_present_whep").pass);
+        let v = verdict(&r, "whep_frames_continuous_whep");
+        assert!(
+            !v.pass && v.detail.contains("the server pushed no frame"),
+            "{}",
+            v.detail
+        );
+        let v = verdict(&r, "whep_klv_sei_equals_dc_whep");
+        assert!(
+            !v.pass && v.detail.contains("the server pushed no KLV record"),
+            "{}",
+            v.detail
+        );
     }
 
     #[test]
