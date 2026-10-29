@@ -9,6 +9,11 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import deps_advisory as da  # noqa: E402
 
+DEPS = {d["name"]: d for d in da.DEPS}
+POSIX_DEP = DEPS["freertos-posix"]
+LIBRIST_DEP = DEPS["librist"]
+MBEDTLS_DEP = DEPS["mbedtls"]
+
 
 class ParseVersion(unittest.TestCase):
     """One parser over the four upstream tag grammars."""
@@ -225,6 +230,28 @@ class Findings(unittest.TestCase):
         f = da.build_findings(self.dep(name="freertos-posix"), pin_tag=None, pin_version=None,
                               tags=["v1.0"], advisories=[], cves=[])
         self.assertEqual(f, [])
+
+
+    def test_an_untagged_pin_still_gets_advisories_newer_than_its_commit(self):
+        adv = {"ghsa_id": "GHSA-x", "severity": "high", "published_at": "2026-09-01T00:00:00Z",
+               "vulnerabilities": [{"vulnerable_version_range": "< 2.0"}]}
+        f = da.build_findings(POSIX_DEP, None, None, [], [adv], [], pin_date="2026-01-01T00:00:00Z",
+                              pin_sha="0123456789abcdef")
+        self.assertEqual([x.kind for x in f], ["advisory"])
+        self.assertEqual(f[0].title, "deps: GHSA-x may affect untagged freertos-posix pin 01234567 (high)")
+
+    def test_an_untagged_pin_skips_advisories_older_than_its_commit(self):
+        adv = {"ghsa_id": "GHSA-x", "severity": "high", "published_at": "2025-09-01T00:00:00Z",
+               "vulnerabilities": [{"vulnerable_version_range": "< 2.0"}]}
+        f = da.build_findings(POSIX_DEP, None, None, ["v1.0"], [adv], [], pin_date="2026-01-01T00:00:00Z")
+        self.assertEqual(f, [])
+
+    def test_a_dependency_with_no_advisory_source_is_unassessed(self):
+        self.assertEqual(da.advisory_sources(LIBRIST_DEP), [])
+
+    def test_advisory_sources_name_ghsa_and_nvd(self):
+        self.assertEqual(da.advisory_sources(MBEDTLS_DEP), ["GHSA", "NVD"])
+        self.assertEqual(da.advisory_sources(POSIX_DEP), ["GHSA"])
 
 
 class Dedupe(unittest.TestCase):
