@@ -24,7 +24,8 @@
 #
 # Usage:
 #   run-matrix.sh --outdir DIR [--seconds N] [--cells GLOB] [--profiles LIST]
-#                 [--allowed-skips LIST] [--au-sizes compact|realistic]
+#                 [--only-subset NAME] [--allowed-skips LIST]
+#                 [--au-sizes compact|realistic]
 #
 #   --outdir DIR      required. Cell JSON -> DIR/cells/*.json, per-cell
 #                      combined (us + peer) logs -> DIR/logs/*.log,
@@ -41,6 +42,11 @@
 #                      the SRT block, 'decode/*' for every decode cell
 #                      across every profile, etc. Quote it so the shell
 #                      doesn't expand the glob itself.
+#   --only-subset NAME run only the cells listed in expectations.toml's
+#                      `[NAME_subset]` table (exact ids or trailing-`*`
+#                      globs; --cells still narrows inside it). The
+#                      interop workflow's linux-aarch64 job runs
+#                      `--only-subset arm64`. The shape is "subset".
 #   --profiles LIST    comma-separated profile names (default: all 12
 #                      canonical profiles, lib.sh's $ALL_PROFILE_NAMES).
 #                      Only the format axis scales with this list — the
@@ -90,8 +96,8 @@
 # it WOULD run and returns immediately) and writes the resulting exact
 # {id, profile} multiset to DIR/inventory.json, whose `shape` field is
 # "full" iff --cells is the default "*" AND --profiles is the
-# default full 12-profile list, else "subset". `tst-interop report
-# merge` is handed this file via --inventory and hard-fails (exit 2, no
+# default full 12-profile list AND no --only-subset, else "subset".
+# `tst-interop report merge` is handed this file via --inventory and hard-fails (exit 2, no
 # results.json written) if the cells actually produced don't exactly
 # match the declared multiset (missing/duplicate/extra/undeclared skip).
 #
@@ -112,6 +118,8 @@ SECONDS_ARG=10
 CELLS_GLOB="*"
 PROFILES_ARG="$ALL_PROFILE_NAMES"
 ALLOWED_SKIPS_ARG=""
+SUBSET_NAME=""
+SUBSET_CELLS=""
 # Realistic by default: the matrix's whole point is evidence against real
 # peer tools, and a tools-facing run should exchange the AU sizes those
 # tools are built for. See the --au-sizes note in the header.
@@ -160,6 +168,11 @@ while [[ $# -gt 0 ]]; do
       PROFILES_ARG=$2
       shift 2
       ;;
+    --only-subset)
+      require_value "$@"
+      SUBSET_NAME=$2
+      shift 2
+      ;;
     --allowed-skips)
       require_value "$@"
       ALLOWED_SKIPS_ARG=$2
@@ -171,7 +184,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h | --help)
-      sed -n '2,100p' "$0" | sed 's/^# \{0,1\}//'
+      awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -196,6 +209,13 @@ done
   echo "run-matrix.sh: --au-sizes must be 'compact' or 'realistic', got: $AU_SIZES" >&2
   exit 2
 }
+if [[ -n "$SUBSET_NAME" ]]; then
+  SUBSET_CELLS=$(subset_cells "$SCRIPT_DIR/expectations.toml" "$SUBSET_NAME") || {
+    echo "run-matrix.sh: expectations.toml has no well-formed [${SUBSET_NAME}_subset] table" >&2
+    exit 2
+  }
+  echo "run-matrix: --only-subset $SUBSET_NAME: $(tr '\n' ' ' <<<"$SUBSET_CELLS")" >&2
+fi
 
 # Hard dependencies, distinct from the optional per-cell peer tools
 # `have()`/emit_skipped gate below: this script cannot run AT ALL
@@ -1658,7 +1678,7 @@ if [[ -n "$ALLOWED_SKIPS_ARG" ]]; then
 fi
 
 SHAPE=subset
-[[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" ]] && SHAPE=full
+[[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" && -z "$SUBSET_NAME" ]] && SHAPE=full
 jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS_GLOB" \
   --arg profiles "$PROFILES_ARG" --rawfile tsv "$INVENTORY_TSV" \
   --argjson tools "$(tool_versions_json)" --argjson allowed_skips "$ALLOWED_SKIPS_JSON" \

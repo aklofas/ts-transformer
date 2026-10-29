@@ -201,7 +201,7 @@ mod matrix;
 pub use matrix::{
     ExpectVerdict, Expectation, Inventory, InventoryCell, SHAPE_FULL, SHAPE_SUBSET,
     append_github_summary, build_results, check_inventory, merge, parse_census, parse_expectations,
-    parse_inventory, render, render_markdown,
+    parse_inventory, parse_subset, render, render_markdown,
 };
 
 /// `report step` / `report stress` — the stress harness's verdicts; see `report/stress.rs`.

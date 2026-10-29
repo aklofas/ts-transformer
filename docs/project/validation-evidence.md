@@ -36,10 +36,17 @@ SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --outdir /tmp/interop
 `run-matrix.sh` requires `jq` and `python3` on `PATH`, plus whichever peer
 tools (`ffmpeg`, TSDuck's `tsp`, `gst-launch-1.0`, `vlc`, `mpv`) you want
 exercised — a missing tool degrades its cells to `SKIPPED`, never a fake
-pass or fail. Both scripts are validated on linux-x86_64; linux-aarch64 is
-expected to work (no arch-specific code) but hasn't been validated yet —
-`run-matrix.sh` additionally depends on per-arch apt/deb availability of
-the peer tools above. `soak.sh`'s SRT and RIST legs need no third-party
+pass or fail. `run-matrix.sh` runs its full census on linux-x86_64. On
+linux-aarch64 the interop workflow's second job runs the cells listed in
+the `[arm64_subset]` table of `scripts/interop/expectations.toml`
+(`--only-subset arm64`): SRT and RIST live with ffmpeg, TSDuck and
+GStreamer, every profile over SRT, RTP over RTSP, the publisher role in
+both its MPEG-TS and elementary shapes, and TSDuck's analyzers. The
+browser, VLC, mpv and HLS cells are left out. That job's census is recorded
+in the qualification record beside the x86_64 one, and the release verdict
+reads the x86_64 census. A peer tool missing from the arm runner skips its
+cells, and the job's step summary names them. `soak.sh` runs on
+linux-x86_64. `soak.sh`'s SRT and RIST legs need no third-party
 media tools, being `tst-interop` talking to itself through its own
 impairment proxy; its `rtsp-publish` leg needs GStreamer's
 `gst-launch-1.0` with `rtspclientsink`, and `--no-rtsp-publish` runs

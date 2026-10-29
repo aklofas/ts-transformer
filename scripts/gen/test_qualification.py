@@ -977,6 +977,37 @@ class TagAndEquivalenceTests(unittest.TestCase):
                          {"soaked": SHA, "qualified": SHA, "changed_release_documents": []})
 
 
+ARM_CENSUS = {"arch": "linux-aarch64", "shape": "subset", "total": 70, "pass": 60, "fail": 2,
+              "expected_unsupported": 4, "skipped": 4, "stale": 0}
+
+
+class ArmCensusTests(unittest.TestCase):
+    def test_interop_accepts_a_second_census_and_go_reads_the_x86_64_one(self):
+        rec = collect(lambda f: f.__setitem__("interop-census-aarch64.json", dict(ARM_CENSUS)))
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        censuses = rec["interop"]["censuses"]
+        self.assertEqual([c["arch"] for c in censuses], ["linux-x86_64", "linux-aarch64"])
+        self.assertEqual(censuses[0]["total"], 159)
+        self.assertEqual(censuses[1], ARM_CENSUS)
+        self.assertIn("The linux-aarch64 census (subset) reads 70 / 60 / 2 / 4 / 4: total, pass, fail, "
+                      "expected-unsupported, skipped. Stale expectations: 0.", q.render_block(rec))
+        # A failing x86_64 census still decides the verdict.
+        def m(f):
+            f["interop-census-aarch64.json"] = dict(ARM_CENSUS, fail=0)
+            f["interop-evidence/results.json"]["summary"]["fail"] = 1
+        self.assertEqual(collect(m)["verdict"], "NO-GO")
+
+    def test_without_an_aarch64_census_only_the_x86_64_one_is_recorded(self):
+        rec = collect()
+        self.assertEqual([c["arch"] for c in rec["interop"]["censuses"]], ["linux-x86_64"])
+        self.assertNotIn("linux-aarch64 census", q.render_block(rec))
+
+    def test_a_malformed_aarch64_census_fails_the_collect(self):
+        with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()):
+            collect(lambda f: f.__setitem__("interop-census-aarch64.json", {"arch": "linux-aarch64"}))
+        self.assertEqual(e.exception.code, 2)
+
+
 class ChecksumTests(unittest.TestCase):
     def test_checksums_cover_the_files_not_the_sums_file(self):
         tmp = tempfile.mkdtemp()

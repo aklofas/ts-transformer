@@ -167,26 +167,50 @@ fn parse_kv_line(line: &str, line_no: usize) -> Result<(String, String), String>
 
 /// Parse the expectations file format: `#`-comment lines, blank lines,
 /// `[[expect]]` block markers, a `[census]` table holding
-/// `full_cells = <integer>`, and `key = "value"` lines within an
-/// `[[expect]]` block. Anything else is a loud parse error naming the
-/// offending line number. The census is read separately by
-/// [`parse_census`]; this returns only the rows.
+/// `full_cells = <integer>`, `[<name>_subset]` tables holding one
+/// `cells = [` … `]` list of quoted cell patterns, one per line, and
+/// `key = "value"` lines within an `[[expect]]` block. Anything else is a
+/// loud parse error naming the offending line number. The census and the
+/// subsets are read separately by [`parse_census`] and [`parse_subset`];
+/// this returns only the rows.
 pub fn parse_expectations(text: &str) -> Result<Vec<Expectation>, String> {
-    parse_expectations_file(text).map(|(rows, _)| rows)
+    parse_expectations_file(text).map(|f| f.rows)
 }
 
 /// The number of cells a full-shape run produces, declared once in the
 /// `[census]` table of the expectations file. `None` when the file has
 /// no such table.
 pub fn parse_census(text: &str) -> Result<Option<usize>, String> {
-    parse_expectations_file(text).map(|(_, census)| census)
+    parse_expectations_file(text).map(|f| f.census)
 }
 
-fn parse_expectations_file(text: &str) -> Result<(Vec<Expectation>, Option<usize>), String> {
+/// The cell patterns of the `[<name>_subset]` table (`run-matrix.sh
+/// --only-subset <name>` runs exactly these), or `None` when the file has
+/// no such table.
+pub fn parse_subset(text: &str, name: &str) -> Result<Option<Vec<String>>, String> {
+    parse_expectations_file(text).map(|mut f| f.subsets.remove(name))
+}
+
+struct ExpectationsFile {
+    rows: Vec<Expectation>,
+    census: Option<usize>,
+    subsets: BTreeMap<String, Vec<String>>,
+}
+
+/// Where the parser is: a subset table before its `cells = [` line, or
+/// inside the list.
+enum SubsetState {
+    Header(String, usize),
+    List(String, usize, Vec<String>),
+}
+
+fn parse_expectations_file(text: &str) -> Result<ExpectationsFile, String> {
     let mut out = Vec::new();
     let mut current: Option<ExpectBuilder> = None;
     let mut in_census = false;
     let mut census: Option<usize> = None;
+    let mut subsets: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut subset: Option<SubsetState> = None;
     let mut last_line = 0;
 
     for (idx, raw_line) in text.lines().enumerate() {
@@ -194,6 +218,66 @@ fn parse_expectations_file(text: &str) -> Result<(Vec<Expectation>, Option<usize
         last_line = line_no;
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        match subset.take() {
+            Some(SubsetState::Header(name, at)) => {
+                if line.split_whitespace().collect::<String>() != "cells=[" {
+                    return Err(format!(
+                        "expectations line {line_no}: [{name}_subset] (line {at}) holds one \
+                         `cells = [` list, got: {line:?}"
+                    ));
+                }
+                subset = Some(SubsetState::List(name, at, Vec::new()));
+                continue;
+            }
+            Some(SubsetState::List(name, at, cells)) if line == "]" => {
+                if cells.is_empty() {
+                    return Err(format!(
+                        "expectations line {line_no}: [{name}_subset] (line {at}) lists an empty \
+                         `cells` array"
+                    ));
+                }
+                subsets.insert(name, cells);
+                continue;
+            }
+            Some(SubsetState::List(name, at, mut cells)) => {
+                let item = line.strip_suffix(',').unwrap_or(line).trim();
+                let pattern = item
+                    .strip_prefix('"')
+                    .and_then(|v| v.strip_suffix('"'))
+                    .filter(|v| !v.is_empty() && !v.contains('"'))
+                    .ok_or_else(|| {
+                        format!(
+                            "expectations line {line_no}: a [{name}_subset] cell must be a quoted \
+                             cell pattern, got: {line:?}"
+                        )
+                    })?;
+                cells.push(pattern.to_string());
+                subset = Some(SubsetState::List(name, at, cells));
+                continue;
+            }
+            None => {}
+        }
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|l| l.strip_suffix("_subset]"))
+            .filter(|n| {
+                !n.is_empty()
+                    && n.chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+            })
+        {
+            if let Some(builder) = current.take() {
+                out.push(builder.finish(line_no)?);
+            }
+            in_census = false;
+            if subsets.contains_key(name) {
+                return Err(format!(
+                    "expectations line {line_no}: duplicate [{name}_subset] table"
+                ));
+            }
+            subset = Some(SubsetState::Header(name.to_string(), line_no));
             continue;
         }
         if line == "[[expect]]" {
@@ -257,11 +341,21 @@ fn parse_expectations_file(text: &str) -> Result<(Vec<Expectation>, Option<usize
             }
         }
     }
+    if let Some(SubsetState::Header(name, at) | SubsetState::List(name, at, _)) = subset {
+        return Err(format!(
+            "expectations line {at}: [{name}_subset] is unterminated: its `cells = [` list has no \
+             closing `]`"
+        ));
+    }
     if let Some(builder) = current.take() {
         out.push(builder.finish(last_line)?);
     }
     reject_ambiguous(&out)?;
-    Ok((out, census))
+    Ok(ExpectationsFile {
+        rows: out,
+        census,
+        subsets,
+    })
 }
 
 /// Can `a` and `b` (exact ids or trailing-`*` prefix globs) both match
@@ -698,7 +792,11 @@ pub fn merge(
 ) -> Result<Results, String> {
     let expectations_text = fs::read_to_string(expectations_path)
         .map_err(|e| format!("read {}: {e}", expectations_path.display()))?;
-    let (expectations, census) = parse_expectations_file(&expectations_text)
+    let ExpectationsFile {
+        rows: expectations,
+        census,
+        ..
+    } = parse_expectations_file(&expectations_text)
         .map_err(|e| format!("{}: {e}", expectations_path.display()))?;
     let full_cells = census.ok_or_else(|| {
         format!(
@@ -2290,6 +2388,38 @@ failure_contains = \"stream_sha256 mismatch\"
         assert!(!patterns_overlap("a/*", "b/*"));
     }
 
+    const SUBSET_FILE: &str = "[census]\nfull_cells = 3\n\n[arm64_subset]\ncells = [\n  \"srt/*\",\n  \
+                               # a comment\n  \"analyze/tsanalyze/*\"\n]\n\n[[expect]]\ncell = \"x\"\n\
+                               profile = \"baseline\"\nverdict = \"known_flaky\"\nreason = \"r\"\n";
+
+    #[test]
+    fn a_subset_table_lists_its_cell_patterns() {
+        assert_eq!(
+            parse_subset(SUBSET_FILE, "arm64").unwrap(),
+            Some(vec!["srt/*".to_string(), "analyze/tsanalyze/*".to_string()])
+        );
+        assert_eq!(parse_subset(SUBSET_FILE, "riscv").unwrap(), None);
+        assert_eq!(parse_expectations(SUBSET_FILE).unwrap().len(), 1);
+        assert_eq!(parse_census(SUBSET_FILE).unwrap(), Some(3));
+    }
+
+    #[test]
+    fn a_malformed_subset_table_is_a_parse_error() {
+        for (bad, want) in [
+            ("[arm64_subset]\ncells = [\n\"srt/*\",\n", "unterminated"),
+            ("[arm64_subset]\ncells = [\n]\n", "empty"),
+            ("[arm64_subset]\nlist = [\n\"a\"\n]\n", "cells = ["),
+            ("[arm64_subset]\ncells = [\nsrt/*\n]\n", "quoted"),
+            (
+                "[arm64_subset]\ncells = [\n\"a\"\n]\n[arm64_subset]\ncells = [\n\"b\"\n]\n",
+                "duplicate",
+            ),
+        ] {
+            let e = parse_subset(bad, "arm64").unwrap_err();
+            assert!(e.contains(want), "{bad:?}: {e}");
+        }
+    }
+
     #[test]
     fn live_expectations_table_parses() {
         let text = include_str!(concat!(
@@ -2298,6 +2428,11 @@ failure_contains = \"stream_sha256 mismatch\"
         ));
         let parsed = parse_expectations(text).expect("the live expectations table must parse");
         assert_eq!(parse_census(text).unwrap(), Some(161));
+        let arm = parse_subset(text, "arm64")
+            .unwrap()
+            .expect("the live table declares the arm64 subset");
+        assert!(arm.iter().any(|c| c == "srt-live/*"), "{arm:?}");
+        assert!(!arm.iter().any(|c| c.starts_with("whep/")), "{arm:?}");
         assert!(
             parsed.len() >= 65,
             "expected at least 65 rows, got {}",
