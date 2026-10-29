@@ -355,8 +355,8 @@ def test_rist_simple_profile_loopback():
     """Simple-profile loopback round-trip on librist's bundled UDP transport.
 
     This test requires librist to bind an even port for the receiver and
-    establish a sender session. It is marked tolerant — any RistError or
-    timeout skips rather than fails, to avoid flaky CI on constrained runners.
+    establish a sender session. Only a receiver bind failure or a recv timeout
+    skips; a sender build or send error fails the test.
     """
     # Try several even ports in case one is busy.
     rx = None
@@ -381,14 +381,14 @@ def test_rist_simple_profile_loopback():
                 .build()
             )
         except RistError as e:
-            pytest.skip(f"sender build failed ({e.kind.name}): {e}")
+            pytest.fail(f"sender build failed ({e.kind.name}): {e}")
 
         try:
             payload = b"\x47\x40\x00\x10" + b"\x00" * 184
             try:
                 tx.send(payload)
             except RistError as e:
-                pytest.skip(f"send failed ({e.kind.name}): {e}")
+                pytest.fail(f"send failed ({e.kind.name}): {e}")
 
             # recv with a tolerant timeout
             try:
