@@ -430,6 +430,14 @@ pub struct WireSummary {
     /// generates; non-zero means something damaged a PAT or PMT in
     /// flight, which is exactly what the corruption tap does on purpose.
     pub psi_crc_rejected: u64,
+    /// Per-PID minimum of how far a PES's decode time leads the clock: for
+    /// every PES start carrying a PTS on a PID some program lists, its DTS
+    /// (else its PTS) minus the most recent PCR base on that program's
+    /// PCR_PID, in 90 kHz ticks. Both are 33-bit counters (§2.4.3.5,
+    /// §2.4.3.7), so the difference is taken mod 2^33 as a signed
+    /// distance; a negative lead is an AU the decoder was already late
+    /// for. A PES before the PMT or before the first PCR is not measured.
+    pub pcr_lead_min_ticks: BTreeMap<u16, i64>,
 }
 
 pub struct Reader {
@@ -464,6 +472,9 @@ pub struct Reader {
     /// bytes differ — see [`WireSummary::pes_starts_per_pid`] and
     /// [`pcr_masked_identical`].
     last_pkt: BTreeMap<u16, [u8; PKT]>,
+    /// Most recent PCR base per PID, for
+    /// [`WireSummary::pcr_lead_min_ticks`].
+    last_pcr_base: BTreeMap<u16, u64>,
 }
 
 impl Default for Reader {
@@ -495,6 +506,7 @@ impl Reader {
             pcr_events: Vec::new(),
             prefix_events: Vec::new(),
             last_pkt: BTreeMap::new(),
+            last_pcr_base: BTreeMap::new(),
         }
     }
 
@@ -785,6 +797,7 @@ impl Reader {
                 .entry(info.pid)
                 .or_insert_with(|| TimestampSeries::new(retention, info.pid))
                 .push(base);
+            self.last_pcr_base.insert(info.pid, base);
             // An attribution anchor only from a PID the PMT declares as a
             // PCR_PID (before the first PMT — a mid-stream attach — any PID
             // is accepted). After a framing injection the hunt can accept a
@@ -1020,17 +1033,36 @@ impl Reader {
         let pts_dts = payload[7] >> 6;
         let hdr_len = usize::from(payload[8]);
         if pts_dts & 0x2 != 0 {
-            let q = payload.get(9..14).ok_or("PTS past packet")?;
-            let pts = (u64::from((q[0] >> 1) & 0x7) << 30)
-                | (u64::from(q[1]) << 22)
-                | (u64::from((q[2] >> 1) & 0x7F) << 15)
-                | (u64::from(q[3]) << 7)
-                | u64::from(q[4] >> 1);
+            let pts = timestamp(payload.get(9..14).ok_or("PTS past packet")?);
             self.summary
                 .pts
                 .entry(pid)
                 .or_insert_with(|| TimestampSeries::new(retention, pid))
                 .push(pts);
+            let dts = if pts_dts == 0x3 {
+                Some(timestamp(payload.get(14..19).ok_or("DTS past packet")?))
+            } else {
+                None
+            };
+            let pcr_base = self
+                .summary
+                .programs
+                .values()
+                .find(|prog| prog.streams.iter().any(|st| st.pid == pid))
+                .and_then(|prog| self.last_pcr_base.get(&prog.pcr_pid));
+            if let Some(&base) = pcr_base {
+                let ahead = dts.unwrap_or(pts).wrapping_sub(base) % TS_MODULUS;
+                let lead = if ahead >= TS_MODULUS / 2 {
+                    ahead as i64 - TS_MODULUS as i64
+                } else {
+                    ahead as i64
+                };
+                self.summary
+                    .pcr_lead_min_ticks
+                    .entry(pid)
+                    .and_modify(|m| *m = (*m).min(lead))
+                    .or_insert(lead);
+            }
         }
         if let Some(d) = payload.get(9 + hdr_len..9 + hdr_len + 4) {
             match shape.first_payload_prefix {
@@ -1046,6 +1078,16 @@ impl Reader {
         }
         Ok(())
     }
+}
+
+/// A 33-bit PTS or DTS field (§2.4.3.7, Table 2-21): its five bytes,
+/// marker bits dropped.
+fn timestamp(q: &[u8]) -> u64 {
+    (u64::from((q[0] >> 1) & 0x7) << 30)
+        | (u64::from(q[1]) << 22)
+        | (u64::from((q[2] >> 1) & 0x7F) << 15)
+        | (u64::from(q[3]) << 7)
+        | u64::from(q[4] >> 1)
 }
 
 pub fn summarize_file(path: &Path) -> io::Result<WireSummary> {
