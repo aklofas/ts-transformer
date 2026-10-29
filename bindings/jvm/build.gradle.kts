@@ -174,6 +174,42 @@ tasks.register<JavaExec>("runServeWhep") {
 
 tasks.named("test") { dependsOn(tasks.named(examples.compileJavaTaskName)) }
 
+// --- Module-path smoke: a named consumer module compiled and run against the
+//     jar itself (never the exploded classes), so a package missing from
+//     module-info fails here instead of in a user's build. The smoke sources
+//     are not packaged. Uses the toolchain JDK, not the `java` on PATH.
+val moduleSmokeSrc = layout.projectDirectory.dir("src/moduleSmoke/java")
+val moduleSmokeOut = layout.buildDirectory.dir("moduleSmoke/classes")
+val jarFile = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+val toolchains = extensions.getByType<JavaToolchainService>()
+
+val compileModuleSmoke = tasks.register<JavaCompile>("compileModuleSmoke") {
+    source(moduleSmokeSrc)
+    destinationDirectory.set(moduleSmokeOut)
+    classpath = files()
+    javaCompiler.set(toolchains.compilerFor { languageVersion.set(JavaLanguageVersion.of(17)) })
+    options.encoding = "UTF-8"
+    options.compilerArgs.addAll(listOf("--module-path", jarFile.get().asFile.path))
+    dependsOn(tasks.named("jar"))
+}
+
+val modulePathSmoke = tasks.register<JavaExec>("modulePathSmoke") {
+    group = "verification"
+    description = "Run a named module against the assembled jar on the module path"
+    dependsOn(compileModuleSmoke)
+    javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) })
+    classpath = files()
+    jvmArgs(
+        "--module-path",
+        listOf(jarFile.get().asFile.path, moduleSmokeOut.get().asFile.path)
+            .joinToString(File.pathSeparator),
+    )
+    mainModule.set("org.tstrans.smoke")
+    mainClass.set("org.tstrans.smoke.Main")
+}
+
+tasks.named("check") { dependsOn(modulePathSmoke) }
+
 // javac (like javadoc below) defaults to the platform charset, which is
 // windows-1252 on the Windows CI runner and rejects the UTF-8 arrows / § /
 // em-dashes that appear in source comments. Force UTF-8 so main + test

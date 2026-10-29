@@ -115,6 +115,16 @@ jobs:
         # probe-free lib into resources/ before the upload step copies it.
         run: ./gradlew copyNative --no-daemon --stacktrace
 
+      # A named module on the module path consumes this leg's jar, so a package
+      # missing from module-info fails on every platform (path separators differ).
+      - name: Module-path smoke (this platform's jar)
+        working-directory: bindings/jvm
+        shell: bash
+        env:
+          SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
+        run: ./gradlew modulePathSmoke --no-daemon --stacktrace
+
       - name: check-jvm-jni-catch-coverage
         if: matrix.triple == 'linux-x86_64'
         run: bash scripts/check/jvm/jni-catch-coverage.sh
@@ -212,6 +222,13 @@ jobs:
             fi
           done
           echo "All gating native libs present in JAR."
+
+      # The same named-module consumer, run against the fat jar users download.
+      # The jar task is already up to date, so this reuses the assembled file.
+      - name: Module-path smoke (assembled fat JAR)
+        working-directory: bindings/jvm
+        shell: bash
+        run: ./gradlew modulePathSmoke --no-daemon --stacktrace -PnativeStagingDir="$GITHUB_WORKSPACE/staging"
 
       # Smoke-load: the assemble runner is linux-x86_64, and the JAR ships that
       # lib. Version.versionString() triggers NativeLoader.load() via a static
