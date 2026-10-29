@@ -83,7 +83,7 @@ use super::subset::{self, Pick, ReplayPlan};
 use super::sweep::{DOWNSTREAM_OUTPUTS, SweepSummary, digests_fingerprint};
 use super::{PATHS, REPLAY_PICK_MAX_BYTES, RunDir, STALL_SECONDS, Sha256Hex};
 use crate::report::csv::RSS_HEADER;
-use crate::report::soak::{
+use crate::report::rss::{
     MAX_GAP_CADENCES, MAX_WARMUP_S, MIN_SAMPLE_COVERAGE, RSS_SLOPE_THRESHOLD_KB_PER_HOUR,
     WARMUP_FRACTION, linear_regression_slope, rss_coverage, rss_warmup_s,
 };
