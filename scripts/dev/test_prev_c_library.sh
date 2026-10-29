@@ -38,43 +38,75 @@ echo "unexpected gh call: \$*" >&2; exit 3
 STUB
 chmod +x "$T/bin/gh"
 
-# case <name> <sums-line or "-" for no SHA256SUMS> <attest rc> [tarball: yes|no]
+# A second package of another version, and a package whose tarball holds no tstrans.abi.
+TAR2=tstrans-c-0.0.2-linux-x86_64.tar.gz
+cp "$T/$TAR" "$T/$TAR2"
+mkdir -p "$T/noabi-src/tstrans-c-0.0.1-linux-x86_64" "$T/noabi"
+echo h > "$T/noabi-src/tstrans-c-0.0.1-linux-x86_64/tstrans.h"
+tar -czf "$T/noabi/$TAR" -C "$T/noabi-src" tstrans-c-0.0.1-linux-x86_64
+NOABI="$(sha256sum "$T/noabi/$TAR" | cut -d' ' -f1)"
+
+# setup <sums-line or "-" for no SHA256SUMS> <attest rc> [tarballs: one|none|two|noabi]
 setup() {
   rm -rf "$T/assets" "$T/rt" "$T/out" "$T/gh.log"; mkdir -p "$T/assets" "$T/rt"
-  [ "${4:-yes}" = yes ] && cp "$T/$TAR" "$T/assets/"
-  if [ "$2" != - ]; then printf '%s\n' "aaaa  qualification.json" "$2" > "$T/assets/SHA256SUMS"; fi
-  echo "$3" > "$T/attest-rc"
+  case "${3:-one}" in
+    one) cp "$T/$TAR" "$T/assets/" ;;
+    two) cp "$T/$TAR" "$T/$TAR2" "$T/assets/" ;;
+    noabi) cp "$T/noabi/$TAR" "$T/assets/" ;;
+  esac
+  if [ "$1" != - ]; then printf '%s\n' "aaaa  qualification.json" "$1" > "$T/assets/SHA256SUMS"; fi
+  echo "$2" > "$T/attest-rc"
 }
 run() {
   env PATH="$T/bin:$PATH" GITHUB_OUTPUT="$T/out" RUNNER_TEMP="$T/rt" PREV=v0.0.1 GITHUB_REPOSITORY=x/y \
     bash "$PREVLIB" release > "$T/log" 2>&1
 }
 has_lib() { [ -f "$T/out" ] && grep -q '^lib=' "$T/out"; }
+# fell <case> <detail line> <fallback reason>: no lib=, the detail and the fallback line
+# in the log, and exactly that reason in the step's `fallback` output.
 FELL='the v0.0.1 Release package failed verification; the source build is used'
+fell() {
+  if has_lib; then no "$1: still yields lib="; else ok "$1: no lib="; fi
+  grep -qxF "$FELL" "$T/log" && grep -qxF "$2" "$T/log" && ok "$1: names the file and the check" || no "$1: message"
+  [ "$(sed -n 's/^fallback=//p' "$T/out" 2>/dev/null)" = "$3" ] && ok "$1: fallback=$3" || { no "$1: fallback output"; sed 's/^/    out: /' "$T/out" 2>/dev/null; }
+}
 
-setup wrong "$BADSUM  $TAR" 0; run
-if has_lib; then no "a wrong digest still yields lib="; else ok "a wrong digest yields no lib="; fi
-grep -qxF "$FELL" "$T/log" && grep -qF "$TAR: sha256sum -c against SHA256SUMS failed" "$T/log" && ok "a wrong digest names the file and the check" || no "wrong-digest message"
+setup "$BADSUM  $TAR" 0; run
+fell "a wrong digest" "$TAR: sha256sum -c against SHA256SUMS failed" "checksum mismatch"
 
-setup good "$GOOD  $TAR" 0; run
+setup "$GOOD  $TAR" 0; run
 if has_lib && [ "$(sed -n 's/^lib=//p' "$T/out")" = "$T/rt/prev-release/tstrans-c-0.0.1-linux-x86_64/tstrans.abi" ]; then ok "a verified package yields lib="; else no "a verified package yields no lib="; fi
-grep -qxF "gh attestation verify $T/rt/prev-release/$TAR -R x/y" "$T/gh.log" && ok "the attestation is verified against this repository" || { no "attestation call"; sed 's/^/    /' "$T/gh.log"; }
+grep -q '^fallback=' "$T/out" && no "a verified package wrote a fallback reason" || ok "a verified package writes no fallback reason"
+grep -qxF "gh attestation verify $T/rt/prev-release/$TAR -R x/y --signer-workflow aklofas/ts-transformer/.github/workflows/release-qualify.yml --source-ref refs/tags/v0.0.1" "$T/gh.log" \
+  && ok "the attestation must come from release-qualify.yml at the previous tag" || { no "attestation call"; sed 's/^/    /' "$T/gh.log"; }
 
-setup attest "$GOOD  $TAR" 1; run
-if has_lib; then no "a failed attestation still yields lib="; else ok "a failed attestation yields no lib="; fi
-grep -qxF "$FELL" "$T/log" && grep -qF "$TAR: gh attestation verify failed" "$T/log" && ok "a failed attestation names the file and the check" || no "attestation message"
+setup "$GOOD  $TAR" 1; run
+fell "a failed attestation" "$TAR: gh attestation verify failed" "attestation verify failed"
 
-setup unlisted "bbbb  tstrans-py.cdx.json" 0; run
-if has_lib; then no "a SHA256SUMS without the tarball line still yields lib="; else ok "a SHA256SUMS without the tarball line yields no lib="; fi
-grep -qxF "$FELL" "$T/log" && grep -qF "$TAR: no line for it in SHA256SUMS" "$T/log" && ok "an unlisted tarball names the file and the check" || no "unlisted message"
+setup "bbbb  tstrans-py.cdx.json" 0; run
+fell "an unlisted tarball" "$TAR: no line for it in SHA256SUMS" "package not listed in SHA256SUMS"
 
-setup nosums - 0; run
-if has_lib; then no "a Release without SHA256SUMS still yields lib="; else ok "a Release without SHA256SUMS yields no lib="; fi
-grep -qxF "$FELL" "$T/log" && grep -qF "SHA256SUMS: not in the v0.0.1 Release" "$T/log" && ok "a missing SHA256SUMS names the file" || no "missing-sums message"
+setup - 0; run
+fell "a missing SHA256SUMS" "SHA256SUMS: not in the v0.0.1 Release" "SHA256SUMS missing"
 
-setup nopkg - 0 no; run
+# Two packages are refused, not picked between: neither is known to be the tag's.
+setup "$GOOD  $TAR" 0 two; run
+fell "two packages" "the v0.0.1 Release holds 2 C packages, expected one" "more than one package"
+
+setup "$NOABI  $TAR" 0 noabi; run
+fell "a package without tstrans.abi" "$TAR: holds no tstrans.abi" "no tstrans.abi in package"
+
+setup - 0 none; run
 if has_lib; then no "a Release without a C package yields lib="; else ok "a Release without a C package yields no lib="; fi
 grep -qxF "the v0.0.1 Release carries no C package" "$T/log" && ok "a Release without a C package says so" || no "no-package message"
+[ "$(sed -n 's/^fallback=//p' "$T/out" 2>/dev/null)" = "no package for v0.0.1" ] && ok "no package: fallback=no package for v0.0.1" || no "no-package fallback output"
+
+# `source` folds how the previous library was obtained into one string for the ABI record.
+src() { env PREV=v0.0.1 "$@" bash "$PREVLIB" source 2>"$T/log"; }
+[ "$(src RELEASE_LIB=/x/tstrans.abi FALLBACK=)" = attested ] && ok "source: a verified package is attested" || no "source: attested"
+[ "$(src RELEASE_LIB= FALLBACK='attestation verify failed')" = "built: attestation verify failed" ] && ok "source: a fallback carries its reason" || no "source: built with reason"
+src RELEASE_LIB= FALLBACK= >/dev/null; rc=$?
+[ $rc = 2 ] && grep -qxF "prev-c-library.sh source: neither a verified package nor a fallback reason" "$T/log" && ok "source: no lib and no reason is refused" || no "source: refusal rc=$rc"
 
 [ $fail = 0 ] && echo "test_prev_c_library: OK"
 exit $fail

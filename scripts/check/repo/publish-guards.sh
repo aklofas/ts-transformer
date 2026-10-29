@@ -16,11 +16,13 @@
 #    the conjuncts `github.event_name == 'push'` and
 #    `startsWith(github.ref, 'refs/tags/v')`. The environment is the publishing
 #    identity a registry trusts; a rehearsal never enters it.
-# 3. A job that holds credentials (an `environment:`, or `id-token: write` /
-#    `write-all` from its own or the workflow's permissions) pins every remote
-#    action to a 40-hex commit sha: a moved tag must not run inside it. A local
-#    composite action (`./...`) runs inside the job, so its `uses:` are held to
-#    the same rule; one that cannot be read fails.
+# 3. A job that holds credentials (an `environment:`, or `id-token: write`,
+#    `contents: write` or `write-all` from its own or the workflow's
+#    permissions; `contents: write` can alter Releases and tags) pins every
+#    remote action to a 40-hex commit sha: a moved tag must not run inside it.
+#    A local composite action (`./...`) runs inside the job, so its `uses:` are
+#    held to the same rule; one that cannot be read fails, and one that itself
+#    uses a local action is refused (the rail follows one level).
 #
 # A condition is read once per reader: drop a trailing comment and a
 # `${{ ... }}` wrapper, refuse `||`, split at depth-0 `&&`, strip balanced outer
@@ -93,7 +95,7 @@ def conjuncts(cond):
     return out
 
 def cred_perms(p):
-    return p == 'write-all' or (isinstance(p, dict) and p.get('id-token') == 'write')
+    return p == 'write-all' or (isinstance(p, dict) and 'write' in (p.get('id-token'), p.get('contents')))
 
 def unpinned(u):
     return not u.startswith('./') and not SHA.fullmatch(u)
@@ -146,7 +148,9 @@ for f in sys.argv[1:]:
                     continue
                 a = yaml.safe_load(open(act)) or {}
                 for s in ((a.get('runs') or {}).get('steps') or []):
-                    if 'uses' in s and unpinned(str(s['uses'])):
+                    if 'uses' in s and str(s['uses']).startswith('./'):
+                        bad.append(f"{f}: job '{name}' holds credentials but {r} uses the local action {s['uses']}, which this rail does not follow")
+                    elif 'uses' in s and unpinned(str(s['uses'])):
                         bad.append(f"{f}: job '{name}' holds credentials but {r} uses {s['uses']}, which is not pinned to a commit sha")
 if bad:
     print('\n'.join(bad)); sys.exit(1)
@@ -210,7 +214,7 @@ for f in "${files[@]}"; do
                 if ((getline line < path) < 0) { printf "%s: job \x27%s\x27 holds credentials but %s/action.yml cannot be read\n", F, job, r; bad = 1; return }
             }
             do {
-                if (line ~ /^[ \t-]*uses:/) { u = uses_of(line); if (!pinned(u)) { printf "%s: job \x27%s\x27 holds credentials but %s uses %s, which is not pinned to a commit sha\n", F, job, r, u; bad = 1 } }
+                if (line ~ /^[ \t-]*uses:/) { u = uses_of(line); if (u ~ /^\.\//) { printf "%s: job \x27%s\x27 holds credentials but %s uses the local action %s, which this rail does not follow\n", F, job, r, u; bad = 1 } else if (!pinned(u)) { printf "%s: job \x27%s\x27 holds credentials but %s uses %s, which is not pinned to a commit sha\n", F, job, r, u; bad = 1 } }
             } while ((getline line < path) > 0)
             close(path)
         }
@@ -234,13 +238,13 @@ for f in "${files[@]}"; do
         # The workflow-level permissions, read before `jobs:`.
         !injobs && /^permissions:[ \t]*write-all/ { topcred = 1 }
         !injobs && /^permissions:/ { intop = 1; next }
-        !injobs && intop && /^  id-token:[ \t]*write/ { topcred = 1 }
+        !injobs && intop && /^  (id-token|contents):[ \t]*write/ { topcred = 1 }
         !injobs && /^[^ #]/ { intop = 0 }
         /^jobs:/ { injobs = 1; next }
         injobs && /^  [A-Za-z0-9_-]+:/ { flush(); job = $1; sub(/:$/, "", job); callee = ""; passes = 0; env = 0; shaped = 0; cond = ""; jperm = 0; jcred = 0; inperm = 0; nu = 0; next }
         injobs && /^    [A-Za-z0-9_-]+:/ { inperm = 0 }
         injobs && /^    permissions:/ { jperm = 1; inperm = 1; if ($0 ~ /write-all/) jcred = 1 }
-        injobs && inperm && /^      id-token:[ \t]*write/ { jcred = 1 }
+        injobs && inperm && /^      (id-token|contents):[ \t]*write/ { jcred = 1 }
         injobs && /^    uses: \.\/\.github\/workflows\// { callee = $2; sub(/.*\//, "", callee) }
         injobs && /^      dry_run: true[ ]*$/ { passes = 1 }
         injobs && /^    environment:/ { env = 1 }

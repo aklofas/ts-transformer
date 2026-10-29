@@ -307,10 +307,13 @@ jobs:
           PREV_MINOR: ${{ steps.prev.outputs.prev_minor }}
           HEAD_MINOR: ${{ steps.prev.outputs.head_minor }}
           RELEASE_LIB: ${{ steps.release.outputs.lib }}
+          FALLBACK: ${{ steps.release.outputs.fallback }}
         run: |
           mkdir -p "$RUNNER_TEMP/abi-record"
           old="$(bash scripts/dev/prev-c-library.sh resolve)"
-          if [ -n "$RELEASE_LIB" ]; then how="from its Release package"; else how="built"; fi
+          # `attested`, or `built: <why>`: a failed verification and a missing
+          # package read differently in the record.
+          how="$(bash scripts/dev/prev-c-library.sh source)"
           bash scripts/dev/prev-c-library.sh header "$RUNNER_TEMP/prev-tstrans.h"
           set +e
           bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" \
@@ -647,7 +650,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: qualification-${{ needs.resolve.outputs.slug }}
           path: ${{ runner.temp }}/bundle

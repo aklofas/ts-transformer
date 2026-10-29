@@ -927,6 +927,8 @@ jobs:
     steps:
       - uses: actions/attest-build-provenance@v3
 YML
+sed "s/^      id-token: write\$/      contents: write/; /^      contents: read\$/d" "$pg/pin-idtoken.yml" > "$pg/pin-contents.yml"
+sed "s/^  id-token: write\$/  contents: write/; /^  contents: read\$/d" "$pg/pin-top.yml" > "$pg/pin-top-contents.yml"
 cat > "$pg/pin-noid.yml" <<'YML'
 name: noid
 on: pull_request
@@ -959,6 +961,16 @@ runs:
   steps:
     - uses: dtolnay/rust-toolchain@stable
 YML
+# A local composite that calls another local composite is refused: the rail follows one level.
+mkdir -p "$pg/repo/.github/actions/outer"
+cat > "$pg/repo/.github/actions/outer/action.yml" <<'YML'
+name: outer
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup
+YML
+sed 's/setup$/outer/' "$pg/repo/.github/workflows/local.yml" > "$pg/repo/.github/workflows/local-nested.yml"
 
 # publish-guards, caller side: a job calling a callable workflow that declares dry_run must pass `dry_run: true`.
 cat > "$pg/callee.yml" <<'YML'
@@ -1022,7 +1034,7 @@ for mode in python awk; do
   expect_out "publish-guards ($mode): pin-env" "$pg/pin-env.yml: job 'deploy' holds credentials but uses actions/checkout@v5, which is not pinned to a commit sha"
   expect "publish-guards ($mode): a sha-pinned action passes" 0 "${pre[@]}" bash $PGS "$pg/pin-good.yml"
   expect "publish-guards ($mode): a 41-hex ref is not a sha" 1 "${pre[@]}" bash $PGS "$pg/pin-long.yml"
-  for f in pin-idtoken pin-writeall pin-top; do
+  for f in pin-idtoken pin-writeall pin-top pin-contents pin-top-contents; do
     expect "publish-guards ($mode): $f fails" 1 "${pre[@]}" bash $PGS "$pg/$f.yml"
     expect_out "publish-guards ($mode): $f" "$pg/$f.yml: job 'attest' holds credentials but uses actions/attest-build-provenance@v3, which is not pinned to a commit sha"
   done
@@ -1031,6 +1043,8 @@ for mode in python awk; do
   expect_out "publish-guards ($mode): local" "$pg/repo/.github/workflows/local.yml: job 'attest' holds credentials but ./.github/actions/setup uses dtolnay/rust-toolchain@stable, which is not pinned to a commit sha"
   expect "publish-guards ($mode): an unreadable local action fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-missing.yml"
   expect_out "publish-guards ($mode): local-missing" "$pg/repo/.github/workflows/local-missing.yml: job 'attest' holds credentials but ./.github/actions/missing/action.yml cannot be read"
+  expect "publish-guards ($mode): a local action inside a local action fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-nested.yml"
+  expect_out "publish-guards ($mode): local-nested" "$pg/repo/.github/workflows/local-nested.yml: job 'attest' holds credentials but ./.github/actions/outer uses the local action ./.github/actions/setup, which this rail does not follow"
 done
 plant "$pg/repo/.github/actions/setup/action.yml" '@stable' "@$SHA"
 for mode in python awk; do
