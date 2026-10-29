@@ -2,12 +2,12 @@
 //!
 //! Independence is the point: tst-interop's `verify.rs` tally comes from
 //! tst-core's demuxer, i.e. the code under test. This reader shares nothing
-//! with it — it parses exactly the constructs the interop generator emits (188-byte
-//! packets, single-packet PAT/PMT, adaptation-field PCR, PES headers) and
-//! returns an error for anything else, so it can never quietly degrade into
-//! the demuxer's view of a stream. Spec references: ITU-T H.222.0 §2.4.3.2
-//! (packet header), §2.4.3.5 (adaptation field / PCR), §2.4.4.3-.8 (PAT /
-//! PMT), §2.4.3.7 (PES header / PTS).
+//! with it — it parses exactly the constructs the interop generator emits
+//! (188-byte packets, single-packet PAT/PMT, adaptation-field PCR, PES
+//! headers) and returns an error for anything else, so it can never quietly
+//! degrade into the demuxer's view of a stream. Spec references: ITU-T
+//! H.222.0 §2.4.3.2 (packet header), §2.4.3.5 (adaptation field / PCR),
+//! §2.4.4.3-.8 (PAT / PMT), §2.4.3.7 (PES header / PTS).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -473,7 +473,11 @@ pub struct Reader {
     /// [`pcr_masked_identical`].
     last_pkt: BTreeMap<u16, [u8; PKT]>,
     /// Most recent PCR base per PID, for
-    /// [`WireSummary::pcr_lead_min_ticks`].
+    /// [`WireSummary::pcr_lead_min_ticks`]. It survives a
+    /// `discontinuity_indicator`: the first PCR after one replaces it, so a
+    /// PES between the two is measured against the old timeline. Nothing
+    /// sets a floor on that lead by default; a caller that does must reset
+    /// this entry on a discontinuity.
     last_pcr_base: BTreeMap<u16, u64>,
 }
 
@@ -1029,7 +1033,8 @@ impl Reader {
         let record = self.resync_mode;
         let shape = self.summary.pes.entry(pid).or_default();
         shape.stream_ids.insert(stream_id);
-        // §2.4.3.7: byte 6 = '10' + flags, byte 7 = PTS_DTS_flags.., byte 8 = header_data_length.
+        // §2.4.3.7: byte 6 = '10' + flags, byte 7 = PTS_DTS_flags..,
+        // byte 8 = header_data_length.
         let pts_dts = payload[7] >> 6;
         let hdr_len = usize::from(payload[8]);
         if pts_dts & 0x2 != 0 {
@@ -1039,18 +1044,20 @@ impl Reader {
                 .entry(pid)
                 .or_insert_with(|| TimestampSeries::new(retention, pid))
                 .push(pts);
-            let dts = if pts_dts == 0x3 {
-                Some(timestamp(payload.get(14..19).ok_or("DTS past packet")?))
-            } else {
-                None
-            };
+            // A packet that ends inside a flagged DTS is read as before (its
+            // PTS recorded); only the lead is not measured, since no oracle
+            // that is off by default may change what this reader accepts.
+            let dts = (pts_dts == 0x3)
+                .then(|| payload.get(14..19).map(timestamp))
+                .flatten();
+            let dts_missing = pts_dts == 0x3 && dts.is_none();
             let pcr_base = self
                 .summary
                 .programs
                 .values()
                 .find(|prog| prog.streams.iter().any(|st| st.pid == pid))
                 .and_then(|prog| self.last_pcr_base.get(&prog.pcr_pid));
-            if let Some(&base) = pcr_base {
+            if let Some(&base) = pcr_base.filter(|_| !dts_missing) {
                 let ahead = dts.unwrap_or(pts).wrapping_sub(base) % TS_MODULUS;
                 let lead = if ahead >= TS_MODULUS / 2 {
                     ahead as i64 - TS_MODULUS as i64

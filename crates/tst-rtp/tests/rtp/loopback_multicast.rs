@@ -19,6 +19,7 @@ use std::time::Duration;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_rtp::{RtpConnectError, RtpRecvTransport, RtpTransport, RtpUrl};
 use tst_test_helpers::capability::skip_unless_required;
+use tst_test_helpers::timing::scaled;
 
 fn try_listen_multicast_v4(addr: &str) -> Option<RtpRecvTransport> {
     match RtpRecvTransport::listen(addr) {
@@ -59,7 +60,7 @@ fn ipv4_multicast_loopback_round_trip() {
     let payload = [0x47u8; 188];
     send.send_bytes(&payload).unwrap();
 
-    let got = match rx.recv_timeout(Duration::from_secs(5)) {
+    let got = match rx.recv_timeout(scaled(Duration::from_secs(5))) {
         Ok(v) => v,
         Err(_) => {
             if let Some(c) = &cancel {
@@ -154,7 +155,7 @@ fn two_rtp_multicast_receivers_deliver_same_datagram() {
     let mut send = RtpTransport::connect("rtp://239.55.55.4:55012?ttl=1&iface=127.0.0.1").unwrap();
     send.send_bytes(&payload).unwrap();
 
-    let got1 = match rx1.recv_timeout(Duration::from_secs(5)) {
+    let got1 = match rx1.recv_timeout(scaled(Duration::from_secs(5))) {
         Ok(v) => v,
         Err(_) => {
             cancel_receivers();
@@ -165,7 +166,7 @@ fn two_rtp_multicast_receivers_deliver_same_datagram() {
             return;
         }
     };
-    let got2 = match rx2.recv_timeout(Duration::from_secs(5)) {
+    let got2 = match rx2.recv_timeout(scaled(Duration::from_secs(5))) {
         Ok(v) => v,
         Err(_) => {
             cancel_receivers();

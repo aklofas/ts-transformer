@@ -46,21 +46,39 @@ mod tests {
     #[test]
     fn a_required_capability_panics_and_an_optional_one_logs() {
         let log = std::env::temp_dir().join(format!("cap-log-{}", std::process::id()));
-        // SAFETY: the test owns these two variable names; no other test reads them.
+        // SAFETY: the test owns these two variable names and no other test
+        // reads them; CI runs it under nextest, one process per test, so no
+        // other thread touches the environment meanwhile.
         unsafe {
             std::env::set_var("TST_CAPABILITY_LOG", &log);
             std::env::remove_var("TST_REQUIRE_SELFTESTCAP");
         }
         skip_unless_required("SELFTESTCAP", "no such thing");
-        assert!(
-            std::fs::read_to_string(&log)
-                .unwrap()
-                .starts_with("SELFTESTCAP\t")
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("<unnamed>")
+            .to_owned();
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            format!("SELFTESTCAP\t{name}\tno such thing\n")
         );
         unsafe {
             std::env::set_var("TST_REQUIRE_SELFTESTCAP", "1");
         }
-        assert!(std::panic::catch_unwind(|| skip_unless_required("SELFTESTCAP", "x")).is_err());
+        let panic = std::panic::catch_unwind(|| skip_unless_required("SELFTESTCAP", "x"))
+            .expect_err("a required capability panics");
+        let text = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .unwrap_or_default();
+        assert!(
+            text.contains("capability SELFTESTCAP is required on this host and is unavailable: x"),
+            "{text}"
+        );
+        unsafe {
+            std::env::remove_var("TST_CAPABILITY_LOG");
+            std::env::remove_var("TST_REQUIRE_SELFTESTCAP");
+        }
         let _ = std::fs::remove_file(&log);
     }
 }
