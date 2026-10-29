@@ -279,7 +279,7 @@ fn an_invariant_failure_fails_the_sweep_until_annotated() {
     let sha = sha_of(&twice);
     std::fs::write(
         ann.join(format!("{sha}.toml")),
-        "known_discontinuity = true\nreason = \"two takes joined\"\n",
+        "known_discontinuity = true\nmax_pts_backward_breaks = 1\ndiscontinuity_pids = [4113]\nreason = \"two takes joined\"\n",
     )
     .unwrap();
     let run = temp_dir_named("sw-invariant-run2");
@@ -447,11 +447,13 @@ fn a_zero_filled_dropout_fails_feed_error_until_marked_never_a_parse_failure() {
         .map(|f| f["rule"].as_str().unwrap())
         .collect();
     assert_eq!(rules, ["feed-error"], "{s}");
+    // The reviewed count the annotation below pins as its bound.
+    assert_eq!(failures[0]["detail"], "1 feed errors", "{s}");
 
     let ann = temp_dir_named("sw-dropout-ann");
     std::fs::write(
         ann.join(format!("{}.toml", sha_of(&bytes))),
-        "known_feed_errors = true\nreason = \"recorder dropout, reviewed\"\n",
+        "known_feed_errors = true\nmax_feed_errors = 1\nreason = \"recorder dropout, reviewed\"\n",
     )
     .unwrap();
     let run = temp_dir_named("sw-dropout-run2");
@@ -466,6 +468,22 @@ fn a_zero_filled_dropout_fails_feed_error_until_marked_never_a_parse_failure() {
             .as_str()
             .unwrap()
             .starts_with("excused: recorder dropout, reviewed;"),
+        "{s}"
+    );
+
+    // A bound below what the capture shows no longer excuses it.
+    std::fs::write(
+        ann.join(format!("{}.toml", sha_of(&bytes))),
+        "known_feed_errors = true\nmax_feed_errors = 0\nreason = \"recorder dropout, reviewed\"\n",
+    )
+    .unwrap();
+    let run = temp_dir_named("sw-dropout-run3");
+    let out = sweep(&dir, &run, &["--annotations", ann.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let s = json(&run.join("sweep.json"));
+    assert_eq!(
+        s["per_file"][0]["invariant_failures"][0]["detail"],
+        "1 feed errors exceeds the reviewed bound 0",
         "{s}"
     );
 }
