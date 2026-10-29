@@ -129,6 +129,12 @@ tasks.test {
     dependsOn(copyNative) // dev-mode native; assemble job runs `jar`, not `test`.
     useJUnitPlatform()
     testLogging { showStandardStreams = true }
+    // The scenario tests read the shared fixtures outside this project; as
+    // inputs, a changed golden or corpus reruns them instead of leaving the
+    // task up to date.
+    inputs.dir("../../crates/tst-integration/tests/fixtures/scenarios")
+        .withPropertyName("scenarioFixtures")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     // -Xcheck:jni: HotSpot's built-in JNI verifier. It catches the
     // JNI-semantic bug class — invalid/stale handles, local-ref leaks,
     // env misuse across threads — which memory sanitizers

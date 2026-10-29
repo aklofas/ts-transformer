@@ -2475,8 +2475,10 @@ fn synthetic_ts_unknown_stream_type() -> Vec<u8> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `kind = "url-corpus"`: the hand-written URL corpus (see [`url`]). The
-/// input is the corpus itself, so nothing is generated; each row carries its
-/// own expected record and the golden holds no events.
+/// input is the corpus itself; each row carries its own expected record and
+/// the golden holds no events. The golden's `extensions.corpus` is the whole
+/// corpus as JSON, for the JVM leg, which has no TOML reader; `--check` keeps
+/// it in step with the TOML.
 struct UrlCorpus;
 
 impl Scenario for UrlCorpus {
@@ -2496,11 +2498,20 @@ impl Scenario for UrlCorpus {
     fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
         // The corpus and its golden share the scenario's directory.
         std::fs::create_dir_all(out_dir.join(self.id())).expect("create scenario dir");
+        // The twin is read from the committed corpus, never from `out_dir`:
+        // the corpus is hand-written input, not generated output. Loading it
+        // first refuses a corpus the Rust legs could not read.
+        url::load();
+        let path = url::corpus_path();
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let corpus: serde_json::Value = toml::from_str(&text)
+            .unwrap_or_else(|e| panic!("cannot convert {}: {e}", path.display()));
         let golden = Golden {
             schema_version: 0,
             lossy: false,
             core: vec![],
-            extensions: serde_json::Value::Null,
+            extensions: serde_json::json!({ "corpus": corpus }),
         };
         (PathBuf::from(self.id()).join("corpus.toml"), golden)
     }
