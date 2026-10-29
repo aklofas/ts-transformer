@@ -68,10 +68,8 @@ version  = "2"
 optional = true
 
 [dependencies.rustls]
-version          = "0.23"
-optional         = true
-default-features = false
-features         = ["std", "ring"]
+workspace = true
+optional  = true
 
 [dependencies.tokio-rustls]
 version          = "0.26"
