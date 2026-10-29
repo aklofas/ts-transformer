@@ -27,7 +27,12 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -181,12 +186,94 @@ class UrlCorpusTest {
             caller.setDaemon(true);
             caller.start();
         }
-        try (Receiver r = Receiver.open(url)) {
-            // accepted one peer
+        // The open parks in an accept no cancel handle reaches (none exists until it returns),
+        // so it runs on a daemon thread: past the deadline the row fails by name, and one more
+        // dial unparks the accept.
+        CompletableFuture<Receiver> opened = new CompletableFuture<>();
+        Thread open = new Thread(() -> {
+            try {
+                opened.complete(Receiver.open(url));
+            } catch (Throwable t) {
+                opened.completeExceptionally(t);
+            }
+        });
+        open.setDaemon(true);
+        open.start();
+        try {
+            opened.get(scaledMs(15_000), TimeUnit.MILLISECONDS).close();
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof Exception cause) throw cause;
+            throw e;
+        } catch (TimeoutException e) {
+            if (peerUrl != null) {
+                try {
+                    dialed.add(new Builder(peerUrl).connectTimeoutMs((int) scaledMs(2000)).connect());
+                } catch (SrtException ignored) {
+                    // the accept stays parked; the daemon thread dies with the JVM
+                }
+            }
+            opened.thenAccept(Receiver::close);
+            throw new AssertionError(url + ": Receiver.open still waiting in accept after "
+                + scaledMs(15_000) + " ms (no caller reached it)");
         } finally {
             if (caller != null) caller.join(scaledMs(10_000));
             for (org.tstrans.srt.Socket s : dialed) s.close();
         }
+    }
+
+    /**
+     * A loopback TCP listener that accepts and drops every connection. A caller dialing a closed
+     * loopback port is refused at once on Linux but only after about two seconds of SYN retries
+     * on Windows, so the tcp caller rows and the rtsps refusal row dial one of these instead.
+     */
+    static final class DropPeer implements AutoCloseable {
+        private static final Set<Integer> SHARED = new TreeSet<>();
+        final ServerSocket listener;
+
+        DropPeer(int port) throws IOException {
+            listener = new ServerSocket(port, 50, InetAddress.getByName("127.0.0.1"));
+            Thread t = new Thread(() -> {
+                while (true) {
+                    try (Socket conn = listener.accept()) {
+                        // dropped
+                    } catch (IOException e) {
+                        if (listener.isClosed()) return;
+                    }
+                }
+            });
+            t.setDaemon(true);
+            t.start();
+        }
+
+        /** A peer on {@code port} for the rest of the run, started once per port. */
+        static synchronized void shared(int port) throws IOException {
+            if (SHARED.add(port)) new DropPeer(port);
+        }
+
+        int port() { return listener.getLocalPort(); }
+
+        @Override public void close() throws IOException { listener.close(); }
+    }
+
+    /** The port written in {@code url}'s authority, or -1 when there is none. */
+    static int urlPort(String url) {
+        Matcher m = AUTHORITY.matcher(url);
+        if (!m.find() || m.group(2) == null) return -1;
+        int port = Integer.parseInt(m.group(2));
+        return port > 0 && port <= 65535 ? port : -1;
+    }
+
+    static void openTcpCaller(String url) throws Exception {
+        int port = urlPort(url);
+        if (port > 0) DropPeer.shared(port);
+        try (Sender s = Sender.open(url)) { }
+    }
+
+    static void openRtspRefusalOnly(String url) throws Exception {
+        // The row is refusal-only (no TLS peer), so the port it names is never observed: a
+        // drop peer's port takes its place, and the TLS handshake fails at once.
+        try (DropPeer peer = new DropPeer(0);
+             RtspSession s = RtspClient.connect(RtspClientConfig.of(withPort(url, peer.port())))) { }
     }
 
     static void openHls(String url) throws Exception {
@@ -217,12 +304,18 @@ class UrlCorpusTest {
     static String probe(String entry, Map<String, Object> row) throws Exception {
         String family = family(row);
         Open run;
+        boolean valid = expect(row).get("error_kind") == null;
         if (family.equals("srt")) {
             run = switch (entry) {
                 case "shells.Sender.open" -> UrlCorpusTest::openSrtCaller;
                 case "shells.Receiver.open" -> UrlCorpusTest::openSrtListener;
                 default -> throw new AssertionError("no srt probe for " + entry);
             };
+        } else if (family.equals("tcp") && entry.equals("shells.Sender.open")) {
+            run = UrlCorpusTest::openTcpCaller;
+        } else if (family.equals("rtsp") && valid) {
+            // An invalid row keeps its own port: rewriting it could change how the URL parses.
+            run = UrlCorpusTest::openRtspRefusalOnly;
         } else {
             run = ENTRIES.get(entry);
             if (run == null) throw new AssertionError("no JVM probe for entry point " + entry);
@@ -263,6 +356,7 @@ class UrlCorpusTest {
     static final class RecordingPeer implements AutoCloseable {
         final ServerSocket listener;
         final List<String> heads = new CopyOnWriteArrayList<>();
+        final AtomicBoolean accepted = new AtomicBoolean();
         final Thread server;
 
         RecordingPeer(boolean challenge) throws IOException {
@@ -278,6 +372,7 @@ class UrlCorpusTest {
             Socket sock;
             try {
                 sock = listener.accept();
+                accepted.set(true);
             } catch (IOException e) {
                 return;
             } finally {
@@ -350,7 +445,14 @@ class UrlCorpusTest {
         }
 
         @Override public void close() throws Exception {
-            // Unblocks a peer still waiting in accept (the client never dialed).
+            // Unblocks a peer still waiting in accept (the client never dialed). Only then: the
+            // peer holds its listener until the accept returns, so this connect finds it
+            // listening; dialing a peer that already accepted would hit a closed port, which
+            // Windows refuses only after about two seconds.
+            if (accepted.get()) {
+                server.join(scaledMs(10_000));
+                return;
+            }
             try (Socket poke = new Socket()) {
                 poke.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port()), 1000);
             } catch (IOException ignored) {
