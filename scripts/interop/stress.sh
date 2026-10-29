@@ -884,30 +884,18 @@ PROXY_IMPAIR_ARGS=()
 PROXY_SEED=""
 PROXY_EXTRA_S=0
 
-# reserve_port <transport> — one port no other reservation of this step
-# holds. Re-probes while the candidate is already taken by an earlier
-# reservation: those sockets may not have bound yet, so the kernel can hand
-# the same free port out twice.
-reserve_port() {
-  local transport=$1 port=""
-  until [[ -n "$port" && -z "${USED_PORTS[$port]:-}" ]]; do
-    if [[ "$transport" == "tcp" ]]; then port=$(free_port tcp); else port=$(free_port udp); fi
-  done
-  USED_PORTS[$port]=1
-  printf '%s' "$port"
-}
-
 # stream_port <transport> <leg> — the leg's ports, allocated on first use:
 # the receiver's bind port and, for the UDP transports, the impairment
-# proxy's listen port. Both come from the same reservation table. The proxy
-# used to listen on `:0` and take whatever the kernel chose, which can be a
-# port reserved here for a receiver that has not bound yet — one hold
-# launch of 176 streams lost its receiver that way.
+# proxy's listen port. Both come from the same reservation table
+# (`reserve_port`, lib.sh). The proxy used to listen on `:0` and take
+# whatever the kernel chose, which can be a port reserved here for a
+# receiver that has not bound yet — one hold launch of 176 streams lost
+# its receiver that way.
 stream_port() {
   local transport=$1 leg=$2
   [[ -z "${STREAM_PORT[$leg]:-}" ]] || return 0
-  STREAM_PORT[$leg]=$(reserve_port "$transport")
-  [[ "$transport" == "tcp" ]] || PROXY_PORT[$leg]=$(reserve_port "$transport")
+  reserve_port "$transport" "STREAM_PORT[$leg]"
+  [[ "$transport" == "tcp" ]] || reserve_port "$transport" "PROXY_PORT[$leg]"
 }
 
 launch_stream() {
