@@ -398,7 +398,7 @@ jobs:
       # https://docs.pypi.org/trusted-publishers/
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: dist
           merge-multiple: true
@@ -523,7 +523,7 @@ jobs:
           print(f"Release manifest gate OK: required wheels + sdist present exactly once at {EXPECTED} (filename + embedded metadata).")
           PY
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           # Trusted publishing — no `password:` needed. PyPI looks up
           # the trusted publisher config for `tstrans` and verifies the

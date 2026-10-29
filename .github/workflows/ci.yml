@@ -729,6 +729,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/dev/test_c_package.sh
 
+      - name: crates.io rehearsal runner self-test (scripts/release/publish-crates-all.sh)
+        # cargo is stubbed: checks the rehearsal walks the publish job's layers
+        # in order as dry runs and refuses PUBLISH=1.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/release/test_publish_crates_all.sh
+
       - name: Public-API ratchet (no unintended SemVer breaks)
         # Checks every crate with a committed public-api.txt baseline
         # (scripts/lib/roster.sh public-api) against it. tst-c is excluded: its ABI surface is a

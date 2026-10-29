@@ -807,8 +807,13 @@ expect "dependency-lattice: the committed table passes"              0 bash scri
 # abi-compat: the C ABI compatibility rail judges planted C libraries (SKIPs without abidiff).
 expect "abi-compat: the planted-library matrix" 0 bash scripts/check/c/tests/abi-compat-selftest.sh
 
-# publish-guards: a callable workflow's publish-shaped job needs `inputs.dry_run` in its `if:`.
+# publish-guards: a callable workflow's publish-shaped job keeps `!inputs.dry_run` as a
+# top-level conjunct of its `if:`; any job with an environment is tag-only; a job holding
+# an environment or `id-token: write` pins every remote action to a commit sha.
 pg="$tmp/publish-guards"; mkdir -p "$pg"
+expect_out() { grep -qF -- "$2" "$tmp/out" || { echo "FAIL: $1: the output lacks: $2"; sed 's/^/    /' "$tmp/out"; fail=1; }; }
+NEG='its `if:` does not negate inputs.dry_run'
+TAGONLY="has an environment but its \`if:\` does not require github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
 cat > "$pg/bad.yml" <<'YML'
 name: bad
 on:
@@ -818,20 +823,103 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_type == 'tag'
     environment: pypi
     steps:
       - run: echo hi
 YML
-sed "s/github.event_name == 'push'/github.event_name == 'push' \&\& !inputs.dry_run/" "$pg/bad.yml" > "$pg/good.yml"
-expect "publish-guards: an unguarded callable publish job fails" 1 bash scripts/check/repo/publish-guards.sh "$pg/bad.yml"
-grep -q "job 'publish'" "$tmp/out" || { echo "FAIL: publish-guards: the failure did not name the job"; sed 's/^/    /' "$tmp/out"; fail=1; }
-expect "publish-guards: a guarded job passes" 0 bash scripts/check/repo/publish-guards.sh "$pg/good.yml"
-# A guard must make the job impossible under dry_run: true; a mention is not a guard.
-sed "s/github.event_name == 'push'/inputs.dry_run/" "$pg/bad.yml" > "$pg/inverted.yml"
-sed "s/github.event_name == 'push'/github.event_name == 'push' || !inputs.dry_run/" "$pg/bad.yml" > "$pg/disjunct.yml"
-sed "s/github.event_name == 'push'/\${{ !inputs.dry_run \&\& github.ref_type == 'tag' }}/" "$pg/bad.yml" > "$pg/wrapped.yml"
-sed "s/github.event_name == 'push'/github.event_name == 'push'  # !inputs.dry_run/" "$pg/bad.yml" > "$pg/commented.yml"
+# Each variant rewrites the last conjunct, so the tag-only conjuncts stay in place.
+G="github.ref_type == 'tag'"
+sed "s/$G/!inputs.dry_run/" "$pg/bad.yml" > "$pg/good.yml"
+sed "s/$G/inputs.dry_run/" "$pg/bad.yml" > "$pg/inverted.yml"
+sed "s/$G/$G || !inputs.dry_run/" "$pg/bad.yml" > "$pg/disjunct.yml"
+sed "s/^    if: \(.*\) && $G\$/    if: \${{ \1 \&\& !inputs.dry_run }}/" "$pg/bad.yml" > "$pg/wrapped.yml"
+sed "s/ && $G/  # !inputs.dry_run/" "$pg/bad.yml" > "$pg/commented.yml"
+sed "s/$G/!(inputs.dry_run == false)/" "$pg/bad.yml" > "$pg/negwrap.yml"
+sed "s/$G/!inputs.dry_run_x/" "$pg/bad.yml" > "$pg/suffix.yml"
+sed "s/$G/!(!inputs.dry_run)/" "$pg/bad.yml" > "$pg/doubleneg.yml"
+sed "s/$G/!(github.ref == 'x' \&\& !inputs.dry_run)/" "$pg/bad.yml" > "$pg/negconj.yml"
+sed "s/$G/(!inputs.dry_run) \&\& $G/" "$pg/bad.yml" > "$pg/paren.yml"
+sed "s/'push'/\"push\"/; s/'refs\/tags\/v'/\"refs\/tags\/v\"/" "$pg/good.yml" > "$pg/dquote.yml"
+
+# Tag-only environments, in a workflow nothing calls.
+cat > "$pg/env-good.yml" <<'YML'
+name: env
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    environment: crates-io
+    steps:
+      - run: echo hi
+YML
+sed "s/ && startsWith(github.ref, 'refs\/tags\/v')//" "$pg/env-good.yml" > "$pg/env-push.yml"
+grep -v '^    if:' "$pg/env-good.yml" > "$pg/env-noif.yml"
+sed "s/'refs\/tags\/v')\$/'refs\/tags\/v') || true/" "$pg/env-good.yml" > "$pg/env-disj.yml"
+
+# Credential-bearing jobs pin their actions.
+SHA=0123456789abcdef0123456789abcdef01234567
+sed "s/      - run: echo hi/      - uses: actions\/checkout@v5\n      - run: echo hi/" "$pg/env-good.yml" > "$pg/pin-env.yml"
+sed "s/@v5/@$SHA  # v5/" "$pg/pin-env.yml" > "$pg/pin-good.yml"
+sed "s/@v5/@${SHA}0/" "$pg/pin-env.yml" > "$pg/pin-long.yml"
+cat > "$pg/pin-idtoken.yml" <<'YML'
+name: idtoken
+on: pull_request
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/attest-build-provenance@v3
+YML
+sed "s/^    permissions:\$/    permissions: write-all/; /^      contents: read\$/d; /^      id-token: write\$/d" "$pg/pin-idtoken.yml" > "$pg/pin-writeall.yml"
+cat > "$pg/pin-top.yml" <<'YML'
+name: top
+on: pull_request
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/attest-build-provenance@v3
+YML
+cat > "$pg/pin-noid.yml" <<'YML'
+name: noid
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+YML
+# A local composite action runs inside the job: its own `uses:` are held to the same rule.
+mkdir -p "$pg/repo/.github/workflows" "$pg/repo/.github/actions/setup"
+cat > "$pg/repo/.github/workflows/local.yml" <<'YML'
+name: local
+on: pull_request
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: ./.github/actions/setup
+YML
+sed 's/setup$/missing/' "$pg/repo/.github/workflows/local.yml" > "$pg/repo/.github/workflows/local-missing.yml"
+cat > "$pg/repo/.github/actions/setup/action.yml" <<'YML'
+name: setup
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+YML
 
 # publish-guards, caller side: a job calling a callable workflow that declares dry_run must pass `dry_run: true`.
 cat > "$pg/callee.yml" <<'YML'
@@ -868,16 +956,47 @@ mkdir -p "$pg/noyaml"
 real_py="$(command -v python3)"
 printf '#!/bin/sh\n[ "$1" = "-c" ] && exit 1\nexec %s "$@"\n' "$real_py" > "$pg/noyaml/python3"
 chmod +x "$pg/noyaml/python3"
+PGS=scripts/check/repo/publish-guards.sh
 for mode in python awk; do
   if [[ $mode == awk ]]; then pre=(env PATH="$pg/noyaml:$PATH"); else pre=(); fi
-  expect "publish-guards ($mode): a caller passing dry_run: false fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-bad.yml"
-  grep -q "job 'call'" "$tmp/out" || { echo "FAIL: publish-guards ($mode): the failure did not name the job"; sed 's/^/    /' "$tmp/out"; fail=1; }
-  expect "publish-guards ($mode): a caller omitting dry_run fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-omit.yml"
-  expect "publish-guards ($mode): a caller passing dry_run: true passes" 0 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/caller-good.yml"
-  expect "publish-guards ($mode): an inverted guard fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/inverted.yml"
-  expect "publish-guards ($mode): a disjunctive guard fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/disjunct.yml"
-  expect "publish-guards ($mode): a wrapped negated guard passes" 0 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/wrapped.yml"
-  expect "publish-guards ($mode): a guard only in a trailing comment fails" 1 "${pre[@]}" bash scripts/check/repo/publish-guards.sh "$pg/commented.yml"
+  expect "publish-guards ($mode): an unguarded callable publish job fails" 1 "${pre[@]}" bash $PGS "$pg/bad.yml"
+  expect_out "publish-guards ($mode): bad" "$pg/bad.yml: job 'publish' is publish-shaped and callable but $NEG"
+  expect "publish-guards ($mode): a guarded job passes" 0 "${pre[@]}" bash $PGS "$pg/good.yml"
+  expect "publish-guards ($mode): a caller passing dry_run: false fails" 1 "${pre[@]}" bash $PGS "$pg/caller-bad.yml"
+  expect_out "publish-guards ($mode): caller-bad" "$pg/caller-bad.yml: job 'call' calls ./.github/workflows/callee.yml but does not pass \`with: dry_run: true\`"
+  expect "publish-guards ($mode): a caller omitting dry_run fails" 1 "${pre[@]}" bash $PGS "$pg/caller-omit.yml"
+  expect "publish-guards ($mode): a caller passing dry_run: true passes" 0 "${pre[@]}" bash $PGS "$pg/caller-good.yml"
+  # A guard must make the job impossible under dry_run: true; a mention is not a guard.
+  for f in inverted disjunct commented negwrap suffix doubleneg negconj; do
+    expect "publish-guards ($mode): $f fails" 1 "${pre[@]}" bash $PGS "$pg/$f.yml"
+    expect_out "publish-guards ($mode): $f" "$pg/$f.yml: job 'publish' is publish-shaped and callable but $NEG"
+  done
+  expect "publish-guards ($mode): a wrapped negated guard passes" 0 "${pre[@]}" bash $PGS "$pg/wrapped.yml"
+  expect "publish-guards ($mode): a parenthesised conjunct passes" 0 "${pre[@]}" bash $PGS "$pg/paren.yml"
+  expect "publish-guards ($mode): double-quoted tag conjuncts pass" 0 "${pre[@]}" bash $PGS "$pg/dquote.yml"
+  expect "publish-guards ($mode): a tag-only environment passes" 0 "${pre[@]}" bash $PGS "$pg/env-good.yml"
+  for f in env-push env-noif env-disj; do
+    expect "publish-guards ($mode): $f fails" 1 "${pre[@]}" bash $PGS "$pg/$f.yml"
+    expect_out "publish-guards ($mode): $f" "$pg/$f.yml: job 'deploy' $TAGONLY"
+  done
+  expect "publish-guards ($mode): an environment job with a tag-floating action fails" 1 "${pre[@]}" bash $PGS "$pg/pin-env.yml"
+  expect_out "publish-guards ($mode): pin-env" "$pg/pin-env.yml: job 'deploy' holds credentials but uses actions/checkout@v5, which is not pinned to a commit sha"
+  expect "publish-guards ($mode): a sha-pinned action passes" 0 "${pre[@]}" bash $PGS "$pg/pin-good.yml"
+  expect "publish-guards ($mode): a 41-hex ref is not a sha" 1 "${pre[@]}" bash $PGS "$pg/pin-long.yml"
+  for f in pin-idtoken pin-writeall pin-top; do
+    expect "publish-guards ($mode): $f fails" 1 "${pre[@]}" bash $PGS "$pg/$f.yml"
+    expect_out "publish-guards ($mode): $f" "$pg/$f.yml: job 'attest' holds credentials but uses actions/attest-build-provenance@v3, which is not pinned to a commit sha"
+  done
+  expect "publish-guards ($mode): a job without credentials may float" 0 "${pre[@]}" bash $PGS "$pg/pin-noid.yml"
+  expect "publish-guards ($mode): a local action's floating ref fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local.yml"
+  expect_out "publish-guards ($mode): local" "$pg/repo/.github/workflows/local.yml: job 'attest' holds credentials but ./.github/actions/setup uses dtolnay/rust-toolchain@stable, which is not pinned to a commit sha"
+  expect "publish-guards ($mode): an unreadable local action fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-missing.yml"
+  expect_out "publish-guards ($mode): local-missing" "$pg/repo/.github/workflows/local-missing.yml: job 'attest' holds credentials but ./.github/actions/missing/action.yml cannot be read"
+done
+plant "$pg/repo/.github/actions/setup/action.yml" '@stable' "@$SHA"
+for mode in python awk; do
+  if [[ $mode == awk ]]; then pre=(env PATH="$pg/noyaml:$PATH"); else pre=(); fi
+  expect "publish-guards ($mode): a local action with pinned refs passes" 0 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local.yml"
 done
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi

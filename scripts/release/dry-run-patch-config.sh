@@ -25,7 +25,7 @@
 # NEVER apply this to the real publish: `cargo publish` must resolve
 # against the registry so a dependency that is not live yet fails loudly
 # instead of being papered over by the tree. crates-io.yml writes the
-# table only when its `publish` output is 0.
+# table only in its rehearse job, which holds no publishing identity.
 #
 # Caveat the patch cannot hide: a STALE `version =` key (e.g. `^0.6.0`
 # after a bump to 0.7.1) is not satisfied by the in-tree 0.7.1, so the
