@@ -118,21 +118,35 @@ RTSP_PUBLISH_ES=1
 WHEP=1
 PREFLIGHT_ONLY=0
 
+# need_value <flag> [<next-arg>] — a value option given no value (the
+# last argument, or followed by another flag) is a usage error, never a
+# silent `shift 2` past the end or a flag taken as the value.
+need_value() {
+  if [[ $# -lt 2 || "$2" == --* ]]; then
+    echo "soak.sh: $1 needs a value" >&2
+    exit 2
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --hours)
+      need_value "$@"
       HOURS=$2
       shift 2
       ;;
     --outdir)
+      need_value "$@"
       OUTDIR=$2
       shift 2
       ;;
     --seed)
+      need_value "$@"
       SEED=$2
       shift 2
       ;;
     --profile)
+      need_value "$@"
       PROFILE=$2
       shift 2
       ;;
@@ -157,14 +171,17 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --schedule-phases)
+      need_value "$@"
       SCHEDULE_PHASES=$2
       shift 2
       ;;
     --schedule-phase-s)
+      need_value "$@"
       SCHEDULE_PHASE_S=$2
       shift 2
       ;;
     --rss-slope-threshold-kb-per-hour)
+      need_value "$@"
       RSS_SLOPE_THRESHOLD=$2
       shift 2
       ;;

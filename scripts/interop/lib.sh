@@ -104,6 +104,26 @@ free_port() {
   python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.$sock_type); s.bind((\"127.0.0.1\", 0)); print(s.getsockname()[1]); s.close()"
 }
 
+# reserve_port <transport> <out-var> — set <out-var> to one port no other
+# reservation in the caller's USED_PORTS table holds, and record it there.
+# Re-probes while the candidate is already taken by an earlier
+# reservation: those sockets may not have bound yet, so the kernel can hand
+# the same free port out twice. The caller declares `USED_PORTS` as an
+# associative array (bash >= 4).
+#
+# Call it directly, never as `$(reserve_port …)`: a command substitution
+# runs in a subshell, whose write to USED_PORTS dies with it, and every
+# reservation would then be checked against an empty table. `printf -v`
+# hands the port back without one.
+reserve_port() {
+  local transport=$1 out=$2 port=""
+  until [[ -n "$port" && -z "${USED_PORTS[$port]:-}" ]]; do
+    if [[ "$transport" == "tcp" ]]; then port=$(free_port tcp); else port=$(free_port udp); fi
+  done
+  USED_PORTS[$port]=1
+  printf -v "$out" '%s' "$port"
+}
+
 # ---------------------------------------------------------------------
 # Cell-id <-> filesystem-safe name
 # ---------------------------------------------------------------------
