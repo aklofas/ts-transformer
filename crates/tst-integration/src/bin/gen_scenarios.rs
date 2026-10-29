@@ -8,9 +8,10 @@
 //! This crate-local path — not a workspace-root `tests/fixtures/scenarios` — is
 //! the canonical location all binding adapters (Rust/C/Python) resolve against.
 //!
-//! `--check` mode: regenerate into a temp dir, diff the manifest and every
-//! golden by content (sha256), exit non-zero with a clear message on any
-//! drift.
+//! `--check` mode: regenerate into a temp dir and compare it with the
+//! committed fixtures (`tst_integration::scenarios::check::drift`): every
+//! golden, the manifest, and every generated input byte for byte. Exits
+//! non-zero with one message per difference, keeping the temp dir to diff.
 //!
 //! # Synthetic data only
 //!
@@ -19,10 +20,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-
-use tst_integration::scenarios::{all_scenarios, golden::Golden};
+use tst_integration::scenarios::all_scenarios;
+use tst_integration::scenarios::check::{ScenarioEntry, ScenariosManifest, drift, golden_rel};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -46,26 +45,6 @@ fn main() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Manifest types
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[derive(Serialize, Deserialize)]
-struct ScenariosManifest {
-    scenario: Vec<ScenarioEntry>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ScenarioEntry {
-    id: String,
-    kind: String,
-    input: String,
-    golden: String,
-    features: Vec<String>,
-    tier: String,
-    schema_version: u32,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Generate mode
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -79,20 +58,11 @@ fn run_generate(fixtures_dir: &Path) {
         let (input_rel, golden) = scenario.generate(fixtures_dir);
 
         // Write golden.json.
-        let golden_rel = PathBuf::from(scenario.id()).join("golden.json");
-        let golden_abs = fixtures_dir.join(&golden_rel);
+        let golden_abs = fixtures_dir.join(golden_rel(scenario.as_ref()));
         let golden_json = serde_json::to_string_pretty(&golden).expect("serialise golden");
         std::fs::write(&golden_abs, &golden_json).expect("write golden.json");
 
-        entries.push(ScenarioEntry {
-            id: scenario.id().to_string(),
-            kind: scenario.kind().to_string(),
-            input: input_rel.to_string_lossy().replace('\\', "/"),
-            golden: golden_rel.to_string_lossy().replace('\\', "/"),
-            features: scenario.features().iter().map(|s| s.to_string()).collect(),
-            tier: scenario.tier().to_string(),
-            schema_version: golden.schema_version,
-        });
+        entries.push(ScenarioEntry::new(scenario.as_ref(), &input_rel, &golden));
 
         println!("  generated: {}", scenario.id());
     }
@@ -111,112 +81,22 @@ fn run_generate(fixtures_dir: &Path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn run_check(fixtures_dir: &Path) {
-    // Regenerate into a temp dir.
     let tmp = std::env::temp_dir().join(format!("tst-integration-check-{}", std::process::id()));
-    std::fs::create_dir_all(&tmp).expect("create temp dir");
-
-    let scenarios = all_scenarios();
-    let mut fresh_entries: Vec<ScenarioEntry> = Vec::new();
-    let mut drift_found = false;
-
-    for scenario in &scenarios {
-        let (input_rel, golden) = scenario.generate(&tmp);
-
-        let golden_rel = PathBuf::from(scenario.id()).join("golden.json");
-        let fresh_golden_json = serde_json::to_string_pretty(&golden).expect("serialise golden");
-
-        // Compare golden.json content.
-        let committed_golden_path = fixtures_dir.join(&golden_rel);
-        if committed_golden_path.exists() {
-            let committed =
-                std::fs::read_to_string(&committed_golden_path).expect("read committed golden");
-            // Normalise by round-tripping through serde_json to ignore whitespace diff.
-            let committed_parsed: Golden =
-                serde_json::from_str(&committed).expect("parse committed golden");
-            let fresh_parsed: Golden =
-                serde_json::from_str(&fresh_golden_json).expect("parse fresh golden");
-            if committed_parsed != fresh_parsed {
-                eprintln!(
-                    "STALE: golden differs for scenario '{}'\n  committed: {}\n  fresh:     {}",
-                    scenario.id(),
-                    committed_golden_path.display(),
-                    tmp.join(&golden_rel).display()
-                );
-                // Dump a brief diff of the JSON representations.
-                eprintln!("  committed JSON:\n{committed}");
-                eprintln!("  fresh JSON:\n{fresh_golden_json}");
-                drift_found = true;
-            }
-        } else {
-            eprintln!(
-                "MISSING: committed golden not found for scenario '{}': {}",
-                scenario.id(),
-                committed_golden_path.display()
-            );
-            drift_found = true;
-        }
-
-        fresh_entries.push(ScenarioEntry {
-            id: scenario.id().to_string(),
-            kind: scenario.kind().to_string(),
-            input: input_rel.to_string_lossy().replace('\\', "/"),
-            golden: golden_rel.to_string_lossy().replace('\\', "/"),
-            features: scenario.features().iter().map(|s| s.to_string()).collect(),
-            tier: scenario.tier().to_string(),
-            schema_version: golden.schema_version,
-        });
-    }
-
-    // Compare scenarios.toml manifest.
-    let committed_manifest_path = fixtures_dir.join("scenarios.toml");
-    if committed_manifest_path.exists() {
-        let fresh_manifest = ScenariosManifest {
-            scenario: fresh_entries,
-        };
-        let fresh_toml = toml::to_string(&fresh_manifest).expect("serialise manifest");
-        let committed_toml =
-            std::fs::read_to_string(&committed_manifest_path).expect("read committed manifest");
-        // Compare by sha256 of normalised TOML (round-trip through toml to drop
-        // whitespace differences).
-        let committed_parsed: ScenariosManifest =
-            toml::from_str(&committed_toml).expect("parse committed manifest");
-        let committed_re = toml::to_string(&committed_parsed).expect("re-serialise");
-        if sha256_hex(fresh_toml.as_bytes()) != sha256_hex(committed_re.as_bytes()) {
-            eprintln!(
-                "STALE: scenarios.toml differs\n  committed: {}\nRun `cargo run -p tst-integration --bin gen-scenarios` to update.",
-                committed_manifest_path.display()
-            );
-            drift_found = true;
-        }
-    } else {
-        eprintln!(
-            "MISSING: committed scenarios.toml not found at {}\nRun `cargo run -p tst-integration --bin gen-scenarios` to create it.",
-            committed_manifest_path.display()
-        );
-        drift_found = true;
-    }
-
-    // Cleanup temp dir.
     let _ = std::fs::remove_dir_all(&tmp);
-
-    if drift_found {
+    let messages = drift(fixtures_dir, &tmp);
+    if !messages.is_empty() {
+        for m in &messages {
+            eprintln!("STALE: {m}");
+        }
         eprintln!(
-            "\nScenario fixtures are stale.  Run:\n  cargo run -p tst-integration --bin gen-scenarios\nto regenerate them."
+            "\nScenario fixtures are stale (the fresh copy is in {}).  Run:\n  cargo run -p tst-integration --bin gen-scenarios\nto regenerate them.",
+            tmp.display()
         );
         std::process::exit(1);
     }
-
+    let _ = std::fs::remove_dir_all(&tmp);
     println!(
         "check-scenarios: all {} scenarios up to date.",
-        scenarios.len()
+        all_scenarios().len()
     );
-}
-
-fn sha256_hex(data: &[u8]) -> String {
-    let digest = Sha256::digest(data);
-    digest.iter().fold(String::new(), |mut s, b| {
-        use std::fmt::Write;
-        write!(s, "{b:02x}").unwrap();
-        s
-    })
 }

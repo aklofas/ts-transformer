@@ -13,6 +13,7 @@
 //! any real corpus.  All input data is synthesised programmatically so that
 //! the scenarios are hermetic and reproducible on any machine.
 
+pub mod check;
 pub mod golden;
 pub mod url;
 
