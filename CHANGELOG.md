@@ -42,13 +42,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-jni
 
-- A byte-sized `int` argument outside 0..=255 (`pushKlv`/`pushKlvTo` `metadataServiceId`, a `MispTimestamp` `timeStatus`, `CoreId.version`, the slice-header `nalUnitType`, `H264DepayConfig.payloadType`) throws `IllegalArgumentException` instead of wrapping modulo 256; a refused push queues nothing.
+- A byte-sized `int` argument outside 0..=255 (`pushKlv`/`pushKlvTo` `metadataServiceId`, a `MispTimestamp` `timeStatus`, `CoreId.version`, the slice-header `nalUnitType`, `H264DepayConfig.payloadType`, a data stream type) throws `IllegalArgumentException` instead of wrapping modulo 256; a refused push queues nothing.
+- `DemuxerConfig.Builder.strictMode(null)` and `av1Carriage(null)` throw `NullPointerException`.
+- `Builder.maxBandwidthBps` is documented as bytes per second; the value was always passed to `SRTO_MAXBW` unchanged.
 
 ### Fixed — tst-jni
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
-- Values documented as immutable no longer hand out mutable state: `MuxerConfig`'s array accessors and the `NalUnit` factories copy, and the KLV records snapshot the lists they are given.
+- Two JVMs starting at once on a shared temp directory could fail to load the native library, or delete a library another JVM was about to load. Each JVM now stages its own file, reuses a cached library only after checking its size and CRC, and the loader never deletes cache entries.
+- `Socket.intoMuxSender(null)` and `intoDemuxReceiver(null)` no longer leak the native socket, and a config the native layer refuses no longer destroys the socket; the corrected retry succeeds.
+- `Io.parseFile` closes its input when the native library cannot load.
+- A byte sink that throws now ends the receive at once: `next()` rethrows its exception and the receiver stays cancelled.
+- A byte sink calling `stats()`, `next()` or `close()` on its own receiver no longer deadlocks. `close()` ends the in-flight `next()` and the sink is not called again; the other calls throw `IllegalStateException`.
+- Values documented as immutable no longer hand out mutable state: `MuxerConfig`'s array accessors and the `NalUnit` factories copy, and the KLV records take a shallow copy of the lists they are given (the elements stay caller-owned).
 - `MuxerFileSink.push*` and `commit()` after `close()` throw `IllegalStateException("MuxerFileSink is closed")` before the muxer is touched.
+- The KLV forced-error test natives are no longer in the shipped native library.
 
 ### Fixed — tst-py
 
@@ -161,6 +169,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — release tooling
 
+- The JVM build syncs the native libraries into the jar staging directory and fails when the jar lacks one, and the jar-assembly job compiles and runs a small named module against the assembled jar on the module path on each platform.
+- The shared URL corpus is also parsed through the JVM binding and compared with the recorded result.
 - The public-api baselines now ratchet the optional TLS surfaces: `tst-core` is rendered with `tls` and `tst-rtp` with `rtsp-server-tls`.
 - The fuzz workspaces' `Cargo.lock` files are committed, and the qualification run's fuzz job refuses to re-resolve them (`cargo metadata --locked`) and records the nightly it fuzzed with.
 - The weekly advisory check reads an enumerated GHSA version list (`V11.3.0, V11.3.1`) as exactly those versions, so a pin at the patched version is no longer reported as inside the range; the pin was reported twice for the FreeRTOS kernel at `V11.3.2`.

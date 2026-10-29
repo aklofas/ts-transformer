@@ -191,6 +191,7 @@ val compileModuleSmoke = tasks.register<JavaCompile>("compileModuleSmoke") {
     options.encoding = "UTF-8"
     options.compilerArgs.addAll(listOf("--module-path", jarFile.get().asFile.path))
     dependsOn(tasks.named("jar"))
+    inputs.files(jarFile)
 }
 
 val modulePathSmoke = tasks.register<JavaExec>("modulePathSmoke") {
