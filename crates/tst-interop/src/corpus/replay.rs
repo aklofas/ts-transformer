@@ -17,7 +17,8 @@
 //! also fall; a second death in the same pick judges it
 //! [`ReceiverOutcome::Exited`], and a child that cannot be started judges
 //! it [`ReceiverOutcome::Error`]. The restarted child appends to its
-//! path's logs, and the summary counts each path's restarts.
+//! path's logs after a separator line naming the pick it was started for,
+//! and the summary lists, per path, the SHA of each pick a restart preceded.
 //!
 //! `srt`, `rist`, `udp` and `tcp` send through a [`Sender`] over
 //! [`make_send`]. `rtsp-publish` pipes the same paced bytes into
@@ -132,10 +133,11 @@ pub struct ReplaySummary {
     /// rule could not judge it (see [`judge_rss`]). Recorded, not gated.
     #[serde(default)]
     pub rss_note_by_path: BTreeMap<String, String>,
-    /// Per path: how many times its child was started again after it died
-    /// or was killed; absent from older files.
+    /// Per path: the SHA of each pick its child was started again for,
+    /// after the previous child died or was killed, in plan order; empty
+    /// for a path never restarted, absent from older files.
     #[serde(default)]
-    pub restarts_by_path: BTreeMap<String, u64>,
+    pub restarted_before_by_path: BTreeMap<String, Vec<Sha256Hex>>,
     /// No verdict failed and every path produced a verdict. RSS takes no
     /// part: the soak gates memory.
     pub pass: bool,
@@ -281,7 +283,7 @@ type Started = (Child, Option<ChildStdin>, Receiver<String>);
 
 impl PathRun {
     fn spawn(path: &str, run: &RunDir) -> Result<Self, String> {
-        let (child, stdin, lines) = Self::start(path, run, false)?;
+        let (child, stdin, lines) = Self::start(path, run, None)?;
         Ok(Self {
             path: path.to_string(),
             stdin,
@@ -291,13 +293,14 @@ impl PathRun {
         })
     }
 
-    /// A fresh child for this path in place of one that died or was
-    /// killed. It appends to the path's logs, so one path keeps one of each.
-    fn respawn(&mut self, run: &RunDir) -> Result<(), String> {
+    /// A fresh child for this path, for the pick `before`, in place of one
+    /// that died or was killed. It appends to the path's logs, so one path
+    /// keeps one of each.
+    fn respawn(&mut self, run: &RunDir, before: &Sha256Hex) -> Result<(), String> {
         self.stdin = None;
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let (child, stdin, lines) = Self::start(&self.path, run, true)?;
+        let (child, stdin, lines) = Self::start(&self.path, run, Some(before))?;
         self.child = child;
         self.stdin = stdin;
         self.lines = lines;
@@ -306,8 +309,11 @@ impl PathRun {
     }
 
     /// Starts a child. A path's first child truncates the path's logs; a
-    /// restarted one appends to them (the child appends its verdicts).
-    fn start(path: &str, run: &RunDir, restart: bool) -> Result<Started, String> {
+    /// child restarted for the pick `restart` appends to them (the child
+    /// appends its verdicts), after a stderr line that names the pick, so
+    /// each child's lines can be told apart.
+    fn start(path: &str, run: &RunDir, restart: Option<&Sha256Hex>) -> Result<Started, String> {
+        let append = restart.is_some();
         let exe = std::env::current_exe()
             .map_err(|e| format!("cannot find the tool's own executable: {}", e.kind()))?;
         let logs = run.root.join("logs");
@@ -318,13 +324,17 @@ impl PathRun {
             std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
-                .append(restart)
-                .truncate(!restart)
+                .append(append)
+                .truncate(!append)
                 .open(name)
                 .map_err(|e| format!("cannot create a receiver log: {}", e.kind()))
         };
         log(&verdicts)?;
-        let stderr = log(&logs.join(format!("receive-{path}.stderr")))?;
+        let mut stderr = log(&logs.join(format!("receive-{path}.stderr")))?;
+        if let Some(sha) = restart {
+            writeln!(stderr, "--- receiver restarted for pick {sha} ---")
+                .map_err(|e| format!("cannot write a receiver log: {}", e.kind()))?;
+        }
         let mut child = Command::new(exe)
             .args(["corpus", "receive", "--path", path, "--digests"])
             .arg(run.root.join("digests"))
@@ -845,7 +855,7 @@ fn replay_path(
                     true,
                 );
             }
-            if let Err(e) = r.respawn(run) {
+            if let Err(e) = r.respawn(run, &pick.sha256) {
                 return (
                     not_received(&pick.sha256, &r.path, ReceiverOutcome::Error(e)),
                     false,
@@ -865,15 +875,15 @@ fn replay_path(
     }
 }
 
-/// Every path's verdict for one pick; a path restarted for it is counted
-/// in `restarts`.
+/// Every path's verdict for one pick; a path restarted for it records the
+/// pick's SHA in `restarted_before`.
 fn replay_pick(
     pick: &Pick,
     entry: Option<&FileEntry>,
     runs: &mut [PathRun],
     run: &RunDir,
     procs: &Procs,
-    restarts: &mut BTreeMap<String, u64>,
+    restarted_before: &mut BTreeMap<String, Vec<Sha256Hex>>,
 ) -> Vec<FileVerdict> {
     let fail_all = |runs: &[PathRun], why: String| -> Vec<FileVerdict> {
         runs.iter()
@@ -928,7 +938,10 @@ fn replay_pick(
     done.into_iter()
         .map(|(path, v, restarted)| {
             if restarted {
-                *restarts.entry(path).or_default() += 1;
+                restarted_before
+                    .entry(path)
+                    .or_default()
+                    .push(pick.sha256.clone());
             }
             v
         })
@@ -1053,8 +1066,8 @@ pub fn run_with(
     };
 
     let mut verdicts = Vec::new();
-    let mut restarts_by_path: BTreeMap<String, u64> =
-        args.paths.iter().map(|p| (p.clone(), 0)).collect();
+    let mut restarted_before_by_path: BTreeMap<String, Vec<Sha256Hex>> =
+        args.paths.iter().map(|p| (p.clone(), Vec::new())).collect();
     for pick in &plan.picks {
         for v in replay_pick(
             pick,
@@ -1062,7 +1075,7 @@ pub fn run_with(
             &mut runs,
             &args.run,
             &procs,
-            &mut restarts_by_path,
+            &mut restarted_before_by_path,
         ) {
             on_verdict(&v);
             verdicts.push(v);
@@ -1089,7 +1102,19 @@ pub fn run_with(
         rss_slope_kb_per_hour_by_path
             .insert(path.clone(), linear_regression_slope(&points[1..]) * 3600.0);
     }
-    let rss = judge_rss(&samples, &args.paths, args.rss_sample_seconds.max(1) as f64);
+    let mut rss = judge_rss(&samples, &args.paths, args.rss_sample_seconds.max(1) as f64);
+    // A restarted path's samples come from more than one child.
+    for (path, before) in &restarted_before_by_path {
+        if let Some(note) = rss.note_by_path.get_mut(path)
+            && !before.is_empty()
+        {
+            *note = format!(
+                "the series mixes {} receiver processes ({} restart(s)); {note}",
+                before.len() + 1,
+                before.len()
+            );
+        }
+    }
     // The per-file verdicts alone decide; RSS is recorded beside them.
     let failed = verdicts.iter().filter(|v| !v.pass).count() as u64;
     let every_path_judged = args
@@ -1110,7 +1135,7 @@ pub fn run_with(
         rss_slope_kb_per_hour_by_path,
         rss_judged_by_path: rss.judged_by_path,
         rss_note_by_path: rss.note_by_path,
-        restarts_by_path,
+        restarted_before_by_path,
     };
     let text = serde_json::to_string_pretty(&summary).map_err(|e| format!("replay json: {e}"))?;
     std::fs::write(args.run.root.join("replay.json"), text).map_err(|e| {

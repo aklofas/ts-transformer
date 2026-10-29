@@ -373,8 +373,10 @@ struct Child<'a> {
 impl Child<'_> {
     fn verdict(&mut self, v: &FileVerdict) {
         let json = serde_json::to_string(v).expect("a verdict is plain data");
-        // The record is on disk before the line announces it.
-        let _ = writeln!(self.out, "{json}");
+        // The record is on disk before the line announces it. One write per
+        // record: a child killed mid-record cannot leave half a line for the
+        // next child on the path to append to.
+        let _ = self.out.write_all(format!("{json}\n").as_bytes());
         let _ = self.out.flush();
         say(&format!(
             "verdict {} {} {json}",
@@ -520,7 +522,10 @@ impl Child<'_> {
 }
 
 /// The child's whole life: reads commands until `quit`. Returns the process
-/// exit code.
+/// exit code. Verdicts are appended to `out`, so a child the replay
+/// restarts adds to its path's log; the replay truncates the log for a
+/// path's first child, and a `corpus receive` run by hand appends to an
+/// existing file.
 pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
     if urls(path).is_none() {
         eprintln!("corpus receive: unknown path");
