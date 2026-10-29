@@ -300,7 +300,9 @@ check_java_symbol() {
   esac
   rest="${cell#org.tstrans.}"
   dir="$SURFACE_JAVA_DIR/org/tstrans"
-  IFS_OLD="$IFS"; IFS=.; set -- $rest; IFS="$IFS_OLD"
+  # Split on dots with pathname expansion off: a `*` or `?` in a cell is
+  # text, not a glob over the working directory.
+  IFS_OLD="$IFS"; IFS=.; set -f; set -- $rest; set +f; IFS="$IFS_OLD"
   while [ $# -gt 0 ]; do
     comp="$1"; shift
     if [ -z "$file" ]; then
@@ -309,7 +311,7 @@ check_java_symbol() {
       else echo "FAIL: java symbol unresolved: $cell: no class or package $comp under ${dir#"$SURFACE_JAVA_DIR"/}"; return 0
       fi
     else
-      grep -qw -- "$comp" "$file" \
+      grep -Fqw -- "$comp" "$file" \
         || { echo "FAIL: java symbol unresolved: $cell: ${file#"$SURFACE_JAVA_DIR"/} has no $comp"; return 0; }
     fi
   done

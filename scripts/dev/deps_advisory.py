@@ -281,10 +281,14 @@ def _nvd_description(cve: dict) -> str:
     return ""
 
 
-def advisory_sources(dep: dict) -> list[str]:
-    """The advisory databases this script consults for `dep` (empty = unassessed)."""
+def advisory_sources(dep: dict, tagged: bool = True) -> list[str]:
+    """The advisory databases this script checks `dep` against (empty = unassessed).
+
+    An untagged pin is checked against GitHub advisories only: NVD CVEs are
+    placed by version, and an untagged pin has none.
+    """
     out = ["GHSA"] if dep.get("host") == "github" else []
-    if dep.get("cpe"):
+    if dep.get("cpe") and tagged:
         out.append("NVD")
     return out
 
@@ -525,7 +529,7 @@ def main(argv=None) -> int:
         newest = newest_in_line(versions, pin_version) if pin_version else None
         rows.append((dep["name"], pin_tag or f"{sha[:8]} (untagged)", pin_date or "?",
                      newest[1] if newest else ("current" if pin_version else f"{ahead} commit(s) ahead upstream"),
-                     ", ".join(advisory_sources(dep)) or "UNASSESSED",
+                     ", ".join(advisory_sources(dep, pin_version is not None)) or "UNASSESSED",
                      len(advisories), len(cves), len(found)))
 
     existing = set() if args.dry_run else existing_issue_titles(repo)

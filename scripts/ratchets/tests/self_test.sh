@@ -611,6 +611,14 @@ smf_row_cells2 deferred org.tstrans.io.Io.parse
 expect "surface manifest: java: a member that is only a prefix of a real one" 1 smf_j
 smf_row_cells2 deferred tstrans.io.Io
 expect "surface manifest: java: a cell outside org.tstrans" 1 smf_j
+# A cell component is literal text: never a pathname glob (a `*` run from a
+# directory holding a file named `Io` must not become `Io`) and never a regex.
+mkdir -p "$tmp/smf/globcwd"; : > "$tmp/smf/globcwd/Io"
+smf_row_cells2 deferred 'org.tstrans.io.*'
+smf_j_glob() { (cd "$tmp/smf/globcwd" && smf_j); }
+expect "surface manifest: java: a glob component is not expanded" 1 smf_j_glob
+smf_row_cells2 deferred 'org.tstrans.io.Io.p[a-z]rseFile'
+expect "surface manifest: java: a component is not a regex" 1 smf_j
 smf_row_cells2 tst_demux deferred
 expect "surface manifest: c: a prefix of a real function" 1 smf_j
 expect_out "surface manifest: c prefix" "FAIL: c symbol unresolved: tst_demux"
@@ -1102,6 +1110,20 @@ rm "$os/java/org/tstrans/x/B.java"
 plant "$os/java/org/tstrans/x/A.java" 'mode.ordinal(), ' ''
 expect "ordinal sites: a removed site fails" 1 os_run
 expect_out "ordinal sites: gone" "FAIL: ordinal-sites: pinned ordinal site gone org/tstrans/x/A.java: mode.ordinal()"
+# A site the rail cannot parse fails closed (exit 2, naming file:line), never
+# passes as "no site": an indexed receiver, a continuation line, and a line
+# mixing a string literal with a comment.
+cp "$os/A.orig" "$os/java/org/tstrans/x/A.java"
+os_bad() { # <case> <java line> <expected message>
+    mkdir -p "$os/bad-$1/org/tstrans/x"
+    printf 'class C {\n    void f() {\n%s\n    }\n}\n' "$2" > "$os/bad-$1/org/tstrans/x/C.java"
+    : > "$os/bad-$1.tsv"
+    expect "ordinal sites: $1 fails closed" 2 env ORDINAL_SITES_JAVA_DIR="$os/bad-$1" ORDINAL_SITES_LIST="$os/bad-$1.tsv" bash "$OS"
+    expect_out "ordinal sites: $1" "$3"
+}
+os_bad indexed '        n(Mode.values()[i].ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot parse the receiver of every .ordinal()"
+os_bad continuation '            .ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot parse the receiver of every .ordinal()"
+os_bad string-comment '        n("a//b", mode.ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot classify a line mixing a string literal and a comment"
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
