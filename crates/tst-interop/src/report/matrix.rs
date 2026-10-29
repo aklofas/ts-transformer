@@ -1598,7 +1598,7 @@ mod tests {
     fn each_excused_line_names_the_row_that_excused_it() {
         let mut second = expect_row("decode/mpv/x", "baseline", Some("no stream"));
         second.reason = "second mechanism".to_string();
-        second.reference = Some("REF-2".to_string());
+        second.reference = Some("second-mechanism-note".to_string());
         let exp = vec![
             expect_row("decode/mpv/x", "baseline", Some("no decoder")),
             second,
@@ -1621,13 +1621,13 @@ mod tests {
             by,
             [
                 Some(("documented gap", None)),
-                Some(("second mechanism", Some("REF-2")))
+                Some(("second mechanism", Some("second-mechanism-note")))
             ]
         );
         assert_eq!(
             render_verdict(&r.cells[0]).1,
             "no decoder for vvc [excused by: documented gap]; \
-             no stream selected [excused by: second mechanism (REF-2)]"
+             no stream selected [excused by: second mechanism (second-mechanism-note)]"
         );
     }
 
