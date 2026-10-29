@@ -4,6 +4,7 @@
 //! `[dev-dependencies]` entry everywhere except tst-interop (a test tool) and
 //! tst-jni, whose test-only `jni-test-hooks` feature builds `whep_viewer`.
 
+pub mod capability;
 pub mod errors;
 pub mod mock_transport;
 pub mod synthetic_nal;

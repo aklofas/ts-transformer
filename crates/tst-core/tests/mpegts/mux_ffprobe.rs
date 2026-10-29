@@ -11,6 +11,7 @@ use crate::common::mux_demux::drain_mux as drain_all;
 use std::process::Command;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder};
+use tst_test_helpers::capability::skip_unless_required;
 use tst_test_helpers::synthetic_nal;
 
 fn run_ffprobe_field(path: &str, field: &str) -> String {
@@ -39,7 +40,7 @@ fn run_ffprobe_field(path: &str, field: &str) -> String {
 #[test]
 fn ffprobe_recognizes_our_pmt() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -87,7 +88,7 @@ fn ffprobe_recognizes_our_pmt() {
 #[test]
 fn ffprobe_recognizes_dual_camera_plus_klv() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -176,7 +177,7 @@ fn ffprobe_recognizes_dual_camera_plus_klv() {
 #[test]
 fn ffprobe_recognizes_two_programs_with_distinct_streams() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -288,7 +289,7 @@ fn ffprobe_recognizes_two_programs_with_distinct_streams() {
 #[test]
 fn ffprobe_roundtrip_audio_video_klv_three_streams() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -374,7 +375,7 @@ fn ffprobe_roundtrip_audio_video_klv_three_streams() {
 #[test]
 fn ffprobe_roundtrip_each_audio_codec() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -485,7 +486,7 @@ fn ffprobe_roundtrip_each_audio_codec() {
 #[ignore = "ffprobe-only"]
 fn ffprobe_validates_dvb_subtitling_round_trip() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -562,7 +563,7 @@ fn ffprobe_validates_dvb_subtitling_round_trip() {
 #[ignore = "ffprobe-only"]
 fn ffprobe_validates_dvb_teletext_round_trip() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -635,7 +636,7 @@ fn ffprobe_validates_dvb_teletext_round_trip() {
 #[ignore = "ffprobe-only"]
 fn ffprobe_validates_webvtt_in_ts_round_trip() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -699,7 +700,7 @@ fn ffprobe_validates_webvtt_in_ts_round_trip() {
 #[test]
 fn ffprobe_agrees_on_mp2_sample_rate_and_channels() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 
@@ -742,7 +743,7 @@ fn ffprobe_agrees_on_mp2_sample_rate_and_channels() {
 #[test]
 fn ffprobe_agrees_on_aac_adts_sample_rate_and_channels() {
     if !have_ffprobe() {
-        eprintln!("[skip] ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
 

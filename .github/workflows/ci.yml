@@ -29,6 +29,10 @@ jobs:
     # 6-hour default — on 2026-05-28 a hang ran linux-aarch64 for 235 min
     # before the runner killed it. Tune down once aarch64 has a green baseline.
     timeout-minutes: 75
+    env:
+      # Loopback multicast works on both Linux runners, so a multicast test
+      # that skips there fails instead (tst_test_helpers::capability).
+      TST_REQUIRE_MULTICAST: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -65,6 +69,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
+
+      - name: Name the capability-skip log
+        # Every test that skips for a missing host capability appends a line
+        # here; the last step lists them in the job summary. `runner.temp` is
+        # not available to job-level env, hence the step.
+        shell: bash
+        run: echo "TST_CAPABILITY_LOG=$RUNNER_TEMP/capability-skips.txt" >> "$GITHUB_ENV"
 
       - name: Install build prerequisites (Linux)
         # apt-get is Linux-only; macOS / Windows runners come with cmake +
@@ -842,6 +853,27 @@ jobs:
             exit 1
           fi
           echo "non_exhaustive count: $OBSERVED (baseline $BASELINE)"
+
+      - name: List the capability skips
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Capability skips (${{ matrix.name }})"
+            if [ -s "$TST_CAPABILITY_LOG" ]; then
+              echo
+              echo '| count | capability | test | reason |'
+              echo '| --- | --- | --- | --- |'
+              # One line per skip per nextest pass; count the repeats.
+              sort "$TST_CAPABILITY_LOG" | uniq -c | while read -r n line; do
+                IFS=$'\t' read -r cap test why <<<"$line"
+                echo "| $n | $cap | \`$test\` | ${why//|/\\|} |"
+              done
+            else
+              echo
+              echo 'None.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   test-linux-musl:
     name: test (linux-musl-x86_64, no-libsrt crates)

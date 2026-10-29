@@ -72,6 +72,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     Av1CarriageMode, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
+use tst_test_helpers::capability::skip_unless_required;
 
 // ─────────────────────────────────────────────────────────────────────
 // AV1 access-unit synthesis (mirrors `tests/codec/av1_carriage_roundtrip.rs`)
@@ -332,7 +333,7 @@ fn binding_and_interop_streams_have_different_byte_signatures() {
 #[test]
 fn ffprobe_recognizes_av01_tag_in_binding_mode() {
     if !tool_available("ffprobe") {
-        eprintln!("ffprobe not available — skipping");
+        skip_unless_required("FFPROBE", "ffprobe not available");
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
@@ -371,7 +372,7 @@ fn ffprobe_recognizes_av01_tag_in_binding_mode() {
 #[test]
 fn tsanalyze_reports_stream_id_0xbd_in_binding_mode() {
     if !tool_available("tsanalyze") {
-        eprintln!("tsanalyze not available — skipping");
+        skip_unless_required("TSANALYZE", "tsanalyze not available");
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
@@ -403,7 +404,7 @@ fn tsanalyze_reports_stream_id_0xbd_in_binding_mode() {
 #[test]
 fn tsanalyze_reports_stream_id_0xe0_in_interop_mode() {
     if !tool_available("tsanalyze") {
-        eprintln!("tsanalyze not available — skipping");
+        skip_unless_required("TSANALYZE", "tsanalyze not available");
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::InteropRawObu);
@@ -446,7 +447,7 @@ fn tsanalyze_reports_stream_id_0xe0_in_interop_mode() {
 #[ignore = "tier-b — requires ffprobe and exercises external decoder behavior"]
 fn ffprobe_deep_classification_diff_binding_vs_interop() {
     if !tool_available("ffprobe") {
-        eprintln!("ffprobe not available — skipping");
+        skip_unless_required("FFPROBE", "ffprobe not available");
         return;
     }
     let binding_ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
@@ -496,7 +497,7 @@ fn ffprobe_deep_classification_diff_binding_vs_interop() {
 #[ignore = "tier-b — requires ffmpeg and exercises bitstream extraction"]
 fn ffmpeg_copy_extracts_ts_obu_framed_bitstream_from_binding_mode() {
     if !tool_available("ffmpeg") {
-        eprintln!("ffmpeg not available — skipping");
+        skip_unless_required("FFMPEG", "ffmpeg not available");
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);
@@ -559,8 +560,12 @@ fn ffmpeg_copy_extracts_ts_obu_framed_bitstream_from_binding_mode() {
 #[test]
 #[ignore = "tier-b — diagnostic dav1d probe, asserts non-crash only"]
 fn dav1d_handles_extracted_binding_bitstream_without_crashing() {
-    if !tool_available("dav1d") || !tool_available("ffmpeg") {
-        eprintln!("dav1d or ffmpeg not available — skipping");
+    if !tool_available("ffmpeg") {
+        skip_unless_required("FFMPEG", "ffmpeg not available");
+        return;
+    }
+    if !tool_available("dav1d") {
+        skip_unless_required("DAV1D", "dav1d not available");
         return;
     }
     let ts = build_av1_ts(Av1CarriageMode::Mpeg2TsBinding);

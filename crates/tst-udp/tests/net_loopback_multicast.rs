@@ -2,7 +2,10 @@
 //!
 //! Uses the established try_listen pattern from tst-rtp — if the host
 //! lacks multicast support (CI runners on certain providers), the test
-//! prints a skip message and returns rather than failing.
+//! records a MULTICAST capability skip and returns, unless the host sets
+//! `TST_REQUIRE_MULTICAST=1`, which makes the skip a failure. The IPv6 case
+//! records MULTICAST_V6 instead: the receiver rejects `?iface=` for IPv6
+//! today, so it skips on every host and no CI leg requires it.
 //!
 //! The IPv4 round-trip runs on Windows too: the send-side
 //! `?iface=127.0.0.1` goes through `set_multicast_if_v4`'s socket2 Windows
@@ -15,13 +18,17 @@ use std::thread;
 use std::time::Duration;
 
 use tst_core::transport::{RecvTransport, Transport};
+use tst_test_helpers::capability::skip_unless_required;
 use tst_udp::{UdpRecvTransport, UdpTransport};
 
 fn try_listen_v4(url: &str) -> Option<UdpRecvTransport> {
     match UdpRecvTransport::listen(url) {
         Ok(t) => Some(t),
         Err(e) => {
-            eprintln!("skipping IPv4 multicast test: failed to listen on {url}: {e}");
+            skip_unless_required(
+                "MULTICAST",
+                format_args!("IPv4 listen on {url} failed: {e}"),
+            );
             None
         }
     }
@@ -32,7 +39,10 @@ fn try_listen_v6(url: &str) -> Option<UdpRecvTransport> {
     match UdpRecvTransport::listen(url) {
         Ok(t) => Some(t),
         Err(e) => {
-            eprintln!("skipping IPv6 multicast test: failed to listen on {url}: {e}");
+            skip_unless_required(
+                "MULTICAST_V6",
+                format_args!("IPv6 listen on {url} failed: {e}"),
+            );
             None
         }
     }
@@ -87,7 +97,10 @@ fn ipv6_multicast_loopback_round_trip() {
     let mut send = match UdpTransport::connect("udp://[ff02::1]:55021?ttl=1&iface=lo") {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("skipping IPv6 multicast test: failed to connect sender: {e}");
+            skip_unless_required(
+                "MULTICAST_V6",
+                format_args!("IPv6 sender connect failed: {e}"),
+            );
             return;
         }
     };
