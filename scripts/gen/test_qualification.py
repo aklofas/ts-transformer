@@ -778,6 +778,90 @@ class ReleaseModeTests(unittest.TestCase):
                       "newest soak archive for this tree: none.", q.render_block(old))
 
 
+WAIVER = {"verdicts": ["a", "b"], "reason": "harness", "reviewer": "maintainer", "date": "2026-10-28",
+          "fixed_in": "0.9.1"}
+# Parsed archive rows, as load_archives returns them.
+ROW = {"id": "soak-x", "kind": "soak", "tree": SHA, "overall_pass": True, "note": "n",
+       "date": "2026-10-27", "expected_duration_s": 3600}
+SOAK72 = dict(ROW, id="soak-rel", expected_duration_s=259200, legs=list(FIVE))
+CORPUS = dict(ROW, id="corpus-rel", kind="corpus", expected_duration_s=None,
+              **dict(COUNTS, files=251))
+
+
+class WaiverTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.sha = SHA
+
+    def record_with(self, **patch):
+        return dict(collect(), **patch)
+
+    def test_a_waiver_is_accepted_only_on_a_failed_row(self):
+        ok = dict(ROW, overall_pass=False, waiver=WAIVER)
+        self.assertEqual(q.validate_archives([ok]), [])
+        bad = dict(ROW, overall_pass=True, waiver=WAIVER)
+        self.assertIn("a waiver belongs to a failed row only", q.validate_archives([bad])[0])
+        short = dict(ROW, overall_pass=False, waiver={"reason": "x"})
+        self.assertIn("waiver needs", q.validate_archives([short])[0])
+
+    def test_a_waiver_needs_a_dated_non_empty_verdict_list(self):
+        for bad in (dict(WAIVER, verdicts=[]), dict(WAIVER, verdicts=[1]), dict(WAIVER, date="28 Oct"),
+                    dict(WAIVER, fixed_in=91)):
+            row = dict(ROW, overall_pass=False, waiver=bad)
+            self.assertEqual(q.validate_archives([row]),
+                             ["soak-x: waiver needs verdicts, reason, reviewer, date and fixed_in"], bad)
+
+    def test_release_mode_refuses_a_waived_soak_without_allow_waiver(self):
+        rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), CORPUS]
+        gate = q.release_vm(self.root, self.sha, rows, True, 251)
+        self.assertEqual(gate["soak"]["disposition"], "waived")
+        self.assertTrue(any("needs a raw pass" in r for r in gate["reasons"]))
+        self.assertIn("soak: archive soak-rel is waived (2 verdicts), and a release needs a raw pass",
+                      gate["reasons"])
+
+    def test_a_mid_cycle_dispatch_may_allow_a_waiver(self):
+        rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), CORPUS]
+        gate = q.release_vm(self.root, self.sha, rows, True, 251, allow_waiver=True)
+        self.assertEqual(gate["reasons"], [])
+        self.assertEqual(gate["disposition"], "waived")
+
+    def test_a_waived_corpus_row_needs_a_raw_pass_too(self):
+        rows = [SOAK72, dict(CORPUS, overall_pass=False, waiver=WAIVER)]
+        gate = q.release_vm(self.root, self.sha, rows, True, 251)
+        self.assertEqual(gate["corpus"]["disposition"], "waived")
+        self.assertEqual(gate["reasons"],
+                         ["corpus: archive corpus-rel is waived (2 verdicts), and a release needs a raw pass"])
+        self.assertEqual(q.release_vm(self.root, self.sha, rows, True, 251, allow_waiver=True)["reasons"], [])
+
+    def test_an_unwaived_failure_is_the_worse_disposition(self):
+        rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), dict(CORPUS, overall_pass=False)]
+        gate = q.release_vm(self.root, self.sha, rows, True, 251, allow_waiver=True)
+        self.assertEqual(gate["corpus"]["disposition"], "fail")
+        self.assertEqual(gate["disposition"], "fail")
+        self.assertEqual(q.release_vm(self.root, self.sha, [SOAK72, CORPUS], True, 251)["disposition"], "pass")
+
+    def test_collect_reads_the_waiver_and_the_flag(self):
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False, legs=FIVE)
+                             + '[archive.waiver]\nverdicts = ["a", "b"]\nreason = "harness"\n'
+                               'reviewer = "maintainer"\ndate = "2026-10-28"\nfixed_in = "0.9.1"\n',
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        tmp = tempfile.mkdtemp()
+        art, root = build(tmp, archives=rows)
+        rec = q.collect(art, root, release=True)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(rec["archives"][0]["waiver"], WAIVER)
+        rec = q.collect(art, root, release=True, allow_waiver=True)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["disposition"], "waived")
+        self.assertIn("Release gate: soak soak-rel (tree %s, 259200 s, legs srt, rist, rtsp-publish, "
+                      "rtsp-publish-es, whep, FAIL, waived)" % SHA[:12], q.render_block(rec))
+
+    def test_render_prints_the_waiver_on_the_archive_line(self):
+        rec = self.record_with(archives=[dict(ROW, overall_pass=False, waiver=WAIVER)])
+        self.assertIn("overall_pass=false, waived: 2 verdict(s) by maintainer on 2026-10-28, fixed in 0.9.1",
+                      q.render_block(rec))
+
+
 class ChecksumTests(unittest.TestCase):
     def test_checksums_cover_the_files_not_the_sums_file(self):
         tmp = tempfile.mkdtemp()

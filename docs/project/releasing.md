@@ -192,6 +192,11 @@ merge commit, and the qualification run checks that nothing under
    - the corpus run, with the counts its archive row carries. Its `files`
      must equal `expected_files` in the file's `[corpus]` table. When the
      corpus has changed, the same PR updates `expected_files`.
+   - `overall_pass` exactly as the harness printed it. A failed harness
+     verdict stays `false`; the maintainer's review goes in
+     `[archive.waiver]` (the verdicts it covers, the reason, the reviewer,
+     the date and the release that fixes the cause). A release needs a raw
+     pass, so a harness defect is fixed and the soak rerun.
 
    The same PR adds the soak to the runs table on the
    [validation evidence page](/docs/project/validation-evidence.md).

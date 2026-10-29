@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The qualification record: one JSON file per qualified tree, rendered into the evidence page.
 
-  collect   --artifacts DIR --out FILE [--root DIR] [--release]
+  collect   --artifacts DIR --out FILE [--root DIR] [--release] [--allow-waiver]
             read a release-qualify run's artefacts; --release also requires the
-            72-hour soak and the corpus archives for the qualified tree
+            72-hour soak and the corpus archives for the qualified tree, each with
+            a raw pass unless --allow-waiver admits a maintainer's waiver
   render    --json FILE (--write | --check) [--root DIR]   the generated block in
             docs/project/validation-evidence.md
   checksums --dir DIR                                  write DIR/SHA256SUMS
@@ -106,6 +107,30 @@ def parse_corpus_expectation(text):
     return tomllib.loads(text).get("corpus", {}).get("expected_files")
 
 
+WAIVER_KEYS = ("verdicts", "reason", "reviewer", "date", "fixed_in")
+
+
+def _waiver_ok(w):
+    if not isinstance(w, dict) or set(w) != set(WAIVER_KEYS):
+        return False
+    v = w["verdicts"]
+    if not isinstance(v, list) or not v or not all(isinstance(x, str) and x for x in v):
+        return False
+    if not all(isinstance(w[k], str) and w[k] for k in ("reason", "reviewer", "fixed_in")):
+        return False
+    return bool(re.fullmatch(r"\d{4}-\d\d-\d\d", str(w["date"])))
+
+
+def disposition(row):
+    """`pass`, `waived` or `fail`: the raw verdict, with a waiver beside a failed one."""
+    if row.get("overall_pass"):
+        return "pass"
+    return "waived" if row.get("waiver") else "fail"
+
+
+DISPOSITION_ORDER = ("pass", "waived", "fail")
+
+
 def validate_archives(rows):
     problems, seen = [], set()
     for r in rows:
@@ -121,6 +146,11 @@ def validate_archives(rows):
             problems.append("%s: overall_pass must be true or false" % i)
         if not r.get("note") or not re.fullmatch(r"\d{4}-\d\d-\d\d", str(r.get("date", ""))):
             problems.append("%s: note and a YYYY-MM-DD date are required" % i)
+        if "waiver" in r:
+            if r.get("overall_pass") is not False:
+                problems.append("%s: a waiver belongs to a failed row only" % i)
+            elif not _waiver_ok(r["waiver"]):
+                problems.append("%s: waiver needs verdicts, reason, reviewer, date and fixed_in" % i)
         d = r.get("expected_duration_s")
         if r.get("kind") == "soak":
             if isinstance(d, bool) or not isinstance(d, int) or d <= 0:
@@ -165,6 +195,8 @@ def load_archives(root):
         row["expected_duration_s"] = r.get("expected_duration_s")
         if "legs" in r:
             row["legs"] = r["legs"]
+        if "waiver" in r:
+            row["waiver"] = r["waiver"]
         row.update({k: r[k] for k in CORPUS_COUNTS if k in r})
         out.append(row)
     return out, expected
@@ -206,7 +238,8 @@ def _by_date(rows):
 def _soak_entry(root, sha, s):
     e = {"id": s["id"], "tree": s["tree"], "date": s["date"],
          "overall_pass": s["overall_pass"], "expected_duration_s": s.get("expected_duration_s"),
-         "legs": s.get("legs"), "changed_paths": 0, "git_error": None}
+         "legs": s.get("legs"), "waiver": s.get("waiver"), "disposition": disposition(s),
+         "changed_paths": 0, "git_error": None}
     if s["tree"] != sha:
         try:
             e["changed_paths"] = len(changed_paths(root, s["tree"], sha))
@@ -237,11 +270,23 @@ def _check_sha(sha):
         raise QualificationError("context.json source.sha is not a 40-hex commit: %r" % (sha,))
 
 
-def release_vm(root, sha, archives, release, expected_files):
+def _raw_verdict_reason(kind, entry, allow_waiver):
+    """The reason a soak or corpus entry fails the gate on its verdict, or None."""
+    if entry["disposition"] == "fail":
+        return "%s: archive %s recorded overall_pass=false" % (kind, entry["id"])
+    if entry["disposition"] == "waived" and not allow_waiver:
+        return ("%s: archive %s is waived (%d verdicts), and a release needs a raw pass"
+                % (kind, entry["id"], len(entry["waiver"]["verdicts"])))
+    return None
+
+
+def release_vm(root, sha, archives, release, expected_files, allow_waiver=False):
     """The release gate: the chosen soak archive (see _pick_soak) must stand for
     `sha`, have passed and declared 72 hours, and a passing corpus archive must
-    exist for the soaked tree. Outside release mode the same entries are recorded
-    for information and `reasons` stays empty."""
+    exist for the soaked tree. A waived archive passes only with `allow_waiver`
+    (a mid-cycle dispatch); a release needs the harness's own pass. Outside
+    release mode the same entries are recorded for information and `reasons`
+    stays empty."""
     reasons = []
     soak, corpus = None, None
     soaks = [a for a in archives if a["kind"] == "soak"]
@@ -256,15 +301,17 @@ def release_vm(root, sha, archives, release, expected_files):
             if soak["changed_paths"]:
                 reasons.append("soak: archive %s is superseded by %d changed path(s) outside the release documents"
                                % (soak["id"], soak["changed_paths"]))
-            if not soak["overall_pass"]:
-                reasons.append("soak: archive %s recorded overall_pass=false" % soak["id"])
+            r = _raw_verdict_reason("soak", soak, allow_waiver)
+            if r:
+                reasons.append(r)
             # A failed run on the same tree after the chosen one, of any declared
             # duration, is evidence against it; a newer pass never replaces it.
             order = {id(a): i for i, a in enumerate(soaks)}
             chosen = next(a for a in soaks if a["id"] == soak["id"])
             key = lambda a: (a["date"], order[id(a)])
             for a in _by_date(soaks):
-                if a["tree"] == soak["tree"] and not a["overall_pass"] and key(a) > key(chosen):
+                admitted = disposition(a) == "pass" or (allow_waiver and disposition(a) == "waived")
+                if a["tree"] == soak["tree"] and not admitted and key(a) > key(chosen):
                     reasons.append("soak: archive %s, a newer run on the same tree, recorded overall_pass=false"
                                    % a["id"])
             if soak["expected_duration_s"] != RELEASE_SOAK_S:
@@ -279,14 +326,15 @@ def release_vm(root, sha, archives, release, expected_files):
                 reasons.append("corpus: no corpus archive for the soaked tree %s" % soak["tree"][:12])
             else:
                 corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"],
-                          "note": c["note"]}
+                          "note": c["note"], "waiver": c.get("waiver"), "disposition": disposition(c)}
                 corpus.update({k: c[k] for k in CORPUS_COUNTS if k in c})
                 # The release cites the counts; a row without them is hand-typed.
                 if any(k not in c for k in CORPUS_COUNTS):
                     reasons.append("corpus: archive %s records no counts; the release gate needs the "
                                    "eight the corpus tool's archive row carries" % c["id"])
-                if not c["overall_pass"]:
-                    reasons.append("corpus: archive %s recorded overall_pass=false" % c["id"])
+                r = _raw_verdict_reason("corpus", corpus, allow_waiver)
+                if r:
+                    reasons.append(r)
                 if all(k in c for k in CORPUS_COUNTS):
                     if c["replay_paths"] != 5:
                         reasons.append("corpus: archive %s replayed %s path(s), not 5"
@@ -299,7 +347,9 @@ def release_vm(root, sha, archives, release, expected_files):
                     if c["replay_failed"] != 0:
                         reasons.append("corpus: archive %s has %s failed replay(s)"
                                        % (c["id"], c["replay_failed"]))
-    return {"release_mode": bool(release), "soak": soak, "corpus": corpus,
+    # The worse of the two; an entry the gate could not choose counts as a failure.
+    worst = max(((e or {}).get("disposition", "fail") for e in (soak, corpus)), key=DISPOSITION_ORDER.index)
+    return {"release_mode": bool(release), "soak": soak, "corpus": corpus, "disposition": worst,
             "reasons": reasons if release else []}
 
 
@@ -377,7 +427,7 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None):
     return ("GO" if not reasons else "NO-GO"), reasons
 
 
-def collect(art, root, release=False):
+def collect(art, root, release=False, allow_waiver=False):
     ctx = read_json(os.path.join(art, "context.json"))
     if ctx is None:
         die("context.json is missing from " + art)
@@ -450,7 +500,7 @@ def collect(art, root, release=False):
     archives, expected_files = load_archives(root)
     try:
         gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release,
-                          expected_files)
+                          expected_files, allow_waiver=allow_waiver)
     except QualificationError as e:
         die(str(e))
     v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate)
@@ -486,6 +536,14 @@ def _leg_line(l):
     return s + "."
 
 
+def _verdict_word(e):
+    """PASS or FAIL, the raw verdict, with the waiver beside a waived FAIL. A record
+    written before waivers existed carries no `waiver` and reads by `overall_pass`."""
+    if e["overall_pass"]:
+        return "PASS"
+    return "FAIL, waived" if e.get("waiver") else "FAIL"
+
+
 def _release_line(gate):
     """One line naming what the release gate saw. A record written before release
     mode existed has no `release_vm` and reads as not applied."""
@@ -499,11 +557,11 @@ def _release_line(gate):
     else:
         legs = (", legs " + ", ".join(s["legs"])) if s.get("legs") else ""
         soak = "%s (tree %s, %s s%s, %s)" % (s["id"], s["tree"][:12], s.get("expected_duration_s"), legs,
-                                            "PASS" if s["overall_pass"] else "FAIL")
+                                            _verdict_word(s))
     if not (gate or {}).get("release_mode"):
         return "Release gate: not applied (not a release qualification); newest soak archive for this tree: %s." % soak
     c = gate.get("corpus")
-    corpus = "none" if c is None else "%s (%s)" % (c["id"], "PASS" if c["overall_pass"] else "FAIL")
+    corpus = "none" if c is None else "%s (%s)" % (c["id"], _verdict_word(c))
     return "Release gate: soak %s, corpus %s." % ("none" if s is None else soak, corpus)
 
 
@@ -587,9 +645,14 @@ def render_block(rec):
     out += ["", "Cited soak, stress and corpus archives, with the verdicts they recorded:", ""]
     for r in rec["archives"]:
         declared = (", %d s declared" % r["expected_duration_s"]) if r.get("expected_duration_s") else ""
-        out.append("- `%s` (%s, %s, tree `%s`): `overall_pass=%s`%s. %s" % (
-            r["id"], r["kind"], r["date"], r["tree"][:12],
-            "true" if r["overall_pass"] else "false", declared, r["note"]))
+        w = r.get("waiver")
+        if w:
+            raw = "overall_pass=false, waived: %d verdict(s) by %s on %s, fixed in %s" % (
+                len(w["verdicts"]), w["reviewer"], w["date"], w["fixed_in"])
+        else:
+            raw = "`overall_pass=%s`" % ("true" if r["overall_pass"] else "false")
+        out.append("- `%s` (%s, %s, tree `%s`): %s%s. %s" % (
+            r["id"], r["kind"], r["date"], r["tree"][:12], raw, declared, r["note"]))
     out += ["", "Checks that stay with the maintainer and are not part of this record:", ""]
     out.extend("- " + m for m in rec["maintainer_local"])
     return "\n".join(out) + "\n"
@@ -664,6 +727,8 @@ def main(argv=None):
     c.add_argument("--root", default=".")
     c.add_argument("--release", action="store_true",
                    help="qualify as a release: require the 72-hour soak and corpus archives for this tree")
+    c.add_argument("--allow-waiver", action="store_true",
+                   help="admit a soak or corpus archive the maintainer waived (never for a release)")
     r = sub.add_parser("render")
     r.add_argument("--json", required=True)
     r.add_argument("--root", default=".")
@@ -676,7 +741,7 @@ def main(argv=None):
     v.add_argument("--root", default=".")
     args = ap.parse_args(argv)
     if args.cmd == "collect":
-        rec = collect(args.artifacts, args.root, release=args.release)
+        rec = collect(args.artifacts, args.root, release=args.release, allow_waiver=args.allow_waiver)
         with open(args.out, "w") as f:
             json.dump(rec, f, indent=2)
             f.write("\n")
