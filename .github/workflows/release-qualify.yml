@@ -575,9 +575,6 @@ jobs:
           flags=()
           [ "$RELEASE" = "true" ] && flags+=(--release)
           [ -n "$TAG" ] && flags+=(--tag "$TAG")
-          # Never --allow-waiver: a release needs the soak's and the corpus run's raw
-          # pass, so a waived archive keeps this run NO-GO until the harness is fixed
-          # and the run repeated.
           bash scripts/gen/qualification.sh collect --artifacts "$RUNNER_TEMP/artifacts" --out "$RUNNER_TEMP/bundle/qualification.json" "${flags[@]}"
 
       - name: Render the record, add the natives to the SBOMs, write the bundle

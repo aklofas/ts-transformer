@@ -189,6 +189,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The coverage manifests are validated row by row from parsed TOML.
 - The iOS build reuses an XCFramework slice only when it was built from the same tree and features.
 - The harness verdict in `tests/coverage/evidence-archives.toml` is never edited: a maintainer's waiver is an `[archive.waiver]` table beside it, and a release needs a raw pass.
+- `qualification.py collect` has no option that admits a waiver: every collect records a waived archive's disposition, outside release mode with no reasons, and a release collect refuses it.
 - The soak, corpus and ARM64 status cells of the 1.0 exit criteria are rendered from the qualification record; a waiver names the release it stood in for from the record's tag or the waived archive, never from the CHANGELOG.
 - The qualification record names the tag on a tag push and lists the release documents that changed since the soaked tree, and the bundle carries `TREE-EQUIVALENCE.txt`, the proof that nothing under `crates/` or `bindings/` changed between the soaked and the qualified commit.
 - The Python URL-corpus test takes its scheme families from the corpus header.
@@ -229,7 +230,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The no_std job restores its QEMU and ARM toolchain packages from an Actions cache, so a slow apt mirror cannot run the install past the job timeout.
 - cargo-deny also checks the fuzz and embedded workspaces against the same policy, with `--locked`.
 - Every workflow and composite action pins its actions by commit SHA, Dependabot moves those pins weekly, and every `pip install` pins its tools by hash.
-- A linux-aarch64 interop job runs the `[arm64_subset]` cells on scheduled and release-qualify runs, and its census is recorded beside the x86_64 one. It runs with `continue-on-error` until two scheduled runs are green.
+- A linux-aarch64 interop job runs the `[arm64_subset]` cells on scheduled, dispatched and release-qualify runs, and its census is recorded beside the x86_64 one. It runs with `continue-on-error` until two scheduled runs are green, and then gates.
 - The stress port-table rail runs in CI.
 
 ### Changed — dependencies
