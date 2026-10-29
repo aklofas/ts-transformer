@@ -37,6 +37,66 @@ const NO_DATA_TIMEOUT: Duration = Duration::from_secs(15);
 /// startup jitter and in-flight packets near the end of the window.
 const POST_START_GRACE: Duration = Duration::from_secs(2);
 
+/// How far past `seconds` a `tcp://` recv's watcher lets the run go before
+/// cancelling a parked accept or read: the no-data allowance plus the
+/// post-start grace, so it never fires before the receive loop's own
+/// latest deadline (a first event at the very end of the allowance).
+const TCP_NO_DATA_SLACK: Duration = NO_DATA_TIMEOUT.saturating_add(POST_START_GRACE);
+
+/// A thread that fires a [`transport::Watch`] once `budget` has passed,
+/// unless [`Self::stop`] is called first.
+struct DeadlineWatcher {
+    watch: transport::Watch,
+    budget: Duration,
+    stop: std::sync::mpsc::Sender<()>,
+    thread: thread::JoinHandle<()>,
+}
+
+impl DeadlineWatcher {
+    fn spawn(budget: Duration) -> Self {
+        let watch = transport::Watch::default();
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let w = watch.clone();
+        let thread = thread::spawn(move || {
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(budget) {
+                w.fire();
+            }
+        });
+        Self {
+            watch,
+            budget,
+            stop,
+            thread,
+        }
+    }
+
+    /// End the watch; returns whether it fired.
+    fn stop(self) -> bool {
+        drop(self.stop);
+        let _ = self.thread.join();
+        self.watch.fired()
+    }
+}
+
+/// What a `tcp://?listen=1` recv receives from when its deadline cancelled
+/// the accept: a transport that has already ended, so the capture is judged
+/// as the empty one it is.
+struct NoPeer;
+
+impl RecvTransport for NoPeer {
+    fn recv_bytes(&mut self, _buf: &mut [u8]) -> Result<usize, TransportError> {
+        Err(TransportError::Closed)
+    }
+
+    fn max_payload(&self) -> usize {
+        7 * 188
+    }
+
+    fn is_alive(&self) -> bool {
+        false
+    }
+}
+
 /// Factory closure type `run_managed` hands to `ManagedRecvTransport`
 /// — named so the type isn't repeated inline (clippy's
 /// `type_complexity` lint).
@@ -303,7 +363,22 @@ pub fn run(
     layout: WireLayout,
     placement: Option<KlvPlacementExpect>,
 ) -> Result<VerifyReport, String> {
-    let (transport, publish_mount) = transport::make_recv_probed(url)?;
+    let (transport, publish_mount, watcher) = if transport::is_tcp(url)? {
+        // A TCP accept and a TCP read both park until something arrives, so
+        // the receive loop's own deadline check never runs against a peer
+        // that never connects or never sends; a watcher thread cancels them.
+        let watcher = DeadlineWatcher::spawn(Duration::from_secs_f64(seconds) + TCP_NO_DATA_SLACK);
+        let transport: Box<dyn RecvTransport> =
+            match transport::tcp_transport_with(url, &watcher.watch) {
+                Ok(t) => Box::new(t),
+                Err(_) if watcher.watch.fired() => Box::new(NoPeer),
+                Err(e) => return Err(e),
+            };
+        (transport, None, Some(watcher))
+    } else {
+        let (transport, probe) = transport::make_recv_probed(url)?;
+        (transport, probe, None)
+    };
     let mut report = recv_over_transport_with_layout(
         transport,
         expect,
@@ -315,6 +390,15 @@ pub fn run(
         layout,
         placement,
     )?;
+    if let Some(watcher) = watcher {
+        let budget = watcher.budget;
+        if watcher.stop() && report.metrics.bytes == 0 {
+            let msg = format!("no data before the deadline ({} s)", budget.as_secs());
+            eprintln!("recv: {msg}");
+            report.failures.push(msg);
+            report.pass = false;
+        }
+    }
     // The transport is gone by now, so its listener has filled the probe.
     report.publish_mount =
         publish_mount.and_then(|p| p.lock().unwrap_or_else(|e| e.into_inner()).take());
