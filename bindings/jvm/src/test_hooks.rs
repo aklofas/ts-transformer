@@ -133,3 +133,39 @@ jni_native! {
         crate::hls::errors::throw_hls(env, k, &message);
     }
 }
+
+// ---------------------------------------------------------------------------
+// KLV error-model probes: force a KlvDecodeException / KlvEncodeException of a
+// named Kind so the error-mapping path can be tested end to end.
+// ---------------------------------------------------------------------------
+
+mod klv_probe {
+    use crate::panic::jni_native;
+    use jni::objects::JString;
+
+    jni_native! {
+        /// `org.tstrans.internal.KlvProbe.nRaiseDecode(kind)` — throws a
+        /// `KlvDecodeException` with the given Kind name.
+        fn Java_org_tstrans_internal_KlvProbe_nRaiseDecode<'local>(
+            env,
+            _class,
+            kind: JString<'local>,
+        ) = () => {
+            let k: String = kind.try_to_string(env).unwrap_or_default();
+            crate::error::throw_klv_decode_raw(env, &k, "forced decode error for test");
+        }
+    }
+
+    jni_native! {
+        /// `org.tstrans.internal.KlvProbe.nRaiseEncode(kind)` — throws a
+        /// `KlvEncodeException` with the given Kind name (no tag).
+        fn Java_org_tstrans_internal_KlvProbe_nRaiseEncode<'local>(
+            env,
+            _class,
+            kind: JString<'local>,
+        ) = () => {
+            let k: String = kind.try_to_string(env).unwrap_or_default();
+            crate::error::throw_klv_encode_raw(env, &k, None, "forced encode error for test");
+        }
+    }
+}
