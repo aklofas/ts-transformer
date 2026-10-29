@@ -1819,90 +1819,105 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         // rather than compute a negative packet total from it.
         let outage_consistent = counters.iter().all(|(_, d, o)| o <= d);
 
-        let (drop_pass, expected, tolerance, observed, drop_detail) = if !totals_reconcile {
-            (
-                false,
-                0.0,
-                0.0,
-                0.0,
-                format!(
-                    "{leg_name}: malformed artifact — per-phase counters sum to {}/{} \
+        let (drop_pass, expected, tolerance, observed, drop_detail) =
+            if !artifacts.proxy_stats.final_snapshot {
+                // A periodic snapshot stops short of the run's tail, and a
+                // file from a proxy that never reached its exit write is
+                // exactly that: no rate is judged from it.
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!(
+                        "{leg_name}: the stats file is not the proxy's final snapshot — the proxy \
+                     did not complete its exit write, so its totals miss the run's tail"
+                    ),
+                )
+            } else if !totals_reconcile {
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!(
+                        "{leg_name}: malformed artifact — per-phase counters sum to {}/{} \
                      (forwarded/dropped) but the top-level totals say {}/{}",
-                    total_forwarded,
-                    total_dropped,
-                    artifacts.proxy_stats.forwarded,
-                    artifacts.proxy_stats.dropped
-                ),
-            )
-        } else if !outage_consistent {
-            (
-                false,
-                0.0,
-                0.0,
-                0.0,
-                format!(
-                    "{leg_name}: malformed artifact — a phase records more outage-window \
+                        total_forwarded,
+                        total_dropped,
+                        artifacts.proxy_stats.forwarded,
+                        artifacts.proxy_stats.dropped
+                    ),
+                )
+            } else if !outage_consistent {
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!(
+                        "{leg_name}: malformed artifact — a phase records more outage-window \
                      drops than drops"
-                ),
-            )
-        } else if models.len() != counters.len() {
-            // A malformed artifact (e.g. hand-edited or truncated
-            // stats JSON whose phase-counter count doesn't match its
-            // own schedule echo) must fail loud, never panic and
-            // never silently fall back to a partial computation.
-            (
-                false,
-                0.0,
-                0.0,
-                0.0,
-                format!(
-                    "{leg_name}: malformed artifact — {} phase rate(s) in the schedule echo \
+                    ),
+                )
+            } else if models.len() != counters.len() {
+                // A malformed artifact (e.g. hand-edited or truncated
+                // stats JSON whose phase-counter count doesn't match its
+                // own schedule echo) must fail loud, never panic and
+                // never silently fall back to a partial computation.
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!(
+                        "{leg_name}: malformed artifact — {} phase rate(s) in the schedule echo \
                      but {} phase counter(s) recorded",
-                    models.len(),
-                    phase_count
-                ),
-            )
-        } else if total == 0 {
-            (
-                false,
-                0.0,
-                0.0,
-                0.0,
-                format!("{leg_name}: proxy observed zero packets — no traffic crossed it"),
-            )
-        } else {
-            let expected_drops: f64 = counters
-                .iter()
-                .zip(&models)
-                .map(|((f, d, o), m)| (f + d - o) as f64 * m.p)
-                .sum();
-            let variance: f64 = counters
-                .iter()
-                .zip(&models)
-                .map(|((f, d, o), m)| (f + d - o) as f64 * m.var_rate)
-                .sum();
-            let expected = expected_drops / total as f64;
-            let tolerance = drop_rate_tolerance(variance.sqrt() / total as f64);
-            let observed = (total_dropped - total_outage) as f64 / total as f64;
-            let pass = (observed - expected).abs() <= tolerance;
-            (
-                pass,
-                expected,
-                tolerance,
-                observed,
-                format!(
-                    "{leg_name}: observed {:.2}%, expected {:.2}% ± {:.2}pp over {} phase(s) \
+                        models.len(),
+                        phase_count
+                    ),
+                )
+            } else if total == 0 {
+                (
+                    false,
+                    0.0,
+                    0.0,
+                    0.0,
+                    format!("{leg_name}: proxy observed zero packets — no traffic crossed it"),
+                )
+            } else {
+                let expected_drops: f64 = counters
+                    .iter()
+                    .zip(&models)
+                    .map(|((f, d, o), m)| (f + d - o) as f64 * m.p)
+                    .sum();
+                let variance: f64 = counters
+                    .iter()
+                    .zip(&models)
+                    .map(|((f, d, o), m)| (f + d - o) as f64 * m.var_rate)
+                    .sum();
+                let expected = expected_drops / total as f64;
+                let tolerance = drop_rate_tolerance(variance.sqrt() / total as f64);
+                let observed = (total_dropped - total_outage) as f64 / total as f64;
+                let pass = (observed - expected).abs() <= tolerance;
+                (
+                    pass,
+                    expected,
+                    tolerance,
+                    observed,
+                    format!(
+                        "{leg_name}: observed {:.2}%, expected {:.2}% ± {:.2}pp over {} phase(s) \
                      ({} forwarded, {} dropped, {} outage-window drop(s) excluded)",
-                    observed * 100.0,
-                    expected * 100.0,
-                    tolerance * 100.0,
-                    phase_count,
-                    total_forwarded,
-                    total_dropped,
-                    total_outage
-                ),
-            )
-        };
+                        observed * 100.0,
+                        expected * 100.0,
+                        tolerance * 100.0,
+                        phase_count,
+                        total_forwarded,
+                        total_dropped,
+                        total_outage
+                    ),
+                )
+            };
 
         verdicts.push(SoakVerdict {
             name: format!("drop_rate_consistent_with_impairment_{leg_name}"),
@@ -3485,6 +3500,7 @@ pub(crate) mod tests {
                 duped: 0,
                 outage_dropped: 0,
             }],
+            final_snapshot: true,
         }
     }
 
@@ -3935,6 +3951,34 @@ pub(crate) mod tests {
     // can't account for) fails the drop-rate check — see the module
     // doc's "Known telemetry limitations" section for why this
     // stands in for a per-event gap-timing check.
+    /// A periodic (non-final) snapshot never judges a leg.
+    #[test]
+    fn a_leg_whose_proxy_stats_are_not_final_fails_its_drop_verdict() {
+        let mut inputs = healthy_inputs();
+        inputs.legs[0].1.proxy_stats.final_snapshot = false;
+        let r = build_soak_results(inputs).unwrap();
+        let v = r
+            .verdicts
+            .iter()
+            .find(|v| v.name.starts_with("drop_rate_"))
+            .unwrap();
+        assert!(
+            !v.pass && v.detail.contains("not the proxy's final snapshot"),
+            "{v:?}"
+        );
+        assert!(!r.overall_pass);
+    }
+
+    /// A stats file written before the flag existed reads as not final,
+    /// so archived evidence without it can never pass the drop verdict.
+    #[test]
+    fn a_stats_file_without_the_final_flag_reads_as_not_final() {
+        let mut v = serde_json::to_value(proxy_stats(1000, 0, 0.0, None, 0)).unwrap();
+        v.as_object_mut().unwrap().remove("final_snapshot");
+        let s: ProxyStats = serde_json::from_value(v).unwrap();
+        assert!(!s.final_snapshot);
+    }
+
     #[test]
     fn unexplained_excess_drop_fails_the_drop_rate_check() {
         let samples = vec![rss_row("srt", "send", 0.0, Some(1000))];
