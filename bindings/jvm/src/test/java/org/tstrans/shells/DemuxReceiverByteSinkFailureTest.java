@@ -232,6 +232,25 @@ class DemuxReceiverByteSinkFailureTest {
         }
     }
 
+    /** A sink that closes its receiver and then throws: the exception wins, and the close completes. */
+    @Test
+    void sinkThatClosesAndThenThrowsStillCompletesTheClose() throws Exception {
+        try (Pair p = new Pair()) {
+            DemuxReceiver rx = p.rx;
+            RuntimeException boom = new IllegalStateException("sink failed");
+            rx.addByteSink(pkt -> {
+                rx.close();
+                throw boom;
+            });
+            CompletableFuture<Object> r = recvOnDaemon(rx);
+            p.write(nullPackets(16));
+            assertSame(boom, await(r));
+            assertFalse(rx.isAlive());
+            assertThrows(IllegalStateException.class, rx::recvEvent,
+                "the deferred close must be complete once the sink exception was rethrown");
+        }
+    }
+
     /** A sink registered after a sink failure would never run: the registration is refused. */
     @Test
     void addByteSinkAfterASinkFailureIsRefused() throws Exception {

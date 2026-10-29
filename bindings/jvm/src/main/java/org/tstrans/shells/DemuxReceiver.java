@@ -156,7 +156,16 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     private DemuxEvent pull() throws BindingException {
-        DemuxEvent e = nNext(peekHandle());
+        DemuxEvent e;
+        try {
+            e = nNext(peekHandle());
+        } catch (Throwable t) {
+            // A sink that closed the receiver and then threw: the exception
+            // wins, but the close completes now, since a failed receiver is
+            // usually not pulled again.
+            if (closeDeferred) close();
+            throw t;
+        }
         if (e == null && closeDeferred) close();
         return e;
     }

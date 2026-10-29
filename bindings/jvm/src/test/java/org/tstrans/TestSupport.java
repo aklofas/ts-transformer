@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -76,6 +78,32 @@ public final class TestSupport {
             Thread.sleep(10);
         }
         return true;
+    }
+
+    /** A finished child process: its exit status and its combined stdout and stderr. */
+    public record ChildResult(int exitValue, String output) {}
+
+    /**
+     * Start {@code pb} with stdout and stderr redirected to {@code log}, wait at most
+     * {@code scaledMs(ms)}, and kill the child on timeout or interruption. The output is
+     * read only after the child has exited, so a hung child cannot block the read.
+     */
+    public static ChildResult runChild(ProcessBuilder pb, Path log, long ms)
+            throws IOException, InterruptedException {
+        Process child = pb.redirectErrorStream(true).redirectOutput(log.toFile()).start();
+        boolean exited;
+        try {
+            exited = child.waitFor(scaledMs(ms), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            child.destroyForcibly();
+            throw e;
+        }
+        if (!exited) {
+            child.destroyForcibly().waitFor(scaledMs(5_000), TimeUnit.MILLISECONDS);
+        }
+        String out = Files.readString(log, StandardCharsets.UTF_8);
+        if (!exited) throw new AssertionError("child did not exit within " + scaledMs(ms) + " ms: " + out);
+        return new ChildResult(child.exitValue(), out);
     }
 
     /** Whether the current OS is Linux, for gating live-socket fixtures. */
