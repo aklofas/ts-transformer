@@ -10,8 +10,10 @@
 //! needs no `UasDatalinkLs` reader of its own.
 //!
 //! `CotConfig` is a small Java `record` (5 components) read by the generated
-//! `read_cot_config`; a null string component or a negative
-//! `updateIntervalUs` is an `IllegalArgumentException` naming the component.
+//! `read_cot_config`; a null string component is an
+//! `IllegalArgumentException` naming the component, and a negative
+//! `updateIntervalUs` is read as its unsigned bit pattern, as `CotConfig`
+//! documents.
 //!
 //! ### JNI local-ref capacity
 //!

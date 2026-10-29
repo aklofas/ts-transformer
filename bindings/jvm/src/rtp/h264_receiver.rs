@@ -11,18 +11,15 @@
 //! stop routes through the cancel handle (held separately so `close()` can fire
 //! it without taking the resource lock). This matches tst-py's `PyH264Receiver`.
 //!
-//! `cancel` is held outside the registry slot (cloned at construction into a
-//! `Box<dyn FnOnce>` cancel hook). A cross-thread `nClose` fires the hook BEFORE
-//! taking the slot (waking any parked `nRecvAu`), then drops the receiver.
+//! `Owned` retains the cancel target outside the slot. A cross-thread `nClose`
+//! fires it BEFORE taking the slot (waking any parked `nRecvAu`), then drops the
+//! receiver.
 //!
-//! # Error mapping (mirrors tst-py)
+//! # Error mapping
 //!
-//! - `TransportError::ExplicitClose`  → `RtpException(CLOSED)`
-//! - `TransportError::TooLarge`       → `RtpException(MALFORMED_PACKET)`
-//! - `TransportError::Backpressure`   → `RtpException(BACKPRESSURE)` (recv deadline
-//!   expired; retryable — the transport/session is still alive)
-//! - other `TransportError`           → `RtpException(IO)`
-//! - `RtpConnectError`                   → `RtpException(IO)`
+//! Transport errors project through the shared RTP mapping in `rtp::errors`
+//! (`TooLarge` surfaces as `TOO_LARGE`); a recv deadline expiring is
+//! `BACKPRESSURE`, retryable because the transport is still alive.
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;

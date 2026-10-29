@@ -191,7 +191,7 @@ pub(crate) fn throw_handle_state(env: &mut Env, what: &str, state: &HandleState)
 ///
 /// `get_static_field_id`, NOT `get_static_field`: the latter READS the field
 /// and hands back a `JValueOwned::Object` — a JNI local ref jni-rs does not
-/// auto-delete. This loop visits every member of the nine JVM domains in one frame,
+/// auto-delete. This loop visits every member of the JVM domains in one frame,
 /// well past the 16-slot default local-reference capacity, and `-Xcheck:jni`
 /// does not report local-ref accumulation. The field ID
 /// lookup validates the member name AND its signature identically while
@@ -549,13 +549,11 @@ pub(crate) fn throw_kinded(
     thrown(env.throw(env.cast_local::<jni::objects::JThrowable>(exc)?))
 }
 
-/// Shared per-family wrapper around [`throw_kinded`]: bails if an exception is
-/// already pending, then falls back to a plain `RuntimeException` naming
-/// `exc_class`'s simple name if construction itself fails. Every
-/// `throw_<family>` one-liner (`throw_demux`/`throw_mux`/`throw_klv_decode`
-/// here, plus `throw_srt` in `srt::errors` and `throw_rtp`/`throw_rtsp` in
-/// `rtp::errors`) calls this — the per-family fn names stay because the jvm
-/// error-mapping ratchet greps for `throw_<family>(env, "<KIND>", ...)`.
+/// Wrapper around [`throw_kinded`] for the raw decode probe: bails if an
+/// exception is already pending, then falls back to a plain `RuntimeException`
+/// naming `exc_class`'s simple name if construction itself fails. Production
+/// families go through `throw_binding` / `throw_kinded` instead; this exists
+/// only under `jni-test-hooks`.
 #[cfg(feature = "jni-test-hooks")]
 pub(crate) fn throw_family(
     env: &mut Env,

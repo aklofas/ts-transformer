@@ -20,10 +20,9 @@ pub(crate) fn throw_rtp(env: &mut Env, kind: BindingErrorKind, message: &str) {
 }
 
 /// `send_bytes` / `recv_bytes` / shell recv errors — the shared `From<TransportError>`:
-/// `ExplicitClose → CLOSED` ("cancelled from another thread"; was `CANCELLED`),
-/// `Backpressure → BACKPRESSURE` (the `?recv_timeout=` deadline; was `TIMEOUT`),
-/// `TooLarge → TOO_LARGE` (was `MALFORMED_PACKET`), `Broken → BROKEN`,
-/// `Closed → CLOSED` (both were `TRANSPORT`).
+/// `ExplicitClose → CLOSED` ("cancelled from another thread"),
+/// `Backpressure → BACKPRESSURE` (the `?recv_timeout=` deadline),
+/// `TooLarge → TOO_LARGE`, `Broken → BROKEN`, `Closed → CLOSED`.
 pub(crate) fn transport_error(env: &mut Env, e: &TransportError) {
     throw_binding(env, Domain::Rtp, &BindingError::from(e.clone()));
 }

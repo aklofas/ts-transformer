@@ -48,7 +48,7 @@ static REGISTRY: LazyLock<HandleRegistry<PairingDemuxer>> = LazyLock::new(Handle
 
 jni_native! {
     /// `nOpen(videoPid, klvPid)` — allocate a default-config [`PairingDemuxer`]
-    /// and hand the JVM its raw pointer as a `jlong` handle.
+    /// and hand the JVM an opaque registry key as a `jlong` handle.
     fn Java_org_tstrans_pipeline_Pairer_nOpen<'local>(
         _env,
         _class,
@@ -218,7 +218,9 @@ fn build_output_list<'local>(
         // refs; a per-item frame reclaims them so the table stays bounded. The
         // only value leaving the frame is `()`: the element is added to `list`
         // (an outer-frame ref) inside it.
-        env.with_local_frame(8, |env| -> jni::errors::Result<()> {
+        // 16 slots: a Paired item holds about 12-13 locals (two samples, their
+        // unit lists, strings, the record and scratch).
+        env.with_local_frame(16, |env| -> jni::errors::Result<()> {
             // `Ok(None)` = skip this output (a forward-compat unmapped event;
             // unreachable today). Mirrors `mpegts::nNextEvent`'s skip behavior so a
             // future skip-worthy variant is dropped from the batch, not failed.
@@ -305,7 +307,7 @@ fn convert_output<'local>(
 /// carries an eager `payload` field, so the NAL/OBU list is produced here by
 /// `vs.split_units()` internally. The Java surface is unchanged (same 5-arg
 /// record / ctor signature, same `VideoPayload`). JVM `raw`/RAI parity is
-/// deferred to the design §5 fast-follow.
+/// not exposed: the JVM pairing projection does not expose the raw AU / RAI fields.
 fn convert_video_sample<'local>(
     env: &mut Env<'local>,
     vs: &VideoSample,
