@@ -78,10 +78,8 @@ tls = [
 rtsp-server-tls = ["rtsp-server", "tls", "dep:tokio-rustls"]
 
 [dependencies.rustls]
-version          = "0.23"
-optional         = true
-default-features = false
-features         = ["std", "ring"]
+workspace = true
+optional  = true
 
 # Pulls trust roots from the OS / native cert store so `rtsps://` works
 # out-of-the-box without webpki-roots being baked into the binary.
