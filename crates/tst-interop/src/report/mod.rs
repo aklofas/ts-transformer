@@ -95,12 +95,29 @@ pub struct MergedCell {
     /// `FAIL`, however many other lines a row excused.
     #[serde(default)]
     pub unexplained_failures: Vec<String>,
+    /// One entry per line of `failures`, in order: the expectation row
+    /// that explained that line, or `None`. Lets a reader of the
+    /// evidence see which row excused which line when a cell needed
+    /// several. Empty for a `PASS`, a skip, or a `FAIL` that printed no
+    /// line.
+    #[serde(default)]
+    pub explained_by: Vec<Option<ExcusedBy>>,
     pub metrics: Option<CellMetrics>,
     pub log: String,
     /// The matching expectation's `reason`, if `verdict == ExpectedUnsupported`.
     pub expectation_reason: Option<String>,
     /// The matching expectation's optional `ref`, if any.
     pub expectation_ref: Option<String>,
+}
+
+/// The expectation row that explained one failure line: its `reason`,
+/// its optional `ref`, and the `failure_contains` text that selected it
+/// (`None` for a row matching every line of its cell).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExcusedBy {
+    pub reason: String,
+    pub reference: Option<String>,
+    pub failure_contains: Option<String>,
 }
 
 /// One expectation whose matched cell turned out to `PASS` — the
