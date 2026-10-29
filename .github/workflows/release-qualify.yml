@@ -234,6 +234,10 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: read
+      # gh attestation verify reads the previous package's provenance.
+      attestations: read
     outputs:
       semver: ${{ steps.semver.outcome }}
     steps:
@@ -656,6 +660,13 @@ jobs:
           cd "$RUNNER_TEMP/bundle"
           sha256sum -c SHA256SUMS
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Only a draft may have its assets replaced: once the Release is
+            # published, its bundle is what users verified against.
+            draft="$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)"
+            if [ "$draft" != true ]; then
+              echo "::error::the $TAG Release is published; its assets are not replaced"
+              exit 1
+            fi
             gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber ./*
           else
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" --draft --notes "Draft: notes from the CHANGELOG to follow." ./*

@@ -8,7 +8,8 @@
 #   select    previous tag (scripts/dev/prev-tag.sh) and the ABI minors of the
 #             tag and of this tree; outputs prev, prev_minor, head_minor
 #   release   the library from the tag's Release package (tstrans.abi); output
-#             lib when the Release carries a C package, nothing otherwise
+#             lib when the Release carries a C package that SHA256SUMS and its
+#             build-provenance attestation verify, nothing otherwise
 #   build     build the library from source at the tag (worktree under
 #             $RUNNER_TEMP/prev, target dir $RUNNER_TEMP/prev-target)
 #   header <file>   write the tag's committed tstrans.h to <file>
@@ -36,14 +37,34 @@ case "${1:-}" in
     echo "previous tag $prev (ABI minor $prev_minor), this tree ABI minor $head_minor"
     ;;
   release)
-    mkdir -p "$RUNNER_TEMP/prev-release"
-    if gh release download "$PREV" -R "$GITHUB_REPOSITORY" -p 'tstrans-c-*-linux-x86_64.tar.gz' -D "$RUNNER_TEMP/prev-release" 2>/dev/null \
-       && tar -xzf "$RUNNER_TEMP"/prev-release/tstrans-c-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP/prev-release" \
-       && abi="$(find "$RUNNER_TEMP/prev-release" -name tstrans.abi | head -1)" && [ -n "$abi" ]; then
-      echo "previous tag $PREV, taken from its Release package"
+    # The package is used only after SHA256SUMS (from the same Release) lists
+    # it with a matching digest and its build-provenance attestation from this
+    # repository verifies. Anything less falls back to the source build at the
+    # tag, which needs no trust in a downloaded file.
+    d="$RUNNER_TEMP/prev-release"
+    mkdir -p "$d"
+    if ! gh release download "$PREV" -R "$GITHUB_REPOSITORY" -p 'tstrans-c-*-linux-x86_64.tar.gz' -D "$d" 2>/dev/null; then
+      echo "the $PREV Release carries no C package"
+      exit 0
+    fi
+    unverified() { echo "$1"; echo "the $PREV Release package failed verification; the source build is used"; exit 0; }
+    set -- "$d"/tstrans-c-*-linux-x86_64.tar.gz
+    [ $# -eq 1 ] || unverified "the $PREV Release holds $# C packages, expected one"
+    tarball="$1"; name="$(basename "$tarball")"
+    gh release download "$PREV" -R "$GITHUB_REPOSITORY" -p SHA256SUMS -D "$d" 2>/dev/null \
+      || unverified "SHA256SUMS: not in the $PREV Release"
+    # --ignore-missing passes on an empty match, so the tarball's own line is required first.
+    grep -qE "^[0-9a-f]{64}  $(printf '%s' "$name" | sed 's/[.]/[.]/g')\$" "$d/SHA256SUMS" \
+      || unverified "$name: no line for it in SHA256SUMS"
+    (cd "$d" && sha256sum -c --ignore-missing --quiet SHA256SUMS) \
+      || unverified "$name: sha256sum -c against SHA256SUMS failed"
+    gh attestation verify "$tarball" -R "$GITHUB_REPOSITORY" \
+      || unverified "$name: gh attestation verify failed"
+    if tar -xzf "$tarball" -C "$d" && abi="$(find "$d" -name tstrans.abi | head -1)" && [ -n "$abi" ]; then
+      echo "previous tag $PREV, taken from its verified Release package"
       out "lib=$abi"
     else
-      echo "the $PREV Release carries no C package"
+      unverified "$name: holds no tstrans.abi"
     fi
     ;;
   build)
