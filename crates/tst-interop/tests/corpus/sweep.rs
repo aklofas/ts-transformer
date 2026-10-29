@@ -44,7 +44,24 @@ fn sweep_without_a_baseline_passes_and_writes_one_digest_per_file() {
     for sha in &shas {
         assert!(run.join("digests").join(format!("{sha}.json")).exists());
     }
-    assert_eq!(std::fs::read_dir(run.join("digests")).unwrap().count(), 2);
+    let digests = std::fs::read_dir(run.join("digests"))
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_str()
+                .unwrap()
+                .ends_with(".json")
+        })
+        .count();
+    assert_eq!(digests, 2);
+    let mut listed = shas.clone();
+    listed.sort();
+    assert_eq!(
+        std::fs::read_to_string(run.join("digests").join("manifest.txt")).unwrap(),
+        format!("{}\n", listed.join("\n"))
+    );
     assert_eq!(json(&run.join("sweep.json"))["new_no_baseline"], 2);
 }
 
@@ -338,6 +355,8 @@ fn a_baseline_that_matches_no_capture_fails_the_sweep() {
     let s = json(&run.join("sweep.json"));
     assert_eq!(s["baseline_matched"], 0);
     assert_eq!(s["new_no_baseline"], 1);
+    assert_eq!(s["new_unexplained"], 1);
+    assert_eq!(s["baseline_only"].as_array().unwrap().len(), 2);
     assert_eq!(s["pass"], false);
 }
 
@@ -581,4 +600,181 @@ fn a_sweep_summary_without_the_field_error_counts_reads_as_zero() {
     let s: tst_interop::corpus::sweep::SweepSummary =
         serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
     assert_eq!((s.klv_field_errors, s.files_with_klv_field_errors), (0, 0));
+}
+
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+#[test]
+fn a_baseline_missing_most_digests_is_refused() {
+    let (dir, shas) = two_files("sw-partial");
+    let first = temp_dir_named("sw-partial-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    std::fs::remove_file(first.join("digests").join(format!("{}.json", shas[1]))).unwrap();
+    let second = temp_dir_named("sw-partial-second");
+    let out = sweep(
+        &dir,
+        &second,
+        &["--baseline", first.join("digests").to_str().unwrap()],
+    );
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("the baseline is incomplete: 1 listed digest(s) are missing"),
+        "{out:?}"
+    );
+    assert!(!second.join("digests").exists(), "no file was digested");
+}
+
+#[test]
+fn a_capture_the_baseline_does_not_list_fails_unless_accepted() {
+    let (dir, _) = two_files("sw-newcap");
+    let first = temp_dir_named("sw-newcap-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    let c = gen_profile_bytes("baseline", 4.0);
+    std::fs::write(dir.join("c.ts"), &c).unwrap();
+    let sha = sha_of(&c).0;
+    let base = first.join("digests");
+    let second = temp_dir_named("sw-newcap-second");
+    let out = sweep(&dir, &second, &["--baseline", base.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let s = json(&second.join("sweep.json"));
+    assert_eq!(s["new_unexplained"], 1, "{s}");
+    assert_eq!(s["identical"], 2, "{s}");
+    // The line names the capture by SHA and says how to accept it.
+    assert!(
+        stdout(&out).contains(&format!(
+            "{sha} new-no-baseline: the baseline does not list it; accept it with --accept {sha} --because <reason>"
+        )),
+        "{out:?}"
+    );
+    assert!(!stdout(&out).contains("c.ts"), "{out:?}");
+    let third = temp_dir_named("sw-newcap-third");
+    let out = sweep(
+        &dir,
+        &third,
+        &[
+            "--baseline",
+            base.to_str().unwrap(),
+            "--accept",
+            &sha,
+            "--because",
+            "new capture",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let s = json(&third.join("sweep.json"));
+    assert_eq!(s["new_explained"], 1, "{s}");
+    assert_eq!(s["new_unexplained"], 0, "{s}");
+    assert!(stdout(&out).contains("new (accepted): 1"), "{out:?}");
+}
+
+#[test]
+fn a_baseline_capture_missing_from_the_corpus_fails_unless_accepted() {
+    let (dir, shas) = two_files("sw-gone");
+    let first = temp_dir_named("sw-gone-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    std::fs::remove_file(dir.join("b.ts")).unwrap();
+    let base = first.join("digests");
+    let second = temp_dir_named("sw-gone-second");
+    let out = sweep(&dir, &second, &["--baseline", base.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let s = json(&second.join("sweep.json"));
+    assert_eq!(s["baseline_only"], serde_json::json!([shas[1]]), "{s}");
+    assert_eq!(s["baseline_only_explained"], 0, "{s}");
+    assert!(
+        stdout(&out).contains(&format!(
+            "{} baseline-only: the corpus no longer holds it; accept it with --accept {} --because <reason>",
+            shas[1], shas[1]
+        )),
+        "{out:?}"
+    );
+    assert!(stdout(&out).contains("baseline only: 1"), "{out:?}");
+    let third = temp_dir_named("sw-gone-third");
+    let out = sweep(
+        &dir,
+        &third,
+        &[
+            "--baseline",
+            base.to_str().unwrap(),
+            "--accept",
+            &shas[1],
+            "--because",
+            "capture withdrawn",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let s = json(&third.join("sweep.json"));
+    assert_eq!(s["baseline_only_explained"], 1, "{s}");
+    assert_eq!(s["unused_accepts"], serde_json::json!([]), "{s}");
+}
+
+fn manifest(digests: &Path, expect: &str) -> Output {
+    bin()
+        .arg("corpus")
+        .arg("manifest")
+        .arg(digests)
+        .args(["--expect-files", expect])
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn a_baseline_without_a_manifest_is_refused_until_the_manifest_command_repairs_it() {
+    let (dir, _) = two_files("sw-nomanifest");
+    let first = temp_dir_named("sw-nomanifest-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    let base = first.join("digests");
+    std::fs::remove_file(base.join("manifest.txt")).unwrap();
+    let second = temp_dir_named("sw-nomanifest-second");
+    let out = sweep(&dir, &second, &["--baseline", base.to_str().unwrap()]);
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(
+        err.contains(
+            "--baseline has no manifest.txt; a baseline from before manifests needs `corpus manifest <dir> --expect-files N` once"
+        ),
+        "{err}"
+    );
+    assert_no_path(&err, &base);
+    assert!(!second.join("digests").exists(), "no file was digested");
+    // A replay's prefix digest is not a whole-capture digest.
+    std::fs::write(base.join("aa.prefix600.json"), b"{}").unwrap();
+    let out = manifest(&base, "3");
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("2 whole-capture digest(s), expected 3"),
+        "{out:?}"
+    );
+    assert!(!base.join("manifest.txt").exists());
+    let out = manifest(&base, "2");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let third = temp_dir_named("sw-nomanifest-third");
+    let out = sweep(&dir, &third, &["--baseline", base.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(json(&third.join("sweep.json"))["identical"], 2);
+}
+
+#[test]
+fn the_manifest_command_refuses_a_digest_whose_name_is_not_its_sha() {
+    let (dir, shas) = two_files("sw-badname");
+    let first = temp_dir_named("sw-badname-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    let base = first.join("digests");
+    std::fs::remove_file(base.join("manifest.txt")).unwrap();
+    let wrong = "0".repeat(64);
+    std::fs::rename(
+        base.join(format!("{}.json", shas[0])),
+        base.join(format!("{wrong}.json")),
+    )
+    .unwrap();
+    let out = manifest(&base, "2");
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains(&format!("digest {wrong}.json holds capture {}", shas[0])),
+        "{out:?}"
+    );
+    assert!(!base.join("manifest.txt").exists());
 }

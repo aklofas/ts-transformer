@@ -1,8 +1,8 @@
 //! The sweep stage: digest every distinct capture, compare each digest with
 //! a baseline and record which changes carry a stated reason.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -14,6 +14,11 @@ use super::digest::{self, CONFIG_KEYS, FileDigest};
 use super::invariants::{self, InvariantFailure, WireWalk};
 use super::inventory::{self, FileEntry};
 use super::{RunDir, Sha256Hex};
+
+/// The list of captures a digests directory stands for: one SHA-256 per
+/// line, sorted, newline-terminated. Without it a baseline missing digests
+/// cannot be told from a corpus that gained captures.
+pub const BASELINE_MANIFEST: &str = "manifest.txt";
 
 /// What one worker made of one file: its digest and its wire walk.
 type Digested = Result<(FileDigest, WireWalk), String>;
@@ -69,6 +74,18 @@ pub struct SweepSummary {
     /// Captures with at least one such field error.
     #[serde(default)]
     pub files_with_klv_field_errors: u64,
+    /// Of `new_no_baseline` under a `--baseline`, the captures an
+    /// `--accept` names, and the rest.
+    #[serde(default)]
+    pub new_explained: u64,
+    #[serde(default)]
+    pub new_unexplained: u64,
+    /// Captures the baseline lists that the corpus no longer holds.
+    #[serde(default)]
+    pub baseline_only: Vec<Sha256Hex>,
+    /// Of `baseline_only`, those an `--accept` names.
+    #[serde(default)]
+    pub baseline_only_explained: u64,
     pub per_file: Vec<SweepFile>,
     pub pass: bool,
 }
@@ -143,6 +160,95 @@ pub fn digests_fingerprint(run: &RunDir) -> Result<Sha256Hex, String> {
     ))
 }
 
+fn is_sha256(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn write_manifest_lines(digests_dir: &Path, shas: &BTreeSet<Sha256Hex>) -> Result<(), String> {
+    std::fs::create_dir_all(digests_dir)
+        .map_err(|e| format!("cannot create the digests directory: {}", e.kind()))?;
+    let text: String = shas.iter().map(|s| format!("{s}\n")).collect();
+    std::fs::write(digests_dir.join(BASELINE_MANIFEST), text)
+        .map_err(|e| format!("cannot write {BASELINE_MANIFEST}: {}", e.kind()))
+}
+
+/// Writes the manifest of a digests directory that has none: the
+/// whole-capture digests it holds, each checked to parse and to name its
+/// own capture. Refuses unless there are exactly `expect_files`, so a
+/// directory that lost digests is not certified as whole. Returns the
+/// count. Errors name no path.
+pub fn write_manifest(digests_dir: &Path, expect_files: u64) -> Result<u64, String> {
+    let rd = std::fs::read_dir(digests_dir)
+        .map_err(|e| format!("read the digests directory: {}", e.kind()))?;
+    let mut shas = BTreeSet::new();
+    for e in rd {
+        let e = e.map_err(|e| format!("read the digests directory: {}", e.kind()))?;
+        let name = e.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(stem) = name.strip_suffix(".json") else {
+            continue;
+        };
+        if stem.contains(".prefix") {
+            continue;
+        }
+        let text = std::fs::read_to_string(e.path())
+            .map_err(|e| format!("read digest {name}: {}", e.kind()))?;
+        let d: FileDigest =
+            serde_json::from_str(&text).map_err(|e| format!("parse digest {name}: {e}"))?;
+        if d.sha256.0 != stem || d.prefix_seconds.is_some() {
+            return Err(format!("digest {name} holds capture {}", d.sha256));
+        }
+        shas.insert(d.sha256);
+    }
+    let n = shas.len() as u64;
+    if n != expect_files {
+        return Err(format!(
+            "found {n} whole-capture digest(s), expected {expect_files}; no manifest written"
+        ));
+    }
+    write_manifest_lines(digests_dir, &shas)?;
+    Ok(n)
+}
+
+/// The captures a baseline lists, each checked to have its digest. Errors
+/// name no path.
+fn read_baseline_manifest(dir: &Path) -> Result<BTreeSet<Sha256Hex>, String> {
+    let text = match std::fs::read_to_string(dir.join(BASELINE_MANIFEST)) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "--baseline has no {BASELINE_MANIFEST}; a baseline from before manifests needs `corpus manifest <dir> --expect-files N` once"
+            ));
+        }
+        Err(e) => {
+            return Err(format!(
+                "read the baseline {BASELINE_MANIFEST}: {}",
+                e.kind()
+            ));
+        }
+    };
+    let mut listed = BTreeSet::new();
+    for (i, line) in text.lines().enumerate() {
+        if !is_sha256(line) {
+            return Err(format!(
+                "the baseline {BASELINE_MANIFEST} line {} is not a SHA-256",
+                i + 1
+            ));
+        }
+        listed.insert(Sha256Hex(line.to_string()));
+    }
+    let missing = listed
+        .iter()
+        .filter(|s| !dir.join(format!("{s}.json")).is_file())
+        .count();
+    if missing > 0 {
+        return Err(format!(
+            "the baseline is incomplete: {missing} listed digest(s) are missing"
+        ));
+    }
+    Ok(listed)
+}
+
 pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
     if let Some(b) = &args.baseline {
         let own = args.run.root.join("digests");
@@ -160,6 +266,11 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
             return Err("--baseline must name an existing directory".to_string());
         }
     }
+    // Read before any file is digested, so a bad baseline costs nothing.
+    let listed = match &args.baseline {
+        Some(b) => Some(read_baseline_manifest(b)?),
+        None => None,
+    };
     // Only an absent inventory is rebuilt; an unreadable one is an error.
     let inv = if inventory::exists(&args.run) {
         inventory::read(&args.run)?
@@ -242,9 +353,21 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         baseline_matched: None,
         klv_field_errors: 0,
         files_with_klv_field_errors: 0,
+        new_explained: 0,
+        new_unexplained: 0,
+        baseline_only: Vec::new(),
+        baseline_only_explained: 0,
         per_file: Vec::new(),
         pass: false,
     };
+    // The reason an `--accept` gives for `sha`, marking it used.
+    let mut accept = |sha: &Sha256Hex| {
+        args.accepts.iter().position(|(s, _)| s == sha).map(|p| {
+            used[p] = true;
+            args.accepts[p].1.clone()
+        })
+    };
+    let mut digested = BTreeSet::new();
     for (i, entry) in inv.files.iter().enumerate() {
         let mut failures = Vec::new();
         let outcome = match by_index.remove(&i).expect("every file was digested") {
@@ -265,11 +388,10 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                 if failures.iter().any(|f| !f.excused) {
                     summary.invariant_failures += 1;
                 }
-                let base = match &args.baseline {
-                    None => None,
-                    Some(dir) => {
+                let base = match (&args.baseline, &listed) {
+                    (Some(dir), Some(listed)) => {
                         let p = dir.join(format!("{}.json", entry.sha256));
-                        if p.exists() {
+                        if listed.contains(&entry.sha256) {
                             baseline_matched += 1;
                             let text = std::fs::read_to_string(&p).map_err(|e| {
                                 format!("read baseline {}: {}", entry.sha256, e.kind())
@@ -281,11 +403,24 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                             Some(None)
                         }
                     }
+                    _ => None,
                 };
                 digest::store(&args.run, &d)?;
+                digested.insert(entry.sha256.clone());
                 match base {
-                    None | Some(None) => {
+                    None => {
                         summary.new_no_baseline += 1;
+                        FileOutcome::NewNoBaseline
+                    }
+                    // New since the baseline: the common case at every
+                    // release, accepted by name like a change.
+                    Some(None) => {
+                        summary.new_no_baseline += 1;
+                        if accept(&entry.sha256).is_some() {
+                            summary.new_explained += 1;
+                        } else {
+                            summary.new_unexplained += 1;
+                        }
                         FileOutcome::NewNoBaseline
                     }
                     Some(Some(b)) if same_but_version(&d, &b) => {
@@ -293,14 +428,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                         FileOutcome::Identical
                     }
                     Some(Some(_)) => {
-                        let why = args
-                            .accepts
-                            .iter()
-                            .position(|(s, _)| *s == entry.sha256)
-                            .map(|p| {
-                                used[p] = true;
-                                args.accepts[p].1.clone()
-                            });
+                        let why = accept(&entry.sha256);
                         if why.is_some() {
                             summary.changed_explained += 1;
                         } else {
@@ -317,6 +445,18 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
             invariant_failures: failures,
         });
     }
+    // Captures the baseline lists that this corpus does not hold: one
+    // that is gone silently would shrink the comparison unnoticed.
+    if let Some(listed) = &listed {
+        let held: BTreeSet<&Sha256Hex> = inv.files.iter().map(|f| &f.sha256).collect();
+        for sha in listed.iter().filter(|s| !held.contains(s)) {
+            if accept(sha).is_some() {
+                summary.baseline_only_explained += 1;
+            }
+            summary.baseline_only.push(sha.clone());
+        }
+    }
+    write_manifest_lines(&args.run.root.join("digests"), &digested)?;
     for (u, (sha, _)) in used.iter().zip(&args.accepts) {
         if !u && !summary.unused_accepts.contains(sha) {
             summary.unused_accepts.push(sha.clone());
@@ -328,6 +468,8 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
     summary.baseline_matched = args.baseline.as_ref().map(|_| baseline_matched);
     summary.pass = summary.baseline_matched != Some(0)
         && summary.changed_unexplained == 0
+        && summary.new_unexplained == 0
+        && summary.baseline_only.len() as u64 == summary.baseline_only_explained
         && summary.parse_failures == 0
         && summary.invariant_failures == 0
         && summary.unused_accepts.is_empty();

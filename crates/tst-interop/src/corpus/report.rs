@@ -74,6 +74,13 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
         ("Changed and explained", sweep.changed_explained),
         ("Changed and unexplained", sweep.changed_unexplained),
         ("New without a baseline", sweep.new_no_baseline),
+        ("New and accepted", sweep.new_explained),
+        ("New and not accepted", sweep.new_unexplained),
+        ("In the baseline only", sweep.baseline_only.len() as u64),
+        (
+            "In the baseline only, accepted",
+            sweep.baseline_only_explained,
+        ),
         ("Parse failures", sweep.parse_failures),
         ("Invariant failures", sweep.invariant_failures),
     ] {
