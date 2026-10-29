@@ -890,7 +890,7 @@ fn spawn_tcp_listener_recv() -> (
             "--expect",
             "baseline",
             "--seconds",
-            "2",
+            "2.5",
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -931,8 +931,9 @@ fn a_tcp_listener_with_no_peer_ends_at_its_deadline() {
     let status = wait_or_kill(&mut child, limit).expect("hung");
     let stderr = drain.join().unwrap();
     assert_eq!(status.code(), Some(1), "stderr: {stderr}");
+    // 2.5 s of profile plus 17 s of slack, printed to one decimal.
     assert!(
-        stderr.contains("recv: no data before the deadline ("),
+        stderr.contains("recv: no data before the deadline (19.5 s)"),
         "stderr: {stderr}"
     );
 }

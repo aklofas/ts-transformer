@@ -4,8 +4,8 @@
 //! sequence of [`Action`]s for the exact same sequence of `elapsed_ms`
 //! inputs: determinism is the entire point, so nothing in this module
 //! reads wall-clock time itself (no `SystemTime`/`Instant`) — the proxy
-//! feeds each packet's real `elapsed_ms`, so a run's decisions are
-//! replayable from the seed, the config and the recorded elapsed times.
+//! feeds each packet's real `elapsed_ms`, so the same seed, config and
+//! packet timing always give the same decisions.
 
 /// Minimal xorshift64* PRNG (Vigna, "An experimental exploration of
 /// Marsaglia's xorshift generators, scrambled"). Chosen over the stdlib's

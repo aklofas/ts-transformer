@@ -8,11 +8,14 @@
 # that was rewritten by hand on the VM for each attempt.
 #
 # Usage:
-#   bash release-vm-corpus.sh <full 40-hex sha> [--baseline DIR]
+#   bash release-vm-corpus.sh <full 40-hex sha> (--baseline DIR | --no-baseline)
 #       [--accept SHA256 --because TEXT]... [--run-dir DIR] [--dry-run]
 #
 #   --baseline DIR      the previous release's digests to compare with
-#                       (`corpus sweep --baseline`); a first run has none
+#                       (`corpus sweep --baseline`)
+#   --no-baseline       compare with none: a first run only. One of the two
+#                       is required, so a forgotten flag never skips the
+#                       comparison; the archive row says which it was
 #   --accept SHA256 --because TEXT
 #                       a reviewed change to accept, passed through to the
 #                       sweep verbatim (repeatable, always in pairs)
@@ -39,12 +42,14 @@ set -uo pipefail
 
 SHA=""
 BASELINE=""
+NO_BASELINE=0
 RUN_DIR=""
 DRY_RUN=0
 SWEEP_EXTRA=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --baseline) BASELINE=$2; shift 2 ;;
+    --no-baseline) NO_BASELINE=1; shift ;;
     --run-dir) RUN_DIR=$2; shift 2 ;;
     --accept)
       [[ $# -ge 4 && "$3" == "--because" ]] ||
@@ -65,6 +70,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ ${#SHA} -eq 40 ]] || { echo "release-vm-corpus.sh: need the full 40-hex sha (got '$SHA')" >&2; exit 2; }
+if [[ -n "$BASELINE" && "$NO_BASELINE" -eq 1 ]]; then
+  echo "release-vm-corpus.sh: --baseline and --no-baseline contradict each other" >&2; exit 2
+fi
+[[ -n "$BASELINE" || "$NO_BASELINE" -eq 1 ]] ||
+  { echo "release-vm-corpus.sh: name the baseline (--baseline DIR) or say there is none (--no-baseline)" >&2; exit 2; }
 [[ -z "$BASELINE" || -d "$BASELINE" || "$DRY_RUN" -eq 1 ]] ||
   { echo "release-vm-corpus.sh: --baseline $BASELINE is not a directory" >&2; exit 2; }
 

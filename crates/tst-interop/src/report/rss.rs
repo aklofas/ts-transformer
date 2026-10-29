@@ -92,6 +92,23 @@ pub struct RssSample {
 /// malformed or truncated artifact must never silently read as "no data,
 /// every check vacuously passes."
 pub fn parse_rows(text: &str, leg_ok: impl Fn(&str) -> bool) -> Result<Vec<RssSample>, String> {
+    parse_rows_checked(text, |leg, _| {
+        if leg_ok(leg) {
+            Ok(())
+        } else {
+            Err(format!("unknown leg {leg:?}"))
+        }
+    })
+}
+
+/// [`parse_rows`] with a per-row check of `(leg, process)`, run on each line
+/// as it is read (after `elapsed_s`, before `pid`), so the first bad line in
+/// the file is the one reported, whatever its fault. The check's error is
+/// prefixed with the line number.
+pub(crate) fn parse_rows_checked(
+    text: &str,
+    check: impl Fn(&str, &str) -> Result<(), String>,
+) -> Result<Vec<RssSample>, String> {
     let mut samples = Vec::new();
     for (line_no, fields) in csv_rows(text, RSS_HEADER, 5, "rss.csv")? {
         let elapsed_s: f64 = fields[0]
@@ -103,10 +120,8 @@ pub fn parse_rows(text: &str, leg_ok: impl Fn(&str) -> bool) -> Result<Vec<RssSa
             ));
         }
         let leg = fields[1].to_string();
-        if !leg_ok(&leg) {
-            return Err(format!("rss.csv line {line_no}: unknown leg {leg:?}"));
-        }
         let process = fields[2].to_string();
+        check(&leg, &process).map_err(|e| format!("rss.csv line {line_no}: {e}"))?;
         let pid: u32 = fields[3]
             .parse()
             .map_err(|_| format!("rss.csv line {line_no}: invalid pid {:?}", fields[3]))?;
@@ -151,10 +166,40 @@ pub(crate) fn linear_regression_slope(points: &[(f64, f64)]) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use crate::report::{soak, stress};
+
     #[test]
     fn a_negative_or_non_finite_elapsed_is_rejected_by_both_callers() {
         let bad = "elapsed_s,leg,process,pid,rss_kb\n-1,srt-1,recv,10,100\n";
-        assert!(crate::report::stress::parse_rss_csv(bad).is_err());
-        assert!(crate::report::stress::parse_rss_csv(&bad.replace("-1", "NaN")).is_err());
+        assert!(stress::parse_rss_csv(bad).is_err());
+        assert!(stress::parse_rss_csv(&bad.replace("-1", "NaN")).is_err());
+        let bad = "elapsed_s,leg,process,pid,rss_kb\n-1,srt,recv,10,100\n";
+        assert!(soak::parse_rss_csv(bad).is_err());
+        assert!(soak::parse_rss_csv(&bad.replace("-1", "NaN")).is_err());
+    }
+
+    #[test]
+    fn the_soak_names_the_line_and_the_allowed_legs_and_processes() {
+        let head = "elapsed_s,leg,process,pid,rss_kb\n0,srt,recv,10,100\n";
+        let err = soak::parse_rss_csv(&format!("{head}5,sat,recv,10,100\n")).unwrap_err();
+        assert_eq!(
+            err,
+            "rss.csv line 3: unknown leg \"sat\" (want one of \
+             [\"srt\", \"rist\", \"rtsp-publish\", \"rtsp-publish-es\", \"whep\"])"
+        );
+        let err = soak::parse_rss_csv(&format!("{head}5,srt,relay,10,100\n")).unwrap_err();
+        assert_eq!(
+            err,
+            "rss.csv line 3: unknown process \"relay\" for leg \"srt\" \
+             (want one of [\"send\", \"proxy\", \"recv\"])"
+        );
+    }
+
+    #[test]
+    fn the_first_bad_line_is_reported_whatever_its_fault() {
+        // An unknown process on line 2 is reported before a bad pid on line 3.
+        let text = "elapsed_s,leg,process,pid,rss_kb\n0,srt,relay,10,100\n5,srt,recv,x,100\n";
+        let err = soak::parse_rss_csv(text).unwrap_err();
+        assert!(err.starts_with("rss.csv line 2: unknown process"), "{err}");
     }
 }

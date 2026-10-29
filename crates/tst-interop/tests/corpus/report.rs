@@ -28,6 +28,7 @@ fn sweep(pass: bool) -> SweepSummary {
         invariant_failures: 0,
         unused_accepts: vec![],
         baseline_matched: Some(12),
+        baseline_manifest_sha256: Some(sha('m')),
         klv_field_errors: 0,
         files_with_klv_field_errors: 0,
         new_explained: 0,
@@ -129,8 +130,43 @@ fn the_note_is_the_fixed_sentence() {
     let row = report::archive_row(&sweep(true), Some(&replay(true)));
     assert_eq!(
         row.note,
-        "Sweep 12 files: 10 identical, 2 changed and explained, 0 invariant failures, \
-         0 parse failures; replay 3 files over 5 paths, 0 failed."
+        format!(
+            "Sweep 12 files: 10 identical, 2 changed and explained, 0 invariant failures, \
+             0 parse failures; replay 3 files over 5 paths, 0 failed. Compared with the \
+             baseline whose manifest has SHA-256 {}: 12 captures matched.",
+            sha('m')
+        )
+    );
+}
+
+/// A run without a baseline says so in its row and its block, so a release
+/// run that skipped the comparison cannot read as one that made it.
+#[test]
+fn a_sweep_without_a_baseline_says_so_in_the_row_and_the_block() {
+    let mut s = sweep(true);
+    s.baseline_matched = None;
+    s.baseline_manifest_sha256 = None;
+    let row = report::archive_row(&s, Some(&replay(true)));
+    assert!(
+        row.note.ends_with(" No baseline was compared."),
+        "{}",
+        row.note
+    );
+    assert!(row.overall_pass);
+    let md = report::markdown(&s, None);
+    assert!(md.contains("\nNo baseline was compared.\n"), "{md}");
+    // The "Restarted before" column lists SHAs, so it is not right-aligned.
+    let md = report::markdown(&sweep(true), Some(&replay(true)));
+    assert!(
+        md.contains("| --- | ---: | ---: | --- | ---: | ---: |\n"),
+        "{md}"
+    );
+    assert!(
+        md.contains(&format!(
+            "\nCompared with the baseline whose manifest has SHA-256 {}: 12 captures matched.\n",
+            sha('m')
+        )),
+        "{md}"
     );
 }
 

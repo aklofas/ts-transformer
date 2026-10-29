@@ -84,6 +84,10 @@ pub struct SweepSummary {
     /// baseline. A baseline that matches no file fails the sweep.
     #[serde(default)]
     pub baseline_matched: Option<u64>,
+    /// SHA-256 of the `--baseline` directory's `manifest.txt`, naming the
+    /// baseline the sweep compared with; `None` when it compared with none.
+    #[serde(default)]
+    pub baseline_manifest_sha256: Option<Sha256Hex>,
     /// ST 0601 field errors over every capture's `default` configuration,
     /// one per field the lenient decoder could not read in a record it
     /// kept. Recorded, never gated.
@@ -240,9 +244,11 @@ pub fn write_manifest(digests_dir: &Path, expect_files: u64) -> Result<u64, Stri
 }
 
 /// The captures a baseline lists, with their digests: each listed digest
-/// must be there, parse, and name the capture it is listed for. Errors
-/// name no path.
-fn read_baseline_manifest(dir: &Path) -> Result<BTreeMap<Sha256Hex, FileDigest>, String> {
+/// must be there, parse, and name the capture it is listed for. Also the
+/// SHA-256 of the manifest itself. Errors name no path.
+fn read_baseline_manifest(
+    dir: &Path,
+) -> Result<(BTreeMap<Sha256Hex, FileDigest>, Sha256Hex), String> {
     let text = match std::fs::read_to_string(dir.join(BASELINE_MANIFEST)) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -297,7 +303,11 @@ fn read_baseline_manifest(dir: &Path) -> Result<BTreeMap<Sha256Hex, FileDigest>,
         }
         digests.insert(sha, d);
     }
-    Ok(digests)
+    let manifest_sha = Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Ok((digests, Sha256Hex(manifest_sha)))
 }
 
 pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
@@ -318,9 +328,12 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         }
     }
     // Read before any file is digested, so a bad baseline costs nothing.
-    let mut listed = match &args.baseline {
-        Some(b) => Some(read_baseline_manifest(b)?),
-        None => None,
+    let (mut listed, baseline_manifest_sha256) = match &args.baseline {
+        Some(b) => {
+            let (listed, manifest) = read_baseline_manifest(b)?;
+            (Some(listed), Some(manifest))
+        }
+        None => (None, None),
     };
     // Only an absent inventory is rebuilt; an unreadable one is an error.
     let inv = if inventory::exists(&args.run) {
@@ -402,6 +415,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         invariant_failures: 0,
         unused_accepts: Vec::new(),
         baseline_matched: None,
+        baseline_manifest_sha256,
         klv_field_errors: 0,
         files_with_klv_field_errors: 0,
         new_explained: 0,

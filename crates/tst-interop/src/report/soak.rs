@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::rss::{
-    MAX_GAP_CADENCES, MIN_SAMPLE_COVERAGE, RssSample, linear_regression_slope, parse_rows,
+    MAX_GAP_CADENCES, MIN_SAMPLE_COVERAGE, RssSample, linear_regression_slope, parse_rows_checked,
     rss_coverage, rss_warmup_s,
 };
 use crate::proxy::ProxyStats;
@@ -229,17 +229,18 @@ const WORKER_ROLES: [&str; 12] = [
 /// Parse the soak's `rss.csv` and check every row's leg and process
 /// against the legs `soak.sh` launches.
 pub fn parse_rss_csv(text: &str) -> Result<Vec<RssSample>, String> {
-    let samples = parse_rows(text, |leg| KNOWN_LEGS.contains(&leg))?;
-    for s in &samples {
-        let processes = leg_processes(&s.leg);
-        if !processes.contains(&s.process.as_str()) {
+    parse_rows_checked(text, |leg, process| {
+        if !KNOWN_LEGS.contains(&leg) {
+            return Err(format!("unknown leg {leg:?} (want one of {KNOWN_LEGS:?})"));
+        }
+        let processes = leg_processes(leg);
+        if !processes.contains(&process) {
             return Err(format!(
-                "rss.csv: unknown process {:?} for leg {:?} at elapsed_s {} (want one of {processes:?})",
-                s.process, s.leg, s.elapsed_s
+                "unknown process {process:?} for leg {leg:?} (want one of {processes:?})"
             ));
         }
-    }
-    Ok(samples)
+        Ok(())
+    })
 }
 
 /// `soak.sh`'s declared run parameters, written to `soak-config.json`
