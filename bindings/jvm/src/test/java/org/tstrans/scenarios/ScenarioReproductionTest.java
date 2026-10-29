@@ -20,6 +20,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.tstrans.GoldenSupport;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -531,78 +532,22 @@ class ScenarioReproductionTest {
 
     private record GoldenKlv(int pid, String set) {}
 
-    /**
-     * Minimal extraction of the single {@code "event":"video"} core object's
-     * {@code pid}, {@code pts}, and {@code payload_sha256} fields from the golden
-     * JSON text. Deliberately not a general JSON parser — it locates the video
-     * object by its {@code "event": "video"} marker and reads the three scalar
-     * fields that follow within that object. Fails loudly if any is absent.
-     */
     private static GoldenVideo extractVideoEvent(String json) {
-        int videoMarker = json.indexOf("\"video\"");
-        assertTrue(videoMarker >= 0, "golden has no \"video\" core event: " + json);
-        // The object containing "video" starts at the preceding '{'.
-        int objStart = json.lastIndexOf('{', videoMarker);
-        int objEnd = json.indexOf('}', videoMarker);
-        assertTrue(objStart >= 0 && objEnd > objStart,
-            "could not bound the video core object in golden");
-        String obj = json.substring(objStart, objEnd + 1);
-
-        int pid = (int) extractNumber(obj, "pid");
-        long pts = extractNumber(obj, "pts");
-        String sha = extractString(obj, "payload_sha256");
-        return new GoldenVideo(pid, pts, sha);
+        String obj = GoldenSupport.videoObject(json);
+        return new GoldenVideo((int) extractNumber(obj, "pid"), extractNumber(obj, "pts"),
+            extractString(obj, "payload_sha256"));
     }
 
-    /**
-     * Minimal extraction of the single {@code "event":"klv"} core object's
-     * {@code pid} and {@code set} fields from the golden JSON text. Mirrors
-     * {@link #extractVideoEvent}: it locates the klv object by its {@code "klv"}
-     * marker, bounds the enclosing {@code {...}}, and reads the two scalar fields.
-     * Fails loudly if any is absent.
-     */
     private static GoldenKlv extractKlvEvent(String json) {
-        int klvMarker = json.indexOf("\"klv\"");
-        assertTrue(klvMarker >= 0, "golden has no \"klv\" core event: " + json);
-        int objStart = json.lastIndexOf('{', klvMarker);
-        int objEnd = json.indexOf('}', klvMarker);
-        assertTrue(objStart >= 0 && objEnd > objStart,
-            "could not bound the klv core object in golden");
-        String obj = json.substring(objStart, objEnd + 1);
-
-        int pid = (int) extractNumber(obj, "pid");
-        String set = extractString(obj, "set");
-        return new GoldenKlv(pid, set);
+        String obj = GoldenSupport.eventObject(json, "klv");
+        return new GoldenKlv((int) extractNumber(obj, "pid"), extractString(obj, "set"));
     }
 
-    /** Read an integer-valued JSON field {@code "key": <number>} from {@code obj}. */
     private static long extractNumber(String obj, String key) {
-        String needle = "\"" + key + "\"";
-        int k = obj.indexOf(needle);
-        assertTrue(k >= 0, "golden object missing field \"" + key + "\": " + obj);
-        int colon = obj.indexOf(':', k + needle.length());
-        assertTrue(colon >= 0, "malformed golden field \"" + key + "\"");
-        int i = colon + 1;
-        while (i < obj.length() && (obj.charAt(i) == ' ' || obj.charAt(i) == '\t')) {
-            i++;
-        }
-        int start = i;
-        while (i < obj.length() && (Character.isDigit(obj.charAt(i)) || obj.charAt(i) == '-')) {
-            i++;
-        }
-        assertTrue(i > start, "golden field \"" + key + "\" is not a number");
-        return Long.parseLong(obj.substring(start, i));
+        return GoldenSupport.signedNumber(obj, key);
     }
 
-    /** Read a string-valued JSON field {@code "key": "<value>"} from {@code obj}. */
     private static String extractString(String obj, String key) {
-        String needle = "\"" + key + "\"";
-        int k = obj.indexOf(needle);
-        assertTrue(k >= 0, "golden object missing field \"" + key + "\": " + obj);
-        int firstQuote = obj.indexOf('"', obj.indexOf(':', k + needle.length()) + 1);
-        assertTrue(firstQuote >= 0, "malformed golden field \"" + key + "\"");
-        int lastQuote = obj.indexOf('"', firstQuote + 1);
-        assertTrue(lastQuote > firstQuote, "unterminated golden string field \"" + key + "\"");
-        return obj.substring(firstQuote + 1, lastQuote);
+        return GoldenSupport.stringField(obj, key);
     }
 }

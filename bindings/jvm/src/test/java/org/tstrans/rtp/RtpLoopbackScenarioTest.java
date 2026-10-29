@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.tstrans.GoldenSupport;
 import org.tstrans.RtpException;
 import org.tstrans.codec.VideoUnit;
 import org.tstrans.shells.CancelHandle;
@@ -69,8 +70,9 @@ class RtpLoopbackScenarioTest {
             "shared scenario golden missing (expected committed fixture): " + goldenPath);
 
         byte[] input = Files.readAllBytes(inputPath);
-        String expectedSha = extractVideoPayloadSha256(
-            Files.readString(goldenPath, StandardCharsets.UTF_8));
+        String expectedSha = GoldenSupport.stringField(
+            GoldenSupport.videoObject(Files.readString(goldenPath, StandardCharsets.UTF_8)),
+            "payload_sha256");
 
         int port = freeUdpPort();
 
@@ -175,33 +177,5 @@ class RtpLoopbackScenarioTest {
         assertEquals(expectedSha, actualSha,
             "RTP-received scenario bytes must demux to the golden payload_sha256 "
                 + "(cross-binding parity proof: JVM RTP path ≡ Rust/Python)");
-    }
-
-    // ── helpers (replicated from SrtLoopbackScenarioTest) ───────────────────
-    //
-    // Private to each test class (same package, but Java doesn't inherit private
-    // members across class files). Replicated here rather than adding a shared
-    // helper class: keeps the test self-contained and easy to grep in isolation.
-
-    /**
-     * Minimal extraction of the {@code "event":"video"} core object's
-     * {@code payload_sha256} field from the golden JSON text. Mirrors
-     * {@code extractVideoPayloadSha256} in
-     * {@link org.tstrans.srt.SrtLoopbackScenarioTest}.
-     */
-    private static String extractVideoPayloadSha256(String json) {
-        int videoMarker = json.indexOf("\"video\"");
-        assertTrue(videoMarker >= 0, "golden has no \"video\" core event: " + json);
-        int objStart = json.lastIndexOf('{', videoMarker);
-        int objEnd   = json.indexOf('}', videoMarker);
-        assertTrue(objStart >= 0 && objEnd > objStart, "could not bound the video core object");
-        String obj = json.substring(objStart, objEnd + 1);
-        String needle = "\"payload_sha256\"";
-        int k = obj.indexOf(needle);
-        assertTrue(k >= 0, "golden video object missing payload_sha256: " + obj);
-        int firstQuote = obj.indexOf('"', obj.indexOf(':', k + needle.length()) + 1);
-        int lastQuote  = obj.indexOf('"', firstQuote + 1);
-        assertTrue(firstQuote >= 0 && lastQuote > firstQuote, "malformed payload_sha256 value");
-        return obj.substring(firstQuote + 1, lastQuote);
     }
 }
