@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::process::Command;
 
-use tst_interop::corpus::replay::ReplaySummary;
+use tst_interop::corpus::inventory::{self, FileEntry, Inventory};
+use tst_interop::corpus::replay::{self, ReplayArgs, ReplaySummary};
 use tst_interop::corpus::report::{self, ArchiveRow};
 use tst_interop::corpus::subset::{Pick, ReplayPlan};
 use tst_interop::corpus::sweep::{Acceptance, Accepted, SweepSummary};
@@ -399,4 +400,52 @@ fn the_markdown_counts_captures_new_to_or_gone_from_the_baseline() {
     ] {
         assert!(md.contains(row), "{row}: {md}");
     }
+}
+
+/// A retry that fails its preflight leaves no replay for the report to
+/// pass: the old PASS was removed when the retry started.
+#[test]
+fn a_failed_replay_retry_leaves_no_pass_behind() {
+    let run = write_run("rep-retry", true);
+    assert!(report_of(&run).overall_pass);
+    // One capture under the run directory, so the inventory names a path
+    // the other corpus directory does not hold.
+    let capture = run.join("capture.ts");
+    std::fs::write(&capture, b"").unwrap();
+    let inv = Inventory {
+        schema_version: 1,
+        files: vec![FileEntry {
+            sha256: sha('a'),
+            paths: vec![capture],
+            bytes: 0,
+            duration_s: 0.0,
+            pcr_discontinuities: 0,
+            shape: "other".into(),
+            pcr_pid: None,
+            programs: 0,
+            streams: vec![],
+            codecs: vec![],
+            klv_sets: vec![],
+            largest_au_bytes: 0,
+            feed_errors: 0,
+            probe_error: None,
+        }],
+    };
+    let run_dir = RunDir { root: run.clone() };
+    inventory::write(&inv, &run_dir).unwrap();
+    std::fs::write(run.join("replay-rss.csv"), "elapsed_s\n").unwrap();
+    std::fs::write(run.join("replay-plan.json"), "{}").unwrap();
+    let args = ReplayArgs {
+        dir: temp_dir_named("rep-retry-other-corpus"),
+        run: run_dir,
+        paths: vec!["udp".into()],
+        budget_seconds: 60,
+        rss_sample_seconds: 1,
+    };
+    let err = replay::run_with(&args, &mut |_| {}).unwrap_err();
+    assert!(err.contains("another corpus directory"), "{err}");
+    for name in ["replay.json", "replay-rss.csv", "replay-plan.json"] {
+        assert!(!run.join(name).exists(), "{name} survived the failed retry");
+    }
+    assert!(!report_of(&run).overall_pass);
 }

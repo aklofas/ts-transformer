@@ -30,7 +30,6 @@ fn a_flat_rss_is_noted_within_the_soak_threshold() {
     let note = &j.note_by_path["udp"];
     assert!(note.contains("within the soak's threshold 200"), "{j:?}");
     assert!(note.ends_with("(recorded, not gated)"), "{j:?}");
-    assert!(j.above_threshold.is_empty(), "{j:?}");
 }
 
 #[test]
@@ -42,7 +41,6 @@ fn a_rising_rss_is_noted_above_the_soak_threshold_and_nothing_fails() {
     let note = &j.note_by_path["udp"];
     assert!(note.contains("above the soak's threshold 200"), "{j:?}");
     assert!(note.ends_with("(recorded, not gated)"), "{j:?}");
-    assert_eq!(j.above_threshold, ["udp"]);
 }
 
 #[test]
@@ -54,7 +52,7 @@ fn a_path_with_too_few_samples_is_noted_as_such() {
         j.note_by_path["tcp"].starts_with("too few samples: "),
         "{j:?}"
     );
-    assert!(!j.above_threshold.contains(&"tcp".to_string()), "{j:?}");
+    assert!(!j.note_by_path["tcp"].contains("above"), "{j:?}");
 }
 
 #[test]
