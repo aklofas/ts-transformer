@@ -283,18 +283,8 @@ class SrtMuxDemuxLoopbackTest {
         receiverThread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SEC));
     }
 
-    // NOTE: no separate live "throwing byte sink" test. The fail-loud throw path
-    // (a sink exception is captured first-wins and re-raised from the next
-    // iteration, stopping it) is wired structurally in DemuxReceiver/addByteSink
-    // and is not feasible to assert here without live-timing fragility:
-    //   - addByteSink exists only on the SRT DemuxReceiver, not the offline
-    //     Demuxer, so the throw path cannot be exercised against a deterministic
-    //     offline demuxer; and
-    //   - a live throwing-sink test would race the TSBPD delivery window (the
-    //     sink must fire before the iterator returns), which is exactly the kind
-    //     of flake the ×5 stress gate exists to prevent.
-    // A flaky live test is worse than none, so the throw path is left to its
-    // structural wiring rather than a fragile live assertion.
+    // A throwing byte sink is covered over TCP, where the stream is fully
+    // scripted: see org.tstrans.shells.DemuxReceiverByteSinkFailureTest.
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
