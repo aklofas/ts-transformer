@@ -101,9 +101,10 @@ val copyNative = tasks.register<Copy>("copyNative") {
     rename { resourceLibName(t) }
 }
 
-// --- Staging mode (CI assemble): copy ALL pre-built native/<triple>/* libs
-//     from the staging dir into resources. No cargo, no tests.
-val stageNative = tasks.register<Copy>("stageNative") {
+// --- Staging mode (CI assemble): mirror ALL pre-built native/<triple>/* libs
+//     from the staging dir into resources. No cargo, no tests. Sync (not Copy)
+//     so a native left behind by an earlier local build cannot ride along.
+val stageNative = tasks.register<Sync>("stageNative") {
     onlyIf { nativeStagingDir != null }
     // config-time guard: prevents File(null, "native") NPE during configuration; onlyIf gates execution
     if (nativeStagingDir != null) {
@@ -176,12 +177,20 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 // --- Completeness guard: in staging mode, fail `jar` if any gating native lib
-//     is missing (no silent truncation).
+//     is missing from the staging input (no silent truncation). Checked against
+//     the input, not the resources dir, which may hold stale local copies.
+//     Any mode refuses a probe-enabled native: the jni-test-hooks library
+//     must never be packaged.
 tasks.named<Jar>("jar") {
     doFirst {
+        if (jniTestHooks) {
+            throw GradleException(
+                "refusing to package a jni-test-hooks native library; rebuild without -PjniTestHooks"
+            )
+        }
         if (nativeStagingDir != null) {
             val missing = gatingTriples.filter {
-                !resourcesNativeRoot.dir(it).file(resourceLibName(it)).asFile.exists()
+                !File(nativeStagingDir, "native/$it/${resourceLibName(it)}").exists()
             }
             if (missing.isNotEmpty()) {
                 throw GradleException("fat JAR missing gating native libs for: $missing")
