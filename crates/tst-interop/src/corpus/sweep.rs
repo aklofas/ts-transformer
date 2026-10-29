@@ -147,8 +147,10 @@ fn same_but_version(current: &FileDigest, baseline: &FileDigest) -> bool {
     *current == b
 }
 
-/// Files a sweep invalidates: the replay's results and its subset plan.
-const DOWNSTREAM_OUTPUTS: [&str; 3] = ["replay.json", "replay-rss.csv", "replay-plan.json"];
+/// Files a sweep invalidates, and a replay attempt removes before it can
+/// fail: the replay's results and its subset plan.
+pub(super) const DOWNSTREAM_OUTPUTS: [&str; 3] =
+    ["replay.json", "replay-rss.csv", "replay-plan.json"];
 
 /// SHA-256 over every whole-capture `digests/*.json` file of the run, in
 /// sorted file-name order. The replay's prefix digests are its outputs, not

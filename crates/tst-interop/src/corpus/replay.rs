@@ -67,7 +67,7 @@ use super::pace::{PcrPacer, send_paced};
 use super::pcr::prefix_end_read;
 use super::receive::{STALL_ENV, net_core, udp_rcvbuf_need};
 use super::subset::{self, Pick, ReplayPlan};
-use super::sweep::{SweepSummary, digests_fingerprint};
+use super::sweep::{DOWNSTREAM_OUTPUTS, SweepSummary, digests_fingerprint};
 use super::{PATHS, REPLAY_PICK_MAX_BYTES, RunDir, STALL_SECONDS, Sha256Hex};
 use crate::report::csv::RSS_HEADER;
 use crate::report::soak::{
@@ -138,8 +138,6 @@ pub struct RssJudgement {
     /// Per path: the slope against the soak's threshold, or why the rule
     /// could not judge it.
     pub note_by_path: BTreeMap<String, String>,
-    /// Judged paths whose slope exceeded the soak's threshold.
-    pub above_threshold: Vec<String>,
 }
 
 /// Applies the soak's RSS rule to each path's samples and records the
@@ -169,9 +167,6 @@ pub fn judge_rss(samples: &[(String, f64, u64)], paths: &[String], cadence_s: f6
         let (judged, text) = if covered {
             let slope = linear_regression_slope(&points) * 3600.0;
             let within = slope <= RSS_SLOPE_THRESHOLD_KB_PER_HOUR;
-            if !within {
-                out.above_threshold.push(path.clone());
-            }
             (
                 true,
                 format!(
@@ -842,7 +837,8 @@ fn check_dir(dir: &Path, inv: &inventory::Inventory) -> Result<(), String> {
 
 /// Replays the subset of the swept corpus and writes `replay-plan.json`,
 /// `replay.json` and `replay-rss.csv` into the run directory, calling
-/// `on_verdict` as each verdict lands. Needs the sweep's `digests/` and
+/// `on_verdict` as each verdict lands. A previous attempt's three files are
+/// removed once `sweep.json` is read, before anything can fail. Needs the sweep's `digests/` and
 /// `inventory.json` in the run directory. The receivers are this
 /// executable's own `corpus receive`, so it is meant to run from the
 /// `tst-interop` binary.
@@ -850,14 +846,23 @@ pub fn run_with(
     args: &ReplayArgs,
     on_verdict: &mut dyn FnMut(&FileVerdict),
 ) -> Result<ReplaySummary, String> {
+    let sweep_text = std::fs::read_to_string(args.run.root.join("sweep.json"))
+        .map_err(|_| "the run directory holds no sweep.json: run the sweep first".to_string())?;
+    // A retry that fails below must not leave the previous attempt's
+    // results for the report to pass.
+    for name in DOWNSTREAM_OUTPUTS {
+        match std::fs::remove_file(args.run.root.join(name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot remove a stale {name}: {}", e.kind())),
+        }
+    }
+    let sweep: SweepSummary =
+        serde_json::from_str(&sweep_text).map_err(|e| format!("parse sweep.json: {e}"))?;
     check_paths(&args.paths)?;
     if !args.run.root.join("digests").is_dir() {
         return Err("the run directory holds no digests: run the sweep first".into());
     }
-    let sweep_text = std::fs::read_to_string(args.run.root.join("sweep.json"))
-        .map_err(|_| "the run directory holds no sweep.json: run the sweep first".to_string())?;
-    let sweep: SweepSummary =
-        serde_json::from_str(&sweep_text).map_err(|e| format!("parse sweep.json: {e}"))?;
     let sweep_digests_sha256 = digests_fingerprint(&args.run)?;
     let inv = inventory::read(&args.run)?;
     check_dir(&args.dir, &inv)?;
