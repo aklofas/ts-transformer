@@ -26,7 +26,12 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>For consuming-native sites (ownership transfer — e.g. {@code intoSender()}):
  *       call {@link #consumeHandle()} to atomically zero-and-capture the handle
  *       <em>before</em> the native call; a subsequent {@link #close()} then finds 0
- *       and is a harmless no-op. Conversely, a native that only <em>borrows</em>
+ *       and is a harmless no-op. A consuming native that validates its other
+ *       arguments before it takes the registry entry (so a refusal leaves the
+ *       resource with the caller) instead passes {@link #peekHandle()} and calls
+ *       {@code consumeHandle()} after it returns; the registry hands the entry to
+ *       exactly one taker and never reuses a key, so a racing {@link #close()}
+ *       stays a no-op or wins the entry outright. Conversely, a native that only <em>borrows</em>
  *       the handle without transferring ownership (a <b>sanctioned lease</b> —
  *       e.g. {@code RtspSession.intoDemuxReceiver()}, which moves the internal
  *       data plane but leaves the session's control plane usable) reads via

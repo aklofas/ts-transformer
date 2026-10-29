@@ -76,9 +76,8 @@ public final class Socket extends NativeHandle {
      *
      * <p>Same consumption semantics as {@link #intoSender()}: the underlying
      * {@code tst_srt::Socket} moves into the new {@code MuxSender} and this
-     * socket's handle is zeroed. A {@code null} config is refused before the
-     * socket is claimed; a config the native rejects still consumes it (the
-     * pending exception propagates from the native call).
+     * socket's handle is zeroed. A muxer config that is refused leaves the
+     * socket open and unconsumed, so a corrected retry can still convert it.
      *
      * @param programConfig the muxer program configuration
      * @return a {@code MuxSender} owning this socket + a configured muxer
@@ -105,16 +104,15 @@ public final class Socket extends NativeHandle {
         boolean[] streamCarriesPts = programConfig.streamCarriesPts();
         byte[] dataDescBytes = programConfig.dataDescBytes();
         int[] dataDescLens = programConfig.dataDescLens();
-        // Claim the registry id BEFORE the native call (consume-first), after every
-        // argument is read: a null config or a throwing accessor must not leave the
-        // native socket registered with no Java owner. nIntoMuxSender closes the
-        // registry entry unconditionally but can still throw afterwards
-        // (muxer-config rejection / MuxSender::new failure); claiming first means a
-        // later close() finds 0 and is a clean no-op.
-        long sock = consumeHandle();
-        long h = nIntoMuxSender(sock, programNumber, pmtPid, pcrPid, pcrIntervalMs,
+        // The native builds the muxer config BEFORE it takes the socket, so a
+        // refusal leaves the socket registered under this key; the key is claimed
+        // only once the native has taken it. The registry hands the socket to
+        // exactly one caller and never reuses a key, so a racing close() or a
+        // second conversion either wins the socket or sees it closed.
+        long h = nIntoMuxSender(peekHandle(), programNumber, pmtPid, pcrPid, pcrIntervalMs,
             psiIntervalMs, bufferPackets, av1Carriage, streamPids, streamKinds, streamCodecs,
             streamTypeCodes, streamCarriesPts, dataDescBytes, dataDescLens);
+        consumeHandle();
         return ShellAdapters.muxSender(h);
     }
 
@@ -142,8 +140,8 @@ public final class Socket extends NativeHandle {
      * Consume this socket and produce a {@link DemuxReceiver} with the given
      * {@link org.tstrans.mpegts.DemuxerConfig}.
      *
-     * <p>Same consumption semantics as {@link #intoDemuxReceiver()}; a
-     * {@code null} config is refused before the socket is claimed.
+     * <p>Same consumption semantics as {@link #intoDemuxReceiver()}. A demuxer
+     * config that is refused leaves the socket open and unconsumed.
      *
      * @param demuxConfig the demuxer configuration
      * @return a {@code DemuxReceiver} owning this socket + a configured demuxer
@@ -164,10 +162,11 @@ public final class Socket extends NativeHandle {
         boolean lenientPsi = demuxConfig.lenientPsiReassembly();
         long syncBufCap = demuxConfig.syncBufCap();
         boolean unwrapTimestamps = demuxConfig.unwrapTimestamps();
-        // Consume-first, after every argument is read (see intoMuxSender).
-        long sock = consumeHandle();
-        long h = nIntoDemuxReceiverWithConfig(sock, strict, pesCapPerPid, pesCapTotal,
+        // Claimed after the native takes the socket (see intoMuxSender): the
+        // native builds the demuxer config first, so a refusal keeps the socket.
+        long h = nIntoDemuxReceiverWithConfig(peekHandle(), strict, pesCapPerPid, pesCapTotal,
             cfiTolerance, av1Carriage, auCellCapPerPid, lenientPsi, syncBufCap, unwrapTimestamps);
+        consumeHandle();
         return ShellAdapters.demuxReceiver(h);
     }
 
