@@ -371,12 +371,17 @@ fn the_discontinuity_indicator_after_a_gap_is_one_event_in_both() {
 #[test]
 fn a_payload_without_a_klv_label_fails_unless_annotated() {
     // No AU-cell header and no SMPTE label: the demuxer hands it out as an
-    // unclassified sample on the KLV PID, never as a KLV record.
+    // unclassified sample on the KLV PID, never as a KLV record, so the
+    // PID's PES on the wire also show no KLV in the digest.
     let bytes = muxed(Some(Some(b"not klv")));
     let f = failures(&bytes, &Annotations::default());
-    assert_eq!(rules(&f), ["klv-unknown"], "{f:?}");
+    assert_eq!(rules(&f), ["klv-unknown", "klv-missing"], "{f:?}");
     assert_eq!(f[0].pid, Some(KLV_PID));
     assert!(f[0].detail.contains("unknown sample"), "{f:?}");
+    assert_eq!(
+        f[1].detail,
+        "30 KLV PES on the wire, digest 0 metadata events"
+    );
     let ann = Annotations {
         non_misb_private_pids: vec![KLV_PID],
         max_private_records: Some(30),
@@ -384,8 +389,8 @@ fn a_payload_without_a_klv_label_fails_unless_annotated() {
         ..Default::default()
     };
     let f = failures(&bytes, &ann);
-    assert_eq!(rules(&f), ["klv-unknown"], "{f:?}");
-    assert!(f[0].excused, "{f:?}");
+    assert_eq!(rules(&f), ["klv-unknown", "klv-missing"], "{f:?}");
+    assert!(f.iter().all(|x| x.excused), "{f:?}");
     assert!(
         f[0].detail
             .starts_with("excused: vendor private data; 30 private record(s) (bound 30)"),
@@ -767,5 +772,102 @@ fn unknown_samples_beside_excused_truncations_still_fail() {
             && !x.excused
             && x.detail == "15 unknown sample(s)"),
         "{f:?}"
+    );
+}
+
+/// The demuxer stops emitting KLV on a PID the wire carries: simulated
+/// by editing the digest, the way a regression would leave it.
+#[test]
+fn klv_that_disappears_or_is_reclassified_fails_klv_missing() {
+    let bytes = muxed(Some(None));
+    let w = walk(&bytes);
+    assert!(w.klv_pes_starts[&KLV_PID] >= 30, "{w:?}");
+    let mut d = digest_config("default", &bytes, FEED_CHUNK);
+    d.pids.get_mut(&KLV_PID).unwrap().kind = "unknown".into();
+    let f = check(&d, &w, &Annotations::default());
+    assert_eq!(rules(&f), ["klv-missing"], "{f:?}");
+    assert_eq!(f[0].pid, Some(KLV_PID));
+    assert_eq!(f[0].detail, "30 KLV PES on the wire, digest kind unknown");
+    d.pids.remove(&KLV_PID);
+    let f = check(&d, &w, &Annotations::default());
+    assert_eq!(rules(&f), ["klv-missing"], "{f:?}");
+    assert_eq!(f[0].detail, "30 KLV PES on the wire, digest absent");
+    // Reviewed private data on the PID excuses it, within the bound.
+    let ann = Annotations {
+        non_misb_private_pids: vec![KLV_PID],
+        max_private_records: Some(30),
+        reason: Some("vendor private data".into()),
+        ..Default::default()
+    };
+    let f = check(&d, &w, &ann);
+    assert_eq!(rules(&f), ["klv-missing"], "{f:?}");
+    assert!(f[0].excused, "{f:?}");
+    assert_eq!(
+        f[0].detail,
+        "excused: vendor private data; 30 KLV PES on the wire, digest absent (bound 30)"
+    );
+    let tight = Annotations {
+        max_private_records: Some(29),
+        ..ann
+    };
+    let f = check(&d, &w, &tight);
+    assert!(!f[0].excused, "{f:?}");
+}
+
+/// A KLV PID whose records all arrive as metadata events passes; one whose
+/// digest keeps its kind but counts no metadata does not.
+#[test]
+fn klv_pes_with_no_metadata_events_fails_klv_missing() {
+    let bytes = muxed(Some(None));
+    let w = walk(&bytes);
+    let mut d = digest_config("default", &bytes, FEED_CHUNK);
+    assert!(check(&d, &w, &Annotations::default()).is_empty());
+    d.pids.get_mut(&KLV_PID).unwrap().metadata = 0;
+    let f = check(&d, &w, &Annotations::default());
+    assert_eq!(rules(&f), ["klv-missing"], "{f:?}");
+    assert_eq!(
+        f[0].detail,
+        "30 KLV PES on the wire, digest 0 metadata events"
+    );
+}
+
+/// Private data on a 0x06 stream without a KLVA registration is not
+/// expected to carry KLV.
+#[test]
+fn a_private_stream_without_klva_is_not_expected_to_carry_klv() {
+    let mut cc = 0u8;
+    let mut bytes = section_packets(0, &mut cc, &pat(0));
+    bytes.extend(section_packets(
+        PMT_PID,
+        &mut cc,
+        &pmt(0, &[(0x06, 0x200)], 0),
+    ));
+    bytes.extend(es(0x200, &[0, 1, 2, 3]));
+    assert!(walk(&bytes).klv_pes_starts.is_empty());
+}
+
+/// A PES start on a 0x15 stream, or on a 0x06 stream with a KLVA
+/// registration, is counted; a payload that does not open a PES is not.
+#[test]
+fn klv_pes_starts_are_counted_on_klv_carriers_only() {
+    let pes = [0u8, 0, 1, 0xFC, 0, 0];
+    let mut psi = Psi::new();
+    let mut bytes = psi.pat(0);
+    let mut body = vec![0xE1, 0x00, 0xF0, 0x00];
+    body.extend_from_slice(&[0x15, 0xE3, 0x00, 0xF0, 0x00]);
+    body.extend_from_slice(&[0x06, 0xE3, 0x01, 0xF0, 0x06, 0x05, 0x04]);
+    body.extend_from_slice(b"KLVA");
+    body.extend_from_slice(&[0x06, 0xE3, 0x02, 0xF0, 0x00]);
+    bytes.extend(psi.pmt(&long_section(2, 1, 0, &body)));
+    for pid in [0x300, 0x301, 0x302] {
+        bytes.extend(packet(pid, 0, true, &pes));
+        bytes.extend(packet(pid, 1, false, &pes));
+        bytes.extend(packet(pid, 2, true, &[0xAA]));
+        bytes.extend(packet(pid, 3, true, &pes));
+    }
+    let w = walk(&bytes);
+    assert_eq!(
+        w.klv_pes_starts.into_iter().collect::<Vec<_>>(),
+        [(0x300, 2), (0x301, 2)]
     );
 }

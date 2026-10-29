@@ -1,12 +1,14 @@
 //! Invariants every capture must meet without any baseline: the demuxer saw
 //! no feed error, KLV payloads decode, the demuxer's discontinuity count
-//! agrees with an independent walk of the wire, and PTS never jumps back.
+//! agrees with an independent walk of the wire, PTS never jumps back, and
+//! a PID the PMT declares as KLV and the wire carries PES on shows KLV
+//! metadata in the digest.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tst_core::mpegts::demux::low_level::{parse_pat, parse_pmt};
+use tst_core::mpegts::demux::low_level::{has_klva_registration, parse_pat, parse_pmt};
 use tst_core::mpegts::sync::TsSync;
 
 use super::FEED_CHUNK;
@@ -14,8 +16,8 @@ use super::annotations::Annotations;
 use super::digest::ConfigDigest;
 
 /// One broken invariant. `rule` is `"feed-error"`, `"klv-unknown"`,
-/// `"accounting"` or `"pts-order"`; it is a `String` so a report can be read
-/// back from disk.
+/// `"klv-missing"`, `"accounting"` or `"pts-order"`; it is a `String` so a
+/// report can be read back from disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvariantFailure {
     pub rule: String,
@@ -37,6 +39,11 @@ pub struct WireWalk {
     /// declared, a continuity jump without the discontinuity indicator, or
     /// a payload packet carrying the indicator.
     pub cc_errors: u64,
+    /// Per PID, packets opening a PES (`00 00 01` after the unit start)
+    /// while the PMT declares the PID a KLV carrier: stream type 0x15, or
+    /// 0x06 with a KLVA registration. A PID a PMT change retires keeps the
+    /// count it reached.
+    pub klv_pes_starts: BTreeMap<u16, u64>,
 }
 
 struct PidCc {
@@ -112,7 +119,14 @@ struct Program {
     number: u16,
     version: Option<u8>,
     /// Elementary PIDs with the kind signature the PMT gave them.
-    streams: Vec<(u16, Vec<u8>)>,
+    streams: Vec<Stream>,
+}
+
+struct Stream {
+    pid: u16,
+    sig: Vec<u8>,
+    /// The PMT declares it a KLV carrier, as the demuxer classifies one.
+    klv: bool,
 }
 
 /// The demuxer's sync re-acquisition rule: after a byte that is not where a
@@ -132,6 +146,7 @@ pub struct Walker {
     pat_version: Option<u8>,
     programs: BTreeMap<u16, Program>,
     declared: BTreeSet<u16>,
+    klv: BTreeSet<u16>,
     out: WireWalk,
 }
 
@@ -187,11 +202,9 @@ impl Walker {
     }
 
     fn rebuild_declared(&mut self) {
-        self.declared = self
-            .programs
-            .values()
-            .flat_map(|p| p.streams.iter().map(|(pid, _)| *pid))
-            .collect();
+        let streams = || self.programs.values().flat_map(|p| p.streams.iter());
+        self.declared = streams().map(|s| s.pid).collect();
+        self.klv = streams().filter(|s| s.klv).map(|s| s.pid).collect();
     }
 
     /// Forgets the continuity state of PIDs a topology change retired.
@@ -221,7 +234,7 @@ impl Walker {
             .collect();
         for pmt_pid in gone {
             if let Some(p) = self.programs.remove(&pmt_pid) {
-                let pids: Vec<u16> = p.streams.iter().map(|(pid, _)| *pid).collect();
+                let pids: Vec<u16> = p.streams.iter().map(|s| s.pid).collect();
                 self.retire(&pids);
             }
             self.assemblers.remove(&pmt_pid);
@@ -247,24 +260,30 @@ impl Walker {
             return;
         }
         // First program to declare a PID owns it.
-        let mut streams: Vec<(u16, Vec<u8>)> = Vec::new();
+        let mut streams: Vec<Stream> = Vec::new();
         for s in &pmt.streams {
             let taken = self.programs.iter().any(|(p, other)| {
-                *p != pmt_pid && other.streams.iter().any(|(e, _)| *e == s.elementary_pid)
+                *p != pmt_pid && other.streams.iter().any(|e| e.pid == s.elementary_pid)
             });
             if !taken {
                 let mut sig = vec![s.stream_type];
                 sig.extend(s.descriptors.iter().map(|d| d.tag));
-                streams.push((s.elementary_pid, sig));
+                let klv = s.stream_type == 0x15
+                    || (s.stream_type == 0x06 && has_klva_registration(&s.descriptors));
+                streams.push(Stream {
+                    pid: s.elementary_pid,
+                    sig,
+                    klv,
+                });
             }
         }
         // A PID the old version owned that is gone, or kept under another
         // kind, loses its continuity state.
         let mut reset = Vec::new();
-        for (pid, sig) in &program.streams {
-            match streams.iter().find(|(p, _)| p == pid) {
-                None => reset.push(*pid),
-                Some((_, new)) if new != sig => reset.push(*pid),
+        for old in &program.streams {
+            match streams.iter().find(|s| s.pid == old.pid) {
+                None => reset.push(old.pid),
+                Some(new) if new.sig != old.sig => reset.push(old.pid),
                 Some(_) => {}
             }
         }
@@ -384,13 +403,19 @@ impl Walker {
                 }
             }
         }
+        let payload = if payload_off < 188 {
+            &p[payload_off..]
+        } else {
+            &[][..]
+        };
+        let pusi = p[1] & 0x40 != 0;
+        // Counted after the duplicate check, so a tolerated duplicate of a
+        // PES start counts once.
+        if pusi && self.klv.contains(&pid) && payload.starts_with(&[0, 0, 1]) {
+            *self.out.klv_pes_starts.entry(pid).or_default() += 1;
+        }
         if pid == 0 || self.programs.contains_key(&pid) {
-            let payload = if payload_off < 188 {
-                &p[payload_off..]
-            } else {
-                &[][..]
-            };
-            self.psi(pid, payload, p[1] & 0x40 != 0, jumped);
+            self.psi(pid, payload, pusi, jumped);
         }
     }
 }
@@ -571,6 +596,28 @@ pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<
                 format!("{} unknown sample(s)", d.unknown_samples),
             );
         }
+    }
+    // KLV the wire carries must reach the digest as KLV: a demuxer that
+    // drops it, or reclassifies the PID, fails here.
+    for (pid, &pes) in &walk.klv_pes_starts {
+        let state = match default.pids.get(pid) {
+            None => "absent".to_string(),
+            Some(d) if d.kind != "klv-sync" && d.kind != "klv-async" => {
+                format!("kind {}", d.kind)
+            }
+            Some(d) if d.metadata == 0 => "0 metadata events".to_string(),
+            Some(_) => continue,
+        };
+        let seen = Observed {
+            rule: "klv-missing",
+            pid: Some(*pid),
+            count: pes,
+            what: format!("KLV PES on the wire, digest {state}"),
+        };
+        let bound = ann
+            .max_private_records
+            .filter(|_| ann.non_misb_private_pids.contains(pid));
+        seen.record(&mut out, ann, bound);
     }
     if walk.packets == 0 {
         push(&mut out, "accounting", None, "no packets".to_string());
