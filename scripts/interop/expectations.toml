@@ -44,12 +44,17 @@
 # is reported non-fatally (labeled KNOWN-FLAKY in the rendered report)
 # and a PASS is simply normal — never flagged stale.
 #
-# `failure_contains`: narrows this block to only match a `FAIL` whose
-# failures text (the raw cell's `failures` array, joined with "; ")
-# contains this substring. A `FAIL` on the same (cell, profile) whose
-# text does NOT contain it is not matched by this block — it falls
-# through to a later block (if any matches) or, if none do, surfaces as
-# an unexpected FAIL. Use this whenever a (cell, profile) pair can
+# `failure_contains`: narrows this block to explain only the `FAIL`
+# lines (each entry of the raw cell's `failures` array, matched one at a
+# time) that contain this substring. A line that does NOT contain it is
+# not explained by this block — it falls through to a later block (if
+# any matches) or, if none do, stays unexplained. A cell is
+# expected_unsupported only when EVERY one of its failure lines is
+# explained by some block; one unexplained line keeps it an unexpected
+# FAIL. A known_flaky block without failure_contains explains every
+# line of its cell. Where one mechanism prints two lines, the second
+# line gets its own block citing the same reason. Use this whenever a
+# (cell, profile) pair can
 # genuinely fail for more than one distinct, already-understood reason
 # and a plain (cell, profile) match would blanket over a DIFFERENT
 # failure mode than the one this block's `reason` describes.
@@ -405,6 +410,13 @@ profile = "h266-klv"
 verdict = "expected_unsupported"
 reason = "mpv --vo=null --frames=10 --ao=null identifies the H.266/VVC video track (unlike this cell's earlier --no-video invocation, which never got that far) but reports 'Failed to initialize a decoder for codec 'vvc''. — this box's mpv build has no working VVC decoder at all, a distinct finding from ffmpeg's own separate vps_id=0 rejection (see the srt-live/h266-klv rows). With no decoder to hand the track to, mpv still ends up printing 'No video or audio streams selected.'. See scripts/interop/lib.sh's MPV_NO_STREAMS_SELECTED doc comment."
 failure_contains = "Failed to initialize a decoder for codec 'vvc'"
+
+[[expect]]
+cell = "decode/mpv/h266-klv"
+profile = "h266-klv"
+verdict = "expected_unsupported"
+reason = "Same mechanism as the row above: with no VVC decoder to hand the track to, mpv selects no stream and the harness prints this second line for the same gap."
+failure_contains = "mpv selected no stream at all"
 
 [[expect]]
 cell = "decode/vlc/audio"

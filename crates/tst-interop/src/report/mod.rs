@@ -90,6 +90,11 @@ pub struct MergedCell {
     /// `KNOWN-FLAKY` instead of `EXPECTED-UNSUPPORTED`.
     pub known_flaky: bool,
     pub failures: Vec<String>,
+    /// The lines of `failures` no expectation explained. Empty unless
+    /// `verdict == Fail`: one unexplained line keeps the whole cell a
+    /// `FAIL`, however many other lines a row excused.
+    #[serde(default)]
+    pub unexplained_failures: Vec<String>,
     pub metrics: Option<CellMetrics>,
     pub log: String,
     /// The matching expectation's `reason`, if `verdict == ExpectedUnsupported`.
