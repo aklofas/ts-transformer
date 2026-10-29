@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """The qualification record: one JSON file per qualified tree, rendered into the evidence page.
 
-  collect   --artifacts DIR --out FILE [--root DIR] [--release] [--allow-waiver]
+  collect   --artifacts DIR --out FILE [--root DIR] [--release] [--allow-waiver] [--tag NAME]
             read a release-qualify run's artefacts; --release also requires the
             72-hour soak and the corpus archives for the qualified tree, each with
-            a raw pass unless --allow-waiver admits a maintainer's waiver
+            a raw pass unless --allow-waiver admits a maintainer's waiver; --tag names
+            the tag a tag push qualified
   render    --json FILE (--write | --check) [--root DIR]   the generated blocks in
             docs/project/validation-evidence.md and docs/project/1.0-exit-criteria.md
   checksums --dir DIR                                  write DIR/SHA256SUMS
@@ -208,8 +209,7 @@ def load_archives(root):
 
 # ---- release mode ----------------------------------------------------------
 
-def changed_paths(root, tree, sha):
-    """The paths outside RELEASE_DOCUMENT_PATHS that differ between commits `tree` and `sha`."""
+def _diff_names(root, tree, sha):
     cmd = ["git", "-C", root, "diff", "--name-only", "--no-renames", tree, sha]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True)
@@ -217,12 +217,23 @@ def changed_paths(root, tree, sha):
         raise QualificationError(str(e))
     if p.returncode != 0:
         raise QualificationError(p.stderr.strip() or "git exited %d" % p.returncode)
-    def is_document(path):
-        if path.startswith(RELEASE_CODE_UNDER_DOCS) and not path.endswith(".md"):
-            return False
-        return any(path == d or (d.endswith("/") and path.startswith(d))
-                   for d in RELEASE_DOCUMENT_PATHS)
-    return [l for l in p.stdout.splitlines() if l and not is_document(l)]
+    return [l for l in p.stdout.splitlines() if l]
+
+
+def _is_release_document(path):
+    if path.startswith(RELEASE_CODE_UNDER_DOCS) and not path.endswith(".md"):
+        return False
+    return any(path == d or (d.endswith("/") and path.startswith(d)) for d in RELEASE_DOCUMENT_PATHS)
+
+
+def changed_paths(root, tree, sha):
+    """The paths outside RELEASE_DOCUMENT_PATHS that differ between commits `tree` and `sha`."""
+    return [l for l in _diff_names(root, tree, sha) if not _is_release_document(l)]
+
+
+def changed_release_documents(root, tree, sha):
+    """The release-document paths that differ between commits `tree` and `sha`, sorted."""
+    return sorted(l for l in _diff_names(root, tree, sha) if _is_release_document(l))
 
 
 def _newest(rows):
@@ -302,6 +313,13 @@ def release_vm(root, sha, archives, release, expected_files, allow_waiver=False)
         if soak["git_error"] is not None:
             reasons.append("soak: git could not resolve %s: %s" % (soak["tree"], soak["git_error"]))
         else:
+            # The record states what changed between the soaked and the qualified
+            # tree, not only that nothing outside the release documents did.
+            docs = []
+            if soak["tree"] != sha and not soak["changed_paths"]:
+                docs = changed_release_documents(root, soak["tree"], sha)
+            soak["equivalence"] = {"soaked": soak["tree"], "qualified": sha,
+                                   "changed_release_documents": docs}
             if soak["changed_paths"]:
                 reasons.append("soak: archive %s is superseded by %d changed path(s) outside the release documents"
                                % (soak["id"], soak["changed_paths"]))
@@ -431,7 +449,7 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None):
     return ("GO" if not reasons else "NO-GO"), reasons
 
 
-def collect(art, root, release=False, allow_waiver=False):
+def collect(art, root, release=False, allow_waiver=False, tag=None):
     ctx = read_json(os.path.join(art, "context.json"))
     if ctx is None:
         die("context.json is missing from " + art)
@@ -508,10 +526,13 @@ def collect(art, root, release=False, allow_waiver=False):
     except QualificationError as e:
         die(str(e))
     v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate)
+    source, label = dict(ctx.get("source", {})), ctx.get("label", "unlabelled")
+    if tag:
+        source["tag"], label = tag, "tag " + tag
     return {
         "schema_version": 0,
-        "label": ctx.get("label", "unlabelled"),
-        "source": ctx.get("source", {}),
+        "label": label,
+        "source": source,
         "toolchain": ctx.get("toolchain", {}),
         "natives": natives,
         "host": ctx.get("host", {}),
@@ -860,6 +881,7 @@ def main(argv=None):
                    help="qualify as a release: require the 72-hour soak and corpus archives for this tree")
     c.add_argument("--allow-waiver", action="store_true",
                    help="admit a soak or corpus archive the maintainer waived (never for a release)")
+    c.add_argument("--tag", help="the v* tag a tag push qualified; recorded as source.tag")
     r = sub.add_parser("render")
     r.add_argument("--json", required=True)
     r.add_argument("--root", default=".")
@@ -872,7 +894,8 @@ def main(argv=None):
     v.add_argument("--root", default=".")
     args = ap.parse_args(argv)
     if args.cmd == "collect":
-        rec = collect(args.artifacts, args.root, release=args.release, allow_waiver=args.allow_waiver)
+        rec = collect(args.artifacts, args.root, release=args.release, allow_waiver=args.allow_waiver,
+                      tag=args.tag)
         with open(args.out, "w") as f:
             json.dump(rec, f, indent=2)
             f.write("\n")

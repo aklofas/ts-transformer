@@ -566,10 +566,12 @@ jobs:
         # the collector diff an earlier soaked tree against this one).
         env:
           RELEASE: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.release == true }}
+          TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/bundle"
           flags=()
           [ "$RELEASE" = "true" ] && flags+=(--release)
+          [ -n "$TAG" ] && flags+=(--tag "$TAG")
           # Never --allow-waiver: a release needs the soak's and the corpus run's raw
           # pass, so a waived archive keeps this run NO-GO until the harness is fixed
           # and the run repeated.
@@ -604,6 +606,30 @@ jobs:
               "$RUNNER_TEMP/downloaded/sbom/$f.cdx.json" > "$B/$f.cdx.json"
           done
           cp "$RUNNER_TEMP"/downloaded/c-package/*.tar.gz "$B/" || echo "::warning::no C package was produced"
+          # The tree-equivalence proof: the soak ran on an earlier commit than the
+          # one qualified, so the bundle shows that nothing under crates/ or
+          # bindings/ changed between them and lists everything that did.
+          read -r soaked qualified tag < <(python3 - "$B/qualification.json" <<'PY'
+          import json, sys
+          rec = json.load(open(sys.argv[1]))
+          eq = ((rec.get("release_vm") or {}).get("soak") or {}).get("equivalence") or {}
+          print(eq.get("soaked") or "-", eq.get("qualified") or "-", rec["source"].get("tag") or "-")
+          PY
+          )
+          {
+            echo "soaked $soaked"
+            echo "qualified $qualified"
+            echo "tag $tag"
+            echo
+            if [ "$soaked" = "-" ]; then
+              echo "(this record cites no soak archive whose tree resolved)"
+            else
+              stat="$(git diff --stat "$soaked..$qualified" -- crates bindings)"
+              echo "${stat:-(no changes under crates/ or bindings/)}"
+              echo
+              git diff --name-only "$soaked..$qualified"
+            fi
+          } > "$B/TREE-EQUIVALENCE.txt"
           bash scripts/gen/qualification.sh checksums --dir "$B"
           ls -l "$B"
           cat "$B/qualification.md" >> "$GITHUB_STEP_SUMMARY"
@@ -617,6 +643,7 @@ jobs:
             ${{ runner.temp }}/bundle/tstrans-c.cdx.json
             ${{ runner.temp }}/bundle/tstrans-py.cdx.json
             ${{ runner.temp }}/bundle/tstrans-c-*.tar.gz
+            ${{ runner.temp }}/bundle/TREE-EQUIVALENCE.txt
             ${{ runner.temp }}/bundle/SHA256SUMS
 
       - name: Keep the bundle

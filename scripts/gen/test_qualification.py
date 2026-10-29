@@ -521,11 +521,14 @@ class ReleaseModeTests(unittest.TestCase):
         self.assertEqual(rec["release_vm"]["reasons"], [])
 
     def test_release_mode_accepts_a_soaked_tree_with_only_doc_changes_since(self):
-        with mock.patch.object(q, "changed_paths", return_value=[]) as cp:
+        with mock.patch.object(q, "changed_paths", return_value=[]) as cp, \
+                mock.patch.object(q, "changed_release_documents", return_value=["CHANGELOG.md"]) as cd:
             rec = collect(release=True, archives=SOAKED_EARLIER)
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         self.assertEqual(cp.call_args.args[1:], (OLD_TREE, SHA))
+        self.assertEqual(cd.call_args.args[1:], (OLD_TREE, SHA))
         self.assertEqual(rec["release_vm"]["soak"]["changed_paths"], 0)
+        self.assertEqual(rec["release_vm"]["soak"]["equivalence"]["changed_release_documents"], ["CHANGELOG.md"])
 
     def test_release_mode_rejects_a_soaked_tree_with_code_changes_since(self):
         with mock.patch.object(q, "changed_paths", return_value=["crates/tst-core/src/lib.rs"]):
@@ -716,7 +719,8 @@ class ReleaseModeTests(unittest.TestCase):
                              archive_row("soak-old", "soak", older, date="2026-10-10", legs=FIVE),
                              archive_row("corpus-old", "corpus", older, counts=COUNTS))
         diffs = {newer: ["crates/tst-core/src/lib.rs"], older: []}
-        with mock.patch.object(q, "changed_paths", side_effect=lambda root, tree, sha: diffs[tree]):
+        with mock.patch.object(q, "changed_paths", side_effect=lambda root, tree, sha: diffs[tree]), \
+                mock.patch.object(q, "changed_release_documents", return_value=[]):
             rec = collect(release=True, archives=rows)
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-old")
@@ -932,6 +936,45 @@ class ExitCriteriaTests(unittest.TestCase):
                       "80 / 70 / 0 / 10: total, pass, fail, skipped. Status: met.", text)
         text = q.render_exit_criteria(rec, rec["archives"], [dict(arm, fail=1)])
         self.assertIn("Status: open: the linux-aarch64 census has 1 failure(s).", text)
+
+
+class TagAndEquivalenceTests(unittest.TestCase):
+    def test_collect_records_the_tag_and_the_changed_release_documents(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "root")
+            os.makedirs(os.path.join(root, "docs"))
+            git(root, "init", "-q", "-b", "main")
+            for f in ("CHANGELOG.md", "docs/x.md", "README"):
+                spit(os.path.join(root, f), "1\n")
+            git(root, "add", ".")
+            git(root, "commit", "-q", "-m", "A")
+            soaked = git(root, "rev-parse", "HEAD")
+            for f in ("CHANGELOG.md", "docs/x.md"):
+                spit(os.path.join(root, f), "2\n")
+            git(root, "commit", "-q", "-am", "B")
+            qualified = git(root, "rev-parse", "HEAD")
+            # The archive table and the fuzz manifest stay untracked, so the diff is the two documents.
+            art, _ = build(os.path.join(d, "a"), lambda f: f["context.json"].update(
+                source=dict(CONTEXT["source"], sha=qualified)))
+            put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
+            put(os.path.join(root, "tests/coverage/evidence-archives.toml"), archives_toml(
+                archive_row("soak-rel", "soak", soaked, legs=FIVE),
+                archive_row("corpus-rel", "corpus", soaked, counts=COUNTS)))
+            rec = q.collect(art, root, release=True, tag="v9.9.9")
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["source"]["tag"], "v9.9.9")
+        self.assertEqual(rec["label"], "tag v9.9.9")
+        self.assertEqual(rec["release_vm"]["soak"]["equivalence"],
+                         {"soaked": soaked, "qualified": qualified,
+                          "changed_release_documents": ["CHANGELOG.md", "docs/x.md"]})
+
+    def test_without_a_tag_the_source_has_none_and_a_same_tree_soak_changed_nothing(self):
+        with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
+            rec = collect(release=True, archives=RELEASE_OK)
+        self.assertNotIn("tag", rec["source"])
+        self.assertEqual(rec["label"], CONTEXT["label"])
+        self.assertEqual(rec["release_vm"]["soak"]["equivalence"],
+                         {"soaked": SHA, "qualified": SHA, "changed_release_documents": []})
 
 
 class ChecksumTests(unittest.TestCase):
