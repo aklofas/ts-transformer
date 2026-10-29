@@ -218,8 +218,9 @@ fn build_output_list<'local>(
         // refs; a per-item frame reclaims them so the table stays bounded. The
         // only value leaving the frame is `()`: the element is added to `list`
         // (an outer-frame ref) inside it.
-        // 16 slots: a Paired item holds about 12-13 locals (two samples, their
-        // unit lists, strings, the record and scratch).
+        // 16 slots: a Paired item keeps up to 15 locals live at once (7 per
+        // sample: stream kind parts, StreamId, dts, codec or kind, payload,
+        // record; plus the Paired record). The hint is a minimum.
         env.with_local_frame(16, |env| -> jni::errors::Result<()> {
             // `Err(())` leaves its exception pending; the frame error only
             // carries the failure out.
@@ -291,8 +292,8 @@ fn convert_output<'local>(env: &mut Env<'local>, o: &PairerOutput) -> Result<JOb
 /// Forced-minimal raw-first adaptation: the pairing `VideoSample` no longer
 /// carries an eager `payload` field, so the NAL/OBU list is produced here by
 /// `vs.split_units()` internally. The Java surface is unchanged (same 5-arg
-/// record / ctor signature, same `VideoPayload`). JVM `raw`/RAI parity is
-/// not exposed: the JVM pairing projection does not expose the raw AU / RAI fields.
+/// record / ctor signature, same `VideoPayload`). The JVM pairing projection
+/// does not expose the raw AU / RAI fields.
 fn convert_video_sample<'local>(
     env: &mut Env<'local>,
     vs: &VideoSample,

@@ -13,12 +13,15 @@ import org.tstrans.SrtException;
  *
  * <p>{@link #intoSender()} / {@link #intoReceiver()} each <strong>consume</strong>
  * this handle — the underlying native socket moves into the new wrapper and
- * this {@code Socket}'s {@link #close()} becomes a no-op. The handle is claimed
- * after the Java arguments are read and before the consuming native runs, so a
- * concurrent close or second conversion cannot free it twice.
+ * this {@code Socket}'s {@link #close()} becomes a no-op. For
+ * {@code intoSender}, {@code intoReceiver} and {@code intoDemuxReceiver} the
+ * handle is claimed after the Java arguments are read and before the consuming
+ * native runs, so a concurrent close or second conversion cannot free it twice.
  *
  * <p>{@link #intoMuxSender(org.tstrans.mpegts.MuxerConfig)} and
- * {@link #intoDemuxReceiver()} likewise consume this handle.
+ * {@code intoDemuxReceiverWithConfig} likewise consume this handle, but a
+ * refused config must leave the socket usable: they pass the registry key to
+ * the native and claim the handle only once the native has taken the socket.
  *
  * <pre>{@code
  * try (Socket s = new Builder("srt://127.0.0.1:9000").caller().connect()) {
@@ -229,9 +232,9 @@ public final class Socket extends NativeHandle {
 
     /**
      * Consume the Box&lt;Socket&gt; and build a Box&lt;MuxSender&gt;. Returns 0 and
-     * throws on error. The Java caller claims the handle (see
-     * {@code consumeHandle()}) before calling, since the native handle is
-     * consumed unconditionally.
+     * throws on error. The native takes the socket only once the config is
+     * accepted; the Java caller claims the handle (see {@code consumeHandle()})
+     * after the native has taken it.
      */
     private static native long nIntoMuxSender(long handle, int programNumber, int pmtPid,
         int pcrPid, int pcrIntervalMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
