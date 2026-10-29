@@ -5,14 +5,30 @@
 //! uses: the first PCR is anchored to wall-clock zero, the sender sleeps
 //! until a chunk's PCR offset has elapsed, and the bytes between two PCRs
 //! go out at line rate in one write.
+//!
+//! A step between two PCRs is paced only up to [`MAX_PCR_GAP_S`]: a reset,
+//! or a forward jump past it, is paced as no time at all, so a capture
+//! with a broken PCR timeline is sent faster than its clock and never
+//! waits longer than that between two chunks. [`PcrPacer::clamped_gaps`]
+//! counts those steps.
 
 use std::time::Duration;
 
 use tst_test_helpers::rawts::classify_packet;
 
-use super::pcr::{PCR_BASE_HZ, PcrSpan, align_offset, parse_prefix, prefix_end, starts_packet};
+use super::pcr::{
+    PCR_BASE_HZ, PCR_MAX_STEP_TICKS, PcrSpan, align_offset, parse_prefix, prefix_end, starts_packet,
+};
 
 const PKT: usize = 188;
+
+/// The longest wait between two chunks: the largest PCR step counted as
+/// elapsed time, the same bound the prefix cut and the inventory's
+/// duration use, so all three agree on a capture's span.
+pub const MAX_PCR_GAP_S: f64 = 1.0;
+
+// The bound is the span rule's own; one second in 90 kHz ticks.
+const _: () = assert!(PCR_MAX_STEP_TICKS == PCR_BASE_HZ);
 
 /// The bytes from one PCR-bearing packet up to (excluding) the next one on
 /// the pacing PID, and when they are due.
@@ -32,6 +48,7 @@ pub struct PcrPacer<'a> {
     /// The first confirmed packet start; bytes before it are never sent.
     start: usize,
     end: usize,
+    clamped_gaps: u64,
 }
 
 impl<'a> PcrPacer<'a> {
@@ -74,6 +91,7 @@ impl<'a> PcrPacer<'a> {
             marks,
             start,
             end,
+            clamped_gaps: span.map_or(0, |s| s.discontinuities),
         })
     }
 
@@ -96,6 +114,11 @@ impl<'a> PcrPacer<'a> {
     /// The due time of the last chunk.
     pub fn total_seconds(&self) -> f64 {
         self.marks.last().map_or(0.0, |m| m.1)
+    }
+
+    /// PCR steps paced as no time: resets and jumps past [`MAX_PCR_GAP_S`].
+    pub fn clamped_gaps(&self) -> u64 {
+        self.clamped_gaps
     }
 }
 
