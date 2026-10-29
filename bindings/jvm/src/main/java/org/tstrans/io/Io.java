@@ -221,7 +221,9 @@ public final class Io {
             InputStream s = new BufferedInputStream(Files.newInputStream(path), FEED_CHUNK);
             try {
                 this.demuxer = (config == null) ? new Demuxer() : new Demuxer(config);
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | Error e) {
+                // An Error too: the first Demuxer loads the native library, and an
+                // UnsatisfiedLinkError must not leave the input open.
                 try { s.close(); } catch (IOException ignored) {
                     // best-effort close on failed construction
                 }

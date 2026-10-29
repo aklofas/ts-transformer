@@ -1,5 +1,7 @@
 package org.tstrans.mpegts;
 
+import java.util.Objects;
+
 /**
  * Configuration for {@link Demuxer}. Mirrors {@code tstrans.mpegts.DemuxerConfig} (9 knobs).
  *
@@ -64,13 +66,13 @@ public final class DemuxerConfig {
         private long syncBufCap = 0;
         private boolean unwrapTimestamps = false;
 
-        public Builder strictMode(StrictMode v) { this.strictMode = v; return this; }
+        public Builder strictMode(StrictMode v) { this.strictMode = Objects.requireNonNull(v, "strictMode"); return this; }
         /** Per-PID PES cap in bytes; {@code 0} = use the Rust default. Rejects negatives. */
         public Builder pesCapPerPid(long v) { this.pesCapPerPid = requireNonNegativeCap(v, "pesCapPerPid"); return this; }
         /** Aggregate PES cap in bytes; {@code 0} = use the Rust default. Rejects negatives. */
         public Builder pesCapTotal(long v) { this.pesCapTotal = requireNonNegativeCap(v, "pesCapTotal"); return this; }
         public Builder cfiTolerance(boolean v) { this.cfiTolerance = v; return this; }
-        public Builder av1Carriage(Av1CarriageMode v) { this.av1Carriage = v; return this; }
+        public Builder av1Carriage(Av1CarriageMode v) { this.av1Carriage = Objects.requireNonNull(v, "av1Carriage"); return this; }
         /** Per-PID AU-cell cap in bytes; {@code 0} = use the Rust default. Rejects negatives. */
         public Builder auCellCapPerPid(long v) { this.auCellCapPerPid = requireNonNegativeCap(v, "auCellCapPerPid"); return this; }
         public Builder lenientPsiReassembly(boolean v) { this.lenientPsiReassembly = v; return this; }

@@ -1,5 +1,6 @@
 package org.tstrans.srt;
 
+import java.util.Objects;
 import java.util.Optional;
 import org.tstrans.MuxException;
 import org.tstrans.NativeHandle;
@@ -75,11 +76,13 @@ public final class Socket extends NativeHandle {
      *
      * <p>Same consumption semantics as {@link #intoSender()}: the underlying
      * {@code tst_srt::Socket} moves into the new {@code MuxSender} and this
-     * socket's handle is zeroed. The socket is consumed even if the muxer config
-     * is rejected (the pending exception propagates from the native call).
+     * socket's handle is zeroed. A {@code null} config is refused before the
+     * socket is claimed; a config the native rejects still consumes it (the
+     * pending exception propagates from the native call).
      *
      * @param programConfig the muxer program configuration
      * @return a {@code MuxSender} owning this socket + a configured muxer
+     * @throws NullPointerException if {@code programConfig} is {@code null}
      * @throws IllegalStateException if the socket is already closed
      * @throws SrtException on transport error; {@link org.tstrans.MuxException}
      *     ({@code CONFIG_INVALID}) if the muxer config is rejected
@@ -87,18 +90,31 @@ public final class Socket extends NativeHandle {
     public org.tstrans.shells.MuxSender intoMuxSender(org.tstrans.mpegts.MuxerConfig programConfig)
             throws SrtException, MuxException {
         ensureOpen("Socket is closed");
-        // Claim the registry id BEFORE the native call (consume-first). nIntoMuxSender
-        // closes the registry entry unconditionally but can still throw afterwards
+        Objects.requireNonNull(programConfig, "programConfig");
+        int programNumber = programConfig.programNumber();
+        int pmtPid = programConfig.pmtPid();
+        int pcrPid = programConfig.pcrPid();
+        int pcrIntervalMs = programConfig.pcrIntervalMs();
+        int psiIntervalMs = programConfig.psiIntervalMs();
+        int bufferPackets = programConfig.bufferPackets();
+        int av1Carriage = programConfig.av1Carriage().ordinal();
+        int[] streamPids = programConfig.streamPids();
+        int[] streamKinds = programConfig.streamKinds();
+        int[] streamCodecs = programConfig.streamCodecs();
+        int[] streamTypeCodes = programConfig.streamTypeCodes();
+        boolean[] streamCarriesPts = programConfig.streamCarriesPts();
+        byte[] dataDescBytes = programConfig.dataDescBytes();
+        int[] dataDescLens = programConfig.dataDescLens();
+        // Claim the registry id BEFORE the native call (consume-first), after every
+        // argument is read: a null config or a throwing accessor must not leave the
+        // native socket registered with no Java owner. nIntoMuxSender closes the
+        // registry entry unconditionally but can still throw afterwards
         // (muxer-config rejection / MuxSender::new failure); claiming first means a
-        // later close() finds 0 and is a clean no-op. (The registry already makes a
-        // double-close idempotent, but consume-first keeps the contract explicit.)
+        // later close() finds 0 and is a clean no-op.
         long sock = consumeHandle();
-        long h = nIntoMuxSender(sock, programConfig.programNumber(), programConfig.pmtPid(),
-            programConfig.pcrPid(), programConfig.pcrIntervalMs(), programConfig.psiIntervalMs(),
-            programConfig.bufferPackets(), programConfig.av1Carriage().ordinal(),
-            programConfig.streamPids(), programConfig.streamKinds(), programConfig.streamCodecs(),
-            programConfig.streamTypeCodes(), programConfig.streamCarriesPts(),
-            programConfig.dataDescBytes(), programConfig.dataDescLens());
+        long h = nIntoMuxSender(sock, programNumber, pmtPid, pcrPid, pcrIntervalMs,
+            psiIntervalMs, bufferPackets, av1Carriage, streamPids, streamKinds, streamCodecs,
+            streamTypeCodes, streamCarriesPts, dataDescBytes, dataDescLens);
         return ShellAdapters.muxSender(h);
     }
 
@@ -126,24 +142,32 @@ public final class Socket extends NativeHandle {
      * Consume this socket and produce a {@link DemuxReceiver} with the given
      * {@link org.tstrans.mpegts.DemuxerConfig}.
      *
-     * <p>Same consumption semantics as {@link #intoDemuxReceiver()}.
+     * <p>Same consumption semantics as {@link #intoDemuxReceiver()}; a
+     * {@code null} config is refused before the socket is claimed.
      *
      * @param demuxConfig the demuxer configuration
      * @return a {@code DemuxReceiver} owning this socket + a configured demuxer
+     * @throws NullPointerException if {@code demuxConfig} is {@code null}
      * @throws IllegalStateException if the socket is already closed
      * @throws SrtException on transport error
      */
     public org.tstrans.shells.DemuxReceiver intoDemuxReceiver(org.tstrans.mpegts.DemuxerConfig demuxConfig)
             throws SrtException {
         ensureOpen("Socket is closed");
-        // Consume-first (see intoDemuxReceiver()).
+        Objects.requireNonNull(demuxConfig, "demuxConfig");
+        int strict = demuxConfig.strictMode().ordinal();
+        long pesCapPerPid = demuxConfig.pesCapPerPid();
+        long pesCapTotal = demuxConfig.pesCapTotal();
+        boolean cfiTolerance = demuxConfig.cfiTolerance();
+        int av1Carriage = demuxConfig.av1Carriage().ordinal();
+        long auCellCapPerPid = demuxConfig.auCellCapPerPid();
+        boolean lenientPsi = demuxConfig.lenientPsiReassembly();
+        long syncBufCap = demuxConfig.syncBufCap();
+        boolean unwrapTimestamps = demuxConfig.unwrapTimestamps();
+        // Consume-first, after every argument is read (see intoMuxSender).
         long sock = consumeHandle();
-        long h = nIntoDemuxReceiverWithConfig(sock,
-            demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
-            demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
-            demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
-            demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
-            demuxConfig.unwrapTimestamps());
+        long h = nIntoDemuxReceiverWithConfig(sock, strict, pesCapPerPid, pesCapTotal,
+            cfiTolerance, av1Carriage, auCellCapPerPid, lenientPsi, syncBufCap, unwrapTimestamps);
         return ShellAdapters.demuxReceiver(h);
     }
 
