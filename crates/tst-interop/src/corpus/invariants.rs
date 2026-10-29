@@ -8,7 +8,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tst_core::mpegts::demux::low_level::{has_klva_registration, parse_pat, parse_pmt};
+use tst_core::mpegts::demux::low_level::{
+    RawDescriptor, has_klva_registration, parse_pat, parse_pmt,
+};
+use tst_core::mpegts::descriptors::{find_descriptor_tag, find_format_identifier};
 use tst_core::mpegts::sync::TsSync;
 
 use super::FEED_CHUNK;
@@ -40,8 +43,8 @@ pub struct WireWalk {
     /// a payload packet carrying the indicator.
     pub cc_errors: u64,
     /// Per PID, packets opening a PES (`00 00 01` after the unit start)
-    /// while the PMT declares the PID a KLV carrier: stream type 0x15, or
-    /// 0x06 with a KLVA registration. A PID a PMT change retires keeps the
+    /// while the PMT declares the PID a stream the demuxer classifies as
+    /// KLV (see `is_klv_carrier`). A PID a PMT change retires keeps the
     /// count it reached.
     pub klv_pes_starts: BTreeMap<u16, u64>,
 }
@@ -125,8 +128,79 @@ struct Program {
 struct Stream {
     pid: u16,
     sig: Vec<u8>,
-    /// The PMT declares it a KLV carrier, as the demuxer classifies one.
+    /// The PMT declares it a KLV carrier, by [`is_klv_carrier`].
     klv: bool,
+}
+
+/// Whether the demuxer classifies a PMT stream as KLV (sync or async).
+/// A copy of its cascade, kept here so the wire walk does not depend on
+/// the demuxer it checks; a parity test pins the two together.
+///
+/// - 0x15 is KLV unless its `metadata_descriptor` positively names another
+///   format (ID3 timed metadata is the common case).
+/// - 0x06 is KLV only through a KLVA registration, and only when nothing
+///   the demuxer ranks first claims it: an AV01 registration, a DVB
+///   subtitling or teletext descriptor, or a VTTC or GA94 registration.
+fn is_klv_carrier(stream_type: u8, descriptors: &[RawDescriptor]) -> bool {
+    match stream_type {
+        0x15 => !names_non_klv_metadata(descriptors),
+        0x06 => {
+            !find_format_identifier(descriptors, b"AV01")
+                && ![0x59, 0x56, 0x46]
+                    .iter()
+                    .any(|t| find_descriptor_tag(descriptors, *t))
+                && !find_format_identifier(descriptors, b"VTTC")
+                && !find_format_identifier(descriptors, b"GA94")
+                && has_klva_registration(descriptors)
+        }
+        _ => false,
+    }
+}
+
+/// True when the first `metadata_descriptor` (tag 0x26) parses through its
+/// fixed fields (H.222.0 Table 2-89) and names `metadata_format` 0x10 or
+/// 0x11, or 0xFF with an identifier other than `KLVA`. A missing or
+/// truncated descriptor names nothing, so the stream stays KLV.
+fn names_non_klv_metadata(descriptors: &[RawDescriptor]) -> bool {
+    descriptors
+        .iter()
+        .find(|d| d.tag == 0x26)
+        .and_then(|d| metadata_format(&d.data))
+        .is_some_and(|(format, id)| match format {
+            0x10 | 0x11 => true,
+            0xFF => id != Some(*b"KLVA"),
+            _ => false,
+        })
+}
+
+/// `metadata_format` and, for 0xFF, `metadata_format_identifier` of a
+/// `metadata_descriptor` body; `None` when the body is shorter than the
+/// fixed fields it declares.
+fn metadata_format(body: &[u8]) -> Option<(u8, Option<[u8; 4]>)> {
+    let app_format = u16::from_be_bytes([*body.first()?, *body.get(1)?]);
+    let mut pos = if app_format == 0xFFFF { 6 } else { 2 };
+    let format = *body.get(pos)?;
+    pos += 1;
+    let id = if format == 0xFF {
+        let id: [u8; 4] = body.get(pos..pos + 4)?.try_into().ok()?;
+        pos += 4;
+        Some(id)
+    } else {
+        None
+    };
+    // metadata_service_id, then the flags byte.
+    pos += 1;
+    let flags = *body.get(pos)?;
+    pos += 1;
+    if flags & 0x10 != 0 {
+        pos += 1 + usize::from(*body.get(pos)?);
+    }
+    match flags >> 5 {
+        0b001 | 0b011 | 0b101 | 0b110 => pos += 1 + usize::from(*body.get(pos)?),
+        0b100 => pos += 1,
+        _ => {}
+    }
+    (body.len() >= pos).then_some((format, id))
 }
 
 /// The demuxer's sync re-acquisition rule: after a byte that is not where a
@@ -268,8 +342,7 @@ impl Walker {
             if !taken {
                 let mut sig = vec![s.stream_type];
                 sig.extend(s.descriptors.iter().map(|d| d.tag));
-                let klv = s.stream_type == 0x15
-                    || (s.stream_type == 0x06 && has_klva_registration(&s.descriptors));
+                let klv = is_klv_carrier(s.stream_type, &s.descriptors);
                 streams.push(Stream {
                     pid: s.elementary_pid,
                     sig,
