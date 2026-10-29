@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tst_core::error::DemuxErrorKind;
-use tst_core::klv::st0601;
+use tst_core::error::KlvDecodeError;
+use tst_core::klv::length::read_ber;
+use tst_core::klv::{UniversalLabel, st0601, st0605};
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, DiscontinuityKind, MetadataKind, NonConformantIssue,
     SamplePayload, StrictMode,
@@ -40,8 +42,17 @@ pub struct KlvRecordDigest {
     pub pts: i64,
     pub canonical_sha256: Sha256Hex,
     pub tags: Vec<u32>,
+    /// The kinds of the payload's top-level items in order (`"st0605-pack"`,
+    /// `"st0601-ls"`); empty unless every item decoded.
+    pub items: Vec<String>,
     pub decoded: bool,
     pub unknown_reason: Option<String>,
+    /// The payload ends inside an item: a record cut short, as packet loss
+    /// leaves it, rather than one that is malformed or foreign.
+    pub truncated: bool,
+    /// Field-level errors the lenient ST 0601 decoder recorded while
+    /// keeping the record.
+    pub field_errors: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -78,6 +89,15 @@ pub struct PidDigest {
     pub unknown_samples: u64,
     /// Running SHA-256 over every sample and metadata payload, in order.
     pub payload_sha256: Sha256Hex,
+    /// Of `klv_unknown`, the records that ended inside an item. `None` only
+    /// in a digest written before the field existed; see
+    /// [`adopt_fields_the_baseline_predates`].
+    #[serde(default)]
+    pub klv_truncated: Option<u64>,
+    /// ST 0601 field errors over this PID's decoded records. `None` as for
+    /// `klv_truncated`.
+    #[serde(default)]
+    pub klv_field_errors: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -124,33 +144,124 @@ fn sha_hex(bytes: &[u8]) -> Sha256Hex {
     Sha256Hex(hex(&Sha256::digest(bytes)))
 }
 
-/// The digest of one KLV payload: its ST 0601 decode, re-encoded in the
-/// encoder's tag order and hashed, so a producer's tag order never changes
-/// the hash. A payload that does not decode, or whose decoded record does
-/// not re-encode, is hashed as it is and says why in `unknown_reason`.
+/// The top-level KLV items of a payload: per item 16 UL bytes, a BER
+/// length, then that many body bytes. Each item comes back whole, UL
+/// included. A length that runs past the end, or trailing bytes too short
+/// to hold a UL, is [`KlvDecodeError::Truncated`]: a payload is split
+/// completely or not at all.
+fn split_items(payload: &[u8]) -> Result<Vec<(UniversalLabel, &[u8])>, KlvDecodeError> {
+    let mut items = Vec::new();
+    let mut at = 0;
+    // An empty payload holds no item, so it is short of a UL too.
+    while at < payload.len() || items.is_empty() {
+        let rest = &payload[at..];
+        if rest.len() < 16 {
+            return Err(KlvDecodeError::Truncated {
+                offset: at,
+                needed: 16,
+                have: rest.len(),
+            });
+        }
+        let mut ul = [0u8; 16];
+        ul.copy_from_slice(&rest[..16]);
+        let (len, body) = read_ber(&rest[16..])?;
+        let body_at = rest.len() - body.len();
+        if body.len() < len {
+            return Err(KlvDecodeError::Truncated {
+                offset: at + body_at,
+                needed: len,
+                have: body.len(),
+            });
+        }
+        items.push((UniversalLabel::new(ul), &rest[..body_at + len]));
+        at += body_at + len;
+    }
+    Ok(items)
+}
+
+/// The digest of one KLV payload, a sequence of top-level MISB items: an
+/// ST 0605 Precision Time Stamp Pack, standalone or before the set, and
+/// ST 0601 local sets. A set is decoded and re-encoded in the encoder's
+/// tag order, so a producer's tag order never changes the hash; a pack has
+/// one shape and is hashed as it is. A payload with an item that does not
+/// split, decode or re-encode, or whose UL is neither, is hashed as it is
+/// and says why in `unknown_reason`, naming the first failing item.
 pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest {
-    let undecoded = |reason: String| KlvRecordDigest {
+    let undecoded = |reason: String, truncated: bool| KlvRecordDigest {
         pid,
         pts,
         canonical_sha256: sha_hex(payload),
         tags: Vec::new(),
+        items: Vec::new(),
         decoded: false,
         unknown_reason: Some(reason),
+        truncated,
+        field_errors: 0,
     };
-    match st0601::decode(payload) {
-        // `encode_to_vec` sizes its buffer from the record, so no retry is needed.
-        Ok(rec) => match st0601::encode_to_vec(&rec) {
-            Ok(canonical) => KlvRecordDigest {
-                pid,
-                pts,
-                canonical_sha256: sha_hex(&canonical),
-                tags: crate::fixtures::observed_tags(&rec).into_iter().collect(),
-                decoded: true,
-                unknown_reason: None,
-            },
-            Err(e) => undecoded(format!("re-encode: {e}")),
-        },
-        Err(e) => undecoded(e.to_string()),
+    let items = match split_items(payload) {
+        Ok(items) => items,
+        Err(e) => return undecoded(e.to_string(), false),
+    };
+    let mut canonical = Vec::with_capacity(payload.len());
+    let mut kinds = Vec::with_capacity(items.len());
+    let mut tags = std::collections::BTreeSet::new();
+    for (i, (ul, item)) in items.iter().enumerate() {
+        let failed = |why: String| undecoded(format!("item {i} ({}): {why}", hex(&ul.0)), false);
+        if *ul == UniversalLabel::PRECISION_TIMESTAMP_PACK_UL {
+            if let Err(e) = st0605::decode(item) {
+                return failed(e.to_string());
+            }
+            canonical.extend_from_slice(item);
+            kinds.push("st0605-pack".to_string());
+        } else if ul.is_st0601_family() {
+            let rec = match st0601::decode(item) {
+                Ok(rec) => rec,
+                Err(e) => return failed(e.to_string()),
+            };
+            // `encode_to_vec` sizes its buffer from the record, so no retry is needed.
+            match st0601::encode_to_vec(&rec) {
+                Ok(bytes) => canonical.extend_from_slice(&bytes),
+                Err(e) => return failed(format!("re-encode: {e}")),
+            }
+            tags.extend(crate::fixtures::observed_tags(&rec));
+            kinds.push("st0601-ls".to_string());
+        } else {
+            return failed("not a registered MISB item".to_string());
+        }
+    }
+    KlvRecordDigest {
+        pid,
+        pts,
+        canonical_sha256: sha_hex(&canonical),
+        tags: tags.into_iter().collect(),
+        items: kinds,
+        decoded: true,
+        unknown_reason: None,
+        truncated: false,
+        field_errors: 0,
+    }
+}
+
+/// Gives `baseline` the value `current` has for every field the baseline's
+/// digest predates (read back as `None`), on every PID both hold under the
+/// same configuration. A field added to the digest then never marks a
+/// capture changed against a baseline written before it.
+pub fn adopt_fields_the_baseline_predates(baseline: &mut FileDigest, current: &FileDigest) {
+    for (key, base_cfg) in &mut baseline.configs {
+        let Some(cur_cfg) = current.configs.get(key) else {
+            continue;
+        };
+        for (pid, base) in &mut base_cfg.pids {
+            let Some(cur) = cur_cfg.pids.get(pid) else {
+                continue;
+            };
+            if base.klv_truncated.is_none() {
+                base.klv_truncated = cur.klv_truncated;
+            }
+            if base.klv_field_errors.is_none() {
+                base.klv_field_errors = cur.klv_field_errors;
+            }
+        }
     }
 }
 
@@ -302,6 +413,8 @@ impl Pass {
                 klv_unknown_reason: None,
                 unknown_samples: 0,
                 payload_sha256: Sha256Hex(String::new()),
+                klv_truncated: Some(0),
+                klv_field_errors: Some(0),
             },
             hasher: Sha256::new(),
             pts_clock: None,

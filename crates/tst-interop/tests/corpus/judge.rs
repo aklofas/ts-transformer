@@ -186,6 +186,12 @@ fn every_pid_digest_field_is_judged() {
         }),
         ("unknown_samples", |p| p.unknown_samples += 1),
         ("payload_sha256", |p| p.payload_sha256 = sha_of(b"other")),
+        ("klv_truncated", |p| {
+            p.klv_truncated = Some(p.klv_truncated.unwrap_or(0) + 1)
+        }),
+        ("klv_field_errors", |p| {
+            p.klv_field_errors = Some(p.klv_field_errors.unwrap_or(0) + 1)
+        }),
     ];
     for (name, mutate) in mutations {
         let mut got = d.clone();
