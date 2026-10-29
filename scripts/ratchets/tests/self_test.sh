@@ -999,5 +999,36 @@ for mode in python awk; do
   expect "publish-guards ($mode): a local action with pinned refs passes" 0 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local.yml"
 done
 
+# ---- fixture hashes (scripts/check/repo/fixture-hashes.sh) ----
+# Every [[file]] record carries exactly one path and one sha256, and a path is
+# listed once: a record that lost its hash or a duplicated record is not
+# provenance, however the closure check reads.
+FH="$DIR/../check/repo/fixture-hashes.sh"
+fx="$tmp/fixture-hashes"; mkdir -p "$fx/tests/coverage" "$fx/fx"
+git -C "$fx" init -q
+printf 'a\n' > "$fx/fx/a.bin"; printf 'b\n' > "$fx/fx/b.bin"
+printf '[[group]]\nroot = "fx"\n' > "$fx/tests/coverage/fixture-manifest.toml"
+git -C "$fx" add -A
+fx_good="$fx/good.toml"
+{ printf '# header\n\n'
+  for f in fx/a.bin fx/b.bin; do
+    printf '[[file]]\npath = "%s"\nsha256 = "%s"\n\n' "$f" "$(cd "$fx" && sha256sum "$f" | cut -d' ' -f1)"
+  done; } > "$fx_good"
+fx_case() { cp "$1" "$fx/tests/coverage/fixture-hashes.toml"; }
+fx_case "$fx_good"
+expect "fixture-hashes: a complete inventory passes" 0 env FIXTURE_ROOT="$fx" bash "$FH"
+awk '/^sha256 = / && !d {d=1; next} {print}' "$fx_good" > "$fx/nosha.toml"
+fx_case "$fx/nosha.toml"
+expect "fixture-hashes: a record without its sha256 fails" 1 env FIXTURE_ROOT="$fx" bash "$FH"
+expect_out "fixture-hashes: nosha" "FAIL: row 1: missing sha256 for fx/a.bin"
+{ cat "$fx_good"; awk '/^\[\[file\]\]/{n++} n==1' "$fx_good"; } > "$fx/dup.toml"
+fx_case "$fx/dup.toml"
+expect "fixture-hashes: a duplicated record fails" 1 env FIXTURE_ROOT="$fx" bash "$FH"
+expect_out "fixture-hashes: dup" "FAIL: listed twice: fx/a.bin"
+awk '{print} /^path = "fx\/a.bin"/{print "path = \"fx/b.bin\""}' "$fx_good" > "$fx/twopath.toml"
+fx_case "$fx/twopath.toml"
+expect "fixture-hashes: a record with two path lines fails" 1 env FIXTURE_ROOT="$fx" bash "$FH"
+expect_out "fixture-hashes: twopath" "FAIL: row 1: two path lines"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
