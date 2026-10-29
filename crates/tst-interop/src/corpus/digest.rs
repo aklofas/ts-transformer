@@ -254,6 +254,10 @@ pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest 
 /// digest predates (read back as `None`), on every PID both hold under the
 /// same configuration. A field added to the digest then never marks a
 /// capture changed against a baseline written before it.
+///
+/// Only fields whose `None` means "not recorded" are filled. Where `None`
+/// is a real value (`pts_first`, `pts_last`, `klv_unknown_reason`), filling
+/// it would hide a change, so those fields are compared as they are.
 pub fn adopt_fields_the_baseline_predates(baseline: &mut FileDigest, current: &FileDigest) {
     for (key, base_cfg) in &mut baseline.configs {
         let Some(cur_cfg) = current.configs.get(key) else {

@@ -37,7 +37,9 @@ pub struct Annotations {
     /// The most feed errors excused.
     pub max_feed_errors: Option<u64>,
     /// The capture lost packets and some KLV records are cut short; a KLV
-    /// PID whose every undecoded record is a truncation is excused.
+    /// PID whose every undecoded record is a truncation is excused. A
+    /// truncation is a record whose declared length runs past its payload;
+    /// a missing checksum is malformed data and is never excused here.
     pub known_klv_truncation: bool,
     /// The most truncated records excused on each PID of
     /// `klv_truncation_pids`.
