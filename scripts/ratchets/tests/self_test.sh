@@ -1069,5 +1069,25 @@ fx_case "$fx/twopath.toml"
 expect "fixture-hashes: a record with two path lines fails" 1 env FIXTURE_ROOT="$fx" bash "$FH"
 expect_out "fixture-hashes: twopath" "FAIL: row 1: two path lines"
 
+# ---- JVM ordinal sites (scripts/check/jvm/ordinal-sites.sh) ----
+# Every `.ordinal()` in the JVM main sources is a pinned site: a new one fails
+# naming it, a gone one fails naming it, a comment mention is not a site.
+OS="$DIR/../check/jvm/ordinal-sites.sh"
+os="$tmp/ordinal-sites"; mkdir -p "$os/java/org/tstrans/x"
+printf 'class A {\n    void f() { n(mode.ordinal(), cfg.av1Carriage().ordinal()); }\n    // Mode.ordinal() order is pinned\n    int g;  // Kind.ordinal(): 0 = A\n}\n' > "$os/java/org/tstrans/x/A.java"
+os_run() { ORDINAL_SITES_JAVA_DIR="$os/java" ORDINAL_SITES_LIST="$os/list.tsv" bash "$OS" "$@"; }
+expect "ordinal sites: a missing pinned list fails" 2 os_run
+os_run --regen >/dev/null
+expect "ordinal sites: the regenerated list passes" 0 os_run
+expect_out "ordinal sites: comments are not sites" "ordinal-sites: OK (2 pinned sites)"
+cp "$os/java/org/tstrans/x/A.java" "$os/A.orig"
+printf 'class B {\n    void h() { n(kind.ordinal()); }\n}\n' > "$os/java/org/tstrans/x/B.java"
+expect "ordinal sites: a new site fails" 1 os_run
+expect_out "ordinal sites: new" "FAIL: ordinal-sites: new ordinal site org/tstrans/x/B.java: kind.ordinal()"
+rm "$os/java/org/tstrans/x/B.java"
+plant "$os/java/org/tstrans/x/A.java" 'mode.ordinal(), ' ''
+expect "ordinal sites: a removed site fails" 1 os_run
+expect_out "ordinal sites: gone" "FAIL: ordinal-sites: pinned ordinal site gone org/tstrans/x/A.java: mode.ordinal()"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
