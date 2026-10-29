@@ -726,7 +726,9 @@ rs_copy() { # a copy of the real files roster-sync reads, for planting
     rm -rf "$tmp/rs"; mkdir -p "$tmp/rs/.github/workflows" "$tmp/rs/scripts/check/repo"
     cp "$REPO/.github/workflows/ci.yml" "$REPO/.github/workflows/sanitizers.yml" "$REPO/.github/workflows/crates-io.yml" "$tmp/rs/.github/workflows/"
     cp "$REPO/scripts/check/repo/release-version-consistency.sh" "$tmp/rs/scripts/check/repo/"
-    for m in $(cd "$REPO" && find crates -path '*/fuzz/Cargo.toml'); do
+    # Every fuzz workspace, and every manifest the deny job names.
+    for m in $(cd "$REPO" && find crates -path '*/fuzz/Cargo.toml') \
+             $(sed -nE 's/^[[:space:]]*manifest-path:[[:space:]]*([^[:space:]]+).*/\1/p' "$REPO/.github/workflows/ci.yml"); do
         mkdir -p "$tmp/rs/$(dirname "$m")"; cp "$REPO/$m" "$tmp/rs/$m"
     done
 }
@@ -744,6 +746,12 @@ rs_copy; plant "$tmp/rs/scripts/check/repo/release-version-consistency.sh" ' \$R
 rs_copy; mkdir -p "$tmp/rs/crates/tst-new/fuzz"; printf '[package]\nname = "tst-new-fuzz"\n' > "$tmp/rs/crates/tst-new/fuzz/Cargo.toml"
                                                                                  expect "roster-sync: a fuzz workspace the deny job does not check" 1 rsync_
 expect_out "roster-sync: unchecked fuzz workspace" "crates/tst-new/fuzz/Cargo.toml"
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'manifest-path: crates/tst-core/fuzz/Cargo.toml' 'manifest-path: crates/tst-gone/fuzz/Cargo.toml'
+                                                                                 expect "roster-sync: the deny job names a manifest that does not exist" 1 rsync_
+expect_out "roster-sync: bogus manifest-path" "ci.yml deny job names a manifest-path that does not exist: crates/tst-gone/fuzz/Cargo.toml"
+rs_copy; rm "$tmp/rs/embedded/baremetal-qemu/Cargo.toml"
+                                                                                 expect "roster-sync: a deny manifest gone from the checked tree" 1 rsync_
+expect_out "roster-sync: deny manifest gone" "ci.yml deny job names a manifest-path that does not exist: embedded/baremetal-qemu/Cargo.toml"
 
 # ---- network test binaries (scripts/check/repo/net-test-binaries.sh) ----
 NTB="$DIR/../check/repo/net-test-binaries.sh"
@@ -968,6 +976,18 @@ jobs:
       - uses: ./.github/actions/setup
 YML
 sed 's/setup$/missing/' "$pg/repo/.github/workflows/local.yml" > "$pg/repo/.github/workflows/local-missing.yml"
+# The same composite in a job that holds no credential is held to the rule too.
+cat > "$pg/repo/.github/workflows/local-nocred.yml" <<'YML'
+name: local-nocred
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/setup
+YML
 cat > "$pg/repo/.github/actions/setup/action.yml" <<'YML'
 name: setup
 runs:
@@ -1056,6 +1076,8 @@ for mode in python awk; do
   expect_out "publish-guards ($mode): pin-noid" "$pg/pin-noid.yml: job 'build' uses actions/checkout@v5, which is not pinned to a commit sha"
   expect "publish-guards ($mode): a local action's floating ref fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local.yml"
   expect_out "publish-guards ($mode): local" "$pg/repo/.github/workflows/local.yml: job 'attest' uses ./.github/actions/setup, whose step uses dtolnay/rust-toolchain@stable, which is not pinned to a commit sha"
+  expect "publish-guards ($mode): a credential-free job's local action with a floating ref fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-nocred.yml"
+  expect_out "publish-guards ($mode): local-nocred" "$pg/repo/.github/workflows/local-nocred.yml: job 'build' uses ./.github/actions/setup, whose step uses dtolnay/rust-toolchain@stable, which is not pinned to a commit sha"
   expect "publish-guards ($mode): an unreadable local action fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-missing.yml"
   expect_out "publish-guards ($mode): local-missing" "$pg/repo/.github/workflows/local-missing.yml: job 'attest' uses ./.github/actions/missing, but ./.github/actions/missing/action.yml cannot be read"
   expect "publish-guards ($mode): a local action inside a local action fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-nested.yml"
@@ -1128,6 +1150,19 @@ resolved = "2026-01-01"
 EOF
 expect "test-manifests: a blocked_bug entry without its own marker fails" 1 env TEST_MANIFESTS_DIR="$tm" bash "$TM"
 expect_out "test-manifests: per-row marker" "unmarked"
+# A single table where an array of tables belongs, or an element that is not
+# a table, is a FAIL line naming the file, not a Python traceback.
+printf '[skip]\ntest = "one"\ncrate = "x"\nclass = "slow"\n' > "$tm/skip-ledger.toml"
+expect "test-manifests: a single [skip] table fails" 1 env TEST_MANIFESTS_DIR="$tm" bash "$TM"
+expect_out "test-manifests: single [skip]" "FAIL: $tm/skip-ledger.toml: skip must be an array of tables ([[skip]])"
+cp "$tmp/out" "$tmp/tm-out"; expect "test-manifests: a single [skip] table prints no traceback" 1 grep -q Traceback "$tmp/tm-out"
+cp "$DIR/../../tests/coverage/skip-ledger.toml" "$tm/skip-ledger.toml"
+cp "$tm/fixture-manifest.toml" "$tm/fixture-manifest.orig"
+printf 'group = ["crates/x"]\n' > "$tm/fixture-manifest.toml"
+expect "test-manifests: a group element that is not a table fails" 1 env TEST_MANIFESTS_DIR="$tm" bash "$TM"
+expect_out "test-manifests: non-table group" "FAIL: $tm/fixture-manifest.toml: group 1 is not a table"
+cp "$tmp/out" "$tmp/tm-out"; expect "test-manifests: a non-table group prints no traceback" 1 grep -q Traceback "$tmp/tm-out"
+cp "$tm/fixture-manifest.orig" "$tm/fixture-manifest.toml"
 
 # ---- JVM ordinal sites (scripts/check/jvm/ordinal-sites.sh) ----
 # Every `.ordinal()` in the JVM main sources is a pinned site: a new one fails
@@ -1162,6 +1197,7 @@ os_bad() { # <case> <java line> <expected message>
 os_bad indexed '        n(Mode.values()[i].ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot parse the receiver of every .ordinal()"
 os_bad continuation '            .ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot parse the receiver of every .ordinal()"
 os_bad string-comment '        n("a//b", mode.ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot classify a line mixing a string literal and a comment"
+os_bad block-comment '        n(mode.ordinal()); /* was kind.ordinal() */' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot classify a line holding a block-comment delimiter"
 
 # ---- release-vm-corpus.sh: a run names its baseline or says it has none ----
 # --dry-run prints each stage's command and runs nothing. A run with neither
@@ -1173,7 +1209,9 @@ expect "release-vm-corpus: neither --baseline nor --no-baseline is refused" 2 ba
 expect_out "release-vm-corpus: the refusal" "release-vm-corpus.sh: name the baseline (--baseline DIR) or say there is none (--no-baseline)"
 expect "release-vm-corpus: --baseline with --no-baseline is refused" 2 bash "$RVC" "$rvc_sha" --dry-run --baseline "$tmp/base" --no-baseline
 expect "release-vm-corpus: --no-baseline runs a sweep without one" 0 bash "$RVC" "$rvc_sha" --dry-run --no-baseline
-expect "release-vm-corpus: --no-baseline passes no --baseline to the sweep" 1 grep -q -- '--baseline' "$tmp/out"
+cp "$tmp/out" "$tmp/rvc-out"
+expect_out "release-vm-corpus: the sweep runs" "sweep: "
+expect "release-vm-corpus: --no-baseline passes no --baseline to the sweep" 1 grep -q -- '--baseline' "$tmp/rvc-out"
 expect "release-vm-corpus: --baseline DIR reaches the sweep" 0 bash "$RVC" "$rvc_sha" --dry-run --baseline "$tmp/base"
 expect_out "release-vm-corpus: the sweep line" "--baseline $tmp/base"
 

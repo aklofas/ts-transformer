@@ -12,8 +12,9 @@
 # Fails closed (exit 2, naming file:line) on a line it cannot read: one whose
 # `.ordinal()` receiver is not a dotted chain of names and `()` calls (an
 # indexed receiver, a call with arguments, a chained call split across lines;
-# reformat it onto one line), or one that holds both a `"` and a `//`, where a
-# string literal and a comment cannot be told apart.
+# reformat it onto one line), one that holds both a `"` and a `//`, where a
+# string literal and a comment cannot be told apart, or a code line holding a
+# `/*` or `*/`, where a block comment's extent cannot be told.
 #
 # Run it:       bash scripts/check/jvm/ordinal-sites.sh
 # Regenerate:   bash scripts/check/jvm/ordinal-sites.sh --regen
@@ -43,6 +44,11 @@ sites() { # stdout: sorted `<path><TAB><expression>` rows
       *'"'*) case "$line" in *'//'*)
         echo "FAIL: ordinal-sites: $rel:$lineno: cannot classify a line mixing a string literal and a comment: $line" >&2
         exit 2 ;; esac ;;
+    esac
+    case "$line" in
+      *'/*'*|*'*/'*)
+        echo "FAIL: ordinal-sites: $rel:$lineno: cannot classify a line holding a block-comment delimiter: $line" >&2
+        exit 2 ;;
     esac
     line="$(printf '%s' "$line" | sed 's|//.*$||')"
     found="$(printf '%s\n' "$line" | grep -oE '\.ordinal\(\)' | grep -c . || true)"

@@ -13,7 +13,8 @@
 #       or placeholder entry carries `expires_after` or `resolved` itself.
 #   stream-matrix.toml    — every status value outside [gaps] is one of
 #       covered|partial|gap.
-# A file that does not parse fails as `FAIL: <file>: <tomllib message>`.
+# A file that does not parse fails as `FAIL: <file>: <tomllib message>`, and
+# a `group` or `skip` that is not an array of tables as a FAIL line too.
 #
 # TEST_MANIFESTS_DIR overrides tests/coverage (the self-test points it at a
 # planted copy); fixture roots still resolve against the repository root.
@@ -60,9 +61,26 @@ def load(name):
         return None
 
 
+def rows(doc, name, key):
+    """The array of tables `key` of manifest `name`, one (index, table) per
+    element; a FAIL line for any other shape, never a traceback."""
+    value = doc.get(key, [])
+    path = os.path.join(cov, name)
+    if not isinstance(value, list):
+        err(f"{path}: {key} must be an array of tables ([[{key}]])")
+        return []
+    out = []
+    for i, t in enumerate(value, 1):
+        if isinstance(t, dict):
+            out.append((i, t))
+        else:
+            err(f"{path}: {key} {i} is not a table")
+    return out
+
+
 fm = load("fixture-manifest.toml")
 if fm is not None:
-    for i, g in enumerate(fm.get("group", []), 1):
+    for i, g in rows(fm, "fixture-manifest.toml", "group"):
         where = f"fixture-manifest group {i}"
         root = g.get("root")
         if not isinstance(root, str):
@@ -83,7 +101,7 @@ if fm is not None:
 classes = {"placeholder", "external_tool", "environmental", "slow", "diagnostic", "blocked_bug"}
 sl = load("skip-ledger.toml")
 if sl is not None:
-    for i, e in enumerate(sl.get("skip", []), 1):
+    for i, e in rows(sl, "skip-ledger.toml", "skip"):
         where = f"skip-ledger entry {i} ({e.get('test')})"
         cls = e.get("class")
         if cls not in classes:

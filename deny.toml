@@ -3,7 +3,7 @@
 # Two checks run in CI (ci.yml job `deny`) and locally, over the root
 # workspace and every fuzz and embedded workspace:
 #   cargo install cargo-deny --locked && cargo deny check advisories licenses
-#   cargo deny --manifest-path <workspace>/Cargo.toml --config deny.toml check advisories licenses
+#   cargo deny --manifest-path <workspace>/Cargo.toml --config deny.toml --locked check advisories licenses
 # `bans` and `sources` are deliberately NOT enabled: there is no decision yet
 # on duplicate-version policy or registry restrictions; add them as their own
 # change when one is made.
