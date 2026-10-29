@@ -526,7 +526,12 @@ pub fn run(path: &str, digests: &Path, out: &Path) -> i32 {
         eprintln!("corpus receive: unknown path");
         return 2;
     }
-    let out = match std::fs::File::create(out) {
+    // Appended: a child restarted on the same path adds to its log.
+    let out = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(out)
+    {
         Ok(f) => f,
         Err(e) => {
             eprintln!(

@@ -137,31 +137,47 @@ fn replay_refuses_without_a_sweep() {
     assert!(text(&out).contains("run the sweep first"), "{}", text(&out));
 }
 
+/// The distinct pids `replay-rss.csv` sampled for `path`'s receiver.
+#[cfg(target_os = "linux")]
+fn distinct_pids(run: &Path, path: &str) -> usize {
+    let rows = parse_rss_csv(&std::fs::read_to_string(run.join("replay-rss.csv")).unwrap())
+        .expect("replay-rss.csv parses");
+    rows.iter()
+        .filter(|r| r.leg == path && r.process == "recv")
+        .map(|r| r.pid)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+}
+
 #[test]
-fn a_receiver_that_dies_fails_its_remaining_files_but_the_other_path_finishes() {
+fn a_dead_path_is_restarted_for_the_next_pick() {
     let (dir, _) = two_files("rp-die");
     let run = dir.join("run");
     sweep(&dir, &run);
+    // The tcp child exits after its first verdict.
     let out = replay(
         &dir,
         &run,
         &[("TST_CORPUS_TEST_RECEIVE_DIE_AFTER", "tcp:1")],
     );
-    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
     let summary = json(&run.join("replay.json"));
     let verdicts = summary["verdicts"].as_array().unwrap();
     let of =
         |path: &str| -> Vec<&Value> { verdicts.iter().filter(|v| v["path"] == path).collect() };
     let tcp = of("tcp");
     assert_eq!(tcp.len(), 2, "{summary}");
-    assert_eq!(tcp[0]["pass"], true, "{summary}");
-    assert_eq!(tcp[1]["pass"], false, "{summary}");
-    assert_eq!(tcp[1]["failures"][0], "receiver exited", "{summary}");
+    assert!(tcp.iter().all(|v| v["pass"] == true), "{summary}");
+    assert_eq!(summary["restarts_by_path"]["tcp"], 1, "{summary}");
     let udp = of("udp");
     assert_eq!(udp.len(), 2, "{summary}");
     assert!(udp.iter().all(|v| v["pass"] == true), "{summary}");
-    assert_eq!(summary["failed"], 1);
-    assert_eq!(summary["pass"], false);
+    // The sampler follows the restarted child.
+    #[cfg(target_os = "linux")]
+    assert_eq!(distinct_pids(&run, "tcp"), 2);
+    // One log per path: both children's verdicts are in it.
+    let log = std::fs::read_to_string(run.join("logs/receive-tcp.jsonl")).unwrap();
+    assert_eq!(log.lines().count(), 2, "{log}");
 }
 
 #[test]
@@ -181,8 +197,11 @@ fn replay_output_names_no_path() {
     }
 }
 
+/// A receiver that stops reading on every pick trips each pick's send
+/// deadline: the killed child is restarted once, for the second pick, and
+/// that child stalls the same way.
 #[test]
-fn a_receiver_that_stops_reading_trips_the_send_deadline() {
+fn a_child_that_dies_on_every_pick_fails_each_pick_once() {
     let dir = two_realistic_files("rp-deadline");
     let run = dir.join("run");
     sweep(&dir, &run);
@@ -200,16 +219,18 @@ fn a_receiver_that_stops_reading_trips_the_send_deadline() {
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let summary = json(&run.join("replay.json"));
     let verdicts = summary["verdicts"].as_array().unwrap();
-    let tcp: Vec<&Value> = verdicts.iter().filter(|v| v["path"] == "tcp").collect();
-    assert_eq!(tcp.len(), 2, "{summary}");
-    let first = tcp[0]["failures"].as_array().unwrap();
-    assert!(
-        first[0].as_str().unwrap().starts_with("sender deadline"),
-        "{summary}"
-    );
-    assert_eq!(first[1], "receiver stalled", "{summary}");
-    assert_eq!(tcp[1]["failures"][0], "receiver exited", "{summary}");
     assert_eq!(verdicts.len(), 2, "{summary}");
+    for v in verdicts {
+        assert_eq!(v["path"], "tcp", "{summary}");
+        assert_eq!(v["pass"], false, "{summary}");
+        let failures = v["failures"].as_array().unwrap();
+        assert!(
+            failures[0].as_str().unwrap().starts_with("sender deadline"),
+            "{summary}"
+        );
+        assert_eq!(failures[1], "receiver stalled", "{summary}");
+    }
+    assert_eq!(summary["restarts_by_path"]["tcp"], 1, "{summary}");
 }
 
 /// Sweeps then replays over tcp a 2 s capture at realistic access-unit
