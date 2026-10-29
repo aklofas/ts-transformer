@@ -6,8 +6,18 @@
 //! stdout (the protocol in [`super::receive`]). Picks go in plan order and
 //! in lockstep: each pick is read once, up to its prefix cut, and every
 //! path replays it on its own thread before the next pick starts, so at
-//! most one pick's bytes are held. A child that exits early fails its
-//! remaining picks as [`ReceiverOutcome::Exited`]; the other paths go on.
+//! most one pick's bytes are held.
+//!
+//! A path whose child has died, or was killed for a stall, gets a fresh
+//! child before its next pick, so one capture that kills a receiver costs
+//! that path one verdict, not the rest of the run. A path is restarted at
+//! most once per pick: a capture that kills every child costs one child per
+//! pick, never a loop. A child found gone before it answered `ready` has
+//! not been sent a byte of the pick, so that is where the one restart can
+//! also fall; a second death in the same pick judges it
+//! [`ReceiverOutcome::Exited`], and a child that cannot be started judges
+//! it [`ReceiverOutcome::Error`]. The restarted child appends to its
+//! path's logs, and the summary counts each path's restarts.
 //!
 //! `srt`, `rist`, `udp` and `tcp` send through a [`Sender`] over
 //! [`make_send`]. `rtsp-publish` pipes the same paced bytes into
@@ -19,14 +29,16 @@
 //! `VERDICT_WAIT` to answer `sent`; the paced send itself gets the pick's
 //! PCR seconds plus twice the stall time (`send_deadline`). A send that
 //! outlives it (a receiver alive but no longer reading, so the sender's
-//! writes never complete) is cancelled, the child is killed, the pick is
-//! judged `Stalled` and the path's later picks `Exited`.
+//! writes never complete) is cancelled, the child is killed and the pick is
+//! judged `Stalled`; the next pick restarts the path.
 //!
 //! An RSS sampler reads each child's `VmRSS` every `rss_sample_seconds`
 //! into `replay-rss.csv`, in the `rss.csv` shape the soak and stress
 //! reports read (leg = the path, process = `recv`). A tick that reads no
 //! `VmRSS` (a child that has exited, or a read that raced it) records no
-//! row; it is never taken for an exit. `VmRSS` comes from `/proc`, so the
+//! row; it is never taken for an exit. A restarted child is sampled as soon
+//! as the sampler sees its pid, then on the cadence, so the CSV's `pid`
+//! column changes for that path mid-run. `VmRSS` comes from `/proc`, so the
 //! sampling is Linux-only: elsewhere the CSV holds only its header and the
 //! summary's RSS maps are empty.
 //!
@@ -120,6 +132,10 @@ pub struct ReplaySummary {
     /// rule could not judge it (see [`judge_rss`]). Recorded, not gated.
     #[serde(default)]
     pub rss_note_by_path: BTreeMap<String, String>,
+    /// Per path: how many times its child was started again after it died
+    /// or was killed; absent from older files.
+    #[serde(default)]
+    pub restarts_by_path: BTreeMap<String, u64>,
     /// No verdict failed and every path produced a verdict. RSS takes no
     /// part: the soak gates memory.
     pub pass: bool,
@@ -256,20 +272,64 @@ struct PathRun {
     alive: bool,
 }
 
+/// A pick the child was gone for before it answered `ready`: nothing of the
+/// pick was sent, so a fresh child can take it.
+struct NotStarted;
+
+/// A started `corpus receive` child, its stdin and its stdout's lines.
+type Started = (Child, Option<ChildStdin>, Receiver<String>);
+
 impl PathRun {
     fn spawn(path: &str, run: &RunDir) -> Result<Self, String> {
+        let (child, stdin, lines) = Self::start(path, run, false)?;
+        Ok(Self {
+            path: path.to_string(),
+            stdin,
+            child,
+            lines,
+            alive: true,
+        })
+    }
+
+    /// A fresh child for this path in place of one that died or was
+    /// killed. It appends to the path's logs, so one path keeps one of each.
+    fn respawn(&mut self, run: &RunDir) -> Result<(), String> {
+        self.stdin = None;
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let (child, stdin, lines) = Self::start(&self.path, run, true)?;
+        self.child = child;
+        self.stdin = stdin;
+        self.lines = lines;
+        self.alive = true;
+        Ok(())
+    }
+
+    /// Starts a child. A path's first child truncates the path's logs; a
+    /// restarted one appends to them (the child appends its verdicts).
+    fn start(path: &str, run: &RunDir, restart: bool) -> Result<Started, String> {
         let exe = std::env::current_exe()
             .map_err(|e| format!("cannot find the tool's own executable: {}", e.kind()))?;
         let logs = run.root.join("logs");
         std::fs::create_dir_all(&logs)
             .map_err(|e| format!("cannot create logs in the run directory: {}", e.kind()))?;
-        let stderr = File::create(logs.join(format!("receive-{path}.stderr")))
-            .map_err(|e| format!("cannot create a receiver log: {}", e.kind()))?;
+        let verdicts = logs.join(format!("receive-{path}.jsonl"));
+        let log = |name: &Path| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(restart)
+                .truncate(!restart)
+                .open(name)
+                .map_err(|e| format!("cannot create a receiver log: {}", e.kind()))
+        };
+        log(&verdicts)?;
+        let stderr = log(&logs.join(format!("receive-{path}.stderr")))?;
         let mut child = Command::new(exe)
             .args(["corpus", "receive", "--path", path, "--digests"])
             .arg(run.root.join("digests"))
             .arg("--out")
-            .arg(logs.join(format!("receive-{path}.jsonl")))
+            .arg(verdicts)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr)
@@ -285,13 +345,16 @@ impl PathRun {
                 }
             }
         });
-        Ok(Self {
-            path: path.to_string(),
-            stdin: child.stdin.take(),
-            child,
-            lines,
-            alive: true,
-        })
+        let stdin = child.stdin.take();
+        Ok((child, stdin, lines))
+    }
+
+    /// Whether the child can take a pick: not killed, and not exited.
+    fn is_running(&mut self) -> bool {
+        if self.alive && !matches!(self.child.try_wait(), Ok(None)) {
+            self.alive = false;
+        }
+        self.alive
     }
 
     /// Writes one protocol line; `false` when the child can no longer read.
@@ -350,18 +413,18 @@ impl PathRun {
     }
 
     /// One pick over this path: `file`, `ready`, the paced send, `sent`,
-    /// `verdict`.
+    /// `verdict`; [`NotStarted`] when the child was gone before `ready`.
     fn replay(
         &mut self,
         pick: &Pick,
         pacer: &PcrPacer,
         logs: &Path,
         largest_au_bytes: u64,
-    ) -> FileVerdict {
+    ) -> Result<FileVerdict, NotStarted> {
         let sha = &pick.sha256;
         let path = self.path.clone();
         if !self.alive {
-            return not_received(sha, &path, ReceiverOutcome::Exited);
+            return Err(NotStarted);
         }
         let prefix = pick
             .prefix_seconds
@@ -378,31 +441,38 @@ impl PathRun {
             && let n = udp_rcvbuf_need(largest_au_bytes, largest_chunk)
             && n > max
         {
-            return failed(
+            return Ok(failed(
                 sha,
                 &path,
                 format!(
                     "the udp path needs a {n}-byte receive buffer but net.core.rmem_max is {max}"
                 ),
-            );
+            ));
         }
         if !self.say(&format!(
             "file {sha} {prefix} {largest_au_bytes} {largest_chunk}"
         )) {
             self.alive = false;
-            return not_received(sha, &path, ReceiverOutcome::Exited);
+            return Err(NotStarted);
         }
-        let ready = match self.answer(sha, READY_WAIT) {
+        let ready = match self.next_line(READY_WAIT) {
             Ok(l) => l,
-            Err(v) => return v,
+            Err(Gone::Exited) => {
+                self.alive = false;
+                return Err(NotStarted);
+            }
+            Err(Gone::Silent) => {
+                self.kill();
+                return Ok(not_received(sha, &path, ReceiverOutcome::Stalled));
+            }
         };
         // A file the child could not prepare is judged in place of `ready`.
         if let Some(v) = Self::parse_verdict(&ready, sha) {
-            return v;
+            return Ok(v);
         }
         let Some(url) = ready.strip_prefix(&format!("ready {sha} ")) else {
             self.kill();
-            return failed(sha, &path, "receiver protocol error".into());
+            return Ok(failed(sha, &path, "receiver protocol error".into()));
         };
         let deadline = send_deadline(pacer);
         let log = logs.join(format!("publish-{sha}.log"));
@@ -435,7 +505,7 @@ impl PathRun {
                     deadline.as_secs()
                 ),
             );
-            return v;
+            return Ok(v);
         };
         // A path that ends on the sender's close may already have judged
         // the file, and a child told to leave after it may be gone: the
@@ -443,11 +513,11 @@ impl PathRun {
         let _ = self.say(&format!("sent {sha}"));
         let line = match self.answer(sha, VERDICT_WAIT) {
             Ok(l) => l,
-            Err(v) => return v,
+            Err(v) => return Ok(v),
         };
         let Some(mut v) = Self::parse_verdict(&line, sha) else {
             self.kill();
-            return failed(sha, &path, "receiver protocol error".into());
+            return Ok(failed(sha, &path, "receiver protocol error".into()));
         };
         if let Err(e) = sent {
             v.pass = false;
@@ -462,7 +532,7 @@ impl PathRun {
                 resyncs.events, resyncs.bytes_skipped
             ));
         }
-        v
+        Ok(v)
     }
 
     /// The child's next line, or the verdict for a child that gave none.
@@ -687,31 +757,37 @@ fn vm_rss_kb(pid: u32) -> Option<u64> {
 /// (path, elapsed seconds, kB) per sample.
 type Samples = Vec<(String, f64, u64)>;
 
+/// Each path's current child pid; a restart replaces its path's entry.
+type Procs = Arc<Mutex<Vec<(String, u32)>>>;
+
 /// Samples every child now and then every `every` until `stop`, appending
-/// each sample to `csv` as it is taken.
-fn sample_rss(
-    mut csv: File,
-    procs: Vec<(String, u32)>,
-    every: Duration,
-    stop: Arc<AtomicBool>,
-) -> Samples {
+/// each sample to `csv` as it is taken. A pid not seen before (a restarted
+/// child) is sampled at the next tick, as every child is at its start.
+fn sample_rss(mut csv: File, procs: Procs, every: Duration, stop: Arc<AtomicBool>) -> Samples {
     let epoch = Instant::now();
     let mut samples = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut next = epoch;
     loop {
+        let due = Instant::now() >= next;
         let t = epoch.elapsed().as_secs_f64();
-        for (path, pid) in &procs {
+        let current: Vec<(String, u32)> = procs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        for (path, pid) in &current {
+            if !seen.insert(*pid) && !due {
+                continue;
+            }
             if let Some(kb) = vm_rss_kb(*pid) {
                 let _ = writeln!(csv, "{t:.3},{path},recv,{pid},{kb}");
                 samples.push((path.clone(), t, kb));
             }
         }
         let _ = csv.flush();
-        let next = epoch + Duration::from_secs_f64(t) + every;
-        while Instant::now() < next {
-            if stop.load(Ordering::Relaxed) {
-                return samples;
-            }
-            std::thread::sleep(TICK.min(every));
+        if due {
+            next = epoch + Duration::from_secs_f64(t) + every;
+        }
+        std::thread::sleep(TICK.min(every));
+        if stop.load(Ordering::Relaxed) {
+            return samples;
         }
     }
 }
@@ -748,12 +824,56 @@ fn read_pick(file: &Path, sha: &Sha256Hex, prefix_seconds: Option<u32>) -> Resul
     Ok(bytes)
 }
 
-/// Every path's verdict for one pick.
+/// One path's verdict for one pick, and whether its child was restarted
+/// for it: a dead child is restarted before the pick, or once the pick
+/// finds it gone before `ready`, never twice.
+fn replay_path(
+    r: &mut PathRun,
+    pick: &Pick,
+    pacer: &PcrPacer,
+    logs: &Path,
+    largest_au: u64,
+    run: &RunDir,
+    procs: &Procs,
+) -> (FileVerdict, bool) {
+    let mut restarted = false;
+    loop {
+        if !r.is_running() {
+            if restarted {
+                return (
+                    not_received(&pick.sha256, &r.path, ReceiverOutcome::Exited),
+                    true,
+                );
+            }
+            if let Err(e) = r.respawn(run) {
+                return (
+                    not_received(&pick.sha256, &r.path, ReceiverOutcome::Error(e)),
+                    false,
+                );
+            }
+            restarted = true;
+            let mut procs = procs.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(entry) = procs.iter_mut().find(|(p, _)| *p == r.path) {
+                entry.1 = r.child.id();
+            }
+        }
+        match r.replay(pick, pacer, logs, largest_au) {
+            Ok(v) => return (v, restarted),
+            // Gone before anything was sent: the loop restarts it, once.
+            Err(NotStarted) => r.alive = false,
+        }
+    }
+}
+
+/// Every path's verdict for one pick; a path restarted for it is counted
+/// in `restarts`.
 fn replay_pick(
     pick: &Pick,
     entry: Option<&FileEntry>,
     runs: &mut [PathRun],
     run: &RunDir,
+    procs: &Procs,
+    restarts: &mut BTreeMap<String, u64>,
 ) -> Vec<FileVerdict> {
     let fail_all = |runs: &[PathRun], why: String| -> Vec<FileVerdict> {
         runs.iter()
@@ -789,16 +909,30 @@ fn replay_pick(
     }
     let logs = run.root.join("logs");
     let largest_au = entry.map_or(0, |e| e.largest_au_bytes);
-    std::thread::scope(|s| {
+    let done: Vec<(String, FileVerdict, bool)> = std::thread::scope(|s| {
         let threads: Vec<_> = runs
             .iter_mut()
-            .map(|r| s.spawn(|| r.replay(pick, &pacer, &logs, largest_au)))
+            .map(|r| {
+                s.spawn(|| {
+                    let (v, restarted) =
+                        replay_path(r, pick, &pacer, &logs, largest_au, run, procs);
+                    (r.path.clone(), v, restarted)
+                })
+            })
             .collect();
         threads
             .into_iter()
             .map(|t| t.join().expect("a path thread does not panic"))
             .collect()
-    })
+    });
+    done.into_iter()
+        .map(|(path, v, restarted)| {
+            if restarted {
+                *restarts.entry(path).or_default() += 1;
+            }
+            v
+        })
+        .collect()
 }
 
 fn check_paths(paths: &[String]) -> Result<(), String> {
@@ -906,23 +1040,29 @@ pub fn run_with(
         }
     }
     let stop = Arc::new(AtomicBool::new(false));
-    let sampler = {
-        let procs = runs
-            .iter()
+    let procs: Procs = Arc::new(Mutex::new(
+        runs.iter()
             .map(|r| (r.path.clone(), r.child.id()))
-            .collect();
+            .collect(),
+    ));
+    let sampler = {
+        let procs = Arc::clone(&procs);
         let every = Duration::from_secs(args.rss_sample_seconds.max(1));
         let stop = Arc::clone(&stop);
         std::thread::spawn(move || sample_rss(csv, procs, every, stop))
     };
 
     let mut verdicts = Vec::new();
+    let mut restarts_by_path: BTreeMap<String, u64> =
+        args.paths.iter().map(|p| (p.clone(), 0)).collect();
     for pick in &plan.picks {
         for v in replay_pick(
             pick,
             entries.get(&pick.sha256).copied(),
             &mut runs,
             &args.run,
+            &procs,
+            &mut restarts_by_path,
         ) {
             on_verdict(&v);
             verdicts.push(v);
@@ -970,6 +1110,7 @@ pub fn run_with(
         rss_slope_kb_per_hour_by_path,
         rss_judged_by_path: rss.judged_by_path,
         rss_note_by_path: rss.note_by_path,
+        restarts_by_path,
     };
     let text = serde_json::to_string_pretty(&summary).map_err(|e| format!("replay json: {e}"))?;
     std::fs::write(args.run.root.join("replay.json"), text).map_err(|e| {

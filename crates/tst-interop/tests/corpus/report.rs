@@ -87,6 +87,7 @@ fn replay(pass: bool) -> ReplaySummary {
         rss_slope_kb_per_hour_by_path: slope,
         rss_judged_by_path: BTreeMap::new(),
         rss_note_by_path: BTreeMap::new(),
+        restarts_by_path: BTreeMap::new(),
         pass,
     }
 }
@@ -238,6 +239,7 @@ fn the_markdown_table_carries_the_per_path_counts_rss_and_the_dash_fallback() {
     r.rss_max_kb_by_path.remove("rist");
     r.rss_slope_kb_per_hour_by_path.remove("rist");
     r.rss_max_kb_by_path.insert("srt".into(), 123_456);
+    r.restarts_by_path.insert("srt".into(), 1);
     r.rss_note_by_path.insert(
         "srt".into(),
         "9000.0 KiB/h over 181 post-warm-up sample(s), above the soak's threshold 200 \
@@ -245,9 +247,10 @@ fn the_markdown_table_carries_the_per_path_counts_rss_and_the_dash_fallback() {
             .into(),
     );
     let md = report::markdown(&sweep(true), Some(&r));
-    assert!(md.contains("| srt | 2 | 1 | 123456 | 1.5 |"), "{md}");
-    assert!(md.contains("| udp | 1 | 0 | 120000 | 1.5 |"), "{md}");
-    assert!(md.contains("| rist | 0 | 0 | - | - |"), "{md}");
+    assert!(md.contains("| srt | 2 | 1 | 1 | 123456 | 1.5 |"), "{md}");
+    // A path with no recorded restarts, as in an older replay.json, shows 0.
+    assert!(md.contains("| udp | 1 | 0 | 0 | 120000 | 1.5 |"), "{md}");
+    assert!(md.contains("| rist | 0 | 0 | 0 | - | - |"), "{md}");
     assert!(
         md.contains("RSS is recorded, not gated; the soak gates memory."),
         "{md}"

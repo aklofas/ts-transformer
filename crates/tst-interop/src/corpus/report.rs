@@ -106,8 +106,10 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
         s.push_str("\nNo replay was recorded for this run.\n");
         return s;
     };
-    s.push_str("\n| Replay path | Files | Failed | RSS max (kB) | RSS slope (kB per hour) |\n");
-    s.push_str("| --- | ---: | ---: | ---: | ---: |\n");
+    s.push_str(
+        "\n| Replay path | Files | Failed | Restarts | RSS max (kB) | RSS slope (kB per hour) |\n",
+    );
+    s.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
     for p in PATHS.iter().filter(|p| r.paths.iter().any(|q| q == *p)) {
         let failed = r
             .verdicts
@@ -115,6 +117,7 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
             .filter(|v| v.path == *p && !v.pass)
             .count();
         let files = r.verdicts.iter().filter(|v| v.path == *p).count();
+        let restarts = r.restarts_by_path.get(*p).copied().unwrap_or(0);
         let max = r
             .rss_max_kb_by_path
             .get(*p)
@@ -123,7 +126,10 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
             .rss_slope_kb_per_hour_by_path
             .get(*p)
             .map_or("-".into(), |v| format!("{v:.1}"));
-        let _ = writeln!(s, "| {p} | {files} | {failed} | {max} | {slope} |");
+        let _ = writeln!(
+            s,
+            "| {p} | {files} | {failed} | {restarts} | {max} | {slope} |"
+        );
     }
     s.push_str("\nRSS is recorded, not gated; the soak gates memory.\n");
     for (path, note) in &r.rss_note_by_path {
