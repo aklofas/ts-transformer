@@ -66,6 +66,18 @@ fn flag(value: &str) -> Option<bool> {
     }
 }
 
+/// The excusing key a bound or PID-list key belongs to.
+fn bounded_key(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "max_private_records" => "non_misb_private_pids",
+        "max_pts_backward_breaks" | "discontinuity_pids" => "known_discontinuity",
+        "max_cc_mismatch" => "known_cc_mismatch",
+        "max_feed_errors" => "known_feed_errors",
+        "max_klv_truncated" | "klv_truncation_pids" => "known_klv_truncation",
+        _ => return None,
+    })
+}
+
 fn count(value: &str) -> Option<u64> {
     value.parse().ok()
 }
@@ -82,7 +94,8 @@ fn text(value: &str) -> Option<String> {
 /// that excuses a rule (a non-empty `non_misb_private_pids`, or one of the
 /// `known_*` flags set true) needs a non-empty `reason`, its `max_*` bound
 /// and, where it has one, a non-empty PID list; without one the error names
-/// that key's line.
+/// that key's line. A bound or PID list whose key excuses nothing is
+/// refused the same way.
 pub fn load(dir: &Path, sha: &Sha256Hex) -> Result<Annotations, String> {
     let path = dir.join(format!("{sha}.toml"));
     let body = match std::fs::read_to_string(&path) {
@@ -95,6 +108,8 @@ pub fn load(dir: &Path, sha: &Sha256Hex) -> Result<Annotations, String> {
     // excusing key's own line, for the bound check.
     let mut excusing: Option<(usize, &str)> = None;
     let mut excusing_lines: Vec<(usize, &str)> = Vec::new();
+    // The first line of each bound or PID-list key.
+    let mut bound_lines: Vec<(usize, &str)> = Vec::new();
     for (i, raw) in body.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -165,6 +180,9 @@ pub fn load(dir: &Path, sha: &Sha256Hex) -> Result<Annotations, String> {
         if excuses && !excusing_lines.iter().any(|(_, k)| *k == key) {
             excusing_lines.push((i + 1, key));
         }
+        if bounded_key(key).is_some() && !bound_lines.iter().any(|(_, k)| *k == key) {
+            bound_lines.push((i + 1, key));
+        }
     }
     if let Some((n, key)) = excusing
         && ann.reason.as_deref().is_none_or(str::is_empty)
@@ -210,6 +228,25 @@ pub fn load(dir: &Path, sha: &Sha256Hex) -> Result<Annotations, String> {
             && pids.is_empty()
         {
             return Err(needs(&format!("{list_key} = [N, ...]")));
+        }
+    }
+    // A bound whose key excuses nothing is a typo; loading it silently
+    // would hide that the annotation does not say what was meant.
+    for (n, key) in bound_lines {
+        let Some(bounds) = bounded_key(key) else {
+            continue;
+        };
+        let set = match bounds {
+            "non_misb_private_pids" => !ann.non_misb_private_pids.is_empty(),
+            "known_discontinuity" => ann.known_discontinuity,
+            "known_cc_mismatch" => ann.known_cc_mismatch,
+            "known_feed_errors" => ann.known_feed_errors,
+            _ => ann.known_klv_truncation,
+        };
+        if !set {
+            return Err(format!(
+                "annotations {sha}.toml line {n}: {key} bounds {bounds}, which excuses nothing"
+            ));
         }
     }
     Ok(ann)

@@ -38,6 +38,16 @@ pub fn muxed_klv_file(payload: &[u8], n: u32) -> Vec<u8> {
 
 /// [`muxed`] with `n` video AUs.
 fn muxed_n(klv: Option<Option<&[u8]>>, n: u32) -> Vec<u8> {
+    muxed_by(n, |i| match klv {
+        None => None,
+        Some(Some(raw)) => Some(raw.to_vec()),
+        Some(None) => Some(klv_record_for(KlvSet::Compact, 0, i).unwrap()),
+    })
+}
+
+/// `n` video AUs on 0x100, each followed on the KLV PID by what `klv`
+/// gives for its index, if anything.
+fn muxed_by(n: u32, klv: impl Fn(u32) -> Option<Vec<u8>>) -> Vec<u8> {
     let p = tst_interop::profiles::by_name("baseline").unwrap();
     let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
     prog.add_video(0x100, VideoCodec::H264);
@@ -52,13 +62,8 @@ fn muxed_n(klv: Option<Option<&[u8]>>, n: u32) -> Vec<u8> {
         let pts = Pts90khz::new(i64::from(i) * 3000);
         let (au, key) = video_au_sized(p.video, i, AuSizeMode::Compact);
         mux.push_video_to(vh, &au, pts, key).unwrap();
-        match klv {
-            None => {}
-            Some(Some(raw)) => mux.push_klv_to(kh, raw, pts, 0).unwrap(),
-            Some(None) => {
-                let rec = klv_record_for(KlvSet::Compact, 0, i).unwrap();
-                mux.push_klv_to(kh, &rec, pts, 0).unwrap();
-            }
+        if let Some(raw) = klv(i) {
+            mux.push_klv_to(kh, &raw, pts, 0).unwrap();
         }
         loop {
             let n = mux.pull(&mut buf);
@@ -221,6 +226,11 @@ fn a_waived_pts_break_and_a_private_pid_skip_write_excused_rows() {
         "{f:?}"
     );
     assert!(f.iter().all(|x| x.excused), "{f:?}");
+    assert!(
+        f.iter().any(|x| x.pid == Some(RESTART_PID)
+            && x.detail == "excused: recorder restart; 1 backward PTS breaks (bound 1)"),
+        "{f:?}"
+    );
     // One break more than reviewed fails, and so does an unlisted PID.
     let tight = Annotations {
         max_pts_backward_breaks: Some(0),
@@ -229,8 +239,10 @@ fn a_waived_pts_break_and_a_private_pid_skip_write_excused_rows() {
     let f = failures(&bytes, &tight);
     assert!(
         f.iter().any(|x| x.rule == "pts-order"
+            && x.pid == Some(RESTART_PID)
             && !x.excused
-            && x.detail.contains("exceeds the reviewed bound 0")),
+            && x.detail
+                == "1 backward PTS breaks (1 over the listed PIDs) exceeds the reviewed bound 0"),
         "{f:?}"
     );
     let elsewhere = Annotations {
@@ -714,4 +726,46 @@ fn a_false_sync_candidate_after_a_sync_loss_is_refused_as_the_demuxer_refuses_it
     let (walked, demuxed) = both(&bytes);
     assert_eq!(walked, demuxed);
     assert_eq!(demuxed, 0);
+}
+
+/// Excused truncations on a PID do not hide label-less payloads on it:
+/// those are judged on their own and fail.
+#[test]
+fn unknown_samples_beside_excused_truncations_still_fail() {
+    let ls = klv_record_for(KlvSet::Compact, 0, 0).unwrap();
+    let bytes = muxed_by(30, |i| {
+        Some(if i % 2 == 0 {
+            ls[..ls.len() - 3].to_vec()
+        } else {
+            b"not klv".to_vec()
+        })
+    });
+    let d = digest_config("default", &bytes, FEED_CHUNK);
+    let klv = &d.pids[&KLV_PID];
+    assert_eq!(
+        (klv.klv_unknown, klv.klv_truncated),
+        (15, Some(15)),
+        "{klv:?}"
+    );
+    assert_eq!(klv.unknown_samples, 15, "{klv:?}");
+    let ann = Annotations {
+        known_klv_truncation: true,
+        max_klv_truncated: Some(15),
+        klv_truncation_pids: vec![KLV_PID],
+        reason: Some("packet loss".into()),
+        ..Default::default()
+    };
+    let f = failures(&bytes, &ann);
+    assert!(
+        f.iter()
+            .any(|x| x.excused && x.detail.contains("15 truncated record(s)")),
+        "{f:?}"
+    );
+    assert!(
+        f.iter().any(|x| x.rule == "klv-unknown"
+            && x.pid == Some(KLV_PID)
+            && !x.excused
+            && x.detail == "15 unknown sample(s)"),
+        "{f:?}"
+    );
 }
