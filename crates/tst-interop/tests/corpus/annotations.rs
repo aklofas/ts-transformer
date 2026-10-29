@@ -154,3 +154,71 @@ fn a_key_that_excuses_a_rule_needs_its_bound() {
         );
     }
 }
+
+/// A bound or PID list without the key it bounds is a typo, not a no-op.
+#[test]
+fn a_bound_without_its_excusing_key_is_refused() {
+    let dir = temp_dir_named("ann-orphan");
+    let sha = sha_of(b"annotated with a stray bound");
+    let file = dir.join(format!("{sha}.toml"));
+    for (body, line, key, bounds) in [
+        (
+            "max_feed_errors = 3\n",
+            1,
+            "max_feed_errors",
+            "known_feed_errors",
+        ),
+        (
+            "known_cc_mismatch = false\nmax_cc_mismatch = 0\n",
+            2,
+            "max_cc_mismatch",
+            "known_cc_mismatch",
+        ),
+        (
+            "discontinuity_pids = [256]\n",
+            1,
+            "discontinuity_pids",
+            "known_discontinuity",
+        ),
+        (
+            "max_pts_backward_breaks = 1\n",
+            1,
+            "max_pts_backward_breaks",
+            "known_discontinuity",
+        ),
+        (
+            "klv_truncation_pids = [65]\n",
+            1,
+            "klv_truncation_pids",
+            "known_klv_truncation",
+        ),
+        (
+            "max_klv_truncated = 2\n",
+            1,
+            "max_klv_truncated",
+            "known_klv_truncation",
+        ),
+        (
+            "max_private_records = 4\n",
+            1,
+            "max_private_records",
+            "non_misb_private_pids",
+        ),
+    ] {
+        std::fs::write(&file, body).unwrap();
+        let err = load(&dir, &sha).unwrap_err();
+        assert!(
+            err.contains(&format!(
+                "line {line}: {key} bounds {bounds}, which excuses nothing"
+            )),
+            "{body:?}: {err}"
+        );
+    }
+    // A bound of 0 beside its key is legal: nothing of it is excused.
+    std::fs::write(
+        &file,
+        "known_feed_errors = true\nmax_feed_errors = 0\nreason = \"reviewed\"\n",
+    )
+    .unwrap();
+    assert_eq!(load(&dir, &sha).unwrap().max_feed_errors, Some(0));
+}

@@ -144,34 +144,75 @@ fn sha_hex(bytes: &[u8]) -> Sha256Hex {
     Sha256Hex(hex(&Sha256::digest(bytes)))
 }
 
+/// Why a payload did not split into whole items.
+struct SplitError {
+    reason: String,
+    /// An item's declared length runs past the payload: the record was cut.
+    truncated: bool,
+}
+
+impl SplitError {
+    /// A KLV error from the split, its offset counted from `base` so the
+    /// text matches what the ST 0601 decoder reports for the same record
+    /// (the decoder rebases with a helper private to tst-core, mirrored
+    /// here for the two errors `read_ber` can carry an offset in).
+    fn decode(mut e: KlvDecodeError, base: usize) -> Self {
+        match &mut e {
+            KlvDecodeError::Truncated { offset, .. }
+            | KlvDecodeError::MalformedLength { offset } => *offset += base,
+            _ => {}
+        }
+        Self {
+            truncated: matches!(e, KlvDecodeError::Truncated { .. }),
+            reason: e.to_string(),
+        }
+    }
+}
+
 /// The top-level KLV items of a payload: per item 16 UL bytes, a BER
 /// length, then that many body bytes. Each item comes back whole, UL
-/// included. A length that runs past the end, or trailing bytes too short
-/// to hold a UL, is [`KlvDecodeError::Truncated`]: a payload is split
-/// completely or not at all.
-fn split_items(payload: &[u8]) -> Result<Vec<(UniversalLabel, &[u8])>, KlvDecodeError> {
+/// included; a payload is split completely or not at all. A length that
+/// runs past the end is a cut record. Fewer than 16 bytes where a UL
+/// should start is not: after a complete item it is stuffing, and a cut
+/// that lands inside a later item's UL is rare enough to be reviewed as
+/// unknown.
+fn split_items(payload: &[u8]) -> Result<Vec<(UniversalLabel, &[u8])>, SplitError> {
     let mut items = Vec::new();
     let mut at = 0;
     // An empty payload holds no item, so it is short of a UL too.
     while at < payload.len() || items.is_empty() {
         let rest = &payload[at..];
         if rest.len() < 16 {
-            return Err(KlvDecodeError::Truncated {
-                offset: at,
-                needed: 16,
-                have: rest.len(),
+            // With no item yet, the text is the one the ST 0601 decoder
+            // gives a payload shorter than a UL.
+            let reason = if items.is_empty() {
+                KlvDecodeError::Truncated {
+                    offset: at,
+                    needed: 16,
+                    have: rest.len(),
+                }
+                .to_string()
+            } else {
+                format!("{} trailing byte(s) shorter than a UL", rest.len())
+            };
+            return Err(SplitError {
+                reason,
+                truncated: false,
             });
         }
         let mut ul = [0u8; 16];
         ul.copy_from_slice(&rest[..16]);
-        let (len, body) = read_ber(&rest[16..])?;
+        let (len, body) = read_ber(&rest[16..]).map_err(|e| SplitError::decode(e, at + 16))?;
         let body_at = rest.len() - body.len();
         if body.len() < len {
-            return Err(KlvDecodeError::Truncated {
-                offset: at + body_at,
-                needed: len,
-                have: body.len(),
-            });
+            return Err(SplitError::decode(
+                KlvDecodeError::Truncated {
+                    offset: body_at,
+                    needed: len,
+                    have: body.len(),
+                },
+                at,
+            ));
         }
         items.push((UniversalLabel::new(ul), &rest[..body_at + len]));
         at += body_at + len;
@@ -200,13 +241,7 @@ pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest 
     };
     let items = match split_items(payload) {
         Ok(items) => items,
-        // Only a length that runs past the payload is a cut record; inside a
-        // set that splits whole, ST 0601 also reports a missing checksum as
-        // truncation, which is a malformed record, not a lost packet.
-        Err(e) => {
-            let truncated = matches!(e, KlvDecodeError::Truncated { .. });
-            return undecoded(e.to_string(), truncated);
-        }
+        Err(e) => return undecoded(e.reason, e.truncated),
     };
     let mut canonical = Vec::with_capacity(payload.len());
     let mut kinds = Vec::with_capacity(items.len());

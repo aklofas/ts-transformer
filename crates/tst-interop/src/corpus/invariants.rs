@@ -559,7 +559,11 @@ pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<
                     d.klv_unknown_reason.clone().unwrap_or_default(),
                 );
             }
-        } else if d.unknown_samples > 0 {
+        }
+        // Label-less payloads are judged apart from undecoded records: an
+        // excused truncation on the PID says nothing about them, and no key
+        // excuses them on a KLV PID.
+        if d.unknown_samples > 0 {
             push(
                 &mut out,
                 "klv-unknown",
@@ -618,16 +622,20 @@ pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<
                 breaks(pid, d).unlisted(&mut out, *pid);
             } else if within.is_some() {
                 breaks(pid, d).record(&mut out, ann, within);
+            } else {
+                let max = ann
+                    .max_pts_backward_breaks
+                    .map_or("none".to_string(), |m| m.to_string());
+                push(
+                    &mut out,
+                    "pts-order",
+                    Some(*pid),
+                    format!(
+                        "{} backward PTS breaks ({total} over the listed PIDs) exceeds the reviewed bound {max}",
+                        d.pts_backward_breaks
+                    ),
+                );
             }
-        }
-        if within.is_none() && total > 0 {
-            Observed {
-                rule: "pts-order",
-                pid: None,
-                count: total,
-                what: format!("backward PTS breaks over pids {:?}", ann.discontinuity_pids),
-            }
-            .record(&mut out, ann, ann.max_pts_backward_breaks);
         }
     } else {
         for (pid, d) in broken {

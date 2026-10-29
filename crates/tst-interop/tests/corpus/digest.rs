@@ -569,6 +569,35 @@ fn trailing_bytes_shorter_than_a_label_are_unknown() {
     let rec = klv_record_digest(0x1001, 0, &[pack.as_slice(), &[0x06, 0x0E, 0x2B]].concat());
     assert!(!rec.decoded);
     assert!(rec.items.is_empty());
+    // Stuffing after a complete item is malformed, not a cut record.
+    assert!(!rec.truncated);
+    assert_eq!(
+        rec.unknown_reason.as_deref(),
+        Some("3 trailing byte(s) shorter than a UL")
+    );
+}
+
+/// A record cut inside its long-form BER length keeps the reason text the
+/// ST 0601 decoder gave it, offsets included, so its digest does not change.
+#[test]
+fn a_record_cut_inside_its_length_keeps_the_old_reason_text() {
+    let mut cut = tst_core::klv::UniversalLabel::ST_0601_LS.0.to_vec();
+    cut.extend_from_slice(&[0x82, 0x01]);
+    let old = tst_core::klv::st0601::decode(&cut).unwrap_err().to_string();
+    let rec = klv_record_digest(1, 0, &cut);
+    assert!(!rec.decoded);
+    assert!(rec.truncated);
+    assert_eq!(rec.unknown_reason.as_deref(), Some(old.as_str()));
+    // And a cut body, the common case.
+    let ls = klv_record_for(KlvSet::Compact, 0, 0).unwrap();
+    let body_cut = &ls[..ls.len() - 3];
+    let old = tst_core::klv::st0601::decode(body_cut)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        klv_record_digest(1, 0, body_cut).unknown_reason.as_deref(),
+        Some(old.as_str())
+    );
 }
 
 #[test]
