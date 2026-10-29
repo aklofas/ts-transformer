@@ -34,21 +34,23 @@ def load_corpus() -> dict[str, Any]:
 
 CORPUS = load_corpus()
 
-# The header keys its tables on the scheme family (`tcps` is `tcp`).
-FAMILY = {
-    "srt": "srt",
-    "rtp": "rtp",
-    "rtsp": "rtsp",
-    "rtsps": "rtsp",
-    "udp": "udp",
-    "tcp": "tcp",
-    "tcps": "tcp",
-    "hls": "hls",
-    "hlss": "hls",
-    "rist": "rist",
-    "whep": "whep",
-    "wheps": "whep",
-}
+def families(corpus: dict[str, Any]) -> dict[str, str]:
+    """The scheme -> family map of the corpus header's ``[families]`` table.
+
+    The header keys its tables on the scheme family (``tcps`` is ``tcp``), and
+    the Rust coverage check holds this table to the parsers, so it is read
+    rather than copied: a scheme a row writes that the table omits is refused.
+    """
+    table = corpus["families"]
+    for row in corpus["url"]:
+        if row["scheme"] not in table:
+            raise ValueError(
+                f"scheme {row['scheme']!r} has no entry in the corpus header's [families] table"
+            )
+    return dict(table)
+
+
+FAMILY = families(CORPUS)
 
 
 def label(row: dict[str, Any]) -> str:
@@ -363,6 +365,13 @@ def check_row(row: dict[str, Any]) -> bool:
         check_wire(row, fields)
         return True
     return check_outcome(row)
+
+
+def test_a_scheme_missing_from_the_header_families_table_is_refused() -> None:
+    copy = load_corpus()
+    del copy["families"]["wheps"]
+    with pytest.raises(ValueError, match="scheme 'wheps' has no entry in the corpus header's \\[families\\] table"):
+        families(copy)
 
 
 @pytest.mark.parametrize("row", CORPUS["url"], ids=[label(r) for r in CORPUS["url"]])
