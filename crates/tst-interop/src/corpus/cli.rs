@@ -25,12 +25,13 @@ fn value(args: &[String], i: usize, flag: &str) -> String {
 pub fn run(args: &[String]) -> ! {
     note_test_knobs();
     let Some(sub) = args.first() else {
-        fail("a subcommand is required: inventory | sweep | replay | report");
+        fail("a subcommand is required: inventory | sweep | manifest | replay | report");
     };
     let rest = &args[1..];
     match sub.as_str() {
         "inventory" => run_inventory(rest),
         "sweep" => run_sweep(rest),
+        "manifest" => run_manifest(rest),
         "replay" => run_replay(rest),
         "report" => run_report(rest),
         // Internal: the replay stage's child process, not in the usage text.
@@ -149,17 +150,47 @@ fn outcome_label(o: &FileOutcome) -> String {
     }
 }
 
-fn print_summary(s: &SweepSummary) {
+/// How a capture the baseline does not settle on its own is accepted.
+fn how_to_accept(sha: &Sha256Hex) -> String {
+    format!("accept it with --accept {sha} --because <reason>")
+}
+
+fn print_summary(s: &SweepSummary, accepts: &[(Sha256Hex, String)]) {
+    let accepted = |sha: &Sha256Hex| accepts.iter().any(|(a, _)| a == sha);
     println!("files: {}", s.files);
     println!("identical: {}", s.identical);
     println!("changed-explained: {}", s.changed_explained);
     println!("changed-unexplained: {}", s.changed_unexplained);
     println!("new-no-baseline: {}", s.new_no_baseline);
+    println!("new (accepted): {}", s.new_explained);
+    println!("baseline only: {}", s.baseline_only.len());
     println!("parse-failures: {}", s.parse_failures);
     println!("invariant-failures: {}", s.invariant_failures);
     for f in &s.per_file {
-        if f.outcome != FileOutcome::Identical {
-            println!("{} {}", f.sha256, outcome_label(&f.outcome));
+        match &f.outcome {
+            FileOutcome::Identical => {}
+            FileOutcome::NewNoBaseline if s.baseline_matched.is_some() => {
+                if accepted(&f.sha256) {
+                    println!("{} new-no-baseline (accepted)", f.sha256);
+                } else {
+                    println!(
+                        "{} new-no-baseline: the baseline does not list it; {}",
+                        f.sha256,
+                        how_to_accept(&f.sha256)
+                    );
+                }
+            }
+            o => println!("{} {}", f.sha256, outcome_label(o)),
+        }
+    }
+    for sha in &s.baseline_only {
+        if accepted(sha) {
+            println!("{sha} baseline-only (accepted)");
+        } else {
+            println!(
+                "{sha} baseline-only: the corpus no longer holds it; {}",
+                how_to_accept(sha)
+            );
         }
     }
     for sha in &s.unused_accepts {
@@ -182,8 +213,45 @@ fn run_sweep(args: &[String]) -> ! {
     };
     match sweep::run(&sweep_args) {
         Ok(s) => {
-            print_summary(&s);
+            print_summary(&s, &sweep_args.accepts);
             std::process::exit(if s.pass { 0 } else { 1 });
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+/// `corpus manifest <digests-dir> --expect-files N`: writes the manifest a
+/// digests directory from before manifests lacks, so it can serve as a
+/// baseline. Exits 0 or 2.
+fn run_manifest(args: &[String]) -> ! {
+    let (mut dir, mut expect) = (None, None);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--expect-files" => {
+                expect = Some(
+                    value(args, i, "--expect-files")
+                        .parse::<u64>()
+                        .unwrap_or_else(|_| fail("--expect-files must be a whole number")),
+                );
+                i += 2;
+            }
+            a if a.starts_with("--") => fail("unknown option"),
+            _ => {
+                if dir.is_some() {
+                    fail("only one directory is accepted");
+                }
+                dir = Some(PathBuf::from(&args[i]));
+                i += 1;
+            }
+        }
+    }
+    let dir = dir.unwrap_or_else(|| fail("a digests directory is required"));
+    let expect = expect.unwrap_or_else(|| fail("--expect-files is required"));
+    match sweep::write_manifest(&dir, expect) {
+        Ok(n) => {
+            println!("manifest: {n} digests");
+            std::process::exit(0);
         }
         Err(e) => fail(&e),
     }

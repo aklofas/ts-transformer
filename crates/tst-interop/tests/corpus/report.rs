@@ -29,6 +29,10 @@ fn sweep(pass: bool) -> SweepSummary {
         baseline_matched: Some(12),
         klv_field_errors: 0,
         files_with_klv_field_errors: 0,
+        new_explained: 0,
+        new_unexplained: 0,
+        baseline_only: vec![],
+        baseline_only_explained: 0,
         per_file: vec![],
         pass,
     }
@@ -353,4 +357,25 @@ fn the_markdown_reports_st0601_field_errors_as_recorded_not_gated() {
         report::archive_row(&s, None),
         report::archive_row(&sweep(true), None)
     );
+}
+
+/// Captures added to or gone from the corpus since the baseline are
+/// counted in the sweep table.
+#[test]
+fn the_markdown_counts_captures_new_to_or_gone_from_the_baseline() {
+    let mut s = sweep(true);
+    s.new_no_baseline = 3;
+    s.new_explained = 2;
+    s.new_unexplained = 1;
+    s.baseline_only = vec![sha('b'), sha('c')];
+    s.baseline_only_explained = 1;
+    let md = report::markdown(&s, None);
+    for row in [
+        "| New and accepted | 2 |",
+        "| New and not accepted | 1 |",
+        "| In the baseline only | 2 |",
+        "| In the baseline only, accepted | 1 |",
+    ] {
+        assert!(md.contains(row), "{row}: {md}");
+    }
 }
