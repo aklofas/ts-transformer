@@ -140,15 +140,15 @@ merge commit, and the qualification run checks that nothing under
      the AWS CLI, the UDP receive-buffer ceiling, Google Chrome, and a clean
      checkout of the frozen commit with `tst-interop` built in release mode
      (`SETUP-DONE rc=0`).
-   - `aws s3 sync s3://<bucket>/baselines/vX.Y.Z/ ~/baseline-vX.Y.Z/` fetches
-     the previous release's digests. The 0.9.0 digests were never promoted
-     under their tag's name, so before the first comparison against them
-     copy them there once:
+   - The 0.9.0 digests were never promoted under their tag's name, so before
+     the first comparison against them copy them there once:
      ```bash
      aws s3 cp --recursive \
        s3://<bucket>/baselines/unreleased-9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234/ \
        s3://<bucket>/baselines/v0.9.0/
      ```
+     Then `aws s3 sync s3://<bucket>/baselines/vX.Y.Z/ ~/baseline-vX.Y.Z/`
+     fetches the previous release's digests.
    - A baseline written before the sweep kept a `manifest.txt` (the 0.9.0
      digests are one) is refused until its manifest is written, once, before
      the first comparison against it:
