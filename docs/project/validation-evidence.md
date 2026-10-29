@@ -463,7 +463,15 @@ the declared generations, with no KLV unit dropped by the mount and at
 least one access unit emitted. `klv_placement_rtsp-publish-es` requires
 every record to sit within 91 ticks of the video access unit it was
 generated with, no unexpected timeline reset, and one generation seen per
-declared publisher generation. Each new publisher restarts the timeline,
+declared publisher generation. The placement oracle admits one
+sender-report-sized excursion per generation and reports it: a run of
+consecutive records off by more than 91 ticks, spanning at most one RTCP
+sender-report interval (7.5 s, the randomised maximum of the nominal 5 s)
+with no record off by more than 10 ms, is the mapping jitter of one
+report. It passes as a `klv_placement_excursion_rtsp-publish-es` row
+marked excused, with its record count, span, largest error and
+generation. A second excursion in a generation, a longer one, or any
+record off by more than 10 ms fails the verdict. Each new publisher restarts the timeline,
 so the receiver excuses one backward timestamp step per PID at each
 declared generation boundary, and the timing anomalies that coincide with
 it; any other backward step fails. The verdict detail gives the excused
@@ -564,7 +572,10 @@ nothing after it. Between reconnects a program map replaces the declaration
 of its own program and of any program that held its PMT PID. The demuxer
 reports no event when a PAT drops a program, so the harness cannot see that
 removal, and a PCR anomaly on such a program's former PCR PID would still be
-judged as one on a declared PID. The
+judged as one on a declared PID. The AV1 carriage oracle and the ADTS audio oracle excuse a later PES whose
+opening bytes the tap damaged (its start lies inside an attributed
+corruption window), and the attribution report counts each
+(`av1_prefix_excused`, `adts_prefix_excused`). The
 rich-KLV oracles
 skip a record an injection demonstrably damaged, counting it separately so
 every failure string reports how many records went unexamined. Offline
@@ -959,7 +970,11 @@ is designed as follows:
   `generation >= publisher_generations`, where `publisher_generations`
   is the declared number of segments. The stream stops `30 + N` seconds
   before the run, so the last publisher ends before recv's deadline; one
-  cut off there would also fail `worker_exits`.
+  cut off there would also fail `worker_exits`. A publisher's post-EOS
+  send failure is a clean end: `gst-launch-1.0` exiting nonzero after it
+  logged `Got EOS` failed to send its closing message on a stream whose
+  media was delivered, and the publisher log names it as such. A nonzero
+  exit before EOS, or an overrun the timeout kills, fails the generation.
 - **Declared like the other legs.** `soak-config.json` declares the leg's
   profile, KLV mode, publisher command, segment length, segment count and
   source digest before any worker launches. A declared leg whose report is

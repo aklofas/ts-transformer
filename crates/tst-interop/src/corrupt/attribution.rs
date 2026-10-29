@@ -296,6 +296,10 @@ pub struct AttributionReport {
     /// verifier, not the attribution; zero without corruption.
     #[serde(default)]
     pub adts_prefix_excused: u64,
+    /// The same for the AV1 video PID's later PES payloads, which the
+    /// AV1 carriage oracle holds to the first one's opening bytes.
+    #[serde(default)]
+    pub av1_prefix_excused: u64,
 }
 
 impl AttributionReport {
@@ -1950,6 +1954,7 @@ impl Attribution {
             approx_slack: self.approx_slack,
             anchors_rejected: self.anchors_rejected,
             adts_prefix_excused: 0,
+            av1_prefix_excused: 0,
         }
     }
 }

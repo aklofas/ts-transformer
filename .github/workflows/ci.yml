@@ -264,6 +264,10 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/interop-analyze-counters.sh
 
+      - name: Interop publish generation (a post-EOS send failure is a clean end)
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/interop-publish-generation.sh
+
       - name: No stale relocated-away package paths
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-stale-relocated-paths.sh
