@@ -1,6 +1,5 @@
 package org.tstrans.klv;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -190,8 +189,8 @@ public record SecurityLs(
 
     // Compact constructor: make the list fields truly immutable.
     public SecurityLs {
-        unknown = unknown != null ? Collections.unmodifiableList(unknown) : Collections.emptyList();
-        fieldErrors = fieldErrors != null ? Collections.unmodifiableList(fieldErrors) : Collections.emptyList();
+        unknown = Lists.snapshot(unknown);
+        fieldErrors = Lists.snapshot(fieldErrors);
     }
 
     // -----------------------------------------------------------------------

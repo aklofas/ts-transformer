@@ -40,7 +40,7 @@ public record NalUnit(
      * @return the H.264 NAL unit
      */
     public static NalUnit h264(int nalType, int refIdc, byte[] payload) {
-        return new NalUnit("H264", nalType, refIdc, null, null, ByteBuffer.wrap(payload));
+        return new NalUnit("H264", nalType, refIdc, null, null, ByteBuffer.wrap(payload.clone()));
     }
 
     /**
@@ -53,7 +53,7 @@ public record NalUnit(
      * @return the H.265 NAL unit
      */
     public static NalUnit h265(int nalType, int layerId, int temporalIdPlus1, byte[] payload) {
-        return new NalUnit("H265", nalType, null, layerId, temporalIdPlus1, ByteBuffer.wrap(payload));
+        return new NalUnit("H265", nalType, null, layerId, temporalIdPlus1, ByteBuffer.wrap(payload.clone()));
     }
 
     /**
@@ -66,6 +66,6 @@ public record NalUnit(
      * @return the H.266 NAL unit
      */
     public static NalUnit h266(int nalType, int layerId, int temporalIdPlus1, byte[] payload) {
-        return new NalUnit("H266", nalType, null, layerId, temporalIdPlus1, ByteBuffer.wrap(payload));
+        return new NalUnit("H266", nalType, null, layerId, temporalIdPlus1, ByteBuffer.wrap(payload.clone()));
     }
 }

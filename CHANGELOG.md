@@ -47,6 +47,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-jni
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
+- Values documented as immutable no longer hand out mutable state: `MuxerConfig`'s array accessors and the `NalUnit` factories copy, and the KLV records snapshot the lists they are given.
 
 ### Fixed — tst-py
 
