@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
-    AXIS_DETAILS_THRESHOLD, InventorySummary, MergedCell, RawCell, RawVerdict, Results,
+    AXIS_DETAILS_THRESHOLD, ExcusedBy, InventorySummary, MergedCell, RawCell, RawVerdict, Results,
     StaleExpectation, Summary, Verdict,
 };
 
@@ -370,6 +370,7 @@ pub fn build_results(
 
     for raw in raw_cells {
         let mut unexplained = Vec::new();
+        let mut explained_by = Vec::new();
         let (verdict, known_flaky, expectation_reason, expectation_ref) = match raw.verdict {
             RawVerdict::SkippedToolMissing => (Verdict::SkippedToolMissing, false, None, None),
             RawVerdict::Pass => {
@@ -415,26 +416,42 @@ pub fn build_results(
                 let mut matched = Vec::new();
                 let mut all_explained = true;
                 for line in lines {
-                    match find_expectation(expectations, &raw.id, &raw.profile, Some(line)) {
+                    let found = find_expectation(expectations, &raw.id, &raw.profile, Some(line));
+                    match found {
                         Some(exp) => matched.push(exp),
-                        None => {
-                            all_explained = false;
-                            // The synthetic empty line is not a failure
-                            // the cell printed, so it is not recorded.
-                            if !raw.failures.is_empty() {
-                                unexplained.push(line.clone());
-                            }
+                        None => all_explained = false,
+                    }
+                    // The synthetic empty line is not a failure the cell
+                    // printed, so neither list records it.
+                    if !raw.failures.is_empty() {
+                        if found.is_none() {
+                            unexplained.push(line.clone());
                         }
+                        explained_by.push(found.map(|e| ExcusedBy {
+                            reason: e.reason.clone(),
+                            reference: e.reference.clone(),
+                            failure_contains: e.failure_contains.clone(),
+                        }));
                     }
                 }
-                match matched.first() {
-                    Some(first) if all_explained => (
+                let known_flaky = matched
+                    .iter()
+                    .all(|e| e.verdict == ExpectVerdict::KnownFlaky);
+                // The cell-level reason summarises the label: a mixed
+                // cell is labelled a gap, so it cites a gap row.
+                let summary = if known_flaky {
+                    matched.first()
+                } else {
+                    matched
+                        .iter()
+                        .find(|e| e.verdict == ExpectVerdict::ExpectedUnsupported)
+                };
+                match summary {
+                    Some(row) if all_explained => (
                         Verdict::ExpectedUnsupported,
-                        matched
-                            .iter()
-                            .all(|e| e.verdict == ExpectVerdict::KnownFlaky),
-                        Some(first.reason.clone()),
-                        first.reference.clone(),
+                        known_flaky,
+                        Some(row.reason.clone()),
+                        row.reference.clone(),
                     ),
                     _ => (Verdict::Fail, false, None, None),
                 }
@@ -451,6 +468,7 @@ pub fn build_results(
             known_flaky,
             failures: raw.failures,
             unexplained_failures: unexplained,
+            explained_by,
             metrics: raw.metrics,
             log: raw.log,
             expectation_reason,
@@ -759,10 +777,13 @@ fn render_verdict(cell: &MergedCell) -> (&'static str, String) {
             } else {
                 "⚠️ EXPECTED-UNSUPPORTED"
             };
-            let mut notes = cell.expectation_reason.clone().unwrap_or_default();
-            if let Some(r) = &cell.expectation_ref {
-                notes.push_str(&format!(" ({r})"));
-            }
+            let notes = match per_line_trail(cell) {
+                Some(trail) => trail,
+                None => with_ref(
+                    cell.expectation_reason.clone().unwrap_or_default(),
+                    cell.expectation_ref.as_deref(),
+                ),
+            };
             (label, notes)
         }
         Verdict::SkippedToolMissing => ("⏭ SKIPPED", cell.failures.join("; ")),
@@ -775,20 +796,57 @@ fn render_verdict(cell: &MergedCell) -> (&'static str, String) {
     (label, escape_markdown_table_cell(&notes))
 }
 
+/// `reason`, followed by ` (ref)` when the row carries one.
+fn with_ref(reason: String, reference: Option<&str>) -> String {
+    match reference {
+        Some(r) => format!("{reason} ({r})"),
+        None => reason,
+    }
+}
+
+/// `line [excused by: reason (ref)]`: an explained line naming its row.
+fn excused_line(line: &str, by: &ExcusedBy) -> String {
+    let row = with_ref(by.reason.clone(), by.reference.as_deref());
+    format!("{line} [excused by: {row}]")
+}
+
+/// An expected cell's notes line by line, when more than one row
+/// explained it: each line names the row that excused it. `None` when
+/// a single row explained every line (its reason alone says it all) or
+/// the trail is absent, as in a `results.json` written before it was
+/// recorded.
+fn per_line_trail(cell: &MergedCell) -> Option<String> {
+    if cell.explained_by.len() != cell.failures.len() {
+        return None;
+    }
+    let rows: Vec<&ExcusedBy> = cell.explained_by.iter().flatten().collect();
+    let first = rows.first()?;
+    if rows.iter().all(|r| r == first) {
+        return None;
+    }
+    let lines: Vec<String> = cell
+        .failures
+        .iter()
+        .zip(&cell.explained_by)
+        .filter_map(|(line, by)| by.as_ref().map(|b| excused_line(line, b)))
+        .collect();
+    Some(lines.join("; "))
+}
+
 /// A `FAIL`'s notes: the lines no expectation explained first, since
-/// they are what fails the run, then the explained ones. A
-/// `results.json` written before per-line matching carries no
-/// `unexplained_failures`, so every line is shown as it was.
+/// they are what fails the run, then each explained line with the row
+/// that excused it. A `results.json` written before per-line matching
+/// carries neither list, so every line is shown as it was.
 fn fail_notes(cell: &MergedCell) -> String {
-    if cell.unexplained_failures.is_empty() {
+    if cell.unexplained_failures.is_empty() || cell.explained_by.len() != cell.failures.len() {
         return cell.failures.join("; ");
     }
     let mut notes = cell.unexplained_failures.join("; ");
-    let explained: Vec<&str> = cell
+    let explained: Vec<String> = cell
         .failures
         .iter()
-        .filter(|f| !cell.unexplained_failures.contains(f))
-        .map(String::as_str)
+        .zip(&cell.explained_by)
+        .filter_map(|(line, by)| by.as_ref().map(|b| excused_line(line, b)))
         .collect();
     if !explained.is_empty() {
         notes.push_str("; also expected: ");
@@ -1530,8 +1588,81 @@ mod tests {
         let r = build_results(vec![cell], &exp, serde_json::json!({}));
         assert_eq!(
             render_verdict(&r.cells[0]).1,
-            "new regression; also expected: known gap"
+            "new regression; also expected: known gap [excused by: documented gap]"
         );
+    }
+
+    // Each excused line records the row that excused it, and an expected
+    // cell explained by more than one row names each row per line.
+    #[test]
+    fn each_excused_line_names_the_row_that_excused_it() {
+        let mut second = expect_row("decode/mpv/x", "baseline", Some("no stream"));
+        second.reason = "second mechanism".to_string();
+        second.reference = Some("REF-2".to_string());
+        let exp = vec![
+            expect_row("decode/mpv/x", "baseline", Some("no decoder")),
+            second,
+        ];
+        let cell = raw_fail(
+            "decode/mpv/x",
+            "baseline",
+            &["no decoder for vvc", "no stream selected"],
+        );
+        let r = build_results(vec![cell], &exp, serde_json::json!({}));
+        let by: Vec<_> = r.cells[0]
+            .explained_by
+            .iter()
+            .map(|b| {
+                b.as_ref()
+                    .map(|b| (b.reason.as_str(), b.reference.as_deref()))
+            })
+            .collect();
+        assert_eq!(
+            by,
+            [
+                Some(("documented gap", None)),
+                Some(("second mechanism", Some("REF-2")))
+            ]
+        );
+        assert_eq!(
+            render_verdict(&r.cells[0]).1,
+            "no decoder for vvc [excused by: documented gap]; \
+             no stream selected [excused by: second mechanism (REF-2)]"
+        );
+    }
+
+    // A FAIL's trail keeps `None` for the line no row explained.
+    #[test]
+    fn an_unexplained_line_has_no_row_in_the_trail() {
+        let exp = vec![expect_row("rist/x", "baseline", Some("known"))];
+        let r = build_results(
+            vec![raw_fail(
+                "rist/x",
+                "baseline",
+                &["known gap", "new regression"],
+            )],
+            &exp,
+            serde_json::json!({}),
+        );
+        assert!(r.cells[0].explained_by[0].is_some());
+        assert!(r.cells[0].explained_by[1].is_none());
+    }
+
+    // A results.json written before the trail existed still loads, and
+    // its cells render as they always did.
+    #[test]
+    fn a_results_file_without_the_trail_still_loads_and_renders() {
+        let r = build_results(
+            vec![raw_fail("rist/x", "baseline", &["a", "b"])],
+            &[],
+            serde_json::json!({}),
+        );
+        let mut v = serde_json::to_value(&r.cells[0]).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("explained_by");
+        obj.remove("unexplained_failures");
+        let old: MergedCell = serde_json::from_value(v).unwrap();
+        assert_eq!(render_verdict(&old).1, "a; b");
     }
 
     // A FAIL that printed nothing is never excused by a row naming a
@@ -1549,7 +1680,8 @@ mod tests {
     }
 
     // The cell is known-flaky only when every line was explained by a
-    // known_flaky row; one expected_unsupported line makes it a gap.
+    // known_flaky row; one expected_unsupported line makes it a gap, and
+    // the cell then cites the gap row, not the flaky one.
     #[test]
     fn a_cell_is_known_flaky_only_when_every_matched_row_is() {
         let exp = vec![
@@ -1562,7 +1694,7 @@ mod tests {
         assert!(!r.cells[0].known_flaky);
         assert_eq!(
             r.cells[0].expectation_reason.as_deref(),
-            Some("intermittent")
+            Some("documented gap")
         );
     }
 
@@ -1766,6 +1898,7 @@ mod tests {
                     known_flaky: false,
                     failures: Vec::new(),
                     unexplained_failures: Vec::new(),
+                    explained_by: Vec::new(),
                     metrics: None,
                     log: "decode-ffmpeg.log".to_string(),
                     expectation_reason: None,
@@ -1781,6 +1914,7 @@ mod tests {
                     known_flaky: false,
                     failures: Vec::new(),
                     unexplained_failures: Vec::new(),
+                    explained_by: Vec::new(),
                     metrics: None,
                     log: "decode-mpv.log".to_string(),
                     expectation_reason: Some("mpv lacks async KLV support".to_string()),
@@ -1796,6 +1930,7 @@ mod tests {
                     known_flaky: false,
                     failures: vec!["timeout waiting for connect".to_string()],
                     unexplained_failures: Vec::new(),
+                    explained_by: Vec::new(),
                     metrics: None,
                     log: "srt-us-to-ffmpeg.log".to_string(),
                     expectation_reason: None,
@@ -1886,6 +2021,7 @@ mod tests {
                 known_flaky: false,
                 failures: Vec::new(),
                 unexplained_failures: Vec::new(),
+                explained_by: Vec::new(),
                 metrics: None,
                 log: format!("tool{i}.log"),
                 expectation_reason: None,
@@ -1928,6 +2064,7 @@ mod tests {
                 known_flaky: false,
                 failures: Vec::new(),
                 unexplained_failures: Vec::new(),
+                explained_by: Vec::new(),
                 metrics: None,
                 log: format!("tool{i}.log"),
                 expectation_reason: None,
