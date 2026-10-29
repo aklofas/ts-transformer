@@ -214,18 +214,29 @@ fn build_output_list<'local>(
         )
         .map_err(|_| ())?;
     for o in outs {
-        // `Ok(None)` = skip this output (a forward-compat unmapped event;
-        // unreachable today). Mirrors `mpegts::nNextEvent`'s skip behavior so a
-        // future skip-worthy variant is dropped from the batch, not failed.
-        if let Some(obj) = convert_output(env, o)? {
-            env.call_method(
-                &list,
-                jni_str!("add"),
-                jni_sig!("(Ljava/lang/Object;)Z"),
-                &[JValue::Object(&obj)],
-            )
-            .map_err(|_| ())?;
-        }
+        // A batch can hold thousands of outputs, each minting several local
+        // refs; a per-item frame reclaims them so the table stays bounded. The
+        // only value leaving the frame is `()`: the element is added to `list`
+        // (an outer-frame ref) inside it.
+        env.with_local_frame(8, |env| -> jni::errors::Result<()> {
+            // `Ok(None)` = skip this output (a forward-compat unmapped event;
+            // unreachable today). Mirrors `mpegts::nNextEvent`'s skip behavior so a
+            // future skip-worthy variant is dropped from the batch, not failed.
+            // `Err(())` leaves its exception pending; the frame error only
+            // carries the failure out.
+            if let Some(obj) = convert_output(env, o)
+                .map_err(|()| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?
+            {
+                env.call_method(
+                    &list,
+                    jni_str!("add"),
+                    jni_sig!("(Ljava/lang/Object;)Z"),
+                    &[JValue::Object(&obj)],
+                )?;
+            }
+            Ok(())
+        })
+        .map_err(|_| ())?;
     }
     Ok(list)
 }

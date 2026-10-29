@@ -267,6 +267,19 @@ class H264ReceiverTest {
         }
     }
 
+    /** Thousands of initial parameter sets are read without exhausting local refs. */
+    @Test
+    void listenAcceptsManyInitialParameterSets() throws Exception {
+        List<byte[]> sets = new ArrayList<>();
+        for (int i = 0; i < 4096; i++) sets.add(new byte[] {0x67, 0x42, 0x00, 0x1E});
+        H264DepayConfig cfg = H264DepayConfig.builder()
+            .initialParameterSets(sets)
+            .build();
+        try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96", cfg)) {
+            assertNotNull(rx.localAddr());
+        }
+    }
+
     // ── Test 5: DepayStats and RtpStats constructible ─────────────────────────
 
     /**
