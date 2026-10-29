@@ -645,6 +645,7 @@ fn healthy_proxy_stats(forwarded: u64) -> ProxyStats {
             duped: 0,
             outage_dropped: 0,
         }],
+        final_snapshot: true,
     }
 }
 

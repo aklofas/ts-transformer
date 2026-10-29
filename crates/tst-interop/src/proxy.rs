@@ -97,6 +97,9 @@
 //! `STATS_INTERVAL` and once more, unconditionally, right before
 //! [`run`] returns — atomically (write to a sibling `.tmp` path, then
 //! `rename`) so a concurrent reader never observes a half-written file.
+//! Only that last write carries [`ProxyStats::final_snapshot`]. A failed
+//! periodic write is logged and the relay goes on; a failed final write
+//! makes [`run`] return `Err`, because the run's evidence is then lost.
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
@@ -305,6 +308,13 @@ pub struct ProxyStats {
     /// all counted zero, which still writes one entry per phase).
     #[serde(default)]
     pub phases: Vec<PhaseCounters>,
+    /// `true` only in the file [`run`] writes as it returns; every
+    /// periodic write carries `false`. A periodic snapshot undercounts
+    /// the run's tail, so a reader that judges totals needs to know
+    /// which one it holds. `#[serde(default)]`: a file written before
+    /// this field existed reads as not final.
+    #[serde(default)]
+    pub final_snapshot: bool,
 }
 
 /// One queued (decided-forward, not-yet-due) relayed packet.
@@ -527,6 +537,7 @@ pub fn run(
                 ..PhaseCounters::default()
             })
             .collect(),
+        final_snapshot: false,
     };
 
     let mut last_stats_write = Instant::now();
@@ -698,8 +709,8 @@ pub fn run(
             // relay itself — that would silently stop forwarding
             // real traffic over a problem with an evidence
             // side-channel. Log and keep relaying; the next
-            // interval (or the unconditional write at exit) gets
-            // another chance.
+            // interval gets another chance, and the write at exit is
+            // the one whose failure fails the run.
             if let Err(e) = write_stats_atomic(path, &stats) {
                 eprintln!("proxy: periodic stats write failed (continuing to relay): {e}");
             }
@@ -721,17 +732,13 @@ pub fn run(
         &mut max_sent_order,
     );
 
+    // The final write is the run's evidence: a reader judges the
+    // run's totals from it, and no periodic snapshot stands in for it.
+    // An evidence producer whose evidence is lost has failed, so a
+    // relay that forwarded every packet still returns `Err` here.
+    stats.final_snapshot = true;
     if let Some(path) = &stats_json {
-        // Same reasoning as the periodic write above: a run that
-        // otherwise completed cleanly must not be reported as failed
-        // just because its LAST stats write hit a transient FS problem
-        // — that would mask a successful relay (and, for the CLI path,
-        // exit non-zero) over what's ultimately a side-channel write.
-        // The in-process API (this function's return value) still
-        // carries the real, final `ProxyStats` regardless.
-        if let Err(e) = write_stats_atomic(path, &stats) {
-            eprintln!("proxy: final stats write failed (relay itself completed normally): {e}");
-        }
+        write_stats_atomic(path, &stats).map_err(|e| format!("final stats write failed: {e}"))?;
     }
 
     Ok(stats)

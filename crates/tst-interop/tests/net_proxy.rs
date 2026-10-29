@@ -1,7 +1,7 @@
 //! Integration tests for `proxy::run`: transparent relay (byte
 //! transparency at loss=0), scheduled outage windows, phase-scheduled
-//! impairment (the echoed phase table and per-phase counters), resilience
-//! to an unwritable stats path, and an end-to-end SRT-through-proxy cell
+//! impairment (the echoed phase table and per-phase counters), a lost
+//! final stats write failing the run, and an end-to-end SRT-through-proxy cell
 //! (SRT's own retransmission recovering from a lossy/jittered link).
 //!
 //! # nextest group placement
@@ -30,7 +30,8 @@
 //! [`outage_windows_produce_periodic_gaps`],
 //! [`scheduled_proxy_echoes_its_phase_table_and_per_phase_counters`],
 //! [`fixed_mode_proxy_records_one_phase_and_no_schedule`],
-//! [`unwritable_stats_path_does_not_fail_the_relay`], and the two
+//! [`a_failed_final_stats_write_is_an_error`],
+//! [`the_stats_file_written_at_exit_is_marked_final`], and the two
 //! subprocess argument-validation cells) is left unmatched
 //! (default group, full parallelism): they use ephemeral OS-assigned
 //! ports (no cross-test port contention) and are written with generous
@@ -956,71 +957,82 @@ fn fixed_mode_proxy_records_one_phase_and_no_schedule() {
     let _ = std::fs::remove_file(&stats_path);
 }
 
-/// A `stats_json` whose containing directory doesn't exist must not
-/// turn an otherwise-successful relay into a failure — see `proxy::run`'s
-/// module doc's "Stats" section. This exercises `run`'s FINAL (at-exit)
-/// stats write, the one guaranteed to fire even for a short run (the
-/// periodic write only fires past `STATS_INTERVAL`, well beyond what
-/// this test's short `run_seconds` needs to cover). Real traffic must
-/// still flow, and `proxy::run` must still return `Ok` carrying the
-/// correct counters, despite the doomed write.
+/// The final stats write is the run's evidence: when it fails, `run`
+/// returns `Err` even though the relay itself forwarded every packet.
+/// The stats directory exists when the proxy starts and is removed while
+/// traffic flows, so the write at exit hits a missing directory (no
+/// reliance on filesystem permissions, which vary across CI platforms).
+/// Traffic keeps flowing while the evidence path is broken: only the
+/// final write's failure fails the run.
 #[test]
-fn unwritable_stats_path_does_not_fail_the_relay() {
+fn a_failed_final_stats_write_is_an_error() {
     let dest_sock = UdpSocket::bind("127.0.0.1:0").expect("bind destination socket");
     dest_sock
         .set_read_timeout(Some(Duration::from_millis(500)))
         .expect("set_read_timeout");
     let dest_addr = dest_sock.local_addr().expect("destination local_addr");
 
-    // A path whose PARENT directory doesn't exist: `write_stats_atomic`'s
-    // `fs::write` (into a sibling `.tmp` path, same containing directory)
-    // fails with `NotFound` every time, deterministically — no reliance
-    // on real filesystem permissions, which would vary across CI
-    // platforms/users.
-    let bogus_dir = std::env::temp_dir().join(format!(
-        "tst-interop-proxy-nonexistent-dir-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX_EPOCH")
-            .as_nanos(),
-    ));
-    let stats_path = bogus_dir.join("stats.json");
-    assert!(
-        !bogus_dir.exists(),
-        "the whole point of this test is that this directory does NOT exist"
-    );
+    let dir = unique_stats_path("final-write").with_extension("d");
+    let stats_path = dir.join("sub/stats.json");
+    std::fs::create_dir_all(stats_path.parent().unwrap()).expect("create stats dir");
 
-    let (proxy_addr, proxy_handle, _proxy_stop) = spawn_proxy(
+    let (proxy_addr, proxy_handle, proxy_stop) = spawn_proxy(
         "127.0.0.1:0".parse().unwrap(),
         dest_addr,
         ImpairConfig::default(),
         None,
         Some(stats_path.clone()),
-        2,
+        30,
     );
 
     let sender = UdpSocket::bind("127.0.0.1:0").expect("bind sender socket");
     sender
         .send_to(b"hello", proxy_addr)
         .expect("send datagram to proxy");
-
-    // Real traffic must still be relayed despite the doomed stats path.
     let mut buf = [0u8; 16];
     let n = dest_sock
         .recv(&mut buf)
-        .expect("datagram must still be relayed despite an unwritable stats path");
+        .expect("the relay forwards while its stats path is intact");
     assert_eq!(&buf[..n], b"hello");
 
-    let stats = join_with_timeout(proxy_handle, Duration::from_secs(10))
-        .expect("proxy::run must still return Ok even though its stats write failed");
-    assert_eq!(stats.forwarded, 1);
-    assert_eq!(stats.dropped, 0);
+    std::fs::remove_dir_all(dir.join("sub")).expect("remove the stats dir mid-run");
+    sender
+        .send_to(b"again", proxy_addr)
+        .expect("send datagram to proxy");
+    let n = dest_sock
+        .recv(&mut buf)
+        .expect("the relay keeps forwarding with its stats path gone");
+    assert_eq!(&buf[..n], b"again");
 
-    assert!(
-        !stats_path.exists(),
-        "sanity check: the stats file was genuinely never written (parent directory never existed)"
+    proxy_stop.store(true, Ordering::SeqCst);
+    let err = join_with_timeout(proxy_handle, Duration::from_secs(10))
+        .expect_err("a lost final stats write must fail the run");
+    assert!(err.contains("final stats write failed"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The file a completed run leaves behind is marked as the final
+/// snapshot; `report soak` judges a leg only from such a file.
+#[test]
+fn the_stats_file_written_at_exit_is_marked_final() {
+    let dest_sock = UdpSocket::bind("127.0.0.1:0").expect("bind destination socket");
+    let dest_addr = dest_sock.local_addr().expect("destination local_addr");
+    let stats_path = unique_stats_path("final-flag");
+    let (_proxy_addr, proxy_handle, proxy_stop) = spawn_proxy(
+        "127.0.0.1:0".parse().unwrap(),
+        dest_addr,
+        ImpairConfig::default(),
+        None,
+        Some(stats_path.clone()),
+        30,
     );
+    proxy_stop.store(true, Ordering::SeqCst);
+    let stats = join_with_timeout(proxy_handle, Duration::from_secs(10)).expect("proxy run");
+    assert!(stats.final_snapshot);
+    let on_disk: proxy::ProxyStats =
+        serde_json::from_str(&std::fs::read_to_string(&stats_path).unwrap()).unwrap();
+    assert!(on_disk.final_snapshot);
+    let _ = std::fs::remove_file(&stats_path);
 }
 
 /// SRT sender -> impaired proxy (2% loss, 10ms jitter, fixed seed) ->
