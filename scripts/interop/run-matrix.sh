@@ -1677,15 +1677,27 @@ if [[ -n "$ALLOWED_SKIPS_ARG" ]]; then
   ALLOWED_SKIPS_JSON=$(sort -u "$allowed_skip_ids_file" | jq -R . | jq -s .)
 fi
 
+# A subset pattern that matches no declared cell is a typo or a vanished
+# cell family, never an empty selection. Under a --cells narrowing a
+# pattern may legitimately match nothing, so the check needs the default.
+if [[ -n "$SUBSET_NAME" && "$CELLS_GLOB" == "*" ]]; then
+  dead=$(subset_dead_patterns "$SUBSET_CELLS" "$(cut -f1 "$INVENTORY_TSV" | sort -u)")
+  if [[ -n "$dead" ]]; then
+    echo "run-matrix: FATAL: [${SUBSET_NAME}_subset] pattern(s) match no declared cell: $(tr '\n' ' ' <<<"$dead")" >&2
+    exit 2
+  fi
+fi
+
 SHAPE=subset
 [[ "$CELLS_GLOB" == "*" && "$PROFILES_ARG" == "$ALL_PROFILE_NAMES" && -z "$SUBSET_NAME" ]] && SHAPE=full
 jq -n --arg shape "$SHAPE" --arg seconds "$SECONDS_ARG" --arg cells_glob "$CELLS_GLOB" \
   --arg profiles "$PROFILES_ARG" --rawfile tsv "$INVENTORY_TSV" \
   --argjson tools "$(tool_versions_json)" --argjson allowed_skips "$ALLOWED_SKIPS_JSON" \
+  --arg arch "$(uname -m)" \
   '{shape: $shape, seconds_per_cell: ($seconds | tonumber), cells_glob: $cells_glob,
     profiles: ($profiles | split(",")),
     cells: ($tsv | split("\n") | map(select(length > 0)) | map(split("\t") | {id: .[0], profile: .[1]})),
-    allowed_skips: $allowed_skips, tools: $tools}' >"$OUTDIR/inventory.json"
+    allowed_skips: $allowed_skips, tools: $tools, arch: $arch}' >"$OUTDIR/inventory.json"
 declared=$(jq '.cells | length' "$OUTDIR/inventory.json")
 echo "run-matrix: declared $declared cell(s), shape=$SHAPE" >&2
 

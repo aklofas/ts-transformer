@@ -170,6 +170,25 @@ cell_selected() {
   return 1
 }
 
+# subset_dead_patterns <patterns> <declared ids>
+#
+# Each subset pattern (one per line) that matches none of the declared
+# cell ids (one per line), one per line: a misspelt or vanished family
+# would otherwise silently select nothing.
+subset_dead_patterns() {
+  local p id hit
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    hit=0
+    while IFS= read -r id; do
+      case "$id" in
+        $p) hit=1; break ;;
+      esac
+    done <<<"$2"
+    [[ $hit -eq 1 ]] || echo "$p"
+  done <<<"$1"
+}
+
 # subset_cells <expectations.toml> <name>
 #
 # The cell patterns of the file's `[<name>_subset]` table, one per line:
@@ -299,8 +318,8 @@ expected_stream_count() {
 # and a discontinuity at each continuity-counter break: all three are 0
 # on a conforming, lossless, locally generated stream, so a muxer PCR or
 # PTS step-back fails the cell from an analyzer that is not ours. The
-# one exception is a clock that wraps at 2^33 inside the capture (its
-# last value below its first, as the pts-rollover profile does): TSDuck
+# one exception is a clock that wraps at its modulus inside the capture
+# (as the pts-rollover profile does; see _tsanalyze_wrapped): TSDuck
 # counts the wrap itself as one backward leap, so one leap on that clock
 # is excused, and a second still fails. The first offending PID is
 # echoed with its raw counters.
@@ -349,13 +368,27 @@ _tsanalyze_field() {
   grep -oE "(^|:)$1=[0-9]+" <<<"$2" | head -1 | cut -d= -f2 || true
 }
 
-# _tsanalyze_wrapped <pcr|pts> <pid: line>: 1 when the clock's last value
-# is below its first (it wrapped at 2^33 within the capture), else 0.
+# _tsanalyze_wrapped <pcr|pts> <pid: line>: 1 when the clock wrapped at
+# its modulus inside the capture, else 0. A real wrap starts within one
+# hour of clock below the modulus (2^33 at 90 kHz for PTS, 2^33 x 300 at
+# 27 MHz for PCR) and ends within one hour above zero. An hour is longer
+# than any matrix capture yet far closer to the modulus than a timeline
+# reset lands, so a backward reset that ends below its start (from 33 s
+# to 1 s, say) is not taken for a wrap.
 _tsanalyze_wrapped() {
-  local first last
+  local first last modulus bound
   first=$(_tsanalyze_field "first$1" "$2")
   last=$(_tsanalyze_field "last$1" "$2")
-  if [[ -n "$first" && -n "$last" ]] && (( last < first )); then echo 1; else echo 0; fi
+  if [[ "$1" == pcr ]]; then
+    modulus=2576980377600 bound=97200000000
+  else
+    modulus=8589934592 bound=324000000
+  fi
+  if [[ -n "$first" && -n "$last" ]] && (( first >= modulus - bound && last <= bound )); then
+    echo 1
+  else
+    echo 0
+  fi
 }
 
 # publish_generation <k> <log> -- <cmd...>
