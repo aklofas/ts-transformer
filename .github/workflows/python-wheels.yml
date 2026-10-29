@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         # No submodules: the rail only reads version strings from tracked files.
         with:
           ref: ${{ inputs.ref }}
@@ -98,7 +98,7 @@ jobs:
             manylinux: 2_28
     continue-on-error: ${{ matrix.continue-on-error }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -107,7 +107,7 @@ jobs:
         with:
           toolchain: env-only
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -116,7 +116,7 @@ jobs:
       # to build from source); the container base doesn't include it.
       # `manylinux: 2_28` matches the manylinux baseline the rest of the
       # project ratchets on.
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
@@ -150,8 +150,17 @@ jobs:
             # package installs the binary as `ninja` — RHEL's `ninja-build`
             # package names it `ninja-build`, which rist-sys's `which("ninja")`
             # check would miss (the x86_64 image happens to also ship `ninja`).
-            python3 -m pip install --upgrade meson ninja \
-              || pip3 install --upgrade meson ninja
+            # Both come hash-pinned from the shared build-tools file; only
+            # their two entries are taken, so its pkgconf never changes which
+            # pkg-config (if any) these builds see. The script runs in
+            # bindings/python. The pypa image's python3 has no pip, and the
+            # first pip3 on this PATH is CPython 3.9, older than the pinned
+            # meson accepts, so that image uses its CPython 3.12.
+            awk '/^[a-z]/ { keep = ($1 ~ /^(meson|ninja)==/) } keep' \
+              ../../scripts/ci/requirements-build-tools.txt > /tmp/build-tools.txt
+            py=python3
+            "$py" -m pip --version >/dev/null 2>&1 || py=/opt/python/cp312-cp312/bin/python3
+            "$py" -m pip install --require-hashes -r /tmp/build-tools.txt
             # aarch64 is cross-compiled inside the x86_64 manylinux container.
             # The cmake C build uses the cross gcc fine, but srt-sys/rist-sys's
             # bindgen runs clang with host include paths and can't find the
@@ -175,12 +184,12 @@ jobs:
       # other step here runs 3.12, so without this the floor and the newest
       # classifier are never imported. x86_64 only: it is the required leg,
       # and the aarch64 wheel cannot run on this x86_64 runner.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         if: matrix.target == 'x86_64'
         id: py311
         with:
           python-version: "3.11"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         if: matrix.target == 'x86_64'
         id: py314
         with:
@@ -201,7 +210,7 @@ jobs:
             "$venv/bin/python" -c "import sys, tstrans, tstrans.srt; print(sys.version, tstrans.__version__)"
           done
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheel-linux-${{ matrix.target }}
           path: bindings/python/dist/*.whl
@@ -232,12 +241,12 @@ jobs:
             continue-on-error: false
     continue-on-error: ${{ matrix.continue-on-error }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -262,7 +271,7 @@ jobs:
             brew list --formula "$pkg" >/dev/null 2>&1 || brew install "$pkg"
           done
 
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           target: ${{ matrix.target }}
           working-directory: bindings/python
@@ -272,7 +281,7 @@ jobs:
           RIST_FORCE_VENDORED: "1"
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheel-macos-${{ matrix.target }}
           path: bindings/python/dist/*.whl
@@ -288,12 +297,12 @@ jobs:
     # this leg; it does not gate the publish.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -310,12 +319,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade meson pkgconf ninja
+          python -m pip install --require-hashes -r scripts/ci/requirements-build-tools.txt
           for tool in ninja meson pkg-config; do
             command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install"; exit 1; }
           done
 
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           working-directory: bindings/python
           args: --release --out dist --features rtp,srt,udp,tcp,hls,rist,tls,webrtc
@@ -338,7 +347,7 @@ jobs:
           python -m pip install --no-index --find-links bindings/python/dist tstrans
           python -c "import tstrans, tstrans.rist, tstrans.srt, tstrans.webrtc; print(tstrans.__version__)"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheel-windows-x86_64
           path: bindings/python/dist/*.whl
@@ -351,7 +360,7 @@ jobs:
     timeout-minutes: 15
     needs: version-preflight
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -360,17 +369,17 @@ jobs:
         with:
           toolchain: env-only
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: sdist
           working-directory: bindings/python
           args: --out dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: sdist
           path: bindings/python/dist/*.tar.gz

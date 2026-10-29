@@ -45,7 +45,7 @@ jobs:
           # winding down (a queued best-effort job blocked assemble), and
           # ci.yml doesn't build it either. See docs/deferred-features.md.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive  # tst-srt builds vendor/srt + vendor/mbedtls
@@ -54,13 +54,13 @@ jobs:
         uses: ./.github/actions/rust-setup
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
 
       # librist (tst-rist, behind org.tstrans.shells' rist:// dispatch) builds with
       # meson + ninja and needs pkg-config; cmake is pre-installed.
@@ -85,7 +85,7 @@ jobs:
           # pip drops meson, ninja and pkg-config into the Python Scripts dir;
           # a runner's already-running job does not re-read a registry PATH, so
           # export that dir for the later steps.
-          python -m pip install --upgrade meson pkgconf ninja
+          python -m pip install --require-hashes -r scripts/ci/requirements-build-tools.txt
           scripts_dir=$(python -c 'import sysconfig; print(sysconfig.get_path("scripts"))')
           echo "$scripts_dir" >> "$GITHUB_PATH"
           export PATH="$scripts_dir:$PATH"
@@ -163,7 +163,7 @@ jobs:
           fi
           echo "OK: no org.tstrans.internal symbol in shipped native lib"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: native-${{ matrix.triple }}
           path: upload/
@@ -176,24 +176,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         # no submodules: assembly does not build native code
         with:
           ref: ${{ inputs.ref }}
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
 
       # merge-multiple flattens all native-* artifacts into one tree:
       # staging/native/<triple>/libtstjni.<ext> for every uploaded platform.
       - name: Download native libs
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: staging
           pattern: native-*
@@ -252,7 +252,7 @@ jobs:
           javac -cp "$JAR" -d smoke smoke/Smoke.java
           java -cp "$JAR:smoke" Smoke
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: tstrans-jvm-fat-jar
           path: bindings/jvm/build/libs/tstrans-jvm*.jar

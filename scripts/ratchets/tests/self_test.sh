@@ -862,8 +862,8 @@ expect "dependency-lattice: the committed table passes"              0 bash scri
 expect "abi-compat: the planted-library matrix" 0 bash scripts/check/c/tests/abi-compat-selftest.sh
 
 # publish-guards: a callable workflow's publish-shaped job keeps `!inputs.dry_run` as a
-# top-level conjunct of its `if:`; any job with an environment is tag-only; a job holding
-# an environment or `id-token: write` pins every remote action to a commit sha.
+# top-level conjunct of its `if:`; any job with an environment is tag-only; every job
+# pins every remote action to a commit sha.
 pg="$tmp/publish-guards"; mkdir -p "$pg"
 NEG='its `if:` does not negate inputs.dry_run'
 TAGONLY="has an environment but its \`if:\` does not require github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
@@ -911,7 +911,7 @@ sed "s/ && startsWith(github.ref, 'refs\/tags\/v')//" "$pg/env-good.yml" > "$pg/
 grep -v '^    if:' "$pg/env-good.yml" > "$pg/env-noif.yml"
 sed "s/'refs\/tags\/v')\$/'refs\/tags\/v') || true/" "$pg/env-good.yml" > "$pg/env-disj.yml"
 
-# Credential-bearing jobs pin their actions.
+# Every job pins its actions, credential-bearing or not.
 SHA=0123456789abcdef0123456789abcdef01234567
 sed "s/      - run: echo hi/      - uses: actions\/checkout@v5\n      - run: echo hi/" "$pg/env-good.yml" > "$pg/pin-env.yml"
 sed "s/@v5/@$SHA  # v5/" "$pg/pin-env.yml" > "$pg/pin-good.yml"
@@ -1045,20 +1045,21 @@ for mode in python awk; do
     expect_out "publish-guards ($mode): $f" "$pg/$f.yml: job 'deploy' $TAGONLY"
   done
   expect "publish-guards ($mode): an environment job with a tag-floating action fails" 1 "${pre[@]}" bash $PGS "$pg/pin-env.yml"
-  expect_out "publish-guards ($mode): pin-env" "$pg/pin-env.yml: job 'deploy' holds credentials but uses actions/checkout@v5, which is not pinned to a commit sha"
+  expect_out "publish-guards ($mode): pin-env" "$pg/pin-env.yml: job 'deploy' uses actions/checkout@v5, which is not pinned to a commit sha"
   expect "publish-guards ($mode): a sha-pinned action passes" 0 "${pre[@]}" bash $PGS "$pg/pin-good.yml"
   expect "publish-guards ($mode): a 41-hex ref is not a sha" 1 "${pre[@]}" bash $PGS "$pg/pin-long.yml"
   for f in pin-idtoken pin-writeall pin-top pin-contents pin-top-contents; do
     expect "publish-guards ($mode): $f fails" 1 "${pre[@]}" bash $PGS "$pg/$f.yml"
-    expect_out "publish-guards ($mode): $f" "$pg/$f.yml: job 'attest' holds credentials but uses actions/attest-build-provenance@v3, which is not pinned to a commit sha"
+    expect_out "publish-guards ($mode): $f" "$pg/$f.yml: job 'attest' uses actions/attest-build-provenance@v3, which is not pinned to a commit sha"
   done
-  expect "publish-guards ($mode): a job without credentials may float" 0 "${pre[@]}" bash $PGS "$pg/pin-noid.yml"
+  expect "publish-guards ($mode): a job without credentials fails too" 1 "${pre[@]}" bash $PGS "$pg/pin-noid.yml"
+  expect_out "publish-guards ($mode): pin-noid" "$pg/pin-noid.yml: job 'build' uses actions/checkout@v5, which is not pinned to a commit sha"
   expect "publish-guards ($mode): a local action's floating ref fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local.yml"
-  expect_out "publish-guards ($mode): local" "$pg/repo/.github/workflows/local.yml: job 'attest' holds credentials but ./.github/actions/setup uses dtolnay/rust-toolchain@stable, which is not pinned to a commit sha"
+  expect_out "publish-guards ($mode): local" "$pg/repo/.github/workflows/local.yml: job 'attest' uses ./.github/actions/setup, whose step uses dtolnay/rust-toolchain@stable, which is not pinned to a commit sha"
   expect "publish-guards ($mode): an unreadable local action fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-missing.yml"
-  expect_out "publish-guards ($mode): local-missing" "$pg/repo/.github/workflows/local-missing.yml: job 'attest' holds credentials but ./.github/actions/missing/action.yml cannot be read"
+  expect_out "publish-guards ($mode): local-missing" "$pg/repo/.github/workflows/local-missing.yml: job 'attest' uses ./.github/actions/missing, but ./.github/actions/missing/action.yml cannot be read"
   expect "publish-guards ($mode): a local action inside a local action fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-nested.yml"
-  expect_out "publish-guards ($mode): local-nested" "$pg/repo/.github/workflows/local-nested.yml: job 'attest' holds credentials but ./.github/actions/outer uses the local action ./.github/actions/setup, which this rail does not follow"
+  expect_out "publish-guards ($mode): local-nested" "$pg/repo/.github/workflows/local-nested.yml: job 'attest' uses ./.github/actions/outer, whose step uses the local action ./.github/actions/setup, which this rail does not follow"
 done
 plant "$pg/repo/.github/actions/setup/action.yml" '@stable' "@$SHA"
 for mode in python awk; do

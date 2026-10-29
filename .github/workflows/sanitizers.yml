@@ -73,7 +73,7 @@ jobs:
     # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
     if: github.event_name != 'pull_request' || inputs.ref != ''
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -129,7 +129,7 @@ jobs:
       - name: Record job conclusion
         if: always()
         run: echo '{"job":"asan","conclusion":"${{ job.status }}"}' > "$RUNNER_TEMP/sanitizer-asan.json"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: sanitizer-asan
@@ -144,7 +144,7 @@ jobs:
     # the one red was a peer-drop-before-option-read test race, fixed in the
     # same PR that removed the soft-fail).
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -226,7 +226,7 @@ jobs:
       - name: Record job conclusion
         if: always()
         run: echo '{"job":"asan-native","conclusion":"${{ job.status }}"}' > "$RUNNER_TEMP/sanitizer-asan-native.json"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: sanitizer-asan-native
@@ -242,7 +242,7 @@ jobs:
     # rerun; only an infra failure (apt outage, cache error, GitHub
     # incident) is a rerun case.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -307,7 +307,7 @@ jobs:
       - name: Record job conclusion
         if: always()
         run: echo '{"job":"tsan-native","conclusion":"${{ job.status }}"}' > "$RUNNER_TEMP/sanitizer-tsan-native.json"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: sanitizer-tsan-native
@@ -319,7 +319,7 @@ jobs:
     # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
     if: github.event_name != 'pull_request' || inputs.ref != ''
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -365,7 +365,7 @@ jobs:
       - name: Record job conclusion
         if: always()
         run: echo '{"job":"tsan","conclusion":"${{ job.status }}"}' > "$RUNNER_TEMP/sanitizer-tsan.json"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: sanitizer-tsan
