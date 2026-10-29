@@ -168,7 +168,30 @@ fn a_dead_path_is_restarted_for_the_next_pick() {
     let tcp = of("tcp");
     assert_eq!(tcp.len(), 2, "{summary}");
     assert!(tcp.iter().all(|v| v["pass"] == true), "{summary}");
-    assert_eq!(summary["restarts_by_path"]["tcp"], 1, "{summary}");
+    // The restart is named by the pick it preceded: the second.
+    let second = tcp[1]["sha256"].as_str().unwrap();
+    assert_eq!(
+        summary["restarted_before_by_path"]["tcp"],
+        serde_json::json!([second]),
+        "{summary}"
+    );
+    assert_eq!(
+        summary["restarted_before_by_path"]["udp"],
+        serde_json::json!([]),
+        "{summary}"
+    );
+    // The RSS note says the series spans both children.
+    let note = summary["rss_note_by_path"]["tcp"].as_str().unwrap();
+    assert!(
+        note.starts_with("the series mixes 2 receiver processes (1 restart(s)); "),
+        "{note}"
+    );
+    // The stderr log marks where the restarted child's lines begin, by SHA.
+    let stderr = std::fs::read_to_string(run.join("logs/receive-tcp.stderr")).unwrap();
+    let marker = format!("--- receiver restarted for pick {second} ---");
+    assert_eq!(stderr.matches(&marker).count(), 1, "{stderr}");
+    let tmp = std::env::temp_dir().display().to_string();
+    assert!(!stderr.contains(&tmp), "{stderr}");
     let udp = of("udp");
     assert_eq!(udp.len(), 2, "{summary}");
     assert!(udp.iter().all(|v| v["pass"] == true), "{summary}");
@@ -230,7 +253,65 @@ fn a_child_that_dies_on_every_pick_fails_each_pick_once() {
         );
         assert_eq!(failures[1], "receiver stalled", "{summary}");
     }
-    assert_eq!(summary["restarts_by_path"]["tcp"], 1, "{summary}");
+    // One restart, before the second pick.
+    assert_eq!(
+        summary["restarted_before_by_path"]["tcp"],
+        serde_json::json!([verdicts[1]["sha256"]]),
+        "{summary}"
+    );
+}
+
+/// Adds `ticks` to the PCR base of every PCR-bearing packet from the
+/// middle of the capture on: one forward jump on the PCR timeline.
+fn jump_pcrs_from_the_middle(bytes: &mut [u8], ticks: u64) {
+    let half = bytes.len() / 188 / 2;
+    for pkt in bytes.chunks_exact_mut(188).skip(half) {
+        if pkt[3] & 0x20 == 0 || pkt[4] < 7 || pkt[5] & 0x10 == 0 {
+            continue;
+        }
+        let base = (u64::from(pkt[6]) << 25)
+            | (u64::from(pkt[7]) << 17)
+            | (u64::from(pkt[8]) << 9)
+            | (u64::from(pkt[9]) << 1)
+            | u64::from(pkt[10] >> 7);
+        let base = (base + ticks) & ((1 << 33) - 1);
+        pkt[6] = (base >> 25) as u8;
+        pkt[7] = (base >> 17) as u8;
+        pkt[8] = (base >> 9) as u8;
+        pkt[9] = (base >> 1) as u8;
+        pkt[10] = (pkt[10] & 0x7F) | ((base & 1) as u8) << 7;
+    }
+}
+
+/// A capture whose PCR jumps a minute forward is paced across the gap at
+/// once, and the replay says so for that pick, by SHA and without a path.
+#[test]
+fn a_pcr_gap_the_pacer_did_not_pace_is_named_by_sha() {
+    let dir = temp_dir_named("rp-pcr-gap");
+    let mut bytes = gen_profile_bytes("baseline", 2.0);
+    jump_pcrs_from_the_middle(&mut bytes, 60 * 90_000);
+    std::fs::write(dir.join("gap.ts"), &bytes).unwrap();
+    let run = dir.join("run");
+    // The sweep may judge the jump; the replay only needs its digests.
+    run_bounded(
+        bin()
+            .args(["corpus", "sweep"])
+            .arg(&dir)
+            .arg("--out")
+            .arg(&run),
+        LIMIT,
+    );
+    let out = replay_over(&dir, &run, "tcp", &[]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    let sha = sha_of(&bytes).0;
+    assert!(
+        err.contains(&format!("pick {sha}: 1 PCR gap(s) not paced")),
+        "{}",
+        text(&out)
+    );
+    let tmp = std::env::temp_dir().display().to_string();
+    assert!(!text(&out).contains(&tmp), "{}", text(&out));
+    assert!(!text(&out).contains("gap.ts"), "{}", text(&out));
 }
 
 /// Sweeps then replays over tcp a 2 s capture at realistic access-unit

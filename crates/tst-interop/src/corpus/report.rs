@@ -107,7 +107,7 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
         return s;
     };
     s.push_str(
-        "\n| Replay path | Files | Failed | Restarts | RSS max (kB) | RSS slope (kB per hour) |\n",
+        "\n| Replay path | Files | Failed | Restarted before | RSS max (kB) | RSS slope (kB per hour) |\n",
     );
     s.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
     for p in PATHS.iter().filter(|p| r.paths.iter().any(|q| q == *p)) {
@@ -117,7 +117,15 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
             .filter(|v| v.path == *p && !v.pass)
             .count();
         let files = r.verdicts.iter().filter(|v| v.path == *p).count();
-        let restarts = r.restarts_by_path.get(*p).copied().unwrap_or(0);
+        // The SHA of each pick a restart preceded; never a path.
+        let restarts = match r.restarted_before_by_path.get(*p) {
+            Some(shas) if !shas.is_empty() => shas
+                .iter()
+                .map(|s| s.0.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "-".into(),
+        };
         let max = r
             .rss_max_kb_by_path
             .get(*p)
