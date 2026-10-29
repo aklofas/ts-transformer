@@ -176,7 +176,10 @@ jni_native! {
 
         // Build H264DepayConfig from the caller's fields (mirrors Python's kwarg path).
         let mut config = H264DepayConfig::default();
-        config.payload_type = payload_type as u8;
+        config.payload_type = match crate::jutil::checked_u8(env, payload_type as i64, "payloadType") {
+            Ok(v) => v,
+            Err(_) => return 0,
+        };
         config.parameter_set_injection = match parameter_set_injection {
             1 => ParameterSetInjection::BeforeIdr,
             _ => ParameterSetInjection::None,

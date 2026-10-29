@@ -379,8 +379,13 @@ jni_native! {
             return;
         };
         // `metadata_service_id` is `u8` in `Muxer::push_klv` (spec default 0x00).
+        let Ok(service_id) =
+            crate::jutil::checked_u8(env, metadata_service_id as i64, "metadataServiceId")
+        else {
+            return;
+        };
         with_mux_push(env, handle, |mux| {
-            mux.push_klv(&buf, Pts90khz::new(pts), metadata_service_id as u8)
+            mux.push_klv(&buf, Pts90khz::new(pts), service_id)
         });
     }
 }
@@ -726,8 +731,13 @@ jni_native! {
         let Some(buf) = read_mux_bytes(env, &klv) else {
             return;
         };
+        let Ok(service_id) =
+            crate::jutil::checked_u8(env, metadata_service_id as i64, "metadataServiceId")
+        else {
+            return;
+        };
         with_mux_push(env, handle, |mux| {
-            mux.push_klv_to(h, &buf, Pts90khz::new(pts), metadata_service_id as u8)
+            mux.push_klv_to(h, &buf, Pts90khz::new(pts), service_id)
         });
     }
 }
@@ -1078,7 +1088,7 @@ jni_native! {
 }
 
 /// Construct a `MispTimestamp` from the JNI scalar fields (kind ordinal 0/1,
-/// timeStatus as low byte, value as unsigned reinterpret). Returns `None`
+/// timeStatus as a byte, value as unsigned reinterpret). Returns `None`
 /// (with a `MuxException(INVALID_USAGE)` thrown) when `kind` is out of range.
 fn build_misp(
     env: &mut Env,
@@ -1087,7 +1097,7 @@ fn build_misp(
     value: jlong,
 ) -> Option<tst_core::codec::misp_time::MispTimestamp> {
     use tst_core::codec::misp_time::MispTimestamp;
-    let ts = time_status as u8;
+    let ts = crate::jutil::checked_u8(env, time_status as i64, "timeStatus").ok()?;
     let v = value as u64;
     match kind {
         0 => Some(MispTimestamp::micros(v, ts)),

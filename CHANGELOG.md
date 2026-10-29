@@ -40,6 +40,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - C: an out-of-range value for a codec, KLV stream type, framing mode, overflow policy or reconnect mode argument returns `TST_E_INVALID_CONFIG`. It used to be undefined behaviour.
 - C: a host thread-local destructor that calls into the library after the library's own last-error slot is destroyed no longer aborts the process; such a call reads `TST_E_INTERNAL` from `tst_get_last_error` and `""` from `tst_get_last_error_str`, and its error record is dropped.
 
+### Changed — tst-jni
+
+- A byte-sized `int` argument outside 0..=255 (`pushKlv`/`pushKlvTo` `metadataServiceId`, a `MispTimestamp` `timeStatus`, `CoreId.version`, the slice-header `nalUnitType`, `H264DepayConfig.payloadType`) throws `IllegalArgumentException` instead of wrapping modulo 256; a refused push queues nothing.
+
 ### Fixed — tst-jni
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
