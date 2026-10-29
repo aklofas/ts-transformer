@@ -1,6 +1,6 @@
 # crates.io publish via Trusted Publishing (OIDC).
 #
-# Publishes all 11 publishable workspace crates in dependency order,
+# Publishes all 12 publishable workspace crates in dependency order,
 # authenticating via OIDC (rust-lang/crates-io-auth-action) — no
 # maintainer-held API token. The crates.io side trusts THIS workflow
 # (filename crates-io.yml) running in the `crates-io` environment of
@@ -8,22 +8,26 @@
 # that binding — update every crate's Settings → Trusted Publishing on
 # crates.io if either ever changes.
 #
-# Triggers (mirrors python-wheels.yml):
-# - tag push `v*` — preflight, then the real ordered publish.
-# - workflow_dispatch — full dry-run rehearsal (packages + verify-builds
-#   every crate in order, uploads nothing, needs no token).
-# - pull_request touching this file or the release scripts — same
-#   dry-run, so workflow regressions surface pre-merge.
+# Two jobs, one per trigger kind:
+# - `publish` runs on a tag push `v*` only: version check, then the real
+#   ordered publish. It alone enters the `crates-io` environment and holds
+#   `id-token: write`, the identity crates.io trusts.
+# - `rehearse` runs on workflow_dispatch and on a pull_request touching
+#   this file or the release scripts: it packages and verify-builds every
+#   crate in the same order (`cargo publish --dry-run`), uploads nothing,
+#   and has neither the environment nor an OIDC token, so a rehearsal can
+#   never publish. scripts/release/publish-crates-all.sh reads the layer
+#   lists from the publish job's steps below, so both jobs walk the same
+#   lists.
 #
-# Dry-runs resolve internal deps from the TREE, not the index: the
+# Rehearsals resolve internal deps from the TREE, not the index: the
 # "Point registry deps at the tree" step writes a `[patch.crates-io]`
 # table (scripts/release/dry-run-patch-config.sh) so a rehearsal passes
-# between a version sweep and its tag publish too — previously every
-# layer-2+ dry-run failed dependency resolution whenever the in-tree
-# version was ahead of the index, which made this check red on every PR
-# touching the workflow during release prep. The real tag publish never
-# gets the patch table (it must resolve against the registry; layers
-# land in order and cargo >=1.85 waits for index propagation).
+# between a version sweep and its tag publish too; without it every
+# layer-2+ dry run fails dependency resolution whenever the in-tree
+# version is ahead of the index. The publish job never gets the patch
+# table (it must resolve against the registry; layers land in order and
+# cargo >=1.85 waits for index propagation).
 #
 # Token lifetime: OIDC-minted tokens live ~30 min and the full sequence
 # (two vendored-C verify builds included) can exceed that, so each layer
@@ -31,7 +35,7 @@
 #
 # Re-runs are idempotent: the layer script skips crates already live at
 # their current version (crates.io publishes are immutable), so a
-# mid-sequence failure recovers with a plain re-run of this job.
+# mid-sequence failure recovers with a plain re-run of the publish job.
 
 name: crates-io
 
@@ -47,33 +51,19 @@ on:
       - "scripts/release/**"
 
 env:
-  # Vendored native builds for the sys crates' verify step.
+  # Vendored native builds for the sys crates' verify step, in both jobs.
   SRT_FORCE_VENDORED: "1"
   RIST_FORCE_VENDORED: "1"
   CARGO_TERM_COLOR: always
 
 jobs:
-  publish:
-    name: ordered publish (11 crates)
+  rehearse:
+    name: rehearsal (12 crates, dry run)
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Every crate's crates.io Trusted Publishing config names this
-    # environment (the OIDC claim carries it). No protection rules — the
-    # tag is the gate. NOTE: the environment binds ALL runs of this job,
-    # including PR/dispatch dry-run rehearsals; if protection rules
-    # (required reviewers) are ever added, they will gate rehearsals too —
-    # at that point split this into a dry-run job (no environment, no
-    # id-token) and a tag-only publish job, not before (the split costs
-    # duplicated setup steps and buys nothing while the environment is
-    # unprotected).
-    environment:
-      name: crates-io
-      url: https://crates.io/crates/tst-core
     permissions:
       contents: read
-      # Required to mint the OIDC token crates.io exchanges for a
-      # temporary publish token.
-      id-token: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -82,10 +72,8 @@ jobs:
           submodules: recursive
 
       - name: Assert version consistency
-        # Same rail ci/python-wheels/jvm-jar run. On a v* tag push it also
-        # forces source version == tag. Re-asserted at publish time because
-        # it is the specific guard against stranding the ordered publish
-        # mid-sequence (internal dep `version` keys == workspace version).
+        # Same rail ci/python-wheels/jvm-jar run (internal dep `version`
+        # keys == workspace version).
         run: bash scripts/check/repo/release-version-consistency.sh
 
       - name: Install build prerequisites
@@ -98,24 +86,7 @@ jobs:
 
       - uses: ./.github/actions/rust-setup
 
-      - name: Resolve mode
-        id: meta
-        # publish=1 only on real v* tag pushes; every other trigger runs
-        # the identical sequence as a dry-run. (Per-crate versions are
-        # resolved inside the layer script from cargo metadata — some
-        # crates carry build-metadata suffixes, so there is no single
-        # workspace version string here.)
-        run: |
-          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "publish=1" >> "$GITHUB_OUTPUT"
-            echo "mode: PUBLISH (tag ${{ github.ref_name }})"
-          else
-            echo "publish=0" >> "$GITHUB_OUTPUT"
-            echo "mode: dry-run (${{ github.event_name }})"
-          fi
-
-      - name: Point registry deps at the tree (dry-run only)
-        if: steps.meta.outputs.publish == '0'
+      - name: Point registry deps at the tree
         # `cargo publish --dry-run` rewrites path deps to registry
         # requirements and resolves them against the index, which cannot
         # satisfy a bumped `version =` key before the tag publish. A
@@ -124,56 +95,94 @@ jobs:
         # the one case it cannot cover — a stale pin, which the version
         # rail above catches). The checkout-local .cargo/config.toml sits
         # outside every crate root, so cargo's uncommitted-changes check
-        # ignores it. The real publish must never see this table.
+        # ignores it.
         run: |
           mkdir -p .cargo
           bash scripts/release/dry-run-patch-config.sh >> .cargo/config.toml
           cat .cargo/config.toml
 
+      - name: Rehearse every layer
+        env:
+          PUBLISH: "0"
+        run: bash scripts/release/publish-crates-all.sh
+
+  publish:
+    name: ordered publish (12 crates)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Every crate's crates.io Trusted Publishing config names this
+    # environment (the OIDC claim carries it). Only this tag-only job
+    # enters it; the environment's deployment policy admits `v*` tags.
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/tst-core
+    permissions:
+      contents: read
+      # Required to mint the OIDC token crates.io exchanges for a
+      # temporary publish token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          submodules: recursive
+
+      - name: Assert version consistency
+        # On a v* tag push this also forces source version == tag. Re-asserted
+        # at publish time because it is the specific guard against stranding
+        # the ordered publish mid-sequence (internal dep `version` keys ==
+        # workspace version).
+        run: bash scripts/check/repo/release-version-consistency.sh
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+
+      - uses: ./.github/actions/rust-setup
+
+      # Each layer step's argument list is the layer: the rehearsal reads
+      # these lines, and the roster rail checks them against the roster.
       # ---- Layer 1: the base of the dependency chain ------------------
       - name: Mint crates.io token (layer 1)
-        if: steps.meta.outputs.publish == '1'
         id: auth1
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
 
       - name: Layer 1 — tstrans-mbedtls-src
         env:
-          PUBLISH: ${{ steps.meta.outputs.publish }}
+          PUBLISH: "1"
           CARGO_REGISTRY_TOKEN: ${{ steps.auth1.outputs.token }}
         run: bash scripts/release/publish-crates-layer.sh tstrans-mbedtls-src
 
       # ---- Layer 2: sys crates (vendored-C verify builds, the slow ones)
       - name: Mint crates.io token (layer 2)
-        if: steps.meta.outputs.publish == '1'
         id: auth2
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
 
       - name: Layer 2 — tstrans-srt-sys, tstrans-rist-sys
         env:
-          PUBLISH: ${{ steps.meta.outputs.publish }}
+          PUBLISH: "1"
           CARGO_REGISTRY_TOKEN: ${{ steps.auth2.outputs.token }}
         run: bash scripts/release/publish-crates-layer.sh tstrans-srt-sys tstrans-rist-sys
 
       # ---- Layer 3: core + pipeline ------------------------------------
       - name: Mint crates.io token (layer 3)
-        if: steps.meta.outputs.publish == '1'
         id: auth3
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
 
       - name: Layer 3 — tst-core, tst-pipeline
         env:
-          PUBLISH: ${{ steps.meta.outputs.publish }}
+          PUBLISH: "1"
           CARGO_REGISTRY_TOKEN: ${{ steps.auth3.outputs.token }}
         run: bash scripts/release/publish-crates-layer.sh tst-core tst-pipeline
 
       # ---- Layer 4: the seven transports ---------------------------------
       - name: Mint crates.io token (layer 4)
-        if: steps.meta.outputs.publish == '1'
         id: auth4
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
 
       - name: Layer 4 — transports
         env:
-          PUBLISH: ${{ steps.meta.outputs.publish }}
+          PUBLISH: "1"
           CARGO_REGISTRY_TOKEN: ${{ steps.auth4.outputs.token }}
         run: bash scripts/release/publish-crates-layer.sh tst-udp tst-tcp tst-hls tst-rtp tst-webrtc tst-srt tst-rist

@@ -452,7 +452,7 @@ jobs:
     outputs:
       verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.resolve.outputs.ref }}
           submodules: recursive
@@ -494,7 +494,7 @@ jobs:
       - name: Download every leg's artefacts
         # Only the record-bearing artefacts: the wheels, the fat jar and the
         # native libraries of the called workflows are not part of the record.
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: "{interop-evidence,sanitizer-*,fuzz-tst-*,abi-record,c-package,ci-record,sbom}"
           path: ${{ runner.temp }}/downloaded
@@ -599,7 +599,7 @@ jobs:
           cat "$B/qualification.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Attest the bundle (build provenance)
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: |
             ${{ runner.temp }}/bundle/qualification.json
@@ -610,7 +610,7 @@ jobs:
             ${{ runner.temp }}/bundle/SHA256SUMS
 
       - name: Keep the bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: qualification-${{ needs.resolve.outputs.slug }}
           path: ${{ runner.temp }}/bundle
