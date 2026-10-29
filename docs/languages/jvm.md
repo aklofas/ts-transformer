@@ -66,7 +66,10 @@ The Gradle build (JDK 17 toolchain, wrapper 9.5.1) drives
 (`libtstjni.so` / `.dylib` / `.dll`), copies it into JAR resources under
 `native/<triple>/`, then compiles and tests the Java surface. A
 `NativeLoader` extracts the right native library for the running platform
-at runtime.
+at runtime. The library is cached in a shared
+`<tmpdir>/tstrans-native-<crc32>/` directory: each JVM stages its own file
+there, reuses an existing entry only after verifying it, and never deletes
+cache entries. Old versions are left for the operating system's temp cleaner.
 
 **Minimum JDK is 17.** The native code is delivered as a single fat JAR
 bundling the per-platform native libraries (linux-x86_64 / linux-aarch64 /
@@ -74,7 +77,8 @@ macos-arm64 / windows-x86_64); the consumer picks no classifier.
 
 The jar is also a named module, `org.tstrans`. On the module path, add
 `requires org.tstrans;` to your `module-info.java` and run with
-`--module-path tstrans-jvm-<version>.jar:<your classes>`. Every public package
+`--module-path tstrans-jvm-<version>.jar:<your classes>` (use `;` as the
+separator on Windows). Every public package
 is exported, and CI runs a small named module against the assembled jar on each
 platform.
 

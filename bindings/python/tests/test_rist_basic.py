@@ -347,7 +347,7 @@ def test_rist_error_construction():
 
 
 # ---------------------------------------------------------------------------
-# Simple profile loopback (tolerant — skip if ports busy or timing issues)
+# Simple profile loopback (skips only on bind or recv-timeout environment limits)
 # ---------------------------------------------------------------------------
 
 
