@@ -18,6 +18,23 @@ class MuxerConfigTest {
     }
 
     @Test
+    void accessorsReturnCopies() {
+        MuxerConfig cfg = MuxerConfig.builder().programNumber(1).pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.H264).build();
+        cfg.streamPids()[0] = 0x1FFF;
+        cfg.streamKinds()[0] = 99;
+        cfg.streamCodecs()[0] = 99;
+        cfg.streamTypeCodes()[0] = 99;
+        assertEquals(0x101, cfg.streamPids()[0]);
+        assertNotEquals(99, cfg.streamKinds()[0]);
+        assertNotEquals(99, cfg.streamCodecs()[0]);
+        assertNotEquals(99, cfg.streamTypeCodes()[0]);
+        boolean first = cfg.streamCarriesPts()[0];
+        cfg.streamCarriesPts()[0] = !first;
+        assertEquals(first, cfg.streamCarriesPts()[0]);
+    }
+
+    @Test
     void emptyConfigRejected() {
         assertThrows(IllegalArgumentException.class, () -> MuxerConfig.builder().build());
     }

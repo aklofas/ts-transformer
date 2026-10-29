@@ -8,9 +8,9 @@ import java.util.Objects;
  * Single-program muxer configuration. Mirrors the user-facing shape of
  * {@code tstrans.mpegts.MuxerConfigBuilder} + {@code MuxerProgramConfigBuilder},
  * collapsed to one program. Built via {@link #builder()}; the resulting
- * immutable value exposes package-private parallel-array accessors that the
- * {@link Muxer} constructor marshals across the JNI boundary in a single
- * {@code nOpen} call.
+ * immutable value exposes parallel-array accessors (public for cross-package
+ * marshalling; each returns a copy) that the {@link Muxer} constructor marshals
+ * across the JNI boundary in a single {@code nOpen} call.
  *
  * <p>The builder performs only cheap Java-side sanity checks (≥1 stream, PID
  * range). Deep validation (PID collisions, PMT-size budget, PCR-on-KLV, sync-KLV
@@ -108,21 +108,22 @@ public final class MuxerConfig {
     // Accessors read by the Muxer ctor and the srt MuxSender/Socket marshalling to
     // build the nOpen parallel-array contract. Public for cross-package
     // org.tstrans.srt callers; the parallel-array shape is not a stable user API.
+    // The array accessors return copies so the immutable value cannot be mutated through them.
     public int pmtPid() { return pmtPid; }
     public int pcrPid() { return pcrPid; }
     public int pcrIntervalMs() { return pcrIntervalMs; }
     public int psiIntervalMs() { return psiIntervalMs; }
     public int bufferPackets() { return bufferPackets; }
     public Av1CarriageMode av1Carriage() { return av1Carriage; }
-    public int[] streamPids() { return streamPids; }
-    public int[] streamKinds() { return streamKinds; }
-    public int[] streamCodecs() { return streamCodecs; }
+    public int[] streamPids() { return streamPids.clone(); }
+    public int[] streamKinds() { return streamKinds.clone(); }
+    public int[] streamCodecs() { return streamCodecs.clone(); }
     /** KlvStreamType ordinal for KLV streams; raw PMT stream_type byte for DATA streams; -1 otherwise. */
-    public int[] streamTypeCodes() { return streamTypeCodes; }
+    public int[] streamTypeCodes() { return streamTypeCodes.clone(); }
     /** {@code true} if this stream carries PTS (KLV + DATA streams); {@code false} otherwise. */
-    public boolean[] streamCarriesPts() { return streamCarriesPts; }
-    public byte[] dataDescBytes() { return dataDescBytes; }
-    public int[] dataDescLens() { return dataDescLens; }
+    public boolean[] streamCarriesPts() { return streamCarriesPts.clone(); }
+    public byte[] dataDescBytes() { return dataDescBytes.clone(); }
+    public int[] dataDescLens() { return dataDescLens.clone(); }
 
     /**
      * Fluent builder for {@link MuxerConfig}. Defaults mirror

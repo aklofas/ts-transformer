@@ -1,7 +1,6 @@
 package org.tstrans.klv;
 
 import java.nio.ByteBuffer;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -1538,13 +1537,17 @@ public record UasDatalinkLs(
             throw new IllegalArgumentException(
                     "UasDatalinkLs.universalLabel must be exactly 16 bytes; got " + cap);
         }
-        unknown = unknown == null ? Collections.emptyList() : Collections.unmodifiableList(unknown);
-        fieldErrors = fieldErrors == null ? Collections.emptyList() : Collections.unmodifiableList(fieldErrors);
-        sentinelTags = sentinelTags == null ? Collections.emptyList() : Collections.unmodifiableList(sentinelTags);
-        imapbSpecials = imapbSpecials == null ? Collections.emptyList() : Collections.unmodifiableList(imapbSpecials);
-        controlCommands = controlCommands == null
-                ? Collections.emptyList() : Collections.unmodifiableList(controlCommands);
-        sdccFlps = sdccFlps == null ? Collections.emptyList() : Collections.unmodifiableList(sdccFlps);
+        unknown = Lists.snapshot(unknown);
+        fieldErrors = Lists.snapshot(fieldErrors);
+        sentinelTags = Lists.snapshot(sentinelTags);
+        imapbSpecials = Lists.snapshot(imapbSpecials);
+        controlCommands = Lists.snapshot(controlCommands);
+        sdccFlps = Lists.snapshot(sdccFlps);
+        controlCommandVerification = Lists.snapshotOrNull(controlCommandVerification);
+        activeWavelengths = Lists.snapshotOrNull(activeWavelengths);
+        wavelengthsList = Lists.snapshotOrNull(wavelengthsList);
+        weaponsStores = Lists.snapshotOrNull(weaponsStores);
+        waypointList = Lists.snapshotOrNull(waypointList);
     }
 
     // -----------------------------------------------------------------------
