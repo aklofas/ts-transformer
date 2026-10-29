@@ -11,6 +11,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.tstrans.codec.NalUnit;
 import org.tstrans.codec.VideoUnit;
 import org.tstrans.mpegts.DemuxEvent;
@@ -61,6 +62,20 @@ public final class TestSupport {
             }
         }
         return (long) Math.ceil(ms * scale);
+    }
+
+    /**
+     * Poll every 10 ms until {@code ref} holds a value or {@code ms} elapses.
+     *
+     * @return whether {@code ref} holds a value
+     */
+    public static boolean awaitNonNull(AtomicReference<?> ref, long ms) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms);
+        while (ref.get() == null) {
+            if (System.nanoTime() >= deadline) return false;
+            Thread.sleep(10);
+        }
+        return true;
     }
 
     /** Whether the current OS is Linux, for gating live-socket fixtures. */

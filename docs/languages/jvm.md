@@ -1222,10 +1222,16 @@ Gotchas:
   raw TS packet (the SRT live-mode quantum), before parsing.
 - **Keep it cheap.** The sink runs on the receiver's own recv-loop thread; a slow
   sink throttles the receiver.
-- **Never re-enter the receiver.** Do NOT call `next()` / `close()` / `stats()`
-  on the same `DemuxReceiver` from inside the sink.
-- **Fail-loud.** If the sink throws, the first error wins and is re-raised from
-  the **next** iteration step, which then stops iteration.
+- **Re-entry is limited.** From inside the sink, only `close()`,
+  `cancelHandle()`, `isAlive()` and `endReason()` may be called on the same
+  `DemuxReceiver`; `next()`, `stats()`, `socketStats()`, `lastSeenMicros()`
+  and `addByteSink()` throw `IllegalStateException`, also when reached through
+  another receiver the sink drives. `close()` from the sink cancels: the
+  in-flight iteration step still returns the event it produced, if any, and
+  the iteration then ends (at once when the step produced none).
+- **Fail-loud, and final.** If the sink throws, the receiver is cancelled, the
+  sink is not called again, and the next iteration step rethrows that
+  exception. The receiver cannot be resumed.
 - **Register before iterating** (or between `next()` calls) — `addByteSink` is
   not safe to call concurrently with an in-flight `next()`.
 
@@ -1550,8 +1556,10 @@ try (DemuxReceiver rx = DemuxReceiver.open("rtp://0.0.0.0:5004")) {
 - RTP/UDP is connectionless: a remote sender closing does **not** end a
   `DemuxReceiver` iteration. Break out of the loop on a sentinel event (or close
   the receiver) rather than waiting for end-of-stream.
-- `addByteSink` callbacks run on the receiver's own thread and must not re-enter
-  the receiver. Sample payloads and byte-sink buffers are heap `byte[]` copies.
+- `addByteSink` callbacks run on the receiver's own thread; from inside one,
+  only `close()`, `cancelHandle()`, `isAlive()` and `endReason()` may be called
+  on the same receiver. Sample payloads and byte-sink buffers are heap `byte[]`
+  copies.
 
 `rx.lastSeenMicros(pid)` returns the Unix-epoch microsecond timestamp of the
 most recent item this receiver emitted for `pid`, or `null` if that PID has
@@ -2529,6 +2537,10 @@ Gotchas:
   same state. `HlsException.Kind.FINISHED` is still declared because the
   Rust library can raise it. `close()` on `HlsPublisher` / `MuxPublisher` is
   quiet (finish, errors dropped); `finish()` throws.
+- **A byte-sink exception ends the `DemuxReceiver`.** The receiver is
+  cancelled and the sink is not called again; the exception is rethrown once.
+  Python re-raises a sink error from the next pull but keeps the receiver
+  usable, so its iteration can resume after the error is caught.
 
 The Rust page's "Where this binding differs from the Rust core" section
 treats Rust as the canonical surface; everything here is a subset of it.

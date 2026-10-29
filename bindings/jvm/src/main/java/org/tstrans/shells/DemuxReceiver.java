@@ -55,6 +55,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     // then. Written once by nativeClose, read by endReason()/endDetail().
     private volatile EndReason closedEndReason;
     private volatile String closedEndDetail;
+    // Set by a close() from this receiver's own byte sink, which only
+    // cancels; the pull that then reports end of stream completes the close.
+    private volatile boolean closeDeferred;
 
     /** Wrap a native handle returned by {@link #openHandle(String)}. */
     protected DemuxReceiver(long handle) { setHandle(handle); }
@@ -149,7 +152,13 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      */
     public DemuxEvent recvEvent() throws BindingException, DemuxException {
         ensureOpen("DemuxReceiver is closed");
-        return nNext(peekHandle());
+        return pull();
+    }
+
+    private DemuxEvent pull() throws BindingException {
+        DemuxEvent e = nNext(peekHandle());
+        if (e == null && closeDeferred) close();
+        return e;
     }
 
     /**
@@ -171,7 +180,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
                 if (done) return false;
                 if (peeked != null) return true;
                 try {
-                    peeked = nNext(peekHandle());
+                    peeked = pull();
                 } catch (BindingException e) {
                     throw new RuntimeException(e);
                 }
@@ -203,9 +212,15 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * cross-thread stop is {@link #cancelHandle()}{@code .cancel()}.
      *
      * <p><b>Re-entrancy:</b> the callback runs on the receiver's own thread
-     * inside the recv loop. It MUST NOT re-enter this receiver (no
-     * {@code next()}/{@code close()}/{@code stats()} from inside the sink). Keep
-     * the callback cheap — a slow sink throttles the receiver.
+     * inside the recv loop. The callback must not call this receiver's methods
+     * except {@code close()}, {@code cancelHandle()}, {@code isAlive()} and
+     * {@code endReason()}; any other call throws {@code IllegalStateException}.
+     * The same holds when the call reaches this receiver through another
+     * receiver the callback drives. {@code close()} from the callback cancels;
+     * the in-flight iteration step still returns the event it produced, if any,
+     * and the iteration then returns end of stream (at once when the step
+     * produced none). Keep the callback cheap — a slow sink throttles the
+     * receiver.
      *
      * @param callback invoked with a fresh {@code byte[]} per 188-byte TS packet
      * @throws IllegalStateException if the receiver is closed
@@ -326,8 +341,26 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * slot the parked recv holds, so that iteration ends promptly with the
      * transport's {@code CLOSED} and {@code close()} returns without waiting for
      * data. Same contract as the Python and C twins.
+     *
+     * <p>Called from this receiver's own byte sink (see {@link #addByteSink}),
+     * whose iteration step holds the receiver, {@code close()} only cancels; the
+     * iteration then ends and completes the close. A {@code close()} from
+     * anywhere else completes at once and wins over such a deferred close.
      */
-    @Override public void close() { super.close(); }
+    @Override public void close() {
+        long h = peekHandle();
+        // The deferral claims nothing: the handle stays set for the pull
+        // that completes the close through super.close().
+        if (h != 0 && nDeferClose(h)) {
+            closeDeferred = true;
+            return;
+        }
+        // Cleared on both sides: a sink may defer a close while this one
+        // waits for the receiver, and the completed close wins.
+        closeDeferred = false;
+        super.close();
+        closeDeferred = false;
+    }
 
     /**
      * Return {@code true} while the receiver owns a live transport.
@@ -361,6 +394,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     private static native long nLastSeenMicros(long handle, int pid);
     private static native int nEndReason(long handle);
     private static native String nEndDetail(long handle);
+    private static native boolean nDeferClose(long handle);
     private static native EndReason.Snapshot nClose(long handle);
     private static native boolean nIsAlive(long handle);
 }
