@@ -506,6 +506,13 @@ if [[ -n "${DRY_RUN_MEM_TOTAL_KB:-}" ]]; then
   [[ "$DRY_RUN_MEM_TOTAL_KB" =~ ^[1-9][0-9]*$ ]] || die "DRY_RUN_MEM_TOTAL_KB must be a positive integer (KB), got: $DRY_RUN_MEM_TOTAL_KB"
   MEM_TOTAL_KB=$DRY_RUN_MEM_TOTAL_KB
 fi
+# DRY_RUN_PORT_NEXT is reserve_port's dry-run counter (lib.sh): with it set
+# every reservation is a sequential number, never a probed free port, so a
+# value inherited from the environment would hand a real run's receivers and
+# proxies ports nobody checked. The dry run sets it itself.
+if [[ -n "${DRY_RUN_PORT_NEXT+set}" ]]; then
+  [[ "$DRY_RUN" -eq 1 ]] || die "DRY_RUN_PORT_NEXT is a --dry-run counter; refusing it on a real run"
+fi
 
 # size_hold <ceilings-assoc> <cpu-fraction-assoc> <rss-kb-per-stream-assoc>
 # — the hold sizing rule (see README.md's "The hold"): sets HOLD_T (the held

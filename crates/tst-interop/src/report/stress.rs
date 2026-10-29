@@ -541,6 +541,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
 
     let mut verdicts = Vec::new();
     verdicts.push(verdict_worker_exits(&worker_exits, &streams));
+    verdicts.push(verdict_proxy_stats_final(&streams));
     verdicts.push(verdict_recv_invariants(&streams));
     verdicts.extend(verdict_corruption(&decl, &streams));
     verdicts.push(verdict_delivery_complete(
@@ -613,6 +614,32 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
 
 /// Every role of every stream must have exited 0. A missing role is a
 /// failure too: an absent status is not evidence of a clean exit.
+/// `proxy_stats_final`: every stream with a proxy carries the stats file
+/// the proxy wrote as it exited. A periodic snapshot stops short of the
+/// step's tail, so its totals are neither recorded nor judged.
+fn verdict_proxy_stats_final(streams: &[StreamArtifacts]) -> StepVerdict {
+    let not_final: Vec<String> = streams
+        .iter()
+        .filter(|s| s.proxy.as_ref().is_some_and(|p| !p.final_snapshot))
+        .map(|s| format!("{}/proxy", s.leg))
+        .collect();
+    StepVerdict {
+        name: "proxy_stats_final".into(),
+        pass: not_final.is_empty(),
+        observed: not_final.len() as f64,
+        threshold: 0.0,
+        detail: if not_final.is_empty() {
+            "every proxy's stats file is its final snapshot".into()
+        } else {
+            format!(
+                "{}: the stats file is not the proxy's final snapshot — the proxy did not \
+                 complete its exit write",
+                not_final.join(", ")
+            )
+        },
+    }
+}
+
 fn verdict_worker_exits(exits: &BTreeMap<String, i32>, streams: &[StreamArtifacts]) -> StepVerdict {
     let mut required = Vec::new();
     for s in streams {
@@ -1502,11 +1529,17 @@ fn stream_figures(
                 wire_mbps: s.recv.metrics.bytes as f64 * 8.0 / wire_window_s / 1e6,
                 wire_window_s,
                 reconnects: s.recv.reconnects,
-                proxy_forwarded: s.proxy.as_ref().map(|p| p.forwarded),
-                proxy_dropped: s.proxy.as_ref().map(|p| p.dropped),
+                // Only a final snapshot's totals are the step's; a periodic
+                // one fails `proxy_stats_final` and records nothing here.
+                proxy_forwarded: final_proxy(s).map(|p| p.forwarded),
+                proxy_dropped: final_proxy(s).map(|p| p.dropped),
             }
         })
         .collect()
+}
+
+fn final_proxy(s: &StreamArtifacts) -> Option<&ProxyStats> {
+    s.proxy.as_ref().filter(|p| p.final_snapshot)
 }
 
 /// The step's position on its axis: `streams` for `Axis::Streams`/
@@ -3130,6 +3163,25 @@ mod tests {
         assert!(r.pass, "{:?}", r.failing);
         assert_eq!(r.per_stream[0].leg, "srt-0");
         assert_eq!(r.per_stream[0].cpu_seconds.len(), 3);
+    }
+
+    #[test]
+    fn a_proxy_stats_file_that_is_not_final_fails_the_step_and_records_nothing() {
+        let mut inp = inputs(2, 10);
+        inp.streams[1].proxy.as_mut().unwrap().final_snapshot = false;
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "proxy_stats_final");
+        assert!(
+            !v.pass
+                && v.detail
+                    .starts_with("srt-1/proxy: the stats file is not the proxy's final"),
+            "{v:?}"
+        );
+        assert!(!r.pass);
+        assert!(r.failing.contains(&"proxy_stats_final".to_string()));
+        assert!(r.per_stream[0].proxy_forwarded.is_some());
+        assert_eq!(r.per_stream[1].proxy_forwarded, None);
+        assert_eq!(r.per_stream[1].proxy_dropped, None);
     }
 
     #[test]

@@ -569,7 +569,13 @@ mod tests {
 
     #[test]
     fn lazy_pushes_match_the_eager_order_and_hold_no_list() {
-        for (name, opus) in [("baseline", true), ("baseline", false), ("audio", true)] {
+        for (name, opus) in [
+            ("baseline", true),
+            ("baseline", false),
+            ("klv-sync", true),
+            ("klv-sync", false),
+            ("audio", true),
+        ] {
             let p = profiles::by_name(name).unwrap();
             let (start, lazy) = build_pushes(p, 10.0, opus);
             let (s2, eager) = eager_reference(p, 10.0, opus);

@@ -59,6 +59,11 @@ const SEED: u64 = 11;
 /// about the property under test changed.
 const BODY_FLIP_PSI_SEED: u64 = 19;
 
+/// A seed whose forced body flips on the `audio` profile hit a PCR base
+/// byte of a PCR-only packet (found by sweeping seeds; see
+/// [`a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps`]).
+const BODY_FLIP_PCR_ONLY_SEED: u64 = 26;
+
 fn baseline() -> &'static Profile {
     profiles::by_name("baseline").expect("the baseline profile exists")
 }
@@ -740,4 +745,46 @@ fn unlogged_psi_damage_fails_nonconformant_and_attributed() {
     let r = judge(&bytes, p, Some(&(header, Vec::new())));
     assert_failure_starting_with(&r, "corruption_attributed");
     assert_failure_starting_with(&r, "nonconformant_event");
+}
+
+/// The `audio` profile is the one whose muxer emits PCR-only packets
+/// (adaptation field, no payload) on the video PID, and a body flip there
+/// lands in the adaptation field: at this seed it flips a PCR base byte.
+/// Measured through the real demuxer, the receiver reports the PCR jump
+/// and the jump back as two `PcrAnomaly` events on that PID; the
+/// body-flip arm of `expects` explains them.
+#[test]
+fn a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps() {
+    let p = profiles::by_name("audio").expect("the audio profile exists");
+    let bytes = gen_bytes(p, "bf-pcr-only");
+    let (wire, header, injections) = tap(
+        &bytes,
+        "rate=300,min_gap=1000,classes=body_flip",
+        BODY_FLIP_PCR_ONLY_SEED,
+    );
+    assert!(
+        injections.iter().any(|i| i.class == Class::BodyFlip
+            && i.before[3] & 0x30 == 0x20
+            && i.offsets.iter().any(|o| (6..=11).contains(o))),
+        "seed {BODY_FLIP_PCR_ONLY_SEED} must flip a PCR byte of a PCR-only packet: {:?}",
+        shape(&injections)
+    );
+    let log = (header, injections);
+    let r = judge(&wire, p, Some(&log));
+    assert!(r.pass, "{:?}", r.failures);
+    // Strict attribution explains both events too. (Strict mode's
+    // `pcr_interval` oracle still fails here: it holds every interval,
+    // and the flipped PCR is one bogus interval it does not excuse.)
+    let strict = judge_in(VerifyMode::Strict, &wire, p, Some(&log));
+    let a = strict.metrics.corruption_attribution.expect("attribution");
+    assert_transport_loss_excusal_is_inert(&a, "body_flip on a PCR-only packet");
+    assert!(
+        a.unexplained_events.is_empty(),
+        "{:?}",
+        a.unexplained_events
+    );
+    assert!(
+        a.attributed_events >= 2,
+        "the PCR jump and its return are both explained: {a:?}"
+    );
 }

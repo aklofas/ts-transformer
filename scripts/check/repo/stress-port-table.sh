@@ -26,12 +26,20 @@ cursor=$(mktemp)
 dry_outdir=$(mktemp -d)
 trap 'rm -rf "$cursor" "$dry_outdir"' EXIT
 echo 0 >"$cursor"
+# An exhausted list fails the rail instead of feeding reserve_port's
+# re-probe loop an empty candidate forever.
 free_port() {
   local i
   i=$(<"$cursor")
+  if ((i >= ${#seq_ports[@]})); then
+    echo "FAIL: the stub free_port ran out after $i ports: reserve_port kept re-probing" >&2
+    exit 1
+  fi
   echo $((i + 1)) >"$cursor"
   printf '%s\n' "${seq_ports[$i]}"
 }
+# A failing `$(free_port)` inside reserve_port must end the rail, not
+# return an empty candidate, so errexit has to reach it.
 reserve_port udp 'STREAM_PORT[a]'
 reserve_port udp 'STREAM_PORT[b]'
 reserve_port udp 'PROXY_PORT[b]'
@@ -49,12 +57,27 @@ while read -r t axis load _; do
   steps=$((steps + 1))
   if [[ "$axis" == streams ]]; then n=$load; else n=1; fi
   rows=$(grep -E "^ports: $t $axis $load " <<<"$out" || true)
+  # A UDP-transport leg has a proxy port; a TCP leg has none.
+  if [[ "$t" == tcp ]]; then proxy='-'; else proxy='[0-9]+'; fi
   for ((i = 0; i < n; i++)); do
-    grep -q " $t-$i recv=[0-9]" <<<"$rows" \
-      || { echo "FAIL: dry-run port table for $t/$axis/$load lists no $t-$i"; exit 1; }
+    grep -qE " $t-$i recv=[0-9]+ proxy=$proxy\$" <<<"$rows" \
+      || { echo "FAIL: dry-run port table for $t/$axis/$load lists no $t-$i with recv= and proxy=$proxy"; exit 1; }
   done
-  dup=$(sed -E 's/.* recv=([0-9]+) proxy=([0-9-]+)$/\1\n\2/' <<<"$rows" | grep -v '^-$' | sort | uniq -d)
+  dup=$(awk '{ for (f = 1; f <= NF; f++) if ($f ~ /^(recv|proxy)=[0-9]+$/) { sub(/^[a-z]+=/, "", $f); print $f } }' <<<"$rows" | sort | uniq -d)
   [[ -z "$dup" ]] || { echo "FAIL: dry-run step $t/$axis/$load reserves port(s) $dup twice"; exit 1; }
 done < <(grep -E '^(srt|tcp) (streams|bitrate) [0-9]+ ' <<<"$out")
 [[ $steps -eq 6 ]] || { echo "FAIL: expected 6 dry-run steps, saw $steps"; exit 1; }
+
+# A real run refuses an inherited dry-run counter. The outdir already holds
+# a stress-config.json, so if the refusal ever goes missing the run stops at
+# the reused-outdir check (a different message) and launches nothing.
+real_outdir=$(mktemp -d)
+trap 'rm -rf "$cursor" "$dry_outdir" "$real_outdir"' EXIT
+echo '{}' >"$real_outdir/stress-config.json"
+rc=0
+out=$(DRY_RUN_PORT_NEXT=1 SRT_RECONNECT_MODE=background RSS_SLOPE_THRESHOLD_KB_PER_HOUR=8000 \
+  bash "$ROOT/scripts/interop/stress.sh" --outdir "$real_outdir" --seed 11 \
+  --transports srt,tcp --stream-ladder 1 --scale-ladder 2 --skip-hold 2>&1) || rc=$?
+[[ $rc -eq 2 && "$out" == *"DRY_RUN_PORT_NEXT is a --dry-run counter; refusing it on a real run"* ]] \
+  || { echo "FAIL: a real run with DRY_RUN_PORT_NEXT set exited $rc: $out"; exit 1; }
 echo "PASS: stress-port-table"
