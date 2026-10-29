@@ -252,6 +252,10 @@ merge commit, and the qualification run checks that nothing under
     ```bash
     bash scripts/gen/qualification.sh --write
     ```
+    The same PR updates the
+    [release findings ledger](/docs/project/release-findings.md): one row
+    per defect found during this release-candidate cycle, with the class of
+    test that now covers it.
 12. **Maintainer-local checks.** Some validation needs inputs that are not on a
     CI runner, so the record lists them as `maintainer_local` and they stay
     with you. Run each and note the result before tagging:
