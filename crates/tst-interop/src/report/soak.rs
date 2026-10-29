@@ -1191,7 +1191,7 @@ pub struct WhepUnpairedRecord {
 /// `serve-whep --json`'s counters, the leg's server-side evidence.
 /// Every field defaults so a counter no verdict reads never fails an
 /// older report; a counter a verdict reads is required by
-/// [`WHEP_REQUIRED_COUNTERS`] instead.
+/// `WHEP_REQUIRED_COUNTERS` instead.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WhepServeReport {
@@ -1203,7 +1203,7 @@ pub struct WhepServeReport {
     pub viewer_connected_before_push: bool,
     pub mount: WhepMountCounters,
     pub server: WhepServerCounters,
-    /// The [`WHEP_REQUIRED_COUNTERS`] the file did not carry, filled by
+    /// The `WHEP_REQUIRED_COUNTERS` the file did not carry, filled by
     /// the loader. The struct's defaults would read each of them as 0,
     /// a measured "nothing dropped" the server never wrote.
     #[serde(skip)]
@@ -1225,7 +1225,7 @@ const WHEP_REQUIRED_COUNTERS: [&str; 9] = [
     "server.sessions_total",
 ];
 
-/// The [`WHEP_REQUIRED_COUNTERS`] absent (or `null`) in `raw`.
+/// The `WHEP_REQUIRED_COUNTERS` absent (or `null`) in `raw`.
 fn whep_missing_counters(raw: &serde_json::Value) -> Vec<String> {
     WHEP_REQUIRED_COUNTERS
         .iter()
