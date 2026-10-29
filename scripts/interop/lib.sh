@@ -256,6 +256,18 @@ expected_stream_count() {
 # see README) and echoes a human-readable verdict line: "0" (clean) or
 # a nonzero-counters/unparseable message. Caller checks the echoed text
 # for the literal string "0" alone vs anything else.
+#
+# Then every `pid:` line's `pcrleap`, `ptsleap` and `discontinuities`
+# must be 0. TSDuck counts a leap when a PID's PCR (or PTS) moves
+# backward or forward by more than one second from the previous value,
+# and a discontinuity at each continuity-counter break: all three are 0
+# on a conforming, lossless, locally generated stream, so a muxer PCR or
+# PTS step-back fails the cell from an analyzer that is not ours. The
+# one exception is a clock that wraps at 2^33 inside the capture (its
+# last value below its first, as the pts-rollover profile does): TSDuck
+# counts the wrap itself as one backward leap, so one leap on that clock
+# is excused, and a second still fails. The first offending PID is
+# echoed with its raw counters.
 tsanalyze_ts_line_counters_zero() {
   local out="$1"
   local tsline invalidsyncs transporterrors suspectignored
@@ -271,7 +283,43 @@ tsanalyze_ts_line_counters_zero() {
     echo "nonzero counters: invalidsyncs=$invalidsyncs transporterrors=$transporterrors suspectignored=$suspectignored"
     return
   fi
+  local pidlines line pid pcrleap ptsleap disc
+  pidlines=$(grep '^pid:' <<<"$out") || pidlines=""
+  if [[ -z "$pidlines" ]]; then
+    echo "could not parse pid counters"
+    return
+  fi
+  while IFS= read -r line; do
+    pid=$(_tsanalyze_field pid "$line")
+    pcrleap=$(_tsanalyze_field pcrleap "$line")
+    ptsleap=$(_tsanalyze_field ptsleap "$line")
+    disc=$(_tsanalyze_field discontinuities "$line")
+    if [[ -z "$pid" || -z "$pcrleap" || -z "$ptsleap" || -z "$disc" ]]; then
+      echo "could not parse pid counters"
+      return
+    fi
+    if (( pcrleap - $(_tsanalyze_wrapped pcr "$line") > 0 || ptsleap - $(_tsanalyze_wrapped pts "$line") > 0 \
+          || disc != 0 )); then
+      echo "nonzero pid counters: pid=$pid pcrleap=$pcrleap ptsleap=$ptsleap discontinuities=$disc"
+      return
+    fi
+  done <<<"$pidlines"
   echo "0"
+}
+
+# _tsanalyze_field <name> <normalized line>: the integer value of the
+# `:<name>=` field, or nothing.
+_tsanalyze_field() {
+  grep -oE "(^|:)$1=[0-9]+" <<<"$2" | head -1 | cut -d= -f2 || true
+}
+
+# _tsanalyze_wrapped <pcr|pts> <pid: line>: 1 when the clock's last value
+# is below its first (it wrapped at 2^33 within the capture), else 0.
+_tsanalyze_wrapped() {
+  local first last
+  first=$(_tsanalyze_field "first$1" "$2")
+  last=$(_tsanalyze_field "last$1" "$2")
+  if [[ -n "$first" && -n "$last" ]] && (( last < first )); then echo 1; else echo 0; fi
 }
 
 # tsp_analyze_counters_zero <tsp -P analyze combined output>
