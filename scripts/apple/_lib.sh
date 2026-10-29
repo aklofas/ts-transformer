@@ -32,21 +32,21 @@ require_macos() {
   command -v lipo      >/dev/null || die "lipo not found"
 }
 
-# build_id — what a slice is built from: the commit, PROFILE, FEATURES and a
-# hash of the working tree's uncommitted changes, one per line. build_slice
-# records it beside each slice so a later assembly can tell whether a slice
-# on disk came from this tree with these settings.
+# build_id — what a slice is built from: the commit, PROFILE and FEATURES,
+# then `clean` or `dirty <nonce>`, one per line. build_slice records it beside
+# each slice so a later assembly can tell whether a slice on disk came from
+# this tree with these settings. A dirty tree gets a fresh nonce every call, so
+# it never matches: fingerprinting uncommitted content is not worth its cost,
+# and release builds come from a clean checkout.
 build_id() {
-  local porcelain_hash
-  if command -v sha256sum >/dev/null; then
-    porcelain_hash="$(git -C "$WORKSPACE_ROOT" status --porcelain | sha256sum)"
-  else
-    porcelain_hash="$(git -C "$WORKSPACE_ROOT" status --porcelain | shasum -a 256)"
-  fi
   git -C "$WORKSPACE_ROOT" rev-parse HEAD
   echo "$PROFILE"
   echo "$FEATURES"
-  echo "${porcelain_hash%% *}"
+  if [ -z "$(git -C "$WORKSPACE_ROOT" status --porcelain --ignore-submodules=none)" ]; then
+    echo clean
+  else
+    echo "dirty $(date +%s)-$$-$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')"
+  fi
 }
 
 # build_slice <rust-triple> <slice-name>
