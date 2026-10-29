@@ -165,7 +165,7 @@ fn probe(entry: &str, row: &Row) -> Option<i32> {
                 let dial = peer_addr(row).map(|addr| {
                     std::thread::spawn(move || {
                         SrtSocketBuilder::new()
-                            .connect_timeout(common::scaled(Duration::from_secs(2)))
+                            .connect_timeout(common::scaled(Duration::from_secs(5)))
                             .connect(addr)
                     })
                 });
