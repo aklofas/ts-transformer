@@ -16,17 +16,23 @@
 //! `recv_event`, attaches to the JVM, and upcalls a `Consumer<byte[]>`. No
 //! Java monitor is held across the upcall, but the receiver's slot is:
 //! `nNext` holds it for the whole `recv_event` call (`REGISTRY.with_mut`),
-//! so the sink must not re-enter a native that takes the slot (`next()`,
-//! `stats()`, `socketStats()`, `lastSeenMicros()`, `addByteSink()`).
-//! `cancelHandle()` / `isAlive()` / `endReason()` stay lock-free and
-//! `close()` cancels before it takes the slot, so other threads can still
-//! stop a receiver whose sink is running. A callback exception ends the
-//! receive: the sink stores it (as a `Global`) in [`SinkState`], cancels the
-//! receiver so the in-flight `recv_event` returns, and never upcalls again;
-//! `nNext` rethrows it once the slot is released.
+//! so a native that takes the slot (`next()`, `stats()`, `socketStats()`,
+//! `lastSeenMicros()`, `addByteSink()`) called from the sink would relock it
+//! on the same thread. [`IN_SINK`] marks every receiver whose sink is running
+//! on this thread, and those natives throw `IllegalStateException` for a
+//! marked receiver instead. `close()` from the sink is deferred
+//! (`nDeferClose`): it only cancels; `nNext` then reports end of stream and
+//! the Java side completes the close. `cancelHandle()` / `isAlive()` /
+//! `endReason()` stay lock-free and `close()` cancels before it takes the
+//! slot, so other threads can still stop a receiver whose sink is running.
+//! A callback exception ends the receive: the sink stores it (as a
+//! `Global`) in [`SinkState`], cancels the receiver so the in-flight
+//! `recv_event` returns, and never upcalls again; `nNext` rethrows it once
+//! the slot is released.
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -72,6 +78,57 @@ struct SinkState {
     /// Latched by the first failing callback: no sink is called again and
     /// the receiver stays ended.
     failed: AtomicBool,
+    /// Set by a `close()` from this receiver's own sink; the `nNext` it
+    /// runs under, or the next one, ends the iteration so Java can finish
+    /// the close. A plain close clears it.
+    close_pending: AtomicBool,
+}
+
+thread_local! {
+    /// The keys of every receiver whose byte sink is running on this
+    /// thread, innermost last. A stack, not a single key: A's sink may pull
+    /// B, and B's sink may then call into A, whose slot is still held.
+    static IN_SINK: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Pops this sink's key on scope exit, unwind included.
+struct InSinkGuard;
+
+impl InSinkGuard {
+    fn enter(key: u64) -> Self {
+        IN_SINK.with(|s| s.borrow_mut().push(key));
+        Self
+    }
+}
+
+impl Drop for InSinkGuard {
+    fn drop(&mut self) {
+        IN_SINK.with(|s| {
+            s.borrow_mut().pop();
+        });
+    }
+}
+
+/// `true` when called on this thread from inside a byte sink of the
+/// receiver `handle`, however many receivers deep.
+fn in_own_sink(handle: jlong) -> bool {
+    IN_SINK.with(|s| s.borrow().contains(&(handle as u64)))
+}
+
+/// Throw `IllegalStateException` and return `true` when `method` is called
+/// from the receiver's own sink, where taking the slot would deadlock.
+fn refuse_reentry(env: &mut Env, handle: jlong, method: &str) -> bool {
+    if !in_own_sink(handle) {
+        return false;
+    }
+    let _ = env.throw_new(
+        FindClass(jni_str!("java/lang/IllegalStateException")),
+        JNIString::from(format!(
+            "DemuxReceiver.{method}() called from its own byte sink; only close(), \
+             cancelHandle(), isAlive() and endReason() are allowed there"
+        )),
+    );
+    true
 }
 
 static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<Arc<SinkState>>>> =
@@ -208,10 +265,18 @@ jni_native! {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
             return JObject::null().into_raw();
         };
+        if refuse_reentry(env, handle, "recvEvent") {
+            return JObject::null().into_raw();
+        }
         let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.clone()) else {
             crate::error::throw_closed(env, "DemuxReceiver");
             return JObject::null().into_raw();
         };
+        // The previous pull delivered its event after its sink deferred a
+        // close: end the iteration now, and Java finishes the close.
+        if sinks.close_pending.load(Ordering::Acquire) {
+            return JObject::null().into_raw();
+        }
         // A sink failure, rethrown by an earlier call, ended the receive for
         // good: what the demuxer still queues came from packets after it.
         if sinks.failed.load(Ordering::Acquire) {
@@ -234,6 +299,13 @@ jni_native! {
             if let Ok(local) = env.new_local_ref(&global) {
                 let _ = env.throw(local);
             }
+            return JObject::null().into_raw();
+        }
+
+        // A close deferred by a sink during this pull: deliver the event the
+        // pull produced, if any (the next call ends the iteration); with
+        // none, end it now, whatever the cancel made `recv_event` return.
+        if sinks.close_pending.load(Ordering::Acquire) && !matches!(res, Ok(Some(_))) {
             return JObject::null().into_raw();
         }
 
@@ -275,6 +347,9 @@ jni_native! {
         handle: jlong,
         consumer: JObject<'local>,
     ) = () => {
+        if refuse_reentry(env, handle, "addByteSink") {
+            return;
+        }
         // Capture owned `Send` state for the closure: a cached `JavaVM` (to attach
         // the receiver thread per packet), a `Global` to the consumer (local refs
         // can't cross the call). These touch `env`, so build them BEFORE leasing.
@@ -311,6 +386,9 @@ jni_native! {
                 if sinks.failed.load(Ordering::Acquire) {
                     return;
                 }
+                // Marks this receiver for the callback's duration, so a call
+                // back into it is refused or deferred instead of relocking.
+                let _in_sink = InSinkGuard::enter(handle as u64);
                 // Scoped: the thread is detached again when the closure ends
                 // unless it was already attached, as with the 0.21 guard. It
                 // also pushes a local frame per call (each packet's byte[]
@@ -372,6 +450,9 @@ jni_native! {
         handle: jlong,
         pid: jint,
     ) -> jlong = -1 => {
+        if refuse_reentry(env, handle, "lastSeenMicros") {
+            return -1;
+        }
         // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
         let last_seen = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -423,6 +504,9 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
+        if refuse_reentry(env, handle, "socketStats") {
+            return JObject::null();
+        }
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -451,6 +535,9 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
+        if refuse_reentry(env, handle, "stats") {
+            return JObject::null();
+        }
         // counters live inside the shell and have no value to report while a parked call holds it
         let combined = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -517,6 +604,29 @@ jni_native! {
 }
 
 jni_native! {
+    /// `nDeferClose(handle)` — from inside this receiver's own byte sink,
+    /// whose `nNext` holds the slot: cancel, mark the close pending and
+    /// return `true`; the iteration then ends and Java completes the close.
+    /// Elsewhere it does nothing and returns `false`. Never takes the slot.
+    fn Java_org_tstrans_shells_DemuxReceiver_nDeferClose(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jboolean = false => {
+        if !in_own_sink(handle) {
+            return false;
+        }
+        if let Some(cancel) = REGISTRY.cancel_view(handle as u64) {
+            cancel.0.cancel();
+        }
+        if let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.clone()) {
+            sinks.close_pending.store(true, Ordering::Release);
+        }
+        true
+    }
+}
+
+jni_native! {
     /// `nClose(handle)` — cancel first, then take the receiver and close it.
     /// Returns the end-reason snapshot (`EndReason$Snapshot`), null when the
     /// close lost the race (a double `close()` is safe).
@@ -525,7 +635,19 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
-        match REGISTRY.close_with_end_reason(handle as u64, |mut jdr| jdr.inner.close()) {
+        // Cleared before and after: while this close waits for the slot, the
+        // in-flight pull's sink may defer a close of its own, and the
+        // completed close wins over it.
+        let sinks = REGISTRY.snapshot(handle as u64, |s| s.handles.clone());
+        let clear = || {
+            if let Some(s) = &sinks {
+                s.close_pending.store(false, Ordering::Release);
+            }
+        };
+        clear();
+        let closed = REGISTRY.close_with_end_reason(handle as u64, |mut jdr| jdr.inner.close());
+        clear();
+        match closed {
             Some(reason) => build_close_snapshot(env, reason).unwrap_or_else(|_| JObject::null()),
             None => JObject::null(),
         }
