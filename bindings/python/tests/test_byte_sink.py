@@ -532,6 +532,53 @@ def test_plain_close_supersedes_a_deferred_close() -> None:
     )
 
 
+def test_plain_close_overlapping_a_deferred_close_still_wins() -> None:
+    # Thread B's plain close() clears any deferral, cancels, then blocks on
+    # the slot the in-flight __next__ holds. The sink waits until that
+    # cancel is visible (so B is past its clear) and only then defers its
+    # own close. B's close completes afterwards, so the next pull must
+    # report the closed receiver, not end the iteration.
+    script = PREFIX + """
+    from tstrans.exceptions import SrtError, SrtErrorKind
+    started = threading.Event()
+    fired = []
+    def closer():
+        started.set()
+        rx.close()
+    b = threading.Thread(target=closer)
+    def sink(pkt):
+        if fired:
+            return
+        fired.append(True)
+        b.start()
+        started.wait(5.0)
+        handle = rx.cancel_handle()
+        deadline = time.monotonic() + 5.0
+        while not handle.is_cancelled() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        print("B-CANCELLED", handle.is_cancelled())
+        rx.close()
+    rx.add_byte_sink(sink)
+    try:
+        next(rx)
+    except StopIteration:
+        pass
+    b.join(10.0)
+    print("B-DONE", not b.is_alive())
+    try:
+        next(rx)
+        print("EVENT")
+    except StopIteration:
+        print("STOP")
+    except SrtError as e:
+        print("CLOSED", e.kind == SrtErrorKind.CLOSED)
+    """
+    r = _run(script, timeout=30.0, what=" a plain close overlapping a deferred one")
+    out = r.stdout
+    assert "B-CANCELLED True" in out and "B-DONE True" in out, f"{out}\n{r.stderr[-800:]}"
+    assert "CLOSED True" in out, f"{out}\n{r.stderr[-800:]}"
+
+
 def test_own_sink_may_use_lock_free_accessors_and_another_receiver() -> None:
     script = PREFIX + """
     other = shells.DemuxReceiver.open("udp://127.0.0.1:0")
