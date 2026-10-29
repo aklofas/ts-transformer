@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::csv::{RSS_HEADER, csv_rows};
-use super::soak::{RssSample, linear_regression_slope};
+use super::csv::csv_rows;
+use super::rss::{RssSample, linear_regression_slope, parse_rows};
 use crate::proxy::ProxyStats;
 use crate::report_types::{CellMetrics, VerifyReport};
 
@@ -79,31 +79,12 @@ pub fn parse_proc_csv(text: &str) -> Result<Vec<ProcSample>, String> {
         .collect()
 }
 
-/// Parse the stress harness's own `rss.csv`. Same shape as
-/// `super::soak::parse_rss_csv` (same header, same columns) but WITHOUT
-/// that function's `KNOWN_LEGS` allowlist (`srt`/`rist` only, sized for
-/// `soak.sh`'s fixed two-leg design): a stress step runs N concurrent
-/// streams of one transport, each with its own leg (`<transport>-<k>`,
-/// see `StreamArtifacts::leg`), so soak's allowlist would reject every
-/// real stress artifact. `RssSample` itself is still the shared type —
-/// only the leg/process validation differs; both read the same CSV rows.
+/// Parse the stress harness's own `rss.csv`. Same decoder as the soak's
+/// but with no leg allowlist: a stress step runs N concurrent streams of
+/// one transport, each with its own leg (`<transport>-<k>`, see
+/// `StreamArtifacts::leg`), which the soak's fixed leg set would reject.
 pub fn parse_rss_csv(text: &str) -> Result<Vec<RssSample>, String> {
-    csv_rows(text, RSS_HEADER, 5, "rss.csv")?
-        .into_iter()
-        .map(|(n, f)| {
-            Ok(RssSample {
-                elapsed_s: f[0]
-                    .parse()
-                    .map_err(|_| format!("rss.csv line {n}: bad elapsed_s"))?,
-                leg: f[1].to_string(),
-                process: f[2].to_string(),
-                pid: f[3]
-                    .parse()
-                    .map_err(|_| format!("rss.csv line {n}: bad pid"))?,
-                rss_kb: opt(f[4], "rss_kb", n)?,
-            })
-        })
-        .collect()
+    parse_rows(text, |_| true)
 }
 
 pub fn parse_host_csv(text: &str) -> Result<Vec<HostSample>, String> {
@@ -2545,8 +2526,8 @@ mod tests {
             fds: Some(fd),
         }
     }
-    fn rss_row(t: f64, leg: &str, process: &str, kb: u64) -> super::super::soak::RssSample {
-        super::super::soak::RssSample {
+    fn rss_row(t: f64, leg: &str, process: &str, kb: u64) -> super::super::rss::RssSample {
+        super::super::rss::RssSample {
             elapsed_s: t,
             leg: leg.into(),
             process: process.into(),
@@ -2559,7 +2540,7 @@ mod tests {
     fn healthy_stream(
         leg: &str,
         cpu_ticks_per_tick: u64,
-    ) -> (Vec<ProcSample>, Vec<super::super::soak::RssSample>) {
+    ) -> (Vec<ProcSample>, Vec<super::super::rss::RssSample>) {
         let mut p = Vec::new();
         let mut r = Vec::new();
         for i in 0..22u64 {

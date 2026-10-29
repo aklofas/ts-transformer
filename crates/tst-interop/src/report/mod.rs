@@ -195,6 +195,8 @@ pub struct InventorySummary {
 // ---------------------------------------------------------------------
 
 pub(crate) mod csv;
+/// The `rss.csv` decoder and the RSS-trend helpers the soak, stress and replay judges share.
+pub mod rss;
 mod matrix;
 pub use matrix::{
     ExpectVerdict, Expectation, Inventory, InventoryCell, SHAPE_FULL, SHAPE_SUBSET,
