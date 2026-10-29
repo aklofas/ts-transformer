@@ -174,6 +174,72 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The public-api baselines now ratchet the optional TLS surfaces: `tst-core` is rendered with `tls` and `tst-rtp` with `rtsp-server-tls`.
 - The fuzz workspaces' `Cargo.lock` files are committed, and the qualification run's fuzz job refuses to re-resolve them (`cargo metadata --locked`) and records the nightly it fuzzed with.
 - The weekly advisory check reads an enumerated GHSA version list (`V11.3.0, V11.3.1`) as exactly those versions, so a pin at the patched version is no longer reported as inside the range; the pin was reported twice for the FreeRTOS kernel at `V11.3.2`.
+- The publish guards are read from the workflow files with three rules: in a called workflow, a publish-shaped job's `if:` has `!inputs.dry_run` (or an equivalent) as a top-level conjunct and no `||`; a job with an `environment:` runs on a `v*` tag push only; and every job pins every remote action, its local composite actions' included, to a commit SHA.
+- The crates.io workflow's rehearsal is its own `rehearse` job (on `workflow_dispatch` and on a pull request touching the workflow or the release scripts). It has neither the `crates-io` environment nor an OIDC token, so a rehearsal cannot publish; the tag-only `publish` job alone enters the environment.
+- `release-qualify` attaches its bundle only to a draft Release.
+- The C ABI comparison uses the previous tag's C package from its Release only when `SHA256SUMS` and the package's build-provenance attestation, signed by `release-qualify.yml` at that tag, verify it; otherwise it builds the tag from source. The ABI record says which: `attested`, or `built: <reason>`.
+- `fixture-hashes.toml` refuses a row without its path or hash, and a path listed twice.
+- The process-marker rail fails on an `rg` error and on a stale or malformed allowlist row.
+- The surface manifest's binding cells must resolve to an exact class and member, and its feature tags are a closed vocabulary.
+- The binding-records rail treats a repeated or unbalanced generated block as stale.
+- `gen-scenarios --check` compares the generated input bytes with the committed ones, and names a scenario whose input is not generated.
+- The qualification record takes the fuzz leg's conclusion from the leg's own record only.
+- The weekly advisory check checks an untagged pin by its date, lists only the sources it checked the pin against, and reports a dependency with no advisory source as unassessed.
+- Every `.ordinal()` the JVM binding passes to native code is a pinned site (`scripts/ratchets/ordinal-sites.tsv`); a site the rail cannot parse fails it.
+- The coverage manifests are validated row by row from parsed TOML.
+- The iOS build reuses an XCFramework slice only when it was built from the same tree and features.
+- The harness verdict in `tests/coverage/evidence-archives.toml` is never edited: a maintainer's waiver is an `[archive.waiver]` table beside it, and a release needs a raw pass.
+- The soak, corpus and ARM64 status cells of the 1.0 exit criteria are rendered from the qualification record; a waiver names the release it stood in for from the record's tag or the waived archive, never from the CHANGELOG.
+- The qualification record names the tag on a tag push and lists the release documents that changed since the soaked tree, and the bundle carries `TREE-EQUIVALENCE.txt`, the proof that nothing under `crates/` or `bindings/` changed between the soaked and the qualified commit.
+- The Python URL-corpus test takes its scheme families from the corpus header.
+
+### Changed — tst-interop
+
+- An `expectations.toml` row excuses only the failure lines of a cell that contain its `failure_contains`; one line no row explains keeps the cell a `FAIL`, and each excused line names the row that excused it.
+- An expectation row may carry `arch = "x86_64"` or `arch = "aarch64"`: it then applies only to a run on that architecture and is never judged stale on another. An `--only-subset` pattern that matches no declared cell is an error.
+- The `analyze/tsanalyze/*` cells gate TSDuck's per-PID PCR and PTS leap and discontinuity counters. The one leap TSDuck counts when a clock wraps at 2^33 inside the capture is excused, and only for a real wrap: the clock must start within an hour of its modulus and end within an hour of zero.
+- A PCR-lead wire oracle: once a profile sets a floor, each program's PCR PID must lead its PES decode times by at least that much, and every other PID the PMT lists must not fall behind the PCR.
+- The placement oracle excuses one excursion per generation as sender-report jitter when no record is off by more than 10 ms and the excursion spans at most 7.5 s, one RTCP sender-report interval plus half.
+- The AV1 oracle excuses damage the corruption tap attributed, and a publisher's send failure after its end of stream is a clean end.
+- `serve-whep` logs how long the first viewer took to connect; it pushes once that viewer connects. The matrix starts Chrome once before its first browser cell, so the first `whep/*` cell no longer pays Chrome's cold start.
+- `corpus sweep` decodes every registered MISB item on a KLV PID: an ST 0605 Precision Time Stamp Pack, standalone or before an ST 0601 local set, now decodes. A capture that carries packs changes digest once against a baseline from an earlier release. The stricter item split can also mark as changed a capture the earlier decode accepted.
+- Corpus annotations carry the count a person reviewed: every key that excuses a rule needs its bound (`max_private_records`, `max_pts_backward_breaks` with `discontinuity_pids`, `max_cc_mismatch`, `max_feed_errors`), and excuses that much and no more, only on the PIDs it lists. An annotation without its bound is refused. The new `known_klv_truncation` key, with `max_klv_truncated` and `klv_truncation_pids`, excuses KLV records cut short by packet loss.
+- `corpus sweep` counts ST 0601 field errors per PID and reports their total and the captures that carry them; they are recorded, not gated.
+- A new corpus invariant, `klv-missing`: a PID the PMT declares as KLV and whose packets open PES on the wire must show KLV in the digest.
+- `corpus sweep --baseline` needs the baseline's `manifest.txt` and verifies every digest it lists; a sweep writes one. `corpus manifest <digests-dir> --expect-files N` writes the manifest an older digests directory lacks. Every capture added or removed against the baseline needs `--accept <sha256> --because <text>`, and the reason is kept in the sweep summary and the report.
+- `corpus inventory` skips directories named `quarantine` at any depth.
+- `corpus replay` restarts a path whose receiver died, once per pick, and the summary lists per path the SHA of each pick a restart preceded.
+- `corpus replay` prints, per pick, how many PCR gaps it did not pace: a reset or a forward step over one second is sent as no time.
+
+### Fixed — tst-interop
+
+- A `corpus replay` attempt removes the previous attempt's result before it can fail, so a failed retry never leaves an old pass for the report.
+- Label-less samples on a KLV PID fail the `klv-unknown` invariant on their own, even when every undecoded record there is an excused truncation. Fewer than 16 bytes after a complete KLV item are unknown, not a truncation.
+- The impairment proxy fails the run when its final stats write is lost, and the soak judges only a final snapshot.
+- The soak judges a WHEP leg only from counters the server wrote, and requires them.
+- `serve-whep` builds its push schedule lazily, so a 72-hour window holds no pushes in memory.
+- Corruption attribution: a legal duplicate packet explains nothing in its window, and a body flip on a PCR-only packet explains that packet's PCR signals.
+- The stress judge requires proc samples from every declared role. The stress port table dedupes in the caller's shell; the dry run lists each step's ports and refuses a repeat within a step, and a real run refuses the dry run's port counter. `soak.sh` options require their value.
+- The soak, stress and replay judges share one `rss.csv` decoder, and the stress parser rejects a negative or non-finite elapsed time.
+- `tst-interop recv`'s deadline covers a TCP accept and an idle TCP peer.
+
+### Changed — CI
+
+- A test that skips for want of a host capability (loopback multicast, ffprobe, TSDuck) fails where CI sets `TST_REQUIRE_<CAP>=1`, and is listed in the job summary where it does not (`TST_CAPABILITY_LOG`). The Linux legs require `MULTICAST`. The IPv6 UDP multicast test records `MULTICAST_V6` and skips on every host until the receiver accepts `?iface=` for IPv6.
+- The no_std job restores its QEMU and ARM toolchain packages from an Actions cache, so a slow apt mirror cannot run the install past the job timeout.
+- cargo-deny also checks the fuzz and embedded workspaces against the same policy, with `--locked`.
+- Every workflow and composite action pins its actions by commit SHA, Dependabot moves those pins weekly, and every `pip install` pins its tools by hash.
+- A linux-aarch64 interop job runs the `[arm64_subset]` cells on scheduled and release-qualify runs, and its census is recorded beside the x86_64 one. It runs with `continue-on-error` until two scheduled runs are green.
+- The stress port-table rail runs in CI.
+
+### Changed — dependencies
+
+- The crates take their `tracing` and `rustls` requirements from the workspace; no resolved feature set changes.
+
+### Docs — project pages
+
+- `docs/project/release-findings.md` is a new ledger of defects that escaped the release qualification, each with the class of test that now covers it, seeded with the 0.9.0 escapes.
+- `docs/project/real-capture-testing.md` describes the annotation bounds, `klv-missing`, the baseline manifest and the replay's restart and pacing counts; `docs/project/releasing.md` the one-time manifest repair of an older baseline and the crates.io rehearsal.
 
 ### Added — tst-core
 

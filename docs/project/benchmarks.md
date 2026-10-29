@@ -63,6 +63,7 @@ of its ceiling actually survive a full day of real-world disruption."
 | Verdict | Rule | Threshold |
 |---|---|---|
 | `worker_exits` | No worker process exits before the run's own end-of-run teardown. | zero unscheduled exits |
+| `proxy_stats_final` | Every stream with an impairment proxy carries the stats file the proxy wrote as it exited. A periodic snapshot stops short of the step's tail, so its totals are neither recorded nor judged. | present for every proxied stream |
 | `recv_invariants` | Every receiver's own internal invariants hold throughout. | no violation |
 | `delivery_complete` | Received video access units against sent. | ≥ 0.7×, and > 1.2× fails as an accounting mismatch rather than a pass |
 | `cpu_headroom` | Sum of worker CPU-seconds over wall-seconds over vCPU count. | ≤ 0.80 |
@@ -70,6 +71,7 @@ of its ceiling actually survive a full day of real-world disruption."
 | `fd_count_flat_*` | File-descriptor count range per process after a 60-second warm-up. | max − min ≤ 2 |
 | `thread_count_flat_*` | Thread count range per process after the same warm-up. | max − min ≤ 1 |
 | `sample_coverage` | Fraction of expected sampler ticks actually recorded. | ≥ 90% |
+| `proc_sample_coverage` | The same for the CPU, file-descriptor and thread samples; every declared role of every stream is expected, and a sample counts only with all four of its fields. | ≥ 90% |
 | `reconnect_count` *(hold only)* | Each SRT receiver rebuilds its transport at least once per outage window it lived through. | ≥ (outage windows − 1); one less than the window count because the final window can coincide with teardown |
 | `peer_restart_recovery` *(hold only)* | After each scheduled receiver restart, the sender reconnects. | within 120 seconds; a restart in the run's final 120 seconds is unjudgeable |
 | `queue_depth_p99` *(hold only)* | The managed sender's gap-length distribution. | p99 ≤ 0.9× its configured capacity |

@@ -151,6 +151,21 @@ merge commit, and the qualification run checks that nothing under
      baseline (`CORPUS-DONE rc=0`). A failure stops the checklist here; it is
      a finding to fix, and the fix restarts at step 2. A reviewed change is
      accepted with `--accept <sha256> --because <text>`.
+   - A baseline written before the sweep kept a `manifest.txt` (the 0.9.0
+     digests are one) is refused until its manifest is written, once, before
+     the first comparison against it:
+     ```bash
+     tst-interop corpus manifest ~/baseline-vX.Y.Z --expect-files 251
+     ```
+     The same first comparison changes the digest of every capture whose
+     ST 0605 packs did not decode before. These are the captures whose
+     baseline digest has undecoded KLV records; review each and pass its
+     SHA-256 to `--accept`:
+     ```bash
+     jq -r 'select(.prefix_seconds == null and .configs.default.klv_unknown > 0) | .sha256' ~/baseline-vX.Y.Z/*.json
+     ```
+     [Real-capture testing](/docs/project/real-capture-testing.md) has the
+     rules behind both.
    - From a machine with an authenticated `gh`,
      `release-vm-soak.sh ci-green <full sha> ubuntu@<vm> --dispatch-wheels <ref>`
      dispatches the wheels dry run and creates `~/ci-green` on the VM once
@@ -236,6 +251,15 @@ merge commit, and the qualification run checks that nothing under
     failed corpus archive, a corpus run that swept a different file
     count). A real leg failure is a finding to fix, not a rerun; rerun
     only a failure that belongs to a ledgered flake class.
+
+    The ABI leg compares against the previous tag's C package from that
+    tag's Release only when `SHA256SUMS` and the package's build-provenance
+    attestation, signed by `release-qualify.yml` at that tag, verify it.
+    Otherwise it builds the previous tag from source, and the record's ABI
+    source reads `built: <reason>` instead of `attested`. Two cases always
+    take the source build, by design: a fork, since the check names the
+    signing workflow by the `aklofas/ts-transformer` slug, and a runner whose `gh` lacks the attestation flags, which
+    records `built: attestation verify failed`.
 
     The run's bundle holds `qualification.json`, the rendered
     `qualification.md`, `TREE-EQUIVALENCE.txt`, the SBOMs, `SHA256SUMS`, the
@@ -342,7 +366,11 @@ dependency order with per-layer OIDC-minted tokens — no maintainer-held
 API token. The crates.io side of the binding (per crate: repository
 `aklofas/ts-transformer`, workflow `crates-io.yml`, environment
 `crates-io`) lives at each crate's Settings → Trusted Publishing page;
-renaming the workflow file or environment breaks it on both sides.
+renaming the workflow file or environment breaks it on both sides. Only the
+tag-only `publish` job enters the `crates-io` environment, and the
+environment's deployment policy in the repository's Settings → Environments
+admits `v*` tags only. The policy is a repository setting, not a file in the
+tree, so the maintainer sets it once and checks it before a release.
 
 **At release time:** the tag you push for PyPI/Maven triggers this too.
 Watch the `crates-io` run; after it goes green do the same per-crate
@@ -360,9 +388,11 @@ from `cargo metadata` — `tstrans-mbedtls-src` carries a build-metadata
 suffix (`X.Y.Z+<mbedtls-version>`), so there is no single shared
 version string.
 
-**Rehearsal:** `workflow_dispatch` (or a PR touching the workflow file)
-runs the identical sequence as `cargo publish --dry-run` — packages and
-verify-builds everything, uploads nothing, needs no token. The rehearsal
+**Rehearsal:** the workflow's `rehearse` job, on `workflow_dispatch` or a PR
+touching the workflow file or the release scripts, runs the identical
+sequence as `cargo publish --dry-run` — packages and verify-builds
+everything, uploads nothing. It has neither the environment nor an OIDC
+token, so it cannot publish. The rehearsal
 resolves internal dependencies from the tree (a `[patch.crates-io]` table
 written by `scripts/release/dry-run-patch-config.sh`, dry-run only), so it
 also passes after a release version sweep, when the index cannot yet
@@ -433,6 +463,10 @@ self-heals the moment the new `tstrans-mbedtls-src` version is live.
 
 ## Notes
 
+- Every workflow and composite action pins its actions by commit SHA,
+  including `dtolnay/rust-toolchain`, which used to follow its moving
+  `stable` ref. Dependabot moves those pins weekly; a toolchain or action
+  update arrives as its pull request, never by a tag moving.
 - Maven Central releases are **permanent/immutable** — a bad bundle means
   shipping a corrective `0.2.1`, never overwriting. That is why the publish
   stages for manual inspection (`publishToMavenCentral(automaticRelease =

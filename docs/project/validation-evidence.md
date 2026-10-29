@@ -1391,6 +1391,9 @@ unexpected failure. This is the integrity property the whole file rests
 on: **an undocumented `FAIL` always fails the run.** There is no way to add
 a permissive expectation that quietly widens to catch failures it wasn't
 written to describe.
+The match is made per failure line: a row explains only the lines of a
+cell's `FAIL` that contain its text, so a second, different failure on the
+same cell keeps it a `FAIL`.
 
 ## Third-party field validation
 
