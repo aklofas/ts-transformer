@@ -30,24 +30,26 @@ unmaintained = "workspace"
 # Ignore entries must carry a reason + date, e.g.
 #   { id = "RUSTSEC-YYYY-NNNN", reason = "…", }   # added 2026-MM-DD
 ignore = [
-    # rustls-pemfile 2.2.0 (direct dep of tst-hls/tst-jni/tst-py/tst-rtp/tst-tcp,
-    # for loading TLS cert/key PEM files). Unmaintained advisory, no CVE — the
-    # advisory's own text says "No safe upgrade is available!"; migrating to
-    # rustls-pki-types' PemObject trait is a source-code change across five
-    # crates, out of scope for a rails/CI-hygiene change that touches no
-    # Rust code.
-    { id = "RUSTSEC-2025-0134", reason = "no safe upgrade exists (per the advisory); the rustls-pki-types::PemObject migration is a source change across 5 crates, out of scope for a rails/CI-hygiene WP" },   # added 2026-09-15
+    # rustls-pemfile 2.2.0 (a direct dependency of tst-core only, behind its
+    # `tls` feature, which loads TLS cert/key PEM files for every TLS-capable
+    # transport). Unmaintained advisory, no CVE — the advisory's own text says
+    # "No safe upgrade is available!". Dropping it means moving tst-core's PEM
+    # loading to rustls-pki-types' PemObject trait, a source change in
+    # tst-core.
+    { id = "RUSTSEC-2025-0134", reason = "unmaintained, no safe upgrade exists (per the advisory); dropping it is a source change in tst-core (the rustls-pki-types::PemObject migration)" },   # added 2026-09-15
     # crypto-bigint 0.5.5 (transitive: str0m 0.24.1 -> dimpl / str0m-proto /
     # str0m-rust-crypto -> ecdsa 0.16 / p256 0.13 -> elliptic-curve 0.13).
     # Timing-variability advisory in constant-time arithmetic; the patched
     # line is 0.7.6+, which elliptic-curve 0.13 cannot take — the fix is
     # str0m adopting the RustCrypto 0.14 line, and no str0m or dimpl
-    # release does so yet (dimpl 0.8.0 still pins ecdsa ^0.16). Exposure is
-    # the DTLS handshake signature on the WHEP server's certificate key,
-    # observable only by a peer timing its own handshakes on the same host
-    # class. Revisit at every versions refresh: drop this entry as soon as
-    # `cargo tree -i crypto-bigint` shows no 0.5.x.
-    { id = "RUSTSEC-2026-0387", reason = "transitive via str0m's DTLS (dimpl -> ecdsa 0.16 -> elliptic-curve 0.13 pins crypto-bigint 0.5); the patched 0.7.6 line needs str0m to move to RustCrypto 0.14, which no release does yet" },   # added 2026-10-24
+    # release does so yet (dimpl 0.8.0 still pins ecdsa ^0.16). Exposure:
+    # dimpl's `rcgen` feature builds aws-lc-rs, and when no crypto provider
+    # is installed dimpl signs the DTLS handshake with aws-lc; tst-webrtc
+    # never installs one. The RustCrypto ecdsa / crypto-bigint 0.5 code is
+    # compiled in but is not on the handshake path. Revisit at every versions
+    # refresh: drop this entry as soon as `cargo tree -i crypto-bigint`
+    # shows no 0.5.x.
+    { id = "RUSTSEC-2026-0387", reason = "transitive via str0m's DTLS (dimpl -> ecdsa 0.16 -> elliptic-curve 0.13 pins crypto-bigint 0.5), compiled in but off the handshake path (dimpl signs with aws-lc); the patched 0.7.6 line needs str0m to move to RustCrypto 0.14, which no release does yet" },   # added 2026-10-24
 ]
 
 [licenses]

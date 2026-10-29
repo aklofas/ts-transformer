@@ -5,9 +5,8 @@ name: ci-health
 # REST API. Output = step summary + a CSV artifact (90-day retention). The
 # CSV artifact is the only record (no in-tree copy: the one-row ledger
 # docs/project/ci-health.csv was removed 2026-10-19 as unread) — this
-# workflow deliberately keeps `contents: read` (no bot
-# commits to main; deps-advisory.yml is the only workflow with a write scope,
-# `issues: write`, and it never commits either).
+# workflow deliberately keeps `contents: read`: it writes nothing but its
+# step summary and artifact, and makes no bot commits to main.
 
 on:
   schedule:

@@ -468,7 +468,10 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
     //                             explicit: our -Dfallback_builtin=false turns
     //                             the would-be automatic builtin fallback into
     //                             a hard "lz4.h not found" meson error)
-    //   -Dbuiltin_mbedtls=<bool>  bundle contrib/mbedtls when mbedtls feature is on
+    //   -Dbuiltin_mbedtls=false   the encrypted build links the shared vendored
+    //                             mbedTLS, never librist's contrib/mbedtls, and
+    //                             sets -Dfallback_builtin=false so a missing
+    //                             mbedTLS is an error, not a silent bundle
     //   -Duse_mbedtls=<bool>      enable/disable encryption entirely
     let mut args: Vec<String> = vec![
         "setup".into(),
@@ -523,10 +526,10 @@ fn build_vendored(want_mbedtls: bool, sanitizer: Option<&str>) -> Vec<PathBuf> {
             )
         });
         // Tool::get_envs() yields the INCLUDE/LIB/PATH (and friends) the MSVC
-        // compiler needs; forward each into the meson subprocess env. For PATH
-        // we APPEND the discovered MSVC dirs to the inherited PATH rather than
-        // replacing it, so meson + ninja (installed on the original PATH) stay
-        // findable by the `meson compile` step.
+        // compiler needs; forward each into the meson subprocess env. PATH is
+        // the discovered MSVC dirs first, then the inherited PATH, rather than
+        // the MSVC dirs alone, so meson + ninja (installed on the original
+        // PATH) stay findable by the `meson compile` step.
         for (k, v) in cl.get_envs() {
             let key = k.to_string_lossy().into_owned();
             let mut val = v.to_string_lossy().into_owned();
