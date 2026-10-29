@@ -9,6 +9,12 @@
 # occurrence, `<path under the Java source root><TAB><expression>`, sorted.
 # Comment lines and trailing `//` comments are not sites.
 #
+# Fails closed (exit 2, naming file:line) on a line it cannot read: one whose
+# `.ordinal()` receiver is not a dotted chain of names and `()` calls (an
+# indexed receiver, a call with arguments, a chained call split across lines;
+# reformat it onto one line), or one that holds both a `"` and a `//`, where a
+# string literal and a comment cannot be told apart.
+#
 # Run it:       bash scripts/check/jvm/ordinal-sites.sh
 # Regenerate:   bash scripts/check/jvm/ordinal-sites.sh --regen
 # Overridable (the ratchet self-test points these at fixtures):
@@ -30,11 +36,24 @@ sites() { # stdout: sorted `<path><TAB><expression>` rows
   [ "$rc" -le 1 ] || { echo "FAIL: ordinal-sites: grep failed under $JAVA_DIR" >&2; return 2; }
   [ -n "$hits" ] || return 0
   printf '%s\n' "$hits" | while IFS= read -r hit; do
-    file="${hit%%:*}"; rest="${hit#*:}"; line="${rest#*:}"
+    file="${hit%%:*}"; rest="${hit#*:}"; lineno="${rest%%:*}"; line="${rest#*:}"
+    rel="${file#"$JAVA_DIR"/}"
     case "$(printf '%s' "$line" | sed 's/^[[:space:]]*//')" in '//'*|'*'*|'/*'*) continue ;; esac
+    case "$line" in
+      *'"'*) case "$line" in *'//'*)
+        echo "FAIL: ordinal-sites: $rel:$lineno: cannot classify a line mixing a string literal and a comment: $line" >&2
+        exit 2 ;; esac ;;
+    esac
     line="$(printf '%s' "$line" | sed 's|//.*$||')"
-    { printf '%s\n' "$line" | grep -oE "$EXPR" || true; } | while IFS= read -r e; do
-      printf '%s\t%s\n' "${file#"$JAVA_DIR"/}" "$e"
+    found="$(printf '%s\n' "$line" | grep -oE '\.ordinal\(\)' | grep -c . || true)"
+    exprs="$(printf '%s\n' "$line" | grep -oE "$EXPR" || true)"
+    if [ "$(printf '%s\n' "$exprs" | grep -c . || true)" -lt "$found" ]; then
+      echo "FAIL: ordinal-sites: $rel:$lineno: cannot parse the receiver of every .ordinal() (put the receiver on the line as a dotted chain of names): $line" >&2
+      exit 2
+    fi
+    [ -n "$exprs" ] || continue
+    printf '%s\n' "$exprs" | while IFS= read -r e; do
+      printf '%s\t%s\n' "$rel" "$e"
     done
   done | LC_ALL=C sort
 }

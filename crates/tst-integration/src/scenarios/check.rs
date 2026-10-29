@@ -53,11 +53,20 @@ pub fn golden_rel(scenario: &dyn Scenario) -> PathBuf {
 /// missing manifest, and an input whose bytes differ from the committed file.
 /// Empty means the committed fixtures are what the generators produce.
 pub fn drift(fixtures_dir: &Path, scratch: &Path) -> Vec<String> {
+    drift_of(&all_scenarios(), fixtures_dir, scratch)
+}
+
+/// [`drift`] over the given scenarios rather than every registered one.
+pub fn drift_of(
+    scenarios: &[Box<dyn Scenario>],
+    fixtures_dir: &Path,
+    scratch: &Path,
+) -> Vec<String> {
     std::fs::create_dir_all(scratch).expect("create scratch dir");
     let mut out = Vec::new();
     let mut fresh_entries = Vec::new();
 
-    for scenario in &all_scenarios() {
+    for scenario in scenarios {
         let (input_rel, golden) = scenario.generate(scratch);
         let id = scenario.id();
 
@@ -92,11 +101,16 @@ pub fn drift(fixtures_dir: &Path, scratch: &Path) -> Vec<String> {
                 "input missing for scenario '{id}': {}",
                 committed_input.display()
             )),
-            // A scenario whose input is hand-written (the URL corpus) writes
-            // none: its committed file is the source, and the golden above
-            // is what is generated from it.
-            Ok(committed) => {
-                if let Ok(generated) = std::fs::read(scratch.join(&input_rel)) {
+            // A hand-written input (the URL corpus) is the committed source,
+            // and the golden above is what is generated from it. Any other
+            // scenario must have written its input.
+            Ok(_) if scenario.input_is_hand_written() => {}
+            Ok(committed) => match std::fs::read(scratch.join(&input_rel)) {
+                Err(_) => out.push(format!(
+                    "input not generated for scenario '{id}': {}",
+                    scratch.join(&input_rel).display()
+                )),
+                Ok(generated) => {
                     let (c, g) = (sha256_hex(&committed), sha256_hex(&generated));
                     if c != g {
                         out.push(format!(
@@ -104,7 +118,7 @@ pub fn drift(fixtures_dir: &Path, scratch: &Path) -> Vec<String> {
                         ));
                     }
                 }
-            }
+            },
         }
         fresh_entries.push(ScenarioEntry::new(scenario.as_ref(), &input_rel, &golden));
     }

@@ -39,6 +39,12 @@ pub trait Scenario {
     /// Generate the input artifact under `out_dir/<id>/` and return
     /// `(relative_path_of_input, Golden)`.
     fn generate(&self, out_dir: &Path) -> (PathBuf, Golden);
+
+    /// True when the input is hand-written and committed, not generated: the
+    /// generator writes no input file, and only the golden is compared.
+    fn input_is_hand_written(&self) -> bool {
+        false
+    }
 }
 
 /// All registered scenarios.
@@ -2494,6 +2500,10 @@ impl Scenario for UrlCorpus {
     }
     fn tier(&self) -> &'static str {
         "A"
+    }
+
+    fn input_is_hand_written(&self) -> bool {
+        true
     }
 
     fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {

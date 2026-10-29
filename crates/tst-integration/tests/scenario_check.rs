@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use tst_integration::scenarios::check::drift;
+use tst_integration::scenarios::Scenario;
+use tst_integration::scenarios::check::{drift, drift_of};
+use tst_integration::scenarios::golden::Golden;
 
 fn scratch_dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("tst-integration-{name}-{}", std::process::id()));
@@ -99,6 +101,52 @@ fn an_edited_url_corpus_twin_is_drift() {
     assert!(
         d.iter()
             .any(|m| m.starts_with("golden differs for scenario 'url-corpus'")),
+        "{d:?}"
+    );
+    std::fs::remove_dir_all(&copy).unwrap();
+}
+
+/// A scenario whose generator writes no input file, though its input is not
+/// hand-written.
+struct Ghost;
+
+impl Scenario for Ghost {
+    fn id(&self) -> &'static str {
+        "video-roundtrip"
+    }
+    fn kind(&self) -> &'static str {
+        "roundtrip"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec![]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        std::fs::create_dir_all(out_dir.join(self.id())).unwrap();
+        let golden = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/scenarios/video-roundtrip/golden.json"),
+        )
+        .unwrap();
+        (
+            PathBuf::from(self.id()).join("output.ts"),
+            serde_json::from_str(&golden).unwrap(),
+        )
+    }
+}
+
+#[test]
+fn a_generator_that_writes_no_input_is_drift() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scenarios");
+    let copy = scratch_dir("scn-check-ghost");
+    copy_dir(&fixtures, &copy);
+    let scenarios: Vec<Box<dyn Scenario>> = vec![Box::new(Ghost)];
+    let d = drift_of(&scenarios, &copy, &scratch_dir("scn-check-ghost-gen"));
+    assert!(
+        d.iter()
+            .any(|m| m.starts_with("input not generated for scenario 'video-roundtrip'")),
         "{d:?}"
     );
     std::fs::remove_dir_all(&copy).unwrap();

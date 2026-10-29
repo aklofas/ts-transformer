@@ -231,7 +231,6 @@ class Findings(unittest.TestCase):
                               tags=["v1.0"], advisories=[], cves=[])
         self.assertEqual(f, [])
 
-
     def test_an_untagged_pin_still_gets_advisories_newer_than_its_commit(self):
         adv = {"ghsa_id": "GHSA-x", "severity": "high", "published_at": "2026-09-01T00:00:00Z",
                "vulnerabilities": [{"vulnerable_version_range": "< 2.0"}]}
@@ -252,6 +251,10 @@ class Findings(unittest.TestCase):
     def test_advisory_sources_name_ghsa_and_nvd(self):
         self.assertEqual(da.advisory_sources(MBEDTLS_DEP), ["GHSA", "NVD"])
         self.assertEqual(da.advisory_sources(POSIX_DEP), ["GHSA"])
+
+    def test_an_untagged_pin_with_a_cpe_does_not_list_nvd(self):
+        # Untagged pins are checked against GHSA only; NVD CVEs are not evaluated.
+        self.assertEqual(da.advisory_sources(MBEDTLS_DEP, tagged=False), ["GHSA"])
 
 
 class Dedupe(unittest.TestCase):

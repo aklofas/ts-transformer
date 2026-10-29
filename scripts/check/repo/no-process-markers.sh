@@ -265,11 +265,17 @@ selftest() {
   [ "$rc" -eq 2 ] || { echo "selftest FAIL: an allowlist row without a line regex exited $rc, want 2"; fails=1; }
   out=$(NO_PROCESS_MARKERS_ALLOWLIST="$tmp/missing.txt" TST_WS="$REPO" bash "$0" --mode fail -- "$neg" 2>&1); rc=$?
   [ "$rc" -eq 2 ] || { echo "selftest FAIL: a missing allowlist exited $rc, want 2"; fails=1; }
-  printf 'clean\n' > "$tmp/unreadable.txt"; chmod 000 "$tmp/unreadable.txt"
-  out=$(TST_WS="$REPO" bash "$0" --mode fail -- "$tmp/unreadable.txt" 2>&1); rc=$?
-  chmod 600 "$tmp/unreadable.txt"
-  [ "$rc" -eq 2 ] || { echo "selftest FAIL: an unreadable path exited $rc, want 2"; fails=1; }
-  printf '%s\n' "$out" | grep -qF 'FAIL: no-process-markers: rg failed' || { echo "selftest FAIL: rg-failure message missing: $out"; fails=1; }
+  # chmod 000 does not stop root from reading the file, so the case cannot
+  # fail closed there.
+  if [ "$(id -u)" -eq 0 ]; then
+    echo "SKIP: no-process-markers self-test: the unreadable-path case needs a non-root user"
+  else
+    printf 'clean\n' > "$tmp/unreadable.txt"; chmod 000 "$tmp/unreadable.txt"
+    out=$(TST_WS="$REPO" bash "$0" --mode fail -- "$tmp/unreadable.txt" 2>&1); rc=$?
+    chmod 600 "$tmp/unreadable.txt"
+    [ "$rc" -eq 2 ] || { echo "selftest FAIL: an unreadable path exited $rc, want 2"; fails=1; }
+    printf '%s\n' "$out" | grep -qF 'FAIL: no-process-markers: rg failed' || { echo "selftest FAIL: rg-failure message missing: $out"; fails=1; }
+  fi
   mkdir "$tmp/ws"; git -C "$tmp/ws" init -q; printf 'clean text\n' > "$tmp/ws/a.txt"; git -C "$tmp/ws" add a.txt
   printf '*\tneverappearsanywhere123\n' > "$tmp/stale.txt"
   out=$(NO_PROCESS_MARKERS_ALLOWLIST="$tmp/stale.txt" TST_WS="$tmp/ws" bash "$0" --mode fail 2>&1); rc=$?
