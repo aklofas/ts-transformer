@@ -23,13 +23,14 @@ import java.util.zip.CRC32;
  * <h2>Extraction layout</h2>
  * <p>The library is extracted to
  * {@code <java.io.tmpdir>/tstrans-native-<hash>/libtstjni.<ext>}, where
- * {@code <hash>} is a CRC32 hex digest of the resource bytes. If the file
- * already exists with the same hash (e.g. from a previous JVM run with the
- * same JAR), it is reused without re-extraction. On load, stale sibling
- * {@code tstrans-native-*} directories (from older JAR versions) are
- * swept best-effort. On Windows, a currently-loaded DLL is locked by the OS
- * and cannot be deleted; the deletion error is silently swallowed and the
- * stale directory is left for cleanup on a future run after the JVM exits.
+ * {@code <hash>} is a CRC32 hex digest of the resource bytes. Each JVM writes
+ * its own uniquely named staging file in that directory and publishes it with
+ * an atomic move, so JVMs starting together never share a partial file. An
+ * existing target is reused only when its size and CRC32 match the resource,
+ * so a file truncated by a crash is replaced. The loader never deletes a
+ * {@code tstrans-native-*} entry: another JVM may be about to load it, and
+ * Windows locks a loaded DLL. Directories from older JAR versions are left for
+ * the operating system's temp cleaner.
  *
  * <h2>Developer / debug override</h2>
  * <p>Set the JVM system property {@code tstrans.native.lib} to an absolute
@@ -102,36 +103,45 @@ public final class NativeLoader {
 
     /**
      * Extracts {@code bytes} to
-     * {@code <tmpBase>/tstrans-native-<hash>/libtstjni.<ext>}, reusing the
-     * file without re-writing if it already exists (same content hash = same
-     * JAR build). Stale sibling {@code tstrans-native-*} directories are
-     * swept best-effort before extraction.
+     * {@code <tmpBase>/tstrans-native-<hash>/libtstjni.<ext>}, reusing an
+     * existing file only when its size and CRC32 match. Deletes nothing but
+     * its own staging file.
      *
      * <p>Package-private for unit testing.
      */
     static Path extractToStableDir(byte[] bytes, String ext, Path tmpBase) throws IOException {
-        String hash = contentHash(bytes);
-        String dirName = "tstrans-native-" + hash;
-        Path targetDir = tmpBase.resolve(dirName);
+        Path targetDir = tmpBase.resolve("tstrans-native-" + contentHash(bytes));
         Path target = targetDir.resolve("libtstjni." + ext);
-
-        // Sweep stale dirs from previous JAR versions before (re)using ours.
-        sweepStale(tmpBase, dirName);
-
-        if (!Files.exists(target)) {
-            Files.createDirectories(targetDir);
-            // Write to a staging file first, then promote atomically.  If the
-            // JVM crashes between write and move only the .part file is partial;
-            // target either does not exist (next run re-extracts) or already
-            // contains a complete write (from a racing JVM that won the move).
-            // REPLACE_EXISTING lets a racing loser overwrite with identical bytes.
-            Path part = targetDir.resolve("libtstjni." + ext + ".part");
-            Files.write(part, bytes);
-            Files.move(part, target, StandardCopyOption.ATOMIC_MOVE,
-                    StandardCopyOption.REPLACE_EXISTING);
+        if (matches(target, bytes)) {
+            return target;
         }
-        target.toFile().deleteOnExit();
+        Files.createDirectories(targetDir);
+        // A per-call staging name keeps concurrent JVMs off each other's partial
+        // writes; the atomic move means target is either absent or complete.
+        Path staging = Files.createTempFile(targetDir, "libtstjni." + ext + ".", ".part");
+        try {
+            Files.write(staging, bytes);
+            try {
+                Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                // Another JVM published first, or (Windows) the target is a loaded,
+                // locked DLL: an intact copy is just as good.
+                if (matches(target, bytes)) {
+                    return target;
+                }
+                throw e;
+            }
+        } finally {
+            Files.deleteIfExists(staging);
+        }
         return target;
+    }
+
+    private static boolean matches(Path file, byte[] bytes) throws IOException {
+        return Files.isRegularFile(file)
+                && Files.size(file) == bytes.length
+                && contentHash(Files.readAllBytes(file)).equals(contentHash(bytes));
     }
 
     /**
@@ -144,43 +154,6 @@ public final class NativeLoader {
         CRC32 crc = new CRC32();
         crc.update(bytes);
         return String.format("%08x", crc.getValue());
-    }
-
-    /**
-     * Best-effort sweep of {@code <tmpBase>/tstrans-native-*} directories
-     * other than {@code keepDirName}. Files inside each stale directory are
-     * deleted first, then the directory itself. On Windows, a currently-loaded
-     * DLL is locked by the OS; the resulting {@link IOException} is silently
-     * swallowed and the stale directory is left for cleanup on the next run.
-     *
-     * <p>Package-private for unit testing.
-     */
-    static void sweepStale(Path tmpBase, String keepDirName) {
-        try (var stream = Files.list(tmpBase)) {
-            stream.filter(p -> {
-                String n = p.getFileName().toString();
-                return n.startsWith("tstrans-native-")
-                        && !n.equals(keepDirName)
-                        && Files.isDirectory(p);
-            }).forEach(staleDir -> {
-                try {
-                    try (var files = Files.list(staleDir)) {
-                        files.forEach(f -> {
-                            try {
-                                Files.delete(f);
-                            } catch (IOException ignored) {
-                                // Windows: DLL locked by the OS → leave it.
-                            }
-                        });
-                    }
-                    Files.delete(staleDir);
-                } catch (IOException ignored) {
-                    // Directory not empty (locked file on Windows) → leave it.
-                }
-            });
-        } catch (IOException ignored) {
-            // tmpBase not listable (unusual) → skip sweep entirely.
-        }
     }
 
     /**
