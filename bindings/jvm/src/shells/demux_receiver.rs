@@ -124,8 +124,8 @@ fn refuse_reentry(env: &mut Env, handle: jlong, method: &str) -> bool {
     let _ = env.throw_new(
         FindClass(jni_str!("java/lang/IllegalStateException")),
         JNIString::from(format!(
-            "DemuxReceiver.{method}() called from its own byte sink; only close(), \
-             cancelHandle(), isAlive() and endReason() are allowed there"
+            "DemuxReceiver.{method} called from this receiver's own byte sink; only \
+             close(), cancelHandle(), isAlive() and endReason() are allowed there"
         )),
     );
     true
@@ -265,7 +265,7 @@ jni_native! {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
             return JObject::null().into_raw();
         };
-        if refuse_reentry(env, handle, "recvEvent") {
+        if refuse_reentry(env, handle, "recvEvent() / iterator next()") {
             return JObject::null().into_raw();
         }
         let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.clone()) else {
@@ -347,7 +347,7 @@ jni_native! {
         handle: jlong,
         consumer: JObject<'local>,
     ) = () => {
-        if refuse_reentry(env, handle, "addByteSink") {
+        if refuse_reentry(env, handle, "addByteSink()") {
             return;
         }
         // Capture owned `Send` state for the closure: a cached `JavaVM` (to attach
@@ -377,13 +377,23 @@ jni_native! {
             throw_handle_state(env, "DemuxReceiver", &HandleState::Closed);
             return;
         };
+        // A failed receiver never calls a sink again; one registered now
+        // would silently never run.
+        if sinks.failed.load(Ordering::Acquire) {
+            throw_handle_state(env, "DemuxReceiver", &HandleState::Closed);
+            return;
+        }
         let cancel = cancel.0;
         let registered = REGISTRY.with_mut(handle as u64, |jdr| {
             jdr.inner.add_byte_sink(Box::new(move |pkt: &[u8]| {
                 // Runs on the receiver's own thread inside recv_event, under
                 // the receiver's slot and with no Java monitor held. Touches
                 // only `consumer`, `sinks` and `cancel`, never the receiver.
-                if sinks.failed.load(Ordering::Acquire) {
+                // After a failure, or a close() from a sink, the packets the
+                // pull still feeds from its buffer reach no sink.
+                if sinks.failed.load(Ordering::Acquire)
+                    || sinks.close_pending.load(Ordering::Acquire)
+                {
                     return;
                 }
                 // Marks this receiver for the callback's duration, so a call
@@ -450,7 +460,7 @@ jni_native! {
         handle: jlong,
         pid: jint,
     ) -> jlong = -1 => {
-        if refuse_reentry(env, handle, "lastSeenMicros") {
+        if refuse_reentry(env, handle, "lastSeenMicros()") {
             return -1;
         }
         // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
@@ -504,7 +514,7 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
-        if refuse_reentry(env, handle, "socketStats") {
+        if refuse_reentry(env, handle, "socketStats()") {
             return JObject::null();
         }
         // counters live inside the shell and have no value to report while a parked call holds it
@@ -535,7 +545,7 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
-        if refuse_reentry(env, handle, "stats") {
+        if refuse_reentry(env, handle, "stats()") {
             return JObject::null();
         }
         // counters live inside the shell and have no value to report while a parked call holds it
@@ -635,9 +645,10 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
-        // Cleared before and after: while this close waits for the slot, the
-        // in-flight pull's sink may defer a close of its own, and the
-        // completed close wins over it.
+        // Cleared before and after, so this completed close wins over a
+        // deferral. Java zeroes the handle before this runs, so a sink's
+        // close() normally never reaches `nDeferClose`; the after-clear covers
+        // a sink that read the handle just before that claim.
         let sinks = REGISTRY.snapshot(handle as u64, |s| s.handles.clone());
         let clear = || {
             if let Some(s) = &sinks {

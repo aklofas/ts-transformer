@@ -192,7 +192,7 @@ class DemuxReceiverByteSinkFailureTest {
             assertTrue(TestSupport.awaitNonNull(seen, TestSupport.scaledMs(5_000)),
                 "the sink deadlocked on " + call + "()");
             assertInstanceOf(IllegalStateException.class, seen.get());
-            assertTrue(seen.get().getMessage().contains("from its own byte sink"), seen.get().getMessage());
+            assertTrue(seen.get().getMessage().contains("own byte sink"), seen.get().getMessage());
             p.rescue.cancel();
             await(r);
         }
@@ -211,6 +211,38 @@ class DemuxReceiverByteSinkFailureTest {
                 "next() must end (null) once the sink closed the receiver");
             assertFalse(rx.isAlive());
             assertThrows(IllegalStateException.class, rx::recvEvent);
+        }
+    }
+
+    /** After its {@code close()} the sink is not called again, so a later throw cannot surface. */
+    @Test
+    void sinkThatClosesItsReceiverIsNotCalledAgain() throws Exception {
+        try (Pair p = new Pair()) {
+            DemuxReceiver rx = p.rx;
+            AtomicInteger calls = new AtomicInteger();
+            rx.addByteSink(pkt -> {
+                if (calls.incrementAndGet() > 1) throw new IllegalStateException("sink called after close");
+                rx.close();
+            });
+            CompletableFuture<Object> r = recvOnDaemon(rx);
+            p.write(nullPackets(16));
+            assertEquals(Optional.empty(), await(r), "the deferred close must complete cleanly");
+            assertEquals(1, calls.get());
+            assertFalse(rx.isAlive());
+        }
+    }
+
+    /** A sink registered after a sink failure would never run: the registration is refused. */
+    @Test
+    void addByteSinkAfterASinkFailureIsRefused() throws Exception {
+        try (Pair p = new Pair()) {
+            DemuxReceiver rx = p.rx;
+            RuntimeException boom = new IllegalStateException("sink failed");
+            rx.addByteSink(pkt -> { throw boom; });
+            CompletableFuture<Object> r = recvOnDaemon(rx);
+            p.write(nullPackets(16));
+            assertSame(boom, await(r));
+            assertThrows(IllegalStateException.class, () -> rx.addByteSink(q -> { }));
         }
     }
 
@@ -269,19 +301,20 @@ class DemuxReceiverByteSinkFailureTest {
             assertInstanceOf(Optional.class, pulled.get(), String.valueOf(pulled.get()));
             assertTrue(((Optional<?>) pulled.get()).isPresent(), "B's pull delivers its event");
             assertInstanceOf(IllegalStateException.class, aStats.get());
-            assertTrue(aStats.get().getMessage().contains("from its own byte sink"), aStats.get().getMessage());
+            assertTrue(aStats.get().getMessage().contains("own byte sink"), aStats.get().getMessage());
             assertFalse(a.rx.isAlive());
             assertTrue(b.rx.isAlive());
         }
     }
 
     /**
-     * Another thread's plain {@code close()} that started first wins over a close the sink
-     * defers while that plain close waits for the slot: the next pull reports the closed
-     * receiver rather than the end of stream.
+     * A plain {@code close()} on another thread claims the handle (zeroes it) before it
+     * cancels, so a sink that waits for that cancel and then calls {@code close()} finds
+     * the handle at 0 and never reaches native code: its close is a no-op, the plain
+     * close completes, and the next pull reports the closed receiver.
      */
     @Test
-    void plainCloseOverlappingADeferredCloseStillWins() throws Exception {
+    void sinkCloseAfterAPlainCloseClaimedTheHandleIsANoOp() throws Exception {
         try (Pair p = new Pair()) {
             DemuxReceiver rx = p.rx;
             CountDownLatch started = new CountDownLatch(1);
