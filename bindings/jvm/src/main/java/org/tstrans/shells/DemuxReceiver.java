@@ -159,7 +159,8 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * {@link BindingException}s (the transport's exception, {@link DemuxException})
      * surfaced by the native pull are wrapped in an unchecked {@link RuntimeException} (the {@code Iterator}
      * contract forbids checked exceptions); a byte-sink exception (see
-     * {@link #addByteSink}) is re-raised fail-loud and stops iteration.
+     * {@link #addByteSink}) is rethrown by the step after the callback threw,
+     * and the receiver cannot be resumed.
      */
     @Override
     public Iterator<DemuxEvent> iterator() {
@@ -192,9 +193,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * stream (record-to-disk, parallel parser, etc.) without consuming the event
      * iterator.
      *
-     * <p><b>Fail-loud:</b> if {@code callback} throws, the exception is captured
-     * (first error wins; later per-packet errors are dropped) and re-raised from
-     * the <em>next</em> iteration step, which then stops iteration.
+     * <p><b>Fail-loud:</b> if the callback throws, the receiver is cancelled, the
+     * callback is not called again, and the next iteration step rethrows that
+     * exception; the receiver cannot be resumed.
      *
      * <p><b>Registration timing:</b> register sinks BEFORE iterating, or between
      * {@code next()} calls. This method is NOT safe to call concurrently with an

@@ -45,6 +45,24 @@ public final class TestSupport {
         return buf;
     }
 
+    /**
+     * {@code ms} scaled by the {@code TST_TEST_TIMEOUT_SCALE} environment variable (a
+     * decimal factor, default 1; values below 1 count as 1), so slow runners can stretch
+     * every live-socket budget at once.
+     */
+    public static long scaledMs(long ms) {
+        double scale = 1.0;
+        String raw = System.getenv("TST_TEST_TIMEOUT_SCALE");
+        if (raw != null) {
+            try {
+                scale = Math.max(1.0, Double.parseDouble(raw.trim()));
+            } catch (NumberFormatException e) {
+                scale = 1.0;
+            }
+        }
+        return (long) Math.ceil(ms * scale);
+    }
+
     /** Whether the current OS is Linux, for gating live-socket fixtures. */
     public static boolean isLinux() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("linux");

@@ -13,21 +13,21 @@
 //!
 //! `add_byte_sink` discipline (the load-bearing piece): the registered
 //! `Box<dyn FnMut(&[u8]) + Send>` runs on the receiver's own thread inside
-//! `recv_event`, attaches to the JVM, and upcalls a `Consumer<byte[]>`. It
-//! holds NO Java monitor across the upcall, but it DOES run under this
-//! handle's slot: `nNext` holds the slot for the whole `recv_event` call
-//! (`REGISTRY.with_mut`) and the sink fires while it is held. A sink that
-//! re-enters the same `DemuxReceiver` through any native that takes the slot
-//! (`next()`, `stats()`, `socketStats()`, `lastSeenMicros()`, `addByteSink()`)
-//! therefore self-deadlocks; the never-re-enter rule in the user guide is
-//! load-bearing. `cancelHandle()` / `isAlive()` / `endReason()` stay lock-free
-//! and `close()` cancels before it takes the slot, so OTHER threads can still
-//! stop a receiver whose sink is running. A callback exception is captured
-//! first-wins into `sink_error` (as a `Global`) and re-thrown from the next
-//! `nNext` after the slot is released.
+//! `recv_event`, attaches to the JVM, and upcalls a `Consumer<byte[]>`. No
+//! Java monitor is held across the upcall, but the receiver's slot is:
+//! `nNext` holds it for the whole `recv_event` call (`REGISTRY.with_mut`),
+//! so the sink must not re-enter a native that takes the slot (`next()`,
+//! `stats()`, `socketStats()`, `lastSeenMicros()`, `addByteSink()`).
+//! `cancelHandle()` / `isAlive()` / `endReason()` stay lock-free and
+//! `close()` cancels before it takes the slot, so other threads can still
+//! stop a receiver whose sink is running. A callback exception ends the
+//! receive: the sink stores it (as a `Global`) in [`SinkState`], cancels the
+//! receiver so the in-flight `recv_event` returns, and never upcalls again;
+//! `nNext` rethrows it once the slot is released.
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use jni::Env;
@@ -39,7 +39,7 @@ use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::transport::RecvTransport;
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened, Owned};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
 };
@@ -57,16 +57,24 @@ use crate::mpegts::{
     build_demux_config_from_args, convert_event, shell_muxer_stats, throw_demux_error,
 };
 
-/// Native backing for `org.tstrans.shells.DemuxReceiver`. Only `sink_error` is
-/// shared: the `FnMut`+`Send` byte-sink closure needs owned `Send` capture, and
-/// it stashes the first byte-sink exception here as a `Global` for
-/// fail-loud re-raise from `nNext`.
+/// Native backing for `org.tstrans.shells.DemuxReceiver`.
 struct JniDemuxReceiver {
     inner: RustDemuxReceiver<Box<dyn RecvTransport>>,
-    sink_error: Arc<Mutex<Option<Global<JThrowable<'static>>>>>,
 }
 
-static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<()>>> =
+/// Byte-sink state shared by the sink closures and `nNext`. It lives in the
+/// snapshot, outside the slot, because the closures run while `nNext` holds
+/// the slot.
+#[derive(Default)]
+struct SinkState {
+    /// The exception that ended the receive, until `nNext` rethrows it.
+    error: Mutex<Option<Global<JThrowable<'static>>>>,
+    /// Latched by the first failing callback: no sink is called again and
+    /// the receiver stays ended.
+    failed: AtomicBool,
+}
+
+static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<Arc<SinkState>>>> =
     LazyLock::new(OwnedRegistry::new);
 
 /// Throw a `recv_event` failure: demux-sourced ones keep `DemuxException`;
@@ -122,16 +130,13 @@ pub(crate) fn register(
         None => RustDemuxReceiver::new(transport),
         Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
     };
-    let jdr = JniDemuxReceiver {
-        inner,
-        sink_error: Arc::new(Mutex::new(None)),
-    };
+    let jdr = JniDemuxReceiver { inner };
     let mut owned = Owned::new(
         jdr,
         cancel,
         Snapshot {
             domain,
-            handles: (),
+            handles: Arc::new(SinkState::default()),
         },
     );
     if let Some(h) = end_reason {
@@ -203,12 +208,18 @@ jni_native! {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
             return JObject::null().into_raw();
         };
-        // recv_event runs INSIDE the slot. The byte sinks fire during this call
-        // and may stash an exception; the `sink_error` Arc is cloned out so it
-        // can be drained AFTER the slot is released.
-        let (res, sink_error) = match REGISTRY.with_mut(handle as u64, |jdr| {
-            (jdr.inner.recv_event(), jdr.sink_error.clone())
-        }) {
+        let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.clone()) else {
+            crate::error::throw_closed(env, "DemuxReceiver");
+            return JObject::null().into_raw();
+        };
+        // A sink failure, rethrown by an earlier call, ended the receive for
+        // good: what the demuxer still queues came from packets after it.
+        if sinks.failed.load(Ordering::Acquire) {
+            throw_state(env, domain, "DemuxReceiver", &HandleState::Closed);
+            return JObject::null().into_raw();
+        }
+        // recv_event runs INSIDE the slot; the byte sinks fire during it.
+        let res = match REGISTRY.with_mut(handle as u64, |jdr| jdr.inner.recv_event()) {
             Ok(v) => v,
             Err(state) => {
                 throw_state(env, domain, "DemuxReceiver", &state);
@@ -216,11 +227,9 @@ jni_native! {
             }
         };
 
-        // Fail-loud: surface any byte-sink exception captured during this
-        // `recv_event` BEFORE inspecting `res`, re-raising the first-wins
-        // Throwable and stopping iteration. `take()` so a resumed iteration
-        // after a caught error is not permanently poisoned.
-        let captured = sink_error.lock().ok().and_then(|mut s| s.take());
+        // A sink exception wins over `res`: the sink already cancelled the
+        // receiver, and an event this `recv_event` returned is discarded.
+        let captured = sinks.error.lock().ok().and_then(|mut s| s.take());
         if let Some(global) = captured {
             if let Ok(local) = env.new_local_ref(&global) {
                 let _ = env.throw(local);
@@ -258,8 +267,8 @@ jni_native! {
 jni_native! {
     /// `nAddByteSink(handle, consumer)` — register a fan-out `Consumer<byte[]>` that
     /// fires once per 188-byte TS packet before demux. See the module doc
-    /// for the monitor discipline: the closure attaches to the JVM and upcalls with
-    /// NO Rust lock and NO Java monitor held.
+    /// for the discipline: the closure upcalls under the receiver's slot,
+    /// with no Java monitor held, and a callback exception cancels the receiver.
     fn Java_org_tstrans_shells_DemuxReceiver_nAddByteSink<'local>(
         env,
         _class,
@@ -284,17 +293,24 @@ jni_native! {
             }
         };
 
-        // Register the sink under the registry lease. The shared sink-error slot is
-        // cloned from the leased receiver.
+        // The shared sink state and the receiver's own cancel are read off
+        // the entry without the slot.
+        let (Some(sinks), Some(cancel)) = (
+            REGISTRY.snapshot(handle as u64, |s| s.handles.clone()),
+            REGISTRY.cancel_view(handle as u64),
+        ) else {
+            throw_handle_state(env, "DemuxReceiver", &HandleState::Closed);
+            return;
+        };
+        let cancel = cancel.0;
         let registered = REGISTRY.with_mut(handle as u64, |jdr| {
-            let slot = jdr.sink_error.clone();
             jdr.inner.add_byte_sink(Box::new(move |pkt: &[u8]| {
-                // Runs on the receiver's own thread INSIDE recv_event. NO Java monitor
-                // and NO Rust lock is held across this upcall (DemuxReceiver Java
-                // methods are NOT synchronized and there is no inner mutex) — the JVM
-                // analogue of tst-py's allow-threads-before-lock fix, trivial here
-                // because there is no GIL. Touches ONLY `consumer` + `slot`, never the
-                // receiver's `inner`.
+                // Runs on the receiver's own thread inside recv_event, under
+                // the receiver's slot and with no Java monitor held. Touches
+                // only `consumer`, `sinks` and `cancel`, never the receiver.
+                if sinks.failed.load(Ordering::Acquire) {
+                    return;
+                }
                 // Scoped: the thread is detached again when the closure ends
                 // unless it was already attached, as with the 0.21 guard. It
                 // also pushes a local frame per call (each packet's byte[]
@@ -318,16 +334,19 @@ jni_native! {
                         jni_sig!("(Ljava/lang/Object;)V"),
                         &[JValue::Object(&arr.into())],
                     );
-                    // Fail-loud: capture the first callback exception as a Global; later
-                    // per-packet errors are dropped. `nNext` drains + re-throws it.
+                    // The first callback exception ends the receive: store it
+                    // for `nNext`, then cancel so the in-flight recv_event
+                    // returns instead of waiting for an event.
                     if env.exception_check()
                         && let Some(exc) = env.exception_occurred() {
                             env.exception_clear();
-                            if let Ok(mut s) = slot.lock()
-                                && s.is_none()
+                            if !sinks.failed.swap(true, Ordering::AcqRel) {
+                                if let Ok(mut s) = sinks.error.lock()
                                     && let Ok(g) = env.new_global_ref(&exc) {
                                         *s = Some(g);
                                     }
+                                cancel.cancel();
+                            }
                         }
                     Ok(())
                 });
