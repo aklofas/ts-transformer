@@ -610,10 +610,6 @@ jni_native! {
         data_desc_bytes: JByteArray<'local>,
         data_desc_lens: JIntArray<'local>,
     ) -> jlong = 0 => {
-        let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
-            crate::error::throw_closed(env, "Socket");
-            return 0;
-        };
         let cfg = match build_muxer_config_from_arrays(
             env,
             program_number,
@@ -632,8 +628,13 @@ jni_native! {
             &data_desc_lens,
         ) {
             Ok(c) => c,
-            // The socket is already consumed (dropped here); the exception is pending.
+            // Refused before the take: the socket stays registered with its
+            // caller, so a corrected retry can still convert it.
             Err(()) => return 0,
+        };
+        let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
+            crate::error::throw_closed(env, "Socket");
+            return 0;
         };
         shells::mux_sender::register(env, opened_send(socket), cfg)
     }
@@ -666,10 +667,6 @@ jni_native! {
         sync_buf_cap: jlong,
         unwrap_timestamps: jboolean,
     ) -> jlong = 0 => {
-        let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
-            crate::error::throw_closed(env, "Socket");
-            return 0;
-        };
         let Some(opts) = build_demux_config_from_args(
             env,
             strict,
@@ -682,6 +679,11 @@ jni_native! {
             sync_buf_cap,
             unwrap_timestamps,
         ) else {
+            // Refused before the take (see nIntoMuxSender).
+            return 0;
+        };
+        let Some(socket) = REGISTRY_SOCKET.close(handle as u64) else {
+            crate::error::throw_closed(env, "Socket");
             return 0;
         };
         shells::demux_receiver::register(opened_recv(socket), Some(opts))
