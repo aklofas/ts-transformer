@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::csv::csv_rows;
-use super::rss::{RssSample, linear_regression_slope, parse_rows};
+use super::rss::{MIN_SAMPLE_COVERAGE, RssSample, linear_regression_slope, parse_rows};
 use crate::proxy::ProxyStats;
 use crate::report_types::{CellMetrics, VerifyReport};
 
@@ -365,10 +365,6 @@ fn roles(s: &StreamArtifacts) -> &'static [&'static str] {
     }
 }
 
-/// Same floor as soak's `MIN_SAMPLE_COVERAGE`: below it a resource
-/// verdict rests on too few points to mean anything.
-const MIN_SAMPLE_COVERAGE: f64 = 0.9;
-
 /// A sampler row keyed by `(leg, process, pid)` at an elapsed time.
 trait Sampled {
     fn elapsed_s(&self) -> f64;
@@ -594,34 +590,44 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
     })
 }
 
-/// Every role of every stream must have exited 0. A missing role is a
-/// failure too: an absent status is not evidence of a clean exit.
-/// `proxy_stats_final`: every stream with a proxy carries the stats file
-/// the proxy wrote as it exited. A periodic snapshot stops short of the
-/// step's tail, so its totals are neither recorded nor judged.
+/// Whether `stress.sh` runs `leg` through an impairment proxy: every
+/// transport but TCP, whose sender connects straight to its receiver.
+fn is_proxied(leg: &str) -> bool {
+    leg.rsplit_once('-').map_or(leg, |(transport, _)| transport) != "tcp"
+}
+
+/// `proxy_stats_final`: every proxied stream carries the stats file the
+/// proxy wrote as it exited. A missing file is a proxy that died before its
+/// first write; a periodic snapshot stops short of the step's tail, so its
+/// totals are neither recorded nor judged.
 fn verdict_proxy_stats_final(streams: &[StreamArtifacts]) -> StepVerdict {
-    let not_final: Vec<String> = streams
-        .iter()
-        .filter(|s| s.proxy.as_ref().is_some_and(|p| !p.final_snapshot))
-        .map(|s| format!("{}/proxy", s.leg))
-        .collect();
+    let mut problems = Vec::new();
+    for s in streams {
+        match &s.proxy {
+            None if is_proxied(&s.leg) => problems.push(format!("{}/proxy: no stats file", s.leg)),
+            Some(p) if !p.final_snapshot => problems.push(format!(
+                "{}/proxy: the stats file is not the proxy's final snapshot — the proxy did \
+                 not complete its exit write",
+                s.leg
+            )),
+            _ => {}
+        }
+    }
     StepVerdict {
         name: "proxy_stats_final".into(),
-        pass: not_final.is_empty(),
-        observed: not_final.len() as f64,
+        pass: problems.is_empty(),
+        observed: problems.len() as f64,
         threshold: 0.0,
-        detail: if not_final.is_empty() {
+        detail: if problems.is_empty() {
             "every proxy's stats file is its final snapshot".into()
         } else {
-            format!(
-                "{}: the stats file is not the proxy's final snapshot — the proxy did not \
-                 complete its exit write",
-                not_final.join(", ")
-            )
+            problems.join("; ")
         },
     }
 }
 
+/// Every role of every stream must have exited 0. A missing role is a
+/// failure too: an absent status is not evidence of a clean exit.
 fn verdict_worker_exits(exits: &BTreeMap<String, i32>, streams: &[StreamArtifacts]) -> StepVerdict {
     let mut required = Vec::new();
     for s in streams {
@@ -3124,9 +3130,20 @@ mod tests {
         // TCP: send connects straight to recv — no proxy process, no
         // proxy rows, no proxy exit status, no proxy stats.
         let mut inp = inputs(1, 30);
+        inp.decl.transport = "tcp".into();
         inp.proc.retain(|s| s.process != "proxy");
         inp.rss.retain(|s| s.process != "proxy");
-        inp.worker_exits.remove("srt-0-proxy");
+        for s in &mut inp.proc {
+            s.leg = "tcp-0".into();
+        }
+        for s in &mut inp.rss {
+            s.leg = "tcp-0".into();
+        }
+        inp.worker_exits = ["send", "recv"]
+            .iter()
+            .map(|role| (format!("tcp-0-{role}"), 0))
+            .collect();
+        inp.streams[0].leg = "tcp-0".into();
         inp.streams[0].proxy = None;
         let r = build_step_results(inp).unwrap();
         assert!(r.pass, "{:?}", r.failing);
@@ -3145,6 +3162,22 @@ mod tests {
         assert!(r.pass, "{:?}", r.failing);
         assert_eq!(r.per_stream[0].leg, "srt-0");
         assert_eq!(r.per_stream[0].cpu_seconds.len(), 3);
+    }
+
+    #[test]
+    fn a_proxied_stream_without_a_stats_file_fails_the_step() {
+        // An SRT stream always runs through a proxy, so a missing stats file
+        // is a proxy that died before its first write, never a proxyless
+        // stream.
+        let mut inp = inputs(2, 10);
+        inp.streams[1].proxy = None;
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "proxy_stats_final");
+        assert!(
+            !v.pass && v.detail.starts_with("srt-1/proxy: no stats file"),
+            "{v:?}"
+        );
+        assert!(r.failing.contains(&"proxy_stats_final".to_string()));
     }
 
     #[test]
@@ -3430,6 +3463,13 @@ mod tests {
                 &format!("streams/{}/recv-report.json", a.index),
                 &serde_json::to_string(&a.recv).unwrap(),
             );
+            if let Some(proxy) = &a.proxy {
+                write(
+                    dir,
+                    &format!("streams/{}/proxy-stats.json", a.index),
+                    &serde_json::to_string(proxy).unwrap(),
+                );
+            }
         }
     }
 
@@ -3545,6 +3585,11 @@ mod tests {
             &dir,
             "streams/0/recv-report.json",
             &serde_json::to_string(&passing_recv_report(18_000)).unwrap(),
+        );
+        write(
+            &dir,
+            "streams/0/proxy-stats.json",
+            &serde_json::to_string(&proxy_stats(18_000, 0, 0.0, None, 0)).unwrap(),
         );
 
         let r = run_step(&dir, thresholds()).unwrap();

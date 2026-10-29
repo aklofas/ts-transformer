@@ -987,6 +987,16 @@ fn the_walks_klv_carriers_are_the_demuxers() {
         (0x06, with(registration(b"GA94"))),
         (0x06, registration(b"ID3 ")),
         (0x1B, klva.clone()),
+        // Format 0x11 (BiM) under application format 0x0100.
+        (0x15, vec![0x26, 5, 0x01, 0x00, 0x11, 0x00, 0x0F]),
+        // Application format 0xFFFF carries a 4-byte identifier, so the
+        // format (0x10, not 0xFF) sits at offset 6.
+        (
+            0x15,
+            vec![
+                0x26, 9, 0xFF, 0xFF, b'a', b'b', b'c', b'd', 0x10, 0x00, 0x0F,
+            ],
+        ),
     ];
     let bytes = carrier_capture(&streams);
     let demuxed = demuxed_carriers(&bytes);

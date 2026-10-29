@@ -74,7 +74,19 @@ fn sweep_against_its_own_output_is_identical() {
     let base = first.join("digests");
     let out = sweep(&dir, &second, &["--baseline", base.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(json(&second.join("sweep.json"))["identical"], 2);
+    let s = json(&second.join("sweep.json"));
+    assert_eq!(s["identical"], 2);
+    use sha2::{Digest, Sha256};
+    let manifest = std::fs::read(base.join("manifest.txt")).unwrap();
+    let want: String = Sha256::digest(&manifest)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(s["baseline_manifest_sha256"], want.as_str());
+    assert_eq!(
+        json(&first.join("sweep.json"))["baseline_manifest_sha256"],
+        Value::Null
+    );
 }
 
 /// A baseline written before a digest field existed compares identical

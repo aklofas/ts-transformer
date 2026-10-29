@@ -489,19 +489,19 @@ mod tests {
     /// runs out; without a viewer it starts at the limit.
     #[test]
     fn the_push_starts_when_the_viewer_connects() {
-        let t0 = Instant::now();
-        let connects_at = Duration::from_millis(300);
+        // The viewer connects on the third poll: the wait returns there, and
+        // never polls again on to the limit.
+        let mut polls = 0;
         let waited = wait_until(
-            || t0.elapsed() >= connects_at,
-            Duration::from_secs(10),
-            VIEWER_POLL,
-        )
-        .expect("the viewer connected inside the limit");
-        assert!(waited >= connects_at, "{waited:?}");
-        assert!(
-            waited < Duration::from_secs(5),
-            "pushed on connect, not at the limit: {waited:?}"
+            || {
+                polls += 1;
+                polls == 3
+            },
+            Duration::from_secs(3600),
+            Duration::from_millis(1),
         );
+        assert!(waited.is_some(), "the viewer connected inside the limit");
+        assert_eq!(polls, 3, "pushed on connect, not at the limit");
 
         let t0 = Instant::now();
         let limit = Duration::from_millis(300);

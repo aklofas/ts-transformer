@@ -30,7 +30,19 @@ pub struct ArchiveRow {
     pub note: String,
 }
 
-/// The archive row of a run. A run without a replay is not a pass.
+/// Which baseline the sweep compared with, or that it compared with none.
+fn baseline_sentence(sweep: &SweepSummary) -> String {
+    match (&sweep.baseline_manifest_sha256, sweep.baseline_matched) {
+        (Some(m), Some(n)) => format!(
+            "Compared with the baseline whose manifest has SHA-256 {m}: {n} captures matched."
+        ),
+        _ => "No baseline was compared.".into(),
+    }
+}
+
+/// The archive row of a run. A run without a replay is not a pass. The note
+/// says which baseline the sweep compared with, or that it compared with
+/// none.
 pub fn archive_row(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> ArchiveRow {
     let (replay_files, replay_paths, replay_failed) = replay
         .map(|r| (r.files, r.paths.len() as u64, r.failed))
@@ -38,12 +50,13 @@ pub fn archive_row(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> Arch
     let note = format!(
         "Sweep {} files: {} identical, {} changed and explained, {} invariant failures, \
          {} parse failures; replay {replay_files} files over {replay_paths} paths, \
-         {replay_failed} failed.",
+         {replay_failed} failed. {}",
         sweep.files,
         sweep.identical,
         sweep.changed_explained,
         sweep.invariant_failures,
         sweep.parse_failures,
+        baseline_sentence(sweep),
     );
     ArchiveRow {
         kind: "corpus".into(),
@@ -101,6 +114,7 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
         "\nST 0601 field errors: {} across {} capture(s) (recorded, not gated).",
         sweep.klv_field_errors, sweep.files_with_klv_field_errors
     );
+    let _ = writeln!(s, "\n{}", baseline_sentence(sweep));
     let _ = writeln!(s, "\nSweep verdict: {}.", verdict(sweep.pass));
     let Some(r) = replay else {
         s.push_str("\nNo replay was recorded for this run.\n");
@@ -109,7 +123,7 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
     s.push_str(
         "\n| Replay path | Files | Failed | Restarted before | RSS max (kB) | RSS slope (kB per hour) |\n",
     );
-    s.push_str("| --- | ---: | ---: | ---: | ---: | ---: |\n");
+    s.push_str("| --- | ---: | ---: | --- | ---: | ---: |\n");
     for p in PATHS.iter().filter(|p| r.paths.iter().any(|q| q == *p)) {
         let failed = r
             .verdicts

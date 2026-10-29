@@ -330,21 +330,15 @@ impl PathRun {
                 .map_err(|e| format!("cannot create a receiver log: {}", e.kind()))
         };
         log(&verdicts)?;
-        let mut stderr = log(&logs.join(format!("receive-{path}.stderr")))?;
-        if let Some(sha) = restart {
-            writeln!(stderr, "--- receiver restarted for pick {sha} ---")
-                .map_err(|e| format!("cannot write a receiver log: {}", e.kind()))?;
-        }
-        let mut child = Command::new(exe)
-            .args(["corpus", "receive", "--path", path, "--digests"])
+        let stderr = log(&logs.join(format!("receive-{path}.stderr")))?;
+        let mut cmd = Command::new(exe);
+        cmd.args(["corpus", "receive", "--path", path, "--digests"])
             .arg(run.root.join("digests"))
             .arg("--out")
             .arg(verdicts)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(stderr)
-            .spawn()
-            .map_err(|e| format!("cannot start the {path} receiver: {}", e.kind()))?;
+            .stdout(Stdio::piped());
+        let mut child = spawn_logged(&mut cmd, stderr, restart, path)?;
         let stdout = child.stdout.take().expect("stdout is piped");
         let (tx, lines) = mpsc::channel();
         std::thread::spawn(move || {
@@ -1147,6 +1141,29 @@ pub fn run_with(
     Ok(summary)
 }
 
+/// Spawns a receiver with its stderr appended to `stderr`. A restart is
+/// marked in the log first, so the new child's lines follow the marker; a
+/// spawn that fails is marked too, so the log never claims a restart the
+/// summary leaves out.
+fn spawn_logged(
+    cmd: &mut Command,
+    mut stderr: File,
+    restart: Option<&Sha256Hex>,
+    path: &str,
+) -> Result<Child, String> {
+    let write_err = |e: std::io::Error| format!("cannot write a receiver log: {}", e.kind());
+    if let Some(sha) = restart {
+        writeln!(stderr, "--- receiver restarted for pick {sha} ---").map_err(write_err)?;
+    }
+    let mut marker = stderr.try_clone().map_err(write_err)?;
+    cmd.stderr(stderr).spawn().map_err(|e| {
+        if restart.is_some() {
+            let _ = writeln!(marker, "--- restart failed: {} ---", e.kind());
+        }
+        format!("cannot start the {path} receiver: {}", e.kind())
+    })
+}
+
 // The only unit test here reads a sparse file's length through the Linux
 // pick-size check, so the whole module is Linux-only; a bare `cfg(test)`
 // would leave `use super::*` unused on macOS and Windows, which clippy
@@ -1169,5 +1186,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(e.starts_with("skipped: "), "{e}");
         assert!(e.contains("over the pick size cap"), "{e}");
+    }
+}
+
+#[cfg(test)]
+mod spawn_tests {
+    use super::*;
+
+    /// A restart whose spawn fails says so in the log, so the log never
+    /// claims a restart the summary leaves out.
+    #[test]
+    fn a_restart_that_cannot_spawn_is_marked_failed_in_the_log() {
+        let dir = std::env::temp_dir().join(format!("tst-replay-spawn-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("receive.stderr");
+        let file = File::create(&log).unwrap();
+        let sha = Sha256Hex("a".repeat(64));
+        let mut cmd = Command::new(dir.join("no-such-receiver"));
+        assert!(spawn_logged(&mut cmd, file, Some(&sha), "udp").is_err());
+        let text = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert_eq!(
+            lines[0],
+            format!("--- receiver restarted for pick {sha} ---")
+        );
+        assert!(lines[1].starts_with("--- restart failed: "), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -293,7 +293,7 @@ fn a_pcr_gap_the_pacer_did_not_pace_is_named_by_sha() {
     std::fs::write(dir.join("gap.ts"), &bytes).unwrap();
     let run = dir.join("run");
     // The sweep may judge the jump; the replay only needs its digests.
-    run_bounded(
+    let sweep = run_bounded(
         bin()
             .args(["corpus", "sweep"])
             .arg(&dir)
@@ -301,6 +301,7 @@ fn a_pcr_gap_the_pacer_did_not_pace_is_named_by_sha() {
             .arg(&run),
         LIMIT,
     );
+    assert!(run.join("digests").is_dir(), "{}", text(&sweep));
     let out = replay_over(&dir, &run, "tcp", &[]);
     let err = String::from_utf8_lossy(&out.stderr);
     let sha = sha_of(&bytes).0;

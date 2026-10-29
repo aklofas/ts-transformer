@@ -39,8 +39,10 @@ const POST_START_GRACE: Duration = Duration::from_secs(2);
 
 /// How far past `seconds` a `tcp://` recv's watcher lets the run go before
 /// cancelling a parked accept or read: the no-data allowance plus the
-/// post-start grace, so it never fires before the receive loop's own
-/// latest deadline (a first event at the very end of the allowance).
+/// post-start grace. When the accept returns at once, it never fires before
+/// the receive loop's own latest deadline (a first event at the very end of
+/// the allowance); the watcher starts before the accept, so a slow accept
+/// moves the loop's deadline later and the watcher does not follow it.
 const TCP_NO_DATA_SLACK: Duration = NO_DATA_TIMEOUT.saturating_add(POST_START_GRACE);
 
 /// A thread that fires a [`transport::Watch`] once `budget` has passed,
@@ -393,7 +395,10 @@ pub fn run(
     if let Some(watcher) = watcher {
         let budget = watcher.budget;
         if watcher.stop() && report.metrics.bytes == 0 {
-            let msg = format!("no data before the deadline ({} s)", budget.as_secs());
+            let msg = format!(
+                "no data before the deadline ({:.1} s)",
+                budget.as_secs_f64()
+            );
             eprintln!("recv: {msg}");
             report.failures.push(msg);
             report.pass = false;

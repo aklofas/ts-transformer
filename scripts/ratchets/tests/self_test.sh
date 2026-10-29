@@ -1163,5 +1163,19 @@ os_bad indexed '        n(Mode.values()[i].ordinal());' "FAIL: ordinal-sites: or
 os_bad continuation '            .ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot parse the receiver of every .ordinal()"
 os_bad string-comment '        n("a//b", mode.ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot classify a line mixing a string literal and a comment"
 
+# ---- release-vm-corpus.sh: a run names its baseline or says it has none ----
+# --dry-run prints each stage's command and runs nothing. A run with neither
+# --baseline nor --no-baseline is refused, so a release run cannot skip the
+# baseline comparison by forgetting the flag.
+RVC="$DIR/../interop/release-vm-corpus.sh"
+rvc_sha=0123456789abcdef0123456789abcdef01234567
+expect "release-vm-corpus: neither --baseline nor --no-baseline is refused" 2 bash "$RVC" "$rvc_sha" --dry-run
+expect_out "release-vm-corpus: the refusal" "release-vm-corpus.sh: name the baseline (--baseline DIR) or say there is none (--no-baseline)"
+expect "release-vm-corpus: --baseline with --no-baseline is refused" 2 bash "$RVC" "$rvc_sha" --dry-run --baseline "$tmp/base" --no-baseline
+expect "release-vm-corpus: --no-baseline runs a sweep without one" 0 bash "$RVC" "$rvc_sha" --dry-run --no-baseline
+expect "release-vm-corpus: --no-baseline passes no --baseline to the sweep" 1 grep -q -- '--baseline' "$tmp/out"
+expect "release-vm-corpus: --baseline DIR reaches the sweep" 0 bash "$RVC" "$rvc_sha" --dry-run --baseline "$tmp/base"
+expect_out "release-vm-corpus: the sweep line" "--baseline $tmp/base"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
