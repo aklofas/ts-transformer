@@ -540,8 +540,13 @@ impl PyDemuxReceiver {
         }
         // Done here and now: a later `__next__` must report the closed
         // receiver, not end the iteration as the deferred close would.
+        // Cleared again once the close completes: while this call waited
+        // for the slot, the in-flight `__next__`'s sink may have deferred
+        // a close of its own, and the completed close wins.
         self.close_pending.store(false, Ordering::Release);
-        close_owned(py, &self.owned.snapshot().domain, &self.owned)
+        let res = close_owned(py, &self.owned.snapshot().domain, &self.owned);
+        self.close_pending.store(false, Ordering::Release);
+        res
     }
 
     /// `True` while the receiver owns a live transport (a `__next__`
