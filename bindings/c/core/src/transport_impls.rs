@@ -1383,7 +1383,10 @@ mod open_guard_tests {
         use crate::rtp::*;
         let bad = CString::new("not a url").unwrap();
         let (n, nc) = (std::ptr::null(), std::ptr::null());
+        // A null pointer is a caller error; a URL the parser refuses is the
+        // RTP transport's own code, as on every RTP open.
         let cfgd = TstError::InvalidConfig;
+        let url = TstError::RtpTransport;
         unsafe {
             let cfg = valid_mux_cfg();
             check(
@@ -1393,7 +1396,7 @@ mod open_guard_tests {
             );
             check(
                 tst_rtp_sender_open(bad.as_ptr()).is_null(),
-                cfgd,
+                url,
                 "rtp url parse error:",
             );
             check(
@@ -1403,7 +1406,7 @@ mod open_guard_tests {
             );
             check(
                 tst_rtp_recv_open(bad.as_ptr()).is_null(),
-                cfgd,
+                url,
                 "rtp url parse error:",
             );
             check(
@@ -1413,12 +1416,12 @@ mod open_guard_tests {
             );
             check(
                 tst_rtp_mux_sender_open(bad.as_ptr(), cfg).is_null(),
-                cfgd,
+                url,
                 "rtp url parse error:",
             );
             check(
                 tst_rtp_mux_sender_open(bad.as_ptr(), nc).is_null(),
-                cfgd,
+                url,
                 "rtp url parse error:",
             );
             check(
@@ -1428,7 +1431,7 @@ mod open_guard_tests {
             );
             check(
                 tst_rtp_demux_receiver_open(bad.as_ptr(), std::ptr::null()).is_null(),
-                cfgd,
+                url,
                 "rtp url parse error:",
             );
             crate::config::tst_mux_config_free(cfg);
