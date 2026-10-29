@@ -22,9 +22,9 @@ use crate::schedule::{self, Event, PTS_HZ};
 ///
 /// Pacing is entirely offline: PTS advances `90_000 / p.fps` ticks per
 /// video frame and `90_000 / p.klv_hz` ticks per KLV record, both from
-/// `p.start_pts_ticks`, with no wall-clock sleeps — every event for the
-/// whole `seconds` window is computed up front, sorted into ascending PTS
-/// order, then pushed and drained in one pass. Audio (when `p.audio`)
+/// `p.start_pts_ticks`, with no wall-clock sleeps — the schedule yields
+/// the whole `seconds` window's events lazily in ascending PTS order, and
+/// each is pushed and drained as it comes. Audio (when `p.audio`)
 /// runs on its own cadence — real AAC framing at 1024 samples/frame and
 /// `schedule::AUDIO_SAMPLE_RATE_HZ` (48 kHz) — independent of the video
 /// frame rate; see `schedule::build_schedule`'s doc comment and

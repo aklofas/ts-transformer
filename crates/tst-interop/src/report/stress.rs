@@ -80,9 +80,10 @@ pub fn parse_proc_csv(text: &str) -> Result<Vec<ProcSample>, String> {
 }
 
 /// Parse the stress harness's own `rss.csv`. Same decoder as the soak's
-/// but with no leg allowlist: a stress step runs N concurrent streams of
-/// one transport, each with its own leg (`<transport>-<k>`, see
-/// `StreamArtifacts::leg`), which the soak's fixed leg set would reject.
+/// (`super::rss::parse_rows`) but with no leg allowlist: a stress step runs
+/// N concurrent streams of one transport, each with its own leg
+/// (`<transport>-<k>`, see `StreamArtifacts::leg`), which the soak's
+/// five-leg allowlist would reject.
 pub fn parse_rss_csv(text: &str) -> Result<Vec<RssSample>, String> {
     parse_rows(text, |_| true)
 }
@@ -3554,9 +3555,9 @@ mod tests {
 
     #[test]
     fn rss_csv_accepts_per_stream_legs_and_empty_rss() {
-        // Unlike super::soak::parse_rss_csv, the stress-local parser has
-        // no KNOWN_LEGS allowlist: "tcp-12" is a per-stream leg, not one
-        // of soak.sh's two fixed legs.
+        // Both parsers share super::rss::parse_rows; only the soak's passes
+        // a leg allowlist. "tcp-12" is a per-stream leg, not one of the
+        // soak's five fixed legs.
         let text = "elapsed_s,leg,process,pid,rss_kb\n30,tcp-12,send,100,\n";
         let rows = parse_rss_csv(text).unwrap();
         assert_eq!(rows.len(), 1);

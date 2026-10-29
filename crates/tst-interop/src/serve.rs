@@ -306,7 +306,7 @@ pub enum ServeScheme {
 /// Classify `url`'s scheme as a serve (bind) scheme. Mirrors
 /// `transport.rs`'s own private `scheme_of` — a distinct copy rather than
 /// a shared helper, per this crate's convention of small per-module
-/// "same shape" parsing (see `gen.rs`/`send.rs`'s duplicated `Event`).
+/// "same shape" parsing.
 fn scheme_of(url: &str) -> Option<&str> {
     url.split_once("://").map(|(scheme, _)| scheme)
 }

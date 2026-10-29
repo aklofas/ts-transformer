@@ -8,10 +8,9 @@
 //! - `Error` events are compared by **stable public code** (e.g.
 //!   `"STRICT_REJECTION"`), never by Rust-internal kind or free text.
 //! - An unknown `event` tag encountered during JSON deserialization causes a
-//!   hard parse error (via `#[serde(deny_unknown_fields)]` on the tag +
-//!   `#[serde(other)]` absent deliberately).  An older consumer encountering
-//!   a `CoreEvent` variant it doesn't recognise will fail loudly, never skip
-//!   silently.
+//!   hard parse error (no `#[serde(other)]` catch-all, deliberately).  An
+//!   older consumer encountering a `CoreEvent` variant it doesn't recognise
+//!   will fail loudly, never skip silently.
 //! - `roundtrip` scenarios carry no media events (`core: []`); the whole-stream
 //!   byte-identity digest lives under `extensions.output_sha256`. The demux-path
 //!   `payload_sha256` field (NAL payload hash) is never overloaded for this.
