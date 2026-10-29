@@ -27,8 +27,11 @@
 #              refused without --smoke.
 #   --dry-run  every validation, then one line per step
 #              `transport axis load nominal_mbps` (nominal_mbps = the
-#              step's AGGREGATE nominal bitrate). Builds nothing, writes
-#              nothing, launches nothing. Without --skip-hold it also
+#              step's AGGREGATE nominal bitrate), then each step's port
+#              table, one `ports: transport axis load leg recv=P proxy=P`
+#              line per leg, from a counter (no port is probed or bound);
+#              a port reserved twice within a step exits 2. Builds
+#              nothing, writes nothing, launches nothing. Without --skip-hold it also
 #              prints the hold's schedule (restart instants, outage
 #              windows, the collision verdict). Exit codes as a real
 #              run's pre-flight: 2 bad argument/env/schedule, 1 a
@@ -649,8 +652,58 @@ for t in "${TRANSPORTS[@]}"; do
   done
 done
 
+declare -A STREAM_PORT
+declare -A PROXY_PORT
+declare -A USED_PORTS
+
+# stream_port <transport> <leg> — the leg's ports, allocated on first use:
+# the receiver's bind port and, for the UDP transports, the impairment
+# proxy's listen port. Both come from the same reservation table
+# (`reserve_port`, lib.sh). The proxy used to listen on `:0` and take
+# whatever the kernel chose, which can be a port reserved here for a
+# receiver that has not bound yet — one hold launch of 176 streams lost
+# its receiver that way.
+stream_port() {
+  local transport=$1 leg=$2
+  [[ -z "${STREAM_PORT[$leg]:-}" ]] || return 0
+  reserve_port "$transport" "STREAM_PORT[$leg]"
+  [[ "$transport" == "tcp" ]] || reserve_port "$transport" "PROXY_PORT[$leg]"
+}
+
+# dry_run_port_table <transport> <axis> <load> — the step's ports, one
+# line per leg, drawn through the same stream_port call a real step makes
+# but from reserve_port's counter (DRY_RUN_PORT_NEXT) instead of the
+# kernel. The table resets per step, exactly as a real step resets it (a
+# step's sockets are gone before the next one binds), so ports repeat
+# across steps by design and only a repeat WITHIN a step is a fault.
+dry_run_port_table() {
+  local transport=$1 axis=$2 load=$3 i leg n port
+  local -A seen=()
+  STREAM_PORT=()
+  PROXY_PORT=()
+  USED_PORTS=()
+  DRY_RUN_PORT_NEXT=$DRY_RUN_PORT_BASE
+  n=$(step_streams "$axis" "$load")
+  for ((i = 0; i < n; i++)); do
+    leg="$transport-$i"
+    stream_port "$transport" "$leg"
+    echo "ports: $transport $axis $load $leg recv=${STREAM_PORT[$leg]} proxy=${PROXY_PORT[$leg]:--}"
+    for port in "${STREAM_PORT[$leg]}" ${PROXY_PORT[$leg]:+"${PROXY_PORT[$leg]}"}; do
+      [[ -z "${seen[$port]:-}" ]] ||
+        die "dry run: step $transport/$axis/$load reserved port $port twice (${seen[$port]} and $leg)"
+      seen[$port]=$leg
+    done
+  done
+}
+
 if [[ "$DRY_RUN" -eq 1 ]]; then
   printf '%s\n' "${STEP_LIST[@]}"
+  DRY_RUN_PORT_BASE=20000
+  for step in "${STEP_LIST[@]}"; do
+    read -r t axis load _ <<<"$step"
+    dry_run_port_table "$t" "$axis" "$load"
+  done
+  unset DRY_RUN_PORT_NEXT
   [[ "$SKIP_HOLD" -eq 1 ]] || print_hold_schedule
 fi
 # A colliding hold schedule is a usage error (the knobs are wrong).
@@ -877,26 +930,9 @@ BIN="$REPO_ROOT/target/release/tst-interop"
 # --run-seconds: an SRT proxy launched early must also end later). The
 # receiver log is always opened for append: a step's log is new, and a
 # restarted receiver continues its predecessor's.
-declare -A STREAM_PORT
-declare -A PROXY_PORT
-declare -A USED_PORTS
 PROXY_IMPAIR_ARGS=()
 PROXY_SEED=""
 PROXY_EXTRA_S=0
-
-# stream_port <transport> <leg> — the leg's ports, allocated on first use:
-# the receiver's bind port and, for the UDP transports, the impairment
-# proxy's listen port. Both come from the same reservation table
-# (`reserve_port`, lib.sh). The proxy used to listen on `:0` and take
-# whatever the kernel chose, which can be a port reserved here for a
-# receiver that has not bound yet — one hold launch of 176 streams lost
-# its receiver that way.
-stream_port() {
-  local transport=$1 leg=$2
-  [[ -z "${STREAM_PORT[$leg]:-}" ]] || return 0
-  reserve_port "$transport" "STREAM_PORT[$leg]"
-  [[ "$transport" == "tcp" ]] || reserve_port "$transport" "PROXY_PORT[$leg]"
-}
 
 launch_stream() {
   local phase=$1 transport=$2 idx=$3 leg=$4 stream_dir=$5 seconds=$6 scale=$7 managed=$8 outage=$9

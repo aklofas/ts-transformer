@@ -115,10 +115,22 @@ free_port() {
 # runs in a subshell, whose write to USED_PORTS dies with it, and every
 # reservation would then be checked against an empty table. `printf -v`
 # hands the port back without one.
+#
+# With DRY_RUN_PORT_NEXT set (stress.sh --dry-run), the port comes from
+# that counter instead of the kernel: nothing binds, and the counter
+# advances in the caller's shell only, so a reservation made in a subshell
+# hands the same port out again and the dry run's per-step table shows it.
 reserve_port() {
   local transport=$1 out=$2 port=""
   until [[ -n "$port" && -z "${USED_PORTS[$port]:-}" ]]; do
-    if [[ "$transport" == "tcp" ]]; then port=$(free_port tcp); else port=$(free_port udp); fi
+    if [[ -n "${DRY_RUN_PORT_NEXT:-}" ]]; then
+      port=$DRY_RUN_PORT_NEXT
+      DRY_RUN_PORT_NEXT=$((port + 1))
+    elif [[ "$transport" == "tcp" ]]; then
+      port=$(free_port tcp)
+    else
+      port=$(free_port udp)
+    fi
   done
   USED_PORTS[$port]=1
   printf -v "$out" '%s' "$port"
