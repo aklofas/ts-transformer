@@ -260,6 +260,10 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/stress-port-table.sh
 
+      - name: Interop analyze counters (the tsanalyze verdict gates per-PID leaps)
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/interop-analyze-counters.sh
+
       - name: No stale relocated-away package paths
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-stale-relocated-paths.sh

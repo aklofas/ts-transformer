@@ -173,6 +173,14 @@ mechanism string by definition.
     project's own pre-release decoder-compatibility check.
     Also used for every format-axis `analyze/*` cell (a structural/
     counter assertion, not a byte- or profile-invariant comparison).
+    The `analyze/tsanalyze/*` cells gate TSDuck's global counters
+    (invalid syncs, transport errors, suspect packets) and its per-PID
+    leap and discontinuity counters: a PCR or PTS that steps back or
+    jumps by more than a second, or a continuity-counter break, on any
+    PID is a matrix failure from an independent analyzer. The one leap
+    TSDuck counts when a clock wraps at 2^33 inside the capture (the
+    `pts-rollover` profile) is excused; see
+    `tsanalyze_ts_line_counters_zero` in `lib.sh`.
 
 ### Inventory and shape
 
