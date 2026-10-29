@@ -243,6 +243,28 @@ SETTLE=2
 WHEP_VIEWER_WAIT=15
 WHEP_BROWSER_MARGIN=15
 
+# warm_chrome <browser>
+#
+# Once per run, before the first whep/* cell: one throwaway headless launch
+# on about:blank, capped at 20 s. A runner's first headless Chrome start
+# has taken about 6 s against 0.2 s for the next one, enough to push the
+# first cell's page past WHEP_VIEWER_WAIT; paid here, it stays outside
+# every cell's measured window. serve-whep also starts its push the moment
+# the viewer connects, so the wait is an upper bound, not a fixed delay.
+CHROME_WARMED=""
+warm_chrome() {
+  [[ -z "$CHROME_WARMED" ]] || return 0
+  CHROME_WARMED=1
+  local t0 t1 dir="$WORK/warm-browser-profile"
+  t0=$(date +%s%N)
+  timeout --kill-after=5 20 "$1" --headless=new --no-sandbox --disable-gpu --no-first-run \
+    --disable-background-networking --user-data-dir="$dir" --dump-dom about:blank \
+    >/dev/null 2>&1 || true
+  t1=$(date +%s%N)
+  rm -rf "$dir"
+  echo "run-matrix: warmed chrome in $(awk -v d="$((t1 - t0))" 'BEGIN { printf "%.1f", d / 1e9 }') s" >&2
+}
+
 # AES passphrase shared by every "encrypted" cell below. Length must
 # clear SRT's 10-byte floor (RFC/libsrt: 10..79 chars); arbitrary
 # otherwise — this is test-fixture traffic, not a real secret.
@@ -1247,6 +1269,7 @@ run_whep_browser() {
     emit_skipped "$id" google-chrome send remux "neither google-chrome nor chromium is installed on this box"
     return 0
   fi
+  warm_chrome "$browser"
 
   local slugged
   slugged=$(slug "$id")

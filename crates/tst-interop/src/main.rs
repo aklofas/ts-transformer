@@ -244,8 +244,8 @@ fn main() {
 /// generator's. `--mount-kind mp2t` (the default) muxes in-process and
 /// feeds `push_ts`; `elementary` pushes units directly, and `--opus`
 /// (elementary only) adds one Opus silence packet every 20 ms.
-/// `--wait-viewer SECS` (default 0) waits that long for a connected
-/// viewer before the first push. `--json OUT` writes the counters after
+/// `--wait-viewer SECS` (default 0) waits up to that long for a connected
+/// viewer and pushes as soon as one connects. `--json OUT` writes the counters after
 /// the window. A profile whose video is not H.264, or with more than one
 /// program, is refused with exit 2 before anything is bound
 /// (`whep_serve::check_profile`); `--validate-profile` runs only that

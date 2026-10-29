@@ -27,9 +27,9 @@
 //!   mount can carry audio (the TS demuxer has no Opus mapping).
 //!
 //! The push waits, up to `wait_viewer`, for one viewer session to be ICE
-//! connected before the first event, so a browser that joins after bind
-//! still sees the first keyframe and every record bound to it; without a
-//! viewer in time it pushes anyway and the cell fails on its oracles. Once
+//! connected and starts as soon as one is, so a browser that joins after
+//! bind still sees the first keyframe and every record bound to it; without
+//! a viewer in time it pushes anyway and the cell fails on its oracles. Once
 //! the schedule is done the server stays up for `LINGER` so the browser
 //! decodes what is in flight, the counters are written as JSON, and the
 //! server stops.
@@ -243,18 +243,33 @@ fn sleep_until(wall_start: Instant, start: i64, pts_ticks: i64) {
     }
 }
 
-/// Waits up to `limit` for a session on `mount` to report ICE connected.
-/// `true` when one did.
-fn wait_for_viewer(mount: &MountHandle, limit: Duration) -> bool {
-    let deadline = Instant::now() + limit;
+/// Waits up to `limit` for a session on `mount` to report ICE connected,
+/// returning how long that took, so the push starts the moment a viewer
+/// connects.
+fn wait_for_viewer(mount: &MountHandle, limit: Duration) -> Option<Duration> {
+    wait_until(
+        || mount.sessions().iter().any(|s| s.connected_for.is_some()),
+        limit,
+        VIEWER_POLL,
+    )
+}
+
+/// Poll `connected` every `poll` until it holds, returning how long that
+/// took, or `None` once `limit` has passed without it.
+fn wait_until(
+    mut connected: impl FnMut() -> bool,
+    limit: Duration,
+    poll: Duration,
+) -> Option<Duration> {
+    let t0 = Instant::now();
     loop {
-        if mount.sessions().iter().any(|s| s.connected_for.is_some()) {
-            return true;
+        if connected() {
+            return Some(t0.elapsed());
         }
-        if Instant::now() >= deadline {
-            return false;
+        if t0.elapsed() >= limit {
+            return None;
         }
-        thread::sleep(VIEWER_POLL);
+        thread::sleep(poll);
     }
 }
 
@@ -366,16 +381,23 @@ pub fn run(opts: &Options, json: Option<&str>) -> Result<(), String> {
     let viewer_connected = if opts.wait_viewer.is_zero() {
         false
     } else {
-        let connected = wait_for_viewer(&mount, opts.wait_viewer);
-        if connected {
-            thread::sleep(DATA_CHANNEL_SETTLE);
-        } else {
-            eprintln!(
-                "serve-whep: no viewer connected within {:?}; pushing anyway",
-                opts.wait_viewer
-            );
+        match wait_for_viewer(&mount, opts.wait_viewer) {
+            Some(after) => {
+                eprintln!(
+                    "serve-whep: viewer connected after {:.1} s; pushing",
+                    after.as_secs_f64()
+                );
+                thread::sleep(DATA_CHANNEL_SETTLE);
+                true
+            }
+            None => {
+                eprintln!(
+                    "serve-whep: no viewer connected within {:?}; pushing anyway",
+                    opts.wait_viewer
+                );
+                false
+            }
         }
-        connected
     };
 
     let gop = gop_access_units();
@@ -462,6 +484,30 @@ mod tests {
     use crate::profiles;
     use crate::verify::{klv_set_hash, to_hex};
     use sha2::{Digest, Sha256};
+
+    /// The push starts when the viewer connects, not when `--wait-viewer`
+    /// runs out; without a viewer it starts at the limit.
+    #[test]
+    fn the_push_starts_when_the_viewer_connects() {
+        let t0 = Instant::now();
+        let connects_at = Duration::from_millis(300);
+        let waited = wait_until(
+            || t0.elapsed() >= connects_at,
+            Duration::from_secs(10),
+            VIEWER_POLL,
+        )
+        .expect("the viewer connected inside the limit");
+        assert!(waited >= connects_at, "{waited:?}");
+        assert!(
+            waited < Duration::from_secs(5),
+            "pushed on connect, not at the limit: {waited:?}"
+        );
+
+        let t0 = Instant::now();
+        let limit = Duration::from_millis(300);
+        assert_eq!(wait_until(|| false, limit, VIEWER_POLL), None);
+        assert!(t0.elapsed() >= limit);
+    }
 
     #[test]
     fn the_gop_fixture_is_thirty_access_units_opening_on_a_keyframe() {
