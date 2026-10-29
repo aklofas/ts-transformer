@@ -494,3 +494,79 @@ fn the_senders_cut_and_the_sweeps_cut_agree_when_junk_sits_at_a_block_boundary()
     let v = judge("udp", &sweep, Some(&received), &ReceiverOutcome::Completed);
     assert!(v.pass, "{:?}", v.failures);
 }
+
+/// An ST 0605 Precision Time Stamp Pack: its UL, BER length 9, the status
+/// byte and the big-endian microseconds.
+fn st0605_pack_bytes(status: u8, micros: u64) -> Vec<u8> {
+    let mut out = tst_core::klv::UniversalLabel::PRECISION_TIMESTAMP_PACK_UL
+        .0
+        .to_vec();
+    out.push(0x09);
+    out.push(status);
+    out.extend_from_slice(&micros.to_be_bytes());
+    out
+}
+
+/// A complete item under a UL that is neither an ST 0605 pack nor an
+/// ST 0601 set.
+pub fn foreign_ul_item() -> Vec<u8> {
+    let mut foreign = vec![
+        0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x02, 0x00, 0x00,
+        0x00,
+    ];
+    foreign.extend_from_slice(&[0x01, 0xAA]);
+    foreign
+}
+
+#[test]
+fn a_pack_prefixed_0601_payload_is_one_decoded_record() {
+    // A pack immediately followed by a minimal ST 0601 LS.
+    let pack = st0605_pack_bytes(0x00, 1_700_000_000_000_000);
+    let ls = klv_record_for(KlvSet::Compact, 0, 0).unwrap();
+    let rec = klv_record_digest(0x1001, 90_000, &[pack.as_slice(), ls.as_slice()].concat());
+    assert!(rec.decoded, "{:?}", rec.unknown_reason);
+    assert_eq!(rec.items, ["st0605-pack", "st0601-ls"]);
+    assert_eq!(rec.tags, klv_record_digest(0x1001, 90_000, &ls).tags);
+    // The canonical hash covers the pack: the LS alone hashes differently.
+    assert_ne!(
+        rec.canonical_sha256,
+        klv_record_digest(0x1001, 90_000, &ls).canonical_sha256
+    );
+}
+
+#[test]
+fn a_standalone_pack_is_a_decoded_record_with_no_tags() {
+    let rec = klv_record_digest(0x1001, 0, &st0605_pack_bytes(0x00, 1));
+    assert!(rec.decoded, "{:?}", rec.unknown_reason);
+    assert_eq!(rec.items, ["st0605-pack"]);
+    assert!(rec.tags.is_empty());
+}
+
+#[test]
+fn an_unregistered_ul_is_still_unknown_and_names_the_item() {
+    let rec = klv_record_digest(0x1001, 0, &foreign_ul_item());
+    assert!(!rec.decoded);
+    let why = rec.unknown_reason.as_deref().unwrap();
+    assert!(why.starts_with("item 0 (060e2b34020b0101"), "{why}");
+}
+
+#[test]
+fn a_payload_that_ends_inside_an_item_is_unknown_not_partially_decoded() {
+    let ls = klv_record_for(KlvSet::Compact, 0, 0).unwrap();
+    let rec = klv_record_digest(0x1001, 0, &ls[..ls.len() - 3]);
+    assert!(!rec.decoded);
+    assert!(rec.items.is_empty());
+    // A pack whose trailing LS is cut is not partially decoded either.
+    let pack = st0605_pack_bytes(0x00, 1);
+    let rec = klv_record_digest(0x1001, 0, &[pack.as_slice(), &ls[..ls.len() - 3]].concat());
+    assert!(!rec.decoded);
+    assert!(rec.items.is_empty());
+}
+
+#[test]
+fn trailing_bytes_shorter_than_a_label_are_unknown() {
+    let pack = st0605_pack_bytes(0x00, 1);
+    let rec = klv_record_digest(0x1001, 0, &[pack.as_slice(), &[0x06, 0x0E, 0x2B]].concat());
+    assert!(!rec.decoded);
+    assert!(rec.items.is_empty());
+}

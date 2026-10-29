@@ -60,6 +60,32 @@ fn sweep_against_its_own_output_is_identical() {
     assert_eq!(json(&second.join("sweep.json"))["identical"], 2);
 }
 
+/// A baseline written before a digest field existed compares identical
+/// on that field: the field is taken from the current digest.
+#[test]
+fn a_baseline_digest_without_the_new_fields_is_identical() {
+    let (dir, shas) = two_files("sw-oldfields");
+    let first = temp_dir_named("sw-oldfields-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    for sha in &shas {
+        let p = first.join("digests").join(format!("{sha}.json"));
+        let mut v = json(&p);
+        for cfg in v["configs"].as_object_mut().unwrap().values_mut() {
+            for pid in cfg["pids"].as_object_mut().unwrap().values_mut() {
+                let o = pid.as_object_mut().unwrap();
+                o.remove("klv_truncated");
+                o.remove("klv_field_errors");
+            }
+        }
+        std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
+    }
+    let second = temp_dir_named("sw-oldfields-second");
+    let base = first.join("digests");
+    let out = sweep(&dir, &second, &["--baseline", base.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(json(&second.join("sweep.json"))["identical"], 2);
+}
+
 #[test]
 fn a_changed_file_fails_unless_accepted_with_a_reason() {
     let (dir, shas) = two_files("sw-changed");

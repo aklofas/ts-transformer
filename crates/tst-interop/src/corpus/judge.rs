@@ -32,7 +32,7 @@ fn pid_failure(pid: u16, want: &PidDigest, got: &PidDigest) -> Option<String> {
             want.samples - got.samples
         ));
     }
-    let fields: [(&str, bool); 14] = [
+    let fields: [(&str, bool); 16] = [
         ("kind", want.kind != got.kind),
         ("samples", want.samples != got.samples),
         ("metadata", want.metadata != got.metadata),
@@ -59,6 +59,11 @@ fn pid_failure(pid: u16, want: &PidDigest, got: &PidDigest) -> Option<String> {
             want.unknown_samples != got.unknown_samples,
         ),
         ("payload_sha256", want.payload_sha256 != got.payload_sha256),
+        ("klv_truncated", want.klv_truncated != got.klv_truncated),
+        (
+            "klv_field_errors",
+            want.klv_field_errors != got.klv_field_errors,
+        ),
     ];
     fields
         .iter()

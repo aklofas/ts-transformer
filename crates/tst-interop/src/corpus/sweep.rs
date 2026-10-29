@@ -91,10 +91,13 @@ fn digest_entry(entry: &FileEntry) -> Result<(FileDigest, WireWalk), String> {
     Ok((d, invariants::walk_file(path)?))
 }
 
-fn same_but_version(a: &FileDigest, b: &FileDigest) -> bool {
-    let mut a = a.clone();
-    a.schema_version = b.schema_version;
-    a == *b
+/// `current` equals `baseline` up to the schema version and the fields the
+/// baseline predates.
+fn same_but_version(current: &FileDigest, baseline: &FileDigest) -> bool {
+    let mut b = baseline.clone();
+    b.schema_version = current.schema_version;
+    digest::adopt_fields_the_baseline_predates(&mut b, current);
+    *current == b
 }
 
 /// Files a sweep invalidates: the replay's results and its subset plan.
