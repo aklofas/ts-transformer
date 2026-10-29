@@ -58,14 +58,14 @@ class PairerTest {
 
     static {
         try {
-            SYNC_KLV_BYTES = buildSyncKlvBytes();
+            SYNC_KLV_BYTES = buildSyncKlvBytes(N);
         } catch (Exception e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
     /** Mux 5 video AUs + 5 KLV records at matching PTS (sync-KLV fixture); drain TS bytes. */
-    private static byte[] buildSyncKlvBytes() throws Exception {
+    private static byte[] buildSyncKlvBytes(int count) throws Exception {
         MuxerConfig cfg = MuxerConfig.builder()
             .programNumber(1).pmtPid(0x100)
             .addVideo(VIDEO_PID, VideoCodec.H264)
@@ -74,7 +74,7 @@ class PairerTest {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();
         byte[] out = new byte[188 * 64];
         try (Muxer m = new Muxer(cfg)) {
-            for (int i = 0; i < N; i++) {
+            for (int i = 0; i < count; i++) {
                 long pts = 90_000 + i * 3000L;
                 m.pushVideo(minimalH264Au(), pts, /*keyFrame=*/ true);
                 m.pushKlv(dummyKlv(), pts, /*metadataServiceId=*/ 0);
@@ -85,6 +85,19 @@ class PairerTest {
             }
         }
         return acc.toByteArray();
+    }
+
+    /** A batch far past the JNI local-ref table keeps every output, in order. */
+    @Test
+    void largeBatchKeepsEveryOutputInOrder() throws Exception {
+        int n = 2000;
+        try (Pairer p = new Pairer(VIDEO_PID, KLV_PID)) {
+            List<PairerOutput.Paired> paired = pairedOf(feedAll(p, buildSyncKlvBytes(n)));
+            assertEquals(n, paired.size());
+            for (int i = 0; i < n; i++) {
+                assertEquals(90_000 + i * 3000L, paired.get(i).video().pts());
+            }
+        }
     }
 
     private static List<PairerOutput> feedAll(Pairer p, byte[] data) throws DemuxException {

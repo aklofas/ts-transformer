@@ -196,31 +196,24 @@ jni_native! {
                 }
             };
             for i in 0..len {
-                let elem_obj = match initial_parameter_sets.get_element(env, i) {
-                    Ok(o) => o,
+                // Thousands of sets would otherwise pile up local refs until
+                // the native returns; only the owned bytes leave the frame.
+                let bytes = env.with_local_frame(4, |env| -> jni::errors::Result<Option<Vec<u8>>> {
+                    let elem_obj = initial_parameter_sets.get_element(env, i)?;
+                    if elem_obj.is_null() {
+                        return Ok(None);
+                    }
+                    let arr = env.cast_local::<JByteArray>(elem_obj)?;
+                    Ok(Some(env.convert_byte_array(&arr)?))
+                });
+                match bytes {
+                    Ok(Some(b)) => config.initial_parameter_sets.push(b),
+                    Ok(None) => {}
                     Err(e) => {
                         let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
                         return 0;
                     }
-                };
-                if elem_obj.is_null() {
-                    continue;
                 }
-                let arr = match env.cast_local::<JByteArray>(elem_obj) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                        return 0;
-                    }
-                };
-                let bytes = match env.convert_byte_array(&arr) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                        return 0;
-                    }
-                };
-                config.initial_parameter_sets.push(bytes);
             }
         }
 
