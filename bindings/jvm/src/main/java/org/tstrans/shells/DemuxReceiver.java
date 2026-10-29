@@ -204,8 +204,8 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      *
      * <p><b>Fail-loud:</b> if the callback throws, the receiver is cancelled, the
      * callback is not called again (sinks registered after one that deferred a
-     * close skip the packet on which the deferral happened), and the next iteration step rethrows that
-     * exception; the receiver cannot be resumed.
+     * close skip the packet on which the deferral happened), and the next
+     * iteration step rethrows that exception; the receiver cannot be resumed.
      *
      * <p><b>Registration timing:</b> register sinks BEFORE iterating, or between
      * {@code next()} calls. This method is NOT safe to call concurrently with an

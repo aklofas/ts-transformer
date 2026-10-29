@@ -11,10 +11,10 @@
 //!
 //! ## Reconnect-attempt counter
 //!
-//! `nReconnectAttempts` reads `ManagedHandles.attempts` (factory invocations) —
-//! the same counter on all four managed shells since 0.7.0, composed once in
-//! `tst_srt::shells` instead of by a per-binding counting closure.
-//! It is an ATTEMPT counter, not `reconnects` (the SUCCESS counter): a factory
+//! `nReconnectAttempts` on the receivers reads `ManagedHandles.attempts` (factory
+//! invocations), composed once in `tst_srt::shells` instead of by a per-binding
+//! counting closure; the senders read the attempt count from their reconnect
+//! stats. It is an ATTEMPT counter, not `reconnects` (the SUCCESS counter): a factory
 //! call parked in a re-accept has incremented `attempts` and not `reconnects`.
 //!
 //! ## Mode
@@ -100,9 +100,9 @@ fn throw_demux_recv_error(env: &mut Env, e: &DemuxReceiverError) {
 // ---------------------------------------------------------------------------
 
 /// Native backing for `org.tstrans.srt.ManagedMuxSender`: just the shell. The
-/// attempt counters, the cancel target and the reconnect/gap telemetry observer
-/// live in the entry's `Owned` snapshot ([`ManagedSenderSnapshot`]), outside the
-/// slot, so every getter answers while a `send*` is parked in a reconnect.
+/// reconnect/gap telemetry observer lives in the entry's `Owned` snapshot
+/// ([`ManagedSenderSnapshot`]), outside the slot, so every getter answers while a
+/// `send*` is parked in a reconnect; the cancel target is `Owned`'s own field.
 struct JniManagedMuxSender {
     inner: RustMuxSender<ManagedTransport<SrtTransport>>,
 }

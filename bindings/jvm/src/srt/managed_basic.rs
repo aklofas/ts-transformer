@@ -58,8 +58,8 @@ use crate::handle::OwnedRegistry;
 // -----------------------------------------------------------------------
 
 /// Backing state for `ManagedSender`: just the shell. The reconnect/gap
-/// telemetry, the cancel target and the attempt counters live in the entry's
-/// `Owned` snapshot ([`ManagedSenderSnapshot`]), outside the slot.
+/// telemetry lives in the entry's `Owned` snapshot ([`ManagedSenderSnapshot`]),
+/// outside the slot; the cancel target is `Owned`'s own field.
 struct JniManagedSender {
     inner: PlSender<ManagedTransport<SrtTransport>>,
 }
