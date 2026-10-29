@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.zip.CRC32;
 
 /**
@@ -121,6 +122,13 @@ public final class NativeLoader {
         Path staging = Files.createTempFile(targetDir, "libtstjni." + ext + ".", ".part");
         try {
             Files.write(staging, bytes);
+            // createTempFile is owner-only; other users on a shared temp dir must
+            // be able to read (and load) the published library.
+            try {
+                Files.setPosixFilePermissions(staging, PosixFilePermissions.fromString("rw-r--r--"));
+            } catch (UnsupportedOperationException ignored) {
+                // Non-POSIX filesystem (Windows): ACLs already govern access.
+            }
             try {
                 Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE,
                         StandardCopyOption.REPLACE_EXISTING);
@@ -138,10 +146,15 @@ public final class NativeLoader {
         return target;
     }
 
-    private static boolean matches(Path file, byte[] bytes) throws IOException {
-        return Files.isRegularFile(file)
-                && Files.size(file) == bytes.length
-                && contentHash(Files.readAllBytes(file)).equals(contentHash(bytes));
+    /** False for any unreadable target, so the caller falls through to extraction. */
+    private static boolean matches(Path file, byte[] bytes) {
+        try {
+            return Files.isRegularFile(file)
+                    && Files.size(file) == bytes.length
+                    && contentHash(Files.readAllBytes(file)).equals(contentHash(bytes));
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     /**
