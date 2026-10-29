@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::PATHS;
 use super::RunDir;
 use super::replay::ReplaySummary;
-use super::sweep::{SweepSummary, digests_fingerprint};
+use super::sweep::{Acceptance, SweepSummary, digests_fingerprint};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArchiveRow {
@@ -85,6 +85,16 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
         ("Invariant failures", sweep.invariant_failures),
     ] {
         let _ = writeln!(s, "| {label} | {n} |");
+    }
+    if !sweep.accepted.is_empty() {
+        s.push_str("\nAccepted against the baseline:\n\n");
+        for a in &sweep.accepted {
+            let kind = match a.kind {
+                Acceptance::New => "new",
+                Acceptance::Removed => "removed",
+            };
+            let _ = writeln!(s, "- {} {kind}: {}", a.sha, a.because);
+        }
     }
     let _ = writeln!(
         s,

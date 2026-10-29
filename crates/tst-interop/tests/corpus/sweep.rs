@@ -581,8 +581,8 @@ fn field_errors_are_summed_into_the_sweep_and_do_not_fail_it() {
     assert_eq!(s["files_with_klv_field_errors"], 1, "{s}");
 }
 
-/// A sweep summary written before the field-error counts existed still
-/// reads, as zero.
+/// A sweep summary written before the field-error counts and the baseline
+/// acceptance fields existed still reads, as zero and empty.
 #[test]
 fn a_sweep_summary_without_the_field_error_counts_reads_as_zero() {
     let (dir, _) = two_files("sw-oldsummary");
@@ -592,6 +592,15 @@ fn a_sweep_summary_without_the_field_error_counts_reads_as_zero() {
     let mut v = json(&p);
     let o = v.as_object_mut().unwrap();
     assert_eq!(o.remove("klv_field_errors"), Some(Value::from(0)));
+    assert_eq!(o.remove("accepted"), Some(serde_json::json!([])));
+    for key in [
+        "new_explained",
+        "new_unexplained",
+        "baseline_only",
+        "baseline_only_explained",
+    ] {
+        assert!(o.remove(key).is_some(), "{key}");
+    }
     assert_eq!(
         o.remove("files_with_klv_field_errors"),
         Some(Value::from(0))
@@ -600,6 +609,8 @@ fn a_sweep_summary_without_the_field_error_counts_reads_as_zero() {
     let s: tst_interop::corpus::sweep::SweepSummary =
         serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
     assert_eq!((s.klv_field_errors, s.files_with_klv_field_errors), (0, 0));
+    assert!(s.accepted.is_empty() && s.baseline_only.is_empty());
+    assert_eq!((s.new_explained, s.new_unexplained), (0, 0));
 }
 
 fn stdout(out: &Output) -> String {
@@ -667,6 +678,11 @@ fn a_capture_the_baseline_does_not_list_fails_unless_accepted() {
     let s = json(&third.join("sweep.json"));
     assert_eq!(s["new_explained"], 1, "{s}");
     assert_eq!(s["new_unexplained"], 0, "{s}");
+    assert_eq!(
+        s["accepted"],
+        serde_json::json!([{"sha": sha, "kind": "new", "because": "new capture"}]),
+        "{s}"
+    );
     assert!(stdout(&out).contains("new (accepted): 1"), "{out:?}");
 }
 
@@ -707,6 +723,11 @@ fn a_baseline_capture_missing_from_the_corpus_fails_unless_accepted() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let s = json(&third.join("sweep.json"));
     assert_eq!(s["baseline_only_explained"], 1, "{s}");
+    assert_eq!(
+        s["accepted"],
+        serde_json::json!([{"sha": shas[1], "kind": "removed", "because": "capture withdrawn"}]),
+        "{s}"
+    );
     assert_eq!(s["unused_accepts"], serde_json::json!([]), "{s}");
 }
 

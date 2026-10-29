@@ -4,7 +4,7 @@ use std::process::Command;
 use tst_interop::corpus::replay::ReplaySummary;
 use tst_interop::corpus::report::{self, ArchiveRow};
 use tst_interop::corpus::subset::{Pick, ReplayPlan};
-use tst_interop::corpus::sweep::SweepSummary;
+use tst_interop::corpus::sweep::{Acceptance, Accepted, SweepSummary};
 use tst_interop::corpus::{PATHS, RunDir, Sha256Hex};
 
 use crate::temp_dir_named;
@@ -33,6 +33,7 @@ fn sweep(pass: bool) -> SweepSummary {
         new_unexplained: 0,
         baseline_only: vec![],
         baseline_only_explained: 0,
+        accepted: vec![],
         per_file: vec![],
         pass,
     }
@@ -369,7 +370,27 @@ fn the_markdown_counts_captures_new_to_or_gone_from_the_baseline() {
     s.new_unexplained = 1;
     s.baseline_only = vec![sha('b'), sha('c')];
     s.baseline_only_explained = 1;
+    s.accepted = vec![
+        Accepted {
+            sha: sha('d'),
+            kind: Acceptance::New,
+            because: "new capture".into(),
+        },
+        Accepted {
+            sha: sha('b'),
+            kind: Acceptance::Removed,
+            because: "capture withdrawn".into(),
+        },
+    ];
     let md = report::markdown(&s, None);
+    assert!(
+        md.contains(&format!("- {} new: new capture\n", sha('d'))),
+        "{md}"
+    );
+    assert!(
+        md.contains(&format!("- {} removed: capture withdrawn\n", sha('b'))),
+        "{md}"
+    );
     for row in [
         "| New and accepted | 2 |",
         "| New and not accepted | 1 |",
