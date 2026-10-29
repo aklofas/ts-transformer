@@ -117,9 +117,18 @@ fn a_klv_pid_with_undecodable_records_fails_unless_annotated() {
     assert!(!f[0].detail.is_empty());
     let ann = Annotations {
         non_misb_private_pids: vec![KLV_PID],
+        max_private_records: Some(30),
+        reason: Some("vendor private data".into()),
         ..Default::default()
     };
-    assert!(failures(&bytes, &ann).is_empty());
+    let f = failures(&bytes, &ann);
+    assert_eq!(rules(&f), ["klv-unknown"], "{f:?}");
+    assert!(f[0].excused, "{f:?}");
+    assert!(
+        f[0].detail
+            .starts_with("excused: vendor private data; 30 private record(s) (bound 30)"),
+        "{f:?}"
+    );
 }
 
 #[test]
@@ -131,19 +140,162 @@ fn a_declared_klv_pid_with_no_records_passes() {
     assert!(failures(&bytes, &Annotations::default()).is_empty());
 }
 
-#[test]
-fn a_pts_jump_backwards_fails_unless_known() {
+/// A capture joined to itself: its timeline restarts once on every PID.
+fn pts_jump_capture() -> Vec<u8> {
     let first = gen_profile_bytes("baseline", 2.0);
     let mut bytes = first.clone();
     bytes.extend_from_slice(&first);
+    bytes
+}
+
+#[test]
+fn a_pts_jump_backwards_fails_unless_known() {
+    let bytes = pts_jump_capture();
     let f = failures(&bytes, &Annotations::default());
     assert!(rules(&f).contains(&"pts-order"), "{f:?}");
+}
+
+/// The reviewed damage passes as excused; one more of it, or the same
+/// damage on another PID, fails.
+#[test]
+fn an_annotation_excuses_only_up_to_its_reviewed_bound_and_pids() {
+    let bytes = muxed_with_one_truncated_record();
+    let mut ann = Annotations {
+        known_klv_truncation: true,
+        max_klv_truncated: Some(30),
+        klv_truncation_pids: vec![KLV_PID],
+        reason: Some("packet loss".into()),
+        ..Default::default()
+    };
+    assert!(failures(&bytes, &ann).iter().all(|f| f.excused));
+    ann.max_klv_truncated = Some(29); // muxed() pushes 30 cut records
+    assert!(
+        failures(&bytes, &ann)
+            .iter()
+            .any(|f| !f.excused && f.detail.contains("exceeds the reviewed bound 29"))
+    );
+    ann.max_klv_truncated = Some(30);
+    ann.klv_truncation_pids = vec![KLV_PID + 1];
+    assert!(
+        failures(&bytes, &ann)
+            .iter()
+            .any(|f| !f.excused && f.detail.contains("does not list"))
+    );
+}
+
+/// The PID of the baseline profile whose timeline breaks when the capture
+/// is joined to itself; the other streams carry no backward PTS break.
+const RESTART_PID: u16 = 0x1011;
+
+#[test]
+fn a_waived_pts_break_and_a_private_pid_skip_write_excused_rows() {
+    // The count and PID the unannotated run of this capture reports.
+    let bytes = pts_jump_capture();
+    let plain = failures(&bytes, &Annotations::default());
+    assert!(
+        plain
+            .iter()
+            .any(|x| x.pid == Some(RESTART_PID) && x.detail == "1 backward PTS breaks"),
+        "{plain:?}"
+    );
     let ann = Annotations {
         known_discontinuity: true,
+        max_pts_backward_breaks: Some(1),
+        discontinuity_pids: vec![RESTART_PID],
+        reason: Some("recorder restart".into()),
         ..Default::default()
     };
     let f = failures(&bytes, &ann);
-    assert!(f.is_empty(), "{f:?}");
+    assert!(
+        f.iter().any(|x| x.rule == "pts-order" && x.excused),
+        "{f:?}"
+    );
+    assert!(f.iter().all(|x| x.excused), "{f:?}");
+    // One break more than reviewed fails, and so does an unlisted PID.
+    let tight = Annotations {
+        max_pts_backward_breaks: Some(0),
+        ..ann.clone()
+    };
+    let f = failures(&bytes, &tight);
+    assert!(
+        f.iter().any(|x| x.rule == "pts-order"
+            && !x.excused
+            && x.detail.contains("exceeds the reviewed bound 0")),
+        "{f:?}"
+    );
+    let elsewhere = Annotations {
+        discontinuity_pids: vec![0x100],
+        ..ann
+    };
+    let f = failures(&bytes, &elsewhere);
+    assert!(
+        f.iter().any(|x| x.rule == "pts-order"
+            && x.pid == Some(RESTART_PID)
+            && !x.excused
+            && x.detail.contains("does not list")),
+        "{f:?}"
+    );
+    // A PID of private data is still recorded, as excused.
+    let bytes = muxed_with_a_foreign_record();
+    let private = Annotations {
+        non_misb_private_pids: vec![KLV_PID],
+        max_private_records: Some(30),
+        reason: Some("vendor data".into()),
+        ..Default::default()
+    };
+    let f = failures(&bytes, &private);
+    assert_eq!(rules(&f), ["klv-unknown"], "{f:?}");
+    assert!(f[0].excused, "{f:?}");
+}
+
+/// The muxed capture with every KLV record cut three bytes short of its
+/// declared length, as packet loss leaves a record.
+fn muxed_with_one_truncated_record() -> Vec<u8> {
+    let ls = klv_record_for(KlvSet::Compact, 0, 0).unwrap();
+    muxed(Some(Some(&ls[..ls.len() - 3])))
+}
+
+/// The muxed capture with every KLV record under a UL that is no
+/// registered MISB item.
+fn muxed_with_a_foreign_record() -> Vec<u8> {
+    muxed(Some(Some(&crate::digest::foreign_ul_item())))
+}
+
+#[test]
+fn a_truncated_record_is_excused_only_by_known_klv_truncation() {
+    let bytes = muxed_with_one_truncated_record();
+    let d = digest_config("default", &bytes, FEED_CHUNK);
+    assert_eq!(d.pids[&KLV_PID].klv_unknown, 30);
+    assert_eq!(d.pids[&KLV_PID].klv_truncated, Some(30));
+    assert_eq!(
+        rules(&failures(&bytes, &Annotations::default())),
+        ["klv-unknown"]
+    );
+    let ann = Annotations {
+        known_klv_truncation: true,
+        max_klv_truncated: Some(30),
+        klv_truncation_pids: vec![KLV_PID],
+        reason: Some("packet loss".into()),
+        ..Default::default()
+    };
+    let f = failures(&bytes, &ann);
+    assert!(f.iter().all(|x| x.excused), "{f:?}");
+    assert!(
+        f.iter().any(|x| x.rule == "klv-unknown"
+            && x.detail == "excused: packet loss; 30 truncated record(s) (bound 30)"),
+        "{f:?}"
+    );
+    // A foreign UL on the same PID is not excused by the truncation key.
+    let bytes = muxed_with_a_foreign_record();
+    assert_eq!(
+        digest_config("default", &bytes, FEED_CHUNK).pids[&KLV_PID].klv_truncated,
+        Some(0)
+    );
+    assert!(
+        failures(&bytes, &ann)
+            .iter()
+            .any(|x| x.rule == "klv-unknown" && !x.excused)
+    );
 }
 
 #[test]
@@ -205,9 +357,18 @@ fn a_payload_without_a_klv_label_fails_unless_annotated() {
     assert!(f[0].detail.contains("unknown sample"), "{f:?}");
     let ann = Annotations {
         non_misb_private_pids: vec![KLV_PID],
+        max_private_records: Some(30),
+        reason: Some("vendor private data".into()),
         ..Default::default()
     };
-    assert!(failures(&bytes, &ann).is_empty());
+    let f = failures(&bytes, &ann);
+    assert_eq!(rules(&f), ["klv-unknown"], "{f:?}");
+    assert!(f[0].excused, "{f:?}");
+    assert!(
+        f[0].detail
+            .starts_with("excused: vendor private data; 30 private record(s) (bound 30)"),
+        "{f:?}"
+    );
 }
 
 // ---- hand-built PSI, to drive the walk and the demuxer through the same rules
@@ -440,6 +601,7 @@ fn a_reviewed_cc_mismatch_is_recorded_as_excused() {
     assert!(!plain[0].excused);
     let ann = Annotations {
         known_cc_mismatch: true,
+        max_cc_mismatch: Some(1),
         reason: Some("reviewed: a re-typed PID".into()),
         ..Default::default()
     };
@@ -451,6 +613,15 @@ fn a_reviewed_cc_mismatch_is_recorded_as_excused() {
             .detail
             .starts_with("excused: reviewed: a re-typed PID;"),
         "{excused:?}"
+    );
+    assert!(excused[0].detail.ends_with("(bound 1)"), "{excused:?}");
+    // A second unexplained difference is more than was reviewed.
+    w.cc_errors += 1;
+    let over = check(&d, &w, &ann);
+    assert!(!over[0].excused, "{over:?}");
+    assert!(
+        over[0].detail.contains("exceeds the reviewed bound 1"),
+        "{over:?}"
     );
 }
 

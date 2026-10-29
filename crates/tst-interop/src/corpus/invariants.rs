@@ -442,37 +442,123 @@ fn push<'a>(
     out.last_mut().expect("just pushed")
 }
 
+/// One rule's observation weighed against an annotation: excused with the
+/// reviewed bound when `waived` holds it and `count` is within it, failed
+/// naming the bound when `count` is over it, failed plainly otherwise.
+struct Observed<'a> {
+    rule: &'a str,
+    pid: Option<u16>,
+    count: u64,
+    /// What `count` counts, as it reads after the number.
+    what: String,
+}
+
+impl Observed<'_> {
+    fn record(self, out: &mut Vec<InvariantFailure>, ann: &Annotations, bound: Option<u64>) {
+        let Observed {
+            rule,
+            pid,
+            count,
+            what,
+        } = self;
+        match bound {
+            Some(max) if count <= max => {
+                let why = ann.reason.as_deref().unwrap_or("");
+                push(
+                    out,
+                    rule,
+                    pid,
+                    format!("excused: {why}; {count} {what} (bound {max})"),
+                )
+                .excused = true;
+            }
+            Some(max) => {
+                push(
+                    out,
+                    rule,
+                    pid,
+                    format!("{count} {what} exceeds the reviewed bound {max}"),
+                );
+            }
+            None => {
+                push(out, rule, pid, format!("{count} {what}"));
+            }
+        }
+    }
+
+    /// Fails on a PID the annotation does not list.
+    fn unlisted(self, out: &mut Vec<InvariantFailure>, pid: u16) {
+        push(
+            out,
+            self.rule,
+            self.pid,
+            format!(
+                "{} {} on pid {pid}, which the annotation does not list",
+                self.count, self.what
+            ),
+        );
+    }
+}
+
 /// The invariants broken by a capture whose `default`-configuration digest
-/// and wire walk are given. `ann` excuses what a person has reviewed.
+/// and wire walk are given. `ann` excuses what a person has reviewed, up to
+/// the count reviewed and only where it was seen; every waived observation
+/// is still recorded, as an excused row.
 pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<InvariantFailure> {
     let mut out = Vec::new();
     if default.feed_errors > 0 {
-        let detail = format!("{} feed errors", default.feed_errors);
-        if ann.known_feed_errors {
-            let why = ann.reason.as_deref().unwrap_or("");
-            push(
-                &mut out,
-                "feed-error",
-                None,
-                format!("excused: {why}; {detail}"),
-            )
-            .excused = true;
-        } else {
-            push(&mut out, "feed-error", None, detail);
+        Observed {
+            rule: "feed-error",
+            pid: None,
+            count: default.feed_errors,
+            what: "feed errors".to_string(),
         }
+        .record(
+            &mut out,
+            ann,
+            ann.max_feed_errors.filter(|_| ann.known_feed_errors),
+        );
     }
     for (pid, d) in &default.pids {
         let klv = d.kind == "klv-sync" || d.kind == "klv-async";
-        if !klv || ann.non_misb_private_pids.contains(pid) {
+        if !klv {
+            continue;
+        }
+        if ann.non_misb_private_pids.contains(pid) {
+            let count = d.klv_unknown + d.unknown_samples;
+            if count > 0 {
+                Observed {
+                    rule: "klv-unknown",
+                    pid: Some(*pid),
+                    count,
+                    what: "private record(s)".to_string(),
+                }
+                .record(&mut out, ann, ann.max_private_records);
+            }
             continue;
         }
         if d.klv_unknown > 0 {
-            push(
-                &mut out,
-                "klv-unknown",
-                Some(*pid),
-                d.klv_unknown_reason.clone().unwrap_or_default(),
-            );
+            let truncated = d.klv_truncated.unwrap_or(0);
+            if ann.known_klv_truncation && d.klv_unknown == truncated {
+                let seen = Observed {
+                    rule: "klv-unknown",
+                    pid: Some(*pid),
+                    count: truncated,
+                    what: "truncated record(s)".to_string(),
+                };
+                if ann.klv_truncation_pids.contains(pid) {
+                    seen.record(&mut out, ann, ann.max_klv_truncated);
+                } else {
+                    seen.unlisted(&mut out, *pid);
+                }
+            } else {
+                push(
+                    &mut out,
+                    "klv-unknown",
+                    Some(*pid),
+                    d.klv_unknown_reason.clone().unwrap_or_default(),
+                );
+            }
         } else if d.unknown_samples > 0 {
             push(
                 &mut out,
@@ -494,28 +580,58 @@ pub fn check(default: &ConfigDigest, walk: &WireWalk, ann: &Annotations) -> Vec<
             walk.cc_errors
         );
         if ann.known_cc_mismatch {
-            let why = ann.reason.as_deref().unwrap_or("");
-            let excused = push(
-                &mut out,
-                "accounting",
-                None,
-                format!("excused: {why}; {detail}"),
-            );
-            excused.excused = true;
+            Observed {
+                rule: "accounting",
+                pid: None,
+                count: walk.cc_errors.abs_diff(demuxed),
+                what: format!(
+                    "continuity difference(s), cc errors {} vs demuxer discontinuities {demuxed} with {oversize} PES oversize left out",
+                    walk.cc_errors
+                ),
+            }
+            .record(&mut out, ann, ann.max_cc_mismatch);
         } else {
             push(&mut out, "accounting", None, detail);
         }
     }
-    if !ann.known_discontinuity {
-        for (pid, d) in &default.pids {
-            if d.pts_backward_breaks > 0 {
-                push(
-                    &mut out,
-                    "pts-order",
-                    Some(*pid),
-                    format!("{} backward PTS breaks", d.pts_backward_breaks),
-                );
+    let breaks = |pid: &u16, d: &super::digest::PidDigest| Observed {
+        rule: "pts-order",
+        pid: Some(*pid),
+        count: d.pts_backward_breaks,
+        what: "backward PTS breaks".to_string(),
+    };
+    let broken = default
+        .pids
+        .iter()
+        .filter(|(_, d)| d.pts_backward_breaks > 0);
+    if ann.known_discontinuity {
+        // The bound is a total over the listed PIDs: a restart breaks every
+        // stream once, and a person reviews the capture, not each PID.
+        let total: u64 = broken
+            .clone()
+            .filter(|(pid, _)| ann.discontinuity_pids.contains(pid))
+            .map(|(_, d)| d.pts_backward_breaks)
+            .sum();
+        let within = ann.max_pts_backward_breaks.filter(|max| total <= *max);
+        for (pid, d) in broken {
+            if !ann.discontinuity_pids.contains(pid) {
+                breaks(pid, d).unlisted(&mut out, *pid);
+            } else if within.is_some() {
+                breaks(pid, d).record(&mut out, ann, within);
             }
+        }
+        if within.is_none() && total > 0 {
+            Observed {
+                rule: "pts-order",
+                pid: None,
+                count: total,
+                what: format!("backward PTS breaks over pids {:?}", ann.discontinuity_pids),
+            }
+            .record(&mut out, ann, ann.max_pts_backward_breaks);
+        }
+    } else {
+        for (pid, d) in broken {
+            breaks(pid, d).record(&mut out, ann, None);
         }
     }
     out

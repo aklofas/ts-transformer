@@ -200,7 +200,13 @@ pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest 
     };
     let items = match split_items(payload) {
         Ok(items) => items,
-        Err(e) => return undecoded(e.to_string(), false),
+        // Only a length that runs past the payload is a cut record; inside a
+        // set that splits whole, ST 0601 also reports a missing checksum as
+        // truncation, which is a malformed record, not a lost packet.
+        Err(e) => {
+            let truncated = matches!(e, KlvDecodeError::Truncated { .. });
+            return undecoded(e.to_string(), truncated);
+        }
     };
     let mut canonical = Vec::with_capacity(payload.len());
     let mut kinds = Vec::with_capacity(items.len());
@@ -472,6 +478,9 @@ impl Pass {
                             self.klv_unknown += 1;
                             let d = &mut self.pid(stream.pid, kind_name(&stream.kind)).digest;
                             d.klv_unknown += 1;
+                            if rec.truncated {
+                                *d.klv_truncated.get_or_insert(0) += 1;
+                            }
                             if d.klv_unknown_reason.is_none() {
                                 d.klv_unknown_reason = rec.unknown_reason.clone();
                             }

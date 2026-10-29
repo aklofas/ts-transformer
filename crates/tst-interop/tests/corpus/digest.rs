@@ -570,3 +570,11 @@ fn trailing_bytes_shorter_than_a_label_are_unknown() {
     assert!(!rec.decoded);
     assert!(rec.items.is_empty());
 }
+
+#[test]
+fn a_record_cut_mid_body_is_truncated_and_a_foreign_ul_is_not() {
+    let ls = klv_record_for(KlvSet::Compact, 0, 0).unwrap();
+    assert!(klv_record_digest(1, 0, &ls[..ls.len() - 3]).truncated);
+    assert!(!klv_record_digest(1, 0, &foreign_ul_item()).truncated);
+    assert!(!klv_record_digest(1, 0, &ls).truncated);
+}
