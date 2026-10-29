@@ -4,8 +4,12 @@
 # Enforced (fails the build on violation):
 #   (a) every owning_tests path in tests/coverage/surface-manifest.toml exists on disk;
 #   (b) every binding column symbol resolves in that binding's source
-#       (feature-tagged "[feature=X]" entries are skipped unless X is in BUILT_FEATURES);
-#       c: and java: are substring matches; python: names a definition
+#       (feature-tagged "[feature=X]" entries are skipped unless X is in BUILT_FEATURES,
+#       and X must be in FEATURE_VOCAB);
+#       c: is a whole word of the header; java: names
+#       org.tstrans.<package>.<Class>[.<Nested>...][.<member>], a <Class>.java
+#       under the package directory in which every component after the class
+#       is a whole word (check_java_symbol); python: names a definition
 #       (function | Class | Class.member, see check_python_symbols);
 #   (b2) every [[surface]] row carries all five binding columns (c, python, java,
 #       swift, kotlin) — "<prefix>:unaudited" / ":deferred" / ":n/a" declare a
@@ -29,6 +33,8 @@
 #   SURFACE_BASELINE_DIR    directory containing <crate>/public-api.txt files
 #   SURFACE_CRATES          space-separated list of crate names to check
 #   SURFACE_BUILT_FEATURES  space-separated features considered built (default: all)
+#   SURFACE_FEATURE_VOCAB   space-separated feature tags a cell may carry
+#   SURFACE_JAVA_DIR        the JVM binding's Java source root
 #   SURFACE_C_HEADER        path to the C binding header
 #   SURFACE_PYI_DIR         the Python package directory (.pyi stubs + .py sources)
 #   SURFACE_PY_PACKAGE      the package name a module-qualified cell starts with
@@ -43,6 +49,9 @@ SURFACE_MANIFEST="${SURFACE_MANIFEST:-$ROOT/tests/coverage/surface-manifest.toml
 SURFACE_BASELINE_DIR="${SURFACE_BASELINE_DIR:-$ROOT/crates}"
 SURFACE_CRATES="${SURFACE_CRATES:-$(bash "$ROOT/scripts/lib/roster.sh" surface | tr '\n' ' ')}"
 SURFACE_BUILT_FEATURES="${SURFACE_BUILT_FEATURES:-srt rtp udp tcp hls rist}"
+# Every tag a cell may carry. A tag outside it is a typo, not an unbuilt
+# feature: without the closed set a misspelt tag would skip its cell forever.
+SURFACE_FEATURE_VOCAB="${SURFACE_FEATURE_VOCAB:-srt rtp udp tcp hls rist webrtc}"
 SURFACE_C_HEADER="${SURFACE_C_HEADER:-$ROOT/bindings/c/include/tstrans.h}"
 SURFACE_PYI_DIR="${SURFACE_PYI_DIR:-$ROOT/bindings/python/python/tstrans}"
 SURFACE_JAVA_DIR="${SURFACE_JAVA_DIR:-$ROOT/bindings/jvm/src/main/java}"
@@ -198,8 +207,11 @@ check_python_symbols() {
       }
     }
   ' "$SURFACE_MANIFEST" \
-  | awk -F '\t' -v pkg="${SURFACE_PY_PACKAGE:-tstrans}" -v built="$SURFACE_BUILT_FEATURES" '
-    BEGIN { nb = split(built, B, " "); for (i = 1; i <= nb; i++) BUILT[B[i]] = 1 }
+  | awk -F '\t' -v pkg="${SURFACE_PY_PACKAGE:-tstrans}" -v built="$SURFACE_BUILT_FEATURES" -v vocab="$SURFACE_FEATURE_VOCAB" '
+    BEGIN {
+      nb = split(built, B, " "); for (i = 1; i <= nb; i++) BUILT[B[i]] = 1
+      nv = split(vocab, V, " "); for (i = 1; i <= nv; i++) VOCAB[V[i]] = 1
+    }
     # The two inputs are told apart by an explicit phase (assignment operands
     # below), never by `FNR == NR`: with an EMPTY index that test stays true
     # through the whole manifest, every row is swallowed as an index row and
@@ -216,9 +228,10 @@ check_python_symbols() {
     {
       item = $1; sym = $2; shown = sym
       if (sym ~ /^(unaudited|deferred|n\/a)(\(.*\))?$/) next
-      if (match(sym, / *\[feature=[a-z]+\]/)) {
-        feat = substr(sym, RSTART, RLENGTH); gsub(/[^a-z=]/, "", feat); sub(/^feature=/, "", feat)
+      if (match(sym, / *\[feature=[^]]*\]/)) {
+        feat = substr(sym, RSTART, RLENGTH); sub(/^ *\[feature=/, "", feat); sub(/\]$/, "", feat)
         sym = substr(sym, 1, RSTART - 1)
+        if (!(feat in VOCAB)) { print "FAIL: unknown feature tag " feat " in python:" shown; next }
         if (!(feat in BUILT)) next
       }
       if (!nidx) {
@@ -272,6 +285,38 @@ check_python_symbols() {
 }
 
 # ---------------------------------------------------------------------------
+# check_java_symbol <cell>: the cell is org.tstrans.<package path>.<Class>
+# [.<Nested>...][.<member>]. The package path is walked as directories under
+# SURFACE_JAVA_DIR until <Class>.java exists; every component after the class
+# must be a whole word of that file. Prints one FAIL line when it does not
+# resolve. A leaf matched anywhere in the sources would let a cell name the
+# wrong class (or no class at all) and still pass.
+# ---------------------------------------------------------------------------
+check_java_symbol() {
+  local cell="$1" rest dir comp file="" IFS_OLD
+  case "$cell" in
+    org.tstrans.?*) ;;
+    *) echo "FAIL: java symbol unresolved: $cell: not under org.tstrans"; return 0 ;;
+  esac
+  rest="${cell#org.tstrans.}"
+  dir="$SURFACE_JAVA_DIR/org/tstrans"
+  IFS_OLD="$IFS"; IFS=.; set -- $rest; IFS="$IFS_OLD"
+  while [ $# -gt 0 ]; do
+    comp="$1"; shift
+    if [ -z "$file" ]; then
+      if [ -f "$dir/$comp.java" ]; then file="$dir/$comp.java"
+      elif [ -d "$dir/$comp" ]; then dir="$dir/$comp"
+      else echo "FAIL: java symbol unresolved: $cell: no class or package $comp under ${dir#"$SURFACE_JAVA_DIR"/}"; return 0
+      fi
+    else
+      grep -qw -- "$comp" "$file" \
+        || { echo "FAIL: java symbol unresolved: $cell: ${file#"$SURFACE_JAVA_DIR"/} has no $comp"; return 0; }
+    fi
+  done
+  [ -n "$file" ] || echo "FAIL: java symbol unresolved: $cell: names a package, not a class"
+}
+
+# ---------------------------------------------------------------------------
 # run_check: validate the manifest against the baselines and binding sources
 # ---------------------------------------------------------------------------
 run_check() {
@@ -294,10 +339,12 @@ run_check() {
     sym="$b"
     # Extract optional [feature=X] suffix
     if printf '%s' "$b" | grep -q '\[feature='; then
-      feat="$(printf '%s' "$b" | sed -E 's/.*\[feature=([a-z]+)\].*/\1/')"
-      sym="$(printf '%s' "$b" | sed -E 's/ *\[feature=[a-z]+\]//')"
+      feat="$(printf '%s' "$b" | sed -E 's/.*\[feature=([^]]*)\].*/\1/')"
+      sym="$(printf '%s' "$b" | sed -E 's/ *\[feature=[^]]*\]//')"
+      printf '%s\n' $SURFACE_FEATURE_VOCAB | grep -Fxq -- "$feat" \
+        || { echo "FAIL: unknown feature tag $feat in $b"; continue; }
       # Skip if feature not built
-      printf '%s\n' $SURFACE_BUILT_FEATURES | grep -Fxq "$feat" || continue
+      printf '%s\n' $SURFACE_BUILT_FEATURES | grep -Fxq -- "$feat" || continue
     fi
     case "$sym" in
       *:deferred|*:n/a|*:unaudited|*:deferred\(*\)|*:n/a\(*\))
@@ -308,25 +355,19 @@ run_check() {
         #   :deferred   no twin in that binding TODAY
         #   :n/a        no twin by design
         # :deferred and :n/a may carry their reason: :deferred(reason).
-        # This arm MUST precede `c:*)`: the resolution arms are unbounded
-        # substring greps, and the word "deferred" really does occur in
-        # tstrans.h (1x) and in the Python (3 files) and Java (11 files)
-        # sources — so a sentinel that reached them would silently "resolve"
-        # and rule (b) would pass for the wrong reason.
+        # This arm MUST precede `c:*)`: the word "deferred" really does occur
+        # in tstrans.h and in the Python and Java sources, so a sentinel that
+        # reached a resolution arm would silently "resolve" and rule (b)
+        # would pass for the wrong reason.
         : ;;
       c:*)
-        grep -Fq "${sym#c:}" "$SURFACE_C_HEADER" \
+        # A whole word: `tst_demux` must not resolve through `tst_demuxer_new`.
+        grep -Fwq -- "${sym#c:}" "$SURFACE_C_HEADER" \
           || echo "FAIL: c symbol unresolved: ${sym#c:}" ;;
       python:*)
         : ;;   # resolved by DEFINITION, per row, in check_python_symbols below
       java:*)
-        leaf="${sym#java:}"
-        leaf="${leaf##*.}"   # last dotted component (e.g. feed/nextEvent/Demuxer)
-        # Same UNBOUNDED SUBSTRING looseness as the python: arm (L3 bootstrap) —
-        # resolves the Java leaf anywhere in the JVM binding sources. Tighten to a
-        # word-boundary / AST-aware check when java: column trust matters per-symbol.
-        grep -rFq "$leaf" "$SURFACE_JAVA_DIR" \
-          || echo "FAIL: java symbol unresolved: ${sym#java:} (leaf: $leaf)" ;;
+        check_java_symbol "${sym#java:}" ;;
       swift:*|kotlin:*)
         : ;;   # RESERVED until tst-uniffi lands; presence-only, not resolved
       *)
@@ -402,7 +443,8 @@ run_check() {
   rm -f "$unaudited"
 
   if [ -s "$errs" ]; then
-    cat "$errs" >&2
+    # A python: cell's unknown feature tag is reported by both readers.
+    awk '!seen[$0]++' "$errs" >&2
     fail=1
   fi
   return "$fail"

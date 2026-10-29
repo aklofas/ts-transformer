@@ -1,6 +1,6 @@
 # Surface-to-test ownership manifest (L3).
 #
-# Every MAPPABLE entry across the 8 public-api.txt baselines is a [[surface]]
+# Every MAPPABLE entry across the 11 public-api.txt baselines is a [[surface]]
 # row (item -> owning tests + per-binding columns), an [[exempt]] row with a
 # reason, or one of the un-catalogued items the rail pins by count and digest
 # (`bash scripts/check/repo/surface-manifest.sh --list-unaudited` prints them).
@@ -614,7 +614,7 @@ item = "tst_core::io_file::TryDemuxFromFile"
 owning_tests = ["crates/tst-core/tests/io/io_file_smoke.rs"]
 # java: tst-jni io wave — Io.parseFile is the JVM fallible-streaming-from-file
 # analogue (surfaces demux errors as DemuxException, like TryDemuxFromFile yields Err).
-bindings = ["java:org.tstrans.io.parseFile", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.io.Io.parseFile", "c:unaudited", "python:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
