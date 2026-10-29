@@ -61,4 +61,15 @@ class MuxerConfigTest {
             .build();
         assertEquals(3, cfg.streamCount());
     }
+
+    @Test
+    void dataStreamTypeOutsideAByteIsRefused() throws Exception {
+        MuxerConfig.Builder b = MuxerConfig.builder().addVideo(0x100, VideoCodec.H264);
+        for (int bad : new int[] {-1, 256}) {
+            var e = assertThrows(IllegalArgumentException.class, () -> b.addData(0x101, bad, false));
+            assertTrue(e.getMessage().contains(String.valueOf(bad)), e.getMessage());
+        }
+        b.addData(0x101, 0x06, false); // the builder is usable afterwards
+        new Muxer(b.build()).close();
+    }
 }
