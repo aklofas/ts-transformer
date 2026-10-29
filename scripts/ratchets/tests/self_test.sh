@@ -1091,6 +1091,37 @@ fx_case "$fx/twopath.toml"
 expect "fixture-hashes: a record with two path lines fails" 1 env FIXTURE_ROOT="$fx" bash "$FH"
 expect_out "fixture-hashes: twopath" "FAIL: row 1: two path lines"
 
+# ---- coverage manifests (scripts/check/repo/test-manifests.sh) ----
+# The rail reads the manifests as TOML and checks each row on its own: a file
+# that does not parse fails naming the file, and a blocked_bug entry without
+# its own expiry marker fails even when another entry carries two.
+TM="$DIR/../check/repo/test-manifests.sh"
+tm="$tmp/test-manifests"; mkdir -p "$tm"
+for f in fixture-manifest.toml skip-ledger.toml stream-matrix.toml README.md; do
+    cp "$DIR/../../tests/coverage/$f" "$tm/$f"
+done
+expect "test-manifests: the real manifests pass from a copy" 0 env TEST_MANIFESTS_DIR="$tm" bash "$TM"
+cp "$tm/stream-matrix.toml" "$tm/stream-matrix.orig"
+plant "$tm/stream-matrix.toml" '^\[video\]$' '[video'
+expect "test-manifests: an unclosed [ in stream-matrix.toml fails" 1 env TEST_MANIFESTS_DIR="$tm" bash "$TM"
+expect_out "test-manifests: parse error" "FAIL: $tm/stream-matrix.toml: "
+cp "$tm/stream-matrix.orig" "$tm/stream-matrix.toml"
+cat > "$tm/skip-ledger.toml" <<'EOF'
+[[skip]]
+test = "unmarked"
+crate = "x"
+class = "blocked_bug"
+
+[[skip]]
+test = "twice_marked"
+crate = "x"
+class = "slow"
+expires_after = "2099-01-01"
+resolved = "2026-01-01"
+EOF
+expect "test-manifests: a blocked_bug entry without its own marker fails" 1 env TEST_MANIFESTS_DIR="$tm" bash "$TM"
+expect_out "test-manifests: per-row marker" "unmarked"
+
 # ---- JVM ordinal sites (scripts/check/jvm/ordinal-sites.sh) ----
 # Every `.ordinal()` in the JVM main sources is a pinned site: a new one fails
 # naming it, a gone one fails naming it, a comment mention is not a site.

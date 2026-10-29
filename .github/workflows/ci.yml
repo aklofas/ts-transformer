@@ -387,7 +387,9 @@ jobs:
 
       - name: Check advisory test manifests (existence + format only)
         # tests/coverage/*.toml are well-formed and reference real, path-safe,
-        # in-tree files. Not a coverage gate.
+        # in-tree files. Not a coverage gate. Gated to linux-x86_64: a
+        # platform-independent scan that parses the TOML with python3 >= 3.11.
+        if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/test-manifests.sh
 
       - name: check-skip-ledger-sync (ledger matches real #[ignore]s)
