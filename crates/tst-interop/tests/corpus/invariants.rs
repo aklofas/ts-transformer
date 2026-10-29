@@ -871,3 +871,129 @@ fn klv_pes_starts_are_counted_on_klv_carriers_only() {
         [(0x300, 2), (0x301, 2)]
     );
 }
+
+// ---- KLV carriers: the walk must classify as the demuxer does
+
+fn registration(id: &[u8; 4]) -> Vec<u8> {
+    [&[0x05, 4][..], id].concat()
+}
+
+/// A `metadata_descriptor` naming format 0xFF with `id`, under
+/// application format 0xFFFF with the same identifier.
+fn metadata_descriptor(id: &[u8; 4]) -> Vec<u8> {
+    let mut d = vec![0x26, 13, 0xFF, 0xFF];
+    d.extend_from_slice(id);
+    d.push(0xFF);
+    d.extend_from_slice(id);
+    d.extend_from_slice(&[0x00, 0x0F]);
+    d
+}
+
+/// One PMT declaring each `(stream_type, descriptors)` on PIDs from 0x300
+/// on, then one PES start per PID.
+fn carrier_capture(streams: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let mut body = vec![0xE1, 0x00, 0xF0, 0x00];
+    for (i, (ty, desc)) in streams.iter().enumerate() {
+        let pid = 0x300 + i as u16;
+        body.extend_from_slice(&[*ty, 0xE0 | (pid >> 8) as u8, pid as u8]);
+        body.extend_from_slice(&[0xF0 | (desc.len() >> 8) as u8, desc.len() as u8]);
+        body.extend_from_slice(desc);
+    }
+    let mut psi = Psi::new();
+    let mut bytes = psi.pat(0);
+    bytes.extend(psi.pmt(&long_section(2, 1, 0, &body)));
+    for i in 0..streams.len() {
+        bytes.extend(packet(0x300 + i as u16, 0, true, &[0, 0, 1, 0xFC, 0, 0]));
+    }
+    bytes
+}
+
+fn walked_carriers(bytes: &[u8]) -> Vec<u16> {
+    walk(bytes).klv_pes_starts.into_keys().collect()
+}
+
+/// The PIDs the demuxer's PMT classification calls KLV.
+fn demuxed_carriers(bytes: &[u8]) -> Vec<u16> {
+    use tst_core::mpegts::demux::StreamKind;
+    let mut d = Demuxer::new();
+    let _ = d.feed(bytes);
+    d.flush();
+    let mut out = Vec::new();
+    while let Some(ev) = d.next_event() {
+        if let DemuxEvent::ProgramMap(pm) = ev {
+            out = pm
+                .streams
+                .iter()
+                .filter(|s| matches!(s.kind, StreamKind::KlvSync { .. } | StreamKind::KlvAsync))
+                .map(|s| s.pid)
+                .collect();
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn a_0x15_stream_whose_metadata_descriptor_names_id3_is_not_a_klv_carrier() {
+    let bytes = carrier_capture(&[
+        (0x15, metadata_descriptor(b"ID3 ")),
+        (0x15, metadata_descriptor(b"KLVA")),
+    ]);
+    assert_eq!(walked_carriers(&bytes), [0x301]);
+}
+
+#[test]
+fn a_0x06_klva_stream_another_kind_claims_first_is_not_a_klv_carrier() {
+    let klva = registration(b"KLVA");
+    let bytes = carrier_capture(&[
+        (0x06, [registration(b"AV01"), klva.clone()].concat()),
+        (
+            0x06,
+            [
+                klva.clone(),
+                vec![0x59, 8, b'e', b'n', b'g', 0x10, 0, 1, 0, 2],
+            ]
+            .concat(),
+        ),
+        (0x06, klva),
+    ]);
+    assert_eq!(walked_carriers(&bytes), [0x302]);
+}
+
+/// The walk's copy of the demuxer's cascade, case by case against the
+/// demuxer itself, so neither can drift from the other unseen.
+#[test]
+fn the_walks_klv_carriers_are_the_demuxers() {
+    let klva = registration(b"KLVA");
+    let with = |extra: Vec<u8>| [klva.clone(), extra].concat();
+    let streams = vec![
+        (0x15, vec![]),
+        (0x15, metadata_descriptor(b"KLVA")),
+        (0x15, metadata_descriptor(b"ID3 ")),
+        // Format 0x10 (TeM) under application format 0x0100.
+        (0x15, vec![0x26, 5, 0x01, 0x00, 0x10, 0x00, 0x0F]),
+        // The same descriptor cut short names nothing: still KLV.
+        (0x15, vec![0x26, 3, 0x01, 0x00, 0x10]),
+        (0x06, vec![]),
+        (0x06, klva.clone()),
+        (0x06, with(registration(b"AV01"))),
+        (
+            0x06,
+            with(vec![0x59, 8, b'e', b'n', b'g', 0x10, 0, 1, 0, 2]),
+        ),
+        (0x06, with(vec![0x56, 5, b'e', b'n', b'g', 0x09, 0x00])),
+        (0x06, with(vec![0x46, 5, b'e', b'n', b'g', 0x09, 0x00])),
+        (0x06, with(registration(b"VTTC"))),
+        (0x06, with(registration(b"GA94"))),
+        (0x06, registration(b"ID3 ")),
+        (0x1B, klva.clone()),
+    ];
+    let bytes = carrier_capture(&streams);
+    let demuxed = demuxed_carriers(&bytes);
+    assert_eq!(
+        demuxed,
+        [0x300, 0x301, 0x304, 0x306],
+        "the cases cover both answers"
+    );
+    assert_eq!(walked_carriers(&bytes), demuxed);
+}

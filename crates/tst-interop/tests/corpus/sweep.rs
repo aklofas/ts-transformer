@@ -799,3 +799,131 @@ fn the_manifest_command_refuses_a_digest_whose_name_is_not_its_sha() {
     );
     assert!(!base.join("manifest.txt").exists());
 }
+
+/// A swept baseline whose digests directory is then edited by `edit`; the
+/// next sweep against it must refuse before digesting anything.
+fn refused_baseline(name: &str, edit: impl Fn(&Path, &[String])) -> (String, Vec<String>) {
+    let (dir, shas) = two_files(name);
+    let first = temp_dir_named(&format!("{name}-first"));
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    let base = first.join("digests");
+    edit(&base, &shas);
+    let second = temp_dir_named(&format!("{name}-second"));
+    let out = sweep(&dir, &second, &["--baseline", base.to_str().unwrap()]);
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert_no_path(&err, &base);
+    assert!(!second.join("digests").exists(), "no file was digested");
+    (err, shas)
+}
+
+#[test]
+fn a_corrupt_or_mismatched_baseline_digest_is_refused_before_digesting() {
+    let (err, _) = refused_baseline("sw-corruptbase", |base, shas| {
+        std::fs::write(base.join(format!("{}.json", shas[0])), "{ not json").unwrap();
+    });
+    assert!(err.contains("parse baseline"), "{err}");
+    let (err, shas) = refused_baseline("sw-swappedbase", |base, shas| {
+        let other = std::fs::read(base.join(format!("{}.json", shas[1]))).unwrap();
+        std::fs::write(base.join(format!("{}.json", shas[0])), other).unwrap();
+    });
+    let first = &shas[0];
+    assert!(
+        err.contains(&format!(
+            "baseline digest {first}.json is not the whole-capture digest of {first}"
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_unsorted_or_repeated_manifest_line_is_refused() {
+    let rewrite = |f: fn(&mut Vec<String>)| {
+        move |base: &Path, _: &[String]| {
+            let p = base.join("manifest.txt");
+            let mut lines: Vec<String> = std::fs::read_to_string(&p)
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            f(&mut lines);
+            std::fs::write(&p, format!("{}\n", lines.join("\n"))).unwrap();
+        }
+    };
+    let (err, _) = refused_baseline("sw-unsorted", rewrite(|l| l.reverse()));
+    assert!(
+        err.contains("manifest.txt line 2 is out of order or repeats the line before it"),
+        "{err}"
+    );
+    let (err, _) = refused_baseline("sw-repeated", rewrite(|l| l.insert(1, l[0].clone())));
+    assert!(
+        err.contains("manifest.txt line 2 is out of order or repeats the line before it"),
+        "{err}"
+    );
+}
+
+#[test]
+fn accepting_one_of_two_new_captures_leaves_the_other_failing_by_name() {
+    let (dir, _) = two_files("sw-twonew");
+    let first = temp_dir_named("sw-twonew-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    let c = gen_profile_bytes("baseline", 4.0);
+    let d = gen_profile_bytes("baseline", 5.0);
+    std::fs::write(dir.join("c.ts"), &c).unwrap();
+    std::fs::write(dir.join("d.ts"), &d).unwrap();
+    let (c, d) = (sha_of(&c).0, sha_of(&d).0);
+    let base = first.join("digests");
+    let second = temp_dir_named("sw-twonew-second");
+    let out = sweep(
+        &dir,
+        &second,
+        &[
+            "--baseline",
+            base.to_str().unwrap(),
+            "--accept",
+            &c,
+            "--because",
+            "new capture",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let s = json(&second.join("sweep.json"));
+    assert_eq!(
+        (&s["new_explained"], &s["new_unexplained"]),
+        (&1.into(), &1.into()),
+        "{s}"
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(&format!("{c} new-no-baseline (accepted)")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "{d} new-no-baseline: the baseline does not list it; accept it with --accept {d} --because <reason>"
+        )),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_manifest_command_names_a_prefix_digest_under_a_whole_capture_name() {
+    let (dir, shas) = two_files("sw-prefixname");
+    let first = temp_dir_named("sw-prefixname-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    let base = first.join("digests");
+    std::fs::remove_file(base.join("manifest.txt")).unwrap();
+    let p = base.join(format!("{}.json", shas[0]));
+    let mut v = json(&p);
+    v["prefix_seconds"] = Value::from(600);
+    std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
+    let out = manifest(&base, "2");
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(&format!(
+            "digest {}.json is a replay prefix digest stored under a whole-capture name",
+            shas[0]
+        )),
+        "{out:?}"
+    );
+}

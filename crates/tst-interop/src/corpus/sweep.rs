@@ -217,7 +217,12 @@ pub fn write_manifest(digests_dir: &Path, expect_files: u64) -> Result<u64, Stri
             .map_err(|e| format!("read digest {name}: {}", e.kind()))?;
         let d: FileDigest =
             serde_json::from_str(&text).map_err(|e| format!("parse digest {name}: {e}"))?;
-        if d.sha256.0 != stem || d.prefix_seconds.is_some() {
+        if d.prefix_seconds.is_some() {
+            return Err(format!(
+                "digest {name} is a replay prefix digest stored under a whole-capture name"
+            ));
+        }
+        if d.sha256.0 != stem {
             return Err(format!("digest {name} holds capture {}", d.sha256));
         }
         shas.insert(d.sha256);
@@ -232,9 +237,10 @@ pub fn write_manifest(digests_dir: &Path, expect_files: u64) -> Result<u64, Stri
     Ok(n)
 }
 
-/// The captures a baseline lists, each checked to have its digest. Errors
+/// The captures a baseline lists, with their digests: each listed digest
+/// must be there, parse, and name the capture it is listed for. Errors
 /// name no path.
-fn read_baseline_manifest(dir: &Path) -> Result<BTreeSet<Sha256Hex>, String> {
+fn read_baseline_manifest(dir: &Path) -> Result<BTreeMap<Sha256Hex, FileDigest>, String> {
     let text = match std::fs::read_to_string(dir.join(BASELINE_MANIFEST)) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -249,7 +255,7 @@ fn read_baseline_manifest(dir: &Path) -> Result<BTreeSet<Sha256Hex>, String> {
             ));
         }
     };
-    let mut listed = BTreeSet::new();
+    let mut listed: Vec<Sha256Hex> = Vec::new();
     for (i, line) in text.lines().enumerate() {
         if !is_sha256(line) {
             return Err(format!(
@@ -257,7 +263,15 @@ fn read_baseline_manifest(dir: &Path) -> Result<BTreeSet<Sha256Hex>, String> {
                 i + 1
             ));
         }
-        listed.insert(Sha256Hex(line.to_string()));
+        // The sweep writes it sorted, one line per capture: a line out of
+        // order or repeated is a hand edit, and is refused.
+        if listed.last().is_some_and(|prev| prev.0.as_str() >= line) {
+            return Err(format!(
+                "the baseline {BASELINE_MANIFEST} line {} is out of order or repeats the line before it",
+                i + 1
+            ));
+        }
+        listed.push(Sha256Hex(line.to_string()));
     }
     let missing = listed
         .iter()
@@ -268,7 +282,20 @@ fn read_baseline_manifest(dir: &Path) -> Result<BTreeSet<Sha256Hex>, String> {
             "the baseline is incomplete: {missing} listed digest(s) are missing"
         ));
     }
-    Ok(listed)
+    let mut digests = BTreeMap::new();
+    for sha in listed {
+        let text = std::fs::read_to_string(dir.join(format!("{sha}.json")))
+            .map_err(|e| format!("read baseline {sha}: {}", e.kind()))?;
+        let d: FileDigest =
+            serde_json::from_str(&text).map_err(|e| format!("parse baseline {sha}: {e}"))?;
+        if d.sha256 != sha || d.prefix_seconds.is_some() {
+            return Err(format!(
+                "baseline digest {sha}.json is not the whole-capture digest of {sha}"
+            ));
+        }
+        digests.insert(sha, d);
+    }
+    Ok(digests)
 }
 
 pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
@@ -289,7 +316,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         }
     }
     // Read before any file is digested, so a bad baseline costs nothing.
-    let listed = match &args.baseline {
+    let mut listed = match &args.baseline {
         Some(b) => Some(read_baseline_manifest(b)?),
         None => None,
     };
@@ -411,23 +438,13 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
                 if failures.iter().any(|f| !f.excused) {
                     summary.invariant_failures += 1;
                 }
-                let base = match (&args.baseline, &listed) {
-                    (Some(dir), Some(listed)) => {
-                        let p = dir.join(format!("{}.json", entry.sha256));
-                        if listed.contains(&entry.sha256) {
-                            baseline_matched += 1;
-                            let text = std::fs::read_to_string(&p).map_err(|e| {
-                                format!("read baseline {}: {}", entry.sha256, e.kind())
-                            })?;
-                            let b: FileDigest = serde_json::from_str(&text)
-                                .map_err(|e| format!("parse baseline {}: {e}", entry.sha256))?;
-                            Some(Some(b))
-                        } else {
-                            Some(None)
-                        }
-                    }
-                    _ => None,
-                };
+                // A matched entry leaves the map; what stays is checked for
+                // baseline-only captures below.
+                let base = listed.as_mut().map(|listed| {
+                    let b = listed.remove(&entry.sha256);
+                    baseline_matched += u64::from(b.is_some());
+                    b
+                });
                 digest::store(&args.run, &d)?;
                 digested.insert(entry.sha256.clone());
                 match base {
@@ -477,7 +494,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
     // that is gone silently would shrink the comparison unnoticed.
     if let Some(listed) = &listed {
         let held: BTreeSet<&Sha256Hex> = inv.files.iter().map(|f| &f.sha256).collect();
-        for sha in listed.iter().filter(|s| !held.contains(s)) {
+        for sha in listed.keys().filter(|s| !held.contains(s)) {
             if let Some(because) = accept(sha) {
                 summary.baseline_only_explained += 1;
                 summary.accepted.push(Accepted {
