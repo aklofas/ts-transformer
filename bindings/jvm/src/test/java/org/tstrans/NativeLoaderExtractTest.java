@@ -23,9 +23,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Unit tests for the content-addressed extraction helpers and dev-override
- * property. All tests are Linux-runnable; the
- * Windows-locked-DLL path (where {@link Files#delete} swallows
- * {@link IOException} on an in-use DLL) is documented but not exercised on CI.
+ * property. All tests are Linux-runnable; the Windows-locked-DLL path (the
+ * atomic move fails, the existing target is verified by content and reused)
+ * is not exercised directly.
  */
 class NativeLoaderExtractTest {
 
@@ -170,6 +170,31 @@ class NativeLoaderExtractTest {
         assertEquals(0, child.exitValue(), out);
         Path target = Path.of(out.strip().lines().reduce((a, b) -> b).orElseThrow());
         assertTrue(Files.exists(target), "deleteOnExit removed the shared cached library: " + out);
+    }
+
+    @Test
+    void publishedLibraryIsReadableByOtherUsers(@TempDir Path tmp) throws IOException {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+            tmp.getFileSystem().supportedFileAttributeViews().contains("posix"));
+        Path target = NativeLoader.extractToStableDir(new byte[] {1, 1, 2, 3}, "so", tmp);
+        var perms = Files.getPosixFilePermissions(target);
+        assertTrue(perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_READ));
+        assertTrue(perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_READ));
+    }
+
+    @Test
+    void unreadableCachedLibraryFallsThroughToExtraction(@TempDir Path tmp) throws IOException {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+            tmp.getFileSystem().supportedFileAttributeViews().contains("posix"));
+        byte[] bytes = {8, 6, 7, 5, 3, 0, 9};
+        Path dir = tmp.resolve("tstrans-native-" + NativeLoader.contentHash(bytes));
+        Files.createDirectories(dir);
+        Path planted = dir.resolve("libtstjni.so");
+        Files.write(planted, bytes);
+        Files.setPosixFilePermissions(planted, java.util.Set.of());
+        org.junit.jupiter.api.Assumptions.assumeFalse(Files.isReadable(planted), "running as root");
+        Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
+        assertArrayEquals(bytes, Files.readAllBytes(target));
     }
 
     // -----------------------------------------------------------------------
