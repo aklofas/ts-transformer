@@ -3711,6 +3711,28 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# The Python twin registers the accept slot before the first accept, so the
+# interpreter-exit hook can wake a listener no handle reaches yet.
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_receiver_from_url_with_cancel"
+owning_tests = ["bindings/python/tests/test_exit_with_parked_shell.py"]
+bindings = ["c:deferred(the C managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "python:tstrans.srt.ManagedReceiver.from_url", "java:deferred(the JVM managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# The Python twin registers the accept slot before the first accept, so the
+# interpreter-exit hook can wake a listener no handle reaches yet.
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::shells::managed_demux_receiver_from_url_with_cancel"
+owning_tests = ["bindings/python/tests/test_exit_with_parked_shell.py"]
+bindings = ["c:deferred(the C managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "python:tstrans.srt.ManagedDemuxReceiver.from_url", "java:deferred(the JVM managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[surface]]
 kind = "rust"
 crate = "tst-srt"
