@@ -99,6 +99,15 @@ so an unrelated regression on the same cell can never be silently
 swallowed); `known_flaky` rows may omit it, since a flake has no single
 mechanism string by definition.
 
+Matching is per failure line: a row explains only the lines of a cell's
+`FAIL` that contain its `failure_contains`, so one line no row explains
+keeps the whole cell a `FAIL`, however many others a row excused. The
+cell's notes list its unexplained lines first, then each explained line
+with the row that excused it (`explained_by`). A row may carry
+`arch = "x86_64"` or `arch = "aarch64"`; it then applies only to a run whose
+inventory names that architecture and is never judged stale on another, so
+an arm-only gap neither excuses nor goes stale on the x86_64 census.
+
 ## Cell id / tier / direction conventions
 
 - **Cell id**: transport-axis cells are `<transport>/<direction>-<peer>[-encrypted]`,

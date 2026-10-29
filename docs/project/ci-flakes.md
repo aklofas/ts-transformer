@@ -22,6 +22,16 @@ artifact, and prints an `ALERT` line for any job rerun twice or more. An
 and `environmental` entries in `tests/coverage/skip-ledger.toml`
 (timing-sensitive skipped tests).
 
+**Capability skips are not flakes.** A test that needs something a host may
+lack (loopback multicast, `ffprobe`, TSDuck) records a capability skip and
+returns. Where CI knows the capability is present it sets
+`TST_REQUIRE_<CAP>=1`, and the skip fails the test instead; the Linux legs
+require `MULTICAST`. Elsewhere each skip is appended to the file
+`TST_CAPABILITY_LOG` names, and the `ci` job's step summary lists every skip
+the leg took, with its count. The IPv6 UDP multicast test records
+`MULTICAST_V6` and skips on every host until the UDP receiver accepts
+`?iface=` for IPv6, so no leg requires it and it stays on every summary.
+
 A defect that escaped the release qualification is not a flake; it is a row
 of the [release findings ledger](/docs/project/release-findings.md).
 
