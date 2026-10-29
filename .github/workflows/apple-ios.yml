@@ -61,3 +61,12 @@ jobs:
           name: TSTrans.xcframework
           path: target/apple/TSTrans.xcframework
           if-no-files-found: error
+
+      - name: Reassembly with other features rebuilds the iOS slices
+        # The first assembly left srt-only iOS slices on disk; a second one
+        # with FEATURES=srt,rtp must rebuild them rather than reuse them. Runs
+        # after the upload so the published artifact stays the srt-only one.
+        run: |
+          set -o pipefail
+          FEATURES=srt,rtp bash scripts/apple/make-xcframework.sh | tee "$RUNNER_TEMP/reassembly.log"
+          grep -qF "iOS slices are from another build" "$RUNNER_TEMP/reassembly.log"
