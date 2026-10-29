@@ -346,6 +346,7 @@ jni_native! {
         payload_size: JObject<'local>,
     ) -> jlong = 0 => {
         // Ordinal 3 = RENDEZVOUS, ordinal 2 = LISTENER (wrong for connect).
+        // Order pinned by BuilderModeOrdinalTest.
         if mode == 3 {
             throw_srt(
                 env,
@@ -456,6 +457,7 @@ jni_native! {
         mss: JObject<'local>,
         payload_size: JObject<'local>,
     ) -> jlong = 0 => {
+        // Order pinned by BuilderModeOrdinalTest.
         if mode == 3 {
             throw_srt(
                 env,

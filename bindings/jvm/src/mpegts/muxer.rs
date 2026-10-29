@@ -221,6 +221,7 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                 // the DVB codecs the Java builder already rejects (they need config
                 // not exposed in the JVM binding); reject defensively if one slips
                 // through.
+                // Order pinned by OrdinalContractTest.
                 match codecs[i] {
                     2 => {
                         prog.add_subtitle(pid, SubtitleCodec::Cea708Standalone);
@@ -1106,6 +1107,7 @@ fn build_misp(
     use tst_core::codec::misp_time::MispTimestamp;
     let ts = crate::jutil::checked_u8(env, time_status as i64, "timeStatus").ok()?;
     let v = value as u64;
+    // Order pinned by OrdinalContractTest.
     match kind {
         0 => Some(MispTimestamp::micros(v, ts)),
         1 => Some(MispTimestamp::nanos(v, ts)),
@@ -1224,6 +1226,7 @@ fn read_boolean_array(env: &mut Env, arr: &JBooleanArray) -> Option<Vec<bool>> {
 /// and returns `None` on any ordinal outside the valid range (0-3); this
 /// catches enum drift across binding versions.
 fn video_codec(env: &mut Env, ordinal: i32) -> Option<VideoCodec> {
+    // Order pinned by OrdinalContractTest.
     match ordinal {
         0 => Some(VideoCodec::H264),
         1 => Some(VideoCodec::H265),
@@ -1244,6 +1247,7 @@ fn video_codec(env: &mut Env, ordinal: i32) -> Option<VideoCodec> {
 /// Matches the Java `AudioCodec` enum declaration order. Throws CONFIG_INVALID
 /// and returns `None` on any ordinal outside the valid range (0-3).
 fn audio_codec(env: &mut Env, ordinal: i32) -> Option<AudioCodec> {
+    // Order pinned by OrdinalContractTest.
     match ordinal {
         0 => Some(AudioCodec::Mp2),
         1 => Some(AudioCodec::Aac),
@@ -1280,6 +1284,7 @@ fn split_descriptor_tlvs(blob: &[u8]) -> Option<Vec<Vec<u8>>> {
 /// `None` on ordinals outside 0-1 (ordinal 1 IS valid PrivateData — only
 /// truly out-of-range values indicate enum drift).
 fn klv_type(env: &mut Env, ordinal: i32) -> Option<KlvStreamType> {
+    // Order pinned by OrdinalContractTest.
     match ordinal {
         0 => Some(KlvStreamType::SynchronousMetadata),
         1 => Some(KlvStreamType::PrivateData),
@@ -1299,6 +1304,7 @@ fn klv_type(env: &mut Env, ordinal: i32) -> Option<KlvStreamType> {
 /// 1 = InteropRawObu. Throws CONFIG_INVALID and returns `None` on ordinals
 /// outside 0-1; mirrors the demux path hardened in commit 38d51690.
 fn av1_mode(env: &mut Env, ordinal: i32) -> Option<Av1CarriageMode> {
+    // Order pinned by OrdinalContractTest.
     match ordinal {
         0 => Some(Av1CarriageMode::Mpeg2TsBinding),
         1 => Some(Av1CarriageMode::InteropRawObu),

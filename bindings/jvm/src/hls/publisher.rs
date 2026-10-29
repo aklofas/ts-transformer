@@ -181,6 +181,7 @@ jni_native! {
         if playlist_window >= 0 {
             b.playlist_window(playlist_window as usize);
         }
+        // Order pinned by OrdinalContractTest.
         match mode {
             -1 => {}
             0 => {

@@ -180,6 +180,7 @@ jni_native! {
             Ok(v) => v,
             Err(_) => return 0,
         };
+        // Order pinned by OrdinalContractTest.
         config.parameter_set_injection = match parameter_set_injection {
             1 => ParameterSetInjection::BeforeIdr,
             _ => ParameterSetInjection::None,

@@ -135,12 +135,14 @@ pub(crate) fn build_demux_config_from_args(
     // top of `default()`, mirroring tst-py's `build_demuxer_config`. The Rust-only
     // `klv_link_overrides`/`stream_kind_overrides` keep their defaults (deferred).
     let mut opts = DemuxerConfig::default();
+    // Order pinned by OrdinalContractTest.
     opts.strict = match strict {
         0 => StrictMode::Off,
         1 => StrictMode::TimingOnly,
         2 => StrictMode::DescriptorsOnly, // Java PSI_ONLY
         _ => StrictMode::Full,            // 3 (and any out-of-range → strictest, safe)
     };
+    // Order pinned by OrdinalContractTest.
     opts.av1_carriage = match av1 {
         0 => Av1CarriageMode::Mpeg2TsBinding,
         1 => Av1CarriageMode::InteropRawObu,
@@ -319,6 +321,7 @@ jni_native! {
         // so an out-of-range ordinal means enum drift (a Java variant added
         // without updating this mapping) or a reflective misuse — fail loudly
         // rather than silently parsing with the wrong codec/carriage.
+        // Order pinned by OrdinalContractTest.
         let codec = match codec_ordinal {
             0 => VideoCodec::H264,
             1 => VideoCodec::H265,
@@ -392,6 +395,7 @@ jni_native! {
         // Exact ordinal validation, mirroring nSplitVideo: an out-of-range value
         // means AudioCodec enum drift (a Java variant added without updating this
         // mapping) or a reflective misuse — fail loudly.
+        // Order pinned by OrdinalContractTest.
         let codec = match codec_ordinal {
             0 => AudioCodec::Mp2,
             1 => AudioCodec::Aac,
