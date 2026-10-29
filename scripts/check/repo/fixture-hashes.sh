@@ -7,7 +7,9 @@
 #   - no listed file may be untracked/removed.
 # Regenerate with scripts/gen/fixture-manifest.sh after intentional changes.
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+# FIXTURE_ROOT overrides the repository root (the self-test points it at a
+# temporary git repository).
+ROOT="${FIXTURE_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 cd "$ROOT"
 FM="tests/coverage/fixture-manifest.toml"
 HASHES="tests/coverage/fixture-hashes.toml"
@@ -28,27 +30,42 @@ grep -oE '^root = "[^"]+"' "$FM" | sed -E 's/^root = "(.*)"/\1/' | while IFS= re
 done | LC_ALL=C sort -u > "$expected" || true
 [[ -s "$expected" ]] || err "no fixture roots resolved from $FM"
 
-# Listed set + per-file hash verification.
-path=""
+# Listed set + per-file hash verification, one [[file]] record at a time:
+# each record carries exactly one path and one sha256.
+row=0 path="" npath=0 want="" nsha=0
+check_record() {
+    [[ "$row" -gt 0 ]] || return 0
+    if [[ "$npath" -eq 0 ]]; then err "row $row: missing path"; return 0; fi
+    if [[ "$npath" -gt 1 ]]; then err "row $row: two path lines"; return 0; fi
+    if [[ "$nsha" -eq 0 ]]; then err "row $row: missing sha256 for $path"; return 0; fi
+    if [[ "$nsha" -gt 1 ]]; then err "row $row: two sha256 lines for $path"; return 0; fi
+    case "$path" in
+        /*)   err "listed path is absolute: $path"; return 0 ;;
+        *..*) err "listed path contains '..': $path"; return 0 ;;
+    esac
+    echo "$path" >> "$listed"
+    if [[ ! -f "$path" ]]; then err "listed file does not exist: $path"; return 0; fi
+    got="$(sha256sum "$path" | cut -d' ' -f1)"
+    [[ "$got" == "$want" ]] || err "sha256 drift for $path (have $got, manifest $want)"
+}
 while IFS= read -r line; do
     case "$line" in
+        '[[file]]')
+            check_record
+            row=$((row + 1)) path="" npath=0 want="" nsha=0 ;;
         'path = '*)
+            [[ "$row" -gt 0 ]] || { err "path line before the first [[file]] record: $line"; continue; }
             path="$(printf '%s' "$line" | sed -E 's/^path = "(.*)"/\1/')"
-            case "$path" in
-                /*)   err "listed path is absolute: $path"; path=""; continue ;;
-                *..*) err "listed path contains '..': $path"; path=""; continue ;;
-            esac
-            echo "$path" >> "$listed"
-            [[ -f "$path" ]] || err "listed file does not exist: $path" ;;
+            npath=$((npath + 1)) ;;
         'sha256 = '*)
-            [[ -n "$path" && -f "$path" ]] || { path=""; continue; }
+            [[ "$row" -gt 0 ]] || { err "sha256 line before the first [[file]] record: $line"; continue; }
             want="$(printf '%s' "$line" | sed -E 's/^sha256 = "(.*)"/\1/')"
-            got="$(sha256sum "$path" | cut -d' ' -f1)"
-            [[ "$got" == "$want" ]] || err "sha256 drift for $path (have $got, manifest $want)"
-            path="" ;;
+            nsha=$((nsha + 1)) ;;
     esac
 done < "$HASHES"
-LC_ALL=C sort -u -o "$listed" "$listed"
+check_record
+LC_ALL=C sort -o "$listed" "$listed"
+while IFS= read -r p; do err "listed twice: $p"; done < <(uniq -d "$listed")
 
 # Closure both ways.
 while IFS= read -r p; do grep -qxF "$p" "$listed" || err "unlisted committed fixture: $p (run scripts/gen/fixture-manifest.sh)"; done < "$expected"
