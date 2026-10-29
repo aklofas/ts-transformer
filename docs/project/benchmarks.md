@@ -63,7 +63,7 @@ of its ceiling actually survive a full day of real-world disruption."
 | Verdict | Rule | Threshold |
 |---|---|---|
 | `worker_exits` | No worker process exits before the run's own end-of-run teardown. | zero unscheduled exits |
-| `proxy_stats_final` | Every stream with an impairment proxy carries the stats file the proxy wrote as it exited. A periodic snapshot stops short of the step's tail, so its totals are neither recorded nor judged. | present for every proxied stream |
+| `proxy_stats_final` | Every stream with an impairment proxy (every transport but TCP) carries the stats file the proxy wrote as it exited. A missing file is a proxy that died before its first write. A periodic snapshot stops short of the step's tail, so its totals are neither recorded nor judged. | present for every proxied stream |
 | `recv_invariants` | Every receiver's own internal invariants hold throughout. | no violation |
 | `delivery_complete` | Received video access units against sent. | ≥ 0.7×, and > 1.2× fails as an accounting mismatch rather than a pass |
 | `cpu_headroom` | Sum of worker CPU-seconds over wall-seconds over vCPU count. | ≤ 0.80 |

@@ -38,7 +38,10 @@ is exercised today.
    cell exists.
 
 A harness finding (an oracle that judged a correct run wrong) has the class
-**harness oracle**: the evidence tooling's own tests cover it.
+**harness oracle**: the evidence tooling's own tests cover it. A finding in
+the build that runs the tests (a task that stays up to date over a changed
+input) has the class **test tooling**: the build's own configuration covers
+it.
 
 ## Severity
 
@@ -66,3 +69,8 @@ A harness finding (an oracle that judged a correct run wrong) has the class
 | The AV1 carriage oracle did not excuse PES-start damage the corruption tap had injected and attributed, so a correct RIST leg failed | soak harness | low | the 0.9.0 release soak | the ADTS oracle had the excusal and the AV1 oracle did not; no test fed the AV1 oracle attributed damage | harness oracle: `av1_carriage_excuses_attributed_prefix_damage` in tst-interop | 0.9.1 |
 | An external publisher that failed to send its closing message after end of stream was counted as a failed generation, though its media was delivered | soak harness | low | the 0.9.0 release soak | the publisher loop judged only gst-launch's exit code | harness oracle: the `interop-publish-generation.sh` rail, which drives the publisher generation with a stand-in for gst-launch | 0.9.1 |
 | One KLV placement excursion of 2.3 ms over a sender-report interval failed the elementary publish leg, though the library applied the sender's own time mapping | soak harness | low | the 0.9.0 release soak | the placement oracle held every record to 1 ms and had no notion of a report-interval excursion | harness oracle: `klv_placement_excuses_one_sr_interval_excursion_under_10_ms` and `klv_placement_fails_a_second_excursion_or_an_excursion_over_10_ms` in tst-interop | 0.9.1 |
+| Gradle's `:test` task did not list the shared scenario fixtures as inputs, so a changed golden left the JVM scenario tests up to date and unrun | JVM build | low | a mutation check, while the URL corpus gained its JVM leg, that passed without running | Gradle judged the task up to date from its declared inputs, and nothing changed a fixture and expected the tests to rerun | test tooling: the `:test` task in `bindings/jvm/build.gradle.kts` declares the scenario fixture directory as an input | 0.9.1 |
+| The JVM loader staged the extracted native library through `Files.createTempFile`, so the published file was mode 0600 and unreadable by any other user of a shared cache directory | JVM binding | medium | code review, before the change merged | no test read the published library's file mode | packaged-consumer integration: `publishedLibraryIsReadableByOtherUsers` in `NativeLoaderExtractTest` | 0.9.1 |
+| A cancel landing between the TCP `write_loop`'s read of the cancel latch and its read of the connection's liveness was reported as `Closed`, not as the cancel | tst-tcp | medium | the macOS leg of `ci` on `main` | the cancel tests hit that window only by chance, and rarely | hostile network lifecycle: `hard_error_with_cancel_latched_but_still_live_is_explicit_close` and `zero_progress_timeout_with_cancel_latched_but_still_live_is_explicit_close` in tst-tcp, which hold the latch set and the connection live | 0.9.1 |
+| An RTSP URL with a username and no password (`rtsp://admin@host`) never authenticates: the client sends credentials only when a password is present, although RFC 7617 allows an empty one | RTSP client | medium | the shared URL corpus | no test sent a username-only URL to a server that asks for credentials | cross-binding parity: the URL corpus row for `rtsp://admin@127.0.0.1:31501/live` records the credentials as `wire_absent` until the fix changes the row | open |
+| With the corruption tap on, a strict receiver's `pcr_interval` oracle reads injected PCR damage (a flipped PCR byte, a dropped PCR) as a stream fault | interop harness | low | the review of the corruption attribution | strict mode is a receiver flag and the tap a sender flag, and no cell declares both | harness oracle: none yet; a cell that declares both stays lossy-judged until the oracle consults the tap's log, and the interop README says so | open |

@@ -185,8 +185,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `gen-scenarios --check` compares the generated input bytes with the committed ones, and names a scenario whose input is not generated.
 - The qualification record takes the fuzz leg's conclusion from the leg's own record only.
 - The weekly advisory check checks an untagged pin by its date, lists only the sources it checked the pin against, and reports a dependency with no advisory source as unassessed.
-- Every `.ordinal()` the JVM binding passes to native code is a pinned site (`scripts/ratchets/ordinal-sites.tsv`); a site the rail cannot parse fails it.
-- The coverage manifests are validated row by row from parsed TOML.
+- Every `.ordinal()` the JVM binding passes to native code is a pinned site (`scripts/ratchets/ordinal-sites.tsv`); a site the rail cannot parse, a block comment on a code line included, fails it.
+- The coverage manifests are validated row by row from parsed TOML, and a `group` or `skip` that is not an array of tables fails with a message.
+- `release-vm-corpus.sh` takes `--baseline DIR` or `--no-baseline` and refuses to run with neither.
 - The iOS build reuses an XCFramework slice only when it was built from the same tree and features.
 - The harness verdict in `tests/coverage/evidence-archives.toml` is never edited: a maintainer's waiver is an `[archive.waiver]` table beside it, and a release needs a raw pass.
 - `qualification.py collect` has no option that admits a waiver: every collect records a waived archive's disposition, outside release mode with no reasons, and a release collect refuses it.
@@ -210,7 +211,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `corpus sweep --baseline` needs the baseline's `manifest.txt` and verifies every digest it lists; a sweep writes one. `corpus manifest <digests-dir> --expect-files N` writes the manifest an older digests directory lacks. Every capture added or removed against the baseline needs `--accept <sha256> --because <text>`, and the reason is kept in the sweep summary and the report.
 - `corpus inventory` skips directories named `quarantine` at any depth.
 - `corpus replay` restarts a path whose receiver died, once per pick, and the summary lists per path the SHA of each pick a restart preceded.
-- `corpus replay` prints, per pick, how many PCR gaps it did not pace: a reset or a forward step over one second is sent as no time.
+- `corpus replay` names each pick with PCR gaps it did not pace, and how many: a reset or a forward step over one second is sent as no time.
+- A corpus run's archive row and report name the baseline the sweep compared with, by the SHA-256 of its `manifest.txt`, or say that none was compared.
 
 ### Fixed — tst-interop
 
@@ -220,16 +222,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The soak judges a WHEP leg only from counters the server wrote, and requires them.
 - `serve-whep` builds its push schedule lazily, so a 72-hour window holds no pushes in memory.
 - Corruption attribution: a legal duplicate packet explains nothing in its window, and a body flip on a PCR-only packet explains that packet's PCR signals.
-- The stress judge requires proc samples from every declared role. The stress port table dedupes in the caller's shell; the dry run lists each step's ports and refuses a repeat within a step, and a real run refuses the dry run's port counter. `soak.sh` options require their value.
-- The soak, stress and replay judges share one `rss.csv` decoder, and the stress parser rejects a negative or non-finite elapsed time.
-- `tst-interop recv`'s deadline covers a TCP accept and an idle TCP peer.
+- The stress judge requires proc samples from every declared role, and a stats file from the proxy of every stream but a TCP one. The stress port table dedupes in the caller's shell; the dry run lists each step's ports and refuses a repeat within a step, and a real run refuses the dry run's port counter. `soak.sh` options require their value.
+- The soak, stress and replay judges share one `rss.csv` decoder, and the stress parser rejects a negative or non-finite elapsed time. The soak's errors name the line and the legs or processes it allows, and the first bad line is the one reported.
+- A replay restart whose receiver cannot start is marked failed in that receiver's log.
+- `tst-interop recv`'s deadline covers a TCP accept and an idle TCP peer, and its message prints a fractional window.
 
 ### Changed — CI
 
 - A test that skips for want of a host capability (loopback multicast, ffprobe, TSDuck) fails where CI sets `TST_REQUIRE_<CAP>=1`, and is listed in the job summary where it does not (`TST_CAPABILITY_LOG`). The Linux legs require `MULTICAST`. The IPv6 UDP multicast test records `MULTICAST_V6` and skips on every host until the receiver accepts `?iface=` for IPv6.
-- The no_std job restores its QEMU and ARM toolchain packages from an Actions cache, so a slow apt mirror cannot run the install past the job timeout.
-- cargo-deny also checks the fuzz and embedded workspaces against the same policy, with `--locked`.
-- Every workflow and composite action pins its actions by commit SHA, Dependabot moves those pins weekly, and every `pip install` pins its tools by hash.
+- The no_std job restores its QEMU and ARM toolchain packages from an Actions cache, so a slow apt mirror cannot run the install past the job timeout; a run that restores no cache retries each fetch five times.
+- cargo-deny also checks the fuzz and embedded workspaces against the same policy, with `--locked`, and a manifest the job names must exist.
+- Every workflow and composite action pins its actions by commit SHA, and Dependabot moves those pins weekly. The release build tools (meson, ninja, pkgconf) install from a hash-pinned requirements file.
+- `ci` can be dispatched on a branch with the full SHA of its tip (`gh workflow run ci.yml --ref <branch> -f sha=<sha>`), so a stacked pull request, which gets no `pull_request` run, is tested too. A SHA that is not the dispatched branch's tip fails the run.
 - A linux-aarch64 interop job runs the `[arm64_subset]` cells on scheduled, dispatched and release-qualify runs, and its census is recorded beside the x86_64 one. It runs with `continue-on-error` until two scheduled runs are green, and then gates.
 - The stress port-table rail runs in CI.
 
@@ -240,7 +244,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Docs — project pages
 
 - `docs/project/release-findings.md` is a new ledger of defects that escaped the release qualification, each with the class of test that now covers it, seeded with the 0.9.0 escapes.
-- `docs/project/real-capture-testing.md` describes the annotation bounds, `klv-missing`, the baseline manifest and the replay's restart and pacing counts; `docs/project/releasing.md` the one-time manifest repair of an older baseline and the crates.io rehearsal.
+- `docs/project/real-capture-testing.md` describes the annotation bounds, `klv-missing`, the baseline manifest and the replay's restart and pacing counts; `docs/project/releasing.md` the one-time manifest repair of an older baseline, the corpus baseline's promotion under the tag's name, and the crates.io rehearsal.
 
 ### Added — tst-core
 
