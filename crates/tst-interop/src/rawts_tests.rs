@@ -1037,3 +1037,38 @@ fn the_reader_measures_the_lead_of_each_pes_over_the_last_pcr() {
     let w = summarize(&pcr_then_pes(0x100, 90_000, Some(99_000), 108_000));
     assert_eq!(w.pcr_lead_min_ticks[&0x100], 9_000); // 100 ms
 }
+
+/// Both clocks are 33-bit counters: a DTS just past the wrap still leads
+/// a PCR just before it.
+#[test]
+fn the_lead_is_measured_across_the_33_bit_wrap() {
+    let w = summarize(&pcr_then_pes(0x100, TS_MODULUS - 4_500, Some(4_500), 9_000));
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 9_000);
+}
+
+#[test]
+fn a_pes_before_any_pcr_leaves_no_lead() {
+    // Drop the third packet, the PCR, leaving PAT, PMT and the PES.
+    let b = pcr_then_pes(0x100, 90_000, Some(99_000), 108_000);
+    let w = summarize(&[&b[..2 * PKT], &b[3 * PKT..]].concat());
+    assert!(w.pts.contains_key(&0x100));
+    assert!(!w.pcr_lead_min_ticks.contains_key(&0x100), "{w:?}");
+}
+
+/// The lead measurement is off on every profile, so it must not change what
+/// the reader accepts: a PES start that flags a DTS but whose packet ends
+/// inside it reads as it always did (its PTS recorded), and only the lead
+/// is not measured.
+#[test]
+fn a_pes_start_ending_inside_its_dts_reads_without_a_lead() {
+    let b = pcr_then_pes(0x100, 90_000, Some(99_000), 108_000);
+    // The PES packet again, with 15 payload bytes (the PES header through
+    // the PTS and one DTS byte) behind adaptation-field stuffing.
+    let pes = &b[3 * PKT + 4..3 * PKT + 4 + 15];
+    let mut short = vec![SYNC, 0x40 | 0x01, 0x00, 0x30, 168, 0x00];
+    short.resize(PKT - 15, 0xFF);
+    short.extend_from_slice(pes);
+    let w = summarize(&[&b[..3 * PKT], &short[..]].concat());
+    assert_eq!(w.pts[&0x100].count(), 1, "{w:?}");
+    assert!(!w.pcr_lead_min_ticks.contains_key(&0x100), "{w:?}");
+}
