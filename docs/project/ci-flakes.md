@@ -22,6 +22,9 @@ artifact, and prints an `ALERT` line for any job rerun twice or more. An
 and `environmental` entries in `tests/coverage/skip-ledger.toml`
 (timing-sensitive skipped tests).
 
+A defect that escaped the release qualification is not a flake; it is a row
+of the [release findings ledger](/docs/project/release-findings.md).
+
 ## Active classes
 
 | Class | Job | Symptom | Cause | First seen | Last seen | Rule |
