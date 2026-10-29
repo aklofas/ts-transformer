@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # A stacked pull request (its base is another branch) gets no pull_request
+  # run. Dispatch this workflow on its branch instead, naming the branch tip:
+  #   gh workflow run ci.yml --ref <branch> -f sha="$(git rev-parse <branch>)"
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: The full 40-hex commit to test; it must be the tip of the ref the run is dispatched on
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -19,6 +28,23 @@ env:
   RIST_FORCE_VENDORED: "1"
 
 jobs:
+  # A run is recorded under the dispatched ref's tip (release-qualify reads ci
+  # runs by head_sha), so a dispatch must test exactly that commit: the sha
+  # input is the full 40-hex form and equals the tip. This job fails the run
+  # otherwise; it is skipped on push and pull_request.
+  dispatch-sha:
+    name: the sha input is the full tip commit
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          SHA: ${{ inputs.sha }}
+          TIP: ${{ github.sha }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be the full 40-hex commit (got '$SHA'); use git rev-parse <ref>"; exit 2; }
+          [ "$SHA" = "$TIP" ] || { echo "::error::sha $SHA is not the tip $TIP of ${GITHUB_REF}; dispatch on the branch whose tip it is"; exit 2; }
+
   build:
     name: build (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
@@ -68,6 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ inputs.sha }}
           submodules: recursive
 
       - name: Name the capability-skip log
@@ -898,6 +925,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ inputs.sha }}
           submodules: recursive
 
       - name: Rust toolchain + musl target, cargo cache
@@ -953,6 +981,8 @@ jobs:
     # job in checkout).
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.sha }}
 
       - name: Rust toolchain, cargo cache, cargo-nextest
         uses: ./.github/actions/rust-setup
@@ -991,6 +1021,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ inputs.sha }}
           submodules: recursive
 
       - name: Rust toolchain + bare-metal targets, cargo cache
@@ -1067,7 +1098,11 @@ jobs:
       # separate qemu-system-arm package, installed alongside it here).
       # The packages come from an Actions cache keyed on this list and
       # `version`, so a slow apt mirror cannot run the install past the job
-      # timeout on a warm cache. Bump `version` to refetch them.
+      # timeout on a warm cache. Bump `version` to refetch them. A cache miss
+      # fetches through apt, which retries as the other apt steps do.
+      - name: apt retries a failed fetch five times
+        run: echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries
+
       - name: Install QEMU + ARM C cross-toolchain
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         timeout-minutes: 20
@@ -1191,6 +1226,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ inputs.sha }}
           submodules: recursive
 
       - name: Pinned toolchain with rustfmt (fuzz-workspace fmt check)
@@ -1276,6 +1312,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ inputs.sha }}
           submodules: recursive
 
       - name: check-py-non-conformant-kind-coverage
@@ -1377,6 +1414,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ inputs.sha }}
           submodules: recursive
 
       - name: Install build prerequisites
@@ -1455,6 +1493,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ inputs.sha }}
           submodules: recursive
 
       - name: Install build prerequisites
@@ -1502,6 +1541,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: ${{ inputs.sha }}
           submodules: recursive
 
       - name: Install build prerequisites and abigail-tools
@@ -1574,6 +1614,8 @@ jobs:
     # Policy lives in deny.toml; `bans`/`sources` are intentionally off.
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.sha }}
 
       - id: rust
         uses: ./.github/actions/rust-setup
