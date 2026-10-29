@@ -35,12 +35,12 @@ use tst_pipeline::ext::pairing::{
 
 use crate::error::throw_demux;
 use crate::handle::HandleRegistry;
-use crate::jutil::enum_const;
+use crate::jutil::{enum_const, wrap_heap_byte_buffer};
 use tst_pipeline::binding::BindingErrorKind;
 
 use crate::mpegts::{
     build_demux_config_from_args, build_stream_id, build_video_units, convert_event, metadata_kind,
-    opt_long, throw_demux_error, video_codec_name, wrap_heap_byte_buffer,
+    opt_long, throw_demux_error, video_codec_name,
 };
 
 /// Per-type leased-handle registry for `org.tstrans.pipeline.Pairer`.
@@ -221,21 +221,16 @@ fn build_output_list<'local>(
         // 16 slots: a Paired item holds about 12-13 locals (two samples, their
         // unit lists, strings, the record and scratch).
         env.with_local_frame(16, |env| -> jni::errors::Result<()> {
-            // `Ok(None)` = skip this output (a forward-compat unmapped event;
-            // unreachable today). Mirrors `mpegts::nNextEvent`'s skip behavior so a
-            // future skip-worthy variant is dropped from the batch, not failed.
             // `Err(())` leaves its exception pending; the frame error only
             // carries the failure out.
-            if let Some(obj) = convert_output(env, o)
-                .map_err(|()| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?
-            {
-                env.call_method(
-                    &list,
-                    jni_str!("add"),
-                    jni_sig!("(Ljava/lang/Object;)Z"),
-                    &[JValue::Object(&obj)],
-                )?;
-            }
+            let obj = convert_output(env, o)
+                .map_err(|()| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?;
+            env.call_method(
+                &list,
+                jni_str!("add"),
+                jni_sig!("(Ljava/lang/Object;)Z"),
+                &[JValue::Object(&obj)],
+            )?;
             Ok(())
         })
         .map_err(|_| ())?;
@@ -244,13 +239,9 @@ fn build_output_list<'local>(
 }
 
 /// Convert one `PairerOutput` to its `org.tstrans.pipeline.PairerOutput.*`
-/// sealed-record variant (nested binary names use `$`). `Ok(None)` = skip this
-/// output (a forward-compat unmapped `DemuxEvent` in a `PassThrough`; not
-/// produced today); `Err(())` = a JNI conversion failed (exception pending).
-fn convert_output<'local>(
-    env: &mut Env<'local>,
-    o: &PairerOutput,
-) -> Result<Option<JObject<'local>>, ()> {
+/// sealed-record variant (nested binary names use `$`). `Err(())` = a JNI
+/// conversion failed (exception pending).
+fn convert_output<'local>(env: &mut Env<'local>, o: &PairerOutput) -> Result<JObject<'local>, ()> {
     let obj = match o {
         PairerOutput::Paired { video, klv } => {
             let v = convert_video_sample(env, video)?;
@@ -281,13 +272,7 @@ fn convert_output<'local>(
             .map_err(|_| ())?
         }
         PairerOutput::PassThrough(ev) => {
-            // `convert_event` can in principle signal "skip this event"
-            // (`Ok(None)`) — a forward-compat channel no current variant
-            // exercises. Propagate the skip so the unmapped event is dropped
-            // from the batch (matching `mpegts::nNextEvent`), not failed.
-            let Some(ev_obj) = convert_event(env, ev)? else {
-                return Ok(None);
-            };
+            let ev_obj = convert_event(env, ev)?;
             env.new_object(
                 FindClass(jni_str!("org/tstrans/pipeline/PairerOutput$PassThrough")),
                 jni_sig!("(Lorg/tstrans/mpegts/DemuxEvent;)V"),
@@ -296,7 +281,7 @@ fn convert_output<'local>(
             .map_err(|_| ())?
         }
     };
-    Ok(Some(obj))
+    Ok(obj)
 }
 
 /// Project a `VideoSample` to a `org.tstrans.pipeline.VideoSample` record.
