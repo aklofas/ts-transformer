@@ -3418,6 +3418,18 @@ fn read_leg_artifacts(
     })
 }
 
+/// Reads `serve-whep --json`'s output, recording in
+/// [`WhepServeReport::missing`] every required counter the file lacks.
+fn read_whep_serve_report(path: &Path) -> Result<WhepServeReport, String> {
+    let raw: serde_json::Value = serde_json::from_str(&read_to_string(path)?)
+        .map_err(|e| format!("parse {}: {e}", path.display()))?;
+    let missing = whep_missing_counters(&raw);
+    let mut serve: WhepServeReport =
+        serde_json::from_value(raw).map_err(|e| format!("parse {}: {e}", path.display()))?;
+    serve.missing = missing;
+    Ok(serve)
+}
+
 /// `report soak`'s file-driven entry point: read every artifact
 /// path, build [`SoakInputs`], and write [`build_soak_results`]'s
 /// output to `out_path`. The `rist` leg is entirely optional — pass
@@ -3431,18 +3443,6 @@ fn read_leg_artifacts(
 ///
 /// Errors on an unreadable or unparsable artifact, and on a publish
 /// leg name outside [`PUBLISH_LEGS`] or given twice.
-/// Reads `serve-whep --json`'s output, recording in
-/// [`WhepServeReport::missing`] every required counter the file lacks.
-fn read_whep_serve_report(path: &Path) -> Result<WhepServeReport, String> {
-    let raw: serde_json::Value = serde_json::from_str(&read_to_string(path)?)
-        .map_err(|e| format!("parse {}: {e}", path.display()))?;
-    let missing = whep_missing_counters(&raw);
-    let mut serve: WhepServeReport =
-        serde_json::from_value(raw).map_err(|e| format!("parse {}: {e}", path.display()))?;
-    serve.missing = missing;
-    Ok(serve)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     rss_path: &Path,
@@ -4016,10 +4016,6 @@ pub(crate) mod tests {
         assert!(!results.overall_pass);
     }
 
-    // (c) an unexplained gap (drop rate the configured schedule
-    // can't account for) fails the drop-rate check — see the module
-    // doc's "Known telemetry limitations" section for why this
-    // stands in for a per-event gap-timing check.
     /// A periodic (non-final) snapshot never judges a leg.
     #[test]
     fn a_leg_whose_proxy_stats_are_not_final_fails_its_drop_verdict() {
@@ -4048,6 +4044,10 @@ pub(crate) mod tests {
         assert!(!s.final_snapshot);
     }
 
+    // (c) an unexplained gap (drop rate the configured schedule
+    // can't account for) fails the drop-rate check — see the module
+    // doc's "Known telemetry limitations" section for why this
+    // stands in for a per-event gap-timing check.
     #[test]
     fn unexplained_excess_drop_fails_the_drop_rate_check() {
         let samples = vec![rss_row("srt", "send", 0.0, Some(1000))];

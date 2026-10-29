@@ -423,6 +423,12 @@ struct Tracked {
     /// missing from its PID) or the counter itself (`[3]`). Such a jump
     /// needs a previous counter on that PID — see [`ReconnectGap::holds`].
     noticed_by_continuity: bool,
+    /// The packet the tap touched carried no payload
+    /// (`adaptation_field_control == 0b10`), read from the logged original.
+    /// A body flip there lands in the adaptation field itself — its length,
+    /// its flags or the PCR — rather than in a payload. `false` when the
+    /// log holds no original to read.
+    adaptation_only: bool,
 }
 
 impl From<&Injection> for Tracked {
@@ -439,6 +445,7 @@ impl From<&Injection> for Tracked {
                 .then_some(REWRITTEN_PID),
             noticed_by_continuity: i.class == Class::Drop
                 || (i.class == Class::Header && matches!(i.offsets.as_slice(), [1, 2] | [3])),
+            adaptation_only: i.before.get(3).is_some_and(|b| b & 0x30 == 0x20),
         }
     }
 }
@@ -773,8 +780,18 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         }
         // A flip inside a media payload leaves the packet's framing and
         // its header intact: the most a demuxer sees is a PES header it
-        // cannot parse, or another payload-level non-conformance.
-        Class::BodyFlip => matches!(sig, Signal::MalformedPes | Signal::OtherNonConformant),
+        // cannot parse, or another payload-level non-conformance. On a
+        // packet with no payload (the muxer's PCR-only packets) the tap
+        // flips from byte 4, i.e. the adaptation field: a flipped PCR byte
+        // is a PCR jump and its return (measured:
+        // `a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps` in
+        // `tests/corruption.rs`), and a flipped flag byte can raise a
+        // discontinuity indicator.
+        Class::BodyFlip => {
+            matches!(sig, Signal::MalformedPes | Signal::OtherNonConformant)
+                || (inj.adaptation_only
+                    && matches!(sig, Signal::PcrAnomaly { .. } | Signal::OtherDiscontinuity))
+        }
         // H.222.0 §2.4.3.3 allows one duplicate packet, and a receiver
         // discards it unread: it changes no byte a decoder reads, so
         // nothing inside its window is its doing.
@@ -1400,11 +1417,13 @@ impl Attribution {
     /// judging a record, not a receiver event.
     ///
     /// True when `at` falls in the window of a resolved injection that
-    /// either targeted `pid` (any class — a body flip, a header rewrite or
-    /// a dropped packet all leave the record on that PID malformed or
-    /// incomplete) or was a [`Class::Truncate`]/[`Class::Garbage`] on any
-    /// PID (both destroy packet framing for the whole multiplex, so the
-    /// damage is not confined to the PID they hit).
+    /// either targeted `pid` (any class but [`Class::Dup`] — a body flip, a
+    /// header rewrite or a dropped packet all leave the record on that PID
+    /// malformed or incomplete) or was a [`Class::Truncate`]/[`Class::Garbage`]
+    /// on any PID (both destroy packet framing for the whole multiplex, so
+    /// the damage is not confined to the PID they hit). A duplicate is
+    /// excluded: one repeated packet is legal (H.222.0 §2.4.3.3) and the
+    /// receiver discards it, so it damages no record.
     ///
     /// The point is not to excuse a decoder bug. A record the tap never
     /// touched still has to decode, and a record inside a window still has
@@ -3397,9 +3416,6 @@ mod tests {
         assert_eq!((strict.undetected_lost, strict.unrecovered_lost), (0, 0));
     }
 
-    /// `explains_damage` answers for a content oracle, records nothing,
-    /// and covers exactly two cases: same PID any class, or Truncate/
-    /// Garbage on any PID (both destroy framing multiplex-wide).
     /// H.222.0 §2.4.3.3: one duplicate packet is legal and changes no byte a
     /// decoder reads, so nothing inside its window is its doing.
     #[test]
@@ -3431,6 +3447,32 @@ mod tests {
         assert_eq!(r.unexplained_nonconformant, 0, "{r:?}");
     }
 
+    /// A body flip on a packet with no payload lands in the adaptation
+    /// field, so it explains a discontinuity on its PID; the same flip on a
+    /// payload packet does not. The flag is read from the logged original's
+    /// `adaptation_field_control` bits.
+    #[test]
+    fn a_body_flip_explains_adaptation_field_signals_only_on_a_payload_less_packet() {
+        for (afc, explained) in [(0x20u8, true), (0x30, false), (0x10, false)] {
+            let mut flip = inj(1000, 10, Class::BodyFlip, 0x1011, false);
+            flip.before = vec![0x47, 0x10, 0x11, afc];
+            flip.before.resize(188, 0xff);
+            let mut a = Attribution::strict(vec![flip], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5015, Some(0x1011), Signal::OtherDiscontinuity);
+            a.on_media(5100, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(
+                r.attributed_events,
+                u64::from(explained),
+                "afc {afc:#04x}: {r:?}"
+            );
+        }
+    }
+
+    /// `explains_damage` answers for a content oracle, records nothing,
+    /// and covers exactly two cases (never a duplicate): same PID any class, or Truncate/
+    /// Garbage on any PID (both destroy framing multiplex-wide).
     #[test]
     fn explains_damage_covers_same_pid_any_class_and_framing_classes_anywhere() {
         let mut a = Attribution::strict(
@@ -3443,7 +3485,7 @@ mod tests {
         a.on_pcr(1000, 5000); // body flip on 0x1031 resolves to 5010
         a.on_pcr(2000, 7000); // truncate on 0x1011 resolves to 7010
 
-        // Same PID, any class.
+        // Same PID, any class but a duplicate.
         assert!(a.explains_damage(5010, 0x1031));
         assert!(a.explains_damage(5010 + ATTRIBUTION_WINDOW, 0x1031));
         // A body flip on another PID explains nothing there.
