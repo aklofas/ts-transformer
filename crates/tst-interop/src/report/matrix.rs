@@ -21,8 +21,8 @@ pub struct Expectation {
     pub verdict: ExpectVerdict,
     pub reason: String,
     pub reference: Option<String>,
-    /// Substring narrowing: when set, this expectation only matches a
-    /// `FAIL` whose failures text contains it (see the private
+    /// Substring narrowing: when set, this expectation only explains
+    /// the `FAIL` lines that contain it (see the private
     /// `find_expectation` helper's doc comment for the exact matching
     /// rule). Never applied to a `PASS` staleness lookup — an
     /// expectation is checked for staleness by `(cell, profile)` alone,
@@ -326,13 +326,14 @@ fn cell_pattern_matches(pattern: &str, id: &str) -> bool {
 /// both surviving rows would otherwise match identically.
 ///
 /// `failure_text` distinguishes the two call sites in [`build_results`]:
-/// - `Some(joined_failures)` (the `FAIL`-matching path): an expectation
-///   with `failure_contains` set only matches if `failure_text` contains
-///   that substring — a `FAIL` on the same `(cell, profile)` whose text
-///   does *not* contain it is skipped in favor of a later candidate (or,
-///   if none match, surfaces as an unexpected `FAIL`, never silently
-///   absorbed by a same-cell expectation written for a *different*
-///   failure mode).
+/// - `Some(line)` (the `FAIL`-matching path): `line` is ONE line of the
+///   cell's `failures`, never the joined list, so a row explains only
+///   the lines that contain its text. An expectation with
+///   `failure_contains` set matches only if `line` contains that
+///   substring; otherwise it is skipped in favor of a later candidate
+///   (or, if none match, the line stays unexplained and the cell a
+///   `FAIL` — one mechanism's row never absorbs a second, different
+///   failure printed by the same cell).
 /// - `None` (the `PASS`-staleness-check path): `failure_contains` is
 ///   never applied — staleness is a property of the whole `(cell,
 ///   profile)` pair, independent of which specific failure text the
@@ -368,6 +369,7 @@ pub fn build_results(
     let mut stale = Vec::new();
 
     for raw in raw_cells {
+        let mut unexplained = Vec::new();
         let (verdict, known_flaky, expectation_reason, expectation_ref) = match raw.verdict {
             RawVerdict::SkippedToolMissing => (Verdict::SkippedToolMissing, false, None, None),
             RawVerdict::Pass => {
@@ -401,17 +403,40 @@ pub fn build_results(
                 (Verdict::Pass, false, None, None)
             }
             RawVerdict::Fail => {
-                let failure_text = raw.failures.join("; ");
-                let matched =
-                    find_expectation(expectations, &raw.id, &raw.profile, Some(&failure_text));
-                match matched {
-                    Some(exp) => (
+                // A FAIL that printed no failure line is matched as one
+                // empty line: a row without `failure_contains` still
+                // explains it, a row naming a text cannot.
+                let empty = [String::new()];
+                let lines = if raw.failures.is_empty() {
+                    &empty[..]
+                } else {
+                    &raw.failures[..]
+                };
+                let mut matched = Vec::new();
+                let mut all_explained = true;
+                for line in lines {
+                    match find_expectation(expectations, &raw.id, &raw.profile, Some(line)) {
+                        Some(exp) => matched.push(exp),
+                        None => {
+                            all_explained = false;
+                            // The synthetic empty line is not a failure
+                            // the cell printed, so it is not recorded.
+                            if !raw.failures.is_empty() {
+                                unexplained.push(line.clone());
+                            }
+                        }
+                    }
+                }
+                match matched.first() {
+                    Some(first) if all_explained => (
                         Verdict::ExpectedUnsupported,
-                        exp.verdict == ExpectVerdict::KnownFlaky,
-                        Some(exp.reason.clone()),
-                        exp.reference.clone(),
+                        matched
+                            .iter()
+                            .all(|e| e.verdict == ExpectVerdict::KnownFlaky),
+                        Some(first.reason.clone()),
+                        first.reference.clone(),
                     ),
-                    None => (Verdict::Fail, false, None, None),
+                    _ => (Verdict::Fail, false, None, None),
                 }
             }
         };
@@ -425,6 +450,7 @@ pub fn build_results(
             verdict,
             known_flaky,
             failures: raw.failures,
+            unexplained_failures: unexplained,
             metrics: raw.metrics,
             log: raw.log,
             expectation_reason,
@@ -726,7 +752,7 @@ fn escape_markdown_table_cell(s: &str) -> String {
 fn render_verdict(cell: &MergedCell) -> (&'static str, String) {
     let (label, notes) = match cell.verdict {
         Verdict::Pass => ("✅ PASS", String::new()),
-        Verdict::Fail => ("❌ FAIL", cell.failures.join("; ")),
+        Verdict::Fail => ("❌ FAIL", fail_notes(cell)),
         Verdict::ExpectedUnsupported => {
             let label = if cell.known_flaky {
                 "⚠️ KNOWN-FLAKY"
@@ -747,6 +773,28 @@ fn render_verdict(cell: &MergedCell) -> (&'static str, String) {
         (Some(d), false) => format!("{d}; {notes}"),
     };
     (label, escape_markdown_table_cell(&notes))
+}
+
+/// A `FAIL`'s notes: the lines no expectation explained first, since
+/// they are what fails the run, then the explained ones. A
+/// `results.json` written before per-line matching carries no
+/// `unexplained_failures`, so every line is shown as it was.
+fn fail_notes(cell: &MergedCell) -> String {
+    if cell.unexplained_failures.is_empty() {
+        return cell.failures.join("; ");
+    }
+    let mut notes = cell.unexplained_failures.join("; ");
+    let explained: Vec<&str> = cell
+        .failures
+        .iter()
+        .filter(|f| !cell.unexplained_failures.contains(f))
+        .map(String::as_str)
+        .collect();
+    if !explained.is_empty() {
+        notes.push_str("; also expected: ");
+        notes.push_str(&explained.join("; "));
+    }
+    notes
 }
 
 /// The relaxation a cell's receiver ran under, as the row declares it:
@@ -1194,6 +1242,29 @@ mod tests {
         }
     }
 
+    fn expect_row(cell: &str, profile: &str, failure_contains: Option<&str>) -> Expectation {
+        Expectation {
+            failure_contains: failure_contains.map(str::to_string),
+            ..expectation(
+                cell,
+                profile,
+                ExpectVerdict::ExpectedUnsupported,
+                "documented gap",
+            )
+        }
+    }
+
+    fn flaky_row(cell: &str, profile: &str, failure_contains: Option<&str>) -> Expectation {
+        Expectation {
+            failure_contains: failure_contains.map(str::to_string),
+            ..expectation(cell, profile, ExpectVerdict::KnownFlaky, "intermittent")
+        }
+    }
+
+    fn raw_fail(cell: &str, profile: &str, failures: &[&str]) -> RawCell {
+        raw_cell_with_failures(cell, profile, RawVerdict::Fail, failures)
+    }
+
     // (a) all-PASS cells -> exit-0 summary (summary.fail == 0).
     #[test]
     fn all_pass_cells_yield_zero_fail() {
@@ -1253,7 +1324,7 @@ mod tests {
 
     // --- failure_contains ---
 
-    // A FAIL whose joined failures text contains the expectation's
+    // A FAIL whose failure line contains the expectation's
     // `failure_contains` substring matches, exactly like a plain
     // (cell, profile)-only expectation would.
     #[test]
@@ -1386,6 +1457,112 @@ mod tests {
             results.cells[0].expectation_reason.as_deref(),
             Some("KLV payload truncation"),
             "must resolve via the second (matching) candidate, not the first (non-matching, cell+profile-only) one"
+        );
+    }
+
+    // --- per-line matching ---
+
+    /// A cell with one expected and one unexpected failure stays FAIL and
+    /// keeps the unexpected line in its notes.
+    #[test]
+    fn an_expected_failure_does_not_excuse_a_second_unrelated_one() {
+        let exp = vec![expect_row(
+            "rist/ffmpeg-to-us",
+            "baseline",
+            Some("KLV records: got 0"),
+        )];
+        let cell = raw_fail(
+            "rist/ffmpeg-to-us",
+            "baseline",
+            &[
+                "KLV records: got 0 (want >= 40)",
+                "video AUs: got 0 (want >= 120)",
+            ],
+        );
+        let r = build_results(vec![cell], &exp, serde_json::json!({}));
+        assert_eq!(r.cells[0].verdict, Verdict::Fail);
+        assert_eq!(
+            r.cells[0].unexplained_failures,
+            ["video AUs: got 0 (want >= 120)"]
+        );
+        assert_eq!(r.summary.fail, 1);
+        assert!(render_verdict(&r.cells[0]).1.contains("video AUs: got 0"));
+    }
+
+    #[test]
+    fn every_line_matched_by_some_row_is_expected_unsupported() {
+        let exp = vec![
+            expect_row("decode/mpv/h266-klv", "h266-klv", Some("codec 'vvc'")),
+            expect_row(
+                "decode/mpv/h266-klv",
+                "h266-klv",
+                Some("No video or audio streams selected"),
+            ),
+        ];
+        let cell = raw_fail(
+            "decode/mpv/h266-klv",
+            "h266-klv",
+            &[
+                "Failed to initialize a decoder for codec 'vvc'",
+                "No video or audio streams selected.",
+            ],
+        );
+        let r = build_results(vec![cell], &exp, serde_json::json!({}));
+        assert_eq!(r.cells[0].verdict, Verdict::ExpectedUnsupported);
+        assert!(r.cells[0].unexplained_failures.is_empty());
+    }
+
+    #[test]
+    fn a_known_flaky_row_without_failure_contains_explains_every_line() {
+        let exp = vec![flaky_row("srt/us-to-us", "baseline", None)];
+        let cell = raw_fail("srt/us-to-us", "baseline", &["a", "b"]);
+        let r = build_results(vec![cell], &exp, serde_json::json!({}));
+        assert_eq!(r.cells[0].verdict, Verdict::ExpectedUnsupported);
+        assert!(r.cells[0].known_flaky);
+    }
+
+    // A FAIL lists its unexplained lines first; the lines a row did
+    // explain follow, so a reader sees what still needs a fix first.
+    #[test]
+    fn a_fail_renders_unexplained_lines_before_the_expected_ones() {
+        let exp = vec![expect_row("rist/x", "baseline", Some("known"))];
+        let cell = raw_fail("rist/x", "baseline", &["known gap", "new regression"]);
+        let r = build_results(vec![cell], &exp, serde_json::json!({}));
+        assert_eq!(
+            render_verdict(&r.cells[0]).1,
+            "new regression; also expected: known gap"
+        );
+    }
+
+    // A FAIL that printed nothing is never excused by a row naming a
+    // text, and records no line it did not print.
+    #[test]
+    fn a_fail_with_no_failure_lines_records_nothing_unexplained() {
+        let exp = vec![expect_row("rist/z", "baseline", Some("known"))];
+        let r = build_results(
+            vec![raw_fail("rist/z", "baseline", &[])],
+            &exp,
+            serde_json::json!({}),
+        );
+        assert_eq!(r.cells[0].verdict, Verdict::Fail);
+        assert!(r.cells[0].unexplained_failures.is_empty());
+    }
+
+    // The cell is known-flaky only when every line was explained by a
+    // known_flaky row; one expected_unsupported line makes it a gap.
+    #[test]
+    fn a_cell_is_known_flaky_only_when_every_matched_row_is() {
+        let exp = vec![
+            flaky_row("srt/y", "baseline", Some("timeout")),
+            expect_row("srt/y", "baseline", Some("unsupported")),
+        ];
+        let cell = raw_fail("srt/y", "baseline", &["timeout", "unsupported codec"]);
+        let r = build_results(vec![cell], &exp, serde_json::json!({}));
+        assert_eq!(r.cells[0].verdict, Verdict::ExpectedUnsupported);
+        assert!(!r.cells[0].known_flaky);
+        assert_eq!(
+            r.cells[0].expectation_reason.as_deref(),
+            Some("intermittent")
         );
     }
 
@@ -1588,6 +1765,7 @@ mod tests {
                     verdict: Verdict::Pass,
                     known_flaky: false,
                     failures: Vec::new(),
+                    unexplained_failures: Vec::new(),
                     metrics: None,
                     log: "decode-ffmpeg.log".to_string(),
                     expectation_reason: None,
@@ -1602,6 +1780,7 @@ mod tests {
                     verdict: Verdict::ExpectedUnsupported,
                     known_flaky: false,
                     failures: Vec::new(),
+                    unexplained_failures: Vec::new(),
                     metrics: None,
                     log: "decode-mpv.log".to_string(),
                     expectation_reason: Some("mpv lacks async KLV support".to_string()),
@@ -1616,6 +1795,7 @@ mod tests {
                     verdict: Verdict::Fail,
                     known_flaky: false,
                     failures: vec!["timeout waiting for connect".to_string()],
+                    unexplained_failures: Vec::new(),
                     metrics: None,
                     log: "srt-us-to-ffmpeg.log".to_string(),
                     expectation_reason: None,
@@ -1705,6 +1885,7 @@ mod tests {
                 verdict: Verdict::Pass,
                 known_flaky: false,
                 failures: Vec::new(),
+                unexplained_failures: Vec::new(),
                 metrics: None,
                 log: format!("tool{i}.log"),
                 expectation_reason: None,
@@ -1746,6 +1927,7 @@ mod tests {
                 verdict: Verdict::Pass,
                 known_flaky: false,
                 failures: Vec::new(),
+                unexplained_failures: Vec::new(),
                 metrics: None,
                 log: format!("tool{i}.log"),
                 expectation_reason: None,
