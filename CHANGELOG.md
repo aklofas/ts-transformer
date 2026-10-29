@@ -53,8 +53,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Socket.intoMuxSender(null)` and `intoDemuxReceiver(null)` no longer leak the native socket, and a config the native layer refuses no longer destroys the socket; the corrected retry succeeds.
 - `Io.parseFile` closes its input when the native library cannot load.
 - A byte sink that throws now ends the receive at once: `next()` rethrows its exception and the receiver stays cancelled.
-- A byte sink calling `stats()`, `next()` or `close()` on its own receiver no longer deadlocks. `close()` ends the in-flight `next()` and the sink is not called again; the other calls throw `IllegalStateException`.
-- Values documented as immutable no longer hand out mutable state: `MuxerConfig`'s array accessors and the `NalUnit` factories copy, and the KLV records take a shallow copy of the lists they are given (the elements stay caller-owned).
+- A byte sink calling `stats()`, `next()` or `close()` on its own receiver no longer deadlocks. `close()` cancels the receiver, so the in-flight `next()` still returns the event it produced and iteration then ends, and the sink is not called again; the other calls throw `IllegalStateException`.
+- Values documented as immutable no longer hand out mutable state: `MuxerConfig`'s array accessors copy, and the KLV records take a shallow copy of the lists they are given (the elements stay caller-owned). The `NalUnit` factories copy their input array.
 - `MuxerFileSink.push*` and `commit()` after `close()` throw `IllegalStateException("MuxerFileSink is closed")` before the muxer is touched.
 - The KLV forced-error test natives are no longer in the shipped native library.
 
@@ -169,7 +169,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — release tooling
 
-- The JVM build syncs the native libraries into the jar staging directory and fails when the jar lacks one, and the jar-assembly job compiles and runs a small named module against the assembled jar on the module path on each platform.
+- The JVM build syncs the native libraries into the jar staging directory and fails when the jar lacks one, and the jar jobs compile and run a small named module on the module path against the jar they build, on each platform.
 - The shared URL corpus is also parsed through the JVM binding and compared with the recorded result.
 - The public-api baselines now ratchet the optional TLS surfaces: `tst-core` is rendered with `tls` and `tst-rtp` with `rtsp-server-tls`.
 - The fuzz workspaces' `Cargo.lock` files are committed, and the qualification run's fuzz job refuses to re-resolve them (`cargo metadata --locked`) and records the nightly it fuzzed with.
