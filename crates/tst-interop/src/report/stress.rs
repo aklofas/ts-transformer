@@ -570,7 +570,7 @@ pub fn build_step_results(inputs: StepInputs) -> Result<StepResults, String> {
         |s| s.threads,
         thresholds.thread_delta_max,
     ));
-    verdicts.push(verdict_sample_coverage(&decl, &rss, &streams));
+    verdicts.extend(verdict_sample_coverage(&decl, &rss, &proc, &streams));
 
     let per_stream = stream_figures(&decl, &proc_groups, &rss_groups, &streams, &restarts);
     // An ungated rss_slope verdict is the only kind that can fail
@@ -1286,16 +1286,47 @@ fn verdict_flat(
         .collect()
 }
 
-/// Post-warm-up RSS ticks observed per `(leg, process)` ÷ the ticks the
-/// hold should have produced. Every declared stream's roles are
-/// expected even if the sampler never wrote a row for them. This counts
-/// sampler ticks, not judgeable samples: rows of every pid at or after
-/// the step's warm-up count, so a restarted process's own warm-up does
-/// not read as missing ticks.
+/// Post-warm-up sampler ticks observed per `(leg, process)` ÷ the ticks
+/// the hold should have produced, once for rss.csv (`sample_coverage`)
+/// and once for proc.csv (`proc_sample_coverage`). Every declared
+/// stream's roles are expected even if the sampler never wrote a row for
+/// them. This counts sampler ticks, not judgeable samples: rows of every
+/// pid at or after the step's warm-up count, so a restarted process's
+/// own warm-up does not read as missing ticks. A proc.csv row counts
+/// only with all four of its fields: the CPU, fd and thread verdicts
+/// each read one, and a row missing any of them is no evidence for it.
 fn verdict_sample_coverage(
     decl: &StepDeclaration,
     rss: &[RssSample],
+    proc: &[ProcSample],
     streams: &[StreamArtifacts],
+) -> Vec<StepVerdict> {
+    let rss_ticks = rss
+        .iter()
+        .filter(|s| s.elapsed_s >= decl.warmup_s && s.rss_kb.is_some())
+        .map(|s| (s.leg.as_str(), s.process.as_str()));
+    let proc_ticks = proc
+        .iter()
+        .filter(|s| {
+            s.elapsed_s >= decl.warmup_s
+                && s.utime_ticks.is_some()
+                && s.stime_ticks.is_some()
+                && s.threads.is_some()
+                && s.fds.is_some()
+        })
+        .map(|s| (s.leg.as_str(), s.process.as_str()));
+    vec![
+        coverage_verdict("sample_coverage", decl, streams, rss_ticks),
+        coverage_verdict("proc_sample_coverage", decl, streams, proc_ticks),
+    ]
+}
+
+/// One coverage verdict over the `(leg, process)` of every counted tick.
+fn coverage_verdict<'a>(
+    name: &str,
+    decl: &StepDeclaration,
+    streams: &[StreamArtifacts],
+    ticks: impl Iterator<Item = (&'a str, &'a str)>,
 ) -> StepVerdict {
     let expected = decl.hold_s / decl.sample_cadence_s;
     let mut counts: BTreeMap<(String, String), usize> = BTreeMap::new();
@@ -1304,12 +1335,9 @@ fn verdict_sample_coverage(
             counts.insert((s.leg.clone(), role.to_string()), 0);
         }
     }
-    for s in rss
-        .iter()
-        .filter(|s| s.elapsed_s >= decl.warmup_s && s.rss_kb.is_some())
-    {
+    for (leg, process) in ticks {
         *counts
-            .entry((s.leg.clone(), s.process.clone()))
+            .entry((leg.to_string(), process.to_string()))
             .or_default() += 1;
     }
     let mut min_coverage = f64::INFINITY;
@@ -1322,7 +1350,7 @@ fn verdict_sample_coverage(
         min_coverage = min_coverage.min(coverage);
     }
     StepVerdict {
-        name: "sample_coverage".into(),
+        name: name.into(),
         pass: min_coverage >= MIN_SAMPLE_COVERAGE,
         observed: min_coverage,
         threshold: MIN_SAMPLE_COVERAGE,
@@ -2110,10 +2138,11 @@ pub struct StressDeclaration {
 /// judged (a worker died, the step timed out) or the sampler's coverage
 /// fell short: an axis ending on one of these ended on the HARNESS, not on
 /// a transport limit, and the page must say so.
-const HARNESS_ENDINGS: [&str; 5] = [
+const HARNESS_ENDINGS: [&str; 6] = [
     "step_unjudgeable",
     "step_timeout",
     "sample_coverage",
+    "proc_sample_coverage",
     "hold_unjudgeable",
     "hold_timeout",
 ];
@@ -3104,6 +3133,45 @@ mod tests {
     }
 
     #[test]
+    fn a_role_with_rss_rows_but_no_proc_rows_fails_proc_coverage() {
+        let mut inp = inputs(2, 10);
+        inp.proc
+            .retain(|s| !(s.leg == "srt-1" && s.process == "recv"));
+        let r = build_step_results(inp).unwrap();
+        let v = verdict(&r, "proc_sample_coverage");
+        assert!(!v.pass && v.detail.contains("srt-1/recv: 0 of 20"), "{v:?}");
+        assert!(verdict(&r, "sample_coverage").pass, "rss.csv is whole");
+        assert!(!r.pass);
+        assert!(r.failing.contains(&"proc_sample_coverage".to_string()));
+    }
+
+    #[test]
+    fn missing_fields_inside_a_present_role_count_as_missing_samples() {
+        for field in ["utime_ticks", "stime_ticks", "threads", "fds"] {
+            let mut inp = inputs(2, 10);
+            for s in inp
+                .proc
+                .iter_mut()
+                .filter(|s| s.leg == "srt-1" && s.process == "recv")
+            {
+                match field {
+                    "utime_ticks" => s.utime_ticks = None,
+                    "stime_ticks" => s.stime_ticks = None,
+                    "threads" => s.threads = None,
+                    _ => s.fds = None,
+                }
+            }
+            let r = build_step_results(inp).unwrap();
+            let v = verdict(&r, "proc_sample_coverage");
+            assert!(
+                !v.pass && v.detail.contains("srt-1/recv: 0 of 20"),
+                "{field}: {v:?}"
+            );
+            assert!(!r.pass, "{field}");
+        }
+    }
+
+    #[test]
     fn missing_exit_status_fails_worker_exits() {
         let mut inp = inputs(1, 30);
         inp.worker_exits.remove("srt-0-send");
@@ -3923,7 +3991,12 @@ mod tests {
 
     #[test]
     fn harness_ended_ceiling_must_carry_a_limitation() {
-        for failure in ["sample_coverage", "step_timeout", "step_unjudgeable"] {
+        for failure in [
+            "sample_coverage",
+            "proc_sample_coverage",
+            "step_timeout",
+            "step_unjudgeable",
+        ] {
             let steps = vec![
                 step_result(2, Axis::Streams, true, &[]),
                 step_result(4, Axis::Streams, false, &[failure]),
