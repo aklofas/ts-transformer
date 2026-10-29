@@ -189,10 +189,11 @@ fn main() {
     // Symbol hygiene for downstream cdylib consumers is wired in each cdylib
     // crate's OWN build.rs, not here: a `cargo:rustc-link-arg-cdylib` directive
     // applies only to a cdylib target in the SAME package, and srt-sys is
-    // rlib-only (rust-lang/cargo#9562). No `--exclude-libs=ALL` is used at all
-    // (see bindings/c/build.rs): rustc's cdylib export policy already localizes
-    // every symbol that is not a crate-graph `#[no_mangle]` export, and the
-    // "no srt_*/SRT_* symbol leak" C export rail verifies it.
+    // rlib-only (rust-lang/cargo#9562). On Linux no `--exclude-libs=ALL` is
+    // used (see bindings/c/build.rs): the version script rustc writes for a
+    // cdylib already localizes every symbol that is not a crate-graph
+    // `#[no_mangle]` export, and the "no srt_*/SRT_* symbol leak" C export
+    // rail verifies it. macOS uses the cdylib crate's exported-symbols list.
 
     let force_vendored = env::var_os("SRT_FORCE_VENDORED").is_some();
     let no_pkg_config = env::var_os("SRT_NO_PKG_CONFIG").is_some();

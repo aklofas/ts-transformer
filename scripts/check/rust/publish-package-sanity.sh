@@ -136,7 +136,7 @@ for pkg in tstrans-srt-sys tstrans-rist-sys tstrans-mbedtls-src; do
   [ "$size" -le $((9 * 1024 * 1024)) ] || { echo "FAIL: $pkg is $size bytes (> 9 MiB budget)"; fail=1; }
 done
 
-# Check 5: census. Exactly the 11 known publishable crates must carry
+# Check 5: census. Exactly the 12 known publishable crates must carry
 # publish=null (cargo metadata's spelling for "no publish restriction") with
 # non-empty description/readme/keywords/categories (crates.io listing
 # quality); every other workspace member must be explicitly publish=false

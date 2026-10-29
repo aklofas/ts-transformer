@@ -10,8 +10,8 @@ name: deps-advisory
 # ("stay on the 3.6 LTS line") and it is never reopened. A quiet week writes
 # only the step summary.
 #
-# This is the one workflow here with a write scope (`issues: write`); every
-# other workflow stays `contents: read`. It never commits.
+# Its one write scope is `issues: write`, for opening the finding issues; it
+# never commits.
 
 on:
   schedule:
