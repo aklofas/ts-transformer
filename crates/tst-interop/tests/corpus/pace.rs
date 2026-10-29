@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::time::Duration;
 
-use tst_interop::corpus::pace::{PcrPacer, send_paced};
+use tst_interop::corpus::pace::{MAX_PCR_GAP_S, PcrPacer, send_paced};
 
 use crate::gen_profile_bytes;
 
@@ -228,4 +228,66 @@ fn a_forward_pcr_jump_neither_counts_as_time_nor_makes_the_pacer_sleep() {
         inv.files[0].duration_s
     );
     assert_eq!(inv.files[0].pcr_discontinuities, 1);
+}
+
+/// Every sleep `send_paced` asks for, under a clock that only the sleeps move.
+fn sleeps_under_fake_clock(pacer: &PcrPacer) -> Vec<Duration> {
+    let now = Cell::new(Duration::ZERO);
+    let sleeps = RefCell::new(Vec::new());
+    send_paced(
+        pacer,
+        &mut || now.get(),
+        &mut |d| {
+            sleeps.borrow_mut().push(d);
+            now.set(now.get() + d);
+        },
+        |_| Ok(()),
+    )
+    .unwrap();
+    sleeps.into_inner()
+}
+
+#[test]
+fn a_pcr_gap_above_the_clamp_is_not_paced() {
+    let (_, pid) = hand_built(&[]);
+    let s = 90_000;
+    let marks: Vec<(u16, u64)> = [0, s / 2, s / 2 + 30 * s, 31 * s]
+        .iter()
+        .map(|b| (pid, *b))
+        .collect();
+    let (bytes, _) = hand_built(&marks);
+    let pacer = PcrPacer::new(&bytes, None).unwrap();
+    assert_eq!(pacer.clamped_gaps(), 1);
+    // 0.5 s, the 30-s gap not paced, 0.5 s: the capture is sent faster
+    // than its PCR, never slower.
+    assert!(
+        (pacer.total_seconds() - 1.0).abs() < 1e-6,
+        "{}",
+        pacer.total_seconds()
+    );
+    let sleeps = sleeps_under_fake_clock(&pacer);
+    assert!(
+        sleeps
+            .iter()
+            .all(|d| *d <= Duration::from_secs_f64(MAX_PCR_GAP_S)),
+        "{sleeps:?}"
+    );
+}
+
+#[test]
+fn a_stream_with_no_gap_above_the_clamp_is_unchanged() {
+    let bytes = gen_profile_bytes("baseline", 10.0);
+    let pacer = PcrPacer::new(&bytes, None).unwrap();
+    assert_eq!(pacer.clamped_gaps(), 0);
+    // The paced time is the PCR span the inventory measures.
+    let dir = crate::temp_dir_named("pace-no-gap");
+    std::fs::write(dir.join("baseline.ts"), &bytes).unwrap();
+    let inv = tst_interop::corpus::inventory::build(&dir).unwrap();
+    assert!(inv.files[0].duration_s > 9.0, "{}", inv.files[0].duration_s);
+    assert!(
+        (pacer.total_seconds() - inv.files[0].duration_s).abs() < 1e-6,
+        "{} vs {}",
+        pacer.total_seconds(),
+        inv.files[0].duration_s
+    );
 }

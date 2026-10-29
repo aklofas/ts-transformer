@@ -779,6 +779,14 @@ fn replay_pick(
         Ok(p) => p,
         Err(e) => return fail_all(runs, e),
     };
+    // Shows which capture went out faster than its PCR clock.
+    if pacer.clamped_gaps() > 0 {
+        eprintln!(
+            "pick {}: {} PCR gap(s) not paced",
+            pick.sha256,
+            pacer.clamped_gaps()
+        );
+    }
     let logs = run.root.join("logs");
     let largest_au = entry.map_or(0, |e| e.largest_au_bytes);
     std::thread::scope(|s| {
