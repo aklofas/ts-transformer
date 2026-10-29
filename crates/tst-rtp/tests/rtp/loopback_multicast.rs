@@ -3,8 +3,8 @@
 //! Some CI environments don't have multicast routing enabled by default
 //! on `lo` (macOS GHA runner is the historical offender). The test
 //! gracefully degrades: if `join_multicast_v4` returns an error
-//! (typically `EADDRINUSE` or `ENODEV`), we skip with `#[ignore]`
-//! semantics by short-circuiting.
+//! (typically `EADDRINUSE` or `ENODEV`), it records a MULTICAST capability
+//! skip and returns, unless the host sets `TST_REQUIRE_MULTICAST=1`.
 //!
 //! Runs on Windows too: `tst_core::net::udp_socket` sets IP_MULTICAST_IF
 //! through socket2 (so the send-side `?iface=127.0.0.1` works there) and
@@ -18,15 +18,18 @@ use std::time::Duration;
 
 use tst_core::transport::{RecvTransport, Transport};
 use tst_rtp::{RtpConnectError, RtpRecvTransport, RtpTransport, RtpUrl};
+use tst_test_helpers::capability::skip_unless_required;
 
 fn try_listen_multicast_v4(addr: &str) -> Option<RtpRecvTransport> {
     match RtpRecvTransport::listen(addr) {
         Ok(t) => Some(t),
         Err(e) => {
-            eprintln!(
-                "skipping multicast loopback test — bind/join failed: {e:?}. \
-                 Likely missing multicast routing on lo (common on macOS \
-                 GHA runners). Run locally on Linux to exercise this path."
+            skip_unless_required(
+                "MULTICAST",
+                format_args!(
+                    "bind/join failed: {e:?}. Likely missing multicast routing \
+                     on lo (common on macOS GHA runners)."
+                ),
             );
             None
         }
@@ -62,7 +65,7 @@ fn ipv4_multicast_loopback_round_trip() {
             if let Some(c) = &cancel {
                 c.cancel();
             }
-            eprintln!("multicast loopback recv timed out — kernel filter on lo");
+            skip_unless_required("MULTICAST", "recv timed out — kernel filter on lo");
             return;
         }
     };
@@ -86,9 +89,9 @@ fn two_rtp_multicast_receivers_deliver_same_datagram() {
     let mut recv1 = match RtpRecvTransport::listen_with(&parsed) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!(
-                "skipping two-receiver test — r1 bind/join failed: {e:?}. \
-                 Likely missing multicast routing on lo."
+            skip_unless_required(
+                "MULTICAST",
+                format_args!("r1 bind/join failed: {e:?}. Likely missing multicast routing on lo."),
             );
             return;
         }
@@ -103,9 +106,12 @@ fn two_rtp_multicast_receivers_deliver_same_datagram() {
             );
         }
         Err(e) => {
-            eprintln!(
-                "skipping two-receiver test — r2 bind/join failed: {e:?}. \
-                 Platform may not honour SO_REUSEADDR for multicast."
+            skip_unless_required(
+                "MULTICAST",
+                format_args!(
+                    "r2 bind/join failed: {e:?}. Platform may not honour \
+                     SO_REUSEADDR for multicast."
+                ),
             );
             return;
         }
@@ -152,7 +158,10 @@ fn two_rtp_multicast_receivers_deliver_same_datagram() {
         Ok(v) => v,
         Err(_) => {
             cancel_receivers();
-            eprintln!("two-receiver: recv1 timed out — kernel filtered loopback multicast");
+            skip_unless_required(
+                "MULTICAST",
+                "recv1 timed out — kernel filtered loopback multicast",
+            );
             return;
         }
     };
@@ -160,7 +169,10 @@ fn two_rtp_multicast_receivers_deliver_same_datagram() {
         Ok(v) => v,
         Err(_) => {
             cancel_receivers();
-            eprintln!("two-receiver: recv2 timed out — kernel filtered loopback multicast");
+            skip_unless_required(
+                "MULTICAST",
+                "recv2 timed out — kernel filtered loopback multicast",
+            );
             return;
         }
     };

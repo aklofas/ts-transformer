@@ -8,6 +8,7 @@ use std::process::Command;
 use crate::common::fixtures::{ffprobe_available, subtitle_fixture as load};
 use crate::common::mux_demux::demux_bytes_flushed as collect_events;
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload, StreamKind, SubtitleCodec};
+use tst_test_helpers::capability::skip_unless_required;
 
 #[test]
 fn dvb_subtitling_eng_classifies_as_dvb_subtitling() {
@@ -184,7 +185,7 @@ fn webvtt_multi_program_with_klv_yields_two_program_maps() {
 #[ignore = "ffprobe-only — runs locally, gated on ffprobe presence"]
 fn dvb_subtitling_ffprobe_agrees() {
     if !ffprobe_available() {
-        eprintln!("skipping: ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -209,7 +210,7 @@ fn dvb_subtitling_ffprobe_agrees() {
 #[ignore = "ffprobe-only"]
 fn dvb_teletext_ffprobe_agrees() {
     if !ffprobe_available() {
-        eprintln!("skipping: ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -234,7 +235,7 @@ fn dvb_teletext_ffprobe_agrees() {
 #[ignore = "ffprobe-only"]
 fn webvtt_in_ts_ffprobe_agrees() {
     if !ffprobe_available() {
-        eprintln!("skipping: ffprobe not on PATH");
+        skip_unless_required("FFPROBE", "ffprobe not on PATH");
         return;
     }
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
