@@ -80,7 +80,9 @@ whole one.
 
 A directory with no `.ts` file exits 2. A `--baseline` directory that does
 not exist exits 2, and a baseline that holds the digest of none of the
-captures fails the sweep. A first run uses no `--baseline` at all.
+captures fails the sweep. A first run uses no `--baseline` at all. The sweep
+summary records the SHA-256 of the baseline's `manifest.txt`, and the report
+and the archive row's note name it, or say that no baseline was compared.
 
 Every capture that changed against the baseline, every capture the baseline
 does not hold and every capture the baseline holds that this corpus lacks
@@ -193,9 +195,9 @@ The replay's time rules:
 - A send may take the pick's own PCR seconds plus twice the stall time; one
   that takes longer is cancelled and the path's receiver is stopped.
 - No pacing wait is longer than one second: a PCR reset, or a forward step
-  of more than one second, is sent as no time. The replay prints per pick
-  how many such gaps it did not pace, so a capture that went out faster than
-  its clock is named. A replay that runs far past its budget is not waiting on
+  of more than one second, is sent as no time. The replay names each pick
+  with such gaps, and how many it did not pace, so a capture that went out
+  faster than its clock is named. A replay that runs far past its budget is not waiting on
   the pacer; the 154-second overrun of the 0.9.0 release run was the RTSP
   publisher path blocked on a write.
 
@@ -252,7 +254,10 @@ or I/O error. `report` exits 0 even for a failed run, because its job is to
 describe it.
 
 The release VM runs exactly this sequence, with the bucket sync before it and
-the digest push after, through `scripts/interop/release-vm-corpus.sh`.
+the digest push after, through `scripts/interop/release-vm-corpus.sh`. The
+script takes either `--baseline DIR` or `--no-baseline` and refuses to run
+with neither, so a release run never skips the comparison by a forgotten
+flag.
 
 ## How results are cited
 

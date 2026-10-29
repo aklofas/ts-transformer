@@ -848,6 +848,11 @@ The rtsp-publish-es leg keeps one source of a single generation's length on
 disk for the whole run: about 0.85 GB per hour of `PUBLISHER_DROP_PERIOD_S`,
 so about 140 MB at the default (exit 2 below 1.2 × that).
 
+A running publisher generation writes its gst-launch output to
+`logs/rtsp-publish-generation.log` (or `logs/rtsp-publish-es-generation.log`),
+which each generation overwrites. The leg's own log gets a copy only when the
+generation ends, so follow a live generation in that file.
+
 ### Outputs and the supervisor
 
 Under `--outdir`: `rss.csv` (`elapsed_s,leg,process,pid,rss_kb` for every
@@ -1705,6 +1710,11 @@ per-class reasoning, all of it measured rather than assumed:
 - **`dup` is never detectable.** A repeated packet with the same continuity
   counter is legal (section 2.4.3.3 allows one duplicate); a receiver that
   says nothing about it is conformant.
+- **A strict receiver's `pcr_interval` does not read the tap's log.** A
+  `body_flip` on a PCR-only packet rewrites PCR bytes, and a flipped flag
+  can drop a PCR, so `recv --strict` reads that damage as a PCR interval
+  fault. A cell that runs the tap and `--strict` together stays lossy-judged
+  until the oracle consults the tap's log.
 - **`psi_flip` leaves the CRC intact on purpose**, so the section genuinely
   fails its checksum. It is only schedulable on a PAT/PMT packet that
   carries one complete section; a draw that fires elsewhere keeps the class

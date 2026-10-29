@@ -141,31 +141,44 @@ merge commit, and the qualification run checks that nothing under
      checkout of the frozen commit with `tst-interop` built in release mode
      (`SETUP-DONE rc=0`).
    - `aws s3 sync s3://<bucket>/baselines/vX.Y.Z/ ~/baseline-vX.Y.Z/` fetches
-     the previous release's digests, then
-     `release-vm-corpus.sh <full sha> --baseline ~/baseline-vX.Y.Z`
-     runs the corpus phase: `corpus inventory` lists the captures,
-     `corpus sweep` digests each one and compares it with the baseline,
-     `corpus replay` sends each selected capture through the transports and
-     judges what arrives, `corpus report` writes the result and its archive
-     row, and the digests go to the bucket as the commit's unreleased
-     baseline (`CORPUS-DONE rc=0`). A failure stops the checklist here; it is
-     a finding to fix, and the fix restarts at step 2. A reviewed change is
-     accepted with `--accept <sha256> --because <text>`.
+     the previous release's digests. The 0.9.0 digests were never promoted
+     under their tag's name, so before the first comparison against them
+     copy them there once:
+     ```bash
+     aws s3 cp --recursive \
+       s3://<bucket>/baselines/unreleased-9b8acb3b6fae559dc8b4dc0c4bbcc31af097d234/ \
+       s3://<bucket>/baselines/v0.9.0/
+     ```
    - A baseline written before the sweep kept a `manifest.txt` (the 0.9.0
      digests are one) is refused until its manifest is written, once, before
      the first comparison against it:
      ```bash
-     tst-interop corpus manifest ~/baseline-vX.Y.Z --expect-files 251
+     ~/ts-transformer/target/release/tst-interop corpus manifest \
+       ~/baseline-vX.Y.Z --expect-files 251
      ```
      The same first comparison changes the digest of every capture whose
      ST 0605 packs did not decode before. These are the captures whose
      baseline digest has undecoded KLV records; review each and pass its
-     SHA-256 to `--accept`:
+     SHA-256 to the `release-vm-corpus.sh` run below as
+     `--accept <sha256> --because <text>`:
      ```bash
      jq -r 'select(.prefix_seconds == null and .configs.default.klv_unknown > 0) | .sha256' ~/baseline-vX.Y.Z/*.json
      ```
      [Real-capture testing](/docs/project/real-capture-testing.md) has the
      rules behind both.
+   - `release-vm-corpus.sh <full sha> --baseline ~/baseline-vX.Y.Z`
+     runs the corpus phase: `corpus inventory` lists the captures,
+     `corpus sweep` digests each one and compares it with the baseline,
+     `corpus replay` sends each selected capture through the transports and
+     judges what arrives, `corpus report` writes the result and its archive
+     row, and the digests go to the bucket as the commit's unreleased
+     baseline (`CORPUS-DONE rc=0`). The script refuses to run without
+     either `--baseline DIR` or `--no-baseline` (a first run, with no
+     previous release to compare with), and the archive row's note names
+     the baseline's manifest digest or says none was compared. A failure
+     stops the checklist here; it is a finding to fix, and the fix restarts
+     at step 2. A reviewed change is accepted with
+     `--accept <sha256> --because <text>`.
    - From a machine with an authenticated `gh`,
      `release-vm-soak.sh ci-green <full sha> ubuntu@<vm> --dispatch-wheels <ref>`
      dispatches the wheels dry run and creates `~/ci-green` on the VM once
@@ -258,8 +271,9 @@ merge commit, and the qualification run checks that nothing under
     Otherwise it builds the previous tag from source, and the record's ABI
     source reads `built: <reason>` instead of `attested`. Two cases always
     take the source build, by design: a fork, since the check names the
-    signing workflow by the `aklofas/ts-transformer` slug, and a runner whose `gh` lacks the attestation flags, which
-    records `built: attestation verify failed`.
+    signing workflow by the `aklofas/ts-transformer` slug, and a runner
+    whose `gh` lacks the attestation flags, which records
+    `built: attestation verify failed`.
 
     The run's bundle holds `qualification.json`, the rendered
     `qualification.md`, `TREE-EQUIVALENCE.txt`, the SBOMs, `SHA256SUMS`, the
@@ -346,7 +360,16 @@ Release; the committed record stays the one step 10 collected.
    - Every crate page at `https://crates.io/crates/<pkg>` shows X.Y.Z and
      the docs.rs builds are green (see the crates.io section below).
    Only **after** all three verify, announce the release.
-5. **GitHub Release.** The tag push also runs `release-qualify.yml` again.
+5. **Promote the corpus baseline.** The corpus run pushed its digests as the
+   soaked commit's unreleased baseline; the next release compares with them
+   under the tag's name:
+   ```bash
+   aws s3 cp --recursive s3://<bucket>/baselines/unreleased-<soaked sha>/ \
+     s3://<bucket>/baselines/vX.Y.Z/
+   ```
+   `<soaked sha>` is the full commit the record's `release_vm.corpus.tree`
+   names.
+6. **GitHub Release.** The tag push also runs `release-qualify.yml` again.
    The publish workflows above do not wait for it: `jvm-jar.yml` and
    `python-wheels.yml` publish on their own tag triggers, in parallel,
    whatever that run's verdict. The pre-tag dispatch in step 10 of the
