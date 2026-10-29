@@ -72,6 +72,12 @@ at runtime.
 bundling the per-platform native libraries (linux-x86_64 / linux-aarch64 /
 macos-arm64 / windows-x86_64); the consumer picks no classifier.
 
+The jar is also a named module, `org.tstrans`. On the module path, add
+`requires org.tstrans;` to your `module-info.java` and run with
+`--module-path tstrans-jvm-<version>.jar:<your classes>`. Every public package
+is exported, and CI runs a small named module against the assembled jar on each
+platform.
+
 ## Hello world
 
 The smallest thing that proves the native library loads and the JNI bridge
