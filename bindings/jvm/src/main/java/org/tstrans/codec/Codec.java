@@ -31,9 +31,9 @@ public final class Codec {
     }
 
     // --- H.264 native entry points ---------------------------------------
-    // The native methods cannot declare `throws`; on a parse error they leave a
-    // pending CodecParseException and return null. The public wrappers below
-    // declare `throws CodecParseException` so the pending exception propagates.
+    // The natives do not declare CodecParseException: on a parse error they leave
+    // it pending and return null. The public wrappers below declare
+    // `throws CodecParseException`.
 
     private static native H264Sps nParseH264Sps(byte[] rbsp);
 

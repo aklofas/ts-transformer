@@ -9,7 +9,13 @@ package org.tstrans.mpegts;
  * ({@link Muxer#pushDataTo(DataStreamHandle, byte[], long)} and the senders'
  * {@code sendDataTo}). The
  * {@code raw} value is the muxer's packed {@code u32} stream identifier widened
- * to {@code long}; it is meaningful only to the muxer that minted it.
+ * to {@code long}; it addresses a stream by index.
+ *
+ * <p>A handle is meaningful only to the muxer that minted it; keeping it with
+ * that muxer is the caller's obligation. A handle from another muxer is not
+ * detected and addresses this muxer's stream at the same index. A raw value
+ * with an invalid bit layout, or an index past this muxer's streams, is
+ * rejected at push time with {@code INVALID_USAGE}.
  *
  * <p>Mirrors {@code tstrans.mpegts.DataStreamHandle}. Being a record, equality
  * and hashing are by {@code raw}.

@@ -76,8 +76,9 @@ public abstract class NativeHandle implements AutoCloseable {
      * {@link #close()} and by consuming-native sites that transfer handle ownership
      * to a native API. Returns 0 if the handle was already consumed or closed.
      *
-     * <p>At consuming-native sites, call this <em>before</em> the native call — the
-     * double-free invariant requires the Java field to be zeroed first.
+     * <p>At consuming-native sites, call this <em>before</em> the native call so the Java
+     * field is zeroed first, unless the native validates before its take (see the
+     * class contract).
      */
     protected final long consumeHandle() {
         return handle.getAndSet(0);

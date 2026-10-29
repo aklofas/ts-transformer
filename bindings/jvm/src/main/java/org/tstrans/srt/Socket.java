@@ -13,9 +13,9 @@ import org.tstrans.SrtException;
  *
  * <p>{@link #intoSender()} / {@link #intoReceiver()} each <strong>consume</strong>
  * this handle — the underlying native socket moves into the new wrapper and
- * this {@code Socket}'s {@link #close()} becomes a no-op. The Java field is zeroed
- * immediately after the JNI call returns, so no double-free is possible even if
- * an exception is thrown mid-sequence.
+ * this {@code Socket}'s {@link #close()} becomes a no-op. The handle is claimed
+ * after the Java arguments are read and before the consuming native runs, so a
+ * concurrent close or second conversion cannot free it twice.
  *
  * <p>{@link #intoMuxSender(org.tstrans.mpegts.MuxerConfig)} and
  * {@link #intoDemuxReceiver()} likewise consume this handle.
@@ -219,9 +219,9 @@ public final class Socket extends NativeHandle {
 
     /**
      * Consume the Box&lt;Socket&gt; and build a Box&lt;Sender&gt;. Returns 0 and throws
-     * SrtException on error. The Java caller MUST zero its own handle field
-     * after this returns (regardless of success/failure) since the native handle
-     * is consumed unconditionally.
+     * SrtException on error. The Java caller claims the handle (see
+     * {@code consumeHandle()}) before calling, since the native handle is
+     * consumed unconditionally.
      */
     private static native long nIntoSender(long handle) throws SrtException;
 
@@ -229,8 +229,8 @@ public final class Socket extends NativeHandle {
 
     /**
      * Consume the Box&lt;Socket&gt; and build a Box&lt;MuxSender&gt;. Returns 0 and
-     * throws on error. The Java caller MUST zero its own handle field after this
-     * returns (regardless of success/failure) since the native handle is
+     * throws on error. The Java caller claims the handle (see
+     * {@code consumeHandle()}) before calling, since the native handle is
      * consumed unconditionally.
      */
     private static native long nIntoMuxSender(long handle, int programNumber, int pmtPid,

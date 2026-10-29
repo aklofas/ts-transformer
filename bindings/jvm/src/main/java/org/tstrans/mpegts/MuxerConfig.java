@@ -19,9 +19,10 @@ import java.util.Objects;
  *
  * <p><b>Deferred (documented):</b> multi-program configs; per-stream/program
  * descriptors for the typed kinds (data streams get theirs via
- * {@link Builder#streamDescriptorsForData}); the typed kinds'
- * {@code *_to(handle, ...)} multi-stream variants (data streams have them:
- * {@link Muxer#pushDataTo} + {@link Muxer#dataHandles()}); stats.
+ * {@link Builder#streamDescriptorsForData}); stats. The handle-targeted
+ * pushes ({@link Muxer#pushVideoTo}, {@link Muxer#pushVideoWireTo},
+ * {@link Muxer#pushKlvTo}, {@link Muxer#pushAudioTo},
+ * {@link Muxer#pushSubtitleTo}, {@link Muxer#pushDataTo}) are available.
  * DVB subtitle codecs (which need language + page-ID config) are also
  * deferred — {@link Builder#addSubtitle} accepts only the no-config codecs
  * (CEA-708 / WebVTT).

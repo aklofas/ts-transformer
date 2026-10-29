@@ -248,8 +248,9 @@ public final class RtspServer extends NativeHandle {
     /**
      * Test-only: the raw native handle, for routing a panic through the real
      * {@code REGISTRY_SERVER} in {@code RtspPanicPoisoningTest} (proves the server
-     * mutators are wired to {@code with_server_poisoning}). Package-private,
-     * mirrors the {@code *ForTest} convention in {@code Klv}.
+     * mutators are wired to {@code with_server_poisoning}). Package-private;
+     * the panic probes live in {@code org.tstrans.internal} and are built only
+     * under the {@code jni-test-hooks} feature.
      */
     long nativeHandleForTest() { return peekHandle(); }
 
