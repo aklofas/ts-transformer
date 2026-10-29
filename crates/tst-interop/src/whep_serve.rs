@@ -167,29 +167,70 @@ fn gop_access_units() -> Vec<(Vec<u8>, bool)> {
 /// The PTS-ordered pushes for `seconds` of `p`'s schedule: the profile's
 /// video and KLV events, plus an Opus packet every 20 ms when `opus`. On a
 /// shared tick the order is video, KLV, Opus, the schedule's own tie rule
-/// extended by one kind.
-fn build_pushes(p: &Profile, seconds: f64, opus: bool) -> (i64, Vec<(i64, Push)>) {
-    let (start, events) = schedule::build_schedule(p, seconds);
-    let mut pushes: Vec<(i64, u8, Push)> = events
-        .filter_map(|(pts, ev)| match ev {
-            Event::Video { frame_idx } => Some((pts, 0, Push::Video { frame_idx })),
-            Event::Klv { seq } => Some((pts, 1, Push::Klv { seq })),
-            // The profile's AAC cadence has no Opus packet to forward.
-            Event::Audio { .. } => None,
-        })
-        .collect();
-    if opus {
-        let count = (seconds * PTS_HZ as f64 / OPUS_FRAME_TICKS as f64).round() as i64;
-        pushes.extend((0..count).map(|i| (start + i * OPUS_FRAME_TICKS, 2, Push::Opus)));
-    }
-    pushes.sort_by_key(|&(pts, order, _)| (pts, order));
+/// extended by one kind. Lazy, like the schedule the senders walk: a
+/// 72-hour window is millions of pushes, and none of them is held.
+fn build_pushes(p: &Profile, seconds: f64, opus: bool) -> (i64, Pushes) {
+    let (start, schedule) = schedule::build_schedule(p, seconds);
+    let opus_count = if opus {
+        (seconds * PTS_HZ as f64 / OPUS_FRAME_TICKS as f64).round() as i64
+    } else {
+        0
+    };
     (
         start,
-        pushes
-            .into_iter()
-            .map(|(pts, _, push)| (pts, push))
-            .collect(),
+        Pushes {
+            schedule,
+            pending: None,
+            start,
+            opus_next: 0,
+            opus_count,
+        },
     )
+}
+
+/// [`build_pushes`]' iterator: the schedule's video and KLV events merged
+/// with an arithmetic Opus sequence, in O(1) state.
+struct Pushes {
+    schedule: schedule::Schedule,
+    /// The next video or KLV push, pulled from `schedule` and not yet
+    /// yielded because an earlier Opus packet goes first.
+    pending: Option<(i64, Push)>,
+    start: i64,
+    opus_next: i64,
+    opus_count: i64,
+}
+
+impl Iterator for Pushes {
+    type Item = (i64, Push);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pending.is_none() {
+            // The profile's AAC cadence has no Opus packet to forward.
+            self.pending = self.schedule.find_map(|(pts, ev)| match ev {
+                Event::Video { frame_idx } => Some((pts, Push::Video { frame_idx })),
+                Event::Klv { seq } => Some((pts, Push::Klv { seq })),
+                Event::Audio { .. } => None,
+            });
+        }
+        let opus_pts = (self.opus_next < self.opus_count)
+            .then(|| self.start + self.opus_next * OPUS_FRAME_TICKS);
+        match (self.pending, opus_pts) {
+            // `<=`: on a shared tick video and KLV go before Opus.
+            (Some((pts, _)), Some(o)) if pts > o => {
+                self.opus_next += 1;
+                Some((o, Push::Opus))
+            }
+            (Some(push), _) => {
+                self.pending = None;
+                Some(push)
+            }
+            (None, Some(o)) => {
+                self.opus_next += 1;
+                Some((o, Push::Opus))
+            }
+            (None, None) => None,
+        }
+    }
 }
 
 /// Sleep until `pts_ticks`'s offset from `start` has elapsed since
@@ -440,7 +481,7 @@ mod tests {
     #[test]
     fn the_klv_pushes_are_the_profiles_schedule() {
         let p = profiles::by_name("baseline").expect("baseline exists");
-        let (_, pushes) = build_pushes(p, 3.0, false);
+        let pushes: Vec<(i64, Push)> = build_pushes(p, 3.0, false).1.collect();
         let digests: Vec<String> = pushes
             .iter()
             .filter_map(|(_, push)| match push {
@@ -468,6 +509,7 @@ mod tests {
     fn opus_packets_run_every_twenty_milliseconds_after_video_and_klv() {
         let p = profiles::by_name("baseline").expect("baseline exists");
         let (start, pushes) = build_pushes(p, 1.0, true);
+        let pushes: Vec<(i64, Push)> = pushes.collect();
         let opus: Vec<i64> = pushes
             .iter()
             .filter(|(_, push)| matches!(push, Push::Opus))
@@ -487,8 +529,58 @@ mod tests {
             })
             .collect();
         assert_eq!(first_tick, [0, 1, 2]);
-        let (_, without) = build_pushes(p, 1.0, false);
-        assert!(without.iter().all(|(_, push)| !matches!(push, Push::Opus)));
+        let (_, mut without) = build_pushes(p, 1.0, false);
+        assert!(without.all(|(_, push)| !matches!(push, Push::Opus)));
+    }
+
+    /// The eager body `build_pushes` had before it was lazy: every push
+    /// collected and stably sorted. Kept as the order's reference.
+    fn eager_reference(p: &Profile, seconds: f64, opus: bool) -> (i64, Vec<(i64, Push)>) {
+        let (start, events) = schedule::build_schedule(p, seconds);
+        let mut pushes: Vec<(i64, u8, Push)> = events
+            .filter_map(|(pts, ev)| match ev {
+                Event::Video { frame_idx } => Some((pts, 0, Push::Video { frame_idx })),
+                Event::Klv { seq } => Some((pts, 1, Push::Klv { seq })),
+                // The profile's AAC cadence has no Opus packet to forward.
+                Event::Audio { .. } => None,
+            })
+            .collect();
+        if opus {
+            let count = (seconds * PTS_HZ as f64 / OPUS_FRAME_TICKS as f64).round() as i64;
+            pushes.extend((0..count).map(|i| (start + i * OPUS_FRAME_TICKS, 2, Push::Opus)));
+        }
+        pushes.sort_by_key(|&(pts, order, _)| (pts, order));
+        (
+            start,
+            pushes
+                .into_iter()
+                .map(|(pts, _, push)| (pts, push))
+                .collect(),
+        )
+    }
+
+    fn key(item: (i64, Push)) -> (i64, u8, u32) {
+        match item.1 {
+            Push::Video { frame_idx } => (item.0, 0, frame_idx),
+            Push::Klv { seq } => (item.0, 1, seq),
+            Push::Opus => (item.0, 2, 0),
+        }
+    }
+
+    #[test]
+    fn lazy_pushes_match_the_eager_order_and_hold_no_list() {
+        for (name, opus) in [("baseline", true), ("baseline", false), ("audio", true)] {
+            let p = profiles::by_name(name).unwrap();
+            let (start, lazy) = build_pushes(p, 10.0, opus);
+            let (s2, eager) = eager_reference(p, 10.0, opus);
+            assert_eq!(start, s2);
+            assert_eq!(
+                lazy.map(key).collect::<Vec<_>>(),
+                eager.into_iter().map(key).collect::<Vec<_>>(),
+                "{name} opus={opus}"
+            );
+        }
+        assert!(std::mem::size_of::<Pushes>() <= 160);
     }
 
     #[test]
