@@ -503,7 +503,7 @@ jobs:
         # native libraries of the called workflows are not part of the record.
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          pattern: "{interop-evidence,sanitizer-*,fuzz-tst-*,abi-record,c-package,ci-record,sbom}"
+          pattern: "{interop-evidence,interop-census-aarch64,sanitizer-*,fuzz-tst-*,abi-record,c-package,ci-record,sbom}"
           path: ${{ runner.temp }}/downloaded
 
       - name: Lay the artefacts out for the collector
@@ -513,6 +513,9 @@ jobs:
           # Interop evidence and the four sanitizer one-liners keep their
           # artefact names as directories (the layout the collector reads).
           [ -d "$D/interop-evidence" ] && cp -r "$D/interop-evidence" "$A/interop-evidence"
+          # The linux-aarch64 subset's census, recorded beside the x86_64 one.
+          [ -f "$D/interop-census-aarch64/interop-census-aarch64.json" ] \
+            && cp "$D/interop-census-aarch64/interop-census-aarch64.json" "$A/"
           for d in "$D"/sanitizer-*; do [ -d "$d" ] && cp -r "$d" "$A/"; done
           [ -f "$D/ci-record/ci.json" ] && cp "$D/ci-record/ci.json" "$A/ci.json"
           for f in abi.json semver-checks.json; do [ -f "$D/abi-record/$f" ] && cp "$D/abi-record/$f" "$A/$f"; done

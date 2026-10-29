@@ -11,8 +11,9 @@ name: interop
 # This is the continuously-refreshed public interop evidence: the run's
 # GITHUB_STEP_SUMMARY table + uploaded artifacts are what a consumer reads
 # to see this codebase actually interoperate with real tools on a stock
-# runner, not another closed-loop self-test. linux-x86_64 only, matching
-# scripts/interop/'s own stance (see lib.sh's header).
+# runner, not another closed-loop self-test. The full census runs on
+# linux-x86_64; a second job runs the `[arm64_subset]` cells of
+# expectations.toml on linux-aarch64 and keeps its own census.
 
 on:
   workflow_call:
@@ -308,5 +309,131 @@ jobs:
             ${{ runner.temp }}/interop/work/*-whep.json
             ${{ runner.temp }}/interop/work/*-console.txt
             ${{ runner.temp }}/interop/work/*-chrome.stderr.gz
+          retention-days: 90
+          if-no-files-found: warn
+
+  interop-arm64:
+    name: interop subset (linux-aarch64)
+    # Scheduled and called (release-qualify) runs only, never pull requests.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    # Its census is recorded beside the x86_64 one (the qualification record
+    # keeps both; the 1.0 exit criteria read this one) while the release
+    # verdict reads the x86_64 census, so a red subset never fails the
+    # workflow a release-qualify run calls.
+    continue-on-error: true
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+
+      - name: Install peer tools
+        # The x86_64 job's list minus the players the subset leaves out
+        # (vlc, mpv, gst-play-1.0) and Chrome. A package missing from the arm
+        # index fails this step, and a tool missing from PATH skips its
+        # cells (see the skip step below).
+        run: |
+          sudo apt-get -o Acquire::Retries=5 install -y ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-rtsp jq
+
+      - name: Install TSDuck
+        # The arm64 asset of the release the x86_64 job pins, its sha256
+        # self-computed the same way (no upstream checksum is published).
+        env:
+          TSDUCK_DEB_URL: "https://github.com/tsduck/tsduck/releases/download/v3.44-4676/tsduck_3.44-4676.ubuntu24_arm64.deb"
+          TSDUCK_DEB_SHA256: "09e728567c9e1eac619a440dfd22393eaaf04c0ab09711498cd5f787a7c7cae2"
+        run: |
+          curl -sL --retry 5 -o /tmp/tsduck.deb "$TSDUCK_DEB_URL"
+          echo "$TSDUCK_DEB_SHA256  /tmp/tsduck.deb" | sha256sum -c -
+          sudo dpkg -i /tmp/tsduck.deb || sudo apt-get -o Acquire::Retries=5 install -y -f
+          rm -f /tmp/tsduck.deb
+          tsp --version
+
+      - name: Rust toolchain, cargo cache
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-key: cargo-interop-arm64-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-interop-arm64-${{ runner.os }}-
+
+      - name: cargo build --release -p tst-interop
+        env:
+          SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
+        run: cargo build --release -p tst-interop
+
+      - name: Skip the cells of peer tools this runner lacks
+        # The subset is trimmed to what runs here: each tool `which` does not
+        # find adds its cells to --allowed-skips, and the step summary names
+        # them. Nothing is trimmed when every tool is present.
+        id: skips
+        run: |
+          skips=()
+          trim() { # <tool> <cell pattern...>
+            local tool=$1
+            shift
+            if which "$tool" >/dev/null 2>&1; then return; fi
+            echo "- \`$tool\` is missing: $*" >> "$GITHUB_STEP_SUMMARY"
+            skips+=("$@")
+          }
+          echo "### linux-aarch64 subset: cells trimmed for missing tools" >> "$GITHUB_STEP_SUMMARY"
+          trim ffmpeg srt/us-to-ffmpeg srt/ffmpeg-to-us srt/us-to-ffmpeg-encrypted srt/ffmpeg-to-us-encrypted \
+            'srt-live/us-to-ffmpeg/*' 'srt-live/ffmpeg-to-us/*' rist/us-to-ffmpeg rist/ffmpeg-to-us rtsp-serve/ffmpeg-pull
+          trim tsp srt/us-to-tsp srt/tsp-to-us srt/us-to-tsp-encrypted srt/tsp-to-us-encrypted \
+            'srt-live/us-to-tsp/*' 'srt-live/tsp-to-us/*' rist/us-to-tsp rist/tsp-to-us 'analyze/tsp-analyze/*'
+          trim tsanalyze 'analyze/tsanalyze/*'
+          trim gst-launch-1.0 srt/us-to-gst srt/gst-to-us 'rtsp-publish/*'
+          [ "${#skips[@]}" -gt 0 ] || echo "none: every peer tool the subset uses is installed" >> "$GITHUB_STEP_SUMMARY"
+          list=$(IFS=,; echo "${skips[*]}")
+          echo "allowed=$list" >> "$GITHUB_OUTPUT"
+
+      - name: Run the arm64 subset
+        env:
+          ALLOWED_SKIPS: ${{ steps.skips.outputs.allowed }}
+        run: |
+          args=(--outdir "$RUNNER_TEMP/interop" --seconds 10 --only-subset arm64)
+          [ -z "$ALLOWED_SKIPS" ] || args+=(--allowed-skips "$ALLOWED_SKIPS")
+          bash scripts/interop/run-matrix.sh "${args[@]}"
+
+      - name: Write the census
+        # The record the qualification collector reads as
+        # interop-census-aarch64.json; absent when the matrix wrote no results.
+        if: always()
+        run: |
+          r="$RUNNER_TEMP/interop/results.json"
+          [ -f "$r" ] || { echo "::warning::no results.json; no census written"; exit 0; }
+          jq '{arch: "linux-aarch64", shape: .inventory.shape, total: .summary.total, pass: .summary.pass,
+               fail: .summary.fail, expected_unsupported: .summary.expected_unsupported,
+               skipped: .summary.skipped_tool_missing, stale: (.summary.stale_expectations | length)}' \
+            "$r" > "$RUNNER_TEMP/interop-census-aarch64.json"
+          cat "$RUNNER_TEMP/interop-census-aarch64.json"
+          target/release/tst-interop report render --in "$r" --out "$RUNNER_TEMP/interop/results.md" --github-summary
+
+      - name: Upload the census
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: interop-census-aarch64
+          path: ${{ runner.temp }}/interop-census-aarch64.json
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload interop evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: interop-evidence-aarch64
+          path: |
+            ${{ runner.temp }}/interop/results.json
+            ${{ runner.temp }}/interop/results.md
+            ${{ runner.temp }}/interop/inventory.json
+            ${{ runner.temp }}/interop/cells
+            ${{ runner.temp }}/interop/logs
+            ${{ runner.temp }}/interop/work/*-recv.json
           retention-days: 90
           if-no-files-found: warn

@@ -15,6 +15,11 @@
 #   [census]
 #   full_cells = 158                     # the cell count of a full-shape run, declared once
 #
+#   [arm64_subset]                       # a named cell subset, `[<name>_subset]`
+#   cells = [                            # one quoted cell pattern per line,
+#     "srt/*",                           # exact id or `*` glob
+#   ]
+#
 # The census is the single place the advertised full cell count lives.
 # `report merge` fails a full-shape inventory whose declared count
 # differs from it, records it as `inventory.expected_full_cells` in
@@ -89,6 +94,27 @@
 
 [census]
 full_cells = 161
+
+# The cells `run-matrix.sh --only-subset arm64` runs: the interop workflow's
+# linux-aarch64 job, whose census the qualification record keeps beside the
+# x86_64 one. Every cell muxes the generator's stream and demuxes the
+# capture (the KLV digests and the wire oracles judge both), so the subset
+# needs no separate mux or demux cells: SRT and RIST live with ffmpeg,
+# TSDuck and GStreamer, every profile through ffmpeg and TSDuck over SRT,
+# RTP over RTSP, the publisher role in both its MPEG-TS and elementary
+# shapes, and TSDuck's analyzers. Left out: the browser cells (whep/*),
+# the VLC and mpv players, and the HLS pulls. A peer tool missing from the
+# arm runner skips its cells; the job names them in its step summary.
+[arm64_subset]
+cells = [
+  "srt/*",
+  "srt-live/*",
+  "rist/*",
+  "rtsp-serve/ffmpeg-pull",
+  "rtsp-publish/*",
+  "analyze/tsanalyze/*",
+  "analyze/tsp-analyze/*",
+]
 
 [[expect]]
 cell = "hls/ffmpeg-pull"

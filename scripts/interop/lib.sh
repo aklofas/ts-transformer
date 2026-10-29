@@ -151,13 +151,49 @@ slug() {
 # ---------------------------------------------------------------------
 
 # True iff cell id "$1" matches the orchestrator's --cells glob
-# (default "*", i.e. everything). A plain bash `case` glob — supports
-# the same `*`/`?`/`[...]` shapes run-matrix.sh's own --help documents.
+# (default "*", i.e. everything) and, under --only-subset, one of the
+# subset's patterns in SUBSET_CELLS (one per line). Plain bash `case`
+# globs — the same `*`/`?`/`[...]` shapes run-matrix.sh's own --help
+# documents.
 cell_selected() {
   case "$1" in
-    $CELLS_GLOB) return 0 ;;
+    $CELLS_GLOB) ;;
     *) return 1 ;;
   esac
+  [[ -n "${SUBSET_CELLS:-}" ]] || return 0
+  local p
+  while IFS= read -r p; do
+    case "$1" in
+      $p) return 0 ;;
+    esac
+  done <<<"$SUBSET_CELLS"
+  return 1
+}
+
+# subset_cells <expectations.toml> <name>
+#
+# The cell patterns of the file's `[<name>_subset]` table, one per line:
+# a `cells = [` line, one quoted pattern per line (trailing comma
+# optional), then `]`. Fails, printing nothing usable, on a missing,
+# unterminated or empty table or an unquoted pattern — the same shapes
+# `report merge`'s parser (report/matrix.rs `parse_subset`) refuses.
+subset_cells() {
+  awk -v hdr="[$2_subset]" '
+    { line = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", line) }
+    line == "" || line ~ /^#/ { next }
+    state == 0 && line == hdr { state = 1; next }
+    state == 0 { next }
+    state == 1 {
+      if (line ~ /^cells[[:space:]]*=[[:space:]]*\[$/) { state = 2; next }
+      bad = 1; exit
+    }
+    state == 2 && line == "]" { state = 3; exit }
+    state == 2 {
+      sub(/,$/, "", line)
+      if (line !~ /^"[^"]+"$/) { bad = 1; exit }
+      print substr(line, 2, length(line) - 2); n++
+    }
+    END { if (bad || state != 3 || n == 0) exit 1 }' "$1"
 }
 
 # ---------------------------------------------------------------------

@@ -19,6 +19,8 @@ Artefact directory read by `collect` (a missing file is a missing leg, never a p
                                        required leg beside its four jobs)
   ci.json                              {conclusion, run_url} of the ci workflow on the sha
   interop-evidence/{results,inventory}.json
+  interop-census-aarch64.json          {arch, shape, total, pass, fail, expected_unsupported,
+                                       skipped, stale} of the linux-aarch64 subset job, if it ran
   sanitizer-<job>/sanitizer-<job>.json (or sanitizer-<job>.json) {job, conclusion}
   fuzz.json, abi.json, semver-checks.json
 
@@ -393,9 +395,27 @@ def _find_sanitizer(art, job):
     return None
 
 
+CENSUS_COUNTS = ("total", "pass", "fail", "expected_unsupported", "skipped", "stale")
+
+
+def _arm_census(art):
+    """The linux-aarch64 subset census, or None when that job left none. It is
+    recorded beside the x86_64 census; the verdict reads only the x86_64 one."""
+    c = read_json(os.path.join(art, "interop-census-aarch64.json"))
+    if c is None:
+        return None
+    if (not isinstance(c, dict) or c.get("arch") != "linux-aarch64" or not isinstance(c.get("shape"), str)
+            or not all(isinstance(c.get(k), int) and not isinstance(c.get(k), bool) and c[k] >= 0
+                       for k in CENSUS_COUNTS)):
+        die("interop-census-aarch64.json needs arch linux-aarch64, a shape and the counts %s"
+            % ", ".join(CENSUS_COUNTS))
+    return {k: c[k] for k in ("arch", "shape") + CENSUS_COUNTS}
+
+
 def _interop(art):
     results = read_json(os.path.join(art, "interop-evidence", "results.json"))
     inv = read_json(os.path.join(art, "interop-evidence", "inventory.json")) or {}
+    arm = _arm_census(art)
     if results is None or not os.path.isfile(os.path.join(art, "interop-evidence", "inventory.json")):
         return None, {}
     s, i = results.get("summary", {}), results.get("inventory", {})
@@ -410,6 +430,9 @@ def _interop(art):
         "expected_full_cells": i.get("expected_full_cells", 0),
         "au_sizes": results.get("meta", {}).get("au_sizes", "unrecorded"),
     }
+    rec["censuses"] = [dict({"arch": "linux-x86_64"}, **{k: rec[k] for k in ("shape",) + CENSUS_COUNTS})]
+    if arm is not None:
+        rec["censuses"].append(arm)
     return rec, dict(inv.get("tools", {}))
 
 
@@ -642,6 +665,14 @@ def render_block(rec):
             "census is %d cells, at %s access-unit sizes." % (
                 i["shape"], i["total"], i["pass"], i["fail"], i["expected_unsupported"],
                 i["skipped"], i["stale"], i["expected_full_cells"], i["au_sizes"]))
+        for c in i.get("censuses", []):
+            if c["arch"] == "linux-x86_64":
+                continue
+            out.append(
+                "The %s census (%s) reads %d / %d / %d / %d / %d: total, pass, fail, "
+                "expected-unsupported, skipped. Stale expectations: %d." % (
+                    c["arch"], c["shape"], c["total"], c["pass"], c["fail"],
+                    c["expected_unsupported"], c["skipped"], c["stale"]))
     if rec["peers"]:
         out.append("")
         out.append("Peer tools: " + ", ".join(
