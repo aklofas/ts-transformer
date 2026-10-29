@@ -91,6 +91,10 @@ pub struct Invariants {
     pub audio_sample_rate_hz: Option<u32>,
     /// PIDs of every program this profile mixes onto the wire.
     pub programs: Vec<ExpectedProgram>,
+    /// Least lead, in ms, of a PES's decode time over the preceding PCR on
+    /// its program's PCR PID — see [`crate::oracles`]'s PCR lead rule.
+    /// `None` leaves the rule off.
+    pub pcr_lead_min_ms: Option<u32>,
 }
 
 const FPS: u32 = 30;
@@ -416,6 +420,10 @@ pub fn invariants(p: &Profile) -> Invariants {
         av1_mode: p.av1_mode,
         audio_sample_rate_hz: p.audio.then_some(schedule::AUDIO_SAMPLE_RATE_HZ),
         programs,
+        // No profile sets a floor: the muxer's PCR equals the decode time
+        // of the PES it precedes (a lead of zero on every profile today),
+        // so any floor would fail every capture.
+        pcr_lead_min_ms: None,
     }
 }
 

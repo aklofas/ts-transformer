@@ -62,18 +62,18 @@ impl Explained {
     }
 }
 
-/// Run all seven wire-level oracles and concatenate their failures.
+/// Run all eight wire-level oracles and concatenate their failures.
 ///
 /// Under [`WireLayout::Remuxed`] only the layout-independent parts run:
-/// the per-program AU / KLV floors, PCR cadence and "a PMT was seen for
-/// every program". Everything keyed on the generator's PIDs (wire media
+/// the per-program AU / KLV floors, PCR cadence, PCR lead and "a PMT was
+/// seen for every program". Everything keyed on the generator's PIDs (wire media
 /// per PID, PMT stream types and descriptors, audio and AV1 carriage,
 /// PTS wrap on the video PID, wire-vs-demux per PID) is skipped — see
 /// [`crate::verify::REMUXED_SKIPPED_ORACLES`].
 /// `explained` is what a corruption log and the capture's own
 /// discontinuity/non-conformance tallies account for, per PID — see
 /// `wire_vs_demux` (private; `--document-private-items` renders it).
-// Each parameter is a distinct fact one of the seven oracles needs, all
+// Each parameter is a distinct fact one of the eight oracles needs, all
 // of them already owned by the single caller (`verify::Tally::finish`) —
 // a struct here would only move the same list one line up.
 #[allow(clippy::too_many_arguments)]
@@ -98,6 +98,7 @@ pub fn check(
         layout,
     ));
     f.extend(pcr_interval(inv, wire, mode));
+    f.extend(pcr_lead(inv, wire));
     f.extend(pmt_streams(p, inv, wire, layout));
     if layout == WireLayout::Generator {
         f.extend(audio(inv, wire, seconds, explained));
@@ -329,6 +330,46 @@ fn pcr_interval(inv: &Invariants, wire: &WireSummary, mode: VerifyMode) -> Vec<S
                 },
                 inv.pcr_interval_ms
             ));
+        }
+    }
+    f
+}
+
+/// Oracle 8: PCR lead (H.222.0 §2.4.2) — a decoder starts an AU once the
+/// STC reaches its DTS, so the PCR before a PES must sit below the PES's
+/// decode time. Judged only once a profile sets
+/// [`Invariants::pcr_lead_min_ms`]: each program's PCR PID is held to that
+/// floor, every other PID the PMT lists to 0 ms, since a KLV or audio PES
+/// may legitimately sit closer to the clock than the video it rides with.
+/// The PIDs come from the captured PMT, so this runs on a remuxed capture
+/// too.
+fn pcr_lead(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
+    let Some(floor) = inv.pcr_lead_min_ms else {
+        return Vec::new();
+    };
+    let mut f = Vec::new();
+    for ep in &inv.programs {
+        // A missing program is `pmt_streams`'s finding, as in `pcr_interval`.
+        let Some(prog) = wire.programs.get(&ep.program_number) else {
+            continue;
+        };
+        let others = prog
+            .streams
+            .iter()
+            .map(|st| st.pid)
+            .filter(|&pid| pid != prog.pcr_pid);
+        for (pid, want_ms, note) in std::iter::once((prog.pcr_pid, floor, ""))
+            .chain(others.map(|pid| (pid, 0, " (non-PCR PID)")))
+        {
+            let Some(&ticks) = wire.pcr_lead_min_ticks.get(&pid) else {
+                continue;
+            };
+            let lead_ms = ticks as f64 / 90.0;
+            if lead_ms < f64::from(want_ms) {
+                f.push(format!(
+                    "pcr_lead: PID {pid} min lead {lead_ms:.1} ms, want >= {want_ms} ms{note}"
+                ));
+            }
         }
     }
     f
@@ -606,6 +647,7 @@ mod tests {
 
     use super::*;
     use crate::profiles;
+    use crate::rawts_tests::{pcr_then_pes, pcr_then_pes_on, summarize};
     use tst_test_helpers::rawts::{self, PesShape, Program, Stream};
 
     fn stream(
@@ -871,6 +913,45 @@ mod tests {
             !real_adts.iter().any(|f| f.starts_with("audio_codec_adts")),
             "{real_adts:?}"
         );
+    }
+
+    #[test]
+    fn the_oracle_judges_only_when_the_profile_sets_a_floor() {
+        let w = summarize(&pcr_then_pes(0x100, 90_000, None, 90_000)); // PCR == PTS: zero lead
+        let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+        assert!(pcr_lead(&inv, &w).is_empty());
+        inv.pcr_lead_min_ms = Some(90);
+        assert_eq!(
+            pcr_lead(&inv, &w),
+            ["pcr_lead: PID 256 min lead 0.0 ms, want >= 90 ms"]
+        );
+    }
+
+    /// A non-PCR media PID (KLV, or audio on a video-PCR program) may sit
+    /// closer than the floor to the PCR, but never behind it.
+    #[test]
+    fn a_non_pcr_pid_is_held_to_zero_lead_not_the_floor() {
+        let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+        inv.pcr_lead_min_ms = Some(90);
+        // PCR PID 0x100; a KLV PES on 0x101 with PTS 2 ms above the PCR passes.
+        let w = summarize(&pcr_then_pes_on(0x100, 0x101, 90_000, None, 90_180));
+        assert!(pcr_lead(&inv, &w).is_empty());
+        // The same PES with its PTS 1 ms below the PCR fails.
+        let w = summarize(&pcr_then_pes_on(0x100, 0x101, 90_000, None, 89_910));
+        assert_eq!(
+            pcr_lead(&inv, &w),
+            ["pcr_lead: PID 257 min lead -1.0 ms, want >= 0 ms (non-PCR PID)"]
+        );
+    }
+
+    /// An audio PID on a video-PCR program at a 10 ms lead passes: the
+    /// 90 ms floor is the PCR PID's alone.
+    #[test]
+    fn an_audio_pid_at_ten_ms_lead_passes_under_a_ninety_ms_floor() {
+        let mut inv = profiles::invariants(profiles::by_name("audio").unwrap());
+        inv.pcr_lead_min_ms = Some(90);
+        let w = summarize(&pcr_then_pes_on(0x100, 0x102, 90_000, None, 90_900)); // +10 ms
+        assert!(pcr_lead(&inv, &w).is_empty());
     }
 
     fn wire_with_pcr(pid: u16, ticks: &[u64]) -> WireSummary {

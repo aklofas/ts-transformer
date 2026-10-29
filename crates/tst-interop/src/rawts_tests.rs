@@ -917,3 +917,123 @@ fn a_later_pes_prefix_mismatch_is_reported_with_its_packet_ordinal_in_resync_mod
     assert_eq!(r.take_prefix_mismatches(), vec![(pid, victim as u64)]);
     assert!(r.take_prefix_mismatches().is_empty(), "drained");
 }
+
+/// `bytes` read whole by a fresh [`Reader`].
+pub(crate) fn summarize(bytes: &[u8]) -> WireSummary {
+    let mut r = Reader::new();
+    r.feed(bytes).unwrap();
+    r.finish().unwrap()
+}
+
+/// One PSI section (H.222.0 §2.4.4): the 8-byte long-form header, `body`,
+/// and the CRC-32.
+fn psi_section(table_id: u8, ext: u16, body: &[u8]) -> Vec<u8> {
+    let len = 5 + body.len() + 4;
+    let mut s = vec![
+        table_id,
+        0xB0 | (len >> 8) as u8,
+        len as u8,
+        (ext >> 8) as u8,
+        ext as u8,
+        0xC1,
+        0,
+        0,
+    ];
+    s.extend_from_slice(body);
+    let crc = tst_core::mpegts::common::crc32::crc32_mpeg2(&s);
+    s.extend_from_slice(&crc.to_be_bytes());
+    s
+}
+
+/// A 188-byte payload-only packet, `0xFF`-padded.
+fn payload_packet(pid: u16, pusi: bool, payload: &[u8]) -> Vec<u8> {
+    let mut p = vec![
+        SYNC,
+        u8::from(pusi) << 6 | (pid >> 8) as u8,
+        pid as u8,
+        0x10,
+    ];
+    p.extend_from_slice(payload);
+    p.resize(PKT, 0xFF);
+    p
+}
+
+/// A 33-bit PTS or DTS field (H.222.0 Table 2-21) under its 4-bit prefix.
+fn timestamp_field(prefix: u8, ts: u64) -> [u8; 5] {
+    [
+        prefix << 4 | ((ts >> 29) & 0x0E) as u8 | 1,
+        (ts >> 22) as u8,
+        ((ts >> 14) & 0xFE) as u8 | 1,
+        (ts >> 7) as u8,
+        ((ts << 1) & 0xFE) as u8 | 1,
+    ]
+}
+
+/// PAT, PMT (program 1, PCR on `pcr_pid`, listing `pcr_pid` and
+/// `pes_pid`), an adaptation-field-only packet carrying PCR base
+/// `pcr_base` on `pcr_pid` (Table 2-6), then a PES start on `pes_pid`
+/// with `pts`, and `dts` when given (Table 2-21).
+pub(crate) fn pcr_then_pes_on(
+    pcr_pid: u16,
+    pes_pid: u16,
+    pcr_base: u64,
+    dts: Option<u64>,
+    pts: u64,
+) -> Vec<u8> {
+    const PMT_PID: u16 = 0x1000;
+    let mut out = Vec::with_capacity(4 * PKT);
+
+    let pat = psi_section(0x00, 1, &[0, 1, 0xE0 | (PMT_PID >> 8) as u8, PMT_PID as u8]);
+    out.extend(payload_packet(0, true, &[&[0u8][..], &pat].concat()));
+
+    let mut pmt_body = vec![0xE0 | (pcr_pid >> 8) as u8, pcr_pid as u8, 0xF0, 0];
+    let mut streams = vec![(0x1B, pcr_pid)];
+    if pes_pid != pcr_pid {
+        streams.push((0x06, pes_pid));
+    }
+    for (stream_type, pid) in streams {
+        pmt_body.extend([stream_type, 0xE0 | (pid >> 8) as u8, pid as u8, 0xF0, 0]);
+    }
+    let pmt = psi_section(0x02, 1, &pmt_body);
+    out.extend(payload_packet(PMT_PID, true, &[&[0u8][..], &pmt].concat()));
+
+    let mut pcr = vec![SYNC, (pcr_pid >> 8) as u8, pcr_pid as u8, 0x20, 183, 0x10];
+    pcr.extend([
+        (pcr_base >> 25) as u8,
+        (pcr_base >> 17) as u8,
+        (pcr_base >> 9) as u8,
+        (pcr_base >> 1) as u8,
+        ((pcr_base & 1) as u8) << 7 | 0x7E,
+        0,
+    ]);
+    pcr.resize(PKT, 0xFF);
+    out.extend(pcr);
+
+    let mut pes = vec![0, 0, 1, 0xE0, 0, 0, 0x80];
+    match dts {
+        Some(dts) => {
+            pes.extend([0xC0, 10]);
+            pes.extend(timestamp_field(0b0011, pts));
+            pes.extend(timestamp_field(0b0001, dts));
+        }
+        None => {
+            pes.extend([0x80, 5]);
+            pes.extend(timestamp_field(0b0010, pts));
+        }
+    }
+    out.extend(payload_packet(pes_pid, true, &pes));
+    out
+}
+
+pub(crate) fn pcr_then_pes(pid: u16, pcr_base: u64, dts: Option<u64>, pts: u64) -> Vec<u8> {
+    pcr_then_pes_on(pid, pid, pcr_base, dts, pts)
+}
+
+/// H.222.0 §2.4.2: a decoder may start decoding an AU only once the STC
+/// reaches its DTS, so the PCR that precedes the AU must be below it.
+#[test]
+fn the_reader_measures_the_lead_of_each_pes_over_the_last_pcr() {
+    // packets: PCR base 90_000 on 0x100, then a PES on 0x100 with DTS 99_000
+    let w = summarize(&pcr_then_pes(0x100, 90_000, Some(99_000), 108_000));
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 9_000); // 100 ms
+}
