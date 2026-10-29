@@ -238,8 +238,13 @@ merge commit, and the qualification run checks that nothing under
     only a failure that belongs to a ledgered flake class.
 
     The run's bundle holds `qualification.json`, the rendered
-    `qualification.md`, the SBOMs, `SHA256SUMS`, the build attestations and
-    the C package. Download it from the run's artefacts.
+    `qualification.md`, `TREE-EQUIVALENCE.txt`, the SBOMs, `SHA256SUMS`, the
+    build attestations and the C package. Download it from the run's
+    artefacts. `TREE-EQUIVALENCE.txt` names the soaked and the qualified
+    commit (and the tag on a tag push), shows that nothing under `crates/` or
+    `bindings/` changed between them, and lists every path that did; the
+    record's `release_vm.soak.equivalence` lists the release documents among
+    them.
 11. **Commit the record.** In a docs-only PR, add the run's
     `qualification.json` as `docs/project/qualification.json` (CI's
     `check-qualification` step verifies the page matches it) and render the
@@ -270,13 +275,24 @@ merge commit, and the qualification run checks that nothing under
     | HLS segment probe | the `hls/{ffmpeg,tsp}-pull` cells and `crates/tst-hls/tests/net_hls_e2e.rs` |
     | PTS-rollover and PCR-jitter checks | removed; they never ran |
 13. **Tag** the commit that carries the qualification record from step 11,
-    following the release procedure below. That PR changes release-document
-    paths only, so the soaked and qualified tree still stands for it and the
-    tagged tree carries its own record.
+    following the release procedure below. Three commits and two records are
+    involved, each in one place:
+    - the committed `docs/project/qualification.json` was collected on the
+      commit it names (`source.sha`), the one step 10 qualified; the tag sits
+      on the record PR's merge, which changes release documents only;
+    - the tag push runs `release-qualify` again on the tagged commit, and
+      that run's record (with `source.tag`) is in the Release bundle beside
+      its `TREE-EQUIVALENCE.txt`;
+    - the heavy evidence, the soak and the corpus run, ran on the soaked
+      tree both records name in `release_vm`, and the equivalence file shows
+      that tree differs from the qualified one in release documents only.
 
 ## Release procedure
 
-(`vX.Y.Z` below stands for the release tag, e.g. `v0.3.0`.)
+(`vX.Y.Z` below stands for the release tag, e.g. `v0.3.0`.) The tag goes on
+the record PR's merge commit (step 13 above). The tag push's own
+qualification record and tree-equivalence proof are attached to the draft
+Release; the committed record stays the one step 10 collected.
 
 1. **Tag and push** (only after explicit maintainer confirmation — Maven
    Central is immutable):
