@@ -418,8 +418,10 @@ def collect(art, root, release=False):
         add("sanitizers/" + j, (s or {}).get("conclusion"), san_url)
     c, u = entry("sanitizers")
     add("sanitizers", c, u)
+    # The leg record is the only source of the fuzz conclusion: fuzz.json
+    # holds the counts the verdict checks, not whether the leg succeeded.
     c, u = entry("fuzz")
-    add("fuzz", c if c else (None if fuzz is None else ("success" if not fuzz["crashes"] else "failure")), u)
+    add("fuzz", c, u)
     for n in ("jvm-jar", "python-wheels"):
         c, u = entry(n)
         add(n, c, u)

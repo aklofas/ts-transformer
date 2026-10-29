@@ -208,6 +208,13 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(leg(rec, "ci (on this sha)")["conclusion"], "missing")
         self.assertEqual(rec["verdict"], "NO-GO")
 
+    def test_fuzz_leg_without_a_conclusion_is_missing_even_with_a_clean_fuzz_json(self):
+        def m(f):
+            del f["legs.json"]["fuzz"]
+        rec = collect(m)
+        self.assertEqual(leg(rec, "fuzz")["conclusion"], "missing")
+        self.assertEqual(rec["verdict"], "NO-GO")
+
 
 class HoleTests(unittest.TestCase):
     def test_dirty_tree_is_no_go(self):
