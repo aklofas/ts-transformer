@@ -66,7 +66,7 @@ jobs:
             continue: false
             phase: features
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           submodules: recursive
 
@@ -155,7 +155,7 @@ jobs:
           # package fetched its zip from sourceforge, which 404/522'd on
           # 2026-10-01 and failed this step twice (run 36819765562) — one
           # external single point of failure removed.
-          python -m pip install --upgrade meson pkgconf ninja
+          python -m pip install --require-hashes -r scripts/ci/requirements-build-tools.txt
           # ripgrep: the pinned upstream release, checksum-verified. `gh` and
           # GITHUB_TOKEN are present on every hosted runner.
           RG_VERSION=15.2.0
@@ -545,7 +545,7 @@ jobs:
         # — see commit `f0754dc` body for the full reproduction.
         # Linux-only, matches the cargo doc step's matrix guard.
         if: matrix.name == 'linux-x86_64'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: nightly
 
@@ -894,7 +894,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           submodules: recursive
 
@@ -950,7 +950,7 @@ jobs:
     # 2026-08-08 code.videolan.org outage failed every submodule-cloning
     # job in checkout).
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Rust toolchain, cargo cache, cargo-nextest
         uses: ./.github/actions/rust-setup
@@ -987,7 +987,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           submodules: recursive
 
@@ -1187,7 +1187,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           submodules: recursive
 
@@ -1272,7 +1272,7 @@ jobs:
     # from one Rust table, resolved at `import tstrans`, so a gap fails the
     # import (and the pytest suite) instead of needing a call-site grep.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           submodules: recursive
 
@@ -1293,7 +1293,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=5 update
           sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -1373,7 +1373,7 @@ jobs:
     # job as a smoke check — it patches sys.modules so the [pandas] extra
     # being installed here doesn't suppress the test.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           submodules: recursive
 
@@ -1382,7 +1382,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=5 update
           sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -1451,7 +1451,7 @@ jobs:
           - name: neither
             cargo_flags: "--no-default-features"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           submodules: recursive
 
@@ -1498,7 +1498,7 @@ jobs:
     # pass the previous and current major like the minors, or the intended
     # break fails the job.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           submodules: recursive
 
@@ -1528,7 +1528,7 @@ jobs:
       - name: Previous library cache
         if: steps.release.outputs.lib == ''
         id: cache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ runner.temp }}/prev-target/debug/libtstrans.so
           key: c-abi-${{ steps.prev.outputs.prev }}-${{ hashFiles('rust-toolchain.toml') }}
@@ -1556,7 +1556,7 @@ jobs:
 
       - name: Upload the abidiff report
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: c-abi-report
           path: ${{ runner.temp }}/abi-report.txt
@@ -1571,14 +1571,14 @@ jobs:
     # (the vendored native libs are not crates; see deny.toml's header).
     # Policy lives in deny.toml; `bans`/`sources` are intentionally off.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - id: rust
         uses: ./.github/actions/rust-setup
         with:
           toolchain: none
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check advisories licenses
           rust-version: ${{ steps.rust.outputs.channel }}
@@ -1587,49 +1587,49 @@ jobs:
       # their committed lockfiles: `--locked` fails the job when a lock no
       # longer matches its manifest instead of re-resolving it. roster-sync.sh
       # fails when a crates/*/fuzz workspace is missing from this list.
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: crates/tst-core/fuzz/Cargo.toml
           command: check advisories licenses
           arguments: --config deny.toml --locked
           rust-version: ${{ steps.rust.outputs.channel }}
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: crates/tst-rtp/fuzz/Cargo.toml
           command: check advisories licenses
           arguments: --config deny.toml --locked
           rust-version: ${{ steps.rust.outputs.channel }}
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: crates/tst-srt/fuzz/Cargo.toml
           command: check advisories licenses
           arguments: --config deny.toml --locked
           rust-version: ${{ steps.rust.outputs.channel }}
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: crates/tst-webrtc/fuzz/Cargo.toml
           command: check advisories licenses
           arguments: --config deny.toml --locked
           rust-version: ${{ steps.rust.outputs.channel }}
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: embedded/baremetal-qemu/Cargo.toml
           command: check advisories licenses
           arguments: --config deny.toml --locked
           rust-version: ${{ steps.rust.outputs.channel }}
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: embedded/baremetal-qemu-c/Cargo.toml
           command: check advisories licenses
           arguments: --config deny.toml --locked
           rust-version: ${{ steps.rust.outputs.channel }}
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: embedded/freertos-srt/example/host/Cargo.toml
           command: check advisories licenses

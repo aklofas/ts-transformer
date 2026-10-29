@@ -74,7 +74,7 @@ jobs:
     # without letting one wedged cell burn the 6-hour job default.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -296,7 +296,7 @@ jobs:
         # if-no-files-found: warn covers the results.json/.md pair on that
         # same early-failure path without failing this step.
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: interop-evidence
           path: |
@@ -324,7 +324,7 @@ jobs:
     continue-on-error: true
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -416,7 +416,7 @@ jobs:
 
       - name: Upload the census
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: interop-census-aarch64
           path: ${{ runner.temp }}/interop-census-aarch64.json
@@ -425,7 +425,7 @@ jobs:
 
       - name: Upload interop evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: interop-evidence-aarch64
           path: |

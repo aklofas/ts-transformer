@@ -1,0 +1,11 @@
+# Workflows and composite actions pin every action by commit SHA; this keeps
+# those pins moving. Cargo and pip are covered by deps-advisory.yml instead.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # "/" covers .github/workflows; composite actions need their own entry.
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: weekly
