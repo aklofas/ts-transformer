@@ -441,7 +441,7 @@ the release qualification accepts no shorter run.
 | `soak-rc070-2026-10-04` | 2026-10-01 → 2026-10-04 | `e86dd9ea6d1a` | 259 200 s | `overall_pass=false` | The 0.7.0 release soak. The SRT leg passed every gating verdict; the RIST leg failed corruption attribution on harness defects. |
 | `soak-rtsp-publish-2026-10-08` | 2026-10-09 | `b6545e6004ae` | 3 600 s | `overall_pass=false` | The first one-hour run with the `rtsp-publish` leg, which passed every verdict it owns; the three failures were harness defects on the SRT leg's receiver. |
 | `soak-whep-2026-10-21` | 2026-10-21 | `a5c0e9d7a6af` | 3 600 s | `overall_pass=true` | The first one-hour run with the `whep` leg (WebRTC playback to a reconnecting headless browser); every verdict on every leg passed. Described under "WebRTC playback" below. |
-| `soak-0.9.0-2026-10-27` | 2026-10-24 → 2026-10-27 | `9b8acb3b6fae` | 259 200 s | `overall_pass=true` (re-judged) | The 0.9.0 release soak, with all five legs (`srt`, `rist`, `rtsp-publish`, `rtsp-publish-es` and `whep`). 89 of 93 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The harness reported `overall_pass=false` on four verdicts: `recv_invariants_rist` from the `rist` leg's AV1 carriage check (a harness oracle gap: it does not excuse corruption the impairment schedule attributes), `worker_exits` from one external-publisher teardown race in 432 generations on the `rtsp-publish` leg, and `recv_invariants_rtsp-publish-es` with `klv_placement_rtsp-publish-es` from a 2.3 ms KLV placement excursion over one sender-report interval on the ES leg. None is a library defect; the maintainer re-judged the run as a pass on 2026-10-28, so the archive row records `true` with this note, and the harness fixes are queued for 0.9.1. Run on the release VM after the corpus run on the same tree. |
+| `soak-0.9.0-2026-10-27` | 2026-10-24 → 2026-10-27 | `9b8acb3b6fae` | 259 200 s | `overall_pass=false`, waived | The 0.9.0 release soak, with all five legs (`srt`, `rist`, `rtsp-publish`, `rtsp-publish-es` and `whep`). 89 of 93 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The harness reported `overall_pass=false` on four verdicts: `recv_invariants_rist` from the `rist` leg's AV1 carriage check (a harness oracle gap: it does not excuse corruption the impairment schedule attributes), `worker_exits` from one external-publisher teardown race in 432 generations on the `rtsp-publish` leg, and `recv_invariants_rtsp-publish-es` with `klv_placement_rtsp-publish-es` from a 2.3 ms KLV placement excursion over one sender-report interval on the ES leg. None is a library defect: harness FAIL on four verdicts, waived by the maintainer (harness defects, fixed in 0.9.1); the release was tagged on that waiver, which the release gate no longer admits. Run on the release VM after the corpus run on the same tree. |
 
 The release qualification reads the same runs from
 `tests/coverage/evidence-archives.toml`, except `soak-run2-2026-08-05`, which
@@ -1316,11 +1316,12 @@ report analyses them: a harness oracle gap (the AV1 carriage check does not
 excuse corruption the impairment schedule attributes), one external
 publisher's teardown race in 432 generations, and a 2.3 ms KLV placement
 excursion over one sender-report interval on the elementary publish leg.
-None is a defect in the library, so the maintainer re-judged the run as a
-pass on 2026-10-28 and the row records `true` with that note; the harness
-verdict is kept in the note and in the retained report, not erased. The
-harness fixes (the oracle's excusal, the publisher's post-end-of-stream
-exit rule, the placement tolerance) are queued for 0.9.1.
+None is a defect in the library: harness FAIL on four verdicts, waived by
+the maintainer (harness defects, fixed in 0.9.1); the release was tagged on
+that waiver, which the release gate no longer admits. The archive row keeps
+`overall_pass=false` and carries the waiver beside it. The harness fixes
+are the AV1 oracle's excusal, the publisher's post-end-of-stream exit rule
+and the placement oracle's excursion rule.
 
 ## Stress and ceilings
 
