@@ -53,7 +53,7 @@ use crate::codec::shared::build_nal_unit;
 use crate::error::{map_codec_parse_error, throw_demux};
 use crate::generated::codec::{build_adts_frame_owned, build_frame_owned, build_obu};
 use crate::handle::HandleRegistry;
-use crate::jutil::enum_const;
+use crate::jutil::{enum_const, wrap_heap_byte_buffer};
 use tst_pipeline::binding::BindingErrorKind;
 use tst_pipeline::binding::kind::kind_of_demux;
 
@@ -249,34 +249,25 @@ jni_native! {
 
 jni_native! {
     /// `nNextEvent(handle)` — pull the next event, converting it to a Java
-    /// `DemuxEvent` record. Every current `DemuxEvent` variant maps to a record, so
-    /// the loop returns the first event pulled; the `Ok(None) => continue` arm is a
-    /// retained forward-compat guard (currently unreachable). Returns Java `null`
-    /// when the queue drains.
+    /// `DemuxEvent` record. Returns Java `null` when the queue drains.
     fn Java_org_tstrans_mpegts_Demuxer_nNextEvent<'local>(
         env,
         _class,
         handle: jlong,
     ) -> jobject = std::ptr::null_mut() => {
-        // Lease + drive the pull loop under the resource lock. `with` runs the
-        // closure synchronously, so capturing `env` (`&mut Env`) to build the
-        // Java record in-place is sound. `None` (closed/absent) → IllegalStateException.
+        // Lease + pull under the resource lock. `with` runs the closure
+        // synchronously, so capturing `env` (`&mut Env`) to build the Java record
+        // in-place is sound. `None` (closed/absent) → IllegalStateException.
         let result = REGISTRY.with_poisoning(handle as u64, |dx| {
-            loop {
-                let Some(ev) = dx.next_event() else {
-                    return JObject::null().into_raw();
-                };
-                match convert_event(env, &ev) {
-                    Ok(Some(obj)) => return obj.into_raw(),
-                    // All current `DemuxEvent` variants map to `Ok(Some(..))`, so this
-                    // branch is currently unreachable; retained as a forward-compat
-                    // guard should a future skip-worthy variant appear.
-                    Ok(None) => continue,
-                    Err(()) => {
-                        // RuntimeException: demux has no INTERNAL kind.
-                        throw_demux(env, BindingErrorKind::Internal, "event conversion failed");
-                        return JObject::null().into_raw();
-                    }
+            let Some(ev) = dx.next_event() else {
+                return JObject::null().into_raw();
+            };
+            match convert_event(env, &ev) {
+                Ok(obj) => obj.into_raw(),
+                Err(()) => {
+                    // RuntimeException: demux has no INTERNAL kind.
+                    throw_demux(env, BindingErrorKind::Internal, "event conversion failed");
+                    JObject::null().into_raw()
                 }
             }
         });
@@ -491,14 +482,12 @@ fn closed(env: &mut Env) {
 /// Convert one `DemuxEvent` to a Java `DemuxEvent` record.
 ///
 /// `DemuxEvent` is not marked non-exhaustive, so this match is exhaustive and
-/// every variant currently builds a record: `Ok(Some(obj))`. The `Ok(None)`
-/// "skip this event" channel is retained in the return type as a forward-compat
-/// guard (see `nNextEvent`) but is not produced today. `Err(())` — a JNI call
-/// failed.
+/// every variant builds a record. `Err(())` — a JNI call failed (exception
+/// pending).
 pub(crate) fn convert_event<'local>(
     env: &mut Env<'local>,
     ev: &DemuxEvent,
-) -> Result<Option<JObject<'local>>, ()> {
+) -> Result<JObject<'local>, ()> {
     match ev {
         DemuxEvent::ProgramMap(pm) => {
             let pids = build_pid_list(env, pm.streams.iter().map(|s| s.pid))?;
@@ -514,7 +503,7 @@ pub(crate) fn convert_event<'local>(
                     ],
                 )
                 .map_err(|_| ())?;
-            Ok(Some(obj))
+            Ok(obj)
         }
         DemuxEvent::Sample {
             stream,
@@ -621,7 +610,7 @@ pub(crate) fn convert_event<'local>(
                     .map_err(|_| ())?
                 }
             };
-            Ok(Some(obj))
+            Ok(obj)
         }
         DemuxEvent::Metadata {
             stream,
@@ -648,7 +637,7 @@ pub(crate) fn convert_event<'local>(
                     ],
                 )
                 .map_err(|_| ())?;
-            Ok(Some(obj))
+            Ok(obj)
         }
         DemuxEvent::Discontinuity { stream, kind } => {
             let stream_obj = build_stream_id(env, stream)?;
@@ -662,7 +651,7 @@ pub(crate) fn convert_event<'local>(
                     &[JValue::Object(&stream_obj), JValue::Object(&kind_obj)],
                 )
                 .map_err(|_| ())?;
-            Ok(Some(obj))
+            Ok(obj)
         }
         DemuxEvent::NonConformant { stream, issue } => {
             let stream_obj = build_stream_id(env, stream)?;
@@ -687,7 +676,7 @@ pub(crate) fn convert_event<'local>(
                     ],
                 )
                 .map_err(|_| ())?;
-            Ok(Some(obj))
+            Ok(obj)
         }
         DemuxEvent::ReconnectDiscontinuity => {
             let obj = env
@@ -699,7 +688,7 @@ pub(crate) fn convert_event<'local>(
                     &[],
                 )
                 .map_err(|_| ())?;
-            Ok(Some(obj))
+            Ok(obj)
         }
     }
 }
@@ -883,25 +872,6 @@ pub(crate) fn opt_long<'local>(
             .map_err(|_| ()),
         None => Ok(JObject::null()),
     }
-}
-
-/// Copy `bytes` into a fresh Java `byte[]` and wrap it as a heap `ByteBuffer`
-/// (`java.nio.ByteBuffer.wrap`). The returned buffer is backed by JVM-owned
-/// memory, so it is safe to retain past the next pull / after `close()`.
-pub(crate) fn wrap_heap_byte_buffer<'local>(
-    env: &mut Env<'local>,
-    bytes: &[u8],
-) -> Result<JObject<'local>, ()> {
-    let arr = env.byte_array_from_slice(bytes).map_err(|_| ())?;
-    env.call_static_method(
-        FindClass(jni_str!("java/nio/ByteBuffer")),
-        jni_str!("wrap"),
-        jni_sig!("([B)Ljava/nio/ByteBuffer;"),
-        &[JValue::Object(&arr)],
-    )
-    .map_err(|_| ())?
-    .l()
-    .map_err(|_| ())
 }
 
 /// Build a `java.util.List<Integer>` (an `ArrayList`) of boxed PIDs.

@@ -1,6 +1,5 @@
 package org.tstrans.klv;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
@@ -852,49 +851,40 @@ public final class Klv {
             return Optional.of(decodePrecisionTimestamp(buf));
         }
         if (Arrays.equals(ul, SECURITY_LS_UL)) {
-            long[] berResult = peelBer(buf, 16, "ST 0102");
-            long valueLen = berResult[0];
-            long berBytes = berResult[1];
-            long bodyStart = 16L + berBytes;
-            long bodyEnd = bodyStart + valueLen;
-            if (bodyEnd > buf.length) {
-                throw new org.tstrans.KlvDecodeException(
-                    org.tstrans.KlvDecodeException.Kind.TRUNCATED_SET,
-                    "ST 0102 declared body length " + valueLen
-                        + " exceeds available " + (buf.length - bodyStart));
-            }
-            if (bodyEnd < buf.length) {
-                throw new org.tstrans.KlvDecodeException(
-                    org.tstrans.KlvDecodeException.Kind.MALFORMED_BYTES,
-                    "ST 0102 universal record has " + (buf.length - bodyEnd)
-                        + " trailing bytes after declared body length " + valueLen);
-            }
-            byte[] body = Arrays.copyOfRange(buf, (int) bodyStart, (int) bodyEnd);
+            byte[] body = universalBody(buf, "ST 0102");
             return Optional.of(decodeSecurity(body));
         }
         if (Arrays.equals(ul, VMTI_LS_UL)) {
-            long[] berResult = peelBer(buf, 16, "ST 0903");
-            long valueLen = berResult[0];
-            long berBytes = berResult[1];
-            long bodyStart = 16L + berBytes;
-            long bodyEnd = bodyStart + valueLen;
-            if (bodyEnd > buf.length) {
-                throw new org.tstrans.KlvDecodeException(
-                    org.tstrans.KlvDecodeException.Kind.TRUNCATED_SET,
-                    "ST 0903 declared body length " + valueLen
-                        + " exceeds available " + (buf.length - bodyStart));
-            }
-            if (bodyEnd < buf.length) {
-                throw new org.tstrans.KlvDecodeException(
-                    org.tstrans.KlvDecodeException.Kind.MALFORMED_BYTES,
-                    "ST 0903 universal record has " + (buf.length - bodyEnd)
-                        + " trailing bytes after declared body length " + valueLen);
-            }
-            byte[] body = Arrays.copyOfRange(buf, (int) bodyStart, (int) bodyEnd);
+            byte[] body = universalBody(buf, "ST 0903");
             return Optional.of(decodeVmti(body));
         }
 
         return Optional.empty();
+    }
+
+    /**
+     * Peel the BER length after the 16-byte UL and return the value bytes. The
+     * declared length must match the bytes that follow exactly.
+     */
+    private static byte[] universalBody(byte[] buf, String spec) throws org.tstrans.KlvDecodeException {
+        long[] berResult = peelBer(buf, 16, spec);
+        long valueLen = berResult[0];
+        long berBytes = berResult[1];
+        long bodyStart = 16L + berBytes;
+        long bodyEnd = bodyStart + valueLen;
+        if (bodyEnd > buf.length) {
+            throw new org.tstrans.KlvDecodeException(
+                org.tstrans.KlvDecodeException.Kind.TRUNCATED_SET,
+                spec + " declared body length " + valueLen
+                    + " exceeds available " + (buf.length - bodyStart));
+        }
+        if (bodyEnd < buf.length) {
+            throw new org.tstrans.KlvDecodeException(
+                org.tstrans.KlvDecodeException.Kind.MALFORMED_BYTES,
+                spec + " universal record has " + (buf.length - bodyEnd)
+                    + " trailing bytes after declared body length " + valueLen);
+        }
+        return Arrays.copyOfRange(buf, (int) bodyStart, (int) bodyEnd);
     }
 
     /**

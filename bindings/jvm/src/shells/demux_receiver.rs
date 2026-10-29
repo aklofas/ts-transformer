@@ -312,10 +312,7 @@ jni_native! {
         match res {
             Ok(None) => JObject::null().into_raw(),
             Ok(Some(ev)) => match convert_event(env, &ev) {
-                Ok(Some(obj)) => obj.into_raw(),
-                // All current `DemuxEvent` variants map to a record; retained as a
-                // forward-compat guard (see mpegts::nNextEvent).
-                Ok(None) => JObject::null().into_raw(),
+                Ok(obj) => obj.into_raw(),
                 Err(()) => {
                     // Event-conversion JNI failure. `throw_demux` guards against
                     // clobbering a pending exception; it throws RuntimeException:

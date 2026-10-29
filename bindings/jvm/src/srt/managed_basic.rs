@@ -149,7 +149,7 @@ jni_native! {
         REGISTRY_SENDER.insert(Owned::new(
             JniManagedSender { inner },
             cancel,
-            ManagedSenderSnapshot { handles, stats },
+            ManagedSenderSnapshot { stats },
         )) as jlong
     }
 }

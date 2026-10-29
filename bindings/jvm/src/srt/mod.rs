@@ -8,26 +8,13 @@ mod managed_convenience;
 use std::time::Duration;
 
 use jni::Env;
-use tst_pipeline::binding::ManagedHandles;
 use tst_pipeline::{BackoffStrategy, OverflowPolicy, ReconnectMode, ReconnectPolicy};
 
 /// Construction-constant view of a MANAGED sender (`ManagedSender` /
-/// `ManagedMuxSender`): the handles `tst_srt::shells` composed at open plus the
-/// reconnect/gap telemetry observer. Both live outside the slot, so
-/// `reconnectStats()` / `reconnectAttempts()` answer while a `send*` is parked
-/// in a Blocking reconnect.
+/// `ManagedMuxSender`): the reconnect/gap telemetry observer. It lives outside
+/// the slot, so `reconnectStats()` / `reconnectAttempts()` answer while a
+/// `send*` is parked in a Blocking reconnect.
 pub(crate) struct ManagedSenderSnapshot {
-    /// The open-time handles. `cancel` is consumed by `Owned::new` at
-    /// registration; the counters are kept because the send side reports
-    /// attempts from [`Self::stats`] (`ManagedTransportStats::reconnect_attempts`)
-    /// rather than from `ManagedHandles::attempts`, which the recv side
-    /// maintains separately. Held so a binding-side `reconnecting()` getter
-    /// has the same snapshot to read as the receivers do.
-    #[expect(
-        dead_code,
-        reason = "send side reads attempts from `stats`; kept for the binding-side `reconnecting()` getter and cancel-handle use"
-    )]
-    pub handles: ManagedHandles,
     pub stats: tst_pipeline::ManagedStatsHandle,
 }
 
