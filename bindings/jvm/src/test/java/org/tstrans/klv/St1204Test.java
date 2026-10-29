@@ -505,4 +505,18 @@ class St1204Test {
         assertTrue(ex.getMessage().contains(param),
                 "expected message to mention " + param + "; got: " + ex.getMessage());
     }
+
+    @Test
+    void encodeRejectsAVersionOutsideAByte() throws KlvDecodeException {
+        CoreId id = Klv.decodeCoreId(TABLE7);
+        for (int bad : new int[] {-1, 256}) {
+            CoreId c = new CoreId(bad, id.sensorType(), id.sensorId(), id.platformType(),
+                id.platformId(), id.windowId(), id.minorId());
+            var e = assertThrows(IllegalArgumentException.class, () -> Klv.encodeCoreId(c));
+            assertTrue(e.getMessage().contains("version"), e.getMessage());
+        }
+        CoreId ok = new CoreId(255, id.sensorType(), id.sensorId(), id.platformType(),
+            id.platformId(), id.windowId(), id.minorId());
+        assertNotNull(Klv.encodeCoreId(ok), "the byte boundary is accepted");
+    }
 }

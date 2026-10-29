@@ -458,4 +458,14 @@ class H264ReceiverTest {
             .programNumber(1).pmtPid(0x1000)
             .addVideo(0x1011, VideoCodec.H264).build();
     }
+
+    @Test
+    void listenWithConfigRejectsAPayloadTypeOutsideAByte() {
+        for (int bad : new int[] {-1, 256}) {
+            H264DepayConfig cfg = H264DepayConfig.builder().payloadType(bad).build();
+            var e = assertThrows(IllegalArgumentException.class,
+                () -> H264Receiver.listen("rtp://127.0.0.1:0?pt=96", cfg));
+            assertTrue(e.getMessage().contains("payloadType"), e.getMessage());
+        }
+    }
 }

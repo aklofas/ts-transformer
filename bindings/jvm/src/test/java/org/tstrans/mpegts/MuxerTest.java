@@ -56,4 +56,35 @@ class MuxerTest {
         MuxException ex = assertThrows(MuxException.class, () -> new Muxer(cfg));
         assertEquals(MuxException.Kind.CONFIG_INVALID, ex.kind());
     }
+
+    private static MuxerConfig klvConfig() throws Exception {
+        return MuxerConfig.builder().programNumber(1).pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.H264)
+            .addKlv(0x102, KlvStreamType.PRIVATE_DATA, /*carriesPts=*/ true).build();
+    }
+
+    @Test
+    void pushKlvRejectsAServiceIdOutsideAByte() throws Exception {
+        try (Muxer m = new Muxer(klvConfig())) {
+            for (int bad : new int[] {-1, 256, 257}) {
+                var e = assertThrows(IllegalArgumentException.class, () -> m.pushKlv(new byte[] {1}, 0, bad));
+                assertTrue(e.getMessage().contains("metadataServiceId"), e.getMessage());
+            }
+            assertEquals(0, org.tstrans.TestSupport.drain(m).length, "a rejected push queues nothing");
+            m.pushKlv(new byte[] {1}, 0, 255);
+        }
+    }
+
+    @Test
+    void pushKlvToRejectsAServiceIdOutsideAByte() throws Exception {
+        try (Muxer m = new Muxer(klvConfig())) {
+            KlvStreamHandle h = m.klvHandles().get(0);
+            for (int bad : new int[] {-1, 256}) {
+                var e = assertThrows(IllegalArgumentException.class, () -> m.pushKlvTo(h, new byte[] {1}, 0, bad));
+                assertTrue(e.getMessage().contains("metadataServiceId"), e.getMessage());
+            }
+            assertEquals(0, org.tstrans.TestSupport.drain(m).length, "a rejected push queues nothing");
+            m.pushKlvTo(h, new byte[] {1}, 0, 255);
+        }
+    }
 }

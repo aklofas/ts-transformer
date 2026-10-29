@@ -152,4 +152,19 @@ class MuxerMispTest {
         assertEquals(0x01, nano.timeStatus());
         assertEquals(999L, nano.value());
     }
+
+    @Test
+    void pushVideoMispToRejectsATimeStatusOutsideAByte() throws Exception {
+        MuxerConfig cfg = MuxerConfig.builder().addVideo(0x100, VideoCodec.H264).build();
+        try (Muxer m = new Muxer(cfg)) {
+            VideoStreamHandle h = m.videoStreamHandle(0).orElseThrow();
+            for (int bad : new int[] {-1, 256}) {
+                MispTimestamp ts = MispTimestamp.micros(1L, bad);
+                var e = assertThrows(IllegalArgumentException.class,
+                    () -> m.pushVideoMispTo(h, syntheticH264IdrPrefix(), 9000L, true, ts));
+                assertTrue(e.getMessage().contains("timeStatus"), e.getMessage());
+            }
+            assertEquals(0, drain(m).length, "a rejected push queues nothing");
+        }
+    }
 }

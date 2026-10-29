@@ -183,7 +183,9 @@ jni_native! {
             }
         };
 
-        let nut = (nal_unit_type & 0xff) as u8;
+        let Ok(nut) = crate::jutil::checked_u8(env, nal_unit_type as i64, "nalUnitType") else {
+            return JObject::null().into_raw();
+        };
         match parse_slice_header_light(&bytes, sps_ctx.as_ref(), nut) {
             Ok(h) => match build_h266_slice_header_light(env, &h) {
                 Ok(obj) => obj.into_raw(),

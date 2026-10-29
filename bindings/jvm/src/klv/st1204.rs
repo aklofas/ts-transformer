@@ -239,7 +239,7 @@ fn read_core_id<'a>(env: &mut Env<'a>, obj: &JObject<'a>) -> jni::errors::Result
     let version = env
         .call_method(obj, jni_str!("version"), jni_sig!("()I"), &[])?
         .i()?;
-    let version = version as u8;
+    let version = crate::jutil::checked_u8(env, version as i64, "version")?;
 
     let sensor_type = read_nullable_id_type(env, obj, "sensorType")?;
     let sensor_id = read_nullable_bytes(env, obj, "sensorId")?;
