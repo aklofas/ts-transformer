@@ -186,4 +186,10 @@ class DemuxerConfigTest {
         }
         return out;
     }
+
+    @Test
+    void enumSettersRejectNull() {
+        assertThrows(NullPointerException.class, () -> DemuxerConfig.builder().strictMode(null));
+        assertThrows(NullPointerException.class, () -> DemuxerConfig.builder().av1Carriage(null));
+    }
 }

@@ -1,14 +1,40 @@
 package org.tstrans.io;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.inputTs;
+import static org.tstrans.TestSupport.isLinux;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 import org.tstrans.mpegts.DemuxEvent;
 
 class ParseFileTest {
+
+    /** A demuxer that cannot be built must not leave the opened input behind. */
+    @Test
+    @Timeout(60)
+    void parseFileClosesItsInputWhenTheNativeLibraryCannotLoad(@TempDir Path tmp) throws Exception {
+        assumeTrue(isLinux(), "counts descriptors through /proc/self/fd");
+        Path input = Files.write(tmp.resolve("input.ts"), new byte[188]);
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        Process child = new ProcessBuilder(List.of(java,
+                "-Dtstrans.native.lib=/nonexistent/libtstjni.so",
+                "-cp", System.getProperty("java.class.path"),
+                ParseFileOpenFailureChild.class.getName(), input.toString()))
+            .redirectErrorStream(true).start();
+        String out = new String(child.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(child.waitFor(30, TimeUnit.SECONDS), out);
+        assertEquals(0, child.exitValue(), out);
+        assertTrue(out.contains("THROWN=java.lang.UnsatisfiedLinkError"), out);
+        assertTrue(out.contains("OPEN=0"), out);
+    }
 
     @Test
     void parseFileYieldsDemuxEvents() throws Exception {
