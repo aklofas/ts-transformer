@@ -34,6 +34,13 @@ refuse "an empty list" $'[arm64_subset]\ncells = [\n]\n'
 refuse "an unquoted pattern" $'[arm64_subset]\ncells = [\n  srt/*\n]\n'
 refuse "another key" $'[arm64_subset]\nlist = [\n  "srt/*"\n]\n'
 
+dead=$(subset_dead_patterns $'srt/*\nmux/*\nrist/us-to-tsp\nklv/*' $'srt/us-to-tsp\nrist/us-to-tsp\nwhep/x')
+if [[ "$dead" == $'mux/*\nklv/*' ]]; then echo "ok: names the patterns that match no declared cell"; else
+  fail "subset_dead_patterns gave '$dead'"
+fi
+[[ -z $(subset_dead_patterns "$got" $'srt/a\nsrt-live/a/b\nrist/a\nrtsp-serve/ffmpeg-pull\nrtsp-publish/a\nanalyze/tsanalyze/a\nanalyze/tsp-analyze/a') ]] \
+  && echo "ok: every live pattern matches its family" || fail "a live pattern matched nothing"
+
 CELLS_GLOB="*"
 SUBSET_CELLS="$got"
 for id in srt/us-to-ffmpeg srt/tsp-to-us-encrypted srt-live/us-to-tsp/h265-klv rist/ffmpeg-to-us \

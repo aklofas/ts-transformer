@@ -287,7 +287,7 @@ class RenderTests(unittest.TestCase):
         body += "## Evidence for the 0.8.0 tree\n\nold text\n"
         put(page, body)
         exit_page = os.path.join(tmp, q.EXIT_PAGE)
-        put(exit_page, "# Exit\n\n" + q.exit_wrapped(None, [], [], None) + "\n\nrest\n")
+        put(exit_page, "# Exit\n\n" + q.exit_wrapped(None, [], []) + "\n\nrest\n")
         return page
 
     def test_check_fails_when_the_exit_criteria_block_is_stale_and_write_fixes_it(self):
@@ -339,6 +339,11 @@ class RenderTests(unittest.TestCase):
             rc, _, err = self.run_cli(["render", "--json", jf, "--root", tmp, "--check"])
             self.assertEqual(rc, 1)
             self.assertIn("must hold a GO record", err)
+
+    def test_replace_block_inserts_above_the_anchor_it_is_given(self):
+        text = "# P\n\n## Other heading\n"
+        out = q.replace_block(text, "BLOCK", "<b>", "<e>", "p.md", "## Other heading")
+        self.assertEqual(out, "# P\n\nBLOCK\n\n## Other heading\n")
 
     def test_check_on_empty_block_without_json_skips(self):
         tmp = tempfile.mkdtemp()
@@ -907,14 +912,49 @@ class ExitCriteriaTests(unittest.TestCase):
         corpus = [l for l in text.splitlines() if l.startswith("**The corpus today.**")][0]
         self.assertTrue(corpus.endswith(" Status: met."), corpus)
 
+    def waived_record(self, soak_id="soak-9.9.0-2026-10-27", tag=None):
+        """A release record whose soak was waived (admitted with allow_waiver)."""
+        rows = archives_toml(archive_row(soak_id, "soak", SHA, overall_pass=False, legs=FIVE)
+                             + '[archive.waiver]\nverdicts = ["a", "b"]\nreason = "harness"\n'
+                               'reviewer = "maintainer"\ndate = "2026-10-28"\nfixed_in = "9.9.1"\n',
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        art, root = build(tempfile.mkdtemp(), archives=rows)
+        return q.collect(art, root, release=True, allow_waiver=True, tag=tag)
+
+    def test_a_waiver_names_the_release_its_soak_archive_stood_for(self):
+        rec = self.waived_record()
+        text = q.render_exit_criteria(rec, rec["archives"], [])
+        self.assertIn("harness verdict FAIL, waived: 2 verdict(s) by maintainer on 2026-10-28, "
+                      "fixed in 9.9.1", text)
+        self.assertIn("Status: met by waiver (9.9.0); a raw pass is required from 9.9.1.", text)
+        # A tag on the record names the release instead.
+        rec = self.waived_record(tag="v9.9.5")
+        self.assertIn("met by waiver (9.9.5);", q.render_exit_criteria(rec, rec["archives"], []))
+        # An archive id that names no release, and no tag: no version is claimed.
+        rec = self.waived_record(soak_id="soak-rel")
+        self.assertIn("Status: met by waiver; a raw pass is required from 9.9.1.",
+                      q.render_exit_criteria(rec, rec["archives"], []))
+
     def test_a_waiver_recorded_after_collection_reads_as_met_by_waiver(self):
         rec = self.release_record(RELEASE_OK)
         archives = [dict(a, overall_pass=False, waiver=dict(WAIVER, fixed_in="9.9.1"))
                     if a["id"] == "soak-rel" else a for a in rec["archives"]]
-        text = q.render_exit_criteria(rec, archives, [], release="9.9.0")
-        self.assertIn("harness verdict FAIL, waived: 2 verdict(s) by maintainer on 2026-10-28, "
-                      "fixed in 9.9.1", text)
-        self.assertIn("Status: met by waiver (9.9.0); a raw pass is required from 9.9.1.", text)
+        self.assertIn("Status: met by waiver; a raw pass is required from 9.9.1.",
+                      q.render_exit_criteria(rec, archives, []))
+
+    def test_a_dated_changelog_section_leaves_the_block_unchanged(self):
+        tmp = tempfile.mkdtemp()
+        RenderTests._page(None, tmp)
+        jf = os.path.join(tmp, "q.json")
+        put(jf, self.waived_record())
+        rc, _, err = RenderTests.run_cli(None, ["render", "--json", jf, "--root", tmp, "--write"])
+        self.assertEqual(rc, 0, err)
+        before = slurp(os.path.join(tmp, q.EXIT_PAGE))
+        self.assertIn("met by waiver (9.9.0); a raw pass is required from 9.9.1", before)
+        put(os.path.join(tmp, "CHANGELOG.md"), "# Changelog\n\n## [9.9.1] \u2014 2099-01-01\n\n## [9.9.0] \u2014 2098-01-01\n")
+        rc, _, err = RenderTests.run_cli(None, ["render", "--json", jf, "--root", tmp, "--check"])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(slurp(os.path.join(tmp, q.EXIT_PAGE)), before)
 
     def test_a_mid_cycle_record_names_the_newest_archives(self):
         rec = collect(archives=RELEASE_OK)
@@ -933,7 +973,9 @@ class ExitCriteriaTests(unittest.TestCase):
                "skipped": 10, "stale": 0}
         text = q.render_exit_criteria(rec, rec["archives"], [arm])
         self.assertIn("**The ARM64 subset today.** The linux-aarch64 census (subset-arm64) reads "
-                      "80 / 70 / 0 / 10: total, pass, fail, skipped. Status: met.", text)
+                      "80 / 70 / 0 / 10: total, pass, fail, skipped. Status: met, with 10 cell(s) skipped for "
+                      "a missing peer tool.", text)
+        self.assertIn("Status: met.", q.render_exit_criteria(rec, rec["archives"], [dict(arm, skipped=0)]))
         text = q.render_exit_criteria(rec, rec["archives"], [dict(arm, fail=1)])
         self.assertIn("Status: open: the linux-aarch64 census has 1 failure(s).", text)
 

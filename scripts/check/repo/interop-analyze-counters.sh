@@ -55,6 +55,14 @@ $(video 1 0 0 0 268200000 0 897000)"
 check "one leap per clock that wraps at 2^33 in the capture" "0" "$TS
 $PAT
 $(video 1 1 0 2576845377600 133200000 8589484592 447000)"
+check "a backward reset that does not wrap is not excused" \
+  "nonzero pid counters: pid=4113 pcrleap=1 ptsleap=1 discontinuities=0" "$TS
+$PAT
+$(video 1 1 0 900000000 27000000 3000000 90000)"
+check "a reset from the top half of the range to near zero is not a wrap" \
+  "nonzero pid counters: pid=4113 pcrleap=1 ptsleap=1 discontinuities=0" "$TS
+$PAT
+$(video 1 1 0 1500000000000 133200000 5000000000 447000)"
 check "a step-back on top of a wrap" \
   "nonzero pid counters: pid=4113 pcrleap=2 ptsleap=1 discontinuities=0" "$TS
 $PAT

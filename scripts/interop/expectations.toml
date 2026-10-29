@@ -34,6 +34,9 @@
 #   reason = "mpv has no async KLV support (see linked ticket)"
 #   ref = "https://example.invalid/TICKET-123"       # optional
 #   failure_contains = "some substring"              # mandatory on expected_unsupported, see below
+#   arch = "aarch64"                     # optional: "x86_64" or "aarch64"; the row applies only
+#                                        # to a run on that arch (inventory.json's `arch`, from
+#                                        # `uname -m`), and is never judged stale on another
 #
 # `expected_unsupported`: this (cell, profile) pair is known to fail and
 # is not expected to ever pass — if it starts passing, `report merge`

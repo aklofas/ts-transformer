@@ -478,10 +478,10 @@ with no record off by more than 10 ms, is the mapping jitter of one
 report. It passes as a `klv_placement_excursion_rtsp-publish-es` row
 marked excused, with its record count, span, largest error and
 generation. A second excursion in a generation, a longer one, or any
-record off by more than 10 ms fails the verdict. Each new publisher restarts the timeline,
-so the receiver excuses one backward timestamp step per PID at each
-declared generation boundary, and the timing anomalies that coincide with
-it; any other backward step fails. The verdict detail gives the excused
+record off by more than 10 ms fails the verdict. Each new publisher
+restarts the timeline, so the receiver excuses one backward timestamp step
+per PID at each declared generation boundary, and the timing anomalies that
+coincide with it; any other backward step fails. The verdict detail gives the excused
 counts. No archived run has carried this leg yet.
 
 ### The current soak shape (2026-09-14)

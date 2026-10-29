@@ -741,7 +741,18 @@ def _raw_text(row):
         len(w["verdicts"]), w["reviewer"], w["date"], w["fixed_in"])
 
 
-def _criterion(kind, entry, archives, gate, release):
+def _waived_release(rec, row):
+    """The release a waiver stood in for: the record's tag, else the version the
+    waived archive's id names (`soak-0.9.0-2026-10-27` stood for 0.9.0), else None.
+    Never the CHANGELOG, which moves on before the record is replaced."""
+    tag = ((rec or {}).get("source") or {}).get("tag")
+    if tag:
+        return tag[1:] if tag.startswith("v") else tag
+    m = re.search(r"(?:^|-)(\d+\.\d+\.\d+)(?:-|$)", row["id"])
+    return m.group(1) if m else None
+
+
+def _criterion(kind, entry, archives, gate, rec):
     """The status sentence of the soak or corpus criterion. The archive table is read
     as it stands now, so a waiver entered after the record was collected shows."""
     row = next((a for a in archives if a["id"] == entry["id"]), entry)
@@ -752,6 +763,7 @@ def _criterion(kind, entry, archives, gate, release):
     elif d == "pass":
         status = "met"
     elif d == "waived":
+        release = _waived_release(rec, row)
         status = "met by waiver%s; a raw pass is required from %s" % (
             (" (%s)" % release) if release else "", row["waiver"]["fixed_in"])
     else:
@@ -759,11 +771,10 @@ def _criterion(kind, entry, archives, gate, release):
     return row, status
 
 
-def render_exit_criteria(rec, archives, census, release=None):
+def render_exit_criteria(rec, archives, census):
     """The status paragraphs of the 1.0 exit-criteria page: the soak and corpus
     criteria from the committed record's release gate and the archive table, the
-    ARM64 subset from the interop censuses. `release` is the version the record
-    qualified, named when a waiver stands in for a raw pass."""
+    ARM64 subset from the interop censuses."""
     gate = (rec or {}).get("release_vm") or {}
     soaks = [a for a in archives if a["kind"] == "soak"]
     long = [a for a in _by_date(soaks) if a.get("expected_duration_s") == RELEASE_SOAK_S]
@@ -787,7 +798,7 @@ def render_exit_criteria(rec, archives, census, release=None):
                 body = "The committed release qualification (%s) cites no %s archive. Status: not met: %s." % (
                     rec["label"], kind, reasons[0] if reasons else "%s: none recorded" % kind)
             else:
-                row, status = _criterion(kind, entry, archives, gate, release)
+                row, status = _criterion(kind, entry, archives, gate, rec)
                 body = cited % (rec["label"], kind, desc(dict(entry, **row)), _raw_text(row), status)
             out.append(_today(anchor, label, body))
     arm = next((c for c in census if c.get("arch") == "linux-aarch64"), None)
@@ -796,31 +807,16 @@ def render_exit_criteria(rec, archives, census, release=None):
     else:
         body = "The linux-aarch64 census (%s) reads %d / %d / %d / %d: total, pass, fail, skipped. Status: %s." % (
             arm.get("shape", "unknown"), arm["total"], arm["pass"], arm["fail"], arm["skipped"],
-            "met" if arm["fail"] == 0 and arm["total"] > 0
+            ("met" + (", with %d cell(s) skipped for a missing peer tool" % arm["skipped"]
+                      if arm["skipped"] else ""))
+            if arm["fail"] == 0 and arm["total"] > 0
             else "open: the linux-aarch64 census has %d failure(s)" % arm["fail"])
     out.append(_today("the-arm64-subset-today", "The ARM64 subset today.", body))
     return "\n\n".join(out) + "\n"
 
 
-def exit_wrapped(rec, archives, census, release):
-    return EXIT_BEGIN + "\n" + render_exit_criteria(rec, archives, census, release) + EXIT_END
-
-
-def _release_version(root, rec):
-    """The version the committed record qualified: its tag, else the CHANGELOG's
-    newest dated section (the record is committed for the release being dated)."""
-    tag = ((rec or {}).get("source") or {}).get("tag")
-    if tag:
-        return tag[1:] if tag.startswith("v") else tag
-    try:
-        with open(os.path.join(root, "CHANGELOG.md")) as f:
-            for line in f:
-                m = re.match(r"## \[(\d+\.\d+\.\d+)\] \S+ \d{4}-\d\d-\d\d", line)
-                if m:
-                    return m.group(1)
-    except FileNotFoundError:
-        pass
-    return None
+def exit_wrapped(rec, archives, census):
+    return EXIT_BEGIN + "\n" + render_exit_criteria(rec, archives, census) + EXIT_END
 
 
 def _current_archives(root, rec):
@@ -844,9 +840,9 @@ def replace_block(text, block, begin=BEGIN, end=END, page=PAGE, anchor=ANCHOR):
         return text[:a] + block + text[b + len(end):]
     if anchor is None:
         die("%s has no generated-block markers" % page, 1)
-    if ANCHOR not in text:
+    if anchor not in text:
         die("%s has no '%s' heading to insert above" % (page, anchor), 1)
-    k = text.index(ANCHOR)
+    k = text.index(anchor)
     return text[:k] + block + "\n\n" + text[k:]
 
 
@@ -865,8 +861,7 @@ def cmd_render(args):
     census = ((rec or {}).get("interop") or {}).get("censuses", [])
     pages = [(page, PAGE, text, replace_block(text, wrapped(rec))),
              (exit_page, EXIT_PAGE, exit_text,
-              replace_block(exit_text, exit_wrapped(rec, _current_archives(args.root, rec), census,
-                                                    _release_version(args.root, rec)),
+              replace_block(exit_text, exit_wrapped(rec, _current_archives(args.root, rec), census),
                             EXIT_BEGIN, EXIT_END, EXIT_PAGE, None))]
     if args.write:
         for path, _, old, new in pages:

@@ -3,7 +3,7 @@
 //! results. The shared result types live in the parent module.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -32,6 +32,24 @@ pub struct Expectation {
     /// name the failure text it absorbs); optional on a `KnownFlaky`
     /// row, which by definition has no single mechanism string.
     pub failure_contains: Option<String>,
+    /// `x86_64` or `aarch64`: the row applies only to a run on that
+    /// architecture (see [`expectations_for_arch`]); unset, to every run.
+    pub arch: Option<String>,
+}
+
+/// The architectures an `arch` key may name: `uname -m` of the runners the
+/// interop workflow uses.
+const EXPECTATION_ARCHES: [&str; 2] = ["x86_64", "aarch64"];
+
+/// The rows that apply to a run on `arch` (the inventory's): every unscoped
+/// row, and the rows scoped to that architecture. A row scoped to another
+/// architecture is neither applied nor judged stale, so an arm-only failure
+/// never reads as a stale row on the x86_64 census.
+pub fn expectations_for_arch(rows: &[Expectation], arch: Option<&str>) -> Vec<Expectation> {
+    rows.iter()
+        .filter(|e| e.arch.is_none() || e.arch.as_deref() == arch)
+        .cloned()
+        .collect()
 }
 
 /// The two verdicts an expectation can declare. See
@@ -57,6 +75,7 @@ struct ExpectBuilder {
     reason: Option<String>,
     reference: Option<String>,
     failure_contains: Option<String>,
+    arch: Option<String>,
 }
 
 impl ExpectBuilder {
@@ -71,6 +90,15 @@ impl ExpectBuilder {
             "reason" => self.reason = Some(value),
             "ref" => self.reference = Some(value),
             "failure_contains" => self.failure_contains = Some(value),
+            "arch" => {
+                if !EXPECTATION_ARCHES.contains(&value.as_str()) {
+                    return Err(format!(
+                        "expectations line {line_no}: arch must be one of {EXPECTATION_ARCHES:?}, \
+                         got {value:?}"
+                    ));
+                }
+                self.arch = Some(value);
+            }
             other => {
                 return Err(format!(
                     "expectations line {line_no}: unknown key `{other}`"
@@ -119,6 +147,7 @@ impl ExpectBuilder {
             reason,
             reference: self.reference,
             failure_contains: self.failure_contains,
+            arch: self.arch,
         })
     }
 }
@@ -170,9 +199,10 @@ fn parse_kv_line(line: &str, line_no: usize) -> Result<(String, String), String>
 /// `full_cells = <integer>`, `[<name>_subset]` tables holding one
 /// `cells = [` … `]` list of quoted cell patterns, one per line, and
 /// `key = "value"` lines within an `[[expect]]` block. Anything else is a
-/// loud parse error naming the offending line number. The census and the
-/// subsets are read separately by [`parse_census`] and [`parse_subset`];
-/// this returns only the rows.
+/// loud parse error naming the offending line number, so `report merge`
+/// refuses a malformed subset table. The census is read separately by
+/// [`parse_census`]; this returns only the rows. A subset's cell list is
+/// read by `run-matrix.sh --only-subset` (lib.sh `subset_cells`).
 pub fn parse_expectations(text: &str) -> Result<Vec<Expectation>, String> {
     parse_expectations_file(text).map(|f| f.rows)
 }
@@ -184,24 +214,16 @@ pub fn parse_census(text: &str) -> Result<Option<usize>, String> {
     parse_expectations_file(text).map(|f| f.census)
 }
 
-/// The cell patterns of the `[<name>_subset]` table (`run-matrix.sh
-/// --only-subset <name>` runs exactly these), or `None` when the file has
-/// no such table.
-pub fn parse_subset(text: &str, name: &str) -> Result<Option<Vec<String>>, String> {
-    parse_expectations_file(text).map(|mut f| f.subsets.remove(name))
-}
-
 struct ExpectationsFile {
     rows: Vec<Expectation>,
     census: Option<usize>,
-    subsets: BTreeMap<String, Vec<String>>,
 }
 
 /// Where the parser is: a subset table before its `cells = [` line, or
 /// inside the list.
 enum SubsetState {
     Header(String, usize),
-    List(String, usize, Vec<String>),
+    List(String, usize, usize),
 }
 
 fn parse_expectations_file(text: &str) -> Result<ExpectationsFile, String> {
@@ -209,7 +231,7 @@ fn parse_expectations_file(text: &str) -> Result<ExpectationsFile, String> {
     let mut current: Option<ExpectBuilder> = None;
     let mut in_census = false;
     let mut census: Option<usize> = None;
-    let mut subsets: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut subsets: BTreeSet<String> = BTreeSet::new();
     let mut subset: Option<SubsetState> = None;
     let mut last_line = 0;
 
@@ -228,23 +250,22 @@ fn parse_expectations_file(text: &str) -> Result<ExpectationsFile, String> {
                          `cells = [` list, got: {line:?}"
                     ));
                 }
-                subset = Some(SubsetState::List(name, at, Vec::new()));
+                subset = Some(SubsetState::List(name, at, 0));
                 continue;
             }
             Some(SubsetState::List(name, at, cells)) if line == "]" => {
-                if cells.is_empty() {
+                if cells == 0 {
                     return Err(format!(
                         "expectations line {line_no}: [{name}_subset] (line {at}) lists an empty \
                          `cells` array"
                     ));
                 }
-                subsets.insert(name, cells);
+                subsets.insert(name);
                 continue;
             }
-            Some(SubsetState::List(name, at, mut cells)) => {
+            Some(SubsetState::List(name, at, cells)) => {
                 let item = line.strip_suffix(',').unwrap_or(line).trim();
-                let pattern = item
-                    .strip_prefix('"')
+                item.strip_prefix('"')
                     .and_then(|v| v.strip_suffix('"'))
                     .filter(|v| !v.is_empty() && !v.contains('"'))
                     .ok_or_else(|| {
@@ -253,8 +274,7 @@ fn parse_expectations_file(text: &str) -> Result<ExpectationsFile, String> {
                              cell pattern, got: {line:?}"
                         )
                     })?;
-                cells.push(pattern.to_string());
-                subset = Some(SubsetState::List(name, at, cells));
+                subset = Some(SubsetState::List(name, at, cells + 1));
                 continue;
             }
             None => {}
@@ -272,7 +292,7 @@ fn parse_expectations_file(text: &str) -> Result<ExpectationsFile, String> {
                 out.push(builder.finish(line_no)?);
             }
             in_census = false;
-            if subsets.contains_key(name) {
+            if subsets.contains(name) {
                 return Err(format!(
                     "expectations line {line_no}: duplicate [{name}_subset] table"
                 ));
@@ -351,11 +371,7 @@ fn parse_expectations_file(text: &str) -> Result<ExpectationsFile, String> {
         out.push(builder.finish(last_line)?);
     }
     reject_ambiguous(&out)?;
-    Ok(ExpectationsFile {
-        rows: out,
-        census,
-        subsets,
-    })
+    Ok(ExpectationsFile { rows: out, census })
 }
 
 /// Can `a` and `b` (exact ids or trailing-`*` prefix globs) both match
@@ -372,11 +388,15 @@ fn patterns_overlap(a: &str, b: &str) -> bool {
 /// Reject a table where two rows could both claim the same (cell,
 /// profile) — first-match-wins would then silently decide which
 /// documented mechanism a failure gets attributed to. Two rows may
-/// share a cell only when each carries a DIFFERENT `failure_contains`.
+/// share a cell only when each carries a DIFFERENT `failure_contains`,
+/// or when they are scoped to different architectures.
 fn reject_ambiguous(expectations: &[Expectation]) -> Result<(), String> {
     for (i, a) in expectations.iter().enumerate() {
         for b in &expectations[i + 1..] {
             if a.profile != b.profile || !patterns_overlap(&a.cell, &b.cell) {
+                continue;
+            }
+            if matches!((&a.arch, &b.arch), (Some(x), Some(y)) if x != y) {
                 continue;
             }
             let distinct = matches!((&a.failure_contains, &b.failure_contains),
@@ -649,6 +669,11 @@ pub struct Inventory {
     pub allowed_skips: Vec<String>,
     #[serde(default)]
     pub tools: serde_json::Value,
+    /// `uname -m` of the box that ran the matrix; selects the
+    /// arch-scoped expectation rows. Absent in an older inventory, which
+    /// then applies only unscoped rows.
+    #[serde(default)]
+    pub arch: Option<String>,
 }
 
 pub const SHAPE_FULL: &str = "full";
@@ -825,6 +850,7 @@ pub fn merge(
     }
     check_inventory(&raw_cells, &inventory, full_cells)?;
 
+    let expectations = expectations_for_arch(&expectations, inventory.arch.as_deref());
     let mut results = build_results(raw_cells, &expectations, meta);
     results.inventory = Some(InventorySummary {
         shape: if inventory.shape == SHAPE_FULL {
@@ -1151,6 +1177,7 @@ mod tests {
                 .collect(),
             allowed_skips: allowed_skips.iter().map(|s| s.to_string()).collect(),
             tools: serde_json::json!({}),
+            arch: None,
         }
     }
 
@@ -1370,6 +1397,7 @@ mod tests {
             reason: reason.to_string(),
             reference: None,
             failure_contains: None,
+            arch: None,
         }
     }
 
@@ -1419,6 +1447,57 @@ mod tests {
 
     fn raw_fail(cell: &str, profile: &str, failures: &[&str]) -> RawCell {
         raw_cell_with_failures(cell, profile, RawVerdict::Fail, failures)
+    }
+
+    #[test]
+    fn an_arch_scoped_row_parses_and_an_unknown_arch_is_an_error() {
+        let row = "[[expect]]\ncell = \"srt/us-to-gst\"\nprofile = \"baseline\"\nverdict = \"known_flaky\"\n\
+                   reason = \"r\"\narch = \"aarch64\"\n";
+        assert_eq!(
+            parse_expectations(row).unwrap()[0].arch.as_deref(),
+            Some("aarch64")
+        );
+        let e = parse_expectations(&row.replace("aarch64", "mips")).unwrap_err();
+        assert!(e.contains("arch"), "{e}");
+        // The same cell on two arches is two rows, not an ambiguity.
+        let two = format!("{row}{}", row.replace("aarch64", "x86_64"));
+        assert_eq!(parse_expectations(&two).unwrap().len(), 2);
+    }
+
+    /// An arm-only row applies to the aarch64 census and is neither applied
+    /// nor judged stale on the x86_64 one, in both directions.
+    #[test]
+    fn an_arch_scoped_row_applies_only_to_a_census_of_that_arch() {
+        let arm_row = Expectation {
+            arch: Some("aarch64".to_string()),
+            ..expect_row("srt/us-to-gst", "baseline", Some("arm only"))
+        };
+        let rows = [arm_row];
+        let judge = |arch: &str, verdict: RawVerdict, failures: &[&str]| {
+            let raw = vec![raw_cell_with_failures(
+                "srt/us-to-gst",
+                "baseline",
+                verdict,
+                failures,
+            )];
+            build_results(
+                raw,
+                &expectations_for_arch(&rows, Some(arch)),
+                serde_json::json!({}),
+            )
+        };
+        // x86_64: a PASS leaves the arm row unjudged (not stale), a FAIL stays unexpected.
+        let r = judge("x86_64", RawVerdict::Pass, &[]);
+        assert!(r.summary.stale_expectations.is_empty());
+        let r = judge("x86_64", RawVerdict::Fail, &["arm only"]);
+        assert_eq!(r.cells[0].verdict, Verdict::Fail);
+        // aarch64: the row explains the FAIL and goes stale on a PASS.
+        let r = judge("aarch64", RawVerdict::Fail, &["arm only"]);
+        assert_eq!(r.cells[0].verdict, Verdict::ExpectedUnsupported);
+        let r = judge("aarch64", RawVerdict::Pass, &[]);
+        assert_eq!(r.summary.stale_expectations.len(), 1);
+        // A run whose inventory names no arch applies only unscoped rows.
+        assert!(expectations_for_arch(&rows, None).is_empty());
     }
 
     // (a) all-PASS cells -> exit-0 summary (summary.fail == 0).
@@ -2393,12 +2472,7 @@ failure_contains = \"stream_sha256 mismatch\"
                                profile = \"baseline\"\nverdict = \"known_flaky\"\nreason = \"r\"\n";
 
     #[test]
-    fn a_subset_table_lists_its_cell_patterns() {
-        assert_eq!(
-            parse_subset(SUBSET_FILE, "arm64").unwrap(),
-            Some(vec!["srt/*".to_string(), "analyze/tsanalyze/*".to_string()])
-        );
-        assert_eq!(parse_subset(SUBSET_FILE, "riscv").unwrap(), None);
+    fn a_subset_table_parses_beside_the_rows_and_the_census() {
         assert_eq!(parse_expectations(SUBSET_FILE).unwrap().len(), 1);
         assert_eq!(parse_census(SUBSET_FILE).unwrap(), Some(3));
     }
@@ -2415,7 +2489,7 @@ failure_contains = \"stream_sha256 mismatch\"
                 "duplicate",
             ),
         ] {
-            let e = parse_subset(bad, "arm64").unwrap_err();
+            let e = parse_expectations(bad).unwrap_err();
             assert!(e.contains(want), "{bad:?}: {e}");
         }
     }
@@ -2428,11 +2502,6 @@ failure_contains = \"stream_sha256 mismatch\"
         ));
         let parsed = parse_expectations(text).expect("the live expectations table must parse");
         assert_eq!(parse_census(text).unwrap(), Some(161));
-        let arm = parse_subset(text, "arm64")
-            .unwrap()
-            .expect("the live table declares the arm64 subset");
-        assert!(arm.iter().any(|c| c == "srt-live/*"), "{arm:?}");
-        assert!(!arm.iter().any(|c| c.starts_with("whep/")), "{arm:?}");
         assert!(
             parsed.len() >= 65,
             "expected at least 65 rows, got {}",
