@@ -96,7 +96,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # `tracing::dispatcher::has_been_set()`, which needs `tracing` in scope
 # (tracing-subscriber does not re-export it). Same version pin as
 # tst-rtp/tst-pipeline.
-tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

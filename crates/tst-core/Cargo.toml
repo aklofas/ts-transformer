@@ -28,7 +28,7 @@ tls = ["std", "dep:rustls", "dep:rustls-pemfile"]
 [dependencies]
 thiserror    = { workspace = true }
 libc         = { workspace = true }  # raw setsockopt in net::udp_socket (cfg(unix) helpers)
-tracing      = { version = "0.1", default-features = false }
+tracing      = { workspace = true }
 serde        = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json   = { version = "1", optional = true }
 toml         = { version = "1", optional = true }
@@ -54,7 +54,7 @@ portable-atomic = { version = "1", default-features = false, features = ["fallba
 # compiled on the BSD/macOS cfg arm — a Linux-only build check cannot catch
 # its absence (macOS CI does).
 socket2      = { workspace = true, optional = true, features = ["all"] }
-rustls         = { version = "0.23", optional = true, default-features = false, features = ["std", "ring"] }
+rustls         = { workspace = true, optional = true }
 rustls-pemfile = { version = "2", optional = true }
 
 [dev-dependencies]

@@ -102,7 +102,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Direct dependency: `util::close_owned` logs a transport whose own
 # `close()` failed instead of raising (Python `close()` is documented
 # infallible + idempotent). Already linked transitively via tracing-subscriber.
-tracing = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 # On macOS, PyO3's `extension-module` feature requires the *consuming* crate

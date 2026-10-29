@@ -25,7 +25,7 @@ tst-pipeline = { path = "../tst-pipeline", version = "0.9.0" }
 # tokio too; scripts/ratchets/dependency-lattice.tsv holds that line.
 tst-rtp = { path = "../tst-rtp", version = "0.9.0", default-features = false }
 thiserror = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
 # str0m's DTLS certificate path builds aws-lc-sys under every crypto backend.
 # Its aws-lc-rs dependency already enables prebuilt NASM objects, so the MSVC
 # legs need no NASM install; if they ever fail on NASM, setting

@@ -30,7 +30,7 @@ secrecy       = { workspace = true }
 # events with target="srt"; consumers wire one `tracing-subscriber`.
 # Default features include `attributes`/`std`. We only need `std`;
 # consumers attach their own subscriber.
-tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 tst-core = { path = "../tst-core", features = ["conformance"] }
