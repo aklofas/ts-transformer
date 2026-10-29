@@ -245,6 +245,10 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-process-markers-selftest.sh
 
+      - name: Stress port table (reservations never repeat within a step)
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/stress-port-table.sh
+
       - name: No stale relocated-away package paths
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-stale-relocated-paths.sh
