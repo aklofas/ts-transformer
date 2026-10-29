@@ -81,8 +81,8 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
     }
     let _ = writeln!(
         s,
-        "\nST 0601 field errors: {} in {} capture(s) (recorded, not gated).",
-        sweep.klv_field_error_records, sweep.files_with_klv_field_errors
+        "\nST 0601 field errors: {} across {} capture(s) (recorded, not gated).",
+        sweep.klv_field_errors, sweep.files_with_klv_field_errors
     );
     let _ = writeln!(s, "\nSweep verdict: {}.", verdict(sweep.pass));
     let Some(r) = replay else {

@@ -558,7 +558,7 @@ fn field_errors_are_summed_into_the_sweep_and_do_not_fail_it() {
     let out = sweep(&dir, &run, &[]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let s = json(&run.join("sweep.json"));
-    assert_eq!(s["klv_field_error_records"], 5, "{s}");
+    assert_eq!(s["klv_field_errors"], 5, "{s}");
     assert_eq!(s["files_with_klv_field_errors"], 1, "{s}");
 }
 
@@ -572,7 +572,7 @@ fn a_sweep_summary_without_the_field_error_counts_reads_as_zero() {
     let p = run.join("sweep.json");
     let mut v = json(&p);
     let o = v.as_object_mut().unwrap();
-    assert_eq!(o.remove("klv_field_error_records"), Some(Value::from(0)));
+    assert_eq!(o.remove("klv_field_errors"), Some(Value::from(0)));
     assert_eq!(
         o.remove("files_with_klv_field_errors"),
         Some(Value::from(0))
@@ -580,8 +580,5 @@ fn a_sweep_summary_without_the_field_error_counts_reads_as_zero() {
     std::fs::write(&p, serde_json::to_vec(&v).unwrap()).unwrap();
     let s: tst_interop::corpus::sweep::SweepSummary =
         serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
-    assert_eq!(
-        (s.klv_field_error_records, s.files_with_klv_field_errors),
-        (0, 0)
-    );
+    assert_eq!((s.klv_field_errors, s.files_with_klv_field_errors), (0, 0));
 }
