@@ -17,6 +17,9 @@ import org.tstrans.MuxException;
  * underlying file when the buffer fills or on {@link #close()} — not necessarily
  * synchronously per push. Construct via {@link Muxer#writeFile}.
  *
+ * <p><b>Not thread-safe:</b> use a sink from one thread; its closed state is a
+ * plain field.
+ *
  * <p>The {@link Muxer} is <b>borrowed, not owned</b> — it remains usable after the
  * try-with-resources block (including for further {@code writeFile} calls).
  *

@@ -136,9 +136,10 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * calling thread on kernel I/O; there is no GIL to release on the JVM side.
      *
      * @return the next {@link H264AccessUnit}, or {@code null} at EOS (clean close
-     *     or RTSP teardown — caller should exit the recv loop)
-     * @throws RtpException {@code CLOSED} if the cancel handle was fired
-     *     explicitly; {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
+     *     or RTSP teardown — caller should exit the recv loop). A fired cancel
+     *     returns the depacketizer's final buffered AU if one exists, else
+     *     {@code null}; it does not throw {@code CLOSED}.
+     * @throws RtpException {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
      *     a configured persistent recv deadline (the {@code ?recv_timeout=<ms>}
      *     URL knob) expires
      * @throws IllegalStateException if the receiver is already closed
@@ -162,11 +163,12 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      *     {@code null} (blocks indefinitely) — there is no separate
      *     "immediate timeout" or rejected-argument case.
      * @return the next {@link H264AccessUnit}, or {@code null} at EOS (clean
-     *     close or RTSP teardown — caller should exit the recv loop). A
+     *     close or RTSP teardown — caller should exit the recv loop). A fired
+     *     cancel returns the depacketizer's final buffered AU if one exists,
+     *     else {@code null}; it does not throw {@code CLOSED}. A
      *     {@code null} return never means the deadline expired — expiry always
      *     throws {@code RtpException(BACKPRESSURE)}.
-     * @throws RtpException {@code CLOSED} if the cancel handle was fired
-     *     explicitly; {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
+     * @throws RtpException {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
      *     {@code timeoutMs} elapses, or (when {@code timeoutMs} is {@code null})
      *     a configured persistent recv deadline expires
      * @throws IllegalStateException if the receiver is already closed

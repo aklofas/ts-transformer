@@ -267,7 +267,7 @@ class H264ReceiverTest {
         }
     }
 
-    /** Thousands of initial parameter sets are read without exhausting local refs. */
+    /** 4096 initial parameter sets are read without error. */
     @Test
     void listenAcceptsManyInitialParameterSets() throws Exception {
         List<byte[]> sets = new ArrayList<>();
@@ -315,6 +315,21 @@ class H264ReceiverTest {
             // cancel() must not throw.
             ch.cancel();
             ch.close();
+        }
+    }
+
+    /** A fired cancel ends a parked {@code recvAu()} with {@code null}; it never throws CLOSED. */
+    @Test @Timeout(30)
+    void cancelledRecvAuReturnsNullNotClosed() throws Exception {
+        try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
+            CancelHandle ch = rx.cancelHandle();
+            CompletableFuture<Object> r = CompletableFuture.supplyAsync(() -> {
+                try { return java.util.Optional.ofNullable(rx.recvAu()); } catch (Exception e) { return e; }
+            });
+            Thread.sleep(300); // let recvAu park
+            ch.cancel();
+            assertEquals(java.util.Optional.empty(),
+                r.get(org.tstrans.TestSupport.scaledMs(5_000), TimeUnit.MILLISECONDS));
         }
     }
 

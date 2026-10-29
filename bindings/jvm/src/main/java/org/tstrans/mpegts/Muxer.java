@@ -152,9 +152,9 @@ public final class Muxer extends NativeHandle {
      * pacing. A {@code carriesPts = false} stream re-demuxes with
      * {@code pts == 0} (this library's no-PTS substitute).
      *
-     * <p>Data is the first stream kind with a handle-targeted push on the
-     * offline {@code Muxer} (see {@link #pushDataTo}); the other kinds'
-     * {@code *To} variants remain sender-only/deferred.
+     * <p>To target one stream of several, use the handle-targeted variants
+     * {@link #pushVideoTo}, {@link #pushVideoWireTo}, {@link #pushKlvTo},
+     * {@link #pushAudioTo}, {@link #pushSubtitleTo} and {@link #pushDataTo}.
      *
      * @param data raw payload bytes (caller's framing convention; at most
      *             65527 bytes with PTS, 65532 without)

@@ -124,7 +124,9 @@ public final class Builder {
     public Builder recvLatencyMs(int ms) { this.recvLatencyMs = requireNonNegative(ms, "recvLatencyMs"); return this; }
 
     /**
-     * Set {@code SRTO_MAXBW} in bits-per-second. Chainable.
+     * Set {@code SRTO_MAXBW} as an absolute cap in <b>bytes</b> per second.
+     * {@code 0} means relative to the input rate (libsrt's {@code SRTO_INPUTBW}
+     * rule), not unlimited. Chainable.
      * @throws IllegalArgumentException if {@code bps} is negative.
      */
     public Builder maxBandwidthBps(long bps) { this.maxBandwidthBps = requireNonNegative(bps, "maxBandwidthBps"); return this; }

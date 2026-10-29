@@ -118,7 +118,11 @@ public final class WhepServer extends NativeHandle {
 
     private void ensureOpen() { ensureOpen("WhepServer is closed"); }
 
-    /** Test-only: the raw native handle, for the jni-test-hooks viewer probe. */
+    /**
+     * Test-only: the raw native handle, for the viewer probe in
+     * {@code org.tstrans.internal}, built only under the {@code jni-test-hooks}
+     * feature.
+     */
     long nativeHandleForTest() { return peekHandle(); }
 
     @Override protected void nativeClose(long h) { nClose(h); }
