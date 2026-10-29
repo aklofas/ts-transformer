@@ -195,7 +195,8 @@ subset_dead_patterns() {
 # a `cells = [` line, one quoted pattern per line (trailing comma
 # optional), then `]`. Fails, printing nothing usable, on a missing,
 # unterminated or empty table or an unquoted pattern — the same shapes
-# `report merge`'s parser (report/matrix.rs `parse_subset`) refuses.
+# `report merge`'s expectations parser (report/matrix.rs
+# `parse_expectations_file`) refuses.
 subset_cells() {
   awk -v hdr="[$2_subset]" '
     { line = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", line) }

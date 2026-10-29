@@ -67,7 +67,7 @@ for m in $(cd "$F" && find crates -path '*/fuzz/Cargo.toml' | sort); do
   printf '%s\n' "$deny_paths" | grep -qxF -- "$m" || bad "ci.yml deny job does not check the fuzz workspace $m"
 done
 for m in $deny_paths; do
-  [ -f "$ROOT/$m" ] || bad "ci.yml deny job names a manifest-path that does not exist: $m"
+  [ -f "$F/$m" ] || bad "ci.yml deny job names a manifest-path that does not exist: $m"
 done
 
 [ "$fail" -eq 0 ] && echo "roster-sync: OK"

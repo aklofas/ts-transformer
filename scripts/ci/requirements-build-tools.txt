@@ -7,9 +7,13 @@
 # platform wheels plus the sdist), so one file serves linux, macOS and
 # Windows runners alike.
 #
-# Regenerate (dependabot does not track this file; refresh it by hand):
+# Regenerate (dependabot does not track this file; refresh it by hand). The
+# command prints only the requirements, so replace everything below this
+# header with its output and keep the header:
 #   printf 'meson\npkgconf\nninja\n' | uv pip compile - --universal \
 #     --generate-hashes --python-version 3.10 --no-header
+# 3.10 is the oldest python3 that installs from this file: the aarch64
+# cross image's.
 colorama==0.4.6 ; os_name == 'nt' \
     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
