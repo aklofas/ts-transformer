@@ -939,41 +939,6 @@ public final class Klv {
         return new long[] {value, 1L + nbytes};
     }
 
-    // -----------------------------------------------------------------------
-    // Test-only forced-throw helpers (package-private)
-    // -----------------------------------------------------------------------
-
-    // Native entry points for test-only forced-throw paths. Package-private so
-    // test classes in the same package can reach them; not part of the public API.
-    static native void nRaiseDecodeForTest(String kind);
-    static native void nRaiseEncodeForTest(String kind);
-
-    /**
-     * Force a {@link org.tstrans.KlvDecodeException} with the given
-     * {@code Kind} name. Used by {@code KlvErrorModelTest} to exercise the
-     * error-mapping wiring before real decode entry points exist.
-     *
-     * @param kind the {@code KlvDecodeException.Kind} constant name (e.g. {@code "TRUNCATED_SET"})
-     * @throws org.tstrans.KlvDecodeException always
-     */
-    @SuppressWarnings("RedundantThrows")
-    static void raiseDecodeForTest(String kind) throws org.tstrans.KlvDecodeException {
-        nRaiseDecodeForTest(kind);
-    }
-
-    /**
-     * Force a {@link org.tstrans.KlvEncodeException} with the given
-     * {@code Kind} name. Used by {@code KlvErrorModelTest} to exercise the
-     * error-mapping wiring before real encode entry points exist.
-     *
-     * @param kind the {@code KlvEncodeException.Kind} constant name (e.g. {@code "OUT_OF_RANGE"})
-     * @throws org.tstrans.KlvEncodeException always
-     */
-    @SuppressWarnings("RedundantThrows")
-    static void raiseEncodeForTest(String kind) throws org.tstrans.KlvEncodeException {
-        nRaiseEncodeForTest(kind);
-    }
-
     static {
         org.tstrans.NativeLoader.load();
     }

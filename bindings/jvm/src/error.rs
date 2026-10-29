@@ -248,9 +248,10 @@ pub fn throw_klv_decode(env: &mut Env, kind: BindingErrorKind, message: &str) {
 }
 
 /// Raw-member variant for the `jni-test-hooks` probes ONLY
-/// (`klv/mod.rs::nRaiseDecodeForTest`): the test names a Java member directly,
+/// (`test_hooks.rs`, `KlvProbe.nRaiseDecode`): the test names a Java member directly,
 /// so there is no `BindingErrorKind` to resolve. Never used on a real error
 /// path — those all go through [`throw_klv_decode`].
+#[cfg(feature = "jni-test-hooks")]
 pub fn throw_klv_decode_raw(env: &mut Env, member: &str, message: &str) {
     throw_family(
         env,
@@ -261,8 +262,9 @@ pub fn throw_klv_decode_raw(env: &mut Env, member: &str, message: &str) {
     );
 }
 
-/// [`throw_klv_decode_raw`]'s encode twin (`klv/mod.rs::nRaiseEncodeForTest`).
+/// [`throw_klv_decode_raw`]'s encode twin (`test_hooks.rs`, `KlvProbe.nRaiseEncode`).
 /// `tag` = `None` → the `(Kind, String)` ctor; `Some(t)` → `(Kind, Long, String)`.
+#[cfg(feature = "jni-test-hooks")]
 pub fn throw_klv_encode_raw(env: &mut Env, member: &str, tag: Option<u64>, message: &str) {
     if env.exception_check() {
         return;
@@ -554,6 +556,7 @@ pub(crate) fn throw_kinded(
 /// here, plus `throw_srt` in `srt::errors` and `throw_rtp`/`throw_rtsp` in
 /// `rtp::errors`) calls this — the per-family fn names stay because the jvm
 /// error-mapping ratchet greps for `throw_<family>(env, "<KIND>", ...)`.
+#[cfg(feature = "jni-test-hooks")]
 pub(crate) fn throw_family(
     env: &mut Env,
     exc_class: &str,
