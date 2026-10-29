@@ -120,10 +120,15 @@ public abstract class NativeHandle implements AutoCloseable {
      * a clean {@link IllegalStateException}; neither outcome is undefined behaviour.
      *
      * @implSpec Subclasses that override this method (e.g. to add {@code synchronized})
-     *           must call {@code super.close()} exactly once and add no other native
-     *           interaction — the atomic claim in this base implementation is the
-     *           double-free guarantee, and bypassing or duplicating it breaks the
-     *           idempotency contract above.
+     *           must call {@code super.close()} exactly once and add no native
+     *           interaction that claims or frees the handle — the atomic claim in this
+     *           base implementation is the double-free guarantee, and bypassing or
+     *           duplicating it breaks the idempotency contract above. A native call
+     *           that claims and frees nothing is allowed. One exception to calling
+     *           {@code super.close()}: a close that is deferred because the resource is
+     *           held further up the calling thread may return without it, provided
+     *           the close is later completed through {@code super.close()} (see
+     *           {@code org.tstrans.shells.DemuxReceiver#close()}).
      */
     @Override
     public void close() {

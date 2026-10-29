@@ -345,7 +345,8 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * <p>Called from this receiver's own byte sink (see {@link #addByteSink}),
      * whose iteration step holds the receiver, {@code close()} only cancels; the
      * iteration then ends and completes the close. A {@code close()} from
-     * anywhere else completes at once and wins over such a deferred close.
+     * anywhere else cancels, waits for an in-flight iteration step to return,
+     * and then closes; it wins over such a deferred close.
      */
     @Override public void close() {
         long h = peekHandle();
@@ -355,8 +356,10 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
             closeDeferred = true;
             return;
         }
-        // Cleared on both sides: a sink may defer a close while this one
-        // waits for the receiver, and the completed close wins.
+        // Cleared on both sides so this completed close wins over a deferral.
+        // super.close() zeroes the handle before it cancels, so a sink's
+        // close() normally sees 0 and does nothing; the second clear covers a
+        // sink that read the handle just before that claim.
         closeDeferred = false;
         super.close();
         closeDeferred = false;
