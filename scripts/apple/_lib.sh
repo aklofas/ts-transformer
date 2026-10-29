@@ -32,6 +32,23 @@ require_macos() {
   command -v lipo      >/dev/null || die "lipo not found"
 }
 
+# build_id — what a slice is built from: the commit, PROFILE, FEATURES and a
+# hash of the working tree's uncommitted changes, one per line. build_slice
+# records it beside each slice so a later assembly can tell whether a slice
+# on disk came from this tree with these settings.
+build_id() {
+  local porcelain_hash
+  if command -v sha256sum >/dev/null; then
+    porcelain_hash="$(git -C "$WORKSPACE_ROOT" status --porcelain | sha256sum)"
+  else
+    porcelain_hash="$(git -C "$WORKSPACE_ROOT" status --porcelain | shasum -a 256)"
+  fi
+  git -C "$WORKSPACE_ROOT" rev-parse HEAD
+  echo "$PROFILE"
+  echo "$FEATURES"
+  echo "${porcelain_hash%% *}"
+}
+
 # build_slice <rust-triple> <slice-name>
 # Cross-compiles tst-c for the triple, then merges the Rust staticlib
 # (libtstrans.a) with the native static libs it links against (libsrt.a +
@@ -75,6 +92,7 @@ build_slice() {
   [ "${#native_libs[@]}" -ge 1 ] || die "no native static libs (libsrt.a / libmbed*.a) found under ${target_dir}/build — did the vendored cmake build run?"
 
   mkdir -p "$out_dir"
+  rm -f "${out_dir}/build-id"
   # libtool -static merges archives into one; -D = deterministic (no timestamps).
   libtool -static -D -o "${out_dir}/libtstrans.a" "$rust_lib" "${native_libs[@]}" 2>/dev/null \
     || libtool -static -o "${out_dir}/libtstrans.a" "$rust_lib" "${native_libs[@]}" \
@@ -95,6 +113,7 @@ build_slice() {
   echo "  symbols: tst_*=${tst_syms} srt_*=${srt_syms}"
   [ "${tst_syms}" -gt 0 ] || die "no _tst_* symbols in merged lib for $slice"
   [ "${srt_syms}" -gt 0 ] || die "no _srt_* symbols in merged lib for $slice (libsrt did not link)"
+  build_id > "${out_dir}/build-id"
 }
 
 # stage_headers <dir> — copy the committed public header + modulemap into <dir>

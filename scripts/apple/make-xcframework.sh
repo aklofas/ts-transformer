@@ -8,8 +8,9 @@
 # each paired with the committed C header + module.modulemap, so a Swift
 # consumer can `import TSTrans` with no bridging header.
 #
-# Runs build-ios.sh first if the iOS slices are missing, then builds the macOS
-# slice, then `xcodebuild -create-xcframework`. Output:
+# Runs build-ios.sh first unless both iOS slices on disk were built from this
+# tree with the same PROFILE and FEATURES (their `build-id`), then builds the
+# macOS slice, then `xcodebuild -create-xcframework`. Output:
 #   target/apple/TSTrans.xcframework
 #
 # No SPM package wrapper is built: its shape belongs with the UniFFI Swift
@@ -26,10 +27,20 @@ source "${SCRIPT_DIR}/_lib.sh"
 require_macos
 command -v xcodebuild >/dev/null || die "xcodebuild not found — install Xcode (not just the command-line tools)"
 
-# 1. iOS slices (the spike). Reuse build-ios.sh's outputs; run it if absent.
+# 1. iOS slices (the spike). Reuse build-ios.sh's outputs only when both were
+# built from this tree with these settings; otherwise rebuild them.
 if [ ! -f "${APPLE_OUT}/ios-arm64/libtstrans.a" ] || [ ! -f "${APPLE_OUT}/ios-arm64-sim/libtstrans.a" ]; then
   echo "iOS slices missing — running build-ios.sh first…"
   "${SCRIPT_DIR}/build-ios.sh"
+else
+  want_id="$(build_id)"
+  for slice in ios-arm64 ios-arm64-sim; do
+    if [ "$(cat "${APPLE_OUT}/${slice}/build-id" 2>/dev/null)" != "$want_id" ]; then
+      echo "iOS slices are from another build — running build-ios.sh"
+      "${SCRIPT_DIR}/build-ios.sh"
+      break
+    fi
+  done
 fi
 
 # 2. macOS slice (native cargo build on the Apple-silicon runner + native merge).
