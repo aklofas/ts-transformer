@@ -726,6 +726,9 @@ rs_copy() { # a copy of the real files roster-sync reads, for planting
     rm -rf "$tmp/rs"; mkdir -p "$tmp/rs/.github/workflows" "$tmp/rs/scripts/check/repo"
     cp "$REPO/.github/workflows/ci.yml" "$REPO/.github/workflows/sanitizers.yml" "$REPO/.github/workflows/crates-io.yml" "$tmp/rs/.github/workflows/"
     cp "$REPO/scripts/check/repo/release-version-consistency.sh" "$tmp/rs/scripts/check/repo/"
+    for m in $(cd "$REPO" && find crates -path '*/fuzz/Cargo.toml'); do
+        mkdir -p "$tmp/rs/$(dirname "$m")"; cp "$REPO/$m" "$tmp/rs/$m"
+    done
 }
 rsync_() { ROSTER_METADATA="$tmp/ro/meta.json" RSYNC_FILES_ROOT="$tmp/rs" bash "$RSYNC"; }
 rs_copy;                                                                         expect "roster-sync: the real files agree"                 0 rsync_
@@ -738,6 +741,9 @@ rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'continue: false' 'continue: t
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'continue-on-error: \${{ matrix.continue }}' 'continue-on-error: true'; expect "roster-sync: the build job made continue-on-error: true" 1 rsync_
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'name: windows-msvc-features' 'name: windows-msvc-features-gone'; expect "roster-sync: the windows features leg renamed away" 1 rsync_
 rs_copy; plant "$tmp/rs/scripts/check/repo/release-version-consistency.sh" ' \$ROOT/crates/tst-udp/Cargo.toml' ''; expect "roster-sync: a manifest dropped from the version rail" 1 rsync_
+rs_copy; mkdir -p "$tmp/rs/crates/tst-new/fuzz"; printf '[package]\nname = "tst-new-fuzz"\n' > "$tmp/rs/crates/tst-new/fuzz/Cargo.toml"
+                                                                                 expect "roster-sync: a fuzz workspace the deny job does not check" 1 rsync_
+expect_out "roster-sync: unchecked fuzz workspace" "crates/tst-new/fuzz/Cargo.toml"
 
 # ---- network test binaries (scripts/check/repo/net-test-binaries.sh) ----
 NTB="$DIR/../check/repo/net-test-binaries.sh"

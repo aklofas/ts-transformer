@@ -7,8 +7,10 @@
 #   3. release-version-consistency.sh's RVC_DEP_TOMLS == roster dep-tomls;
 #   4. ci.yml's build matrix is the five gating legs, none continue-on-error
 #      (the job's continue-on-error stays the matrix value, never literal true);
-#   5. every member manifest inherits the lint table.
-# RSYNC_FILES_ROOT points 1-4 at copies of those files (self_test.sh).
+#   5. every member manifest inherits the lint table;
+#   6. ci.yml's deny job checks every fuzz workspace (crates/*/fuzz), and each
+#      manifest-path it names exists in this tree.
+# RSYNC_FILES_ROOT points 1-4 and 6 at copies of those files (self_test.sh).
 # Linux/bash 3.2-portable: no mapfile, no sed -i; runs on the linux-x86_64 leg.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -58,6 +60,15 @@ if grep -qE 'continue-on-error:[[:space:]]*true' <<<"$build_job"; then bad "ci.y
 while IFS= read -r toml; do
   awk '/^\[lints\]/ {f = 1; next} /^\[/ {f = 0} f && /^workspace[[:space:]]*=[[:space:]]*true/ {ok = 1} END {exit !ok}' "$toml" || bad "$toml does not inherit [workspace.lints]"
 done < <(bash "$R" manifests)
+
+deny_paths="$(awk '/^  deny:$/ {f = 1; next} /^  [a-z-]+:$/ {f = 0} f' "$F/.github/workflows/ci.yml" \
+  | sed -nE 's/^[[:space:]]*manifest-path:[[:space:]]*([^[:space:]]+).*/\1/p' | sort)"
+for m in $(cd "$F" && find crates -path '*/fuzz/Cargo.toml' | sort); do
+  printf '%s\n' "$deny_paths" | grep -qxF -- "$m" || bad "ci.yml deny job does not check the fuzz workspace $m"
+done
+for m in $deny_paths; do
+  [ -f "$ROOT/$m" ] || bad "ci.yml deny job names a manifest-path that does not exist: $m"
+done
 
 [ "$fail" -eq 0 ] && echo "roster-sync: OK"
 exit "$fail"

@@ -1,7 +1,9 @@
 # cargo-deny configuration.
 #
-# Two checks run in CI (ci.yml job `deny`) and locally:
+# Two checks run in CI (ci.yml job `deny`) and locally, over the root
+# workspace and every fuzz and embedded workspace:
 #   cargo install cargo-deny --locked && cargo deny check advisories licenses
+#   cargo deny --manifest-path <workspace>/Cargo.toml --config deny.toml check advisories licenses
 # `bans` and `sources` are deliberately NOT enabled: there is no decision yet
 # on duplicate-version policy or registry restrictions; add them as their own
 # change when one is made.
@@ -77,8 +79,17 @@ allow = [
 # tst-c and never links into a shipped artifact). Scoped exception rather
 # than a global MPL-2.0 allow so a runtime MPL dependency still trips the
 # check and forces a decision.
+#
+# The fuzz workspaces (crates/*/fuzz) and the embedded test workspaces are
+# checked against this same policy. libfuzzer-sys bundles LLVM's libFuzzer
+# (NCSA) and links only into the fuzz harnesses; smoltcp and its `managed`
+# dependency are 0BSD and link only into the bare-metal QEMU smoke binary.
+# None of them reaches a shipped artifact, so each is a scoped exception.
 exceptions = [
     { allow = ["MPL-2.0"], crate = "cbindgen" },
+    { allow = ["NCSA"], crate = "libfuzzer-sys" },
+    { allow = ["0BSD"], crate = "smoltcp" },
+    { allow = ["0BSD"], crate = "managed" },
 ]
 confidence-threshold = 0.8
 # tst-integration, tst-interop and examples carry no `license` key and are

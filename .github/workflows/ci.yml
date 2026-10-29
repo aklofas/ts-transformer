@@ -1570,3 +1570,56 @@ jobs:
         with:
           command: check advisories licenses
           rust-version: ${{ steps.rust.outputs.channel }}
+
+      # The workspaces outside the root one, against the same policy and at
+      # their committed lockfiles: `--locked` fails the job when a lock no
+      # longer matches its manifest instead of re-resolving it. roster-sync.sh
+      # fails when a crates/*/fuzz workspace is missing from this list.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: crates/tst-core/fuzz/Cargo.toml
+          command: check advisories licenses
+          arguments: --config deny.toml --locked
+          rust-version: ${{ steps.rust.outputs.channel }}
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: crates/tst-rtp/fuzz/Cargo.toml
+          command: check advisories licenses
+          arguments: --config deny.toml --locked
+          rust-version: ${{ steps.rust.outputs.channel }}
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: crates/tst-srt/fuzz/Cargo.toml
+          command: check advisories licenses
+          arguments: --config deny.toml --locked
+          rust-version: ${{ steps.rust.outputs.channel }}
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: crates/tst-webrtc/fuzz/Cargo.toml
+          command: check advisories licenses
+          arguments: --config deny.toml --locked
+          rust-version: ${{ steps.rust.outputs.channel }}
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: embedded/baremetal-qemu/Cargo.toml
+          command: check advisories licenses
+          arguments: --config deny.toml --locked
+          rust-version: ${{ steps.rust.outputs.channel }}
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: embedded/baremetal-qemu-c/Cargo.toml
+          command: check advisories licenses
+          arguments: --config deny.toml --locked
+          rust-version: ${{ steps.rust.outputs.channel }}
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: embedded/freertos-srt/example/host/Cargo.toml
+          command: check advisories licenses
+          arguments: --config deny.toml --locked
+          rust-version: ${{ steps.rust.outputs.channel }}
