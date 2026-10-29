@@ -8,14 +8,18 @@
 #   select    previous tag (scripts/dev/prev-tag.sh) and the ABI minors of the
 #             tag and of this tree; outputs prev, prev_minor, head_minor
 #   release   the library from the tag's Release package (tstrans.abi); output
-#             lib when the Release carries a C package that SHA256SUMS and its
-#             build-provenance attestation verify, nothing otherwise
+#             lib when the Release carries one C package that SHA256SUMS and its
+#             build-provenance attestation (signed by release-qualify.yml at the
+#             tag) verify, else fallback=<why the source build is used>
 #   build     build the library from source at the tag (worktree under
 #             $RUNNER_TEMP/prev, target dir $RUNNER_TEMP/prev-target)
 #   header <file>   write the tag's committed tstrans.h to <file>
 #   resolve   print the old library path on stdout and how it was obtained on
 #             stderr (RELEASE_LIB set = the Release package, else the source build)
-# Environment: PREV (release, build, header, resolve), RELEASE_LIB (resolve),
+#   source    print how the old library was obtained, for the ABI record:
+#             `attested`, or `built: <fallback reason>`
+# Environment: PREV (release, build, header, resolve), RELEASE_LIB (resolve,
+#   source), FALLBACK (source: the release step's fallback output),
 #   GH_TOKEN (release), RUNNER_TEMP (all but select), GITHUB_REPOSITORY (release).
 # Outputs go to $GITHUB_OUTPUT when it is set, to stdout otherwise.
 set -euo pipefail
@@ -38,33 +42,41 @@ case "${1:-}" in
     ;;
   release)
     # The package is used only after SHA256SUMS (from the same Release) lists
-    # it with a matching digest and its build-provenance attestation from this
-    # repository verifies. Anything less falls back to the source build at the
-    # tag, which needs no trust in a downloaded file.
+    # it with a matching digest and its build-provenance attestation verifies
+    # as signed by release-qualify.yml for the tag: every PR and dispatch run of
+    # that workflow attests its own package too, so the repository alone would
+    # accept any of them. Anything less falls back to the source build at the
+    # tag, which needs no trust in a downloaded file; the fallback output says
+    # why, for the ABI record.
     d="$RUNNER_TEMP/prev-release"
     mkdir -p "$d"
     if ! gh release download "$PREV" -R "$GITHUB_REPOSITORY" -p 'tstrans-c-*-linux-x86_64.tar.gz' -D "$d" 2>/dev/null; then
       echo "the $PREV Release carries no C package"
+      out "fallback=no package for $PREV"
       exit 0
     fi
-    unverified() { echo "$1"; echo "the $PREV Release package failed verification; the source build is used"; exit 0; }
+    # unverified <detail> <fallback reason>
+    unverified() { echo "$1"; echo "the $PREV Release package failed verification; the source build is used"; out "fallback=$2"; exit 0; }
     set -- "$d"/tstrans-c-*-linux-x86_64.tar.gz
-    [ $# -eq 1 ] || unverified "the $PREV Release holds $# C packages, expected one"
+    # Two packages are refused rather than picked between: neither is known to be the tag's.
+    [ $# -eq 1 ] || unverified "the $PREV Release holds $# C packages, expected one" "more than one package"
     tarball="$1"; name="$(basename "$tarball")"
     gh release download "$PREV" -R "$GITHUB_REPOSITORY" -p SHA256SUMS -D "$d" 2>/dev/null \
-      || unverified "SHA256SUMS: not in the $PREV Release"
+      || unverified "SHA256SUMS: not in the $PREV Release" "SHA256SUMS missing"
     # --ignore-missing passes on an empty match, so the tarball's own line is required first.
     grep -qE "^[0-9a-f]{64}  $(printf '%s' "$name" | sed 's/[.]/[.]/g')\$" "$d/SHA256SUMS" \
-      || unverified "$name: no line for it in SHA256SUMS"
+      || unverified "$name: no line for it in SHA256SUMS" "package not listed in SHA256SUMS"
     (cd "$d" && sha256sum -c --ignore-missing --quiet SHA256SUMS) \
-      || unverified "$name: sha256sum -c against SHA256SUMS failed"
+      || unverified "$name: sha256sum -c against SHA256SUMS failed" "checksum mismatch"
     gh attestation verify "$tarball" -R "$GITHUB_REPOSITORY" \
-      || unverified "$name: gh attestation verify failed"
+      --signer-workflow aklofas/ts-transformer/.github/workflows/release-qualify.yml \
+      --source-ref "refs/tags/$PREV" \
+      || unverified "$name: gh attestation verify failed" "attestation verify failed"
     if tar -xzf "$tarball" -C "$d" && abi="$(find "$d" -name tstrans.abi | head -1)" && [ -n "$abi" ]; then
       echo "previous tag $PREV, taken from its verified Release package"
       out "lib=$abi"
     else
-      unverified "$name: holds no tstrans.abi"
+      unverified "$name: holds no tstrans.abi" "no tstrans.abi in package"
     fi
     ;;
   build)
@@ -79,6 +91,12 @@ case "${1:-}" in
     # abi-compat rail needs it to see a struct that lost its body.
     git show "$PREV:bindings/c/include/tstrans.h" > "$2"
     ;;
+  source)
+    if [ -n "${RELEASE_LIB:-}" ]; then echo attested
+    elif [ -n "${FALLBACK:-}" ]; then echo "built: $FALLBACK"
+    else echo "prev-c-library.sh source: neither a verified package nor a fallback reason" >&2; exit 2
+    fi
+    ;;
   resolve)
     if [ -n "${RELEASE_LIB:-}" ]; then
       echo "previous tag $PREV, from its Release package" >&2
@@ -88,5 +106,5 @@ case "${1:-}" in
       echo "$RUNNER_TEMP/prev-target/debug/libtstrans.so"
     fi
     ;;
-  *) echo "usage: $0 select|release|build|header <file>|resolve" >&2; exit 2 ;;
+  *) echo "usage: $0 select|release|build|header <file>|resolve|source" >&2; exit 2 ;;
 esac

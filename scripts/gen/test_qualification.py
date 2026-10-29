@@ -43,7 +43,7 @@ RESULTS = {"summary": {"total": 159, "pass": 94, "fail": 0, "expected_unsupporte
 INVENTORY = {"tools": {"ffmpeg": "7.1", "tsp": "3.40", "gst-launch-1.0": "1.24", "vlc": "3.0", "mpv": "0.37"}}
 FUZZ = {"targets_run": 37, "seconds_per_target": 60, "crashes": 0}
 ABI = {"major": 0, "minor": 25, "symbols": 505, "previous_tag": "v0.8.0",
-       "previous_source": "built", "abidiff_exit": 4, "verdict": "compatible"}
+       "previous_source": "built: no package for v0.8.0", "abidiff_exit": 4, "verdict": "compatible"}
 SEMVER = [{"crate": "tst-core", "exit": 0, "failed_checks": 0, "items": 0, "report": "r", "analysed": True}]
 SAN_JOBS = ["asan", "asan-native", "tsan", "tsan-native"]
 
@@ -265,6 +265,12 @@ class RenderTests(unittest.TestCase):
         self.assertIn("GO", text)
         self.assertIn("overall_pass=false", text)
         self.assertIn("The SRT leg passed; the RIST leg failed attribution.", text)
+
+    def test_abi_line_carries_how_the_previous_library_was_obtained(self):
+        for how in ("attested", "built: attestation verify failed", "built: no package for v0.8.0"):
+            rec = collect(lambda f: f["abi.json"].update(previous_source=how))
+            self.assertEqual(rec["abi"]["previous_source"], how)
+            self.assertIn("compared with v0.8.0 (%s): abidiff exit 4" % how, q.render_block(rec))
 
     def test_no_go_block_names_the_leg(self):
         def m(f):
