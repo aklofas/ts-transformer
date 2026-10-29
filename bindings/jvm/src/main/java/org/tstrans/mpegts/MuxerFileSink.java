@@ -71,6 +71,7 @@ public final class MuxerFileSink implements AutoCloseable {
      * TS packets to the file after pushing.
      */
     public void pushVideo(byte[] nal, long pts, boolean keyFrame) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushVideo(nal, pts, keyFrame);
         drain();
     }
@@ -81,6 +82,7 @@ public final class MuxerFileSink implements AutoCloseable {
      * pushing.
      */
     public void pushVideoWire(byte[] wire, long pts, boolean keyFrame) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushVideoWire(wire, pts, keyFrame);
         drain();
     }
@@ -90,6 +92,7 @@ public final class MuxerFileSink implements AutoCloseable {
      * pushing.
      */
     public void pushKlv(byte[] klv, long pts, int metadataServiceId) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushKlv(klv, pts, metadataServiceId);
         drain();
     }
@@ -98,6 +101,7 @@ public final class MuxerFileSink implements AutoCloseable {
      * Push one audio frame. Drains pending TS packets to the file after pushing.
      */
     public void pushAudio(byte[] frames, long pts) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushAudio(frames, pts);
         drain();
     }
@@ -108,6 +112,7 @@ public final class MuxerFileSink implements AutoCloseable {
      * after pushing.
      */
     public void pushSubtitle(long pts, byte[] payload) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushSubtitle(pts, payload);
         drain();
     }
@@ -118,6 +123,7 @@ public final class MuxerFileSink implements AutoCloseable {
      * the file after pushing.
      */
     public void pushData(byte[] data, long pts) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushData(data, pts);
         drain();
     }
@@ -129,48 +135,56 @@ public final class MuxerFileSink implements AutoCloseable {
      */
     public void pushDataTo(DataStreamHandle h, byte[] data, long pts)
             throws MuxException, IOException {
+        ensureOpen();
         muxer.pushDataTo(h, data, pts);
         drain();
     }
 
     /** Push a video AU to a specific configured video stream (see {@link Muxer#pushVideoTo}). Drains after pushing. */
     public void pushVideoTo(VideoStreamHandle h, byte[] nal, long pts, boolean keyFrame) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushVideoTo(h, nal, pts, keyFrame);
         drain();
     }
 
     /** Push an on-wire video AU to a specific video stream (see {@link Muxer#pushVideoWireTo}). Drains after pushing. */
     public void pushVideoWireTo(VideoStreamHandle h, byte[] wire, long pts, boolean keyFrame) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushVideoWireTo(h, wire, pts, keyFrame);
         drain();
     }
 
     /** Push a KLV payload to a specific KLV stream (see {@link Muxer#pushKlvTo}). Drains after pushing. */
     public void pushKlvTo(KlvStreamHandle h, byte[] klv, long pts, int metadataServiceId) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushKlvTo(h, klv, pts, metadataServiceId);
         drain();
     }
 
     /** Push an audio frame to a specific audio stream (see {@link Muxer#pushAudioTo}). Drains after pushing. */
     public void pushAudioTo(AudioStreamHandle h, byte[] frames, long pts) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushAudioTo(h, frames, pts);
         drain();
     }
 
     /** Push a subtitle PES to a specific subtitle stream; note the {@code (pts, payload)} order (see {@link Muxer#pushSubtitleTo}). Drains after pushing. */
     public void pushSubtitleTo(SubtitleStreamHandle h, long pts, byte[] payload) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushSubtitleTo(h, pts, payload);
         drain();
     }
 
     /** Push a video AU with explicit decode timestamp to a specific video stream (see {@link Muxer#pushVideoToWithDts}). Drains after pushing. */
     public void pushVideoToWithDts(VideoStreamHandle h, byte[] nal, long pts, long dts, boolean keyFrame) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushVideoToWithDts(h, nal, pts, dts, keyFrame);
         drain();
     }
 
     /** Push an on-wire video AU with explicit decode timestamp to a specific video stream (see {@link Muxer#pushVideoWireToWithDts}). Drains after pushing. */
     public void pushVideoWireToWithDts(VideoStreamHandle h, byte[] wire, long pts, long dts, boolean keyFrame) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushVideoWireToWithDts(h, wire, pts, dts, keyFrame);
         drain();
     }
@@ -178,6 +192,7 @@ public final class MuxerFileSink implements AutoCloseable {
     /** Push a video AU with MISP SEI splice to a specific video stream (see {@link Muxer#pushVideoMispTo}). Drains after pushing. */
     public void pushVideoMispTo(VideoStreamHandle h, byte[] nal, long pts, boolean keyFrame,
             org.tstrans.codec.MispTimestamp misp) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushVideoMispTo(h, nal, pts, keyFrame, misp);
         drain();
     }
@@ -185,6 +200,7 @@ public final class MuxerFileSink implements AutoCloseable {
     /** Push a video AU with MISP SEI splice and explicit DTS to a specific video stream (see {@link Muxer#pushVideoMispTo(VideoStreamHandle, byte[], long, long, boolean, org.tstrans.codec.MispTimestamp)}). Drains after pushing. */
     public void pushVideoMispTo(VideoStreamHandle h, byte[] nal, long pts, long dts,
             boolean keyFrame, org.tstrans.codec.MispTimestamp misp) throws MuxException, IOException {
+        ensureOpen();
         muxer.pushVideoMispTo(h, nal, pts, dts, keyFrame, misp);
         drain();
     }
@@ -192,11 +208,19 @@ public final class MuxerFileSink implements AutoCloseable {
     /**
      * Mark the write successful. In atomic mode, only a committed sink promotes the
      * {@code *.partial} temp to the destination on {@link #close()}; without it,
-     * close discards the temp. A no-op in non-atomic mode. Calling this after
-     * {@link #close()} has no effect.
+     * close discards the temp. A no-op in non-atomic mode.
+     *
+     * @throws IllegalStateException after {@link #close()}
      */
     public void commit() {
+        ensureOpen();
         this.committed = true;
+    }
+
+    private void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("MuxerFileSink is closed");
+        }
     }
 
     private void drain() throws IOException {

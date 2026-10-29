@@ -29,6 +29,17 @@ class MuxerFileSinkTest {
     }
 
     @Test
+    void pushAfterCloseThrowsAndLeavesTheMuxerAlone(@TempDir Path tmp) throws Exception {
+        try (Muxer m = new Muxer(roundtripConfig())) {
+            MuxerFileSink sink = m.writeFile(tmp.resolve("out.ts"));
+            sink.close();
+            var e = assertThrows(IllegalStateException.class, () -> sink.pushVideo(IDR, 0L, true));
+            assertEquals("MuxerFileSink is closed", e.getMessage());
+            assertEquals(0, org.tstrans.TestSupport.drain(m).length);
+        }
+    }
+
+    @Test
     void atomicCommitPromotes(@TempDir Path tmp) throws Exception {
         Path out = tmp.resolve("atomic.ts");
         try (Muxer m = new Muxer(roundtripConfig());
