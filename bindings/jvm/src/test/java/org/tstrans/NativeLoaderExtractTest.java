@@ -10,12 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -162,11 +160,11 @@ class NativeLoaderExtractTest {
     @Timeout(60)
     void cachedLibrarySurvivesTheExtractingJvmsExit(@TempDir Path tmp) throws Exception {
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        Process child = new ProcessBuilder(List.of(java, "-cp", System.getProperty("java.class.path"),
-                NativeLoaderExtractChild.class.getName(), tmp.toString()))
-            .redirectErrorStream(true).start();
-        String out = new String(child.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(child.waitFor(30, TimeUnit.SECONDS), out);
+        TestSupport.ChildResult child = TestSupport.runChild(
+            new ProcessBuilder(List.of(java, "-cp", System.getProperty("java.class.path"),
+                NativeLoaderExtractChild.class.getName(), tmp.toString())),
+            tmp.resolve("child.log"), 30_000);
+        String out = child.output();
         assertEquals(0, child.exitValue(), out);
         Path target = Path.of(out.strip().lines().reduce((a, b) -> b).orElseThrow());
         assertTrue(Files.exists(target), "deleteOnExit removed the shared cached library: " + out);
