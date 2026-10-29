@@ -852,3 +852,103 @@ fn report_stress_folds_a_sweep_tree() {
     std::fs::remove_dir_all(&outdir).unwrap();
     std::fs::remove_dir_all(&empty).unwrap();
 }
+
+/// Wait for `child` up to `limit`; on expiry kill it and return `None`.
+fn wait_or_kill(
+    child: &mut std::process::Child,
+    limit: std::time::Duration,
+) -> Option<std::process::ExitStatus> {
+    let end = std::time::Instant::now() + limit;
+    loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            return Some(status);
+        }
+        if std::time::Instant::now() >= end {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Spawn `recv` on a `tcp://127.0.0.1:0?listen=1` URL and return it with the
+/// address its listener bound, read from its `tcp: listening on <addr>` line.
+/// The rest of its stderr is drained in the background and handed back by the
+/// join handle.
+fn spawn_tcp_listener_recv() -> (
+    std::process::Child,
+    std::net::SocketAddr,
+    std::thread::JoinHandle<String>,
+) {
+    use std::io::BufRead;
+    let mut child = tst_interop_cmd()
+        .args([
+            "recv",
+            "--url",
+            "tcp://127.0.0.1:0?listen=1",
+            "--expect",
+            "baseline",
+            "--seconds",
+            "2",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn tst-interop recv");
+    let stderr = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let drain = std::thread::spawn(move || {
+        let mut all = String::new();
+        for line in std::io::BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if let Some(addr) = line.strip_prefix("tcp: listening on ") {
+                let _ = tx.send(addr.parse::<std::net::SocketAddr>().unwrap());
+            }
+            all.push_str(&line);
+            all.push('\n');
+        }
+        all
+    });
+    let limit = tst_test_helpers::timing::scaled(std::time::Duration::from_secs(10));
+    let Ok(addr) = rx.recv_timeout(limit) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!(
+            "recv never printed its listening address: {}",
+            drain.join().unwrap()
+        );
+    };
+    (child, addr, drain)
+}
+
+/// A `tcp://?listen=1` recv that no sender ever dials ends at its deadline
+/// with a failing report, instead of parking in accept forever.
+#[test]
+fn a_tcp_listener_with_no_peer_ends_at_its_deadline() {
+    let (mut child, _addr, drain) = spawn_tcp_listener_recv();
+    let limit = tst_test_helpers::timing::scaled(std::time::Duration::from_secs(30));
+    let status = wait_or_kill(&mut child, limit).expect("hung");
+    let stderr = drain.join().unwrap();
+    assert_eq!(status.code(), Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("recv: no data before the deadline ("),
+        "stderr: {stderr}"
+    );
+}
+
+/// A sender that connects and then sends nothing does not hold the recv past
+/// its deadline: the parked read is cancelled and the report fails.
+#[test]
+fn a_connected_idle_tcp_peer_ends_at_the_deadline() {
+    let (mut child, addr, drain) = spawn_tcp_listener_recv();
+    let _idle_peer = std::net::TcpStream::connect(addr).expect("connect to recv");
+    let limit = tst_test_helpers::timing::scaled(std::time::Duration::from_secs(30));
+    let status = wait_or_kill(&mut child, limit).expect("hung");
+    let stderr = drain.join().unwrap();
+    assert_eq!(status.code(), Some(1), "stderr: {stderr}");
+    assert!(
+        stderr.contains("recv: no data before the deadline ("),
+        "stderr: {stderr}"
+    );
+}

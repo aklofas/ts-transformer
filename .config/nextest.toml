@@ -29,6 +29,14 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 network = { max-threads = 1 }
 
 [[profile.default.overrides]]
+# `tst-interop recv`'s deadline tests wait out the CLI's own no-data
+# allowance (about 19 s for `--seconds 2`), so they need more than the
+# network group's 20 s kill. Still single-threaded in the network group.
+filter = "binary(=net_cli) & test(/_ends_at_(its|the)_deadline$/)"
+test-group = "network"
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+[[profile.default.overrides]]
 # Windows CI runners are the slowest and most load-variable platform for the
 # loopback/network tests (known flake class: loopback connects overrunning
 # the per-test kill under runner load — see the git history of

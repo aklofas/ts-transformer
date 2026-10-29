@@ -395,6 +395,11 @@ pub fn make_recv(url: &str) -> Result<Box<dyn RecvTransport>, String> {
     }
 }
 
+/// Whether `url` is a `tcp://` or `tcps://` URL.
+pub fn is_tcp(url: &str) -> Result<bool, String> {
+    Ok(matches!(scheme_of(url)?, "tcp" | "tcps"))
+}
+
 /// Scheme prefix of a `scheme://...` URL (e.g. `"udp"`, `"tcps"`).
 fn scheme_of(url: &str) -> Result<&str, String> {
     url.split_once("://")
@@ -410,15 +415,71 @@ fn scheme_of(url: &str) -> Result<&str, String> {
 /// which direction (send/recv) this crate is using the resulting
 /// transport for.
 fn tcp_transport(url: &str) -> Result<tst_tcp::TcpTransport, String> {
-    let parsed = tst_tcp::url::TcpUrl::parse(url).map_err(|e| format!("tcp url {url}: {e}"))?;
-    if parsed.listen {
-        tst_tcp::TcpListener::from_url(url)
-            .map_err(|e| format!("tcp listen {url}: {e}"))?
-            .accept_blocking()
-            .map_err(|e| format!("tcp accept {url}: {e}"))
-    } else {
-        tst_tcp::TcpTransport::connect(url).map_err(|e| format!("tcp connect {url}: {e}"))
+    tcp_transport_with(url, &Watch::default())
+}
+
+/// The cancel handle of whatever a `tcp(s)://` receive is blocked in —
+/// the listener while it accepts, then the accepted or connected
+/// transport — shared with a deadline watcher that may cancel it from
+/// another thread. A handle handed over after the watch fired is
+/// cancelled at once, so a deadline that lands between the accept
+/// returning and the transport's handle arriving still ends the read.
+#[derive(Clone, Default)]
+pub struct Watch {
+    slot: Arc<Mutex<WatchSlot>>,
+}
+
+#[derive(Default)]
+struct WatchSlot {
+    handle: Option<tst_tcp::TcpCancelHandle>,
+    fired: bool,
+}
+
+impl Watch {
+    fn hold(&self, handle: tst_tcp::TcpCancelHandle) {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.fired {
+            handle.cancel();
+        }
+        slot.handle = Some(handle);
     }
+
+    /// Cancel whatever the receive is blocked in now, and anything handed
+    /// over later.
+    pub fn fire(&self) {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        slot.fired = true;
+        if let Some(handle) = &slot.handle {
+            handle.cancel();
+        }
+    }
+
+    /// Whether [`Self::fire`] has been called.
+    pub fn fired(&self) -> bool {
+        self.slot.lock().unwrap_or_else(|e| e.into_inner()).fired
+    }
+}
+
+/// [`tcp_transport`], with each blocking stage's cancel handle held in
+/// `watch`. A `?listen=1` URL prints `tcp: listening on <addr>` to stderr
+/// once bound, so a `:0` port can be read back.
+pub fn tcp_transport_with(url: &str, watch: &Watch) -> Result<tst_tcp::TcpTransport, String> {
+    let parsed = tst_tcp::url::TcpUrl::parse(url).map_err(|e| format!("tcp url {url}: {e}"))?;
+    let transport = if parsed.listen {
+        let listener =
+            tst_tcp::TcpListener::from_url(url).map_err(|e| format!("tcp listen {url}: {e}"))?;
+        if let Ok(addr) = listener.local_addr() {
+            eprintln!("tcp: listening on {addr}");
+        }
+        watch.hold(listener.cancel_handle());
+        listener
+            .accept_blocking()
+            .map_err(|e| format!("tcp accept {url}: {e}"))?
+    } else {
+        tst_tcp::TcpTransport::connect(url).map_err(|e| format!("tcp connect {url}: {e}"))?
+    };
+    watch.hold(transport.cancel_handle());
+    Ok(transport)
 }
 
 /// Build a connected/accepted SRT `Socket` for either mode described by
