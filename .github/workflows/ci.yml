@@ -49,12 +49,10 @@ jobs:
     name: build (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.continue }}
-    # Backstop against a hung test (no test should be able to block CI
-    # indefinitely). A healthy build job is ~33 min on x86_64; this caps a
-    # deadlocked network/loopback test instead of letting it burn the
-    # 6-hour default — on 2026-05-28 a hang ran linux-aarch64 for 235 min
-    # before the runner killed it. Tune down once aarch64 has a green baseline.
-    timeout-minutes: 75
+    # Backstop against a hung step. The job builds, lints and runs the rails;
+    # the nextest passes run in the test-* jobs below, so a hung test no
+    # longer counts against this budget.
+    timeout-minutes: 45
     env:
       # Loopback multicast works on both Linux runners, so a multicast test
       # that skips there fails instead (tst_test_helpers::capability).
@@ -62,32 +60,35 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `phase` splits the slowest leg. The three nextest passes (default /
-        # no-default-features / all-features) are ~8 min each on windows-latest
-        # and the whole job ran ~44 min against ~30–33 for every other leg
-        # (measured 2026-10-02, run 37064257995), so it set the wall-clock of
-        # every PR. Windows now runs as two parallel legs of ~26 min each:
-        # `default` = clippy + doc tests + default build/test + the tst-c
-        # per-feature builds; `features` = the no-default-features and
-        # all-features build/test pairs. Everything else runs `all`.
+        # `phase` splits the slowest leg. Windows runs as two parallel legs
+        # (measured 2026-10-02, run 37064257995, when the job still ran the
+        # nextest passes): `default` = clippy + doc tests + the default build +
+        # the tst-c per-feature builds; `features` = the no-default-features
+        # and all-features builds. Everything else runs `all`. The nextest
+        # passes run in the test-* jobs below.
         include:
           - name: linux-x86_64
+            platform: linux-x86_64
             runner: ubuntu-latest
             continue: false
             phase: all
           - name: linux-aarch64
+            platform: linux-aarch64
             runner: ubuntu-24.04-arm
             continue: false
             phase: all
           - name: macos-arm64
+            platform: macos-arm64
             runner: macos-15
             continue: false
             phase: all
           - name: windows-msvc
+            platform: windows-msvc
             runner: windows-latest
             continue: false
             phase: default
           - name: windows-msvc-features
+            platform: windows-msvc
             runner: windows-latest
             continue: false
             phase: features
@@ -106,7 +107,7 @@ jobs:
 
       - uses: ./.github/actions/build-prereqs
         with:
-          platform: ${{ matrix.name }}
+          platform: ${{ matrix.platform }}
           abigail: ${{ matrix.name == 'linux-x86_64' }}
 
       - name: Rust toolchain, cargo-nextest, cargo cache
@@ -502,32 +503,16 @@ jobs:
         timeout-minutes: 15
         run: cargo test --doc --workspace --no-fail-fast
 
-      # `cargo test` only builds the rlib of crates with multiple crate-types.
-      # tst-c's smoke test asserts on target/debug/libtstrans.so, so we need an
-      # explicit `cargo build` to produce the cdylib + staticlib first.
+      # `cargo test` only builds the rlib of crates with multiple crate-types,
+      # so an explicit `cargo build` produces the cdylib + staticlib; the
+      # test-* jobs restore this job's cache and rebuild tst-c per pass.
       - name: cargo build (all crate types, with mbedtls)
         if: matrix.phase != 'features'
         run: cargo build --workspace
 
-      - name: cargo test (default features, with mbedtls)
-        if: matrix.phase != 'features'
-        # Runs under nextest (all platforms): per-test `terminate-after`
-        # (.config/nextest.toml) kills any hung test and keeps going — one hang
-        # can't stall the job and every failure surfaces in one run — while the
-        # `network` test-group serialises loopback tests so they don't contend.
-        # --no-fail-fast = run all tests. timeout-minutes is a coarse backstop.
-        timeout-minutes: 20
-        run: cargo nextest run --workspace --no-fail-fast
-
       - name: cargo build (all crate types, no-default-features)
         if: matrix.phase != 'default'
         run: cargo build --workspace --no-default-features
-
-      - name: cargo test (no-default-features, no encryption)
-        if: matrix.phase != 'default'
-        # Enabled on windows-msvc 2026-05-29 — see cargo test --doc comment above.
-        timeout-minutes: 20
-        run: cargo nextest run --workspace --no-default-features --no-fail-fast
 
       - name: Build tst-c per-feature (srt/rtp/udp/tcp/hls/rist) — catch single-feature breakage
         if: matrix.phase != 'features'
@@ -544,10 +529,10 @@ jobs:
         # tst-c --no-default-features` overwrites target/debug/libtstrans.{so,
         # dylib} with a partial-feature cdylib. If this step ran AFTER the
         # all-features build (as it did 2026-05-28, when A5a appended it there),
-        # the subsequent `cargo test --all-features` smoke test links smoke.c
-        # against the stripped cdylib and fails with `undefined reference to
-        # tst_muxer_open`. Keeping the all-features build last re-syncs the
-        # cdylib to the test's feature set.
+        # the later C steps in this job would link against the stripped cdylib
+        # (`undefined reference to tst_muxer_open`). Keeping the all-features
+        # build last re-syncs the cdylib to their feature set. The test suite
+        # runs in the test-* jobs, which rebuild tst-c per pass.
         #
         # Each combo ALSO runs `clippy -D warnings`: the workspace clippy step
         # above lints default features only (all transports OFF), so a
@@ -588,13 +573,13 @@ jobs:
         # `cargo test` only rebuilds the rlib of crates with multiple
         # crate-types, so the cdylib at target/debug/libtstrans.{so,dylib}
         # is whatever the LAST explicit `cargo build` left it — which is the
-        # per-feature --no-default-features build above. tst-c's `smoke.rs`
-        # test then re-links smoke.c against that stripped cdylib under the
-        # --all-features run and fails ("undefined reference to tst_muxer_open"
+        # per-feature --no-default-features build above. Anything that links
+        # against it then fails ("undefined reference to tst_muxer_open"
         # / "Undefined symbols for architecture arm64: _tst_sender_close").
         # Surfaced 2026-05-26 on macos-arm64 (`26479673047`) and 2026-05-28
         # across the whole matrix after A5a added the per-feature step. This
-        # build MUST stay the last cdylib-producing build before the test step.
+        # build MUST stay the last cdylib-producing build before the C steps
+        # below; the test suite runs in the test-* jobs.
         run: cargo build --workspace --all-features
 
       - name: abi-compat self-test (abidiff verdicts on fixture libraries)
@@ -616,18 +601,6 @@ jobs:
         run: |
           git fetch --tags --depth=1 origin
           bash scripts/check/c/abi-symbols.sh
-
-      - name: cargo test (all features)
-        if: matrix.phase != 'default'
-        # The default feature set no longer includes the transports
-        # (srt/rtp/udp/tcp/hls/rist are all opt-in), so this rail is the
-        # only one that exercises the full tst-c transport surface + its
-        # integration tests (smoke.rs, the *_loopback / *_open_smoke suites,
-        # header_drift) — the default-features run above now builds a
-        # transport-less cdylib. This is the canonical "everything on" gate.
-        # Enabled on windows-msvc 2026-05-29 — see cargo test --doc comment above.
-        timeout-minutes: 20
-        run: cargo nextest run --workspace --all-features --no-fail-fast
 
       - name: C scenario adapter (cross-binding parity check)
         # C adapter for the cross-binding scenario harness. Compiles
@@ -808,6 +781,280 @@ jobs:
         run: |
           {
             echo "### Capability skips (${{ matrix.name }})"
+            if [ -s "$TST_CAPABILITY_LOG" ]; then
+              echo
+              echo '| count | capability | test | reason |'
+              echo '| --- | --- | --- | --- |'
+              # One line per skip per nextest pass; count the repeats.
+              sort "$TST_CAPABILITY_LOG" | uniq -c | while read -r n line; do
+                IFS=$'\t' read -r cap test why <<<"$line"
+                echo "| $n | $cap | \`$test\` | ${why//|/\\|} |"
+              done
+            else
+              echo
+              echo 'None.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test-linux:
+    name: test (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/3)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      # Loopback multicast works on both Linux runners, so a multicast test
+      # that skips there fails instead (tst_test_helpers::capability).
+      TST_REQUIRE_MULTICAST: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each include object attaches to the combinations whose axis values it
+        # repeats (here `pass`) and adds the rest; none sets `shard`, so each
+        # lands on every shard. With `shard` as the only axis every object
+        # would match every combination and the last one would overwrite the
+        # others, collapsing the jobs to one pass.
+        shard: [1, 2, 3]
+        pass: [default, no-default, all-features]
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            pass: default
+            flags: ''
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            pass: no-default
+            flags: --no-default-features
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            pass: all-features
+            flags: --all-features
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          submodules: recursive
+
+      - name: Name the capability-skip log
+        shell: bash
+        run: echo "TST_CAPABILITY_LOG=$RUNNER_TEMP/capability-skips.txt" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/build-prereqs
+        with:
+          platform: ${{ matrix.name }}
+
+      - name: Rust toolchain, cargo-nextest, cargo cache (restore only)
+        # The key equals the build job's key for this platform, so the restore
+        # hits what that job saved; the shards never save.
+        uses: ./.github/actions/rust-setup
+        with:
+          nextest: 'true'
+          cache-save: 'false'
+          cache-key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-${{ matrix.name }}-
+
+      - name: Build the C library for this pass's feature set
+        # bindings/c/tests/abi/{has_feature,smoke}.rs load target/debug/libtstrans.*
+        # and assert its TST_HAS_* set; the restored cache holds whichever cdylib
+        # the build job wrote last.
+        run: cargo build -p tst-c ${{ matrix.flags }}
+
+      - name: cargo test (${{ matrix.pass }}, shard ${{ matrix.shard }}/3)
+        # Runs under nextest: per-test `terminate-after` (.config/nextest.toml)
+        # kills any hung test and keeps going, and the `network` test-group
+        # serialises loopback tests within the shard.
+        timeout-minutes: 20
+        run: cargo nextest run --workspace ${{ matrix.flags }} --no-fail-fast --partition hash:${{ matrix.shard }}/3
+
+      - name: List the capability skips
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }} ${{ matrix.shard }}/3)"
+            if [ -s "$TST_CAPABILITY_LOG" ]; then
+              echo
+              echo '| count | capability | test | reason |'
+              echo '| --- | --- | --- | --- |'
+              # One line per skip per nextest pass; count the repeats.
+              sort "$TST_CAPABILITY_LOG" | uniq -c | while read -r n line; do
+                IFS=$'\t' read -r cap test why <<<"$line"
+                echo "| $n | $cap | \`$test\` | ${why//|/\\|} |"
+              done
+            else
+              echo
+              echo 'None.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test-platforms:
+    name: test (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/2)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      # Loopback multicast works on both Linux runners, so a multicast test
+      # that skips there fails instead (tst_test_helpers::capability).
+      TST_REQUIRE_MULTICAST: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+        name: [linux-aarch64, macos-arm64, windows-msvc]
+        include:
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            pass: all-features
+            flags: --all-features
+          - name: macos-arm64
+            runner: macos-15
+            pass: all-features
+            flags: --all-features
+          - name: windows-msvc
+            runner: windows-latest
+            pass: all-features
+            flags: --all-features
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          submodules: recursive
+
+      - name: Name the capability-skip log
+        shell: bash
+        run: echo "TST_CAPABILITY_LOG=$RUNNER_TEMP/capability-skips.txt" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/build-prereqs
+        with:
+          platform: ${{ matrix.name }}
+
+      - name: Rust toolchain, cargo-nextest, cargo cache (restore only)
+        # The key equals the build job's key for this platform, so the restore
+        # hits what that job saved; the shards never save.
+        uses: ./.github/actions/rust-setup
+        with:
+          nextest: 'true'
+          cache-save: 'false'
+          cache-key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-${{ matrix.name }}-
+
+      - name: Build the C library for this pass's feature set
+        # bindings/c/tests/abi/{has_feature,smoke}.rs load target/debug/libtstrans.*
+        # and assert its TST_HAS_* set; the restored cache holds whichever cdylib
+        # the build job wrote last.
+        run: cargo build -p tst-c ${{ matrix.flags }}
+
+      - name: cargo test (${{ matrix.pass }}, shard ${{ matrix.shard }}/2)
+        # Runs under nextest: per-test `terminate-after` (.config/nextest.toml)
+        # kills any hung test and keeps going, and the `network` test-group
+        # serialises loopback tests within the shard.
+        timeout-minutes: 20
+        run: cargo nextest run --workspace ${{ matrix.flags }} --no-fail-fast --partition hash:${{ matrix.shard }}/2
+
+      - name: List the capability skips
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }} ${{ matrix.shard }}/2)"
+            if [ -s "$TST_CAPABILITY_LOG" ]; then
+              echo
+              echo '| count | capability | test | reason |'
+              echo '| --- | --- | --- | --- |'
+              # One line per skip per nextest pass; count the repeats.
+              sort "$TST_CAPABILITY_LOG" | uniq -c | while read -r n line; do
+                IFS=$'\t' read -r cap test why <<<"$line"
+                echo "| $n | $cap | \`$test\` | ${why//|/\\|} |"
+              done
+            else
+              echo
+              echo 'None.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test-main-extra:
+    name: test (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/2)
+    # Push to main, the nightly dispatch and any workflow_dispatch run the
+    # passes the PR set leaves out (design decision 3; dispatch runs certify
+    # what main would).
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      # Loopback multicast works on both Linux runners, so a multicast test
+      # that skips there fails instead (tst_test_helpers::capability).
+      TST_REQUIRE_MULTICAST: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+        name: [linux-aarch64, macos-arm64, windows-msvc]
+        pass: [default, no-default]
+        include:
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            pass: default
+            flags: ''
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            pass: no-default
+            flags: --no-default-features
+          - name: macos-arm64
+            runner: macos-15
+            pass: default
+            flags: ''
+          - name: macos-arm64
+            runner: macos-15
+            pass: no-default
+            flags: --no-default-features
+          - name: windows-msvc
+            runner: windows-latest
+            pass: default
+            flags: ''
+          - name: windows-msvc
+            runner: windows-latest
+            pass: no-default
+            flags: --no-default-features
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          submodules: recursive
+
+      - name: Name the capability-skip log
+        shell: bash
+        run: echo "TST_CAPABILITY_LOG=$RUNNER_TEMP/capability-skips.txt" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/build-prereqs
+        with:
+          platform: ${{ matrix.name }}
+
+      - name: Rust toolchain, cargo-nextest, cargo cache (restore only)
+        # The key equals the build job's key for this platform, so the restore
+        # hits what that job saved; the shards never save.
+        uses: ./.github/actions/rust-setup
+        with:
+          nextest: 'true'
+          cache-save: 'false'
+          cache-key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
+          cache-restore-key: cargo-${{ matrix.name }}-
+
+      - name: Build the C library for this pass's feature set
+        # bindings/c/tests/abi/{has_feature,smoke}.rs load target/debug/libtstrans.*
+        # and assert its TST_HAS_* set; the restored cache holds whichever cdylib
+        # the build job wrote last.
+        run: cargo build -p tst-c ${{ matrix.flags }}
+
+      - name: cargo test (${{ matrix.pass }}, shard ${{ matrix.shard }}/2)
+        # Runs under nextest: per-test `terminate-after` (.config/nextest.toml)
+        # kills any hung test and keeps going, and the `network` test-group
+        # serialises loopback tests within the shard.
+        timeout-minutes: 20
+        run: cargo nextest run --workspace ${{ matrix.flags }} --no-fail-fast --partition hash:${{ matrix.shard }}/2
+
+      - name: List the capability skips
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }} ${{ matrix.shard }}/2)"
             if [ -s "$TST_CAPABILITY_LOG" ]; then
               echo
               echo '| count | capability | test | reason |'
