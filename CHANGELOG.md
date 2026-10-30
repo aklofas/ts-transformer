@@ -49,7 +49,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-jni
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
-- Two JVMs starting at once on a shared temp directory could fail to load the native library, or delete a library another JVM was about to load. Each JVM now stages its own file, reuses a cached library only after checking its size and CRC, and the loader never deletes cache entries.
+- Two JVMs starting at once on a shared temp directory could fail to load the native library, or delete a library another JVM was about to load. Each JVM now stages its own file, reuses a cached library only after checking its size and CRC, and the loader never deletes cache entries. On Windows, a publish that collides with another JVM replacing the same cached file at the same instant is retried briefly instead of failing the load.
 - `Socket.intoMuxSender(null)` and `intoDemuxReceiver(null)` no longer leak the native socket, and a config the native layer refuses no longer destroys the socket; the corrected retry succeeds.
 - `Io.parseFile` closes its input when the native library cannot load.
 - A byte sink that throws now ends the receive at once: `next()` rethrows its exception and the receiver stays cancelled.

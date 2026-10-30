@@ -129,21 +129,48 @@ public final class NativeLoader {
             } catch (UnsupportedOperationException ignored) {
                 // Non-POSIX filesystem (Windows): ACLs already govern access.
             }
-            try {
-                Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING);
-            } catch (IOException e) {
-                // Another JVM published first, or (Windows) the target is a loaded,
-                // locked DLL: an intact copy is just as good.
-                if (matches(target, bytes)) {
-                    return target;
-                }
-                throw e;
-            }
+            publish(staging, target, bytes);
         } finally {
             Files.deleteIfExists(staging);
         }
         return target;
+    }
+
+    /**
+     * Moves {@code staging} onto {@code target}, or accepts a complete copy that
+     * another JVM published first.
+     *
+     * <p>On Windows two replace-renames onto the same name race: one fails with
+     * ACCESS_DENIED while the other is still superseding the old file, and for
+     * that instant the target reads as absent or locked. That is not a reason to
+     * fail the load, so a failed move is retried briefly until it succeeds or an
+     * intact copy (published by the other JVM, loaded and locked or not) is in
+     * place.
+     */
+    private static void publish(Path staging, Path target, byte[] bytes) throws IOException {
+        IOException last = null;
+        for (int attempt = 0; attempt < 20; attempt++) {
+            if (attempt > 0) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    last.addSuppressed(e);
+                    throw last;
+                }
+            }
+            try {
+                Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+                return;
+            } catch (IOException e) {
+                if (matches(target, bytes)) {
+                    return;
+                }
+                last = e;
+            }
+        }
+        throw last;
     }
 
     /** False for any unreadable target, so the caller falls through to extraction. */
