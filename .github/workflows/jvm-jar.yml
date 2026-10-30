@@ -18,10 +18,12 @@ on:
     paths:
       - "bindings/jvm/**"
       - "crates/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".github/actions/rust-setup/**"
       - ".github/actions/jvm-build/**"
+      - "scripts/check/jvm/**"
       - ".github/workflows/jvm-jar.yml"
 
 permissions:
