@@ -11,7 +11,7 @@ use jni::objects::{JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jobjectArray};
 use tst_pipeline::binding::BindingErrorKind;
 use tst_srt::error::RejectReason;
-use tst_srt::{ListenRule, ListenRuleError, ListenRules, Passphrase};
+use tst_srt::{AccessControl, ListenRule, ListenRuleError, ListenRules, Passphrase};
 
 use super::errors::throw_srt;
 use super::lowlevel::listener_rules;
@@ -192,6 +192,45 @@ jni_native! {
                 })?;
             }
             Ok(rows.into_raw())
+        };
+        build(env).unwrap_or(std::ptr::null_mut())
+    }
+}
+
+jni_native! {
+    fn Java_org_tstrans_srt_AccessControl_nParse<'local>(
+        env,
+        _class,
+        stream_id: JString<'local>,
+    ) -> jobjectArray = std::ptr::null_mut() => {
+        let Ok(stream_id) = stream_id.try_to_string(env) else { return std::ptr::null_mut() };
+        let ac = match AccessControl::parse(&stream_id) {
+            Ok(ac) => ac,
+            Err(e) => {
+                let _ = env.throw_new(
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
+                    jni::strings::JNIString::from(e.to_string()),
+                );
+                return std::ptr::null_mut();
+            }
+        };
+        let pairs: Vec<(&str, &str)> = ac.pairs().collect();
+        let build = |env: &mut Env| -> jni::errors::Result<jobjectArray> {
+            let out = env.new_object_array(
+                (pairs.len() * 2) as i32,
+                FindClass(jni_str!("java/lang/String")),
+                JObject::null(),
+            )?;
+            for (i, (k, v)) in pairs.iter().enumerate() {
+                // One frame per pair so the String locals do not pile up.
+                env.with_local_frame(4, |inner| -> jni::errors::Result<()> {
+                    let ks = inner.new_string(*k)?;
+                    out.set_element(inner, i * 2, &ks)?;
+                    let vs = inner.new_string(*v)?;
+                    out.set_element(inner, i * 2 + 1, &vs)
+                })?;
+            }
+            Ok(out.into_raw())
         };
         build(env).unwrap_or(std::ptr::null_mut())
     }
