@@ -34,9 +34,11 @@ class _AcceptThread:
     def __init__(self, lst: tstrans.srt.Listener, timeout_ms: int) -> None:
         self.sock: Optional[tstrans.srt.Socket] = None
         self.err: Optional[BaseException] = None
+        self.entered = threading.Event()
 
         def run() -> None:
             try:
+                self.entered.set()
                 self.sock = lst.accept(timeout_ms=timeout_ms)
             except BaseException as exc:  # noqa: BLE001
                 self.err = exc
@@ -104,6 +106,8 @@ def test_passphrase_rule_round_trip() -> None:
         assert ei.value.kind == SrtErrorKind.CONNECT_FAILED
         assert "BadSecret" in str(ei.value)
         acc.join()
+        assert isinstance(acc.err, SrtError)
+        assert acc.err.kind == SrtErrorKind.TIMEOUT
     finally:
         lst.close()
 
@@ -113,7 +117,15 @@ def test_rules_edit_while_accept_parked() -> None:
     rules = lst.rules()
     cancel = lst.cancel_handle()
     acc = _AcceptThread(lst, 60_000)
+
+    def assert_parked() -> None:
+        assert acc.thread.is_alive() and acc.err is None and acc.sock is None
+
     try:
+        assert acc.entered.wait(5.0)
+        # Margin for the thread to get from the event into libsrt's accept.
+        time.sleep(0.3)
+        assert_parked()
         start = time.monotonic()
         rules.set_default(ListenRule.reject(RejectReason.UNAUTHORIZED))
         rules.set("a", ListenRule.accept())
@@ -123,6 +135,7 @@ def test_rules_edit_while_accept_parked() -> None:
         assert len(rules) == 0
         rules.clear()
         assert time.monotonic() - start < 1.0
+        assert_parked()
     finally:
         cancel.cancel()
         acc.join()

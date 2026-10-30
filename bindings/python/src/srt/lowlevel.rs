@@ -690,8 +690,8 @@ pub(crate) struct ListenerSnapshot {
 
 impl Drop for PyListener {
     fn drop(&mut self) {
-        drop_owned(&SRT, &self.owned);
         self.owned.snapshot().closed.store(true, Ordering::Release);
+        drop_owned(&SRT, &self.owned);
     }
 }
 
@@ -774,9 +774,10 @@ impl PyListener {
     /// with `StopIteration`), then frees the libsrt listener — the
     /// ordering `tst_srt::SrtListener::close` documents. Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
-        let res = close_owned(py, &SRT, &self.owned);
+        // Flag first: a concurrent `ListenRules.remove` then raises CLOSED
+        // rather than returning False against a closing table.
         self.owned.snapshot().closed.store(true, Ordering::Release);
-        res
+        close_owned(py, &SRT, &self.owned)
     }
 
     /// This listener's per-stream-ID `ListenRules`. Answered from the
