@@ -265,13 +265,20 @@ fn reject(ns: srt_sys::SRTSOCKET, code: i32) -> c_int {
     -1
 }
 
+// The `sockaddr` srt-sys's bindings declare: libc's on Unix (bindgen's copy
+// is blocklisted and imported privately), bindgen's own on Windows.
+#[cfg(unix)]
+type BindingSockaddr = libc::sockaddr;
+#[cfg(not(unix))]
+type BindingSockaddr = srt_sys::sockaddr;
+
 /// libsrt's listen callback, installed on every listener. Runs on libsrt's
 /// receiver thread during the handshake.
 extern "C" fn listen_hook(
     opaque: *mut c_void,
     ns: srt_sys::SRTSOCKET,
     _hs_version: c_int,
-    _peer: *const libc::sockaddr,
+    _peer: *const BindingSockaddr,
     streamid: *const c_char,
 ) -> c_int {
     let decided = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -292,7 +299,14 @@ extern "C" fn listen_hook(
         let rule = decide(&inner.read(), stream_id);
         apply(ns, &rule)
     }));
-    decided.unwrap_or_else(|_| reject(ns, FIRST_APPLICATION_REASON))
+    match decided {
+        Ok(code) => code,
+        Err(payload) => {
+            // A payload whose `Drop` panics would unwind out of this frame.
+            std::mem::forget(payload);
+            reject(ns, FIRST_APPLICATION_REASON)
+        }
+    }
 }
 
 #[cfg(test)]
