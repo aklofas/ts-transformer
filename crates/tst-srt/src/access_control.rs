@@ -91,6 +91,11 @@ impl AccessControl {
         Ok(Self { pairs })
     }
 
+    /// Every `(key, value)` pair, in the order the stream ID gave them.
+    pub fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.pairs.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
     /// The value of `key`, if present.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.pairs
@@ -159,6 +164,12 @@ mod tests {
         assert_eq!(ac.kind(), AccessKind::File);
         assert_eq!(ac.mode(), AccessMode::Publish);
         assert_eq!(ac.resource(), Some("results.csv"));
+    }
+    #[test]
+    fn pairs_iterate_in_input_order() {
+        let ac = AccessControl::parse("#!::u=a,user_x=1,r=b").unwrap();
+        let got: Vec<_> = ac.pairs().collect();
+        assert_eq!(got, [("u", "a"), ("user_x", "1"), ("r", "b")]);
     }
     #[test]
     fn custom_keys_and_other_values() {
