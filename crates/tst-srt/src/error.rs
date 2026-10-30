@@ -568,6 +568,53 @@ impl RejectReason {
             other => RejectReason::Other(other),
         }
     }
+
+    /// The raw reject code libsrt carries for this reason. Inverse of
+    /// [`RejectReason::from_raw`]: `from_raw(r.raw()) == r` for every variant.
+    pub fn raw(&self) -> i32 {
+        match *self {
+            RejectReason::Unknown => 0,
+            RejectReason::System => 1,
+            RejectReason::Peer => 2,
+            RejectReason::Resource => 3,
+            RejectReason::Rogue => 4,
+            RejectReason::Backlog => 5,
+            RejectReason::Ipe => 6,
+            RejectReason::Close => 7,
+            RejectReason::Version => 8,
+            RejectReason::RdvCookie => 9,
+            RejectReason::BadSecret => 10,
+            RejectReason::Unsecure => 11,
+            RejectReason::MessageApi => 12,
+            RejectReason::Congestion => 13,
+            RejectReason::Filter => 14,
+            RejectReason::Group => 15,
+            RejectReason::Timeout => 16,
+            RejectReason::Crypto => 17,
+            RejectReason::Fallback => 1000,
+            RejectReason::KeyNotSupported => 1001,
+            RejectReason::Filepath => 1002,
+            RejectReason::HostNotFound => 1003,
+            RejectReason::BadRequest => 1400,
+            RejectReason::Unauthorized => 1401,
+            RejectReason::Overload => 1402,
+            RejectReason::Forbidden => 1403,
+            RejectReason::NotFound => 1404,
+            RejectReason::BadMode => 1405,
+            RejectReason::Unacceptable => 1406,
+            RejectReason::Conflict => 1409,
+            RejectReason::NotSupportedMedia => 1415,
+            RejectReason::Locked => 1423,
+            RejectReason::FailedDependency => 1424,
+            RejectReason::InternalServerError => 1500,
+            RejectReason::Unimplemented => 1501,
+            RejectReason::Gateway => 1502,
+            RejectReason::Down => 1503,
+            RejectReason::VersionUnsupported => 1505,
+            RejectReason::NoRoom => 1507,
+            RejectReason::Other(raw) => raw,
+        }
+    }
 }
 
 /// Decide whether a `RawError` indicates a timeout.
@@ -1330,5 +1377,48 @@ mod tests {
             SrtConnectError::TimedOut => {}
             other => panic!("expected TimedOut, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod reject_reason_tests {
+    use super::RejectReason;
+
+    #[test]
+    fn raw_round_trips_every_typed_variant() {
+        for code in (0..=17).chain([
+            1000, 1001, 1002, 1003, 1400, 1401, 1402, 1403, 1404, 1405, 1406, 1409, 1415, 1423,
+            1424, 1500, 1501, 1502, 1503, 1505, 1507,
+        ]) {
+            let r = RejectReason::from_raw(code);
+            assert_ne!(r, RejectReason::Other(code), "code {code} must be typed");
+            assert_eq!(r.raw(), code);
+        }
+        assert_eq!(RejectReason::Other(2042).raw(), 2042);
+    }
+
+    /// Every `#define SRT_REJX_<NAME> <code>` in the vendored header is a typed variant.
+    #[test]
+    fn every_predefined_header_code_is_typed() {
+        let header = include_str!("../../srt-sys/vendor/srt/srtcore/access_control.h");
+        let mut seen = 0;
+        for line in header.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("#define SRT_REJX_") else {
+                continue;
+            };
+            let mut parts = rest.split_whitespace();
+            let name = parts.next().unwrap();
+            let code: i32 = parts.next().unwrap().parse().unwrap();
+            assert_ne!(
+                RejectReason::from_raw(code),
+                RejectReason::Other(code),
+                "SRT_REJX_{name} ({code}) has no RejectReason variant"
+            );
+            seen += 1;
+        }
+        assert!(
+            seen >= 21,
+            "expected the header's predefined codes, parsed {seen}"
+        );
     }
 }
