@@ -329,6 +329,10 @@ merge commit, and the qualification run checks that nothing under
       tree both records name in `release_vm`, and the equivalence file shows
       that tree differs from the qualified one in release documents only.
 
+    A red nightly `ci` run on the release tip is rerun
+    (`gh run rerun <id> --failed`) or explained before tagging, because the
+    tag-time qualification reads the latest `ci` run on the sha.
+
 ## Release procedure
 
 (`vX.Y.Z` below stands for the release tag, e.g. `v0.3.0`.) The tag goes on
