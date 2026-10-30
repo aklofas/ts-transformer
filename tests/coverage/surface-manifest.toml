@@ -4868,3 +4868,168 @@ reason = "listener-side twin of the caller builder setter, applied to accepted s
 [[exempt]]
 item = "tst_srt::builder::SrtListenerBuilder::udp_send_buffer_bytes"
 reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through a listener URL's udpsndbuf key"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listen_rules::ListenRules::set"
+owning_tests = ["crates/tst-srt/tests/loopback/listen_rules.rs", "crates/tst-srt/tests/loopback/listen_rules_encrypted.rs", "crates/tst-srt/src/listen_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:ListenRules.set", "java:org.tstrans.srt.ListenRules.set", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listen_rules::ListenRules::remove"
+owning_tests = ["crates/tst-srt/tests/loopback/listen_rules.rs", "crates/tst-srt/tests/loopback/listen_rules_encrypted.rs", "crates/tst-srt/src/listen_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:ListenRules.remove", "java:org.tstrans.srt.ListenRules.remove", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listen_rules::ListenRules::set_default"
+owning_tests = ["crates/tst-srt/tests/loopback/listen_rules.rs", "crates/tst-srt/tests/loopback/listen_rules_encrypted.rs", "crates/tst-srt/src/listen_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:ListenRules.set_default", "java:org.tstrans.srt.ListenRules.setDefault", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listen_rules::ListenRules::clear"
+owning_tests = ["crates/tst-srt/tests/loopback/listen_rules.rs", "crates/tst-srt/tests/loopback/listen_rules_encrypted.rs", "crates/tst-srt/src/listen_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:ListenRules.clear", "java:org.tstrans.srt.ListenRules.clear", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listen_rules::ListenRules::len"
+owning_tests = ["crates/tst-srt/tests/loopback/listen_rules.rs", "crates/tst-srt/tests/loopback/listen_rules_encrypted.rs", "crates/tst-srt/src/listen_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:ListenRules.__len__", "java:org.tstrans.srt.ListenRules.size", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listen_rules::ListenRules"
+owning_tests = ["crates/tst-srt/tests/loopback/listen_rules.rs", "crates/tst-srt/tests/loopback/listen_rules_encrypted.rs", "crates/tst-srt/src/listen_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:ListenRules", "java:org.tstrans.srt.ListenRules", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listener::SrtListener::rules"
+owning_tests = ["crates/tst-srt/tests/loopback/listen_rules.rs", "crates/tst-srt/tests/loopback/listen_rules_encrypted.rs", "crates/tst-srt/src/listen_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:Listener.rules", "java:org.tstrans.srt.Listener.rules", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::error::RejectReason::raw"
+owning_tests = ["crates/tst-srt/tests/loopback/listen_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:RejectReason", "java:org.tstrans.srt.RejectReason.code", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::parse"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.parse", "java:org.tstrans.srt.AccessControl.parse", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::get"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.get", "java:org.tstrans.srt.AccessControl.get", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::user"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.user", "java:org.tstrans.srt.AccessControl.user", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::resource"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.resource", "java:org.tstrans.srt.AccessControl.resource", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::host"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.host", "java:org.tstrans.srt.AccessControl.host", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::session"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.session", "java:org.tstrans.srt.AccessControl.session", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::kind"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.kind", "java:org.tstrans.srt.AccessControl.kind", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::mode"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.mode", "java:org.tstrans.srt.AccessControl.mode", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::access_control::AccessControl::pairs"
+owning_tests = ["crates/tst-srt/src/access_control.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:AccessControl.items", "java:org.tstrans.srt.AccessControl.all", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_srt::ListenRules"
+reason = "crate-root re-export of tst_srt::listen_rules::ListenRules, covered by that item's row"
+
+[[exempt]]
+item = "tst_srt::listen_rules::ListenRules::is_empty"
+reason = "the clippy-mandated twin of len; the bindings expose the count (size / __len__) and callers compare it with zero"
+
+[[exempt]]
+item = "tst_srt::options::StreamId::access_control"
+reason = "the Rust-side shortcut for AccessControl::parse over a StreamId; the bindings parse the stream-ID string through AccessControl.parse, so no StreamId method carries it"
