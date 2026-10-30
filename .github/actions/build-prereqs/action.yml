@@ -26,15 +26,17 @@ runs:
         # ports.ubuntu.com linux-aarch64 class, 2026-07-16) instead of
         # failing the job on the first fetch error.
         sudo apt-get -o Acquire::Retries=5 update
-        # ripgrep (`rg`) backs the two scrub-guard steps below; the GHA
-        # ubuntu image no longer ships it preinstalled, so install it
-        # explicitly (a missing `rg` made the denylist guard fail closed
-        # and silently no-op'd the pre-rename guard).
+        # ripgrep (`rg`) backs the two scrub-guard steps, which run later in
+        # the ci.yml build job; the GHA ubuntu image no longer ships it
+        # preinstalled, so install it explicitly (a missing `rg` made the
+        # denylist guard fail closed and silently no-op'd the pre-rename
+        # guard).
         sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build ripgrep
 
     - name: Install abigail-tools (linux-x86_64)
-      # abidiff + nm back the abi-compat self-test below, which fails under
-      # CI without abidiff by design. Pinned to the ubuntu-24.04 version.
+      # abidiff + nm back the abi-compat self-test, which runs later in the
+      # ci.yml build job and fails under CI without abidiff by design.
+      # Pinned to the ubuntu-24.04 version.
       if: inputs.platform == 'linux-x86_64' && inputs.abigail == 'true'
       shell: bash
       run: sudo apt-get -o Acquire::Retries=5 install -y binutils abigail-tools=2.4-3build1
