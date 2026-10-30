@@ -751,6 +751,13 @@ rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'manifest-path: crates/tst-cor
 expect_out "roster-sync: bogus manifest-path" "ci.yml deny job names a manifest-path that does not exist: crates/tst-gone/fuzz/Cargo.toml"
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'pass: no-default' 'pass: no-defaults';  expect "roster-sync: a test pass renamed away loses the union" 1 rsync_
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "if: github.event_name != 'pull_request'" 'if: true'; expect "roster-sync: the main-only test job runs on PRs" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'hash:\${{ matrix.shard }}/3' 'hash:\${{ matrix.shard }}/4'; expect "roster-sync: a partition denominator off the shard count" 1 rsync_
+# The job key line is the one line that occurs once and only in test-platforms;
+# plant's sed cannot insert a line portably, so awk adds the job-level if:.
+rs_copy; awk '{print} $0 == "  test-platforms:" {print "    if: github.event_name != '"'"'pull_request'"'"'"}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
+                                                                                 expect "roster-sync: a PR test job made main-only" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'flags: --no-default-features' 'flags: --all-features'; expect "roster-sync: an include entry whose flags do not match its pass" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "if: github.event_name != 'pull_request'" "# if: github.event_name != 'pull_request'"; expect "roster-sync: the main-only if: commented out" 1 rsync_
 rs_copy; rm "$tmp/rs/embedded/baremetal-qemu/Cargo.toml"
                                                                                  expect "roster-sync: a deny manifest gone from the checked tree" 1 rsync_
 expect_out "roster-sync: deny manifest gone" "ci.yml deny job names a manifest-path that does not exist: embedded/baremetal-qemu/Cargo.toml"

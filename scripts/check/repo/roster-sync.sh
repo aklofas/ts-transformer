@@ -8,7 +8,10 @@
 #   4. ci.yml's build matrix is the five gating legs, none continue-on-error
 #      (the job's continue-on-error stays the matrix value, never literal true);
 #      the test jobs give every platform all three feature passes between them,
-#      test-main-extra runs only off pull requests, none continue-on-error;
+#      test-main-extra runs only off pull requests, test-linux and
+#      test-platforms run on every event and give every platform all-features,
+#      each job's shard axis, /N and --partition agree, each include entry's
+#      flags match its pass, none continue-on-error;
 #   5. every member manifest inherits the lint table;
 #   6. ci.yml's deny job checks every fuzz workspace (crates/*/fuzz), and each
 #      manifest-path it names exists in this tree.
@@ -76,7 +79,40 @@ for platform in linux-x86_64 linux-aarch64 macos-arm64 windows-msvc; do
   got="$(awk -v p="$platform" '/- name: /{n = $3} /^[[:space:]]+pass:[[:space:]]+[a-z-]+[[:space:]]*$/ {if (n == p) print $2}' <<<"$all_tests" | sort -u | tr '\n' ' ')"
   [ "$got" = "all-features default no-default " ] || bad "ci.yml test jobs give platform $platform the passes [$got], want all-features default no-default"
 done
-grep -qF "if: github.event_name != 'pull_request'" <<<"$(job_text test-main-extra)" || bad "ci.yml test-main-extra no longer runs only off pull requests"
+grep -qE "^[[:space:]]*if:[[:space:]]*github\.event_name != 'pull_request'[[:space:]]*$" <<<"$(job_text test-main-extra)" || bad "ci.yml test-main-extra no longer runs only off pull requests"
+# The PR jobs run on every event, and give every platform the all-features pass.
+pr_tests=""
+for j in test-linux test-platforms; do
+  if grep -qE '^    if:' <<<"$(job_text "$j")"; then bad "ci.yml $j has a job-level if:"; fi
+  pr_tests="$pr_tests$(job_text "$j")
+"
+done
+for platform in linux-x86_64 linux-aarch64 macos-arm64 windows-msvc; do
+  awk -v p="$platform" '/- name: /{n = $3} /^[[:space:]]+pass:[[:space:]]+all-features[[:space:]]*$/ {if (n == p) ok = 1} END {exit !ok}' <<<"$pr_tests" \
+    || bad "ci.yml PR test jobs (test-linux, test-platforms) do not give platform $platform the all-features pass"
+done
+# Each test job's shard axis, its name's /N and its --partition denominator agree.
+for j in $test_jobs; do
+  t="$(job_text "$j")"
+  axis="$(sed -nE 's/^[[:space:]]+shard:[[:space:]]*\[(.*)\][[:space:]]*$/\1/p' <<<"$t" | awk -F, '{print NF}')"
+  named="$(sed -nE 's|^    name:.*/([0-9]+)\)[[:space:]]*$|\1|p' <<<"$t")"
+  parts="$(grep -oE 'partition hash:\$\{\{ matrix\.shard \}\}/[0-9]+' <<<"$t" | sed 's|.*/||' | sort -u | tr '\n' ' ')"
+  [ -n "$axis" ] && [ "$named" = "$axis" ] && [ "$parts" = "$axis " ] || bad "ci.yml $j: shard axis has ${axis:-?} values, the name says /${named:-?}, the partitions say [${parts}]"
+done
+# Each include entry's flags match its pass.
+for j in $test_jobs; do
+  out="$(awk -v j="$j" -v q="''" '
+    function done_entry() { if (p != "" && !seen) print "ci.yml " j " include " n " pass " p " has no flags:"; p = ""; seen = 0 }
+    /- name: / { done_entry(); n = $3 }
+    /^[[:space:]]+pass:[[:space:]]+[a-z-]+[[:space:]]*$/ { p = $2 }
+    /^[[:space:]]+flags:/ {
+      f = $0; sub(/^[[:space:]]+flags:[[:space:]]*/, "", f); sub(/[[:space:]]+$/, "", f); seen = 1
+      want = (p == "default") ? q : (p == "no-default") ? "--no-default-features" : (p == "all-features") ? "--all-features" : "?"
+      if (f != want) print "ci.yml " j " include " n " pass " p " has flags: " f ", want " want
+    }
+    END { done_entry() }' <<<"$(job_text "$j")")"
+  [ -z "$out" ] || { printf '%s\n' "$out" | sed 's/^/FAIL: roster-sync: /'; fail=1; }
+done
 
 while IFS= read -r toml; do
   awk '/^\[lints\]/ {f = 1; next} /^\[/ {f = 0} f && /^workspace[[:space:]]*=[[:space:]]*true/ {ok = 1} END {exit !ok}' "$toml" || bad "$toml does not inherit [workspace.lints]"
