@@ -2,7 +2,7 @@
 
 Receivers that pull TS bytes from a transport (SRT, UDP, TCP, RIST,
 RTP/RTSP, or file-replay) and either dump, demux, or re-mux them.
-Twelve examples, in read-order:
+Thirteen examples, in read-order:
 
 ## 1. `srt_caller_dump.rs` — caller-mode SRT receiver
 
@@ -26,7 +26,21 @@ Diff from §1: take the listener role instead of caller. Pair with any
 caller-mode sender (e.g.
 [`../sending/send_pipeline_to_socket.rs`](../sending/send_pipeline_to_socket.rs)).
 
-## 3. `srt_recv_typed.rs` — typed-event receiver via `DemuxReceiver<T>`
+## 3. `srt_listener_rules.rs` — one listener, many stream IDs
+
+```sh
+cargo run -p tst-examples --example srt_listener_rules -- publish:amber=amber-secret-1 publish:cobalt
+```
+
+Diff from §2: the listener holds a rule table keyed by stream ID. Listed
+names are accepted (with their own passphrase if given), everything else is
+refused in the handshake, and each accepted name is locked against a second
+publisher until its receiver thread ends. The rules handle is cloned before
+the accept loop so any thread can edit it while `accept` is parked.
+
+Cookbook: [Accept or refuse callers by stream ID](../../docs/cookbook/receiving/srt-listen-rules.md).
+
+## 4. `srt_recv_typed.rs` — typed-event receiver via `DemuxReceiver<T>`
 
 ```sh
 cargo run -p tst-examples --example srt_recv_typed -- 9000
@@ -37,7 +51,7 @@ Diff from §1/§2: instead of writing raw bytes, run them through the
 (per-stream samples, PSI events, errors). The shape every consumer
 that wants real-time access to the parsed stream uses.
 
-## 4. `ts_relay_from_file.rs` — file → SRT
+## 5. `ts_relay_from_file.rs` — file → SRT
 
 ```sh
 cargo run -p tst-examples --example ts_relay_from_file -- input.ts 127.0.0.1:9000
@@ -52,7 +66,7 @@ SRT-aware listener) on the receiver side.
 
 Cookbook: [Relay a captured `.ts` file over SRT](../../docs/cookbook/sending/relay-file-to-srt.md).
 
-## 5. `demux_to_events.rs` — full file-feed demux loop
+## 6. `demux_to_events.rs` — full file-feed demux loop
 
 ```sh
 cargo run -p tst-examples --example demux_to_events -- /path/to/capture.ts
@@ -66,7 +80,7 @@ of a capture.
 Cookbook: [Extract subtitle PES bytes from a captured `.ts` file](../../docs/cookbook/receiving/extract-subtitle-pes.md)
 (adjacent recipe — the same demux loop with subtitle filtering).
 
-## 6. `recv_udp.rs` — UDP receiver (unicast + multicast)
+## 7. `recv_udp.rs` — UDP receiver (unicast + multicast)
 
 ```sh
 cargo run -p tst-examples --example recv_udp -- udp://@0.0.0.0:5004 out.ts
@@ -79,7 +93,7 @@ GStreamer, VLC, STANAG 4609 sensor pods).
 
 Cookbook: [Receive MPEG-TS over UDP](../../docs/cookbook/receiving/udp.md).
 
-## 7. `recv_tcp.rs` — TCP listener receiver
+## 8. `recv_tcp.rs` — TCP listener receiver
 
 ```sh
 cargo run -p tst-examples --example recv_tcp -- 0.0.0.0:7001 out.ts
@@ -93,7 +107,7 @@ producer.
 
 Cookbook: [Receive MPEG-TS over TCP](../../docs/cookbook/receiving/tcp.md).
 
-## 8. `recv_rist.rs` — `tst-rist` quickstart receiver
+## 9. `recv_rist.rs` — `tst-rist` quickstart receiver
 
 ```sh
 cargo run -p tst-examples --example recv_rist
@@ -107,7 +121,7 @@ handling the librist poll-timeout produces between packets. Pair with
 
 Cookbook: [Receive MPEG-TS over RIST](../../docs/cookbook/receiving/rist.md).
 
-## 9. `recv_rtp.rs` — `tst-rtp` quickstart receiver
+## 10. `recv_rtp.rs` — `tst-rtp` quickstart receiver
 
 ```sh
 cargo run -p tst-examples --example recv_rtp
@@ -118,7 +132,7 @@ malformed-packet counter. RTP has no handshake — `listen()` binds the
 socket and is done, unlike the SRT caller/listener pair. Pair with
 [`../sending/send_rtp.rs`](../sending/send_rtp.rs).
 
-## 10. `recv_rtsp_camera.rs` — pull MPEG-TS-over-RTP from an RTSP camera
+## 11. `recv_rtsp_camera.rs` — pull MPEG-TS-over-RTP from an RTSP camera
 
 ```sh
 cargo run -p tst-examples --example recv_rtsp_camera -- rtsp://admin:secret@cam.local/h264
@@ -131,13 +145,13 @@ audio multiplexed): OPTIONS/DESCRIBE, `setup_mp2t_auto`, bridge into a
 `?transport=tcp` to force TCP-interleaved delivery through NAT/firewall
 setups that block UDP.
 
-## 11. `recv_rtsp_h264.rs` — RTSP H.264 → Muxer → `.ts` file gateway
+## 12. `recv_rtsp_h264.rs` — RTSP H.264 → Muxer → `.ts` file gateway
 
 ```sh
 cargo run -p tst-examples --example recv_rtsp_h264 -- rtsp://cam.local/h264
 ```
 
-Diff from §10: for cameras that expose a bare H.264 elementary stream
+Diff from §11: for cameras that expose a bare H.264 elementary stream
 over RTSP (no enclosing MPEG-TS m-line), instead of `setup_mp2t_auto`
 this uses `setup_h264_auto` + `into_h264_receiver` (the RFC 6184
 depacketizer) and pushes each recovered access unit through a `Muxer`
@@ -145,7 +159,7 @@ to build a `.ts` file.
 
 Cookbook: [Receive RTSP H.264 into a `.ts` file](../../docs/cookbook/receiving/recv-rtsp-h264-to-ts.md).
 
-## 12. `recv_rtsp_publish.rs` — let encoders push into `RtspServer`
+## 13. `recv_rtsp_publish.rs` — let encoders push into `RtspServer`
 
 ```sh
 cargo run -p tst-examples --example recv_rtsp_publish
@@ -153,7 +167,7 @@ ffmpeg -re -f lavfi -i testsrc=size=320x240:rate=15 -c:v libx264 \
     -preset ultrafast -tune zerolatency -f rtsp rtsp://127.0.0.1:8554/demo
 ```
 
-Diff from §10/§11: the roles invert. The application runs the RTSP
+Diff from §11/§12: the roles invert. The application runs the RTSP
 server and publishers connect and push (ANNOUNCE / RECORD). With
 `accept_unregistered_publishers(true)` any announced name becomes a
 mount on demand; `next_publisher` hands each one back, and

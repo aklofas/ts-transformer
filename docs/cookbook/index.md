@@ -47,6 +47,7 @@ Start here if your job is producing MPEG-TS bytes: files, fixtures, multi-stream
 - **[Receive MPEG-TS over UDP](/docs/cookbook/receiving/udp.md)** — Ingest from ffmpeg, VLC, or STANAG 4609 senders; unicast or multicast.
 - **[Receive MPEG-TS over TCP](/docs/cookbook/receiving/tcp.md)** — Accept an inbound caller (listener) or connect to a producer; TLS via `tcps://`.
 - **[Receive MPEG-TS over RIST](/docs/cookbook/receiving/rist.md)** — Bind URL form (`rist://@host:port`) with optional AES PSK decryption.
+- **[Accept or refuse SRT callers by stream ID](/docs/cookbook/receiving/srt-listen-rules.md)** — One listener, many publishers: per-ID accept, passphrase or reject rules, editable while it runs.
 - **[Receive into a file](/docs/cookbook/receiving/receive-to-file.md)** — Archive a stream or build a test fixture from a live producer.
 - **[Ingest H.264 from an RTSP camera and remux to MPEG-TS](/docs/cookbook/receiving/recv-rtsp-h264-to-ts.md)** — Bare H.264-over-RTP (RFC 6184) gateway pattern. Python-first; Rust example twin.
 - **[Accept RTSP publishers (ANNOUNCE / RECORD ingest)](/docs/cookbook/receiving/rtsp-publish-ingest.md)** — Encoders push to your `RtspServer` (ffmpeg `-f rtsp`, GStreamer `rtspclientsink`); each pushed stream arrives as MPEG-TS and is re-served to RTSP players.

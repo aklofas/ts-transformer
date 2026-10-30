@@ -96,6 +96,10 @@ name = "srt_caller_dump"
 path = "receiving/srt_caller_dump.rs"
 
 [[example]]
+name = "srt_listener_rules"
+path = "receiving/srt_listener_rules.rs"
+
+[[example]]
 name = "srt_listener_to_file"
 path = "receiving/srt_listener_to_file.rs"
 
