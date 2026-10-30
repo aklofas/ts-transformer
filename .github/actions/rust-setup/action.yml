@@ -24,6 +24,9 @@ inputs:
   cache-restore-key:
     description: actions/cache restore-keys prefix
     default: ''
+  cache-save:
+    description: "'false' restores the cache and never saves it (test shards); 'true' saves it at job end"
+    default: 'true'
   cache-extra-paths:
     description: Lines appended to the shared cache path list
     default: ''
@@ -62,8 +65,21 @@ runs:
       uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
       with:
         tool: nextest
-    - if: inputs.cache-key != ''
+    - if: inputs.cache-key != '' && inputs.cache-save == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          !target/debug/incremental
+          !target/debug/.fingerprint
+          !target/debug/deps
+          ${{ inputs.cache-extra-paths }}
+        key: ${{ inputs.cache-key }}
+        restore-keys: ${{ inputs.cache-restore-key }}
+    - if: inputs.cache-key != '' && inputs.cache-save != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry
