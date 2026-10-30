@@ -250,6 +250,12 @@ internally.
   so a passphrase-only sender connecting to an AES-256 peer adopts
   AES-256. Set the same `KeyLength` on both ends when the cipher strength
   must not depend on the peer.
+- A listener can require a different passphrase per stream ID; see
+  [Listen rules](#listen-rules). A rule carries the passphrase only. libsrt
+  fixes the key length from the caller's key material before the rule is
+  consulted, so the length cannot differ per ID, and
+  `SrtListenerBuilder::key_length` only states a preference to callers that
+  leave theirs unset.
 
 Paired listener and caller, mirroring
 [examples/encrypted_send_recv.rs](/examples/sending/encrypted_send_recv.rs):
@@ -360,11 +366,83 @@ fn listener_inspect() -> Result<(), Box<dyn std::error::Error>> {
 The common pattern is to encode a platform identifier — synthetic
 values like `"sensor-platform-1"` or `"TEST-001"` are appropriate for
 examples and tests; never hard-code real call signs or operational
-identifiers in source. Filter logic is intentionally caller-side:
-`SrtListener::accept` returns every successful handshake and the
-application's accept loop decides whether to keep the connection. See
-"Stream-ID filtering on `SrtListener`" in
-[`docs/project/deferred-features.md`](/docs/project/deferred-features.md) for the rationale.
+identifiers in source.
+
+`AccessControl::parse(stream_id)` reads the structured `#!::` form
+(`#!::u=alice,r=cam1,m=request`) into typed fields: `user()`,
+`resource()`, `host()`, `session()`, `kind()` and `mode()`, plus
+`get(key)` and `pairs()` for any other key. Only the flat form is
+understood. A free-form ID returns `AccessControlError::NotAccessControl`,
+a nested `#!{…}` ID returns `Unsupported`, and a malformed or repeated key
+returns `Syntax` or `DuplicateKey`. `StreamId::access_control()` is the
+same call on an ID you already hold. The JVM binding has the same parser.
+
+### Listen rules
+
+A listener can decide while the handshake is still running, before
+`accept()` returns. `SrtListener::rules()` returns a `ListenRules` handle
+onto a table keyed by stream ID. Each entry is a `ListenRule`: `Accept`,
+`AcceptWith { passphrase }` or `Reject(RejectReason)`. Take the handle
+before the accept loop starts, because `accept()` borrows the listener
+mutably and parks:
+
+```rust,no_run
+use tst_srt::error::RejectReason;
+use tst_srt::{ListenRule, Passphrase, SrtListenerBuilder};
+
+fn serve() -> Result<(), Box<dyn std::error::Error>> {
+    let mut listener = SrtListenerBuilder::new().bind("127.0.0.1:9000")?;
+    let rules = listener.rules();
+
+    // Only this name may connect, and only with its own passphrase.
+    rules.set(
+        "publish:amber",
+        ListenRule::AcceptWith { passphrase: Passphrase::new("amber-secret-1")? },
+    )?;
+    // Everything else is refused with 1404.
+    rules.set_default(ListenRule::Reject(RejectReason::NotFound))?;
+
+    loop {
+        let (socket, _peer) = listener.accept()?;
+        if let Some(id) = socket.stream_id().map(str::to_owned) {
+            // One live publisher per name: refuse the next caller.
+            rules.set(&id, ListenRule::Reject(RejectReason::Conflict))?;
+            // ... hand `socket` to a worker; when it ends: rules.remove(&id);
+        }
+    }
+}
+```
+
+- **Matching** is an exact string compare on the raw stream ID. A caller
+  with no stream ID, including a handshake-v4 caller, is checked against
+  the default rule.
+- **The default rule is `Accept`.** A listener whose table you never touch
+  behaves exactly as it did before, including a builder-wide passphrase.
+- **`Reject` codes start at 1000.** Lower codes belong to libsrt, and
+  `set` returns `ListenRuleError::InternalReason` for them. Use a
+  predefined `RejectReason` or an application code of 2000 or more.
+- **Edits can come from any thread.** `ListenRules` is a cheap clone of the
+  same table, so move a clone to a worker and call `set`, `remove`,
+  `set_default` or `clear` while the accept thread is parked. An edit
+  applies from the next handshake. After the listener closes, `set` and
+  `set_default` return `ListenRuleError::Closed` and `remove` returns
+  `false`.
+- **There is a race window.** A rule installed after `accept()` returns does
+  not cover a caller whose handshake completed in that instant. Keep the
+  application's own check after `accept()` when a duplicate must never
+  get through.
+- **Decisions that need the peer address stay after `accept()`.** The
+  table is keyed by stream ID only.
+- **The caller sees the refusal at once.** Its connect fails with
+  `SrtConnectError::Rejected { reason, .. }` rather than timing out, and
+  the listener's `accept()` never returns for it. A caller that sends the
+  wrong passphrase to an `AcceptWith` rule gets `BadSecret`, and one that
+  sends none gets `Unsecure`.
+
+The runnable version is
+[examples/receiving/srt_listener_rules.rs](/examples/receiving/srt_listener_rules.rs);
+the recipe is
+[Accept or refuse SRT callers by stream ID](/docs/cookbook/receiving/srt-listen-rules.md).
 
 ## Packet filters
 
