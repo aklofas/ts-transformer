@@ -33,6 +33,7 @@
 )]
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -49,6 +50,7 @@ use tst_srt::{
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 
+use super::listen_rules::PyListenRules;
 use crate::errors::make_kinded_error;
 use crate::raise::{SRT, pyres, raise};
 use crate::shells::cancel::PyCancelHandle;
@@ -667,27 +669,42 @@ impl tst_pipeline::binding::Close for ListenerHeld {
 /// `SrtError`.
 #[pyclass(name = "Listener", module = "tstrans.srt")]
 pub(crate) struct PyListener {
-    /// Snapshot = the bound address read at construction (never waits
-    /// behind a parked `accept()` — the thread asking for the port is
-    /// usually the one that has to connect to end that park); `None` only
-    /// if `getsockname` failed.
-    owned: Owned<ListenerHeld, Option<SocketAddr>>,
+    /// Snapshot = what is read without the slot (never waits behind a
+    /// parked `accept()` — the thread asking for the port or editing the
+    /// rules is usually the one that has to end that park).
+    owned: Owned<ListenerHeld, ListenerSnapshot>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<crate::util::CancelSource>,
+}
+
+/// Read at construction, answered without the slot.
+pub(crate) struct ListenerSnapshot {
+    /// The bound address; `None` only if `getsockname` failed.
+    local_addr: Option<SocketAddr>,
+    rules: tst_srt::ListenRules,
+    /// Shared with every `ListenRules` handed out, set once the listener
+    /// closes, so their non-failing edits (`remove`, `clear`, `len`) raise
+    /// `CLOSED` like `set`.
+    closed: Arc<AtomicBool>,
 }
 
 impl Drop for PyListener {
     fn drop(&mut self) {
         drop_owned(&SRT, &self.owned);
+        self.owned.snapshot().closed.store(true, Ordering::Release);
     }
 }
 
 impl PyListener {
     pub(crate) fn wrap(listener: SrtListener) -> Self {
         let cancel = crate::util::CancelSource::new(Arc::new(listener.cancel_handle()));
-        let local_addr = listener.local_addr().ok();
+        let snapshot = ListenerSnapshot {
+            local_addr: listener.local_addr().ok(),
+            rules: listener.rules(),
+            closed: Arc::new(AtomicBool::new(false)),
+        };
         Self {
-            owned: Owned::new(ListenerHeld(Some(listener)), cancel.as_dyn(), local_addr),
+            owned: Owned::new(ListenerHeld(Some(listener)), cancel.as_dyn(), snapshot),
             cancel,
         }
     }
@@ -731,7 +748,7 @@ impl PyListener {
     /// construction-time `getsockname` failed, so there is no address to
     /// report and re-reading it under the slot would only buy a park.
     fn local_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
-        let addr = match self.owned.snapshot() {
+        let addr = match &self.owned.snapshot().local_addr {
             Some(addr) if !self.owned.is_closed() => *addr,
             Some(_) => {
                 return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
@@ -757,7 +774,21 @@ impl PyListener {
     /// with `StopIteration`), then frees the libsrt listener — the
     /// ordering `tst_srt::SrtListener::close` documents. Idempotent.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
-        close_owned(py, &SRT, &self.owned)
+        let res = close_owned(py, &SRT, &self.owned);
+        self.owned.snapshot().closed.store(true, Ordering::Release);
+        res
+    }
+
+    /// This listener's per-stream-ID `ListenRules`. Answered from the
+    /// construction-time snapshot, so it never waits behind a parked
+    /// `accept()`; obtain it before the accept loop starts. Raises
+    /// `SrtError(CLOSED)` once the listener is closed.
+    fn rules(&self, py: Python<'_>) -> PyResult<PyListenRules> {
+        if self.owned.is_closed() {
+            return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
+        }
+        let s = self.owned.snapshot();
+        Ok(PyListenRules::new(s.rules.clone(), s.closed.clone()))
     }
 
     /// `True` while this listener still owns the libsrt handle (an accept
