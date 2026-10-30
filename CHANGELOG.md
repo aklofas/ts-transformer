@@ -237,7 +237,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A linux-aarch64 interop job runs the `[arm64_subset]` cells on scheduled, dispatched and release-qualify runs, and its census is recorded beside the x86_64 one. It runs with `continue-on-error` until two scheduled runs are green, and then gates.
 - The stress port-table rail runs in CI.
 - The test suite runs as hash-partitioned nextest shards; platforms other than linux-x86_64 run the all-features pass on pull requests and the other passes on push to main; a nightly dispatch opens a `ci-nightly` issue on red.
-- `jvm-jar` and `python-wheels` build linux-x86_64 only on pull requests and run their full platform matrices on push to main, on tags and under the qualification call; `clusterfuzzlite-pr` fuzzes for 300 s.
+- `jvm-jar` runs on pull requests only when JVM-relevant paths change; on pull requests it and `python-wheels` build linux-x86_64 only, and both run their full platform matrices on push to main, on tags and under the qualification call; `clusterfuzzlite-pr` fuzzes for 300 s.
 
 ### Changed — dependencies
 
