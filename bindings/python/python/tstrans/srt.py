@@ -7,6 +7,8 @@ will fail to import this submodule with a friendly ImportError.
 Submodule contents are populated by `tstrans._native.srt`:
 - `SrtStats`
 - `Socket`, `Listener`, `Builder`
+- `ListenRule`, `ListenRules` (`Listener.rules()`); `RejectReason` and
+  `user_defined` are defined here
 - `ReconnectPolicy`, `BackoffStrategy`, `OverflowPolicy`
 - `ManagedSender`, `ManagedReceiver`, `ManagedMuxSender`, `ManagedDemuxReceiver`
 - `ReconnectMode`, `ManagedTransportStats` (`reconnect_stats()` on
@@ -22,6 +24,7 @@ The shell classes (`Sender`, `Receiver`, `MuxSender`, `DemuxReceiver`),
 
 from __future__ import annotations
 
+import enum as _enum
 import warnings as _warnings
 
 from . import shells as _shells
@@ -70,6 +73,49 @@ Builder = _srt.Builder
 Socket = _srt.Socket
 Listener = _srt.Listener
 
+# Per-stream-ID listen rules.
+ListenRule = _srt.ListenRule
+ListenRules = _srt.ListenRules
+_native_reject_reason_table = _srt._reject_reason_table
+
+
+class RejectReason(_enum.IntEnum):
+    """The predefined SRT reject codes (`SRT_REJX_*`, 1000..=1999) a
+    `ListenRule.reject` can carry; the caller's connect error names the
+    reason. `ListenRule.reject` also takes any other int >= 1000; use
+    `user_defined` for application codes (2000 and up)."""
+
+    FALLBACK = 1000
+    KEY_NOT_SUPPORTED = 1001
+    FILEPATH = 1002
+    HOST_NOT_FOUND = 1003
+    BAD_REQUEST = 1400
+    UNAUTHORIZED = 1401
+    OVERLOAD = 1402
+    FORBIDDEN = 1403
+    NOT_FOUND = 1404
+    BAD_MODE = 1405
+    UNACCEPTABLE = 1406
+    CONFLICT = 1409
+    NOT_SUPPORTED_MEDIA = 1415
+    LOCKED = 1423
+    FAILED_DEPENDENCY = 1424
+    INTERNAL_SERVER_ERROR = 1500
+    UNIMPLEMENTED = 1501
+    GATEWAY = 1502
+    DOWN = 1503
+    VERSION_UNSUPPORTED = 1505
+    NO_ROOM = 1507
+
+
+def user_defined(code: int) -> int:
+    """An application reject code for `ListenRule.reject`. Raises
+    `ValueError` below 2000 (`SRT_REJC_USERDEFINED`; lower codes are
+    libsrt's or predefined)."""
+    if code < 2000:
+        raise ValueError(f"user-defined reject codes start at 2000, got {code}")
+    return code
+
 # Reconnect policy ergonomics.
 BackoffStrategy = _srt.BackoffStrategy
 OverflowPolicy = _srt.OverflowPolicy
@@ -95,6 +141,11 @@ __all__: list[str] = [
     "Builder",
     "Socket",
     "Listener",
+    # listen rules
+    "ListenRule",
+    "ListenRules",
+    "RejectReason",
+    "user_defined",
     # policy
     "BackoffStrategy",
     "OverflowPolicy",

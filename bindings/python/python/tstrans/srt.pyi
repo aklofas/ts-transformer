@@ -62,6 +62,10 @@ __all__: list[str] = [
     "Builder",
     "Socket",
     "Listener",
+    "ListenRule",
+    "ListenRules",
+    "RejectReason",
+    "user_defined",
     "BackoffStrategy",
     "OverflowPolicy",
     "ReconnectPolicy",
@@ -242,6 +246,7 @@ class Listener:
     def cancel_handle(self) -> CancelHandle: ...
     def local_addr(self) -> Tuple[str, int]: ...
     def close(self) -> None: ...
+    def rules(self) -> ListenRules: ...
     def is_alive(self) -> bool: ...
     def __iter__(self) -> Listener: ...
     def __next__(self) -> Socket: ...
@@ -252,6 +257,74 @@ class Listener:
         exc_value: Optional[BaseException],
         traceback: Optional[Any],
     ) -> bool: ...
+    def __repr__(self) -> str: ...
+
+
+# ---------------------------------------------------------------------------
+# Listen rules (ListenRule / ListenRules / RejectReason)
+# ---------------------------------------------------------------------------
+
+
+class RejectReason(enum.IntEnum):
+    """The predefined SRT reject codes (`SRT_REJX_*`, 1000..=1999)."""
+
+    FALLBACK = 1000
+    KEY_NOT_SUPPORTED = 1001
+    FILEPATH = 1002
+    HOST_NOT_FOUND = 1003
+    BAD_REQUEST = 1400
+    UNAUTHORIZED = 1401
+    OVERLOAD = 1402
+    FORBIDDEN = 1403
+    NOT_FOUND = 1404
+    BAD_MODE = 1405
+    UNACCEPTABLE = 1406
+    CONFLICT = 1409
+    NOT_SUPPORTED_MEDIA = 1415
+    LOCKED = 1423
+    FAILED_DEPENDENCY = 1424
+    INTERNAL_SERVER_ERROR = 1500
+    UNIMPLEMENTED = 1501
+    GATEWAY = 1502
+    DOWN = 1503
+    VERSION_UNSUPPORTED = 1505
+    NO_ROOM = 1507
+
+
+def user_defined(code: int) -> int:
+    """An application reject code (>= 2000); `ValueError` below."""
+
+
+def _native_reject_reason_table() -> list[tuple[int, str]]: ...
+
+
+@final
+class ListenRule:
+    """What a listener does with a caller: accept, accept with a
+    passphrase, or reject with a reason the caller reads. `repr` redacts
+    the passphrase."""
+
+    @staticmethod
+    def accept() -> ListenRule: ...
+    @staticmethod
+    def accept_with(passphrase: str) -> ListenRule: ...
+    @staticmethod
+    def reject(reason: int) -> ListenRule: ...
+    def __repr__(self) -> str: ...
+
+
+@final
+class ListenRules:
+    """One listener's per-stream-ID rules, from `Listener.rules()`. Safe
+    to edit while another thread is parked in `accept()`. Every method
+    raises `SrtError(CLOSED)` once the listener is closed; `set` /
+    `set_default` raise `SrtError(CONFIG_INVALID)` for a bad passphrase."""
+
+    def set(self, stream_id: str, rule: ListenRule) -> None: ...
+    def remove(self, stream_id: str) -> bool: ...
+    def set_default(self, rule: ListenRule) -> None: ...
+    def clear(self) -> None: ...
+    def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
 
 

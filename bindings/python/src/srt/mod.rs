@@ -6,6 +6,7 @@
 //! Submodules:
 //! - `generated::stats_srt`: SrtStats (the shell classes live in `tstrans.shells`)
 //! - `lowlevel`:             Socket, Listener, Builder
+//! - `listen_rules`:         ListenRule, ListenRules (from `Listener.rules()`)
 //! - `policy`:               ReconnectPolicy, BackoffStrategy, OverflowPolicy
 //! - `managed_basic`:        ManagedSender, ManagedReceiver
 //! - `managed_convenience`:  ManagedMuxSender, ManagedDemuxReceiver
@@ -15,6 +16,7 @@
 //! next to its own definition, and `raise` resolves the kind's `name()` on
 //! `tstrans.exceptions.SrtErrorKind` — checked at `import tstrans`.
 
+mod listen_rules;
 mod lowlevel;
 pub(crate) mod managed_basic;
 pub(crate) mod managed_convenience;
@@ -26,6 +28,7 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "srt")?;
     crate::generated::stats_srt::register(&m)?;
     lowlevel::register(&m)?;
+    listen_rules::register(&m)?;
     policy::register(&m)?;
     managed_basic::register(&m)?;
     managed_convenience::register(&m)?;
