@@ -305,6 +305,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/ratchet-self-test.sh
 
+      - name: nightly-issue self-test (the issue script creates or comments)
+        # Runs scripts/ci/nightly-issue.sh against a stub gh. Gated to
+        # linux-x86_64: platform-independent, no signal from other runners.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/nightly-issue-selftest.sh
+
       - name: No duplicate test helpers
         # A Rust fn / Python def / Java private static body identical in two
         # or more test files fails unless listed, with a reason, in
