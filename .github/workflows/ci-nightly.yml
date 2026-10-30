@@ -4,7 +4,9 @@
 # Why a dispatcher and not a schedule trigger on ci.yml: release-qualify's
 # ci-lookup reads the latest ci run on a sha, so a frozen release sha must
 # collect at most one nightly, and ci.yml's job graph stays untouched. The
-# check step skips a tip that already has a completed nightly run.
+# check step skips a tip that already has a completed nightly run; when that
+# run ended red and no open ci-nightly issue names the tip, the job reports it
+# instead of dispatching a second run.
 #
 # The dispatched run executes the full set because test-main-extra runs on
 # every event except pull_request.
@@ -14,6 +16,10 @@ on:
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: ci-nightly
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -37,11 +43,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tip=$(git rev-parse HEAD)
-          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$tip&event=workflow_dispatch&actor=github-actions%5Bbot%5D&per_page=5" \
-            --jq '[.workflow_runs[] | select(.status=="completed")] | length')
-          if [ "$n" -gt 0 ]; then
-            echo "tip $tip already has a nightly run; nothing to do" >> "$GITHUB_STEP_SUMMARY"
+          echo "tip=$tip" >> "$GITHUB_OUTPUT"
+          last=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$tip&event=workflow_dispatch&actor=github-actions%5Bbot%5D&per_page=5" \
+            --jq '[.workflow_runs[] | select(.status=="completed")] | sort_by(.created_at) | last | if . == null then empty else "\(.id) \(.conclusion)" end')
+          if [ -n "$last" ]; then
+            echo "tip $tip already has a nightly run; nothing to dispatch" >> "$GITHUB_STEP_SUMMARY"
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            read -r id conclusion <<<"$last"
+            if [ "$conclusion" != success ]; then
+              open=$(gh issue list --label ci-nightly --state open --search "$tip" --json number --jq 'length')
+              # A red run that no open issue names was never reported (the
+              # job that waited on it died first): report it now.
+              if [ "$open" = 0 ]; then
+                echo "stale_run_id=$id" >> "$GITHUB_OUTPUT"
+              fi
+            fi
           fi
 
       - name: Dispatch ci on the tip
@@ -51,12 +67,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tip=$(git rev-parse HEAD)
-          before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          tip=$(git ls-remote origin refs/heads/main | cut -f1)
+          echo "tip=$tip" >> "$GITHUB_OUTPUT"
+          runs="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$tip&event=workflow_dispatch&per_page=100"
+          known=$(gh api "$runs" --jq '[.workflow_runs[].id]')
           gh workflow run ci.yml --ref main -f sha="$tip"
           for _ in $(seq 1 12); do
-            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$tip&event=workflow_dispatch&per_page=5" \
-              --jq "[.workflow_runs[] | select(.created_at >= \"$before\")] | sort_by(.created_at) | last | .id // empty")
+            id=$(gh api "$runs" \
+              --jq "[.workflow_runs[] | select((.id | IN(${known}[])) | not)] | sort_by(.created_at) | last | .id // empty")
             if [ -n "$id" ]; then
               echo "run_id=$id" >> "$GITHUB_OUTPUT"
               exit 0
@@ -68,19 +86,22 @@ jobs:
 
       - name: Wait for the run
         id: wait
-        if: steps.dispatch.outputs.run_id != ''
+        if: steps.dispatch.outputs.run_id != '' || steps.check.outputs.stale_run_id != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id || steps.check.outputs.stale_run_id }}
         run: |
           while true; do
-            json=$(gh run view "$RUN_ID" --json status,conclusion,url,jobs)
+            # A transient gh failure retries; the job's timeout bounds the loop.
+            json=$(gh run view "$RUN_ID" --json status,conclusion,url,jobs) || { sleep 60; continue; }
             if [ "$(echo "$json" | jq -r .status)" = completed ]; then
               {
                 echo "conclusion=$(echo "$json" | jq -r .conclusion)"
                 echo "url=$(echo "$json" | jq -r .url)"
-                echo "failed=$(echo "$json" | jq -r '[.jobs[] | select(.conclusion=="failure") | .name] | join(",")')"
+                # A hang that hits a timeout ends `cancelled`, so anything
+                # but success or skipped counts. Job names contain commas.
+                echo "failed=$(echo "$json" | jq -r '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | .name] | join("; ")')"
               } >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -94,9 +115,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TIP: ${{ steps.dispatch.outputs.tip || steps.check.outputs.tip }}
           RUN_URL: ${{ steps.wait.outputs.url }}
           FAILED: ${{ steps.wait.outputs.failed }}
         run: |
-          tip=$(git rev-parse HEAD)
-          bash scripts/ci/nightly-issue.sh "$tip" "$RUN_URL" "$FAILED"
+          bash scripts/ci/nightly-issue.sh "$TIP" "$RUN_URL" "$FAILED"
           exit 1

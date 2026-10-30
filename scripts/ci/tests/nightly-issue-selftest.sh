@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Self-test of scripts/ci/nightly-issue.sh against a stub `gh` that logs its
-# arguments and answers `issue list` from $TMP/open.json. Asserts the issue is
-# created when none is open and commented on when one is.
+# arguments and answers `issue list` from $TMP/open.json. Asserts the issue
+# list asks for open ci-nightly issues, and the issue is created when none is
+# open and commented on (with the run URL) when one is.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -43,12 +44,15 @@ run_case
 grep -q '^issue create.*\[--label\] \[ci-nightly\]' "$TMP/gh.log" || { echo "FAIL: create lacks --label ci-nightly"; cat "$TMP/gh.log"; exit 1; }
 grep -q '\[--title\] \[nightly ci red on abc1234\]' "$TMP/gh.log" || { echo "FAIL: create lacks the expected title"; cat "$TMP/gh.log"; exit 1; }
 grep -q 'build,test-main' "$TMP/gh.log" || { echo "FAIL: create body lacks the failed jobs"; exit 1; }
+grep -q '^issue list.*\[--label\] \[ci-nightly\]' "$TMP/gh.log" || { echo "FAIL: issue list lacks --label ci-nightly"; cat "$TMP/gh.log"; exit 1; }
+grep -q '^issue list.*\[--state\] \[open\]' "$TMP/gh.log" || { echo "FAIL: issue list lacks --state open"; cat "$TMP/gh.log"; exit 1; }
 ! grep -q '^issue comment' "$TMP/gh.log" || { echo "FAIL: unexpected issue comment"; exit 1; }
 
 # Case 2: open issue 41 -> comment on it, no create
 echo '[{"number":41}]' > "$TMP/open.json"
 run_case
 [ "$(grep -c '^issue comment \[41\]' "$TMP/gh.log")" = 1 ] || { echo "FAIL: expected one issue comment on 41"; cat "$TMP/gh.log"; exit 1; }
+grep -q '^issue comment \[41\].*https://example.invalid/runs/1' "$TMP/gh.log" || { echo "FAIL: comment body lacks the run URL"; cat "$TMP/gh.log"; exit 1; }
 ! grep -q '^issue create' "$TMP/gh.log" || { echo "FAIL: unexpected issue create"; exit 1; }
 
 echo "nightly-issue self-test: OK"
