@@ -157,10 +157,15 @@ fn edits_race_handshakes_without_deadlock() {
     let drain = {
         let done = done.clone();
         std::thread::spawn(move || {
+            // Accepted sockets stay open too: closing one right away can
+            // break a caller that is still finishing its connect.
+            let mut accepted = Vec::new();
             loop {
                 match listener.accept_timeout(Duration::from_millis(200)) {
-                    Ok(_) => {}
-                    Err(AcceptError::TimedOut) if done.load(Ordering::Acquire) => return,
+                    Ok(conn) => accepted.push(conn),
+                    Err(AcceptError::TimedOut) if done.load(Ordering::Acquire) => {
+                        return (listener, accepted);
+                    }
                     Err(AcceptError::TimedOut) => {}
                     Err(e) => panic!("accept: {e:?}"),
                 }
@@ -168,10 +173,15 @@ fn edits_race_handshakes_without_deadlock() {
         })
     };
 
+    // Admitted callers stay open until the drain has finished: a caller that
+    // vanishes right after its handshake can leave the accepted socket broken
+    // before `accept_timeout` configures it, which that call reports as an
+    // error.
+    let mut admitted = Vec::new();
     for i in 0..20 {
         match connect(port, Some("publish:amber")) {
-            Ok(_)
-            | Err(SrtConnectError::Rejected {
+            Ok(sock) => admitted.push(sock),
+            Err(SrtConnectError::Rejected {
                 reason: RejectReason::Overload,
                 ..
             }) => {}
@@ -180,5 +190,8 @@ fn edits_race_handshakes_without_deadlock() {
     }
     done.store(true, Ordering::Release);
     flipper.join().expect("join flipper");
-    drain.join().expect("join drain");
+    // The listener outlives the flipper's last edit: dropping it first would
+    // make that edit report `Closed`.
+    let kept = drain.join().expect("join drain");
+    drop((admitted, kept));
 }
