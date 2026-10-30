@@ -397,7 +397,7 @@ fn serve() -> Result<(), Box<dyn std::error::Error>> {
     // Only this name may connect, and only with its own passphrase.
     let amber = ListenRule::AcceptWith { passphrase: Passphrase::new("amber-secret-1")? };
     rules.set("publish:amber", amber.clone())?;
-    // Everything else is refused with 1404.
+    // Everything else is refused with 1404 (`RejectReason::NotFound`).
     rules.set_default(ListenRule::Reject(RejectReason::NotFound))?;
 
     loop {
@@ -741,7 +741,7 @@ Each item below maps to an entry in
   libsrt 1.5.7 negotiates with anything 1.3 or newer.
 - Typed FEC / packet-filter builder — pass the libsrt spec string
   verbatim today.
-- Stream-ID filtering on `SrtListener` — kept caller-side intentionally.
+- Peer-address decisions at SRT handshake time — the rules table is keyed by stream ID, so a decision that needs the caller's address stays after `accept()`; see [deferred features](/docs/project/deferred-features.md).
 - Custom congestion-controller selection — `Live` and `File` ship.
 
 ## See also
