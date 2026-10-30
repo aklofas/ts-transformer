@@ -570,7 +570,7 @@ impl RejectReason {
     }
 
     /// The raw reject code libsrt carries for this reason. Inverse of
-    /// [`RejectReason::from_raw`]: `from_raw(r.raw()) == r` for every variant.
+    /// `RejectReason::from_raw`: `from_raw(r.raw()) == r` for every variant.
     pub fn raw(&self) -> i32 {
         match *self {
             RejectReason::Unknown => 0,
