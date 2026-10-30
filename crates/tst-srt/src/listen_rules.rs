@@ -7,8 +7,8 @@
 //! table was never edited accepts every caller, as libsrt does by default.
 
 use crate::error::{OptionError, RejectReason, last_error};
-use crate::options::{KeyLength, Passphrase};
-use crate::socket::{set_int, set_passphrase};
+use crate::options::Passphrase;
+use crate::socket::set_passphrase;
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,14 +25,15 @@ const FIRST_APPLICATION_REASON: i32 = 1000;
 pub enum ListenRule {
     /// Accept with the listener's own settings (libsrt's default behavior).
     Accept,
-    /// Accept, with this passphrase (and key length) applied to the
-    /// connection. libsrt then rejects a caller whose key material does not
-    /// match with [`RejectReason::BadSecret`].
+    /// Accept, with this passphrase applied to the connection. libsrt then
+    /// rejects a caller whose key material does not match with
+    /// [`RejectReason::BadSecret`]. The key length is negotiated from the
+    /// caller's key material (libsrt HSv5), so a rule cannot set it; the
+    /// listener-wide `SrtListenerBuilder::key_length` only advertises a
+    /// preference to callers that leave theirs unset.
     AcceptWith {
         /// The passphrase the connection must use.
         passphrase: Passphrase,
-        /// The key length; `None` leaves it to the handshake's negotiation.
-        key_length: Option<KeyLength>,
     },
     /// Refuse during the handshake; the caller reads `reason`. Only
     /// predefined (`1000..=1999`) or user-defined (`2000..`) reasons are
@@ -245,24 +246,13 @@ pub(crate) fn decide(table: &Table, stream_id: Option<&[u8]>) -> ListenRule {
 pub(crate) fn apply(ns: srt_sys::SRTSOCKET, rule: &ListenRule) -> c_int {
     match rule {
         ListenRule::Accept => 0,
-        ListenRule::AcceptWith {
-            passphrase,
-            key_length,
-        } => {
-            // Key length before the passphrase, as `apply_common_options` does.
-            let set = key_length
-                .map_or(Ok(()), |kl| {
-                    set_int(ns, srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN, kl.as_bytes())
-                })
-                .and_then(|()| set_passphrase(ns, passphrase));
-            match set {
-                Ok(()) => 0,
-                Err(e) => {
-                    tracing::warn!(error = %e, "listen rule: could not apply the passphrase; rejecting the caller");
-                    reject(ns, FIRST_APPLICATION_REASON)
-                }
+        ListenRule::AcceptWith { passphrase } => match set_passphrase(ns, passphrase) {
+            Ok(()) => 0,
+            Err(e) => {
+                tracing::warn!(error = %e, "listen rule: could not apply the passphrase; rejecting the caller");
+                reject(ns, FIRST_APPLICATION_REASON)
             }
-        }
+        },
         ListenRule::Reject(r) => reject(ns, r.raw()),
     }
 }
@@ -423,14 +413,10 @@ mod tests {
                 "a",
                 ListenRule::AcceptWith {
                     passphrase: pw.clone(),
-                    key_length: None,
                 },
             )
             .unwrap();
-        let rule = ListenRule::AcceptWith {
-            passphrase: pw,
-            key_length: Some(KeyLength::Aes256),
-        };
+        let rule = ListenRule::AcceptWith { passphrase: pw };
         for s in [format!("{rules:?}"), format!("{rule:?}")] {
             assert!(!s.contains("secretsecretsecret"), "{s}");
         }
@@ -444,10 +430,7 @@ mod tests {
         assert_eq!(
             apply(
                 srt_sys::SRT_INVALID_SOCK,
-                &ListenRule::AcceptWith {
-                    passphrase: pw,
-                    key_length: None
-                }
+                &ListenRule::AcceptWith { passphrase: pw }
             ),
             -1
         );
