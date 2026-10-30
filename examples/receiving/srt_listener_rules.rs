@@ -76,6 +76,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("listening on 127.0.0.1:9000 ({} rules)", rules.len());
 
     let mut workers = Vec::new();
+    // Numbers each connection: IDs that sanitize alike (`a-b`, `a_b`) or a
+    // name reused after its publisher left would otherwise share one file.
+    let mut connection: u64 = 0;
     loop {
         // A caller the rules refuse never reaches this point: libsrt answers
         // it inside the handshake and `accept` keeps waiting.
@@ -110,8 +113,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let rules = rules.clone();
         let original = id.as_ref().and_then(|id| originals.get(id)).cloned();
+        connection += 1;
         let path = env::temp_dir().join(format!(
-            "srt_rules_{}.ts",
+            "srt_rules_{}_{connection}.ts",
             id.as_deref()
                 .unwrap_or("anonymous")
                 .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
