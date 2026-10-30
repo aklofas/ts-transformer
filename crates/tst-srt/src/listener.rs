@@ -70,6 +70,8 @@ pub struct SrtListener {
     /// never double-close — and so Drop does not latch the caller-visible
     /// `is_cancelled()` (see the type docs).
     cancel: tst_core::ResourceCancel,
+    /// The table the listen hook consults during each handshake.
+    rules: crate::listen_rules::ListenRules,
     /// Stored for inheritance into accepted Sockets.
     accepted_send_timeout: Option<Duration>,
     accepted_recv_timeout: Option<Duration>,
@@ -79,6 +81,7 @@ impl std::fmt::Debug for SrtListener {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SrtListener")
             .field("handle", &self.handle)
+            .field("rules", &self.rules)
             .field("accepted_send_timeout", &self.accepted_send_timeout)
             .field("accepted_recv_timeout", &self.accepted_recv_timeout)
             .finish()
@@ -155,10 +158,20 @@ impl SrtListener {
                 continue;
             }
 
+            // libsrt takes the listen hook only before srt_listen.
+            let rules = match crate::listen_rules::install(handle) {
+                Ok(rules) => rules,
+                Err(e) => {
+                    crate::exit_guard::close_socket(handle);
+                    last_err = Some(BindError::InvalidOption(e));
+                    continue;
+                }
+            };
+
             let rc = unsafe { srt_sys::srt_listen(handle, config.backlog as c_int) };
             if rc < 0 {
                 let raw = last_error();
-                unsafe { srt_sys::srt_close(handle) };
+                crate::exit_guard::close_socket(handle);
                 last_err = Some(raw.into());
                 continue;
             }
@@ -166,6 +179,7 @@ impl SrtListener {
             return Ok(Self {
                 handle,
                 cancel: make_cancel_handle(handle),
+                rules,
                 accepted_send_timeout: config.socket.send_timeout,
                 accepted_recv_timeout: config.socket.recv_timeout,
             });
@@ -484,6 +498,14 @@ impl SrtListener {
     /// listener socket without freeing the listener itself. Idempotent.
     pub fn cancel_handle(&self) -> tst_core::ResourceCancel {
         self.cancel.clone()
+    }
+
+    /// The per-stream-ID rules this listener consults during each
+    /// handshake. Clone-able and usable from any thread; obtain it before
+    /// parking in [`accept`](Self::accept) to edit rules while the accept
+    /// waits. See [`ListenRules`](crate::ListenRules).
+    pub fn rules(&self) -> crate::listen_rules::ListenRules {
+        self.rules.clone()
     }
 
     /// Bind `addr`, accept **one** connection, and return it as an
