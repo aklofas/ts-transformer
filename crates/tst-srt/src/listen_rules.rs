@@ -135,7 +135,8 @@ fn validate(rule: &ListenRule) -> Result<(), ListenRuleError> {
 
 impl ListenRules {
     /// Set the rule for callers whose stream ID is exactly `stream_id`,
-    /// replacing any rule already there.
+    /// replacing any rule already there. A rule for the empty string is
+    /// stored but never matches: an empty stream ID gets the default.
     pub fn set(&self, stream_id: &str, rule: ListenRule) -> Result<(), ListenRuleError> {
         validate(&rule)?;
         self.inner.check_open()?;
@@ -227,11 +228,13 @@ pub(crate) fn uninstall(handle: srt_sys::SRTSOCKET) {
     }
 }
 
-/// The decision for one handshake. `None` (handshake v4, or an unreadable
-/// stream ID) and any stream ID that is not UTF-8 get the default rule.
+/// The decision for one handshake. `None`, an empty stream ID (handshake
+/// v4 included) and any stream ID that is not UTF-8 get the default rule.
 pub(crate) fn decide(table: &Table, stream_id: Option<&[u8]>) -> ListenRule {
     stream_id
         .and_then(|b| std::str::from_utf8(b).ok())
+        // libsrt hands a handshake-v4 caller an empty string, not NULL.
+        .filter(|id| !id.is_empty())
         .and_then(|id| table.rules.get(id))
         .unwrap_or(&table.default)
         .clone()
@@ -349,6 +352,19 @@ mod tests {
             decide(&t, Some(b"\xff\xfe")),
             ListenRule::Reject(RejectReason::Overload)
         ));
+        assert!(matches!(
+            decide(&t, Some(b"")),
+            ListenRule::Reject(RejectReason::Overload)
+        ));
+        assert!(matches!(
+            decide(&t, None),
+            ListenRule::Reject(RejectReason::Overload)
+        ));
+        drop(t);
+        rules
+            .set("", ListenRule::Reject(RejectReason::Conflict))
+            .unwrap();
+        let t = rules.inner.table.read().unwrap();
         assert!(matches!(
             decide(&t, Some(b"")),
             ListenRule::Reject(RejectReason::Overload)
