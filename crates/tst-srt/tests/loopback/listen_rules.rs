@@ -157,6 +157,8 @@ fn edits_race_handshakes_without_deadlock() {
                 };
                 rules.set_default(rule).unwrap();
                 flips += 1;
+                // RwLock prefers writers: let the hook's read in.
+                std::thread::yield_now();
             }
         })
     };
