@@ -46,10 +46,11 @@ pub enum AccessControlError {
     /// The stream ID does not start with `#!`.
     #[error("not an access-control stream id (no `#!` prefix)")]
     NotAccessControl,
-    /// The nested `#!{{...}}` form.
+    /// The nested `#!{...}` form.
     #[error("nested `#!{{` form is not supported")]
     Unsupported,
-    /// A malformed pair; the number is the byte offset where it starts.
+    /// A malformed pair; the number is the byte offset of the offending
+    /// segment (2 for a `#!` not followed by `::`, right after the prefix).
     #[error("syntax error at byte {0}")]
     Syntax(usize),
     /// The same key appeared twice.

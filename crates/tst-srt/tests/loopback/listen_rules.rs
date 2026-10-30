@@ -9,9 +9,15 @@ use tst_srt::{
     AcceptError, ListenRule, ListenRuleError, SrtConnectError, SrtListener, SrtListenerBuilder,
     SrtSocket, SrtSocketBuilder, StreamId,
 };
+use tst_test_helpers::timing::scaled;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
-const ACCEPT_TIMEOUT: Duration = Duration::from_secs(2);
+fn connect_timeout() -> Duration {
+    scaled(Duration::from_secs(2))
+}
+
+fn accept_timeout() -> Duration {
+    scaled(Duration::from_secs(2))
+}
 
 fn listener() -> (SrtListener, u16) {
     let listener = SrtListenerBuilder::new()
@@ -23,7 +29,7 @@ fn listener() -> (SrtListener, u16) {
 
 fn connect(port: u16, stream_id: Option<&str>) -> Result<SrtSocket, SrtConnectError> {
     let mut b = SrtSocketBuilder::new();
-    b.connect_timeout(CONNECT_TIMEOUT);
+    b.connect_timeout(connect_timeout());
     if let Some(id) = stream_id {
         b.stream_id(StreamId::new(id).expect("stream id"));
     }
@@ -38,7 +44,7 @@ fn reject_rule_refuses_the_caller_with_its_reason_and_accept_never_sees_it() {
         .rules()
         .set("publish:amber", ListenRule::Reject(RejectReason::Forbidden))
         .unwrap();
-    let accept = std::thread::spawn(move || listener.accept_timeout(ACCEPT_TIMEOUT).map(|_| ()));
+    let accept = std::thread::spawn(move || listener.accept_timeout(accept_timeout()).map(|_| ()));
     crate::common::assert_rejected(
         connect(port, Some("publish:amber")),
         RejectReason::Forbidden,
@@ -57,7 +63,7 @@ fn default_rule_switch_applies_to_the_next_caller() {
 
     let _first = connect(port, Some("publish:amber")).expect("first caller connects");
     listener
-        .accept_timeout(ACCEPT_TIMEOUT)
+        .accept_timeout(accept_timeout())
         .expect("accept first");
 
     rules
@@ -68,7 +74,7 @@ fn default_rule_switch_applies_to_the_next_caller() {
     rules.set_default(ListenRule::Accept).unwrap();
     let _third = connect(port, Some("publish:amber")).expect("third caller connects");
     listener
-        .accept_timeout(ACCEPT_TIMEOUT)
+        .accept_timeout(accept_timeout())
         .expect("accept third");
 }
 
@@ -83,7 +89,7 @@ fn remove_falls_back_to_the_default() {
     crate::common::assert_rejected(connect(port, Some("a")), RejectReason::Conflict);
     assert!(rules.remove("a"));
     let _sock = connect(port, Some("a")).expect("connects once the rule is gone");
-    listener.accept_timeout(ACCEPT_TIMEOUT).expect("accept");
+    listener.accept_timeout(accept_timeout()).expect("accept");
 }
 
 #[test]
@@ -92,8 +98,8 @@ fn untouched_table_accepts_as_before() {
     let (mut listener, port) = listener();
     let _with_id = connect(port, Some("publish:amber")).expect("caller with a stream id");
     let _without_id = connect(port, None).expect("caller without a stream id");
-    listener.accept_timeout(ACCEPT_TIMEOUT).expect("accept 1");
-    listener.accept_timeout(ACCEPT_TIMEOUT).expect("accept 2");
+    listener.accept_timeout(accept_timeout()).expect("accept 1");
+    listener.accept_timeout(accept_timeout()).expect("accept 2");
 }
 
 #[test]
@@ -161,7 +167,7 @@ fn edits_race_handshakes_without_deadlock() {
             // break a caller that is still finishing its connect.
             let mut accepted = Vec::new();
             loop {
-                match listener.accept_timeout(Duration::from_millis(200)) {
+                match listener.accept_timeout(scaled(Duration::from_millis(200))) {
                     Ok(conn) => accepted.push(conn),
                     Err(AcceptError::TimedOut) if done.load(Ordering::Acquire) => {
                         return (listener, accepted);

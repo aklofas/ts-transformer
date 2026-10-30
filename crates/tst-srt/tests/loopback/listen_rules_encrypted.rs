@@ -8,9 +8,15 @@ use tst_srt::{
     ListenRule, Passphrase, SrtConnectError, SrtListenerBuilder, SrtSocket, SrtSocketBuilder,
     StreamId,
 };
+use tst_test_helpers::timing::scaled;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
-const ACCEPT_TIMEOUT: Duration = Duration::from_secs(3);
+fn connect_timeout() -> Duration {
+    scaled(Duration::from_secs(3))
+}
+
+fn accept_timeout() -> Duration {
+    scaled(Duration::from_secs(3))
+}
 
 fn pw(s: &str) -> Passphrase {
     Passphrase::new(s).unwrap()
@@ -22,7 +28,7 @@ fn connect(
     passphrase: Option<&str>,
 ) -> Result<SrtSocket, SrtConnectError> {
     let mut b = SrtSocketBuilder::new();
-    b.connect_timeout(CONNECT_TIMEOUT)
+    b.connect_timeout(connect_timeout())
         .stream_id(StreamId::new(stream_id).expect("stream id"));
     if let Some(p) = passphrase {
         b.passphrase(pw(p));
@@ -54,7 +60,7 @@ fn accept_with_passphrase_admits_the_matching_caller_and_rejects_the_wrong_one()
         .unwrap();
 
     let _ok = connect(port, "publish:amber", Some(SECRET)).expect("matching caller");
-    let (accepted, _peer) = listener.accept_timeout(ACCEPT_TIMEOUT).expect("accept");
+    let (accepted, _peer) = listener.accept_timeout(accept_timeout()).expect("accept");
     assert_eq!(accepted.stream_id(), Some("publish:amber"));
 
     crate::common::assert_rejected(
@@ -81,9 +87,9 @@ fn per_id_passphrase_overrides_the_builder_wide_one() {
         .unwrap();
 
     let _a = connect(port, "a", Some(SECRET)).expect("builder-wide secret on id a");
-    listener.accept_timeout(ACCEPT_TIMEOUT).expect("accept a");
+    listener.accept_timeout(accept_timeout()).expect("accept a");
     let _b = connect(port, "b", Some(OTHER)).expect("per-id secret on id b");
-    listener.accept_timeout(ACCEPT_TIMEOUT).expect("accept b");
+    listener.accept_timeout(accept_timeout()).expect("accept b");
     crate::common::assert_rejected(connect(port, "b", Some(SECRET)), RejectReason::BadSecret);
 }
 
