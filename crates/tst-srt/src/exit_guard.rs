@@ -189,9 +189,7 @@ fn register(handle: srt_sys::SRTSOCKET) -> (u64, ResourceCancel) {
         // close to us. The caller's `Operation` covers it. Latch first, as
         // the exit handler does: what the caller sees next is a close.
         cancel.cancel();
-        // SAFETY: `handle` is the live socket the caller just created or
-        // accepted; nothing else can close it.
-        let _ = unsafe { srt_sys::srt_close(handle) };
+        close_socket(handle);
     }
     (id, cancel)
 }
@@ -221,9 +219,19 @@ fn close_registered(id: u64, handle: srt_sys::SRTSOCKET) {
     // No entry: closed at registration, or taken over by the exit handler.
     let Some(_closing) = closing else { return };
     checkpoint(Checkpoint::InClose);
-    // SAFETY: `handle` is the SRTSOCKET this closer was built for; libsrt
-    // accepts srt_close from any thread; removing the entry under the lock
-    // guarantees this runs at most once.
+    // Removing the entry under the lock guarantees this runs at most once.
+    close_socket(handle);
+}
+
+/// Close `handle`, dropping its listen rules first so a handshake still in
+/// flight finds no table. Every close in this module goes through here.
+///
+/// The caller must own `handle` and close it at most once. Never logs: the
+/// exit handler's drain runs it.
+pub(crate) fn close_socket(handle: srt_sys::SRTSOCKET) {
+    crate::listen_rules::uninstall(handle);
+    // SAFETY: the caller owns `handle` and closes it once; libsrt accepts
+    // srt_close from any thread.
     let _ = unsafe { srt_sys::srt_close(handle) };
 }
 
@@ -333,9 +341,9 @@ pub(crate) fn release_parked_calls() {
             // closer it may run finds no entry and returns; the close is
             // the next line.
             cancel.cancel();
-            // SAFETY: the entry was still registered, so no other thread
-            // has closed `handle` or ever will.
-            let _ = unsafe { srt_sys::srt_close(handle) };
+            // The entry was still registered, so no other thread has closed
+            // `handle` or ever will.
+            close_socket(handle);
         }
     }
     let deadline = Instant::now() + RELEASE_CEILING;
@@ -661,6 +669,29 @@ mod tests {
         {
             let _ = stderr;
         }
+    }
+
+    /// The exit drain bypasses the listener's closer, so it has to drop the
+    /// listen rules itself: a handshake after it must find no table.
+    #[test]
+    fn the_exit_drain_closes_the_listen_rules() {
+        if !in_own_process("exit_guard::tests::the_exit_drain_closes_the_listen_rules") {
+            return;
+        }
+        if !loopback_available() {
+            eprintln!("SKIP: loopback unavailable");
+            return;
+        }
+        let listener =
+            SrtListener::bind_with(&SrtListenerConfig::default(), "127.0.0.1:0").expect("bind");
+        let rules = listener.rules();
+        rules.set("a", crate::ListenRule::Accept).expect("open");
+        release_parked_calls();
+        assert!(matches!(
+            rules.set("a", crate::ListenRule::Accept),
+            Err(crate::ListenRuleError::Closed)
+        ));
+        drop(listener);
     }
 
     /// A closed socket leaves the registry, so the exit walk can neither

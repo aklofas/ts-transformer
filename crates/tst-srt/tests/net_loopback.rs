@@ -28,6 +28,8 @@ mod handshake;
 mod ipv6_loopback;
 #[path = "loopback/key_length_negotiation.rs"]
 mod key_length_negotiation;
+#[path = "loopback/listen_rules.rs"]
+mod listen_rules;
 #[path = "loopback/listener_accept_one_cancellable.rs"]
 mod listener_accept_one_cancellable;
 #[path = "loopback/listener_accept_timeout.rs"]

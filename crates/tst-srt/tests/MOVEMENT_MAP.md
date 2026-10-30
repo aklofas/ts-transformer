@@ -87,6 +87,7 @@ tst-core +16, tst-pipeline +3 (net zero).
 | `getaddrinfo_walk.rs` | `loopback/getaddrinfo_walk.rs` |
 | `handshake.rs` | `loopback/handshake.rs` |
 | `ipv6_loopback.rs` | `loopback/ipv6_loopback.rs` |
+| (new) | `loopback/listen_rules.rs` |
 | `listener_accept_timeout.rs` | `loopback/listener_accept_timeout.rs` |
 | (new) | `loopback/listener_cancel.rs` |
 | `maxbw_roundtrip.rs` | `loopback/maxbw_roundtrip.rs` |
