@@ -749,6 +749,8 @@ expect_out "roster-sync: unchecked fuzz workspace" "crates/tst-new/fuzz/Cargo.to
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'manifest-path: crates/tst-core/fuzz/Cargo.toml' 'manifest-path: crates/tst-gone/fuzz/Cargo.toml'
                                                                                  expect "roster-sync: the deny job names a manifest that does not exist" 1 rsync_
 expect_out "roster-sync: bogus manifest-path" "ci.yml deny job names a manifest-path that does not exist: crates/tst-gone/fuzz/Cargo.toml"
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'pass: no-default' 'pass: no-defaults';  expect "roster-sync: a test pass renamed away loses the union" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "if: github.event_name != 'pull_request'" 'if: true'; expect "roster-sync: the main-only test job runs on PRs" 1 rsync_
 rs_copy; rm "$tmp/rs/embedded/baremetal-qemu/Cargo.toml"
                                                                                  expect "roster-sync: a deny manifest gone from the checked tree" 1 rsync_
 expect_out "roster-sync: deny manifest gone" "ci.yml deny job names a manifest-path that does not exist: embedded/baremetal-qemu/Cargo.toml"

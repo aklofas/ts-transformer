@@ -7,6 +7,8 @@
 #   3. release-version-consistency.sh's RVC_DEP_TOMLS == roster dep-tomls;
 #   4. ci.yml's build matrix is the five gating legs, none continue-on-error
 #      (the job's continue-on-error stays the matrix value, never literal true);
+#      the test jobs give every platform all three feature passes between them,
+#      test-main-extra runs only off pull requests, none continue-on-error;
 #   5. every member manifest inherits the lint table;
 #   6. ci.yml's deny job checks every fuzz workspace (crates/*/fuzz), and each
 #      manifest-path it names exists in this tree.
@@ -51,11 +53,30 @@ done < <(bash "$R" publish-deps)
 rvc="$(sed -nE 's/^RVC_DEP_TOMLS="\$\{RVC_DEP_TOMLS:-(.*)\}"$/\1/p' "$F/scripts/check/repo/release-version-consistency.sh" | tr ' ' '\n' | sed "s|^\$ROOT|$ROOT|" | sort)"
 [ "$rvc" = "$(bash "$R" dep-tomls | sort)" ] || bad "release-version-consistency.sh RVC_DEP_TOMLS != roster dep-tomls"
 
-legs="$(awk '/^  build:$/ {f = 1} /^  test-linux-musl:$/ {f = 0} f && /- name: /{n = $3} f && /continue: false/ {print n}' "$F/.github/workflows/ci.yml" | sort | tr '\n' ' ')"
+CI="$F/.github/workflows/ci.yml"
+job_text() { # <job> : the text of that ci.yml job, up to the next top-level job
+  awk -v j="  $1:" '$0 == j {f = 1; next} /^  [a-z-]+:$/ {f = 0} f' "$CI"
+}
+build_job="$(job_text build)"
+legs="$(awk '/- name: /{n = $3} /continue: false/ {print n}' <<<"$build_job" | sort | tr '\n' ' ')"
 [ "$legs" = "linux-aarch64 linux-x86_64 macos-arm64 windows-msvc windows-msvc-features " ] || bad "ci.yml build legs with continue: false are [$legs], want the five gating legs"
-build_job="$(awk '/^  build:$/ {f = 1} /^  test-linux-musl:$/ {f = 0} f' "$F/.github/workflows/ci.yml")"
 grep -qF 'continue-on-error: ${{ matrix.continue }}' <<<"$build_job" || bad "ci.yml build job no longer takes continue-on-error from the matrix"
 if grep -qE 'continue-on-error:[[:space:]]*true' <<<"$build_job"; then bad "ci.yml build job has continue-on-error: true"; fi
+
+# The three test jobs together run all three feature passes on every platform:
+# the union is read from include entries only (`- name:` then a bare `pass:`
+# value), never from the matrix axis lines.
+test_jobs="test-linux test-platforms test-main-extra"
+for j in $test_jobs; do
+  [ -n "$(job_text "$j")" ] || bad "ci.yml has no $j job"
+  if grep -qE 'continue-on-error:[[:space:]]*true' <<<"$(job_text "$j")"; then bad "ci.yml $j job has continue-on-error: true"; fi
+done
+all_tests="$(for j in $test_jobs; do job_text "$j"; done)"
+for platform in linux-x86_64 linux-aarch64 macos-arm64 windows-msvc; do
+  got="$(awk -v p="$platform" '/- name: /{n = $3} /^[[:space:]]+pass:[[:space:]]+[a-z-]+[[:space:]]*$/ {if (n == p) print $2}' <<<"$all_tests" | sort -u | tr '\n' ' ')"
+  [ "$got" = "all-features default no-default " ] || bad "ci.yml test jobs give platform $platform the passes [$got], want all-features default no-default"
+done
+grep -qF "if: github.event_name != 'pull_request'" <<<"$(job_text test-main-extra)" || bad "ci.yml test-main-extra no longer runs only off pull requests"
 
 while IFS= read -r toml; do
   awk '/^\[lints\]/ {f = 1; next} /^\[/ {f = 0} f && /^workspace[[:space:]]*=[[:space:]]*true/ {ok = 1} END {exit !ok}' "$toml" || bad "$toml does not inherit [workspace.lints]"
