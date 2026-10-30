@@ -395,10 +395,8 @@ fn serve() -> Result<(), Box<dyn std::error::Error>> {
     let rules = listener.rules();
 
     // Only this name may connect, and only with its own passphrase.
-    rules.set(
-        "publish:amber",
-        ListenRule::AcceptWith { passphrase: Passphrase::new("amber-secret-1")? },
-    )?;
+    let amber = ListenRule::AcceptWith { passphrase: Passphrase::new("amber-secret-1")? };
+    rules.set("publish:amber", amber.clone())?;
     // Everything else is refused with 1404.
     rules.set_default(ListenRule::Reject(RejectReason::NotFound))?;
 
@@ -407,7 +405,8 @@ fn serve() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(id) = socket.stream_id().map(str::to_owned) {
             // One live publisher per name: refuse the next caller.
             rules.set(&id, ListenRule::Reject(RejectReason::Conflict))?;
-            // ... hand `socket` to a worker; when it ends: rules.remove(&id);
+            // ... hand `socket` to a worker; when it ends, put the name back:
+            // rules.set(&id, amber.clone())?;
         }
     }
 }
@@ -427,6 +426,11 @@ fn serve() -> Result<(), Box<dyn std::error::Error>> {
   applies from the next handshake. After the listener closes, `set` and
   `set_default` return `ListenRuleError::Closed` and `remove` returns
   `false`.
+- **Restore the original rule, do not just remove it.** Setting a name to
+  `Reject(Conflict)` overwrites its earlier rule, and `remove` would drop
+  the name to the default. Keep a clone of each rule you installed
+  (`ListenRule` is `Clone`), set it back when the publisher ends, and
+  `remove` only names that had no rule of their own.
 - **There is a race window.** A rule installed after `accept()` returns does
   not cover a caller whose handshake completed in that instant. Keep the
   application's own check after `accept()` when a duplicate must never
