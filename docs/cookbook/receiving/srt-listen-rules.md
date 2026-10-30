@@ -34,7 +34,9 @@ loop {
     if let Some(id) = socket.stream_id() {
         // One live publisher per name from now on.
         rules.set(id, ListenRule::Reject(RejectReason::Conflict))?;
-        // ... hand `socket` to a worker; `rules.remove(id)` when it ends.
+        // ... hand `socket` to a worker. When it ends, put the name's
+        // original rule back (`rules.set(id, original)`); `remove` only a
+        // name that had no rule, or the default rejects it next time.
     }
 }
 ```
@@ -57,8 +59,9 @@ rules.set_default(ListenRule.reject(RejectReason.NOT_FOUND))
 
 # after accepting a publisher:
 rules.set(stream_id, ListenRule.reject(RejectReason.CONFLICT))
-# when it ends:
-rules.remove(stream_id)
+# when it ends, restore the name's original rule; remove() only a name
+# that had none (otherwise the default reject locks it out):
+rules.set(stream_id, original_rule)
 ```
 
 ## Java
@@ -75,8 +78,9 @@ rules.setDefault(ListenRule.reject(RejectReason.NOT_FOUND));
 
 // after accepting a publisher:
 rules.set(streamId, ListenRule.reject(RejectReason.CONFLICT));
-// when it ends:
-rules.remove(streamId);
+// when it ends, restore the name's original rule; remove() only a name
+// that had none (otherwise the default reject locks it out):
+rules.set(streamId, originalRule);
 ```
 
 ## Notes
