@@ -45,7 +45,7 @@ jobs:
           # winding down (a queued best-effort job blocked assemble), and
           # ci.yml doesn't build it either. See docs/deferred-features.md.
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive  # tst-srt builds vendor/srt + vendor/mbedtls
@@ -176,7 +176,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # no submodules: assembly does not build native code
         with:
           ref: ${{ inputs.ref }}
@@ -276,7 +276,7 @@ jobs:
       name: maven-central
       url: https://central.sonatype.com/publishing/deployments
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # no submodules: publishing rebuilds the jar from staged native libs,
         # not from cargo.
         with:

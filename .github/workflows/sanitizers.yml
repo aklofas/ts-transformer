@@ -73,7 +73,7 @@ jobs:
     # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
     if: github.event_name != 'pull_request' || inputs.ref != ''
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -144,7 +144,7 @@ jobs:
     # the one red was a peer-drop-before-option-read test race, fixed in the
     # same PR that removed the soft-fail).
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -242,7 +242,7 @@ jobs:
     # rerun; only an infra failure (apt outage, cache error, GitHub
     # incident) is a rerun case.
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
@@ -319,7 +319,7 @@ jobs:
     # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
     if: github.event_name != 'pull_request' || inputs.ref != ''
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           submodules: recursive
