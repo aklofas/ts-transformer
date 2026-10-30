@@ -88,8 +88,15 @@ fn register_listener(listener: SrtListener) -> u64 {
 }
 
 /// The listener's rules handle, read from the snapshot without the slot;
-/// `None` once the listener is closed.
+/// `None` once the listener is closed or cancelled. A `cancelHandle().cancel()`
+/// without `close()` leaves the entry registered, but the socket is gone.
 pub(super) fn listener_rules(handle: u64) -> Option<tst_srt::ListenRules> {
+    let cancelled = REGISTRY_LISTENER
+        .cancel_view(handle)
+        .is_none_or(|v| v.0.is_cancelled());
+    if cancelled {
+        return None;
+    }
     REGISTRY_LISTENER.snapshot(handle, |s| s.rules.clone())
 }
 

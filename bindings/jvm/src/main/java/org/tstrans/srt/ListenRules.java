@@ -16,7 +16,8 @@ import org.tstrans.SrtException;
  * takes the listener's slot.
  *
  * <p><b>After close.</b> This is a view of the listener, not a resource of its
- * own (nothing to close). Once the listener is closed, every method throws
+ * own (nothing to close). Once the listener is closed (or cancelled through
+ * {@code cancelHandle()}), every method throws
  * {@link SrtException} with {@code Kind.CLOSED}.
  */
 public final class ListenRules {

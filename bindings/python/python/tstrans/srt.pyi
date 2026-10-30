@@ -318,8 +318,8 @@ class ListenRule:
 class ListenRules:
     """One listener's per-stream-ID rules, from `Listener.rules()`. Safe
     to edit while another thread is parked in `accept()`. Every method
-    raises `SrtError(CLOSED)` once the listener is closed; `set` /
-    `set_default` raise `SrtError(CONFIG_INVALID)` for a bad passphrase."""
+    raises `SrtError(CLOSED)` once the listener is closed or cancelled;
+    `set` / `set_default` raise `SrtError(CONFIG_INVALID)` for a bad passphrase."""
 
     def set(self, stream_id: str, rule: ListenRule) -> None: ...
     def remove(self, stream_id: str) -> bool: ...
