@@ -185,8 +185,11 @@ jni_native! {
                 JObject::null(),
             )?;
             for (i, (reason, name)) in PREDEFINED.iter().enumerate() {
-                let row = env.new_string(format!("{} {name}", reason.raw()))?;
-                rows.set_element(env, i, &row)?;
+                // One frame per row so the String locals do not pile up.
+                env.with_local_frame(4, |inner| -> jni::errors::Result<()> {
+                    let row = inner.new_string(format!("{} {name}", reason.raw()))?;
+                    rows.set_element(inner, i, &row)
+                })?;
             }
             Ok(rows.into_raw())
         };

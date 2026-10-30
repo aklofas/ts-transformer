@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -93,7 +94,21 @@ class ListenRulesTest {
         try (Listener listener = listen()) {
             ListenRules rules = listener.rules();
             AtomicReference<Object> outcome = new AtomicReference<>();
-            Thread acceptor = acceptOnDaemon(listener, null, outcome);
+            CountDownLatch entered = new CountDownLatch(1);
+            Thread acceptor = new Thread(() -> {
+                try {
+                    entered.countDown();
+                    listener.accept(null).close();
+                    outcome.set("socket");
+                } catch (Throwable e) {
+                    outcome.set(e);
+                }
+            }, "listen-rules-accept");
+            acceptor.setDaemon(true);
+            acceptor.start();
+            assertTrue(entered.await(5, TimeUnit.SECONDS), "accept never started");
+            Thread.sleep(300); // inside the native accept, holding the listener's slot
+            assertNull(outcome.get(), "accept returned on its own; no caller connects");
 
             // The edits never take the listener's slot, so the parked accept
             // cannot hold them up.
@@ -109,6 +124,7 @@ class ListenRulesTest {
                 }
             }).get(1, TimeUnit.SECONDS);
             assertEquals(1, size);
+            assertNull(outcome.get(), "accept ended before the edits answered");
 
             listener.cancelHandle().cancel();
             acceptor.join(10_000);
@@ -141,6 +157,8 @@ class ListenRulesTest {
             () -> ListenRule.reject(RejectReason.ofCode(10)));
         assertThrows(IllegalArgumentException.class, () -> RejectReason.userDefined(1999));
         assertEquals(2042, RejectReason.userDefined(2042).code());
+        String shown = ListenRule.acceptWith("secretsecretsecret").toString();
+        assertFalse(shown.contains("secretsecretsecret"), "passphrase leaked: " + shown);
 
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
         try (Listener listener = listen()) {
@@ -148,7 +166,5 @@ class ListenRulesTest {
                 () -> listener.rules().set("a", ListenRule.acceptWith("short")));
             assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
         }
-        String shown = ListenRule.acceptWith("secretsecretsecret").toString();
-        assertFalse(shown.contains("secretsecretsecret"), "passphrase leaked: " + shown);
     }
 }
