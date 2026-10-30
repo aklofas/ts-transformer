@@ -236,6 +236,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ci` can be dispatched on a branch with the full SHA of its tip (`gh workflow run ci.yml --ref <branch> -f sha=<sha>`), so a stacked pull request, which gets no `pull_request` run, is tested too. A SHA that is not the dispatched branch's tip fails the run.
 - A linux-aarch64 interop job runs the `[arm64_subset]` cells on scheduled, dispatched and release-qualify runs, and its census is recorded beside the x86_64 one. It runs with `continue-on-error` until two scheduled runs are green, and then gates.
 - The stress port-table rail runs in CI.
+- The test suite runs as hash-partitioned nextest shards; non-linux platforms run the all-features pass on pull requests and the other passes on push to main; a nightly dispatch opens a `ci-nightly` issue on red.
 
 ### Changed — dependencies
 
