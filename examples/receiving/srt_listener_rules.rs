@@ -20,9 +20,9 @@
 //!
 //! With no arguments the listener accepts every ID and still refuses a
 //! second publisher that reuses a name already live. Runs until interrupted.
-//! Stream IDs that start
-//! with `#!` are printed as parsed access-control fields.
+//! Stream IDs that start with `#!` are printed as parsed access-control fields.
 
+use std::collections::HashMap;
 use std::env;
 use std::thread;
 use std::time::Duration;
@@ -43,6 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Optional `NAME=PASSPHRASE` (or bare `NAME`) arguments become the
     // allow-list. Matching is an exact string compare on the raw stream ID.
+    // Remember each operator rule: locking a name for its live publisher
+    // overwrites the entry, so the original must be put back afterwards.
+    let mut originals: HashMap<String, ListenRule> = HashMap::new();
     let mut any_rule = false;
     for arg in env::args().skip(1) {
         let (name, rule) = match arg.split_once('=') {
@@ -55,7 +58,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ),
             None => (arg, ListenRule::Accept),
         };
-        rules.set(&name, rule)?;
+        rules.set(&name, rule.clone())?;
+        originals.insert(name, rule);
         any_rule = true;
     }
     if any_rule {
@@ -102,6 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let rules = rules.clone();
+        let original = id.as_ref().and_then(|id| originals.get(id)).cloned();
         let path = env::temp_dir().join(format!(
             "srt_rules_{}.ts",
             id.as_deref()
@@ -112,9 +117,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workers.push(thread::spawn(move || {
             let result = write_until_closed(&mut socket, &path);
             eprintln!("{peer}: {result:?}; wrote {}", path.display());
-            // The name is free again once its publisher is gone.
+            // The name is free again once its publisher is gone. A name the
+            // operator listed gets its original rule back; plain `remove`
+            // would drop it and the default `Reject(NotFound)` would then
+            // lock the publisher out for good. Only a name that had no rule
+            // is removed.
             if let Some(id) = id {
-                rules.remove(&id);
+                match original {
+                    Some(rule) => {
+                        let _ = rules.set(&id, rule);
+                    }
+                    None => {
+                        rules.remove(&id);
+                    }
+                }
             }
         }));
     }

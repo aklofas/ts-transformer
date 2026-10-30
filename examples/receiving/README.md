@@ -35,7 +35,8 @@ cargo run -p tst-examples --example srt_listener_rules -- publish:amber=amber-se
 Diff from §2: the listener holds a rule table keyed by stream ID. Listed
 names are accepted (with their own passphrase if given), everything else is
 refused in the handshake, and each accepted name is locked against a second
-publisher until its receiver thread ends. The rules handle is cloned before
+publisher until its receiver thread ends, when the name's original rule is
+restored. The rules handle is cloned before
 the accept loop so any thread can edit it while `accept` is parked.
 
 Cookbook: [Accept or refuse callers by stream ID](../../docs/cookbook/receiving/srt-listen-rules.md).
