@@ -48,12 +48,13 @@ use crate::shells;
 pub(crate) static REGISTRY_SOCKET: LazyLock<HandleRegistry<SrtSocket>> =
     LazyLock::new(HandleRegistry::new);
 
-/// Construction-constant view of a `Listener`: the bound address is
-/// captured at registration so `localAddr()` never takes the slot a parked
-/// `accept` holds — otherwise `Listener.localAddr()` blocks behind
-/// `accept(null)` on another thread.
+/// Construction-constant view of a `Listener`: the bound address and the
+/// listen-rules handle are captured at registration so `localAddr()` and the
+/// `ListenRules` natives never take the slot a parked `accept` holds —
+/// otherwise they would block behind `accept(null)` on another thread.
 pub(crate) struct ListenerSnapshot {
     pub local_addr: Result<std::net::SocketAddr, String>,
+    pub rules: tst_srt::ListenRules,
 }
 
 /// Per-type `Owned`-backed registry for `org.tstrans.srt.Listener`.
@@ -81,8 +82,15 @@ fn register_listener(listener: SrtListener) -> u64 {
     let cancel: Arc<dyn TransportCancel> = Arc::new(listener.cancel_handle());
     let snapshot = ListenerSnapshot {
         local_addr: listener.local_addr().map_err(|e| e.to_string()),
+        rules: listener.rules(),
     };
     REGISTRY_LISTENER.insert(Owned::new(listener, cancel, snapshot))
+}
+
+/// The listener's rules handle, read from the snapshot without the slot;
+/// `None` once the listener is closed.
+pub(super) fn listener_rules(handle: u64) -> Option<tst_srt::ListenRules> {
+    REGISTRY_LISTENER.snapshot(handle, |s| s.rules.clone())
 }
 
 // ---------------------------------------------------------------------------

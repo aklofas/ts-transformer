@@ -70,6 +70,22 @@ public final class Listener extends NativeHandle implements Iterable<Socket> {
         return nLocalAddr(peekHandle());
     }
 
+    /**
+     * This listener's per-stream-ID rules ({@link ListenRules}), applied during
+     * each SRT handshake.
+     *
+     * <p>Safe while another thread is parked in {@link #accept(Integer)}: neither
+     * this call nor the returned view takes the listener's slot, so the rules can
+     * be edited while an accept loop runs. Once the listener is closed this method
+     * throws {@link IllegalStateException}, like every other {@code Listener}
+     * method, and a view obtained earlier throws {@link SrtException} with
+     * {@code Kind.CLOSED}.
+     */
+    public ListenRules rules() {
+        ensureOpen("Listener is closed");
+        return new ListenRules(peekHandle());
+    }
+
     /** {@code true} while this listener still owns the native handle. */
     public boolean isAlive() {
         return peekHandle() != 0;
