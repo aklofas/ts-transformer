@@ -128,7 +128,10 @@ tasks.withType<Jar>().configureEach {
 tasks.test {
     dependsOn(copyNative) // dev-mode native; assemble job runs `jar`, not `test`.
     useJUnitPlatform()
-    testLogging { showStandardStreams = true }
+    testLogging {
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
     // The scenario tests read the shared fixtures outside this project; as
     // inputs, a changed golden or corpus reruns them instead of leaving the
     // task up to date.
