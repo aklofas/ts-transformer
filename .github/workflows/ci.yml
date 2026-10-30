@@ -849,9 +849,12 @@ jobs:
 
       - name: Rust toolchain, cargo-nextest, cargo cache (restore only)
         # The key equals the build job's key for this platform, so the restore
-        # hits what that job saved; the shards never save.
+        # hits what that job saved on an earlier run (the shards run alongside
+        # `build`); the shards never save. rustfmt backs the "generated Rust
+        # parses" checks in tst-binding-gen, which pass vacuously without it.
         uses: ./.github/actions/rust-setup
         with:
+          components: rustfmt
           nextest: 'true'
           cache-save: 'false'
           cache-key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
@@ -862,6 +865,11 @@ jobs:
         # and assert its TST_HAS_* set; the restored cache holds whichever cdylib
         # the build job wrote last.
         run: cargo build -p tst-c ${{ matrix.flags }}
+
+      - name: Compile the tests
+        # Builds the test binaries first, so the next step's timeout covers
+        # the test run only.
+        run: cargo nextest run --workspace ${{ matrix.flags }} --no-run
 
       - name: cargo test (${{ matrix.pass }}, shard ${{ matrix.shard }}/3)
         # Runs under nextest: per-test `terminate-after` (.config/nextest.toml)
@@ -875,12 +883,12 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }} ${{ matrix.shard }}/3)"
+            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/3)"
             if [ -s "$TST_CAPABILITY_LOG" ]; then
               echo
               echo '| count | capability | test | reason |'
               echo '| --- | --- | --- | --- |'
-              # One line per skip per nextest pass; count the repeats.
+              # One line per skip; count any repeats.
               sort "$TST_CAPABILITY_LOG" | uniq -c | while read -r n line; do
                 IFS=$'\t' read -r cap test why <<<"$line"
                 echo "| $n | $cap | \`$test\` | ${why//|/\\|} |"
@@ -933,9 +941,12 @@ jobs:
 
       - name: Rust toolchain, cargo-nextest, cargo cache (restore only)
         # The key equals the build job's key for this platform, so the restore
-        # hits what that job saved; the shards never save.
+        # hits what that job saved on an earlier run (the shards run alongside
+        # `build`); the shards never save. rustfmt backs the "generated Rust
+        # parses" checks in tst-binding-gen, which pass vacuously without it.
         uses: ./.github/actions/rust-setup
         with:
+          components: rustfmt
           nextest: 'true'
           cache-save: 'false'
           cache-key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
@@ -946,6 +957,11 @@ jobs:
         # and assert its TST_HAS_* set; the restored cache holds whichever cdylib
         # the build job wrote last.
         run: cargo build -p tst-c ${{ matrix.flags }}
+
+      - name: Compile the tests
+        # Builds the test binaries first, so the next step's timeout covers
+        # the test run only.
+        run: cargo nextest run --workspace ${{ matrix.flags }} --no-run
 
       - name: cargo test (${{ matrix.pass }}, shard ${{ matrix.shard }}/2)
         # Runs under nextest: per-test `terminate-after` (.config/nextest.toml)
@@ -959,12 +975,12 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }} ${{ matrix.shard }}/2)"
+            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/2)"
             if [ -s "$TST_CAPABILITY_LOG" ]; then
               echo
               echo '| count | capability | test | reason |'
               echo '| --- | --- | --- | --- |'
-              # One line per skip per nextest pass; count the repeats.
+              # One line per skip; count any repeats.
               sort "$TST_CAPABILITY_LOG" | uniq -c | while read -r n line; do
                 IFS=$'\t' read -r cap test why <<<"$line"
                 echo "| $n | $cap | \`$test\` | ${why//|/\\|} |"
@@ -978,8 +994,7 @@ jobs:
   test-main-extra:
     name: test (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/2)
     # Push to main, the nightly dispatch and any workflow_dispatch run the
-    # passes the PR set leaves out (design decision 3; dispatch runs certify
-    # what main would).
+    # passes the PR set leaves out.
     if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -1034,9 +1049,12 @@ jobs:
 
       - name: Rust toolchain, cargo-nextest, cargo cache (restore only)
         # The key equals the build job's key for this platform, so the restore
-        # hits what that job saved; the shards never save.
+        # hits what that job saved on an earlier run (the shards run alongside
+        # `build`); the shards never save. rustfmt backs the "generated Rust
+        # parses" checks in tst-binding-gen, which pass vacuously without it.
         uses: ./.github/actions/rust-setup
         with:
+          components: rustfmt
           nextest: 'true'
           cache-save: 'false'
           cache-key: cargo-${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
@@ -1047,6 +1065,11 @@ jobs:
         # and assert its TST_HAS_* set; the restored cache holds whichever cdylib
         # the build job wrote last.
         run: cargo build -p tst-c ${{ matrix.flags }}
+
+      - name: Compile the tests
+        # Builds the test binaries first, so the next step's timeout covers
+        # the test run only.
+        run: cargo nextest run --workspace ${{ matrix.flags }} --no-run
 
       - name: cargo test (${{ matrix.pass }}, shard ${{ matrix.shard }}/2)
         # Runs under nextest: per-test `terminate-after` (.config/nextest.toml)
@@ -1060,12 +1083,12 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }} ${{ matrix.shard }}/2)"
+            echo "### Capability skips (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/2)"
             if [ -s "$TST_CAPABILITY_LOG" ]; then
               echo
               echo '| count | capability | test | reason |'
               echo '| --- | --- | --- | --- |'
-              # One line per skip per nextest pass; count the repeats.
+              # One line per skip; count any repeats.
               sort "$TST_CAPABILITY_LOG" | uniq -c | while read -r n line; do
                 IFS=$'\t' read -r cap test why <<<"$line"
                 echo "| $n | $cap | \`$test\` | ${why//|/\\|} |"
