@@ -3,11 +3,14 @@
 
 #![allow(dead_code)]
 
+use std::ffi::c_int;
 use std::net::{SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 use tst_core::cancel::CancelSlot;
+use tst_srt::error::RejectReason;
+use tst_srt::{SrtConnectError, SrtSocket};
 use tst_test_helpers::timing::scaled;
 
 /// Probe whether 127.0.0.1 is bindable. Tests gate on this so
@@ -485,5 +488,30 @@ impl ParkLatch {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+}
+
+/// Read `SRTO_PBKEYLEN` (the negotiated AES key length in bytes) off a socket.
+pub fn pbkeylen(handle: srt_sys::SRTSOCKET) -> i32 {
+    let mut value: c_int = 0;
+    let mut len = std::mem::size_of::<c_int>() as c_int;
+    let rc = unsafe {
+        srt_sys::srt_getsockflag(
+            handle,
+            srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN,
+            (&raw mut value).cast(),
+            &raw mut len,
+        )
+    };
+    assert!(rc >= 0, "srt_getsockflag(SRTO_PBKEYLEN) failed");
+    value
+}
+
+/// Assert a connect attempt was refused by the listener with `expected`.
+pub fn assert_rejected(result: Result<SrtSocket, SrtConnectError>, expected: RejectReason) {
+    match result {
+        Err(SrtConnectError::Rejected { reason, .. }) => assert_eq!(reason, expected),
+        Err(e) => panic!("expected Rejected {{ reason: {expected:?} }}, got {e:?}"),
+        Ok(_) => panic!("expected Rejected {{ reason: {expected:?} }}, got a connection"),
     }
 }
