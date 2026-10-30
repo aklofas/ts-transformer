@@ -1096,19 +1096,27 @@ jobs:
       # adds the bare-metal C++ standard library needed by the S0 exceptions gate.
       # qemu-system-misc ships qemu-system-riscv32 (the ARM binary lives in the
       # separate qemu-system-arm package, installed alongside it here).
-      # The packages come from an Actions cache keyed on this list and
-      # `version`, so a slow apt mirror cannot run the install past the job
-      # timeout on a warm cache. Bump `version` to refetch them. A cache miss
-      # fetches through apt, which retries as the other apt steps do.
-      - name: apt retries a failed fetch five times
-        run: echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries
-
+      # No apt-package cache: the repository's Actions cache quota is
+      # smaller than its cargo caches alone, so an apt entry is evicted
+      # before the next run. A slow `azure.archive.ubuntu.com` (tens of KB/s)
+      # is bounded instead: the first attempt gets ten minutes, then the
+      # sources switch to `archive.ubuntu.com` for one more attempt.
       - name: Install QEMU + ARM C cross-toolchain
-        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
-        timeout-minutes: 20
-        with:
-          packages: qemu-system-arm qemu-system-misc gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
-          version: 1
+        timeout-minutes: 25
+        run: |
+          pkgs="qemu-system-arm qemu-system-misc gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib"
+          install() {
+            sudo timeout 600 bash -c "apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y $pkgs"
+          }
+          if ! install; then
+            echo "::notice::apt install failed or timed out; retrying through archive.ubuntu.com"
+            for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+              if [ -f "$f" ]; then
+                sudo sed -i 's#//azure\.archive\.ubuntu\.com#//archive.ubuntu.com#g' "$f"
+              fi
+            done
+            install
+          fi
 
       # Runtime gate: run the tst-core muxer + tst-pipeline shells on both a
       # Cortex-M4 (QEMU mps2-an386) and RISC-V (QEMU virt) core and assert
