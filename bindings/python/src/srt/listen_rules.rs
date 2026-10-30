@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 use tst_srt::error::RejectReason;
-use tst_srt::{ListenRuleError, ListenRules, Passphrase};
+use tst_srt::{AccessControl, AccessKind, AccessMode, ListenRuleError, ListenRules, Passphrase};
 
 use crate::raise::{SRT, raise};
 
@@ -222,9 +222,95 @@ impl PyListenRules {
     }
 }
 
+/// A parsed `#!::k=v` access-control stream ID (libsrt's structured form).
+#[pyclass(name = "AccessControl", module = "tstrans.srt", frozen)]
+pub(crate) struct PyAccessControl {
+    inner: AccessControl,
+}
+
+#[pymethods]
+impl PyAccessControl {
+    /// Parse a `#!::k=v,...` stream ID. Raises `ValueError` for a string
+    /// without the `#!` prefix, the nested `#!{` form, a syntax error or a
+    /// duplicate key.
+    #[staticmethod]
+    fn parse(stream_id: &str) -> PyResult<Self> {
+        AccessControl::parse(stream_id)
+            .map(|inner| Self { inner })
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// The `u` key, if present.
+    #[getter]
+    fn user(&self) -> Option<String> {
+        self.inner.user().map(str::to_owned)
+    }
+
+    /// The `r` key, if present.
+    #[getter]
+    fn resource(&self) -> Option<String> {
+        self.inner.resource().map(str::to_owned)
+    }
+
+    /// The `h` key, if present.
+    #[getter]
+    fn host(&self) -> Option<String> {
+        self.inner.host().map(str::to_owned)
+    }
+
+    /// The `s` key, if present.
+    #[getter]
+    fn session(&self) -> Option<String> {
+        self.inner.session().map(str::to_owned)
+    }
+
+    /// The `t` key: `"stream"`, `"file"`, `"auth"` or the raw text.
+    #[getter]
+    fn kind(&self) -> String {
+        match self.inner.kind() {
+            AccessKind::Stream => "stream".to_owned(),
+            AccessKind::File => "file".to_owned(),
+            AccessKind::Auth => "auth".to_owned(),
+            AccessKind::Other(s) => s,
+            _ => String::new(),
+        }
+    }
+
+    /// The `m` key: `"request"`, `"publish"`, `"bidirectional"` or the raw
+    /// text.
+    #[getter]
+    fn mode(&self) -> String {
+        match self.inner.mode() {
+            AccessMode::Request => "request".to_owned(),
+            AccessMode::Publish => "publish".to_owned(),
+            AccessMode::Bidirectional => "bidirectional".to_owned(),
+            AccessMode::Other(s) => s,
+            _ => String::new(),
+        }
+    }
+
+    /// The value for `key`, or `None`.
+    fn get(&self, key: &str) -> Option<String> {
+        self.inner.get(key).map(str::to_owned)
+    }
+
+    /// Every `(key, value)` pair in input order.
+    fn items(&self) -> Vec<(String, String)> {
+        self.inner
+            .pairs()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("AccessControl({:?})", self.items())
+    }
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyListenRule>()?;
     m.add_class::<PyListenRules>()?;
+    m.add_class::<PyAccessControl>()?;
     m.add_function(wrap_pyfunction!(_reject_reason_table, m)?)?;
     Ok(())
 }
