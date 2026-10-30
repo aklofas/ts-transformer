@@ -473,10 +473,11 @@ with Builder("srt://127.0.0.1:9000?mode=listener").listener().listen() as listen
     rules.set_default(ListenRule.reject(RejectReason.NOT_FOUND))
     sock = listener.accept()
     # One live publisher per name: refuse the next caller using it.
-    rules.set(sock.stream_id(), ListenRule.reject(RejectReason.CONFLICT))
+    if sid := sock.stream_id():
+        rules.set(sid, ListenRule.reject(RejectReason.CONFLICT))
 ```
 
-`rules.remove(stream_id)` returns whether a rule existed, `rules.clear()`
+`set` and `set_default` raise `SrtError(CONFIG_INVALID)` for a bad passphrase. `rules.remove(stream_id)` returns whether a rule existed, `rules.clear()`
 drops every explicit rule, and `len(rules)` counts them. `ListenRule.reject`
 takes a code of 1000 or more (`ValueError` below that); `user_defined(code)`
 builds an application code of 2000 or more. Every `ListenRules` method
