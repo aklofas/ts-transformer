@@ -23,6 +23,7 @@
 //! # }
 //! ```
 
+pub mod access_control;
 pub mod addr;
 pub mod builder;
 pub mod config;
@@ -41,6 +42,7 @@ mod binding_kind;
 mod exit_guard;
 
 // Top-level re-exports for the most common types.
+pub use access_control::{AccessControl, AccessControlError, AccessKind, AccessMode};
 pub use builder::{SrtListenerBuilder, SrtSocketBuilder};
 pub use config::{SrtListenerConfig, SrtSocketConfig};
 pub use error::{AcceptError, BindError, RecvError, SendError, SrtConnectError, SrtError};

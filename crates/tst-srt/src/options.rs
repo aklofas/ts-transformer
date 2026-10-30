@@ -217,6 +217,14 @@ impl StreamId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Parses this stream ID as libsrt's `#!::key=value,...` access-control form.
+    ///
+    /// # Errors
+    /// See [`AccessControlError`](crate::AccessControlError).
+    pub fn access_control(&self) -> Result<crate::AccessControl, crate::AccessControlError> {
+        crate::AccessControl::parse(&self.0)
+    }
 }
 
 impl TryFrom<String> for StreamId {
