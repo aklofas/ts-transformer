@@ -177,7 +177,18 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
     mount
         .push_video(&nal, Pts90khz::new(0), true)
         .expect("a removed mount's handle still accepts pushes");
-    assert_eq!(mount.peer_count(), 0);
+    // The reader saw its socket close, but the session task drops its fanout
+    // receiver as it unwinds, a moment later on another thread. Latch-and-poll
+    // — no duration assertion.
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
+    while mount.peer_count() != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "fanout must not outlive the removed mount's session (peer_count = {})",
+            mount.peer_count()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert_eq!(server.stats().mounts, 1);
 
     // `/other`'s reader still receives: push an IDR per attempt until bytes
