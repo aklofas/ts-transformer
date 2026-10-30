@@ -15,6 +15,14 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+    paths:
+      - "bindings/jvm/**"
+      - "crates/**"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/actions/rust-setup/**"
+      - ".github/actions/jvm-build/**"
+      - ".github/workflows/jvm-jar.yml"
 
 permissions:
   contents: read
@@ -22,6 +30,10 @@ permissions:
 jobs:
   build:
     name: jvm ${{ matrix.triple }}
+    # A called run (release-qualify passes dry_run: true) keeps the full matrix:
+    # inside a called workflow github.event_name is the caller's event, so a
+    # pull_request rehearsal of the qualification would otherwise shrink it.
+    if: github.event_name != 'pull_request' || inputs.dry_run
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.continue }}
     timeout-minutes: 75
@@ -53,126 +65,50 @@ jobs:
       - name: Rust toolchain
         uses: ./.github/actions/rust-setup
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+      # The rest of the leg lives in the composite so build and build-pr run
+      # the same steps.
+      - uses: ./.github/actions/jvm-build
         with:
-          distribution: temurin
-          java-version: '17'
+          triple: ${{ matrix.triple }}
+          runner: ${{ matrix.runner }}
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-
-      # librist (tst-rist, behind org.tstrans.shells' rist:// dispatch) builds with
-      # meson + ninja and needs pkg-config; cmake is pre-installed.
-      - name: Install build prerequisites (Linux)
-        if: matrix.runner == 'ubuntu-latest' || matrix.runner == 'ubuntu-24.04-arm'
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y pkg-config meson ninja-build
-
-      - name: Install build prerequisites (macOS)
-        if: matrix.runner == 'macos-15'
-        run: |
-          for pkg in meson ninja pkg-config; do
-            brew list --formula "$pkg" >/dev/null 2>&1 || brew install "$pkg"
-          done
-
-      - name: Install build prerequisites (Windows)
-        if: matrix.runner == 'windows-latest'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # pip drops meson, ninja and pkg-config into the Python Scripts dir;
-          # a runner's already-running job does not re-read a registry PATH, so
-          # export that dir for the later steps.
-          python -m pip install --require-hashes -r scripts/ci/requirements-build-tools.txt
-          scripts_dir=$(python -c 'import sysconfig; print(sysconfig.get_path("scripts"))')
-          echo "$scripts_dir" >> "$GITHUB_PATH"
-          export PATH="$scripts_dir:$PATH"
-          for tool in ninja meson pkg-config; do
-            command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install"; exit 1; }
-          done
-
-      - name: Build + test JVM binding
-        working-directory: bindings/jvm
-        shell: bash
-        env:
-          SRT_FORCE_VENDORED: "1"
-          RIST_FORCE_VENDORED: "1"
-        # -PjniTestHooks=true builds the test-only panic probe and runs
-        # PanicIsolationTest, proving a Rust panic is isolated as a thrown
-        # RuntimeException instead of aborting the JVM.
-        run: ./gradlew test --no-daemon --stacktrace -PjniTestHooks=true
-
-      - name: Rebuild shippable native lib (probe-free)
-        working-directory: bindings/jvm
-        shell: bash
-        env:
-          SRT_FORCE_VENDORED: "1"
-          RIST_FORCE_VENDORED: "1"
-        # cargoBuild without -PjniTestHooks omits the jni-test-hooks feature;
-        # cargo rebuilds (feature set changed) and copyNative re-stages the
-        # probe-free lib into resources/ before the upload step copies it.
-        run: ./gradlew copyNative --no-daemon --stacktrace
-
-      # A named module on the module path consumes this leg's jar, so a package
-      # missing from module-info fails on every platform (path separators differ).
-      - name: Module-path smoke (this platform's jar)
-        working-directory: bindings/jvm
-        shell: bash
-        env:
-          SRT_FORCE_VENDORED: "1"
-          RIST_FORCE_VENDORED: "1"
-        run: ./gradlew modulePathSmoke --no-daemon --stacktrace
-
-      - name: check-jvm-jni-catch-coverage
-        if: matrix.triple == 'linux-x86_64'
-        run: bash scripts/check/jvm/jni-catch-coverage.sh
-
-      - name: check-jvm-publisher-interface-mirror
-        if: matrix.triple == 'linux-x86_64'
-        run: bash scripts/check/jvm/publisher-interface-mirror.sh
-
-      - name: check-jvm-ordinal-sites
-        if: matrix.triple == 'linux-x86_64'
-        run: bash scripts/check/jvm/ordinal-sites.sh
-
-      # The dev-mode `test` task stages the cdylib into resources/native/<triple>/
-      # already renamed to libtstjni.<ext>. Lay it out under native/ for upload.
-      - name: Stage native lib for upload
-        shell: bash
-        run: |
-          mkdir -p upload/native/${{ matrix.triple }}
-          cp bindings/jvm/src/main/resources/native/${{ matrix.triple }}/libtstjni.* \
-             upload/native/${{ matrix.triple }}/
-          ls -la upload/native/${{ matrix.triple }}/
-
-      # Belt-and-suspenders: prove the rebuild step produced a probe-free lib so
-      # a future refactor dropping that step can't silently ship the probe.
-      # Linux-only: nm/symbol tooling isn't portable across macos/windows
-      # runners, and the feature-gating + rebuild logic is identical on every
-      # platform, so linux is a sufficient sentinel.
-      - name: Assert shipped native lib has no test-probe symbol
-        if: matrix.triple == 'linux-x86_64'
-        shell: bash
-        run: |
-          LIB=upload/native/linux-x86_64/libtstjni.so
-          # Every jni-test-hooks native backs a class in org.tstrans.internal.
-          if nm -D "$LIB" | grep -q 'Java_org_tstrans_internal_'; then
-            echo "FAIL: test-only org.tstrans.internal symbol present in shipped lib ($LIB)"; exit 1
-          fi
-          echo "OK: no org.tstrans.internal symbol in shipped native lib"
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+  # Pull requests build linux-x86_64 only; push to main, tags and the
+  # qualification call run the four-platform matrix above.
+  build-pr:
+    name: jvm ${{ matrix.triple }}
+    # A called run never takes this job (see build): the caller's event name
+    # leaks into github.event_name, so inputs.dry_run tells the call apart.
+    if: github.event_name == 'pull_request' && !inputs.dry_run
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: linux-x86_64
+            runner: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: native-${{ matrix.triple }}
-          path: upload/
-          if-no-files-found: error
-          retention-days: 7
+          ref: ${{ inputs.ref }}
+          submodules: recursive  # tst-srt builds vendor/srt + vendor/mbedtls
+
+      - name: Rust toolchain
+        uses: ./.github/actions/rust-setup
+
+      # The rest of the leg lives in the composite so build and build-pr run
+      # the same steps.
+      - uses: ./.github/actions/jvm-build
+        with:
+          triple: ${{ matrix.triple }}
+          runner: ${{ matrix.runner }}
 
   assemble:
     name: assemble fat JAR
     needs: [build] # all four gating platforms must pass
+    # Skipped on pull requests, which build one platform. A called run keeps it
+    # (see build): the caller's event name leaks into github.event_name.
+    if: github.event_name != 'pull_request' || inputs.dry_run
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

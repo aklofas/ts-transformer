@@ -48,7 +48,9 @@ jobs:
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          fuzz-seconds: 600
+          # The nightly clusterfuzzlite-batch keeps the long run; the PR job
+          # was 18–20 min at 600 s.
+          fuzz-seconds: 300
           mode: code-change
           sanitizer: address
           storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
