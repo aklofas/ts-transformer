@@ -1,0 +1,102 @@
+# Dispatches the full ci run on the main tip once a day and opens (or updates)
+# a ci-nightly issue when it ends red.
+#
+# Why a dispatcher and not a schedule trigger on ci.yml: release-qualify's
+# ci-lookup reads the latest ci run on a sha, so a frozen release sha must
+# collect at most one nightly, and ci.yml's job graph stays untouched. The
+# check step skips a tip that already has a completed nightly run.
+#
+# The dispatched run executes the full set because test-main-extra runs on
+# every event except pull_request.
+name: ci-nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    # This cap is the only bound on the wait loop below.
+    timeout-minutes: 150
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Does the tip already have a nightly run?
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tip=$(git rev-parse HEAD)
+          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$tip&event=workflow_dispatch&actor=github-actions%5Bbot%5D&per_page=5" \
+            --jq '[.workflow_runs[] | select(.status=="completed")] | length')
+          if [ "$n" -gt 0 ]; then
+            echo "tip $tip already has a nightly run; nothing to do" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch ci on the tip
+        id: dispatch
+        if: steps.check.outputs.skip != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tip=$(git rev-parse HEAD)
+          before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run ci.yml --ref main -f sha="$tip"
+          for _ in $(seq 1 12); do
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$tip&event=workflow_dispatch&per_page=5" \
+              --jq "[.workflow_runs[] | select(.created_at >= \"$before\")] | sort_by(.created_at) | last | .id // empty")
+            if [ -n "$id" ]; then
+              echo "run_id=$id" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "no ci run appeared within 2 minutes of the dispatch" >&2
+          exit 1
+
+      - name: Wait for the run
+        id: wait
+        if: steps.dispatch.outputs.run_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+        run: |
+          while true; do
+            json=$(gh run view "$RUN_ID" --json status,conclusion,url,jobs)
+            if [ "$(echo "$json" | jq -r .status)" = completed ]; then
+              {
+                echo "conclusion=$(echo "$json" | jq -r .conclusion)"
+                echo "url=$(echo "$json" | jq -r .url)"
+                echo "failed=$(echo "$json" | jq -r '[.jobs[] | select(.conclusion=="failure") | .name] | join(",")')"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 60
+          done
+
+      - name: Open or update the issue
+        id: issue
+        if: steps.wait.outputs.conclusion != 'success' && steps.wait.outputs.conclusion != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ steps.wait.outputs.url }}
+          FAILED: ${{ steps.wait.outputs.failed }}
+        run: |
+          tip=$(git rev-parse HEAD)
+          bash scripts/ci/nightly-issue.sh "$tip" "$RUN_URL" "$FAILED"
+          exit 1
