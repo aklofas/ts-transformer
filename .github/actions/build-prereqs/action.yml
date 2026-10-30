@@ -1,0 +1,118 @@
+name: build-prereqs
+description: >-
+  Installs the native build prerequisites for one platform (cmake/meson/ninja/
+  ripgrep and friends); optionally the abigail tools the ABI self-test needs.
+  Check the repository out first: the Windows step reads a requirements file
+  from the checkout.
+inputs:
+  platform:
+    description: "linux-x86_64 | linux-aarch64 | macos-arm64 | windows-msvc"
+    required: true
+  abigail:
+    description: "'true' installs binutils + abigail-tools (linux-x86_64 only)"
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Install build prerequisites (Linux)
+      # apt-get is Linux-only; macOS / Windows runners come with cmake +
+      # perl pre-installed (macos-15, windows-latest) and pkg-config is
+      # absent on both but the build falls through to vendored via
+      # SRT_FORCE_VENDORED=1.
+      if: startsWith(inputs.platform, 'linux-')
+      shell: bash
+      run: |
+        # -o Acquire::Retries=5: ride out transient mirror outages (the
+        # ports.ubuntu.com linux-aarch64 class, 2026-07-16) instead of
+        # failing the job on the first fetch error.
+        sudo apt-get -o Acquire::Retries=5 update
+        # ripgrep (`rg`) backs the two scrub-guard steps below; the GHA
+        # ubuntu image no longer ships it preinstalled, so install it
+        # explicitly (a missing `rg` made the denylist guard fail closed
+        # and silently no-op'd the pre-rename guard).
+        sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build ripgrep
+
+    - name: Install abigail-tools (linux-x86_64)
+      # abidiff + nm back the abi-compat self-test below, which fails under
+      # CI without abidiff by design. Pinned to the ubuntu-24.04 version.
+      if: inputs.platform == 'linux-x86_64' && inputs.abigail == 'true'
+      shell: bash
+      run: sudo apt-get -o Acquire::Retries=5 install -y binutils abigail-tools=2.4-3build1
+
+    - name: Install build prerequisites (macOS)
+      # librist's vendored build is meson-driven and needs `meson` + `ninja`
+      # on PATH; cmake is pre-installed. ripgrep backs
+      # scripts/check/c/no-direct-not-available-not-found-cast.sh (fails closed if `rg`
+      # is missing). Install only what's absent: `ninja` (and sometimes others)
+      # is pre-installed on the macOS image, and `brew install` on an
+      # already-present formula emits a `::warning::` — guard with `brew list`
+      # to keep the log clean.
+      if: inputs.platform == 'macos-arm64'
+      shell: bash
+      run: |
+        # The macos-14 image shipped a pre-tapped third-party `aws/tap`, and
+        # Homebrew 6 requires explicit tap trust: until it is untapped every
+        # brew call prints a `::warning::` annotation about it. Nothing here
+        # uses that tap. (Observed 2026-09-05 on macos-14; kept — harmless
+        # when absent — until a macos-15 log confirms the tap is gone.)
+        brew untap aws/tap >/dev/null 2>&1 || true
+        for pkg in meson ninja ripgrep; do
+          brew list --formula "$pkg" >/dev/null 2>&1 || brew install "$pkg"
+        done
+
+    - name: Install build prerequisites (Windows)
+      # Same meson + ninja requirement as macOS. windows-latest ships cmake
+      # + MSVC + Strawberry Perl. Nothing here comes from Chocolatey any
+      # more: its community feed answered 503 for ripgrep on four runs in
+      # one morning (2026-10-19, runs 39221903221 / 39216292373 /
+      # 39284237561) after the 504 of 2026-06-08 and the sourceforge 522 of
+      # 2026-10-01 — a third external single point of failure removed. The
+      # job now relies only on PyPI and GitHub, which every other leg already
+      # needs. meson, pkgconf and ninja are pip wheels dropped into the
+      # Python Scripts dir that is already on PATH (the choco meson MSI
+      # updated only the *registry* PATH the running job never re-reads, CI
+      # red 2026-05-29). ripgrep is the pinned upstream release zip, fetched
+      # through the GitHub API and checked against its published SHA-256
+      # before it is unpacked onto PATH.
+      if: startsWith(inputs.platform, 'windows-')
+      # Run under bash with `set -euo pipefail`, NOT the default pwsh (pwsh
+      # only checks the LAST command's exit code). The explicit per-tool
+      # `command -v` check below reds THIS step when a tool is missing
+      # instead of a confusing later one.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        # pkg-config comes from the PyPI `pkgconf` wheel (a real pkgconf
+        # binary plus a `pkg-config` console script dropped into the Python
+        # Scripts dir) so librist's meson can find the shared
+        # crates/mbedtls-src/vendor/mbedtls 3.6.x tree via PKG_CONFIG_PATH
+        # (rist-sys build.rs) instead of falling back to its bundled
+        # contrib/mbedtls 2.26.0 — a version mismatch with libsrt's mbedTLS
+        # would corrupt shared state. It is installed via pip for the same
+        # PATH reason as meson below. The former `pkgconfiglite` choco
+        # package fetched its zip from sourceforge, which 404/522'd on
+        # 2026-10-01 and failed this step twice (run 36819765562) — one
+        # external single point of failure removed.
+        python -m pip install --require-hashes -r scripts/ci/requirements-build-tools.txt
+        # ripgrep: the pinned upstream release, checksum-verified. `gh` and
+        # GITHUB_TOKEN are present on every hosted runner.
+        RG_VERSION=15.2.0
+        RG_SHA256=71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5
+        RG_DIR="$RUNNER_TEMP/ripgrep"
+        mkdir -p "$RG_DIR"
+        gh release download "$RG_VERSION" -R BurntSushi/ripgrep \
+          -p "ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" -D "$RG_DIR" --clobber
+        echo "$RG_SHA256 *$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" | sha256sum -c -
+        python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" \
+          "$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" "$RG_DIR"
+        echo "$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc" >> "$GITHUB_PATH"
+        export PATH="$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc:$PATH"
+        # Verify each prerequisite is actually on PATH — a silently-missing
+        # tool must red THIS step, not a confusing later one.
+        for tool in rg ninja meson pkg-config; do
+          command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install (pip/GitHub fetch likely failed)"; exit 1; }
+        done
+        rg --version | head -1
+        pkg-config --version | head -1
