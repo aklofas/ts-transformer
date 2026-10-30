@@ -17,7 +17,12 @@ which.
 **Where the numbers come from.** The weekly `ci-health` workflow reports
 rerun counts per job over the last seven days in its step summary and CSV
 artifact, and prints an `ALERT` line for any job rerun twice or more. An
-`ALERT` with no matching row here is a finding. The nightly `ci-nightly` dispatch opens or updates an issue labelled `ci-nightly` when its run is red; a sighting there is recorded in this ledger like any other. The other two ledgers are
+`ALERT` with no matching row here is a finding. A test failure that used
+to surface under `build (<platform>)` now surfaces under
+`test (<platform>, <pass>, k/n)`; the rows below keep the historical job
+name of each sighting. The nightly `ci-nightly` dispatch opens or updates
+an issue labelled `ci-nightly` when its run is red; a sighting there is
+recorded in this ledger like any other. The other two ledgers are
 `known_flaky` rows in `scripts/interop/expectations.toml` (interop cells)
 and `environmental` entries in `tests/coverage/skip-ledger.toml`
 (timing-sensitive skipped tests).
