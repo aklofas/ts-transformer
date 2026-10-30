@@ -16,6 +16,7 @@ use tst_srt::error::RejectReason;
 use tst_srt::{AccessControl, AccessKind, AccessMode, ListenRuleError, ListenRules, Passphrase};
 
 use crate::raise::{SRT, raise};
+use crate::util::CancelSource;
 
 /// The lowest code a rule may reject with; libsrt owns the codes below.
 const FIRST_APPLICATION_REASON: i32 = 1000;
@@ -143,23 +144,38 @@ impl PyListenRule {
 /// exact on the stream ID; a caller with no, an empty or a non-UTF-8 stream
 /// ID gets the default rule. An edit applies to the next handshake and is
 /// safe while another thread is parked in `accept()`. Once the listener is
-/// closed every edit raises `SrtError(CLOSED)`.
+/// closed or cancelled every edit raises `SrtError(CLOSED)`.
 #[pyclass(name = "ListenRules", module = "tstrans.srt", frozen)]
 pub(crate) struct PyListenRules {
     rules: ListenRules,
     /// The owning `Listener` sets this on close.
     closed: Arc<AtomicBool>,
+    /// The owning `Listener`'s cancel state: `cancel_handle().cancel()`
+    /// closes the socket without closing the `Listener`.
+    cancel: Arc<CancelSource>,
 }
 
 impl PyListenRules {
-    pub(crate) fn new(rules: ListenRules, closed: Arc<AtomicBool>) -> Self {
-        Self { rules, closed }
+    pub(crate) fn new(
+        rules: ListenRules,
+        closed: Arc<AtomicBool>,
+        cancel: Arc<CancelSource>,
+    ) -> Self {
+        Self {
+            rules,
+            closed,
+            cancel,
+        }
     }
 
-    /// `SrtError(CLOSED)` once the listener is closed: the Rust handle
-    /// reports that only from `set` / `set_default`.
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire) || self.cancel.is_cancelled()
+    }
+
+    /// `SrtError(CLOSED)` once the listener is closed or cancelled: the Rust
+    /// handle reports only a close, and only from `set` / `set_default`.
     fn check_open(&self, py: Python<'_>) -> PyResult<()> {
-        if self.closed.load(Ordering::Acquire) {
+        if self.is_closed() {
             return Err(rule_err(py, ListenRuleError::Closed));
         }
         Ok(())
@@ -181,6 +197,7 @@ impl PyListenRules {
     /// replacing any previous rule for it. Raises `SrtError(CONFIG_INVALID)`
     /// for a bad passphrase, `SrtError(CLOSED)` once the listener is closed.
     fn set(&self, py: Python<'_>, stream_id: &str, rule: &PyListenRule) -> PyResult<()> {
+        self.check_open(py)?;
         let rule = rule.build(py)?;
         self.rules.set(stream_id, rule).map_err(|e| rule_err(py, e))
     }
@@ -196,6 +213,7 @@ impl PyListenRules {
     /// The rule for callers no stream-ID rule matches (initially accept).
     /// Raises like `set`.
     fn set_default(&self, py: Python<'_>, rule: &PyListenRule) -> PyResult<()> {
+        self.check_open(py)?;
         let rule = rule.build(py)?;
         self.rules.set_default(rule).map_err(|e| rule_err(py, e))
     }
@@ -214,7 +232,7 @@ impl PyListenRules {
     }
 
     fn __repr__(&self) -> String {
-        if self.closed.load(Ordering::Acquire) {
+        if self.is_closed() {
             "ListenRules(closed)".to_string()
         } else {
             format!("ListenRules(len={})", self.rules.len())

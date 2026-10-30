@@ -161,6 +161,28 @@ def test_closed_listener() -> None:
     assert ei.value.kind == SrtErrorKind.CLOSED
 
 
+def test_cancelled_listener() -> None:
+    # `cancel_handle().cancel()` without `close()` leaves the Listener object
+    # alive but its socket gone: every edit raises CLOSED.
+    lst, _port = _listen()
+    try:
+        rules = lst.rules()
+        rules.set("a", ListenRule.accept())
+        lst.cancel_handle().cancel()
+        for call in (
+            lambda: rules.remove("a"),
+            lambda: len(rules),
+            rules.clear,
+            lambda: rules.set("b", ListenRule.accept()),
+            lambda: rules.set_default(ListenRule.accept()),
+        ):
+            with pytest.raises(SrtError) as ei:
+                call()
+            assert ei.value.kind == SrtErrorKind.CLOSED
+    finally:
+        lst.close()
+
+
 def test_validation() -> None:
     with pytest.raises(ValueError):
         ListenRule.reject(10)

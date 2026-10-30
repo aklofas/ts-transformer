@@ -789,7 +789,11 @@ impl PyListener {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
         let s = self.owned.snapshot();
-        Ok(PyListenRules::new(s.rules.clone(), s.closed.clone()))
+        Ok(PyListenRules::new(
+            s.rules.clone(),
+            s.closed.clone(),
+            Arc::clone(&self.cancel),
+        ))
     }
 
     /// `True` while this listener still owns the libsrt handle (an accept

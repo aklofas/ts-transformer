@@ -152,6 +152,29 @@ class ListenRulesTest {
 
     @Test
     @Timeout(30)
+    void cancelledListenerThrows() throws Exception {
+        assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
+        try (Listener listener = listen()) {
+            ListenRules rules = listener.rules();
+            rules.set("a", ListenRule.accept());
+            listener.cancelHandle().cancel();
+
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class, rules::size).kind());
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class, () -> rules.remove("a")).kind());
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class, rules::clear).kind());
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class, () -> rules.set("b", ListenRule.accept())).kind());
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class,
+                    () -> rules.setDefault(ListenRule.accept())).kind());
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void validation() throws Exception {
         assertThrows(IllegalArgumentException.class,
             () -> ListenRule.reject(RejectReason.ofCode(10)));
