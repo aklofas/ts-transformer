@@ -230,7 +230,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — CI
 
 - A test that skips for want of a host capability (loopback multicast, ffprobe, TSDuck) fails where CI sets `TST_REQUIRE_<CAP>=1`, and is listed in the job summary where it does not (`TST_CAPABILITY_LOG`). The Linux legs require `MULTICAST`. The IPv6 UDP multicast test records `MULTICAST_V6` and skips on every host until the receiver accepts `?iface=` for IPv6.
-- The no_std job restores its QEMU and ARM toolchain packages from an Actions cache, so a slow apt mirror cannot run the install past the job timeout; a run that restores no cache retries each fetch five times.
+- The no_std job installs its QEMU and ARM toolchain packages with five fetch retries under a ten-minute bound, then retries once through `archive.ubuntu.com`, so a slow Azure apt mirror cannot run the install past the job timeout.
 - cargo-deny also checks the fuzz and embedded workspaces against the same policy, with `--locked`, and a manifest the job names must exist.
 - Every workflow and composite action pins its actions by commit SHA, and Dependabot moves those pins weekly. The release build tools (meson, ninja, pkgconf) install from a hash-pinned requirements file.
 - `ci` can be dispatched on a branch with the full SHA of its tip (`gh workflow run ci.yml --ref <branch> -f sha=<sha>`), so a stacked pull request, which gets no `pull_request` run, is tested too. A SHA that is not the dispatched branch's tip fails the run.
