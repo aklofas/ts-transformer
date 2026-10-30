@@ -163,16 +163,24 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** libsrt adds a filter type that's hard to
   compose by string.
 
-## Stream-ID filtering on `SrtListener`
+## Peer-address decisions at SRT handshake time
 
-- **Status:** Not implemented; `SrtListener::accept` returns every
-  successful handshake.
-- **Why deferred:** Filter shape is application policy (regex? exact
-  list? signed token?), not transport policy. The library exposes
-  `socket.stream_id()` post-`accept` so the caller's accept loop
-  decides whether to keep the connection.
-- **Trigger to revisit:** A common abstraction emerges across multiple
-  consumers.
+- **Status:** Deferred. Listen rules are keyed by stream ID; a decision that
+  needs the caller's address is made after `accept()` returns.
+- **Why deferred:** libsrt runs the listen hook on its receiver thread, where
+  no application code may run, so the rule table holds precomputed answers
+  and cannot call back into the application per peer.
+- **Trigger to revisit:** A consumer that needs a per-peer decision before
+  `accept()`. It would also reopen an "accept once, then reject" rule, which
+  needs the same per-peer state.
+
+## Nested `#!{…}` access-control form
+
+- **Status:** Deferred. `AccessControl::parse` reads the flat `#!::` form
+  and returns `AccessControlError::Unsupported` for the nested form.
+- **Why deferred:** The nested grammar adds quoting and recursion for no
+  caller we have seen.
+- **Trigger to revisit:** A stream ID in that form from a real tool.
 
 ## Custom congestion controller selection
 
@@ -1954,6 +1962,10 @@ and the two below.
 Entries whose feature shipped, one line each: the release it landed in and
 what closed it. That release's CHANGELOG entry has the detail; nothing below
 is a deferral.
+
+### Stream-ID filtering on `SrtListener`
+
+Shipped in 0.9.1 as listen rules — `SrtListener::rules()`; see the [SRT guide](/docs/guides/srt.md#listen-rules).
 
 ### HLS publisher — SUPPORTED
 

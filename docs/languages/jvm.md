@@ -971,6 +971,45 @@ try (Listener listener = new Builder("srt://127.0.0.1:0?mode=listener")
 }
 ```
 
+### Listen rules
+
+`listener.rules()` returns a `ListenRules` view that decides each caller
+during the SRT handshake, keyed by the exact stream ID. The default rule is
+accept, so a listener you never touch behaves as before. Edits are safe from
+any thread, including while another thread is parked in `accept`.
+
+```java
+import org.tstrans.srt.*;
+
+try (Listener listener = new Builder("srt://127.0.0.1:9000?mode=listener")
+        .listener()
+        .listen()) {
+    ListenRules rules = listener.rules();
+    rules.set("publish:amber", ListenRule.acceptWith("amber-secret-1"));
+    rules.setDefault(ListenRule.reject(RejectReason.NOT_FOUND));
+    Socket sock = listener.accept(null);
+    // The accepted peer is "publish:amber" (the only rule that admits one):
+    // refuse the next caller that uses the same name.
+    rules.set("publish:amber", ListenRule.reject(RejectReason.CONFLICT));
+}
+```
+
+`remove(String)` returns whether a rule existed, `clear()` drops every
+explicit rule and `size()` counts them. `RejectReason` has constants such as
+`FORBIDDEN`, `CONFLICT` and `OVERLOAD`, `userDefined(int)` for application
+codes of 2000 or more, and `ofCode(int)`. `ListenRule.reject` takes codes of
+1000 or more. After `Listener.close()` every `ListenRules` method throws
+`SrtException(CLOSED)` and `Listener.rules()` throws `IllegalStateException`.
+A rule installed after `accept` returns does not cover a caller whose
+handshake already completed, so keep your own check after `accept` when it
+matters. A refused caller's connect throws `SrtException(CONNECT_FAILED)`
+with the reason name in the message. `AccessControl.parse(streamId)` (throws
+`IllegalArgumentException` for any other form) reads
+the `#!::` stream-ID form into `user()`, `resource()`, `host()`, `session()`
+(each an `Optional<String>`), `kind()`, `mode()`, `get(key)` and `all()`.
+The semantics, including the passphrase and key-length rules, are those of
+the Rust listener in the [SRT guide](/docs/guides/srt.md#listen-rules).
+
 The accepted `Socket` is consumed by `intoReceiver()` — the `Socket` handle
 is zeroed immediately after the JNI call. Attempting to call any `Socket`
 method after `intoReceiver()` throws `IllegalStateException`. To produce a

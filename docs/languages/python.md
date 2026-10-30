@@ -456,6 +456,38 @@ URL-provided values win over kwargs / setters. A `Listener` is iterable —
 iterating yields accepted `Socket`s until `cancel_handle().cancel()` stops
 it.
 
+### Listen rules
+
+`listener.rules()` returns a `ListenRules` handle that decides each caller
+during the SRT handshake, keyed by the exact stream ID. The default rule is
+accept, so a listener you never touch behaves as before. Take the handle
+before you block in `accept()`; it is safe to edit from any thread while
+another thread is parked there.
+
+```python
+from tstrans.srt import Builder, ListenRule, RejectReason
+
+with Builder("srt://127.0.0.1:9000?mode=listener").listener().listen() as listener:
+    rules = listener.rules()
+    rules.set("publish:amber", ListenRule.accept_with("amber-secret-1"))
+    rules.set_default(ListenRule.reject(RejectReason.NOT_FOUND))
+    sock = listener.accept()
+    # One live publisher per name: refuse the next caller using it.
+    rules.set(sock.stream_id(), ListenRule.reject(RejectReason.CONFLICT))
+```
+
+`rules.remove(stream_id)` returns whether a rule existed, `rules.clear()`
+drops every explicit rule, and `len(rules)` counts them. `ListenRule.reject`
+takes a code of 1000 or more (`ValueError` below that); `user_defined(code)`
+builds an application code of 2000 or more. Every `ListenRules` method
+raises `SrtError(CLOSED)` once the listener is closed. A rule installed after
+`accept()` returns does not cover a caller whose handshake already
+completed, so keep your own check after `accept()` when it matters. A
+refused caller's connect fails with `SrtError(CONNECT_FAILED)`, with the
+reason name in the message. The semantics, including the passphrase and
+key-length rules, are those of the Rust listener in the
+[SRT guide](/docs/guides/srt.md#listen-rules).
+
 ### Cancellation and cross-thread close
 
 Every transport shell — the four `tstrans.shells` classes over any
