@@ -49,7 +49,6 @@ fn accept_with_passphrase_admits_the_matching_caller_and_rejects_the_wrong_one()
             "publish:amber",
             ListenRule::AcceptWith {
                 passphrase: pw(SECRET),
-                key_length: None,
             },
         )
         .unwrap();
@@ -77,7 +76,6 @@ fn per_id_passphrase_overrides_the_builder_wide_one() {
             "b",
             ListenRule::AcceptWith {
                 passphrase: pw(OTHER),
-                key_length: None,
             },
         )
         .unwrap();
