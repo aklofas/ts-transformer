@@ -76,6 +76,7 @@ Listener = _srt.Listener
 # Per-stream-ID listen rules.
 ListenRule = _srt.ListenRule
 ListenRules = _srt.ListenRules
+AccessControl = _srt.AccessControl
 _native_reject_reason_table = _srt._reject_reason_table
 
 
@@ -144,6 +145,7 @@ __all__: list[str] = [
     # listen rules
     "ListenRule",
     "ListenRules",
+    "AccessControl",
     "RejectReason",
     "user_defined",
     # policy
