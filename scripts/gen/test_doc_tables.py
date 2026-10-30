@@ -27,16 +27,68 @@ jobs:
             continue: false
             phase: all
           - name: windows-msvc
+            platform: windows-msvc
             runner: windows-latest
             continue: false
             phase: default
           - name: windows-msvc-features
+            platform: windows-msvc
             runner: windows-latest
             continue: false
             phase: features
     steps:
       - name: not a leg
         runner: nope
+  test-linux:
+    strategy:
+      matrix:
+        shard: [1, 2, 3]
+        pass: [default, no-default, all-features]
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            pass: default
+            flags: ''
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            pass: no-default
+            flags: --no-default-features
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            pass: all-features
+            flags: --all-features
+    steps:
+      - name: not a leg
+        runner: nope
+  test-platforms:
+    strategy:
+      matrix:
+        shard: [1, 2]
+        name: [windows-msvc]
+        include:
+          - name: windows-msvc
+            runner: windows-latest
+            pass: all-features
+            flags: --all-features
+    steps:
+      - run: x
+  test-main-extra:
+    strategy:
+      matrix:
+        shard: [1, 2]
+        name: [windows-msvc]
+        pass: [default, no-default]
+        include:
+          - name: windows-msvc
+            runner: windows-latest
+            pass: default
+            flags: ''
+          - name: windows-msvc
+            runner: windows-latest
+            pass: no-default
+            flags: --no-default-features
+    steps:
+      - run: x
   other:
     steps:
       - name: also not a leg
@@ -105,6 +157,45 @@ class Parsers(unittest.TestCase):
                 ("windows-msvc-features", "windows-latest", "features"),
             ],
         )
+        self.assertEqual(
+            [l["platform"] for l in legs],
+            ["linux-x86_64", "windows-msvc", "windows-msvc"],
+        )
+
+    def test_test_legs_from_the_three_test_jobs(self):
+        legs = dt.parse_test_legs(CI)
+        self.assertEqual(
+            [(l["job"], l["name"], l["pass"], l["shards"]) for l in legs],
+            [
+                ("test-linux", "linux-x86_64", "default", 3),
+                ("test-linux", "linux-x86_64", "no-default", 3),
+                ("test-linux", "linux-x86_64", "all-features", 3),
+                ("test-platforms", "windows-msvc", "all-features", 2),
+                ("test-main-extra", "windows-msvc", "default", 2),
+                ("test-main-extra", "windows-msvc", "no-default", 2),
+            ],
+        )
+
+    @staticmethod
+    def _test_ci(shard, *legs):
+        return ("jobs:\n  test-linux:\n    strategy:\n      matrix:\n" + shard
+                + "        include:\n" + "".join(legs) + "    steps:\n      - run: x\n")
+
+    def test_test_leg_without_pass_dies(self):
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            dt.parse_test_legs(self._test_ci(
+                "        shard: [1, 2]\n",
+                "          - name: a\n            runner: r\n"))
+        self.assertIn("has no `pass`", err.getvalue())
+
+    def test_test_job_without_shard_axis_dies(self):
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            dt.parse_test_legs(self._test_ci(
+                "",
+                "          - name: a\n            runner: r\n            pass: p\n"))
+        self.assertIn("has no `shard:` axis", err.getvalue())
 
     @staticmethod
     def _ci(*legs):
@@ -142,14 +233,14 @@ class Parsers(unittest.TestCase):
 
 
 class Renderers(unittest.TestCase):
-    def test_targets_fold_legs_sharing_a_runner(self):
-        rows = dt.render_targets(dt.parse_build_legs(CI)).splitlines()
-        self.assertEqual(rows[0], "| Target | Runner | CI job |")
+    def test_targets_show_pr_and_main_passes(self):
+        rows = dt.render_targets(dt.parse_build_legs(CI), dt.parse_test_legs(CI)).splitlines()
+        self.assertEqual(rows[0], "| Target | Runner | Build jobs | Tests on a PR | Tests on main only |")
         self.assertEqual(
             rows[2:],
             [
-                "| `linux-x86_64` | `ubuntu-latest` | `build (linux-x86_64)` |",
-                "| `windows-msvc` | `windows-latest` | `build (windows-msvc)`, `build (windows-msvc-features)` |",
+                "| `linux-x86_64` | `ubuntu-latest` | `build (linux-x86_64)` | `default` ×3, `no-default` ×3, `all-features` ×3 | — |",
+                "| `windows-msvc` | `windows-latest` | `build (windows-msvc)`, `build (windows-msvc-features)` | `all-features` ×2 | `default` ×2, `no-default` ×2 |",
             ],
         )
 
