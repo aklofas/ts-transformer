@@ -13,10 +13,13 @@
 //!   cargo run -p tst-examples --example srt_listener_rules -- \
 //!       publish:amber=amber-secret-1 publish:cobalt
 //!
-//!   # terminal B: a sender that sets the stream ID (any caller-mode sender
-//!   # works; a second sender with the same ID is refused with "conflict")
-//!   cargo run -p tst-examples --example send_pipeline_to_socket -- \
-//!       "127.0.0.1:9000?streamid=publish:cobalt"
+//!   # terminal B: a caller that sets the stream ID through an SRT URL (a
+//!   # second sender with the same ID is refused with "conflict")
+//!   srt-live-transmit file://con \
+//!       "srt://127.0.0.1:9000?streamid=publish:amber&passphrase=amber-secret-1" < input.ts
+//!   # or
+//!   ffmpeg -re -i input.ts -c copy -f mpegts \
+//!       "srt://127.0.0.1:9000?streamid=publish:cobalt"
 //!
 //! With no arguments the listener accepts every ID and still refuses a
 //! second publisher that reuses a name already live. Runs until interrupted.

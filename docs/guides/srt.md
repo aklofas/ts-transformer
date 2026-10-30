@@ -375,7 +375,7 @@ identifiers in source.
 understood. A free-form ID returns `AccessControlError::NotAccessControl`,
 a nested `#!{…}` ID returns `Unsupported`, and a malformed or repeated key
 returns `Syntax` or `DuplicateKey`. `StreamId::access_control()` is the
-same call on an ID you already hold. The JVM binding has the same parser.
+same call on an ID you already hold. The JVM and Python bindings have the same parser.
 
 ### Listen rules
 

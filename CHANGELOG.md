@@ -265,6 +265,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `SrtListenerBuilder::{peer_latency, send_buf_bytes, udp_send_buffer_bytes, input_bandwidth}`.
 - `tst_srt::shells::managed_receiver_from_url_with_cancel` and `managed_demux_receiver_from_url_with_cancel`.
 - `SrtListener::rules()` returns a `ListenRules` handle: per-stream-ID `ListenRule`s (`Accept`, `AcceptWith { passphrase }`, `Reject(RejectReason)`) that a listener applies during the handshake, editable from any thread while `accept()` is parked. A refused caller's connect fails at once with `SrtConnectError::Rejected`. The default rule is `Accept`, so a listener that never touches its rules behaves exactly as before. A rule carries a passphrase only: libsrt fixes the key length from the caller's key material before the rule runs.
+- `RejectReason::raw()` returns the wire code, and `AccessControl::get` and `AccessControl::pairs` read any key.
 - `AccessControl::parse` and `StreamId::access_control()` read the flat `#!::` stream-ID form into `user`, `resource`, `host`, `session`, `kind` and `mode`.
 
 ### Added — tst-rist
@@ -274,6 +275,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added — tst-py
 
 - `tstrans.srt.Listener.rules()` returns `ListenRules` (`set`, `remove`, `set_default`, `clear`, `len`) with `ListenRule.accept()`, `accept_with(passphrase)` and `reject(reason)`, plus the `RejectReason` enum and `user_defined(code)`. A listener that never touches its rules behaves as before; the methods raise `SrtError(CLOSED)` once the listener is closed, and a rule carries a passphrase only.
+- `tstrans.srt.AccessControl.parse` reads the `#!::` stream-ID form (`user`, `resource`, `host`, `session`, `kind`, `mode`, `get`, `items`).
 
 ### Added — tst-jni
 

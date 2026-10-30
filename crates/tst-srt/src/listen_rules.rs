@@ -60,8 +60,9 @@ pub enum ListenRuleError {
 /// A clone is the same table. Usable from any thread, including while
 /// another thread is parked in `accept()` (obtain it before the accept loop
 /// starts, as with `cancel_handle()`). An edit takes effect for the next
-/// handshake. Once the listener is closed every edit returns
-/// [`ListenRuleError::Closed`].
+/// handshake. Once the listener is closed, `set` and `set_default` return
+/// [`ListenRuleError::Closed`] and `remove` returns `false`; `clear` still
+/// succeeds on the dead table and `len` stays readable.
 ///
 /// Matching is exact on the stream ID. A caller with no stream ID, an empty
 /// one, or one that is not UTF-8 gets the default rule.
@@ -163,7 +164,8 @@ impl ListenRules {
         Ok(())
     }
 
-    /// Remove every explicit rule. The default rule stays.
+    /// Remove every explicit rule. The default rule stays. Succeeds on a
+    /// closed table too, where it only empties the dead table.
     pub fn clear(&self) {
         self.inner.write().rules.clear();
     }

@@ -489,6 +489,17 @@ reason name in the message. The semantics, including the passphrase and
 key-length rules, are those of the Rust listener in the
 [SRT guide](/docs/guides/srt.md#listen-rules).
 
+`AccessControl.parse(stream_id)` reads the `#!::` stream-ID form. It exposes
+`user`, `resource`, `host` and `session` (each `None` when absent), `kind` and
+`mode` as plain strings, `get(key)` for any key and `items()` for every pair.
+
+```python
+from tstrans.srt import AccessControl
+
+ac = AccessControl.parse("#!::u=alice,r=cam1,m=publish")
+print(ac.user, ac.resource, ac.mode)
+```
+
 ### Cancellation and cross-thread close
 
 Every transport shell — the four `tstrans.shells` classes over any
