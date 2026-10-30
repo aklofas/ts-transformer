@@ -2,26 +2,10 @@
 //! negotiation instead of forcing AES-128.
 #![cfg(feature = "mbedtls")]
 
-use std::ffi::c_int;
 use std::time::Duration;
 use tst_srt::{KeyLength, Passphrase, Role, SrtListenerBuilder, SrtSocket, SrtSocketBuilder};
 
 const PASSPHRASE: &str = "secretsecretsecret";
-
-fn pbkeylen(handle: srt_sys::SRTSOCKET) -> i32 {
-    let mut value: c_int = 0;
-    let mut len = std::mem::size_of::<c_int>() as c_int;
-    let rc = unsafe {
-        srt_sys::srt_getsockflag(
-            handle,
-            srt_sys::SRT_SOCKOPT_SRTO_PBKEYLEN,
-            (&raw mut value).cast(),
-            &raw mut len,
-        )
-    };
-    assert!(rc >= 0, "srt_getsockflag(SRTO_PBKEYLEN) failed");
-    value
-}
 
 fn passphrase() -> Passphrase {
     Passphrase::new(PASSPHRASE).unwrap()
@@ -55,8 +39,8 @@ fn passphrase_only_sender_adopts_listener_aes256() {
     let mut c = SrtSocketBuilder::new();
     c.passphrase(passphrase()).role(Role::Sender);
     let (caller, accepted) = connect_pair(&mut l, &mut c);
-    assert_eq!(pbkeylen(caller.raw_handle()), 32);
-    assert_eq!(pbkeylen(accepted.raw_handle()), 32);
+    assert_eq!(crate::common::pbkeylen(caller.raw_handle()), 32);
+    assert_eq!(crate::common::pbkeylen(accepted.raw_handle()), 32);
 }
 
 /// The reverse: a caller asking for 32 (receiver role) against a
@@ -69,8 +53,8 @@ fn explicit_aes256_caller_keeps_32_against_passphrase_only_listener() {
     let mut c = SrtSocketBuilder::new();
     c.passphrase(passphrase()).key_length(KeyLength::Aes256);
     let (caller, accepted) = connect_pair(&mut l, &mut c);
-    assert_eq!(pbkeylen(caller.raw_handle()), 32);
-    assert_eq!(pbkeylen(accepted.raw_handle()), 32);
+    assert_eq!(crate::common::pbkeylen(caller.raw_handle()), 32);
+    assert_eq!(crate::common::pbkeylen(accepted.raw_handle()), 32);
 }
 
 /// Both ends passphrase-only still connect, on AES-128.
@@ -82,8 +66,8 @@ fn passphrase_only_both_ends_connect_on_aes128() {
     let mut c = SrtSocketBuilder::new();
     c.passphrase(passphrase()).role(Role::Sender);
     let (mut caller, mut accepted) = connect_pair(&mut l, &mut c);
-    assert_eq!(pbkeylen(caller.raw_handle()), 16);
-    assert_eq!(pbkeylen(accepted.raw_handle()), 16);
+    assert_eq!(crate::common::pbkeylen(caller.raw_handle()), 16);
+    assert_eq!(crate::common::pbkeylen(accepted.raw_handle()), 16);
 
     accepted
         .set_recv_timeout(Some(Duration::from_secs(5)))

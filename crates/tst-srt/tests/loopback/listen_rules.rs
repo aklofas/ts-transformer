@@ -30,14 +30,6 @@ fn connect(port: u16, stream_id: Option<&str>) -> Result<SrtSocket, SrtConnectEr
     b.connect(("127.0.0.1", port))
 }
 
-fn assert_rejected(result: Result<SrtSocket, SrtConnectError>, expected: RejectReason) {
-    match result {
-        Err(SrtConnectError::Rejected { reason, .. }) => assert_eq!(reason, expected),
-        Err(e) => panic!("expected Rejected {{ reason: {expected:?} }}, got {e:?}"),
-        Ok(_) => panic!("expected Rejected {{ reason: {expected:?} }}, got a connection"),
-    }
-}
-
 #[test]
 fn reject_rule_refuses_the_caller_with_its_reason_and_accept_never_sees_it() {
     require_loopback!();
@@ -47,7 +39,7 @@ fn reject_rule_refuses_the_caller_with_its_reason_and_accept_never_sees_it() {
         .set("publish:amber", ListenRule::Reject(RejectReason::Forbidden))
         .unwrap();
     let accept = std::thread::spawn(move || listener.accept_timeout(ACCEPT_TIMEOUT).map(|_| ()));
-    assert_rejected(
+    crate::common::assert_rejected(
         connect(port, Some("publish:amber")),
         RejectReason::Forbidden,
     );
@@ -71,7 +63,7 @@ fn default_rule_switch_applies_to_the_next_caller() {
     rules
         .set_default(ListenRule::Reject(RejectReason::Overload))
         .unwrap();
-    assert_rejected(connect(port, Some("publish:amber")), RejectReason::Overload);
+    crate::common::assert_rejected(connect(port, Some("publish:amber")), RejectReason::Overload);
 
     rules.set_default(ListenRule::Accept).unwrap();
     let _third = connect(port, Some("publish:amber")).expect("third caller connects");
@@ -88,7 +80,7 @@ fn remove_falls_back_to_the_default() {
     rules
         .set("a", ListenRule::Reject(RejectReason::Conflict))
         .unwrap();
-    assert_rejected(connect(port, Some("a")), RejectReason::Conflict);
+    crate::common::assert_rejected(connect(port, Some("a")), RejectReason::Conflict);
     assert!(rules.remove("a"));
     let _sock = connect(port, Some("a")).expect("connects once the rule is gone");
     listener.accept_timeout(ACCEPT_TIMEOUT).expect("accept");
