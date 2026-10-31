@@ -73,6 +73,12 @@ __all__: list[str] = [
     "MountStats",
     "RtspServerCancelHandle",
     "RtspServerConfig",
+    "MountCredential",
+    "MountPolicy",
+    "MountRule",
+    "MountRules",
+    "RefuseStatus",
+    "AuthScheme",
     "PublishMount",
     "PublishMountStats",
     "PublisherInfo",
@@ -515,6 +521,73 @@ class MountHandle:
     def __repr__(self) -> str: ...
 
 
+class RefuseStatus(enum.IntEnum):
+    """The status line a `MountPolicy.refuse` answers with. Pure-Python
+    IntEnum."""
+
+    FORBIDDEN = 403
+    NOT_FOUND = 404
+    NOT_ENOUGH_BANDWIDTH = 453
+    SERVICE_UNAVAILABLE = 503
+
+
+class AuthScheme(enum.IntEnum):
+    """The scheme `MountRules.set_challenge` offers. Pure-Python IntEnum."""
+
+    BASIC = 0
+    DIGEST_MD5 = 1
+    DIGEST_SHA256 = 2
+
+
+@final
+class MountCredential:
+    """One username and password a client may present. The password cannot
+    be read back and `repr` redacts it."""
+
+    def __new__(cls, username: str, password: str) -> MountCredential: ...
+    @property
+    def username(self) -> str: ...
+
+
+@final
+class MountPolicy:
+    """What the server does with one direction of traffic on a mount path."""
+
+    @staticmethod
+    def inherit() -> MountPolicy: ...
+    @staticmethod
+    def open() -> MountPolicy: ...
+    @staticmethod
+    def require(*credentials: MountCredential) -> MountPolicy: ...
+    @staticmethod
+    def refuse(status: Union[RefuseStatus, int]) -> MountPolicy: ...
+
+
+@final
+class MountRule:
+    """The publish and read policies for one mount path (or the default). A
+    direction left out inherits."""
+
+    def __new__(
+        cls,
+        publish: Optional[MountPolicy] = ...,
+        read: Optional[MountPolicy] = ...,
+    ) -> MountRule: ...
+
+
+@final
+class MountRules:
+    """One server's per-mount-path rules, from `RtspServer.mount_rules()`."""
+
+    def set(self, path: str, rule: MountRule) -> None: ...
+    def remove(self, path: str) -> bool: ...
+    def set_default(self, rule: MountRule) -> None: ...
+    def clear(self) -> None: ...
+    def set_challenge(self, scheme: Union[AuthScheme, int], realm: str) -> None: ...
+    def is_closed(self) -> bool: ...
+    def __len__(self) -> int: ...
+
+
 @dataclass(frozen=True)
 class RtspServerConfig:
     """Pure-Python frozen dataclass — configuration for `RtspServer.start`.
@@ -536,6 +609,7 @@ class RtspServerConfig:
     tls_cert: Optional[str] = ...
     tls_key: Optional[str] = ...
     accept_unregistered_publishers: bool = ...
+    default_mount_rule: Optional[MountRule] = ...
 
     def __post_init__(self) -> None: ...
 
@@ -667,6 +741,7 @@ class RtspServer:
         program_config: MuxerProgramConfig,
     ) -> MountHandle: ...
     def add_publish_mount(self, path: str) -> PublishMount: ...
+    def mount_rules(self) -> MountRules: ...
     # Releases the GIL; `None` timeout waits until a mount arrives or the
     # server stops (Ctrl-C interrupts). Concurrent callers are served one
     # at a time. Raises RtspError(SERVER) once the server has stopped.

@@ -33,6 +33,7 @@ use crate::mux::{
     PySubtitleStreamHandle, PyVideoStreamHandle, py_pts90khz,
 };
 use crate::raise::{RTSP, raise};
+use crate::rtp::mount_rules::{PyMountRule, PyMountRules};
 use crate::rtp::publish::PyPublishMount;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
@@ -565,6 +566,9 @@ impl PyRtspServer {
                     .fanout_capacity(cfg.fanout_capacity)
                     .graceful_shutdown_drain(Duration::from_millis(cfg.graceful_shutdown_drain_ms))
                     .accept_unregistered_publishers(cfg.accept_unregistered_publishers);
+                if let Some(rule) = cfg.default_mount_rule.as_ref() {
+                    builder.default_mount_rule(rule.clone());
+                }
                 // Wire the cert + key paths through before build().
                 // start() loads these synchronously and fails typed
                 // on bad paths (the guard above just gives nicer
@@ -769,6 +773,13 @@ impl PyRtspServer {
         ServerStats::from(&self.inner.stats())
     }
 
+    /// The server's live per-mount-path rules table. Every call returns a
+    /// handle to the same table; an edit applies to the next request. After
+    /// `stop()` edits raise `RtspError(SERVER)`.
+    pub(crate) fn mount_rules(&self) -> PyMountRules {
+        PyMountRules::new(self.inner.mount_rules())
+    }
+
     /// Listener's bound address as `"ip:port"`, populated after `start()`.
     pub fn local_addr(&self) -> Option<String> {
         self.inner.local_addr().map(|a| a.to_string())
@@ -871,6 +882,7 @@ struct ServerConfigExtract {
     tls_cert: Option<String>,
     tls_key: Option<String>,
     accept_unregistered_publishers: bool,
+    default_mount_rule: Option<tst_rtp::MountRule>,
 }
 
 impl ServerConfigExtract {
@@ -906,6 +918,12 @@ impl ServerConfigExtract {
         let accept_unregistered_publishers: bool = obj
             .getattr(intern!(py, "accept_unregistered_publishers"))?
             .extract()?;
+        let rule_obj = obj.getattr(intern!(py, "default_mount_rule"))?;
+        let default_mount_rule = if rule_obj.is_none() {
+            None
+        } else {
+            Some(rule_obj.extract::<PyRef<'_, PyMountRule>>()?.rule.clone())
+        };
 
         Ok(Self {
             bind_url,
@@ -917,6 +935,7 @@ impl ServerConfigExtract {
             tls_cert,
             tls_key,
             accept_unregistered_publishers,
+            default_mount_rule,
         })
     }
 }
