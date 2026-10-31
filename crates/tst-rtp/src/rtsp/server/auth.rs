@@ -52,20 +52,30 @@ pub(crate) fn generate_nonce() -> String {
     s
 }
 
+/// One accepted (username, password) pair; `ServerAuthConfig` and
+/// `MountCredential` both project to it.
+pub(crate) struct Credential<'a> {
+    pub username: &'a str,
+    pub password: &'a SecretString,
+}
+
 /// Build the `WWW-Authenticate:` header value for the configured scheme.
 ///
 /// `nonce` is only consumed for the Digest schemes; Basic ignores it.
 pub(crate) fn build_challenge_header(cfg: &ServerAuthConfig, nonce: &str) -> String {
-    match cfg.scheme {
-        AuthScheme::Basic => format!("Basic realm=\"{}\"", cfg.realm),
-        AuthScheme::DigestMd5 => format!(
-            "Digest realm=\"{}\", nonce=\"{}\", algorithm=MD5, qop=\"auth\"",
-            cfg.realm, nonce
-        ),
-        AuthScheme::DigestSha256 => format!(
-            "Digest realm=\"{}\", nonce=\"{}\", algorithm=SHA-256, qop=\"auth\"",
-            cfg.realm, nonce
-        ),
+    build_challenge(cfg.scheme, &cfg.realm, nonce)
+}
+
+/// Build the `WWW-Authenticate:` header value for `scheme` and `realm`.
+pub(crate) fn build_challenge(scheme: AuthScheme, realm: &str, nonce: &str) -> String {
+    match scheme {
+        AuthScheme::Basic => format!("Basic realm=\"{realm}\""),
+        AuthScheme::DigestMd5 => {
+            format!("Digest realm=\"{realm}\", nonce=\"{nonce}\", algorithm=MD5, qop=\"auth\"")
+        }
+        AuthScheme::DigestSha256 => {
+            format!("Digest realm=\"{realm}\", nonce=\"{nonce}\", algorithm=SHA-256, qop=\"auth\"")
+        }
     }
 }
 
@@ -93,28 +103,52 @@ pub(crate) fn verify_authorization(
     expected_nonce: &str,
     nc_hwm: &mut u32,
 ) -> Result<(), AuthVerifyError> {
+    verify_credentials(
+        auth_header,
+        method,
+        uri,
+        cfg.scheme,
+        &cfg.realm,
+        &[Credential {
+            username: &cfg.username,
+            password: &cfg.password,
+        }],
+        expected_nonce,
+        nc_hwm,
+    )
+}
+
+/// Like [`verify_authorization`], but accepts any credential in
+/// `credentials`, chosen by the username in the header. An unknown user
+/// fails exactly like a wrong password, so a probe cannot tell them apart.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn verify_credentials(
+    auth_header: Option<&str>,
+    method: &str,
+    uri: &str,
+    scheme: AuthScheme,
+    realm: &str,
+    credentials: &[Credential<'_>],
+    expected_nonce: &str,
+    nc_hwm: &mut u32,
+) -> Result<(), AuthVerifyError> {
     let auth = auth_header.ok_or(AuthVerifyError::Missing)?;
-    match cfg.scheme {
-        AuthScheme::Basic => verify_basic(auth, &cfg.username, &cfg.password),
+    match scheme {
+        AuthScheme::Basic => verify_basic(auth, credentials),
         AuthScheme::DigestMd5 | AuthScheme::DigestSha256 => verify_digest(
             auth,
             method,
             uri,
-            &cfg.username,
-            &cfg.password,
-            &cfg.realm,
-            cfg.scheme,
+            credentials,
+            realm,
+            scheme,
             expected_nonce,
             nc_hwm,
         ),
     }
 }
 
-fn verify_basic(
-    auth_header: &str,
-    expected_user: &str,
-    expected_pass: &SecretString,
-) -> Result<(), AuthVerifyError> {
+fn verify_basic(auth_header: &str, credentials: &[Credential<'_>]) -> Result<(), AuthVerifyError> {
     let value = auth_header
         .strip_prefix("Basic ")
         .ok_or(AuthVerifyError::SchemeMismatch)?
@@ -127,6 +161,12 @@ fn verify_basic(
     let (user, pass) = s
         .split_once(':')
         .ok_or_else(|| AuthVerifyError::BadBasic("missing colon".to_string()))?;
+    // The username only selects the credential; a miss is the same error a
+    // wrong password gives.
+    let Some(cred) = credentials.iter().find(|c| c.username == user) else {
+        return Err(AuthVerifyError::WrongCredentials);
+    };
+    let (expected_user, expected_pass) = (cred.username, cred.password);
     // Constant-time comparison for both user and pass. The two `Choice`
     // values are combined with `&` *before* converting to `bool` so that
     // subtle's optimizer barriers remain in effect across the entire
@@ -156,8 +196,7 @@ fn verify_digest(
     auth_header: &str,
     method: &str,
     uri: &str,
-    expected_user: &str,
-    expected_pass: &SecretString,
+    credentials: &[Credential<'_>],
     expected_realm: &str,
     scheme: AuthScheme,
     expected_nonce: &str,
@@ -176,9 +215,10 @@ fn verify_digest(
     let response_attr = params.get("response").map(String::as_str).unwrap_or("");
     let realm_attr = params.get("realm").map(String::as_str).unwrap_or("");
 
-    if username != expected_user {
-        return Err(AuthVerifyError::WrongCredentials);
-    }
+    let Some(cred) = credentials.iter().find(|c| c.username == username) else {
+        return Err(AuthVerifyError::WrongDigestResponse);
+    };
+    let (expected_user, expected_pass) = (cred.username, cred.password);
     if nonce_attr != expected_nonce {
         return Err(AuthVerifyError::StaleNonce);
     }
@@ -648,7 +688,7 @@ mod tests {
                     uri=\"rtsp://x\", response=\"any\", algorithm=MD5";
         let e = verify_authorization(Some(auth), "DESCRIBE", "rtsp://x", &cfg, "abc", &mut 0)
             .unwrap_err();
-        assert!(matches!(e, AuthVerifyError::WrongCredentials));
+        assert!(matches!(e, AuthVerifyError::WrongDigestResponse));
     }
 
     #[test]
@@ -925,5 +965,155 @@ mod tests {
             matches!(res, Err(AuthVerifyError::WrongDigestResponse)),
             "mismatched password must be rejected, got {res:?}"
         );
+    }
+
+    // ── Credential-set verification ─────────────────────────────────────
+
+    fn pw(s: &str) -> SecretString {
+        SecretString::new(s.to_string().into())
+    }
+
+    fn basic_header(userpass: &str) -> String {
+        use base64::Engine;
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(userpass.as_bytes())
+        )
+    }
+
+    fn basic_check(header: &str, set: &[(&str, SecretString)]) -> Result<(), AuthVerifyError> {
+        let creds: Vec<Credential<'_>> = set
+            .iter()
+            .map(|(u, p)| Credential {
+                username: u,
+                password: p,
+            })
+            .collect();
+        verify_credentials(
+            Some(header),
+            "DESCRIBE",
+            "rtsp://x",
+            AuthScheme::Basic,
+            "tst",
+            &creds,
+            "",
+            &mut 0,
+        )
+    }
+
+    #[test]
+    fn basic_picks_the_credential_by_username() {
+        let set = [("admin", pw("secret")), ("amber", pw("pw"))];
+        basic_check(&basic_header("amber:pw"), &set).unwrap();
+        let e = basic_check(&basic_header("amber:secret"), &set).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongCredentials), "{e:?}");
+    }
+
+    #[test]
+    fn basic_password_may_contain_colons() {
+        let set = [("amber", pw("pa:ss"))];
+        basic_check(&basic_header("amber:pa:ss"), &set).unwrap();
+    }
+
+    #[test]
+    fn basic_unknown_user_is_wrong_credentials_not_a_panic() {
+        let set = [("admin", pw("secret"))];
+        let e = basic_check(&basic_header("nobody:x"), &set).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongCredentials), "{e:?}");
+        let e = basic_check(&basic_header("nobody:x"), &[]).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongCredentials), "{e:?}");
+    }
+
+    fn digest_header(user_attr: &str, user: &str, pass: &SecretString) -> String {
+        let (nonce, nc, cnonce, uri) = ("abc123", "00000001", "deadbeef", "rtsp://server/live");
+        let response = compute_digest_response(
+            AuthScheme::DigestMd5,
+            user,
+            "tst-rtp",
+            pass,
+            "DESCRIBE",
+            uri,
+            nonce,
+            nc,
+            cnonce,
+            "auth",
+        );
+        format!(
+            "Digest username=\"{user_attr}\", realm=\"tst-rtp\", nonce=\"{nonce}\", \
+             uri=\"{uri}\", response=\"{response}\", algorithm=MD5, \
+             nc={nc}, cnonce=\"{cnonce}\", qop=auth"
+        )
+    }
+
+    fn digest_check(header: &str, set: &[(&str, SecretString)]) -> Result<(), AuthVerifyError> {
+        let creds: Vec<Credential<'_>> = set
+            .iter()
+            .map(|(u, p)| Credential {
+                username: u,
+                password: p,
+            })
+            .collect();
+        verify_credentials(
+            Some(header),
+            "DESCRIBE",
+            "rtsp://server/live",
+            AuthScheme::DigestMd5,
+            "tst-rtp",
+            &creds,
+            "abc123",
+            &mut 0,
+        )
+    }
+
+    #[test]
+    fn digest_md5_picks_the_credential_by_username() {
+        let amber = pw("pw");
+        let header = digest_header("amber", "amber", &amber);
+        digest_check(&header, &[("admin", pw("secret")), ("amber", pw("pw"))]).unwrap();
+        let e = digest_check(&header, &[("admin", pw("secret"))]).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongDigestResponse), "{e:?}");
+    }
+
+    #[test]
+    fn digest_unknown_or_escaped_username_is_a_clean_401() {
+        let set = [("admin", pw("secret"))];
+        let e = digest_check(&digest_header("nobody", "nobody", &pw("x")), &set).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongDigestResponse), "{e:?}");
+        let e = digest_check(&digest_header("a\\\"b", "a\"b", &pw("x")), &set).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongDigestResponse), "{e:?}");
+    }
+
+    #[test]
+    fn verify_authorization_wrapper_matches_the_old_behavior() {
+        let cfg = digest_md5_cfg();
+        let header = digest_header("admin", "admin", &cfg.password);
+        verify_authorization(
+            Some(&header),
+            "DESCRIBE",
+            "rtsp://server/live",
+            &cfg,
+            "abc123",
+            &mut 0,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn build_challenge_matches_build_challenge_header() {
+        for scheme in [
+            AuthScheme::Basic,
+            AuthScheme::DigestMd5,
+            AuthScheme::DigestSha256,
+        ] {
+            let cfg = ServerAuthConfig {
+                scheme,
+                realm: "r".into(),
+                ..basic_cfg()
+            };
+            assert_eq!(
+                build_challenge(scheme, "r", "n"),
+                build_challenge_header(&cfg, "n")
+            );
+        }
     }
 }
