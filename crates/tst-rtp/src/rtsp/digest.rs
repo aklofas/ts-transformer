@@ -85,7 +85,7 @@ mod tests {
 
     /// RFC 7616 §3.9.1 MD5 test vector — also a cross-check that the
     /// client path (via DigestAlgorithm::Md5 → Algo::Md5) and server path
-    /// (via ServerAuthScheme::DigestMd5 → Algo::Md5) produce identical
+    /// (via AuthScheme::DigestMd5 → Algo::Md5) produce identical
     /// values for the same inputs.
     #[test]
     fn cross_check_md5_with_qop() {

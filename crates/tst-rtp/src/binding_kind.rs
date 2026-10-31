@@ -80,6 +80,18 @@ impl From<RtspServerError> for BindingError {
     }
 }
 
+#[cfg(feature = "rtsp-server")]
+impl From<crate::rtsp::server::mount_rules::MountRuleError> for BindingError {
+    fn from(e: crate::rtsp::server::mount_rules::MountRuleError) -> Self {
+        use crate::rtsp::server::mount_rules::MountRuleError as E;
+        let kind = match &e {
+            E::InvalidMountPath { .. } | E::EmptyCredentials => K::RtspMount,
+            E::Closed => K::RtspServer,
+        };
+        BindingError::new(kind, e.to_string())
+    }
+}
+
 impl From<MountError> for BindingError {
     fn from(e: MountError) -> Self {
         let kind = match &e {

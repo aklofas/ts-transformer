@@ -12,6 +12,7 @@ pub(crate) mod fanout;
 pub(crate) mod handlers;
 pub(crate) mod listener;
 pub mod mount;
+pub mod mount_rules;
 pub(crate) mod multicast;
 pub mod publish;
 pub(crate) mod session;
@@ -30,8 +31,9 @@ use tokio_util::sync::CancellationToken;
 use crate::error::RtspServerError;
 use crate::rtsp::server::session::SessionWriter;
 
-use self::builder::RtspServerBuilder;
+use self::builder::{AuthScheme, RtspServerBuilder};
 use self::cancel::RtspServerCancelHandle;
+use self::mount_rules::MountRules;
 use crate::url::RtspScheme;
 
 /// Bound of the on-demand publish-mount queue (see
@@ -72,6 +74,8 @@ pub(crate) struct ServerState {
     /// `add_multicast_mount` / `add_publish_mount`.
     pub(crate) mounts:
         std::sync::Mutex<std::collections::HashMap<String, crate::rtsp::server::mount::MountEntry>>,
+    /// Per-path publish and read policies, editable while the server runs.
+    pub(crate) mount_rules: crate::rtsp::server::mount_rules::MountRules,
     /// Live count of accepted (and not-yet-closed) client sessions.
     pub(crate) active_sessions: AtomicUsize,
     /// Cumulative RTP packets sent across all peers + all mounts.
@@ -370,6 +374,7 @@ pub(crate) fn test_state() -> Arc<ServerState> {
         sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
         hard_cancel: RtspServerCancelHandle::new(),
         mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
+        mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
         active_sessions: AtomicUsize::new(0),
         total_rtp_packets_sent: AtomicU64::new(0),
         total_rtp_bytes_sent: AtomicU64::new(0),
@@ -433,12 +438,19 @@ impl RtspServer {
             .map_err(|e| RtspServerError::Io(e.kind()))?;
         let (publish_queue_tx, publish_queue_rx) =
             std::sync::mpsc::sync_channel(PUBLISH_QUEUE_BOUND);
+        let challenge = b.auth.as_ref().map_or_else(
+            || (AuthScheme::DigestMd5, "tstrans".to_string()),
+            |a| (a.scheme, a.realm.clone()),
+        );
+        let mount_rules =
+            MountRules::new(b.default_mount_rule.clone().unwrap_or_default(), challenge);
         let state = Arc::new(ServerState {
             builder: b,
             cancel_token: CancellationToken::new(),
             sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
             hard_cancel: RtspServerCancelHandle::new(),
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
+            mount_rules,
             active_sessions: AtomicUsize::new(0),
             total_rtp_packets_sent: AtomicU64::new(0),
             total_rtp_bytes_sent: AtomicU64::new(0),
@@ -458,6 +470,14 @@ impl RtspServer {
             runtime: Some(runtime),
             publish_queue_rx: std::sync::Mutex::new(publish_queue_rx),
         })
+    }
+
+    /// The live per-path rules table. Every call returns a handle to the
+    /// same table, usable from any thread while the server runs; edits take
+    /// effect on the next request. After [`stop`](Self::stop) edits return
+    /// [`MountRuleError::Closed`](crate::MountRuleError::Closed).
+    pub fn mount_rules(&self) -> MountRules {
+        self.state.mount_rules.clone()
     }
 
     /// Convenience: `RtspServerBuilder::new(url)?.build()`.
@@ -984,6 +1004,8 @@ impl RtspServer {
             .map(|g| g.clone())
             .unwrap_or_default();
         self.notify_and_cancel(&sessions);
+        // Edits to the rules table are refused from here on.
+        self.state.mount_rules.close();
         // End every publish mount's application transport: a parked (or
         // later) `recv_bytes` on it reads `Closed`. Idempotent with the
         // publisher session's own `end_publisher` on its way out.

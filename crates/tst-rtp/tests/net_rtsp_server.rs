@@ -31,6 +31,8 @@ mod loopback_interleaved;
 mod loopback_udp;
 #[path = "rtsp_server/mount.rs"]
 mod mount;
+#[path = "rtsp_server/mount_rules.rs"]
+mod mount_rules;
 #[path = "rtsp_server/multicast.rs"]
 mod multicast;
 #[path = "rtsp_server/notice_5402.rs"]

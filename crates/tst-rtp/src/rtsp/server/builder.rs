@@ -12,14 +12,18 @@ use std::time::Duration;
 use secrecy::SecretString;
 
 use crate::error::RtspServerError;
+use crate::rtsp::server::mount_rules::MountRule;
 use crate::url::RtspUrl;
 
-/// Server-side auth scheme. Internal — consumed by
-/// `RtspServer::from_builder`.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ServerAuthScheme {
+/// Challenge scheme the server offers a client that must authenticate.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthScheme {
+    /// HTTP Basic (RFC 7617).
     Basic,
+    /// HTTP Digest with MD5 (RFC 7616).
     DigestMd5,
+    /// HTTP Digest with SHA-256 (RFC 7616).
     DigestSha256,
 }
 
@@ -27,7 +31,7 @@ pub(crate) enum ServerAuthScheme {
 /// `RtspServer::from_builder`.
 #[derive(Clone)]
 pub(crate) struct ServerAuthConfig {
-    pub(crate) scheme: ServerAuthScheme,
+    pub(crate) scheme: AuthScheme,
     pub(crate) realm: String,
     pub(crate) username: String,
     pub(crate) password: secrecy::SecretString,
@@ -62,6 +66,7 @@ impl std::fmt::Debug for ServerAuthConfig {
 pub struct RtspServerBuilder {
     pub(crate) bind_url: RtspUrl,
     pub(crate) auth: Option<ServerAuthConfig>,
+    pub(crate) default_mount_rule: Option<MountRule>,
     pub(crate) max_sessions: usize,
     pub(crate) session_timeout: Duration,
     pub(crate) fanout_capacity: usize,
@@ -100,6 +105,7 @@ impl RtspServerBuilder {
         Self {
             bind_url: url,
             auth: None,
+            default_mount_rule: None,
             max_sessions: 64,
             session_timeout: Duration::from_secs(60),
             fanout_capacity: 256,
@@ -122,7 +128,7 @@ impl RtspServerBuilder {
     /// behavior (the server holds one credential).
     pub fn auth_basic(&mut self, realm: &str, username: &str, password: SecretString) -> &mut Self {
         self.auth = Some(ServerAuthConfig {
-            scheme: ServerAuthScheme::Basic,
+            scheme: AuthScheme::Basic,
             realm: realm.into(),
             username: username.into(),
             password,
@@ -138,7 +144,7 @@ impl RtspServerBuilder {
         password: SecretString,
     ) -> &mut Self {
         self.auth = Some(ServerAuthConfig {
-            scheme: ServerAuthScheme::DigestMd5,
+            scheme: AuthScheme::DigestMd5,
             realm: realm.into(),
             username: username.into(),
             password,
@@ -154,7 +160,7 @@ impl RtspServerBuilder {
         password: SecretString,
     ) -> &mut Self {
         self.auth = Some(ServerAuthConfig {
-            scheme: ServerAuthScheme::DigestSha256,
+            scheme: AuthScheme::DigestSha256,
             realm: realm.into(),
             username: username.into(),
             password,
@@ -235,6 +241,15 @@ impl RtspServerBuilder {
     /// publishers, before turning this on for a reachable port.
     pub fn accept_unregistered_publishers(&mut self, yes: bool) -> &mut Self {
         self.accept_unregistered_publishers = yes;
+        self
+    }
+
+    /// Set the rule every mount path without its own entry in
+    /// [`RtspServer::mount_rules`](crate::rtsp::server::RtspServer::mount_rules)
+    /// falls back to. The default is [`MountRule::default`], which inherits
+    /// the server-wide credential for both directions.
+    pub fn default_mount_rule(&mut self, rule: MountRule) -> &mut Self {
+        self.default_mount_rule = Some(rule);
         self
     }
 
@@ -331,7 +346,7 @@ mod tests {
         let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         b.auth_basic("tst", "admin", SecretString::new("p".into()));
         let cfg = b.auth.as_ref().unwrap();
-        assert!(matches!(cfg.scheme, ServerAuthScheme::Basic));
+        assert!(matches!(cfg.scheme, AuthScheme::Basic));
         assert_eq!(cfg.realm, "tst");
         assert_eq!(cfg.username, "admin");
     }
@@ -343,7 +358,7 @@ mod tests {
         b.auth_digest_md5("tst", "admin", SecretString::new("p".into()));
         assert!(matches!(
             b.auth.as_ref().unwrap().scheme,
-            ServerAuthScheme::DigestMd5
+            AuthScheme::DigestMd5
         ));
     }
 
