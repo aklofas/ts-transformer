@@ -238,6 +238,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The stress port-table rail runs in CI.
 - The test suite runs as hash-partitioned nextest shards; platforms other than linux-x86_64 run the all-features pass on pull requests and the other passes on push to main; a nightly dispatch opens a `ci-nightly` issue on red.
 - `jvm-jar` runs on pull requests only when JVM-relevant paths change; on pull requests it and `python-wheels` build linux-x86_64 only, and both run their full platform matrices on push to main, on tags and under the qualification call; `clusterfuzzlite-pr` fuzzes for 300 s.
+- The ClusterFuzzLite corpus prune runs with a 2400 s budget instead of 600 s. The runner splits that budget across the 40 fuzz targets as a per-target floor, 15 s before, and kills a merge that outlasts its share; `whep_sdp_select`, whose merge costs about 10 ms per input on a hosted runner, outgrew it once its stored corpus passed about 1800 inputs, so the scheduled run was red for three nights and that corpus went unpruned. A merge ends when it is done, so the larger cap costs nothing while corpora stay small.
 
 ### Changed — dependencies
 

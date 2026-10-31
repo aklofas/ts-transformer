@@ -58,7 +58,15 @@ jobs:
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          fuzz-seconds: 600
+          # The runner splits this budget across every fuzz target as a
+          # per-target floor (fuzz-seconds / target count) and kills a merge
+          # that outlasts its share. At 600 s that floor was 15 s, which
+          # whep_sdp_select outgrew once its stored corpus passed about 1800
+          # inputs (its merge costs about 10 ms per input on a hosted runner).
+          # A merge ends as soon as it is done, so a larger cap costs nothing
+          # while corpora stay small; 2400 s is a 60 s floor for 40 targets,
+          # well inside the job timeout after the eight-minute build.
+          fuzz-seconds: 2400
           mode: prune
           storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
           storage-repo-branch: main
