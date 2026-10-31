@@ -100,36 +100,35 @@ pub(crate) fn challenge_response(
 /// The mount path the rules key on, and the direction, for this request on
 /// this session.
 ///
-/// The key is the path the server itself resolves: the role's mount path
-/// once the session holds one (so a publisher's `SETUP .../amber/video`
-/// still keys on `/amber`), else the request URI's. ANNOUNCE and DESCRIBE
-/// name their own path and always key on the URI. Direction: ANNOUNCE and
-/// RECORD publish; SETUP publishes only for a publisher; TEARDOWN follows
-/// the role (`Idle` reads); everything else reads.
+/// ANNOUNCE and DESCRIBE name their own path: they key on the request URI,
+/// ANNOUNCE publishing and DESCRIBE reading. Every other request on a
+/// session that holds a role keys on the role's mount path (so a
+/// publisher's `SETUP .../amber/video` still keys on `/amber`) and takes
+/// the role's direction: a publisher's SETUP, PLAY, PAUSE, RECORD and
+/// TEARDOWN publish, a reader's read. On an `Idle` session they key on the
+/// URI and read.
 pub(crate) fn rule_key_and_direction(
     req: &RtspRequest,
     session: &ServerSessionState,
 ) -> (String, Direction) {
-    let role_path = match &session.role {
-        Role::Idle => None,
-        Role::Reader(r) => Some(r.mount_path.clone()),
+    let uri_keyed = || {
+        let dir = if req.method == RtspMethod::Announce {
+            Direction::Publish
+        } else {
+            Direction::Read
+        };
+        (extract_mount_path(&req.uri), dir)
+    };
+    if matches!(req.method, RtspMethod::Announce | RtspMethod::Describe) {
+        return uri_keyed();
+    }
+    match &session.role {
+        Role::Idle => uri_keyed(),
+        Role::Reader(r) => (r.mount_path.clone(), Direction::Read),
         // The mount this session's ANNOUNCE claimed; a publisher SETUP
         // never moves it to another mount.
-        Role::Publisher(p) => Some(p.mount.path.clone()),
-    };
-    let is_publisher = matches!(session.role, Role::Publisher(_));
-    let dir = match req.method {
-        RtspMethod::Announce | RtspMethod::Record => Direction::Publish,
-        RtspMethod::Setup | RtspMethod::Teardown if is_publisher => Direction::Publish,
-        _ => Direction::Read,
-    };
-    let key = match (req.method, role_path) {
-        (RtspMethod::Announce | RtspMethod::Describe, _) | (_, None) => {
-            extract_mount_path(&req.uri)
-        }
-        (_, Some(path)) => path,
-    };
-    (key, dir)
+        Role::Publisher(p) => (p.mount.path.clone(), Direction::Publish),
+    }
 }
 
 /// Check a gated request against the mount rules. Returns `Ok(())` if the

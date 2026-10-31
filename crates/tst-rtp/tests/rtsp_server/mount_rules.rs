@@ -440,3 +440,71 @@ fn a_refuse_status_never_trips_the_three_401_close() {
     assert_eq!(p.options("/x"), 200, "the connection stays open");
     server.stop().unwrap();
 }
+
+/// Poll `cond` until it holds or a scaled deadline passes.
+fn eventually(cond: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + scaled(Duration::from_secs(5));
+    while std::time::Instant::now() < deadline {
+        if cond() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    cond()
+}
+
+/// A rule edit reaches a playing reader at its next role-keyed request: a
+/// refused PAUSE answers the Refuse status and ends the reader's role, so
+/// its subscription to the mount goes away.
+#[test]
+fn a_refused_pause_ends_a_playing_readers_role() {
+    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
+        .unwrap()
+        .build()
+        .unwrap();
+    let mount = server.add_mount("/a", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let rules = server.mount_rules();
+    rules
+        .set(
+            "/a",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Require(vec![cred("viewer", "pw")]),
+            ),
+        )
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut viewer = RtspClient::connect(&format!(
+        "rtsp://viewer:pw@127.0.0.1:{port}/a?transport=tcp"
+    ))
+    .unwrap();
+    let sdp = viewer.describe().expect("DESCRIBE");
+    let session = viewer.setup_mp2t_auto(&sdp).expect("SETUP");
+    let _recv = session.into_recv_transport();
+    viewer.play().expect("PLAY");
+    assert!(eventually(|| mount.peer_count() == 1), "the reader plays");
+
+    rules
+        .set(
+            "/a",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Refuse(RefuseStatus::ServiceUnavailable),
+            ),
+        )
+        .unwrap();
+    let e = viewer
+        .pause()
+        .expect_err("the refused read side answers 503");
+    assert!(
+        matches!(e, RtspError::Protocol { code: 503, .. }),
+        "got: {e:?}"
+    );
+    assert!(
+        eventually(|| mount.peer_count() == 0),
+        "the refused reader's role ended"
+    );
+    server.stop().unwrap();
+}
