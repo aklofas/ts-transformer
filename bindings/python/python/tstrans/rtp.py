@@ -12,6 +12,8 @@ Submodule contents are populated by `tstrans._native.rtp`:
   `DigestAlgorithm`, `TransportPref`, `RtspVersion`
 - `RtspServer`, `MountHandle`, `RtspServerConfig`,
   `ServerStats`, `MountStats`, `RtspServerCancelHandle`
+- `MountRules`, `MountRule`, `MountPolicy`, `MountCredential`,
+  `RefuseStatus`, `AuthScheme` (the per-mount-path rules table)
 - `PublishMount`, `PublishMountStats`, `PublisherInfo`, `PublishShape`,
   `ClockAlignment` (the RTSP publisher role)
 
@@ -103,6 +105,30 @@ class ClockAlignment(enum.IntEnum):
     SENDER_REPORT = 3
 
 
+class RefuseStatus(enum.IntEnum):
+    """The status line a `MountPolicy.refuse` answers with. Mirrors
+    `tst_rtp::RefuseStatus`; the values are the RTSP status codes and are
+    pinned across the Python and JVM bindings. Pure Python: pass a member
+    to `MountPolicy.refuse`.
+    """
+
+    FORBIDDEN = 403
+    NOT_FOUND = 404
+    NOT_ENOUGH_BANDWIDTH = 453
+    SERVICE_UNAVAILABLE = 503
+
+
+class AuthScheme(enum.IntEnum):
+    """The scheme `MountRules.set_challenge` offers a client that must
+    authenticate. Mirrors `tst_rtp::AuthScheme`; the values are pinned
+    across the Python and JVM bindings.
+    """
+
+    BASIC = 0
+    DIGEST_MD5 = 1
+    DIGEST_SHA256 = 2
+
+
 # Raw RTP transports (the TS shells over `rtp://` are in `tstrans.shells`).
 Transport = _rtp.Transport
 RecvTransport = _rtp.RecvTransport
@@ -128,6 +154,12 @@ MountHandle = _rtp.MountHandle
 ServerStats = _rtp.ServerStats
 MountStats = _rtp.MountStats
 RtspServerCancelHandle = _rtp.RtspServerCancelHandle
+
+# Per-mount-path rules table (RtspServer.mount_rules()).
+MountCredential = _rtp.MountCredential
+MountPolicy = _rtp.MountPolicy
+MountRule = _rtp.MountRule
+MountRules = _rtp.MountRules
 
 # RTSP publisher role (ANNOUNCE / RECORD ingest on RtspServer).
 PublishMount = _rtp.PublishMount
@@ -199,6 +231,12 @@ class RtspServerConfig:
     this config's default `max_sessions` of 100, so configure `auth` and
     size `max_sessions` before turning this on for a reachable port."""
 
+    default_mount_rule: Optional[MountRule] = None
+    """The rule every mount path without its own entry follows, in force
+    from the first request (so the window between `start()` and the first
+    `RtspServer.mount_rules().set_default(...)` is closed). `None` keeps the
+    default of inheriting `auth` for both directions."""
+
     def __post_init__(self) -> None:
         if self.max_sessions <= 0:
             raise ValueError(
@@ -223,6 +261,13 @@ class RtspServerConfig:
             raise TypeError(
                 f"RtspServerConfig.accept_unregistered_publishers must be a bool; "
                 f"got {type(self.accept_unregistered_publishers).__name__}"
+            )
+        if self.default_mount_rule is not None and not isinstance(
+            self.default_mount_rule, MountRule
+        ):
+            raise TypeError(
+                f"RtspServerConfig.default_mount_rule must be a MountRule or None; "
+                f"got {type(self.default_mount_rule).__name__}"
             )
         cert_set = self.tls_cert is not None
         key_set = self.tls_key is not None
@@ -255,6 +300,12 @@ __all__: list[str] = [
     "MountStats",
     "RtspServerCancelHandle",
     "RtspServerConfig",
+    "MountCredential",
+    "MountPolicy",
+    "MountRule",
+    "MountRules",
+    "RefuseStatus",
+    "AuthScheme",
     # RTSP publisher role
     "PublishMount",
     "PublishMountStats",
