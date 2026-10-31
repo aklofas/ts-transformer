@@ -454,7 +454,10 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
 - **One role per connection.** A reader SETUP or PLAY on a publisher's
   connection, or an ANNOUNCE on a reader's, answers `455`.
 - **One credential set.** Readers and publishers authenticate against the
-  server's single `auth_basic` / `auth_digest_*` credential.
+  server's single `auth_basic` / `auth_digest_*` credential, or against a
+  per-mount rule from `RtspServer::mount_rules()` (credentials, open, or a
+  refusal per path and direction; see the [publish-ingest
+  recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)).
 
 ### Stats
 

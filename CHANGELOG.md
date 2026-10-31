@@ -260,6 +260,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added — tst-rtp
 
 - `RtspClientBuilder::from_url(RtspUrl)`.
+- `RtspServer::mount_rules()` returns a `MountRules` handle: a `MountRule` per mount path (and a default) with separate publish and read policies, `MountPolicy::{Inherit, Open, Require(Vec<MountCredential>), Refuse(RefuseStatus)}`, editable from any thread while the server runs (`set`, `remove`, `set_default`, `clear`, `set_challenge`). `Require` replaces the server-wide credential for that path and direction; `Refuse` answers `403`, `404`, `453` or `503` and ends the role. The check runs first in every gated handler, so a refused ANNOUNCE creates no mount. OPTIONS and GET_PARAMETER are never gated, so a change reaches a streaming publisher at its TEARDOWN; `remove_mount` ends it now. `AuthScheme` is public, `MountRuleError` reports a bad path, empty credentials or a stopped server, and `RtspServerBuilder::default_mount_rule` guards the first ANNOUNCE. A server nobody edits behaves exactly as before.
 
 ### Added — tst-srt
 
@@ -277,10 +278,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `tstrans.srt.Listener.rules()` returns `ListenRules` (`set`, `remove`, `set_default`, `clear`, `len`) with `ListenRule.accept()`, `accept_with(passphrase)` and `reject(reason)`, plus the `RejectReason` enum and `user_defined(code)`. A listener that never touches its rules behaves as before; the methods raise `SrtError(CLOSED)` once the listener is closed, and a rule carries a passphrase only.
 - `tstrans.srt.AccessControl.parse` reads the `#!::` stream-ID form (`user`, `resource`, `host`, `session`, `kind`, `mode`, `get`, `items`).
+- `tstrans.rtp.RtspServer.mount_rules()` returns `MountRules` (`set`, `remove`, `set_default`, `clear`, `set_challenge`, `len`, `is_closed`) with `MountRule(publish=, read=)`, `MountPolicy.inherit()`, `open()`, `require(*creds)` and `refuse(status)`, `MountCredential`, and the `RefuseStatus` and `AuthScheme` enums; `RtspServerConfig(default_mount_rule=...)` guards the first ANNOUNCE. A server nobody edits behaves as before; a bad path or empty credentials raise `RtspError(MOUNT)` and an edit after the server stopped raises `RtspError(SERVER)`.
 
 ### Added — tst-jni
 
 - `org.tstrans.srt.Listener.rules()` returns `ListenRules` (`set`, `remove`, `setDefault`, `clear`, `size`) with `ListenRule.accept()`, `acceptWith(passphrase)` and `reject(RejectReason)`, plus `RejectReason` and `AccessControl.parse` for the `#!::` stream-ID form. A listener that never touches its rules behaves as before; the methods throw `SrtException(CLOSED)` once the listener is closed, and a rule carries a passphrase only.
+- `org.tstrans.rtp.RtspServer.mountRules()` returns `MountRules` (`set`, `remove`, `setDefault`, `clear`, `setChallenge`, `size`, `isClosed`, `close`) with `MountRule.of(publish, read)` and `MountRule.both(policy)`, `MountPolicy.inherit()`, `open()`, `require(MountCredential...)` and `refuse(RefuseStatus)`, `MountCredential.of(user, password)`, and the `RefuseStatus` and `AuthScheme` enums; `RtspServerConfig.Builder.defaultMountRule(...)` guards the first ANNOUNCE. A server nobody edits behaves as before; a bad path or empty credentials throw `RtspException` of kind `MOUNT` and an edit after the server stopped throws kind `SERVER`.
 
 ### Deprecated — tst-srt
 
