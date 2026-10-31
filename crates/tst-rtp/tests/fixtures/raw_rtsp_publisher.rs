@@ -190,6 +190,11 @@ impl RawPublisher {
         status_of(&self.exchange("OPTIONS", path, "", b""))
     }
 
+    /// GET_PARAMETER (a keepalive) on this session; returns the status code.
+    pub fn get_parameter(&mut self, path: &str) -> u16 {
+        status_of(&self.exchange("GET_PARAMETER", path, "", b""))
+    }
+
     /// SETUP `mode=record` over TCP-interleaved. Returns the status and,
     /// on 200, the RTP channel the SERVER allocated (its `interleaved=`).
     pub fn setup_interleaved(&mut self, mount: &str, control: &str) -> (u16, Option<u8>) {
