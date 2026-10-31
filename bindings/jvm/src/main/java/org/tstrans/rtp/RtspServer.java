@@ -65,13 +65,20 @@ public final class RtspServer extends NativeHandle {
             user = d.user();
             password = d.password();
         }
+        MountRule dflt = config.defaultMountRule().orElse(null);
+        MountPolicy dp = dflt == null ? null : dflt.publish();
+        MountPolicy dr = dflt == null ? null : dflt.read();
         long h = nStart(
             config.bindAddr(),
             config.maxSessions(), config.sessionTimeoutSecs(),
             config.fanoutCapacity(), config.gracefulShutdownDrainMs(),
             authScheme, realm, user, password,
             config.tlsCert().orElse(null), config.tlsKey().orElse(null),
-            config.acceptUnregisteredPublishers());
+            config.acceptUnregisteredPublishers(),
+            dflt == null ? -1 : dp.kind(), dflt == null ? 0 : dp.statusCode(),
+            dflt == null ? null : dp.usernames(), dflt == null ? null : dp.passwords(),
+            dflt == null ? 0 : dr.kind(), dflt == null ? 0 : dr.statusCode(),
+            dflt == null ? null : dr.usernames(), dflt == null ? null : dr.passwords());
         if (h == 0) {
             throw new RtspException(RtspException.Kind.SERVER,
                 "nStart returned 0 without throwing");
@@ -226,6 +233,20 @@ public final class RtspServer extends NativeHandle {
         nRemoveMount(peekHandle(), java.util.Objects.requireNonNull(path, "path"));
     }
 
+    /**
+     * The live per-path rules table. Every call returns a new handle to the same table;
+     * close each one you open. The handle outlives this server: after {@link #stop()} its
+     * edits throw {@code SERVER}.
+     *
+     * @throws IllegalStateException if closed
+     */
+    public MountRules mountRules() {
+        ensureOpen();
+        long h = nMountRules(peekHandle());
+        if (h == 0) throw new IllegalStateException("RtspServer is closed");
+        return new MountRules(h);
+    }
+
     /** Cross-thread hard-cancel handle. @throws IllegalStateException if closed. */
     public RtspServerCancelHandle cancelHandle() {
         ensureOpen();
@@ -259,8 +280,11 @@ public final class RtspServer extends NativeHandle {
     private static native long nStart(String bindAddr, long maxSessions, long sessionTimeoutSecs,
         long fanoutCapacity, long gracefulShutdownDrainMs, int authScheme, String authRealm,
         String authUser, String authPassword, String tlsCert, String tlsKey,
-        boolean acceptUnregisteredPublishers)
+        boolean acceptUnregisteredPublishers,
+        int defPubKind, int defPubStatus, String[] defPubUsers, String[] defPubPasswords,
+        int defReadKind, int defReadStatus, String[] defReadUsers, String[] defReadPasswords)
         throws RtspException;
+    private static native long nMountRules(long handle);
     private static native ServerStats nStats(long handle);
     private static native String nLocalAddr(long handle);
     private static native void nStop(long handle, long drainMs) throws RtspException;

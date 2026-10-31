@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 
 use jni::Env;
 use jni::jni_str;
-use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray, JObject, JString};
+use jni::objects::{
+    JBooleanArray, JByteArray, JIntArray, JLongArray, JObject, JObjectArray, JString,
+};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong};
 use secrecy::SecretString;
@@ -160,6 +162,14 @@ jni_native! {
         tls_cert: JString<'local>,
         tls_key: JString<'local>,
         accept_unregistered_publishers: jboolean,
+        def_pub_kind: jint,
+        def_pub_status: jint,
+        def_pub_users: JObjectArray<'local>,
+        def_pub_passwords: JObjectArray<'local>,
+        def_read_kind: jint,
+        def_read_status: jint,
+        def_read_users: JObjectArray<'local>,
+        def_read_passwords: JObjectArray<'local>,
     ) -> jlong = 0 => {
         let bind: String = match bind_addr.try_to_string(env) {
             Ok(s) => s,
@@ -184,6 +194,19 @@ jni_native! {
             Some((auth_scheme, realm, user, pass))
         } else {
             None
+        };
+
+        // `def_pub_kind == -1`: no default rule configured.
+        let default_rule = if def_pub_kind < 0 {
+            None
+        } else {
+            match super::mount_rules::read_rule(
+                env, def_pub_kind, def_pub_status, &def_pub_users, &def_pub_passwords,
+                def_read_kind, def_read_status, &def_read_users, &def_read_passwords,
+            ) {
+                Some(r) => Some(r),
+                None => return 0,
+            }
         };
 
         let cert = match jstring_opt(env, &tls_cert) {
@@ -247,6 +270,9 @@ jni_native! {
                     }
                 }
             }
+            if let Some(rule) = default_rule.as_ref() {
+                builder.default_mount_rule(rule.clone());
+            }
             if let Some((cert, key)) = tls_paths.as_ref() {
                 builder.tls_cert(
                     std::path::PathBuf::from(cert),
@@ -273,6 +299,14 @@ jni_native! {
         REGISTRY_SERVER
             .insert_with_cancel(Arc::new(server), Some(Box::new(move || cancel.cancel())))
             as jlong
+    }
+}
+
+jni_native! {
+    /// `RtspServer.nMountRules(handle)` — a registered clone of the server's live
+    /// rules table, or 0 with `IllegalStateException` pending when the server is closed.
+    fn Java_org_tstrans_rtp_RtspServer_nMountRules(env, _class, handle: jlong) -> jlong = 0 => {
+        with_server(env, handle, |s| super::mount_rules::register(s.mount_rules())).unwrap_or(0)
     }
 }
 

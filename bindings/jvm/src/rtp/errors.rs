@@ -9,8 +9,8 @@
 use jni::Env;
 use tst_core::transport::TransportError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
-use tst_rtp::RtspError;
 use tst_rtp::error::{MountError, RtspServerError};
+use tst_rtp::{MountRuleError, RtspError};
 
 use crate::error::{Domain, throw_binding};
 
@@ -65,5 +65,11 @@ pub(crate) fn server_error_to_jvm(env: &mut Env, e: RtspServerError) {
 /// as before). NOTE: this DIFFERS from the `MuxSender`, whose `Mux(...)` is a
 /// `MuxException` — `MountHandle` pushes are `MOUNT`.
 pub(crate) fn mount_error_to_jvm(env: &mut Env, e: MountError) {
+    throw_binding(env, Domain::Rtsp, &BindingError::from(e));
+}
+
+/// Mount-rule edit errors — the shared `From<MountRuleError>`: an invalid path or
+/// empty credentials → `MOUNT`, a stopped server → `SERVER`.
+pub(crate) fn mount_rule_error_to_jvm(env: &mut Env, e: MountRuleError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
