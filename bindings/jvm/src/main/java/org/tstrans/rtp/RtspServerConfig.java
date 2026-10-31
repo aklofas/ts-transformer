@@ -27,6 +27,7 @@ public final class RtspServerConfig {
     private final String tlsCert;   // nullable; PEM cert-chain FILE PATH
     private final String tlsKey;    // nullable; PEM private-key FILE PATH
     private final boolean acceptUnregisteredPublishers;
+    private final MountRule defaultMountRule;  // nullable
 
     private RtspServerConfig(Builder b) {
         this.bindAddr = b.bindAddr;
@@ -38,6 +39,7 @@ public final class RtspServerConfig {
         this.tlsCert = b.tlsCert;
         this.tlsKey = b.tlsKey;
         this.acceptUnregisteredPublishers = b.acceptUnregisteredPublishers;
+        this.defaultMountRule = b.defaultMountRule;
     }
 
     /** Config with the default field set, bound to {@code bindAddr}. */
@@ -70,6 +72,12 @@ public final class RtspServerConfig {
      */
     public boolean acceptUnregisteredPublishers() { return acceptUnregisteredPublishers; }
 
+    /**
+     * The rule for mount paths no {@link MountRules} entry names, if set. Without one the
+     * default is {@link MountPolicy#inherit()} for both directions.
+     */
+    public Optional<MountRule> defaultMountRule() { return Optional.ofNullable(defaultMountRule); }
+
     @Override public String toString() {
         return "RtspServerConfig(bindAddr=" + bindAddr
             + ", auth=" + (auth != null ? "<auth>" : "None")
@@ -79,7 +87,8 @@ public final class RtspServerConfig {
             + ", gracefulShutdownDrainMs=" + gracefulShutdownDrainMs
             + ", tlsCert=" + (tlsCert != null ? tlsCert : "None")
             + ", tlsKey=" + (tlsKey != null ? tlsKey : "None")
-            + ", acceptUnregisteredPublishers=" + acceptUnregisteredPublishers + ")";
+            + ", acceptUnregisteredPublishers=" + acceptUnregisteredPublishers
+            + ", defaultMountRule=" + (defaultMountRule != null ? defaultMountRule : "None") + ")";
     }
 
     /** Builder for {@link RtspServerConfig}. Defaults match tst-py. */
@@ -93,6 +102,7 @@ public final class RtspServerConfig {
         private String tlsCert;
         private String tlsKey;
         private boolean acceptUnregisteredPublishers;
+        private MountRule defaultMountRule;
 
         private Builder() {}
 
@@ -133,6 +143,15 @@ public final class RtspServerConfig {
          */
         public Builder acceptUnregisteredPublishers(boolean v) {
             this.acceptUnregisteredPublishers = v;
+            return this;
+        }
+
+        /**
+         * The rule for mount paths no {@link MountRules} entry names, in force from the
+         * first request (default: {@link MountPolicy#inherit()} for both directions).
+         */
+        public Builder defaultMountRule(MountRule rule) {
+            this.defaultMountRule = rule;
             return this;
         }
 
