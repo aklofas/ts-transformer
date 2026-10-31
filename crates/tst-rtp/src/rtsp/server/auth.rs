@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use secrecy::{ExposeSecret, SecretString};
 
-use crate::rtsp::server::builder::{ServerAuthConfig, ServerAuthScheme};
+use crate::rtsp::server::builder::{AuthScheme, ServerAuthConfig};
 
 /// Verification result. `Ok(())` means the request is authorized; any
 /// error means the request handler should reply 401 (typically with a
@@ -57,12 +57,12 @@ pub(crate) fn generate_nonce() -> String {
 /// `nonce` is only consumed for the Digest schemes; Basic ignores it.
 pub(crate) fn build_challenge_header(cfg: &ServerAuthConfig, nonce: &str) -> String {
     match cfg.scheme {
-        ServerAuthScheme::Basic => format!("Basic realm=\"{}\"", cfg.realm),
-        ServerAuthScheme::DigestMd5 => format!(
+        AuthScheme::Basic => format!("Basic realm=\"{}\"", cfg.realm),
+        AuthScheme::DigestMd5 => format!(
             "Digest realm=\"{}\", nonce=\"{}\", algorithm=MD5, qop=\"auth\"",
             cfg.realm, nonce
         ),
-        ServerAuthScheme::DigestSha256 => format!(
+        AuthScheme::DigestSha256 => format!(
             "Digest realm=\"{}\", nonce=\"{}\", algorithm=SHA-256, qop=\"auth\"",
             cfg.realm, nonce
         ),
@@ -95,8 +95,8 @@ pub(crate) fn verify_authorization(
 ) -> Result<(), AuthVerifyError> {
     let auth = auth_header.ok_or(AuthVerifyError::Missing)?;
     match cfg.scheme {
-        ServerAuthScheme::Basic => verify_basic(auth, &cfg.username, &cfg.password),
-        ServerAuthScheme::DigestMd5 | ServerAuthScheme::DigestSha256 => verify_digest(
+        AuthScheme::Basic => verify_basic(auth, &cfg.username, &cfg.password),
+        AuthScheme::DigestMd5 | AuthScheme::DigestSha256 => verify_digest(
             auth,
             method,
             uri,
@@ -159,7 +159,7 @@ fn verify_digest(
     expected_user: &str,
     expected_pass: &SecretString,
     expected_realm: &str,
-    scheme: ServerAuthScheme,
+    scheme: AuthScheme,
     expected_nonce: &str,
     nc_hwm: &mut u32,
 ) -> Result<(), AuthVerifyError> {
@@ -265,7 +265,7 @@ fn verify_digest(
 
 #[allow(clippy::too_many_arguments)]
 fn compute_digest_response(
-    scheme: ServerAuthScheme,
+    scheme: AuthScheme,
     user: &str,
     realm: &str,
     pass: &SecretString,
@@ -278,9 +278,9 @@ fn compute_digest_response(
 ) -> String {
     use crate::rtsp::digest::{Algo, ha1, response};
     let algo = match scheme {
-        ServerAuthScheme::DigestMd5 => Algo::Md5,
-        ServerAuthScheme::DigestSha256 => Algo::Sha256,
-        ServerAuthScheme::Basic => unreachable!("compute_digest_response not called for Basic"),
+        AuthScheme::DigestMd5 => Algo::Md5,
+        AuthScheme::DigestSha256 => Algo::Sha256,
+        AuthScheme::Basic => unreachable!("compute_digest_response not called for Basic"),
     };
     let computed_ha1 = ha1(algo, user, realm, pass);
     response(algo, &computed_ha1, method, uri, nonce, nc, cnonce, qop)
@@ -370,7 +370,7 @@ mod tests {
 
     fn basic_cfg() -> ServerAuthConfig {
         ServerAuthConfig {
-            scheme: ServerAuthScheme::Basic,
+            scheme: AuthScheme::Basic,
             realm: "tst".into(),
             username: "admin".into(),
             password: SecretString::new("secret".into()),
@@ -379,7 +379,7 @@ mod tests {
 
     fn digest_md5_cfg() -> ServerAuthConfig {
         ServerAuthConfig {
-            scheme: ServerAuthScheme::DigestMd5,
+            scheme: AuthScheme::DigestMd5,
             realm: "tst-rtp".into(),
             username: "admin".into(),
             password: SecretString::new("secret".into()),
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn challenge_header_digest_sha256() {
         let cfg = ServerAuthConfig {
-            scheme: ServerAuthScheme::DigestSha256,
+            scheme: AuthScheme::DigestSha256,
             ..digest_md5_cfg()
         };
         let ch = build_challenge_header(&cfg, "xyz789");
@@ -577,7 +577,7 @@ mod tests {
         let method = "DESCRIBE";
         let uri = "rtsp://server/live";
         let response = compute_digest_response(
-            ServerAuthScheme::DigestMd5,
+            AuthScheme::DigestMd5,
             "admin",
             "tst-rtp",
             &cfg.password,
@@ -599,12 +599,12 @@ mod tests {
     #[test]
     fn verify_digest_sha256_round_trip() {
         let cfg = ServerAuthConfig {
-            scheme: ServerAuthScheme::DigestSha256,
+            scheme: AuthScheme::DigestSha256,
             ..digest_md5_cfg()
         };
         let nonce = "abc123";
         let response = compute_digest_response(
-            ServerAuthScheme::DigestSha256,
+            AuthScheme::DigestSha256,
             "admin",
             "tst-rtp",
             &cfg.password,
@@ -656,7 +656,7 @@ mod tests {
         let cfg = digest_md5_cfg();
         let nonce = "abc";
         let response = compute_digest_response(
-            ServerAuthScheme::DigestMd5,
+            AuthScheme::DigestMd5,
             "admin",
             "tst-rtp",
             &cfg.password,
@@ -712,7 +712,7 @@ mod tests {
         let method = "DESCRIBE";
         let uri = "rtsp://server/live";
         let response = compute_digest_response(
-            ServerAuthScheme::DigestMd5,
+            AuthScheme::DigestMd5,
             "admin",
             "tst-rtp",
             &cfg.password,
@@ -757,7 +757,7 @@ mod tests {
         // Send nc=00000003 (regression below hwm=5) → rejected.
         let nc = "00000003";
         let response = compute_digest_response(
-            ServerAuthScheme::DigestMd5,
+            AuthScheme::DigestMd5,
             "admin",
             "tst-rtp",
             &cfg.password,
@@ -837,7 +837,7 @@ mod tests {
     /// vectors; this helper drives the full path.
     fn client_server_roundtrip(
         algorithm: crate::rtsp::auth::DigestAlgorithm,
-        scheme: ServerAuthScheme,
+        scheme: AuthScheme,
         client_password: &str,
         server_password: &str,
     ) -> (Result<(), AuthVerifyError>, u32) {
@@ -885,7 +885,7 @@ mod tests {
         use crate::rtsp::auth::DigestAlgorithm;
         let (res, nc_hwm) = client_server_roundtrip(
             DigestAlgorithm::Md5,
-            ServerAuthScheme::DigestMd5,
+            AuthScheme::DigestMd5,
             "s3cret",
             "s3cret",
         );
@@ -901,7 +901,7 @@ mod tests {
         use crate::rtsp::auth::DigestAlgorithm;
         let (res, nc_hwm) = client_server_roundtrip(
             DigestAlgorithm::Sha256,
-            ServerAuthScheme::DigestSha256,
+            AuthScheme::DigestSha256,
             "s3cret",
             "s3cret",
         );
@@ -917,7 +917,7 @@ mod tests {
         use crate::rtsp::auth::DigestAlgorithm;
         let (res, _) = client_server_roundtrip(
             DigestAlgorithm::Md5,
-            ServerAuthScheme::DigestMd5,
+            AuthScheme::DigestMd5,
             "wrong",
             "s3cret",
         );

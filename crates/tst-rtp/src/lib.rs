@@ -89,11 +89,17 @@ pub use h264::{
 // would only fragment the error surface for no benefit.
 pub use error::{MountError, RtspServerError};
 #[cfg(feature = "rtsp-server")]
+pub use rtsp::server::builder::AuthScheme;
+#[cfg(feature = "rtsp-server")]
 pub use rtsp::server::builder::RtspServerBuilder;
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::cancel::RtspServerCancelHandle;
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::mount::{MountHandle, MountKind, MountStats};
+#[cfg(feature = "rtsp-server")]
+pub use rtsp::server::mount_rules::{
+    MountCredential, MountPolicy, MountRule, MountRuleError, MountRules, RefuseStatus,
+};
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::publish::{
     ClockAlignment, PublishMountHandle, PublishMountStats, PublishShape, PublisherInfo,
