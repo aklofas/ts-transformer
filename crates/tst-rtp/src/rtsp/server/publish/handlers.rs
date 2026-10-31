@@ -493,6 +493,76 @@ mod tests {
     }
 
     #[test]
+    fn rule_key_follows_the_role_and_direction_follows_the_method() {
+        use crate::rtsp::server::handlers::rule_key_and_direction;
+        use crate::rtsp::server::mount_rules::Direction;
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        let key = |r: &RtspRequest, s: &ServerSessionState| rule_key_and_direction(r, s);
+        // Idle: the URI's path; SETUP and TEARDOWN read.
+        assert_eq!(
+            key(&req(RtspMethod::Setup, "rtsp://h/pub/trackID=0"), &s),
+            ("/pub".to_string(), Direction::Read)
+        );
+        assert_eq!(
+            key(&req(RtspMethod::Teardown, "rtsp://h/pub"), &s),
+            ("/pub".to_string(), Direction::Read)
+        );
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+        // Publisher: a SETUP whose control segment is not a known prefix
+        // still keys on the ANNOUNCE's mount, before any SETUP recorded it.
+        assert_eq!(s.mount_path(), None);
+        assert_eq!(
+            key(&req(RtspMethod::Setup, "rtsp://h/pub/video"), &s),
+            ("/pub".to_string(), Direction::Publish)
+        );
+        assert_eq!(
+            key(&req(RtspMethod::Teardown, "rtsp://h/pub"), &s),
+            ("/pub".to_string(), Direction::Publish)
+        );
+        assert_eq!(
+            key(&req(RtspMethod::Pause, "rtsp://h/pub"), &s),
+            ("/pub".to_string(), Direction::Read)
+        );
+        // DESCRIBE names its own path whatever the role.
+        assert_eq!(
+            key(&req(RtspMethod::Describe, "rtsp://h/other"), &s),
+            ("/other".to_string(), Direction::Read)
+        );
+    }
+
+    #[test]
+    fn a_refused_record_ends_the_publisher_role() {
+        use crate::rtsp::server::mount_rules::{MountPolicy, MountRule, RefuseStatus};
+        let (st, m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+        st.mount_rules
+            .set(
+                "/pub",
+                MountRule::new(
+                    MountPolicy::Refuse(RefuseStatus::Forbidden),
+                    MountPolicy::Inherit,
+                ),
+            )
+            .unwrap();
+        let r = handle_record(&req(RtspMethod::Record, "rtsp://h/pub"), &st, &mut s);
+        assert_eq!(r.status, 403);
+        assert!(!r.headers.contains_key("www-authenticate"));
+        assert!(matches!(s.role, Role::Idle));
+        assert!(
+            m.publisher.lock().unwrap().info.is_none(),
+            "the slot is freed"
+        );
+    }
+
+    #[test]
     fn announce_elementary_h264_klv_enters_publisher_role() {
         const SDP_ES: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:streamid=0\r\nm=application 0 RTP/AVP 97\r\na=rtpmap:97 smpte336m/90000\r\na=control:streamid=1\r\n";
         let (st, m) = state_with_publish_mount();

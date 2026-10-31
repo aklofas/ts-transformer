@@ -62,6 +62,7 @@ pub(crate) struct Credential<'a> {
 /// Build the `WWW-Authenticate:` header value for the configured scheme.
 ///
 /// `nonce` is only consumed for the Digest schemes; Basic ignores it.
+#[cfg(test)]
 pub(crate) fn build_challenge_header(cfg: &ServerAuthConfig, nonce: &str) -> String {
     build_challenge(cfg.scheme, &cfg.realm, nonce)
 }
@@ -262,7 +263,7 @@ fn verify_digest(
     }
 
     // Reject the RFC 2617 no-qop downgrade when the server
-    // challenge offered qop=auth. Our build_challenge_header always adds
+    // challenge offered qop=auth. Our build_challenge always adds
     // qop="auth" for DigestMd5/DigestSha256; a client that omits qop is
     // deliberately downgrading (or is a broken implementation).
     if qop.is_empty() {

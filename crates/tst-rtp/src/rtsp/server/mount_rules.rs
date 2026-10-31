@@ -16,6 +16,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use secrecy::SecretString;
 
+use crate::rtsp::server::auth::Credential;
 use crate::rtsp::server::builder::AuthScheme;
 use crate::rtsp::server::validate_mount_path;
 
@@ -26,8 +27,6 @@ use crate::rtsp::server::validate_mount_path;
 #[derive(Clone)]
 pub struct MountCredential {
     username: String,
-    // Read by the request handlers once they consult the table.
-    #[allow(dead_code)]
     password: SecretString,
 }
 
@@ -43,6 +42,15 @@ impl MountCredential {
     /// The username.
     pub fn username(&self) -> &str {
         &self.username
+    }
+}
+
+impl<'a> From<&'a MountCredential> for Credential<'a> {
+    fn from(c: &'a MountCredential) -> Self {
+        Credential {
+            username: &c.username,
+            password: &c.password,
+        }
     }
 }
 
@@ -81,7 +89,6 @@ impl RefuseStatus {
     }
 
     /// The reason phrase for the status line.
-    #[allow(dead_code)] // used by the request handlers once they consult the table
     pub(crate) fn reason(self) -> &'static str {
         match self {
             Self::Forbidden => "Forbidden",
@@ -161,7 +168,6 @@ pub enum MountRuleError {
 
 /// Which side of a mount a request belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // used by the request handlers once they consult the table
 pub(crate) enum Direction {
     Publish,
     Read,
@@ -325,7 +331,6 @@ impl MountRules {
     }
 
     /// The policy for `dir` on `path`: the path's own rule, else the default.
-    #[allow(dead_code)] // used by the request handlers once they consult the table
     pub(crate) fn policy_for(&self, path: &str, dir: Direction) -> MountPolicy {
         let pick = |rule: &MountRule| match dir {
             Direction::Publish => rule.publish.clone(),
@@ -337,7 +342,8 @@ impl MountRules {
         }
     }
 
-    #[allow(dead_code)] // used by the request handlers once they consult the table
+    /// The scheme and realm a `Require` challenge offers when the builder
+    /// configured no credential.
     pub(crate) fn challenge(&self) -> (AuthScheme, String) {
         read(&self.inner.challenge).clone()
     }
