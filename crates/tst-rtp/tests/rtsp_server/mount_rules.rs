@@ -14,7 +14,7 @@ use tst_rtp::{
     RtspError, RtspServer, RtspServerBuilder,
 };
 
-use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, scaled, try_header};
+use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, scaled, session_id, try_header};
 use crate::fixtures::raw_rtsp_publisher::*;
 
 fn started(b: RtspServerBuilder) -> RtspServer {
@@ -106,11 +106,25 @@ fn connect(port: u16) -> TcpStream {
 }
 
 fn announce(tcp: &mut TcpStream, uri: &str, cseq: u32, auth: &str) -> String {
+    announce_sdp(tcp, uri, cseq, auth, SDP_MP2T)
+}
+
+fn announce_sdp(tcp: &mut TcpStream, uri: &str, cseq: u32, auth: &str, sdp: &str) -> String {
     request(
         tcp,
         &format!(
-            "ANNOUNCE {uri} RTSP/1.0\r\nCSeq: {cseq}\r\n{auth}Content-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{SDP_MP2T}",
-            SDP_MP2T.len()
+            "ANNOUNCE {uri} RTSP/1.0\r\nCSeq: {cseq}\r\n{auth}Content-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
+            sdp.len()
+        ),
+    )
+}
+
+/// SETUP `mode=record` over TCP-interleaved, by hand so it can carry `auth`.
+fn setup_record(tcp: &mut TcpStream, uri: &str, cseq: u32, auth: &str) -> String {
+    request(
+        tcp,
+        &format!(
+            "SETUP {uri} RTSP/1.0\r\nCSeq: {cseq}\r\n{auth}Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n"
         ),
     )
 }
@@ -506,5 +520,341 @@ fn a_refused_pause_ends_a_playing_readers_role() {
         eventually(|| mount.peer_count() == 0),
         "the refused reader's role ended"
     );
+    server.stop().unwrap();
+}
+
+fn publish_rule(policy: MountPolicy) -> MountRule {
+    MountRule::new(policy, MountPolicy::Inherit)
+}
+
+/// A publisher's track SETUP (`/amber/streamid=0`) keys on the mount its
+/// ANNOUNCE claimed and publishes: it is challenged by the `/amber`
+/// publish rule even though the read side is open. An idle connection's
+/// SETUP on the same URI keys on the URI and reads, so it is never
+/// challenged.
+#[test]
+fn a_publishers_track_setup_is_keyed_on_the_announce_path() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let mount = server.add_publish_mount("/amber").unwrap();
+    let rules = server.mount_rules();
+    rules
+        .set(
+            "/amber",
+            publish_rule(MountPolicy::Require(vec![cred("amber", "pw")])),
+        )
+        .unwrap();
+    rules.set_challenge(AuthScheme::Basic, "lab").unwrap();
+    let port = server.local_addr().unwrap().port();
+    let uri = format!("rtsp://127.0.0.1:{port}/amber");
+    let track = format!("{uri}/streamid=0");
+    let auth = basic("amber", "pw");
+
+    let mut tcp = connect(port);
+    let r = announce_sdp(&mut tcp, &uri, 1, &auth, SDP_H264);
+    assert_eq!(status(&r), 200, "{r}");
+    assert!(mount.publisher().is_some());
+    let r = setup_record(&mut tcp, &track, 2, "");
+    assert_eq!(
+        status(&r),
+        401,
+        "the publish rule gates the track SETUP: {r}"
+    );
+    let r = setup_record(&mut tcp, &track, 3, &auth);
+    assert_eq!(status(&r), 200, "{r}");
+
+    let mut idle = connect(port);
+    let r = setup_record(&mut idle, &track, 1, "");
+    assert!(
+        matches!(status(&r), 404 | 455),
+        "an idle SETUP keys on the open read side: {r}"
+    );
+    drop((tcp, idle));
+    server.stop().unwrap();
+}
+
+/// A rule turned to `Refuse` reaches a publisher that already holds the
+/// slot: its next gated request answers the Refuse status and frees the
+/// slot; a fresh ANNOUNCE is refused too.
+#[test]
+fn a_rule_turned_to_refuse_ends_the_publishers_role_at_its_next_gated_request() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let mount = server.add_publish_mount("/amber").unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/amber", SDP_H264), 200);
+    assert!(mount.publisher().is_some(), "the ANNOUNCE holds the slot");
+
+    server
+        .mount_rules()
+        .set(
+            "/amber",
+            publish_rule(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+        )
+        .unwrap();
+    assert_eq!(p.setup_interleaved("/amber", "streamid=0").0, 403);
+    assert!(
+        mount.publisher().is_none(),
+        "the refused SETUP freed the slot before its response"
+    );
+
+    let mut q = RawPublisher::connect(port);
+    assert_eq!(q.announce("/amber", SDP_H264), 403);
+    server.stop().unwrap();
+}
+
+const PT: u8 = 96;
+const SSRC: u32 = 0x0F0F_1234;
+const TS0: u32 = 1_000_000;
+
+/// OPTIONS and GET_PARAMETER are ungated, so a streaming publisher's
+/// keepalives never see a rule change and its media keeps flowing; its
+/// TEARDOWN is gated, answers the Refuse status and frees the slot.
+#[test]
+fn a_streaming_publishers_keepalive_ignores_a_rule_change_but_teardown_sees_it() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let mount = server.add_publish_mount("/amber").unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut app_t = mount.clone().into_recv_transport().unwrap();
+    // Quiet detector, unscaled like the elementary publish tests.
+    app_t.set_recv_timeout(Some(Duration::from_secs(2)));
+    let mut app = tst_pipeline::DemuxReceiver::new(app_t);
+
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/amber", SDP_H264), 200);
+    let (st, pair) = p.setup_interleaved_pair("/amber", "streamid=0");
+    assert_eq!(st, 200);
+    let (rtp_ch, rtcp_ch) = pair.expect("server allocated an interleaved pair");
+    assert_eq!(p.record_from_start("/amber"), 200);
+
+    // 20 AUs: a 3-fragment IDR plus 19 single-packet P slices. The first
+    // 12 packets are the first 10 AUs.
+    let packets = h264_rtp_packets(20, PT, 100, SSRC, TS0);
+    assert_eq!(packets.len(), 22);
+    p.send_frame(rtcp_ch, &sr_packet(SSRC, 3_900_000_000, 0, TS0));
+    for pkt in &packets[..12] {
+        p.send_frame(rtp_ch, pkt);
+    }
+    // The depacketizer emits an AU when the next one starts: 9 of 10.
+    assert!(
+        eventually(|| mount.stats().aus_emitted >= 9),
+        "first batch: {} AUs",
+        mount.stats().aus_emitted
+    );
+
+    server
+        .mount_rules()
+        .set(
+            "/amber",
+            publish_rule(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+        )
+        .unwrap();
+    assert_eq!(p.get_parameter("/amber"), 200);
+    assert_eq!(p.options("/amber"), 200);
+    for pkt in &packets[12..] {
+        p.send_frame(rtp_ch, pkt);
+    }
+    assert!(
+        eventually(|| mount.stats().aus_emitted >= 19),
+        "second batch still delivered: {} AUs",
+        mount.stats().aus_emitted
+    );
+    assert!(mount.publisher().is_some(), "keepalives ended nothing");
+
+    assert_eq!(p.teardown("/amber"), 403);
+    assert!(
+        mount.publisher().is_none(),
+        "the refused TEARDOWN freed the slot"
+    );
+
+    let deadline = std::time::Instant::now() + scaled(Duration::from_secs(20));
+    let video = demux_until_quiet(&mut app, deadline, "app")
+        .iter()
+        .filter(|ev| {
+            matches!(
+                ev,
+                tst_core::mpegts::demux::DemuxEvent::Sample { stream, .. } if stream.pid == 0x100
+            )
+        })
+        .count();
+    assert!(
+        video > 10,
+        "the app read past the first batch: {video} samples"
+    );
+    server.stop().unwrap();
+}
+
+/// A reader's TEARDOWN keys on the mount it set up and reads, whatever
+/// its URI says: aimed at an unruled path, it still answers `/a`'s Refuse
+/// status and ends the role, so the next TEARDOWN finds an idle session
+/// keyed on its own (open) URI. Raw socket: `RtspClient::teardown`
+/// clears its session whatever the status.
+#[test]
+fn a_readers_teardown_is_keyed_on_its_setup_mount() {
+    let server = started_with_mount(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let rules = server.mount_rules();
+    rules
+        .set(
+            "/a",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Require(vec![cred("viewer", "pw")]),
+            ),
+        )
+        .unwrap();
+    rules.set_challenge(AuthScheme::Basic, "lab").unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut tcp = connect(port);
+    let r = request(
+        &mut tcp,
+        &format!(
+            "SETUP rtsp://127.0.0.1:{port}/a/trackID=0 RTSP/1.0\r\nCSeq: 1\r\n{}\
+             Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n",
+            basic("viewer", "pw")
+        ),
+    );
+    assert_eq!(status(&r), 200, "{r}");
+    let sid = session_id(&r);
+
+    rules
+        .set(
+            "/a",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Refuse(RefuseStatus::ServiceUnavailable),
+            ),
+        )
+        .unwrap();
+    let teardown = |tcp: &mut TcpStream, cseq: u32| {
+        request(
+            tcp,
+            &format!(
+                "TEARDOWN rtsp://127.0.0.1:{port}/other RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"
+            ),
+        )
+    };
+    let r = teardown(&mut tcp, 2);
+    assert_eq!(status(&r), 503, "keyed on the SETUP mount: {r}");
+    let r = teardown(&mut tcp, 3);
+    assert_eq!(status(&r), 200, "the refused TEARDOWN ended the role: {r}");
+    server.stop().unwrap();
+}
+
+/// A rule belongs to the path, not the mount: removing the mount keeps it,
+/// and a mount added again at the path is governed by it.
+#[test]
+fn remove_mount_keeps_the_rule_and_a_new_mount_inherits_it() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let rules = server.mount_rules();
+    rules
+        .set(
+            "/amber",
+            publish_rule(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+        )
+        .unwrap();
+    let _first = server.add_publish_mount("/amber").unwrap();
+    server.remove_mount("/amber").unwrap();
+    assert_eq!(rules.len(), 1);
+
+    let mount = server.add_publish_mount("/amber").unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/amber", SDP_MP2T), 403);
+    assert!(mount.publisher().is_none());
+    server.stop().unwrap();
+}
+
+/// Rule edits racing gated requests: one thread flips the publish rule
+/// between Require and Refuse while four connections ANNOUNCE (and tear
+/// down what they win). Every answer is 200, 401 or 403 (403 also covers
+/// losing the slot to another connection), never a 500, and the server
+/// still admits a publisher afterwards.
+#[test]
+fn rules_edited_while_clients_request_never_deadlock_or_tear() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    // Headroom over the default 64: each won ANNOUNCE costs a connection,
+    // and a closed one is reaped asynchronously.
+    b.max_sessions(1024);
+    let server = started(b);
+    let mount = server.add_publish_mount("/amber").unwrap();
+    let rules = server.mount_rules();
+    rules.set_challenge(AuthScheme::Basic, "lab").unwrap();
+    let require = publish_rule(MountPolicy::Require(vec![cred("a", "pw")]));
+    let refuse = publish_rule(MountPolicy::Refuse(RefuseStatus::Forbidden));
+    rules.set("/amber", require.clone()).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let uri = format!("rtsp://127.0.0.1:{port}/amber");
+    let auth = basic("a", "pw");
+
+    let done = AtomicBool::new(false);
+    let answered = AtomicUsize::new(0);
+    let deadline = std::time::Instant::now() + scaled(Duration::from_secs(2));
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let mut flips = 0u32;
+            while flips < 200 || !done.load(Ordering::Acquire) {
+                let rule = if flips.is_multiple_of(2) {
+                    &refuse
+                } else {
+                    &require
+                };
+                rules.set("/amber", rule.clone()).unwrap();
+                flips += 1;
+                std::thread::yield_now();
+            }
+        });
+        let clients: Vec<_> = (0..4)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut tcp = connect(port);
+                    let mut cseq = 0;
+                    while std::time::Instant::now() < deadline {
+                        cseq += 1;
+                        let r = announce(&mut tcp, &uri, cseq, &auth);
+                        let st = status(&r);
+                        assert!(matches!(st, 200 | 401 | 403), "ANNOUNCE: {r}");
+                        answered.fetch_add(1, Ordering::Relaxed);
+                        if st == 200 {
+                            // Release the slot; a 200 TEARDOWN closes the
+                            // connection, so start a fresh one either way.
+                            cseq += 1;
+                            let r = request(
+                                &mut tcp,
+                                &format!("TEARDOWN {uri} RTSP/1.0\r\nCSeq: {cseq}\r\n{auth}\r\n"),
+                            );
+                            assert!(matches!(status(&r), 200 | 401 | 403), "TEARDOWN: {r}");
+                            tcp = connect(port);
+                            cseq = 0;
+                        }
+                    }
+                })
+            })
+            .collect();
+        for c in clients {
+            let joined = c.join();
+            done.store(true, Ordering::Release);
+            joined.unwrap();
+        }
+        done.store(true, Ordering::Release);
+    });
+    assert!(answered.load(Ordering::Relaxed) > 0);
+
+    rules.set("/amber", require).unwrap();
+    // A slot held by a connection that is still closing frees shortly.
+    let winner = std::cell::RefCell::new(None);
+    let admitted = eventually(|| {
+        let mut tcp = connect(port);
+        let won = status(&announce(&mut tcp, &uri, 1, &auth)) == 200;
+        if won {
+            *winner.borrow_mut() = Some(tcp);
+        }
+        won
+    });
+    assert!(admitted, "the server admits a publisher after the edits");
+    assert!(mount.publisher().is_some());
+    drop(winner);
     server.stop().unwrap();
 }
