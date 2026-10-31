@@ -14,10 +14,14 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use bytes::Bytes;
 
-use crate::rtsp::message::{RtspRequest, RtspResponse};
+use crate::rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
 use crate::rtsp::server::ServerState;
-use crate::rtsp::server::auth::{AuthVerifyError, build_challenge_header, verify_authorization};
+use crate::rtsp::server::auth::{
+    AuthVerifyError, Credential, build_challenge, verify_authorization, verify_credentials,
+};
+use crate::rtsp::server::builder::AuthScheme;
 use crate::rtsp::server::mount::MountEntry;
+use crate::rtsp::server::mount_rules::{Direction, MountPolicy};
 use crate::rtsp::server::session::{
     Playback, ReaderSession, ReaderTransport, Role, ServerSessionState,
 };
@@ -55,11 +59,22 @@ pub(crate) fn handle_not_valid_in_state(req: &RtspRequest) -> RtspResponse {
     error_response(req, 455, "Method Not Valid in This State")
 }
 
+/// The scheme and realm a 401 offers: the builder's when it configured a
+/// credential, else the rules table's challenge.
+fn challenge_scheme_and_realm(state: &ServerState) -> (AuthScheme, String) {
+    match state.builder.auth.as_ref() {
+        Some(cfg) => (cfg.scheme, cfg.realm.clone()),
+        None => state.mount_rules.challenge(),
+    }
+}
+
 /// Build a 401 Unauthorized response with a fresh `WWW-Authenticate`
-/// challenge for the configured auth scheme. Mutates `session.auth_nonce`
-/// if `stale = true` (rotates the nonce for a stale-challenge retry per
-/// RFC 7616 §3.5). Also resets `session.auth_nc_hwm` to 0 when the
-/// nonce is rotated so nc tracking starts fresh for the new nonce.
+/// challenge (scheme and realm per [`challenge_scheme_and_realm`]), so a
+/// `Require` path is challenged even on a server without a builder
+/// credential. Mutates `session.auth_nonce` if `stale = true` (rotates the
+/// nonce for a stale-challenge retry per RFC 7616 §3.5). Also resets
+/// `session.auth_nc_hwm` to 0 when the nonce is rotated so nc tracking
+/// starts fresh for the new nonce.
 pub(crate) fn challenge_response(
     req: &RtspRequest,
     state: &Arc<ServerState>,
@@ -67,43 +82,109 @@ pub(crate) fn challenge_response(
     stale: bool,
 ) -> RtspResponse {
     let mut response = error_response(req, 401, "Unauthorized");
-    if let Some(auth_cfg) = state.builder.auth.as_ref() {
-        if stale {
-            // Rotate the nonce so the client's next attempt uses a
-            // fresh one. Reset the nc hwm so replay tracking begins
-            // fresh under the new nonce.
-            session.auth_nonce = crate::rtsp::server::auth::generate_nonce();
-            session.auth_nc_hwm = 0;
-        }
-        let challenge = build_challenge_header(auth_cfg, &session.auth_nonce);
-        response
-            .headers
-            .insert("www-authenticate".into(), challenge);
+    if stale {
+        // Rotate the nonce so the client's next attempt uses a
+        // fresh one. Reset the nc hwm so replay tracking begins
+        // fresh under the new nonce.
+        session.auth_nonce = crate::rtsp::server::auth::generate_nonce();
+        session.auth_nc_hwm = 0;
     }
+    let (scheme, realm) = challenge_scheme_and_realm(state);
+    let challenge = build_challenge(scheme, &realm, &session.auth_nonce);
+    response
+        .headers
+        .insert("www-authenticate".into(), challenge);
     response
 }
 
-/// Verify auth for an authenticated request. Returns `Ok(())` if auth
-/// is either not required or successfully verified; returns the
-/// challenge response (401) if auth is required and failed.
+/// The mount path the rules key on, and the direction, for this request on
+/// this session.
+///
+/// The key is the path the server itself resolves: the role's mount path
+/// once the session holds one (so a publisher's `SETUP .../amber/video`
+/// still keys on `/amber`), else the request URI's. ANNOUNCE and DESCRIBE
+/// name their own path and always key on the URI. Direction: ANNOUNCE and
+/// RECORD publish; SETUP publishes only for a publisher; TEARDOWN follows
+/// the role (`Idle` reads); everything else reads.
+pub(crate) fn rule_key_and_direction(
+    req: &RtspRequest,
+    session: &ServerSessionState,
+) -> (String, Direction) {
+    let role_path = match &session.role {
+        Role::Idle => None,
+        Role::Reader(r) => Some(r.mount_path.clone()),
+        // The mount this session's ANNOUNCE claimed; a publisher SETUP
+        // never moves it to another mount.
+        Role::Publisher(p) => Some(p.mount.path.clone()),
+    };
+    let is_publisher = matches!(session.role, Role::Publisher(_));
+    let dir = match req.method {
+        RtspMethod::Announce | RtspMethod::Record => Direction::Publish,
+        RtspMethod::Setup | RtspMethod::Teardown if is_publisher => Direction::Publish,
+        _ => Direction::Read,
+    };
+    let key = match (req.method, role_path) {
+        (RtspMethod::Announce | RtspMethod::Describe, _) | (_, None) => {
+            extract_mount_path(&req.uri)
+        }
+        (_, Some(path)) => path,
+    };
+    (key, dir)
+}
+
+/// Check a gated request against the mount rules. Returns `Ok(())` if the
+/// request may proceed; otherwise the response to send: the `Refuse`
+/// status (no challenge; it is not a 401, so it never counts toward the
+/// three-401 close) or a 401 challenge.
 pub(crate) fn check_auth(
     req: &RtspRequest,
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
     method_str: &str,
 ) -> Result<(), RtspResponse> {
-    let Some(auth_cfg) = state.builder.auth.as_ref() else {
-        return Ok(()); // No auth configured — allow.
-    };
+    let (path, dir) = rule_key_and_direction(req, session);
     let auth_header = req.headers.get("authorization").map(String::as_str);
-    match verify_authorization(
-        auth_header,
-        method_str,
-        &req.uri,
-        auth_cfg,
-        &session.auth_nonce,
-        &mut session.auth_nc_hwm,
-    ) {
+    let verified = match state.mount_rules.policy_for(&path, dir) {
+        MountPolicy::Refuse(status) => {
+            // A request keyed on the session's own role (all but ANNOUNCE
+            // and DESCRIBE, which name their own path) ends that role when
+            // refused: a publisher refused at RECORD or TEARDOWN stops.
+            let keyed_on_role = !matches!(req.method, RtspMethod::Announce | RtspMethod::Describe);
+            if keyed_on_role && !matches!(session.role, Role::Idle) {
+                session.end_role();
+            }
+            return Err(error_response(req, status.code(), status.reason()));
+        }
+        MountPolicy::Open => return Ok(()),
+        MountPolicy::Inherit => {
+            let Some(auth_cfg) = state.builder.auth.as_ref() else {
+                return Ok(()); // No auth configured — allow.
+            };
+            verify_authorization(
+                auth_header,
+                method_str,
+                &req.uri,
+                auth_cfg,
+                &session.auth_nonce,
+                &mut session.auth_nc_hwm,
+            )
+        }
+        MountPolicy::Require(creds) => {
+            let (scheme, realm) = challenge_scheme_and_realm(state);
+            let creds: Vec<Credential<'_>> = creds.iter().map(Credential::from).collect();
+            verify_credentials(
+                auth_header,
+                method_str,
+                &req.uri,
+                scheme,
+                &realm,
+                &creds,
+                &session.auth_nonce,
+                &mut session.auth_nc_hwm,
+            )
+        }
+    };
+    match verified {
         Ok(()) => Ok(()),
         Err(AuthVerifyError::StaleNonce) => {
             // Surface stale=true so the client knows to retry with the

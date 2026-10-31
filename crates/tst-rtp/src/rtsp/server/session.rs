@@ -177,7 +177,8 @@ pub struct ServerSessionState {
     /// (DESCRIBE/SETUP/PLAY/PAUSE/TEARDOWN). Non-auth-gated methods
     /// (OPTIONS, GET_PARAMETER) never reset it, so an attacker cannot bypass
     /// the 3-strike limit by interleaving OPTIONS between bad-auth requests.
-    /// After 3 consecutive failures the session closes.
+    /// After 3 consecutive failures the session closes. A mount rule's
+    /// `Refuse` status is not a 401 and leaves the count unchanged.
     pub auth_failures: u8,
     /// CancellationToken for the per-peer fanout task. PAUSE cancels + replaces
     /// with a fresh token so a subsequent PLAY can re-spawn; TEARDOWN
