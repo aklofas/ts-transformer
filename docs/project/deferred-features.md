@@ -174,6 +174,17 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `accept()`. It would also reopen an "accept once, then reject" rule, which
   needs the same per-peer state.
 
+## Peer-address decisions on RTSP requests
+
+- **Status:** Deferred. Mount rules are keyed by mount path and direction; a
+  decision that needs the client's address is made after the request is
+  admitted.
+- **Why deferred:** The rule table holds precomputed answers because no
+  application code may run on the server thread, so it cannot call back into
+  the application per request.
+- **Trigger to revisit:** A consumer that needs a per-IP decision before a
+  session is admitted.
+
 ## Nested `#!{…}` access-control form
 
 - **Status:** Deferred. `AccessControl::parse` reads the flat `#!::` form

@@ -1888,6 +1888,17 @@ The surface:
   that queue and the server holds up to 256 on-demand mounts; an ANNOUNCE
   past either bound answers `503`. Anyone who can reach the port can create
   mounts, so set `auth` where that matters.
+- `RtspServer.mountRules() -> MountRules` is a per-path table, editable while
+  the server runs: `set(path, rule)`, `remove(path)`, `setDefault(rule)`,
+  `clear()`, `setChallenge(scheme, realm)`, `size()`, `isClosed()` and
+  `close()`. `MountRule.of(publish, read)` takes a `MountPolicy`
+  (`inherit()`, `open()`, `require(MountCredential...)` or
+  `refuse(RefuseStatus.NOT_FOUND)`); `RtspServerConfig.builder().defaultMountRule(...)`
+  guards the first ANNOUNCE. A bad path or empty credentials throw
+  `RtspException` of kind `MOUNT`, and an edit after the server stopped throws
+  kind `SERVER`. A server nobody edits behaves as before; see the
+  [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)
+  for when a change takes effect.
 - `RtspServer.removeMount(path)` removes a mount of any kind. A live
   publisher gets the RTSP Notice 5402 and is disconnected. On-demand mounts
   stay registered after their publisher leaves until this removes them.

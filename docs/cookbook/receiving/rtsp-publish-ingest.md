@@ -119,6 +119,65 @@ or returns `None` while the mount is idle.
 One connection holds one role: a reader SETUP or PLAY on a publisher's
 connection, or an ANNOUNCE on a reader's, answers `455`.
 
+### Per-name credentials and refusing a publisher
+
+By default one credential (the builder's `auth_basic` or `auth_digest_*`)
+guards every name, for publishers and readers alike. `server.mount_rules()`
+returns a table you edit while the server runs: a rule per mount path, plus a
+default for every other path. Each rule holds a publish policy (ANNOUNCE and
+RECORD) and a read policy (DESCRIBE, SETUP and PLAY).
+
+```rust,no_run
+use secrecy::SecretString;
+use tst_rtp::{
+    MountCredential, MountPolicy, MountRule, RefuseStatus, RtspServerBuilder,
+};
+
+let mut builder = RtspServerBuilder::new("rtsp://0.0.0.0:8554")?;
+builder.accept_unregistered_publishers(true);
+// Nothing is admitted between start() and the first edit below.
+builder.default_mount_rule(MountRule::new(
+    MountPolicy::Refuse(RefuseStatus::NotFound),
+    MountPolicy::Inherit,
+));
+let server = builder.build()?;
+server.start()?;
+
+let rules = server.mount_rules();
+let pw = SecretString::from("amber-secret".to_string());
+// "/amber" takes its own publisher credential; readers stay as before.
+rules.set(
+    "/amber",
+    MountRule::new(
+        MountPolicy::Require(vec![MountCredential::new("amber", pw)]),
+        MountPolicy::Inherit,
+    ),
+)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`Inherit` is the server-wide behavior (the builder's credential, else open),
+`Open` waives a builder credential, `Require` replaces it for that path and
+direction (the builder's own credential does not open a `Require` path), and
+`Refuse` answers `403`, `404`, `453` or `503`. A `Require` challenge uses the
+builder's scheme and realm when it configured a credential, else the table's
+(`set_challenge`, Digest MD5 and realm `tstrans` by default).
+
+- **Refusal happens before any mount exists.** The check runs first in every
+  gated handler, so a refused or unauthenticated ANNOUNCE is answered before
+  an on-demand mount is created or queued.
+- **A rule change reaches a streaming publisher at its TEARDOWN.** OPTIONS
+  and GET_PARAMETER are never gated, so a publisher that is already streaming
+  keeps going until it sends TEARDOWN, which then answers the refuse status
+  and frees the slot. `server.remove_mount(path)` ends it now.
+- **A session is judged on its role.** Once a session holds a role (publisher
+  or reader), SETUP, PLAY, PAUSE, RECORD and TEARDOWN are judged on that
+  role's mount and direction; ANNOUNCE and DESCRIBE are judged on the request
+  URI. A `Refuse` answered to one of those requests ends the role.
+- **The builder's `default_mount_rule` guards the first ANNOUNCE.** A rule set
+  after `start()` cannot cover a request that arrived before it; the builder's
+  default rule does. A server nobody edits behaves exactly as before.
+
 ### KLV timing on the re-muxed shape
 
 KLV units are placed on the video timeline using the publisher's RTCP sender
