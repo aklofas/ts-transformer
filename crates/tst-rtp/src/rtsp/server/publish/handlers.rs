@@ -523,15 +523,51 @@ mod tests {
             key(&req(RtspMethod::Teardown, "rtsp://h/pub"), &s),
             ("/pub".to_string(), Direction::Publish)
         );
+        // Every role-keyed method takes the publisher's direction.
+        for m in [RtspMethod::Pause, RtspMethod::Play, RtspMethod::Record] {
+            assert_eq!(
+                key(&req(m, "rtsp://h/pub"), &s),
+                ("/pub".to_string(), Direction::Publish),
+                "{m:?}"
+            );
+        }
+        // ANNOUNCE keys on its URI and publishes.
         assert_eq!(
-            key(&req(RtspMethod::Pause, "rtsp://h/pub"), &s),
-            ("/pub".to_string(), Direction::Read)
+            key(&announce("rtsp://h/other", SDP_MP2T), &s),
+            ("/other".to_string(), Direction::Publish)
         );
         // DESCRIBE names its own path whatever the role.
         assert_eq!(
             key(&req(RtspMethod::Describe, "rtsp://h/other"), &s),
             ("/other".to_string(), Direction::Read)
         );
+    }
+
+    #[test]
+    fn a_readers_role_keyed_methods_all_read() {
+        use crate::rtsp::server::handlers::rule_key_and_direction;
+        use crate::rtsp::server::mount_rules::Direction;
+        use crate::rtsp::server::session::{Playback, ReaderSession, ReaderTransport};
+        let mut s = ServerSessionState::new();
+        s.set_role(Role::Reader(ReaderSession {
+            session_id: "1".into(),
+            mount_path: "/live".into(),
+            transport: ReaderTransport::Multicast,
+            playback: Playback::Ready,
+        }));
+        for m in [
+            RtspMethod::Setup,
+            RtspMethod::Play,
+            RtspMethod::Pause,
+            RtspMethod::Record,
+            RtspMethod::Teardown,
+        ] {
+            assert_eq!(
+                rule_key_and_direction(&req(m, "rtsp://h/elsewhere"), &s),
+                ("/live".to_string(), Direction::Read),
+                "{m:?}"
+            );
+        }
     }
 
     #[test]
