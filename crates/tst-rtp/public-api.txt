@@ -630,6 +630,7 @@ pub mod tst_rtp::rtsp::client::builder
 pub struct tst_rtp::rtsp::client::builder::RtspClientBuilder
 impl tst_rtp::rtsp::client::builder::RtspClientBuilder
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::auth(self, impl core::convert::Into<alloc::string::String>, secrecy::SecretString) -> Self
+pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::auth_schemes(self, tst_rtp::AuthSchemes) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::connect(self) -> core::result::Result<tst_rtp::rtsp::client::RtspClient, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::connect_timeout(self, core::time::Duration) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::from_url(tst_rtp::url::RtspUrl) -> Self
@@ -1471,6 +1472,27 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::builder::AuthScheme
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::builder::AuthScheme
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::builder::AuthScheme
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::builder::AuthScheme
+#[non_exhaustive] pub enum tst_rtp::AuthSchemes
+pub tst_rtp::AuthSchemes::Automatic
+pub tst_rtp::AuthSchemes::DigestOnly
+impl core::clone::Clone for tst_rtp::AuthSchemes
+pub fn tst_rtp::AuthSchemes::clone(&self) -> tst_rtp::AuthSchemes
+impl core::cmp::Eq for tst_rtp::AuthSchemes
+impl core::cmp::PartialEq for tst_rtp::AuthSchemes
+pub fn tst_rtp::AuthSchemes::eq(&self, &tst_rtp::AuthSchemes) -> bool
+impl core::default::Default for tst_rtp::AuthSchemes
+pub fn tst_rtp::AuthSchemes::default() -> tst_rtp::AuthSchemes
+impl core::fmt::Debug for tst_rtp::AuthSchemes
+pub fn tst_rtp::AuthSchemes::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::AuthSchemes
+impl core::marker::StructuralPartialEq for tst_rtp::AuthSchemes
+impl core::marker::Freeze for tst_rtp::AuthSchemes
+impl core::marker::Send for tst_rtp::AuthSchemes
+impl core::marker::Sync for tst_rtp::AuthSchemes
+impl core::marker::Unpin for tst_rtp::AuthSchemes
+impl core::marker::UnsafeUnpin for tst_rtp::AuthSchemes
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::AuthSchemes
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::AuthSchemes
 #[non_exhaustive] pub enum tst_rtp::ClockAlignment
 pub tst_rtp::ClockAlignment::NotApplicable
 pub tst_rtp::ClockAlignment::Pending
@@ -2455,6 +2477,7 @@ impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::RtspClient
 pub struct tst_rtp::RtspClientBuilder
 impl tst_rtp::rtsp::client::builder::RtspClientBuilder
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::auth(self, impl core::convert::Into<alloc::string::String>, secrecy::SecretString) -> Self
+pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::auth_schemes(self, tst_rtp::AuthSchemes) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::connect(self) -> core::result::Result<tst_rtp::rtsp::client::RtspClient, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::connect_timeout(self, core::time::Duration) -> Self
 pub fn tst_rtp::rtsp::client::builder::RtspClientBuilder::from_url(tst_rtp::url::RtspUrl) -> Self

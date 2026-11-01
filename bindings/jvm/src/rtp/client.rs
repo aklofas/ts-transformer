@@ -18,6 +18,7 @@ use jni::sys::{jboolean, jint, jlong};
 use secrecy::SecretString;
 use tst_core::mpegts::demux::DemuxerConfig;
 use tst_pipeline::binding::BindingErrorKind;
+use tst_rtp::AuthSchemes;
 use tst_rtp::H264DepayConfig;
 use tst_rtp::RtspClientBuilder;
 use tst_rtp::error::RtspError;
@@ -155,7 +156,7 @@ struct JniRtspSession {
 }
 
 jni_native! {
-    /// `RtspClient.nConnect(url, authUser, authPassword, keepalive, tlsRootCertsPem)`
+    /// `RtspClient.nConnect(url, authUser, authPassword, digestOnly, keepalive, tlsRootCertsPem)`
     /// — run OPTIONS/DESCRIBE/SETUP/PLAY, return a `Box<JniRtspSession>` handle, or 0
     /// with a pending `RtspException` on failure. Ports `PyRtspClient::connect`.
     fn Java_org_tstrans_rtp_RtspClient_nConnect(
@@ -164,6 +165,7 @@ jni_native! {
         url: JString<'_>,
         auth_user: JString<'_>,
         auth_password: JString<'_>,
+        digest_only: jboolean,
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'_>,
     ) -> jlong = 0 => {
@@ -208,6 +210,9 @@ jni_native! {
                 }
             };
             builder = builder.auth(user, SecretString::from(pw));
+            if digest_only {
+                builder = builder.auth_schemes(AuthSchemes::DigestOnly);
+            }
         }
 
         // 3. keepalive=false disables the auto-keepalive thread.
@@ -250,7 +255,7 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspClient.nConnectH264(url, authUser, authPassword, keepalive, tlsRootCertsPem)`
+    /// `RtspClient.nConnectH264(url, authUser, authPassword, digestOnly, keepalive, tlsRootCertsPem)`
     /// — run OPTIONS/DESCRIBE/SETUP for H.264 media/PLAY; return a `JniRtspSession`
     /// handle with the session slot holding an `H264DepayConfig`. Ports
     /// `PyRtspClient::connect_h264`.
@@ -260,6 +265,7 @@ jni_native! {
         url: JString<'_>,
         auth_user: JString<'_>,
         auth_password: JString<'_>,
+        digest_only: jboolean,
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'_>,
     ) -> jlong = 0 => {
@@ -299,6 +305,9 @@ jni_native! {
                 }
             };
             builder = builder.auth(user, SecretString::from(pw));
+            if digest_only {
+                builder = builder.auth_schemes(AuthSchemes::DigestOnly);
+            }
         }
 
         if !keepalive {

@@ -215,6 +215,9 @@ class BasicAuth:
     and only used when this credential is passed as
     `RtspServerConfig.auth` (server-side challenge); client-side use
     reads the realm from the peer's 401.
+
+    As a client credential it answers Digest when the server offers it
+    and Basic otherwise; use `DigestAuth` to refuse Basic.
     """
 
     def __new__(cls,
@@ -237,6 +240,10 @@ class DigestAuth:
     Password held in Rust memory and never re-exposed to Python.
     `realm` is optional; same server-side-config semantics as
     `BasicAuth.realm`.
+
+    As a client credential it never falls back to Basic: a server that
+    offers no Digest challenge fails the request with an auth error and
+    the password is never sent in Basic form.
     """
 
     def __new__(cls,

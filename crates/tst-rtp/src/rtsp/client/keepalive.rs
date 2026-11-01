@@ -185,12 +185,12 @@ pub(crate) fn spawn(
                         match g.challenge.clone() {
                             Some(www) => {
                                 g.nc += 1;
-                                Some((www, g.nc))
+                                Some((www, g.nc, g.schemes))
                             }
                             None => None,
                         }
                     };
-                    if let Some((www, nc)) = snapshot
+                    if let Some((www, nc, schemes)) = snapshot
                         && let Ok(authz) = crate::rtsp::auth::build_authorization(
                             RtspMethod::Options,
                             &url,
@@ -198,6 +198,7 @@ pub(crate) fn spawn(
                             user,
                             pass,
                             nc,
+                            schemes,
                         )
                     {
                         req = req.header("authorization", authz);

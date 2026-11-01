@@ -7,7 +7,9 @@ import java.util.Optional;
  * HTTP Basic auth credentials per RFC 7617. Sent only after a 401 challenge.
  * Mirrors tst-py {@code tstrans.rtp.BasicAuth}: the password is held in memory
  * and never re-exposed through the public surface (only {@link #user()} and
- * {@link #realm()} are readable); {@link #toString()} redacts it.
+ * {@link #realm()} are readable); {@link #toString()} redacts it. As a client
+ * credential it answers Digest when the server offers it and Basic otherwise;
+ * use {@link DigestAuth} to refuse Basic.
  */
 public final class BasicAuth {
     private final String user;

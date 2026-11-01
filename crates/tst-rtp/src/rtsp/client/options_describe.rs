@@ -136,12 +136,14 @@ impl RtspClient {
         // keepalive) can be issued the same `nc` for the same nonce —
         // a qop=auth server rejects a repeated `nc` as a replay
         // (RFC 7616 §3.4).
-        let nc = {
+        let (nc, schemes) = {
             let mut auth = crate::rtsp::client::lock_unpoisoned(&self.auth);
             auth.nc += 1;
-            auth.nc
+            (auth.nc, auth.schemes)
         };
-        crate::rtsp::auth::build_authorization(method, uri, www_auth, username, password, nc)
+        crate::rtsp::auth::build_authorization(
+            method, uri, www_auth, username, password, nc, schemes,
+        )
     }
 
     /// Pre-emptive `Authorization:` header for `method` at `uri`, computed
@@ -165,18 +167,18 @@ impl RtspClient {
         // Snapshot the challenge and allocate its nonce-count under ONE
         // lock acquisition, so the pair can never mix a stale challenge
         // with a post-rotation count (see `AuthState`).
-        let (www, nc) = {
+        let (www, nc, schemes) = {
             let mut auth = crate::rtsp::client::lock_unpoisoned(&self.auth);
             match auth.challenge.clone() {
                 Some(www) => {
                     auth.nc += 1;
-                    (www, auth.nc)
+                    (www, auth.nc, auth.schemes)
                 }
                 None => return Ok(None),
             }
         };
         Ok(Some(crate::rtsp::auth::build_authorization(
-            method, uri, &www, username, password, nc,
+            method, uri, &www, username, password, nc, schemes,
         )?))
     }
 

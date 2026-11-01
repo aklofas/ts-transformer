@@ -9,6 +9,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
+
+- `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic.
+
 ### Fixed — tst-rtp
 
 - An `rtsps://` connect to a server that closes the connection during the TLS handshake now fails with `RtspError::Tls` instead of spinning a CPU forever; `connect_timeout` now bounds the TCP connect and the TLS handshake together (`RtspError::Io(TimedOut)` on expiry), and a server slower than `read_timeout` to answer the handshake no longer fails it. The same change is visible in Python `RtspError(TLS)` / `RtspError(IO)` and JVM `RtspException`.
