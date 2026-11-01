@@ -184,10 +184,8 @@ pub const URL_KEYS: &[QueryKey<TcpUrl>] = &[
 ];
 
 /// The refusal for a listener URL whose host is not an IP literal.
-pub(crate) fn listener_host_rejection(host: &str) -> UrlError {
-    UrlError::BadHost(format!(
-        "listener host '{host}' must be a literal IPv4/IPv6 address"
-    ))
+pub(crate) fn listener_host_rejection() -> UrlError {
+    UrlError::BadHost("listener host must be a literal IPv4/IPv6 address".to_string())
 }
 
 impl TcpUrl {
@@ -225,7 +223,7 @@ impl TcpUrl {
         // accept hostnames: resolution happens at connect time and TLS uses
         // the name for SNI/verification.
         if url.listen && url.host.parse::<IpAddr>().is_err() {
-            return Err(listener_host_rejection(&url.host));
+            return Err(listener_host_rejection());
         }
 
         Ok(url)
@@ -353,7 +351,7 @@ mod tests {
     fn hostname_listener_rejected() {
         let err = TcpUrl::parse("tcp://relay.example.com:7001?listen=1").unwrap_err();
         assert!(
-            matches!(err, UrlError::BadHost(ref h) if h == "listener host 'relay.example.com' must be a literal IPv4/IPv6 address")
+            matches!(err, UrlError::BadHost(ref h) if h == "listener host must be a literal IPv4/IPv6 address")
         );
     }
 

@@ -92,3 +92,23 @@ def test_hls_builder_from_url_error_text():
     with pytest.raises(Exception) as exc:
         hls.HlsPublisherBuilder().from_url(f"hls://u:{SECRET}@10.0.0.5:x/p")
     assert SECRET not in str(exc.value), str(exc.value)
+
+
+@pytest.mark.parametrize("password", ["hun'ter2", "hun ter2", 'hun"ter2'])
+def test_rtsp_client_config_repr_password_with_quote_or_space(password):
+    url = f"rtsp://cam:{password}@10.0.0.5:554/s"
+    text = repr(rtp.RtspClientConfig(url))
+    assert "ter2" not in text, text
+    assert "10.0.0.5:554" in text, text
+
+
+def test_srt_builder_repr_passphrase_value_with_quote():
+    text = repr(srt.Builder("srt://10.0.0.5:9000?passphrase=prefix'hunter2"))
+    assert "hunter2" not in text, text
+    assert "10.0.0.5:9000" in text, text
+
+
+def test_hls_from_url_error_never_echoes_the_malformed_host():
+    with pytest.raises(Exception) as exc:
+        hls.HlsPublisherBuilder().from_url(f"hls://u:{SECRET}:8080/ss@10.0.0.5:8888/p")
+    assert SECRET not in str(exc.value), str(exc.value)

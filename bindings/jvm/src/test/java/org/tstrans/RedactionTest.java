@@ -114,6 +114,20 @@ class RedactionTest {
     }
 
     @Test
+    void quotesAndSpacesInsideSecretsAreRedacted() {
+        assertEquals("rtsp://cam:<redacted>@10.0.0.5:554/s",
+            Redact.url("rtsp://cam:hun'ter2@10.0.0.5:554/s"));
+        assertEquals("rtsp://cam:<redacted>@10.0.0.5:554/s",
+            Redact.url("rtsp://cam:hun ter2@10.0.0.5:554/s"));
+        assertEquals("srt://h:1?passphrase=<redacted>&x=1",
+            Redact.url("srt://h:1?passphrase=prefix'hunter2&x=1"));
+        assertEquals("srt://h:1?passphrase=<redacted>&x=1",
+            Redact.url("srt://h:1?passphrase=pre fix&x=1"));
+        assertEquals("bad \"srt://h?token=<redacted>\" here",
+            Redact.url("bad \"srt://h?token=a b\" here"));
+    }
+
+    @Test
     void plainTextIsUnchanged() {
         assertEquals("hello world", Redact.url("hello world"));
         assertEquals("", Redact.url(""));

@@ -87,7 +87,7 @@ pub enum UrlError {
     #[error("could not resolve host '{host}': {detail}")]
     HostResolve { host: String, detail: String },
     /// A query value could not be parsed for its key.
-    #[error("query param '{key}' has invalid value '{value}': {detail}")]
+    #[error("query param '{key}' has invalid value '{}': {detail}", super::redact::shown_value(.key, .value))]
     BadQueryValue {
         key: String,
         value: String,
@@ -189,7 +189,7 @@ fn split_host_port(s: &str) -> Result<(&str, Option<u16>), UrlError> {
             None
         } else {
             return Err(UrlError::MalformedIpv6Literal {
-                got: redact_non_digits(after),
+                got: "<redacted>".to_string(),
             });
         };
         Ok((host, port))
@@ -202,24 +202,15 @@ fn split_host_port(s: &str) -> Result<(&str, Option<u16>), UrlError> {
     }
 }
 
-/// `s` itself when it is all digits, else `<redacted>`: a malformed userinfo
-/// can put password text where a port or the text after `]` is expected.
-fn redact_non_digits(s: &str) -> String {
-    if s.bytes().all(|b| b.is_ascii_digit()) {
-        s.to_string()
-    } else {
-        "<redacted>".to_string()
-    }
-}
-
 /// Parse a port from a decimal string. Returns [`UrlError::InvalidPort`]
 /// on parse failure or out-of-range value.
 ///
-/// A non-numeric `got` is replaced by `<redacted>`: a malformed userinfo
-/// such as `u:pa/ss@h` splits the password into the "port".
+/// `got` is always `<redacted>`: a malformed userinfo such as `u:pa/ss@h`
+/// or `u:123456/ss@h` splits the password into the "port"; `detail` still
+/// says what was wrong.
 fn parse_port(s: &str) -> Result<u16, UrlError> {
     s.parse::<u16>().map_err(|e| UrlError::InvalidPort {
-        got: redact_non_digits(s),
+        got: "<redacted>".to_string(),
         detail: e.to_string(),
     })
 }
@@ -344,8 +335,8 @@ pub fn parse_host_port(s: &str) -> Result<(IpAddr, u16), UrlError> {
     let ip: IpAddr =
         host.parse()
             .map_err(|e: core::net::AddrParseError| UrlError::InvalidPort {
-                got: host.to_string(),
-                detail: format!("expected literal IPv4 or IPv6 address, got '{host}': {e}"),
+                got: "<redacted>".to_string(),
+                detail: format!("expected literal IPv4 or IPv6 address: {e}"),
             })?;
     Ok((ip, port))
 }
@@ -585,9 +576,33 @@ mod tests {
         assert!(!msg.contains("pa"), "{msg}");
         assert!(!msg.contains("ss"), "{msg}");
         assert!(msg.contains("<redacted>"), "{msg}");
-        // A numeric overflow is not secret and stays visible.
+        // A numeric password prefix reads as an overflowing port: also hidden.
+        let msg = parse_url("rtsp://u:98765432109876543210/ss@h/x")
+            .unwrap_err()
+            .to_string();
+        assert!(!msg.contains("98765"), "{msg}");
+        assert!(msg.contains("number too large"), "{msg}");
         let msg = parse_url("srt://host:99999").unwrap_err().to_string();
-        assert!(msg.contains("99999"), "{msg}");
+        assert!(
+            msg.contains("<redacted>") && msg.contains("number too large"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn host_port_and_ipv6_errors_never_echo_the_host() {
+        let msg = parse_host_port("u:hunter2:80").unwrap_err().to_string();
+        assert!(!msg.contains("hunter2"), "{msg}");
+        let msg = parse_url("rtp://[::1]hunter2").unwrap_err().to_string();
+        assert!(!msg.contains("hunter2"), "{msg}");
+    }
+
+    #[test]
+    fn bad_query_value_hides_a_secret_value() {
+        let e = bad_value("passphrase", "hunter2", "too short".into());
+        assert!(!e.to_string().contains("hunter2"), "{e}");
+        let e = bad_value("latency", "abc", "not a number".into());
+        assert!(e.to_string().contains("'abc'"), "{e}");
     }
 
     #[test]

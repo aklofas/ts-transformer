@@ -236,7 +236,7 @@ impl WhepUrl {
         let port = parsed.port.ok_or(UrlError::MissingPort)?;
         let host = parsed.host;
         let addr: IpAddr = host.parse().map_err(|_| {
-            UrlError::BadHost(format!("host '{host}' is not a literal IPv4/IPv6 address"))
+            UrlError::BadHost("host is not a literal IPv4/IPv6 address".to_string())
         })?;
         if !matches!(parsed.path, "" | "/") {
             return Err(UrlError::BadQueryValue {
