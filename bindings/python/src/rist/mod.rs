@@ -57,7 +57,7 @@ use crate::util::{CancelSource, close_owned, drop_owned};
 /// AES pre-shared key for RIST encryption.
 ///
 /// Construct via `EncryptionKey.aes128(secret)`, `.aes192(secret)`, or
-/// `.aes256(secret)`. The `secret` argument may be `bytes` or `str`.
+/// `.aes256(secret)`. The `secret` argument may be `str` or UTF-8 `bytes` (other bytes are refused).
 ///
 /// The secret is consumed at the FFI boundary and **never** exposed again —
 /// `repr(key)` shows only the key size, not the secret bytes. There is no
@@ -73,7 +73,7 @@ pub(crate) struct PyEncryptionKey {
 
 #[pymethods]
 impl PyEncryptionKey {
-    /// AES-128 PSK. `secret` may be `bytes` or `str`.
+    /// AES-128 PSK. `secret` may be `str` or UTF-8 `bytes`.
     #[staticmethod]
     fn aes128(secret: &Bound<'_, PyAny>) -> PyResult<Self> {
         let s = extract_secret_string(secret)?;
@@ -83,7 +83,7 @@ impl PyEncryptionKey {
         })
     }
 
-    /// AES-192 PSK. `secret` may be `bytes` or `str`.
+    /// AES-192 PSK. `secret` may be `str` or UTF-8 `bytes`.
     #[staticmethod]
     fn aes192(secret: &Bound<'_, PyAny>) -> PyResult<Self> {
         let s = extract_secret_string(secret)?;
@@ -93,7 +93,7 @@ impl PyEncryptionKey {
         })
     }
 
-    /// AES-256 PSK. `secret` may be `bytes` or `str`.
+    /// AES-256 PSK. `secret` may be `str` or UTF-8 `bytes`.
     #[staticmethod]
     fn aes256(secret: &Bound<'_, PyAny>) -> PyResult<Self> {
         let s = extract_secret_string(secret)?;
@@ -119,9 +119,15 @@ fn extract_secret_string(secret: &Bound<'_, PyAny>) -> PyResult<String> {
     if let Ok(s) = secret.extract::<String>() {
         return Ok(s);
     }
-    // Bytes path: raw bytes treated as UTF-8 (lossy).
+    // Bytes path: a lossy conversion would map distinct byte secrets onto one
+    // key and diverge from a peer that uses the raw bytes, so refuse instead.
+    // The message must not echo the secret.
     let bytes: &[u8] = secret.extract()?;
-    Ok(String::from_utf8_lossy(bytes).into_owned())
+    String::from_utf8(bytes.to_vec()).map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(
+            "encryption secret given as bytes must be valid UTF-8",
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
