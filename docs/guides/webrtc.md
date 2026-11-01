@@ -403,6 +403,8 @@ association once it is up.
   behind NAT is the public IP. `advertise=` takes one literal IP address.
 - **No TURN, no STUN, no ICE over TCP.** The viewer must reach the
   advertised address on `media_port` over UDP.
+- **No userinfo.** A bind URL with `user:pass@` is refused; the bearer secret
+  goes in the `token` query key.
 - **TLS.** `wheps://0.0.0.0:8443?cert=server.crt&key=server.key` serves the
   signalling over HTTPS (rustls; feature `tls`). `cert=` and `key=` are PEM
   file paths; a `wheps://` URL without both, or a plaintext `whep://` URL

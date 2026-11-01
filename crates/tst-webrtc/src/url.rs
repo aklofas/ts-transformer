@@ -219,7 +219,8 @@ impl WhepUrl {
     ///   `wheps://` URL that lacks `cert` or `key` and for a plaintext
     ///   `whep://` URL that has either.
     /// - [`UrlError::UnknownQueryKey`] for a key [`URL_KEYS`] does not list.
-    /// - [`UrlError::Rejected`] when the URL's structure does not parse.
+    /// - [`UrlError::Rejected`] when the URL's structure does not parse or it
+    ///   carries userinfo (`user:pass@`).
     pub fn parse(s: &str) -> Result<Self, UrlError> {
         let parsed =
             parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
@@ -233,6 +234,12 @@ impl WhepUrl {
                 });
             }
         };
+        if parsed.username.is_some() || parsed.password.is_some() {
+            return Err(UrlError::Rejected(
+                "a bind URL takes no userinfo; set the bearer secret with the `token` query key"
+                    .into(),
+            ));
+        }
         let port = parsed.port.ok_or(UrlError::MissingPort)?;
         let host = parsed.host;
         let addr: IpAddr = host.parse().map_err(|_| {

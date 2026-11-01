@@ -94,6 +94,9 @@ Optional builder knobs: `.basic_auth("user", "secret")`, `.enable_tls(cert,
 key)` (requires the `tls` feature), `.max_segment_duration(dur)` (see
 [Segment guarantees](#segment-guarantees)).
 
+An `hls://` or `hlss://` URL with `user:pass@` is refused; put credentials in
+the `auth_user` and `auth_pass` query keys.
+
 ## Quickstart (Python)
 
 The Python surface mirrors the Rust one. Wheels ship it default-on:
