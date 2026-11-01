@@ -148,8 +148,8 @@ impl PyMountRule {
 
 /// One server's per-mount-path rules, from `RtspServer.mount_rules()`. An
 /// edit applies to the next request and is safe while the server runs. Once
-/// the server is stopped every edit raises `RtspError(SERVER)`; `len()` and
-/// `is_closed()` keep answering.
+/// the server is stopped, cancelled or garbage-collected every edit raises
+/// `RtspError(SERVER)`; `len()` and `is_closed()` keep answering.
 #[pyclass(name = "MountRules", module = "tstrans.rtp", frozen)]
 pub(crate) struct PyMountRules {
     rules: MountRules,
@@ -211,7 +211,7 @@ impl PyMountRules {
             .map_err(|e| rule_err(py, e))
     }
 
-    /// Whether the server has stopped, after which edits raise.
+    /// Whether the server has shut down, after which edits raise.
     fn is_closed(&self) -> bool {
         self.rules.is_closed()
     }

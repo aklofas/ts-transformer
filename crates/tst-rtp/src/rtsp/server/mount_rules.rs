@@ -168,8 +168,8 @@ pub enum MountRuleError {
     /// username.
     #[error("a Require policy needs at least one credential with a non-empty username")]
     EmptyCredentials,
-    /// The server was stopped.
-    #[error("the server was stopped")]
+    /// The server shut down: stopped, hard-cancelled or dropped.
+    #[error("the server was shut down")]
     Closed,
 }
 
@@ -197,8 +197,9 @@ struct Inner {
 ///
 /// A clone is the same table. Usable from any thread, including while the
 /// server runs; an edit applies from the next request on. After the server
-/// stops, edits return [`MountRuleError::Closed`] while `len`, `is_empty`
-/// and `is_closed` keep answering.
+/// shuts down (stopped, hard-cancelled or dropped), edits return
+/// [`MountRuleError::Closed`] while `len`, `is_empty` and `is_closed` keep
+/// answering.
 #[derive(Clone)]
 pub struct MountRules {
     inner: Arc<Inner>,
@@ -268,7 +269,7 @@ impl MountRules {
     ///   path.
     /// - [`MountRuleError::EmptyCredentials`] if a `Require` policy holds no
     ///   credential or a credential with an empty username.
-    /// - [`MountRuleError::Closed`] after the server stopped.
+    /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set(&self, path: &str, rule: MountRule) -> Result<(), MountRuleError> {
         self.ensure_open()?;
         validate_mount_path(path).map_err(|e| MountRuleError::InvalidMountPath {
@@ -288,7 +289,7 @@ impl MountRules {
     /// [`Self::set`].
     ///
     /// # Errors
-    /// - [`MountRuleError::Closed`] after the server stopped.
+    /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn remove(&self, path: &str) -> Result<bool, MountRuleError> {
         self.ensure_open()?;
         Ok(write(&self.inner.rules)
@@ -301,7 +302,7 @@ impl MountRules {
     /// # Errors
     /// - [`MountRuleError::EmptyCredentials`] if a `Require` policy holds no
     ///   credential or a credential with an empty username.
-    /// - [`MountRuleError::Closed`] after the server stopped.
+    /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set_default(&self, rule: MountRule) -> Result<(), MountRuleError> {
         self.ensure_open()?;
         check_rule(&rule)?;
@@ -312,7 +313,7 @@ impl MountRules {
     /// Remove every path rule. The default rule and the challenge stay.
     ///
     /// # Errors
-    /// - [`MountRuleError::Closed`] after the server stopped.
+    /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn clear(&self) -> Result<(), MountRuleError> {
         self.ensure_open()?;
         write(&self.inner.rules).clear();
@@ -324,7 +325,7 @@ impl MountRules {
     /// `tstrans`; with one it is the builder's scheme and realm.
     ///
     /// # Errors
-    /// - [`MountRuleError::Closed`] after the server stopped.
+    /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set_challenge(&self, scheme: AuthScheme, realm: &str) -> Result<(), MountRuleError> {
         self.ensure_open()?;
         *write(&self.inner.challenge) = (scheme, realm.to_string());
@@ -341,7 +342,7 @@ impl MountRules {
         read(&self.inner.rules).is_empty()
     }
 
-    /// Whether the server has stopped, after which edits are refused.
+    /// Whether the server has shut down, after which edits are refused.
     pub fn is_closed(&self) -> bool {
         self.inner.closed.load(Ordering::Acquire)
     }

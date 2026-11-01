@@ -91,6 +91,9 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
             // stays a plain atomic so `cancel()` remains async-signal-safe
             // for C callers.
             state.cancel_token.cancel();
+            // The server is down for good: refuse further rule edits, as
+            // `stop()` does.
+            state.mount_rules.close();
             drain_sessions(&mut sessions, state.builder.graceful_shutdown_drain).await;
             return Ok(());
         }

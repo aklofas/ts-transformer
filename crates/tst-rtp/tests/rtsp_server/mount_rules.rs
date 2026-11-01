@@ -51,6 +51,34 @@ fn mount_rules_handle_is_live_across_clones_and_closes_with_stop() {
     assert_eq!(b.len(), 1);
 }
 
+/// A handle that outlives its server is closed when the server is dropped.
+#[test]
+fn mount_rules_handle_closes_when_the_server_is_dropped() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let rules = server.mount_rules();
+    drop(server);
+    assert!(rules.is_closed());
+    assert!(matches!(
+        rules.set("/amber", MountRule::default()),
+        Err(MountRuleError::Closed)
+    ));
+}
+
+/// A hard cancel through the cancel handle closes the table once the
+/// listener has exited.
+#[test]
+fn mount_rules_handle_closes_on_a_hard_cancel() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let rules = server.mount_rules();
+    server.cancel_handle().cancel();
+    assert!(eventually(|| rules.is_closed()), "the table closes");
+    assert!(matches!(
+        rules.set("/amber", MountRule::default()),
+        Err(MountRuleError::Closed)
+    ));
+    drop(server);
+}
+
 /// The builder's default rule governs a path with no entry.
 #[test]
 fn builder_default_mount_rule_seeds_the_table() {

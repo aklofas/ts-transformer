@@ -481,7 +481,9 @@ impl RtspServer {
 
     /// The live per-path rules table. Every call returns a handle to the
     /// same table, usable from any thread while the server runs; edits take
-    /// effect on the next request. After [`stop`](Self::stop) edits return
+    /// effect on the next request. Once the server shuts down, by
+    /// [`stop`](Self::stop), a hard cancel through
+    /// [`cancel_handle`](Self::cancel_handle) or being dropped, edits return
     /// [`MountRuleError::Closed`](crate::MountRuleError::Closed).
     pub fn mount_rules(&self) -> MountRules {
         self.state.mount_rules.clone()
@@ -1240,6 +1242,8 @@ impl Drop for RtspServer {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         self.close_publish_mounts();
+        // A `MountRules` clone outlives the server; its edits are refused.
+        self.state.mount_rules.close();
         // Hard-cancel path on Drop — graceful shutdown blocks too long
         // for an implicit Drop.
         self.state.hard_cancel.cancel();
