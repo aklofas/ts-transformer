@@ -175,7 +175,8 @@ builder's scheme and realm when it configured a credential, else the table's
 - **A session is judged on its role.** Once a session holds a role (publisher
   or reader), SETUP, PLAY, PAUSE, RECORD and TEARDOWN are judged on that
   role's mount and direction; ANNOUNCE and DESCRIBE are judged on the request
-  URI. A `Refuse` answered to one of those requests ends the role.
+  URI. A reader's SETUP is judged on the mount it names, since it can move the
+  reader there. A `Refuse` answered to one of those requests ends the role.
 - **The builder's `default_mount_rule` guards the first ANNOUNCE.** A rule set
   after `start()` cannot cover a request that arrived before it; the builder's
   default rule does. A server nobody edits behaves exactly as before.

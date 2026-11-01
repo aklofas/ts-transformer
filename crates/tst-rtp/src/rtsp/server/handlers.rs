@@ -105,8 +105,10 @@ pub(crate) fn challenge_response(
 /// session that holds a role keys on the role's mount path (so a
 /// publisher's `SETUP .../amber/video` still keys on `/amber`) and takes
 /// the role's direction: a publisher's SETUP, PLAY, PAUSE, RECORD and
-/// TEARDOWN publish, a reader's read. On an `Idle` session they key on the
-/// URI and read.
+/// TEARDOWN publish, a reader's read. A reader's SETUP is the exception to
+/// the key: it may move the reader to another mount, so it keys on the path
+/// `handle_setup` resolves from the URI. On an `Idle` session they key on
+/// the URI and read.
 pub(crate) fn rule_key_and_direction(
     req: &RtspRequest,
     session: &ServerSessionState,
@@ -124,6 +126,13 @@ pub(crate) fn rule_key_and_direction(
     }
     match &session.role {
         Role::Idle => uri_keyed(),
+        // A reader that has not played yet may SETUP another mount, and
+        // `handle_setup` re-points it there: key that SETUP on the path the
+        // handler resolves, not the mount the reader is leaving.
+        Role::Reader(_) if req.method == RtspMethod::Setup => (
+            publisher_mount_path(&req.uri, session).unwrap_or_else(|| extract_mount_path(&req.uri)),
+            Direction::Read,
+        ),
         Role::Reader(r) => (r.mount_path.clone(), Direction::Read),
         // The mount this session's ANNOUNCE claimed; a publisher SETUP
         // never moves it to another mount.

@@ -741,6 +741,72 @@ fn a_readers_teardown_is_keyed_on_its_setup_mount() {
     server.stop().unwrap();
 }
 
+/// A reader that has set up one mount and SETUPs another is judged on the
+/// mount the second SETUP names, not the one it is leaving: a refused
+/// second SETUP answers the Refuse status and ends the reader's role.
+#[test]
+fn a_readers_second_setup_is_keyed_on_the_mount_it_names() {
+    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
+        .unwrap()
+        .build()
+        .unwrap();
+    server.add_mount("/open", make_muxer_cfg()).unwrap();
+    let secret = server.add_mount("/secret", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let rules = server.mount_rules();
+    rules
+        .set(
+            "/open",
+            MountRule::new(MountPolicy::Inherit, MountPolicy::Open),
+        )
+        .unwrap();
+    rules
+        .set(
+            "/secret",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Refuse(RefuseStatus::NotFound),
+            ),
+        )
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut tcp = connect(port);
+    let r = request(
+        &mut tcp,
+        &format!(
+            "SETUP rtsp://127.0.0.1:{port}/open/trackID=0 RTSP/1.0\r\nCSeq: 1\r\n\
+             Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        ),
+    );
+    assert_eq!(status(&r), 200, "{r}");
+    let sid = session_id(&r);
+
+    let r = request(
+        &mut tcp,
+        &format!(
+            "SETUP rtsp://127.0.0.1:{port}/secret/trackID=0 RTSP/1.0\r\nCSeq: 2\r\n\
+             Session: {sid}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n"
+        ),
+    );
+    assert_eq!(status(&r), 404, "keyed on /secret, not /open: {r}");
+
+    // A PLAY on the open mount it first set up finds no session: the
+    // refused SETUP ended the role rather than leaving it on /open.
+
+    let r = request(
+        &mut tcp,
+        &format!("PLAY rtsp://127.0.0.1:{port}/open RTSP/1.0\r\nCSeq: 3\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert_eq!(
+        status(&r),
+        454,
+        "the refused SETUP ended the reader's role: {r}"
+    );
+    assert_eq!(secret.peer_count(), 0);
+    server.stop().unwrap();
+}
+
 /// A rule belongs to the path, not the mount: removing the mount keeps it,
 /// and a mount added again at the path is governed by it.
 #[test]
