@@ -20,6 +20,7 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard}
 /// The lowest reject code an application may set (`SRT_REJC_PREDEFINED`);
 /// libsrt reserves everything below for itself.
 const FIRST_APPLICATION_REASON: i32 = 1000;
+const MAX_APPLICATION_REASON: i32 = i32::MAX - 1000;
 
 /// What the listener does with a caller whose stream ID matched a rule, or
 /// with any other caller when this is the default rule.
@@ -45,7 +46,7 @@ pub enum ListenRule {
     },
     /// Refuse during the handshake; the caller reads `reason`. Only
     /// predefined (`1000..=1999`) or user-defined (`2000..`) reasons are
-    /// allowed.
+    /// allowed, up to `i32::MAX - 1000` (libsrt adds 1000 on the wire).
     Reject(RejectReason),
 }
 
@@ -57,6 +58,10 @@ pub enum ListenRuleError {
     /// to libsrt.
     #[error("reject reason {0:?} is reserved for libsrt (codes below 1000)")]
     InternalReason(RejectReason),
+    /// A [`ListenRule::Reject`] whose code libsrt cannot send: it adds 1000
+    /// on the wire, so codes above `i32::MAX - 1000` overflow.
+    #[error("reject reason {0:?} is out of range (codes above 2147482647)")]
+    ReasonOutOfRange(RejectReason),
     /// The stream ID key holds a NUL byte; libsrt hands the listen hook a C
     /// string, so such a key could never match.
     #[error("stream ID key contains a NUL byte")]
@@ -177,6 +182,9 @@ fn validate(rule: &ListenRule) -> Result<(), ListenRuleError> {
     match rule {
         ListenRule::Reject(r) if r.raw() < FIRST_APPLICATION_REASON => {
             Err(ListenRuleError::InternalReason(*r))
+        }
+        ListenRule::Reject(r) if r.raw() > MAX_APPLICATION_REASON => {
+            Err(ListenRuleError::ReasonOutOfRange(*r))
         }
         _ => Ok(()),
     }
@@ -443,6 +451,27 @@ mod tests {
             rules.set_default(ListenRule::Reject(RejectReason::Timeout)),
             Err(ListenRuleError::InternalReason(_))
         ));
+    }
+
+    #[test]
+    fn reject_code_libsrt_cannot_send_is_refused() {
+        let rules = ListenRules::detached();
+        let max = i32::MAX - 1000;
+        assert!(
+            rules
+                .set("a", ListenRule::Reject(RejectReason::Other(max)))
+                .is_ok()
+        );
+        for bad in [max + 1, i32::MAX] {
+            assert!(matches!(
+                rules.set("a", ListenRule::Reject(RejectReason::Other(bad))),
+                Err(ListenRuleError::ReasonOutOfRange(_))
+            ));
+            assert!(matches!(
+                rules.set_default(ListenRule::Reject(RejectReason::Other(bad))),
+                Err(ListenRuleError::ReasonOutOfRange(_))
+            ));
+        }
     }
 
     #[test]

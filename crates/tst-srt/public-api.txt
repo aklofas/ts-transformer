@@ -704,6 +704,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_srt::listen_rules::ListenRule
 pub tst_srt::listen_rules::ListenRuleError::Closed
 pub tst_srt::listen_rules::ListenRuleError::InteriorNul
 pub tst_srt::listen_rules::ListenRuleError::InternalReason(tst_srt::error::RejectReason)
+pub tst_srt::listen_rules::ListenRuleError::ReasonOutOfRange(tst_srt::error::RejectReason)
 impl core::error::Error for tst_srt::listen_rules::ListenRuleError
 impl core::fmt::Debug for tst_srt::listen_rules::ListenRuleError
 pub fn tst_srt::listen_rules::ListenRuleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1282,6 +1283,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_srt::listen_rules::ListenRule
 pub tst_srt::ListenRuleError::Closed
 pub tst_srt::ListenRuleError::InteriorNul
 pub tst_srt::ListenRuleError::InternalReason(tst_srt::error::RejectReason)
+pub tst_srt::ListenRuleError::ReasonOutOfRange(tst_srt::error::RejectReason)
 impl core::error::Error for tst_srt::listen_rules::ListenRuleError
 impl core::fmt::Debug for tst_srt::listen_rules::ListenRuleError
 pub fn tst_srt::listen_rules::ListenRuleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
