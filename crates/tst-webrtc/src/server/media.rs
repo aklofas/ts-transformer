@@ -707,51 +707,54 @@ impl Media {
         }
         // select_video reads the offer's own payload lines.
         let offer_sdp = offer.to_sdp_string();
-        // Nothing is registered for the viewer before this call, so a
-        // refused offer leaves no state behind: `rtc` is dropped here.
-        let answer = contain_panic(|| rtc.sdp_api().accept_offer(offer))?.map_err(|e| {
-            debug!(error = %e, "offer refused by str0m");
-            RejectReason::Internal
-        })?;
-        let (mid, pt) = match select_video(
-            &rtc,
-            &offer_sdp,
-            state.cfg.video,
-            state.sps_profile_level_id(),
-        ) {
-            Negotiated::Video { mid, pt, .. } => (mid, pt),
-            Negotiated::Rejected { reason } => {
-                debug!(reason, "offer rejected");
-                return Err(RejectReason::Codec);
+        // Nothing is registered for the viewer before this call returns, so a
+        // refused or panicking offer leaves no state behind: `rtc` is dropped.
+        let (v, answer, id) = contain_panic(|| {
+            let answer = rtc.sdp_api().accept_offer(offer).map_err(|e| {
+                debug!(error = %e, "offer refused by str0m");
+                RejectReason::Internal
+            })?;
+            let (mid, pt) = match select_video(
+                &rtc,
+                &offer_sdp,
+                state.cfg.video,
+                state.sps_profile_level_id(),
+            ) {
+                Negotiated::Video { mid, pt, .. } => (mid, pt),
+                Negotiated::Rejected { reason } => {
+                    debug!(reason, "offer rejected");
+                    return Err(RejectReason::Codec);
+                }
+            };
+            // Audio never decides whether an offer is served: no Opus in the
+            // offer, or a mount that drops audio, means a video-only session.
+            let audio = match state.cfg.audio {
+                AudioPolicy::PassthroughOpus => select_audio(&rtc, &offer_sdp),
+                AudioPolicy::Drop => None,
+            };
+            // The channel is opened in-band (DCEP) on the SCTP association the
+            // offer's data-channel section brings up, so any viewer receives
+            // it by label and apply() has no offer to return. Unordered: a
+            // record never waits behind an earlier one; each message names its
+            // frame's RTP timestamp, so the page orders them itself.
+            let mut api = rtc.sdp_api();
+            let klv_channel = api.add_channel_with_config(klv_channel_config());
+            if api.apply().is_some() {
+                // str0m offering a data-channel section means the offer had
+                // none: the session has no SCTP transport, so the channel never
+                // opens and the viewer gets video (and KLV in SEI) only.
+                debug!("the offer has no data-channel section; the klv channel is not opened");
             }
-        };
-        // Audio never decides whether an offer is served: no Opus in the
-        // offer, or a mount that drops audio, means a video-only session.
-        let audio = match state.cfg.audio {
-            AudioPolicy::PassthroughOpus => select_audio(&rtc, &offer_sdp),
-            AudioPolicy::Drop => None,
-        };
-        // The channel is opened in-band (DCEP) on the SCTP association the
-        // offer's data-channel section brings up, so any viewer receives
-        // it by label and apply() has no offer to return. Unordered: a
-        // record never waits behind an earlier one; each message names its
-        // frame's RTP timestamp, so the page orders them itself.
-        let mut api = rtc.sdp_api();
-        let klv_channel = api.add_channel_with_config(klv_channel_config());
-        if api.apply().is_some() {
-            // str0m offering a data-channel section means the offer had
-            // none: the session has no SCTP transport, so the channel never
-            // opens and the viewer gets video (and KLV in SEI) only.
-            debug!("the offer has no data-channel section; the klv channel is not opened");
-        }
-        let id = session_id().ok_or(RejectReason::Internal)?;
-        let mut v = Viewer::new(id.clone(), state, rtc, random_seq(), now);
-        v.mid = Some(mid);
-        v.pt = Some(pt);
-        v.klv_channel = Some(klv_channel);
-        v.audio = audio;
-        v.audio_seq = random_seq();
-        drain_rtc(&mut v, &self.socket, now);
+            let id = session_id().ok_or(RejectReason::Internal)?;
+            let mut v = Viewer::new(id.clone(), state, rtc, random_seq(), now);
+            v.mid = Some(mid);
+            v.pt = Some(pt);
+            v.klv_channel = Some(klv_channel);
+            v.audio = audio;
+            v.audio_seq = random_seq();
+            drain_rtc(&mut v, &self.socket, now);
+            Ok((v, answer, id))
+        })??;
         self.viewers.push(v);
         self.gauges_dirty = true;
         Ok(CreatedSession {
