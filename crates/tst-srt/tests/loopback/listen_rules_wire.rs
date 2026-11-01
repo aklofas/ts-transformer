@@ -377,3 +377,42 @@ fn accept_timeout_finds_a_good_caller_queued_beside_a_mismatch() {
         );
     }
 }
+
+/// A backlog of mismatches does not hold a timed accept past its deadline:
+/// with the deadline already spent, one probe closes one mismatch and the
+/// call times out, leaving the rest queued for the next call.
+#[test]
+#[tracing_test::traced_test]
+fn mismatch_drain_stops_at_the_accept_deadline() {
+    require_loopback!();
+    let Loopback { mut listener, port } = cam_only();
+    let _nul: Vec<_> = (0..3)
+        .map(|_| LengthSidCaller::connect(port, b"cam\0x").expect("the hook admits cam\\0x"))
+        .collect();
+    let closed = || {
+        let n = std::cell::Cell::new(0);
+        logs_assert(|lines: &[&str]| {
+            n.set(
+                lines
+                    .iter()
+                    .filter(|l| l.contains("closed an accepted connection whose stream ID differs"))
+                    .count(),
+            );
+            Ok(())
+        });
+        n.get()
+    };
+    let start = std::time::Instant::now();
+    assert!(matches!(
+        listener.accept_timeout(Duration::ZERO),
+        Err(AcceptError::TimedOut)
+    ));
+    assert!(start.elapsed() < scaled(Duration::from_millis(500)));
+    assert_eq!(closed(), 1, "one probe per spent deadline");
+    // Time left: the drain goes on at once and closes the remaining two.
+    assert!(matches!(
+        listener.accept_timeout(scaled(Duration::from_millis(300))),
+        Err(AcceptError::TimedOut)
+    ));
+    assert_eq!(closed(), 3);
+}

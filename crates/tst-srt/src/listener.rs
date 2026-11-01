@@ -298,7 +298,7 @@ impl SrtListener {
             // The listener is `&mut self`, so flipping SRTO_RCVSYN around
             // the probe is exclusive: no other accept caller can observe the
             // transient non-blocking state.
-            if let Some(conn) = self.try_accept_nonblocking()? {
+            if let Some(conn) = self.try_accept_nonblocking(deadline)? {
                 return Ok(conn);
             }
 
@@ -366,14 +366,24 @@ impl SrtListener {
     /// `SRT_EASYNCRCV`), or `Err(...)` for any other libsrt failure. A
     /// queued connection whose stream ID differs from what the listen rules
     /// matched is closed and the queue probed again at once: no readiness
-    /// event announces the connections still queued behind it.
-    fn try_accept_nonblocking(&mut self) -> Result<Option<(SrtSocket, SocketAddr)>, AcceptError> {
+    /// event announces the connections still queued behind it. Once
+    /// `deadline` has passed (`None`: never) a closed mismatch ends the
+    /// drain with `Ok(None)` instead.
+    fn try_accept_nonblocking(
+        &mut self,
+        deadline: Option<Instant>,
+    ) -> Result<Option<(SrtSocket, SocketAddr)>, AcceptError> {
         loop {
             match self.probe_accept()? {
                 Probe::Empty => return Ok(None),
                 Probe::ClosedMismatch => {
                     if crate::exit_guard::is_exiting() {
                         return Err(AcceptError::ListenerClosed);
+                    }
+                    // A queue kept full of mismatches must not hold the
+                    // call past its deadline; the caller then times out.
+                    if deadline.is_some_and(|d| Instant::now() >= d) {
+                        return Ok(None);
                     }
                 }
                 Probe::Accepted(conn) => return Ok(Some(conn)),
