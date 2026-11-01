@@ -1041,6 +1041,9 @@ with RtspClient.connect(cfg) as session:
 - **Passwords stay Rust-side.** `BasicAuth` / `DigestAuth` hold the
   password in Rust memory (never re-exposed); only `user`, `realm`, and
   `algorithm` are readable. `repr()` redacts the secret.
+  URL secrets (userinfo passwords and `passphrase`, `secret`, `token`,
+  `auth_pass`, `password` query values) and stream-ID values are redacted in
+  every `repr()`, `str()` and error message.
 - **`DigestAuth` never falls back to Basic.** A server that offers no Digest
   challenge fails the connect with an auth-unsupported error rather than
   receiving the password in Basic form. `BasicAuth` answers Digest when it is
