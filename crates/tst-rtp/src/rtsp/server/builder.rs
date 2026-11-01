@@ -247,7 +247,9 @@ impl RtspServerBuilder {
     /// Set the rule every mount path without its own entry in
     /// [`RtspServer::mount_rules`](crate::rtsp::server::RtspServer::mount_rules)
     /// falls back to. The default is [`MountRule::default`], which inherits
-    /// the server-wide credential for both directions.
+    /// the server-wide credential for both directions. The rule is checked
+    /// at [`build`](Self::build), as
+    /// [`MountRules::set_default`](crate::MountRules::set_default) checks it.
     pub fn default_mount_rule(&mut self, rule: MountRule) -> &mut Self {
         self.default_mount_rule = Some(rule);
         self
@@ -304,6 +306,9 @@ impl RtspServerBuilder {
     /// # Errors
     ///
     /// - [`RtspServerError::Io`] on Runtime construction failure (rare)
+    /// - [`RtspServerError::InvalidConfig`] if the
+    ///   [`default_mount_rule`](Self::default_mount_rule) holds a `Require`
+    ///   policy with no credential or a credential with an empty username
     ///
     /// TLS cert/key paths are NOT validated here — they are loaded at
     /// [`RtspServer::start`](crate::rtsp::server::RtspServer::start), which

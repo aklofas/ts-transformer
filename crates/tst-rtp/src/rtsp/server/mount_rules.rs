@@ -229,7 +229,7 @@ fn check_policy(policy: &MountPolicy) -> Result<(), MountRuleError> {
     Ok(())
 }
 
-fn check_rule(rule: &MountRule) -> Result<(), MountRuleError> {
+pub(crate) fn check_rule(rule: &MountRule) -> Result<(), MountRuleError> {
     check_policy(&rule.publish)?;
     check_policy(&rule.read)
 }
@@ -550,5 +550,27 @@ mod tests {
             assert_eq!(s.code(), code);
             assert_eq!(s.reason(), reason);
         }
+    }
+
+    #[test]
+    fn build_refuses_an_invalid_default_mount_rule() {
+        use crate::error::RtspServerError;
+        for rule in [
+            MountRule::both(MountPolicy::Require(vec![])),
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Require(vec![MountCredential::new("", pw("x"))]),
+            ),
+        ] {
+            let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+            b.default_mount_rule(rule);
+            assert!(matches!(
+                b.build(),
+                Err(RtspServerError::InvalidConfig { .. })
+            ));
+        }
+        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        b.default_mount_rule(MountRule::both(MountPolicy::Open));
+        assert!(b.build().is_ok());
     }
 }
