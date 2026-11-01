@@ -227,6 +227,15 @@ Keep the default loopback bind, or put a reverse proxy that enforces
 connection limits and timeouts in front of it. Release 0.9.1 adds these
 bounds to the server.
 
+On Unix the `output_dir` must be trusted: owned by the user running the
+publisher, not a symbolic link, and not writable by group or others. A
+missing directory is created with mode 0700; an existing one that fails the
+check makes the publisher return an error instead of writing into it. Files
+inside are opened without following symbolic links. The default
+`temp_dir()/tstrans-hls` is refused on a shared `/tmp` if another account
+created it first, so create your own directory with mode 0700 or set
+`output_dir` to a private path. Other platforms make no such check.
+
 Concurrent publishers must each use a **distinct `output_dir`** (and a
 distinct bind port if each runs its own server) — two publishers writing the
 same directory will clobber each other's segment numbering and playlist.

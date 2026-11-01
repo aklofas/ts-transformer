@@ -1,7 +1,7 @@
 //! Internal rolling segmenter — IDR-aligned cuts + duration-driven fallback.
 
 use std::collections::VecDeque;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -74,7 +74,7 @@ struct OpenSegment {
 impl Segmenter {
     pub(crate) fn new(config: HlsConfig) -> Result<Self, HlsError> {
         // Ensure output_dir exists.
-        std::fs::create_dir_all(&config.output_dir).map_err(HlsError::Io)?;
+        crate::secure_fs::prepare_output_dir(&config.output_dir)?;
 
         // Clean up stale segments + playlist from prior runs (best-effort).
         if let Ok(entries) = std::fs::read_dir(&config.output_dir) {
@@ -282,11 +282,7 @@ impl Segmenter {
         self.next_seq += 1;
         let filename = format!("segment_{seq:05}.ts");
         let path: PathBuf = self.config.output_dir.join(&filename);
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(HlsError::Io)?;
+        let file = crate::secure_fs::create_new_nofollow(&path).map_err(HlsError::Io)?;
         self.current = Some(OpenSegment {
             seq,
             filename,
@@ -339,7 +335,9 @@ impl Segmenter {
         }
         let text = crate::playlist::render(self, is_final);
         let tmp = self.config.output_dir.join(PLAYLIST_TMP_FILENAME);
-        std::fs::write(&tmp, text).map_err(HlsError::Io)?;
+        crate::secure_fs::create_truncate_nofollow(&tmp)
+            .and_then(|mut f| f.write_all(text.as_bytes()))
+            .map_err(HlsError::Io)?;
         std::fs::rename(&tmp, self.config.output_dir.join(PLAYLIST_FILENAME)).map_err(HlsError::Io)
     }
 

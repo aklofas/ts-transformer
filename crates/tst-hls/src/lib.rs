@@ -39,6 +39,7 @@ mod auth;
 #[cfg(feature = "serve")]
 mod http_server;
 mod playlist;
+mod secure_fs;
 mod segmenter;
 #[cfg(feature = "tls")]
 mod tls;

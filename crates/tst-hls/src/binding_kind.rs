@@ -9,7 +9,8 @@ impl From<HlsError> for BindingError {
         let kind = match &e {
             HlsError::Io(_) => K::HlsIo,
             HlsError::BindFailed(_) => K::HlsBindFailed,
-            HlsError::InvalidConfig(_) => K::HlsInvalidConfig,
+            // An untrusted output_dir is a configuration fault; bindings share the kind.
+            HlsError::InvalidConfig(_) | HlsError::UntrustedOutputDir { .. } => K::HlsInvalidConfig,
             HlsError::UnalignedPushTs { .. } => K::HlsUnalignedPushTs,
             HlsError::Finished => K::HlsFinished,
             HlsError::TlsDisabled => K::HlsTlsDisabled,
@@ -39,6 +40,14 @@ mod tests {
         );
         assert_eq!(
             BindingError::from(HlsError::InvalidConfig("x".into())).kind,
+            K::HlsInvalidConfig
+        );
+        assert_eq!(
+            BindingError::from(HlsError::UntrustedOutputDir {
+                path: "/x".into(),
+                reason: "r".into()
+            })
+            .kind,
             K::HlsInvalidConfig
         );
         assert_eq!(

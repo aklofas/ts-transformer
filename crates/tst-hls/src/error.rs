@@ -12,6 +12,11 @@ pub enum HlsError {
     #[error("filesystem I/O error: {0}")]
     Io(#[from] io::Error),
 
+    /// The output directory is a symlink, is not owned by the process user,
+    /// or is writable by group or others (Unix only).
+    #[error("output directory {path} is not trusted: {reason}")]
+    UntrustedOutputDir { path: String, reason: String },
+
     #[error("HTTP server bind failed: {0}")]
     BindFailed(String),
 

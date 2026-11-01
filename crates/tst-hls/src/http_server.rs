@@ -296,7 +296,7 @@ async fn serve(
                 let s = state.lock().expect("HlsPublisher poisoned");
                 s.segmenter.serve_lookup(&name)
             };
-            match path.and_then(|p| std::fs::read(&p).ok()) {
+            match path.and_then(|p| crate::secure_fs::read_nofollow(&p).ok()) {
                 Some(bytes) => Response::builder()
                     .status(StatusCode::OK)
                     .header(CONTENT_TYPE, "video/mp2t")
