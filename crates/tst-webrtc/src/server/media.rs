@@ -27,7 +27,7 @@ use str0m::media::Pt;
 use str0m::net::{Protocol, Receive};
 use str0m::rtp::{RtpWrite, SeqNo};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::clock::Clock;
 use crate::config::AudioPolicy;
@@ -707,7 +707,9 @@ impl Media {
         }
         // select_video reads the offer's own payload lines.
         let offer_sdp = offer.to_sdp_string();
-        let answer = rtc.sdp_api().accept_offer(offer).map_err(|e| {
+        // Nothing is registered for the viewer before this call, so a
+        // refused offer leaves no state behind: `rtc` is dropped here.
+        let answer = contain_panic(|| rtc.sdp_api().accept_offer(offer))?.map_err(|e| {
             debug!(error = %e, "offer refused by str0m");
             RejectReason::Internal
         })?;
@@ -1182,12 +1184,44 @@ fn zero_gauges(state: &MountState) {
         .store(0, Ordering::Relaxed);
 }
 
+/// Runs `f`, turning a panic into a refusal. One thread serves every
+/// viewer, so a str0m panic on one remote-controlled offer must refuse
+/// that offer, not end the thread.
+fn contain_panic<T>(f: impl FnOnce() -> T) -> Result<T, RejectReason> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(value) => Ok(value),
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("non-string panic");
+            warn!(
+                message,
+                "str0m panicked while applying an offer; the offer is refused"
+            );
+            // A payload whose `Drop` panics would unwind out of this frame.
+            std::mem::forget(payload);
+            Err(RejectReason::Internal)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::VideoCodec;
 
     const SAFARI: &str = include_str!("../../tests/fixtures/offers/safari-26.sdp");
+
+    #[test]
+    fn a_panicking_closure_is_contained_as_an_internal_refusal() {
+        let refused = contain_panic(|| -> u8 { panic!("boom") });
+        assert!(matches!(refused, Err(RejectReason::Internal)));
+        let refused = contain_panic(|| -> u8 { panic!("{}", String::from("formatted")) });
+        assert!(matches!(refused, Err(RejectReason::Internal)));
+        assert!(matches!(contain_panic(|| 7), Ok(7)));
+    }
 
     /// Accepts `offer` on `rtc` with a TEST-NET-1 candidate (never bound).
     fn accept(mut rtc: Rtc, offer: &str) -> Rtc {
