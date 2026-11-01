@@ -440,11 +440,11 @@ sha256 = "75e9bd9ed769e10b26233d8013064a56e139da071ef6d9213773416282a600bd"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/url-corpus/corpus.toml"
-sha256 = "7488258ac60125d9de8d3a79dc8729c9450397bff92b32158dd6ce76323fb133"
+sha256 = "d0767bb57b86d3636834a28d1170fd4fb967f5513906353b52361d4698c698e5"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/url-corpus/golden.json"
-sha256 = "d0f680d33c8ea4e13a99ada15c84c735cd487babb5898fd202873e6088e93284"
+sha256 = "4950ea9b3c81a40bf9937ec40a70303f23581b51ff63cbac38b6c7e95714c2d7"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/video-dts-roundtrip/golden.json"
