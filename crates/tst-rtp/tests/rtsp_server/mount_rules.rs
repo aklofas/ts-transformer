@@ -807,6 +807,132 @@ fn a_readers_second_setup_is_keyed_on_the_mount_it_names() {
     server.stop().unwrap();
 }
 
+/// A refused SETUP that ends a reader's role leaves the connection open, and
+/// the connection can then set up an allowed mount and play it: the RTP
+/// actually arrives, so the ended role left no cancelled state behind.
+#[test]
+fn a_reader_refused_mid_session_can_play_another_mount_on_the_same_connection() {
+    use std::io::Read as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tst_core::mpegts::common::Pts90khz;
+
+    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
+        .unwrap()
+        .build()
+        .unwrap();
+    let open = server.add_mount("/open", make_muxer_cfg()).unwrap();
+    server.add_mount("/secret", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let rules = server.mount_rules();
+    rules
+        .set(
+            "/open",
+            MountRule::new(MountPolicy::Inherit, MountPolicy::Open),
+        )
+        .unwrap();
+    rules
+        .set(
+            "/secret",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Refuse(RefuseStatus::NotFound),
+            ),
+        )
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+    let setup = |tcp: &mut TcpStream, path: &str, cseq: u32, session: &str| {
+        request(
+            tcp,
+            &format!(
+                "SETUP rtsp://127.0.0.1:{port}{path}/trackID=0 RTSP/1.0\r\nCSeq: {cseq}\r\n\
+                 {session}Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+            ),
+        )
+    };
+
+    let mut tcp = connect(port);
+    let r = setup(&mut tcp, "/open", 1, "");
+    assert_eq!(status(&r), 200, "{r}");
+    let sid = session_id(&r);
+    let r = setup(&mut tcp, "/secret", 2, &format!("Session: {sid}\r\n"));
+    assert_eq!(status(&r), 404, "the refused SETUP ends the role: {r}");
+
+    let r = setup(&mut tcp, "/open", 3, "");
+    assert_eq!(status(&r), 200, "{r}");
+    let sid = session_id(&r);
+    let r = request(
+        &mut tcp,
+        &format!("PLAY rtsp://127.0.0.1:{port}/open RTSP/1.0\r\nCSeq: 4\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert_eq!(status(&r), 200, "{r}");
+
+    let stop = AtomicBool::new(false);
+    let got_rtp = std::thread::scope(|s| {
+        s.spawn(|| {
+            let mut nal = vec![0u8; 1024];
+            nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
+            let mut pts = 0i64;
+            while !stop.load(Ordering::Acquire) {
+                open.push_video(&nal, Pts90khz::new(pts), true).unwrap();
+                pts += 3600;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        tcp.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let deadline = std::time::Instant::now() + scaled(Duration::from_secs(5));
+        let mut chunk = [0u8; 4096];
+        let mut seen = false;
+        while !seen && std::time::Instant::now() < deadline {
+            match tcp.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => seen = chunk[..n].contains(&b'$'),
+                Err(_) => {}
+            }
+        }
+        stop.store(true, Ordering::Release);
+        seen
+    });
+    assert!(got_rtp, "the second PLAY's fanout delivers interleaved RTP");
+    server.stop().unwrap();
+}
+
+/// The publisher twin: a publisher refused at SETUP can ANNOUNCE another
+/// mount on the same connection, and the media it records reaches it.
+#[test]
+fn a_publisher_refused_mid_session_can_publish_another_mount_on_the_same_connection() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    server.add_publish_mount("/amber").unwrap();
+    let other = server.add_publish_mount("/other").unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/amber", SDP_H264), 200);
+    server
+        .mount_rules()
+        .set(
+            "/amber",
+            publish_rule(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+        )
+        .unwrap();
+    assert_eq!(p.setup_interleaved("/amber", "streamid=0").0, 403);
+
+    assert_eq!(p.announce("/other", SDP_H264), 200);
+    let (st, pair) = p.setup_interleaved_pair("/other", "streamid=0");
+    assert_eq!(st, 200);
+    let (rtp_ch, _) = pair.expect("server allocated an interleaved pair");
+    assert_eq!(p.record_from_start("/other"), 200);
+    for pkt in &h264_rtp_packets(10, PT, 100, SSRC, TS0) {
+        p.send_frame(rtp_ch, pkt);
+    }
+    assert!(
+        eventually(|| other.stats().aus_emitted >= 9),
+        "recorded media reached the second mount: {} AUs",
+        other.stats().aus_emitted
+    );
+    server.stop().unwrap();
+}
+
 /// A rule belongs to the path, not the mount: removing the mount keeps it,
 /// and a mount added again at the path is governed by it.
 #[test]

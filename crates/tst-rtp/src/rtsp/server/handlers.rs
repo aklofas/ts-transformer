@@ -160,6 +160,11 @@ pub(crate) fn check_auth(
             let keyed_on_role = !matches!(req.method, RtspMethod::Announce | RtspMethod::Describe);
             if keyed_on_role && !matches!(session.role, Role::Idle) {
                 session.end_role();
+                // Unlike TEARDOWN, a refusal keeps the connection open, so
+                // it may set up a new role: re-arm the token `end_role`
+                // cancelled (the retired fanout holds the old one and still
+                // exits), or a later PLAY's fanout would start cancelled.
+                session.peer_cancel = tokio_util::sync::CancellationToken::new();
             }
             return Err(error_response(req, status.code(), status.reason()));
         }

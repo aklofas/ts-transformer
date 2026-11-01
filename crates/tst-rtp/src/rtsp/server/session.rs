@@ -181,8 +181,9 @@ pub struct ServerSessionState {
     /// `Refuse` status is not a 401 and leaves the count unchanged.
     pub auth_failures: u8,
     /// CancellationToken for the per-peer fanout task. PAUSE cancels + replaces
-    /// with a fresh token so a subsequent PLAY can re-spawn; TEARDOWN
-    /// cancels it without replacement.
+    /// with a fresh token so a subsequent PLAY can re-spawn, and so does a
+    /// mount rule's refusal that ends the role; TEARDOWN cancels it without
+    /// replacement.
     pub peer_cancel: tokio_util::sync::CancellationToken,
     /// Fanouts retired by PAUSE, TEARDOWN or a second PLAY (see
     /// [`Self::retire_fanout`]). Their token is cancelled and they exit at
