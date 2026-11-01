@@ -165,6 +165,10 @@ direction (the builder's own credential does not open a `Require` path), and
 builder's scheme and realm when it configured a credential, else the table's
 (`set_challenge`, Digest MD5 and realm `tstrans` by default).
 
+A realm may not contain control bytes (`set_challenge` and the builder refuse
+it); quotes and backslashes are escaped in the header. A publisher's SETUP for
+a path other than its announced mount answers `404`.
+
 - **Refusal happens before any mount exists.** The check runs first in every
   gated handler, so a refused or unauthenticated ANNOUNCE is answered before
   an on-demand mount is created or queued.

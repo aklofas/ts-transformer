@@ -1740,6 +1740,10 @@ try (RtspSession session = RtspClient.connect(cfg);
   native connect and wrapped in Rust `secrecy::SecretString`.
 - **`auth` is `Object`.** Java has no union type; `RtspClientConfig.auth()` returns
   `Optional<Object>` that is a `BasicAuth` or `DigestAuth` — match with `instanceof`.
+- **`DigestAuth` never falls back to Basic.** A server that offers no Digest
+  challenge fails the connect with an auth-unsupported `RtspException` rather
+  than receiving the password in Basic form. `BasicAuth` answers Digest when it
+  is offered and Basic otherwise.
 - **Cancellation.** Obtain a `RtspCancelHandle` from `session.cancelHandle()` BEFORE
   a blocking control call; flip `cancel()` from another thread to break it out.
   `close()` is a best-effort teardown, not a cross-thread interruptor. The

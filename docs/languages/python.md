@@ -1040,6 +1040,10 @@ with RtspClient.connect(cfg) as session:
 - **Passwords stay Rust-side.** `BasicAuth` / `DigestAuth` hold the
   password in Rust memory (never re-exposed); only `user`, `realm`, and
   `algorithm` are readable. `repr()` redacts the secret.
+- **`DigestAuth` never falls back to Basic.** A server that offers no Digest
+  challenge fails the connect with an auth-unsupported error rather than
+  receiving the password in Basic form. `BasicAuth` answers Digest when it is
+  offered and Basic otherwise.
 - **TLS (`rtsps://`) is compiled in** (wheels ship the `tls` feature).
   Server certificates verify against platform native trust roots by
   default; pass `tls_root_certs_pem=<PEM bytes>` to trust a private CA /

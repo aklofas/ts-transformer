@@ -458,6 +458,10 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
   per-mount rule from `RtspServer::mount_rules()` (credentials, open, or a
   refusal per path and direction; see the [publish-ingest
   recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)).
+- **Client auth schemes.** `RtspClientBuilder::auth_schemes` defaults to
+  `AuthSchemes::Automatic` (Digest when offered, else Basic).
+  `AuthSchemes::DigestOnly` fails the connect when the server offers no Digest
+  challenge, so the password is never sent in Basic form.
 
 ### Stats
 
