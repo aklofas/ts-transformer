@@ -1200,7 +1200,7 @@ fn contain_panic<T>(f: impl FnOnce() -> T) -> Result<T, RejectReason> {
                 .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
                 .unwrap_or("non-string panic");
             warn!(
-                message,
+                panic = ?message,
                 "str0m panicked while applying an offer; the offer is refused"
             );
             // A payload whose `Drop` panics would unwind out of this frame.
