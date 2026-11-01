@@ -7,7 +7,9 @@
 
 use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use secrecy::SecretString;
-use tst_rtp::{RtspClient, RtspError, RtspServer, RtspServerBuilder};
+use tst_rtp::{
+    AuthSchemes, RtspClient, RtspClientBuilder, RtspError, RtspServer, RtspServerBuilder,
+};
 
 /// Spin up an `RtspServer` requiring Basic auth, with a single
 /// `/live` unicast mount, listening on a kernel-picked port.
@@ -69,5 +71,25 @@ fn wrong_password_returns_auth_failed() {
         .describe()
         .expect_err("DESCRIBE with wrong pw must fail");
     assert!(matches!(e, RtspError::AuthFailed), "got: {e:?}");
+    server.stop().ok();
+}
+
+/// A client restricted to Digest never answers a Basic-only server: the
+/// password stays off the wire and DESCRIBE fails with `AuthUnsupported`.
+#[test]
+fn digest_only_client_refuses_a_basic_only_server() {
+    let server = server_with_basic_auth();
+    let port = server.local_addr().expect("local_addr after start").port();
+    let url = format!("rtsp://127.0.0.1:{port}/live");
+    let mut client = RtspClientBuilder::new(&url)
+        .expect("url")
+        .auth("admin", SecretString::new("secret".into()))
+        .auth_schemes(AuthSchemes::DigestOnly)
+        .connect()
+        .expect("connect");
+    let e = client
+        .describe()
+        .expect_err("DigestOnly must not answer Basic");
+    assert!(matches!(e, RtspError::AuthUnsupported { .. }), "got: {e:?}");
     server.stop().ok();
 }

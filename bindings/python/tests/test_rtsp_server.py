@@ -206,6 +206,27 @@ def _video_audio_program():
     )
 
 
+def test_digest_auth_client_refuses_a_basic_only_server():
+    """A DigestAuth client never answers a Basic challenge."""
+    from tstrans.rtp import RtspClient, RtspClientConfig
+
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0",
+        auth=BasicAuth(user="admin", password="secret", realm="protected"),
+        graceful_shutdown_drain_ms=50,
+    )
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        port = server.local_addr().rsplit(":", 1)[1]
+        client_cfg = RtspClientConfig(
+            url=f"rtsp://127.0.0.1:{port}/live",
+            auth=DigestAuth(user="admin", password="secret"),
+            keepalive=False,
+        )
+        with pytest.raises(RtspError, match="DigestOnly"):
+            RtspClient.connect(client_cfg)
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle — start / context manager / local_addr / stop.
 # ---------------------------------------------------------------------------

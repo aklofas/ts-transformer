@@ -41,7 +41,7 @@ use tst_rtp::rtsp::client::session::RtspSession as RustRtspSession;
 use tst_rtp::rtsp::client::{
     RtspCancelHandle as RustRtspCancelHandle, RtspClient as RustRtspClient,
 };
-use tst_rtp::{H264DepayConfig, RtspClientBuilder, RtspTransportPref, RtspVersion};
+use tst_rtp::{AuthSchemes, H264DepayConfig, RtspClientBuilder, RtspTransportPref, RtspVersion};
 
 use crate::raise::{RTSP, raise};
 use crate::rtp::h264_receiver::PyH264Receiver;
@@ -198,6 +198,10 @@ impl PyBasicAuth {
 /// Same secret-handling story as `BasicAuth`: password held as `String`
 /// here, wrapped in `secrecy::SecretString` only when handed to
 /// `RtspClientBuilder::auth`.
+///
+/// As a client credential it never falls back to Basic: a server that
+/// offers no Digest challenge fails the request instead of receiving the
+/// password in the clear. Use `BasicAuth` to accept either scheme.
 #[pyclass(name = "DigestAuth", module = "tstrans.rtp", frozen)]
 #[derive(Debug, Clone)]
 pub struct PyDigestAuth {
@@ -531,7 +535,9 @@ impl PyRtspClient {
                 // algorithm on the Python side for caller introspection
                 // through DigestAuth.algorithm.
                 let pw = SecretString::from(digest.password.clone());
-                builder = builder.auth(digest.user.clone(), pw);
+                builder = builder
+                    .auth(digest.user.clone(), pw)
+                    .auth_schemes(AuthSchemes::DigestOnly);
             }
         }
 
@@ -611,7 +617,9 @@ impl PyRtspClient {
                 // algorithm on the Python side for caller introspection
                 // through DigestAuth.algorithm.
                 let pw = SecretString::from(digest.password.clone());
-                builder = builder.auth(digest.user.clone(), pw);
+                builder = builder
+                    .auth(digest.user.clone(), pw)
+                    .auth_schemes(AuthSchemes::DigestOnly);
             }
         }
 

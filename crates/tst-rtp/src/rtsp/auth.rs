@@ -339,9 +339,26 @@ pub(crate) fn method_token(method: RtspMethod) -> &'static str {
     }
 }
 
+/// Which `WWW-Authenticate` schemes an [`RtspClient`](crate::RtspClient) may
+/// answer. Set with
+/// [`RtspClientBuilder::auth_schemes`](crate::RtspClientBuilder::auth_schemes).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AuthSchemes {
+    /// Answer Digest when the server offers it, otherwise Basic. A server
+    /// (or an on-path party on a plaintext `rtsp://` link) that offers only
+    /// Basic receives the password in the clear.
+    #[default]
+    Automatic,
+    /// Answer Digest only. A challenge that offers no Digest fails with
+    /// [`RtspError::AuthUnsupported`] and the password is never sent in
+    /// Basic form.
+    DigestOnly,
+}
+
 /// Build an `Authorization:` header value for `method` at `uri` from a raw
 /// `WWW-Authenticate` challenge string and credentials. Prefers Digest over
-/// Basic when both are offered.
+/// Basic when both are offered; `schemes` may forbid Basic.
 ///
 /// `uri` MUST be the exact request-URI of the target method — gortsplib /
 /// MediaMTX hash the Digest HA2 against the request URI, so SETUP must pass
@@ -354,7 +371,8 @@ pub(crate) fn method_token(method: RtspMethod) -> &'static str {
 ///
 /// # Errors
 ///
-/// - [`RtspError::AuthUnsupported`] if no recognized scheme is present.
+/// - [`RtspError::AuthUnsupported`] if no recognized scheme is present, or
+///   only Basic is offered and `schemes` is [`AuthSchemes::DigestOnly`].
 /// - [`RtspError::Io`] if the OS RNG fails while generating the cnonce.
 pub(crate) fn build_authorization(
     method: RtspMethod,
@@ -363,20 +381,30 @@ pub(crate) fn build_authorization(
     username: &str,
     password: &SecretString,
     nc: u32,
+    schemes: AuthSchemes,
 ) -> Result<String, RtspError> {
     let challenges = parse_challenges(www_auth);
     // Prefer Digest over Basic when both are offered.
-    let challenge = challenges
+    let digest = challenges
         .iter()
-        .find(|c| matches!(c, AuthChallenge::Digest(_)))
-        .or_else(|| {
-            challenges
-                .iter()
-                .find(|c| matches!(c, AuthChallenge::Basic { .. }))
-        })
-        .ok_or_else(|| RtspError::AuthUnsupported {
-            scheme: "(no recognized scheme in WWW-Authenticate)".into(),
-        })?;
+        .find(|c| matches!(c, AuthChallenge::Digest(_)));
+    let basic = challenges
+        .iter()
+        .find(|c| matches!(c, AuthChallenge::Basic { .. }));
+    let challenge = match (digest, basic, schemes) {
+        (Some(d), _, _) => d,
+        (None, Some(b), AuthSchemes::Automatic) => b,
+        (None, Some(_), AuthSchemes::DigestOnly) => {
+            return Err(RtspError::AuthUnsupported {
+                scheme: "Basic (refused by the DigestOnly policy)".into(),
+            });
+        }
+        (None, None, _) => {
+            return Err(RtspError::AuthUnsupported {
+                scheme: "(no recognized scheme in WWW-Authenticate)".into(),
+            });
+        }
+    };
 
     Ok(match challenge {
         AuthChallenge::Basic { .. } => build_basic_response(username, password),
@@ -403,6 +431,47 @@ pub(crate) fn build_authorization(
             build_digest_response(&ctx)
         }
     })
+}
+
+#[cfg(test)]
+mod scheme_policy_tests {
+    use super::*;
+
+    fn authz(www: &str, schemes: AuthSchemes) -> Result<String, RtspError> {
+        build_authorization(
+            RtspMethod::Describe,
+            "rtsp://cam/x",
+            www,
+            "u",
+            &SecretString::new("p".into()),
+            1,
+            schemes,
+        )
+    }
+
+    const BASIC: &str = r#"Basic realm="r""#;
+    const BOTH: &str = r#"Basic realm="r", Digest realm="r", nonce="n""#;
+
+    #[test]
+    fn digest_only_refuses_a_basic_only_challenge() {
+        let err = authz(BASIC, AuthSchemes::DigestOnly).unwrap_err();
+        assert!(
+            matches!(&err, RtspError::AuthUnsupported { scheme } if scheme.contains("DigestOnly")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn automatic_answers_a_basic_only_challenge_with_basic() {
+        let h = authz(BASIC, AuthSchemes::Automatic).unwrap();
+        assert!(h.starts_with("Basic "), "got {h:?}");
+    }
+
+    #[test]
+    fn digest_only_answers_digest_when_both_are_offered() {
+        let h = authz(BOTH, AuthSchemes::DigestOnly).unwrap();
+        assert!(h.starts_with("Digest "), "got {h:?}");
+    }
 }
 
 #[cfg(test)]

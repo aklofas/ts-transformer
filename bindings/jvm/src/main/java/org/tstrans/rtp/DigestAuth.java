@@ -8,6 +8,11 @@ import java.util.Optional;
  * MD5). Mirrors tst-py {@code tstrans.rtp.DigestAuth}: same secret-handling story
  * as {@link BasicAuth} — password held in memory, never publicly re-exposed,
  * redacted in {@link #toString()}.
+ *
+ * <p>As a client credential it never falls back to Basic: a server that offers
+ * no Digest challenge fails the request with an {@code RtspException} and the
+ * password is never sent in Basic form. Use {@link BasicAuth} to accept either
+ * scheme.
  */
 public final class DigestAuth {
     private final String user;

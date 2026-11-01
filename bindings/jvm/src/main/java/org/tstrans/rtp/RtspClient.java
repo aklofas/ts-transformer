@@ -35,14 +35,15 @@ public final class RtspClient {
      */
     public static RtspSession connect(RtspClientConfig config) throws RtspException {
         String authUser = null, authPassword = null;
+        boolean digestOnly = false;
         Object a = config.auth().orElse(null);
         if (a instanceof BasicAuth b) {
             authUser = b.user(); authPassword = b.password();
         } else if (a instanceof DigestAuth d) {
-            authUser = d.user(); authPassword = d.password();
+            authUser = d.user(); authPassword = d.password(); digestOnly = true;
         }
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
-        long h = nConnect(effectiveUrl(config), authUser, authPassword, config.keepalive(), tlsRoots);
+        long h = nConnect(effectiveUrl(config), authUser, authPassword, digestOnly, config.keepalive(), tlsRoots);
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nConnect returned 0 without throwing");
@@ -77,14 +78,15 @@ public final class RtspClient {
      */
     public static RtspSession connectH264(RtspClientConfig config) throws RtspException {
         String authUser = null, authPassword = null;
+        boolean digestOnly = false;
         Object a = config.auth().orElse(null);
         if (a instanceof BasicAuth b) {
             authUser = b.user(); authPassword = b.password();
         } else if (a instanceof DigestAuth d) {
-            authUser = d.user(); authPassword = d.password();
+            authUser = d.user(); authPassword = d.password(); digestOnly = true;
         }
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
-        long h = nConnectH264(effectiveUrl(config), authUser, authPassword, config.keepalive(), tlsRoots);
+        long h = nConnectH264(effectiveUrl(config), authUser, authPassword, digestOnly, config.keepalive(), tlsRoots);
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nConnectH264 returned 0 without throwing");
@@ -117,10 +119,11 @@ public final class RtspClient {
     // authUser/authPassword null when no auth. The algorithm is NOT passed: tst-rtp's
     // challenge handler picks it from the server's WWW-Authenticate header (matches
     // tst-py, which captures DigestAuth.algorithm for introspection only).
+    // digestOnly true (a DigestAuth credential) refuses a challenge that offers no Digest.
     // tlsRootCertsPem null means platform native trust roots.
     private static native long nConnect(String url, String authUser, String authPassword,
-        boolean keepalive, byte[] tlsRootCertsPem) throws RtspException;
+        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem) throws RtspException;
 
     private static native long nConnectH264(String url, String authUser, String authPassword,
-        boolean keepalive, byte[] tlsRootCertsPem) throws RtspException;
+        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem) throws RtspException;
 }

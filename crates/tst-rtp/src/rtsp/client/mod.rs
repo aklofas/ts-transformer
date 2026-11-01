@@ -230,6 +230,8 @@ pub(crate) struct AuthState {
     /// when a *different* challenge is cached (a new nonce restarts
     /// the count at 1).
     pub(crate) nc: u32,
+    /// Which challenge schemes this client may answer.
+    pub(crate) schemes: crate::rtsp::auth::AuthSchemes,
 }
 
 impl AuthState {
@@ -337,6 +339,8 @@ pub(crate) struct ConnectParams {
     pub(crate) request_timeout: Option<Duration>,
     /// `User-Agent:` header value sent on every outbound request.
     pub(crate) user_agent: String,
+    /// Which `WWW-Authenticate` schemes the client may answer.
+    pub(crate) auth_schemes: crate::rtsp::auth::AuthSchemes,
 }
 
 impl Default for ConnectParams {
@@ -346,6 +350,7 @@ impl Default for ConnectParams {
             read_timeout: Duration::from_millis(100),
             request_timeout: Some(Duration::from_secs(10)),
             user_agent: "tst-rtp/0.1".into(),
+            auth_schemes: crate::rtsp::auth::AuthSchemes::default(),
         }
     }
 }
@@ -494,7 +499,10 @@ impl RtspClient {
             request_timeout: params.request_timeout,
             keepalive_thread: None,
             pump_state: None,
-            auth: Arc::new(Mutex::new(AuthState::default())),
+            auth: Arc::new(Mutex::new(AuthState {
+                schemes: params.auth_schemes,
+                ..AuthState::default()
+            })),
             write_gate: Arc::new(AtomicUsize::new(0)),
             end_reason: EndReasonHandle::default(),
         })

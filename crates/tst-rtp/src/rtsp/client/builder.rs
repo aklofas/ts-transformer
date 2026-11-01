@@ -9,6 +9,7 @@ use std::time::Duration;
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::error::RtspError;
+use crate::rtsp::auth::AuthSchemes;
 use crate::rtsp::client::{ConnectParams, RtspClient};
 use crate::rtsp::message::validate_header_field;
 use crate::url::{RtspTransportPref, RtspUrl, RtspVersion};
@@ -27,6 +28,7 @@ pub struct RtspClientBuilder {
     url: RtspUrl,
     username: Option<String>,
     password: Option<SecretString>,
+    auth_schemes: AuthSchemes,
     no_auto_keepalive: bool,
     keepalive_interval_override: Option<Duration>,
     connect_timeout: Duration,
@@ -61,6 +63,7 @@ impl RtspClientBuilder {
             url,
             username,
             password,
+            auth_schemes: AuthSchemes::default(),
             no_auto_keepalive: false,
             keepalive_interval_override: None,
             connect_timeout: Duration::from_secs(10),
@@ -120,6 +123,18 @@ impl RtspClientBuilder {
     pub fn auth(mut self, username: impl Into<String>, password: SecretString) -> Self {
         self.username = Some(username.into());
         self.password = Some(password);
+        self
+    }
+
+    /// Restrict which `WWW-Authenticate` schemes the client answers.
+    /// Default [`AuthSchemes::Automatic`] (Digest when offered, else Basic).
+    /// [`AuthSchemes::DigestOnly`] never sends the password in Basic form:
+    /// a challenge without Digest fails with
+    /// [`RtspError::AuthUnsupported`], so a
+    /// plaintext `rtsp://` endpoint or an on-path party cannot downgrade the
+    /// client to Basic.
+    pub fn auth_schemes(mut self, schemes: AuthSchemes) -> Self {
+        self.auth_schemes = schemes;
         self
     }
 
@@ -265,6 +280,7 @@ impl RtspClientBuilder {
             read_timeout: self.read_timeout,
             request_timeout: self.request_timeout,
             user_agent: self.user_agent,
+            auth_schemes: self.auth_schemes,
         };
         #[cfg(feature = "tls")]
         let mut client =

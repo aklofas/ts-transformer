@@ -946,6 +946,7 @@ mod tests {
             "u",
             &SecretString::new("p".into()),
             1,
+            crate::rtsp::auth::AuthSchemes::Automatic,
         )
         .unwrap();
         assert!(
@@ -976,6 +977,7 @@ mod tests {
             "u",
             &SecretString::new("p".into()),
             1,
+            crate::rtsp::auth::AuthSchemes::Automatic,
         )
         .unwrap();
         assert!(

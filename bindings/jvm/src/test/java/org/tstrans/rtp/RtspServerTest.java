@@ -75,6 +75,25 @@ class RtspServerTest {
         }
     }
 
+    /** A DigestAuth client never answers a Basic-only server: the connect fails, no Basic header. */
+    @Test @Timeout(15)
+    void digestAuthClientRefusesBasicOnlyServer() throws Exception {
+        RtspServerConfig cfg = RtspServerConfig.builder()
+            .bindAddr("127.0.0.1:0")
+            .auth(new BasicAuth("admin", "secret", "tst"))
+            .build();
+        try (RtspServer s = RtspServer.start(cfg)) {
+            s.addUnicastMount("/live", org.tstrans.TestSupport.roundtripConfig());
+            String addr = s.localAddr();
+            String url = "rtsp://127.0.0.1:" + addr.substring(addr.lastIndexOf(':') + 1) + "/live";
+            RtspClientConfig client = RtspClientConfig.builder(url)
+                .auth(new DigestAuth("admin", "secret"))
+                .build();
+            RtspException ex = assertThrows(RtspException.class, () -> RtspClient.connect(client));
+            assertTrue(ex.getMessage().contains("DigestOnly"), ex.getMessage());
+        }
+    }
+
     @Test @Timeout(15)
     void usingAfterCloseThrows() throws Exception {
         RtspServer s = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"));
