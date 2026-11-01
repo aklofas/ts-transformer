@@ -1008,9 +1008,9 @@ try (Listener listener = new Builder("srt://127.0.0.1:9000?mode=listener")
 explicit rule and `size()` counts them. `RejectReason` has constants such as
 `FORBIDDEN`, `CONFLICT` and `OVERLOAD`, `userDefined(int)` for application
 codes of 2000 or more, and `ofCode(int)`. `ListenRule.reject` takes codes of
-1000 or more, and `set` throws `SrtException(CONFIG_INVALID)` for a code above
-2147482647, which libsrt cannot send. A stream ID or rule key holding a NUL
-byte throws the same. After `Listener.close()` every `ListenRules` method throws
+1000 or more. `set` throws `SrtException(CONFIG_INVALID)` for a bad
+passphrase, a reject code above 2147482647 (which libsrt cannot send), or a
+NUL byte in a stream ID or rule key. After `Listener.close()` every `ListenRules` method throws
 `SrtException(CLOSED)` and `Listener.rules()` throws `IllegalStateException`.
 A rule installed after `accept` returns does not cover a caller whose
 handshake already completed, so keep your own check after `accept` when it
