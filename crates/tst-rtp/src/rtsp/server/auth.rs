@@ -120,8 +120,10 @@ pub(crate) fn verify_authorization(
 }
 
 /// Like [`verify_authorization`], but accepts any credential in
-/// `credentials`, chosen by the username in the header. An unknown user
-/// fails exactly like a wrong password, so a probe cannot tell them apart.
+/// `credentials`, chosen by the username in the header. For Digest the nonce
+/// is checked first, so a stale nonce answers the same for every username;
+/// with a current nonce an unknown user fails exactly like a wrong password,
+/// so a probe cannot tell listed and unlisted users apart.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_credentials(
     auth_header: Option<&str>,
@@ -216,13 +218,16 @@ fn verify_digest(
     let response_attr = params.get("response").map(String::as_str).unwrap_or("");
     let realm_attr = params.get("realm").map(String::as_str).unwrap_or("");
 
+    // The nonce is checked before the username is looked up: a stale nonce
+    // answers `StaleNonce` for listed and unlisted users alike, so the answer
+    // never reveals which usernames exist.
+    if nonce_attr != expected_nonce {
+        return Err(AuthVerifyError::StaleNonce);
+    }
     let Some(cred) = credentials.iter().find(|c| c.username == username) else {
         return Err(AuthVerifyError::WrongDigestResponse);
     };
     let (expected_user, expected_pass) = (cred.username, cred.password);
-    if nonce_attr != expected_nonce {
-        return Err(AuthVerifyError::StaleNonce);
-    }
 
     // Reject when the client's realm doesn't match ours.
     // A mismatched realm means HA1 was computed against a different domain;
@@ -680,6 +685,41 @@ mod tests {
         let e = verify_authorization(Some(auth), "DESCRIBE", "rtsp://x", &cfg, "fresh", &mut 0)
             .unwrap_err();
         assert!(matches!(e, AuthVerifyError::StaleNonce));
+    }
+
+    #[test]
+    fn verify_digest_unknown_user_with_stale_nonce_is_stale_nonce() {
+        let cfg = digest_md5_cfg();
+        let auth = "Digest username=\"impostor\", realm=\"tst-rtp\", nonce=\"stale\", \
+                    uri=\"rtsp://x\", response=\"any\", algorithm=MD5";
+        let e = verify_authorization(Some(auth), "DESCRIBE", "rtsp://x", &cfg, "fresh", &mut 0)
+            .unwrap_err();
+        assert!(matches!(e, AuthVerifyError::StaleNonce), "{e:?}");
+    }
+
+    #[test]
+    fn verify_digest_unknown_and_known_user_answer_alike_for_each_nonce_state() {
+        let cfg = digest_md5_cfg();
+        let check = |user: &str, nonce: &str| {
+            let auth = format!(
+                "Digest username=\"{user}\", realm=\"tst-rtp\", nonce=\"{nonce}\", \
+                 uri=\"rtsp://x\", response=\"any\", algorithm=MD5"
+            );
+            verify_authorization(Some(&auth), "DESCRIBE", "rtsp://x", &cfg, "fresh", &mut 0)
+                .unwrap_err()
+        };
+        assert!(matches!(
+            check("admin", "stale"),
+            AuthVerifyError::StaleNonce
+        ));
+        assert!(matches!(
+            check("nobody", "stale"),
+            AuthVerifyError::StaleNonce
+        ));
+        assert!(matches!(
+            check("nobody", "fresh"),
+            AuthVerifyError::WrongDigestResponse
+        ));
     }
 
     #[test]
