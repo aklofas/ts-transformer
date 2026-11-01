@@ -50,10 +50,11 @@ fn a_timed_out_connect_is_connect_timeout_on_both_schemes() {
     let (_listener, _fillers, port) = full_backlog_port();
     let ca = ca_pem_file();
     for scheme in ["tcp", "tcps"] {
-        let url = format!(
-            "{scheme}://127.0.0.1:{port}?connect_timeout=1&ca={}",
-            ca.path().display()
-        );
+        // Only `tcps://` accepts a trust root.
+        let mut url = format!("{scheme}://127.0.0.1:{port}?connect_timeout=1");
+        if scheme == "tcps" {
+            url.push_str(&format!("&ca={}", ca.path().display()));
+        }
         // `TcpTransport` has no `Debug`, so the panic text reports the
         // error side only.
         match TcpTransport::connect(&url) {
