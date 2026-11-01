@@ -8,7 +8,7 @@ package org.tstrans;
  * {@code user:password@host} userinfo and the values of the query keys {@code passphrase},
  * {@code secret}, {@code token}, {@code auth_pass} and {@code password} become
  * {@code <redacted>}. Key matching is exact and lower-case. The scrub is a text pass over each
- * whitespace- or quote-delimited token, so a malformed URL, or a message that embeds one, never
+ * whitespace- (ASCII or U+00A0) or quote-delimited token, so a malformed URL, or a message that embeds one, never
  * leaks either kind of secret.
  */
 public final class Redact {
@@ -24,7 +24,7 @@ public final class Redact {
         int start = 0;
         for (int i = 0; i < url.length(); i++) {
             char c = url.charAt(i);
-            if (Character.isWhitespace(c) || c == '"' || c == '\'') {
+            if (isSeparator(c) || c == '"' || c == '\'') {
                 token(url.substring(start, i), out);
                 out.append(c);
                 start = i + 1;
@@ -83,6 +83,11 @@ public final class Redact {
             }
         }
         return null;
+    }
+
+    /** Token separators: ASCII whitespace and the no-break space; identical to the Rust helper. */
+    private static boolean isSeparator(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == '\u00a0';
     }
 
     private static boolean isWord(char c) {

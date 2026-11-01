@@ -1,6 +1,7 @@
 package org.tstrans.rtp;
 
 import org.tstrans.BindingException;
+import org.tstrans.Redact;
 import org.tstrans.RtpException;
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.DemuxReceiver;
@@ -41,6 +42,6 @@ final class ShellAdapters {
             return s;
         }
         throw new IllegalStateException(
-            "unexpected " + e.getClass().getSimpleName() + " opening " + org.tstrans.Redact.url(url), e);
+            "unexpected " + e.getClass().getSimpleName() + " opening " + Redact.url(url), e);
     }
 }

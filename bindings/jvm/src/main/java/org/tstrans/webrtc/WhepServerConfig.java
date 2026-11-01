@@ -1,6 +1,7 @@
 package org.tstrans.webrtc;
 
 import java.util.Objects;
+import org.tstrans.Redact;
 
 /**
  * How a {@link WhepServer} binds. The {@code whep://} or {@code wheps://} URL
@@ -18,6 +19,6 @@ public record WhepServerConfig(String bindUrl) {
     }
 
     @Override public String toString() {
-        return "WhepServerConfig[bindUrl=" + org.tstrans.Redact.url(bindUrl) + "]";
+        return "WhepServerConfig[bindUrl=" + Redact.url(bindUrl) + "]";
     }
 }

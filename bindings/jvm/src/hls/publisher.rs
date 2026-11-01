@@ -27,6 +27,7 @@ use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::publisher::{Publisher, PublisherStats};
+use tst_core::url::redact_url;
 use tst_hls::{HlsError, HlsMode, HlsPublisher, HlsPublisherBuilder};
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
@@ -149,7 +150,7 @@ jni_native! {
             Some(u) => match HlsPublisherBuilder::from_url(&u) {
                 Ok(b) => b,
                 Err(e) => {
-                    hls_error(env, BindingError::new(BindingErrorKind::HlsUrl, e.to_string()));
+                    hls_error(env, BindingError::new(BindingErrorKind::HlsUrl, redact_url(&e.to_string())));
                     return 0;
                 }
             },
@@ -163,7 +164,7 @@ jni_native! {
                 Err(e) => {
                     let _ = env.throw_new(
                         FindClass(jni_str!("java/lang/IllegalArgumentException")),
-                        JNIString::from(format!("invalid bind address {addr:?}: {e}")),
+                        JNIString::from(format!("invalid bind address {:?}: {e}", redact_url(&addr))),
                     );
                     return 0;
                 }
