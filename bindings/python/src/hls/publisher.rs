@@ -33,6 +33,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use tst_core::publisher::Publisher;
+use tst_core::url::redact_url;
 use tst_hls::{HlsError, HlsMode, HlsPublisher, HlsPublisherBuilder, HlsServerHandle};
 
 use crate::generated::stats_hls::HlsStats;
@@ -296,9 +297,9 @@ impl PyHlsPublisherBuilder {
     /// HTTP server bind address (e.g. `"127.0.0.1:0"` for an OS-assigned
     /// port). Raises `ValueError` on a malformed socket address.
     fn bind<'py>(mut slf: PyRefMut<'py, Self>, addr: &str) -> PyResult<PyRefMut<'py, Self>> {
-        let parsed: SocketAddr = addr
-            .parse()
-            .map_err(|e| PyValueError::new_err(format!("invalid bind address {addr:?}: {e}")))?;
+        let parsed: SocketAddr = addr.parse().map_err(|e| {
+            PyValueError::new_err(format!("invalid bind address {:?}: {e}", redact_url(addr)))
+        })?;
         slf.apply(|b| {
             b.bind(parsed);
         })?;
@@ -402,7 +403,7 @@ impl PyHlsPublisherBuilder {
             raise(
                 py,
                 &HLS,
-                BindingError::new(BindingErrorKind::HlsUrl, e.to_string()),
+                BindingError::new(BindingErrorKind::HlsUrl, redact_url(&e.to_string())),
             )
         })?;
         slf.inner = Some(b);

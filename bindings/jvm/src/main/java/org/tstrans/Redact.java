@@ -74,9 +74,9 @@ public final class Redact {
         int i = 0;
         int copied = 0;
         while (i < token.length()) {
-            String key = (i == 0 || !isWord(token.charAt(i - 1))) ? keyAt(token, i) : null;
-            if (key != null) {
-                int valueStart = i + key.length() + 1;
+            int keyLen = (i == 0 || !isWord(token.charAt(i - 1))) ? secretKeyLen(token, i) : -1;
+            if (keyLen >= 0) {
+                int valueStart = i + keyLen + 1;
                 int amp = token.indexOf('&', valueStart);
                 int valueEnd = amp < 0 ? token.length() : amp;
                 out.append(token, copied, valueStart).append(REDACTED);
@@ -89,13 +89,32 @@ public final class Redact {
         out.append(token, copied, token.length());
     }
 
-    private static String keyAt(String token, int i) {
-        for (String k : SECRET_KEYS) {
-            if (token.startsWith(k + "=", i)) {
-                return k;
+    /**
+     * Length of the key at {@code i} when it is {@code <key>=} and the key, percent-decoded, is a
+     * secret key (the URL parser decodes key names, so {@code pass%70hrase=x} sets the passphrase);
+     * -1 otherwise.
+     */
+    private static int secretKeyLen(String token, int i) {
+        int end = i;
+        while (end < token.length() && (isWord(token.charAt(end)) || token.charAt(end) == '%')) {
+            end++;
+        }
+        if (end >= token.length() || token.charAt(end) != '=') {
+            return -1;
+        }
+        StringBuilder decoded = new StringBuilder(end - i);
+        for (int j = i; j < end; ) {
+            int hi = j + 2 < end && token.charAt(j) == '%' ? Character.digit(token.charAt(j + 1), 16) : -1;
+            int lo = hi < 0 ? -1 : Character.digit(token.charAt(j + 2), 16);
+            if (hi >= 0 && lo >= 0) {
+                decoded.append((char) (hi * 16 + lo));
+                j += 3;
+            } else {
+                decoded.append(token.charAt(j));
+                j++;
             }
         }
-        return null;
+        return java.util.Arrays.asList(SECRET_KEYS).contains(decoded.toString()) ? end - i : -1;
     }
 
     /** Token separators: ASCII whitespace and the no-break space; identical to the Rust helper. */

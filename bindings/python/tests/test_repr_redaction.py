@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import tstrans.hls as hls
 import tstrans.rist as rist
 import tstrans.rtp as rtp
 import tstrans.srt as srt
@@ -79,3 +80,15 @@ def test_access_control_repr_hides_values():
     assert SECRET not in text and "admin" not in text, text
     assert '"u"' in text and '"r"' in text, text
     assert text.count("<redacted>") == 2, text
+
+
+def test_hls_builder_bind_error_text():
+    with pytest.raises(ValueError) as exc:
+        hls.HlsPublisherBuilder().bind(f"u:{SECRET}@10.0.0.5")
+    _clean(str(exc.value), "10.0.0.5")
+
+
+def test_hls_builder_from_url_error_text():
+    with pytest.raises(Exception) as exc:
+        hls.HlsPublisherBuilder().from_url(f"hls://u:{SECRET}@10.0.0.5:x/p")
+    assert SECRET not in str(exc.value), str(exc.value)
