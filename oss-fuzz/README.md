@@ -97,7 +97,7 @@ To enable it:
 1. Create a repository `aklofas/ts-transformer-fuzzcorpus` (private is fine).
 2. Create a fine-grained personal access token with Contents read and write
    on that repository only, and add it to this repository as a
-   **repository** secret named `PERSONAL_ACCESS_TOKEN` (not an environment
+   **repository** secret named `FUZZ_CORPUS_TOKEN` (not an environment
    secret).
 3. Nothing else: both workflows pass the storage repo URL whenever that
    secret exists (`main` for corpora, `gh-pages` for coverage).
