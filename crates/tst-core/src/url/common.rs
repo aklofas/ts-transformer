@@ -189,7 +189,7 @@ fn split_host_port(s: &str) -> Result<(&str, Option<u16>), UrlError> {
             None
         } else {
             return Err(UrlError::MalformedIpv6Literal {
-                got: after.to_string(),
+                got: redact_non_digits(after),
             });
         };
         Ok((host, port))
@@ -202,6 +202,16 @@ fn split_host_port(s: &str) -> Result<(&str, Option<u16>), UrlError> {
     }
 }
 
+/// `s` itself when it is all digits, else `<redacted>`: a malformed userinfo
+/// can put password text where a port or the text after `]` is expected.
+fn redact_non_digits(s: &str) -> String {
+    if s.bytes().all(|b| b.is_ascii_digit()) {
+        s.to_string()
+    } else {
+        "<redacted>".to_string()
+    }
+}
+
 /// Parse a port from a decimal string. Returns [`UrlError::InvalidPort`]
 /// on parse failure or out-of-range value.
 ///
@@ -209,11 +219,7 @@ fn split_host_port(s: &str) -> Result<(&str, Option<u16>), UrlError> {
 /// such as `u:pa/ss@h` splits the password into the "port".
 fn parse_port(s: &str) -> Result<u16, UrlError> {
     s.parse::<u16>().map_err(|e| UrlError::InvalidPort {
-        got: if s.bytes().all(|b| b.is_ascii_digit()) {
-            s.to_string()
-        } else {
-            "<redacted>".to_string()
-        },
+        got: redact_non_digits(s),
         detail: e.to_string(),
     })
 }

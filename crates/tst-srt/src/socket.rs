@@ -79,7 +79,10 @@ impl std::fmt::Debug for SrtSocket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SrtSocket")
             .field("handle", &self.handle)
-            .field("stream_id", &self.cached_stream_id)
+            .field(
+                "stream_id",
+                &self.cached_stream_id.as_ref().map(|_| "<redacted>"),
+            )
             .field("payload_limit", &self.cached_payload_limit)
             .finish()
     }
@@ -1061,6 +1064,22 @@ mod tests {
         );
         assert_eq!(get_i64(h, srt_sys::SRT_SOCKOPT_SRTO_INPUTBW), 1_000_000);
         unsafe { srt_sys::srt_close(h) };
+    }
+
+    /// A socket's `Debug` never prints the stream ID it carries.
+    #[test]
+    fn debug_hides_the_stream_id() {
+        super::ensure_initialized();
+        let handle = unsafe { srt_sys::srt_create_socket() };
+        let sock = super::SrtSocket {
+            handle,
+            cancel: super::make_cancel_handle(handle),
+            cached_stream_id: Some("hunter2-stream".to_string()),
+            cached_payload_limit: 1316,
+        };
+        let text = format!("{sock:?}");
+        assert!(!text.contains("hunter2"), "{text}");
+        assert!(text.contains("<redacted>"), "{text}");
     }
 
     /// An unset key length leaves SRTO_PBKEYLEN at libsrt's 0 (negotiate),

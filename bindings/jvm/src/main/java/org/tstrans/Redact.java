@@ -6,14 +6,16 @@ package org.tstrans;
  * <p><b>Implementation detail.</b> Public only so the sibling packages can call it; not part of
  * the stable API. Mirrors {@code tst_core::url::redact_url} rule for rule: the password of
  * {@code user:password@host} userinfo and the values of the query keys {@code passphrase},
- * {@code secret}, {@code token}, {@code auth_pass} and {@code password} become
- * {@code <redacted>}. Key matching is exact and lower-case. The scrub is a text pass over each
- * whitespace- (ASCII or U+00A0) or quote-delimited token, so a malformed URL, or a message that embeds one, never
- * leaks either kind of secret.
+ * {@code secret}, {@code token}, {@code auth_pass}, {@code password}, {@code streamid} and
+ * {@code srt_streamid} become {@code <redacted>}. Key matching is exact and lower-case. The scrub
+ * is a text pass over each whitespace- (ASCII or U+00A0) or quote-delimited token, so a malformed
+ * URL, or a message that embeds one, never leaks either kind of secret. It errs toward
+ * redacting: any later {@code @} ends the userinfo, so {@code srt://h:9000/a@b} loses
+ * {@code 9000/a}.
  */
 public final class Redact {
     private static final String[] SECRET_KEYS =
-        {"passphrase", "secret", "token", "auth_pass", "password"};
+        {"passphrase", "secret", "token", "auth_pass", "password", "streamid", "srt_streamid"};
     private static final String REDACTED = "<redacted>";
 
     private Redact() {}
@@ -44,10 +46,21 @@ public final class Redact {
         queryValues(scrubbed.toString(), out);
     }
 
-    /** The password sits before the last {@code @} that precedes any {@code ?}; it may contain {@code /} or {@code @}. */
+    /**
+     * The password sits before the last {@code @} that precedes any {@code ?}; it may contain
+     * {@code /} or {@code @}. A {@code ?} whose following text reaches an {@code @} with no
+     * {@code =} in between is password text too ({@code u:pa?ss@h}).
+     */
     private static void userinfo(String rest, StringBuilder out) {
         int q = rest.indexOf('?');
+        int lastAt = rest.lastIndexOf('@');
         int limit = q < 0 ? rest.length() : q;
+        if (q >= 0 && lastAt > q) {
+            int eq = rest.indexOf('=', q);
+            if (eq < 0 || eq > lastAt) {
+                limit = rest.length();
+            }
+        }
         int at = rest.lastIndexOf('@', limit - 1);
         int colon = at < 0 ? -1 : rest.indexOf(':');
         if (at >= 0 && colon >= 0 && colon < at) {

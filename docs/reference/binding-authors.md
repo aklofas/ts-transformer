@@ -367,7 +367,7 @@ before receivers when both share state.
 
 ## Secrets in string forms
 
-Secrets never appear in a `repr`, `Debug`, `toString` or error message: URL userinfo passwords, the values of the `passphrase`, `secret`, `token`, `auth_pass` and `password` query keys, bearer tokens, and SRT stream-ID values all count. A binding that formats a URL or a config into text uses `tst_core::url::redact_url` (Rust and Python) or its Java twin `org.tstrans.Redact.url`; a new sink must call the helper rather than format the raw string. Types that hold secrets implement `Debug` by hand and print `<redacted>` for the value.
+Known secrets never appear in a `repr`, `Debug`, `toString` or error message: URL userinfo passwords, the values of the `passphrase`, `secret`, `token`, `auth_pass`, `password`, `streamid` and `srt_streamid` query keys (keys match case-sensitively, in exact lowercase), bearer tokens, and SRT stream-ID values all count. A binding that formats a URL or a config into text uses `tst_core::url::redact_url` (Rust and Python) or its Java twin `org.tstrans.Redact.url`; a new sink must call the helper rather than format the raw string. Types that hold secrets implement `Debug` by hand and print `<redacted>` for the value.
 
 ## Versioning
 
