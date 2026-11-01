@@ -419,17 +419,24 @@ fn serve() -> Result<(), Box<dyn std::error::Error>> {
   A caller with no stream ID, including a handshake-v4 caller, or one whose
   stream ID is not valid UTF-8, is checked against the default rule.
 - **A handshake-v4 caller is refused wherever a passphrase applies**: a
-  builder or URL passphrase on the listener, or an `AcceptWith` rule that
-  decides the caller. v4 callers cannot carry the key material, so the
-  listener refuses them with `RejectReason::VersionUnsupported` (1505) and
-  the caller sees the connection closed. Without a passphrase they connect
-  as before and get the default rule.
+  builder, URL or config passphrase on the listener, or an `AcceptWith` rule
+  that decides the caller. This includes a legacy encoder (libsrt before
+  1.3.0) that holds the right passphrase and would have keyed after
+  connecting: libsrt admits a v4 caller that never keys and the hook cannot
+  tell the two apart. The listener refuses it with
+  `RejectReason::VersionUnsupported` internally; no reject code reaches the
+  caller, which sees the connection closed. Upgrade the caller to libsrt 1.3
+  or later. Without a passphrase, v4 callers connect as before and get the
+  default rule.
 - **`accept()` checks the identity it matched.** If an accepted socket
   reports a stream ID that differs from the one the rules decided on, the
   socket is closed and the listener keeps waiting. This covers a handshake
   that carries its stream ID twice, and holds with a host libsrt too.
   `SrtSocket::stream_id()` drops libsrt's trailing NUL padding, so a
-  one-character ID reads back as itself.
+  one-character ID reads back as itself. A burst of more than 1024
+  handshakes that pass the hook but never reach `accept()` can evict a
+  legitimate caller's record, and `accept()` then closes that caller: an
+  availability loss, never an admission.
 - **The default rule is `Accept`.** A listener whose table you never touch
   behaves exactly as it did before, including a builder-wide passphrase.
 - **`Reject` codes run from 1000 to `i32::MAX - 1000`.** Lower codes

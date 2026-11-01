@@ -477,13 +477,13 @@ with Builder("srt://127.0.0.1:9000?mode=listener").listener().listen() as listen
         rules.set(sid, ListenRule.reject(RejectReason.CONFLICT))
 ```
 
-`set` and `set_default` raise `SrtError(CONFIG_INVALID)` for a bad passphrase. `rules.remove(stream_id)` returns whether a rule existed, `rules.clear()`
+`rules.remove(stream_id)` returns whether a rule existed, `rules.clear()`
 drops every explicit rule, and `len(rules)` counts them. `ListenRule.reject`
-takes a code of 1000 or more (`ValueError` below that) and `set` raises
-`SrtError(CONFIG_INVALID)` for a code above 2147482647, which libsrt cannot
-send; `user_defined(code)` builds an application code of 2000 or more. A
-stream ID or rule key holding a NUL byte also raises `SrtError(CONFIG_INVALID)`. Every `ListenRules` method
-raises `SrtError(CLOSED)` once the listener is closed. A rule installed after
+takes a code of 1000 or more (`ValueError` below that);
+`user_defined(code)` builds an application code of 2000 or more. `set` and
+`set_default` raise `SrtError(CONFIG_INVALID)` for a bad passphrase, a reject
+code above 2147482647 (which libsrt cannot send), or a NUL byte in a stream
+ID or rule key. Every `ListenRules` method raises `SrtError(CLOSED)` once the listener is closed. A rule installed after
 `accept()` returns does not cover a caller whose handshake already
 completed, so keep your own check after `accept()` when it matters. A
 refused caller's connect fails with `SrtError(CONNECT_FAILED)`, with the

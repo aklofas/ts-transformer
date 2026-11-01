@@ -36,10 +36,13 @@ pub enum ListenRule {
     /// listener-wide `SrtListenerBuilder::key_length` only advertises a
     /// preference to callers that leave theirs unset.
     ///
-    /// A handshake-v4 caller (libsrt before 1.3.0) is refused with
-    /// [`RejectReason::VersionUnsupported`] wherever a passphrase applies:
-    /// HSv4 keying happens after the connection, and libsrt admits a v4
-    /// caller that never sends it.
+    /// Every handshake-v4 caller (libsrt before 1.3.0) is refused wherever a
+    /// passphrase applies, including a legacy encoder that holds the right
+    /// passphrase and would have keyed after connecting: HSv4 keying happens
+    /// after the connection, libsrt admits a v4 caller that never keys, and
+    /// the hook cannot tell them apart. The listener refuses it with
+    /// [`RejectReason::VersionUnsupported`] internally; no reject code
+    /// reaches a v4 caller, which sees the connection closed.
     AcceptWith {
         /// The passphrase the connection must use.
         passphrase: Passphrase,
@@ -83,8 +86,10 @@ pub enum ListenRuleError {
 ///
 /// Matching is exact on the stream ID. A caller with no stream ID, an empty
 /// one, or one that is not UTF-8 gets the default rule.
-/// A key or stream ID holding a NUL byte is refused (`InteriorNul`), because
-/// libsrt hands the listen hook the stream ID as a C string.
+/// A key holding a NUL byte is refused ([`ListenRuleError::InteriorNul`]),
+/// because libsrt hands the listen hook the stream ID as a C string. A caller
+/// whose stream ID holds a NUL is matched up to the NUL by libsrt, and
+/// `accept` closes its socket.
 #[derive(Clone)]
 pub struct ListenRules {
     inner: Arc<Inner>,
@@ -93,7 +98,7 @@ pub struct ListenRules {
 pub(crate) struct Inner {
     table: RwLock<Table>,
     closed: AtomicBool,
-    /// The listener itself carries a passphrase (builder or URL).
+    /// The listener itself carries a passphrase (builder, URL or config field).
     listener_passphrase: bool,
     /// The stream ID the hook matched for each socket it accepted, newest
     /// last; `accept` checks the socket against it.
@@ -194,6 +199,13 @@ impl ListenRules {
     /// Set the rule for callers whose stream ID is exactly `stream_id`,
     /// replacing any rule already there. A rule for the empty string is
     /// stored but never matches: an empty stream ID gets the default.
+    ///
+    /// # Errors
+    ///
+    /// [`ListenRuleError::InternalReason`] or
+    /// [`ListenRuleError::ReasonOutOfRange`] for a `Reject` code libsrt
+    /// cannot send, [`ListenRuleError::InteriorNul`] for a key holding a NUL
+    /// byte, and [`ListenRuleError::Closed`] once the listener is closed.
     pub fn set(&self, stream_id: &str, rule: ListenRule) -> Result<(), ListenRuleError> {
         if stream_id.contains('\0') {
             return Err(ListenRuleError::InteriorNul);
@@ -414,6 +426,9 @@ mod tests {
         };
         let reject = ListenRule::Reject(RejectReason::Forbidden);
         for (hs, pw, rule, want) in [
+            (0, false, &ListenRule::Accept, false),
+            (0, true, &ListenRule::Accept, true),
+            (0, true, &with, true),
             (4, false, &ListenRule::Accept, false),
             (4, true, &ListenRule::Accept, true),
             (4, false, &with, true),
