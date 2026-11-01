@@ -54,6 +54,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `DemuxerConfig.Builder.strictMode(null)` and `av1Carriage(null)` throw `NullPointerException`.
 - `Builder.maxBandwidthBps` is documented as bytes per second; the value was always passed to `SRTO_MAXBW` unchanged.
 
+### Security — tst-jni
+
+- The JVM native loader extracted `libtstjni` into a predictable directory under the shared `java.io.tmpdir` and reused a library found there after a size and CRC32 check (unconditionally before that check existed). On a multi-user Linux host another local account could plant a library that the victim's JVM then loaded. Affected: 0.3.0 through 0.9.0. The loader now uses a per-user owner-only directory (`tstrans-native-<user>`) whose owner and mode it verifies, checks cached files by SHA-256 and refuses symbolic links, and extracts into a fresh private temp directory when the per-user one cannot be trusted. On affected versions, start the JVM with `-Djava.io.tmpdir=<private directory>` or `-Dtstrans.native.lib=<path to a trusted libtstjni>`. No advisory is published (pre-1.0).
+
 ### Fixed — tst-jni
 
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
