@@ -7570,6 +7570,7 @@ pub fn tst_core::url::parse_host_port(&str) -> core::result::Result<(core::net::
 pub fn tst_core::url::parse_int<T>(&str, &str) -> core::result::Result<T, tst_core::url::common::UrlError> where T: core::str::traits::FromStr, <T as core::str::traits::FromStr>::Err: core::fmt::Display
 pub fn tst_core::url::parse_size(&str, &str) -> core::result::Result<usize, tst_core::url::common::UrlError>
 pub fn tst_core::url::parse_url(&str) -> core::result::Result<tst_core::url::common::ParsedUrl<'_>, tst_core::url::common::UrlError>
+pub fn tst_core::url::redact_url(&str) -> alloc::string::String
 pub macro tst_core::binding_record!
 #[non_exhaustive] pub enum tst_core::BrokenCause
 pub tst_core::BrokenCause::CleanEof

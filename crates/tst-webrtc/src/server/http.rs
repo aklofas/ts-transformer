@@ -41,7 +41,9 @@ pub enum Method {
 }
 
 /// A parsed request head.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` redacts the bearer token.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Request {
     /// The method.
     pub method: Method,
@@ -55,6 +57,19 @@ pub struct Request {
     pub bearer: Option<String>,
     /// The `Origin` value, if present.
     pub origin: Option<String>,
+}
+
+impl std::fmt::Debug for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("path", &self.path)
+            .field("content_type", &self.content_type)
+            .field("content_length", &self.content_length)
+            .field("bearer", &self.bearer.as_ref().map(|_| "<redacted>"))
+            .field("origin", &self.origin)
+            .finish()
+    }
 }
 
 /// The outcome of [`parse_head`].
@@ -337,5 +352,25 @@ pub fn resp(status: u16, body: impl Into<Vec<u8>>) -> Response {
         reason,
         headers: Vec::new(),
         body: body.into(),
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn debug_never_prints_the_bearer_token() {
+        let head = b"POST /cam1 HTTP/1.1\r\nAuthorization: Bearer s3cr3tT0ken\r\n\r\n";
+        let HeadParse::Done { request, .. } = parse_head(head) else {
+            panic!("head did not parse");
+        };
+        assert_eq!(request.bearer.as_deref(), Some("s3cr3tT0ken"));
+        let shown = format!("{request:?}");
+        assert!(!shown.contains("s3cr3tT0ken"), "{shown}");
+        assert!(
+            shown.contains("/cam1") && shown.contains("<redacted>"),
+            "{shown}"
+        );
     }
 }

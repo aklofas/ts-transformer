@@ -5,14 +5,19 @@
 //! the form has no escaping, so a value cannot contain a comma.
 
 /// The pairs of a `#!::` stream ID, in the order they appeared.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` prints the keys and `<redacted>` for every value: stream-ID
+/// values carry user names and tokens.
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AccessControl {
     pairs: Vec<(String, String)>,
 }
 
 /// The `t` key: what the caller wants to transfer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` redacts the value of [`AccessKind::Other`].
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AccessKind {
     /// `t=stream` or no `t` key.
@@ -26,7 +31,9 @@ pub enum AccessKind {
 }
 
 /// The `m` key: the direction of the transfer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` redacts the value of [`AccessMode::Other`].
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AccessMode {
     /// `m=request` or no `m` key.
@@ -37,6 +44,44 @@ pub enum AccessMode {
     Bidirectional,
     /// Any other value, as given.
     Other(String),
+}
+
+impl core::fmt::Debug for AccessControl {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        struct Pairs<'a>(&'a [(String, String)]);
+        impl core::fmt::Debug for Pairs<'_> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.debug_list()
+                    .entries(self.0.iter().map(|(k, _)| (k, "<redacted>")))
+                    .finish()
+            }
+        }
+        f.debug_struct("AccessControl")
+            .field("pairs", &Pairs(&self.pairs))
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for AccessKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Stream => f.write_str("Stream"),
+            Self::File => f.write_str("File"),
+            Self::Auth => f.write_str("Auth"),
+            Self::Other(_) => f.debug_tuple("Other").field(&"<redacted>").finish(),
+        }
+    }
+}
+
+impl core::fmt::Debug for AccessMode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Request => f.write_str("Request"),
+            Self::Publish => f.write_str("Publish"),
+            Self::Bidirectional => f.write_str("Bidirectional"),
+            Self::Other(_) => f.debug_tuple("Other").field(&"<redacted>").finish(),
+        }
+    }
 }
 
 /// Why a stream ID did not parse as an access-control string.
@@ -150,6 +195,20 @@ impl AccessControl {
 mod tests {
     use super::*;
     use crate::options::StreamId;
+
+    #[test]
+    fn debug_prints_keys_and_never_values() {
+        let ac = AccessControl::parse("#!::u=admin,s=token1,t=weird,m=odd").unwrap();
+        let shown = format!("{ac:?} {:?} {:?}", ac.kind(), ac.mode());
+        for secret in ["admin", "token1", "weird", "odd"] {
+            assert!(!shown.contains(secret), "{shown}");
+        }
+        assert!(
+            shown.contains("\"u\"") && shown.contains("\"s\""),
+            "{shown}"
+        );
+        assert!(shown.contains("<redacted>"), "{shown}");
+    }
 
     #[test]
     fn doc_example_user_and_resource() {
