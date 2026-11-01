@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[path = "build/host_lib.rs"]
 mod host_lib;
@@ -173,6 +173,9 @@ fn main() {
     // two top-level files (each carries the version) is enough to catch
     // every pin change without recursively statting the whole submodule.
     println!("cargo:rerun-if-changed=vendor/srt/CMakeLists.txt");
+    // The file `SOURCE_FIXUPS` patches: a bump that changes it must re-run
+    // the fixup check even when CMakeLists.txt is untouched.
+    println!("cargo:rerun-if-changed=vendor/srt/srtcore/core.cpp");
     println!(
         "cargo:rerun-if-changed={}",
         tstrans_mbedtls_src::source_dir()
@@ -298,6 +301,9 @@ fn main() {
 
 /// Build the vendored libsrt source via cmake.
 ///
+/// cmake builds a staged copy under `OUT_DIR` (see [`SOURCE_FIXUPS`]), never
+/// the submodule itself.
+///
 /// If `mbedtls_prefix` is `Some`, libsrt is configured with
 /// `ENABLE_ENCRYPTION=ON` + `USE_ENCLIB=mbedtls` and uses the prefix
 /// to locate mbedTLS via `find_package(MbedTLS)`.
@@ -315,7 +321,14 @@ fn build_vendored(mbedtls_prefix: Option<&PathBuf>, sanitizer: Option<&str>) -> 
         );
     }
 
-    let mut cfg = cmake::Config::new(&vendor_dir);
+    let source_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("libsrt-src");
+    stage_vendored_source(&vendor_dir, &source_dir);
+    apply_source_fixups(&vendor_dir, &source_dir);
+    // `DEP_SRT_SOURCE_FIXUPS` for dependents' build scripts: tests that need
+    // the corrected behaviour gate on it, since a system libsrt lacks it.
+    println!("cargo:source_fixups=1");
+
+    let mut cfg = cmake::Config::new(&source_dir);
     cfg.define("ENABLE_APPS", "OFF")
         .define("ENABLE_SHARED", "OFF")
         .define("ENABLE_STATIC", "ON")
@@ -407,4 +420,197 @@ fn build_vendored(mbedtls_prefix: Option<&PathBuf>, sanitizer: Option<&str>) -> 
     }
 
     vec![dst.join("include")]
+}
+
+/// A source correction applied to the staged copy of `vendor/srt`, so the
+/// submodule stays pinned at the upstream commit and untouched.
+struct SourceFixup {
+    /// Named in the panic when the fixup stops matching.
+    name: &'static str,
+    /// Path relative to the libsrt source root.
+    file: &'static str,
+    old: &'static str,
+    new: &'static str,
+}
+
+const SOURCE_FIXUPS: &[SourceFixup] = &[
+    SourceFixup {
+        // libsrt's accept hook copies every SID block over the same buffer and
+        // passes the first, while the socket keeps the last: two blocks let a
+        // rule decide on one stream ID and admit another. Refuse the repeat.
+        name: "repeated-sid-block: accept hook",
+        file: "srtcore/core.cpp",
+        old: "\x20       for (;;) // ONE SHOT, but continuable loop\n\
+              \x20       {\n\
+              \x20           int cmd = FindExtensionBlock(begin, length, (blocklen), (next));\n\
+              \n\
+              \x20           const size_t bytelen = blocklen * sizeof(uint32_t);\n\
+              \n\
+              \x20           if (cmd == SRT_CMD_SID)\n\
+              \x20           {\n",
+        new: "\x20       bool have_sid = false;\n\
+              \x20       for (;;) // ONE SHOT, but continuable loop\n\
+              \x20       {\n\
+              \x20           int cmd = FindExtensionBlock(begin, length, (blocklen), (next));\n\
+              \n\
+              \x20           const size_t bytelen = blocklen * sizeof(uint32_t);\n\
+              \n\
+              \x20           if (cmd == SRT_CMD_SID)\n\
+              \x20           {\n\
+              \x20               // A repeated SID block would let this hook and the socket's own parser\n\
+              \x20               // read different stream IDs; refuse it like a repeated CONGESTION block.\n\
+              \x20               if (have_sid)\n\
+              \x20               {\n\
+              \x20                   acore->m_RejectReason = SRT_REJ_ROGUE;\n\
+              \x20                   LOGC(cnlog.Error, log << CONID() << \"STREAMID BLOCK REPEATED!\");\n\
+              \x20                   return false;\n\
+              \x20               }\n\
+              \x20               have_sid = true;\n",
+    },
+    SourceFixup {
+        // The handshake parser's flag for the guard below.
+        name: "repeated-sid-block: handshake flag",
+        file: "srtcore/core.cpp",
+        old: "\x20   bool   have_congctl = false;\n\
+              \x20   bool   have_filter  = false;\n",
+        new: "\x20   bool   have_congctl = false;\n\
+              \x20   bool   have_filter  = false;\n\
+              \x20   bool   have_sid     = false;\n",
+    },
+    SourceFixup {
+        // The socket's own parse refuses the repeat too, so a listener with no
+        // accept hook reads one stream ID like every other.
+        name: "repeated-sid-block: handshake",
+        file: "srtcore/core.cpp",
+        old: "\x20           const size_t bytelen = blocklen * sizeof(uint32_t);\n\
+              \x20           if (cmd == SRT_CMD_SID)\n\
+              \x20           {\n",
+        new: "\x20           const size_t bytelen = blocklen * sizeof(uint32_t);\n\
+              \x20           if (cmd == SRT_CMD_SID)\n\
+              \x20           {\n\
+              \x20               // A repeated SID block would let the accept hook and this parser read\n\
+              \x20               // different stream IDs; refuse it like a repeated CONGESTION block.\n\
+              \x20               if (have_sid)\n\
+              \x20               {\n\
+              \x20                   m_RejectReason = SRT_REJ_ROGUE;\n\
+              \x20                   LOGC(cnlog.Error, log << CONID() << \"STREAMID BLOCK REPEATED!\");\n\
+              \x20                   return false;\n\
+              \x20               }\n\
+              \x20               have_sid = true;\n",
+    },
+];
+
+/// Paths under `vendor/srt` that are not staged. KEEP IN SYNC with the
+/// `vendor/srt/…` entries of Cargo.toml's `exclude` list (prefix stripped),
+/// so a build from the git checkout compiles exactly the tree a build from
+/// the published crate does. `.git` is a file (submodule) or directory that
+/// the package never carries either.
+const STAGE_SKIP: &[&str] = &[
+    ".git",
+    "apps",
+    "docs",
+    "test",
+    "testing",
+    ".github",
+    "examples",
+    "submodules",
+];
+
+/// Copies the vendored tree to `staged`, skipping [`STAGE_SKIP`] and the
+/// [`SOURCE_FIXUPS`] targets (which [`apply_source_fixups`] writes). A file is
+/// written only when it is missing or its bytes differ, so a re-run keeps
+/// mtimes and the native build rebuilds nothing. Nothing is ever deleted from
+/// `staged`.
+fn stage_vendored_source(vendor_dir: &Path, staged: &Path) {
+    fn copy_dir(src_root: &Path, src: &Path, dst_root: &Path) {
+        let entries = std::fs::read_dir(src)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()));
+        for entry in entries {
+            let entry = entry.unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()));
+            let path = entry.path();
+            let rel = path.strip_prefix(src_root).unwrap();
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            if STAGE_SKIP.contains(&rel_str.as_str())
+                || SOURCE_FIXUPS.iter().any(|f| f.file == rel_str)
+            {
+                continue;
+            }
+            let dst = dst_root.join(rel);
+            let file_type = entry
+                .file_type()
+                .unwrap_or_else(|e| panic!("Failed to stat {}: {e}", path.display()));
+            if file_type.is_dir() {
+                std::fs::create_dir_all(&dst)
+                    .unwrap_or_else(|e| panic!("Failed to create {}: {e}", dst.display()));
+                copy_dir(src_root, &path, dst_root);
+            } else {
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
+                write_if_changed(&dst, &bytes);
+            }
+        }
+    }
+    std::fs::create_dir_all(staged)
+        .unwrap_or_else(|e| panic!("Failed to create {}: {e}", staged.display()));
+    copy_dir(vendor_dir, vendor_dir, staged);
+}
+
+/// Writes each [`SOURCE_FIXUPS`] target into the staged tree with its fixups
+/// applied in table order, cumulatively per file. The text is read from the
+/// pristine `vendor_dir`, never from the staged copy, so a re-run sees the
+/// upstream bytes and writes nothing new. Panics unless each fixup's `old`
+/// text occurs exactly once in the text the earlier fixups of that file
+/// left, so a vendor bump that changes the patched code fails the build
+/// instead of silently shipping the bug or a double patch, and panics when a
+/// later fixup erases an earlier one's `new` text.
+fn apply_source_fixups(vendor_dir: &Path, staged: &Path) {
+    let mut files: Vec<&str> = Vec::new();
+    for fixup in SOURCE_FIXUPS {
+        if !files.contains(&fixup.file) {
+            files.push(fixup.file);
+        }
+    }
+    for file in files {
+        let fixups: Vec<&SourceFixup> = SOURCE_FIXUPS.iter().filter(|f| f.file == file).collect();
+        let src = vendor_dir.join(file);
+        // The Windows checkout rewrites line endings to CRLF; the fixup text is LF.
+        let mut text = std::fs::read_to_string(&src)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()))
+            .replace("\r\n", "\n");
+        for fixup in &fixups {
+            match text.matches(fixup.old).count() {
+                1 => text = text.replacen(fixup.old, fixup.new, 1),
+                0 if text.contains(fixup.new) => panic!(
+                    "srt-sys source fixup `{}` no longer matches {}: upstream now carries \
+                     this fix: delete the fixup from SOURCE_FIXUPS in build.rs",
+                    fixup.name, file
+                ),
+                n => panic!(
+                    "srt-sys source fixup `{}` matched {n} times in {} (expected exactly \
+                     once): refresh the fixup text against the bumped source",
+                    fixup.name, file
+                ),
+            }
+        }
+        for (i, fixup) in fixups.iter().enumerate() {
+            if !text.contains(fixup.new) {
+                let later: Vec<&str> = fixups[i + 1..].iter().map(|f| f.name).collect();
+                panic!(
+                    "srt-sys source fixup `{}` in {} was overwritten by a later fixup \
+                     (one of {later:?}): make their `old` texts disjoint",
+                    fixup.name, file
+                );
+            }
+        }
+        write_if_changed(&staged.join(file), text.as_bytes());
+    }
+}
+
+/// Writes `bytes` to `path` only when the file is missing or differs.
+fn write_if_changed(path: &Path, bytes: &[u8]) {
+    if std::fs::read(path).is_ok_and(|current| current == bytes) {
+        return;
+    }
+    std::fs::write(path, bytes)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {e}", path.display()));
 }
