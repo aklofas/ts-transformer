@@ -106,6 +106,14 @@ class RedactionTest {
     }
 
     @Test
+    void percentEncodedKeysAreRedacted() {
+        assertEquals("srt://h:1?pass%70hrase=<redacted>&x=1",
+            Redact.url("srt://h:1?pass%70hrase=abc&x=1"));
+        assertEquals("?%74oken=<redacted>", Redact.url("?%74oken=abc"));
+        assertEquals("srt://h:1?pass%7=abc", Redact.url("srt://h:1?pass%7=abc"));
+    }
+
+    @Test
     void plainTextIsUnchanged() {
         assertEquals("hello world", Redact.url("hello world"));
         assertEquals("", Redact.url(""));

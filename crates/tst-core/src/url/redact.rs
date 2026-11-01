@@ -2,6 +2,7 @@
 //! impl, a `repr` or an error message.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 
 /// Query keys whose values are secrets. Matched exactly, in lower case.
 const SECRET_KEYS: [&str; 7] = [
@@ -97,17 +98,9 @@ fn redact_query_values(token: &str, out: &mut String) {
         if i < skip_to {
             continue;
         }
-        let key = (!prev_word)
-            .then(|| {
-                SECRET_KEYS.iter().find(|k| {
-                    token[i..]
-                        .strip_prefix(**k)
-                        .is_some_and(|r| r.starts_with('='))
-                })
-            })
-            .flatten();
-        if let Some(key) = key {
-            let value_start = i + key.len() + 1;
+        let key_len = (!prev_word).then(|| secret_key_len(&token[i..])).flatten();
+        if let Some(key_len) = key_len {
+            let value_start = i + key_len + 1;
             let value_end = token[value_start..]
                 .find('&')
                 .map_or(token.len(), |n| value_start + n);
@@ -121,6 +114,43 @@ fn redact_query_values(token: &str, out: &mut String) {
         }
     }
     out.push_str(&token[copied..]);
+}
+
+/// Length of the key at the start of `s` when it is `<key>=` and the key,
+/// percent-decoded, is a secret key (the URL parser decodes key names, so
+/// `pass%70hrase=x` sets the passphrase).
+fn secret_key_len(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let len = bytes
+        .iter()
+        .take_while(|&&b| is_word_char(char::from(b)) || b == b'%')
+        .count();
+    if bytes.get(len) != Some(&b'=') {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(len);
+    let mut i = 0;
+    while i < len {
+        let hex = |b: u8| char::from(b).to_digit(16);
+        match (
+            bytes[i],
+            bytes.get(i + 1).and_then(|&b| hex(b)),
+            bytes.get(i + 2).and_then(|&b| hex(b)),
+        ) {
+            (b'%', Some(hi), Some(lo)) if i + 2 < len => {
+                decoded.push((hi * 16 + lo) as u8);
+                i += 3;
+            }
+            (b, ..) => {
+                decoded.push(b);
+                i += 1;
+            }
+        }
+    }
+    SECRET_KEYS
+        .iter()
+        .any(|k| k.as_bytes() == decoded.as_slice())
+        .then_some(len)
 }
 
 fn is_word_char(c: char) -> bool {
@@ -255,6 +285,16 @@ mod tests {
             redact_url("a,srt://u:p@h,srt://v:q@h2"),
             "a,srt://u:<redacted>@h2"
         );
+    }
+
+    #[test]
+    fn percent_encoded_keys_are_redacted() {
+        assert_eq!(
+            redact_url("srt://h:1?pass%70hrase=abc&x=1"),
+            "srt://h:1?pass%70hrase=<redacted>&x=1"
+        );
+        assert_eq!(redact_url("?%74oken=abc"), "?%74oken=<redacted>");
+        assert_eq!(redact_url("srt://h:1?pass%7=abc"), "srt://h:1?pass%7=abc");
     }
 
     #[test]
