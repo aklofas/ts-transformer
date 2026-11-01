@@ -389,6 +389,8 @@ impl TstRtspServerBuilder {
         #[cfg(feature = "tls")]
         if let (Some(cert), Some(key)) = (&self.tls_cert_pem, &self.tls_key_pem) {
             use secrecy::ExposeSecret;
+            // The clone handed to the Rust builder is not zeroed; only the copy
+            // this handle owns is.
             b.tls_cert_pem(cert.clone(), key.expose_secret().to_vec());
         }
         #[cfg(not(feature = "tls"))]
@@ -708,8 +710,15 @@ mod secret_password_tests {
     /// field's type is the contract.
     #[test]
     fn builder_tls_key_is_a_secret_slice() {
+        use crate::rtsp::server::builder::tst_rtsp_server_builder_tls_cert_pem;
         fn is_secret(_: &Option<secrecy::SecretSlice<u8>>) {}
-        is_secret(&None);
+        unsafe {
+            let s = tst_rtsp_server_builder_new(c"rtsps://127.0.0.1:0/".as_ptr());
+            tst_rtsp_server_builder_tls_cert_pem(s, b"c".as_ptr(), 1, b"k".as_ptr(), 1);
+            is_secret(&(*s).tls_key_pem);
+            assert!((*s).tls_key_pem.is_some());
+            tst_rtsp_server_builder_free(s);
+        }
     }
 
     /// A dropped or replaced password must go through secrecy's zeroizing drop:

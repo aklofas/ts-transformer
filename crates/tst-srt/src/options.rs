@@ -198,8 +198,14 @@ impl Congestion {
 
 /// `SRTO_STREAMID` — application-defined identifier sent during handshake.
 #[must_use]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StreamId(String);
+
+impl std::fmt::Debug for StreamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StreamId(<redacted>)")
+    }
+}
 
 impl StreamId {
     /// Accepts any UTF-8 string of at most 512 bytes (the SRT draft's limit).
@@ -398,6 +404,17 @@ mod tests {
     fn congestion_str() {
         assert_eq!(Congestion::Live.as_str(), "live");
         assert_eq!(Congestion::File.as_str(), "file");
+    }
+
+    #[test]
+    fn stream_id_debug_hides_the_value() {
+        let id = StreamId::new("hunter2-stream").unwrap();
+        assert_eq!(format!("{id:?}"), "StreamId(<redacted>)");
+        let cfg = crate::config::SrtSocketConfig {
+            stream_id: Some(id),
+            ..Default::default()
+        };
+        assert!(!format!("{cfg:?}").contains("hunter2"));
     }
 
     #[test]

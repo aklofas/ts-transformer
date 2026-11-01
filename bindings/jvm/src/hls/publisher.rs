@@ -150,7 +150,8 @@ jni_native! {
             Some(u) => match HlsPublisherBuilder::from_url(&u) {
                 Ok(b) => b,
                 Err(e) => {
-                    hls_error(env, BindingError::new(BindingErrorKind::HlsUrl, redact_url(&e.to_string())));
+                    let message = redact_url(&e.to_string());
+                    hls_error(env, BindingError::new(BindingErrorKind::HlsUrl, message));
                     return 0;
                 }
             },

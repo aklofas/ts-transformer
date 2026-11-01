@@ -80,6 +80,32 @@ class RedactionTest {
     }
 
     @Test
+    void streamIdKeysAreRedacted() {
+        assertEquals("srt://h:1?streamid=<redacted>&latency=1",
+            Redact.url("srt://h:1?streamid=#!::r=x&latency=1"));
+        assertEquals("srt://h:1?srt_streamid=<redacted>", Redact.url("srt://h:1?srt_streamid=abc"));
+    }
+
+    @Test
+    void rawQuestionMarkInPasswordIsRedacted() {
+        assertEquals("rtsp://admin:<redacted>@cam/s", Redact.url("rtsp://admin:pa?ss@cam/s"));
+        assertEquals("rtsp://admin:<redacted>@cam/s?token=<redacted>",
+            Redact.url("rtsp://admin:pa?ss@cam/s?token=t"));
+        assertEquals("srt://h:1?mail=a@b", Redact.url("srt://h:1?mail=a@b"));
+    }
+
+    @Test
+    void lateAtOverRedactsAndLeadingQueryKeyIsScrubbed() {
+        assertEquals("srt://h:<redacted>@b", Redact.url("srt://h:9000/a@b"));
+        assertEquals("?token=<redacted>", Redact.url("?token=abc"));
+    }
+
+    @Test
+    void severalUrlsInOneToken() {
+        assertEquals("a,srt://u:<redacted>@h2", Redact.url("a,srt://u:p@h,srt://v:q@h2"));
+    }
+
+    @Test
     void plainTextIsUnchanged() {
         assertEquals("hello world", Redact.url("hello world"));
         assertEquals("", Redact.url(""));

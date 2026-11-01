@@ -35,6 +35,17 @@ def test_srt_builder_repr():
     _clean(repr(srt.Builder(url)), "10.0.0.5:9000")
 
 
+@pytest.mark.parametrize("key", ["streamid", "srt_streamid"])
+def test_srt_builder_repr_hides_stream_id(key):
+    url = f"srt://10.0.0.5:9000?{key}={SECRET}"
+    _clean(repr(srt.Builder(url)), "10.0.0.5:9000")
+
+
+def test_rtsp_client_config_repr_password_with_question_mark():
+    url = f"rtsp://cam:{SECRET}?x@10.0.0.5:554/s"
+    _clean(repr(rtp.RtspClientConfig(url)), "10.0.0.5:554")
+
+
 def test_rtsp_client_config_repr():
     url = f"rtsp://cam:{SECRET}@10.0.0.5:554/s"
     _clean(repr(rtp.RtspClientConfig(url)), "10.0.0.5:554")

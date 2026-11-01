@@ -4,7 +4,15 @@
 use alloc::string::String;
 
 /// Query keys whose values are secrets. Matched exactly, in lower case.
-const SECRET_KEYS: [&str; 5] = ["passphrase", "secret", "token", "auth_pass", "password"];
+const SECRET_KEYS: [&str; 7] = [
+    "passphrase",
+    "secret",
+    "token",
+    "auth_pass",
+    "password",
+    "streamid",
+    "srt_streamid",
+];
 
 const REDACTED: &str = "<redacted>";
 
@@ -15,8 +23,11 @@ const REDACTED: &str = "<redacted>";
 ///
 /// - the password of `user:password@host` userinfo;
 /// - the value of a `key=value` pair whose key is exactly one of
-///   `passphrase`, `secret`, `token`, `auth_pass`, `password`. The match is
-///   case-sensitive: `Token=x` is not scrubbed.
+///   `passphrase`, `secret`, `token`, `auth_pass`, `password`, `streamid`,
+///   `srt_streamid`. The match is case-sensitive: `Token=x` is not scrubbed.
+///
+/// The scrub errs toward redacting: any later `@` ends the userinfo, so
+/// `srt://h:9000/a@b` loses `9000/a`. That over-redaction is accepted.
 ///
 /// The input need not be a valid URL. The scrub is a text pass over each
 /// whitespace- (ASCII or U+00A0) or quote-delimited token, so a malformed URL, or a longer
@@ -57,9 +68,16 @@ fn redact_token(token: &str, out: &mut String) {
 
 /// Redact the password in the userinfo that precedes the last `@` before
 /// any `?`. The password may itself contain `/` or `@`, so the split is
-/// taken from the right, as a client would not and a leak would.
+/// taken from the right, as a client would not and a leak would. A `?`
+/// whose following text reaches an `@` with no `=` in between is password
+/// text too (`u:pa?ss@h`), not the start of a query.
 fn redact_userinfo(rest: &str, out: &mut String) {
-    let limit = rest.find('?').unwrap_or(rest.len());
+    let query = rest.find('?');
+    let limit = match (query, rest.rfind('@')) {
+        (Some(q), Some(at)) if at > q && !rest[q..at].contains('=') => rest.len(),
+        (Some(q), _) => q,
+        (None, _) => rest.len(),
+    };
     if let Some(at) = rest[..limit].rfind('@')
         && let Some(colon) = rest[..at].find(':')
     {
@@ -197,6 +215,46 @@ mod tests {
             "a\u{a0}passphrase=<redacted>\u{a0}b"
         );
         assert_eq!(redact_url("u:pw@h\u{a0}x"), "u:<redacted>@h\u{a0}x");
+    }
+
+    #[test]
+    fn stream_id_keys_are_redacted() {
+        assert_eq!(
+            redact_url("srt://h:1?streamid=#!::r=x&latency=1"),
+            "srt://h:1?streamid=<redacted>&latency=1"
+        );
+        assert_eq!(
+            redact_url("srt://h:1?srt_streamid=abc"),
+            "srt://h:1?srt_streamid=<redacted>"
+        );
+    }
+
+    #[test]
+    fn raw_question_mark_in_password_is_redacted() {
+        assert_eq!(
+            redact_url("rtsp://admin:pa?ss@cam/s"),
+            "rtsp://admin:<redacted>@cam/s"
+        );
+        assert_eq!(
+            redact_url("rtsp://admin:pa?ss@cam/s?token=t"),
+            "rtsp://admin:<redacted>@cam/s?token=<redacted>"
+        );
+        // A real query holding an `@` after an `=` is not userinfo.
+        assert_eq!(redact_url("srt://h:1?mail=a@b"), "srt://h:1?mail=a@b");
+    }
+
+    #[test]
+    fn late_at_over_redacts_and_leading_query_key_is_scrubbed() {
+        assert_eq!(redact_url("srt://h:9000/a@b"), "srt://h:<redacted>@b");
+        assert_eq!(redact_url("?token=abc"), "?token=<redacted>");
+    }
+
+    #[test]
+    fn several_urls_in_one_token() {
+        assert_eq!(
+            redact_url("a,srt://u:p@h,srt://v:q@h2"),
+            "a,srt://u:<redacted>@h2"
+        );
     }
 
     #[test]
