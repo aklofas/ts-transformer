@@ -65,6 +65,9 @@ pub struct HlsConfig {
     /// directory owned by another user even when running as root; for a
     /// container volume, point `output_dir` at a fresh subdirectory the
     /// publisher creates.
+    ///
+    /// Operations are pinned to the validated directory: a later rename of
+    /// its pathname does not redirect them.
     pub output_dir: PathBuf,
     /// Maximum segment duration (default 4 s; must be > 0); the playlist
     /// advertises its ceiling as `#EXT-X-TARGETDURATION`. Segments cut on

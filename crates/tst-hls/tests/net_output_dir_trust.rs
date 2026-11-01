@@ -99,3 +99,55 @@ fn private_output_dir_works_end_to_end() {
         0
     );
 }
+
+#[test]
+fn trailing_separator_or_dot_does_not_look_through_a_symlink() {
+    let root = scratch("slash");
+    let real = private_dir(&root, "real");
+    let link = root.join("link");
+    symlink(&real, &link).unwrap();
+    for suffix in ["/", "/."] {
+        let mut s = link.as_os_str().to_os_string();
+        s.push(suffix);
+        let err = HlsPublisher::with_config(config(Path::new(&s)))
+            .err()
+            .expect("refused");
+        assert!(
+            matches!(err, HlsError::UntrustedOutputDir { .. }),
+            "{suffix}: {err}"
+        );
+    }
+}
+
+#[test]
+fn operations_stay_pinned_to_the_validated_directory() {
+    let root = scratch("pin");
+    let d = root.join("out");
+    let mut p = HlsPublisher::with_config(config(&d)).unwrap();
+    p.push_ts(&ts_packets(1)).unwrap();
+    // Swap the pathname for a different directory.
+    let moved = root.join("moved");
+    std::fs::rename(&d, &moved).unwrap();
+    let decoy = private_dir(&root, "out");
+    p.push_ts(&ts_packets(1)).unwrap();
+    p.cut_segment().unwrap();
+    assert!(moved.join("playlist.m3u8").is_file());
+    assert!(moved.join("segment_00000.ts").is_file());
+    assert_eq!(std::fs::read_dir(&decoy).unwrap().count(), 0);
+    // The HTTP segment read serves from the original directory too.
+    #[cfg(feature = "serve")]
+    {
+        use std::io::{Read, Write};
+        let addr = p.local_addr().unwrap();
+        let mut sock = std::net::TcpStream::connect(addr).unwrap();
+        sock.write_all(b"GET /segment_00000.ts HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut resp = Vec::new();
+        sock.read_to_end(&mut resp).unwrap();
+        assert!(
+            resp.starts_with(b"HTTP/1.1 200 "),
+            "{}",
+            String::from_utf8_lossy(&resp[..40.min(resp.len())])
+        );
+    }
+}
