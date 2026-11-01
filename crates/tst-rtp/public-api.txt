@@ -877,6 +877,8 @@ pub tst_rtp::rtsp::server::mount_rules::MountRuleError::EmptyCredentials
 pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidMountPath
 pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidMountPath::detail: alloc::string::String
 pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidMountPath::path: alloc::string::String
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidRealm
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidRealm::realm: alloc::string::String
 impl core::convert::From<tst_rtp::rtsp::server::mount_rules::MountRuleError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::rtsp::server::mount_rules::MountRuleError) -> Self
 impl core::error::Error for tst_rtp::rtsp::server::mount_rules::MountRuleError
@@ -1553,6 +1555,8 @@ pub tst_rtp::MountRuleError::EmptyCredentials
 pub tst_rtp::MountRuleError::InvalidMountPath
 pub tst_rtp::MountRuleError::InvalidMountPath::detail: alloc::string::String
 pub tst_rtp::MountRuleError::InvalidMountPath::path: alloc::string::String
+pub tst_rtp::MountRuleError::InvalidRealm
+pub tst_rtp::MountRuleError::InvalidRealm::realm: alloc::string::String
 impl core::convert::From<tst_rtp::rtsp::server::mount_rules::MountRuleError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::rtsp::server::mount_rules::MountRuleError) -> Self
 impl core::error::Error for tst_rtp::rtsp::server::mount_rules::MountRuleError

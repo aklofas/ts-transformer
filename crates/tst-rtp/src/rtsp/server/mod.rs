@@ -437,6 +437,11 @@ impl RtspServer {
                 }
             })?;
         }
+        if let Some(a) = b.auth.as_ref().filter(|a| !auth::realm_is_valid(&a.realm)) {
+            return Err(RtspServerError::InvalidConfig {
+                detail: format!("auth realm {:?}: control bytes are not allowed", a.realm),
+            });
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)

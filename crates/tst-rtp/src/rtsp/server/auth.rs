@@ -67,8 +67,30 @@ pub(crate) fn build_challenge_header(cfg: &ServerAuthConfig, nonce: &str) -> Str
     build_challenge(cfg.scheme, &cfg.realm, nonce)
 }
 
+/// Whether `realm` can be sent in a quoted-string: control bytes (CR, LF,
+/// NUL, DEL, ...) would split or corrupt the header, and quotes and
+/// backslashes are escaped by [`build_challenge`] instead.
+pub(crate) fn realm_is_valid(realm: &str) -> bool {
+    !realm.bytes().any(|b| b < 0x20 || b == 0x7F)
+}
+
+/// Escape `"` and `\` for an RFC 7230 quoted-string.
+fn quote_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '"' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Build the `WWW-Authenticate:` header value for `scheme` and `realm`.
+/// `realm` is escaped as a quoted-string; callers refuse control bytes
+/// beforehand (see [`realm_is_valid`]).
 pub(crate) fn build_challenge(scheme: AuthScheme, realm: &str, nonce: &str) -> String {
+    let realm = quote_escape(realm);
     match scheme {
         AuthScheme::Basic => format!("Basic realm=\"{realm}\""),
         AuthScheme::DigestMd5 => {
@@ -1183,6 +1205,26 @@ mod tests {
                 build_challenge(scheme, "r", "n"),
                 build_challenge_header(&cfg, "n")
             );
+        }
+    }
+
+    #[test]
+    fn build_challenge_escapes_quotes_and_backslashes_in_the_realm() {
+        assert_eq!(
+            build_challenge(AuthScheme::Basic, "ts \"quoted\" a\\b", "n"),
+            r#"Basic realm="ts \"quoted\" a\\b""#
+        );
+        assert!(
+            build_challenge(AuthScheme::DigestMd5, "x\"y", "n")
+                .starts_with(r#"Digest realm="x\"y","#)
+        );
+    }
+
+    #[test]
+    fn realm_is_valid_refuses_control_bytes() {
+        assert!(realm_is_valid("ts \"q\" \u{e9}"));
+        for bad in ["a\r\nX: y", "a\nb", "a\0b", "a\x7fb", "a\tb"] {
+            assert!(!realm_is_valid(bad), "{bad:?}");
         }
     }
 }

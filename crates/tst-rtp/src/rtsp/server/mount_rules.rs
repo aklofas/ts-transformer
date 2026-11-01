@@ -176,6 +176,13 @@ pub enum MountRuleError {
         /// The repeated username.
         username: String,
     },
+    /// A challenge realm containing a control byte (CR, LF, NUL, DEL, ...),
+    /// which would corrupt the `WWW-Authenticate` header.
+    #[error("invalid challenge realm {realm:?}: control bytes are not allowed")]
+    InvalidRealm {
+        /// The realm as given.
+        realm: String,
+    },
     /// The server shut down: stopped, hard-cancelled or dropped.
     #[error("the server was shut down")]
     Closed,
@@ -345,9 +352,15 @@ impl MountRules {
     /// `tstrans`; with one it is the builder's scheme and realm.
     ///
     /// # Errors
+    /// - [`MountRuleError::InvalidRealm`] if `realm` holds a control byte.
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set_challenge(&self, scheme: AuthScheme, realm: &str) -> Result<(), MountRuleError> {
         self.ensure_open()?;
+        if !crate::rtsp::server::auth::realm_is_valid(realm) {
+            return Err(MountRuleError::InvalidRealm {
+                realm: realm.to_string(),
+            });
+        }
         *write(&self.inner.challenge) = (scheme, realm.to_string());
         Ok(())
     }
@@ -601,6 +614,10 @@ mod tests {
             t.challenge(),
             (AuthScheme::DigestMd5, "tstrans".to_string())
         );
+        assert!(matches!(
+            t.set_challenge(AuthScheme::Basic, "a\r\nX: y"),
+            Err(MountRuleError::InvalidRealm { .. })
+        ));
         t.set_challenge(AuthScheme::Basic, "lab").unwrap();
         assert_eq!(t.challenge(), (AuthScheme::Basic, "lab".to_string()));
     }
