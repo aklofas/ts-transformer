@@ -38,6 +38,9 @@ The rest of this file records the consolidation that produced them; it is histor
   root** (`#[macro_use] #[path = "common/mod.rs"] mod common;`) instead of
   per-file; member references were updated from `common::…` to `crate::common::…`.
   (The `url` domain does not use the helper, so it has no `common`.)
+  Submodules of `common` (for example `common/raw_handshake.rs`, the raw-UDP
+  SRT handshake caller) are declared from `common/mod.rs` and reached as
+  `crate::common::<submodule>::…`.
 
 ## Equivalence check
 
@@ -89,6 +92,7 @@ tst-core +16, tst-pipeline +3 (net zero).
 | `ipv6_loopback.rs` | `loopback/ipv6_loopback.rs` |
 | (new) | `loopback/listen_rules.rs` |
 | (new) | `loopback/listen_rules_encrypted.rs` |
+| (new) | `loopback/listen_rules_wire.rs` |
 | `listener_accept_timeout.rs` | `loopback/listener_accept_timeout.rs` |
 | (new) | `loopback/listener_cancel.rs` |
 | `maxbw_roundtrip.rs` | `loopback/maxbw_roundtrip.rs` |

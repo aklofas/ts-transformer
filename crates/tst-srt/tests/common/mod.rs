@@ -13,6 +13,8 @@ use tst_srt::error::RejectReason;
 use tst_srt::{SrtConnectError, SrtSocket};
 use tst_test_helpers::timing::scaled;
 
+pub mod raw_handshake;
+
 /// Probe whether 127.0.0.1 is bindable. Tests gate on this so
 /// sandbox/restricted CI environments don't fail dozens of tests
 /// they can't possibly pass. Set env `SKIP_LOOPBACK=1` to force-skip.

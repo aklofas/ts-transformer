@@ -32,6 +32,8 @@ mod key_length_negotiation;
 mod listen_rules;
 #[path = "loopback/listen_rules_encrypted.rs"]
 mod listen_rules_encrypted;
+#[path = "loopback/listen_rules_wire.rs"]
+mod listen_rules_wire;
 #[path = "loopback/listener_accept_one_cancellable.rs"]
 mod listener_accept_one_cancellable;
 #[path = "loopback/listener_accept_timeout.rs"]
