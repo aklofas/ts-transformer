@@ -16,6 +16,11 @@ categories = ["multimedia::video", "network-programming"]
 # tst-core behind its own `tls` feature.
 default = ["tls"]
 tls = ["dep:rustls", "tst-core/tls"]
+# Test-only: compiles a panic trigger into the offer path (an offer whose ICE
+# ufrag starts with `tsthookpanic`) so a test can prove a panic there refuses
+# that offer only. Never enable it in a release build; the all-features test
+# leg does.
+test-hooks = []
 
 [dependencies]
 tst-core = { path = "../tst-core", version = "0.9.0" }
