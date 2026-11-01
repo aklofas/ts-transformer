@@ -43,9 +43,9 @@ public final class MountRules extends NativeHandle {
     /**
      * Remove the rule for {@code path}.
      *
-     * @return {@code true} if a rule was installed for it
-     * @throws RtspException {@code MOUNT} for an invalid path; {@code SERVER} once the
-     *     server has stopped
+     * @return {@code true} if a rule was installed for it; a path that is not a valid
+     *     mount path never has one, so it returns {@code false}
+     * @throws RtspException {@code SERVER} once the server has stopped
      */
     public boolean remove(String path) throws RtspException {
         Objects.requireNonNull(path, "path");

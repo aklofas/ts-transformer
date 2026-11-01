@@ -1142,7 +1142,7 @@ The surface:
   mounts, so set `auth` where that matters.
 - `RtspServer.mount_rules() -> MountRules` is a per-path table, editable while
   the server runs: `set(path, rule)`, `remove(path)`, `set_default(rule)`,
-  `clear()`, `set_challenge(scheme, realm)`, `len()` and `is_closed()`.
+  `clear()`, `set_challenge(scheme, realm)` and `is_closed()`, plus `len(rules)`.
   `MountRule(publish=..., read=...)` takes a `MountPolicy`
   (`inherit()`, `open()`, `require(*MountCredential)` or
   `refuse(RefuseStatus.NOT_FOUND)`); `RtspServerConfig(default_mount_rule=...)`
