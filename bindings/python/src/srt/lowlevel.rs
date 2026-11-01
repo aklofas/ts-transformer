@@ -48,6 +48,7 @@ use tst_srt::{
 };
 
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
+use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 
 use super::listen_rules::PyListenRules;
@@ -446,7 +447,9 @@ impl PyBuilder {
         };
         format!(
             "Builder(url={:?}, mode={}, passphrase={})",
-            self.url, mode, pp
+            redact_url(&self.url),
+            mode,
+            pp
         )
     }
 }

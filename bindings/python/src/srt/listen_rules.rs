@@ -321,7 +321,12 @@ impl PyAccessControl {
     }
 
     fn __repr__(&self) -> String {
-        format!("AccessControl({:?})", self.items())
+        let redacted: Vec<(String, &str)> = self
+            .items()
+            .into_iter()
+            .map(|(k, _)| (k, "<redacted>"))
+            .collect();
+        format!("AccessControl({redacted:?})")
     }
 }
 

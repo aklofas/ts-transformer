@@ -44,6 +44,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned, SendHalf};
 use tst_udp::{UdpError, UdpRecvTransport, UdpTransport};
 
@@ -262,7 +263,10 @@ impl PyUdpTransportBuilder {
     }
 
     fn __repr__(&self) -> String {
-        format!("TransportBuilder(url={:?})", self.url)
+        format!(
+            "TransportBuilder(url={:?})",
+            self.url.as_deref().map(redact_url)
+        )
     }
 }
 
@@ -562,7 +566,10 @@ impl PyUdpRecvTransportBuilder {
     }
 
     fn __repr__(&self) -> String {
-        format!("RecvTransportBuilder(url={:?})", self.url)
+        format!(
+            "RecvTransportBuilder(url={:?})",
+            self.url.as_deref().map(redact_url)
+        )
     }
 }
 

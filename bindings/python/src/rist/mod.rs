@@ -40,6 +40,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, Owned, SendHalf};
 use tst_rist::config::{EncryptionKey, RistProfile};
 use tst_rist::recv::RistRecvTransport;
@@ -418,7 +419,10 @@ impl PyRistTransportBuilder {
     }
 
     fn __repr__(&self) -> String {
-        format!("TransportBuilder(url={:?})", self.url)
+        format!(
+            "TransportBuilder(url={:?})",
+            self.url.as_deref().map(redact_url)
+        )
     }
 }
 
@@ -698,7 +702,10 @@ impl PyRistRecvTransportBuilder {
     }
 
     fn __repr__(&self) -> String {
-        format!("RecvTransportBuilder(url={:?})", self.url)
+        format!(
+            "RecvTransportBuilder(url={:?})",
+            self.url.as_deref().map(redact_url)
+        )
     }
 }
 
