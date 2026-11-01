@@ -895,12 +895,20 @@ pub(crate) fn apply_listener_config(
 
 pub(crate) fn read_stream_id(handle: srt_sys::SRTSOCKET) -> Option<String> {
     let bytes = read_stream_id_bytes(handle);
-    let s = std::str::from_utf8(&bytes).ok()?;
+    let s = std::str::from_utf8(trim_stream_id_padding(&bytes)).ok()?;
     if s.is_empty() {
         None
     } else {
         Some(s.to_string())
     }
+}
+
+/// `bytes` without its trailing NULs. libsrt's padding trim never inspects
+/// the first byte, so a one-byte stream ID reads back with its three NUL pad
+/// bytes; trailing NULs are always padding, never part of the stream ID.
+pub(crate) fn trim_stream_id_padding(bytes: &[u8]) -> &[u8] {
+    let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+    &bytes[..end]
 }
 
 /// The raw `SRTO_STREAMID` bytes, by length (a NUL byte included); empty on
