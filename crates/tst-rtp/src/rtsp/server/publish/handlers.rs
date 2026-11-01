@@ -888,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_record_on_a_different_mount_is_455() {
+    fn setup_record_on_a_different_mount_is_404() {
         let (st, _m) = state_with_publish_mount();
         let m2 = super::super::mount::PublishMountState::new("/pub2", 8, Default::default());
         st.mounts
@@ -900,15 +900,16 @@ mod tests {
         // "streamid=0" is this session's own announced control, so
         // `publisher_mount_path` resolves the mount path by stripping it
         // from the URI — landing on "/pub2", a DIFFERENT publish mount
-        // than the one this session announced into. `handle_setup_record`
-        // must refuse rather than move the session's publisher there.
+        // than the one this session announced into. `handle_setup` must
+        // answer as for a missing mount rather than move the publisher
+        // there or reveal that the mount exists.
         let mut setup = req(RtspMethod::Setup, "rtsp://h/pub2/streamid=0");
         setup.headers.insert(
             "transport".into(),
             "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
         );
         let r = crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s);
-        assert_eq!(r.status, 455);
+        assert_eq!(r.status, 404);
         assert_eq!(s.mount_path(), None);
     }
 

@@ -492,6 +492,15 @@ pub(crate) fn handle_setup(
     // what this session announced) falls back to the fixed-prefix form.
     let mount_path =
         publisher_mount_path(&req.uri, session).unwrap_or_else(|| extract_mount_path(&req.uri));
+    // A publisher holds one mount. A SETUP naming another is answered as a
+    // missing mount before any lookup, so it cannot reveal that mount (or
+    // its type) past a `Refuse(NotFound)` rule.
+    if session
+        .publisher()
+        .is_some_and(|p| p.mount.path != mount_path)
+    {
+        return error_response(req, 404, "Not Found");
+    }
     let mounts = match state.mounts.lock() {
         Ok(m) => m,
         Err(_) => return error_response(req, 500, "Internal Server Error"),

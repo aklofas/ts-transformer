@@ -600,6 +600,56 @@ fn a_publishers_track_setup_is_keyed_on_the_announce_path() {
     server.stop().unwrap();
 }
 
+/// A publisher that SETUPs a track under a mount other than the one it
+/// announced gets the answer a missing mount gets, so a `Refuse(NotFound)`
+/// rule on the other mount cannot be probed through it.
+#[test]
+fn a_publishers_setup_outside_its_announced_mount_answers_like_a_missing_mount() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    server.add_publish_mount("/amber").unwrap();
+    server.add_publish_mount("/hidden").unwrap();
+    server
+        .mount_rules()
+        .set(
+            "/hidden",
+            MountRule::new(
+                MountPolicy::Refuse(RefuseStatus::NotFound),
+                MountPolicy::Refuse(RefuseStatus::NotFound),
+            ),
+        )
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+    let uri = format!("rtsp://127.0.0.1:{port}/amber");
+
+    let mut tcp = connect(port);
+    let r = announce_sdp(&mut tcp, &uri, 1, "", SDP_H264);
+    assert_eq!(status(&r), 200, "{r}");
+    let hidden = setup_record(
+        &mut tcp,
+        &format!("rtsp://127.0.0.1:{port}/hidden/streamid=0"),
+        2,
+        "",
+    );
+    let missing = setup_record(
+        &mut tcp,
+        &format!("rtsp://127.0.0.1:{port}/does-not-exist/streamid=0"),
+        3,
+        "",
+    );
+    assert_eq!(status(&hidden), 404, "{hidden}");
+    assert_eq!(status(&missing), 404, "{missing}");
+    // Same status line, same headers (CSeq aside), same body.
+    let strip = |r: &str| {
+        r.lines()
+            .filter(|l| !l.to_ascii_lowercase().starts_with("cseq"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(strip(&hidden), strip(&missing));
+    drop(tcp);
+    server.stop().unwrap();
+}
+
 /// A rule turned to `Refuse` reaches a publisher that already holds the
 /// slot: its next gated request answers the Refuse status and frees the
 /// slot; a fresh ANNOUNCE is refused too.

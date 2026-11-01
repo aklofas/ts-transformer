@@ -1766,6 +1766,16 @@ mod session_tests {
                 Announced { .. } | PublisherSetup { .. } | Recording { .. }
             );
             let has_session = matches!(model, ReaderSetup { .. } | Playing { .. } | Paused { .. });
+            // A publisher's SETUP naming another mount answers like a
+            // missing mount.
+            if let (
+                Call::SetupReader | Call::SetupRecord,
+                Announced { mount: m } | PublisherSetup { mount: m } | Recording { mount: m },
+            ) = (call, model)
+                && m != at
+            {
+                return (404, model);
+            }
             match call {
                 Call::Options | Call::GetParameter => (200, model),
                 Call::Describe => (200, if model == Init { Described } else { model }),
