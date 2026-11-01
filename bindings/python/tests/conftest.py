@@ -87,3 +87,12 @@ def require_scenario(scenario_id: str) -> tuple[dict[str, Any], Path]:
             f"(scenario '{scenario_id}')"
         )
     return matched, scenario_path
+
+
+def rtsp_header(resp: str, name: str) -> str:
+    """The value of response header `name` (case-insensitive); fails when absent."""
+    for line in resp.split("\r\n"):
+        k, sep, v = line.partition(":")
+        if sep and k.strip().lower() == name.lower():
+            return v.strip()
+    raise AssertionError(f"no {name} header in {resp!r}")

@@ -730,6 +730,26 @@ impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::RtspClient
 pub type tst_rtp::rtsp::client::RtspCancelHandle = tst_core::cancel::FlagCancel
 pub mod tst_rtp::rtsp::server
 pub mod tst_rtp::rtsp::server::builder
+#[non_exhaustive] pub enum tst_rtp::rtsp::server::builder::AuthScheme
+pub tst_rtp::rtsp::server::builder::AuthScheme::Basic
+pub tst_rtp::rtsp::server::builder::AuthScheme::DigestMd5
+pub tst_rtp::rtsp::server::builder::AuthScheme::DigestSha256
+impl core::clone::Clone for tst_rtp::rtsp::server::builder::AuthScheme
+pub fn tst_rtp::rtsp::server::builder::AuthScheme::clone(&self) -> tst_rtp::rtsp::server::builder::AuthScheme
+impl core::cmp::Eq for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::cmp::PartialEq for tst_rtp::rtsp::server::builder::AuthScheme
+pub fn tst_rtp::rtsp::server::builder::AuthScheme::eq(&self, &tst_rtp::rtsp::server::builder::AuthScheme) -> bool
+impl core::fmt::Debug for tst_rtp::rtsp::server::builder::AuthScheme
+pub fn tst_rtp::rtsp::server::builder::AuthScheme::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::Freeze for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::Send for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::Sync for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::Unpin for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::builder::AuthScheme
 pub struct tst_rtp::rtsp::server::builder::RtspServerBuilder
 impl tst_rtp::rtsp::server::builder::RtspServerBuilder
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::accept_unregistered_publishers(&mut self, bool) -> &mut Self
@@ -737,6 +757,7 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_basic(&mut self, 
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_md5(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_sha256(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::build(self) -> core::result::Result<tst_rtp::rtsp::server::RtspServer, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::default_mount_rule(&mut self, tst_rtp::rtsp::server::mount_rules::MountRule) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::fanout_capacity(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drain(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self
@@ -831,6 +852,121 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::mount::MountStats
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount::MountStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount::MountStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount::MountStats
+pub mod tst_rtp::rtsp::server::mount_rules
+#[non_exhaustive] pub enum tst_rtp::rtsp::server::mount_rules::MountPolicy
+pub tst_rtp::rtsp::server::mount_rules::MountPolicy::Inherit
+pub tst_rtp::rtsp::server::mount_rules::MountPolicy::Open
+pub tst_rtp::rtsp::server::mount_rules::MountPolicy::Refuse(tst_rtp::rtsp::server::mount_rules::RefuseStatus)
+pub tst_rtp::rtsp::server::mount_rules::MountPolicy::Require(alloc::vec::Vec<tst_rtp::rtsp::server::mount_rules::MountCredential>)
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountPolicy
+pub fn tst_rtp::rtsp::server::mount_rules::MountPolicy::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountPolicy
+pub fn tst_rtp::rtsp::server::mount_rules::MountPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountPolicy
+#[non_exhaustive] pub enum tst_rtp::rtsp::server::mount_rules::MountRuleError
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::Closed
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::EmptyCredentials
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidMountPath
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidMountPath::detail: alloc::string::String
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidMountPath::path: alloc::string::String
+impl core::convert::From<tst_rtp::rtsp::server::mount_rules::MountRuleError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::rtsp::server::mount_rules::MountRuleError) -> Self
+impl core::error::Error for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountRuleError
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_rtp::rtsp::server::mount_rules::MountRuleError
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRuleError
+#[non_exhaustive] pub enum tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub tst_rtp::rtsp::server::mount_rules::RefuseStatus::Forbidden
+pub tst_rtp::rtsp::server::mount_rules::RefuseStatus::NotEnoughBandwidth
+pub tst_rtp::rtsp::server::mount_rules::RefuseStatus::NotFound
+pub tst_rtp::rtsp::server::mount_rules::RefuseStatus::ServiceUnavailable
+impl tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::code(self) -> u16
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::clone(&self) -> tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::cmp::Eq for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::cmp::PartialEq for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::eq(&self, &tst_rtp::rtsp::server::mount_rules::RefuseStatus) -> bool
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub struct tst_rtp::rtsp::server::mount_rules::MountCredential
+impl tst_rtp::rtsp::server::mount_rules::MountCredential
+pub fn tst_rtp::rtsp::server::mount_rules::MountCredential::new(&str, secrecy::SecretString) -> Self
+pub fn tst_rtp::rtsp::server::mount_rules::MountCredential::username(&self) -> &str
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountCredential
+pub fn tst_rtp::rtsp::server::mount_rules::MountCredential::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountCredential
+pub fn tst_rtp::rtsp::server::mount_rules::MountCredential::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountCredential
+pub struct tst_rtp::rtsp::server::mount_rules::MountRule
+pub tst_rtp::rtsp::server::mount_rules::MountRule::publish: tst_rtp::rtsp::server::mount_rules::MountPolicy
+pub tst_rtp::rtsp::server::mount_rules::MountRule::read: tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl tst_rtp::rtsp::server::mount_rules::MountRule
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::both(tst_rtp::rtsp::server::mount_rules::MountPolicy) -> Self
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::new(tst_rtp::rtsp::server::mount_rules::MountPolicy, tst_rtp::rtsp::server::mount_rules::MountPolicy) -> Self
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountRule
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::default::Default for tst_rtp::rtsp::server::mount_rules::MountRule
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::default() -> Self
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountRule
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRule
+pub struct tst_rtp::rtsp::server::mount_rules::MountRules
+impl tst_rtp::rtsp::server::mount_rules::MountRules
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::clear(&self) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::is_closed(&self) -> bool
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::is_empty(&self) -> bool
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::len(&self) -> usize
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::remove(&self, &str) -> core::result::Result<bool, tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::set(&self, &str, tst_rtp::rtsp::server::mount_rules::MountRule) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::set_challenge(&self, tst_rtp::rtsp::server::builder::AuthScheme, &str) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::set_default(&self, tst_rtp::rtsp::server::mount_rules::MountRule) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountRules
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountRules
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRules
 pub mod tst_rtp::rtsp::server::publish
 #[non_exhaustive] pub enum tst_rtp::rtsp::server::publish::ClockAlignment
 pub tst_rtp::rtsp::server::publish::ClockAlignment::NotApplicable
@@ -949,6 +1085,7 @@ pub fn tst_rtp::rtsp::server::RtspServer::bind(&str) -> core::result::Result<Sel
 pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::rtsp::server::cancel::RtspServerCancelHandle
 pub fn tst_rtp::rtsp::server::RtspServer::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
+pub fn tst_rtp::rtsp::server::RtspServer::mount_rules(&self) -> tst_rtp::rtsp::server::mount_rules::MountRules
 pub fn tst_rtp::rtsp::server::RtspServer::next_publisher(&self, core::time::Duration) -> core::result::Result<core::option::Option<tst_rtp::PublishMountHandle>, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::remove_mount(&self, &str) -> core::result::Result<(), tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::start(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
@@ -1310,6 +1447,26 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::url::RtspUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::url::RtspUrl
 pub const tst_rtp::url::DEFAULT_PKT_SIZE: usize
 pub type tst_rtp::url::UrlError = tst_rtp::url::RtpUrlError
+#[non_exhaustive] pub enum tst_rtp::AuthScheme
+pub tst_rtp::AuthScheme::Basic
+pub tst_rtp::AuthScheme::DigestMd5
+pub tst_rtp::AuthScheme::DigestSha256
+impl core::clone::Clone for tst_rtp::rtsp::server::builder::AuthScheme
+pub fn tst_rtp::rtsp::server::builder::AuthScheme::clone(&self) -> tst_rtp::rtsp::server::builder::AuthScheme
+impl core::cmp::Eq for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::cmp::PartialEq for tst_rtp::rtsp::server::builder::AuthScheme
+pub fn tst_rtp::rtsp::server::builder::AuthScheme::eq(&self, &tst_rtp::rtsp::server::builder::AuthScheme) -> bool
+impl core::fmt::Debug for tst_rtp::rtsp::server::builder::AuthScheme
+pub fn tst_rtp::rtsp::server::builder::AuthScheme::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::Freeze for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::Send for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::Sync for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::Unpin for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::builder::AuthScheme
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::builder::AuthScheme
 #[non_exhaustive] pub enum tst_rtp::ClockAlignment
 pub tst_rtp::ClockAlignment::NotApplicable
 pub tst_rtp::ClockAlignment::Pending
@@ -1370,6 +1527,42 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::mount::MountKind
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount::MountKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount::MountKind
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount::MountKind
+#[non_exhaustive] pub enum tst_rtp::MountPolicy
+pub tst_rtp::MountPolicy::Inherit
+pub tst_rtp::MountPolicy::Open
+pub tst_rtp::MountPolicy::Refuse(tst_rtp::rtsp::server::mount_rules::RefuseStatus)
+pub tst_rtp::MountPolicy::Require(alloc::vec::Vec<tst_rtp::rtsp::server::mount_rules::MountCredential>)
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountPolicy
+pub fn tst_rtp::rtsp::server::mount_rules::MountPolicy::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountPolicy
+pub fn tst_rtp::rtsp::server::mount_rules::MountPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountPolicy
+#[non_exhaustive] pub enum tst_rtp::MountRuleError
+pub tst_rtp::MountRuleError::Closed
+pub tst_rtp::MountRuleError::EmptyCredentials
+pub tst_rtp::MountRuleError::InvalidMountPath
+pub tst_rtp::MountRuleError::InvalidMountPath::detail: alloc::string::String
+pub tst_rtp::MountRuleError::InvalidMountPath::path: alloc::string::String
+impl core::convert::From<tst_rtp::rtsp::server::mount_rules::MountRuleError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_rtp::rtsp::server::mount_rules::MountRuleError) -> Self
+impl core::error::Error for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountRuleError
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_rtp::rtsp::server::mount_rules::MountRuleError
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRuleError
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRuleError
 #[non_exhaustive] pub enum tst_rtp::ParameterSetInjection
 pub tst_rtp::ParameterSetInjection::BeforeIdr
 pub tst_rtp::ParameterSetInjection::None
@@ -1411,6 +1604,29 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::publish::PublishShape
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::publish::PublishShape
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
+#[non_exhaustive] pub enum tst_rtp::RefuseStatus
+pub tst_rtp::RefuseStatus::Forbidden
+pub tst_rtp::RefuseStatus::NotEnoughBandwidth
+pub tst_rtp::RefuseStatus::NotFound
+pub tst_rtp::RefuseStatus::ServiceUnavailable
+impl tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::code(self) -> u16
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::clone(&self) -> tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::cmp::Eq for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::cmp::PartialEq for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::eq(&self, &tst_rtp::rtsp::server::mount_rules::RefuseStatus) -> bool
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::RefuseStatus
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::RefuseStatus
 #[non_exhaustive] pub enum tst_rtp::RtcpError
 pub tst_rtp::RtcpError::CnameTooLong(usize)
 pub tst_rtp::RtcpError::LengthOverflow(usize)
@@ -1750,6 +1966,21 @@ impl core::marker::Unpin for tst_rtp::h264::receiver::H264Receiver
 impl core::marker::UnsafeUnpin for tst_rtp::h264::receiver::H264Receiver
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::h264::receiver::H264Receiver
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h264::receiver::H264Receiver
+pub struct tst_rtp::MountCredential
+impl tst_rtp::rtsp::server::mount_rules::MountCredential
+pub fn tst_rtp::rtsp::server::mount_rules::MountCredential::new(&str, secrecy::SecretString) -> Self
+pub fn tst_rtp::rtsp::server::mount_rules::MountCredential::username(&self) -> &str
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountCredential
+pub fn tst_rtp::rtsp::server::mount_rules::MountCredential::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountCredential
+pub fn tst_rtp::rtsp::server::mount_rules::MountCredential::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountCredential
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountCredential
 pub struct tst_rtp::MountHandle
 impl tst_rtp::rtsp::server::mount::MountHandle
 pub fn tst_rtp::rtsp::server::mount::MountHandle::audio_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::AudioStreamHandle>
@@ -1785,6 +2016,46 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::mount::MountHandle
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount::MountHandle
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount::MountHandle
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount::MountHandle
+pub struct tst_rtp::MountRule
+pub tst_rtp::MountRule::publish: tst_rtp::rtsp::server::mount_rules::MountPolicy
+pub tst_rtp::MountRule::read: tst_rtp::rtsp::server::mount_rules::MountPolicy
+impl tst_rtp::rtsp::server::mount_rules::MountRule
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::both(tst_rtp::rtsp::server::mount_rules::MountPolicy) -> Self
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::new(tst_rtp::rtsp::server::mount_rules::MountPolicy, tst_rtp::rtsp::server::mount_rules::MountPolicy) -> Self
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountRule
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::default::Default for tst_rtp::rtsp::server::mount_rules::MountRule
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::default() -> Self
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountRule
+pub fn tst_rtp::rtsp::server::mount_rules::MountRule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRule
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRule
+pub struct tst_rtp::MountRules
+impl tst_rtp::rtsp::server::mount_rules::MountRules
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::clear(&self) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::is_closed(&self) -> bool
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::is_empty(&self) -> bool
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::len(&self) -> usize
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::remove(&self, &str) -> core::result::Result<bool, tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::set(&self, &str, tst_rtp::rtsp::server::mount_rules::MountRule) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::set_challenge(&self, tst_rtp::rtsp::server::builder::AuthScheme, &str) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::set_default(&self, tst_rtp::rtsp::server::mount_rules::MountRule) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountRules
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountRules
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRules
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRules
 #[non_exhaustive] pub struct tst_rtp::MountStats
 pub tst_rtp::MountStats::bytes_pushed: u64
 pub tst_rtp::MountStats::frames_dropped_total: u64
@@ -2205,6 +2476,7 @@ pub fn tst_rtp::rtsp::server::RtspServer::bind(&str) -> core::result::Result<Sel
 pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::rtsp::server::cancel::RtspServerCancelHandle
 pub fn tst_rtp::rtsp::server::RtspServer::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
+pub fn tst_rtp::rtsp::server::RtspServer::mount_rules(&self) -> tst_rtp::rtsp::server::mount_rules::MountRules
 pub fn tst_rtp::rtsp::server::RtspServer::next_publisher(&self, core::time::Duration) -> core::result::Result<core::option::Option<tst_rtp::PublishMountHandle>, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::remove_mount(&self, &str) -> core::result::Result<(), tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::start(&self) -> core::result::Result<(), tst_rtp::error::RtspServerError>
@@ -2228,6 +2500,7 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_basic(&mut self, 
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_md5(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_sha256(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::build(self) -> core::result::Result<tst_rtp::rtsp::server::RtspServer, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::default_mount_rule(&mut self, tst_rtp::rtsp::server::mount_rules::MountRule) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::fanout_capacity(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drain(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self

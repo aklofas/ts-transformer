@@ -5033,3 +5033,192 @@ reason = "the clippy-mandated twin of len; the bindings expose the count (size /
 [[exempt]]
 item = "tst_srt::options::StreamId::access_control"
 reason = "the Rust-side shortcut for AccessControl::parse over a StreamId; the bindings parse the stream-ID string through AccessControl.parse, so no StreamId method carries it"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::MountCredential"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountCredential", "java:org.tstrans.rtp.MountCredential", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::MountRule"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRule", "java:org.tstrans.rtp.MountRule", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::MountRules"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules", "java:org.tstrans.rtp.MountRules", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::RtspServer::mount_rules"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:RtspServer.mount_rules", "java:org.tstrans.rtp.RtspServer.mountRules", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::default_mount_rule"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:RtspServerConfig.default_mount_rule", "java:org.tstrans.rtp.RtspServerConfig.Builder.defaultMountRule", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountCredential"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountCredential", "java:org.tstrans.rtp.MountCredential", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountCredential::new"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountCredential", "java:org.tstrans.rtp.MountCredential.of", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountCredential::username"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountCredential.username", "java:org.tstrans.rtp.MountCredential.username", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRule"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRule", "java:org.tstrans.rtp.MountRule", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRule::both"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRule", "java:org.tstrans.rtp.MountRule.both", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRule::new"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRule", "java:org.tstrans.rtp.MountRule.of", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules", "java:org.tstrans.rtp.MountRules", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules::clear"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules.clear", "java:org.tstrans.rtp.MountRules.clear", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules::is_closed"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules.is_closed", "java:org.tstrans.rtp.MountRules.isClosed", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules::is_empty"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules.__len__", "java:org.tstrans.rtp.MountRules.size", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules::len"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules.__len__", "java:org.tstrans.rtp.MountRules.size", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules::remove"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules.remove", "java:org.tstrans.rtp.MountRules.remove", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules::set"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules.set", "java:org.tstrans.rtp.MountRules.set", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules::set_challenge"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules.set_challenge", "java:org.tstrans.rtp.MountRules.setChallenge", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::MountRules::set_default"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:MountRules.set_default", "java:org.tstrans.rtp.MountRules.setDefault", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount_rules::RefuseStatus::code"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/mount_rules.rs", "crates/tst-rtp/src/rtsp/server/mount_rules.rs"]
+bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:RefuseStatus", "java:org.tstrans.rtp.RefuseStatus.code", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"

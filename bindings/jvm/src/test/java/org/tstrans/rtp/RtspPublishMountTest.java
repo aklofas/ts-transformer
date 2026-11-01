@@ -3,6 +3,7 @@ package org.tstrans.rtp;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.rtspHeader;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.sha256Units;
 
@@ -601,9 +602,9 @@ class RtspPublishMountTest {
             String s = request("SETUP " + uri + "/streamid=0 RTSP/1.0\r\n",
                 "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
             assertEquals(200, status(s), () -> "SETUP refused: " + s);
-            session = header(s, "Session").split(";")[0].trim();
+            session = rtspHeader(s, "Session").split(";")[0].trim();
             int ch = -1;
-            for (String part : header(s, "Transport").split(";")) {
+            for (String part : rtspHeader(s, "Transport").split(";")) {
                 part = part.trim();
                 if (part.startsWith("interleaved=")) {
                     ch = Integer.parseInt(part.substring("interleaved=".length()).split("-")[0]);
@@ -671,15 +672,6 @@ class RtspPublishMountTest {
             return Integer.parseInt(resp.split(" ")[1]);
         }
 
-        private static String header(String resp, String name) {
-            for (String line : resp.split("\r\n")) {
-                int c = line.indexOf(':');
-                if (c > 0 && line.substring(0, c).trim().equalsIgnoreCase(name)) {
-                    return line.substring(c + 1).trim();
-                }
-            }
-            throw new AssertionError("no " + name + " header in " + resp);
-        }
 
         @Override public void close() throws IOException { sock.close(); }
     }

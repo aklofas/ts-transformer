@@ -106,6 +106,17 @@ public final class TestSupport {
         return new ChildResult(child.exitValue(), out);
     }
 
+    /** The value of response header {@code name} (case-insensitive); fails when absent. */
+    public static String rtspHeader(String resp, String name) {
+        for (String line : resp.split("\r\n")) {
+            int c = line.indexOf(':');
+            if (c > 0 && line.substring(0, c).trim().equalsIgnoreCase(name)) {
+                return line.substring(c + 1).trim();
+            }
+        }
+        throw new AssertionError("no " + name + " header in " + resp);
+    }
+
     /** Whether the current OS is Linux, for gating live-socket fixtures. */
     public static boolean isLinux() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("linux");
