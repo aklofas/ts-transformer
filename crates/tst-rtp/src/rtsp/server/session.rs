@@ -173,13 +173,19 @@ pub struct ServerSessionState {
     pub(crate) auth_nc_hwm: u32,
     /// Count of consecutive 401-bounced auth requests on this connection
     /// since the last successful authentication. Increments on every 401;
-    /// resets to 0 on a successful (2xx) response from an auth-gated method
-    /// (DESCRIBE/SETUP/PLAY/PAUSE/TEARDOWN). Non-auth-gated methods
+    /// resets to 0 on a successful (2xx) response to a request that passed a
+    /// credential check (DESCRIBE/SETUP/PLAY/PAUSE/TEARDOWN/ANNOUNCE/RECORD
+    /// under a `Require` or builder-auth `Inherit` policy; never `Open`). Non-auth-gated methods
     /// (OPTIONS, GET_PARAMETER) never reset it, so an attacker cannot bypass
     /// the 3-strike limit by interleaving OPTIONS between bad-auth requests.
     /// After 3 consecutive failures the session closes. A mount rule's
     /// `Refuse` status is not a 401 and leaves the count unchanged.
     pub auth_failures: u8,
+    /// Set by the auth check when the request in flight passed a credential
+    /// check (`Require`, or `Inherit` with builder auth); cleared before each
+    /// dispatch. An `Open` mount or credential-less `Inherit` leaves it false,
+    /// so its 2xx does not reset [`Self::auth_failures`].
+    pub(crate) request_authenticated: bool,
     /// CancellationToken for the per-peer fanout task. PAUSE cancels + replaces
     /// with a fresh token so a subsequent PLAY can re-spawn, and so does a
     /// mount rule's refusal that ends the role; TEARDOWN cancels it without
@@ -218,6 +224,7 @@ impl ServerSessionState {
             auth_nonce: generate_nonce(),
             auth_nc_hwm: 0,
             auth_failures: 0,
+            request_authenticated: false,
             peer_cancel: tokio_util::sync::CancellationToken::new(),
             retired_fanouts: Vec::new(),
             writer: None,
@@ -682,6 +689,7 @@ where
                 "parser and framer disagree on the frame length"
             );
             buf.drain(..consumed);
+            session.request_authenticated = false;
             let response = dispatch(&req, &state, &mut session);
             // Mirror the session's `session_id` + `mount_path` onto the
             // public `ActiveSession` registry entry when a transition
@@ -749,7 +757,8 @@ where
                 }
             } else if (200..=299).contains(&response.status) {
                 // Only reset the failure counter on a successful (2xx) response
-                // from an auth-gated method. OPTIONS and GET_PARAMETER are
+                // that passed a credential check (`request_authenticated`):
+                // an `Open` mount's 2xx proves nothing about the peer. OPTIONS and GET_PARAMETER are
                 // never auth-gated (they always return 200), so resetting on
                 // them would let an attacker alternate OPTIONS with bad-auth
                 // requests to bypass the 3-strike limit indefinitely.
@@ -763,7 +772,9 @@ where
                     | RtspMethod::Teardown
                     | RtspMethod::Announce
                     | RtspMethod::Record => {
-                        session.auth_failures = 0;
+                        if session.request_authenticated {
+                            session.auth_failures = 0;
+                        }
                     }
                     RtspMethod::Options | RtspMethod::GetParameter => {
                         // Non-auth-gated: do not touch the failure counter.
@@ -1329,6 +1340,101 @@ mod session_tests {
             String::from_utf8_lossy(&resp5).contains("200"),
             "step 5: expected 200 from OPTIONS on live session, got: {}",
             String::from_utf8_lossy(&resp5)
+        );
+
+        drop(client);
+        let _ = server_handle.await;
+    }
+
+    /// A 2xx from an `Open` mount checks no credential, so it must not
+    /// reset the 401 counter: bad-auth, bad-auth, open DESCRIBE, bad-auth
+    /// is the third strike and closes the connection.
+    #[tokio::test]
+    async fn auth_failures_not_reset_by_open_mount_success() {
+        use crate::rtsp::server::mount::{MountEntry, MountKind, MountState};
+        use crate::rtsp::server::mount_rules::{MountPolicy, MountRule};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_handle = tokio::spawn(async move {
+            let (tcp, peer) = listener.accept().await.unwrap();
+            let state = make_state_with_basic_auth();
+            *state.local_addr.lock().unwrap() = Some("127.0.0.1:8554".parse().unwrap());
+            let mux_cfg = crate::rtsp::server::test_muxer_cfg();
+            for p in ["/locked", "/open"] {
+                let mount = MountState::new(p, MountKind::Unicast, mux_cfg.clone(), 16).unwrap();
+                state
+                    .mounts
+                    .lock()
+                    .unwrap()
+                    .insert(p.into(), MountEntry::Local(mount));
+            }
+            state
+                .mount_rules
+                .set("/open", MountRule::both(MountPolicy::Open))
+                .unwrap();
+            state
+                .active_sessions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let slot = SessionSlot::new(state.clone());
+            handle_tcp_connection(state, tcp, peer, slot).await
+        });
+
+        let mut client = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+
+        async fn exchange(client: &mut tokio::net::TcpStream, req: &str) -> String {
+            client.write_all(req.as_bytes()).await.unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            loop {
+                let n = client.read(&mut chunk).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            String::from_utf8_lossy(&buf).into_owned()
+        }
+
+        let r1 = exchange(
+            &mut client,
+            "DESCRIBE rtsp://127.0.0.1/locked RTSP/1.0\r\nCSeq: 1\r\n\r\n",
+        )
+        .await;
+        assert!(r1.contains("401"), "{r1}");
+        let r2 = exchange(
+            &mut client,
+            "DESCRIBE rtsp://127.0.0.1/locked RTSP/1.0\r\nCSeq: 2\r\n\r\n",
+        )
+        .await;
+        assert!(r2.contains("401"), "{r2}");
+        let r3 = exchange(
+            &mut client,
+            "DESCRIBE rtsp://127.0.0.1/open RTSP/1.0\r\nCSeq: 3\r\n\r\n",
+        )
+        .await;
+        assert!(r3.contains("200"), "open mount DESCRIBE: {r3}");
+        // Third strike: the 401 is written, then the connection closes.
+        let r4 = exchange(
+            &mut client,
+            "DESCRIBE rtsp://127.0.0.1/locked RTSP/1.0\r\nCSeq: 4\r\n\r\n",
+        )
+        .await;
+        assert!(r4.contains("401"), "{r4}");
+        let r5 = exchange(
+            &mut client,
+            "OPTIONS rtsp://127.0.0.1/locked RTSP/1.0\r\nCSeq: 5\r\n\r\n",
+        )
+        .await;
+        assert!(
+            r5.is_empty(),
+            "connection must be closed after the third strike, got: {r5}"
         );
 
         drop(client);

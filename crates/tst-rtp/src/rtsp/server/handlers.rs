@@ -152,6 +152,7 @@ pub(crate) fn check_auth(
 ) -> Result<(), RtspResponse> {
     let (path, dir) = rule_key_and_direction(req, session);
     let auth_header = req.headers.get("authorization").map(String::as_str);
+    let credential_checked: bool;
     let verified = match state.mount_rules.policy_for(&path, dir) {
         MountPolicy::Refuse(status) => {
             // A request keyed on the session's own role (all but ANNOUNCE
@@ -173,6 +174,7 @@ pub(crate) fn check_auth(
             let Some(auth_cfg) = state.builder.auth.as_ref() else {
                 return Ok(()); // No auth configured — allow.
             };
+            credential_checked = true;
             verify_authorization(
                 auth_header,
                 method_str,
@@ -183,6 +185,7 @@ pub(crate) fn check_auth(
             )
         }
         MountPolicy::Require(creds) => {
+            credential_checked = true;
             let (scheme, realm) = challenge_scheme_and_realm(state);
             let creds: Vec<Credential<'_>> = creds.iter().map(Credential::from).collect();
             verify_credentials(
@@ -198,7 +201,12 @@ pub(crate) fn check_auth(
         }
     };
     match verified {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            // Tells the session loop this request passed a credential check,
+            // the only kind of success that may reset the 401 counter.
+            session.request_authenticated = credential_checked;
+            Ok(())
+        }
         Err(AuthVerifyError::StaleNonce) => {
             // Surface stale=true so the client knows to retry with the
             // new nonce instead of treating it as a credentials error.
