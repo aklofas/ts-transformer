@@ -556,7 +556,6 @@ mod tests {
             playback: Playback::Ready,
         }));
         for m in [
-            RtspMethod::Setup,
             RtspMethod::Play,
             RtspMethod::Pause,
             RtspMethod::Record,
@@ -568,6 +567,16 @@ mod tests {
                 "{m:?}"
             );
         }
+        // A SETUP may move the reader to another mount, so it keys on the
+        // mount its URI names, still reading.
+        assert_eq!(
+            rule_key_and_direction(&req(RtspMethod::Setup, "rtsp://h/elsewhere/trackID=0"), &s),
+            ("/elsewhere".to_string(), Direction::Read)
+        );
+        assert_eq!(
+            rule_key_and_direction(&req(RtspMethod::Setup, "rtsp://h/live/trackID=1"), &s),
+            ("/live".to_string(), Direction::Read)
+        );
     }
 
     #[test]
