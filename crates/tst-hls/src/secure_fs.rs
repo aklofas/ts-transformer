@@ -33,6 +33,13 @@ fn normalise(path: &Path) -> PathBuf {
     }
 }
 
+fn reject_empty(path: &Path) -> Result<(), HlsError> {
+    if path.as_os_str().is_empty() {
+        return Err(HlsError::InvalidConfig("output_dir is empty".into()));
+    }
+    Ok(())
+}
+
 fn check_name(name: &str) -> io::Result<()> {
     if name.is_empty() || name.contains('/') || name.contains('\0') || name == ".." || name == "." {
         return Err(io::Error::new(
@@ -63,6 +70,7 @@ impl OutputDir {
         use std::os::unix::ffi::OsStrExt;
         use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 
+        reject_empty(path)?;
         let path = normalise(path);
         std::fs::DirBuilder::new()
             .recursive(true)
@@ -87,7 +95,8 @@ impl OutputDir {
             return Err(match e.raw_os_error() {
                 // A final symlink (ELOOP, or ENOTDIR with O_DIRECTORY) or a
                 // plain file.
-                Some(libc::ELOOP) | Some(libc::ENOTDIR) => {
+                // FreeBSD reports a final symlink under O_NOFOLLOW as EMLINK.
+                Some(libc::ELOOP) | Some(libc::ENOTDIR) | Some(libc::EMLINK) => {
                     untrusted("it is a symbolic link or not a directory")
                 }
                 _ => HlsError::Io(e),
@@ -229,6 +238,7 @@ impl OutputDir {
 #[cfg(not(unix))]
 impl OutputDir {
     pub(crate) fn open(path: &Path) -> Result<Self, HlsError> {
+        reject_empty(path)?;
         let path = normalise(path);
         std::fs::create_dir_all(&path).map_err(HlsError::Io)?;
         Ok(Self { path })
@@ -272,6 +282,19 @@ impl OutputDir {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod empty_tests {
+    use super::OutputDir;
+
+    #[test]
+    fn an_empty_path_is_refused() {
+        let err = OutputDir::open(std::path::Path::new(""))
+            .err()
+            .expect("refused");
+        assert!(matches!(err, crate::error::HlsError::InvalidConfig(_)));
     }
 }
 
