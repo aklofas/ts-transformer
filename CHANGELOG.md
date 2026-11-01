@@ -118,6 +118,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
 - A POST on a session resource answers `405` with `Allow: DELETE, OPTIONS`, and a DELETE on a mount path `405` with `Allow: POST, OPTIONS`, both before the bearer check (they were `401`, or `404` past it).
+- A panic inside str0m while the WHEP server applies an offer now refuses that offer with `500` instead of ending the shared media thread and every viewer on it. This is defence in depth: the offer shapes reported against 0.9.0 are already refused at parse by the bundled str0m.
 
 ### Changed — tst-webrtc (BREAKING)
 
