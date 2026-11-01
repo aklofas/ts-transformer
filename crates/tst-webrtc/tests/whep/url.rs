@@ -84,6 +84,16 @@ fn max_viewers_bounds() {
 }
 
 #[test]
+fn userinfo_is_refused_without_echoing_it() {
+    for url in ["whep://u:p@127.0.0.1:8080", "wheps://sekret@127.0.0.1:8080"] {
+        let msg = WhepUrl::parse(url).unwrap_err().to_string();
+        assert!(msg.contains("token"), "{msg}");
+        assert!(!msg.contains("sekret"), "{msg}");
+    }
+    assert!(WhepUrl::parse("whep://127.0.0.1:8080?token=abc").is_ok());
+}
+
+#[test]
 fn a_mount_path_in_the_bind_url_is_refused() {
     assert!(matches!(
         WhepUrl::parse("whep://192.0.2.10:1/cam"),

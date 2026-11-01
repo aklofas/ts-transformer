@@ -161,6 +161,12 @@ impl HlsUrl {
                 });
             }
         };
+        if parsed.username.is_some() || parsed.password.is_some() {
+            return Err(UrlError::Rejected(
+                "a bind URL takes no userinfo; set credentials with the `auth_user` and `auth_pass` query keys"
+                    .into(),
+            ));
+        }
         let port = parsed.port.ok_or(UrlError::MissingPort)?;
 
         let host_str = parsed.host;
@@ -192,6 +198,23 @@ mod tests {
     fn a_malformed_host_is_never_echoed() {
         let err = HlsUrl::parse("hls://u:hunter2:8080/ss@10.0.0.5:8888/p").unwrap_err();
         assert!(!err.to_string().contains("hunter2"), "{err}");
+    }
+
+    #[test]
+    fn userinfo_is_refused_without_echoing_it() {
+        for url in ["hls://u:p@127.0.0.1:8080", "hlss://sekret@127.0.0.1:8080"] {
+            let msg = HlsUrl::parse(url).unwrap_err().to_string();
+            assert!(
+                msg.contains("auth_user") && msg.contains("auth_pass"),
+                "{msg}"
+            );
+            assert!(!msg.contains("sekret"), "{msg}");
+        }
+        let msg = HlsUrl::parse("hls://alice:hunter2@127.0.0.1:8080")
+            .unwrap_err()
+            .to_string();
+        assert!(!msg.contains("alice") && !msg.contains("hunter2"), "{msg}");
+        assert!(HlsUrl::parse("hls://127.0.0.1:8080?auth_user=a&auth_pass=b").is_ok());
     }
 
     #[test]
