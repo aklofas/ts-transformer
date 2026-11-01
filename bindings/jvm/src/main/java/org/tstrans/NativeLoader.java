@@ -35,20 +35,26 @@ import java.util.Set;
  * {@code [A-Za-z0-9._-]} and {@code <hash>} is the SHA-256 hex digest of the
  * resource bytes. {@code java.io.tmpdir} is shared on multi-user Linux, so the
  * per-user root is trusted only when it is a real directory (not a symbolic
- * link), owned by the current user, and accessible by the owner alone
+ * link), owned by the current user, and (POSIX) accessible by the owner alone
  * ({@code rwx------}); it is created that way when absent. When the root exists
  * but fails any of those checks, or cannot be created, the loader does not
  * touch it: it extracts into a fresh random owner-only directory
  * {@code <java.io.tmpdir>/tstrans-native-<random>/} without reusing anything,
- * and logs a warning. On a non-POSIX file system (Windows) the temp directory
- * is already per-user, so the owner and mode checks are skipped there and only
- * the directory and symbolic-link checks apply. Ownership is judged against the
- * identity the process creates files as, not against {@code user.name}.
+ * and logs a warning naming the reason. Ownership of the root, the
+ * {@code <hash>} directory and a reused library is verified on every file
+ * system with an "owner" attribute view, against the identity the process
+ * creates files as (the owner of a probe file {@code tstrans-id-*.tmp} created
+ * and removed under the temp directory; a crash can leave a zero-byte one), not
+ * against {@code user.name}; a store without that view is never trusted. The
+ * mode check is POSIX-only. Known limitation: on Windows no ACL is set, so
+ * rights inherited from a shared temp directory are blocked by the owner check,
+ * not by an ACL. A squatted root makes every launch copy the library into a new
+ * private directory, and nothing removes those copies.
  *
  * <p>Each JVM writes its own uniquely named owner-only staging file and
  * publishes it with an atomic move, so JVMs starting together never share a
  * partial file. An existing target is reused only when it is a regular file
- * (not a symbolic link) whose size and SHA-256 match the resource, so a file
+ * (not a symbolic link) owned by the current user whose size and SHA-256 match the resource, so a file
  * truncated by a crash is replaced. The loader never deletes a
  * {@code tstrans-native-*} entry: another JVM may be about to load it, and
  * Windows locks a loaded DLL. Directories from older JAR versions are left for
@@ -142,27 +148,32 @@ public final class NativeLoader {
     static Path extractToStableDir(byte[] bytes, String ext, Path tmpBase) throws IOException {
         boolean posix = tmpBase.getFileSystem().supportedFileAttributeViews().contains("posix");
         Path root = tmpBase.resolve("tstrans-native-" + userSegment(System.getProperty("user.name")));
-        Path targetDir;
-        if (trustedRoot(root, tmpBase, posix)) {
-            targetDir = root.resolve(contentHash(bytes));
+        Path targetDir = null;
+        String reason = trustedRoot(root, tmpBase, posix);
+        if (reason == null) {
+            Path dir = root.resolve(contentHash(bytes));
             if (posix) {
-                Files.createDirectories(targetDir,
-                        PosixFilePermissions.asFileAttribute(OWNER_DIR));
+                Files.createDirectories(dir, PosixFilePermissions.asFileAttribute(OWNER_DIR));
             } else {
-                Files.createDirectories(targetDir);
+                Files.createDirectories(dir);
             }
-        } else {
+            if (isOwnedDirectory(dir, tmpBase)) {
+                targetDir = dir;
+            } else {
+                reason = dir + " is not a directory owned by the current user";
+            }
+        }
+        if (targetDir == null) {
             LOG.log(System.Logger.Level.WARNING,
-                    "not using {0}: it is not an owner-only directory owned by the current user;"
-                            + " extracting the native library into a private directory",
-                    root);
+                    "not using {0}: {1}; extracting the native library into a private directory",
+                    root, reason);
             targetDir = posix
                     ? Files.createTempDirectory(tmpBase, "tstrans-native-",
                             PosixFilePermissions.asFileAttribute(OWNER_DIR))
                     : Files.createTempDirectory(tmpBase, "tstrans-native-");
         }
         Path target = targetDir.resolve("libtstjni." + ext);
-        if (matches(target, bytes)) {
+        if (matches(target, bytes, tmpBase)) {
             return target;
         }
         // A per-call staging name keeps concurrent JVMs off each other's partial
@@ -171,7 +182,7 @@ public final class NativeLoader {
         Path staging = Files.createTempFile(targetDir, "libtstjni." + ext + ".", ".part");
         try {
             Files.write(staging, bytes);
-            publish(staging, target, bytes);
+            publish(staging, target, bytes, tmpBase);
         } finally {
             Files.deleteIfExists(staging);
         }
@@ -181,51 +192,69 @@ public final class NativeLoader {
     /**
      * Creates {@code root} owner-only if absent; otherwise accepts it only when
      * it is a real directory, owned by this user and (POSIX) owner-only. Never
-     * modifies an existing directory.
+     * modifies an existing directory. Returns {@code null} when the root is
+     * trusted, else the reason it is not.
      */
-    private static boolean trustedRoot(Path root, Path tmpBase, boolean posix) {
+    private static String trustedRoot(Path root, Path tmpBase, boolean posix) {
         try {
             if (posix) {
                 Files.createDirectory(root, PosixFilePermissions.asFileAttribute(OWNER_DIR));
             } else {
                 Files.createDirectory(root);
             }
-            return true;
+            return null;
         } catch (FileAlreadyExistsException exists) {
             // Fall through to the checks on what is already there.
         } catch (IOException | UnsupportedOperationException e) {
-            return false;
+            return "it could not be created (" + e + ")";
         }
         try {
-            if (!Files.readAttributes(root, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS)
-                    .isDirectory()) {
-                return false;
+            if (!isOwnedDirectory(root, tmpBase)) {
+                return "it is not a real directory owned by the current user";
             }
-            if (!posix) {
-                return true;
+            if (posix && !Files.getPosixFilePermissions(root, LinkOption.NOFOLLOW_LINKS)
+                    .equals(OWNER_DIR)) {
+                return "it is not accessible by its owner alone";
             }
-            return currentUserOwns(root, tmpBase)
-                    && Files.getPosixFilePermissions(root, LinkOption.NOFOLLOW_LINKS)
-                            .equals(OWNER_DIR);
+            return null;
         } catch (IOException | UnsupportedOperationException e) {
+            return "it could not be inspected (" + e + ")";
+        }
+    }
+
+    private static boolean isOwnedDirectory(Path dir, Path tmpBase) {
+        try {
+            return Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS)
+                            .isDirectory()
+                    && currentUserOwns(dir, tmpBase);
+        } catch (IOException e) {
             return false;
         }
     }
 
     /**
-     * True when {@code dir} is owned by the identity this process creates files
+     * True when {@code path} is owned by the identity this process creates files
      * as. That identity is read from the file system (the owner of a probe file
-     * created and removed under {@code tmpBase}), not from {@code user.name},
-     * which is {@code ?} or unset when the uid has no passwd entry and can be
-     * overridden on the command line.
+     * {@code tstrans-id-*.tmp} created and removed under {@code tmpBase}; a crash
+     * can leave a zero-byte one behind), not from {@code user.name}, which is
+     * {@code ?} or unset when the uid has no passwd entry and can be overridden
+     * on the command line. A store without an "owner" attribute view cannot be
+     * verified and is never trusted.
      */
-    private static boolean currentUserOwns(Path dir, Path tmpBase) throws IOException {
-        Path probe = Files.createTempFile(tmpBase, "tstrans-id-", ".tmp");
+    static boolean currentUserOwns(Path path, Path tmpBase) {
+        if (!path.getFileSystem().supportedFileAttributeViews().contains("owner")) {
+            return false;
+        }
         try {
-            return Files.getOwner(dir, LinkOption.NOFOLLOW_LINKS)
-                    .equals(Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS));
-        } finally {
-            Files.deleteIfExists(probe);
+            Path probe = Files.createTempFile(tmpBase, "tstrans-id-", ".tmp");
+            try {
+                return Files.getOwner(path, LinkOption.NOFOLLOW_LINKS)
+                        .equals(Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS));
+            } finally {
+                Files.deleteIfExists(probe);
+            }
+        } catch (IOException | UnsupportedOperationException e) {
+            return false;
         }
     }
 
@@ -257,7 +286,8 @@ public final class NativeLoader {
      * intact copy (published by the other JVM, loaded and locked or not) is in
      * place.
      */
-    private static void publish(Path staging, Path target, byte[] bytes) throws IOException {
+    private static void publish(Path staging, Path target, byte[] bytes, Path tmpBase)
+            throws IOException {
         IOException last = null;
         for (int attempt = 0; attempt < 20; attempt++) {
             if (attempt > 0) {
@@ -274,7 +304,7 @@ public final class NativeLoader {
                         StandardCopyOption.REPLACE_EXISTING);
                 return;
             } catch (IOException e) {
-                if (matches(target, bytes)) {
+                if (matches(target, bytes, tmpBase)) {
                     return;
                 }
                 last = e;
@@ -284,13 +314,15 @@ public final class NativeLoader {
     }
 
     /**
-     * True only for a regular, non-symlink file with this content. False for any
-     * unreadable target, so the caller falls through to extraction.
+     * True only for a regular, non-symlink file owned by this user with this
+     * content. False for any unreadable target, so the caller falls through to
+     * extraction.
      */
-    private static boolean matches(Path file, byte[] bytes) {
+    private static boolean matches(Path file, byte[] bytes, Path tmpBase) {
         try {
             return Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS)
                             .isRegularFile()
+                    && currentUserOwns(file, tmpBase)
                     && Files.size(file) == bytes.length
                     && contentHash(Files.readAllBytes(file)).equals(contentHash(bytes));
         } catch (IOException e) {
