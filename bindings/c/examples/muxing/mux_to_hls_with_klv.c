@@ -91,9 +91,20 @@ static const uint8_t KLV_BLOB[17] = {
 #define BIND_ADDR        "127.0.0.1:8081"
 #define SEGMENT_MS       2000
 
+/*
+ * The output directory must be owned by this user and not writable by anyone
+ * else, so the shared temp directory itself (root-owned, sticky, world
+ * writable) is refused. Use a subdirectory of it instead: the publisher
+ * creates it with mode 0700 when it does not exist.
+ */
 static const char *output_dir(void) {
+    static char path[512];
     const char *t = getenv("TMPDIR");
-    return (t && t[0] != '\0') ? t : "/tmp/";
+    if (!t || t[0] == '\0') {
+        t = "/tmp";
+    }
+    snprintf(path, sizeof path, "%s/tstrans-hls-example", t);
+    return path;
 }
 
 int main(void) {
@@ -111,7 +122,12 @@ int main(void) {
         return 2;
     }
     (void) tst_hls_publisher_builder_bind(builder, BIND_ADDR);
-    (void) tst_hls_publisher_builder_output_dir(builder, output_dir());
+    if (tst_hls_publisher_builder_output_dir(builder, output_dir()) != 0) {
+        fprintf(stderr, "[mux_to_hls] output_dir failed: %s\n",
+                tst_get_last_error_str());
+        tst_hls_publisher_builder_free(builder);
+        return 2;
+    }
     (void) tst_hls_publisher_builder_segment_duration_ms(builder, SEGMENT_MS);
 
     TstPublisher *pub = tst_hls_publisher_builder_build(builder);

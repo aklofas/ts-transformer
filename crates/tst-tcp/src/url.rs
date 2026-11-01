@@ -230,9 +230,9 @@ impl TcpUrl {
         };
 
         // Unknown params are ignored on `tcp://` and refused on `tcps://`, where
-        // a misspelt TLS key would otherwise fall back to the native roots. The query is applied before
-        // the host check because `listen` decides whether the host must be
-        // an IP literal.
+        // a misspelt TLS key would otherwise fall back to the native roots.
+        // The query is applied before the host check because `listen` decides
+        // whether the host must be an IP literal.
         let unknown = if tls {
             UnknownKeys::Reject
         } else {

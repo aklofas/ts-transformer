@@ -2649,14 +2649,7 @@
         {
           "case": "credentials",
           "expect": {
-            "host": "127.0.0.1",
-            "keys": {
-              "mode": "live",
-              "playlist_window": "6",
-              "segment_duration": "4"
-            },
-            "port": 31701,
-            "scheme": "hls"
+            "error_kind": "URL"
           },
           "role": "publisher",
           "scheme": "hls",
@@ -3418,14 +3411,7 @@
         {
           "case": "credentials",
           "expect": {
-            "host": "127.0.0.1",
-            "keys": {
-              "cors_origin": "*",
-              "max_viewers": "10",
-              "media_port": "0"
-            },
-            "port": 0,
-            "scheme": "whep"
+            "error_kind": "URL"
           },
           "role": "server",
           "scheme": "whep",

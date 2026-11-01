@@ -20,7 +20,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
 ### Changed — tst-hls (BREAKING)
 
-`HlsPublisher` now refuses (new `HlsError::UntrustedOutputDir`) an `output_dir` that is a symlink, is not owned by the process user, or is writable by group or others (Unix). A missing directory is created with mode 0700, and segments, the playlist and served segment reads are opened without following symlinks. Previously another account could pre-create the default `temp_dir()/tstrans-hls` on a shared `/tmp`, or plant symlinks in it, to redirect or read the publisher's files. Create the directory 0700 or use a private path. Bindings report the new error as the existing invalid-config kind.
+`HlsPublisher` now refuses (new `HlsError::UntrustedOutputDir`) an `output_dir` that is a symlink, is not owned by the process user, or is writable by group or others (Unix). A missing directory is created with mode 0700, and segments, the playlist and served segment reads are opened without following symlinks. Previously another account could pre-create the default `temp_dir()/tstrans-hls` on a shared `/tmp`, or plant symlinks in it, to redirect or read the publisher's files. Create it not writable by group or others (for example 0700 or 0750) or use a private path. Bindings report the new error as the existing invalid-config kind.
 
 ### Changed — tst-tcp (BREAKING)
 

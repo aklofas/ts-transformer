@@ -60,6 +60,11 @@ pub struct HlsConfig {
     /// temp directory is therefore refused on a shared `/tmp` when another
     /// account created it first: create it yourself with mode 0700 or point
     /// `output_dir` at a private path. On other platforms no check is made.
+    ///
+    /// Missing parent directories are also created 0700. The check refuses a
+    /// directory owned by another user even when running as root; for a
+    /// container volume, point `output_dir` at a fresh subdirectory the
+    /// publisher creates.
     pub output_dir: PathBuf,
     /// Maximum segment duration (default 4 s; must be > 0); the playlist
     /// advertises its ceiling as `#EXT-X-TARGETDURATION`. Segments cut on
