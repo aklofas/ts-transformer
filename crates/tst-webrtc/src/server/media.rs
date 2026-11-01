@@ -753,6 +753,12 @@ impl Media {
             v.audio = audio;
             v.audio_seq = random_seq();
             drain_rtc(&mut v, &self.socket, now);
+            // Test-only: an offer whose ICE ufrag carries the marker panics
+            // here, the last step of the guarded span.
+            #[cfg(feature = "test-hooks")]
+            if offer_sdp.contains("a=ice-ufrag:tsthookpanic") {
+                panic!("test hook: panic while initialising a session");
+            }
             Ok((v, answer, id))
         })??;
         self.viewers.push(v);
@@ -1203,8 +1209,13 @@ fn contain_panic<T>(f: impl FnOnce() -> T) -> Result<T, RejectReason> {
                 panic = ?message,
                 "str0m panicked while applying an offer; the offer is refused"
             );
-            // A payload whose `Drop` panics would unwind out of this frame.
-            std::mem::forget(payload);
+            // The usual payloads, `&'static str` and `String`, cannot panic
+            // in `Drop`, so they are freed. Only a payload of unknown type
+            // might panic in `Drop` and unwind out of this frame; leaking
+            // that one is cheaper than the media thread.
+            if !(payload.is::<&str>() || payload.is::<String>()) {
+                std::mem::forget(payload);
+            }
             Err(RejectReason::Internal)
         }
     }

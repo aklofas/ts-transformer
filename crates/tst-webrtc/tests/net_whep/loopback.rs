@@ -623,6 +623,40 @@ fn an_offer_with_a_mid_less_media_line_is_400_and_the_server_keeps_serving() {
     assert_eq!(srv.stats().sessions_total, 1);
 }
 
+/// A panic while a session is being initialised, after str0m accepted the
+/// offer, refuses that offer with 500 and leaves the media thread, its
+/// connected viewers and the session count alone.
+#[cfg(feature = "test-hooks")]
+#[test]
+fn a_panic_while_initialising_a_session_is_500_and_viewers_keep_playing() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut a = TestViewer::new();
+    join(srv.local_addr(), "/cam", &mut a, false);
+    connect_all(&m, std::slice::from_mut(&mut a));
+    let sessions = srv.stats().sessions_total;
+
+    let offer = TestViewer::new().offer(true);
+    let poisoned = offer.replacen("a=ice-ufrag:", "a=ice-ufrag:tsthookpanic", 1);
+    assert_ne!(poisoned, offer);
+    let (status, _, _) = whep_post(srv.local_addr(), "/cam", &poisoned, None);
+    assert_eq!(status, 500);
+    assert_eq!(srv.stats().sessions_total, sessions);
+
+    for (i, (au, key)) in h264_gop().iter().take(5).enumerate() {
+        m.push_video(au, pts(i), *key).unwrap();
+    }
+    assert!(a.pump(|v| v.frames.len() >= 5, DELIVER), "{}", a.trace());
+    let (status, _, _) = whep_post(
+        srv.local_addr(),
+        "/cam",
+        &TestViewer::new().offer(true),
+        None,
+    );
+    assert_eq!(status, 201);
+    assert_eq!(srv.stats().sessions_total, sessions + 1);
+}
+
 /// A `recvonly` offer whose `m=` line lists only 120 and that maps 121,
 /// a number outside it, twice: str0m claims every `a=rtpmap`, so the
 /// second claim of 121 would panic it.
