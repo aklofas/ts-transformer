@@ -292,11 +292,11 @@ async fn serve(
         }
         Route::Segment(name) => {
             // Resolve under the lock, then release it before doing I/O.
-            let path = {
+            let dir = {
                 let s = state.lock().expect("HlsPublisher poisoned");
                 s.segmenter.serve_lookup(&name)
             };
-            match path.and_then(|p| crate::secure_fs::read_nofollow(&p).ok()) {
+            match dir.and_then(|d| d.read(&name).ok()) {
                 Some(bytes) => Response::builder()
                     .status(StatusCode::OK)
                     .header(CONTENT_TYPE, "video/mp2t")

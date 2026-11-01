@@ -3,7 +3,6 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::config::{HlsConfig, HlsMode};
@@ -38,6 +37,8 @@ struct GraceEntry {
 
 pub(crate) struct Segmenter {
     config: HlsConfig,
+    /// The validated output directory; every file operation goes through it.
+    dir: std::sync::Arc<crate::secure_fs::OutputDir>,
     /// Immutable `#EXT-X-TARGETDURATION` (seconds), chosen once at
     /// construction as the ceiling of the configured segment duration.
     /// RFC 8216 §6.2.1 forbids the value from changing once the playlist is
@@ -74,21 +75,14 @@ struct OpenSegment {
 impl Segmenter {
     pub(crate) fn new(config: HlsConfig) -> Result<Self, HlsError> {
         // Ensure output_dir exists.
-        crate::secure_fs::prepare_output_dir(&config.output_dir)?;
+        let dir = std::sync::Arc::new(crate::secure_fs::OutputDir::open(&config.output_dir)?);
 
         // Clean up stale segments + playlist from prior runs (best-effort).
-        if let Ok(entries) = std::fs::read_dir(&config.output_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if (name_str.starts_with("segment_") && name_str.ends_with(".ts"))
-                    || name_str == PLAYLIST_FILENAME
-                    || name_str == PLAYLIST_TMP_FILENAME
-                {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
+        dir.remove_matching(|name| {
+            (name.starts_with("segment_") && name.ends_with(".ts"))
+                || name == PLAYLIST_FILENAME
+                || name == PLAYLIST_TMP_FILENAME
+        });
 
         // Integer ceil-of-seconds: the target is a conformance-critical value
         // (RFC 8216 §4.3.3.1/§6.2.1), so compute it exactly without f64 rounding
@@ -98,6 +92,7 @@ impl Segmenter {
         .max(1);
 
         Ok(Self {
+            dir,
             config,
             target_duration_secs,
             next_seq: 0,
@@ -257,10 +252,13 @@ impl Segmenter {
     /// controlled string is ever joined onto `output_dir` unless it was already
     /// emitted by `open_new()`.
     #[cfg(feature = "serve")]
-    pub(crate) fn serve_lookup(&self, name: &str) -> Option<PathBuf> {
+    pub(crate) fn serve_lookup(
+        &self,
+        name: &str,
+    ) -> Option<std::sync::Arc<crate::secure_fs::OutputDir>> {
         let known = self.history.iter().any(|s| s.filename == name)
             || self.grace.iter().any(|g| g.filename == name);
-        known.then(|| self.config.output_dir.join(name))
+        known.then(|| self.dir.clone())
     }
 
     pub(crate) fn mode(&self) -> HlsMode {
@@ -281,8 +279,7 @@ impl Segmenter {
         let seq = self.next_seq;
         self.next_seq += 1;
         let filename = format!("segment_{seq:05}.ts");
-        let path: PathBuf = self.config.output_dir.join(&filename);
-        let file = crate::secure_fs::create_new_nofollow(&path).map_err(HlsError::Io)?;
+        let file = self.dir.create_new(&filename).map_err(HlsError::Io)?;
         self.current = Some(OpenSegment {
             seq,
             filename,
@@ -334,11 +331,11 @@ impl Segmenter {
             return Ok(());
         }
         let text = crate::playlist::render(self, is_final);
-        let tmp = self.config.output_dir.join(PLAYLIST_TMP_FILENAME);
-        crate::secure_fs::create_truncate_nofollow(&tmp)
+        self.dir
+            .create_truncate(PLAYLIST_TMP_FILENAME)
             .and_then(|mut f| f.write_all(text.as_bytes()))
-            .map_err(HlsError::Io)?;
-        std::fs::rename(&tmp, self.config.output_dir.join(PLAYLIST_FILENAME)).map_err(HlsError::Io)
+            .and_then(|()| self.dir.rename(PLAYLIST_TMP_FILENAME, PLAYLIST_FILENAME))
+            .map_err(HlsError::Io)
     }
 
     fn evict_if_needed(&mut self) -> Result<(), HlsError> {
@@ -391,8 +388,7 @@ impl Segmenter {
         while let Some(front) = self.grace.front() {
             if now.duration_since(front.removed_at) >= front.availability {
                 let entry = self.grace.pop_front().expect("front exists");
-                let path = self.config.output_dir.join(&entry.filename);
-                let _ = std::fs::remove_file(&path);
+                let _ = self.dir.remove(&entry.filename);
             } else {
                 break;
             }
@@ -404,7 +400,7 @@ impl Segmenter {
 mod tests {
     use super::*;
 
-    fn tmpdir() -> PathBuf {
+    fn tmpdir() -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!(
             "hls-seg-test-{}-{}",
             std::process::id(),
@@ -769,7 +765,7 @@ mod tests {
         s.cut().unwrap();
         // segment_00000.ts is in history; lookup must resolve to the absolute path.
         let result = s.serve_lookup("segment_00000.ts");
-        assert_eq!(result, Some(dir.join("segment_00000.ts")));
+        assert!(result.expect("known name").read("segment_00000.ts").is_ok());
     }
 
     #[cfg(feature = "serve")]
@@ -803,10 +799,11 @@ mod tests {
             "segment_00000.ts must have been evicted from history"
         );
         let result = s.serve_lookup("segment_00000.ts");
-        assert_eq!(
-            result,
-            Some(dir.join("segment_00000.ts")),
-            "grace-queued segment must still be lookup-available"
+        assert!(
+            result
+                .expect("grace-queued segment must still be lookup-available")
+                .read("segment_00000.ts")
+                .is_ok()
         );
     }
 
@@ -830,7 +827,7 @@ mod tests {
         let far_future = Instant::now() + Duration::from_secs(3600);
         s.purge_grace(far_future);
         // segment_00000.ts is no longer in history or grace; lookup must return None.
-        assert_eq!(s.serve_lookup("segment_00000.ts"), None);
+        assert!(s.serve_lookup("segment_00000.ts").is_none());
     }
 
     #[cfg(feature = "serve")]
@@ -853,9 +850,8 @@ mod tests {
             "segment_00000.ts\0.ts",
             "",
         ] {
-            assert_eq!(
-                s.serve_lookup(name),
-                None,
+            assert!(
+                s.serve_lookup(name).is_none(),
                 "unexpected Some for never-created name {name:?}"
             );
         }
