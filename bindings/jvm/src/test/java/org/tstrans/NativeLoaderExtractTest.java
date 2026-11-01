@@ -307,6 +307,19 @@ class NativeLoaderExtractTest {
     }
 
     @Test
+    void ownershipPredicateAcceptsOurFilesAndRejectsOthers(@TempDir Path tmp) throws IOException {
+        Path mine = Files.createFile(tmp.resolve("mine"));
+        assertTrue(NativeLoader.currentUserOwns(mine, tmp));
+        assertTrue(NativeLoader.currentUserOwns(tmp, tmp));
+        assertFalse(NativeLoader.currentUserOwns(tmp.resolve("absent"), tmp));
+        assumePosix(tmp);
+        Path rootDir = Path.of("/");
+        org.junit.jupiter.api.Assumptions.assumeFalse(
+            Files.getOwner(rootDir).equals(Files.getOwner(mine)), "running as root");
+        assertFalse(NativeLoader.currentUserOwns(rootDir, tmp), "a directory owned by another user");
+    }
+
+    @Test
     void contentHashIsSha256Hex() {
         String hash = NativeLoader.contentHash("abc".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hash);

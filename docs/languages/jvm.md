@@ -69,7 +69,9 @@ The Gradle build (JDK 17 toolchain, wrapper 9.5.1) drives
 at runtime. The library is cached in a per-user
 `<tmpdir>/tstrans-native-<user>/<sha256>/` directory that the loader creates
 owner-only (`rwx------`) and reuses only when it is a real directory owned by
-the current user with exactly that mode. If the per-user directory exists but
+the current user (checked on every file system with an owner view) and, on
+POSIX, has exactly that mode. The `<sha256>` directory and a reused library
+must be owned by the current user too. If the per-user directory exists but
 fails those checks, the loader leaves it alone and extracts into a fresh private
 temp directory instead, logging a warning. Each JVM stages its own file, reuses
 a cached file only when it is a regular file whose size and SHA-256 match, and
