@@ -1157,6 +1157,46 @@ mod tests {
     }
 
     #[test]
+    fn quoted_realm_401_encodes_one_escaped_www_authenticate_line() {
+        use secrecy::SecretString;
+        let mut builder =
+            crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        builder.auth_digest_md5("ts \"q\"", "admin", SecretString::new("secret".into()));
+        let state = Arc::new(ServerState {
+            builder,
+            cancel_token: CancellationToken::new(),
+            sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
+            hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
+            mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
+            mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
+            active_sessions: AtomicUsize::new(0),
+            total_rtp_packets_sent: AtomicU64::new(0),
+            total_rtp_bytes_sent: AtomicU64::new(0),
+            publish_counters: Default::default(),
+            started: AtomicBool::new(true),
+            shutdown: AtomicBool::new(false),
+            local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
+            sessions: std::sync::Mutex::new(Vec::new()),
+            notice_cseq: AtomicU64::new(1_000_000),
+            #[cfg(feature = "rtsp-server-tls")]
+            tls_config: std::sync::Mutex::new(None),
+            startup_tx: std::sync::Mutex::new(None),
+            publish_queue_tx: std::sync::Mutex::new(None),
+        });
+        let req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/live");
+        let mut session = ServerSessionState::new();
+        let resp = handle_describe(&req, &state, &mut session);
+        assert_eq!(resp.status, 401);
+        let wire = String::from_utf8(resp.encode().to_vec()).unwrap();
+        let lines: Vec<&str> = wire
+            .lines()
+            .filter(|l| l.to_ascii_lowercase().starts_with("www-authenticate:"))
+            .collect();
+        assert_eq!(lines.len(), 1, "{wire}");
+        assert!(lines[0].contains(r#"realm="ts \"q\"""#), "{}", lines[0]);
+    }
+
+    #[test]
     fn extract_mount_path_strips_scheme_and_authority() {
         assert_eq!(extract_mount_path("rtsp://host:8554/live"), "/live");
         assert_eq!(extract_mount_path("rtsps://host/live"), "/live");

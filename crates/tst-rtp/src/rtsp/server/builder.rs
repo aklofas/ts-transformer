@@ -309,7 +309,7 @@ impl RtspServerBuilder {
     /// - [`RtspServerError::InvalidConfig`] if the
     ///   [`default_mount_rule`](Self::default_mount_rule) holds a `Require`
     ///   policy with no credential, a credential with an empty username or a
-    ///   username listed twice
+    ///   username listed twice, or an `auth_*` realm holding a control byte
     ///
     /// TLS cert/key paths are NOT validated here — they are loaded at
     /// [`RtspServer::start`](crate::rtsp::server::RtspServer::start), which
@@ -355,6 +355,16 @@ mod tests {
         assert!(matches!(cfg.scheme, AuthScheme::Basic));
         assert_eq!(cfg.realm, "tst");
         assert_eq!(cfg.username, "admin");
+    }
+
+    #[test]
+    fn build_refuses_a_realm_with_control_bytes() {
+        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        b.auth_basic("a\nb", "admin", SecretString::new("p".into()));
+        assert!(matches!(
+            b.build(),
+            Err(RtspServerError::InvalidConfig { .. })
+        ));
     }
 
     #[test]
