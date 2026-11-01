@@ -8,6 +8,7 @@ caller connects.
 
 from __future__ import annotations
 
+import gc
 import threading
 import time
 from typing import Optional
@@ -214,3 +215,21 @@ def test_reject_reason_table_matches_native() -> None:
     native = dict(tstrans.srt._native_reject_reason_table())
     assert native == {m.value: m.name for m in RejectReason}
     assert len(native) == 21
+
+
+def test_gc_dropped_listener_closes_retained_rules() -> None:
+    # A listener dropped without close() is freed by the garbage collector;
+    # a ListenRules handle taken earlier must then report the closed state.
+    lst, _port = _listen()
+    rules = lst.rules()
+    rules.set("a", ListenRule.accept())
+    del lst
+    gc.collect()
+    with pytest.raises(SrtError) as ei:
+        rules.set("b", ListenRule.accept())
+    assert ei.value.kind == SrtErrorKind.CLOSED
+    # Python raises from every rules method once closed (the Rust handle's
+    # `remove` returns False instead).
+    with pytest.raises(SrtError) as ei:
+        rules.remove("a")
+    assert ei.value.kind == SrtErrorKind.CLOSED

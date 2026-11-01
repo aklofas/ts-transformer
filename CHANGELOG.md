@@ -17,6 +17,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `EncryptionKey.aes128`, `aes192` and `aes256` raise `ValueError` for a `bytes` secret that is not valid UTF-8. The secret was converted lossily, so distinct byte secrets collided on the same key and the derived key differed from a peer that used the raw bytes. A `str` secret and a UTF-8 `bytes` secret behave as before.
 
+### Security — tst-srt
+
+- A listener with a builder or URL passphrase admitted a handshake-v4 SRT caller without any key material, so that caller connected unencrypted (every release since 0.1.0, which already had `SrtListenerBuilder::passphrase`). The listener now refuses such a caller with `RejectReason::VersionUnsupported` (1505); the caller sees the connection closed. The same refusal applies where an `AcceptWith` listen rule decides the caller (the listen rules are unreleased, so only unreleased code was affected). Earlier releases have no library-level workaround.
+- A handshake that carried its stream ID twice, or a stream ID with an interior NUL, could make the listen rules decide on a different identity than the one `SrtSocket::stream_id()` reported. The listen rules are unreleased, so only unreleased code was affected. The vendored libsrt now refuses a handshake with a repeated stream-ID block, and `accept` closes any accepted socket whose stream ID differs from the one the rules matched and keeps waiting, which also covers a host libsrt.
+
+### Changed — tst-srt, tst-py, tst-jni (BREAKING)
+
+- `StreamId::new`, `ListenRules::set` and the `?streamid=` URL key refuse a stream ID or rule key holding a NUL byte (`StreamIdError::InteriorNul`, `ListenRuleError::InteriorNul`; `ListenRules::remove` of such a key returns `false`; Python and JVM report `CONFIG_INVALID`). libsrt's listen hook sees the stream ID as a C string, so a NUL-bearing ID could never match its own rule.
+
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 
 - `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch.
@@ -137,6 +146,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-srt
 
+- `ListenRules::set` refuses a reject code above `i32::MAX - 1000` with `ListenRuleError::ReasonOutOfRange`; libsrt cannot send such a code.
+- `SrtSocket::stream_id()` drops libsrt's trailing NUL padding; a one-character stream ID used to read back as `"a\0\0\0"`.
 - A listener applies peer latency, send buffers and input bandwidth to the sockets it accepts.
 - `accept_timeout` no longer waits past its timeout when libsrt retires a queued connection between readiness and the accept, and its epoll wait no longer overflows libsrt's millisecond timeout multiply.
 - A UDP buffer or input-rate value that wraps negative in libsrt's signed field is refused.

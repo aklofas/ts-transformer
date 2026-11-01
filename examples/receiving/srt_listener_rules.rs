@@ -70,7 +70,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // behavior, and ours). With an allow-list, turn that around: an
         // unknown name is refused with 1404 "not found". Reject codes must
         // be 1000 or higher; lower ones belong to libsrt and `set` refuses
-        // them with `ListenRuleError::InternalReason`.
+        // them with `ListenRuleError::InternalReason`; codes above
+        // `i32::MAX - 1000` are refused with `ReasonOutOfRange`.
         rules.set_default(ListenRule::Reject(RejectReason::NotFound))?;
     }
     eprintln!("listening on 127.0.0.1:9000 ({} rules)", rules.len());

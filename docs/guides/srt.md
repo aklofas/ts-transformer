@@ -412,14 +412,31 @@ fn serve() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-- **Matching** is an exact string compare on the raw stream ID. A caller
-  with no stream ID, including a handshake-v4 caller, is checked against
-  the default rule.
+- **Matching** is an exact string compare on the stream ID as a C string,
+  because that is what libsrt's hook sees. A NUL byte is therefore refused
+  in rule keys and in `StreamId::new` (`ListenRuleError::InteriorNul`,
+  `StreamIdError::InteriorNul`); `remove` of such a key returns `false`.
+  A caller with no stream ID, including a handshake-v4 caller, or one whose
+  stream ID is not valid UTF-8, is checked against the default rule.
+- **A handshake-v4 caller is refused wherever a passphrase applies**: a
+  builder or URL passphrase on the listener, or an `AcceptWith` rule that
+  decides the caller. v4 callers cannot carry the key material, so the
+  listener refuses them with `RejectReason::VersionUnsupported` (1505) and
+  the caller sees the connection closed. Without a passphrase they connect
+  as before and get the default rule.
+- **`accept()` checks the identity it matched.** If an accepted socket
+  reports a stream ID that differs from the one the rules decided on, the
+  socket is closed and the listener keeps waiting. This covers a handshake
+  that carries its stream ID twice, and holds with a host libsrt too.
+  `SrtSocket::stream_id()` drops libsrt's trailing NUL padding, so a
+  one-character ID reads back as itself.
 - **The default rule is `Accept`.** A listener whose table you never touch
   behaves exactly as it did before, including a builder-wide passphrase.
-- **`Reject` codes start at 1000.** Lower codes belong to libsrt, and
-  `set` returns `ListenRuleError::InternalReason` for them. Use a
-  predefined `RejectReason` or an application code of 2000 or more.
+- **`Reject` codes run from 1000 to `i32::MAX - 1000`.** Lower codes
+  belong to libsrt, and `set` returns `ListenRuleError::InternalReason`
+  for them; a code above the upper bound is one libsrt cannot send, and
+  `set` returns `ListenRuleError::ReasonOutOfRange`. Use a predefined
+  `RejectReason` or an application code of 2000 or more.
 - **Edits can come from any thread.** `ListenRules` is a cheap clone of the
   same table, so move a clone to a worker and call `set`, `remove`,
   `set_default` or `clear` while the accept thread is parked. An edit
