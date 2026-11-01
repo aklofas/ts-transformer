@@ -18,6 +18,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stream-ID values in an SRT `AccessControl` (Rust `Debug`, Python repr) are redacted; the keys stay visible.
 - Rust `Debug` for `HlsConfig`, the WHEP bearer-token request holder and the SRT `AccessControl`, `StreamId` and socket types never prints a password, token or stream-ID value. The `InvalidPort` URL error redacts a port that is not digits, since a mistyped URL can put a password there. The shared helper is `tst_core::url::redact_url`.
 - The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
+### Changed — tst-hls (BREAKING)
+
+`HlsPublisher` now refuses (new `HlsError::UntrustedOutputDir`) an `output_dir` that is a symlink, is not owned by the process user, or is writable by group or others (Unix). A missing directory is created with mode 0700, and segments, the playlist and served segment reads are opened without following symlinks. Previously another account could pre-create the default `temp_dir()/tstrans-hls` on a shared `/tmp`, or plant symlinks in it, to redirect or read the publisher's files. Create the directory 0700 or use a private path. Bindings report the new error as the existing invalid-config kind.
+
 ### Changed — tst-tcp (BREAKING)
 
 - A `tcp://` URL that carries `cert`, `key` or `ca` is now an error naming the key and asking for `tcps://`, and a `tcps://` URL with an unknown query key is an error. Before, TLS keys on a plaintext URL were stored and the connection ran unencrypted, and a misspelt `cafile=` on `tcps://` was ignored so the server was verified against the native roots. `tcp://` still ignores other unknown keys.

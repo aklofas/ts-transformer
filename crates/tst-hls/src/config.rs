@@ -50,6 +50,16 @@ pub struct HlsConfig {
     /// publishers sharing one directory (default or otherwise) will clobber
     /// each other's output and race on segment creation — give each publisher
     /// its own `output_dir`.
+    ///
+    /// **Trust requirement (Unix).** The directory must be owned by the
+    /// process user, must not be a symbolic link, and must not be writable
+    /// by group or others; otherwise construction fails with
+    /// [`HlsError::UntrustedOutputDir`](crate::HlsError::UntrustedOutputDir).
+    /// A missing directory is created with mode 0700. Files in it are opened
+    /// without following symbolic links. The default path under the system
+    /// temp directory is therefore refused on a shared `/tmp` when another
+    /// account created it first: create it yourself with mode 0700 or point
+    /// `output_dir` at a private path. On other platforms no check is made.
     pub output_dir: PathBuf,
     /// Maximum segment duration (default 4 s; must be > 0); the playlist
     /// advertises its ceiling as `#EXT-X-TARGETDURATION`. Segments cut on

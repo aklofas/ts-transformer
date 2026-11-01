@@ -86,6 +86,9 @@ pub tst_hls::error::HlsError::Tls(alloc::string::String)
 pub tst_hls::error::HlsError::TlsDisabled
 pub tst_hls::error::HlsError::UnalignedPushTs
 pub tst_hls::error::HlsError::UnalignedPushTs::len: usize
+pub tst_hls::error::HlsError::UntrustedOutputDir
+pub tst_hls::error::HlsError::UntrustedOutputDir::path: alloc::string::String
+pub tst_hls::error::HlsError::UntrustedOutputDir::reason: alloc::string::String
 impl core::convert::From<core::io::error::Error> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_hls::error::HlsError> for tst_pipeline::binding::kind::BindingError
@@ -185,6 +188,9 @@ pub tst_hls::HlsError::Tls(alloc::string::String)
 pub tst_hls::HlsError::TlsDisabled
 pub tst_hls::HlsError::UnalignedPushTs
 pub tst_hls::HlsError::UnalignedPushTs::len: usize
+pub tst_hls::HlsError::UntrustedOutputDir
+pub tst_hls::HlsError::UntrustedOutputDir::path: alloc::string::String
+pub tst_hls::HlsError::UntrustedOutputDir::reason: alloc::string::String
 impl core::convert::From<core::io::error::Error> for tst_hls::error::HlsError
 pub fn tst_hls::error::HlsError::from(core::io::error::Error) -> Self
 impl core::convert::From<tst_hls::error::HlsError> for tst_pipeline::binding::kind::BindingError
