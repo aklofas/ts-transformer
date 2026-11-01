@@ -10,8 +10,9 @@ use std::path::Path;
 
 use crate::error::HlsError;
 
-/// Create `dir` (private, mode 0700 on Unix) if missing, then verify it can
-/// be trusted.
+/// Create `dir` (private, mode 0700 on Unix, as are any missing parents) if
+/// missing, then verify it can be trusted. A directory owned by another user
+/// is refused even when running as root.
 pub(crate) fn prepare_output_dir(dir: &Path) -> Result<(), HlsError> {
     #[cfg(unix)]
     {
@@ -90,3 +91,22 @@ fn nofollow(o: &mut OpenOptions) {
 
 #[cfg(not(unix))]
 fn nofollow(_: &mut OpenOptions) {}
+
+#[cfg(all(test, unix, feature = "serve"))]
+mod tests {
+    use super::read_nofollow;
+
+    #[test]
+    fn read_nofollow_refuses_a_symlink_and_never_reads_the_target() {
+        let dir = std::env::temp_dir().join(format!("secure-fs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        std::fs::write(&target, b"secret").unwrap();
+        let link = dir.join("link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(read_nofollow(&link).is_err());
+        assert_eq!(read_nofollow(&target).unwrap(), b"secret");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

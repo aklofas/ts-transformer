@@ -95,15 +95,19 @@ static void make_null_ts_packet(uint8_t *buf) {
 /* ── Helper: pick an output directory ──────────────────────────────────── */
 
 /*
- * Use $TMPDIR if set (honours the platform temp location), else /tmp. The
- * publisher creates the directory if it does not exist.
+ * The output directory must be owned by this user and not writable by anyone
+ * else, so the shared temp directory itself (root-owned, sticky, world
+ * writable) is refused. Use a subdirectory of it instead: the publisher
+ * creates it with mode 0700 when it does not exist.
  */
 static const char *output_dir(void) {
+    static char path[512];
     const char *t = getenv("TMPDIR");
-    if (t && t[0] != '\0') {
-        return t;
+    if (!t || t[0] == '\0') {
+        t = "/tmp";
     }
-    return "/tmp/";
+    snprintf(path, sizeof path, "%s/tstrans-hls-example", t);
+    return path;
 }
 
 /* ── main ──────────────────────────────────────────────────────────────── */

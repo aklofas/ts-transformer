@@ -1621,7 +1621,7 @@ scheme = "hls"
 role = "publisher"
 case = "credentials"
 url = "hls://user:secret@127.0.0.1:31701"
-expect = { scheme = "hls", host = "127.0.0.1", port = 31701, keys = { segment_duration = "4", playlist_window = "6", mode = "live" } }
+expect = { error_kind = "URL" }
 
 [[url]]
 scheme = "hls"
@@ -2028,7 +2028,7 @@ scheme = "whep"
 role = "server"
 case = "credentials"
 url = "whep://user:secret@127.0.0.1:0"
-expect = { scheme = "whep", host = "127.0.0.1", port = 0, keys = { media_port = "0", max_viewers = "10", cors_origin = "*" } }
+expect = { error_kind = "URL" }
 
 [[url]]
 scheme = "whep"
