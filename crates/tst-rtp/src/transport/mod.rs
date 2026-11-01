@@ -57,7 +57,10 @@ pub enum RtpConnectError {
     /// `RtpUrl::host` couldn't be parsed as a literal IP. The RTP
     /// transport doesn't do DNS resolution — callers can pre-resolve and pass the
     /// literal.
-    #[error("host '{host}' is not a literal IPv4/IPv6 address: {detail}")]
+    ///
+    /// `host` is always `<redacted>`: a malformed userinfo can put a
+    /// password where the host is expected, so the raw text is never kept.
+    #[error("host is not a literal IPv4/IPv6 address: {detail}")]
     HostNotLiteral { host: String, detail: String },
     /// OS-level socket failure (bind, connect, setsockopt).
     #[error("UDP socket error: {0}")]

@@ -165,9 +165,7 @@ impl HlsUrl {
 
         let host_str = parsed.host;
         let addr: IpAddr = host_str.parse().map_err(|_| {
-            UrlError::BadHost(format!(
-                "host '{host_str}' is not a literal IPv4/IPv6 address"
-            ))
+            UrlError::BadHost("host is not a literal IPv4/IPv6 address".to_string())
         })?;
 
         let mut config = HlsConfig {
@@ -189,6 +187,12 @@ impl HlsUrl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_malformed_host_is_never_echoed() {
+        let err = HlsUrl::parse("hls://u:hunter2:8080/ss@10.0.0.5:8888/p").unwrap_err();
+        assert!(!err.to_string().contains("hunter2"), "{err}");
+    }
 
     #[test]
     fn plain_hls() {

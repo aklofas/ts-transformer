@@ -31,8 +31,11 @@ const REDACTED: &str = "<redacted>";
 /// The scrub errs toward redacting: any later `@` ends the userinfo, so
 /// `srt://h:9000/a@b` loses `9000/a`. That over-redaction is accepted.
 ///
-/// The input need not be a valid URL. The scrub is a text pass over each
-/// whitespace- (ASCII or U+00A0) or quote-delimited token, so a malformed URL, or a longer
+/// The input need not be a valid URL. A `scheme://` span runs to the end of
+/// the input, or to the closing quote when it opens right after one, and is
+/// scrubbed whole: a quote or a space inside a password or a value does not
+/// end it. Text outside any such span is scrubbed one whitespace- (ASCII or
+/// U+00A0) or quote-delimited token at a time. A malformed URL, or a longer
 /// message that embeds one, never leaks either kind of secret.
 ///
 /// ```
@@ -45,16 +48,63 @@ const REDACTED: &str = "<redacted>";
 #[must_use]
 pub fn redact_url(url: &str) -> String {
     let mut out = String::with_capacity(url.len());
+    let mut pos = 0;
+    while let Some((start, after_scheme)) = next_url(url, pos) {
+        redact_tokens(&url[pos..start], &mut out);
+        // A URL runs to the end of the input, or to the closing quote when
+        // it opens right after one: quotes and spaces inside it are part
+        // of a password or a value, never delimiters.
+        let end = match url[..start].chars().next_back() {
+            Some(q @ ('"' | '\'')) => url[after_scheme..]
+                .find(q)
+                .map_or(url.len(), |n| after_scheme + n),
+            _ => url.len(),
+        };
+        redact_token(&url[start..end], &mut out);
+        pos = end;
+    }
+    redact_tokens(&url[pos..], &mut out);
+    out
+}
+
+/// Byte offsets of the next `scheme://` at or after `from`: where the scheme
+/// starts and where the text after `://` starts.
+fn next_url(s: &str, from: usize) -> Option<(usize, usize)> {
+    let mut search = from;
+    while let Some(n) = s[search..].find("://") {
+        let sep = search + n;
+        let start = s[from..sep]
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')))
+            .map_or(from, |i| from + i + 1);
+        if start < sep {
+            return Some((start, sep + 3));
+        }
+        search = sep + 3;
+    }
+    None
+}
+
+/// The value to show in an error for query key `key`: `<redacted>` for a
+/// secret key with a non-empty value, `value` otherwise.
+pub(crate) fn shown_value<'a>(key: &str, value: &'a str) -> &'a str {
+    if !value.is_empty() && SECRET_KEYS.contains(&key) {
+        REDACTED
+    } else {
+        value
+    }
+}
+
+/// Free text outside any URL: scrubbed one separator-delimited token at a time.
+fn redact_tokens(text: &str, out: &mut String) {
     let mut start = 0;
-    for (i, c) in url.char_indices() {
+    for (i, c) in text.char_indices() {
         if is_separator(c) || c == '"' || c == '\'' {
-            redact_token(&url[start..i], &mut out);
+            redact_token(&text[start..i], out);
             out.push(c);
             start = i + c.len_utf8();
         }
     }
-    redact_token(&url[start..], &mut out);
-    out
+    redact_token(&text[start..], out);
 }
 
 fn redact_token(token: &str, out: &mut String) {
@@ -296,6 +346,30 @@ mod tests {
         );
         assert_eq!(redact_url("?%74oken=abc"), "?%74oken=<redacted>");
         assert_eq!(redact_url("srt://h:1?pass%7=abc"), "srt://h:1?pass%7=abc");
+    }
+
+    #[test]
+    fn quotes_and_spaces_inside_secrets_are_redacted() {
+        assert_eq!(
+            redact_url("rtsp://cam:hun'ter2@10.0.0.5:554/s"),
+            "rtsp://cam:<redacted>@10.0.0.5:554/s"
+        );
+        assert_eq!(
+            redact_url("rtsp://cam:hun ter2@10.0.0.5:554/s"),
+            "rtsp://cam:<redacted>@10.0.0.5:554/s"
+        );
+        assert_eq!(
+            redact_url("srt://h:1?passphrase=prefix'hunter2&x=1"),
+            "srt://h:1?passphrase=<redacted>&x=1"
+        );
+        assert_eq!(
+            redact_url("srt://h:1?passphrase=pre fix&x=1"),
+            "srt://h:1?passphrase=<redacted>&x=1"
+        );
+        assert_eq!(
+            redact_url("bad \"srt://h?token=a b\" here"),
+            "bad \"srt://h?token=<redacted>\" here"
+        );
     }
 
     #[test]

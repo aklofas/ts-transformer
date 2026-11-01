@@ -323,7 +323,7 @@ impl RtpRecvTransport {
         }
         let ip: IpAddr = url.host.parse().map_err(|e: std::net::AddrParseError| {
             RtpConnectError::HostNotLiteral {
-                host: url.host.clone(),
+                host: "<redacted>".to_string(),
                 detail: e.to_string(),
             }
         })?;

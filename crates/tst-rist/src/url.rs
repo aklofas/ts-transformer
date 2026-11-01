@@ -204,9 +204,7 @@ impl RistUrl {
 
         let host_str = parsed.host;
         let addr: IpAddr = host_str.parse().map_err(|_| {
-            UrlError::BadHost(format!(
-                "host '{host_str}' is not a literal IPv4/IPv6 address"
-            ))
+            UrlError::BadHost("host is not a literal IPv4/IPv6 address".to_string())
         })?;
 
         let mut url = Self {

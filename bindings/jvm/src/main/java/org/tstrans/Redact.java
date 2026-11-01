@@ -7,9 +7,12 @@ package org.tstrans;
  * the stable API. Mirrors {@code tst_core::url::redact_url} rule for rule: the password of
  * {@code user:password@host} userinfo and the values of the query keys {@code passphrase},
  * {@code secret}, {@code token}, {@code auth_pass}, {@code password}, {@code streamid} and
- * {@code srt_streamid} become {@code <redacted>}. Key matching is exact and lower-case, after percent-decoding the key name. The scrub
- * is a text pass over each whitespace- (ASCII or U+00A0) or quote-delimited token, so a malformed
- * URL, or a message that embeds one, never leaks either kind of secret. It errs toward
+ * {@code srt_streamid} become {@code <redacted>}. Key matching is exact and lower-case, after
+ * percent-decoding the key name. A {@code scheme://} span runs to the end of the input, or to the
+ * closing quote when it opens right after one, and is scrubbed whole: a quote or a space inside a
+ * password or a value does not end it. Text outside any such span is scrubbed one whitespace-
+ * (ASCII or U+00A0) or quote-delimited token at a time, so a malformed URL, or a message that
+ * embeds one, never leaks either kind of secret. It errs toward
  * redacting: any later {@code @} ends the userinfo, so {@code srt://h:9000/a@b} loses
  * {@code 9000/a}.
  */
@@ -23,17 +26,67 @@ public final class Redact {
     /** @return {@code url} with its secrets replaced by {@code <redacted>}. */
     public static String url(String url) {
         StringBuilder out = new StringBuilder(url.length());
+        int pos = 0;
+        while (true) {
+            int[] span = nextUrl(url, pos);
+            if (span == null) {
+                break;
+            }
+            int start = span[0];
+            tokens(url.substring(pos, start), out);
+            // A URL runs to the end of the input, or to the closing quote when it opens right
+            // after one: quotes and spaces inside it are part of a password or a value.
+            int end = url.length();
+            if (start > 0) {
+                char q = url.charAt(start - 1);
+                if (q == '"' || q == '\'') {
+                    int close = url.indexOf(q, span[1]);
+                    end = close < 0 ? url.length() : close;
+                }
+            }
+            token(url.substring(start, end), out);
+            pos = end;
+        }
+        tokens(url.substring(pos), out);
+        return out.toString();
+    }
+
+    /** Offsets of the next {@code scheme://} at or after {@code from}: scheme start, text after. */
+    private static int[] nextUrl(String s, int from) {
+        int search = from;
+        while (true) {
+            int sep = s.indexOf("://", search);
+            if (sep < 0) {
+                return null;
+            }
+            int start = sep;
+            while (start > from && isSchemeChar(s.charAt(start - 1))) {
+                start--;
+            }
+            if (start < sep) {
+                return new int[] {start, sep + 3};
+            }
+            search = sep + 3;
+        }
+    }
+
+    private static boolean isSchemeChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+            || c == '+' || c == '.' || c == '-';
+    }
+
+    /** Free text outside any URL: scrubbed one separator-delimited token at a time. */
+    private static void tokens(String text, StringBuilder out) {
         int start = 0;
-        for (int i = 0; i < url.length(); i++) {
-            char c = url.charAt(i);
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
             if (isSeparator(c) || c == '"' || c == '\'') {
-                token(url.substring(start, i), out);
+                token(text.substring(start, i), out);
                 out.append(c);
                 start = i + 1;
             }
         }
-        token(url.substring(start), out);
-        return out.toString();
+        token(text.substring(start), out);
     }
 
     private static void token(String token, StringBuilder out) {

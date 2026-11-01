@@ -84,7 +84,7 @@ impl TcpListener {
         let ip: IpAddr = parsed
             .host
             .parse()
-            .map_err(|_| TcpError::Url(crate::url::listener_host_rejection(&parsed.host)))?;
+            .map_err(|_| TcpError::Url(crate::url::listener_host_rejection()))?;
         let bind_addr = SocketAddr::new(ip, parsed.port);
         let mut listener = Self::bind(bind_addr)?;
         listener.config = parsed.config.clone();

@@ -332,7 +332,7 @@ const TCP_PARSE: &[Row] = &[
     ),
     (
         "tcp://relay.invalid:9000?listen=1",
-        R("listener host 'relay.invalid' must be a literal IPv4/IPv6 address"),
+        R("listener host must be a literal IPv4/IPv6 address"),
     ),
     (
         "tcp://[::]:9000?listen=1",
@@ -486,7 +486,7 @@ const RIST_PARSE: &[Row] = &[
     ("rist://[2001:db8::1]:8000", A(&[("addr", "2001:db8::1")])),
     (
         "rist://relay.invalid:8000",
-        R("host 'relay.invalid' is not a literal IPv4/IPv6 address"),
+        R("host is not a literal IPv4/IPv6 address"),
     ),
     (
         "rist://192.0.2.10:8000?profile=simple",
@@ -745,7 +745,7 @@ const HLS_PARSE: &[Row] = &[
     ("hls://[2001:db8::1]:8080", A(&[("addr", "2001:db8::1")])),
     (
         "hls://relay.invalid:8080",
-        R("host 'relay.invalid' is not a literal IPv4/IPv6 address"),
+        R("host is not a literal IPv4/IPv6 address"),
     ),
     (
         "hls://192.0.2.10:8080?output_dir=/tmp/seg",
