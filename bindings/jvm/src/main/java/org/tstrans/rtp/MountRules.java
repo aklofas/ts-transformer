@@ -17,7 +17,8 @@ import org.tstrans.RtspException;
  * <p><b>Threading.</b> Every method is safe from any thread while the server runs.
  *
  * <p><b>Lifetime.</b> This object shares the server's table but not its lifetime: closing
- * the server does not close it. Once the server has stopped, the editing methods throw
+ * the server does not close it. Once the server has stopped, been cancelled or been
+ * closed, the editing methods throw
  * {@link RtspException} with {@code Kind.SERVER}, while {@link #size()} and {@link
  * #isClosed()} keep answering. Close it to free its native handle.
  */
@@ -96,7 +97,7 @@ public final class MountRules extends NativeHandle {
         return nSize(peekHandle());
     }
 
-    /** Whether the server has stopped, so that edits throw {@code Kind.SERVER}. */
+    /** Whether the server has shut down, so that edits throw {@code Kind.SERVER}. */
     public boolean isClosed() {
         ensureOpen("MountRules is closed");
         return nIsClosed(peekHandle());
