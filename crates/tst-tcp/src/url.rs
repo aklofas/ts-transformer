@@ -92,17 +92,32 @@ fn set_connect_timeout(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
     Ok(())
 }
 
-fn set_cert(u: &mut TcpUrl, _key: &str, value: &str) -> Applied {
+/// A TLS key on a plaintext URL would run unencrypted; refuse it.
+fn require_tls(u: &TcpUrl, key: &str, value: &str) -> Applied {
+    if u.tls {
+        return Ok(());
+    }
+    Err(UrlError::BadQueryValue {
+        key: key.to_string(),
+        value: value.to_string(),
+        detail: "TLS material needs a tcps:// URL".to_string(),
+    })
+}
+
+fn set_cert(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    require_tls(u, key, value)?;
     u.config.cert = Some(PathBuf::from(value));
     Ok(())
 }
 
-fn set_key(u: &mut TcpUrl, _key: &str, value: &str) -> Applied {
+fn set_key(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    require_tls(u, key, value)?;
     u.config.key = Some(PathBuf::from(value));
     Ok(())
 }
 
-fn set_ca(u: &mut TcpUrl, _key: &str, value: &str) -> Applied {
+fn set_ca(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
+    require_tls(u, key, value)?;
     u.config.ca = Some(PathBuf::from(value));
     Ok(())
 }
@@ -164,21 +179,21 @@ pub const URL_KEYS: &[QueryKey<TcpUrl>] = &[
         "cert",
         &[],
         "Server certificate",
-        "PEM file path; a `tcps` listener",
+        "PEM file path; `tcps` only, a listener",
         set_cert,
     ),
     QueryKey::new(
         "key",
         &[],
         "Server private key",
-        "PEM file path; a `tcps` listener",
+        "PEM file path; `tcps` only, a listener",
         set_key,
     ),
     QueryKey::new(
         "ca",
         &[],
         "Custom trust anchors for a caller (the system roots otherwise)",
-        "PEM file path",
+        "PEM file path; `tcps` only",
         set_ca,
     ),
 ];
@@ -214,10 +229,16 @@ impl TcpUrl {
             config: TcpConfig::default(),
         };
 
-        // Unknown params are silently ignored. The query is applied before
+        // Unknown params are ignored on `tcp://` and refused on `tcps://`, where
+        // a misspelt TLS key would otherwise fall back to the native roots. The query is applied before
         // the host check because `listen` decides whether the host must be
         // an IP literal.
-        apply_query(URL_KEYS, &mut url, &parsed.query, UnknownKeys::Ignore)?;
+        let unknown = if tls {
+            UnknownKeys::Reject
+        } else {
+            UnknownKeys::Ignore
+        };
+        apply_query(URL_KEYS, &mut url, &parsed.query, unknown)?;
 
         // Listeners bind a socket — the host must be an IP literal. Callers
         // accept hostnames: resolution happens at connect time and TLS uses
@@ -391,5 +412,40 @@ mod tests {
             u.config.ca.as_deref(),
             Some(std::path::Path::new("/tmp/ca.pem"))
         );
+    }
+
+    #[test]
+    fn plain_tcp_refuses_tls_material() {
+        for q in ["cert=/a&key=/b", "key=/b", "ca=/x"] {
+            let err = TcpUrl::parse(&format!("tcp://127.0.0.1:9000?{q}")).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                matches!(err, UrlError::BadQueryValue { .. }) && msg.contains("tcps://"),
+                "{q}: {msg}"
+            );
+        }
+        let err = TcpUrl::parse("tcp://127.0.0.1:9000?cert=/a&key=/b").unwrap_err();
+        assert!(err.to_string().contains("'cert'"), "{err}");
+    }
+
+    #[test]
+    fn tcps_rejects_unknown_keys() {
+        let err = TcpUrl::parse("tcps://127.0.0.1:9000?cafile=/x").unwrap_err();
+        assert_eq!(
+            err,
+            UrlError::UnknownQueryKey {
+                key: "cafile".into()
+            }
+        );
+    }
+
+    #[test]
+    fn plain_tcp_still_ignores_unknown_keys() {
+        assert!(TcpUrl::parse("tcp://127.0.0.1:9000?bogus=1").is_ok());
+    }
+
+    #[test]
+    fn tcps_accepts_ca() {
+        assert!(TcpUrl::parse("tcps://127.0.0.1:9000?ca=/x").is_ok());
     }
 }
