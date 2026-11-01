@@ -46,9 +46,12 @@ import java.util.Set;
  * creates files as (the owner of a probe file {@code tstrans-id-*.tmp} created
  * and removed under the temp directory; a crash can leave a zero-byte one), not
  * against {@code user.name}; a store without that view is never trusted. The
- * mode check is POSIX-only. Known limitation: on Windows no ACL is set, so
- * rights inherited from a shared temp directory are blocked by the owner check,
- * not by an ACL. A squatted root makes every launch copy the library into a new
+ * mode check is POSIX-only. The owner check refuses a planted root, directory
+ * or file, but it is not an access control: on Windows no ACL is set, so when
+ * the temp directory's ACL lets other accounts write to files in it, one of
+ * them can still modify the library in place, even between verification and
+ * {@code System.load}. Use a private {@code java.io.tmpdir} there; an ACL on the
+ * cache root is a follow-up. A squatted root makes every launch copy the library into a new
  * private directory, and nothing removes those copies.
  *
  * <p>Each JVM writes its own uniquely named owner-only staging file and
@@ -152,15 +155,19 @@ public final class NativeLoader {
         String reason = trustedRoot(root, tmpBase, posix);
         if (reason == null) {
             Path dir = root.resolve(contentHash(bytes));
-            if (posix) {
-                Files.createDirectories(dir, PosixFilePermissions.asFileAttribute(OWNER_DIR));
-            } else {
-                Files.createDirectories(dir);
-            }
-            if (isOwnedDirectory(dir, tmpBase)) {
-                targetDir = dir;
-            } else {
-                reason = dir + " is not a directory owned by the current user";
+            try {
+                if (posix) {
+                    Files.createDirectories(dir, PosixFilePermissions.asFileAttribute(OWNER_DIR));
+                } else {
+                    Files.createDirectories(dir);
+                }
+                if (isOwnedDirectory(dir, tmpBase)) {
+                    targetDir = dir;
+                } else {
+                    reason = dir + " is not a directory owned by the current user";
+                }
+            } catch (IOException e) {
+                reason = dir + " could not be created as a directory (" + e + ")";
             }
         }
         if (targetDir == null) {

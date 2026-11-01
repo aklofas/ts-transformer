@@ -320,6 +320,21 @@ class NativeLoaderExtractTest {
     }
 
     @Test
+    void aNonDirectoryAtTheHashPathFallsBackToThePrivateDirectory(@TempDir Path tmp) throws IOException {
+        byte[] bytes = {2, 7, 1, 8};
+        Path hashDir = hashDir(tmp, bytes);
+        Path root = hashDir.getParent();
+        Files.delete(hashDir);
+        Files.write(hashDir, new byte[] {1});
+        Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
+        assertFalse(target.startsWith(root), "used the root despite the planted file: " + target);
+        assertEquals(tmp, target.getParent().getParent());
+        assertTrue(target.getParent().getFileName().toString().startsWith("tstrans-native-"));
+        assertArrayEquals(bytes, Files.readAllBytes(target));
+        assertArrayEquals(new byte[] {1}, Files.readAllBytes(hashDir), "planted entry must be untouched");
+    }
+
+    @Test
     void contentHashIsSha256Hex() {
         String hash = NativeLoader.contentHash("abc".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hash);
