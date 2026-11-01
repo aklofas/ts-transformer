@@ -56,7 +56,7 @@ pub struct TstRistSender {
 /// negative error code and `tst_get_last_error_str()` for a detail message.
 ///
 /// URL grammar:
-/// - `rist://host:port` — unicast send (Simple Profile by default)
+/// - `rist://host:port` — unicast send (Main Profile by default; `?profile=simple` selects Simple)
 /// - `rist://group:port` (group ∈ 224.0.0.0/4) — multicast send
 /// - Query params: `?profile=simple|main`, `?buffer=N` (recovery buffer ms),
 ///   `?bandwidth=N` (kbps), `?cname=...` (RTCP CNAME)

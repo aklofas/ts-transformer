@@ -61,7 +61,7 @@ pub struct TstRistMuxSender {
 /// it. The returned handle is independent of the config after this call.
 ///
 /// URL grammar:
-/// - `rist://host:port` — unicast send (Simple Profile by default)
+/// - `rist://host:port` — unicast send (Main Profile by default; `?profile=simple` selects Simple)
 /// - `rist://group:port` (group ∈ 224.0.0.0/4) — multicast send
 /// - Query params: `?profile=simple|main`, `?buffer=N` (recovery ms),
 ///   `?bandwidth=N` (kbps), `?cname=...`

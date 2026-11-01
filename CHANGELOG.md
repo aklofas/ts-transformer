@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security — tst-rist, tst-py
+
+- An encrypted RIST Main-profile receiver delivered packets it had not decrypted. A packet carrying the GRE key bit with an all-zero nonce, or with a fresh nonce arriving inside librist's rekey throttle after a burst of undecryptable packets, was passed on as if it were plaintext, so a peer without the passphrase could inject clear media. Affected: `tst-rist` and `tst-py` 0.6.0 through 0.9.0 (the vendored librist 0.2.20 first shipped in 0.6.0; librist 0.2.16 and 0.2.18 dropped the zero-nonce packet). The C package refused every encrypted `rist://` URL before this release, and the JVM has no RIST binding, so neither is affected. The vendored librist build now drops any packet the PSK decrypt did not decrypt. A build linked to a host librist 0.2.19 or later (the pkg-config floor accepts 0.2.20 and up) keeps the defect until upstream ships a fix; build with `RIST_FORCE_VENDORED=1` to get the fixed copy.
+
+### Changed — tst-py (BREAKING)
+
+- `EncryptionKey.aes128`, `aes192` and `aes256` raise `ValueError` for a `bytes` secret that is not valid UTF-8. The secret was converted lossily, so distinct byte secrets collided on the same key and the derived key differed from a peer that used the raw bytes. A `str` secret and a UTF-8 `bytes` secret behave as before.
+
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 
 - `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch.
