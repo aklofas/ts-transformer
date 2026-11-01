@@ -85,12 +85,12 @@ fn max_viewers_bounds() {
 
 #[test]
 fn userinfo_is_refused_without_echoing_it() {
-    for url in ["whep://u:p@127.0.0.1:8080", "wheps://sekret@127.0.0.1:8080"] {
+    for url in ["whep://u:p@0.0.0.0:8080", "wheps://sekret@0.0.0.0:8080"] {
         let msg = WhepUrl::parse(url).unwrap_err().to_string();
         assert!(msg.contains("token"), "{msg}");
         assert!(!msg.contains("sekret"), "{msg}");
     }
-    assert!(WhepUrl::parse("whep://127.0.0.1:8080?token=abc").is_ok());
+    assert!(WhepUrl::parse("whep://0.0.0.0:8080?token=abc").is_ok());
 }
 
 #[test]

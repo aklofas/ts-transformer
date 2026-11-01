@@ -143,6 +143,17 @@ drained-then-quiescent; `#[cfg(not(windows))]` requires FIN/reset.
 """
 
 [[platform_skip]]
+file = "crates/tst-hls/tests/net_output_dir_trust.rs"
+platform = "windows-msvc"
+capability = "unix_file_permissions"
+class = "portability"
+note = """
+The whole file is `#![cfg(unix)]`: the output-directory trust check compares
+the directory owner and mode bits and opens files with `O_NOFOLLOW`, none of
+which has Windows semantics, so the check is a documented no-op there.
+"""
+
+[[platform_skip]]
 file = "crates/tst-interop/tests/corpus/sweep.rs"
 platform = "windows-msvc"
 capability = "unix_file_permissions"
