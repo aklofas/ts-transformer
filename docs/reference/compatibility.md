@@ -126,6 +126,8 @@ against the same bare-metal targets. The `Managed*` reconnect wrappers,
 | `cc` | 1.9 (the `tstrans-rist-sys` build) |
 | `cmake` | upstream-compatible; `pkg-config` discovery first, vendored fallback. A host library is accepted only when `pkg-config --static` resolves it (a `Requires.private` entry without its own `.pc`, as mbedTLS often ships, makes the probe fail), it is at least libsrt 1.5.7 / librist 0.2.20, and, with the `mbedtls` feature on, its static link set contains `mbedcrypto`. Otherwise the vendored copy is built, with a build warning naming the reason. |
 
+**Security floors.** libsrt 1.5.7 and librist 0.2.20 are security floors: a host library older than these is never linked. The vendored librist carries two local fixes that no upstream release has: a null check on the Simple-profile RTCP peer, and a status return from the PSK decrypt so that a packet that was not decrypted is dropped (upstream delivers it). A host librist lacks both. The floor rises to the first upstream release that carries the PSK fix once one exists; until then `RIST_FORCE_VENDORED=1` selects the fixed copy.
+
 The vendored builds disable libsrt's `ENABLE_HEAVY_LOGGING` (Debug+static
 init crash), and force `USE_ENCLIB=mbedtls` when the `mbedtls` feature is
 on (default).
