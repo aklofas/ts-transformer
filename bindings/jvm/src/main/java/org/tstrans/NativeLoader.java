@@ -11,7 +11,6 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
-import java.nio.file.attribute.UserPrincipal;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Set;
@@ -42,7 +41,9 @@ import java.util.Set;
  * touch it: it extracts into a fresh random owner-only directory
  * {@code <java.io.tmpdir>/tstrans-native-<random>/} without reusing anything,
  * and logs a warning. On a non-POSIX file system (Windows) the temp directory
- * is already per-user, so only the directory and symbolic-link checks apply.
+ * is already per-user, so the owner and mode checks are skipped there and only
+ * the directory and symbolic-link checks apply. Ownership is judged against the
+ * identity the process creates files as, not against {@code user.name}.
  *
  * <p>Each JVM writes its own uniquely named owner-only staging file and
  * publishes it with an atomic move, so JVMs starting together never share a
@@ -142,7 +143,7 @@ public final class NativeLoader {
         boolean posix = tmpBase.getFileSystem().supportedFileAttributeViews().contains("posix");
         Path root = tmpBase.resolve("tstrans-native-" + userSegment(System.getProperty("user.name")));
         Path targetDir;
-        if (trustedRoot(root, posix)) {
+        if (trustedRoot(root, tmpBase, posix)) {
             targetDir = root.resolve(contentHash(bytes));
             if (posix) {
                 Files.createDirectories(targetDir,
@@ -182,7 +183,7 @@ public final class NativeLoader {
      * it is a real directory, owned by this user and (POSIX) owner-only. Never
      * modifies an existing directory.
      */
-    private static boolean trustedRoot(Path root, boolean posix) {
+    private static boolean trustedRoot(Path root, Path tmpBase, boolean posix) {
         try {
             if (posix) {
                 Files.createDirectory(root, PosixFilePermissions.asFileAttribute(OWNER_DIR));
@@ -203,7 +204,7 @@ public final class NativeLoader {
             if (!posix) {
                 return true;
             }
-            return currentUserOwns(root)
+            return currentUserOwns(root, tmpBase)
                     && Files.getPosixFilePermissions(root, LinkOption.NOFOLLOW_LINKS)
                             .equals(OWNER_DIR);
         } catch (IOException | UnsupportedOperationException e) {
@@ -211,14 +212,20 @@ public final class NativeLoader {
         }
     }
 
-    private static boolean currentUserOwns(Path dir) throws IOException {
-        String user = System.getProperty("user.name");
-        UserPrincipal owner = Files.getOwner(dir, LinkOption.NOFOLLOW_LINKS);
+    /**
+     * True when {@code dir} is owned by the identity this process creates files
+     * as. That identity is read from the file system (the owner of a probe file
+     * created and removed under {@code tmpBase}), not from {@code user.name},
+     * which is {@code ?} or unset when the uid has no passwd entry and can be
+     * overridden on the command line.
+     */
+    private static boolean currentUserOwns(Path dir, Path tmpBase) throws IOException {
+        Path probe = Files.createTempFile(tmpBase, "tstrans-id-", ".tmp");
         try {
-            return owner.equals(dir.getFileSystem().getUserPrincipalLookupService()
-                    .lookupPrincipalByName(user));
-        } catch (IOException | UnsupportedOperationException e) {
-            return owner.getName().equals(user);
+            return Files.getOwner(dir, LinkOption.NOFOLLOW_LINKS)
+                    .equals(Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS));
+        } finally {
+            Files.deleteIfExists(probe);
         }
     }
 
