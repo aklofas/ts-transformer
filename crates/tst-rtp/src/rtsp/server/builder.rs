@@ -368,6 +368,23 @@ mod tests {
     }
 
     #[test]
+    fn build_refuses_an_empty_username() {
+        for scheme in 0..3 {
+            let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+            let p = SecretString::new("p".into());
+            match scheme {
+                0 => b.auth_basic("tst", "", p),
+                1 => b.auth_digest_md5("tst", "", p),
+                _ => b.auth_digest_sha256("tst", "", p),
+            };
+            assert!(matches!(
+                b.build(),
+                Err(RtspServerError::InvalidConfig { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn rtsp_server_builder_auth_overwrites() {
         let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         b.auth_basic("tst", "admin", SecretString::new("p".into()));

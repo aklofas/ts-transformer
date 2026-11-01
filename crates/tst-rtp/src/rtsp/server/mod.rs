@@ -442,6 +442,11 @@ impl RtspServer {
                 detail: format!("auth realm {:?}: control bytes are not allowed", a.realm),
             });
         }
+        if b.auth.as_ref().is_some_and(|a| a.username.is_empty()) {
+            return Err(RtspServerError::InvalidConfig {
+                detail: "auth username: must not be empty".into(),
+            });
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
