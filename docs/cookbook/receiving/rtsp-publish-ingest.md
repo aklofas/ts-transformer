@@ -135,7 +135,8 @@ use tst_rtp::{
 
 let mut builder = RtspServerBuilder::new("rtsp://0.0.0.0:8554")?;
 builder.accept_unregistered_publishers(true);
-// Nothing is admitted between start() and the first edit below.
+// The default rule refuses a publisher on every path without its own rule.
+// Reads stay `Inherit`: open here, since the server has no credential.
 builder.default_mount_rule(MountRule::new(
     MountPolicy::Refuse(RefuseStatus::NotFound),
     MountPolicy::Inherit,
@@ -145,7 +146,8 @@ server.start()?;
 
 let rules = server.mount_rules();
 let pw = SecretString::from("amber-secret".to_string());
-// "/amber" takes its own publisher credential; readers stay as before.
+// "/amber" takes its own publisher credential. Its read side is `Inherit`,
+// which means the server-wide setting (open here), not the default rule.
 rules.set(
     "/amber",
     MountRule::new(

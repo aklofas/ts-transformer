@@ -57,8 +57,11 @@ pub(crate) struct PyMountPolicy {
 
 #[pymethods]
 impl PyMountPolicy {
-    /// Defer to the next level: a path rule defers to the table default, and
-    /// the table default defers to the server-wide credential.
+    /// The server-wide setting: the config's `auth` credential if one was
+    /// configured, else open. A path rule's `inherit()` does not fall back to
+    /// the table's default rule: under a default of `refuse(...)`, a path rule
+    /// with one direction left `inherit()` leaves that direction as open as
+    /// the server itself is.
     #[staticmethod]
     fn inherit() -> Self {
         Self {
@@ -115,7 +118,8 @@ impl PyMountPolicy {
 }
 
 /// The publish and read policies for one mount path (or the default). A
-/// direction left out inherits.
+/// direction left out inherits: it follows the server-wide `auth` setting
+/// (open when there is none), not the table's default rule.
 #[pyclass(name = "MountRule", module = "tstrans.rtp", frozen)]
 pub(crate) struct PyMountRule {
     pub(crate) rule: MountRule,

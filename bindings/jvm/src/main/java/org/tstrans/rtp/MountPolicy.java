@@ -28,8 +28,11 @@ public final class MountPolicy {
     }
 
     /**
-     * Defer to the next level: a path rule defers to the table default, and the table
-     * default defers to the server-wide credential.
+     * The server-wide setting: the config's credential if one was configured, else open.
+     *
+     * <p>A path rule's {@code inherit()} does not fall back to the table's default rule.
+     * Under a default of {@code refuse(...)}, a path rule with one direction left {@code
+     * inherit()} leaves that direction as open as the server itself is.
      */
     public static MountPolicy inherit() { return INHERIT; }
 
