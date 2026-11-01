@@ -496,7 +496,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_tls_cert_pem(
             Err(_) => return,
         };
         b.tls_cert_pem = Some(cert_bytes.to_vec());
-        b.tls_key_pem = Some(key_bytes.to_vec());
+        b.tls_key_pem = Some(key_bytes.to_vec().into());
     });
 }
 

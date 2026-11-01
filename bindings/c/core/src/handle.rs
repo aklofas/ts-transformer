@@ -281,8 +281,9 @@ pub struct TstRtspServerBuilder {
     pub(crate) tls_cert_pem: Option<Vec<u8>>,
     /// Raw PEM bytes for the TLS private key. Same contract as
     /// [`Self::tls_cert_pem`]: handed to the server in a `tls` build;
-    /// refused at start otherwise.
-    pub(crate) tls_key_pem: Option<Vec<u8>>,
+    /// refused at start otherwise. Held as a `SecretSlice` from the setter on:
+    /// zeroed when the builder is freed or the key replaced.
+    pub(crate) tls_key_pem: Option<secrecy::SecretSlice<u8>>,
     /// Whether an ANNOUNCE to an unregistered path creates a publish mount
     /// on demand. Default: false.
     pub(crate) accept_unregistered_publishers: bool,
@@ -387,7 +388,8 @@ impl TstRtspServerBuilder {
         // the caller believes TLS is armed.
         #[cfg(feature = "tls")]
         if let (Some(cert), Some(key)) = (&self.tls_cert_pem, &self.tls_key_pem) {
-            b.tls_cert_pem(cert.clone(), key.clone());
+            use secrecy::ExposeSecret;
+            b.tls_cert_pem(cert.clone(), key.expose_secret().to_vec());
         }
         #[cfg(not(feature = "tls"))]
         if self.tls_cert_pem.is_some() || self.tls_key_pem.is_some() {
@@ -701,6 +703,14 @@ mod secret_password_tests {
         tst_rtsp_server_builder_auth_basic, tst_rtsp_server_builder_free,
         tst_rtsp_server_builder_new,
     };
+
+    /// The PEM private key is zeroed on release like the passwords: the
+    /// field's type is the contract.
+    #[test]
+    fn builder_tls_key_is_a_secret_slice() {
+        fn is_secret(_: &Option<secrecy::SecretSlice<u8>>) {}
+        is_secret(&None);
+    }
 
     /// A dropped or replaced password must go through secrecy's zeroizing drop:
     /// the field's type is the contract (no test can read freed memory).
