@@ -166,9 +166,11 @@ builder's scheme and realm when it configured a credential, else the table's
 (`set_challenge`, Digest MD5 and realm `tstrans` by default).
 
 A realm may not contain control bytes (`set_challenge` and the builder refuse
-it); quotes and backslashes are escaped in the header. A publisher's SETUP for
-a path other than its announced mount answers `404`.
+it); quotes and backslashes are escaped in the header.
 
+- **A publisher stays inside its mount.** A SETUP for a path other than the
+  mount it announced answers `404`, like a missing mount, so it does not show
+  which other mounts exist.
 - **Refusal happens before any mount exists.** The check runs first in every
   gated handler, so a refused or unauthenticated ANNOUNCE is answered before
   an on-demand mount is created or queued.
