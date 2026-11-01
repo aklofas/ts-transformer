@@ -66,10 +66,16 @@ The Gradle build (JDK 17 toolchain, wrapper 9.5.1) drives
 (`libtstjni.so` / `.dylib` / `.dll`), copies it into JAR resources under
 `native/<triple>/`, then compiles and tests the Java surface. A
 `NativeLoader` extracts the right native library for the running platform
-at runtime. The library is cached in a shared
-`<tmpdir>/tstrans-native-<crc32>/` directory: each JVM stages its own file
-there, reuses an existing entry only after verifying it, and never deletes
-cache entries. Old versions are left for the operating system's temp cleaner.
+at runtime. The library is cached in a per-user
+`<tmpdir>/tstrans-native-<user>/<sha256>/` directory that the loader creates
+owner-only (`rwx------`) and reuses only when it is a real directory owned by
+the current user with exactly that mode. If the per-user directory exists but
+fails those checks, the loader leaves it alone and extracts into a fresh private
+temp directory instead, logging a warning. Each JVM stages its own file, reuses
+a cached file only when it is a regular file whose size and SHA-256 match, and
+never deletes cache entries. Old versions are left for the operating system's
+temp cleaner. To skip extraction entirely, start the JVM with
+`-Dtstrans.native.lib=<absolute path to libtstjni>`.
 
 **Minimum JDK is 17.** The native code is delivered as a single fat JAR
 bundling the per-platform native libraries (linux-x86_64 / linux-aarch64 /
