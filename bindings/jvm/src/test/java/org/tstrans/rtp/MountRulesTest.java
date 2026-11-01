@@ -93,6 +93,9 @@ class MountRulesTest {
                 () -> rules.set("/a", MountRule.both(
                     MountPolicy.require(MountCredential.of("", "pw")))));
             assertEquals(RtspException.Kind.MOUNT, empty.kind());
+            assertEquals(RtspException.Kind.MOUNT, assertThrows(RtspException.class,
+                () -> rules.set("/a", MountRule.both(MountPolicy.require(
+                    MountCredential.of("amber", "a"), MountCredential.of("amber", "b"))))).kind());
         }
     }
 

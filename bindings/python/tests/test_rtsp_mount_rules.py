@@ -123,6 +123,10 @@ def test_invalid_path_is_mount_kind_and_empty_require_is_value_error():
         with pytest.raises(RtspError) as ei:
             rules.set("/amber", MountRule(publish=MountPolicy.require(MountCredential("", "pw"))))
         assert ei.value.kind is RtspErrorKind.MOUNT
+        twice = MountPolicy.require(MountCredential("amber", "a"), MountCredential("amber", "b"))
+        with pytest.raises(RtspError) as ei:
+            rules.set("/amber", MountRule(read=twice))
+        assert ei.value.kind is RtspErrorKind.MOUNT
         with pytest.raises(ValueError):
             MountPolicy.refuse(200)  # type: ignore[arg-type]
 
