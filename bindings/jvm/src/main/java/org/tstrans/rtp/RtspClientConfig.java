@@ -52,7 +52,7 @@ public final class RtspClientConfig {
     public RtspVersion rtspVersion() { return rtspVersion; }
 
     @Override public String toString() {
-        return "RtspClientConfig(url=" + url
+        return "RtspClientConfig(url=" + org.tstrans.Redact.url(url)
             + ", auth=" + (auth != null ? "<auth>" : "None")
             + ", transportPref=" + transportPref
             + ", tlsRootCertsPem=" + (tlsRootCertsPem != null ? "<bytes>" : "None")

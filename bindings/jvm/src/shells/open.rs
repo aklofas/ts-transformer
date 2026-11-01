@@ -8,6 +8,7 @@ use jni::jni_str;
 use jni::objects::JString;
 use jni::strings::JNIString;
 use tst_core::transport::{RecvTransport, Transport};
+use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
 
 use crate::error::throw_binding;
@@ -36,7 +37,8 @@ fn unsupported(env: &mut Env, url: &str) {
     let _ = env.throw_new(
         FindClass(jni_str!("java/lang/IllegalArgumentException")),
         JNIString::from(format!(
-            "unsupported URL scheme in {url:?}; expected one of: srt, rtp, udp, tcp, tcps, rist"
+            "unsupported URL scheme in {:?}; expected one of: srt, rtp, udp, tcp, tcps, rist",
+            redact_url(url)
         )),
     );
 }

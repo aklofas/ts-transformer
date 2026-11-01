@@ -50,6 +50,6 @@ final class ShellAdapters {
             return s;
         }
         throw new IllegalStateException(
-            "unexpected " + e.getClass().getSimpleName() + " opening " + url, e);
+            "unexpected " + e.getClass().getSimpleName() + " opening " + org.tstrans.Redact.url(url), e);
     }
 }
