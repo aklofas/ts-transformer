@@ -933,6 +933,30 @@ fn a_publisher_refused_mid_session_can_publish_another_mount_on_the_same_connect
     server.stop().unwrap();
 }
 
+/// A rule set at a path with a trailing slash governs the mount requests
+/// resolve that path to: an on-demand ANNOUNCE to `/amber/` (or `/amber`)
+/// meets the `/amber/` rule's refusal rather than the open default.
+#[test]
+fn a_rule_set_with_a_trailing_slash_governs_the_announce() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.accept_unregistered_publishers(true);
+    let server = started(b);
+    server
+        .mount_rules()
+        .set(
+            "/amber/",
+            publish_rule(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+        )
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/amber/", SDP_MP2T), 403);
+    assert_eq!(p.announce("/amber", SDP_MP2T), 403);
+    assert_eq!(server.stats().mounts, 0, "no on-demand mount was created");
+    server.stop().unwrap();
+}
+
 /// A rule belongs to the path, not the mount: removing the mount keeps it,
 /// and a mount added again at the path is governed by it.
 #[test]

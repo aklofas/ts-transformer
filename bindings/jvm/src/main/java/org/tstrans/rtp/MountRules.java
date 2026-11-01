@@ -7,8 +7,10 @@ import org.tstrans.RtspException;
 
 /**
  * One {@link RtspServer}'s live per-path rules, from {@link RtspServer#mountRules()}. An
- * edit applies from the next request on. Matching is exact on the mount path; a path
- * with no rule uses the default rule, which starts as the config's {@link
+ * edit applies from the next request on. A path is keyed the way the server resolves a
+ * request URI: a trailing {@code /} or per-media control segment ({@code trackID=},
+ * {@code streamid=}, {@code stream=}) is dropped, so {@code /amber/} names {@code /amber}.
+ * A path with no rule uses the default rule, which starts as the config's {@link
  * RtspServerConfig#defaultMountRule()} or {@link MountPolicy#inherit()} for both
  * directions.
  *

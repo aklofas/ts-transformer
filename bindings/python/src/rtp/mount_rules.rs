@@ -163,7 +163,9 @@ impl PyMountRules {
 
 #[pymethods]
 impl PyMountRules {
-    /// Set the rule for `path`, replacing any earlier one. Raises
+    /// Set the rule for `path`, replacing any earlier one. The path is keyed
+    /// the way the server resolves a request URI, so `/amber/` names
+    /// `/amber`. Raises
     /// `RtspError(MOUNT)` for an invalid path or a credential with an empty
     /// username, `RtspError(SERVER)` once the server is stopped.
     fn set(&self, py: Python<'_>, path: &str, rule: &PyMountRule) -> PyResult<()> {

@@ -20,6 +20,7 @@ use secrecy::SecretString;
 
 use crate::rtsp::server::auth::Credential;
 use crate::rtsp::server::builder::AuthScheme;
+use crate::rtsp::server::handlers::extract_mount_path;
 use crate::rtsp::server::validate_mount_path;
 
 /// One username and password a client may present.
@@ -189,6 +190,11 @@ struct Inner {
 /// Handle to one server's per-path rules, from
 /// [`RtspServer::mount_rules`](crate::RtspServer::mount_rules).
 ///
+/// A path is keyed the way the server resolves a request URI to a mount: a
+/// trailing `/`, and a trailing per-media control segment (`trackID=`,
+/// `streamid=` or `stream=`), are dropped. A rule set at `/amber/` therefore
+/// governs `/amber`, and is the same entry as one set at `/amber`.
+///
 /// A clone is the same table. Usable from any thread, including while the
 /// server runs; an edit applies from the next request on. After the server
 /// stops, edits return [`MountRuleError::Closed`] while `len`, `is_empty`
@@ -254,7 +260,8 @@ impl MountRules {
         }
     }
 
-    /// Set the rule for `path`, replacing any earlier one.
+    /// Set the rule for `path`, replacing any earlier one. `path` is keyed
+    /// as the type-level docs describe (`/amber/` names `/amber`).
     ///
     /// # Errors
     /// - [`MountRuleError::InvalidMountPath`] if `path` is not a valid mount
@@ -272,18 +279,21 @@ impl MountRules {
             },
         })?;
         check_rule(&rule)?;
-        write(&self.inner.rules).insert(path.to_string(), rule);
+        write(&self.inner.rules).insert(extract_mount_path(path), rule);
         Ok(())
     }
 
     /// Remove the rule for `path`; the path then follows the default.
-    /// Returns whether a rule was present.
+    /// Returns whether a rule was present. `path` is keyed as in
+    /// [`Self::set`].
     ///
     /// # Errors
     /// - [`MountRuleError::Closed`] after the server stopped.
     pub fn remove(&self, path: &str) -> Result<bool, MountRuleError> {
         self.ensure_open()?;
-        Ok(write(&self.inner.rules).remove(path).is_some())
+        Ok(write(&self.inner.rules)
+            .remove(&extract_mount_path(path))
+            .is_some())
     }
 
     /// Set the rule every path without its own entry follows.
@@ -471,6 +481,32 @@ mod tests {
         assert!(t.is_empty());
         assert!(matches!(
             t.policy_for("/a", Direction::Read),
+            MountPolicy::Inherit
+        ));
+    }
+
+    #[test]
+    fn a_trailing_slash_keys_the_rule_on_the_path_requests_resolve_to() {
+        let t = table();
+        t.set(
+            "/amber/",
+            MountRule::both(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+        )
+        .unwrap();
+        assert!(matches!(
+            t.policy_for("/amber", Direction::Publish),
+            MountPolicy::Refuse(RefuseStatus::Forbidden)
+        ));
+        t.set("/amber", MountRule::both(MountPolicy::Open)).unwrap();
+        assert_eq!(t.len(), 1, "/amber and /amber/ are one entry");
+        assert!(matches!(
+            t.policy_for("/amber", Direction::Read),
+            MountPolicy::Open
+        ));
+        assert!(t.remove("/amber/").unwrap());
+        assert!(t.is_empty());
+        assert!(matches!(
+            t.policy_for("/amber", Direction::Publish),
             MountPolicy::Inherit
         ));
     }
