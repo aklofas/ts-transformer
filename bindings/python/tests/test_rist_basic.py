@@ -405,3 +405,22 @@ def test_rist_simple_profile_loopback():
             tx.close()
     finally:
         rx.close()
+
+
+def test_encryption_key_refuses_non_utf8_bytes():
+    """A bytes secret that is not UTF-8 is refused, not converted lossily."""
+    secret = b"\xff\xfe-not-utf8-secret"
+    for ctor in (
+        rist.EncryptionKey.aes128,
+        rist.EncryptionKey.aes192,
+        rist.EncryptionKey.aes256,
+    ):
+        with pytest.raises(ValueError) as exc:
+            ctor(secret)
+        msg = str(exc.value)
+        assert "UTF-8" in msg
+        assert "not-utf8-secret" not in msg
+        assert "xff" not in msg.lower()
+    assert isinstance(
+        rist.EncryptionKey.aes256("valid-secret".encode()), rist.EncryptionKey
+    )

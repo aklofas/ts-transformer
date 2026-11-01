@@ -83,17 +83,20 @@ class EncryptionKey:
 
     @staticmethod
     def aes128(secret: bytes | str) -> EncryptionKey:
-        """AES-128 PSK. ``secret`` may be ``bytes`` or ``str``."""
+        """AES-128 PSK. ``secret`` may be ``str`` or ``bytes``; ``bytes`` must be valid UTF-8
+        (``ValueError`` otherwise)."""
         ...
 
     @staticmethod
     def aes192(secret: bytes | str) -> EncryptionKey:
-        """AES-192 PSK. ``secret`` may be ``bytes`` or ``str``."""
+        """AES-192 PSK. ``secret`` may be ``str`` or ``bytes``; ``bytes`` must be valid UTF-8
+        (``ValueError`` otherwise)."""
         ...
 
     @staticmethod
     def aes256(secret: bytes | str) -> EncryptionKey:
-        """AES-256 PSK. ``secret`` may be ``bytes`` or ``str``."""
+        """AES-256 PSK. ``secret`` may be ``str`` or ``bytes``; ``bytes`` must be valid UTF-8
+        (``ValueError`` otherwise)."""
         ...
 
 
