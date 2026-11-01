@@ -6,7 +6,7 @@ use crate::error::{AcceptError, BindError, IoError, OptionError, last_error};
 use crate::init::ensure_initialized;
 use crate::socket::{
     SrtSocket, apply_listener_config, duration_to_ms, make_cancel_handle, read_bool,
-    read_stream_id_bytes, set_bool, set_int,
+    read_stream_id_bytes, set_bool, set_int, trim_stream_id_padding,
 };
 use crate::transport::SrtTransport;
 use os_socketaddr::OsSocketAddr;
@@ -89,6 +89,13 @@ impl std::fmt::Debug for SrtListener {
 }
 
 unsafe impl Send for SrtListener {}
+
+/// What one non-blocking accept probe found.
+enum Probe {
+    Empty,
+    ClosedMismatch,
+    Accepted((SrtSocket, SocketAddr)),
+}
 
 impl SrtListener {
     /// Open a passive socket, apply config, bind, and start listening.
@@ -354,14 +361,31 @@ impl SrtListener {
         }
     }
 
-    /// Non-blocking accept probe: returns `Ok(Some(...))` if a
-    /// connection is already queued, `Ok(None)` if the queue is empty
-    /// (libsrt `SRT_EASYNCRCV`), or `Err(...)` for any other libsrt
-    /// failure. Toggles `SRTO_RCVSYN` to false for the duration of the
-    /// `srt_accept` call and restores it before returning; a failed
+    /// Non-blocking accept: returns `Ok(Some(...))` if a matching
+    /// connection is queued, `Ok(None)` once the queue is empty (libsrt
+    /// `SRT_EASYNCRCV`), or `Err(...)` for any other libsrt failure. A
+    /// queued connection whose stream ID differs from what the listen rules
+    /// matched is closed and the queue probed again at once: no readiness
+    /// event announces the connections still queued behind it.
+    fn try_accept_nonblocking(&mut self) -> Result<Option<(SrtSocket, SocketAddr)>, AcceptError> {
+        loop {
+            match self.probe_accept()? {
+                Probe::Empty => return Ok(None),
+                Probe::ClosedMismatch => {
+                    if crate::exit_guard::is_exiting() {
+                        return Err(AcceptError::ListenerClosed);
+                    }
+                }
+                Probe::Accepted(conn) => return Ok(Some(conn)),
+            }
+        }
+    }
+
+    /// One non-blocking `srt_accept`. Toggles `SRTO_RCVSYN` to false for
+    /// the duration of the call and restores it before returning; a failed
     /// restore is an error, and a connection the probe accepted is closed
     /// before it is reported.
-    fn try_accept_nonblocking(&mut self) -> Result<Option<(SrtSocket, SocketAddr)>, AcceptError> {
+    fn probe_accept(&mut self) -> Result<Probe, AcceptError> {
         let prev_rcvsyn = read_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN).unwrap_or(true);
         if let Err(e) = set_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN, false) {
             // No blocking fallback exists to hand over to, and a closed
@@ -397,15 +421,15 @@ impl SrtListener {
         if let Err(e) = set_bool(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVSYN, prev_rcvsyn) {
             let accepted = probe_outcome?;
             if let Some(accepted) = accepted {
-                unsafe { srt_sys::srt_close(accepted) };
+                crate::listen_rules::take_admitted(self.handle, accepted);
+                crate::exit_guard::close_socket(accepted);
             }
             return Err(self.option_failure("restoring the listener's blocking mode", e));
         }
 
         match probe_outcome {
-            Ok(None) => Ok(None),
-            // The caller re-waits.
-            Ok(Some(accepted)) if !self.keep_admitted(accepted) => Ok(None),
+            Ok(None) => Ok(Probe::Empty),
+            Ok(Some(accepted)) if !self.keep_admitted(accepted) => Ok(Probe::ClosedMismatch),
             Ok(Some(accepted)) => {
                 let socket = SrtSocket::from_accepted(
                     accepted,
@@ -419,7 +443,7 @@ impl SrtListener {
                 })?;
                 let peer = from_sockaddr(&os_addr)
                     .map_err(|e| AcceptError::System(std::io::Error::other(e.to_string())))?;
-                Ok(Some((socket, peer)))
+                Ok(Probe::Accepted((socket, peer)))
             }
             Err(e) => Err(e),
         }
@@ -433,11 +457,7 @@ impl SrtListener {
     fn keep_admitted(&self, accepted: srt_sys::SRTSOCKET) -> bool {
         let matched = crate::listen_rules::take_admitted(self.handle, accepted);
         let actual = read_stream_id_bytes(accepted);
-        // libsrt's padding trim never inspects the first byte, so a one-byte
-        // stream ID keeps its three NUL pad bytes. Trailing NULs are padding,
-        // never part of what the hook read.
-        let end = actual.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
-        if matched.is_some_and(|m| *m == actual[..end]) {
+        if matched.is_some_and(|m| *m == *trim_stream_id_padding(&actual)) {
             return true;
         }
         crate::exit_guard::close_socket(accepted);

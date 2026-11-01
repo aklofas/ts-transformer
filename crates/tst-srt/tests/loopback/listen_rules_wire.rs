@@ -337,7 +337,43 @@ fn one_byte_stream_id_is_not_closed() {
     b.connect_timeout(handshake_timeout());
     b.stream_id(StreamId::new("a").unwrap());
     let _caller = b.connect(("127.0.0.1", port)).expect("connect");
-    listener
+    let (socket, _) = listener
         .accept_timeout(accept_timeout())
         .expect("accept the caller");
+    assert_eq!(
+        socket.stream_id(),
+        Some("a"),
+        "pad bytes are not part of it"
+    );
+}
+
+/// Both callers are queued before the accept subscribes, so no readiness
+/// event follows the closed mismatch: the probe must look again at once.
+/// libsrt hands queued connections out in socket-ID order, so both arrival
+/// orders are run.
+#[test]
+fn accept_timeout_finds_a_good_caller_queued_beside_a_mismatch() {
+    require_loopback!();
+    for nul_first in [true, false] {
+        let Loopback { mut listener, port } = cam_only();
+        let (_nul, _cam);
+        if nul_first {
+            _nul = LengthSidCaller::connect(port, b"cam\0x").expect("the hook admits cam\\0x");
+            _cam = connect_cam(port);
+        } else {
+            _cam = connect_cam(port);
+            _nul = LengthSidCaller::connect(port, b"cam\0x").expect("the hook admits cam\\0x");
+        }
+        let deadline = accept_timeout();
+        let start = std::time::Instant::now();
+        let (socket, _) = listener.accept_timeout(deadline).unwrap_or_else(|e| {
+            panic!("nul_first={nul_first}: accept the queued cam caller: {e:?}")
+        });
+        assert_eq!(socket.stream_id(), Some("cam"));
+        assert!(
+            start.elapsed() < deadline / 2,
+            "nul_first={nul_first}: the queued caller waited for the deadline: {:?}",
+            start.elapsed()
+        );
+    }
 }

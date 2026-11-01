@@ -97,7 +97,8 @@ pub(crate) struct Inner {
 
 /// Records kept per listener. A handshake that later fails never reaches
 /// `accept`, so its record only leaves by eviction; an evicted socket that
-/// does reach `accept` is closed.
+/// does reach `accept` is closed. Eviction costs availability (a legitimate
+/// caller is closed and must reconnect), never admission.
 const ADMITTED_CAP: usize = 1024;
 
 pub(crate) struct Table {
