@@ -5,7 +5,9 @@
 //! [`RtspServer::mount_rules`](crate::RtspServer::mount_rules). A path with
 //! an entry uses it; every other path uses the table's default rule. A table
 //! nobody edits holds `Inherit` for both directions, which leaves the
-//! server-wide credential from the builder in charge, as before.
+//! server-wide credential from the builder in charge, as before. A path
+//! rule's `Inherit` means that same server-wide setting, never the default
+//! rule.
 //!
 //! **Stability: Experimental.**
 
@@ -103,8 +105,12 @@ impl RefuseStatus {
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum MountPolicy {
-    /// Defer to the next level: a path rule defers to the table default, and
-    /// the table default defers to the server-wide credential.
+    /// The server-wide setting: the builder's credential if one was
+    /// configured, else open.
+    ///
+    /// A path rule's `Inherit` does not fall back to the table's default
+    /// rule. Under a default of `Refuse`, a path rule with one direction left
+    /// `Inherit` leaves that direction as open as the server itself is.
     Inherit,
     /// Allow without credentials.
     Open,
