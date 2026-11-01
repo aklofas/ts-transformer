@@ -12,6 +12,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 
 - `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch.
+### Fixed — tst-py, tst-jni, tst-core, tst-hls, tst-webrtc, tst-srt, tst-c
+
+- Python reprs, `str()` and error text, and Java `toString()` and exception text, no longer print URL passwords or the values of `passphrase`, `secret`, `token`, `auth_pass` and `password` query keys; each shows `<redacted>` instead. This covers the RTSP client and server configs, the WHEP server config and the transport open errors, including the unsupported-scheme errors.
+- Stream-ID values in an SRT `AccessControl` (Rust `Debug`, Python repr) are redacted; the keys stay visible.
+- Rust `Debug` for `HlsConfig`, the WHEP bearer-token request holder and the SRT `AccessControl` types never prints a password, token or stream-ID value. The `InvalidPort` URL error redacts a port that is not digits, since a mistyped URL can put a password there. The shared helper is `tst_core::url::redact_url`.
+- The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
 
 ### Fixed — tst-rtp
 
