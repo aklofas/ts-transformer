@@ -135,6 +135,14 @@ fn streamid_utf8_is_accepted_up_to_512_bytes() {
 }
 
 #[test]
+fn streamid_with_encoded_nul_is_refused() {
+    assert!(matches!(
+        SrtUrl::parse("srt://h:9000?streamid=cam%00x"),
+        Err(tst_srt::SrtUrlError::OptionValidation { .. })
+    ));
+}
+
+#[test]
 fn congestion_live() {
     let u = SrtUrl::parse("srt://1.2.3.4:9000?congestion=live").unwrap();
     assert!(matches!(

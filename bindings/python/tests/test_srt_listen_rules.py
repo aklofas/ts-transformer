@@ -198,6 +198,10 @@ def test_validation() -> None:
         with pytest.raises(SrtError) as ei:
             lst.rules().set("a", ListenRule.accept_with("short"))
         assert ei.value.kind == SrtErrorKind.CONFIG_INVALID
+        with pytest.raises(SrtError) as ei:
+            lst.rules().set("a\0b", ListenRule.accept())
+        assert ei.value.kind == SrtErrorKind.CONFIG_INVALID
+        assert lst.rules().remove("a\0b") is False
     finally:
         lst.close()
 

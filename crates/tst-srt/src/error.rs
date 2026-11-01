@@ -40,6 +40,10 @@ pub enum StreamIdError {
     /// next breaking release.
     #[error("stream ID contains non-ASCII characters")]
     NonAscii,
+    /// libsrt hands a listener's hook the stream ID as a C string, so an ID
+    /// holding a NUL byte could never be matched as the socket reports it.
+    #[error("stream ID contains a NUL byte")]
+    InteriorNul,
 }
 
 #[derive(Debug, Error)]
