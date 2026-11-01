@@ -79,7 +79,7 @@ public final class RtspServerConfig {
     public Optional<MountRule> defaultMountRule() { return Optional.ofNullable(defaultMountRule); }
 
     @Override public String toString() {
-        return "RtspServerConfig(bindAddr=" + bindAddr
+        return "RtspServerConfig(bindAddr=" + org.tstrans.Redact.url(bindAddr)
             + ", auth=" + (auth != null ? "<auth>" : "None")
             + ", maxSessions=" + maxSessions
             + ", sessionTimeoutSecs=" + sessionTimeoutSecs

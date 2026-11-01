@@ -16,4 +16,8 @@ public record WhepServerConfig(String bindUrl) {
     public WhepServerConfig {
         Objects.requireNonNull(bindUrl, "bindUrl");
     }
+
+    @Override public String toString() {
+        return "WhepServerConfig[bindUrl=" + org.tstrans.Redact.url(bindUrl) + "]";
+    }
 }
