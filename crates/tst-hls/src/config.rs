@@ -28,7 +28,7 @@ pub enum HlsMode {
 /// [`crate::HlsPublisherBuilder`].
 ///
 /// [`HlsPublisher`]: crate::HlsPublisher
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct HlsConfig {
     /// Where the HTTP server binds.
@@ -102,6 +102,30 @@ pub struct HlsConfig {
     /// even compiled) still requires `tls_cert`/`tls_key` to pass
     /// validation.
     pub tls: bool,
+}
+
+/// `Debug` prints the Basic-auth user name and `<redacted>` for the password.
+impl std::fmt::Debug for HlsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HlsConfig")
+            .field("bind", &self.bind)
+            .field("output_dir", &self.output_dir)
+            .field("segment_duration", &self.segment_duration)
+            .field("max_segment_duration", &self.max_segment_duration)
+            .field("playlist_window", &self.playlist_window)
+            .field("mode", &self.mode)
+            .field(
+                "basic_auth",
+                &self
+                    .basic_auth
+                    .as_ref()
+                    .map(|(user, _)| (user, "<redacted>")),
+            )
+            .field("tls_cert", &self.tls_cert)
+            .field("tls_key", &self.tls_key)
+            .field("tls", &self.tls)
+            .finish()
+    }
 }
 
 impl Default for HlsConfig {
@@ -182,6 +206,21 @@ mod tests {
     use super::*;
     #[cfg(feature = "serve")]
     use crate::url::HlsUrl;
+
+    #[test]
+    fn debug_never_prints_the_basic_auth_password() {
+        let cfg = HlsConfig {
+            basic_auth: Some(("viewer".into(), "hunter2".into())),
+            ..HlsConfig::default()
+        };
+        let shown = format!("{cfg:?}");
+        assert!(!shown.contains("hunter2"), "{shown}");
+        assert!(
+            shown.contains("viewer") && shown.contains("<redacted>"),
+            "{shown}"
+        );
+        assert!(shown.contains("127.0.0.1:8080"), "{shown}");
+    }
 
     #[test]
     fn default_bind_is_loopback() {

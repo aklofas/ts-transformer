@@ -204,9 +204,16 @@ fn split_host_port(s: &str) -> Result<(&str, Option<u16>), UrlError> {
 
 /// Parse a port from a decimal string. Returns [`UrlError::InvalidPort`]
 /// on parse failure or out-of-range value.
+///
+/// A non-numeric `got` is replaced by `<redacted>`: a malformed userinfo
+/// such as `u:pa/ss@h` splits the password into the "port".
 fn parse_port(s: &str) -> Result<u16, UrlError> {
     s.parse::<u16>().map_err(|e| UrlError::InvalidPort {
-        got: s.to_string(),
+        got: if s.bytes().all(|b| b.is_ascii_digit()) {
+            s.to_string()
+        } else {
+            "<redacted>".to_string()
+        },
         detail: e.to_string(),
     })
 }
@@ -564,6 +571,17 @@ mod tests {
     fn parse_url_empty_scheme_rejected() {
         let err = parse_url("://host:9000").unwrap_err();
         assert!(matches!(err, UrlError::EmptyScheme));
+    }
+
+    #[test]
+    fn invalid_port_error_never_echoes_a_password() {
+        let msg = parse_url("rtsp://u:pa/ss@h/x").unwrap_err().to_string();
+        assert!(!msg.contains("pa"), "{msg}");
+        assert!(!msg.contains("ss"), "{msg}");
+        assert!(msg.contains("<redacted>"), "{msg}");
+        // A numeric overflow is not secret and stays visible.
+        let msg = parse_url("srt://host:99999").unwrap_err().to_string();
+        assert!(msg.contains("99999"), "{msg}");
     }
 
     #[test]
