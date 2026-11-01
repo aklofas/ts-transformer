@@ -30,8 +30,9 @@ public final class MountRules extends NativeHandle {
     /**
      * Install {@code rule} for {@code path}, replacing any previous rule for it.
      *
-     * @throws RtspException {@code MOUNT} for an invalid path or a {@link
-     *     MountPolicy#require} credential with an empty username; {@code SERVER} once
+     * @throws RtspException {@code MOUNT} for an invalid path, or a {@link
+     *     MountPolicy#require} credential with an empty username or a username listed
+     *     twice; {@code SERVER} once
      *     the server has stopped
      */
     public void set(String path, MountRule rule) throws RtspException {

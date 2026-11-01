@@ -871,6 +871,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_ru
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountPolicy
 #[non_exhaustive] pub enum tst_rtp::rtsp::server::mount_rules::MountRuleError
 pub tst_rtp::rtsp::server::mount_rules::MountRuleError::Closed
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::DuplicateUsername
+pub tst_rtp::rtsp::server::mount_rules::MountRuleError::DuplicateUsername::username: alloc::string::String
 pub tst_rtp::rtsp::server::mount_rules::MountRuleError::EmptyCredentials
 pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidMountPath
 pub tst_rtp::rtsp::server::mount_rules::MountRuleError::InvalidMountPath::detail: alloc::string::String
@@ -1545,6 +1547,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_ru
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountPolicy
 #[non_exhaustive] pub enum tst_rtp::MountRuleError
 pub tst_rtp::MountRuleError::Closed
+pub tst_rtp::MountRuleError::DuplicateUsername
+pub tst_rtp::MountRuleError::DuplicateUsername::username: alloc::string::String
 pub tst_rtp::MountRuleError::EmptyCredentials
 pub tst_rtp::MountRuleError::InvalidMountPath
 pub tst_rtp::MountRuleError::InvalidMountPath::detail: alloc::string::String

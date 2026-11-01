@@ -308,7 +308,8 @@ impl RtspServerBuilder {
     /// - [`RtspServerError::Io`] on Runtime construction failure (rare)
     /// - [`RtspServerError::InvalidConfig`] if the
     ///   [`default_mount_rule`](Self::default_mount_rule) holds a `Require`
-    ///   policy with no credential or a credential with an empty username
+    ///   policy with no credential, a credential with an empty username or a
+    ///   username listed twice
     ///
     /// TLS cert/key paths are NOT validated here — they are loaded at
     /// [`RtspServer::start`](crate::rtsp::server::RtspServer::start), which

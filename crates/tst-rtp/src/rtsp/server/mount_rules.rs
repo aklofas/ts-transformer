@@ -168,6 +168,14 @@ pub enum MountRuleError {
     /// username.
     #[error("a Require policy needs at least one credential with a non-empty username")]
     EmptyCredentials,
+    /// A [`MountPolicy::Require`] that lists the same username twice. Both
+    /// authentication schemes check a username's first entry only, so the
+    /// later password could never be accepted.
+    #[error("a Require policy lists username {username:?} more than once")]
+    DuplicateUsername {
+        /// The repeated username.
+        username: String,
+    },
     /// The server shut down: stopped, hard-cancelled or dropped.
     #[error("the server was shut down")]
     Closed,
@@ -226,12 +234,20 @@ fn write<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
     lock.write().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Refuse a `Require` that no client could satisfy.
+/// Refuse a `Require` that no client could satisfy, or one with a
+/// credential that could never be accepted (a repeated username).
 fn check_policy(policy: &MountPolicy) -> Result<(), MountRuleError> {
-    if let MountPolicy::Require(creds) = policy
-        && (creds.is_empty() || creds.iter().any(|c| c.username.is_empty()))
-    {
+    let MountPolicy::Require(creds) = policy else {
+        return Ok(());
+    };
+    if creds.is_empty() || creds.iter().any(|c| c.username.is_empty()) {
         return Err(MountRuleError::EmptyCredentials);
+    }
+    let mut seen = std::collections::HashSet::new();
+    if let Some(dup) = creds.iter().find(|c| !seen.insert(c.username.as_str())) {
+        return Err(MountRuleError::DuplicateUsername {
+            username: dup.username.clone(),
+        });
     }
     Ok(())
 }
@@ -269,6 +285,8 @@ impl MountRules {
     ///   path.
     /// - [`MountRuleError::EmptyCredentials`] if a `Require` policy holds no
     ///   credential or a credential with an empty username.
+    /// - [`MountRuleError::DuplicateUsername`] if a `Require` policy lists a
+    ///   username more than once.
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set(&self, path: &str, rule: MountRule) -> Result<(), MountRuleError> {
         self.ensure_open()?;
@@ -302,6 +320,8 @@ impl MountRules {
     /// # Errors
     /// - [`MountRuleError::EmptyCredentials`] if a `Require` policy holds no
     ///   credential or a credential with an empty username.
+    /// - [`MountRuleError::DuplicateUsername`] if a `Require` policy lists a
+    ///   username more than once.
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set_default(&self, rule: MountRule) -> Result<(), MountRuleError> {
         self.ensure_open()?;
@@ -510,6 +530,31 @@ mod tests {
             t.policy_for("/amber", Direction::Publish),
             MountPolicy::Inherit
         ));
+    }
+
+    #[test]
+    fn require_with_a_repeated_username_is_refused() {
+        let t = table();
+        let dup = MountRule::new(
+            MountPolicy::Inherit,
+            MountPolicy::Require(vec![
+                MountCredential::new("amber", pw("a")),
+                MountCredential::new("other", pw("x")),
+                MountCredential::new("amber", pw("b")),
+            ]),
+        );
+        let is_dup = |r: Result<(), MountRuleError>| matches!(r, Err(MountRuleError::DuplicateUsername { username }) if username == "amber");
+        assert!(is_dup(t.set("/a", dup.clone())));
+        assert!(is_dup(t.set_default(dup.clone())));
+        assert!(t.is_empty());
+        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        b.default_mount_rule(dup);
+        match b.build() {
+            Err(crate::error::RtspServerError::InvalidConfig { detail }) => {
+                assert!(detail.contains("amber"), "{detail}");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
     }
 
     #[test]
