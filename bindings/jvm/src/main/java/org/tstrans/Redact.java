@@ -7,7 +7,7 @@ package org.tstrans;
  * the stable API. Mirrors {@code tst_core::url::redact_url} rule for rule: the password of
  * {@code user:password@host} userinfo and the values of the query keys {@code passphrase},
  * {@code secret}, {@code token}, {@code auth_pass}, {@code password}, {@code streamid} and
- * {@code srt_streamid} become {@code <redacted>}. Key matching is exact and lower-case. The scrub
+ * {@code srt_streamid} become {@code <redacted>}. Key matching is exact and lower-case, after percent-decoding the key name. The scrub
  * is a text pass over each whitespace- (ASCII or U+00A0) or quote-delimited token, so a malformed
  * URL, or a message that embeds one, never leaks either kind of secret. It errs toward
  * redacting: any later {@code @} ends the userinfo, so {@code srt://h:9000/a@b} loses

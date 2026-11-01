@@ -25,7 +25,8 @@ const REDACTED: &str = "<redacted>";
 /// - the password of `user:password@host` userinfo;
 /// - the value of a `key=value` pair whose key is exactly one of
 ///   `passphrase`, `secret`, `token`, `auth_pass`, `password`, `streamid`,
-///   `srt_streamid`. The match is case-sensitive: `Token=x` is not scrubbed.
+///   `srt_streamid`. The match is case-sensitive: `Token=x` is not scrubbed. Key
+///   names are percent-decoded first, so `pass%70hrase=x` is scrubbed too.
 ///
 /// The scrub errs toward redacting: any later `@` ends the userinfo, so
 /// `srt://h:9000/a@b` loses `9000/a`. That over-redaction is accepted.
