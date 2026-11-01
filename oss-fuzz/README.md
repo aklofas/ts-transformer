@@ -76,19 +76,31 @@ A crash in the PR job fails the check and attaches the reproducer as a run
 artifact; reproduce it with `cargo +nightly fuzz run <target> <file>` as in
 "Reproducing a crash report" below.
 
-### Corpus persistence (one-time setup, not yet done)
+### Corpus persistence (storage repo)
 
-Without a storage repo every run starts from the committed seeds, corpora
-and coverage land only as run artifacts, and PR runs cannot narrow to the
-harnesses a change touched (that narrowing reads the coverage report).
+Without a storage repo, ClusterFuzzLite keeps each target's corpus as a run
+artifact (`cifuzz-corpus-<target>`, 90-day retention) and the next run picks
+it up, so a gap longer than the retention loses the corpus; coverage lands
+only as a run artifact, and PR runs cannot narrow to the harnesses a change
+touched (that narrowing reads the coverage report).
+
+With a storage repo, corpora live in `corpus/<target>/` on its `main` branch
+and the coverage report in `coverage/` on its `gh-pages` branch; both
+branches are created by the first push, so the repository may start empty.
+Crash reproducers and builds stay run artifacts either way. The storage repo
+replaces the artifact corpora rather than falling back to them, so copy the
+latest `cifuzz-corpus-<target>` artifacts into `corpus/<target>/` before the
+first run, or that run starts from the committed seeds.
+
 To enable it:
 
-1. Create an empty repository `aklofas/ts-transformer-fuzz-corpus`.
-2. Create a personal access token with write permission to that repository
-   only, and add it to this repository as a **repository** secret named
-   `PERSONAL_ACCESS_TOKEN` (not an environment secret).
-3. Nothing else: both workflows already pass the storage repo URL whenever
-   that secret exists (`main` for corpora, `gh-pages` for coverage).
+1. Create a repository `aklofas/ts-transformer-fuzzcorpus` (private is fine).
+2. Create a fine-grained personal access token with Contents read and write
+   on that repository only, and add it to this repository as a
+   **repository** secret named `PERSONAL_ACCESS_TOKEN` (not an environment
+   secret).
+3. Nothing else: both workflows pass the storage repo URL whenever that
+   secret exists (`main` for corpora, `gh-pages` for coverage).
 
 ### Verifying the ClusterFuzzLite image locally
 

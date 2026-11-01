@@ -40,7 +40,7 @@ jobs:
           language: rust
           github-token: ${{ secrets.GITHUB_TOKEN }}
           sanitizer: address
-          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzzcorpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
           storage-repo-branch: main
           storage-repo-branch-coverage: gh-pages
       - name: Run fuzzers
@@ -53,6 +53,6 @@ jobs:
           fuzz-seconds: 300
           mode: code-change
           sanitizer: address
-          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzz-corpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzzcorpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
           storage-repo-branch: main
           storage-repo-branch-coverage: gh-pages
