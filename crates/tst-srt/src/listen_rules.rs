@@ -5,6 +5,9 @@
 //! stream ID up in the listener's [`ListenRules`] and accepts, accepts with
 //! a passphrase, or rejects with a reason the caller reads. A listener whose
 //! table was never edited accepts every caller, as libsrt does by default.
+//! Wherever a passphrase applies (a listener-wide one or an `AcceptWith`
+//! rule) a handshake-v4 caller is refused with
+//! [`RejectReason::VersionUnsupported`]; see [`ListenRule::AcceptWith`].
 
 use crate::error::{OptionError, RejectReason, last_error};
 use crate::options::Passphrase;
@@ -31,6 +34,11 @@ pub enum ListenRule {
     /// caller's key material (libsrt HSv5), so a rule cannot set it; the
     /// listener-wide `SrtListenerBuilder::key_length` only advertises a
     /// preference to callers that leave theirs unset.
+    ///
+    /// A handshake-v4 caller (libsrt before 1.3.0) is refused with
+    /// [`RejectReason::VersionUnsupported`] wherever a passphrase applies:
+    /// HSv4 keying happens after the connection, and libsrt admits a v4
+    /// caller that never sends it.
     AcceptWith {
         /// The passphrase the connection must use.
         passphrase: Passphrase,
@@ -74,6 +82,8 @@ pub struct ListenRules {
 pub(crate) struct Inner {
     table: RwLock<Table>,
     closed: AtomicBool,
+    /// The listener itself carries a passphrase (builder or URL).
+    listener_passphrase: bool,
 }
 
 pub(crate) struct Table {
@@ -98,13 +108,14 @@ impl std::fmt::Debug for ListenRules {
 }
 
 impl Inner {
-    fn new() -> Self {
+    fn new(listener_passphrase: bool) -> Self {
         Self {
             table: RwLock::new(Table {
                 rules: HashMap::new(),
                 default: ListenRule::Accept,
             }),
             closed: AtomicBool::new(false),
+            listener_passphrase,
         }
     }
 
@@ -184,7 +195,7 @@ impl ListenRules {
     #[cfg(test)]
     pub(crate) fn detached() -> Self {
         Self {
-            inner: Arc::new(Inner::new()),
+            inner: Arc::new(Inner::new(false)),
         }
     }
 }
@@ -203,8 +214,11 @@ fn registry() -> std::sync::MutexGuard<'static, HashMap<srt_sys::SRTSOCKET, Arc<
 
 /// Insert the registry entry for `lsn` and install the trampoline. Called by
 /// `SrtListener::bind_with` after `srt_bind`, before `srt_listen`.
-pub(crate) fn install(lsn: srt_sys::SRTSOCKET) -> Result<ListenRules, OptionError> {
-    let inner = Arc::new(Inner::new());
+pub(crate) fn install(
+    lsn: srt_sys::SRTSOCKET,
+    listener_passphrase: bool,
+) -> Result<ListenRules, OptionError> {
+    let inner = Arc::new(Inner::new(listener_passphrase));
     registry().insert(lsn, inner.clone());
     // SAFETY: `lsn` is a live socket the caller owns; `listen_hook` matches
     // `srt_listen_callback_fn` and the opaque value is a plain integer.
@@ -243,6 +257,23 @@ pub(crate) fn decide(table: &Table, stream_id: Option<&[u8]>) -> ListenRule {
         .clone()
 }
 
+/// Whether a handshake-v4 caller must be refused. HSv4 keying happens after
+/// the connection, and libsrt admits a v4 caller that never sends it, so
+/// where a passphrase applies the session would run in clear. A `Reject`
+/// rule keeps its own reason.
+pub(crate) fn hsv4_refused(
+    hs_version: c_int,
+    listener_passphrase: bool,
+    rule: &ListenRule,
+) -> bool {
+    hs_version < 5
+        && match rule {
+            ListenRule::Reject(_) => false,
+            ListenRule::AcceptWith { .. } => true,
+            ListenRule::Accept => listener_passphrase,
+        }
+}
+
 /// Apply `rule` to the incoming socket `ns`: 0 accepts, -1 rejects (the
 /// reason is already set on `ns`).
 pub(crate) fn apply(ns: srt_sys::SRTSOCKET, rule: &ListenRule) -> c_int {
@@ -277,7 +308,7 @@ type BindingSockaddr = srt_sys::sockaddr;
 extern "C" fn listen_hook(
     opaque: *mut c_void,
     ns: srt_sys::SRTSOCKET,
-    _hs_version: c_int,
+    hs_version: c_int,
     _peer: *const BindingSockaddr,
     streamid: *const c_char,
 ) -> c_int {
@@ -297,7 +328,11 @@ extern "C" fn listen_hook(
             Some(unsafe { CStr::from_ptr(streamid) }.to_bytes())
         };
         let rule = decide(&inner.read(), stream_id);
-        apply(ns, &rule)
+        if hsv4_refused(hs_version, inner.listener_passphrase, &rule) {
+            reject(ns, RejectReason::VersionUnsupported.raw())
+        } else {
+            apply(ns, &rule)
+        }
     }));
     match decided {
         Ok(code) => code,
@@ -312,6 +347,29 @@ extern "C" fn listen_hook(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hsv4_refused_truth_table() {
+        let with = ListenRule::AcceptWith {
+            passphrase: Passphrase::new("amber-secret-123").unwrap(),
+        };
+        let reject = ListenRule::Reject(RejectReason::Forbidden);
+        for (hs, pw, rule, want) in [
+            (4, false, &ListenRule::Accept, false),
+            (4, true, &ListenRule::Accept, true),
+            (4, false, &with, true),
+            (4, true, &with, true),
+            (4, false, &reject, false),
+            (4, true, &reject, false),
+            (5, false, &ListenRule::Accept, false),
+            (5, true, &ListenRule::Accept, false),
+            (5, false, &with, false),
+            (5, true, &with, false),
+            (5, true, &reject, false),
+        ] {
+            assert_eq!(hsv4_refused(hs, pw, rule), want, "hs={hs} pw={pw} {rule:?}");
+        }
+    }
 
     #[test]
     fn reject_with_internal_reason_is_refused() {
