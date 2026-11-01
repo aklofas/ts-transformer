@@ -64,6 +64,11 @@ const PORT_ZERO_NONCE_PROXY: u16 = 33033;
 const PORT_PROXY_CONTROL_RECV: u16 = 33035;
 #[cfg(feature = "mbedtls")]
 const PORT_PROXY_CONTROL_PROXY: u16 = 33037;
+/// Main profile: the encrypted receiver and the proxy for the rekey-throttle test.
+#[cfg(feature = "mbedtls")]
+const PORT_THROTTLE_RECV: u16 = 33039;
+#[cfg(feature = "mbedtls")]
+const PORT_THROTTLE_PROXY: u16 = 33041;
 #[cfg(not(windows))]
 const RTCP_CHILD_ENV: &str = "TST_RIST_RTCP_COLLISION_CHILD";
 #[cfg(not(windows))]
@@ -588,6 +593,11 @@ enum Rewrite {
     /// Give a clear GRE packet an all-zero key (nonce) field, so an
     /// encrypted receiver sees "encrypted" data it must refuse to decrypt.
     ZeroNonce,
+    /// Per real datagram `D` (round `r`): five copies of `D` with nonce
+    /// `[1, r, 0x5a, 0xa5]`, then `D` with nonce `[2, r, 0x5a, 0xa5]` inside
+    /// the receiver's rekey throttle window. Rounds start 15 ms apart so the
+    /// first copy of each round is outside the previous round's window.
+    ThrottleSchedule,
 }
 
 /// Stops the proxy thread when dropped.
@@ -624,6 +634,7 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
     let stop_thread = Arc::clone(&stop);
     let thread = thread::spawn(move || {
         let mut sender: Option<SocketAddr> = None;
+        let mut round: u8 = 0;
         let mut buf = vec![0u8; 65536];
         while !stop_thread.load(Ordering::SeqCst) {
             let (n, from) = match sock.recv_from(&mut buf) {
@@ -646,6 +657,24 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
                     dgram[0] |= 0x20;
                 }
             }
+            if let Rewrite::ThrottleSchedule = rewrite {
+                if dgram.len() >= 4 && dgram[0] & 0x20 == 0 {
+                    let keyed = |nonce: [u8; 4]| {
+                        let mut d = dgram.clone();
+                        d.splice(4..4, nonce);
+                        d[0] |= 0x20;
+                        d
+                    };
+                    let garbage = keyed([0x01, round, 0x5a, 0xa5]);
+                    for _ in 0..5 {
+                        let _ = sock.send_to(&garbage, receiver);
+                    }
+                    let _ = sock.send_to(&keyed([0x02, round, 0x5a, 0xa5]), receiver);
+                    round = round.wrapping_add(1);
+                    thread::sleep(Duration::from_millis(15));
+                }
+                continue;
+            }
             let _ = sock.send_to(&dgram, receiver);
         }
     });
@@ -655,13 +684,20 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
     }
 }
 
-/// Sends five packets from an unencrypted Main sender through a proxy to
-/// `recv` and returns what `recv` delivered (same waits as the AES test).
+/// Sends `count` packets, `gap` apart, from an unencrypted Main sender through
+/// a proxy to `recv` and returns what `recv` delivered within `drain` (same
+/// connect waits as the AES test).
 #[cfg(feature = "mbedtls")]
-fn send_clear_through_proxy(recv: tst_rist::RistRecvTransport, proxy_port: u16) -> Vec<Vec<u8>> {
+fn send_clear_through_proxy(
+    recv: tst_rist::RistRecvTransport,
+    proxy_port: u16,
+    count: u8,
+    gap: Duration,
+    drain: Duration,
+) -> Vec<Vec<u8>> {
     let (tx_payloads, rx_payloads) = mpsc::channel::<Vec<Vec<u8>>>();
     let _recv_thread = thread::spawn(move || {
-        let collected = drain_n(recv, 5, Duration::from_secs(12));
+        let collected = drain_n(recv, usize::from(count), drain);
         let _ = tx_payloads.send(collected);
     });
 
@@ -673,11 +709,12 @@ fn send_clear_through_proxy(recv: tst_rist::RistRecvTransport, proxy_port: u16) 
         .expect("connect");
     thread::sleep(Duration::from_millis(1200));
 
-    for i in 1..=5u8 {
+    for i in 1..=count {
         send.send_bytes(&synthetic_ts_packet(i)).expect("send");
+        thread::sleep(gap);
     }
     rx_payloads
-        .recv_timeout(Duration::from_secs(15))
+        .recv_timeout(drain + Duration::from_secs(3))
         .expect("recv thread didn't return in time")
 }
 
@@ -709,7 +746,13 @@ fn main_profile_encrypted_receiver_drops_zero_nonce_clear_packets() {
         PORT_PROXY_CONTROL_RECV,
         Rewrite::PassThrough,
     );
-    let collected = send_clear_through_proxy(recv, PORT_PROXY_CONTROL_PROXY);
+    let collected = send_clear_through_proxy(
+        recv,
+        PORT_PROXY_CONTROL_PROXY,
+        5,
+        Duration::ZERO,
+        Duration::from_secs(12),
+    );
     drop(proxy);
     assert!(
         collected.len() >= 3,
@@ -729,7 +772,54 @@ fn main_profile_encrypted_receiver_drops_zero_nonce_clear_packets() {
         PORT_ZERO_NONCE_RECV,
         Rewrite::ZeroNonce,
     );
-    let collected = send_clear_through_proxy(recv, PORT_ZERO_NONCE_PROXY);
+    let collected = send_clear_through_proxy(
+        recv,
+        PORT_ZERO_NONCE_PROXY,
+        5,
+        Duration::ZERO,
+        Duration::from_secs(12),
+    );
+    drop(proxy);
+    assert!(
+        collected.is_empty(),
+        "encrypted receiver delivered {} clear packet(s)",
+        collected.len()
+    );
+}
+
+/// librist throttles rekeys once an encrypted receiver has seen garbage, and
+/// the throttled packet used to be handed on as if it had been decrypted. Each
+/// round here makes the receiver adopt a nonce, strike on garbage, then see
+/// the real clear datagram under a second nonce inside the throttle window.
+/// Every datagram, RTCP included, takes that path, so the flow authenticates
+/// and delivers media unless a throttled packet is dropped.
+#[cfg(feature = "mbedtls")]
+#[cfg_attr(
+    not(librist_source_fixups),
+    ignore = "needs the vendored librist build: a system librist lacks the PSK decrypt-status fix"
+)]
+#[test]
+fn main_profile_encrypted_receiver_drops_clear_packets_inside_the_rekey_throttle() {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+
+    let recv = RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{PORT_THROTTLE_RECV}"))
+        .unwrap()
+        .profile(RistProfile::Main)
+        .encryption(EncryptionKey::aes256("loopback-test-secret-keep-private"))
+        .listen()
+        .expect("listen");
+    let proxy = spawn_key_bit_proxy(
+        PORT_THROTTLE_PROXY,
+        PORT_THROTTLE_RECV,
+        Rewrite::ThrottleSchedule,
+    );
+    let collected = send_clear_through_proxy(
+        recv,
+        PORT_THROTTLE_PROXY,
+        20,
+        Duration::from_millis(50),
+        Duration::from_secs(8),
+    );
     drop(proxy);
     assert!(
         collected.is_empty(),
