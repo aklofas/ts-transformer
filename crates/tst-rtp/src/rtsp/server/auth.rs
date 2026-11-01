@@ -121,9 +121,9 @@ pub(crate) fn verify_authorization(
 
 /// Like [`verify_authorization`], but accepts any credential in
 /// `credentials`, chosen by the username in the header. For Digest the nonce
-/// is checked first, so a stale nonce answers the same for every username;
-/// with a current nonce an unknown user fails exactly like a wrong password,
-/// so a probe cannot tell listed and unlisted users apart.
+/// and the syntax checks run before the lookup, so they answer the same for
+/// every username; an unknown user otherwise fails exactly like a wrong
+/// password, so a probe cannot tell listed and unlisted users apart.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_credentials(
     auth_header: Option<&str>,
@@ -218,16 +218,12 @@ fn verify_digest(
     let response_attr = params.get("response").map(String::as_str).unwrap_or("");
     let realm_attr = params.get("realm").map(String::as_str).unwrap_or("");
 
-    // The nonce is checked before the username is looked up: a stale nonce
-    // answers `StaleNonce` for listed and unlisted users alike, so the answer
-    // never reveals which usernames exist.
+    // The nonce and every syntax check run before the username is looked up,
+    // so the answer for a stale nonce or a malformed header is the same for
+    // listed and unlisted users and never reveals which usernames exist.
     if nonce_attr != expected_nonce {
         return Err(AuthVerifyError::StaleNonce);
     }
-    let Some(cred) = credentials.iter().find(|c| c.username == username) else {
-        return Err(AuthVerifyError::WrongDigestResponse);
-    };
-    let (expected_user, expected_pass) = (cred.username, cred.password);
 
     // Reject when the client's realm doesn't match ours.
     // A mismatched realm means HA1 was computed against a different domain;
@@ -283,6 +279,10 @@ fn verify_digest(
             detail: format!("uri attr '{uri_attr}' != request uri '{uri}'"),
         });
     }
+    let Some(cred) = credentials.iter().find(|c| c.username == username) else {
+        return Err(AuthVerifyError::WrongDigestResponse);
+    };
+    let (expected_user, expected_pass) = (cred.username, cred.password);
     let expected_response = compute_digest_response(
         scheme,
         expected_user,
@@ -703,7 +703,8 @@ mod tests {
         let check = |user: &str, nonce: &str| {
             let auth = format!(
                 "Digest username=\"{user}\", realm=\"tst-rtp\", nonce=\"{nonce}\", \
-                 uri=\"rtsp://x\", response=\"any\", algorithm=MD5"
+                 uri=\"rtsp://x\", response=\"any\", algorithm=MD5, \
+                 nc=00000001, cnonce=\"c\", qop=auth"
             );
             verify_authorization(Some(&auth), "DESCRIBE", "rtsp://x", &cfg, "fresh", &mut 0)
                 .unwrap_err()
@@ -726,10 +727,37 @@ mod tests {
     fn verify_digest_wrong_username() {
         let cfg = digest_md5_cfg();
         let auth = "Digest username=\"impostor\", realm=\"tst-rtp\", nonce=\"abc\", \
-                    uri=\"rtsp://x\", response=\"any\", algorithm=MD5";
+                    uri=\"rtsp://x\", response=\"any\", algorithm=MD5, \
+                    nc=00000001, cnonce=\"c\", qop=auth";
         let e = verify_authorization(Some(auth), "DESCRIBE", "rtsp://x", &cfg, "abc", &mut 0)
             .unwrap_err();
         assert!(matches!(e, AuthVerifyError::WrongDigestResponse));
+    }
+
+    #[test]
+    fn verify_digest_syntax_errors_do_not_depend_on_the_username() {
+        let cfg = digest_md5_cfg();
+        let check = |user: &str, extra: &str| {
+            let auth = format!(
+                "Digest username=\"{user}\", realm=\"tst-rtp\", nonce=\"abc\", \
+                 uri=\"rtsp://x\", response=\"any\", algorithm=MD5{extra}"
+            );
+            verify_authorization(Some(&auth), "DESCRIBE", "rtsp://x", &cfg, "abc", &mut 0)
+                .unwrap_err()
+        };
+        // Malformed nc, qop downgrade: same class for a listed and an unlisted user.
+        for extra in [", nc=zz, cnonce=\"c\", qop=auth", ""] {
+            let (a, b) = (check("admin", extra), check("nobody", extra));
+            assert_eq!(
+                std::mem::discriminant(&a),
+                std::mem::discriminant(&b),
+                "{extra:?}: {a:?} vs {b:?}"
+            );
+            assert!(
+                matches!(b, AuthVerifyError::BadDigestSyntax { .. }),
+                "{b:?}"
+            );
+        }
     }
 
     #[test]
