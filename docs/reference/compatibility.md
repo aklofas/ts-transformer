@@ -173,7 +173,7 @@ and must not be confused:
   nothing to do with TLS certificates or the TCP transport layer.
 
 - **`tls`** (`tst-tcp` / `tst-rtp` / `tst-hls` feature) — wires in rustls 0.23
-  to provide TLS 1.2/1.3 on top of the raw TCP transport layer (`tcps://`,
+  to provide TLS 1.2 and TLS 1.3 on top of the raw TCP transport layer (`tcps://`,
   `rtsps://`, and HTTPS HLS serving). This is a *transport-layer* security feature — it authenticates
   the TCP connection and encrypts the TCP byte stream. It is independent of any
   SRT or RIST encryption. In `tst-tcp` the `tls` feature is **default-on**

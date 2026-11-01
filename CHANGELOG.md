@@ -18,6 +18,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stream-ID values in an SRT `AccessControl` (Rust `Debug`, Python repr) are redacted; the keys stay visible.
 - Rust `Debug` for `HlsConfig`, the WHEP bearer-token request holder and the SRT `AccessControl`, `StreamId` and socket types never prints a password, token or stream-ID value. The `InvalidPort` URL error redacts a port that is not digits, since a mistyped URL can put a password there. The shared helper is `tst_core::url::redact_url`.
 - The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
+### Fixed — tst-tcp, tst-rtp, tst-hls, tst-webrtc
+
+- Every TLS surface (`tcps://`, `rtsps://`, `hlss://`, `wheps://`) negotiated TLS 1.3 only, although the documentation promised TLS 1.2 and 1.3; rustls is now built with TLS 1.2 support, so 1.2-only peers such as many RTSPS cameras connect.
 
 ### Fixed — tst-rtp
 

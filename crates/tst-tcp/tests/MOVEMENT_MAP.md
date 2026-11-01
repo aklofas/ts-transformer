@@ -14,6 +14,7 @@ what each binary covers.
 | `net_pipeline_round_trip` | (default) | Full pipeline shell: `MuxSender<TcpTransport>` → TCP loopback → `DemuxReceiver<TcpTransport>`. `ProgramMap` smoke: the demuxer recovers the program map. Also a cancel test for a managed TCP receive against a silent peer. |
 | `net_partial_write` | (default) | A peer that stops reading mid-message stalls the send but never desyncs it — the sender keeps writing the remainder and the peer sees one contiguous stream once it resumes; a cancel bounds the stalled send with `ExplicitClose`. |
 | `net_tls_hostname` | `tls` | TLS caller dials by hostname (`localhost`) and rustls verifies the `dnsName` SAN. Also confirms the negative: an IP-literal dial against a `dnsName`-only cert is rejected at the handshake, inside `connect`. Also handshake-timeout and explicit-close cases. |
+| `net_tls_version` | `tls` | A client restricted to TLS 1.2 completes a `tcps://` handshake and echo round-trip against the listener. |
 | `net_tls_cancel` | `tls` | `tcps://` receive path: a cancel reaches a recv parked inside a TLS read, whole plaintext is still delivered one socket read at a time, and `close_notify` is a clean EOF. |
 | `net_connect_timeout` | `tls`, Linux | A `tcps://` connect that runs out `connect_timeout` reports `ConnectTimeout`, like `tcp://`, against a listener with a full accept queue. |
 | `net_conformance` | (default) | The tst-core transport conformance kit over plain `tcp://` loopback pairs, including the cancel rows and the peer-EOF-is-not-a-cancel row. |
