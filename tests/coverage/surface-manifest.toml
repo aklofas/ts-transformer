@@ -5314,6 +5314,6 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::url::redact_url"
 owning_tests = ["crates/tst-core/src/url/redact.rs", "bindings/jvm/src/test/java/org/tstrans/RedactionTest.java", "bindings/python/tests/test_repr_redaction.py"]
-bindings = ["c:n/a(Rust text helper; the C ABI has no string forms of URLs)", "python:n/a(called from the Rust binding code that builds each repr and error text)", "java:org.tstrans.Redact.url", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding returns error codes and copies no URL text through this helper; no C twin)", "python:n/a(internal: the binding's reprs and error text call it; no Python-visible symbol)", "java:org.tstrans.Redact.url", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
