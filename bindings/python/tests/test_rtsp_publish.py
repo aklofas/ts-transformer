@@ -35,6 +35,7 @@ from time import perf_counter
 from typing import Any, Callable, Optional
 
 import pytest
+from conftest import rtsp_header
 
 from tstrans.exceptions import RtpError, RtpErrorKind, RtspError, RtspErrorKind
 from tstrans.mpegts import (
@@ -122,8 +123,8 @@ class RawPublisher:
             "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n"
         )
         assert _status(r) == 200, f"SETUP refused: {r}"
-        session = _header(r, "Session").split(";")[0].strip()
-        transport = _header(r, "Transport")
+        session = rtsp_header(r, "Session").split(";")[0].strip()
+        transport = rtsp_header(r, "Transport")
         self.channel = int(
             next(
                 p.strip()[len("interleaved="):].split("-")[0]
@@ -163,13 +164,6 @@ class RawPublisher:
 def _status(resp: str) -> int:
     return int(resp.split()[1])
 
-
-def _header(resp: str, name: str) -> str:
-    for line in resp.split("\r\n"):
-        k, sep, v = line.partition(":")
-        if sep and k.strip().lower() == name.lower():
-            return v.strip()
-    raise AssertionError(f"no {name} header in {resp!r}")
 
 
 def _muxed_bundles(n: int) -> list[bytes]:

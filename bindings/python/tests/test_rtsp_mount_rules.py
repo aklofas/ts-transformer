@@ -12,6 +12,7 @@ import base64
 import socket
 
 import pytest
+from conftest import rtsp_header
 
 from tstrans.exceptions import RtspError, RtspErrorKind
 from tstrans.rtp import (
@@ -66,13 +67,6 @@ def _status(resp: str) -> int:
     return int(resp.split()[1])
 
 
-def _header(resp: str, name: str) -> str:
-    for line in resp.split("\r\n"):
-        k, sep, v = line.partition(":")
-        if sep and k.strip().lower() == name.lower():
-            return v.strip()
-    raise AssertionError(f"no {name} header in {resp!r}")
-
 
 def _basic(user: str, pw: str) -> str:
     return "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
@@ -93,7 +87,7 @@ def test_require_on_publish_challenges_then_admits_basic():
 
         r = _announce(port, "/amber")
         assert _status(r) == 401
-        challenge = _header(r, "WWW-Authenticate")
+        challenge = rtsp_header(r, "WWW-Authenticate")
         assert challenge.startswith("Basic") and 'realm="lab"' in challenge
 
         assert _status(_announce(port, "/amber", _basic("amber", "wrong"))) == 401

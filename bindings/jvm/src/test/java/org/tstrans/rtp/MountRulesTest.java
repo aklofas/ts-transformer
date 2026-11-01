@@ -3,6 +3,7 @@ package org.tstrans.rtp;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.rtspHeader;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -44,7 +45,7 @@ class MountRulesTest {
 
             String refused = announce(port, "/amber", null);
             assertEquals(401, status(refused));
-            assertEquals("Basic realm=\"lab\"", header(refused, "WWW-Authenticate"));
+            assertEquals("Basic realm=\"lab\"", rtspHeader(refused, "WWW-Authenticate"));
 
             String basic = "Authorization: Basic " + Base64.getEncoder()
                 .encodeToString("amber:pw".getBytes(StandardCharsets.UTF_8)) + "\r\n";
@@ -169,13 +170,4 @@ class MountRulesTest {
         return Integer.parseInt(resp.split(" ")[1]);
     }
 
-    private static String header(String resp, String name) {
-        for (String line : resp.split("\r\n")) {
-            int c = line.indexOf(':');
-            if (c > 0 && line.substring(0, c).trim().equalsIgnoreCase(name)) {
-                return line.substring(c + 1).trim();
-            }
-        }
-        throw new AssertionError("no " + name + " header in " + resp);
-    }
 }
