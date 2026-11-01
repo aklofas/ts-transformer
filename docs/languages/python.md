@@ -1010,7 +1010,8 @@ An `rtp://` receive URL also takes `?rcvbuf=` (kernel receive buffer, e.g. `8M` 
 returns a live `RtspSession`; `RtspSession.into_demux_receiver()` hands you
 the RTP data plane as a `DemuxReceiver`. Auth is `BasicAuth(user,
 password, realm=None)` or `DigestAuth(user, password, algorithm=...,
-realm=None)`:
+realm=None)`. `DigestAuth` never falls back to Basic; `BasicAuth` answers
+Digest when the server offers it and Basic otherwise:
 
 ```python
 from tstrans.rtp import (
