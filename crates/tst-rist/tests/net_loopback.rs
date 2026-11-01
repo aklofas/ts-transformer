@@ -595,7 +595,7 @@ enum Rewrite {
     ZeroNonce,
     /// Per real datagram `D` (round `r`): five copies of `D` with nonce
     /// `[1, r, 0x5a, 0xa5]`, then `D` with nonce `[2, r, 0x5a, 0xa5]` inside
-    /// the receiver's rekey throttle window. Rounds start 15 ms apart so the
+    /// the receiver's rekey throttle window. Rounds start at least 15 ms apart so the
     /// first copy of each round is outside the previous round's window.
     ThrottleSchedule,
 }
@@ -604,7 +604,16 @@ enum Rewrite {
 #[cfg(feature = "mbedtls")]
 struct ProxyHandle {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Datagrams given a zero nonce, or throttle rounds emitted.
+    rewritten: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     thread: Option<thread::JoinHandle<()>>,
+}
+
+#[cfg(feature = "mbedtls")]
+impl ProxyHandle {
+    fn rewritten(&self) -> usize {
+        self.rewritten.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 #[cfg(feature = "mbedtls")]
@@ -624,7 +633,7 @@ impl Drop for ProxyHandle {
 fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyHandle {
     use std::net::{SocketAddr, UdpSocket};
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     let sock = UdpSocket::bind(("127.0.0.1", listen)).expect("bind the proxy");
     sock.set_read_timeout(Some(Duration::from_millis(50)))
@@ -632,6 +641,8 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
     let receiver: SocketAddr = ([127, 0, 0, 1], forward_to).into();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
+    let rewritten = Arc::new(AtomicUsize::new(0));
+    let rewritten_thread = Arc::clone(&rewritten);
     let thread = thread::spawn(move || {
         let mut sender: Option<SocketAddr> = None;
         let mut round: u8 = 0;
@@ -655,6 +666,7 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
                 if dgram.len() >= 4 && dgram[0] & 0x20 == 0 {
                     dgram.splice(4..4, [0u8; 4]);
                     dgram[0] |= 0x20;
+                    rewritten_thread.fetch_add(1, Ordering::SeqCst);
                 }
             }
             if let Rewrite::ThrottleSchedule = rewrite {
@@ -671,6 +683,7 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
                     }
                     let _ = sock.send_to(&keyed([0x02, round, 0x5a, 0xa5]), receiver);
                     round = round.wrapping_add(1);
+                    rewritten_thread.fetch_add(1, Ordering::SeqCst);
                     thread::sleep(Duration::from_millis(15));
                 }
                 continue;
@@ -680,6 +693,7 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
     });
     ProxyHandle {
         stop,
+        rewritten,
         thread: Some(thread),
     }
 }
@@ -751,7 +765,9 @@ fn main_profile_encrypted_receiver_drops_zero_nonce_clear_packets() {
         PORT_PROXY_CONTROL_PROXY,
         5,
         Duration::ZERO,
-        Duration::from_secs(12),
+        // Ends early once all 5 arrive; the cap keeps both halves inside the
+        // nextest network kill (20 s).
+        Duration::from_secs(6),
     );
     drop(proxy);
     assert!(
@@ -777,9 +793,16 @@ fn main_profile_encrypted_receiver_drops_zero_nonce_clear_packets() {
         PORT_ZERO_NONCE_PROXY,
         5,
         Duration::ZERO,
-        Duration::from_secs(12),
+        // Nothing should arrive, so this always runs out; a delivered packet
+        // would land within the receiver's ~1 s recovery buffer of the sends.
+        Duration::from_secs(5),
     );
+    let rewritten = proxy.rewritten();
     drop(proxy);
+    assert!(
+        rewritten >= 1,
+        "the proxy rewrote no datagram, so the case proves nothing"
+    );
     assert!(
         collected.is_empty(),
         "encrypted receiver delivered {} clear packet(s)",
@@ -818,9 +841,14 @@ fn main_profile_encrypted_receiver_drops_clear_packets_inside_the_rekey_throttle
         PORT_THROTTLE_PROXY,
         20,
         Duration::from_millis(50),
-        Duration::from_secs(8),
+        Duration::from_secs(6),
     );
+    let rounds = proxy.rewritten();
     drop(proxy);
+    assert!(
+        rounds >= 10,
+        "the proxy emitted {rounds} throttle round(s), expected at least 10"
+    );
     assert!(
         collected.is_empty(),
         "encrypted receiver delivered {} clear packet(s)",

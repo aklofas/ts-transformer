@@ -123,7 +123,7 @@ fn extract_secret_string(secret: &Bound<'_, PyAny>) -> PyResult<String> {
     // key and diverge from a peer that uses the raw bytes, so refuse instead.
     // The message must not echo the secret.
     let bytes: &[u8] = secret.extract()?;
-    String::from_utf8(bytes.to_vec()).map_err(|_| {
+    std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
         pyo3::exceptions::PyValueError::new_err(
             "encryption secret given as bytes must be valid UTF-8",
         )
