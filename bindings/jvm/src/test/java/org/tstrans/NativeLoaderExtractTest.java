@@ -283,6 +283,30 @@ class NativeLoaderExtractTest {
     }
 
     @Test
+    void anUnresolvableUserNameStillReusesItsRoot(@TempDir Path tmp) throws IOException {
+        assumePosix(tmp);
+        String saved = System.getProperty("user.name");
+        try {
+            for (String name : new String[] {"?", null}) {
+                if (name == null) System.clearProperty("user.name"); else System.setProperty("user.name", name);
+                Path base = Files.createDirectory(tmp.resolve("b" + (name == null ? "null" : "q")));
+                byte[] bytes = {6, 6, 6};
+                Path first = NativeLoader.extractToStableDir(bytes, "so", base);
+                FileTime old = FileTime.fromMillis(1_000_000_000_000L);
+                Files.setLastModifiedTime(first, old);
+                Path second = NativeLoader.extractToStableDir(bytes, "so", base);
+                assertEquals(first, second, "the root must be trusted again on the next call");
+                assertEquals(old, Files.getLastModifiedTime(second));
+                try (var s = Files.list(base)) {
+                    assertEquals(1, s.count(), "no fallback directory may appear");
+                }
+            }
+        } finally {
+            System.setProperty("user.name", saved);
+        }
+    }
+
+    @Test
     void contentHashIsSha256Hex() {
         String hash = NativeLoader.contentHash("abc".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hash);
