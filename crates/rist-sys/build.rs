@@ -173,9 +173,12 @@ fn main() {
     // builds silently reuse the previous librist/mbedTLS static libs.
     // Mirrors srt-sys; see the comment there.
     println!("cargo:rerun-if-changed=vendor/librist/meson.build");
-    // The file `SOURCE_FIXUPS` patches: a bump that changes it must re-run the
-    // fixup check even when meson.build is untouched.
+    // The files `SOURCE_FIXUPS` patches: a bump that changes one must re-run
+    // the fixup check even when meson.build is untouched.
     println!("cargo:rerun-if-changed=vendor/librist/src/rist.c");
+    println!("cargo:rerun-if-changed=vendor/librist/src/crypto/psk.c");
+    println!("cargo:rerun-if-changed=vendor/librist/src/crypto/psk.h");
+    println!("cargo:rerun-if-changed=vendor/librist/src/rist-common.c");
     println!(
         "cargo:rerun-if-changed={}",
         tstrans_mbedtls_src::source_dir()
@@ -298,14 +301,15 @@ struct SourceFixup {
     new: &'static str,
 }
 
-const SOURCE_FIXUPS: &[SourceFixup] = &[SourceFixup {
-    // `rist_receiver_peer_create` (Simple profile) dereferences the RTCP peer
-    // it creates on port + 1 one statement before its null check, so a
-    // failed RTCP bind (port + 1 already held) crashes the process. Moving
-    // the assignment after the check makes that failure return -1.
-    name: "rtcp-peer-null-check",
-    file: "src/rist.c",
-    old: "\t\tp_rtcp = rist_receiver_peer_insert_local(ctx, config);\n\
+const SOURCE_FIXUPS: &[SourceFixup] = &[
+    SourceFixup {
+        // `rist_receiver_peer_create` (Simple profile) dereferences the RTCP peer
+        // it creates on port + 1 one statement before its null check, so a
+        // failed RTCP bind (port + 1 already held) crashes the process. Moving
+        // the assignment after the check makes that failure return -1.
+        name: "rtcp-peer-null-check",
+        file: "src/rist.c",
+        old: "\t\tp_rtcp = rist_receiver_peer_insert_local(ctx, config);\n\
           \t\tp_rtcp->peer_ssrc = p->peer_ssrc;\n\
           \t\tif (!p_rtcp)\n\
           \t\t{\n\
@@ -313,7 +317,7 @@ const SOURCE_FIXUPS: &[SourceFixup] = &[SourceFixup {
           \t\t\tfree(p);\n\
           \t\t\treturn -1;\n\
           \t\t}\n",
-    new: "\t\tp_rtcp = rist_receiver_peer_insert_local(ctx, config);\n\
+        new: "\t\tp_rtcp = rist_receiver_peer_insert_local(ctx, config);\n\
           \t\tif (!p_rtcp)\n\
           \t\t{\n\
           \t\t\tudpsocket_close(p->sd);\n\
@@ -321,7 +325,113 @@ const SOURCE_FIXUPS: &[SourceFixup] = &[SourceFixup {
           \t\t\treturn -1;\n\
           \t\t}\n\
           \t\tp_rtcp->peer_ssrc = p->peer_ssrc;\n",
-}];
+    },
+    // `_librist_crypto_psk_decrypt` returns nothing, and several of its early
+    // returns leave the buffer as received without setting `bad_decryption`;
+    // the fixups below make it return 0 when it decrypted and -1 otherwise.
+    SourceFixup {
+        // The prototype declared no result, so callers could not tell a
+        // skipped decrypt from a done one; it now returns the status.
+        name: "psk-decrypt-status: header",
+        file: "src/crypto/psk.h",
+        old: "RIST_PRIV void _librist_crypto_psk_decrypt(",
+        new: "RIST_PRIV int _librist_crypto_psk_decrypt(",
+    },
+    SourceFixup {
+        // The definition matches the prototype: 0 when the payload was
+        // decrypted, -1 when it was left as received.
+        name: "psk-decrypt-status: definition",
+        file: "src/crypto/psk.c",
+        old: "\nvoid _librist_crypto_psk_decrypt(struct rist_key *key,",
+        new: "\nint _librist_crypto_psk_decrypt(struct rist_key *key,",
+    },
+    SourceFixup {
+        // A zero nonce returned without decrypting or flagging the packet, so
+        // the caller processed clear bytes; it now reports -1 and is dropped.
+        name: "psk-decrypt-status: zero nonce",
+        file: "src/crypto/psk.c",
+        old: "    /* A zero nonce never comes from a legitimate sender; drop the packet.\n\
+              \x20    * Do NOT latch bad_decryption here: a zero nonce triggers no PBKDF2,\n\
+              \x20    * so the latch only served as a one-packet permanent session kill. */\n\
+              \x20   if (!nonce_val)\n\
+              \x20       return;\n",
+        new: "    /* A zero nonce never comes from a legitimate sender; the caller drops the packet.\n\
+              \x20    * Do NOT latch bad_decryption here: a zero nonce triggers no PBKDF2,\n\
+              \x20    * so the latch only served as a one-packet permanent session kill. */\n\
+              \x20   if (!nonce_val)\n\
+              \x20       return -1;\n",
+    },
+    SourceFixup {
+        // The rekey throttle skipped the decrypt the same way; a throttled
+        // packet is now dropped instead of processed as received.
+        name: "psk-decrypt-status: rekey throttle",
+        file: "src/crypto/psk.c",
+        old: "            (now - key->last_rekey) < RIST_REKEY_MIN_INTERVAL)\n            return;\n",
+        new: "            (now - key->last_rekey) < RIST_REKEY_MIN_INTERVAL)\n            return -1;\n",
+    },
+    SourceFixup {
+        // A failed rekey set `bad_decryption` and returned; it now also
+        // reports -1, so the status alone decides the drop.
+        name: "psk-decrypt-status: rekey failure",
+        file: "src/crypto/psk.c",
+        old: "        if (key->bad_decryption)\n            return;\n        key->bad_count = 0;\n",
+        new: "        if (key->bad_decryption)\n            return -1;\n        key->bad_count = 0;\n",
+    },
+    SourceFixup {
+        // Key over-use set `bad_decryption` and returned; it now also
+        // reports -1, like the other early returns.
+        name: "psk-decrypt-status: key over-use",
+        file: "src/crypto/psk.c",
+        old: "    if (key->used_times > RIST_AES_KEY_REUSE_TIMES) {\n        key->bad_decryption = true;\n        return;\n",
+        new: "    if (key->used_times > RIST_AES_KEY_REUSE_TIMES) {\n        key->bad_decryption = true;\n        return -1;\n",
+    },
+    SourceFixup {
+        // The one path that ran AES-CTR over the payload; it reports
+        // success so the callers keep processing the decrypted bytes.
+        name: "psk-decrypt-status: decrypted",
+        file: "src/crypto/psk.c",
+        old: "    _librist_crypto_psk_aes_ctr(key, inbuf, outbuf, payload_len);\n    return;\n}\n\n\
+              void _librist_crypto_psk_encrypt(struct rist_key *key,",
+        new: "    _librist_crypto_psk_aes_ctr(key, inbuf, outbuf, payload_len);\n    return 0;\n}\n\n\
+              void _librist_crypto_psk_encrypt(struct rist_key *key,",
+    },
+    SourceFixup {
+        // The Advanced-profile caller checked only `bad_decryption`; it now
+        // also drops a packet the decrypt reported it did not decrypt.
+        name: "psk-decrypt-status-callers: advanced",
+        file: "src/rist-common.c",
+        old: "\t\t\t\t\t\t\t_librist_crypto_psk_decrypt(ak,\n\
+              \t\t\t\t\t\t\t\t(uint8_t *)adv_parsed.psk_nonce, seq_nbe, 1,\n\
+              \t\t\t\t\t\t\t\tadv_parsed.payload, adv_dec_buf, adv_data_len);\n\
+              \t\t\t\t\t\t\tpthread_mutex_unlock(&p->peer_lock);\n\
+              \t\t\t\t\t\t\tif (ak->bad_decryption)\n",
+        new: "\t\t\t\t\t\t\tint dec = _librist_crypto_psk_decrypt(ak,\n\
+              \t\t\t\t\t\t\t\t(uint8_t *)adv_parsed.psk_nonce, seq_nbe, 1,\n\
+              \t\t\t\t\t\t\t\tadv_parsed.payload, adv_dec_buf, adv_data_len);\n\
+              \t\t\t\t\t\t\tpthread_mutex_unlock(&p->peer_lock);\n\
+              \t\t\t\t\t\t\tif (dec != 0 || ak->bad_decryption)\n",
+    },
+    SourceFixup {
+        // The Main-profile caller decrypts in place, so an undecrypted packet
+        // still held the clear bytes it arrived with; it is now dropped.
+        name: "psk-decrypt-status-callers: main",
+        file: "src/rist-common.c",
+        old: "\t\t\t_librist_crypto_psk_decrypt(k, &recv_buf[nonce_offset], htobe32(seq), rist_gre_version,&recv_buf[payload_offset],  &recv_buf[payload_offset], (recv_bufsize - payload_offset));\n\
+              \t\t\tpthread_mutex_unlock(&p->peer_lock);\n\
+              \n\
+              \t\t\tif (p == peer)\n\
+              \t\t\t\tp = NULL;\n\
+              \n\
+              \t\t\tif (k->bad_decryption)\n",
+        new: "\t\t\tint dec = _librist_crypto_psk_decrypt(k, &recv_buf[nonce_offset], htobe32(seq), rist_gre_version,&recv_buf[payload_offset],  &recv_buf[payload_offset], (recv_bufsize - payload_offset));\n\
+              \t\t\tpthread_mutex_unlock(&p->peer_lock);\n\
+              \n\
+              \t\t\tif (p == peer)\n\
+              \t\t\t\tp = NULL;\n\
+              \n\
+              \t\t\tif (dec != 0 || k->bad_decryption)\n",
+    },
+];
 
 /// Paths under `vendor/librist` that are not staged. KEEP IN SYNC with the
 /// `vendor/librist/…` entries of Cargo.toml's `exclude` list (prefix
@@ -380,35 +490,54 @@ fn stage_vendored_source(vendor_dir: &Path, staged: &Path) {
     copy_dir(vendor_dir, vendor_dir, staged);
 }
 
-/// Writes each [`SOURCE_FIXUPS`] target into the staged tree with its fixup
-/// applied. The text is read from the pristine `vendor_dir`, never from the
-/// staged copy, so a re-run sees the upstream bytes and writes nothing new.
-/// Panics unless each fixup's `old` text occurs exactly once, so a vendor
-/// bump that changes the patched code fails the build instead of silently
-/// shipping the bug or a double patch.
+/// Writes each [`SOURCE_FIXUPS`] target into the staged tree with its fixups
+/// applied in table order, cumulatively per file. The text is read from the
+/// pristine `vendor_dir`, never from the staged copy, so a re-run sees the
+/// upstream bytes and writes nothing new. Panics unless each fixup's `old`
+/// text occurs exactly once in the text the earlier fixups of that file
+/// left, so a vendor bump that changes the patched code fails the build
+/// instead of silently shipping the bug or a double patch, and panics when a
+/// later fixup erases an earlier one's `new` text.
 fn apply_source_fixups(vendor_dir: &Path, staged: &Path) {
+    let mut files: Vec<&str> = Vec::new();
     for fixup in SOURCE_FIXUPS {
-        let src = vendor_dir.join(fixup.file);
+        if !files.contains(&fixup.file) {
+            files.push(fixup.file);
+        }
+    }
+    for file in files {
+        let fixups: Vec<&SourceFixup> = SOURCE_FIXUPS.iter().filter(|f| f.file == file).collect();
+        let src = vendor_dir.join(file);
         // The Windows checkout rewrites line endings to CRLF; the fixup text is LF.
-        let text = std::fs::read_to_string(&src)
+        let mut text = std::fs::read_to_string(&src)
             .unwrap_or_else(|e| panic!("Failed to read {}: {e}", src.display()))
             .replace("\r\n", "\n");
-        match text.matches(fixup.old).count() {
-            1 => write_if_changed(
-                &staged.join(fixup.file),
-                text.replacen(fixup.old, fixup.new, 1).as_bytes(),
-            ),
-            0 if text.contains(fixup.new) => panic!(
-                "rist-sys source fixup `{}` no longer matches {}: upstream now carries \
-                 this fix: delete the fixup from SOURCE_FIXUPS in build.rs",
-                fixup.name, fixup.file
-            ),
-            n => panic!(
-                "rist-sys source fixup `{}` matched {n} times in {} (expected exactly \
-                 once): refresh the fixup text against the bumped source",
-                fixup.name, fixup.file
-            ),
+        for fixup in &fixups {
+            match text.matches(fixup.old).count() {
+                1 => text = text.replacen(fixup.old, fixup.new, 1),
+                0 if text.contains(fixup.new) => panic!(
+                    "rist-sys source fixup `{}` no longer matches {}: upstream now carries \
+                     this fix: delete the fixup from SOURCE_FIXUPS in build.rs",
+                    fixup.name, file
+                ),
+                n => panic!(
+                    "rist-sys source fixup `{}` matched {n} times in {} (expected exactly \
+                     once): refresh the fixup text against the bumped source",
+                    fixup.name, file
+                ),
+            }
         }
+        for (i, fixup) in fixups.iter().enumerate() {
+            if !text.contains(fixup.new) {
+                let later: Vec<&str> = fixups[i + 1..].iter().map(|f| f.name).collect();
+                panic!(
+                    "rist-sys source fixup `{}` in {} was overwritten by a later fixup \
+                     (one of {later:?}): make their `old` texts disjoint",
+                    fixup.name, file
+                );
+            }
+        }
+        write_if_changed(&staged.join(file), text.as_bytes());
     }
 }
 

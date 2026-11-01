@@ -54,6 +54,16 @@ const PORT_BURST: u16 = 33026;
 /// Used only by the collision test, which does not run on Windows.
 #[cfg(not(windows))]
 const PORT_SIMPLE_RTCP_HELD: u16 = 33028;
+/// Main profile (any parity): the zero-nonce receiver and the key-bit proxy
+/// in front of it, then the proxy's unencrypted control pair.
+#[cfg(feature = "mbedtls")]
+const PORT_ZERO_NONCE_RECV: u16 = 33031;
+#[cfg(feature = "mbedtls")]
+const PORT_ZERO_NONCE_PROXY: u16 = 33033;
+#[cfg(feature = "mbedtls")]
+const PORT_PROXY_CONTROL_RECV: u16 = 33035;
+#[cfg(feature = "mbedtls")]
+const PORT_PROXY_CONTROL_PROXY: u16 = 33037;
 #[cfg(not(windows))]
 const RTCP_CHILD_ENV: &str = "TST_RIST_RTCP_COLLISION_CHILD";
 #[cfg(not(windows))]
@@ -567,4 +577,163 @@ fn run_child_with_deadline(test: &str, env: &str, limit: Duration) -> ChildOutpu
         stdout,
         stderr,
     }
+}
+
+/// How [`spawn_key_bit_proxy`] rewrites each datagram from the sender.
+#[cfg(feature = "mbedtls")]
+#[derive(Clone, Copy)]
+enum Rewrite {
+    /// Forward unchanged: proves the proxy itself delivers.
+    PassThrough,
+    /// Give a clear GRE packet an all-zero key (nonce) field, so an
+    /// encrypted receiver sees "encrypted" data it must refuse to decrypt.
+    ZeroNonce,
+}
+
+/// Stops the proxy thread when dropped.
+#[cfg(feature = "mbedtls")]
+struct ProxyHandle {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+#[cfg(feature = "mbedtls")]
+impl Drop for ProxyHandle {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// A one-socket UDP relay on `127.0.0.1:listen`: datagrams from the sender go
+/// to `127.0.0.1:forward_to` after `rewrite`; datagrams from the receiver go
+/// back to the last sender address untouched.
+#[cfg(feature = "mbedtls")]
+fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyHandle {
+    use std::net::{SocketAddr, UdpSocket};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let sock = UdpSocket::bind(("127.0.0.1", listen)).expect("bind the proxy");
+    sock.set_read_timeout(Some(Duration::from_millis(50)))
+        .expect("proxy read timeout");
+    let receiver: SocketAddr = ([127, 0, 0, 1], forward_to).into();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = Arc::clone(&stop);
+    let thread = thread::spawn(move || {
+        let mut sender: Option<SocketAddr> = None;
+        let mut buf = vec![0u8; 65536];
+        while !stop_thread.load(Ordering::SeqCst) {
+            let (n, from) = match sock.recv_from(&mut buf) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            if from == receiver {
+                if let Some(to) = sender {
+                    let _ = sock.send_to(&buf[..n], to);
+                }
+                continue;
+            }
+            sender = Some(from);
+            let mut dgram = buf[..n].to_vec();
+            if let Rewrite::ZeroNonce = rewrite {
+                // GRE base header = flags1, flags2, protocol type; librist
+                // puts the key field right after it, before the sequence.
+                if dgram.len() >= 4 && dgram[0] & 0x20 == 0 {
+                    dgram.splice(4..4, [0u8; 4]);
+                    dgram[0] |= 0x20;
+                }
+            }
+            let _ = sock.send_to(&dgram, receiver);
+        }
+    });
+    ProxyHandle {
+        stop,
+        thread: Some(thread),
+    }
+}
+
+/// Sends five packets from an unencrypted Main sender through a proxy to
+/// `recv` and returns what `recv` delivered (same waits as the AES test).
+#[cfg(feature = "mbedtls")]
+fn send_clear_through_proxy(recv: tst_rist::RistRecvTransport, proxy_port: u16) -> Vec<Vec<u8>> {
+    let (tx_payloads, rx_payloads) = mpsc::channel::<Vec<Vec<u8>>>();
+    let _recv_thread = thread::spawn(move || {
+        let collected = drain_n(recv, 5, Duration::from_secs(12));
+        let _ = tx_payloads.send(collected);
+    });
+
+    thread::sleep(Duration::from_millis(300));
+    let mut send = RistTransportBuilder::new(&format!("rist://127.0.0.1:{proxy_port}"))
+        .unwrap()
+        .profile(RistProfile::Main)
+        .connect()
+        .expect("connect");
+    thread::sleep(Duration::from_millis(1200));
+
+    for i in 1..=5u8 {
+        send.send_bytes(&synthetic_ts_packet(i)).expect("send");
+    }
+    rx_payloads
+        .recv_timeout(Duration::from_secs(15))
+        .expect("recv thread didn't return in time")
+}
+
+/// librist's PSK decrypt returns early on an all-zero nonce without flagging
+/// the packet, and the Main-profile caller decrypts in place, so a clear
+/// packet given a zero key field was delivered as if it had been decrypted.
+/// An encrypted receiver must deliver nothing it did not decrypt.
+///
+/// Ignored when pkg-config linked a system librist, which still accepts them
+/// (see `rist-sys`'s source fixups).
+#[cfg(feature = "mbedtls")]
+#[cfg_attr(
+    not(librist_source_fixups),
+    ignore = "needs the vendored librist build: a system librist lacks the PSK decrypt-status fix"
+)]
+#[test]
+fn main_profile_encrypted_receiver_drops_zero_nonce_clear_packets() {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+
+    // Control: the proxy delivers between two unencrypted ends.
+    let recv =
+        RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{PORT_PROXY_CONTROL_RECV}"))
+            .unwrap()
+            .profile(RistProfile::Main)
+            .listen()
+            .expect("listen");
+    let proxy = spawn_key_bit_proxy(
+        PORT_PROXY_CONTROL_PROXY,
+        PORT_PROXY_CONTROL_RECV,
+        Rewrite::PassThrough,
+    );
+    let collected = send_clear_through_proxy(recv, PORT_PROXY_CONTROL_PROXY);
+    drop(proxy);
+    assert!(
+        collected.len() >= 3,
+        "control: expected at least 3 of 5 packets through the proxy; got {}",
+        collected.len()
+    );
+
+    // Case: the same clear packets, given a zero nonce, at an encrypted receiver.
+    let recv = RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{PORT_ZERO_NONCE_RECV}"))
+        .unwrap()
+        .profile(RistProfile::Main)
+        .encryption(EncryptionKey::aes256("loopback-test-secret-keep-private"))
+        .listen()
+        .expect("listen");
+    let proxy = spawn_key_bit_proxy(
+        PORT_ZERO_NONCE_PROXY,
+        PORT_ZERO_NONCE_RECV,
+        Rewrite::ZeroNonce,
+    );
+    let collected = send_clear_through_proxy(recv, PORT_ZERO_NONCE_PROXY);
+    drop(proxy);
+    assert!(
+        collected.is_empty(),
+        "encrypted receiver delivered {} clear packet(s)",
+        collected.len()
+    );
 }
