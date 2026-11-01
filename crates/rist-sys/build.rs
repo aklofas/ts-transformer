@@ -537,7 +537,48 @@ fn apply_source_fixups(vendor_dir: &Path, staged: &Path) {
                 );
             }
         }
+        check_psk_decrypt_status(file, &text);
         write_if_changed(&staged.join(file), text.as_bytes());
+    }
+}
+
+/// The psk-decrypt-status fixups anchor on today's early returns and callers,
+/// so a bump that adds a new `return;` (MSVC only warns, and the value may
+/// read as 0 = decrypted) or a new caller that ignores the status would still
+/// match every anchor. Panics on either.
+fn check_psk_decrypt_status(file: &str, text: &str) {
+    match file {
+        "src/crypto/psk.c" => {
+            let start = text
+                .find("int _librist_crypto_psk_decrypt(")
+                .expect("psk.c lost `int _librist_crypto_psk_decrypt(` after the fixups");
+            let len = text[start..]
+                .find("void _librist_crypto_psk_encrypt(")
+                .expect("psk.c: `_librist_crypto_psk_encrypt` no longer follows the decrypt");
+            if text[start..start + len].contains("return;") {
+                panic!(
+                    "rist-sys: `_librist_crypto_psk_decrypt` in src/crypto/psk.c has a \
+                     `return;` no psk-decrypt-status fixup covers: re-check every early \
+                     return in the bumped source and add a fixup that returns -1 (or 0 only \
+                     after the payload was decrypted)"
+                );
+            }
+        }
+        "src/rist-common.c" => {
+            let calls = text.matches("_librist_crypto_psk_decrypt(").count();
+            let checked = text
+                .matches("int dec = _librist_crypto_psk_decrypt(")
+                .count();
+            if calls != 2 || checked != 2 {
+                panic!(
+                    "rist-sys: src/rist-common.c has {calls} `_librist_crypto_psk_decrypt(` \
+                     calls, {checked} of them keeping the status (expected 2 and 2): re-check \
+                     the callers in the bumped source so every one drops a packet the \
+                     decrypt reports it did not decrypt"
+                );
+            }
+        }
+        _ => {}
     }
 }
 
