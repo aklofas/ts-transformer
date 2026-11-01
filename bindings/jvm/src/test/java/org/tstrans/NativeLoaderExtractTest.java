@@ -27,6 +27,23 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class NativeLoaderExtractTest {
 
+    /** The per-user cache root the loader uses under {@code tmp}. */
+    private static Path userRoot(Path tmp) {
+        return tmp.resolve("tstrans-native-" + NativeLoader.userSegment(System.getProperty("user.name")));
+    }
+
+    /** Pre-creates a trusted (owner-only) root and the hash directory for {@code bytes}. */
+    private static Path hashDir(Path tmp, byte[] bytes) throws IOException {
+        Path root = userRoot(tmp);
+        if (tmp.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            Files.createDirectories(root, java.nio.file.attribute.PosixFilePermissions
+                .asFileAttribute(java.nio.file.attribute.PosixFilePermissions.fromString("rwx------")));
+        } else {
+            Files.createDirectories(root);
+        }
+        return Files.createDirectories(root.resolve(NativeLoader.contentHash(bytes)));
+    }
+
     // -----------------------------------------------------------------------
     // contentHash
     // -----------------------------------------------------------------------
@@ -49,8 +66,6 @@ class NativeLoaderExtractTest {
     @Test
     void contentHashHexFormat() {
         String hash = NativeLoader.contentHash(new byte[]{0});
-        // CRC32 of a single zero byte is a well-known value; at minimum ensure it
-        // is a non-empty lowercase hex string.
         assertNotNull(hash);
         assertFalse(hash.isEmpty());
         assertTrue(hash.matches("[0-9a-f]+"), "hash must be lowercase hex, got: " + hash);
@@ -66,9 +81,10 @@ class NativeLoaderExtractTest {
         String hash = NativeLoader.contentHash(bytes);
         Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
 
-        // Must sit in tstrans-native-<hash>/libtstjni.so under the given base
+        // Must sit in tstrans-native-<user>/<hash>/libtstjni.so under the given base
         assertEquals("libtstjni.so", target.getFileName().toString());
-        assertEquals("tstrans-native-" + hash, target.getParent().getFileName().toString());
+        assertEquals(hash, target.getParent().getFileName().toString());
+        assertEquals(userRoot(tmp), target.getParent().getParent());
         assertTrue(Files.exists(target));
         assertArrayEquals(bytes, Files.readAllBytes(target));
     }
@@ -97,7 +113,7 @@ class NativeLoaderExtractTest {
     @Test
     void extractionIgnoresAForeignStagingFile(@TempDir Path tmp) throws IOException {
         byte[] bytes = {1, 2, 3, 4};
-        Path dir = tmp.resolve("tstrans-native-" + NativeLoader.contentHash(bytes));
+        Path dir = hashDir(tmp, bytes);
         // The fixed name every JVM used before; a directory makes Files.write on it fail.
         Files.createDirectories(dir.resolve("libtstjni.so.part"));
         Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
@@ -106,7 +122,7 @@ class NativeLoaderExtractTest {
 
     @Test
     void extractionLeavesOtherVersionsCachesAlone(@TempDir Path tmp) throws IOException {
-        Path other = tmp.resolve("tstrans-native-deadbeef");
+        Path other = hashDir(tmp, new byte[] {42}).resolveSibling("deadbeef");
         Files.createDirectories(other);
         Files.write(other.resolve("libtstjni.so"), new byte[] {9});
         NativeLoader.extractToStableDir(new byte[] {1, 2, 3}, "so", tmp);
@@ -117,8 +133,7 @@ class NativeLoaderExtractTest {
     @Test
     void reuseReplacesACorruptCachedLibrary(@TempDir Path tmp) throws IOException {
         byte[] bytes = {5, 6, 7, 8, 9};
-        Path dir = tmp.resolve("tstrans-native-" + NativeLoader.contentHash(bytes));
-        Files.createDirectories(dir);
+        Path dir = hashDir(tmp, bytes);
         Files.write(dir.resolve("libtstjni.so"), new byte[] {5, 6}); // truncated by a crash
         Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
         assertArrayEquals(bytes, Files.readAllBytes(target));
@@ -171,28 +186,127 @@ class NativeLoaderExtractTest {
     }
 
     @Test
-    void publishedLibraryIsReadableByOtherUsers(@TempDir Path tmp) throws IOException {
-        org.junit.jupiter.api.Assumptions.assumeTrue(
-            tmp.getFileSystem().supportedFileAttributeViews().contains("posix"));
-        Path target = NativeLoader.extractToStableDir(new byte[] {1, 1, 2, 3}, "so", tmp);
-        var perms = Files.getPosixFilePermissions(target);
-        assertTrue(perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_READ));
-        assertTrue(perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_READ));
-    }
-
-    @Test
     void unreadableCachedLibraryFallsThroughToExtraction(@TempDir Path tmp) throws IOException {
         org.junit.jupiter.api.Assumptions.assumeTrue(
             tmp.getFileSystem().supportedFileAttributeViews().contains("posix"));
         byte[] bytes = {8, 6, 7, 5, 3, 0, 9};
-        Path dir = tmp.resolve("tstrans-native-" + NativeLoader.contentHash(bytes));
-        Files.createDirectories(dir);
+        Path dir = hashDir(tmp, bytes);
         Path planted = dir.resolve("libtstjni.so");
         Files.write(planted, bytes);
         Files.setPosixFilePermissions(planted, java.util.Set.of());
         org.junit.jupiter.api.Assumptions.assumeFalse(Files.isReadable(planted), "running as root");
         Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
         assertArrayEquals(bytes, Files.readAllBytes(target));
+    }
+
+    // -----------------------------------------------------------------------
+    // Per-user owner-only cache root
+    // -----------------------------------------------------------------------
+
+    private static final java.util.Set<java.nio.file.attribute.PosixFilePermission> OWNER_ONLY =
+        java.nio.file.attribute.PosixFilePermissions.fromString("rwx------");
+
+    private static void assumePosix(Path p) {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+            p.getFileSystem().supportedFileAttributeViews().contains("posix"));
+    }
+
+    /** The per-user root name for a plain account name; skips on an unusual one. */
+    private static String userRootName() {
+        String user = System.getProperty("user.name");
+        org.junit.jupiter.api.Assumptions.assumeTrue(user.matches("[A-Za-z0-9._-]+"), user);
+        return "tstrans-native-" + user;
+    }
+
+    @Test
+    void extractionCreatesAnOwnerOnlyPerUserRoot(@TempDir Path tmp) throws IOException {
+        assumePosix(tmp);
+        String rootName = userRootName();
+        Path target = NativeLoader.extractToStableDir(new byte[] {1, 2, 3, 9}, "so", tmp);
+        Path root = tmp.resolve(rootName);
+        assertTrue(target.startsWith(root), target + " not under " + root);
+        assertEquals(OWNER_ONLY, Files.getPosixFilePermissions(root));
+        assertEquals(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"),
+            Files.getPosixFilePermissions(target));
+    }
+
+    private static void assertPrivateFallback(Path tmp, Path untrusted, byte[] bytes) throws IOException {
+        Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
+        assertFalse(target.startsWith(untrusted), "used the untrusted root: " + target);
+        Path dir = target.getParent();
+        assertEquals(tmp, dir.getParent(), "fallback must sit directly under the base");
+        assertTrue(dir.getFileName().toString().startsWith("tstrans-native-"));
+        assertNotEquals(untrusted.getFileName(), dir.getFileName());
+        assertEquals(OWNER_ONLY, Files.getPosixFilePermissions(dir));
+        assertArrayEquals(bytes, Files.readAllBytes(target));
+    }
+
+    @Test
+    void aPermissivePerUserRootIsNeverUsed(@TempDir Path tmp) throws IOException {
+        assumePosix(tmp);
+        Path root = Files.createDirectory(tmp.resolve(userRootName()));
+        var open = java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x");
+        Files.setPosixFilePermissions(root, open);
+        assertPrivateFallback(tmp, root, new byte[] {4, 4, 2});
+        assertEquals(open, Files.getPosixFilePermissions(root));
+        try (var s = Files.list(root)) {
+            assertEquals(0, s.count(), "the permissive directory must stay untouched");
+        }
+    }
+
+    @Test
+    void aSymlinkedPerUserRootIsNeverUsed(@TempDir Path tmp) throws IOException {
+        assumePosix(tmp);
+        Path elsewhere = Files.createDirectory(tmp.resolve("elsewhere"),
+            java.nio.file.attribute.PosixFilePermissions.asFileAttribute(OWNER_ONLY));
+        Path link = Files.createSymbolicLink(tmp.resolve(userRootName()), elsewhere);
+        assertPrivateFallback(tmp, link, new byte[] {7, 7, 1});
+        try (var s = Files.list(elsewhere)) {
+            assertEquals(0, s.count(), "the link target must stay untouched");
+        }
+    }
+
+    @Test
+    void aSymlinkedCacheEntryIsNotReused(@TempDir Path tmp) throws IOException {
+        assumePosix(tmp);
+        byte[] bytes = {3, 1, 4, 1, 5};
+        Path first = NativeLoader.extractToStableDir(bytes, "so", tmp);
+        Path real = tmp.resolve("real.so");
+        Files.write(real, bytes);
+        Files.delete(first);
+        Files.createSymbolicLink(first, real);
+        Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
+        assertEquals(first, target);
+        assertTrue(Files.isRegularFile(target, java.nio.file.LinkOption.NOFOLLOW_LINKS),
+            "the symlinked entry must have been replaced by a regular file");
+        assertArrayEquals(bytes, Files.readAllBytes(target));
+    }
+
+    @Test
+    void contentHashIsSha256Hex() {
+        String hash = NativeLoader.contentHash("abc".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hash);
+    }
+
+    @Test
+    void contentHashSeparatesEqualCrc32Inputs() {
+        // Birthday search over distinct 6-byte inputs: ~200k samples give a few CRC32 collisions.
+        java.util.Map<Long, byte[]> seen = new java.util.HashMap<>();
+        byte[] a = null;
+        byte[] b = null;
+        for (int i = 0; b == null; i++) {
+            byte[] in = {(byte) i, (byte) (i >>> 8), (byte) (i >>> 16), (byte) (i >>> 24),
+                (byte) (i * 31), (byte) (i * 131 >>> 3)};
+            java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+            crc.update(in);
+            byte[] prev = seen.put(crc.getValue(), in);
+            if (prev != null && !java.util.Arrays.equals(prev, in)) {
+                a = prev;
+                b = in;
+            }
+        }
+        assertNotEquals(NativeLoader.contentHash(a), NativeLoader.contentHash(b));
+        assertTrue(NativeLoader.contentHash(a).matches("[0-9a-f]{64}"));
     }
 
     // -----------------------------------------------------------------------
@@ -238,8 +352,7 @@ class NativeLoaderExtractTest {
     @Test
     void extractionSucceedsBesideACrashedStagingFile(@TempDir Path tmp) throws IOException {
         byte[] fullBytes = new byte[]{10, 20, 30, 40, 50};
-        Path targetDir = tmp.resolve("tstrans-native-" + NativeLoader.contentHash(fullBytes));
-        Files.createDirectories(targetDir);
+        Path targetDir = hashDir(tmp, fullBytes);
         Files.write(targetDir.resolve("libtstjni.so.part"), new byte[]{(byte) 0xDE, (byte) 0xAD});
 
         Path result = NativeLoader.extractToStableDir(fullBytes, "so", tmp);
