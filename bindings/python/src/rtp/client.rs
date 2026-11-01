@@ -36,6 +36,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use secrecy::SecretString;
+use tst_core::url::redact_url;
 use tst_rtp::error::RtspError as RustRtspError;
 use tst_rtp::rtsp::client::session::RtspSession as RustRtspSession;
 use tst_rtp::rtsp::client::{
@@ -367,7 +368,7 @@ impl PyRtspClientConfig {
         format!(
             "RtspClientConfig(url={:?}, auth={}, transport_pref={:?}, \
              tls_root_certs_pem={}, keepalive={}, rtsp_version={:?})",
-            self.url,
+            redact_url(&self.url),
             if self.auth.is_some() {
                 "<auth>"
             } else {

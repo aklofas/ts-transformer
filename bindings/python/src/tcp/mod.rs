@@ -52,6 +52,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyMemoryView};
 
 use tst_core::transport::{RecvTransport, Transport};
+use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned, SendHalf};
 use tst_tcp::error::TcpError;
 use tst_tcp::{TcpListener, TcpTransport};
@@ -422,7 +423,10 @@ impl PyTcpTransportBuilder {
     }
 
     fn __repr__(&self) -> String {
-        format!("TransportBuilder(url={:?})", self.url)
+        format!(
+            "TransportBuilder(url={:?})",
+            self.url.as_deref().map(redact_url)
+        )
     }
 }
 

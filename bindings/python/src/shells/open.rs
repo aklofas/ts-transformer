@@ -4,6 +4,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tst_core::transport::{RecvTransport, Transport};
+use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
 
 use crate::raise::raise;
@@ -29,7 +30,8 @@ fn domain_of(url: &str) -> Option<Domain> {
 
 fn unsupported(url: &str) -> PyErr {
     PyValueError::new_err(format!(
-        "unsupported URL scheme in {url:?}; expected one of: srt, rtp, udp, tcp, tcps, rist (the schemes this build includes)"
+        "unsupported URL scheme in {:?}; expected one of: srt, rtp, udp, tcp, tcps, rist (the schemes this build includes)",
+        redact_url(url)
     ))
 }
 
