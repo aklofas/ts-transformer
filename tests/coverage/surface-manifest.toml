@@ -2545,6 +2545,20 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# auth_schemes: client auth scheme policy (Automatic | DigestOnly). Unit
+# tests of the selection function in rtsp/auth.rs plus a DigestOnly client
+# against a Basic-only RtspServer. The Python and JVM DigestAuth credential
+# selects DigestOnly; the C digest setters keep Automatic until the C-parity
+# batch.
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::auth_schemes"
+owning_tests = ["crates/tst-rtp/src/rtsp/auth.rs", "crates/tst-rtp/tests/rtsp_server/auth_basic.rs"]
+bindings = ["c:n/a(the C digest setters keep Automatic until the C-parity batch)", "python:tstrans.rtp.DigestAuth", "java:org.tstrans.rtp.DigestAuth", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 # from_url: builder from an already parsed RtspUrl; keeps URL userinfo and
 # every query option. Unit test in builder.rs; the C connect path builds
 # through it, tested in the C-binding connect tests.
