@@ -67,6 +67,19 @@ class RedactionTest {
     }
 
     @Test
+    void nonAsciiTextIsKept() {
+        assertEquals("srt://h/é?latency=1", Redact.url("srt://h/é?latency=1"));
+        assertEquals("rtsp://u:<redacted>@h/é", Redact.url("rtsp://u:pä\u00df@h/é"));
+        assertEquals("srt://h/é?token=<redacted>&x=é", Redact.url("srt://h/é?token=\u00e9\u00e9&x=é"));
+    }
+
+    @Test
+    void noBreakSpaceSplitsTokens() {
+        assertEquals("a\u00a0passphrase=<redacted>\u00a0b", Redact.url("a\u00a0passphrase=abc\u00a0b"));
+        assertEquals("u:<redacted>@h\u00a0x", Redact.url("u:pw@h\u00a0x"));
+    }
+
+    @Test
     void plainTextIsUnchanged() {
         assertEquals("hello world", Redact.url("hello world"));
         assertEquals("", Redact.url(""));
@@ -89,6 +102,18 @@ class RedactionTest {
             .toString();
         assertFalse(s.contains(SECRET), s);
         assertTrue(s.contains("0.0.0.0:8554"), s);
+    }
+
+    @Test
+    void rtspServerConfigBuildErrorRedactsBindAddr() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () ->
+            RtspServerConfig.builder()
+                .bindAddr("u:" + SECRET + "@0.0.0.0:8554")
+                .tlsCert("c.pem")
+                .tlsKey("k.pem")
+                .build());
+        assertFalse(e.getMessage().contains(SECRET), e.getMessage());
+        assertTrue(e.getMessage().contains("0.0.0.0:8554"), e.getMessage());
     }
 
     @Test

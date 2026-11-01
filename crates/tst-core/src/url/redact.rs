@@ -19,7 +19,7 @@ const REDACTED: &str = "<redacted>";
 ///   case-sensitive: `Token=x` is not scrubbed.
 ///
 /// The input need not be a valid URL. The scrub is a text pass over each
-/// whitespace- or quote-delimited token, so a malformed URL, or a longer
+/// whitespace- (ASCII or U+00A0) or quote-delimited token, so a malformed URL, or a longer
 /// message that embeds one, never leaks either kind of secret.
 ///
 /// ```
@@ -34,7 +34,7 @@ pub fn redact_url(url: &str) -> String {
     let mut out = String::with_capacity(url.len());
     let mut start = 0;
     for (i, c) in url.char_indices() {
-        if c.is_whitespace() || c == '"' || c == '\'' {
+        if is_separator(c) || c == '"' || c == '\'' {
             redact_token(&url[start..i], &mut out);
             out.push(c);
             start = i + c.len_utf8();
@@ -72,12 +72,14 @@ fn redact_userinfo(rest: &str, out: &mut String) {
 }
 
 fn redact_query_values(token: &str, out: &mut String) {
-    let bytes = token.as_bytes();
-    let mut i = 0;
     let mut copied = 0;
-    while i < bytes.len() {
-        let at_boundary = i == 0 || !is_word_byte(bytes[i - 1]);
-        let key = at_boundary
+    let mut skip_to = 0;
+    let mut prev_word = false;
+    for (i, c) in token.char_indices() {
+        if i < skip_to {
+            continue;
+        }
+        let key = (!prev_word)
             .then(|| {
                 SECRET_KEYS.iter().find(|k| {
                     token[i..]
@@ -94,16 +96,23 @@ fn redact_query_values(token: &str, out: &mut String) {
             out.push_str(&token[copied..value_start]);
             out.push_str(REDACTED);
             copied = value_end;
-            i = value_end;
+            skip_to = value_end;
+            prev_word = false;
         } else {
-            i += 1;
+            prev_word = is_word_char(c);
         }
     }
     out.push_str(&token[copied..]);
 }
 
-fn is_word_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
+fn is_word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+/// Token separators: ASCII whitespace and the no-break space. The Java
+/// `Redact` uses the identical set.
+fn is_separator(c: char) -> bool {
+    c.is_ascii_whitespace() || c == '\u{a0}'
 }
 
 #[cfg(test)]
@@ -166,6 +175,28 @@ mod tests {
             redact_url("bad url 'srt://h?passphrase=abc' here"),
             "bad url 'srt://h?passphrase=<redacted>' here"
         );
+    }
+
+    #[test]
+    fn non_ascii_text_does_not_panic_and_is_kept() {
+        assert_eq!(redact_url("srt://h/é?latency=1"), "srt://h/é?latency=1");
+        assert_eq!(
+            redact_url("rtsp://u:pä\u{df}@h/é"),
+            "rtsp://u:<redacted>@h/é"
+        );
+        assert_eq!(
+            redact_url("srt://h/é?token=\u{e9}\u{e9}&x=é"),
+            "srt://h/é?token=<redacted>&x=é"
+        );
+    }
+
+    #[test]
+    fn non_breaking_space_splits_tokens() {
+        assert_eq!(
+            redact_url("a\u{a0}passphrase=abc\u{a0}b"),
+            "a\u{a0}passphrase=<redacted>\u{a0}b"
+        );
+        assert_eq!(redact_url("u:pw@h\u{a0}x"), "u:<redacted>@h\u{a0}x");
     }
 
     #[test]

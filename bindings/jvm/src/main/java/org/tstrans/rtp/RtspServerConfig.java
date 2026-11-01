@@ -1,6 +1,7 @@
 package org.tstrans.rtp;
 
 import java.util.Optional;
+import org.tstrans.Redact;
 
 /**
  * Configuration for {@link RtspServer#start(RtspServerConfig)}. Mirrors tst-py
@@ -79,7 +80,7 @@ public final class RtspServerConfig {
     public Optional<MountRule> defaultMountRule() { return Optional.ofNullable(defaultMountRule); }
 
     @Override public String toString() {
-        return "RtspServerConfig(bindAddr=" + org.tstrans.Redact.url(bindAddr)
+        return "RtspServerConfig(bindAddr=" + Redact.url(bindAddr)
             + ", auth=" + (auth != null ? "<auth>" : "None")
             + ", maxSessions=" + maxSessions
             + ", sessionTimeoutSecs=" + sessionTimeoutSecs
@@ -174,7 +175,7 @@ public final class RtspServerConfig {
             if (tlsCert != null && !bindAddr.startsWith("rtsps://")) {
                 throw new IllegalArgumentException(
                     "tlsCert/tlsKey require an explicit rtsps:// bind address"
-                        + " (got \"" + bindAddr + "\")");
+                        + " (got \"" + Redact.url(bindAddr) + "\")");
             }
             return new RtspServerConfig(this);
         }

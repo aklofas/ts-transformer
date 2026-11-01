@@ -2,6 +2,7 @@ package org.tstrans.rtp;
 
 import java.util.Objects;
 import java.util.Optional;
+import org.tstrans.Redact;
 
 /**
  * RTSP client connection configuration. Mirrors tst-py
@@ -52,7 +53,7 @@ public final class RtspClientConfig {
     public RtspVersion rtspVersion() { return rtspVersion; }
 
     @Override public String toString() {
-        return "RtspClientConfig(url=" + org.tstrans.Redact.url(url)
+        return "RtspClientConfig(url=" + Redact.url(url)
             + ", auth=" + (auth != null ? "<auth>" : "None")
             + ", transportPref=" + transportPref
             + ", tlsRootCertsPem=" + (tlsRootCertsPem != null ? "<bytes>" : "None")
