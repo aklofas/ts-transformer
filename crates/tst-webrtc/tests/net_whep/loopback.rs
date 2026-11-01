@@ -590,6 +590,39 @@ fn an_offer_mapping_one_payload_type_to_two_formats_is_400_and_the_server_keeps_
     assert_eq!(srv.stats().sessions_total, 1);
 }
 
+/// Chrome's offer with a one-entry BUNDLE group and no `a=mid` on its
+/// second section.
+fn mid_less_section_offer() -> String {
+    let chrome = include_str!("../fixtures/offers/chrome-155.sdp");
+    let cut = chrome.replace("a=group:BUNDLE 0 1", "a=group:BUNDLE 0");
+    assert!(cut.contains("a=mid:1"));
+    cut.lines()
+        .filter(|l| l.trim_end() != "a=mid:1")
+        .map(|l| format!("{l}\r\n"))
+        .collect()
+}
+
+/// str0m 0.24 rejects a media section without `a=mid` while parsing the
+/// offer, so it never reaches the code that would panic on it. This pins
+/// that: if a str0m bump stops rejecting it at parse, this test fails,
+/// and the panic containment around `accept_offer` in the media thread is
+/// what keeps every other viewer alive.
+#[test]
+fn an_offer_with_a_mid_less_media_line_is_400_and_the_server_keeps_serving() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let (status, _, _) = whep_post(srv.local_addr(), "/cam", &mid_less_section_offer(), None);
+    assert_eq!(status, 400);
+    let (status, _, _) = whep_post(
+        srv.local_addr(),
+        "/cam",
+        &TestViewer::new().offer(true),
+        None,
+    );
+    assert_eq!(status, 201);
+    assert_eq!(srv.stats().sessions_total, 1);
+}
+
 /// A `recvonly` offer whose `m=` line lists only 120 and that maps 121,
 /// a number outside it, twice: str0m claims every `a=rtpmap`, so the
 /// second claim of 121 would panic it.
