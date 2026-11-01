@@ -128,6 +128,15 @@ class RedactionTest {
     }
 
     @Test
+    void aQuoteInsideAQuotedUrlDoesNotCloseIt() {
+        assertEquals("'rtsp://cam:<redacted>@h/'", Redact.url("'rtsp://cam:hun'ter2@h/'"));
+        assertEquals("\"srt://h:1?passphrase=<redacted>\"",
+            Redact.url("\"srt://h:1?passphrase=a\"b\""));
+        assertEquals("(see 'srt://h?token=<redacted>', 'x')",
+            Redact.url("(see 'srt://h?token=abc', 'x')"));
+    }
+
+    @Test
     void plainTextIsUnchanged() {
         assertEquals("hello world", Redact.url("hello world"));
         assertEquals("", Redact.url(""));

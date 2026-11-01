@@ -55,9 +55,7 @@ pub fn redact_url(url: &str) -> String {
         // it opens right after one: quotes and spaces inside it are part
         // of a password or a value, never delimiters.
         let end = match url[..start].chars().next_back() {
-            Some(q @ ('"' | '\'')) => url[after_scheme..]
-                .find(q)
-                .map_or(url.len(), |n| after_scheme + n),
+            Some(q @ ('"' | '\'')) => closing_quote(url, after_scheme, q),
             _ => url.len(),
         };
         redact_token(&url[start..end], &mut out);
@@ -65,6 +63,22 @@ pub fn redact_url(url: &str) -> String {
     }
     redact_tokens(&url[pos..], &mut out);
     out
+}
+
+/// Where a span opened by quote `q` ends: the first `q` at or after `from`
+/// that is followed by a separator, a closing bracket, `,` or `;`, or by the
+/// end of the input. A `q` inside a password or a value does not close it.
+fn closing_quote(s: &str, from: usize, q: char) -> usize {
+    s[from..]
+        .match_indices(q)
+        .map(|(n, _)| from + n)
+        .find(|&i| {
+            s[i + 1..]
+                .chars()
+                .next()
+                .is_none_or(|c| is_separator(c) || matches!(c, ',' | ';' | ')' | ']' | '}'))
+        })
+        .unwrap_or(s.len())
 }
 
 /// Byte offsets of the next `scheme://` at or after `from`: where the scheme
@@ -369,6 +383,22 @@ mod tests {
         assert_eq!(
             redact_url("bad \"srt://h?token=a b\" here"),
             "bad \"srt://h?token=<redacted>\" here"
+        );
+    }
+
+    #[test]
+    fn a_quote_inside_a_quoted_url_does_not_close_it() {
+        assert_eq!(
+            redact_url("'rtsp://cam:hun'ter2@h/'"),
+            "'rtsp://cam:<redacted>@h/'"
+        );
+        assert_eq!(
+            redact_url("\"srt://h:1?passphrase=a\"b\""),
+            "\"srt://h:1?passphrase=<redacted>\""
+        );
+        assert_eq!(
+            redact_url("(see 'srt://h?token=abc', 'x')"),
+            "(see 'srt://h?token=<redacted>', 'x')"
         );
     }
 
