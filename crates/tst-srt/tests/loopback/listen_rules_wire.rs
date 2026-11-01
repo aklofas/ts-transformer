@@ -110,3 +110,48 @@ fn repeated_sid_block_is_refused() {
         "a refused caller must not reach accept"
     );
 }
+
+/// libsrt answers a hook-refused v4 caller with a shutdown, not a reject code.
+#[cfg(feature = "mbedtls")]
+#[test]
+fn hsv4_caller_refused_by_a_passphrase_listener() {
+    require_loopback!();
+    let mut b = SrtListenerBuilder::new();
+    b.passphrase(Passphrase::new("amber-secret-123").unwrap());
+    let Loopback { mut listener, port } = Loopback::bind_with(b);
+    assert_eq!(
+        RawCaller::handshake(port, HsVersion::V4, &[], handshake_timeout()),
+        HsOutcome::Shutdown
+    );
+    assert!(
+        matches!(
+            listener.accept_timeout(scaled(Duration::from_secs(1))),
+            Err(AcceptError::TimedOut)
+        ),
+        "a refused caller must not reach accept"
+    );
+}
+
+#[cfg(feature = "mbedtls")]
+#[test]
+fn hsv4_caller_refused_when_the_default_rule_is_accept_with() {
+    require_loopback!();
+    let Loopback { mut listener, port } = Loopback::bind_with(SrtListenerBuilder::new());
+    listener
+        .rules()
+        .set_default(ListenRule::AcceptWith {
+            passphrase: Passphrase::new("amber-secret-123").unwrap(),
+        })
+        .unwrap();
+    assert_eq!(
+        RawCaller::handshake(port, HsVersion::V4, &[], handshake_timeout()),
+        HsOutcome::Shutdown
+    );
+    assert!(
+        matches!(
+            listener.accept_timeout(scaled(Duration::from_secs(1))),
+            Err(AcceptError::TimedOut)
+        ),
+        "a refused caller must not reach accept"
+    );
+}

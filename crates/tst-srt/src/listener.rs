@@ -159,14 +159,15 @@ impl SrtListener {
             }
 
             // libsrt takes the listen hook only before srt_listen.
-            let rules = match crate::listen_rules::install(handle) {
-                Ok(rules) => rules,
-                Err(e) => {
-                    crate::exit_guard::close_socket(handle);
-                    last_err = Some(BindError::InvalidOption(e));
-                    continue;
-                }
-            };
+            let rules =
+                match crate::listen_rules::install(handle, config.socket.passphrase.is_some()) {
+                    Ok(rules) => rules,
+                    Err(e) => {
+                        crate::exit_guard::close_socket(handle);
+                        last_err = Some(BindError::InvalidOption(e));
+                        continue;
+                    }
+                };
 
             let rc = unsafe { srt_sys::srt_listen(handle, config.backlog as c_int) };
             if rc < 0 {
