@@ -7,7 +7,7 @@
 #
 # Without a storage repo the run has no coverage history, so "code-change"
 # mode fuzzes all targets with the time budget split between them. Once the
-# PERSONAL_ACCESS_TOKEN secret exists (setup in oss-fuzz/README.md), the
+# FUZZ_CORPUS_TOKEN secret exists (setup in oss-fuzz/README.md), the
 # storage repo supplies the corpus and the coverage report that narrows the
 # run to the harnesses the PR touched.
 name: clusterfuzzlite-pr
@@ -40,7 +40,7 @@ jobs:
           language: rust
           github-token: ${{ secrets.GITHUB_TOKEN }}
           sanitizer: address
-          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzzcorpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo: ${{ secrets.FUZZ_CORPUS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzzcorpus.git', secrets.FUZZ_CORPUS_TOKEN) || '' }}
           storage-repo-branch: main
           storage-repo-branch-coverage: gh-pages
       - name: Run fuzzers
@@ -53,6 +53,6 @@ jobs:
           fuzz-seconds: 300
           mode: code-change
           sanitizer: address
-          storage-repo: ${{ secrets.PERSONAL_ACCESS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzzcorpus.git', secrets.PERSONAL_ACCESS_TOKEN) || '' }}
+          storage-repo: ${{ secrets.FUZZ_CORPUS_TOKEN && format('https://{0}@github.com/aklofas/ts-transformer-fuzzcorpus.git', secrets.FUZZ_CORPUS_TOKEN) || '' }}
           storage-repo-branch: main
           storage-repo-branch-coverage: gh-pages
