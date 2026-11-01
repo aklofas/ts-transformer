@@ -5,8 +5,8 @@ use crate::config::SrtListenerConfig;
 use crate::error::{AcceptError, BindError, IoError, OptionError, last_error};
 use crate::init::ensure_initialized;
 use crate::socket::{
-    SrtSocket, apply_listener_config, duration_to_ms, make_cancel_handle, read_bool, set_bool,
-    set_int,
+    SrtSocket, apply_listener_config, duration_to_ms, make_cancel_handle, read_bool,
+    read_stream_id_bytes, set_bool, set_int,
 };
 use crate::transport::SrtTransport;
 use os_socketaddr::OsSocketAddr;
@@ -196,13 +196,21 @@ impl SrtListener {
             return Err(AcceptError::ListenerClosed);
         };
         let mut os_addr = OsSocketAddr::new();
-        let mut len = os_addr.capacity() as c_int;
-
-        let accepted =
-            unsafe { srt_sys::srt_accept(self.handle, os_addr.as_mut_ptr().cast(), &raw mut len) };
-        if accepted == SRT_INVALID_SOCK {
-            return Err(last_error().into());
-        }
+        let accepted = loop {
+            let mut len = os_addr.capacity() as c_int;
+            let accepted = unsafe {
+                srt_sys::srt_accept(self.handle, os_addr.as_mut_ptr().cast(), &raw mut len)
+            };
+            if accepted == SRT_INVALID_SOCK {
+                return Err(last_error().into());
+            }
+            if self.keep_admitted(accepted) {
+                break accepted;
+            }
+            if crate::exit_guard::is_exiting() {
+                return Err(AcceptError::ListenerClosed);
+            }
+        };
 
         let socket = SrtSocket::from_accepted(
             accepted,
@@ -396,6 +404,8 @@ impl SrtListener {
 
         match probe_outcome {
             Ok(None) => Ok(None),
+            // The caller re-waits.
+            Ok(Some(accepted)) if !self.keep_admitted(accepted) => Ok(None),
             Ok(Some(accepted)) => {
                 let socket = SrtSocket::from_accepted(
                     accepted,
@@ -413,6 +423,28 @@ impl SrtListener {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Whether `accepted` reports the stream ID the listen hook matched for
+    /// it; one that does not is closed. libsrt hands the hook the stream ID
+    /// as a C string, so a NUL byte in it (or a libsrt that keeps another
+    /// copy of it) lets the hook decide on one name while the socket carries
+    /// another. Called with the accept's exit-guard op held.
+    fn keep_admitted(&self, accepted: srt_sys::SRTSOCKET) -> bool {
+        let matched = crate::listen_rules::take_admitted(self.handle, accepted);
+        let actual = read_stream_id_bytes(accepted);
+        // libsrt's padding trim never inspects the first byte, so a one-byte
+        // stream ID keeps its three NUL pad bytes. Trailing NULs are padding,
+        // never part of what the hook read.
+        let end = actual.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+        if matched.is_some_and(|m| *m == actual[..end]) {
+            return true;
+        }
+        crate::exit_guard::close_socket(accepted);
+        tracing::warn!(
+            "SRT listener: closed an accepted connection whose stream ID differs from the one its listen rules matched"
+        );
+        false
     }
 
     /// The listener was closed by a cancel or by process exit, so a libsrt

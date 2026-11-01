@@ -12,7 +12,7 @@
 use crate::error::{OptionError, RejectReason, last_error};
 use crate::options::Passphrase;
 use crate::socket::set_passphrase;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -90,7 +90,15 @@ pub(crate) struct Inner {
     closed: AtomicBool,
     /// The listener itself carries a passphrase (builder or URL).
     listener_passphrase: bool,
+    /// The stream ID the hook matched for each socket it accepted, newest
+    /// last; `accept` checks the socket against it.
+    admitted: Mutex<VecDeque<(srt_sys::SRTSOCKET, Box<[u8]>)>>,
 }
+
+/// Records kept per listener. A handshake that later fails never reaches
+/// `accept`, so its record only leaves by eviction; an evicted socket that
+/// does reach `accept` is closed.
+const ADMITTED_CAP: usize = 1024;
 
 pub(crate) struct Table {
     rules: HashMap<String, ListenRule>,
@@ -122,7 +130,28 @@ impl Inner {
             }),
             closed: AtomicBool::new(false),
             listener_passphrase,
+            admitted: Mutex::new(VecDeque::new()),
         }
+    }
+
+    // Poison is recovered: every critical section is a single deque operation.
+    fn admitted(&self) -> std::sync::MutexGuard<'_, VecDeque<(srt_sys::SRTSOCKET, Box<[u8]>)>> {
+        self.admitted.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn record_admitted(&self, ns: srt_sys::SRTSOCKET, stream_id: &[u8]) {
+        let mut q = self.admitted();
+        if q.len() == ADMITTED_CAP {
+            q.pop_front();
+        }
+        q.push_back((ns, stream_id.into()));
+    }
+
+    fn take_admitted(&self, ns: srt_sys::SRTSOCKET) -> Option<Box<[u8]>> {
+        let mut q = self.admitted();
+        // Newest first, should libsrt ever reuse a socket ID.
+        let i = q.iter().rposition(|(s, _)| *s == ns)?;
+        q.remove(i).map(|(_, id)| id)
     }
 
     // Poison is recovered: every write is a single map operation or
@@ -254,6 +283,14 @@ pub(crate) fn uninstall(handle: srt_sys::SRTSOCKET) {
     }
 }
 
+/// Remove and return the stream ID the listen hook matched when it accepted
+/// `ns` on the listener `lsn`. `None` when the hook never accepted it, its
+/// record was evicted, or the listener is closing.
+pub(crate) fn take_admitted(lsn: srt_sys::SRTSOCKET, ns: srt_sys::SRTSOCKET) -> Option<Box<[u8]>> {
+    let inner = registry().get(&lsn).cloned()?;
+    inner.take_admitted(ns)
+}
+
 /// The decision for one handshake. `None`, an empty stream ID (handshake
 /// v4 included) and any stream ID that is not UTF-8 get the default rule.
 pub(crate) fn decide(table: &Table, stream_id: Option<&[u8]>) -> ListenRule {
@@ -337,11 +374,15 @@ extern "C" fn listen_hook(
             Some(unsafe { CStr::from_ptr(streamid) }.to_bytes())
         };
         let rule = decide(&inner.read(), stream_id);
-        if hsv4_refused(hs_version, inner.listener_passphrase, &rule) {
+        let code = if hsv4_refused(hs_version, inner.listener_passphrase, &rule) {
             reject(ns, RejectReason::VersionUnsupported.raw())
         } else {
             apply(ns, &rule)
+        };
+        if code == 0 {
+            inner.record_admitted(ns, stream_id.unwrap_or_default());
         }
+        code
     }));
     match decided {
         Ok(code) => code,
@@ -515,6 +556,24 @@ mod tests {
         for s in [format!("{rules:?}"), format!("{rule:?}")] {
             assert!(!s.contains("secretsecretsecret"), "{s}");
         }
+    }
+
+    #[test]
+    fn admitted_records_are_bounded_and_an_evicted_socket_is_not_found() {
+        let inner = Inner::new(false);
+        for ns in 0..=ADMITTED_CAP as srt_sys::SRTSOCKET {
+            inner.record_admitted(ns, b"cam");
+        }
+        assert_eq!(inner.admitted().len(), ADMITTED_CAP);
+        assert_eq!(
+            inner.take_admitted(0),
+            None,
+            "the oldest record was evicted"
+        );
+        let last = ADMITTED_CAP as srt_sys::SRTSOCKET;
+        assert_eq!(inner.take_admitted(last).as_deref(), Some(&b"cam"[..]));
+        assert_eq!(inner.take_admitted(last), None, "a record is taken once");
+        assert_eq!(inner.admitted().len(), ADMITTED_CAP - 1);
     }
 
     #[test]

@@ -894,6 +894,18 @@ pub(crate) fn apply_listener_config(
 }
 
 pub(crate) fn read_stream_id(handle: srt_sys::SRTSOCKET) -> Option<String> {
+    let bytes = read_stream_id_bytes(handle);
+    let s = std::str::from_utf8(&bytes).ok()?;
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+/// The raw `SRTO_STREAMID` bytes, by length (a NUL byte included); empty on
+/// error or when the socket has none.
+pub(crate) fn read_stream_id_bytes(handle: srt_sys::SRTSOCKET) -> Vec<u8> {
     let mut buf = [0u8; 513];
     let mut len = buf.len() as c_int;
     let rc = unsafe {
@@ -905,14 +917,9 @@ pub(crate) fn read_stream_id(handle: srt_sys::SRTSOCKET) -> Option<String> {
         )
     };
     if rc < 0 || len <= 0 {
-        return None;
+        return Vec::new();
     }
-    let s = std::str::from_utf8(&buf[..len as usize]).ok()?;
-    if s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
-    }
+    buf[..len as usize].to_vec()
 }
 
 pub(crate) fn read_payload_size(handle: srt_sys::SRTSOCKET) -> usize {
