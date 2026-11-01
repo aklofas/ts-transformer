@@ -74,7 +74,7 @@ optional  = true
 [dependencies.tokio-rustls]
 version          = "0.26"
 default-features = false
-features         = ["ring"]
+features         = ["ring", "tls12"]
 optional = true
 
 [dev-dependencies]

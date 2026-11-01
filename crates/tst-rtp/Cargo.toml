@@ -95,7 +95,7 @@ optional = true
 version          = "0.26"
 optional         = true
 default-features = false
-features         = ["ring"]
+features         = ["ring", "tls12"]
 
 [dev-dependencies]
 tst-core = { path = "../tst-core", features = ["conformance"] }
