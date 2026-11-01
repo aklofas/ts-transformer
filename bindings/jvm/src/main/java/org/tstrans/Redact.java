@@ -40,8 +40,7 @@ public final class Redact {
             if (start > 0) {
                 char q = url.charAt(start - 1);
                 if (q == '"' || q == '\'') {
-                    int close = url.indexOf(q, span[1]);
-                    end = close < 0 ? url.length() : close;
+                    end = closingQuote(url, span[1], q);
                 }
             }
             token(url.substring(start, end), out);
@@ -49,6 +48,24 @@ public final class Redact {
         }
         tokens(url.substring(pos), out);
         return out.toString();
+    }
+
+    /**
+     * Where a span opened by quote {@code q} ends: the first {@code q} at or after {@code from}
+     * followed by a separator, a closing bracket, {@code ,} or {@code ;}, or by the end of the
+     * input. A {@code q} inside a password or a value does not close it.
+     */
+    private static int closingQuote(String s, int from, char q) {
+        for (int i = s.indexOf(q, from); i >= 0; i = s.indexOf(q, i + 1)) {
+            if (i + 1 == s.length()) {
+                return i;
+            }
+            char c = s.charAt(i + 1);
+            if (isSeparator(c) || c == ',' || c == ';' || c == ')' || c == ']' || c == '}') {
+                return i;
+            }
+        }
+        return s.length();
     }
 
     /** Offsets of the next {@code scheme://} at or after {@code from}: scheme start, text after. */
