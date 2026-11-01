@@ -430,6 +430,13 @@ impl RtspServer {
     /// Internal — called from [`crate::rtsp::server::builder::RtspServerBuilder::build`].
     /// Constructs the tokio Runtime and the shared `ServerState`.
     pub(crate) fn from_builder(b: RtspServerBuilder) -> Result<Self, RtspServerError> {
+        if let Some(rule) = &b.default_mount_rule {
+            crate::rtsp::server::mount_rules::check_rule(rule).map_err(|e| {
+                RtspServerError::InvalidConfig {
+                    detail: format!("default mount rule: {e}"),
+                }
+            })?;
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
