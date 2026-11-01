@@ -664,6 +664,7 @@ impl core::marker::UnsafeUnpin for tst_srt::error::SrtError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::SrtError
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::SrtError
 #[non_exhaustive] pub enum tst_srt::error::StreamIdError
+pub tst_srt::error::StreamIdError::InteriorNul
 pub tst_srt::error::StreamIdError::NonAscii
 pub tst_srt::error::StreamIdError::TooLong(usize)
 impl core::convert::From<tst_srt::error::StreamIdError> for tst_srt::error::OptionError
@@ -701,6 +702,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::listen_rules::ListenRu
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::listen_rules::ListenRule
 #[non_exhaustive] pub enum tst_srt::listen_rules::ListenRuleError
 pub tst_srt::listen_rules::ListenRuleError::Closed
+pub tst_srt::listen_rules::ListenRuleError::InteriorNul
 pub tst_srt::listen_rules::ListenRuleError::InternalReason(tst_srt::error::RejectReason)
 impl core::error::Error for tst_srt::listen_rules::ListenRuleError
 impl core::fmt::Debug for tst_srt::listen_rules::ListenRuleError
@@ -1278,6 +1280,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::listen_rules::ListenRu
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::listen_rules::ListenRule
 #[non_exhaustive] pub enum tst_srt::ListenRuleError
 pub tst_srt::ListenRuleError::Closed
+pub tst_srt::ListenRuleError::InteriorNul
 pub tst_srt::ListenRuleError::InternalReason(tst_srt::error::RejectReason)
 impl core::error::Error for tst_srt::listen_rules::ListenRuleError
 impl core::fmt::Debug for tst_srt::listen_rules::ListenRuleError

@@ -57,6 +57,10 @@ pub enum ListenRuleError {
     /// to libsrt.
     #[error("reject reason {0:?} is reserved for libsrt (codes below 1000)")]
     InternalReason(RejectReason),
+    /// The stream ID key holds a NUL byte; libsrt hands the listen hook a C
+    /// string, so such a key could never match.
+    #[error("stream ID key contains a NUL byte")]
+    InteriorNul,
     /// The listener this table belongs to is closed.
     #[error("listener is closed")]
     Closed,
@@ -74,6 +78,8 @@ pub enum ListenRuleError {
 ///
 /// Matching is exact on the stream ID. A caller with no stream ID, an empty
 /// one, or one that is not UTF-8 gets the default rule.
+/// A key or stream ID holding a NUL byte is refused (`InteriorNul`), because
+/// libsrt hands the listen hook the stream ID as a C string.
 #[derive(Clone)]
 pub struct ListenRules {
     inner: Arc<Inner>,
@@ -151,6 +157,9 @@ impl ListenRules {
     /// replacing any rule already there. A rule for the empty string is
     /// stored but never matches: an empty stream ID gets the default.
     pub fn set(&self, stream_id: &str, rule: ListenRule) -> Result<(), ListenRuleError> {
+        if stream_id.contains('\0') {
+            return Err(ListenRuleError::InteriorNul);
+        }
         validate(&rule)?;
         self.inner.check_open()?;
         self.inner.write().rules.insert(stream_id.to_owned(), rule);
@@ -158,9 +167,9 @@ impl ListenRules {
     }
 
     /// Remove the rule for `stream_id`. Returns `false` when there was none
-    /// or the listener is closed.
+    /// or the listener is closed (a key with a NUL byte is never present).
     pub fn remove(&self, stream_id: &str) -> bool {
-        if self.inner.check_open().is_err() {
+        if stream_id.contains('\0') || self.inner.check_open().is_err() {
             return false;
         }
         self.inner.write().rules.remove(stream_id).is_some()
@@ -445,6 +454,18 @@ mod tests {
             decide(&t, Some(long.as_bytes())),
             ListenRule::Accept
         ));
+    }
+
+    #[test]
+    fn nul_key_is_refused_and_never_present() {
+        let rules = ListenRules::detached();
+        assert!(matches!(
+            rules.set("cam\0x", ListenRule::Accept),
+            Err(ListenRuleError::InteriorNul)
+        ));
+        assert!(rules.set("cam", ListenRule::Accept).is_ok());
+        assert!(!rules.remove("cam\0x"));
+        assert_eq!(rules.len(), 1);
     }
 
     #[test]

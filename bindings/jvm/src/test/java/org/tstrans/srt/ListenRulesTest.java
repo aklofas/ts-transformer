@@ -188,6 +188,10 @@ class ListenRulesTest {
             SrtException e = assertThrows(SrtException.class,
                 () -> listener.rules().set("a", ListenRule.acceptWith("short")));
             assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
+            SrtException nul = assertThrows(SrtException.class,
+                () -> listener.rules().set("a\0b", ListenRule.accept()));
+            assertEquals(SrtException.Kind.CONFIG_INVALID, nul.kind());
+            assertFalse(listener.rules().remove("a\0b"));
         }
     }
 }

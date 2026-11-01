@@ -212,8 +212,12 @@ impl StreamId {
     ///
     /// # Errors
     /// - [`StreamIdError::TooLong`] if the byte count exceeds 512.
+    /// - [`StreamIdError::InteriorNul`] if it contains a NUL byte.
     pub fn new(s: impl Into<String>) -> Result<Self, StreamIdError> {
         let s = s.into();
+        if s.contains('\0') {
+            return Err(StreamIdError::InteriorNul);
+        }
         if s.len() > 512 {
             return Err(StreamIdError::TooLong(s.len()));
         }
@@ -421,6 +425,14 @@ mod tests {
     fn stream_id_valid() {
         let id = StreamId::new("publish:cam1").unwrap();
         assert_eq!(id.as_str(), "publish:cam1");
+    }
+
+    #[test]
+    fn stream_id_refuses_interior_nul() {
+        assert!(matches!(
+            StreamId::new("cam\0x").unwrap_err(),
+            StreamIdError::InteriorNul
+        ));
     }
 
     #[test]
