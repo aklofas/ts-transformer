@@ -758,8 +758,8 @@ where
             } else if (200..=299).contains(&response.status) {
                 // Only reset the failure counter on a successful (2xx) response
                 // that passed a credential check (`request_authenticated`):
-                // an `Open` mount's 2xx proves nothing about the peer. OPTIONS and GET_PARAMETER are
-                // never auth-gated (they always return 200), so resetting on
+                // an `Open` mount's 2xx proves nothing about the peer. OPTIONS
+                // and GET_PARAMETER are never auth-gated (they always return 200), so resetting on
                 // them would let an attacker alternate OPTIONS with bad-auth
                 // requests to bypass the 3-strike limit indefinitely.
                 // 3xx is excluded: no handler emits a redirect on a gated method,

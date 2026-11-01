@@ -460,8 +460,10 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
   recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)).
 - **Client auth schemes.** `RtspClientBuilder::auth_schemes` defaults to
   `AuthSchemes::Automatic` (Digest when offered, else Basic).
-  `AuthSchemes::DigestOnly` fails the connect when the server offers no Digest
-  challenge, so the password is never sent in Basic form.
+  `AuthSchemes::DigestOnly` makes the first challenged request fail when the
+  server offers no Digest challenge (`connect()` itself succeeds in Rust; the
+  Python and JVM `connect` run a DESCRIBE, so they fail there), so the
+  password is never sent in Basic form.
 
 ### Stats
 

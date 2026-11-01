@@ -281,7 +281,8 @@ fn verify_digest(
         // captured Authorization header can never be replayed regardless of
         // which check it failed. The cost — an unauthenticated peer can burn
         // nc values — is bounded by the auth_failures counter (connection
-        // closes after 3 401s without an authenticated 2xx between them) and by hwm reset on nonce rotation.
+        // closes after 3 401s without an authenticated 2xx between them) and
+        // by the hwm reset on nonce rotation.
         *nc_hwm = nc_val;
     }
 

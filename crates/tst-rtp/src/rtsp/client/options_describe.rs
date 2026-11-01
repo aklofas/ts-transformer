@@ -122,7 +122,8 @@ impl RtspClient {
     /// # Errors
     ///
     /// - [`RtspError::AuthFailed`] if the URL carries no credentials.
-    /// - [`RtspError::AuthUnsupported`] if no recognized scheme is present.
+    /// - [`RtspError::AuthUnsupported`] if no recognized scheme is present, or
+    ///   the challenge offers no Digest under `AuthSchemes::DigestOnly`.
     pub(crate) fn authorization_from_challenge(
         &self,
         method: RtspMethod,

@@ -466,7 +466,8 @@ pub(crate) fn next_interleaved_pair() -> Option<(u8, u8)> {
 ///
 /// Rejection codes:
 /// - 401 Unauthorized — auth check fails (via `check_auth`).
-/// - 404 Not Found — mount path not registered.
+/// - 404 Not Found — mount path not registered, or a publisher session's
+///   SETUP outside the mount it announced (answered like a missing mount).
 /// - 400 Bad Request — Transport header missing or malformed.
 /// - 455 Method Not Valid in This State — a reader-direction SETUP (no
 ///   `mode=record`) on a session that announced a publisher; one

@@ -120,7 +120,7 @@ pub fn parse_challenges(www_authenticate: &str) -> Vec<AuthChallenge> {
                     }
                     i += 1;
                 }
-                let val = www_authenticate[val_start..i].to_string();
+                let val = unescape_quoted_string(&www_authenticate[val_start..i]);
                 if i < bytes.len() {
                     i += 1;
                 }
@@ -300,14 +300,14 @@ pub fn build_digest_response(ctx: &DigestContext<'_>) -> String {
     // §3.4 quoted-string syntax before going in a `key="value"` slot —
     // an un-escaped `"` would close the quoted string early and desync
     // every auth-param after it; an un-escaped `\` would escape the
-    // FOLLOWING character instead of standing for itself. `realm` /
-    // `nonce` are the peer's own challenge values reflected back to that
-    // same peer, not caller input, so they stay as-is.
+    // FOLLOWING character instead of standing for itself. `realm`,
+    // `nonce` and `opaque` were unescaped when the challenge was parsed, so
+    // they are escaped again to echo the peer's original bytes.
     let mut out = format!(
         r#"Digest username="{}", realm="{}", nonce="{}", uri="{}", response="{}", algorithm={}"#,
         escape_quoted_string(ctx.username),
-        ctx.challenge.realm,
-        ctx.challenge.nonce,
+        escape_quoted_string(&ctx.challenge.realm),
+        escape_quoted_string(&ctx.challenge.nonce),
         escape_quoted_string(ctx.uri),
         resp,
         algorithm_str,
@@ -319,7 +319,23 @@ pub fn build_digest_response(ctx: &DigestContext<'_>) -> String {
         ));
     }
     if let Some(opaque) = &ctx.challenge.opaque {
-        out.push_str(&format!(r#", opaque="{}""#, opaque));
+        out.push_str(&format!(r#", opaque="{}""#, escape_quoted_string(opaque)));
+    }
+    out
+}
+
+/// Undo the quoted-pair escapes of an RFC 7230 quoted-string body.
+fn unescape_quoted_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(c);
+        }
     }
     out
 }
@@ -497,6 +513,15 @@ mod basic_tests {
         let pw = SecretString::new("open sesame".into());
         let header = build_basic_response("Aladdin", &pw);
         assert_eq!(header, "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+    }
+
+    #[test]
+    fn parse_unescapes_quoted_pairs() {
+        let h = r#"Digest realm="ts \"q\" a\\b", nonce="n""#;
+        match &parse_challenges(h)[0] {
+            AuthChallenge::Digest(d) => assert_eq!(d.realm, r#"ts "q" a\b"#),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

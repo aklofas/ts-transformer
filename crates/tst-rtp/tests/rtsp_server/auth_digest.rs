@@ -136,3 +136,22 @@ fn digest_md5_full_session_authenticates_every_method() {
     client.teardown().expect("TEARDOWN must carry credentials");
     server.stop().ok();
 }
+
+/// A realm holding a quote and a backslash is escaped on the wire; the
+/// client must unescape it for the hash and escape it again when echoing.
+#[test]
+fn digest_md5_quoted_realm_round_trips() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").expect("URL parse");
+    b.auth_digest_md5("ts \"q\" \\ r", "admin", SecretString::new("secret".into()));
+    let server = b.build().expect("server build");
+    let _mount = server
+        .add_mount("/live", make_muxer_cfg())
+        .expect("add_mount");
+    server.start().expect("server start");
+    let port = server.local_addr().expect("local_addr after start").port();
+    let url = format!("rtsp://admin:secret@127.0.0.1:{port}/live");
+    let mut client = RtspClient::connect(&url).expect("connect");
+    let sdp = client.describe().expect("DESCRIBE against a quoted realm");
+    assert!(!sdp.media.is_empty());
+    server.stop().ok();
+}
