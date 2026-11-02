@@ -115,35 +115,39 @@ pub(crate) fn handle_announce(
         }
     };
     let mount_path = extract_mount_path(&req.uri);
-    let mount = {
-        let mut mounts = match state.mounts.lock() {
-            Ok(m) => m,
-            Err(_) => return error_response(req, 500, "Internal Server Error"),
-        };
-        match mounts.get(&mount_path) {
-            Some(MountEntry::Publish(m)) => m.clone(),
-            Some(MountEntry::Local(_)) => {
-                return error_response(req, 461, "Unsupported Transport");
-            }
-            None if state.builder.accept_unregistered_publishers
-                && validate_mount_path(&mount_path).is_ok() =>
-            {
-                match create_on_demand_mount(state, &mut mounts, &mount_path) {
-                    Some(m) => m,
-                    None => return error_response(req, 503, "Service Unavailable"),
-                }
-            }
-            None => return error_response(req, 404, "Not Found"),
-        }
-    };
     let info = PublisherInfo {
         peer: session.peer_addr,
         shape: announced.shape,
         since: SystemTime::now(),
         generation: 0, // try_begin_publisher overwrites this with the mount's real value
     };
-    let Some(slot_generation) = mount.try_begin_publisher(info) else {
-        return error_response(req, 403, "Forbidden");
+    let (mount, slot_generation) = {
+        let mut mounts = match state.mounts.lock() {
+            Ok(m) => m,
+            Err(_) => return error_response(req, 500, "Internal Server Error"),
+        };
+        match mounts.get(&mount_path) {
+            Some(MountEntry::Publish(m)) => {
+                let m = m.clone();
+                drop(mounts);
+                let Some(generation) = m.try_begin_publisher(info) else {
+                    return error_response(req, 403, "Forbidden");
+                };
+                (m, generation)
+            }
+            Some(MountEntry::Local(_)) => {
+                return error_response(req, 461, "Unsupported Transport");
+            }
+            None if state.builder.accept_unregistered_publishers
+                && validate_mount_path(&mount_path).is_ok() =>
+            {
+                match create_on_demand_mount(state, &mut mounts, &mount_path, info) {
+                    Some(claimed) => claimed,
+                    None => return error_response(req, 503, "Service Unavailable"),
+                }
+            }
+            None => return error_response(req, 404, "Not Found"),
+        }
     };
     let adapter: Box<dyn PublishAdapter> = match announced.shape {
         PublishShape::Mp2t => Box::new(Mp2tAdapter::new(
@@ -179,12 +183,15 @@ pub(crate) fn handle_announce(
     ok_response(req, None)
 }
 
-/// Create an on-demand publish mount at `path`, queue its handle for
+/// Create an on-demand publish mount at `path`, claim its publisher slot
+/// for `info`, queue its handle for
 /// [`crate::rtsp::server::RtspServer::next_publisher`], and only then insert
 /// it into `mounts`, so a full (or closed) queue leaves no orphan mount
-/// behind. Returns `None` when the table already holds
+/// behind. The mount is queued already claimed, so a consumer that closes
+/// it at once cannot refuse the announcing publisher. Returns the mount and
+/// the claimed publisher generation, or `None` when the table already holds
 /// [`crate::rtsp::server::ON_DEMAND_MOUNT_CAP`] on-demand mounts or the
-/// queue refused it.
+/// queue refused it (the claim is then released).
 ///
 /// The caller holds the `mounts` lock across the lookup that found no
 /// entry and this insert, and `try_send` never blocks, so two ANNOUNCEs
@@ -195,7 +202,8 @@ fn create_on_demand_mount(
     state: &Arc<ServerState>,
     mounts: &mut HashMap<String, MountEntry>,
     path: &str,
-) -> Option<Arc<PublishMountState>> {
+    info: PublisherInfo,
+) -> Option<(Arc<PublishMountState>, u64)> {
     let on_demand = mounts
         .values()
         .filter(|e| matches!(e, MountEntry::Publish(m) if m.on_demand))
@@ -213,6 +221,8 @@ fn create_on_demand_mount(
         state.builder.fanout_capacity,
         state.publish_counters.clone(),
     );
+    // A fresh mount's slot is open; `?` only guards the impossible case.
+    let generation = m.try_begin_publisher(info)?;
     let queued = state
         .publish_queue_tx
         .lock()
@@ -225,10 +235,11 @@ fn create_on_demand_mount(
             path,
             "on-demand mount refused: queue full or server stopping"
         );
+        m.end_publisher();
         return None;
     }
     mounts.insert(path.to_string(), MountEntry::Publish(m.clone()));
-    Some(m)
+    Some((m, generation))
 }
 
 /// SETUP (`mode=record`) handler — reached only via
@@ -1231,6 +1242,48 @@ mod tests {
         assert_eq!(queued.path, "/new");
         assert!(queued.publisher.lock().unwrap().info.is_some());
         assert!(s.publisher().is_some());
+    }
+
+    fn publisher_info() -> PublisherInfo {
+        PublisherInfo {
+            peer: "127.0.0.1:5000".parse().unwrap(),
+            shape: PublishShape::Mp2t,
+            since: SystemTime::now(),
+            generation: 0,
+        }
+    }
+
+    #[test]
+    fn an_on_demand_mount_holds_its_publisher_when_it_is_queued() {
+        let (st, rx) = crate::rtsp::server::test_state_on_demand(true);
+        let mut mounts = st.mounts.lock().unwrap();
+        let (m, generation) =
+            create_on_demand_mount(&st, &mut mounts, "/new", publisher_info()).expect("created");
+        drop(mounts);
+        let queued = rx.try_recv().expect("queued");
+        assert!(Arc::ptr_eq(&queued, &m));
+        assert!(queued.holds_publisher(generation), "queued while unclaimed");
+        assert_eq!(
+            st.publish_counters
+                .active_publishers
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[test]
+    fn a_refused_queue_rolls_the_claim_back() {
+        let (st, _rx) = crate::rtsp::server::test_state_on_demand(true);
+        st.publish_queue_tx.lock().unwrap().take(); // queue closed: try_send fails
+        let mut mounts = st.mounts.lock().unwrap();
+        assert!(create_on_demand_mount(&st, &mut mounts, "/new", publisher_info()).is_none());
+        assert!(mounts.is_empty());
+        assert_eq!(
+            st.publish_counters
+                .active_publishers
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
     }
 
     #[test]
