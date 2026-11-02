@@ -39,7 +39,9 @@ def test_sender_cancel_then_partial_send_raises_closed() -> None:
 
 
 # `udp://` takes no recv_timeout, so the first receive is bounded by the mark.
-@pytest.mark.timeout(10)
+# `method="thread"`: a receive parked in native code never runs the signal
+# method's handler, so a lost datagram would hang until the job timeout.
+@pytest.mark.timeout(10, method="thread")
 def test_receiver_cancel_then_recv_raises_closed_not_buffered_bytes() -> None:
     port = free_udp_port()
     rx = Receiver.open(f"udp://127.0.0.1:{port}")
