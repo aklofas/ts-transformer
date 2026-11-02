@@ -61,6 +61,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Component descriptor text honours the EN 300 468 Annex A character-set selector. The multi-byte selectors (0x11 ISO/IEC 10646, 0x12 KS X 1001, 0x13 GB-2312, 0x14 Big5) are not transcoded: the label comes from the next descriptor.
 - Aggregate PES overflow reports a discontinuity for every PID it drops.
 - DVB subtitle and teletext PES envelopes are checked and reported.
+- A PAT is identified by transport stream id, version and its complete program list (every section of a multi-section table), not by version alone; a changed transport stream id retires every program's tracker, PMT dedup state and PID state, so the new stream's same-version PMT is adopted. Lifetime counters survive.
+- DVB subtitle PES envelopes, and teletext PES envelopes on PIDs signalled by `teletext_descriptor` (0x56), are checked and reported; a PID signalled only by `VBI_teletext_descriptor` (0x46) stays `DvbTeletext` and is delivered without the EN 300 472 data-unit check.
+- `StrictMode::Full` checks all four reserved bits before a PMT's `program_info_length` (Table 2-33).
+- A `discontinuity_indicator` on an adaptation-field-only packet resets the PID's continuity baseline (H.222.0 §2.4.3.5), so the payload packet that follows the signalled reset is no longer reported as a `ContinuityJump` and the PES before it is no longer marked damaged.
 
 ### Fixed — tst-py, tst-jni, tst-core, tst-hls, tst-webrtc, tst-srt, tst-c
 
@@ -161,29 +165,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Python: a byte sink calling its own receiver raises `RuntimeError` instead of deadlocking; `close()` from the sink delivers the event in flight and ends the iteration on the next pull; a cycle through another receiver's sink is refused the same way.
 - Python: `RawBytes` hashes as the `bytes` it equals; `MuxError.pid` is populated; `udp`/`tcp`/`hls` stubs name the canonical exception classes.
 - Python: `transmux(src, src)` without `atomic=True` raises `ValueError` instead of truncating the source; a failed atomic promotion removes its `*.partial`.
-
-### Fixed — tst-core
-
-- A PES header whose `PES_header_data_length` ends before the PTS no longer yields a PTS read past the header.
-- PES `stream_id` handling follows Table 2-21.
-- A byte-identical duplicate packet that carries `discontinuity_indicator` is discarded instead of replayed into the PES (H.222.0 §2.4.3.5).
-- A PCR carried in a scrambled packet now updates the time base (the adaptation field is never scrambled, §2.4.3.2).
-- A strict verdict applies only to the packet that raised it.
-- `feed_aligned` discards a partial packet left by an earlier `feed`.
-- A PAT is identified by transport stream id, version and its complete program list (every section of a multi-section table), not by version alone; a changed transport stream id retires every program's tracker, PMT dedup state and PID state, so the new stream's same-version PMT is adopted. Lifetime counters survive.
-- A continuity gap on a PSI PID resets the section assembler so a splice cannot join two sections.
-- A PAT section outside its `last_section_number` range is reported; unparseable PSI is reported as `Malformed` instead of being ignored.
-- Programs that share a PMT PID are all tracked.
-- AU cells are tracked per service, and a sequence gap resets that PID's AU state.
-- The AU `cell_count` is bounded.
-- The KLV link heuristic reads only the descriptor's private data; `MissingMetadataDescriptor` fires only when the descriptor is absent and no link can be inferred.
-- AV1 binding streams are walked as `ts_open_bitstream_unit`s, and truncation and invalid emulation prevention are reported.
-- NAL units shorter than their header are reported as `Truncated`.
-- Component descriptor text honours the EN 300 468 Annex A character-set selector. The multi-byte selectors (0x11 ISO/IEC 10646, 0x12 KS X 1001, 0x13 GB-2312, 0x14 Big5) are not transcoded: the label comes from the next descriptor.
-- Aggregate PES overflow reports a discontinuity for every PID it drops.
-- DVB subtitle PES envelopes, and teletext PES envelopes on PIDs signalled by `teletext_descriptor` (0x56), are checked and reported; a PID signalled only by `VBI_teletext_descriptor` (0x46) stays `DvbTeletext` and is delivered without the EN 300 472 data-unit check.
-- `StrictMode::Full` checks all four reserved bits before a PMT's `program_info_length` (Table 2-33).
-- A `discontinuity_indicator` on an adaptation-field-only packet resets the PID's continuity baseline (H.222.0 §2.4.3.5), so the payload packet that follows the signalled reset is no longer reported as a `ContinuityJump` and the PES before it is no longer marked damaged.
 
 ### Fixed — tst-pipeline
 
