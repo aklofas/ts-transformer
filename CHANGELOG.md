@@ -159,6 +159,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-jni
 
 - A byte-sized `int` argument outside 0..=255 (`pushKlv`/`pushKlvTo` `metadataServiceId`, a `MispTimestamp` `timeStatus`, `CoreId.version`, the slice-header `nalUnitType`, `H264DepayConfig.payloadType`, a data stream type) throws `IllegalArgumentException` instead of wrapping modulo 256; a refused push queues nothing.
+- `MuxerConfig.Builder.programNumber` outside 0..=0xFFFF, `pmtPid` outside 0x0010..=0x1FFE, `pcrPid` other than -1 or that range, a `Pairer` PID outside 0x0010..=0x1FFE and a `lastSeenMicros(pid)` outside 0..=0x1FFF throw `IllegalArgumentException` instead of wrapping modulo 65536 (a wrapped value configured another PID silently; `lastSeenMicros(0x10101)` answered for PID 0x101).
 - `DemuxerConfig.Builder.strictMode(null)` and `av1Carriage(null)` throw `NullPointerException`.
 - `Builder.maxBandwidthBps` is documented as bytes per second; the value was always passed to `SRTO_MAXBW` unchanged.
 

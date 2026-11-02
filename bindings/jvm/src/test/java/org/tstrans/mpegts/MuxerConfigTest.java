@@ -89,4 +89,28 @@ class MuxerConfigTest {
         b.addData(0x101, 0x06, false); // the builder is usable afterwards
         new Muxer(b.build()).close();
     }
+
+    @Test
+    void programNumberOutsideU16Rejected() {
+        assertThrows(IllegalArgumentException.class, () -> MuxerConfig.builder().programNumber(0x10000));
+        assertThrows(IllegalArgumentException.class, () -> MuxerConfig.builder().programNumber(-1));
+    }
+
+    @Test
+    void pmtPidOutsideRangeRejected() {
+        assertThrows(IllegalArgumentException.class, () -> MuxerConfig.builder().pmtPid(0x1FFF));
+        assertThrows(IllegalArgumentException.class, () -> MuxerConfig.builder().pmtPid(0x11000));
+    }
+
+    @Test
+    void pcrPidBelowMinusOneRejected() {
+        assertThrows(IllegalArgumentException.class, () -> MuxerConfig.builder().pcrPid(-2));
+    }
+
+    @Test
+    void boundaryPidsAccepted() {
+        assertDoesNotThrow(() -> MuxerConfig.builder()
+            .pmtPid(0x0010).pmtPid(0x1FFE).pcrPid(-1).pcrPid(0x0010).pcrPid(0x1FFE)
+            .programNumber(0xFFFF).programNumber(0));
+    }
 }
