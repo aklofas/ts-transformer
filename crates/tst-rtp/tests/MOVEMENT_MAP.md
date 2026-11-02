@@ -52,7 +52,7 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | --- | --- |
 | `loopback_multicast.rs` | `rtp/loopback_multicast.rs` |
 | `loopback_unicast.rs` | `rtp/loopback_unicast.rs` |
-| (new) | `rtp/signal_interrupt.rs` | Unix only: a handled signal (EINTR) during a parked recv does not end the transport |
+| (new) | `rtp/signal_interrupt.rs` (Unix only) |
 
 ### `rtsp_client/` — RTSP client: SETUP/PLAY/TEARDOWN, auth, fallback, TLS, keepalive, interleaved
 
