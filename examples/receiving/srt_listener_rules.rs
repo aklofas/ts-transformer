@@ -27,6 +27,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tst_srt::error::{RecvError, RejectReason};
@@ -76,6 +77,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     eprintln!("listening on 127.0.0.1:9000 ({} rules)", rules.len());
 
+    // Live workers per stream ID. A second publisher can slip through the
+    // race window described below; if the first worker to end then restored
+    // the name's rule, the name would look free while the other publisher is
+    // still sending. So the rule is restored only when the LAST worker for
+    // the name ends.
+    let live: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
     let mut workers = Vec::new();
     // Numbers each connection: IDs that sanitize alike (`a-b`, `a_b`) or a
     // name reused after its publisher left would otherwise share one file.
@@ -109,34 +116,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // latency, normally well under a millisecond). That duplicate is
             // accepted; an application that must never serve two feeds
             // under one name keeps its own post-accept check as well.
+            //
+            // Count the worker BEFORE the Conflict rule goes in, so a
+            // worker that ends early can never see a count of zero while
+            // this one is about to run.
+            *live.lock().unwrap().entry(id.clone()).or_insert(0) += 1;
             rules.set(id, ListenRule::Reject(RejectReason::Conflict))?;
         }
 
         let rules = rules.clone();
+        let live = Arc::clone(&live);
         let original = id.as_ref().and_then(|id| originals.get(id)).cloned();
         connection += 1;
-        let path = env::temp_dir().join(format!(
-            "srt_rules_{}_{connection}.ts",
-            id.as_deref()
-                .unwrap_or("anonymous")
-                .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
-        ));
+        // A stream ID may be up to 512 bytes while a file name is limited to
+        // 255 (NAME_MAX), so the ID cannot name the file whole. Sanitizing
+        // leaves only ASCII, so cutting at 64 bytes cuts at a character. The
+        // connection number keeps the names unique.
+        let mut slug = id
+            .as_deref()
+            .unwrap_or("anonymous")
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+        slug.truncate(64);
+        let path = env::temp_dir().join(format!("srt_rules_{slug}_{connection}.ts"));
         workers.retain(|w: &thread::JoinHandle<()>| !w.is_finished());
         workers.push(thread::spawn(move || {
             let result = write_until_closed(&mut socket, &path);
             eprintln!("{peer}: {result:?}; wrote {}", path.display());
-            // The name is free again once its publisher is gone. A name the
-            // operator listed gets its original rule back; plain `remove`
-            // would drop it and the default `Reject(NotFound)` would then
-            // lock the publisher out for good. Only a name that had no rule
-            // is removed.
+            // The name is free again once its LAST publisher is gone. A name
+            // the operator listed gets its original rule back; plain
+            // `remove` would drop it and the default `Reject(NotFound)` would
+            // then lock the publisher out for good. Only a name that had no
+            // rule is removed. The lock is held across the edit so a
+            // concurrent accept of the same name sees count and rule agree.
             if let Some(id) = id {
-                match original {
-                    Some(rule) => {
-                        let _ = rules.set(&id, rule);
-                    }
-                    None => {
-                        rules.remove(&id);
+                let mut live = live.lock().unwrap();
+                let n = live.get_mut(&id).expect("counted at accept");
+                *n -= 1;
+                if *n == 0 {
+                    live.remove(&id);
+                    match original {
+                        Some(rule) => {
+                            let _ = rules.set(&id, rule);
+                        }
+                        None => {
+                            rules.remove(&id);
+                        }
                     }
                 }
             }
