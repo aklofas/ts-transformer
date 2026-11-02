@@ -54,6 +54,8 @@ struct Partial {
     /// Why the buffered bytes are known to be incomplete; the first damage
     /// recorded wins.
     damage: Option<&'static str>,
+    /// Offset in `buf` of the first continuity gap: bytes were lost there.
+    gap_at: Option<usize>,
 }
 
 /// Per-call output from `Reassembler::push`. A single TS payload chunk
@@ -115,6 +117,9 @@ pub struct Reassembler {
     by_pid: HashMap<u16, Partial>,
     /// PIDs whose partials the last aggregate-cap overflow dropped.
     dropped_on_total: Vec<u16>,
+    /// `(pid, payload offset of the first continuity gap)` of each damaged
+    /// PES the last `push`/drain completed.
+    finished_gaps: Vec<(u16, usize)>,
     total_buffered: usize,
     cap_per_pid: usize,
     cap_total: usize,
@@ -125,6 +130,7 @@ impl Reassembler {
         Self {
             by_pid: HashMap::new(),
             dropped_on_total: Vec::new(),
+            finished_gaps: Vec::new(),
             total_buffered: 0,
             cap_per_pid,
             cap_total,
@@ -176,6 +182,7 @@ impl Reassembler {
     ) -> (Vec<ReassemblyOutcome>, usize) {
         let mut out = Vec::new();
         let mut old_count = 0;
+        self.finished_gaps.clear();
         if pusi {
             // PUSI: drain whatever was in flight on this PID first.
             let prev = self.by_pid.remove(&pid);
@@ -189,6 +196,7 @@ impl Reassembler {
                     buf: Vec::new(),
                     random_access_indicator,
                     damage: None,
+                    gap_at: None,
                 },
             );
             if let Some(prev) = prev {
@@ -300,6 +308,12 @@ impl Reassembler {
                 if let Some(reason) = part.damage {
                     out.push(ReassemblyOutcome::Malformed { pid, reason });
                 }
+                if let Some(gap) = part.gap_at {
+                    // `payload` is the tail of `buf` after the PES header.
+                    let header_len = part.buf.len() - pes.payload.len();
+                    self.finished_gaps
+                        .push((pid, gap.saturating_sub(header_len)));
+                }
                 out.push(ReassemblyOutcome::Complete(pes));
             }
             // Shorter than a PES header: no `Complete`, so nothing to mark;
@@ -331,6 +345,7 @@ impl Reassembler {
             core::mem::take(&mut self.by_pid).into_iter().collect();
         partials.sort_unstable_by_key(|(pid, _)| *pid);
         self.total_buffered = 0;
+        self.finished_gaps.clear();
         let mut out = Vec::new();
         for (pid, p) in partials {
             self.finish(pid, p, &mut out);
@@ -347,7 +362,15 @@ impl Reassembler {
             && part.damage.is_none()
         {
             part.damage = Some(DAMAGE_CC_GAP);
+            part.gap_at = Some(part.buf.len());
         }
+    }
+
+    /// For a damaged PES on `pid` completed by the last `push` or drain:
+    /// the payload offset at which its first continuity gap lost bytes.
+    pub(crate) fn take_gap(&mut self, pid: u16) -> Option<usize> {
+        let idx = self.finished_gaps.iter().position(|(p, _)| *p == pid)?;
+        Some(self.finished_gaps.swap_remove(idx).1)
     }
 
     /// The PIDs, ascending, whose partials the last

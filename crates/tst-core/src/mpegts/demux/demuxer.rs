@@ -556,7 +556,8 @@ impl Demuxer {
                     let damage = damage_next_complete
                         .take_if(|(pid, _)| *pid == pes.pid)
                         .map(|(_, reason)| reason);
-                    self.handle_complete_pes(pes, damage);
+                    let gap = damage.and_then(|_| self.pes.take_gap(pes.pid));
+                    self.handle_complete_pes(pes, damage, gap);
                 }
                 ReassemblyOutcome::Malformed { pid, reason }
                     if is_damage_reason(reason) && self.options.strict == StrictMode::Off =>
