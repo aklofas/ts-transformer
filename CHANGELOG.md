@@ -137,7 +137,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-c
 
-- `send_rtsp_server.c`, `recv_rtp.c` and `recv_rtsp_publish.c` restore the default signal disposition and clear the global before freeing the handle the handler uses.
+- `send_rtsp_server.c`, `recv_rtp.c` and `recv_rtsp_publish.c` pin signal delivery to the main thread (the signals are blocked before the library spawns any thread) and restore the default disposition before freeing the handle the handler uses.
 - `tst_rist_receiver_recv_ts` / `tst_rist_demux_receiver_next_event` document the retryable idle result `TST_E_BUFFER_FULL`; `recv_rist.c` retries it instead of exiting on the first empty poll.
 - `tst_annexb_to_length_prefixed`'s sizing answer (-4) now records `TST_E_BUFFER_FULL` in `tst_get_last_error`.
 - `tst_publisher_push_ts(NULL, 0)` is a no-op as documented; it used to open an empty segment.

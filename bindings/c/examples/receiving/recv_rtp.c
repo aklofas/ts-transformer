@@ -70,7 +70,7 @@
 
 #include <inttypes.h>
 #include <signal.h>
-#include <stdatomic.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,34 +81,21 @@
 /*
  * Global receiver pointer used by the signal handler.  Declared volatile so
  * the compiler cannot cache a NULL in a register after the assignment
- * in main() — the signal arrives on the same thread in this single-threaded
- * example, but the volatile also ensures correctness in multi-threaded
- * consumers that copy this pattern.
- *
+ * in main().  main() blocks the signals before anything is spawned and
+ * unblocks them only on the main thread (see main()), so the handler runs
+ * on the thread that also clears this pointer and never overlaps the close.
+ */
+static TstRtpDemuxReceiver *volatile g_receiver = NULL;
+
+/*
  * sig_atomic_t flag: set to 1 by the handler; checked in the loop error
  * path to distinguish cancel-by-signal from other TST_E_CLOSED sources.
  */
-/*
- * g_handler_active counts signal handlers currently running.  POSIX may
- * deliver a process-directed SIGINT/SIGTERM to ANY thread that does not
- * block it, including a library worker thread, so a handler can still be
- * inside the cancel call when main starts tearing down.  Restoring the
- * default disposition stops NEW handler runs but not one already in
- * flight; teardown therefore (1) restores SIG_DFL, (2) waits for this
- * count to reach zero, (3) clears the handle global, (4) frees the handle.
- * This example is single-threaded, so the wait is a no-op here; it is kept so
- * every example teaches the same teardown.  The wait is bounded: after step 1 no new handler can start, and a
- * handler that began earlier only reads the global once and makes one
- * atomic-flag call.  atomic_int is lock-free, hence async-signal-safe.
- */
-static atomic_int g_handler_active = 0;
-static TstRtpDemuxReceiver *volatile g_receiver = NULL;
 static volatile sig_atomic_t g_shutdown_requested = 0;
 
 static void on_sigint(int sig) {
     (void)sig;
     g_shutdown_requested = 1;
-    atomic_fetch_add(&g_handler_active, 1);
 
     /*
      * Why call cancel from the signal handler?
@@ -118,15 +105,13 @@ static void on_sigint(int sig) {
      *   parked _next_event notices the flag at its next poll tick and
      *   returns TST_E_CLOSED. The handle still needs _close after the loop.
      *
-     *   main() restores the default disposition, waits for g_handler_active
-     *   to drain and clears g_receiver before the close, so a handler never
-     *   reaches a freed receiver.
+     *   main() restores the default disposition and clears g_receiver
+     *   before the close, so a handler never reaches a freed receiver.
      */
     TstRtpDemuxReceiver *rx = g_receiver;
     if (rx) {
         tst_rtp_demux_receiver_cancel(rx);
     }
-    atomic_fetch_sub(&g_handler_active, 1);
 }
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
@@ -294,6 +279,27 @@ int main(int argc, char **argv) {
     const char *url = argv[1];
 
     /*
+     * ── Pin signal delivery to this thread (do this before ANY tst_* call) ──
+     *
+     * Why block SIGINT/SIGTERM first?
+     *   A new thread inherits the signal mask of the thread that creates it,
+     *   and a process-directed signal is delivered to any thread that does
+     *   not block it.  The library spawns threads inside its calls.  Blocking
+     *   the two signals here, before anything is spawned, makes every library
+     *   thread start with them blocked, so the handler can only ever run on
+     *   this thread.  A handler on this thread cannot overlap the teardown
+     *   code below: it interrupts it between instructions.  The guarantee
+     *   rests on mask inheritance, which POSIX specifies for thread creation.
+     *   The signals are unblocked again once the handler is installed and the
+     *   library objects exist.
+     */
+    sigset_t sigs;
+    sigemptyset(&sigs);
+    sigaddset(&sigs, SIGINT);
+    sigaddset(&sigs, SIGTERM);
+    pthread_sigmask(SIG_BLOCK, &sigs, NULL);
+
+    /*
      * Install SIGINT handler before opening the receiver so there is no
      * window where Ctrl-C cannot cancel it.  We use signal() rather than
      * sigaction() to stay C99-portable; the one-shot semantics (signal
@@ -331,10 +337,11 @@ int main(int argc, char **argv) {
      *       which happens after this assignment in practice.
      *   (b) The volatile qualifier ensures the compiler does not hoist
      *       the read past the store.
-     * Multi-threaded consumers that register the handler before opening
-     * should use an atomic or a mutex instead.
      */
     g_receiver = rx;
+    /* Deliver the signals to this thread now that the handler is installed
+     * and the library's threads exist (they keep the blocked mask). */
+    pthread_sigmask(SIG_UNBLOCK, &sigs, NULL);
 
     fprintf(stderr, "Opened: %s\n", url);
     fprintf(stderr, "Waiting for MPEG-TS events. Press Ctrl-C to stop.\n");
@@ -447,13 +454,11 @@ int main(int argc, char **argv) {
                 "tst_rtp_demux_receiver_next_event failed (rc=%d): %s\n",
                 rc,
                 tst_get_last_error_str());
-        /* Why this order? A Ctrl-C during or after the close must not run
-         * the handler against a freed receiver: (1) restore the default
-         * disposition, (2) wait for a handler already running (a no-op in
-         * this single-threaded example), (3) clear the global, (4) close. */
+        /* Why this order? The handler runs only on this thread, so it cannot
+         * overlap the close; (1) restore the default disposition so a late
+         * Ctrl-C does not run it against a freed receiver, (2) clear the
+         * global, (3) close. */
         signal(SIGINT, SIG_DFL);
-        while (atomic_load(&g_handler_active) != 0) {
-        }
         g_receiver = NULL;
         tst_rtp_demux_receiver_close(rx);
         return 2;
@@ -467,13 +472,10 @@ int main(int argc, char **argv) {
      * Do NOT access any ev.u.* pointer-fields after this call — they
      * borrow from the arena that _close just freed.
      *
-     * Restore the default SIGINT disposition, wait for a running handler
-     * (a no-op here) and clear g_receiver first, so the handler cannot reach
-     * the receiver while or after it is freed.
+     * Restore the default SIGINT disposition and clear g_receiver first, so
+     * the handler cannot reach the receiver after it is freed.
      */
     signal(SIGINT, SIG_DFL);
-    while (atomic_load(&g_handler_active) != 0) {
-    }
     g_receiver = NULL;
     tst_rtp_demux_receiver_close(rx);
     return 0;

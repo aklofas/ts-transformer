@@ -73,7 +73,7 @@
 #include "tstrans.h"
 
 #include <signal.h>
-#include <stdatomic.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -103,32 +103,19 @@
  *   is the simplest cross-platform mechanism for this.
  */
 static volatile sig_atomic_t g_stop_requested = 0;
-/*
- * g_handler_active counts signal handlers currently running.  POSIX may
- * deliver a process-directed SIGINT/SIGTERM to ANY thread that does not
- * block it, including a library worker thread, so a handler can still be
- * inside the cancel call when main starts tearing down.  Restoring the
- * default disposition stops NEW handler runs but not one already in
- * flight; teardown therefore (1) restores SIG_DFL, (2) waits for this
- * count to reach zero, (3) clears the handle global, (4) frees the handle.
- * The wait is bounded: after step 1 no new handler can start, and a
- * handler that began earlier only reads the global once and makes one
- * atomic-flag call.  atomic_int is lock-free, hence async-signal-safe.
- */
-static atomic_int g_handler_active = 0;
+/* Set by main() before the handler can run; cleared by main() before it frees
+ * the handle.  The handler runs only on the main thread (see main()). */
 static struct tst_rtsp_cancel_handle_t *volatile g_cancel_handle = NULL;
 
 static void sigint_handler(int sig) {
     (void)sig;
     g_stop_requested = 1;
-    atomic_fetch_add(&g_handler_active, 1);
     /* Read the global once: test and use must see the same value. */
     struct tst_rtsp_cancel_handle_t *h = g_cancel_handle;
     /* tst_rtsp_cancel_handle_cancel is atomic-flag-set — safe in a handler. */
     if (h) {
         tst_rtsp_cancel_handle_cancel(h);
     }
-    atomic_fetch_sub(&g_handler_active, 1);
 }
 
 /* ── Synthetic H.264 NAL ────────────────────────────────────────────────────
@@ -253,6 +240,28 @@ static long parse_long(int argc, char **argv, const char *key, long dflt) {
 /* ── main ───────────────────────────────────────────────────────────────────*/
 
 int main(int argc, char **argv) {
+    /*
+     * ── Pin signal delivery to this thread (do this before ANY tst_* call) ──
+     *
+     * Why block SIGINT/SIGTERM first?
+     *   A new thread inherits the signal mask of the thread that creates it,
+     *   and a process-directed signal is delivered to any thread that does
+     *   not block it.  The library spawns threads inside its calls.  Blocking
+     *   the two signals here, before anything is spawned, makes every library
+     *   thread start with them blocked, so the handler can only ever run on
+     *   this thread.  A handler on this thread cannot overlap the teardown
+     *   code below: it interrupts it between instructions.  The guarantee
+     *   rests on the mask being inherited, which POSIX specifies for
+     *   pthread_create and which the library's threads (created while the
+     *   mask is blocked) therefore share.  The signals are unblocked again
+     *   once the handler is installed and the library objects exist.
+     */
+    sigset_t sigs;
+    sigemptyset(&sigs);
+    sigaddset(&sigs, SIGINT);
+    sigaddset(&sigs, SIGTERM);
+    pthread_sigmask(SIG_BLOCK, &sigs, NULL);
+
     /* ── Step 0: parse CLI ──────────────────────────────────────────────── */
     const char *bind_url   = parse_arg(argc, argv, "--bind",  "rtsp://0.0.0.0:8554");
     const char *mount_path = parse_arg(argc, argv, "--mount", "/live");
@@ -424,6 +433,9 @@ int main(int argc, char **argv) {
     sa.sa_handler = sigint_handler;
     sigaction(SIGINT,  &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
+    /* Deliver the signals to this thread now that the handler is installed
+     * and the library's threads exist (they keep the blocked mask). */
+    pthread_sigmask(SIG_UNBLOCK, &sigs, NULL);
 
     /* ── Step 5: Push loop ──────────────────────────────────────────────────
      *
@@ -541,13 +553,11 @@ int main(int argc, char **argv) {
 
     /*
      * Why this order?
-     *   The handler dereferences g_cancel_handle and may run on any thread,
-     *   including one of the server's own.  (1) SIG_DFL stops new handler
-     *   runs: a late Ctrl-C just ends the process.  (2) Waiting for
-     *   g_handler_active to drain lets a run already in flight finish; it is
-     *   bounded because nothing can start a new one.  (3) Clearing the global
-     *   and then (4) freeing the handle is now safe: no handler is running
-     *   and none can read the pointer being released.
+     *   The handler dereferences g_cancel_handle.  It runs only on this
+     *   thread, so it cannot overlap this code; what remains is a signal
+     *   arriving AFTER the free.  (1) SIG_DFL first: a late Ctrl-C just ends
+     *   the process instead of running the handler.  (2) Clear the global,
+     *   then (3) free the handle.
      */
     struct sigaction dfl;
     memset(&dfl, 0, sizeof dfl);
@@ -555,10 +565,6 @@ int main(int argc, char **argv) {
     sigemptyset(&dfl.sa_mask);
     sigaction(SIGINT, &dfl, NULL);
     sigaction(SIGTERM, &dfl, NULL);
-    while (atomic_load(&g_handler_active) != 0) {
-        /* spin: a handler that started before the line above finishes in
-         * microseconds */
-    }
     struct tst_rtsp_cancel_handle_t *cancel = g_cancel_handle;
     g_cancel_handle = NULL;
     if (cancel) {
