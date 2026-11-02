@@ -17,7 +17,7 @@
 use crate::error::DemuxError;
 use crate::mpegts::common::{Pts90khz, StreamTypeCode};
 use crate::mpegts::demux::event::{
-    AdaptationFieldKind, DemuxEvent, NonConformantIssue, StreamId, StreamKind,
+    AdaptationFieldKind, DemuxEvent, MultiCellAuReason, NonConformantIssue, StreamId, StreamKind,
 };
 use crate::mpegts::demux::pes::{Reassembler, ReassemblyOutcome, is_damage_reason};
 use crate::mpegts::demux::pid_state::{PidState, TopologyDiff};
@@ -674,8 +674,24 @@ impl Demuxer {
         } else if pkt.has_payload && self.stream_kind(pkt.pid).is_some() {
             // H.222.0 §2.4.3.3: a continuity_counter gap means packets of
             // this PID were lost, so the PES in flight is missing bytes.
+            // A multi-cell AU may span PES, so an AU in progress on the PID
+            // may have lost a cell too: discard it and report the gap at the
+            // AU level.
             if cc_jumped {
                 self.pes.mark_damaged(pkt.pid);
+                if let Some(dropped_bytes) = self.au_reassembler.discard_pid(pkt.pid) {
+                    let stream = self.lookup_stream(pkt.pid).unwrap_or_else(|| {
+                        StreamId::anonymous(pkt.pid, self.program_number_for_pid(pkt.pid))
+                    });
+                    self.queue_nonconformant(
+                        stream,
+                        NonConformantIssue::MultiCellAu {
+                            pid: pkt.pid,
+                            dropped_bytes,
+                            reason: MultiCellAuReason::SequenceGap,
+                        },
+                    );
+                }
             }
             self.handle_pes_packet(&pkt)?;
         }
