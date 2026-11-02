@@ -173,6 +173,11 @@ fn main() {
     // builds silently reuse the previous librist/mbedTLS static libs.
     // Mirrors srt-sys; see the comment there.
     println!("cargo:rerun-if-changed=vendor/librist/meson.build");
+    // The staged copy under OUT_DIR is refreshed only when this script runs, and
+    // bindgen's CargoCallbacks watch the STAGED headers, not these. Watch the two
+    // trees meson compiles from (a directory entry scans it recursively).
+    println!("cargo:rerun-if-changed=vendor/librist/include");
+    println!("cargo:rerun-if-changed=vendor/librist/src");
     // The files `SOURCE_FIXUPS` patches: a bump that changes one must re-run
     // the fixup check even when meson.build is untouched.
     println!("cargo:rerun-if-changed=vendor/librist/src/rist.c");

@@ -64,6 +64,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tstrans-srt-sys, tstrans-rist-sys
 
+- The vendored builds compile a staged copy of the submodule, and an edit to a header or source file in `vendor/librist` or `vendor/srt` that is not one of the few named files did not re-run the build script, so an incremental build kept the stale staged copy. The build scripts now watch the staged source trees.
 - `srt-sys` and `rist-sys` link a host libsrt or librist only when `pkg-config --static` resolves it, it is at least libsrt 1.5.7 / librist 0.2.20 and, with the `mbedtls` feature on, it is built against mbedTLS; otherwise the vendored copy is built and the build prints a warning naming the reason. Before, libsrt 1.5.0 and librist 0.2.10 were accepted whatever their crypto backend.
 
 ### Fixed — tstrans-rist-sys, tst-rist

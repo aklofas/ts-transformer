@@ -173,6 +173,12 @@ fn main() {
     // two top-level files (each carries the version) is enough to catch
     // every pin change without recursively statting the whole submodule.
     println!("cargo:rerun-if-changed=vendor/srt/CMakeLists.txt");
+    // The staged copy under OUT_DIR is refreshed only when this script runs, and
+    // bindgen's CargoCallbacks watch the STAGED headers, not these. Watch the three
+    // trees cmake compiles from (a directory entry scans it recursively).
+    println!("cargo:rerun-if-changed=vendor/srt/srtcore");
+    println!("cargo:rerun-if-changed=vendor/srt/haicrypt");
+    println!("cargo:rerun-if-changed=vendor/srt/common");
     // The file `SOURCE_FIXUPS` patches: a bump that changes it must re-run
     // the fixup check even when CMakeLists.txt is untouched.
     println!("cargo:rerun-if-changed=vendor/srt/srtcore/core.cpp");
