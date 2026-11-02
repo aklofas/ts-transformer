@@ -121,7 +121,14 @@ where
         }
     }
     if !conn.wants_read() {
-        return Ok(HandshakeStep::Progress);
+        // Unreachable on the accepted server path: the send buffer is empty
+        // after the flush above, rustls ignores a close_notify before
+        // application data, and early data is off, so a handshaking server
+        // always wants to read. Fail instead of returning `Progress`, which
+        // would spin the caller's loop with no I/O.
+        return Err(io::Error::other(
+            "TLS handshake stalled: rustls wants neither to read nor to write",
+        ));
     }
     let n = loop {
         match conn.read_tls(sock) {

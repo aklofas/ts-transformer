@@ -500,6 +500,12 @@ impl TcpTransport {
             match tls.handshake_step() {
                 Ok(HandshakeStep::Done) => return Ok(()),
                 Ok(HandshakeStep::Progress) => continue,
+                // A cancel or close that landed while the step was parked
+                // wins over whatever the interrupted syscall reported, as in
+                // `write_loop`: liveness first, then the latch on its own.
+                Err(_) if !self.alive.load(Ordering::Acquire) || self.cancel.is_cancelled() => {
+                    return Err(self.dead_error());
+                }
                 Err(e) if is_poll_timeout(&e) => {
                     // Zero progress, nothing wrong with the socket: the same
                     // Backpressure a silent peer produced inside the lazy

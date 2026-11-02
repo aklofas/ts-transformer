@@ -255,7 +255,17 @@ fn cancel_wakes_a_send_parked_on_a_dripping_tls_handshake() {
         let about_to_send = about_to_send.clone();
         thread::spawn(move || {
             about_to_send.store(true, Ordering::Release);
-            let _ = tx.send(conn.send_bytes(&[0x47; 188]));
+            // A drip gap longer than the socket tick (a loaded runner) is a
+            // zero-progress Backpressure; retry it so only the cancel ends
+            // the send.
+            let deadline = Instant::now() + scaled(Duration::from_secs(15));
+            let r = loop {
+                match conn.send_bytes(&[0x47; 188]) {
+                    Err(TransportError::Backpressure { .. }) if Instant::now() < deadline => {}
+                    other => break other,
+                }
+            };
+            let _ = tx.send(r);
         })
     };
 
