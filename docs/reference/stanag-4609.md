@@ -68,9 +68,11 @@ Class 1 Motion Imagery in an MPEG-2 Transport Stream (MISP-2015.1-50).
 - The H.265 MISP SEI is written with `nuh_temporal_id_plus1 = 1` (TemporalId
   0) on every frame, which an encoder using temporal sub-layers above 0 does
   not match.
-- The auto-emitted `metadata_std_descriptor` declares zero leak rates and a
-  zero buffer size; supply your own descriptor (tag 0x27) if your receiver
-  needs real STD values.
+- The auto-emitted `metadata_std_descriptor` for synchronous KLV declares an
+  input leak rate of 13 109 x 400 bit/s, a 65 x 1024-byte buffer and an
+  output leak rate of 0, an envelope sized for the default 100 ms PSI
+  interval; supply your own descriptor (tag 0x27) if your receiver needs
+  other STD values.
 
 ---
 

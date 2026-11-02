@@ -203,7 +203,11 @@ them; DVB subtitling/teletext are the only such kinds.
 | `Subtitle(Cea708Standalone)` — `0x06` + `GA94` registration | `add_subtitle(pid, SubtitleCodec::Cea708Standalone)` | Registration descriptor auto-re-emitted. |
 | `Subtitle(WebVttInTs)` — `0x06` + `VTTC` registration | `add_subtitle(pid, SubtitleCodec::WebVttInTs)` | Registration descriptor auto-re-emitted. |
 | `Subtitle(DvbSubtitling)` / `Subtitle(DvbTeletext)` | **error (`ConfigInvalid`)** | DVB descriptor params (language, page IDs) are not recoverable from the PMT entry alone. Pass `StreamKindTag::Subtitle` in `drop` to exclude all subtitle streams. |
-| `Unknown(stream_type)` | `add_data(pid, stream_type, carries_pts=true)` | PES pass-through keeping the raw PMT `stream_type` byte; the stream's PMT descriptors are preserved verbatim on the rebuilt PMT. Same `carries_pts` rule as KLV. Pass `StreamKindTag::Unknown` in `drop` to exclude private data streams you don't want to carry. |
+| `Unknown(stream_type)` | `add_data(pid, stream_type, carries_pts=true)` | PES pass-through keeping the raw PMT `stream_type` byte; the stream's PMT descriptors are preserved verbatim on the rebuilt PMT. `carries_pts` is true, like synchronous KLV. Pass `StreamKindTag::Unknown` in `drop` to exclude private data streams you don't want to carry. |
+
+A source with two synchronous KLV streams that do not declare distinct
+`metadata_service_id`s is refused with `ConfigInvalid`; build the config by
+hand with `stream_descriptors_for_klv`.
 
 The `drop` filter is kind-coarse: `StreamKindTag::Subtitle` drops *all* subtitle
 streams including the representable CEA-708 / WebVTT kinds, not only the
