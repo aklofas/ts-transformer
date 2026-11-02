@@ -207,7 +207,7 @@ fn managed_receive_reconnects_through_factory() {
     };
 
     let mut managed =
-        ManagedRecvTransport::new(initial, factory, policy).expect("a default policy validates");
+        ManagedRecvTransport::new(initial, factory, policy).expect("the policy validates");
 
     let mut buf = [0u8; 188];
     let n = managed.recv_bytes(&mut buf).unwrap();

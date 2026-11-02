@@ -81,7 +81,7 @@ fn managed_tcp_recv_cancel_unblocks_parked_read() {
     };
 
     let mut managed =
-        ManagedRecvTransport::new(inner, factory, policy).expect("a default policy validates");
+        ManagedRecvTransport::new(inner, factory, policy).expect("the policy validates");
 
     // Obtain the cancel handle BEFORE moving `managed` into the receiving
     // thread -- this mirrors real usage, where a caller elsewhere holds the

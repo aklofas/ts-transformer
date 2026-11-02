@@ -4275,7 +4275,7 @@ mod tests {
             },
             policy,
         )
-        .expect("a default policy validates");
+        .expect("the policy validates");
 
         let hdr = corruption_header();
         let wire = wire_for("baseline", 3.0);

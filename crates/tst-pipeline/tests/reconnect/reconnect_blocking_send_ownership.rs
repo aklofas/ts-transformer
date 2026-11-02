@@ -61,7 +61,7 @@ fn managed_break_then_backpressure() -> (ManagedTransport<ScriptedSend>, Rig) {
         mode: ReconnectMode::Blocking,
     };
     (
-        ManagedTransport::new(initial, factory, policy).expect("a default policy validates"),
+        ManagedTransport::new(initial, factory, policy).expect("the policy validates"),
         Rig {
             wire,
             factory_calls,
@@ -254,7 +254,7 @@ fn managed_break_then(
         mode: ReconnectMode::Blocking,
     };
     (
-        ManagedTransport::new(initial, factory, policy).expect("a default policy validates"),
+        ManagedTransport::new(initial, factory, policy).expect("the policy validates"),
         Rig {
             wire,
             factory_calls,
@@ -391,8 +391,7 @@ fn sender_over_blocking_managed_resplits_a_bundle_after_the_ceiling_shrinks() {
         overflow_policy: OverflowPolicy::DropOldest,
         mode: ReconnectMode::Blocking,
     };
-    let managed =
-        ManagedTransport::new(initial, factory, policy).expect("a default policy validates");
+    let managed = ManagedTransport::new(initial, factory, policy).expect("the policy validates");
     let stats = managed.stats_handle();
     let mut sender = Sender::new(managed, SenderConfig::default());
 

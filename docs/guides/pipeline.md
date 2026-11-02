@@ -479,7 +479,7 @@ Defaults (`ReconnectPolicy::default()`):
   worker thread instead; see the cookbook recipe linked above.
 
 `ReconnectPolicy::validate` refuses zero backoff with unlimited attempts
-(`max_attempts: None` and a zero `Constant` or `Exponential` base), which
+(`max_attempts: None` and a zero `Constant`, or an `Exponential` with a zero base or a zero cap), which
 would retry with no pacing. `ManagedTransport::new`,
 `ManagedRecvTransport::new` and every managed open return the error as
 `ReconnectPolicyError::UnpacedUnlimitedRetry`, or the config-invalid kind in

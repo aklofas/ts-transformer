@@ -213,7 +213,7 @@ fn cancel_completes_while_a_direct_send_is_parked() {
         cancelled: Arc::clone(&cancelled),
     };
     let managed = ManagedTransport::new(inner, dead_factory(), policy(ReconnectMode::Blocking))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let cancel = managed
         .cancel_handle()
         .expect("managed always hands out a cancel handle");
@@ -257,7 +257,7 @@ fn cancel_completes_while_an_inline_gap_drain_is_parked() {
         ),
         policy(ReconnectMode::Blocking),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     let cancel = managed
         .cancel_handle()
         .expect("managed always hands out a cancel handle");
@@ -309,7 +309,7 @@ fn cancel_completes_while_the_background_worker_drain_is_parked() {
         ),
         policy(ReconnectMode::Background),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     let cancel = managed
         .cancel_handle()
         .expect("managed always hands out a cancel handle");
@@ -363,7 +363,7 @@ fn close_wakes_background_drain() {
         ),
         policy(ReconnectMode::Background),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
 
     managed
         .send_bytes(b"x")
@@ -430,7 +430,7 @@ fn drop_wakes_background_drain() {
         ),
         policy(ReconnectMode::Background),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
 
     managed
         .send_bytes(b"x")

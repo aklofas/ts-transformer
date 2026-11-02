@@ -100,7 +100,7 @@ fn open(url: &SrtUrl, slot: &FactoryCancel) -> Result<SrtTransport, SrtError> {
 ///
 /// # Errors
 ///
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - Whatever the initial [`SrtUrl::connect`] / [`SrtUrl::accept_one`]
 ///   returned; the managed transport is not built.
 pub fn managed_recv_transport_from_url(
@@ -143,7 +143,7 @@ fn recv_handles(managed: &ManagedRecvTransport<SrtTransport>) -> ManagedHandles 
 ///
 /// # Errors
 ///
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_demux_receiver_from_url(
     url: &SrtUrl,
@@ -161,7 +161,7 @@ pub fn managed_demux_receiver_from_url(
 ///
 /// # Errors
 ///
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_demux_receiver_from_url_with_cancel(
     url: &SrtUrl,
@@ -186,7 +186,7 @@ pub fn managed_demux_receiver_from_url_with_cancel(
 ///
 /// # Errors
 ///
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_receiver_from_url(
     url: &SrtUrl,
@@ -203,7 +203,7 @@ pub fn managed_receiver_from_url(
 ///
 /// # Errors
 ///
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_receiver_from_url_with_cancel(
     url: &SrtUrl,
@@ -221,7 +221,7 @@ pub fn managed_receiver_from_url_with_cancel(
 ///
 /// # Errors
 ///
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_raw_receiver_from_url(
     url: &SrtUrl,
@@ -301,7 +301,7 @@ fn send_handles(managed: &ManagedTransport<SrtTransport>) -> (ManagedHandles, Ma
 /// # Errors
 ///
 /// - [`SrtError::Option`] — `?mode=listener` (refused before connecting).
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - [`SrtError::Connect`] — the initial connect failed.
 /// - [`SrtError::Mux`] — `config` was rejected by the muxer; the connected
 ///   transport is dropped.
@@ -331,7 +331,7 @@ pub fn managed_mux_sender_from_url(
 /// # Errors
 ///
 /// - [`SrtError::Option`] — `?mode=listener` (refused before connecting).
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - [`SrtError::Connect`] — the initial connect failed.
 pub fn managed_sender_from_url(
     url: &SrtUrl,
@@ -356,7 +356,7 @@ pub fn managed_sender_from_url(
 /// # Errors
 ///
 /// - [`SrtError::Option`] — `?mode=listener` (refused before connecting).
-/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - [`SrtError::Connect`] — the initial connect failed.
 pub fn managed_raw_sender_from_url(
     url: &SrtUrl,

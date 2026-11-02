@@ -105,7 +105,7 @@ fn connection_drops_mid_ts_packet_reconnect_resyncs_cleanly() {
     });
 
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     let mut saw_reconnect = false;
@@ -157,7 +157,7 @@ fn reconnect_event_is_observable_via_public_api() {
     });
 
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     let mut events: Vec<&'static str> = Vec::new();
@@ -239,7 +239,7 @@ fn reconnect_during_in_flight_psi_drops_partial_state() {
     });
 
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     let mut iters = 0;
@@ -362,7 +362,7 @@ fn clean_reconnect_drops_first_post_reconnect_packet() {
     });
 
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     let mut saw_reconnect = false;
@@ -440,7 +440,7 @@ fn end_reason_reconnect_exhausted_on_budget_giveup() {
     let factory =
         Box::new(|| -> Result<ScriptedRecv, TransportError> { Err(broken("peer never returns")) });
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(1)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     assert_eq!(
@@ -477,7 +477,7 @@ fn end_reason_cancelled_on_caller_cancel() {
     let factory =
         Box::new(|| -> Result<ScriptedRecv, TransportError> { Err(broken("unused (test)")) });
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(5)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     // Obtain-before-move pattern: grab both handles up front, exactly as
@@ -522,7 +522,7 @@ fn end_reason_none_while_live() {
     let factory =
         Box::new(|| -> Result<ScriptedRecv, TransportError> { Err(broken("unused (test)")) });
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(5)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     match rx.recv_event() {
@@ -549,7 +549,7 @@ fn end_reason_first_writer_wins_across_repeated_terminal_calls() {
     let factory =
         Box::new(|| -> Result<ScriptedRecv, TransportError> { Err(broken("peer never returns")) });
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(1)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     // Drive to the first terminal Ok(None).
@@ -649,7 +649,7 @@ fn reconnecting_flag_true_during_outage_false_after_rebuild_latched_after_giveup
     });
 
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     // Obtain-before-drive: the same shape a binding uses before boxing

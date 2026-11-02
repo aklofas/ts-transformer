@@ -71,7 +71,7 @@ fn cancel_wakes_a_factory_parked_on_its_installed_handle() {
         policy,
         factory_cancel,
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     let cancel = managed.cancel_handle().expect("managed cancel handle");
 
     let canceller = std::thread::spawn(move || {
@@ -177,7 +177,7 @@ fn factory_observed_cancel_is_terminal_and_not_retried() {
         policy,
         factory_cancel,
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
 
     let canceller = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(150));
@@ -297,7 +297,7 @@ fn factory_success_after_cancel_is_not_delivered() {
         dead: true,
     };
     let mut managed =
-        ManagedRecvTransport::new(initial, factory, policy).expect("a default policy validates");
+        ManagedRecvTransport::new(initial, factory, policy).expect("the policy validates");
     *handle_cell.lock().unwrap() = managed.cancel_handle();
 
     let mut buf = [0u8; 16];

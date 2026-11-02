@@ -1511,7 +1511,7 @@ mod tests {
             ..ReconnectPolicy::default()
         };
         let managed = ManagedTransport::new(Lost, || Err::<Lost, _>(broken()), policy)
-            .expect("a default policy validates");
+            .expect("the policy validates");
         let cancel = managed
             .cancel_handle()
             .expect("a managed transport has one");
