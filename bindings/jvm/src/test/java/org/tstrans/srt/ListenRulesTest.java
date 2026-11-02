@@ -194,4 +194,32 @@ class ListenRulesTest {
             assertFalse(listener.rules().remove("a\0b"));
         }
     }
+
+    @Test
+    @Timeout(30)
+    void closedListenerReportsClosedBeforeValidatingTheRule() throws Exception {
+        assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
+        Listener listener = listen();
+        ListenRules rules = listener.rules();
+        listener.close();
+        assertEquals(SrtException.Kind.CLOSED, assertThrows(SrtException.class,
+            () -> rules.set("a", ListenRule.acceptWith("short"))).kind());
+        assertEquals(SrtException.Kind.CLOSED, assertThrows(SrtException.class,
+            () -> rules.setDefault(ListenRule.acceptWith("short"))).kind());
+    }
+
+    @Test
+    @Timeout(30)
+    void malformedUtf16IsRefused() throws Exception {
+        assertThrows(IllegalArgumentException.class, () -> ListenRule.acceptWith("\uD800secretsecret"));
+        assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
+        try (Listener listener = listen()) {
+            ListenRules rules = listener.rules();
+            assertThrows(IllegalArgumentException.class, () -> rules.set("a\uD800", ListenRule.accept()));
+            assertThrows(IllegalArgumentException.class, () -> rules.remove("\uDC00"));
+            rules.set("a\uD83D\uDE00", ListenRule.accept()); // a well-formed pair is an ordinary key
+            assertTrue(rules.remove("a\uD83D\uDE00"));
+            assertEquals(0, rules.size());
+        }
+    }
 }

@@ -35,9 +35,13 @@ public final class ListenRule {
      * length follows the caller's key material. The passphrase is validated
      * when the rule is installed ({@code CONFIG_INVALID} unless it is 10 to 80
      * bytes of UTF-8).
+     *
+     * @throws IllegalArgumentException for a passphrase with an unpaired UTF-16 surrogate
      */
     public static ListenRule acceptWith(String passphrase) {
-        return new ListenRule(KIND_ACCEPT_WITH, Objects.requireNonNull(passphrase, "passphrase"), null);
+        Objects.requireNonNull(passphrase, "passphrase");
+        ListenRules.requireWellFormed(passphrase, "passphrase");
+        return new ListenRule(KIND_ACCEPT_WITH, passphrase, null);
     }
 
     /**

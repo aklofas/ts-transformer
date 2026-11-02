@@ -158,6 +158,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-jni
 
+- `ListenRules.set`/`remove` and `ListenRule.acceptWith` throw `IllegalArgumentException` for a string with an unpaired UTF-16 surrogate; such a string was decoded lossily at the JNI boundary, so two distinct Java strings could name one rule.
 - A byte-sized `int` argument outside 0..=255 (`pushKlv`/`pushKlvTo` `metadataServiceId`, a `MispTimestamp` `timeStatus`, `CoreId.version`, the slice-header `nalUnitType`, `H264DepayConfig.payloadType`, a data stream type) throws `IllegalArgumentException` instead of wrapping modulo 256; a refused push queues nothing.
 - `MuxerConfig.Builder.programNumber` outside 0..=0xFFFF, `pmtPid` outside 0x0010..=0x1FFE, `pcrPid` other than -1 or that range, a `Pairer` PID outside 0x0010..=0x1FFE and a `lastSeenMicros(pid)` outside 0..=0x1FFF throw `IllegalArgumentException` instead of wrapping modulo 65536 (a wrapped value configured another PID silently; `lastSeenMicros(0x10101)` answered for PID 0x101).
 - `DemuxerConfig.Builder.strictMode(null)` and `av1Carriage(null)` throw `NullPointerException`.
@@ -169,6 +170,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-jni
 
+- `ListenRules.set`/`setDefault` on a closed or cancelled listener throw `SrtException(CLOSED)` before the rule is validated; a bad passphrase used to answer `CONFIG_INVALID` there.
 - `module-info` exports `org.tstrans.shells`, `org.tstrans.hls` and `org.tstrans.webrtc`; named-module consumers reach the SRT shell returns again.
 - Two JVMs starting at once on a temp directory could fail to load the native library, or delete a library another JVM was about to load. Each JVM now stages its own file, reuses a cached library only after checking its size and SHA-256, and the loader never deletes cache entries. On Windows, a publish that collides with another JVM replacing the same cached file at the same instant is retried briefly instead of failing the load.
 - `Socket.intoMuxSender(null)` and `intoDemuxReceiver(null)` no longer leak the native socket, and a config the native layer refuses no longer destroys the socket; the corrected retry succeeds.

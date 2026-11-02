@@ -117,9 +117,9 @@ jni_native! {
         passphrase: JString<'local>,
         reject_code: jint,
     ) = () => {
+        let Some(rules) = rules_or_throw(env, handle) else { return };
         let Ok(stream_id) = stream_id.try_to_string(env) else { return };
         let Some(rule) = build_rule(env, kind, &passphrase, reject_code) else { return };
-        let Some(rules) = rules_or_throw(env, handle) else { return };
         if let Err(e) = rules.set(&stream_id, rule) {
             throw_rule_error(env, e);
         }
@@ -135,8 +135,8 @@ jni_native! {
         passphrase: JString<'local>,
         reject_code: jint,
     ) = () => {
-        let Some(rule) = build_rule(env, kind, &passphrase, reject_code) else { return };
         let Some(rules) = rules_or_throw(env, handle) else { return };
+        let Some(rule) = build_rule(env, kind, &passphrase, reject_code) else { return };
         if let Err(e) = rules.set_default(rule) {
             throw_rule_error(env, e);
         }

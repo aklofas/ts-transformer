@@ -1010,7 +1010,7 @@ explicit rule and `size()` counts them. `RejectReason` has constants such as
 codes of 2000 or more, and `ofCode(int)`. `ListenRule.reject` takes codes of
 1000 or more. `set` throws `SrtException(CONFIG_INVALID)` for a bad
 passphrase, a reject code above 2147482647 (which libsrt cannot send), or a
-NUL byte in a stream ID or rule key. After `Listener.close()` every `ListenRules` method throws
+NUL byte in a stream ID or rule key. A stream ID, rule key or passphrase with an unpaired UTF-16 surrogate is refused with `IllegalArgumentException` before the listener is consulted (JNI would otherwise decode it lossily and two distinct strings could share one rule). On a closed listener every other `set`/`setDefault` throws `SrtException(CLOSED)` even when the rule itself is invalid. After `Listener.close()` every `ListenRules` method throws
 `SrtException(CLOSED)` and `Listener.rules()` throws `IllegalStateException`.
 A rule installed after `accept` returns does not cover a caller whose
 handshake already completed, so keep your own check after `accept` when it
