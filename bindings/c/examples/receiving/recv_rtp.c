@@ -285,9 +285,9 @@ int main(int argc, char **argv) {
      *   A new thread inherits the signal mask of the thread that creates it,
      *   and a process-directed signal is delivered to any thread that does
      *   not block it.  The library spawns threads inside its calls.  Blocking
-     *   the two signals here, before anything is spawned, makes every library
-     *   thread start with them blocked, so the handler can only ever run on
-     *   this thread.  A handler on this thread cannot overlap the teardown
+     *   the two signals here, before anything is spawned, makes every thread
+     *   created before the unblock start with them blocked, so the handler
+     *   can only ever run on this thread.  A handler on this thread cannot overlap the teardown
      *   code below: it interrupts it between instructions.  The guarantee
      *   rests on mask inheritance, which POSIX specifies for thread creation.
      *   The signals are unblocked again once the handler is installed and the
@@ -307,6 +307,8 @@ int main(int argc, char **argv) {
      * because we check g_shutdown_requested in the loop and exit promptly.
      */
     signal(SIGINT, on_sigint);
+    /* SIGTERM is left at its default disposition (it ends the process); only
+     * Ctrl-C gets the graceful cancel in this example. */
 
     /*
      * Open the RTP-backed demux receiver.
@@ -333,8 +335,8 @@ int main(int argc, char **argv) {
     /*
      * Publish the receiver handle for the SIGINT handler.  The assignment
      * is not guarded by a mutex because:
-     *   (a) SIGINT is not delivered until the process receives the signal,
-     *       which happens after this assignment in practice.
+     *   (a) SIGINT stays blocked until the unblock just below, which is
+     *       after this assignment, and the handler runs only on this thread.
      *   (b) The volatile qualifier ensures the compiler does not hoist
      *       the read past the store.
      */

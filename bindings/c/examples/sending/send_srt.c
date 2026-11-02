@@ -230,12 +230,12 @@ int main(int argc, char **argv) {
          *   100 packets = 14 full bundles + 2 packets still sitting in the
          *   bundling buffer. A short (2-packet) datagram only leaves when
          *   something forces it out: a later send completing the bundle,
-         *   this call, or close. `tst_sender_close` DOES flush the partial
-         *   bundle for you (close == drop by contract) — but it swallows
-         *   the flush's result. Calling flush yourself is how you get to
-         *   SEE a failure on the last bytes, and in a long-running relay it
-         *   is how you push a logical boundary (end of file, end of GOP)
-         *   onto the wire now rather than whenever the next bundle fills.
+         *   this call. `tst_sender_close` does NOT send it: close is
+         *   cancel-first and abortive, so the buffered tail is discarded.
+         *   Calling flush yourself is how you send the last bytes and SEE
+         *   a failure on them, and in a long-running relay it is how you
+         *   push a logical boundary (end of file, end of GOP) onto the wire
+         *   now rather than whenever the next bundle fills.
          */
         int rc = tst_sender_flush(sender);
         if (rc != 0) {

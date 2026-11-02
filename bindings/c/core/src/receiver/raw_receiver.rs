@@ -48,9 +48,10 @@ pub unsafe extern "C" fn tst_raw_receiver_open(
     })
 }
 
-/// Explicit listener-mode open. Forces listener mode regardless of any
-/// `?mode=` URL value — the `_listener` suffix is authoritative. URLs
-/// with `?mode=caller` are accepted and silently overridden.
+/// Explicit listener-mode open. The `_listener` suffix is authoritative: a
+/// host in the URL names the local bind address, never a dial target. An
+/// explicit `?mode=` other than `listener` is refused with
+/// `TST_E_INVALID_CONFIG`.
 ///
 /// Empty-host URLs like `srt://:7000` are accepted directly; the parser's
 /// requirement for an explicit `?mode=listener` does not apply here because
@@ -282,8 +283,9 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_open(
 }
 
 /// Explicit listener-mode open for the managed receiver. Forces
-/// listener mode regardless of any `?mode=` URL value — the
-/// `_listener` suffix is authoritative. On peer disconnect the managed
+/// listener mode — the `_listener` suffix is authoritative: a host in the
+/// URL names the bind address, never a dial target, and an explicit
+/// `?mode=` other than `listener` is refused with `TST_E_INVALID_CONFIG`. On peer disconnect the managed
 /// wrapper re-binds a fresh listener socket and accepts the next
 /// incoming connection. Note: the re-bind + re-accept may block
 /// significantly between attempts depending on the reconnect policy;
