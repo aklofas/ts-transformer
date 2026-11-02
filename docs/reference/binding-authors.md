@@ -265,10 +265,11 @@ and `tst_core::transport::conformance` pins it in each crate's
 finish) after a cancel at the `Owned` entry
 (`Owned::with_mut_unless_cancelled` / `with_ref_blocking_unless_cancelled`,
 `HandleState::Cancelled`), buffered output included; the H.264 receiver's
-drain to end of stream is the documented exception. The detail is `cancelled from another thread` wherever
-the `BindingError` reaches the caller unchanged — the Rust binding layer,
-Python, the JVM, and the C **send** path. The C **receive** path is the one
-exception: a receive that ends `EndOfStream` goes through
+drain to end of stream is the documented exception. An entry refused at that
+gate carries the same detail, `cancelled from another thread`, as a cancel that
+lands while the call is parked. That detail reaches the caller unchanged in the
+Rust binding layer, Python, the JVM, and the C **send** path. The C **receive**
+path is the one exception: a receive that ends `EndOfStream` goes through
 `record_recv_closed`, which picks its code and message from the shared cancel
 flag so a caller close and a peer EOS can be told apart; a typed `Closed` (a
 cancel or close, whichever handle issued it) is −7 regardless of the flag.
