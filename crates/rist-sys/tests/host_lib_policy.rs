@@ -36,6 +36,7 @@ fn found_and_admitted_links() {
     let mbed = vec!["rist".to_string(), "mbedcrypto".into()];
     let d = host_lib_decision(
         "librist",
+        "librist",
         (0, 2, 20),
         true,
         StaticProbe::Found {
@@ -50,6 +51,7 @@ fn found_and_admitted_links() {
 fn found_but_refused_warns_with_the_reason() {
     let ossl = vec!["rist".to_string(), "ssl".into()];
     match host_lib_decision(
+        "librist",
         "librist",
         (0, 2, 20),
         true,
@@ -69,6 +71,7 @@ fn found_but_refused_warns_with_the_reason() {
 #[test]
 fn installed_but_not_static_resolvable_warns() {
     let d = host_lib_decision(
+        "librist",
         "librist",
         (0, 2, 20),
         true,
@@ -94,6 +97,7 @@ fn installed_but_not_static_resolvable_warns() {
 #[test]
 fn nothing_installed_is_silent() {
     let d = host_lib_decision(
+        "librist",
         "librist",
         (0, 2, 20),
         true,

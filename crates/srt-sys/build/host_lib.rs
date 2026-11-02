@@ -8,8 +8,7 @@
 ///
 /// A pre-release or distribution suffix on the floor itself (`0.2.20rc1`,
 /// `1.5.7-dev`, `0.2.20-3`) is read as the floor and admitted: distribution
-/// suffixes are patch levels and rc builds of these libraries are rare
-/// (gap-091 ruling 7, 2026-11-01).
+/// suffixes are patch levels and rc builds of these libraries are rare.
 fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
     let mut parts = version.trim().split('.').map(|p| {
         let digits: String = p.chars().take_while(char::is_ascii_digit).collect();
@@ -85,9 +84,11 @@ pub enum HostLibDecision {
 }
 
 /// Warns when a found host library is refused (floor, backend, or installed
-/// but not statically resolvable), never when none is installed.
+/// but not statically resolvable), never when none is installed. `name` is the
+/// display name in warnings; `pkg_config_name` is the module `pkg-config` knows.
 pub fn host_lib_decision(
     name: &str,
+    pkg_config_name: &str,
     floor: (u32, u32, u32),
     want_mbedtls: bool,
     probe: StaticProbe<'_>,
@@ -108,7 +109,7 @@ pub fn host_lib_decision(
             warning: Some(vendored_warning(
                 name,
                 &format!(
-                    "{name} {v} is installed but `pkg-config --static {name}` could not resolve it: {error}"
+                    "{name} {v} is installed but `pkg-config --static {pkg_config_name}` could not resolve it: {error}"
                 ),
             )),
         },

@@ -38,6 +38,7 @@ fn found_and_admitted_links() {
     let mbed = vec!["srt".to_string(), "mbedcrypto".into()];
     let d = host_lib_decision(
         "libsrt",
+        "srt",
         (1, 5, 7),
         true,
         StaticProbe::Found {
@@ -53,6 +54,7 @@ fn found_but_refused_warns_with_the_reason() {
     let ossl = vec!["srt".to_string(), "ssl".into()];
     match host_lib_decision(
         "libsrt",
+        "srt",
         (1, 5, 7),
         true,
         StaticProbe::Found {
@@ -72,6 +74,7 @@ fn found_but_refused_warns_with_the_reason() {
 fn installed_but_not_static_resolvable_warns() {
     let d = host_lib_decision(
         "libsrt",
+        "srt",
         (1, 5, 7),
         true,
         StaticProbe::Failed {
@@ -82,9 +85,7 @@ fn installed_but_not_static_resolvable_warns() {
     match d {
         HostLibDecision::Vendored { warning: Some(w) } => {
             assert!(
-                w.contains(
-                    "1.5.7 is installed but `pkg-config --static libsrt` could not resolve it"
-                ),
+                w.contains("1.5.7 is installed but `pkg-config --static srt` could not resolve it"),
                 "{w}"
             );
             assert!(w.contains("Package mbedtls was not found"), "{w}");
@@ -97,10 +98,11 @@ fn installed_but_not_static_resolvable_warns() {
 fn nothing_installed_is_silent() {
     let d = host_lib_decision(
         "libsrt",
+        "srt",
         (1, 5, 7),
         true,
         StaticProbe::Failed {
-            error: "Package libsrt was not found",
+            error: "Package srt was not found",
             installed_version: None,
         },
     );
