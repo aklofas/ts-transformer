@@ -88,6 +88,7 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -119,17 +120,31 @@
  *   let `tst_rtsp_server_stop` do everything.
  * ---------------------------------------------------------------------- */
 static volatile sig_atomic_t g_stop = 0;
-static tst_rtsp_cancel_handle_t *g_cancel = NULL;
+/*
+ * g_handler_active counts signal handlers currently running.  POSIX may
+ * deliver a process-directed SIGINT/SIGTERM to ANY thread that does not
+ * block it, including a library worker thread, so a handler can still be
+ * inside the cancel call when main starts tearing down.  Restoring the
+ * default disposition stops NEW handler runs but not one already in
+ * flight; teardown therefore (1) restores SIG_DFL, (2) waits for this
+ * count to reach zero, (3) clears the handle global, (4) frees the handle.
+ * The wait is bounded: after step 1 no new handler can start, and a
+ * handler that began earlier only reads the global once and makes one
+ * atomic-flag call.  atomic_int is lock-free, hence async-signal-safe.
+ */
+static atomic_int g_handler_active = 0;
+static tst_rtsp_cancel_handle_t *volatile g_cancel = NULL;
 
 static void handle_signal(int sig) {
     (void) sig;
     g_stop = 1;
-    /* Copy the global once: the main thread NULLs it before freeing the
-     * handle, so test and use the same local value. */
+    atomic_fetch_add(&g_handler_active, 1);
+    /* Copy the global once: test and use must see the same value. */
     tst_rtsp_cancel_handle_t *cancel = g_cancel;
     if (cancel != NULL) {
         tst_rtsp_cancel_handle_cancel(cancel);
     }
+    atomic_fetch_sub(&g_handler_active, 1);
 }
 
 /* -------------------------------------------------------------------------
@@ -486,10 +501,16 @@ int main(int argc, char **argv) {
         tst_rtsp_publish_mount_free(slots[i].mount);
     }
 
-    /* Restore the default disposition before freeing the cancel handle,
-     * so a late Ctrl-C cannot reach a freed pointer. */
+    /* Teardown order for the signal handler (see g_handler_active): the
+     * handler may run on any thread, including a demux worker.
+     * (1) restore the default disposition so no NEW handler can start,
+     * (2) wait for one already in flight to finish (bounded: it makes one
+     *     atomic-flag call), (3) clear the global, (4) free the handle. */
     signal(SIGINT, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
+    while (atomic_load(&g_handler_active) != 0) {
+        /* spin: finishes in microseconds */
+    }
     tst_rtsp_cancel_handle_t *cancel = g_cancel;
     g_cancel = NULL;
     tst_rtsp_cancel_handle_free(cancel);
