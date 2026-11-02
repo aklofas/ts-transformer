@@ -332,6 +332,10 @@ fn cancel_wakes_a_send_writing_a_slowly_read_tls_handshake_flight() {
     sock.set_recv_buffer_size(4096).expect("SO_RCVBUF");
     sock.connect(&addr.into()).expect("raw connect");
     let mut stream: TcpStream = sock.into();
+    // The reader re-checks its stop flag at least this often.
+    stream
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("SO_RCVTIMEO");
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -354,9 +358,17 @@ fn cancel_wakes_a_send_writing_a_slowly_read_tls_handshake_flight() {
             let end = Instant::now() + scaled(Duration::from_secs(60));
             while !stop.load(Ordering::Acquire) && Instant::now() < end {
                 match stream.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => drained.fetch_add(n, Ordering::AcqRel),
-                };
+                    Ok(0) => break,
+                    Ok(n) => {
+                        drained.fetch_add(n, Ordering::AcqRel);
+                    }
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) => {}
+                    Err(_) => break,
+                }
                 thread::park_timeout(Duration::from_millis(50));
             }
         })

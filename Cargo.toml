@@ -44,7 +44,7 @@ syn           = "3"
 cbindgen      = ">=0.29.2, <0.29.3"
 cc            = "1.9"
 cmake         = "0.1"
-pkg-config    = "0.3"
+pkg-config    = "0.3.34"
 thiserror     = { version = "2", default-features = false }
 secrecy       = "0.10"
 socket2       = "0.6"
