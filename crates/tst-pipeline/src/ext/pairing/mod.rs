@@ -346,7 +346,9 @@ impl Pairer {
     /// on the video or KLV PID (a set `discontinuity_indicator`, H.222.0
     /// §2.4.3.5). Entries that never paired are emitted as `UnpairedKlv` ahead
     /// of the passed-through event, so old-clock metadata cannot attach to a
-    /// new-clock frame. An encoder restart that signals neither (a silent clock
+    /// new-clock frame. The video frame in flight at a signalled discontinuity
+    /// on the video PID is emitted unpaired: the demuxer reports the flag
+    /// before the flagged packet completes that frame. An encoder restart that signals neither (a silent clock
     /// jump) is invisible to the pairer: call [`Self::flush`] at that boundary
     /// yourself.
     ///
