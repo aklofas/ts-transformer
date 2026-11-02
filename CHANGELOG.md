@@ -143,10 +143,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tst_publisher_push_ts(NULL, 0)` is a no-op as documented; it used to open an empty segment.
 - `tst_raw_receiver_recv` / `tst_managed_raw_receiver_recv` document that a `TST_E_TOO_LARGE` message is consumed, not retained; `recv_raw_to_file.c` no longer retries for it.
 - `tst_*_open_listener` (all eight receiver entry points) binds and listens on any URL, host-bearing or not; `srt://0.0.0.0:7000` used to dial out. An explicit `?mode=caller` / `?mode=rendezvous` on these entry points is refused with `TST_E_INVALID_CONFIG`. A URL with invalid UTF-8 is refused once; it was previously reparsed with U+FFFD in place of the caller's bytes (a passphrase could change silently).
-- `tst_rtsp_session_into_demux_receiver` returns NULL with `TST_E_CLOSED` after `tst_rtsp_session_cancel`; it used to hand back a receiver whose keepalive thread had already exited, so the server reaped the session after its timeout. The NULL-return contract now says the allocation is retained while its state may be closed.
 - The `mbedtls` feature now reaches the RIST transport, so encrypted `rist://` URLs open instead of returning `TST_E_RIST_ENCRYPTION_DISABLED`.
 - `tst_rtsp_client_builder_connect` keeps URL credentials, `?transport=`, `?rtsp_version=`, `?tcp_keepalive=`, `?recv_timeout=` and the explicit `_transport_pref`.
-- `tst_rtsp_session_into_demux_receiver` keeps the RTSP client alive until `tst_rtp_demux_receiver_close`, which now sends TEARDOWN, and frees the session on success; on a NULL return the session stays the caller's. After a non-NULL return the session pointer is freed; a program that still called `tst_rtsp_session_cancel` or `tst_rtsp_session_teardown_and_free` on it must stop.
+- `tst_rtsp_session_into_demux_receiver` keeps the RTSP client alive until `tst_rtp_demux_receiver_close`, which now sends TEARDOWN, and frees the session on success; on a NULL return the session stays the caller's. After a non-NULL return the session pointer is freed; a program that still called `tst_rtsp_session_cancel` or `tst_rtsp_session_teardown_and_free` on it must stop. After `tst_rtsp_session_cancel` it returns NULL with `TST_E_CLOSED` (it used to hand back a receiver whose keepalive thread had already exited, so the server reaped the session after its timeout); the NULL-return contract says the allocation is retained while its state may be closed.
 - C: `tst_mux_publisher_with_config_hls` now consumes `hls` on every return, as documented. A rejected or null mux config used to leak the publisher.
 - C: TCP, UDP, RIST and RTP plain receivers report a reset or read failure as `TST_E_TRANSPORT` (-8) with the transport's message. They used to report `TST_E_END_OF_STREAM`. A clean TCP FIN is still -12. Plain SRT receivers keep -12 for a lost connection, because libsrt cannot tell a peer close from an abort.
 - C: `tstrans.h` compiles as C++ with g++ (the ABI asserts use `static_assert` under `__cplusplus`).
@@ -257,8 +256,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-c
 
 - C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 invalid emulation prevention. No struct layout changes.
-- C ABI minor 26 → 27 (`TST_ABI_VERSION_MINOR`): additive `tst_{udp,tcp,rist}_sender_flush` and the tightened contracts listed in this section's entries.
-- New `tst_udp_sender_flush`, `tst_tcp_sender_flush` and `tst_rist_sender_flush` send the buffered partial bundle (ABI 0.27). `tst_*_sender_close` and `tst_*_mux_sender_close` stay cancel-first and abortive; call `_flush` / `_finish` first for a lossless end of stream. The C examples do.
+- C ABI minor 26 → 27 (`TST_ABI_VERSION_MINOR`): additive; see the flush entry below and this release's tst-c entries for the tightened contracts.
+- New `tst_udp_sender_flush`, `tst_tcp_sender_flush`, `tst_rtp_sender_flush` and `tst_rist_sender_flush` (ABI 0.27) send the buffered partial bundle. `tst_*_sender_close` and `tst_*_mux_sender_close` stay cancel-first and abortive; call `_flush` / `_finish` first for a lossless end of stream. The C examples do.
 - C: the enum-valued parameter of `tst_mux_config_add_video_stream`, `tst_mux_config_add_klv_stream`, `tst_mux_config_add_audio_stream`, `tst_mux_config_add_audio_stream_with_language`, `tst_sender_config_set_framing_mode`, `tst_reconnect_policy_set_overflow_policy`, `tst_reconnect_policy_set_mode` and `tst_misp_time_extract` is now spelled `int32_t`. The value and calling convention are unchanged, and existing C and C++ calls compile as before. The one exception is code that stores one of these functions in a function pointer declared with the old enum parameter type.
 
 ### Changed — tst-srt
@@ -6568,6 +6567,7 @@ The integrator-facing changes at a glance (full detail in the sections below):
   12/12 outage-window reconnects, statistically clean drop rates on both
   legs, and flat memory on all six processes, at ~1.9 Mb/s of GOP-structured
   traffic per leg through a seeded impairment proxy.
+
 
 ### Added
 
