@@ -247,9 +247,9 @@ int main(int argc, char **argv) {
      *   A new thread inherits the signal mask of the thread that creates it,
      *   and a process-directed signal is delivered to any thread that does
      *   not block it.  The library spawns threads inside its calls.  Blocking
-     *   the two signals here, before anything is spawned, makes every library
-     *   thread start with them blocked, so the handler can only ever run on
-     *   this thread.  A handler on this thread cannot overlap the teardown
+     *   the two signals here, before anything is spawned, makes every thread
+     *   created before the unblock start with them blocked, so the handler
+     *   can only ever run on this thread.  A handler on this thread cannot overlap the teardown
      *   code below: it interrupts it between instructions.  The guarantee
      *   rests on the mask being inherited, which POSIX specifies for
      *   pthread_create and which the library's threads (created while the

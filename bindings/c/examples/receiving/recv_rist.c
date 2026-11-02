@@ -243,9 +243,10 @@ int main(int argc, char **argv) {
             /*
              * An idle poll tick, not an error: the RIST receive waits about
              * 100 ms for a packet and reports TST_E_BUFFER_FULL when none
-             * arrived. The handle is live, so ask again. The documented start
-             * order (receiver first) lands here on every tick until the
-             * sender appears.
+             * arrived. The handle is live, so ask again. Starting this
+             * receiver before the sender (the order the sibling examples
+             * recv_ts_to_file.c and recv_raw_to_file.c also allow) lands here
+             * on every tick until the sender appears.
              */
             continue;
         }

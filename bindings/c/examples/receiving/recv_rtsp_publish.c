@@ -308,7 +308,7 @@ int main(int argc, char **argv) {
      *   A new thread inherits the signal mask of the thread that creates it,
      *   and a process-directed signal is delivered to any thread that does
      *   not block it.  The library and this program's demux threads are
-     *   created while the signals are blocked, so every one of them starts
+     *   created while the signals are blocked, so each of them starts
      *   with them blocked and the handler can only ever run on this thread.
      *   A handler on this thread cannot overlap the teardown code below: it
      *   interrupts it between instructions.  The guarantee rests on mask
@@ -502,6 +502,13 @@ int main(int argc, char **argv) {
      *      receiver does not borrow from the handle).
      *   5. Free the cancel handle and the server last.  Never free the
      *      server while another thread is inside one of its calls. */
+    /* Restore the default dispositions and unblock the signals before the
+     * stop and join below: the accept loop leaves them blocked, and a stalled
+     * teardown must stay interruptible, so a second Ctrl-C now ends the
+     * process instead of queueing behind the blocked mask. */
+    signal(SIGINT, SIG_DFL);
+    signal(SIGTERM, SIG_DFL);
+    pthread_sigmask(SIG_UNBLOCK, &sigs, NULL);
     print_stats(server, slots, n_slots);
     int rc = tst_rtsp_server_stop(server, 0);
     if (rc != 0) {
@@ -513,12 +520,9 @@ int main(int argc, char **argv) {
         tst_rtsp_publish_mount_free(slots[i].mount);
     }
 
-    /* Teardown order for the signal handler: it runs only on this thread
-     * (see the mask set at the top of main), so it cannot overlap this code.
-     * (1) restore the default disposition so a late Ctrl-C ends the process
-     *     instead of running the handler, (2) clear the global, (3) free. */
-    signal(SIGINT, SIG_DFL);
-    signal(SIGTERM, SIG_DFL);
+    /* The handler runs only on this thread (see the mask set at the top of
+     * main), so it cannot overlap the code above; the global is cleared and
+     * the handle freed last. */
     tst_rtsp_cancel_handle_t *cancel = g_cancel;
     g_cancel = NULL;
     tst_rtsp_cancel_handle_free(cancel);
