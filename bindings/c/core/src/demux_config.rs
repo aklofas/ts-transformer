@@ -255,7 +255,7 @@ pub unsafe extern "C" fn tst_demux_config_add_link_klv(
             if pid > MAX_PID {
                 crate::error::set_last_error(
                     crate::error::TstError::InvalidConfig,
-                    &format!("pid 0x{pid:X} exceeds the 13-bit PID range (max 0x1FFF)"),
+                    &alloc::format!("pid 0x{pid:X} exceeds the 13-bit PID range (max 0x1FFF)"),
                 );
                 return crate::error::TstError::InvalidConfig as i32;
             }
@@ -292,7 +292,7 @@ pub unsafe extern "C" fn tst_demux_config_add_treat_as(
         if pid > MAX_PID {
             crate::error::set_last_error(
                 crate::error::TstError::InvalidConfig,
-                &format!("pid 0x{pid:X} exceeds the 13-bit PID range (max 0x1FFF)"),
+                &alloc::format!("pid 0x{pid:X} exceeds the 13-bit PID range (max 0x1FFF)"),
             );
             return crate::error::TstError::InvalidConfig as i32;
         }
