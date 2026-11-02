@@ -120,9 +120,8 @@ where
             Ok(_) if conn.wants_write() => return Ok(HandshakeStep::Progress),
             Ok(_) => flushed = true,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            // The peer is not reading: report the tick unless this step
-            // already moved bytes.
-            Err(e) if is_poll_timeout(&e) && flushed => return Ok(HandshakeStep::Progress),
+            // Nothing written yet in this step (any write ends the loop), so
+            // a poll timeout here is a zero-progress tick for the caller.
             Err(e) => return Err(e),
         }
     }

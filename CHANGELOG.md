@@ -176,7 +176,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A TLS receive sees a cancel between socket reads, even when a peer drips a record.
 - A send that fails after a cancel reports `ExplicitClose`.
 - A `cancel()` that wakes a parked `send_bytes` always reports `ExplicitClose`; it could report `Closed`.
-- On an accepted `tcps://` connection whose first operation is a send, the TLS server handshake ran inside rustls until it finished, so a peer that kept trickling handshake bytes, or read a large certificate flight a little at a time, kept `send_bytes` parked past a `cancel()`. The first send now drives the handshake one socket step at a time (one write, ended early by a partial write, then at most one read) and re-checks the cancel between steps; a cancel ends it with `ExplicitClose` within one poll tick. A peer that sends nothing still yields a zero-progress `Backpressure`, and a peer that closes mid-handshake is `Broken`, as before.
+- On an accepted `tcps://` connection whose first operation is a send, the TLS server handshake ran inside rustls until it finished, so a peer that kept trickling handshake bytes, or read a large certificate flight a little at a time, kept `send_bytes` parked past a `cancel()`. The first send now drives the handshake one socket step at a time (one write, ended early by a partial write, then at most one read) and re-checks the cancel between steps; a cancel ends it with `ExplicitClose` within two poll ticks (one blocked write plus one read). A peer that sends nothing still yields a zero-progress `Backpressure`, and a peer that closes mid-handshake is `Broken`, as before.
 
 ### Fixed — tst-udp
 
