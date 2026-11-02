@@ -34,6 +34,9 @@ use crate::rtsp::server::publish;
 use crate::rtsp::server::publish::session::PublishSession;
 use crate::rtsp::transport_negotiation::TransportResponse;
 
+/// How long a session's exit path waits to shut its write half down.
+const EXIT_SHUTDOWN_BOUND: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The write half of one RTSP session's connection — plain TCP or TLS —
 /// shared by the response writer, the interleaved fanout and
 /// `RtspServer::stop`'s Notice 5402. The mutex keeps an RTSP response and
@@ -886,11 +889,19 @@ where
     // is written; PLAY/PAUSE/TEARDOWN never abort, see `handle_play`). Idle
     // / EOF / error / cancel exits all land here (TEARDOWN and the cap
     // rejections shut down on their own path).
+    //
+    // The shutdown is bounded like `stop()`'s write-half pass: over TLS it
+    // first flushes close_notify and any pending ciphertext, which never
+    // finishes against a peer that stopped reading, and the session keeps
+    // its `active_sessions` slot until this future ends. Not
+    // `write_bounded`: a cancel already fired on most of these exits and
+    // would skip the FIN. Plain TCP's SHUT_WR does not block.
     drop(session);
-    {
+    let _ = tokio::time::timeout(EXIT_SHUTDOWN_BOUND, async {
         let mut guard = write_half.lock().await;
         let _ = guard.shutdown().await;
-    }
+    })
+    .await;
     tracing::info!(target: "tst_rtp::server", peer = %peer, "session closed");
     Ok(())
 }

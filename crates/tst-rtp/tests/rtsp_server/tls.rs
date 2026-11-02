@@ -392,3 +392,79 @@ fn tls_cert_pem_starts_an_rtsps_server() {
     server.start().expect("start with in-memory PEM");
     server.stop().ok();
 }
+
+/// An rtsps session whose peer stopped reading still ends on `stop()`: the
+/// session's exit-path TLS shutdown must not wait for the peer to drain the
+/// pending ciphertext, or the session holds its `active_sessions` slot until
+/// the server is dropped.
+#[test]
+fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
+    use crate::fixtures::raw_rtsp::{request, session_id};
+    use crate::fixtures::wait_for;
+    use std::time::{Duration, Instant};
+    let certs = SelfSignedCert::generate();
+    let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").expect("URL parse");
+    b.tls_cert(certs.cert_path.clone(), certs.key_path.clone());
+    let server = b.build().expect("server build");
+    let mount = server
+        .add_mount("/live", make_muxer_cfg())
+        .expect("add_mount");
+    server.start().expect("server start");
+    let port = server.local_addr().expect("local_addr").port();
+
+    let roots =
+        tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
+    let conn = rustls::ClientConnection::new(std::sync::Arc::new(config), name).unwrap();
+    let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    tcp.set_write_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    let mut tls = rustls::StreamOwned::new(conn, tcp);
+    let base = format!("rtsps://127.0.0.1:{port}/live");
+    let setup = request(
+        &mut tls,
+        &format!(
+            "SETUP {base} RTSP/1.0\r\nCSeq: 1\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        ),
+    );
+    assert!(setup.contains("200 OK"), "SETUP: {setup}");
+    let sid = session_id(&setup);
+    let play = request(
+        &mut tls,
+        &format!("PLAY {base} RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert!(play.contains("200 OK"), "PLAY: {play}");
+
+    // From here the peer never reads: large access units over the whole
+    // window fill its socket buffers and the server's TLS buffer (the
+    // first dropped frame only says the fanout fell behind, not that the
+    // socket is full).
+    let mut nal = vec![0xBB; 32 * 1024];
+    nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
+    let deadline = Instant::now() + scaled(Duration::from_secs(2));
+    let mut i = 0i64;
+    while Instant::now() < deadline {
+        mount
+            .push_video(
+                &nal,
+                tst_core::mpegts::common::Pts90khz::new(i * 3000),
+                true,
+            )
+            .expect("push must not fail on a stalled peer");
+        i += 1;
+    }
+    assert!(
+        mount.stats().frames_dropped_total > 0,
+        "the peer's socket never filled"
+    );
+    server.stop().unwrap();
+    wait_for(scaled(Duration::from_secs(6)), || {
+        (server.stats().active_sessions == 0).then_some(())
+    });
+    drop(tls);
+}
