@@ -488,6 +488,12 @@ pub struct PyRtspServer {
     /// hold references; the underlying Rust `RtspServer` is the unique
     /// owner of its tokio Runtime (dropped on the last Arc drop).
     inner: Arc<RustRtspServer>,
+    /// The server's hard cancel, registered with the interpreter-exit hook
+    /// like every other shell's source, so a thread parked in
+    /// `next_publisher` ends at exit. Held only to keep the registration
+    /// alive (the registry is weak).
+    #[allow(dead_code)]
+    exit_cancel: Arc<crate::util::CancelSource>,
 }
 
 #[pymethods]
@@ -612,8 +618,13 @@ impl PyRtspServer {
         )
         .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
+        // `stop()` does not latch this source, so a server already stopped
+        // is still fired at exit: its flag flips on a server with no
+        // listener left, which is a no-op.
+        let exit_cancel = crate::util::CancelSource::new(Arc::new(server.cancel_handle()));
         Ok(Self {
             inner: Arc::new(server),
+            exit_cancel,
         })
     }
 
@@ -701,7 +712,9 @@ impl PyRtspServer {
     /// server stops. Returns `None` when the timeout passes, and always
     /// does when the flag is off. The GIL is released while waiting, and
     /// the wait is sliced into 1 s steps between which pending signals are
-    /// handled, so Ctrl-C interrupts a parked call.
+    /// handled, so Ctrl-C interrupts a parked call. At interpreter exit the
+    /// server is hard-cancelled, so a parked call raises `RtspError(SERVER)`
+    /// and a daemon worker inside it ends.
     ///
     /// Concurrent callers are served one at a time, each mount to exactly
     /// one of them, so a call made while another waits can return later

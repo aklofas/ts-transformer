@@ -1851,8 +1851,8 @@ try (RtspServer server = RtspServer.start(cfg);
   the path; the `MountHandle` keeps accepting pushes that reach nobody.
 - **Hard-cancel.** `server.cancelHandle()` returns a cross-thread
   `RtspServerCancelHandle`; call `cancel()` to tear down the server immediately
-  without the graceful drain window. It does not end publish mounts' receivers
-  or wake a parked `nextPublisher`; `stop()` and `close()` do.
+  without the Notice 5402 teardown. Like `stop()` and `close()`, it ends
+  publish mounts' receivers and wakes a parked `nextPublisher`.
 - **Auth.** Pass `new BasicAuth("user", "pass", "realm")` or
   `new DigestAuth("user", "pass", DigestAlgorithm.SHA256, "realm")` to
   `RtspServerConfig.builder().auth(...)`. The realm is required for server-side
@@ -1953,9 +1953,10 @@ Rules the types do not enforce:
 - **Receiver across publishers.** The receiver outlives publisher churn:
   between publishers it stays open and silent, and the next publisher's bytes
   arrive as ordinary continuity discontinuities.
-- **Stop, not the hard cancel, ends the mounts.** `stop()` and `close()` end
-  every publish mount's receiver and wake a parked `nextPublisher`.
-  `cancelHandle().cancel()` does neither.
+- **Every shutdown ends the mounts.** `stop()`, `close()` and
+  `cancelHandle().cancel()` end every publish mount's receiver and wake a
+  parked `nextPublisher`; only the hard cancel skips the Notice 5402
+  teardown.
 - **`nextPublisher` blocking.** The wait holds no lock on the `RtspServer`
   object, so `stats()`, `close()` and the other methods answer from other
   threads while it is parked. `timeoutMs` must be `>= 0` (`0` polls).

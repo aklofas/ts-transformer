@@ -297,6 +297,45 @@ def test_an_earlier_registered_atexit_join_of_a_woken_worker_completes() -> None
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"
 
 
+SCRIPT_EARLIER_ATEXIT_JOINS_PARKED_NEXT_PUBLISHER = """
+    import atexit, threading
+
+    workers = []
+    atexit.register(lambda: [t.join() for t in workers])
+
+    from tstrans.rtp import RtspServer, RtspServerConfig
+
+    server = RtspServer.start(RtspServerConfig(bind_addr="127.0.0.1:0", accept_unregistered_publishers=True))
+    entered = threading.Event()
+
+    def park():
+        entered.set()
+        try:
+            server.next_publisher(None)
+        except Exception:
+            pass
+
+    t = threading.Thread(target=park, daemon=True)
+    workers.append(t)
+    t.start()
+    entered.wait()
+    for _ in range(20):
+        threading.Event().wait(0.01)
+"""
+
+
+def test_an_earlier_registered_atexit_join_of_a_parked_next_publisher_completes() -> None:
+    """The exit hook must fire the server's hard cancel, which ends the parked
+    `next_publisher(None)` with SHUTDOWN; the woken worker returns after its
+    bounded park and the earlier `atexit` join completes (exit 0, not a hang)."""
+    r = _run(
+        SCRIPT_EARLIER_ATEXIT_JOINS_PARKED_NEXT_PUBLISHER,
+        timeout=20.0,
+        what=" with an earlier-registered atexit joining a parked next_publisher",
+    )
+    assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"
+
+
 # A managed `from_url` parks in its first accept before any Python handle
 # exists. The exit hook must still reach that accept, or an earlier
 # `atexit` handler joining the worker hangs the exit.

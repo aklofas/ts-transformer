@@ -1197,9 +1197,11 @@ Rules the types do not enforce:
 - **Receiver across publishers.** The receiver outlives publisher churn: between
   publishers it stays open and silent, and the next publisher's bytes arrive
   as ordinary continuity discontinuities.
-- **Stop, not the hard cancel, ends the mounts.** `stop()` and the `with`
-  exit end every publish mount's receiver and wake a parked
-  `next_publisher`. `cancel_handle().cancel()` does neither.
+- **Every shutdown ends the mounts.** `stop()`, the `with` exit and
+  `cancel_handle().cancel()` end every publish mount's receiver and wake a
+  parked `next_publisher` with `RtspError(SERVER)`; only the hard cancel
+  skips the Notice 5402 teardown. At interpreter exit a server left open is
+  hard-cancelled, so a daemon thread parked in `next_publisher` ends.
 - **`next_publisher` blocking.** It releases the GIL while it waits. With
   `timeout=None` it waits until a mount arrives or the server stops, in 1 s
   slices that handle pending signals, so Ctrl-C interrupts it. Concurrent

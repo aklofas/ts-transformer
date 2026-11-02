@@ -212,3 +212,11 @@ fn hard_cancel_ends_a_streaming_play_session_and_its_fanout() {
     );
     drop(tcp);
 }
+
+/// A hard cancel is terminal: the server cannot be started afterwards.
+#[test]
+fn start_after_a_hard_cancel_is_refused() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    server.cancel_handle().cancel();
+    assert!(matches!(server.start(), Err(RtspServerError::Shutdown)));
+}

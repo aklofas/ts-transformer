@@ -36,6 +36,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `MuxerConfig::from_program_map` maps an asynchronous KLV stream (`StreamKind::KlvAsync`, stream_type 0x06) to `carries_pts: false`, so its remuxed PES packets carry `PTS_DTS_flags` 00 as MISB ST 1402 (ST 1402-22) requires for the asynchronous method. Before, they carried the source PTS, which the conversion's documentation called the STANAG 4609 norm. Synchronous KLV (0x15) and data streams keep `carries_pts: true`. A caller that wants a PTS on a 0x06 stream builds the config by hand. Python `MuxerConfig.from_program_map` changes the same way.
 ### Changed — tst-rtp (BREAKING)
 
+- `RtspServer::cancel_handle().cancel()` is now terminal for the publish side, as `stop()` and dropping the server are: a parked or later `next_publisher` returns `Shutdown`, publish mounts' application transports read `Closed`, and mount registration, rule edits and `start()` are refused, including on a server that was never started. Before, a hard cancel left the queue, the transports and the rules table live, so a `next_publisher` call waited to its timeout and a `DemuxReceiver` on a publish mount kept waiting. The C, Python and JVM server cancel handles carry the same change. Why: one terminal outcome for every shutdown path.
 - `add_mount`, `add_multicast_mount` and `add_publish_mount` refuse a non-canonical path (`/live/`, `/live//`, `/live/trackID=0`) with `InvalidMountPath`; `MountRules::set` and `remove` refuse the same paths instead of normalizing them. Why: a mount registered under one spelling and a rule under another were two keys, so a restrictive rule did not govern the mount; one canonical key closes that. Mount rules are unreleased; the mount registration change affects every release since 0.1.0 only for paths with a trailing slash, which were unreachable by `RtspClient` anyway.
 
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
@@ -164,6 +165,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-py
 
+- At interpreter exit the RTSP server is hard-cancelled with the other shells, so a daemon thread parked in `RtspServer.next_publisher(None)` ends and an earlier-registered `atexit` handler that joins it no longer hangs the exit.
 - A Python shell object dropped without `close()` now cancels its transport first and closes with the GIL released, so a lost peer can no longer hold the drop in a reconnect loop with the interpreter stalled. This covers every shell and transport class (the udp/tcp/rtp/rist transports, `TcpListener`, the SRT `Listener`, the shells, `H264Receiver`). (C's `tst_*_close` and the JVM's `close()` already cancel first.)
 - Python: `CancelHandle.cancel()` and the raw `udp` builders release the GIL (an SRT close with linger, a hostname lookup).
 - Python: a refused mux/demux config passed to `Socket.into_mux_sender`/`into_demux_receiver`, `RtspSession.into_demux_receiver` or `MuxPublisher.with_config_hls` leaves the source handle usable.

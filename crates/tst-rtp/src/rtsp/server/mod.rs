@@ -92,7 +92,8 @@ pub(crate) struct ServerState {
     /// `RtspServerError::Shutdown`.
     pub(crate) shutdown: AtomicBool,
     /// Bound address — set by the listener after kernel-assigns the port
-    /// (when bind URL had `port = 0`). `start()` spin-waits on this.
+    /// (when bind URL had `port = 0`). `start()` waits on a one-shot
+    /// channel the listener signals after setting it.
     pub(crate) local_addr: std::sync::Mutex<Option<SocketAddr>>,
     /// Active session registry — populated by `session::serve_connection`
     /// on accept, removed on session end. Used by `stop()` to fan out the
@@ -127,6 +128,56 @@ pub(crate) struct ServerState {
     /// on-demand ANNOUNCE answers `503`.
     pub(crate) publish_queue_tx:
         std::sync::Mutex<Option<std::sync::mpsc::SyncSender<PublishQueueItem>>>,
+}
+
+impl ServerState {
+    /// `stop()` ran, the server was dropped, or its hard cancel fired.
+    /// Public methods read this wherever they refuse work after shutdown.
+    pub(crate) fn is_shut_down(&self) -> bool {
+        self.shutdown.load(Ordering::Acquire) || self.hard_cancel.is_cancelled()
+    }
+
+    /// The publish-side shutdown every terminal path performs (`stop()`,
+    /// Drop and the listener's hard-cancel branch). Idempotent.
+    ///
+    /// Order matters. Dropping the queue's only sender first wakes a
+    /// parked `next_publisher` with `Disconnected` (`Shutdown`), and an
+    /// on-demand ANNOUNCE racing the rest finds no sender and answers 503
+    /// instead of creating a mount the close below would miss. `shutdown`
+    /// is set before the mounts snapshot, so a registration re-checking it
+    /// under the mounts lock cannot insert a mount the snapshot missed.
+    pub(crate) fn shut_down(&self) {
+        self.publish_queue_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        self.shutdown.store(true, Ordering::Release);
+        self.close_publish_mounts();
+        // A `MountRules` clone outlives the server; its edits are refused.
+        self.mount_rules.close();
+    }
+
+    /// `close()` every publish mount in the table: snapshot them under the
+    /// mounts lock, release it, then close each (synchronous, never
+    /// blocks). A parked or later `recv_bytes` on a mount's application
+    /// transport then reads `Closed`.
+    fn close_publish_mounts(&self) {
+        let publish_mounts: Vec<_> = self
+            .mounts
+            .lock()
+            .map(|g| {
+                g.values()
+                    .filter_map(|m| match m {
+                        crate::rtsp::server::mount::MountEntry::Publish(p) => Some(p.clone()),
+                        crate::rtsp::server::mount::MountEntry::Local(_) => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for m in &publish_mounts {
+            m.close();
+        }
+    }
 }
 
 /// Lightweight per-session record kept on [`ServerState::sessions`] for
@@ -215,7 +266,11 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 ///    is done.
 /// 3. **Hard cross-thread — `cancel_handle()`** — returns an
 ///    [`RtspServerCancelHandle`] that can be cancelled from any thread.
-///    Equivalent to Drop's hard-cancel without dropping the handle.
+///    Cancelling it is terminal for the publish side as `stop()` and Drop
+///    are: a parked or later `next_publisher` returns `Shutdown`, every
+///    publish mount's application transport reads `Closed`, mount
+///    registration and rule edits are refused, and `start()` is refused.
+///    Sessions end at their next poll; no Notice is sent.
 ///
 /// Dropping the server, [`Self::stop`] and [`Self::remove_mount`] block
 /// the calling thread on the server's internal runtime. Call them from a
@@ -476,13 +531,19 @@ impl RtspServer {
             || (AuthScheme::DigestMd5, "tstrans".to_string()),
             |a| (a.scheme, a.realm.clone()),
         );
-        let mount_rules =
-            MountRules::new(b.default_mount_rule.clone().unwrap_or_default(), challenge);
+        // The table shares the server's hard cancel so it reads closed the
+        // moment the cancel fires, started or not.
+        let hard_cancel = RtspServerCancelHandle::new();
+        let mount_rules = MountRules::new(
+            b.default_mount_rule.clone().unwrap_or_default(),
+            challenge,
+            hard_cancel.clone(),
+        );
         let state = Arc::new(ServerState {
             builder: b,
             cancel_token: CancellationToken::new(),
             sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
-            hard_cancel: RtspServerCancelHandle::new(),
+            hard_cancel,
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             mount_rules,
             active_sessions: AtomicUsize::new(0),
@@ -535,7 +596,7 @@ impl RtspServer {
         path: &str,
         make: impl FnOnce() -> Result<(crate::rtsp::server::mount::MountEntry, R), RtspServerError>,
     ) -> Result<R, RtspServerError> {
-        if self.state.shutdown.load(Ordering::Relaxed) {
+        if self.state.is_shut_down() {
             return Err(RtspServerError::Shutdown);
         }
         validate_mount_path(path)?;
@@ -546,7 +607,7 @@ impl RtspServer {
         // registration that passed the early check while `stop()` ran
         // cannot insert a mount the snapshot missed (whose transport would
         // then never see end-of-stream until the server was dropped).
-        if self.state.shutdown.load(Ordering::Acquire) {
+        if self.state.is_shut_down() {
             return Err(RtspServerError::Shutdown);
         }
         if mounts.contains_key(path) {
@@ -677,7 +738,7 @@ impl RtspServer {
     ///   `path`.
     /// - [`RtspServerError::Shutdown`] — server stopped.
     pub fn remove_mount(&self, path: &str) -> Result<(), RtspServerError> {
-        if self.state.shutdown.load(Ordering::Acquire) {
+        if self.state.is_shut_down() {
             return Err(RtspServerError::Shutdown);
         }
         // Take the entry under the mounts lock only; the Notice writes and
@@ -746,7 +807,7 @@ impl RtspServer {
         &self,
         timeout: Duration,
     ) -> Result<Option<crate::rtsp::server::publish::PublishMountHandle>, RtspServerError> {
-        if self.state.shutdown.load(Ordering::Acquire) {
+        if self.state.is_shut_down() {
             return Err(RtspServerError::Shutdown);
         }
         let rx = self
@@ -881,7 +942,7 @@ impl RtspServer {
     /// - [`RtspServerError::BindAddrInUse`] / [`RtspServerError::Io`] on
     ///   listener bind failure.
     pub fn start(&self) -> Result<(), RtspServerError> {
-        if self.state.shutdown.load(Ordering::Relaxed) {
+        if self.state.is_shut_down() {
             return Err(RtspServerError::Shutdown);
         }
         if self.state.started.swap(true, Ordering::AcqRel) {
@@ -1015,20 +1076,18 @@ impl RtspServer {
         if !self.state.started.load(Ordering::Relaxed) {
             return Err(RtspServerError::NotStarted);
         }
-        // Close the on-demand queue first (idempotent): dropping its only
-        // sender wakes a parked `next_publisher` with `Disconnected` →
-        // `Shutdown`, and an on-demand ANNOUNCE racing the rest of `stop()`
-        // finds no sender and answers 503 instead of creating a mount the
-        // publish-mount close below would miss.
-        self.state
-            .publish_queue_tx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if self.state.shutdown.swap(true, Ordering::AcqRel) {
-            // Idempotent: already shut down.
+        // Idempotent: already shut down (stopped, or hard-cancelled, whose
+        // listener branch does the rest of this itself). The swap makes
+        // exactly one of two racing `stop()` calls do the work.
+        if self.state.hard_cancel.is_cancelled() || self.state.shutdown.swap(true, Ordering::AcqRel)
+        {
             return Ok(());
         }
+        // The publish side ends first: a parked `next_publisher` wakes with
+        // `Shutdown`, every publish mount's application transport reads
+        // `Closed` (idempotent with the publisher session's own
+        // `end_publisher` on its way out), and rule edits are refused.
+        self.state.shut_down();
         // Snapshot the active session list. Iterate + send Notice 5402
         // ANNOUNCE + cancel each. The per-session task is responsible
         // for flushing any in-flight RTP + closing the TCP cleanly
@@ -1040,12 +1099,6 @@ impl RtspServer {
             .map(|g| g.clone())
             .unwrap_or_default();
         self.notify_and_cancel(&sessions);
-        // Edits to the rules table are refused from here on.
-        self.state.mount_rules.close();
-        // End every publish mount's application transport: a parked (or
-        // later) `recv_bytes` on it reads `Closed`. Idempotent with the
-        // publisher session's own `end_publisher` on its way out.
-        self.close_publish_mounts();
         // Also fire the global cancel so the listener stops accepting
         // new connections and any per-task observers exit promptly.
         self.state.cancel_token.cancel();
@@ -1192,40 +1245,22 @@ impl RtspServer {
         }
     }
 
-    /// `close()` every publish mount in the table: snapshot them under the
-    /// mounts lock, release it, then close each (synchronous, never
-    /// blocks). Used by [`Self::stop`] and `Drop`.
-    fn close_publish_mounts(&self) {
-        let publish_mounts: Vec<_> = self
-            .state
-            .mounts
-            .lock()
-            .map(|g| {
-                g.values()
-                    .filter_map(|m| match m {
-                        crate::rtsp::server::mount::MountEntry::Publish(p) => Some(p.clone()),
-                        crate::rtsp::server::mount::MountEntry::Local(_) => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        for m in &publish_mounts {
-            m.close();
-        }
-    }
-
-    /// Listener's bound address, populated once `start()` returns. `None`
-    /// before `start()` is called, or before the listener task gets
-    /// scheduled (rare race; spin-wait in `start()` makes this
-    /// observationally rare).
+    /// Listener's bound address, populated once `start()` returns
+    /// (`start()` waits on a one-shot channel the listener signals after
+    /// setting it). `None` before `start()` is called.
     pub fn local_addr(&self) -> Option<SocketAddr> {
         *self.state.local_addr.lock().unwrap()
     }
 
     /// Hard-cancel handle. Cloning is cheap; multiple holders can race
-    /// the cancel call (idempotent). Cancelling it does not end publish
-    /// mounts' application transports; [`Self::stop`] and dropping the
-    /// server do.
+    /// the cancel call (idempotent).
+    ///
+    /// Cancelling it is terminal for the publish side as [`Self::stop`]
+    /// and Drop are: a parked or later [`Self::next_publisher`] returns
+    /// [`RtspServerError::Shutdown`], every publish mount's application
+    /// transport reads `Closed`, mount registration and rule edits are
+    /// refused, and [`Self::start`] is refused. Sessions end at their next
+    /// poll; no Notice is sent.
     pub fn cancel_handle(&self) -> RtspServerCancelHandle {
         self.state.hard_cancel.clone()
     }
@@ -1263,14 +1298,7 @@ impl Drop for RtspServer {
         // transport reads `Closed` (it outlives the server whenever a
         // handle clone is alive, so the runtime shutdown alone would leave
         // it parked, or reading `Broken` once the last handle drops).
-        self.state
-            .publish_queue_tx
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        self.close_publish_mounts();
-        // A `MountRules` clone outlives the server; its edits are refused.
-        self.state.mount_rules.close();
+        self.state.shut_down();
         // Hard-cancel path on Drop — graceful shutdown blocks too long
         // for an implicit Drop.
         self.state.hard_cancel.cancel();

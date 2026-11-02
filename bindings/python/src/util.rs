@@ -358,13 +358,16 @@ pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
         for src in live {
             TransportCancel::cancel(&*src);
         }
-        // Settle window. Cancelling only WAKES the parked call; the thread
-        // then needs the GIL to raise its exception and leave its Python
-        // frame. If interpreter finalisation gets there first, CPython
-        // aborts that thread (exit 134) instead of hanging (exit 124) —
-        // both are bad. Holding here with the GIL released lets those
-        // threads finish while the interpreter is still alive. Bounded and
-        // paid once, at exit, only when a shell was actually left open.
+        // Settle window. Cancelling only WAKES the parked call. A woken
+        // thread does not re-take the GIL at once: the exit flag is already
+        // set, so `allow_threads_parking` parks it for up to
+        // `EXIT_PARK_MAX` (normally the process ends during that park).
+        // This window covers threads that were between their native return
+        // and `exiting()` when the flag flipped: they re-take the GIL, and
+        // holding here with the GIL released lets them raise and leave
+        // their Python frames while the interpreter is still alive, instead
+        // of finalisation aborting them (exit 134). Bounded and paid once,
+        // at exit, only when a shell was actually left open.
         std::thread::sleep(std::time::Duration::from_millis(EXIT_SETTLE_MS));
     });
     fired
