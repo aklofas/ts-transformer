@@ -164,3 +164,58 @@ fn loopback_caller_sender_to_listener_receiver_delivers_bytes_and_eos() {
     assert_eq!(&received[1], b"world");
     assert_eq!(&received[2], b"goodbye");
 }
+
+/// A message larger than the receive buffer is dequeued and lost: the
+/// next call receives the following message.
+#[test]
+fn too_large_consumes_the_oversized_message() {
+    let port: u16 = 28_000 + ((std::process::id() as u16 + 250) % 1000);
+    let (ready_tx, ready_rx) = mpsc::channel::<()>();
+
+    let receiver_thread = thread::spawn(move || {
+        let url = CString::new(format!("srt://:{port}")).unwrap();
+        let rx = unsafe { tst_raw_receiver_open_listener(url.as_ptr()) };
+        assert!(!rx.is_null(), "open_listener: {}", last_error_msg());
+        ready_tx.send(()).expect("ready channel dropped");
+
+        let mut small = [0u8; 500];
+        let mut out_len = 0usize;
+        let rc =
+            unsafe { tst_raw_receiver_recv(rx, small.as_mut_ptr(), small.len(), &mut out_len) };
+        assert_eq!(rc, TstError::TooLarge as i32, "{}", last_error_msg());
+
+        let mut big = [0u8; 2000];
+        let rc = unsafe { tst_raw_receiver_recv(rx, big.as_mut_ptr(), big.len(), &mut out_len) };
+        assert_eq!(rc, 0, "{}", last_error_msg());
+        assert_eq!(out_len, 100, "the 1000-byte message is gone");
+        unsafe { tst_raw_receiver_close(rx) };
+    });
+
+    let sender_thread = thread::spawn(move || {
+        let url = CString::new(format!("srt://127.0.0.1:{port}")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let tx = loop {
+            let handle = unsafe { tst_raw_sender_open(url.as_ptr(), std::ptr::null()) };
+            if !handle.is_null() {
+                break handle;
+            }
+            if std::time::Instant::now() > deadline {
+                panic!("tst_raw_sender_open timed out: {}", last_error_msg());
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+        ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("receiver did not signal ready within 5s");
+        for len in [1000usize, 100] {
+            let m = vec![0xA5u8; len];
+            let rc = unsafe { tst_raw_sender_send(tx, m.as_ptr(), m.len()) };
+            assert_eq!(rc, 0, "send: {}", last_error_msg());
+        }
+        thread::sleep(Duration::from_millis(1000));
+        unsafe { tst_raw_sender_close(tx) };
+    });
+
+    receiver_thread.join().expect("receiver thread panicked");
+    sender_thread.join().expect("sender thread panicked");
+}
