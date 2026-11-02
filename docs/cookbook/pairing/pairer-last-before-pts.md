@@ -15,6 +15,8 @@ it. A KLV can pair with several frames; it is emitted as `UnpairedKlv`
 only if it never paired, when it is evicted from the history or at
 `flush`.
 
+The history is cleared at a reconnect and at a signalled discontinuity (a set `discontinuity_indicator`) on the video or KLV PID, so old-clock metadata never attaches to a new-clock frame; entries that never paired come out as `UnpairedKlv`. Call `pairer.flush()` yourself at a restart your source does not signal.
+
 ```rust,no_run
 use std::time::Duration;
 use tst_pipeline::ext::pairing::{Pairer, PairerOutput};

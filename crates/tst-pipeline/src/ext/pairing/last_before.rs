@@ -6,10 +6,14 @@
 //! future KLV (PTS > video PTS) cannot satisfy "before". The history
 //! lets a reordered frame (a B-frame whose PTS is below the newest
 //! KLV's) still find the sample that preceded it.
+//!
+//! The history is cleared at an epoch boundary: `ReconnectDiscontinuity`, or
+//! `Discontinuity { kind: AdaptationFieldFlag }` on the video or KLV PID;
+//! never-used entries leave as `UnpairedKlv` ahead of the passed-through event.
 
 use super::types::{KlvSample, PairerOutput, VideoSample};
 use std::collections::VecDeque;
-use tst_core::mpegts::demux::DemuxEvent;
+use tst_core::mpegts::demux::{DemuxEvent, DiscontinuityKind};
 
 /// KLV samples kept for pairing reordered frames. Eight covers the
 /// reorder depth of common GOP structures at typical KLV rates.
@@ -43,7 +47,29 @@ impl LastBeforeState {
         match super::classify(event, self.video_pid, self.klv_pid) {
             super::EventClass::Video(v) => self.handle_video(v),
             super::EventClass::Klv(k) => self.handle_klv(k),
-            super::EventClass::Other(other) => vec![PairerOutput::PassThrough(other)],
+            super::EventClass::Other(other) => {
+                if self.is_epoch_boundary(&other) {
+                    let mut out = self.flush();
+                    out.push(PairerOutput::PassThrough(other));
+                    out
+                } else {
+                    vec![PairerOutput::PassThrough(other)]
+                }
+            }
+        }
+    }
+
+    /// True for the events that start a new epoch: a transport reconnect, or
+    /// a signalled discontinuity on the video or KLV PID. A `ContinuityJump`
+    /// (packet loss) and any event on another PID are not epochs.
+    fn is_epoch_boundary(&self, event: &DemuxEvent) -> bool {
+        match event {
+            DemuxEvent::ReconnectDiscontinuity => true,
+            DemuxEvent::Discontinuity {
+                stream,
+                kind: DiscontinuityKind::AdaptationFieldFlag,
+            } => stream.pid == self.video_pid || stream.pid == self.klv_pid,
+            _ => false,
         }
     }
 
@@ -104,7 +130,9 @@ impl LastBeforeState {
 mod tests {
     use super::*;
     use tst_core::mpegts::common::Pts90khz;
-    use tst_core::mpegts::demux::{MetadataKind, SamplePayload, StreamId, StreamKind, VideoCodec};
+    use tst_core::mpegts::demux::{
+        DiscontinuityKind, MetadataKind, SamplePayload, StreamId, StreamKind, VideoCodec,
+    };
     use tst_core::shared::SharedBytes;
 
     const VIDEO_PID: u16 = 0x100;
@@ -139,6 +167,124 @@ mod tests {
             kind: MetadataKind::KlvAsync,
             payload: vec![0xAA, 0xBB],
         }
+    }
+
+    fn af_discontinuity(pid: u16) -> DemuxEvent {
+        DemuxEvent::Discontinuity {
+            stream: StreamId {
+                pid,
+                kind: StreamKind::Video(VideoCodec::H264),
+                program_number: 1,
+            },
+            kind: DiscontinuityKind::AdaptationFieldFlag,
+        }
+    }
+
+    fn cc_jump(pid: u16) -> DemuxEvent {
+        DemuxEvent::Discontinuity {
+            stream: StreamId {
+                pid,
+                kind: StreamKind::Video(VideoCodec::H264),
+                program_number: 1,
+            },
+            kind: DiscontinuityKind::ContinuityJump {
+                expected: 1,
+                observed: 5,
+            },
+        }
+    }
+
+    #[test]
+    fn a_reconnect_clears_the_old_clock_history() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        assert!(s.feed(klv_event(90_000)).is_empty());
+        let out = s.feed(DemuxEvent::ReconnectDiscontinuity);
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k), PairerOutput::PassThrough(DemuxEvent::ReconnectDiscontinuity)] if k.pts.as_ticks() == 90_000),
+            "got {out:?}"
+        );
+        s.feed(klv_event(0));
+        let out = s.feed(video_event(90_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 0),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_signalled_discontinuity_on_the_video_pid_clears_the_history() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, Some(3000));
+        s.feed(klv_event(90_000));
+        let out = s.feed(af_discontinuity(VIDEO_PID));
+        assert!(
+            matches!(
+                &out[..],
+                [PairerOutput::UnpairedKlv(_), PairerOutput::PassThrough(_)]
+            ),
+            "got {out:?}"
+        );
+        // Freshness alone would have accepted the old sample at distance zero.
+        let out = s.feed(video_event(90_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedVideo(_)]),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_signalled_discontinuity_on_the_klv_pid_clears_the_history() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(klv_event(90_000));
+        let out = s.feed(af_discontinuity(KLV_PID));
+        assert!(
+            matches!(
+                &out[..],
+                [PairerOutput::UnpairedKlv(_), PairerOutput::PassThrough(_)]
+            ),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_used_entry_leaves_silently_at_an_epoch() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(klv_event(0));
+        s.feed(video_event(10)); // marks PTS 0 used
+        let out = s.feed(DemuxEvent::ReconnectDiscontinuity);
+        assert!(
+            matches!(&out[..], [PairerOutput::PassThrough(_)]),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_continuity_jump_keeps_the_history() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(klv_event(50));
+        let out = s.feed(cc_jump(VIDEO_PID));
+        assert!(
+            matches!(&out[..], [PairerOutput::PassThrough(_)]),
+            "got {out:?}"
+        );
+        assert!(matches!(
+            &s.feed(video_event(100))[..],
+            [PairerOutput::Paired { .. }]
+        ));
+    }
+
+    #[test]
+    fn a_signalled_discontinuity_on_an_unrouted_pid_keeps_the_history() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(klv_event(50));
+        let out = s.feed(af_discontinuity(0x200));
+        assert!(
+            matches!(&out[..], [PairerOutput::PassThrough(_)]),
+            "got {out:?}"
+        );
+        assert!(matches!(
+            &s.feed(video_event(100))[..],
+            [PairerOutput::Paired { .. }]
+        ));
     }
 
     #[test]

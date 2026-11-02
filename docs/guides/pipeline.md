@@ -874,6 +874,8 @@ in the cookbook) when:
 | Async-KLV (1–10 Hz) against video frames | `Pairer::last_before_pts(...)` | n/a (past-only) |
 | EO + IR sharing one async-KLV stream | Two `Pairer::last_before_pts` instances side-by-side | n/a |
 
+`last_before_pts` clears its history at a reconnect or a signalled discontinuity on either routed PID; flush it yourself at a silent encoder restart.
+
 See the `Pairer` recipes in the [cookbook's pairing section](../cookbook/index.md#-pairing--align-klv-with-video-frames) for runnable patterns.
 
 ### What you give up

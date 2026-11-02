@@ -338,6 +338,18 @@ impl Pairer {
     /// video; if `None`, attach regardless of staleness. Past-only by
     /// definition; no [`PairerMode`] knob applies.
     ///
+    /// # Epochs
+    ///
+    /// The KLV history is cleared when the demuxer signals a new time base: at
+    /// `DemuxEvent::ReconnectDiscontinuity` (emitted by `ManagedDemuxReceiver`
+    /// after a reconnect) and at a `Discontinuity { kind: AdaptationFieldFlag }`
+    /// on the video or KLV PID (a set `discontinuity_indicator`, H.222.0
+    /// §2.4.3.5). Entries that never paired are emitted as `UnpairedKlv` ahead
+    /// of the passed-through event, so old-clock metadata cannot attach to a
+    /// new-clock frame. An encoder restart that signals neither (a silent clock
+    /// jump) is invisible to the pairer: call [`Self::flush`] at that boundary
+    /// yourself.
+    ///
     /// # Example
     ///
     /// ```
@@ -711,6 +723,23 @@ mod tests {
         let _ = p.flush();
         let s_after_flush = p.stats();
         assert_eq!(s_after_flush.unpaired_klv, 5);
+    }
+
+    #[test]
+    fn epoch_clear_is_tallied() {
+        let mut p = Pairer::last_before_pts(VIDEO_PID, KLV_PID, None);
+        for pts in [0, 10, 20] {
+            let _ = p.feed(klv_async_event(KLV_PID, pts));
+        }
+        let out = p.feed(DemuxEvent::ReconnectDiscontinuity);
+        assert_eq!(
+            out.len(),
+            4,
+            "three unpaired KLV and the pass-through: {out:?}"
+        );
+        let s = p.stats();
+        assert_eq!(s.unpaired_klv, 3);
+        assert_eq!(s.pass_through, 1);
     }
 
     #[test]
