@@ -23,7 +23,9 @@ use alloc::string::String;
 ///
 /// The payload is dropped inside a boundary of its own once its message is
 /// read: a payload raised with `panic_any` may have a `Drop` that panics,
-/// and that panic must not escape this helper either.
+/// and that panic must not escape this helper either. If that drop panics,
+/// its own payload is leaked rather than dropped: its destructor could panic
+/// in turn, and nothing outside the inner boundary would catch it.
 ///
 /// Without `std` there is no unwinding (the target aborts on panic), so
 /// this is `Ok(f())`.
@@ -31,7 +33,11 @@ use alloc::string::String;
 pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
     std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)).map_err(|p| {
         let detail = payload_message(&*p);
-        let _ = std::panic::catch_unwind(core::panic::AssertUnwindSafe(move || drop(p)));
+        if let Err(nested) =
+            std::panic::catch_unwind(core::panic::AssertUnwindSafe(move || drop(p)))
+        {
+            core::mem::forget(nested);
+        }
         detail
     })
 }
@@ -118,6 +124,31 @@ mod tests {
         }
         assert_eq!(
             catch(|| -> u32 { std::panic::panic_any(DropPanics) }),
+            Err(String::from("non-string panic payload"))
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn catch_contains_a_payload_whose_drop_raises_a_payload_whose_drop_panics() {
+        // The first payload's drop raises a second payload with `panic_any`;
+        // dropping the second one panics again. Neither panic may escape.
+        struct Second;
+        impl Drop for Second {
+            fn drop(&mut self) {
+                panic!("second payload drop boom")
+            }
+        }
+        struct First;
+        impl Drop for First {
+            fn drop(&mut self) {
+                std::panic::panic_any(Second)
+            }
+        }
+        let outcome =
+            std::panic::catch_unwind(|| catch(|| -> u32 { std::panic::panic_any(First) }));
+        assert_eq!(
+            outcome.expect("no panic may unwind out of catch"),
             Err(String::from("non-string panic payload"))
         );
     }
