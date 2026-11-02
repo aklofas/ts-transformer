@@ -101,6 +101,25 @@ fn unknown_path_is_404_without_the_flag() {
     server.stop().unwrap();
 }
 
+/// An on-demand ANNOUNCE on a path with an empty segment is not a canonical
+/// mount path, so it is refused like an unknown path without the flag and
+/// creates no mount.
+#[test]
+fn an_on_demand_announce_on_a_path_with_an_empty_segment_is_404_and_creates_nothing() {
+    let server = on_demand_server();
+    let port = server.local_addr().unwrap().port();
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/a//b", SDP_MP2T), 404);
+    assert!(
+        server
+            .next_publisher(Duration::from_millis(200))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(server.stats().mounts, 0);
+    server.stop().unwrap();
+}
+
 /// `stop()` wakes a `next_publisher` parked on another thread with
 /// `Shutdown`, well before its own timeout.
 #[test]

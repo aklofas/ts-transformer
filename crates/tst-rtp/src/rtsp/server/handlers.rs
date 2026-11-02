@@ -302,26 +302,41 @@ pub(crate) fn handle_describe(
 /// (RFC 7826 §C.1.1 trackID convention) — otherwise the mount lookup
 /// misses the registered base path.
 ///
-/// A trailing `/` is also stripped (except on the bare root `"/"`) so
+/// Every trailing `/` is also stripped (except on the bare root `"/"`) so
 /// that `rtsp://host/live/` and `rtsp://host/live` both resolve to the
 /// same mount registered at `"/live"`. Without this, a client that
 /// appends a trailing slash to the DESCRIBE URI would get a 404 for a
 /// perfectly valid mount. DESCRIBE, SETUP, and PLAY all go through this
 /// function, so the normalization is consistent across the whole session.
+///
+/// The result is a fixed point: it has no trailing `/` and no trailing
+/// control segment, so `extract_mount_path(&extract_mount_path(u))` equals
+/// `extract_mount_path(u)`. That is what lets [`super::validate_mount_path`]
+/// define a canonical mount path as one this function returns unchanged,
+/// so a registered mount, a rule key and a request lookup are one key.
 pub(crate) fn extract_mount_path(uri: &str) -> String {
-    normalize_mount_path(uri, |seg| {
+    let is_control = |seg: &str| {
         seg.starts_with("trackID=") || seg.starts_with("streamid=") || seg.starts_with("stream=")
-    })
+    };
+    // Each pass strips one control segment; repeat until none is left
+    // (`/live/trackID=0/trackID=1` is `/live`).
+    let mut path = normalize_mount_path(uri, is_control);
+    loop {
+        let next = normalize_mount_path(&path, is_control);
+        if next == path {
+            return path;
+        }
+        path = next;
+    }
 }
 
 /// Shared normalization for [`extract_mount_path`] and the publisher
 /// SETUP path's announced-`a=control`-aware mount-path derivation (see
 /// [`crate::rtsp::server::publish::handlers::handle_setup_record`]):
-/// strip scheme + authority, strip a trailing query string, then strip
-/// the last `/`-delimited path segment when `strip_last` says it's a
-/// per-media control segment (not part of the registered mount path)
-/// rather than part of the mount path itself, then normalize away a
-/// single trailing slash.
+/// strip scheme + authority, strip a trailing query string, strip every
+/// trailing slash, then strip the last `/`-delimited path segment when
+/// `strip_last` says it's a per-media control segment (not part of the
+/// registered mount path), then strip every trailing slash again.
 fn normalize_mount_path(uri: &str, strip_last: impl FnOnce(&str) -> bool) -> String {
     // Strip scheme + authority if present.
     let path_start = if let Some(after_scheme) = uri.strip_prefix("rtsp://") {
@@ -340,36 +355,37 @@ fn normalize_mount_path(uri: &str, strip_last: impl FnOnce(&str) -> bool) -> Str
     // Strip any trailing query string; v1 matches the bare path component
     // of the mount as registered.
     let path = path_start.split('?').next().unwrap_or(path_start);
+    // "/live/" and "/live//" resolve to the mount registered at "/live".
+    let path = trim_trailing_slashes(path);
     // Strip a trailing per-media control segment, per `strip_last`. SDP
     // `a=control:trackID=N` (the canonical form per RFC 7826 §C.1.1), or
     // `a=control:stream=N` (gst-rtsp-server's convention), causes a SETUP
     // URI of `<base>/trackID=N` or `<base>/stream=N`. SETUP matches
     // against the base mount path; the control segment is per-media and
     // not part of the registered mount.
-    let path = if let Some(last_slash) = path.rfind('/') {
-        let last_seg = &path[last_slash + 1..];
-        if strip_last(last_seg) {
-            // Keep the leading slash if it's the only one (root mount)
-            // by ensuring we don't strip to empty.
+    let path = match path.rfind('/') {
+        Some(last_slash) if strip_last(&path[last_slash + 1..]) => {
+            // Keep the leading slash if it's the only one (root mount).
             if last_slash == 0 {
                 "/"
             } else {
-                &path[..last_slash]
+                trim_trailing_slashes(&path[..last_slash])
             }
-        } else {
-            path
         }
-    } else {
-        path
-    };
-    // Normalize: strip a single trailing '/' unless the path is just "/".
-    // This makes "/live/" and "/live" resolve to the same registered mount.
-    let path = if path.len() > 1 && path.ends_with('/') {
-        &path[..path.len() - 1]
-    } else {
-        path
+        _ => path,
     };
     path.to_string()
+}
+
+/// `path` without its trailing slashes; the bare root `"/"` (and any
+/// all-slash path) keeps one.
+fn trim_trailing_slashes(path: &str) -> &str {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() && path.starts_with('/') {
+        "/"
+    } else {
+        trimmed
+    }
 }
 
 /// The raw last `/`-delimited path segment of a request URI (scheme and
@@ -1256,6 +1272,28 @@ mod tests {
         );
         // Root mount with trackID — keep root slash.
         assert_eq!(extract_mount_path("rtsp://host:8554/trackID=0"), "/");
+    }
+
+    #[test]
+    fn normalizer_is_idempotent_on_every_corpus_entry() {
+        for uri in [
+            "/live//",
+            "/live/trackID=0/",
+            "/x//trackID=0",
+            "/live/trackID=0/trackID=1",
+            "rtsp://h/live///",
+            "/trackID=0/",
+            "/",
+            "/a/b/",
+            "rtsp://h:8554/a/stream=1/",
+        ] {
+            let once = extract_mount_path(uri);
+            assert_eq!(extract_mount_path(&once), once, "uri {uri:?}");
+        }
+        assert_eq!(extract_mount_path("/live/trackID=0/"), "/live");
+        assert_eq!(extract_mount_path("/live//trackID=0"), "/live");
+        assert_eq!(extract_mount_path("/live//"), "/live");
+        assert_eq!(extract_mount_path("/trackID=0/"), "/");
     }
 
     #[test]
