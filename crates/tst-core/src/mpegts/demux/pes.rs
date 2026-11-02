@@ -159,7 +159,23 @@ impl Reassembler {
         random_access_indicator: bool,
         is_video: bool,
     ) -> Vec<ReassemblyOutcome> {
+        self.push_split(pid, payload, pusi, random_access_indicator, is_video)
+            .0
+    }
+
+    /// [`push`](Self::push), plus how many leading outcomes belong to the PES
+    /// that was in flight before this PUSI (`0` when none was, or on a
+    /// non-PUSI packet).
+    pub(crate) fn push_split(
+        &mut self,
+        pid: u16,
+        payload: &[u8],
+        pusi: bool,
+        random_access_indicator: bool,
+        is_video: bool,
+    ) -> (Vec<ReassemblyOutcome>, usize) {
         let mut out = Vec::new();
+        let mut old_count = 0;
         if pusi {
             // PUSI: drain whatever was in flight on this PID first.
             let prev = self.by_pid.remove(&pid);
@@ -178,19 +194,20 @@ impl Reassembler {
             if let Some(prev) = prev {
                 self.total_buffered = self.total_buffered.saturating_sub(prev.buf.len());
                 self.finish(pid, prev, &mut out);
+                old_count = out.len();
             }
         }
         // Append payload to whatever partial exists for this PID.
         let part = match self.by_pid.get_mut(&pid) {
             Some(p) => p,
-            None => return out, // bytes before we ever saw a PUSI; drop.
+            None => return (out, old_count), // bytes before we ever saw a PUSI; drop.
         };
         if part.buf.len() + payload.len() > self.cap_per_pid {
             // Cap-per-PID exceeded. Drop, surface, resume from next PUSI on this PID.
             self.total_buffered = self.total_buffered.saturating_sub(part.buf.len());
             self.by_pid.remove(&pid);
             out.push(ReassemblyOutcome::Overflow { pid });
-            return out;
+            return (out, old_count);
         }
         part.buf.extend_from_slice(payload);
         self.total_buffered += payload.len();
@@ -218,7 +235,7 @@ impl Reassembler {
                 self.total_buffered = self.total_buffered.saturating_sub(part.buf.len());
                 self.by_pid.remove(&pid);
                 out.push(ReassemblyOutcome::ZeroLengthNonVideo { pid, stream_id });
-                return out;
+                return (out, old_count);
             }
         }
         // Aggregate cap check.
@@ -229,7 +246,7 @@ impl Reassembler {
             self.by_pid.clear();
             self.total_buffered = 0;
             out.push(ReassemblyOutcome::OverflowTotal);
-            return out;
+            return (out, old_count);
         }
         // Length-driven completion.
         //
@@ -263,7 +280,7 @@ impl Reassembler {
                 self.finish(pid, done, &mut out);
             }
         }
-        out
+        (out, old_count)
     }
 
     /// Turn a closed partial into outcomes: a damage `Malformed` (if any)
