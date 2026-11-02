@@ -454,19 +454,9 @@ class Transmuxer:
     ) -> None:
         self._src = Path(src)
         self._dst = Path(dst)
-        # Non-atomic output opens dst "wb" on the first ProgramMap while
-        # src is still being read, which would truncate the capture.
-        if (
-            not atomic
-            and self._dst.exists()
-            and os.path.samefile(self._src, self._dst)
-        ):
-            raise ValueError(
-                "transmux: src and dst are the same file; "
-                "pass atomic=True to rewrite it in place"
-            )
         self._drop = tuple(drop)
         self._atomic = atomic
+        self._refuse_same_file()
         self._config = config
         self._events = None  # shared single-pass generator
         self._pm = None  # first program's ProgramMap (identity anchor)
@@ -518,6 +508,19 @@ class Transmuxer:
                 self._on_program_map(ev)
             yield ev
 
+    def _refuse_same_file(self) -> None:
+        # Non-atomic output opens dst "wb" on the first ProgramMap while
+        # src is still being read, which would truncate the capture.
+        if (
+            not self._atomic
+            and self._dst.exists()
+            and os.path.samefile(self._src, self._dst)
+        ):
+            raise ValueError(
+                "transmux: src and dst are the same file; "
+                "pass atomic=True to rewrite it in place"
+            )
+
     def _on_program_map(self, ev) -> None:
         if len(ev.programs) != 1:
             raise ValueError(
@@ -550,6 +553,8 @@ class Transmuxer:
             pm, drop=list(self._drop), av1_carriage=src_carriage
         )
         muxer = Muxer(config)
+        # dst may have been linked to src since construction.
+        self._refuse_same_file()
         sink = MuxerFileSink(muxer, self._dst, atomic=self._atomic)
         proxy = sink.__enter__()
         # Record the sink FIRST: from here on, __exit__ owns its

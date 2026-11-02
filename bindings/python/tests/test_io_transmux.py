@@ -730,6 +730,27 @@ def test_transmux_non_atomic_refuses_dst_that_is_src(tmp_path, alias):
     assert src.read_bytes() == original
 
 
+@pytest.mark.parametrize("alias", ["hardlink", "symlink"])
+def test_transmux_non_atomic_refuses_dst_aliased_after_construction(tmp_path, alias):
+    src = tmp_path / "src.ts"
+    _write_large_src(src)
+    original = src.read_bytes()
+    dst = tmp_path / "out.ts"
+    tx = tio.transmux(src, dst)  # dst does not exist yet: the constructor accepts
+    if alias == "hardlink":
+        os.link(src, dst)
+    else:
+        try:
+            dst.symlink_to(src)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="same file"):
+        with tx:
+            for ev in tx:
+                tx.write(ev)
+    assert src.read_bytes() == original
+
+
 def test_transmux_atomic_in_place_rewrite_is_allowed(tmp_path):
     src = tmp_path / "src.ts"
     _write_large_src(src)

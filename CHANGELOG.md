@@ -190,7 +190,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Python: the interpreter-exit hook reaches a `ManagedReceiver`/`ManagedDemuxReceiver` first accept, and a shell opened after the hook ran (for example in an `atexit` handler) is born cancelled, so it cannot park.
 - Python: a byte sink calling its own receiver raises `RuntimeError` instead of deadlocking; `close()` from the sink delivers the event in flight and ends the iteration on the next pull; a cycle through another receiver's sink is refused the same way.
 - Python: `RawBytes` hashes as the `bytes` it equals; `MuxError.pid` is populated; `udp`/`tcp`/`hls` stubs name the canonical exception classes.
-- Python: `transmux(src, src)` without `atomic=True` raises `ValueError` instead of truncating the source; a failed atomic promotion removes its `*.partial`.
+- Python: `transmux(src, src)` without `atomic=True` raises `ValueError` instead of truncating the source; the check runs again when the output file opens, so a `dst` linked to `src` after construction no longer truncates it; a failed atomic promotion removes its `*.partial`.
 
 ### Fixed — tst-pipeline
 
