@@ -5,15 +5,17 @@
 //!   byte-exact. The authoritative verdict for the `example` gate.
 //!   `FREERTOS_SRT_PASSPHRASE` env (set by the gate in Phase B) enables
 //!   AES-128.
-//! - `--send <host:port>`: the `srt-recv` gate's tst-srt SRT CALLER (the
+//! - `--send <host:port> <hold-secs>`: the `srt-recv` gate's tst-srt SRT CALLER (the
 //!   reverse role) — connects to the firmware's SRT LISTENER on the guest NIC
-//!   and streams the golden once. The firmware is the authoritative verifier
+//!   and streams the golden once, then holds the connection until the
+//!   firmware closes it. The firmware is the authoritative verifier
 //!   there (it demuxes on-device), so this mode only needs to prove the send
-//!   succeeded — see `run_send`'s doc comment.
+//!   succeeded and keep the connection up until the firmware has read it —
+//!   see `run_send`'s doc comment.
 use std::io::Write;
 use std::process::exit;
 use std::time::Duration;
-use tst_srt::{KeyLength, SrtListenerBuilder, Passphrase, SrtSocketBuilder};
+use tst_srt::{KeyLength, Passphrase, RecvError, SrtListenerBuilder, SrtSocketBuilder};
 
 include!(concat!(env!("OUT_DIR"), "/golden.rs")); // pub static GOLDEN + GOLDEN_LEN
 
@@ -22,8 +24,17 @@ const STREAM_LEN: usize = GOLDEN_LEN * REPEAT;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() >= 3 && args[1] == "--send" {
-        run_send(&args[2]);
+    if args.len() >= 2 && args[1] == "--send" {
+        // `--send <host:port> <hold-secs>`: hold-secs bounds the wait for the
+        // receiver's close (see run_send); the gate script owns the number.
+        let hold = match args.get(3).map(|s| s.parse::<u64>()) {
+            Some(Ok(secs)) if args.len() == 4 => Duration::from_secs(secs),
+            _ => {
+                eprintln!("usage: freertos-srt-host --send <host:port> <hold-secs>");
+                exit(2);
+            }
+        };
+        run_send(&args[2], hold);
         return;
     }
     run_recv();
@@ -35,8 +46,9 @@ fn main() {
 // the golden ONCE as a single LIVE message. No REPEAT/pacing: the golden is
 // 564 B, "burst is fine" for a stream this small, and the firmware-side gate
 // is the authoritative verifier (on-device demux + byte-compare), so this
-// driver only needs to prove the bytes actually left the host.
-fn run_send(addr: &str) {
+// driver only needs to prove the bytes actually left the host and keep the
+// connection up until the firmware has read them.
+fn run_send(addr: &str, hold: Duration) {
     // sender_defaults() (connect_timeout=15s, linger=5s, role=Sender) is the
     // house preset for a pure caller-sender socket — see its doc example in
     // crates/tst-srt/src/builder.rs and crates/tst-interop/src/transport.rs's
@@ -56,29 +68,41 @@ fn run_send(addr: &str) {
         eprintln!("FAIL[srt_recv_host_send]: send: {e}");
         exit(1);
     }
-    // Deterministic drain: poll the send buffer until libsrt reports it
-    // empty, bounded to 5s in 50ms steps (the golden is a single small LIVE
-    // message, 564 B — should drain in well under a second over lossless
-    // SLIRP loopback; the bound is a backstop, not the expected path). The
-    // firmware-side listener closes its accepted socket immediately once it
-    // has read all the bytes it expects (it has nothing to send back), so a
-    // stats() error mid-poll most often means the peer already closed after
-    // reading everything — treated as "nothing left to drain", not fatal:
-    // the data already left via the successful send() above, and the
-    // firmware is the authoritative verifier (it demuxes on-device and
-    // prints its own PASS/FAIL token).
-    let mut drained = false;
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while std::time::Instant::now() < deadline {
-        match sock.stats() {
-            Ok(s) if s.send_buffer_packets == 0 => { drained = true; break; }
-            Ok(_) => {}
-            Err(_) => { drained = true; break; }
-        }
-        std::thread::sleep(Duration::from_millis(50));
+    // Hold the socket open until the firmware closes its end. The firmware
+    // reads the message only at its TSBPD release time (send time plus the
+    // negotiated latency, later on a starved emulated guest), and a SHUTDOWN
+    // that reaches a receiver parked in srt_recv before that release makes
+    // libsrt drop the message and report the connection lost. An ACK, or an
+    // empty send buffer, only says the packet reached the peer's buffer, not
+    // its reader, so neither is a safe moment to close. The firmware closes
+    // right after its last read, so a broken connection here is the
+    // hand-off; the gate's bound is the backstop.
+    if let Err(e) = sock.set_recv_timeout(Some(hold)) {
+        eprintln!("FAIL[srt_recv_host_send]: set_recv_timeout: {e}");
+        exit(1);
     }
-    if !drained {
-        eprintln!("WARN[srt_recv_host_send]: send buffer did not report empty within 5s; proceeding anyway");
+    // Message API: the buffer must hold a full payload even though the
+    // firmware never sends anything back.
+    let mut sink = [0u8; 2048];
+    loop {
+        match sock.recv(&mut sink) {
+            Ok(n) if n > 0 => continue,
+            Err(RecvError::TimedOut) => {
+                eprintln!(
+                    "WARN[srt_recv_host_send]: the receiver did not close within {}s; closing anyway",
+                    hold.as_secs()
+                );
+                break;
+            }
+            // The receiver closed its end: the hand-off.
+            Ok(_) | Err(RecvError::ConnectionBroken) => break,
+            // Anything else ends the wait before the receiver is known to
+            // have read the message, so say so; the firmware token decides.
+            Err(e) => {
+                eprintln!("WARN[srt_recv_host_send]: recv while holding: {e}; closing anyway");
+                break;
+            }
+        }
     }
     sock.close();
     println!("PASS: srt_recv_host_send ({GOLDEN_LEN} bytes streamed to {addr})");
