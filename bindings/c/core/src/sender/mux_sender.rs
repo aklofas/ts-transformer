@@ -745,9 +745,19 @@ pub(crate) unsafe fn parse_c_srt_url_listener(
     let explicit_other_mode = s
         .split_once('?')
         .map(|(_, q)| {
+            // The URL parser percent-decodes keys and values, so compare the
+            // decoded text: `m%6fde=caller` is the `mode` key too. A string
+            // that does not decode is left to the parser to report.
             q.split('&').any(|kv| {
-                kv.split_once('=')
-                    .is_some_and(|(k, v)| k == "mode" && v != "listener")
+                kv.split_once('=').is_some_and(|(k, v)| {
+                    matches!(
+                        (
+                            tst_core::url::common::percent_decode(k),
+                            tst_core::url::common::percent_decode(v)
+                        ),
+                        (Ok(k), Ok(v)) if k == "mode" && v != "listener"
+                    )
+                })
             })
         })
         .unwrap_or(false);
@@ -1521,10 +1531,23 @@ mod tests {
 
     #[test]
     fn listener_parse_refuses_a_percent_encoded_caller_mode() {
-        for m in ["%63aller", "%72endezvous"] {
-            let url = format!("srt://127.0.0.1:7000?mode={m}");
-            assert!(listener_parse(url.as_bytes()).is_err(), "{m}");
+        for q in [
+            "mode=%63aller",
+            "mode=%72endezvous",
+            "m%6fde=caller",
+            "m%6fde=%63aller",
+        ] {
+            let url = format!("srt://127.0.0.1:7000?{q}");
+            assert!(listener_parse(url.as_bytes()).is_err(), "{q}");
+            assert_eq!(
+                unsafe { crate::error::tst_get_last_error() },
+                TstError::InvalidConfig as i32,
+                "{q}"
+            );
         }
+        let url =
+            listener_parse(b"srt://127.0.0.1:7000?mode=%6cistener").expect("encoded listener");
+        assert_eq!(url.mode, tst_srt::url::Mode::Listener);
     }
 
     #[test]

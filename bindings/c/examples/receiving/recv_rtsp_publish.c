@@ -313,7 +313,9 @@ int main(int argc, char **argv) {
      *   A handler on this thread cannot overlap the teardown code below: it
      *   interrupts it between instructions.  The guarantee rests on mask
      *   inheritance, which POSIX specifies for thread creation.  The signals
-     *   are unblocked only while the accept loop waits in next_publisher.
+     *   are unblocked only while the accept loop waits in next_publisher,
+     *   and again for teardown, after the default dispositions are
+     *   restored.
      */
     sigset_t sigs;
     sigemptyset(&sigs);

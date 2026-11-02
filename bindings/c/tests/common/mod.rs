@@ -19,6 +19,17 @@ pub(crate) fn last_error_msg() -> String {
     }
 }
 
+/// One 188-byte null TS packet (PID 0x1FFF), the smallest valid payload for
+/// the sender tests.
+pub(crate) fn ts_null_packet() -> [u8; 188] {
+    let mut p = [0xFFu8; 188];
+    p[0] = 0x47;
+    p[1] = 0x1F;
+    p[2] = 0xFF;
+    p[3] = 0x10;
+    p
+}
+
 /// `base` stretched by the `TST_TEST_TIMEOUT_SCALE` environment variable
 /// (a whole number, default 1). The sanitizer jobs set it because they run
 /// the peer threads several times slower. Unset, the margin is unchanged.
