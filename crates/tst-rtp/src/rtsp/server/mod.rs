@@ -1076,11 +1076,17 @@ impl RtspServer {
         if !self.state.started.load(Ordering::Relaxed) {
             return Err(RtspServerError::NotStarted);
         }
-        // Idempotent: already shut down (stopped, or hard-cancelled, whose
-        // listener branch does the rest of this itself). The swap makes
-        // exactly one of two racing `stop()` calls do the work.
-        if self.state.hard_cancel.is_cancelled() || self.state.shutdown.swap(true, Ordering::AcqRel)
-        {
+        // Hard-cancelled: the listener's cancel branch does the rest, but it
+        // polls the flag every 100 ms and may already be gone. Run the
+        // publish-side shutdown here too (idempotent, non-blocking) so the
+        // publish side is shut when this returns.
+        if self.state.hard_cancel.is_cancelled() {
+            self.state.shut_down();
+            return Ok(());
+        }
+        // Idempotent: already stopped. The swap makes exactly one of two
+        // racing `stop()` calls do the work.
+        if self.state.shutdown.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
         // The publish side ends first: a parked `next_publisher` wakes with
