@@ -173,12 +173,10 @@ fn main() {
     // two top-level files (each carries the version) is enough to catch
     // every pin change without recursively statting the whole submodule.
     println!("cargo:rerun-if-changed=vendor/srt/CMakeLists.txt");
-    // The staged copy under OUT_DIR is refreshed only when this script runs, and
-    // bindgen's CargoCallbacks watch the STAGED headers, not these. Watch the three
-    // trees cmake compiles from (a directory entry scans it recursively).
-    println!("cargo:rerun-if-changed=vendor/srt/srtcore");
-    println!("cargo:rerun-if-changed=vendor/srt/haicrypt");
-    println!("cargo:rerun-if-changed=vendor/srt/common");
+    // Every staged compile input: the staged copy under OUT_DIR is refreshed only
+    // when this script runs, and bindgen's CargoCallbacks watch the STAGED
+    // headers, not these.
+    watch_staged_inputs(Path::new("vendor/srt"));
     // The file `SOURCE_FIXUPS` patches: a bump that changes it must re-run
     // the fixup check even when CMakeLists.txt is untouched.
     println!("cargo:rerun-if-changed=vendor/srt/srtcore/core.cpp");
@@ -521,6 +519,21 @@ const STAGE_SKIP: &[&str] = &[
     "examples",
     "submodules",
 ];
+
+/// Emits a `rerun-if-changed` for every top-level entry of the vendored tree
+/// that [`stage_vendored_source`] copies (a directory entry is scanned
+/// recursively), derived from [`STAGE_SKIP`] so the two cannot drift.
+fn watch_staged_inputs(vendor_rel: &Path) {
+    let Ok(entries) = std::fs::read_dir(vendor_rel) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !STAGE_SKIP.contains(&name.as_str()) {
+            println!("cargo:rerun-if-changed={}/{name}", vendor_rel.display());
+        }
+    }
+}
 
 /// Copies the vendored tree to `staged`, skipping [`STAGE_SKIP`] and the
 /// [`SOURCE_FIXUPS`] targets (which [`apply_source_fixups`] writes). A file is
