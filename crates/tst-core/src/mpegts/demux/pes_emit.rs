@@ -20,8 +20,8 @@
 use crate::codec::{AudioCodec, VideoCodec};
 use crate::mpegts::common::{Pts90khz, StreamTypeCode, pts_diff_33bit};
 use crate::mpegts::demux::event::{
-    DemuxEvent, DiscontinuityKind, MetadataKind, NonConformantIssue, SamplePayload, StreamId,
-    StreamKind, SubtitleCodec,
+    DemuxEvent, DiscontinuityKind, MetadataKind, MultiCellAuReason, NonConformantIssue,
+    SamplePayload, StreamId, StreamKind, SubtitleCodec,
 };
 use crate::mpegts::demux::payload::{
     DvbSubStripResult, KlvShape, classify_klv, iter_au_cells, strip_dvb_sub_envelope,
@@ -172,7 +172,7 @@ impl super::demuxer::Demuxer {
         // the push, or a PES that starts and ends in this packet is judged
         // against the old clock.
         if pkt.payload_unit_start && !self.pes.has_pid(pkt.pid) {
-            self.settle_pts_baseline(pkt.pid);
+            self.settle_after_pes(pkt.pid);
         }
         let (outcomes, old_count) = self.pes.push_split(
             pkt.pid,
@@ -195,7 +195,7 @@ impl super::demuxer::Demuxer {
         let mut damage_next_complete: Option<(u16, &'static str)> = None;
         for (idx, outcome) in outcomes.into_iter().enumerate() {
             if settles && idx == old_count {
-                self.settle_pts_baseline(pkt.pid);
+                self.settle_after_pes(pkt.pid);
             }
             match outcome {
                 ReassemblyOutcome::Complete(pes) => {
@@ -249,7 +249,7 @@ impl super::demuxer::Demuxer {
                         // time-base reset first and a caller that keeps
                         // feeding is judged on the new clock.
                         if settles {
-                            self.settle_pts_baseline(pkt.pid);
+                            self.settle_after_pes(pkt.pid);
                         }
                         return Err(err);
                     }
@@ -260,7 +260,7 @@ impl super::demuxer::Demuxer {
             }
         }
         if settles {
-            self.settle_pts_baseline(pkt.pid);
+            self.settle_after_pes(pkt.pid);
         }
         Ok(())
     }
@@ -273,16 +273,42 @@ impl super::demuxer::Demuxer {
     /// a standalone marker).
     pub(super) fn handle_complete_pes(&mut self, pes: PesPayload, damage: Option<&'static str>) {
         let pid = pes.pid;
+        let damaged = damage.is_some();
         let mut damage = damage;
         self.emit_complete_pes(pes, &mut damage);
         // Judged on its own clock above; a pending reset applies from the
         // next PES on.
-        self.settle_pts_baseline(pid);
+        self.settle_after_pes(pid);
         if let Some(reason) = damage {
             let stream = self
                 .lookup_stream(pid)
                 .unwrap_or_else(|| StreamId::anonymous(pid, self.program_number_for_pid(pid)));
             self.queue_nonconformant(stream, NonConformantIssue::MalformedPes { pid, reason });
+        }
+        // The PES lost bytes, so a cell of the AU in progress may be among
+        // them: the walk above may have buffered a fragment that must not
+        // join the next PES's cells.
+        if damaged {
+            self.discard_au_in_progress(pid);
+        }
+    }
+
+    /// Packets of `pid` were lost or a new source began: discard every AU
+    /// cell reassembly in progress on the PID and, when one was held, report
+    /// the loss as `MultiCellAu { SequenceGap }` (H.222.0 §2.12.4.2).
+    pub(super) fn discard_au_in_progress(&mut self, pid: u16) {
+        if let Some(dropped_bytes) = self.au_reassembler.discard_pid(pid) {
+            let stream = self
+                .lookup_stream(pid)
+                .unwrap_or_else(|| StreamId::anonymous(pid, self.program_number_for_pid(pid)));
+            self.queue_nonconformant(
+                stream,
+                NonConformantIssue::MultiCellAu {
+                    pid,
+                    dropped_bytes,
+                    reason: MultiCellAuReason::SequenceGap,
+                },
+            );
         }
     }
 
@@ -467,7 +493,10 @@ impl super::demuxer::Demuxer {
         if let Some(state) = self.pid_state.get_mut(&pes.pid) {
             state.latm_carry = None;
         }
-        self.settle_pts_baseline(pes.pid);
+        self.settle_after_pes(pes.pid);
+        // Its cells are not walked, and the bytes it lost may hold a cell of
+        // the AU in progress.
+        self.discard_au_in_progress(pes.pid);
     }
 
     /// Walk the LOAS records of an AAC-LATM PES and update the PID's carry
@@ -2645,5 +2674,146 @@ mod tests {
             2,
             "{ev:?}"
         );
+    }
+
+    /// AU cells on synchronous KLV PID 0x101 (stream_type 0x15).
+    mod au_in_progress {
+        use super::*;
+        use crate::mpegts::au_cell::{
+            AuCellHeader, CellFragmentIndication, write_metadata_au_cell,
+        };
+        use crate::mpegts::demux::event::MultiCellAuReason;
+        use CellFragmentIndication::{First, Last, Middle};
+
+        fn klv_demuxer(mode: StrictMode) -> Demuxer {
+            let mut b = DemuxerConfig::builder();
+            b.strict(mode);
+            let mut d = demuxer_with_streams(b.build(), 0x1FFF, &[(0x15, 0x101, &[])]);
+            drain_all_events(&mut d);
+            d
+        }
+
+        /// One PES (stream_id 0xFC, PTS 90 000) carrying `cells` back to back.
+        fn cells_pes(cc: u8, cells: &[(CellFragmentIndication, u8, &[u8])]) -> Vec<[u8; 188]> {
+            let mut body = Vec::new();
+            for &(cfi, seq, inner) in cells {
+                let header = AuCellHeader {
+                    metadata_service_id: 0,
+                    sequence_number: seq,
+                    cell_fragment_indication: cfi,
+                    decoder_config_flag: false,
+                    random_access_indicator: true,
+                };
+                write_metadata_au_cell(&mut body, header, inner).unwrap();
+            }
+            pes_to_packets(
+                0x101,
+                cc,
+                &pes_bytes(0xFC, Some(90_000), None, true, &body, true),
+            )
+        }
+
+        fn metadata_count(ev: &[DemuxEvent]) -> usize {
+            ev.iter()
+                .filter(|e| matches!(e, DemuxEvent::Metadata { .. }))
+                .count()
+        }
+
+        fn sequence_gaps(ev: &[DemuxEvent]) -> Vec<usize> {
+            issues(ev)
+                .iter()
+                .filter_map(|i| match i {
+                    NonConformantIssue::MultiCellAu {
+                        pid: 0x101,
+                        dropped_bytes,
+                        reason: MultiCellAuReason::SequenceGap,
+                    } => Some(*dropped_bytes),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn run(mode: StrictMode, pkts: &[[u8; 188]]) -> Vec<DemuxEvent> {
+            let mut d = klv_demuxer(mode);
+            let r = feed_packets(&mut d, pkts);
+            assert!(r.is_ok(), "{mode:?}: {r:?}");
+            d.flush();
+            drain_all_events(&mut d)
+        }
+
+        /// PES A carries First 10 (filling its first packet) and Middle 11 in
+        /// its second packet, which is lost; PES B carries Last 12. The jump
+        /// is seen on B's PUSI, before A is flushed: the First that A's walk
+        /// buffers must not join B's Last.
+        #[test]
+        fn a_lost_tail_packet_discards_the_au_in_progress() {
+            // 184 payload bytes in the first packet: a 14-byte PES header
+            // and a 5 + 165-byte First cell.
+            let a = cells_pes(0, &[(First, 10, &[0xAA; 165]), (Middle, 11, &[0xBB; 20])]);
+            assert_eq!(a.len(), 2);
+            let mut pkts = vec![a[0]];
+            pkts.extend(cells_pes(2, &[(Last, 12, b"CCC")]));
+            for mode in [StrictMode::Off, StrictMode::TimingOnly] {
+                let ev = run(mode, &pkts);
+                assert_eq!(metadata_count(&ev), 0, "{mode:?}: {ev:?}");
+            }
+            let ev = run(StrictMode::Off, &pkts);
+            assert_eq!(sequence_gaps(&ev), vec![165], "{ev:?}");
+        }
+
+        /// The same AU when PES A is closed short without a continuity gap
+        /// (its PES_packet_length promised a second packet that never came):
+        /// the damaged PES discards the AU in progress whether it is walked
+        /// (Off) or dropped (TimingOnly).
+        #[test]
+        fn a_short_pes_discards_the_au_in_progress() {
+            let mut pkts = cells_pes(0, &[(First, 10, b"AAA")]);
+            let short = cells_pes(1, &[(Middle, 11, &[0xBB; 165]), (Middle, 12, &[0xBB; 20])]);
+            pkts.push(short[0]);
+            pkts.extend(cells_pes(2, &[(Last, 13, b"CCC")]));
+            for mode in [StrictMode::Off, StrictMode::TimingOnly] {
+                let ev = run(mode, &pkts);
+                assert_eq!(metadata_count(&ev), 0, "{mode:?}: {ev:?}");
+                assert!(!sequence_gaps(&ev).is_empty(), "{mode:?}: {ev:?}");
+            }
+        }
+
+        /// H.222.0 §2.4.3.5: a discontinuity_indicator starts a new source on
+        /// the PID, so an AU in progress from the old one is discarded and
+        /// reported, whether the flag rides the new PES's first packet or an
+        /// adaptation-only packet before it.
+        #[test]
+        fn a_signalled_discontinuity_discards_the_au_in_progress() {
+            let a = cells_pes(0, &[(First, 10, b"AAA")]);
+            let mut b = cells_pes(1, &[(Last, 11, b"CCC")]);
+            // On B's PUSI packet: rebuild it with the flag set.
+            let mut flagged = a.clone();
+            // B fits one packet stuffed by its adaptation field: the payload
+            // follows `adaptation_field_length` + 1 bytes.
+            let payload_start = 5 + usize::from(b[0][4]);
+            flagged.push(ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 7,
+                pusi: true,
+                discontinuity: true,
+                payload: &b[0][payload_start..],
+                ..Default::default()
+            }));
+            // On an adaptation-only packet between A and B.
+            let mut af_only = a;
+            af_only.push(ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 0,
+                discontinuity: true,
+                ..Default::default()
+            }));
+            b[0][3] = (b[0][3] & 0xF0) | 9;
+            af_only.push(b[0]);
+            for (name, pkts) in [("pusi", flagged), ("adaptation-only", af_only)] {
+                let ev = run(StrictMode::Off, &pkts);
+                assert_eq!(metadata_count(&ev), 0, "{name}: {ev:?}");
+                assert_eq!(sequence_gaps(&ev), vec![3], "{name}: {ev:?}");
+            }
+        }
     }
 }

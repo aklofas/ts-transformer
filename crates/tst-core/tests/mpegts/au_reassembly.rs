@@ -234,9 +234,23 @@ fn a_lost_middle_pes_discards_the_au_in_progress() {
             }
         )
     });
+    // The Last cell then arrives with no First: an orphan.
+    let orphan = events.iter().position(|e| {
+        matches!(
+            e,
+            DemuxEvent::NonConformant {
+                issue: NonConformantIssue::MultiCellAu {
+                    pid: KLV_PID,
+                    dropped_bytes: 3,
+                    reason: MultiCellAuReason::Orphan,
+                },
+                ..
+            }
+        )
+    });
     assert!(
-        matches!((jump, gap), (Some(j), Some(g)) if j < g),
-        "ContinuityJump then MultiCellAu SequenceGap: {events:?}",
+        matches!((jump, gap, orphan), (Some(j), Some(g), Some(o)) if j < g && g < o),
+        "ContinuityJump, then MultiCellAu SequenceGap, then MultiCellAu Orphan: {events:?}",
     );
 }
 
