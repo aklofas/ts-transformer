@@ -36,6 +36,10 @@ use self::cancel::RtspServerCancelHandle;
 use self::mount_rules::MountRules;
 use crate::url::RtspScheme;
 
+/// How often a parked [`RtspServer::next_publisher`] re-checks the shutdown
+/// flag, the same period as the listener's hard-cancel poll.
+const NEXT_PUBLISHER_SLICE: Duration = Duration::from_millis(100);
+
 /// Bound of the on-demand publish-mount queue (see
 /// [`RtspServerBuilder::accept_unregistered_publishers`]): handles created
 /// by ANNOUNCE and not yet taken by [`RtspServer::next_publisher`]. An
@@ -270,7 +274,9 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 ///    are: a parked or later `next_publisher` returns `Shutdown`, every
 ///    publish mount's application transport reads `Closed`, mount
 ///    registration and rule edits are refused, and `start()` is refused.
-///    Sessions end at their next poll; no Notice is sent.
+///    Sessions end at their next poll; no Notice is sent. On a server that
+///    was never started, publish mounts' application transports stay open
+///    until the server is dropped.
 ///
 /// Dropping the server, [`Self::stop`] and [`Self::remove_mount`] block
 /// the calling thread on the server's internal runtime. Call them from a
@@ -290,7 +296,7 @@ impl std::fmt::Debug for RtspServer {
         f.debug_struct("RtspServer")
             .field("bind_url", &self.state.builder.bind_url)
             .field("started", &self.state.started.load(Ordering::Relaxed))
-            .field("shutdown", &self.state.shutdown.load(Ordering::Relaxed))
+            .field("shutdown", &self.state.is_shut_down())
             .field("local_addr", &*self.state.local_addr.lock().unwrap())
             .field(
                 "active_sessions",
@@ -801,8 +807,9 @@ impl RtspServer {
     /// expired.
     ///
     /// # Errors
-    /// - [`RtspServerError::Shutdown`] — the server was stopped, including
-    ///   while this call waited.
+    /// - [`RtspServerError::Shutdown`] — the server was stopped, dropped or
+    ///   hard-cancelled, including while this call waited (a hard cancel is
+    ///   seen within 100 ms, on a server that was never started too).
     pub fn next_publisher(
         &self,
         timeout: Duration,
@@ -814,12 +821,37 @@ impl RtspServer {
             .publish_queue_rx
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        match rx.recv_timeout(timeout) {
-            Ok(state) => Ok(Some(crate::rtsp::server::publish::PublishMountHandle {
-                state,
-            })),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(RtspServerError::Shutdown),
+        // Wait in slices and re-check the shutdown flag between them: a
+        // hard cancel is one atomic store (async-signal-safe), so it cannot
+        // drop the queue's sender itself, and on a server that was never
+        // started no listener does it either. `None` = no deadline (a
+        // timeout too large for `Instant`).
+        let deadline = std::time::Instant::now().checked_add(timeout);
+        loop {
+            let slice = match deadline {
+                Some(d) => d
+                    .saturating_duration_since(std::time::Instant::now())
+                    .min(NEXT_PUBLISHER_SLICE),
+                None => NEXT_PUBLISHER_SLICE,
+            };
+            match rx.recv_timeout(slice) {
+                Ok(state) => {
+                    return Ok(Some(crate::rtsp::server::publish::PublishMountHandle {
+                        state,
+                    }));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(RtspServerError::Shutdown);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if self.state.is_shut_down() {
+                        return Err(RtspServerError::Shutdown);
+                    }
+                    if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                        return Ok(None);
+                    }
+                }
+            }
         }
     }
 
@@ -1267,6 +1299,12 @@ impl RtspServer {
     /// transport reads `Closed`, mount registration and rule edits are
     /// refused, and [`Self::start`] is refused. Sessions end at their next
     /// poll; no Notice is sent.
+    ///
+    /// `cancel()` is one atomic store, so the transports are closed by the
+    /// running listener (within 100 ms), by [`Self::stop`] or by Drop. On a
+    /// server that was never started, a publish mount's application
+    /// transport therefore stays open until the server is dropped;
+    /// everything else above holds.
     pub fn cancel_handle(&self) -> RtspServerCancelHandle {
         self.state.hard_cancel.clone()
     }
