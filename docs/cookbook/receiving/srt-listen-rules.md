@@ -29,14 +29,19 @@ rules.set("publish:amber", ListenRule::AcceptWith {
 rules.set("publish:cobalt", ListenRule::Accept)?;
 rules.set_default(ListenRule::Reject(RejectReason::NotFound))?; // allow-list
 
+// Live workers per name: `live: Arc<Mutex<HashMap<String, usize>>>`.
 loop {
     let (socket, peer) = listener.accept()?;
     if let Some(id) = socket.stream_id() {
-        // One live publisher per name from now on.
+        // Count the worker first, then lock the name: one live publisher
+        // per name from now on.
+        *live.lock().unwrap().entry(id.to_owned()).or_insert(0) += 1;
         rules.set(id, ListenRule::Reject(RejectReason::Conflict))?;
-        // ... hand `socket` to a worker. When it ends, put the name's
-        // original rule back (`rules.set(id, original)`); `remove` only a
-        // name that had no rule, or the default rejects it next time.
+        // ... hand `socket` to a worker. When it ends:
+        //     let n = live.get_mut(id).unwrap(); *n -= 1;
+        //     if *n == 0 { put the name's original rule back
+        //                  (`rules.set(id, original)`); `remove` only a
+        //                  name that had no rule, or the default rejects it }
     }
 }
 ```
@@ -57,10 +62,12 @@ rules.set("publish:amber", ListenRule.accept_with("amber-secret-1"))
 rules.set("publish:cobalt", ListenRule.accept())
 rules.set_default(ListenRule.reject(RejectReason.NOT_FOUND))
 
-# after accepting a publisher:
+# after accepting a publisher (count live workers per name; restore only
+# when the last one ends):
 rules.set(stream_id, ListenRule.reject(RejectReason.CONFLICT))
-# when it ends, restore the name's original rule; remove() only a name
-# that had none (otherwise the default reject locks it out):
+# when the last worker for the name ends, restore its original rule;
+# remove() only a name that had none (otherwise the default reject locks
+# it out):
 rules.set(stream_id, original_rule)
 ```
 
@@ -76,10 +83,12 @@ rules.set("publish:amber", ListenRule.acceptWith("amber-secret-1"));
 rules.set("publish:cobalt", ListenRule.accept());
 rules.setDefault(ListenRule.reject(RejectReason.NOT_FOUND));
 
-// after accepting a publisher:
+// after accepting a publisher (count live workers per name; restore only
+// when the last one ends):
 rules.set(streamId, ListenRule.reject(RejectReason.CONFLICT));
-// when it ends, restore the name's original rule; remove() only a name
-// that had none (otherwise the default reject locks it out):
+// when the last worker for the name ends, restore its original rule;
+// remove() only a name that had none (otherwise the default reject locks
+// it out):
 rules.set(streamId, originalRule);
 ```
 
@@ -107,7 +116,9 @@ rules.set(streamId, originalRule);
   caller whose handshake had already completed. Two same-name publishers that
   connect inside that window (typically well under a millisecond, longer
   under scheduling delay) are both accepted. Keep your own post-accept check
-  as the backstop.
+  as the backstop. Count the live workers per name and restore the rule only
+  when the count reaches zero, otherwise the duplicate that slipped through
+  frees the name while the first publisher is still sending.
 - **Peer-address decisions stay post-accept.** Rules see the stream ID only.
   To allow or refuse by source address, inspect the peer returned by
   `accept()` and close the socket yourself.
