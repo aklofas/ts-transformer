@@ -169,7 +169,7 @@ fn loopback_caller_sender_to_listener_receiver_delivers_bytes_and_eos() {
 /// next call receives the following message.
 #[test]
 fn too_large_consumes_the_oversized_message() {
-    let port: u16 = 28_000 + ((std::process::id() as u16 + 250) % 1000);
+    let port: u16 = 28_000 + ((std::process::id() + 250) % 1000) as u16;
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
 
     let receiver_thread = thread::spawn(move || {

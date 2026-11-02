@@ -1520,6 +1520,14 @@ mod tests {
     }
 
     #[test]
+    fn listener_parse_refuses_a_percent_encoded_caller_mode() {
+        for m in ["%63aller", "%72endezvous"] {
+            let url = format!("srt://127.0.0.1:7000?mode={m}");
+            assert!(listener_parse(url.as_bytes()).is_err(), "{m}");
+        }
+    }
+
+    #[test]
     fn listener_parse_refuses_invalid_utf8_without_a_lossy_retry() {
         assert!(listener_parse(b"srt://:7000?passphrase=\xff\xfe0123456789abcdef").is_err());
         assert!(
