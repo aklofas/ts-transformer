@@ -4,9 +4,10 @@
 //! Covers the strict-by-default offender contract (DVB-subtitle streams
 //! error unless their kinds are passed in `drop`), the Unknown→Data
 //! pass-through mapping (PMT descriptors preserved verbatim, `carries_pts`
-//! true for Data and synchronous KLV, false for asynchronous KLV), the PCR copy rule (the demuxed `pcr_pid` is copied only
-//! when it lands on a kept video or audio stream — KLV, data, and
-//! subtitle PIDs are PCR-ineligible),
+//! true for Data and synchronous KLV, false for asynchronous KLV), the PCR
+//! copy rule (the demuxed `pcr_pid` is copied only when it lands on a kept
+//! video or audio stream — KLV, data, and subtitle PIDs are
+//! PCR-ineligible),
 //! exact descriptor preservation for all typed stream kinds,
 //! and real mux→demux→`from_program_map` round-trips.
 
@@ -143,6 +144,40 @@ fn async_klv_maps_to_private_data_without_pts() {
         stream_type: KlvStreamType::PrivateData,
         carries_pts: false,
     }));
+}
+
+/// Two synchronous KLV streams with no `metadata_service_id` of their own
+/// both resolve to service 0, which the muxer refuses (H.222.0 §2.12.9.2).
+#[test]
+fn two_sync_klv_streams_without_service_ids_are_refused() {
+    let p = pm(
+        0x100,
+        0x101,
+        vec![
+            stream(0x101, 0x1B, DemuxKind::Video(DemuxVideo::H264)),
+            stream(
+                0x102,
+                0x15,
+                DemuxKind::KlvSync {
+                    declared_link: None,
+                },
+            ),
+            stream(
+                0x103,
+                0x15,
+                DemuxKind::KlvSync {
+                    declared_link: None,
+                },
+            ),
+        ],
+    );
+    let err = MuxerConfig::from_program_map(&p, &[]).expect_err("duplicate service 0");
+    match err {
+        MuxError::ConfigInvalid { reason } => {
+            assert!(reason.contains("metadata_service_id 0"), "{reason}");
+        }
+        other => panic!("expected ConfigInvalid, got {other:?}"),
+    }
 }
 
 #[test]
@@ -658,9 +693,9 @@ fn unknown_streams_map_to_data_specs_with_descriptors() {
     let prog = &cfg.programs[0];
     assert_eq!(prog.streams.len(), 5, "video + KLV + three data streams");
 
-    // carries_pts is ALWAYS true — a PES-level property the PMT cannot
-    // declare; even the carries_pts=false source stream (0x1102) comes
-    // back true (KLV-rule parity).
+    // carries_pts is true for Data streams — a PES-level property the PMT
+    // cannot declare; even the carries_pts=false source stream (0x1102)
+    // comes back true.
     assert!(prog.streams.contains(&StreamSpec::Data {
         pid: 0x1100,
         stream_type: 0xF0,
