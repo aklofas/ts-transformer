@@ -15,7 +15,7 @@ it. A KLV can pair with several frames; it is emitted as `UnpairedKlv`
 only if it never paired, when it is evicted from the history or at
 `flush`.
 
-The history is cleared at a reconnect and at a signalled discontinuity (a set `discontinuity_indicator`) on the video or KLV PID, so old-clock metadata never attaches to a new-clock frame; entries that never paired come out as `UnpairedKlv`. The video frame in flight at a signalled discontinuity on the video PID is emitted unpaired, because the demuxer reports the flag before the flagged packet completes that frame. Likewise the KLV PES in flight at the flag completes after it on the old clock: the first KLV sample after the flag whose PTS is within two seconds of the last one before it comes out as `UnpairedKlv` and never pairs. Call `pairer.flush()` yourself at a restart your source does not signal.
+The history is cleared at a reconnect and at a signalled discontinuity (a set `discontinuity_indicator`) on the video or KLV PID, so old-clock metadata never attaches to a new-clock frame; entries that never paired come out as `UnpairedKlv`. The video frame in flight at a signalled discontinuity on the video PID is emitted unpaired, because the demuxer reports the flag before the flagged packet completes that frame. Likewise the KLV PES in flight at the flag completes after it on the old clock: the first KLV sample after the flag whose PTS is within two seconds of the last KLV or video PTS before it comes out as `UnpairedKlv` and never pairs. Call `pairer.flush()` yourself at a restart your source does not signal.
 
 ```rust,no_run
 use std::time::Duration;

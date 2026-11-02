@@ -354,7 +354,7 @@ impl Pairer {
     ///
     /// A KLV PES in flight at a signalled discontinuity completes after it with
     /// a PTS on the old clock. The first KLV sample after the flag whose PTS is
-    /// within two seconds of the newest KLV PTS before it is taken to be that
+    /// within two seconds of the newest KLV or video PTS before it is taken to be that
     /// PES and emitted as `UnpairedKlv` without entering the history.
     ///
     /// # Example
