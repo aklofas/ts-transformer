@@ -1398,14 +1398,14 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Status:** Deferred. No C-ABI `H264Receiver` / `H264DepayConfig` /
   `H264Au` family exists; the H.264 ingest path is only available from
   Rust, Python, and JVM.
-- **Why deferred:** The C ABI grows additively (currently minor 26);
+- **Why deferred:** The C ABI grows additively (currently minor 27);
   adding an H.264-specific receive family would bump it further and
   requires cbindgen-friendly struct definitions (no opaque Rust types
   passed by value). The existing Python + JVM mirrors cover all current
   consumers.
 - **Trigger to revisit:** A C or embedded consumer asks for first-party
   H.264 ingest (e.g. a bare-metal pipeline receiving from a STANAG 4609
-  RTSP camera). Would be the next additive ABI minor bump (0.26 → 0.27).
+  RTSP camera). Would be the next additive ABI minor bump (0.27 → 0.28).
 
 ## Elementary H.264/H.265 RTP sender
 
