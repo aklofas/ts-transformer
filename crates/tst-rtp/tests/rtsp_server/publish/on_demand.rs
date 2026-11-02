@@ -188,6 +188,29 @@ fn hard_cancel_wakes_a_parked_next_publisher_with_shutdown() {
     ));
 }
 
+/// A hard cancel wakes a parked `next_publisher` with `Shutdown` even on a
+/// server that was never started, where no listener runs the shutdown: the
+/// call itself re-checks the flag while it waits.
+#[test]
+fn hard_cancel_wakes_a_parked_next_publisher_on_a_never_started_server() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.accept_unregistered_publishers(true);
+    let server = b.build().unwrap();
+    std::thread::scope(|s| {
+        // An unwoken call returns Ok(None) at its timeout, which the match
+        // below fails.
+        let parked = s.spawn(|| server.next_publisher(scaled(Duration::from_secs(5))));
+        std::thread::sleep(Duration::from_millis(200));
+        server.cancel_handle().cancel();
+        let r = parked.join().unwrap();
+        assert!(
+            matches!(r, Err(RtspServerError::Shutdown)),
+            "got {:?}",
+            r.as_ref().map(|h| h.is_some())
+        );
+    });
+}
+
 /// A hard cancel ends a publish mount's application transport with `Closed`.
 #[test]
 fn hard_cancel_ends_a_publish_mounts_app_transport_with_closed() {

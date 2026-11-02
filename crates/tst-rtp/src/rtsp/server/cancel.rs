@@ -14,6 +14,12 @@
 /// `graceful_shutdown_drain`. Clients see the connection close with no
 /// RTSP TEARDOWN-style notification.
 ///
+/// On a server that was never started there is no listener: a parked or
+/// later `next_publisher` still returns `Shutdown` (it re-checks the flag
+/// every 100 ms), and registration, rule edits and `start()` are refused,
+/// but publish mounts' application transports stay open until the server
+/// is dropped.
+///
 /// For graceful shutdown with session-end notification + bounded drain,
 /// use `RtspServer::stop` instead.
 ///
