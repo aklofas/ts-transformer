@@ -1,6 +1,5 @@
 //! The receiving half: [`RtpRecvTransport`] and the byte source behind it.
 
-use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -9,6 +8,7 @@ use tst_core::cancel::CANCEL_POLL_INTERVAL;
 use tst_core::net::udp_socket::{
     apply_multicast_recv_join, bind_udp_socket_multicast, set_socket_buffers,
 };
+use tst_core::net::{RecvAction, classify_recv_error};
 use tst_core::transport::{
     BrokenCause, EndReason, EndReasonHandle, RecvTransport, SocketStats, TransportCancel,
     TransportError,
@@ -88,7 +88,8 @@ impl Source {
     ///
     /// - **Returns `Err(TransportError::Broken)`** when the underlying
     ///   source reports a hard error:
-    ///   - UDP: any `io::Error` that is not `WouldBlock`/`TimedOut` —
+    ///   - UDP: any `io::Error` the shared receive classifier reports as
+    ///     fatal (`WouldBlock`, `TimedOut` and `Interrupted` are retried) —
     ///     `errno_code` carries the OS errno.
     ///   - Mpsc: `RecvTimeoutError::Disconnected` (the pump's `Sender`
     ///     was dropped) — `errno_code` is `None`.
@@ -151,12 +152,7 @@ impl Source {
                 match received {
                     Ok(0) => continue, // Zero-byte recv is meaningless on UDP; loop.
                     Ok(n) => return Ok(n),
-                    Err(e)
-                        if e.kind() == io::ErrorKind::WouldBlock
-                            || e.kind() == io::ErrorKind::TimedOut =>
-                    {
-                        continue;
-                    }
+                    Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => continue,
                     Err(e) => {
                         return Err(TransportError::Broken {
                             msg: format!("UDP recv failed: {e}"),
