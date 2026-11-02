@@ -226,17 +226,20 @@ fn cancel_wakes_a_send_parked_on_a_dripping_tls_handshake() {
     let listener = tls_listener(&cert, &key);
     let addr = listener.local_addr().expect("local_addr");
 
-    // Same raw dripping client as the recv test: a handshake record header
-    // announcing 255 bytes, then one zero byte every 50 ms.
+    // A raw dripping client: a handshake record header announcing 0x4000
+    // bytes (the largest plaintext record), then one zero byte every 50 ms.
+    // The record never completes within the test and the drip outlasts the
+    // result wait at every timeout scale, so a send that ignores the cancel
+    // until the handshake read finishes cannot return in time.
     let stop = Arc::new(AtomicBool::new(false));
     let dripped = Arc::new(AtomicUsize::new(0));
     let drip = {
         let (stop, dripped) = (stop.clone(), dripped.clone());
         thread::spawn(move || {
             let mut s = TcpStream::connect(addr).expect("raw connect");
-            s.write_all(&[0x16, 0x03, 0x01, 0x00, 0xff])
+            s.write_all(&[0x16, 0x03, 0x01, 0x40, 0x00])
                 .expect("record header");
-            let end = Instant::now() + Duration::from_secs(60);
+            let end = Instant::now() + scaled(Duration::from_secs(60));
             while !stop.load(Ordering::Acquire) && Instant::now() < end {
                 if s.write_all(&[0x00]).is_err() {
                     break;
