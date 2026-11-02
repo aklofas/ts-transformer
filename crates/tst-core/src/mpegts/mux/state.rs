@@ -125,15 +125,6 @@ pub(super) fn validate_annex_b(nal: &[u8]) -> Result<(), MuxError> {
     Ok(())
 }
 
-/// AV1-in-MPEG-2-TS binding §3.2 `ts_open_bitstream_unit()` start code.
-///
-/// Per binding spec the `obu_start_code` field is `uimsbf(24)` —
-/// 24 bits = 3 bytes — with value `0x000001`. The on-wire byte
-/// sequence is `0x00 0x00 0x01`, identical to the H.264 / H.265
-/// Annex-B 3-byte start code. (Stream classification keeps AV1 and
-/// H.264 distinguishable via the PMT `stream_type` + `AV01`
-/// registration descriptor — the §3.2 start code only marks OBU
-/// boundaries within an AV1 PES.)
 /// `metadata_STD_descriptor` buffer size for synchronous KLV, in units of
 /// 1024 bytes (H.222.0 §2.6.63): 66 560 bytes hold the largest PES the
 /// synchronous path emits, 6 prefix bytes plus a `PES_packet_length` of
@@ -147,6 +138,15 @@ pub(super) const SYNC_KLV_STD_BUFFER_UNITS: u32 = 65;
 /// configured interval needs less, so this covers every accepted one.
 pub(super) const SYNC_KLV_STD_INPUT_LEAK_RATE: u32 = 13_109;
 
+/// AV1-in-MPEG-2-TS binding §3.2 `ts_open_bitstream_unit()` start code.
+///
+/// Per binding spec the `obu_start_code` field is `uimsbf(24)` —
+/// 24 bits = 3 bytes — with value `0x000001`. The on-wire byte
+/// sequence is `0x00 0x00 0x01`, identical to the H.264 / H.265
+/// Annex-B 3-byte start code. (Stream classification keeps AV1 and
+/// H.264 distinguishable via the PMT `stream_type` + `AV01`
+/// registration descriptor — the §3.2 start code only marks OBU
+/// boundaries within an AV1 PES.)
 pub(super) const AV1_TS_OBU_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
 
 /// Escape-encode a SINGLE AV1 OBU unit body (no start code emitted).
