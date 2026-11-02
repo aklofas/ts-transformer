@@ -205,7 +205,9 @@ pub fn parse_pat(section: &[u8]) -> Result<Pat, PsiParseError> {
 /// `section_syntax_indicator` and a non-zero `section_number` on a
 /// single-section table are always checked; reserved bits only when
 /// `check_reserved_bits` is set. A section whose `table_id` is `0x02` also
-/// has its PMT-only reserved bits checked. A section too short for a field
+/// has its PMT-only reserved bits checked. The reserved bits inside the PAT
+/// program loop and the PMT elementary-stream loop entries are not checked
+/// by this helper. A section too short for a field
 /// skips that field's check, so this never panics.
 pub fn psi_section_syntax_issues(section: &[u8], check_reserved_bits: bool) -> Vec<PsiSyntaxKind> {
     let mut issues = Vec::new();
@@ -230,10 +232,10 @@ pub fn psi_section_syntax_issues(section: &[u8], check_reserved_bits: bool) -> V
             || byte(5).is_some_and(|b| b & 0xC0 != 0xC0);
         if byte(0) == Some(0x02) {
             // PMT additionally: byte 8 bits 0xE0 = reserved (must be 1);
-            // byte 10 bits 0x30 = reserved (must be 1).
+            // byte 10 bits 0xF0 = reserved (must be 1), Table 2-33.
             bad = bad
                 || byte(8).is_some_and(|b| b & 0xE0 != 0xE0)
-                || byte(10).is_some_and(|b| b & 0x30 != 0x30);
+                || byte(10).is_some_and(|b| b & 0xF0 != 0xF0);
         }
         if bad {
             issues.push(PsiSyntaxKind::ReservedBits);
@@ -245,7 +247,7 @@ pub fn psi_section_syntax_issues(section: &[u8], check_reserved_bits: bool) -> V
 #[cfg(test)]
 mod pat_tests {
     use super::*;
-    use crate::mpegts::demux::test_support::{build_pat_section, recrc};
+    use crate::mpegts::demux::test_support::{build_pat_section, build_pmt_section, recrc};
 
     #[test]
     fn public_syntax_helper_matches_the_demuxer_checks() {
@@ -255,6 +257,22 @@ mod pat_tests {
         assert_eq!(
             psi_section_syntax_issues(&s, false),
             vec![PsiSyntaxKind::SectionSyntaxIndicatorUnset]
+        );
+    }
+
+    #[test]
+    fn pmt_reserved_bits_before_program_info_length_are_all_checked() {
+        // Table 2-33: byte 10 = reserved(4) + program_info_length(12) high nibble.
+        let mut s = build_pmt_section(1, 0x100, 0, &[], &[(0x1B, 0x101, &[])]);
+        s[10] &= !0x80; // clear the top reserved bit; bits 0x30 stay set
+        recrc(&mut s);
+        assert_eq!(
+            psi_section_syntax_issues(&s, true),
+            vec![PsiSyntaxKind::ReservedBits]
+        );
+        assert!(
+            psi_section_syntax_issues(&s, false).is_empty(),
+            "lenient mode ignores reserved bits"
         );
     }
 
