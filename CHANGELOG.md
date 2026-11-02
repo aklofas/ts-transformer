@@ -27,6 +27,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A listener with a passphrase refuses every handshake-v4 caller (see Security above); a v4 caller that relied on a passphrase listener must move to libsrt 1.3 or later.
 - `StreamId::new`, `ListenRules::set` and the `?streamid=` URL key refuse a stream ID or rule key holding a NUL byte (`StreamIdError::InteriorNul`, `ListenRuleError::InteriorNul`; `ListenRules::remove` of such a key returns `false`; Python and JVM report `CONFIG_INVALID`). libsrt's listen hook sees the stream ID as a C string, so a NUL-bearing ID could never match its own rule.
 
+### Changed — tst-core, tst-py (BREAKING)
+
+- `MuxerConfig::from_program_map` maps an asynchronous KLV stream (`StreamKind::KlvAsync`, stream_type 0x06) to `carries_pts: false`, so its remuxed PES packets carry `PTS_DTS_flags` 00 as MISB ST 1402 (ST 1402-22) requires for the asynchronous method. Before, they carried the source PTS, which the conversion's documentation called the STANAG 4609 norm. Synchronous KLV (0x15) and data streams keep `carries_pts: true`. A caller that wants a PTS on a 0x06 stream builds the config by hand. Python `MuxerConfig.from_program_map` changes the same way.
+
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 
 - `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch.

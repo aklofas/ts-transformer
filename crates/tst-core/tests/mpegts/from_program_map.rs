@@ -4,7 +4,7 @@
 //! Covers the strict-by-default offender contract (DVB-subtitle streams
 //! error unless their kinds are passed in `drop`), the Unknown→Data
 //! pass-through mapping (PMT descriptors preserved verbatim, `carries_pts`
-//! always true), the PCR copy rule (the demuxed `pcr_pid` is copied only
+//! true for Data and synchronous KLV, false for asynchronous KLV), the PCR copy rule (the demuxed `pcr_pid` is copied only
 //! when it lands on a kept video or audio stream — KLV, data, and
 //! subtitle PIDs are PCR-ineligible),
 //! exact descriptor preservation for all typed stream kinds,
@@ -126,7 +126,7 @@ fn happy_path_video_sync_klv_audio_with_language() {
 }
 
 #[test]
-fn async_klv_maps_to_private_data_with_pts() {
+fn async_klv_maps_to_private_data_without_pts() {
     let p = pm(
         0x100,
         0x101,
@@ -136,13 +136,53 @@ fn async_klv_maps_to_private_data_with_pts() {
         ],
     );
     let cfg = MuxerConfig::from_program_map(&p, &[]).expect("async KLV is representable");
-    // carries_pts defaults to true: it is a PES-level property the PMT
-    // cannot declare, and PTS-carrying KLV is the STANAG 4609 norm.
+    // MISB ST 1402 (ST 1402-22): the asynchronous method carries no PTS
+    // (PTS_DTS_flags 00), so the conversion applies the standard's rule.
     assert!(cfg.programs[0].streams.contains(&StreamSpec::Klv {
         pid: 0x102,
         stream_type: KlvStreamType::PrivateData,
-        carries_pts: true,
+        carries_pts: false,
     }));
+}
+
+#[test]
+fn remuxed_async_klv_pes_has_no_pts_and_stream_id_bd() {
+    let p = pm(
+        0x100,
+        0x101,
+        vec![
+            stream(0x101, 0x1B, DemuxKind::Video(DemuxVideo::H264)),
+            stream(0x102, 0x06, DemuxKind::KlvAsync),
+        ],
+    );
+    let cfg = MuxerConfig::from_program_map(&p, &[]).unwrap();
+    let mut mux = Muxer::new(cfg).unwrap();
+    mux.push_klv(&synthetic_klv_ls(), Pts90khz::new(90_000), 0)
+        .unwrap();
+    let ts = drain(&mut mux);
+    // First PID-0x102 packet with payload_unit_start: skip the TS header and
+    // the adaptation field, then read the PES header.
+    let pes: Vec<u8> = ts
+        .chunks_exact(188)
+        .find(|pkt| {
+            let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
+            pid == 0x102 && pkt[1] & 0x40 != 0
+        })
+        .map(|pkt| {
+            let mut off = 4;
+            if pkt[3] & 0x20 != 0 {
+                off += 1 + usize::from(pkt[4]);
+            }
+            pkt[off..].to_vec()
+        })
+        .expect("a payload-unit-start packet on PID 0x102");
+    assert_eq!(
+        &pes[..4],
+        &[0x00, 0x00, 0x01, 0xBD],
+        "async KLV rides private_stream_1"
+    );
+    assert_eq!(pes[7] >> 6, 0b00, "PTS_DTS_flags 00 (ST 1402-22)");
+    assert_eq!(pes[8], 0, "no PES header extension bytes");
 }
 
 #[test]
