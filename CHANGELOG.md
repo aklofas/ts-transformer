@@ -84,10 +84,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The same outcome in `Sender`, `Receiver`, `MuxSender` and `DemuxReceiver` and their `Managed*` twins: after `cancel_handle().cancel()` every receive, send, `flush()` and `finish()` raises `<Domain>Error(CLOSED)` / throws `<Domain>Exception(CLOSED)`, buffered data included. `MuxSender.finish()` after `cancel_handle().cancel()` raises `CLOSED`; after `close()` or a previous `finish()` it stays a quiet no-op, because only the caller's cancel counts, not the shell closing its own transport. On the JVM this includes an event an iterator's `hasNext()` already returned `true` for: a `next()` after the cancel throws instead of serving it. The H.264 receiver keeps draining to EOS on cancel.
 
-### Changed — tst-hls (BREAKING)
-
-`HlsPublisher` now refuses (new `HlsError::UntrustedOutputDir`) an `output_dir` that is a symlink, is not owned by the process user, or is writable by group or others (Unix). A missing directory is created with mode 0700, and segments, the playlist and served segment reads are opened without following symlinks. Previously another account could pre-create the default `temp_dir()/tstrans-hls` on a shared `/tmp`, or plant symlinks in it, to redirect or read the publisher's files. Create it not writable by group or others (for example 0700 or 0750) or use a private path. Bindings report the new error as the existing invalid-config kind.
-
 ### Changed — tst-tcp (BREAKING)
 
 - A `tcp://` URL that carries `cert`, `key` or `ca` is now an error naming the key and asking for `tcps://`, and a `tcps://` URL with an unknown query key is an error. Before, TLS keys on a plaintext URL were stored and the connection ran unencrypted, and a misspelt `cafile=` on `tcps://` was ignored so the server was verified against the native roots. `tcp://` still ignores other unknown keys.
