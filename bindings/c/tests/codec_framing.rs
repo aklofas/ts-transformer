@@ -378,3 +378,23 @@ fn annexb_adjacent_and_tail_only_overlap_still_convert() {
     assert_eq!(out_len, 6);
     assert_eq!(&buf[..6], &expected);
 }
+
+#[test]
+fn sizing_answer_records_buffer_full_as_last_error() {
+    let annexb = sps_pps_idr_annexb();
+    unsafe {
+        tstrans::error::tst_clear_last_error();
+        let mut out_len: usize = 0;
+        let rc = tst_annexb_to_length_prefixed(
+            annexb.as_ptr(),
+            annexb.len(),
+            4,
+            std::ptr::null_mut(),
+            0,
+            &mut out_len,
+        );
+        assert_eq!(rc, TstError::BufferFull as i32);
+        assert_eq!(tst_get_last_error(), TstError::BufferFull as i32);
+        assert!(!last_error_msg().is_empty(), "detail message recorded");
+    }
+}
