@@ -140,6 +140,7 @@ pub unsafe extern "C" fn tst_publisher_push_ts(
             Err(code) => return code,
         };
         finished(handle.inner.with_inner_mut(|imp| match imp {
+            PublisherImpl::Hls(_) if slice.is_empty() => 0,
             PublisherImpl::Hls(h) => match h.push_ts(slice) {
                 Ok(()) => 0,
                 Err(e) => crate::error::record_with_context(e, "hls push_ts"),
