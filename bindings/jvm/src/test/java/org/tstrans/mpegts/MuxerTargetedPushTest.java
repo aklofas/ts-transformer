@@ -84,7 +84,9 @@ class MuxerTargetedPushTest {
         // Two KLV streams on 0x120 and 0x121. Push to the second (index 1).
         MuxerConfig cfg = MuxerConfig.builder()
             .addVideo(0x100, VideoCodec.H264)
-            .addKlv(0x120, KlvStreamType.SYNCHRONOUS_METADATA, true)
+            // Two synchronous streams need distinct metadata_descriptor service ids,
+            // which the JVM builder cannot set yet; the first stream is asynchronous.
+            .addKlv(0x120, KlvStreamType.PRIVATE_DATA, false)
             .addKlv(0x121, KlvStreamType.SYNCHRONOUS_METADATA, true)
             .build();
         // Minimal raw KLV bytes (tag 1, length 1, value 0xFF).

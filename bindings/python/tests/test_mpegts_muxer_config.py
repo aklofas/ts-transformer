@@ -231,6 +231,26 @@ def test_muxer_config_invalid_pid_collision_raises():
     )
 
 
+def test_two_sync_klv_programs_with_auto_service_id_rejected():
+    # Both synchronous KLV streams would carry the automatic
+    # metadata_descriptor with service id 0 (H.222.0 §2.12.9.2).
+    p1 = (
+        MuxerProgramConfigBuilder(1, 0x1000)
+        .add_video(0x101, VideoCodec.H264)
+        .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+        .build()
+    )
+    p2 = (
+        MuxerProgramConfigBuilder(2, 0x1100)
+        .add_video(0x201, VideoCodec.H264)
+        .add_klv(0x202, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+        .build()
+    )
+    with pytest.raises(MuxError) as ei:
+        MuxerConfigBuilder().add_program(p1).add_program(p2).build()
+    assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
+
+
 def test_muxer_config_builder_pcr_interval_override():
     prog = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
     cfg = MuxerConfigBuilder().add_program(prog).pcr_interval_ms(20).build()

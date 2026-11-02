@@ -762,6 +762,32 @@ impl MuxerConfig {
             }
         }
 
+        // H.222.0 §2.12.9.2: a metadata_service_id is unique within the
+        // transport stream, across programs.
+        let mut declared: Vec<(u8, u16, u16)> = Vec::new();
+        for prog in &self.programs {
+            for (idx, stream) in prog.streams.iter().enumerate() {
+                for id in super::state::declared_metadata_service_ids(prog, idx) {
+                    if let Some(&(_, pid_a, prog_a)) =
+                        declared.iter().find(|(seen, _, _)| *seen == id)
+                    {
+                        return Err(MuxError::ConfigInvalid {
+                            reason: alloc::format!(
+                                "metadata_service_id {id} is declared by klv pid 0x{pid_a:04X} \
+                                 (program {prog_a}) and klv pid 0x{:04X} (program {}); \
+                                 H.222.0 §2.12.9.2 requires a service id to be unique within \
+                                 the transport stream — give each synchronous KLV stream its \
+                                 own metadata_klva(<id>) via stream_descriptors_for_klv",
+                                stream.pid(),
+                                prog.program_number,
+                            ),
+                        });
+                    }
+                    declared.push((id, stream.pid(), prog.program_number));
+                }
+            }
+        }
+
         // Cadence + buffer.
         if !(1..=100).contains(&self.pcr_interval_ms) {
             return Err(MuxError::InvalidConfig(

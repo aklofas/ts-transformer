@@ -288,6 +288,55 @@ pub(super) fn has_descriptor_tag(descs: &[Vec<u8>], tag: u8) -> bool {
     descs.iter().any(|d| !d.is_empty() && d[0] == tag)
 }
 
+/// Parse the `metadata_service_id` out of one `metadata_descriptor` TLV
+/// (tag 0x26, H.222.0 Table 2-89): a 2-byte `metadata_application_format`
+/// (followed by a 4-byte identifier when it is 0xFFFF), a 1-byte
+/// `metadata_format` (followed by a 4-byte identifier when it is 0xFF), then
+/// the service id. `None` for another tag or a TLV that ends before it.
+pub(super) fn metadata_descriptor_service_id(tlv: &[u8]) -> Option<u8> {
+    if tlv.first() != Some(&0x26) {
+        return None;
+    }
+    let body = tlv.get(2..)?;
+    let mut at = 2;
+    if body.get(..2)? == [0xFF, 0xFF] {
+        at += 4;
+    }
+    let format = *body.get(at)?;
+    at += 1;
+    if format == 0xFF {
+        at += 4;
+    }
+    body.get(at).copied()
+}
+
+/// The `metadata_service_id` values the PMT declares for stream
+/// `stream_idx`: only synchronous KLV carries a `metadata_descriptor`. The
+/// automatic descriptor (service 0) applies when the caller supplied no tag
+/// 0x26; otherwise every parseable caller tag 0x26 counts.
+pub(super) fn declared_metadata_service_ids(
+    prog: &MuxerProgramConfig,
+    stream_idx: usize,
+) -> Vec<u8> {
+    if !matches!(
+        prog.streams[stream_idx],
+        StreamSpec::Klv {
+            stream_type: KlvStreamType::SynchronousMetadata,
+            ..
+        }
+    ) {
+        return Vec::new();
+    }
+    let caller = &prog.stream_descriptors[stream_idx];
+    if !has_descriptor_tag(caller, 0x26) {
+        return alloc::vec![0];
+    }
+    caller
+        .iter()
+        .filter_map(|d| metadata_descriptor_service_id(d))
+        .collect()
+}
+
 /// Return `true` when any descriptor in `descs` is a Registration descriptor
 /// (tag 0x05, TLV ≥ 6 bytes) whose 4-byte `format_identifier` equals `fid`.
 pub(super) fn has_registration_fid(descs: &[Vec<u8>], fid: &[u8; 4]) -> bool {

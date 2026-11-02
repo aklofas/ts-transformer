@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 use tst_core::mpegts::common::Pts90khz;
+use tst_core::mpegts::descriptors::metadata_klva;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };
@@ -79,6 +80,12 @@ fn mux_programs(n: usize, programs: u16) -> Vec<u8> {
         let mut prog = MuxerProgramConfigBuilder::new(k + 1, 0x1000 + base);
         prog.add_video(0x1011 + base, MuxVideoCodec::H264);
         prog.add_klv(0x1031 + base, KlvStreamType::SynchronousMetadata, true);
+        if k > 0 {
+            // A metadata_service_id is unique within the transport stream
+            // (H.222.0 §2.12.9.2); program 1 keeps the automatic service 0.
+            prog.stream_descriptors_for_klv(0, vec![metadata_klva(k as u8)])
+                .unwrap();
+        }
         cfg.add_program(prog.build());
     }
     let mut mux = Muxer::new(cfg.build().unwrap()).unwrap();
@@ -93,7 +100,7 @@ fn mux_programs(n: usize, programs: u16) -> Vec<u8> {
                 (SECOND_PROGRAM_OFFSET, second_program_record(i))
             };
             let pts = Pts90khz::new(FIRST_PTS + offset + i as i64 * TICKS_PER_FRAME);
-            mux.push_klv_to(klv[k], &rec, pts, 0).unwrap();
+            mux.push_klv_to(klv[k], &rec, pts, k as u8).unwrap();
             mux.push_video_to(video[k], au, pts, i == 0).unwrap();
         }
         loop {
