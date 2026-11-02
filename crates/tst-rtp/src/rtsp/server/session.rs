@@ -22,6 +22,7 @@ use std::sync::atomic::Ordering;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::RtspServerError;
 use crate::rtsp::message::{RtspFraming, RtspMethod, RtspRequest};
@@ -51,6 +52,39 @@ pub(crate) async fn write_flushed<W: AsyncWrite + Unpin + ?Sized>(
 ) -> std::io::Result<()> {
     w.write_all(bytes).await?;
     w.flush().await
+}
+
+/// The one bounded writer for every reply a session sends: take the
+/// writer lock, write and flush `bytes` and, when `shutdown_after`, shut
+/// the write half, all raced against `bound` and both cancel tokens.
+/// `None` means the bound or a cancel won; the caller then leaves the serve
+/// loop so the session drops (its Drop aborts a fanout parked on the lock).
+///
+/// The lock is shared with the fanout task, which holds it for RFC 7826
+/// §14 interleaved frames and may be parked mid-frame on a peer that never
+/// reads. Unbounded, a reply would wait on it out of reach of the idle
+/// reaper and the server's cancel.
+async fn write_bounded(
+    write_half: &SessionWriter,
+    bytes: &[u8],
+    bound: std::time::Duration,
+    server_cancel: &CancellationToken,
+    session_cancel: &CancellationToken,
+    shutdown_after: bool,
+) -> Option<std::io::Result<()>> {
+    tokio::select! {
+        r = async {
+            let mut guard = write_half.lock().await;
+            write_flushed(&mut **guard, bytes).await?;
+            if shutdown_after {
+                guard.shutdown().await?;
+            }
+            Ok(())
+        } => Some(r),
+        _ = tokio::time::sleep(bound) => None,
+        _ = server_cancel.cancelled() => None,
+        _ = session_cancel.cancelled() => None,
+    }
 }
 
 pub(crate) fn session_writer<W: AsyncWrite + Send + Unpin + 'static>(w: W) -> SessionWriter {
@@ -654,8 +688,19 @@ where
                 break; // partial frame: read more
             }
 
-            if reject_if_over_cap(&buf, peer, &write_half).await {
-                return Ok(());
+            match reject_if_over_cap(
+                &buf,
+                peer,
+                &write_half,
+                idle_bound,
+                &state.cancel_token,
+                &session_entry.cancel,
+            )
+            .await
+            {
+                CapCheck::WithinCaps => {}
+                CapCheck::Answered => return Ok(()),
+                CapCheck::Stalled => break 'serve,
             }
             let RtspFraming::Complete { total_len } =
                 crate::rtsp::message::rtsp_frame_decision(&buf)
@@ -676,10 +721,30 @@ where
                     );
                     buf.drain(..total_len);
                     let bytes = unparseable_reply_bytes(&reply);
-                    let mut guard = write_half.lock().await;
-                    if let Err(e) = write_flushed(&mut **guard, &bytes).await {
-                        tracing::warn!(target: "tst_rtp::server", peer = %peer, error = %e, "write failed");
-                        return Ok(());
+                    match write_bounded(
+                        &write_half,
+                        &bytes,
+                        idle_bound,
+                        &state.cancel_token,
+                        &session_entry.cancel,
+                        false,
+                    )
+                    .await
+                    {
+                        Some(Ok(())) => {}
+                        Some(Err(e)) => {
+                            tracing::warn!(target: "tst_rtp::server", peer = %peer, error = %e, "write failed");
+                            return Ok(());
+                        }
+                        None => {
+                            tracing::warn!(
+                                target: "tst_rtp::server",
+                                peer = %peer,
+                                timeout_secs = idle_bound.as_secs(),
+                                "reply write parked past the idle bound or cancelled; closing session"
+                            );
+                            break 'serve;
+                        }
                     }
                     continue;
                 }
@@ -705,13 +770,13 @@ where
                 }
             }
             let bytes = response.encode();
-            // Lock the write half to serialize against the fanout task
-            // (which holds it for RFC 7826 §14 interleaved frames). Bounded
-            // by the same idle bound and cancels as the read: a fanout this
-            // very request retired (PAUSE, TEARDOWN, a second PLAY) may be
-            // parked mid-frame on a peer that never reads, holding the
-            // lock — unbounded, this wait would be unreachable by the idle
-            // reaper and the server's cancel, and the session (its slot,
+            // Every reply (this one, the unparseable-request reply, the 413
+            // and the TEARDOWN close) goes through `write_bounded`, the one
+            // bounded writer: it serializes against the fanout task on the
+            // writer lock under the same idle bound and cancels as the
+            // read. A fanout this very request retired (PAUSE, TEARDOWN, a
+            // second PLAY) may be parked mid-frame on a peer that never
+            // reads, holding the lock; unbounded, the session (its slot,
             // its registry entry, the retired fanout's subscription) would
             // live as long as the peer kept the TCP open. On the bound we
             // leave the loop: the exit path drops the session, whose Drop
@@ -720,15 +785,15 @@ where
             // by the bound mid-`write_all` leaves a partial RTSP response
             // on the wire before that FIN — fine on a terminal path, the
             // same class as the frame the Drop's abort may cut.
-            let written = tokio::select! {
-                r = async {
-                    let mut guard = write_half.lock().await;
-                    write_flushed(&mut **guard, &bytes).await
-                } => Some(r),
-                _ = tokio::time::sleep(idle_bound) => None,
-                _ = state.cancel_token.cancelled() => None,
-                _ = session_entry.cancel.cancelled() => None,
-            };
+            let written = write_bounded(
+                &write_half,
+                &bytes,
+                idle_bound,
+                &state.cancel_token,
+                &session_entry.cancel,
+                false,
+            )
+            .await;
             match written {
                 Some(Ok(())) => {}
                 Some(Err(e)) => {
@@ -783,12 +848,23 @@ where
             }
             if req.method == RtspMethod::Teardown && response.status == 200 {
                 // Clean close after TEARDOWN. `shutdown` lives on the
-                // write half — take the lock to serialize against any
-                // in-flight fanout writes (fanout exits on session
-                // cancel; the lock is the safety net).
-                let mut guard = write_half.lock().await;
-                let _ = guard.shutdown().await;
-                return Ok(());
+                // write half; the bounded writer serializes it against any
+                // in-flight fanout write (the fanout exits on session
+                // cancel; the lock is the safety net) without waiting on a
+                // parked one past the bound.
+                match write_bounded(
+                    &write_half,
+                    &[],
+                    idle_bound,
+                    &state.cancel_token,
+                    &session_entry.cancel,
+                    true,
+                )
+                .await
+                {
+                    Some(_) => return Ok(()),
+                    None => break 'serve,
+                }
             }
         }
         // Re-arm the message clock for whatever the processing loop left:
@@ -819,13 +895,30 @@ where
     Ok(())
 }
 
+/// What [`reject_if_over_cap`] found.
+enum CapCheck {
+    /// The buffer head is within caps (`NeedMore` or `Complete`).
+    WithinCaps,
+    /// A violation was answered with `413` and the write half shut; the
+    /// caller closes the session.
+    Answered,
+    /// A violation, but the `413` write did not finish within `bound` or a
+    /// cancel won; the caller leaves the serve loop.
+    Stalled,
+}
+
 /// Check the buffer head against the RTSP framing caps (64 KiB headers /
 /// 1 MiB body — see [`crate::rtsp::message::rtsp_frame_decision`]) and, on
 /// a violation, answer `413 Request Entity Too Large` and shut the write
-/// half. Returns `true` when the caller must close the session (a
-/// violation was answered), `false` when the buffer head is within caps
-/// (`NeedMore` or `Complete` — nothing to do here either way).
-async fn reject_if_over_cap(buf: &[u8], peer: SocketAddr, write_half: &SessionWriter) -> bool {
+/// half through [`write_bounded`] under `bound` and the two cancel tokens.
+async fn reject_if_over_cap(
+    buf: &[u8],
+    peer: SocketAddr,
+    write_half: &SessionWriter,
+    bound: std::time::Duration,
+    server_cancel: &CancellationToken,
+    session_cancel: &CancellationToken,
+) -> CapCheck {
     let cap_rejection = match crate::rtsp::message::rtsp_frame_decision(buf) {
         RtspFraming::HeadersTooLong => Some("headers exceed maximum"),
         RtspFraming::NonUtf8Headers { .. } => Some("non-UTF8 RTSP headers"),
@@ -835,7 +928,7 @@ async fn reject_if_over_cap(buf: &[u8], peer: SocketAddr, write_half: &SessionWr
         RtspFraming::NeedMore | RtspFraming::Complete { .. } => None,
     };
     let Some(detail) = cap_rejection else {
-        return false;
+        return CapCheck::WithinCaps;
     };
     tracing::warn!(
         target: "tst_rtp::server",
@@ -845,10 +938,19 @@ async fn reject_if_over_cap(buf: &[u8], peer: SocketAddr, write_half: &SessionWr
         "request exceeded RTSP header/body caps; sending 413 and closing"
     );
     let response_413 = b"RTSP/1.0 413 Request Entity Too Large\r\nContent-Length: 0\r\n\r\n";
-    let mut guard = write_half.lock().await;
-    let _ = write_flushed(&mut *guard, response_413).await;
-    let _ = guard.shutdown().await;
-    true
+    match write_bounded(
+        write_half,
+        response_413,
+        bound,
+        server_cancel,
+        session_cancel,
+        true,
+    )
+    .await
+    {
+        Some(_) => CapCheck::Answered,
+        None => CapCheck::Stalled,
+    }
 }
 
 /// Wire bytes for an [`crate::rtsp::message::UnparseableRequestReply`]:
