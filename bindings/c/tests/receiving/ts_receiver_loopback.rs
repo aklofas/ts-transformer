@@ -171,7 +171,7 @@ fn loopback_ts_sender_to_ts_receiver_delivers_aligned_packets_and_eos() {
 
 #[test]
 fn open_listener_with_an_explicit_host_binds_instead_of_dialing() {
-    let port: u16 = 28_000 + ((std::process::id() as u16 + 500) % 1000);
+    let port: u16 = 28_000 + ((std::process::id() + 500) % 1000) as u16;
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
 
     let receiver_thread = thread::spawn(move || {
