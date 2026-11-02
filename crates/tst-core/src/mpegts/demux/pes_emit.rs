@@ -40,13 +40,33 @@ use alloc::vec::Vec;
 /// most 0.7 s apart.
 const PTS_SPACING_LIMIT_90KHZ: i64 = 63_000;
 
-/// How far the PCR may advance across a PTS-less run before the run is
-/// reported (1.7 s). The PCR at a PES's arrival trails its PTS by the
-/// decoder-buffer delay, which H.222.0 §2.4.2.6 allows anywhere from 0 to
-/// 1 s, so a run whose coded PTS keep the §2.7.4 0.7 s spacing can span up
-/// to 0.7 s + 1 s of PCR. No conformant stream exceeds this (still pictures
-/// are excepted by §2.7.4 itself).
-const PCR_RUN_LIMIT_90KHZ: i64 = PTS_SPACING_LIMIT_90KHZ + 90_000;
+/// H.222.0 §2.4.2.7: the T-STD delay of a byte through the decoder buffers
+/// is at most 1 s for most elementary streams.
+const DECODER_DELAY_1S_90KHZ: i64 = 90_000;
+
+/// H.222.0 §2.4.2.7: ISO/IEC 14496 streams, HEVC and VVC are allowed up to
+/// 10 s of T-STD delay.
+const DECODER_DELAY_10S_90KHZ: i64 = 900_000;
+
+/// How far the program's PCR may advance across a PTS-less run on a stream
+/// of `kind` before the run is reported. The PCR at a PES's arrival trails
+/// its PTS by the decoder delay H.222.0 §2.4.2.7 bounds, so a run whose
+/// coded PTS keep the §2.7.4 0.7 s spacing can span 0.7 s plus that delay
+/// of PCR. The delay is 10 s for ISO/IEC 14496 streams (H.264 is 14496-10,
+/// AAC-LATM is 14496-3), HEVC and VVC, and 1 s for everything else,
+/// including ADTS AAC on `stream_type` 0x0F, which is ISO/IEC 13818-7. AV1
+/// has no H.222.0 clause; it takes the lenient 10 s bound, because this is
+/// a diagnostic and AV1 buffering models follow the 14496 shape.
+fn pcr_run_limit_90khz(kind: &StreamKind) -> i64 {
+    let delay = match kind {
+        StreamKind::Video(
+            VideoCodec::H264 | VideoCodec::H265 | VideoCodec::H266 | VideoCodec::Av1,
+        )
+        | StreamKind::Audio(AudioCodec::AacLatm) => DECODER_DELAY_10S_90KHZ,
+        _ => DECODER_DELAY_1S_90KHZ,
+    };
+    PTS_SPACING_LIMIT_90KHZ + delay
+}
 
 /// `MalformedPes` reason for a DVB subtitle PES whose PES_data_field
 /// envelope does not parse.
@@ -63,8 +83,9 @@ enum PtsRule {
     PerPes,
     /// PES may omit the PTS, but the coded PTS around a PTS-less run must
     /// stay within [`PTS_SPACING_LIMIT_90KHZ`]; until a coded PTS closes the
-    /// run, the program's PCR may advance at most [`PCR_RUN_LIMIT_90KHZ`]
-    /// across it.
+    /// run, the program's PCR may advance at most [`pcr_run_limit_90khz`]
+    /// across it: 0.7 s plus the codec's decoder delay of H.222.0 §2.4.2.7
+    /// (1 s, or 10 s for ISO/IEC 14496 streams, HEVC, VVC and AV1).
     Spacing,
     /// No PTS requirement.
     None,
@@ -76,8 +97,8 @@ enum PtsRule {
 ///   (0.7 s); a PES without one is fine as long as that bound holds. A run
 ///   of PTS-less PES is judged by the coded PTS that closes it, and is also
 ///   timed by the program's PCR from its first PES, so a run that never
-///   closes is caught once the PCR advances more than 1.7 s (0.7 s plus the
-///   1 s decoder-buffer delay §2.4.2.6 allows). A gap between
+///   closes is caught once the PCR advances more than 0.7 s plus the
+///   codec's decoder delay of §2.4.2.7 (see [`pcr_run_limit_90khz`]). A gap between
 ///   coded PTS with no PTS-less PES inside it is not diagnosed: the
 ///   still-picture and low-frame-rate exceptions of §2.7.4 cannot be told
 ///   apart from such a gap.
@@ -324,7 +345,9 @@ impl super::demuxer::Demuxer {
                         state.pts_less_run_pcr = now;
                         false
                     }
-                    (Some(start), Some(now)) => pts_diff_33bit(now, start) > PCR_RUN_LIMIT_90KHZ,
+                    (Some(start), Some(now)) => {
+                        pts_diff_33bit(now, start) > pcr_run_limit_90khz(&stream.kind)
+                    }
                     (Some(_), None) => false,
                 };
                 if overdue {
@@ -1661,7 +1684,7 @@ mod tests {
     }
 
     /// A PCR span above 0.7 s but within the 1 s decoder-buffer allowance
-    /// (H.222.0 §2.4.2.6) is not evidence of a broken PTS bound.
+    /// (H.222.0 §2.4.2.7) is not evidence of a broken PTS bound.
     #[test]
     fn pts_less_stream_within_1_7_s_of_pcr_raises_nothing() {
         let pkts = audio_run_under_pcr(&[None; 11], 32_400_000);
@@ -1729,6 +1752,65 @@ mod tests {
         let ev = drain_all_events(&mut d);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// One single-packet PES on 0x101 (its own PCR_PID) carrying the PCR at
+    /// `pcr_s` seconds; `pts` `None` makes it PTS-less.
+    fn pcr_stamped_pes(cc: &mut u8, pcr_s: u64, pts: Option<u64>, es: &[u8]) -> [u8; 188] {
+        let pkt = ts_packet(&PktSpec {
+            pid: 0x101,
+            cc: *cc,
+            pusi: true,
+            pcr: Some(pcr_s * 27_000_000),
+            payload: &pes_bytes(0xC0, pts, None, false, es, true),
+            ..Default::default()
+        });
+        *cc = (*cc + 1) & 0x0F;
+        pkt
+    }
+
+    /// ISO/IEC 14496-3 LATM: §2.4.2.7 allows a 10 s decoder delay, so a PTS-less
+    /// run spanning 5 s of PCR with legal coded-PTS spacing raises nothing.
+    #[test]
+    fn pts_less_run_on_a_14496_stream_is_allowed_a_ten_second_decoder_delay() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder()
+                .strict(StrictMode::TimingOnly)
+                .build(),
+            0x101,
+            &[(0x11, 0x101, &[])],
+        );
+        // PES with PTS 0 at PCR 0; PTS-less PES at PCR 1 s, 2 s, 3 s, 4 s, 5 s;
+        // closing PTS 60_000 (0.67 s).
+        let rec = loas_record(20);
+        let mut cc = 0;
+        let mut pkts = vec![pcr_stamped_pes(&mut cc, 0, Some(0), &rec)];
+        for s in 1..=5 {
+            pkts.push(pcr_stamped_pes(&mut cc, s, None, &rec));
+        }
+        pkts.push(pcr_stamped_pes(&mut cc, 6, Some(60_000), &rec));
+        let result = feed_packets(&mut d, &pkts);
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+        assert_eq!(latm_framing_count(&ev), 0, "{ev:?}");
+    }
+
+    /// The same run on the 0x0F (ISO/IEC 13818-7) fixture keeps the 1 s allowance.
+    #[test]
+    fn pts_less_run_on_a_13818_7_stream_keeps_the_one_second_decoder_delay() {
+        let mut d = audio_demuxer(StrictMode::Off);
+        let mut cc = 0;
+        let mut pkts = vec![pcr_stamped_pes(&mut cc, 0, Some(0), &[0xAA; 20])];
+        for s in 1..=3 {
+            pkts.push(pcr_stamped_pes(&mut cc, s, None, &[0xAA; 20]));
+        }
+        let result = feed_packets(&mut d, &pkts);
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(missing_pts_count(&ev, 0x101), 1, "{ev:?}");
     }
 
     /// Audio 0x101 (also the PCR_PID). PES A (PTS 900_000) completes. PES B

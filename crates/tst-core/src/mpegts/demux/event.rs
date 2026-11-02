@@ -581,9 +581,10 @@ pub enum NonConformantIssue {
     ///   either side of a run of PTS-less PES differ by more than 0.7 s,
     ///   this is raised once, just before the sample whose PTS closes the
     ///   run. A run is also timed by the program's PCR from its first PES:
-    ///   once the PCR has advanced more than 1.7 s with no coded PTS (a
-    ///   stream that never stamps one, or stops stamping; 0.7 s plus the
-    ///   1 s decoder-buffer delay H.222.0 §2.4.2.6 allows), this is raised
+    ///   once the PCR has advanced more than 0.7 s plus the codec's decoder
+    ///   delay of H.222.0 §2.4.2.7 with no coded PTS (a stream that never
+    ///   stamps one, or stops stamping; the delay is 1 s, or 10 s for
+    ///   ISO/IEC 14496 streams, HEVC, VVC and AV1), this is raised
     ///   once for the run, before that PES's sample, and the PTS that later
     ///   closes the run does not raise it again. A gap between coded PTS
     ///   with no PTS-less PES inside it is not diagnosed (the still-picture
