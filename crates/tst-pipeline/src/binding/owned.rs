@@ -29,8 +29,11 @@
 //!   would build on a value a panic may have left half-updated.
 //! - **Panic policy**: a panic inside the closure is caught and reported as
 //!   [`HandleState::Panicked`] for THAT call; the guard lives outside the
-//!   boundary, so the mutex is NOT poisoned. A panicking MUTATOR drops `T`
-//!   (later calls → [`HandleState::Closed`]); a panicking READER keeps it.
+//!   boundary, so the mutex is NOT poisoned. A panicking MUTATOR retires
+//!   `T` the way [`Owned::close`] does: it takes the value, releases the
+//!   lock, fires [`Owned::cancel`], and only then drops the value, inside
+//!   its own panic boundary (later calls → [`HandleState::Closed`]). A
+//!   panicking READER keeps the value.
 //! - **Double close is quiet**: the second `close()` is `Ok(())`.
 //! - **Implicit drop cancels first**: dropping an `Owned` whose slot still
 //!   holds a value (a binding object freed or collected without `close()`)
@@ -247,11 +250,14 @@ impl<T, S> Owned<T, S> {
     /// was held OUTSIDE the catch boundary, so the mutex is not poisoned —
     /// but a panic mid-mutation leaves `T` in an unknown state, so the slot
     /// is DROPPED: the panicking call reports `Panicked` and every later
-    /// call reports `Closed` (the std-poisoning model). That drop happens
-    /// inside its own panic boundary, so a panicking `T::Drop` cannot
-    /// poison the mutex and turn the promised `Closed` into `Poisoned` —
-    /// the drop panic is swallowed and the closure's original panic is what
-    /// is reported. Readers ([`Self::with_ref_blocking`]) keep the slot: a `&T`
+    /// call reports `Closed` (the std-poisoning model). The panic path
+    /// mirrors [`Self::close`]: the value is taken out, the lock is
+    /// released, [`Self::cancel`] fires, and only then does the value drop,
+    /// so its own `Drop` (a sender's final flush through a reconnecting
+    /// transport) sees a cancelled transport and returns, and no other
+    /// thread waits on the slot meanwhile. That drop runs inside its own
+    /// panic boundary: a panicking `T::Drop` is swallowed and the closure's
+    /// original panic is what is reported. Readers ([`Self::with_ref_blocking`]) keep the slot: a `&T`
     /// closure can only mutate through interior mutability, and every such
     /// interior (transport mutex, atomics) carries its own poison/latch
     /// rule, which contains a reader panic.
@@ -263,13 +269,17 @@ impl<T, S> Owned<T, S> {
         match panic::catch(|| f(guard.as_mut().expect("checked non-empty above"))) {
             Ok(r) => Ok(r),
             Err(detail) => {
-                // Drop `T` here, under the lock — but inside its own panic
-                // boundary: this runs while the guard is held, so a
-                // panicking `Drop` escaping would poison the mutex and every
-                // later call would answer `Poisoned` instead of the promised
-                // `Closed`. The ORIGINAL closure panic is what gets
+                // Retire `T` as `close` does: empty the slot, release the
+                // lock, cancel, then drop. Cancel-first makes the value's
+                // own `Drop` (a final flush through a reconnecting
+                // transport) return instead of retrying; dropping with the
+                // lock released keeps that `Drop` from holding the slot
+                // other threads wait on. The drop has its own panic
+                // boundary, so the ORIGINAL closure panic is what gets
                 // reported; a drop panic is swallowed.
                 let taken = guard.take();
+                drop(guard);
+                self.cancel();
                 let _ = panic::catch(move || drop(taken));
                 Err(HandleState::Panicked { detail })
             }
@@ -359,8 +369,9 @@ impl<T: Close, S> Owned<T, S> {
     ///    the slot;
     /// 2. [`Self::take`] — recovers a poisoned mutex, empties the slot;
     /// 3. [`Close::close`] on the taken value, OUTSIDE the lock, inside a
-    ///    panic boundary — the value is **moved into** that boundary, so its
-    ///    `Drop` runs inside it too.
+    ///    panic boundary; then the value's `Drop`, inside a SECOND boundary,
+    ///    so a `Drop` that panics never runs while a `Close::close` panic
+    ///    unwinds (a panic during an unwind aborts the process).
     ///
     /// A second call finds the slot empty and returns `Ok(())` (the cancel
     /// handle is fired again — idempotent by the `TransportCancel`
@@ -391,22 +402,24 @@ impl<T: Close, S> Owned<T, S> {
     /// double close. A panic from `T`'s `Drop` reports `Panicked` as well,
     /// and takes precedence over a `Close::close` that had returned an
     /// error — the panic is the more severe signal, and the value is gone
-    /// either way.
+    /// either way. When `Close::close` itself panicked, its panic is what is
+    /// reported, whatever the `Drop` then does.
     pub fn close(&self) -> Result<(), CloseFailure<T::Error>> {
         self.cancel();
         let Some(value) = self.take() else {
             return Ok(());
         };
-        // `value` is MOVED in: `Close::close` and the subsequent drop both
-        // run inside the boundary (pinned by
-        // `close_catches_a_panicking_drop_of_the_taken_value`).
-        match panic::catch(move || {
-            let mut value = value;
-            value.close()
-        }) {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(CloseFailure::Inner(e)),
-            Err(detail) => Err(CloseFailure::Panicked { detail }),
+        // Two boundaries: the close panic is caught BEFORE the value drops,
+        // so a panicking `Drop` never runs during that unwind (pinned by
+        // `close_with_a_panicking_close_and_a_panicking_drop_reports_the_close_panic`
+        // and `close_catches_a_panicking_drop_of_the_taken_value`).
+        let mut value = value;
+        let closed = panic::catch(|| value.close());
+        let dropped = panic::catch(move || drop(value));
+        match (closed, dropped) {
+            (Err(detail), _) | (Ok(_), Err(detail)) => Err(CloseFailure::Panicked { detail }),
+            (Ok(Ok(())), Ok(())) => Ok(()),
+            (Ok(Err(e)), Ok(())) => Err(CloseFailure::Inner(e)),
         }
     }
 }
@@ -1359,14 +1372,13 @@ mod tests {
         assert!(!flag.load(Ordering::SeqCst));
     }
 
-    /// The managed-sender shape a binding drops without `close()` after its
-    /// peer is gone: every inner send and every reconnect fails, the policy
-    /// retries forever, and a partial bundle is still buffered, so
-    /// `Sender::drop`'s flush enters the reconnect loop. The cancel that
-    /// `Owned`'s drop fires first is what makes that flush return.
-    #[test]
+    /// The managed-sender shape a binding retires after its peer is gone:
+    /// every inner send and every reconnect fails, the policy retries
+    /// forever, and a partial bundle is still buffered, so `Sender::drop`'s
+    /// flush enters the reconnect loop. Only a fired cancel makes that flush
+    /// return.
     #[cfg(feature = "std")]
-    fn dropping_a_managed_sender_owned_after_the_peer_is_lost_returns_promptly() {
+    fn owned_managed_sender_after_the_peer_is_lost() -> Owned<impl Send + 'static, ()> {
         use crate::reconnect::{BackoffStrategy, ManagedTransport, ReconnectPolicy};
         use crate::sender::{Sender, SenderConfig};
         use tst_core::transport::{BrokenCause, Transport, TransportError};
@@ -1414,7 +1426,15 @@ mod tests {
         sender
             .send_ts(&ts)
             .expect("a partial bundle is only buffered");
-        let owned = Owned::new(sender, cancel as Arc<dyn TransportCancel>, ());
+        Owned::new(sender, cancel as Arc<dyn TransportCancel>, ())
+    }
+
+    /// A binding drops the managed sender without `close()`; the cancel
+    /// that `Owned`'s drop fires first is what makes the flush return.
+    #[test]
+    #[cfg(feature = "std")]
+    fn dropping_a_managed_sender_owned_after_the_peer_is_lost_returns_promptly() {
+        let owned = owned_managed_sender_after_the_peer_is_lost();
 
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
@@ -1428,5 +1448,153 @@ mod tests {
             .is_ok(),
             "dropping the Owned parked in the reconnect loop"
         );
+    }
+
+    // ---- mutator-panic retirement + double panics ----
+
+    /// A value whose `Drop` records whether the cancel handle had fired.
+    #[cfg(feature = "std")]
+    struct RecordsCancelAtDrop {
+        flag: Arc<AtomicBool>,
+        log: Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+    #[cfg(feature = "std")]
+    impl Drop for RecordsCancelAtDrop {
+        fn drop(&mut self) {
+            let entry = if self.flag.load(Ordering::SeqCst) {
+                "drop:cancelled"
+            } else {
+                "drop:live"
+            };
+            self.log.lock().unwrap().push(entry);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn with_mut_panic_fires_cancel_before_the_taken_value_drops() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cancel = Arc::new(MockCancel {
+            calls: AtomicU32::new(0),
+            flag: Arc::clone(&flag),
+        });
+        let owned = Owned::new(
+            RecordsCancelAtDrop {
+                flag,
+                log: Arc::clone(&log),
+            },
+            Arc::clone(&cancel) as Arc<dyn TransportCancel>,
+            (),
+        );
+        let r = owned.with_mut(|_| -> u32 { panic!("mutator boom") });
+        assert_eq!(
+            r,
+            Err(HandleState::Panicked {
+                detail: String::from("mutator boom")
+            })
+        );
+        assert_eq!(log.lock().unwrap().as_slice(), &["drop:cancelled"]);
+        assert_eq!(cancel.calls.load(Ordering::SeqCst), 1);
+        assert!(owned.is_cancelled());
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn with_mut_panic_drops_the_value_outside_the_slot_lock() {
+        // The value's Drop announces itself, then blocks until the test
+        // says "go"; while it is blocked the slot lock must be free.
+        struct GatedDrop {
+            dropping: std::sync::mpsc::Sender<()>,
+            go: std::sync::mpsc::Receiver<()>,
+        }
+        impl Drop for GatedDrop {
+            fn drop(&mut self) {
+                let _ = self.dropping.send(());
+                let _ = self.go.recv_timeout(PARK_DEADLINE);
+            }
+        }
+        let (dropping_tx, dropping) = std::sync::mpsc::channel();
+        let (go, go_rx) = std::sync::mpsc::channel();
+        let (cancel, _flag) = mock_cancel();
+        let owned = Arc::new(Owned::new(
+            GatedDrop {
+                dropping: dropping_tx,
+                go: go_rx,
+            },
+            cancel,
+            (),
+        ));
+        let panicker = {
+            let o = Arc::clone(&owned);
+            std::thread::spawn(move || o.with_mut(|_| -> u32 { panic!("mutator boom") }))
+        };
+        dropping
+            .recv_timeout(tst_test_helpers::timing::scaled(
+                std::time::Duration::from_secs(2),
+            ))
+            .expect("the taken value's drop started");
+        assert!(
+            owned.inner.try_lock().is_ok(),
+            "the value drops with the slot lock released"
+        );
+        go.send(()).unwrap();
+        assert!(matches!(
+            panicker.join().unwrap(),
+            Err(HandleState::Panicked { .. })
+        ));
+        assert!(owned.is_closed());
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn with_mut_panic_over_a_parked_managed_sender_returns_promptly() {
+        // A mutator panic retires the shell like a drop does: without the
+        // cancel first, the dropped sender's flush enters the reconnect
+        // loop and never returns.
+        let owned = owned_managed_sender_after_the_peer_is_lost();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = owned.with_mut(|_| -> u32 { panic!("mutator boom") });
+            let _ = tx.send(r);
+        });
+        let r = rx
+            .recv_timeout(tst_test_helpers::timing::scaled(
+                std::time::Duration::from_secs(2),
+            ))
+            .expect("a mutator panic over a managed sender parked in the reconnect loop");
+        assert_eq!(
+            r,
+            Err(HandleState::Panicked {
+                detail: String::from("mutator boom")
+            })
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn close_with_a_panicking_close_and_a_panicking_drop_reports_the_close_panic() {
+        // The value's Drop must not run while the close panic unwinds: a
+        // panic during an unwind aborts the process.
+        struct BothPanic;
+        impl Close for BothPanic {
+            type Error = MockCloseError;
+            fn close(&mut self) -> Result<(), MockCloseError> {
+                panic!("close boom")
+            }
+        }
+        impl Drop for BothPanic {
+            fn drop(&mut self) {
+                panic!("drop boom");
+            }
+        }
+        let (cancel, _flag) = mock_cancel();
+        let owned = Owned::new(BothPanic, cancel, ());
+        assert!(matches!(
+            owned.close(),
+            Err(CloseFailure::Panicked { detail }) if detail == "close boom"
+        ));
+        assert!(owned.is_closed());
+        assert!(!owned.inner.is_poisoned());
     }
 }
