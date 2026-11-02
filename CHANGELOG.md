@@ -133,6 +133,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-c
 
 - `tst_*_open_listener` (all eight receiver entry points) binds and listens on any URL, host-bearing or not; `srt://0.0.0.0:7000` used to dial out. An explicit `?mode=caller` / `?mode=rendezvous` on these entry points is refused with `TST_E_INVALID_CONFIG`. A URL with invalid UTF-8 is refused once; it was previously reparsed with U+FFFD in place of the caller's bytes (a passphrase could change silently).
+- `tst_rtsp_session_into_demux_receiver` returns NULL with `TST_E_CLOSED` after `tst_rtsp_session_cancel`; it used to hand back a receiver whose keepalive thread had already exited, so the server reaped the session after its timeout. The NULL-return contract now says the allocation is retained while its state may be closed.
 - The `mbedtls` feature now reaches the RIST transport, so encrypted `rist://` URLs open instead of returning `TST_E_RIST_ENCRYPTION_DISABLED`.
 - `tst_rtsp_client_builder_connect` keeps URL credentials, `?transport=`, `?rtsp_version=`, `?tcp_keepalive=`, `?recv_timeout=` and the explicit `_transport_pref`.
 - `tst_rtsp_session_into_demux_receiver` keeps the RTSP client alive until `tst_rtp_demux_receiver_close`, which now sends TEARDOWN, and frees the session on success; on a NULL return the session stays the caller's. After a non-NULL return the session pointer is freed; a program that still called `tst_rtsp_session_cancel` or `tst_rtsp_session_teardown_and_free` on it must stop.
