@@ -100,7 +100,8 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * @param url    {@code srt://[host]:port?mode=listener|caller[&...]}
      * @param policy reconnect tuning; {@code null} applies the defaults
      * @return a connected {@code ManagedDemuxReceiver}
-     * @throws SrtException {@code CONFIG_INVALID} if the URL is malformed;
+     * @throws SrtException {@code CONFIG_INVALID} if the policy is zero backoff with unlimited
+     *     attempts (refused before connecting), or if the URL is malformed;
      *     {@code CONNECT_FAILED} on initial bind/connect failure
      */
     public static ManagedDemuxReceiver fromUrl(String url, ReconnectPolicy policy)

@@ -2550,7 +2550,9 @@ int tst_annexb_to_length_prefixed(const uint8_t *annexb,
 
 /**
  * Add a `klv_pid` → `video_pid` KLV-link override. Bypasses PMT-descriptor
- * inference. Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`.
+ * inference. Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg` or a
+ * PID above `0x1FFF` (the 13-bit PID range; such an override could never
+ * match a packet).
  */
 
 int tst_demux_config_add_link_klv(struct tst_demux_config_t *cfg,
@@ -2566,8 +2568,8 @@ int tst_demux_config_add_link_klv(struct tst_demux_config_t *cfg,
  * into single integers. The implementation table below covers the
  * common cases — extend if a consumer asks for a kind not listed.
  *
- * Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg` or
- * unrecognized `stream_kind`.
+ * Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`, a `pid` above
+ * `0x1FFF` (the 13-bit PID range) or unrecognized `stream_kind`.
  */
  int tst_demux_config_add_treat_as(struct tst_demux_config_t *cfg, uint16_t pid, int stream_kind);
 
@@ -5290,12 +5292,16 @@ int tst_mux_config_set_pcr_pid(struct tst_mux_config_t *cfg,
  *   byte 1: length of body (N)
  *   bytes 2..2+N: body
  *
+ * The list must be consumed exactly: `tlv_count` descriptors that do not
+ * end at `tlv_total_len` are refused.
+ *
  * Calling with `tlv_total_len == 0` or `tlv_count == 0` clears any
  * previously set program descriptors for this program.
  *
  * Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
  * null `tlv_bytes` with non-zero count, invalid program handle, or a
- * malformed TLV byte stream (truncated length or body).
+ * malformed TLV byte stream (truncated length or body, or trailing
+ * bytes after the last descriptor).
  */
 
 int tst_mux_config_set_program_descriptors(struct tst_mux_config_t *cfg,
@@ -5352,7 +5358,8 @@ int tst_mux_config_set_stream_descriptors_for_klv(struct tst_mux_config_t *cfg,
  * previously set stream descriptors for this stream.
  *
  * Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
- * invalid handle, null `tlv_bytes` with non-zero count, or malformed TLV.
+ * invalid handle, null `tlv_bytes` with non-zero count, or malformed TLV
+ * (including trailing bytes after the last descriptor).
  */
 
 int tst_mux_config_set_stream_descriptors_for_video(struct tst_mux_config_t *cfg,
@@ -6986,6 +6993,10 @@ int tst_reconnect_policy_set_backoff_exponential_ms(struct tst_reconnect_policy_
 
 /**
  * Set max reconnect attempts. `n < 0` means retry forever.
+ *
+ * Unlimited attempts with a zero backoff (`tst_reconnect_policy_set_backoff_constant_ms`
+ * with 0, or an exponential base of 0) is refused by every `tst_managed_*_open`
+ * with `TST_E_INVALID_CONFIG`, before any connect: it would retry without pacing.
  */
  int tst_reconnect_policy_set_max_attempts(struct tst_reconnect_policy_t *p, int32_t n);
 

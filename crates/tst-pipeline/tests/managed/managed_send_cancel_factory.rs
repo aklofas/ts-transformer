@@ -107,7 +107,8 @@ fn factory_success_after_cancel_is_not_drained_into() {
         delivered: Arc::new(AtomicU32::new(0)),
         dead: true,
     };
-    let mut managed = ManagedTransport::new(initial, factory, policy);
+    let mut managed =
+        ManagedTransport::new(initial, factory, policy).expect("a default policy validates");
     *handle_cell.lock().unwrap() = managed.cancel_handle();
 
     let result = managed.send_bytes(&[0x47; 188]);
@@ -203,7 +204,8 @@ fn cancel_during_post_reconnect_drain_reports_explicit_close() {
         fired: Arc::new(AtomicBool::new(false)),
         dead: true,
     };
-    let mut managed = ManagedTransport::new(initial, factory, policy);
+    let mut managed =
+        ManagedTransport::new(initial, factory, policy).expect("a default policy validates");
     *handle_cell.lock().unwrap() = managed.cancel_handle();
 
     let result = managed.send_bytes(&[0x47; 188]);

@@ -68,7 +68,8 @@ public final class ManagedReceiver extends NativeHandle {
      * @param url {@code srt://[host]:port?mode=listener[&key=value&...]}
      * @param policy reconnect tuning; {@code null} applies the defaults
      * @return a connected {@code ManagedReceiver}
-     * @throws SrtException {@code CONFIG_INVALID} if the URL is malformed or
+     * @throws SrtException {@code CONFIG_INVALID} if the policy is zero backoff with unlimited
+     *     attempts (refused before connecting), or if the URL is malformed or
      *     uses a non-listener mode; {@code BROKEN} on initial bind/accept failure
      */
     public static ManagedReceiver fromUrl(String url, ReconnectPolicy policy) throws SrtException {

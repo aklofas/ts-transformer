@@ -215,12 +215,16 @@ unsafe fn set_descriptors<K: DescriptorStream>(
 ///   byte 1: length of body (N)
 ///   bytes 2..2+N: body
 ///
+/// The list must be consumed exactly: `tlv_count` descriptors that do not
+/// end at `tlv_total_len` are refused.
+///
 /// Calling with `tlv_total_len == 0` or `tlv_count == 0` clears any
 /// previously set program descriptors for this program.
 ///
 /// Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
 /// null `tlv_bytes` with non-zero count, invalid program handle, or a
-/// malformed TLV byte stream (truncated length or body).
+/// malformed TLV byte stream (truncated length or body, or trailing
+/// bytes after the last descriptor).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_config_set_program_descriptors(
     cfg: *mut TstMuxConfig,
@@ -267,7 +271,8 @@ pub unsafe extern "C" fn tst_mux_config_set_program_descriptors(
 /// previously set stream descriptors for this stream.
 ///
 /// Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
-/// invalid handle, null `tlv_bytes` with non-zero count, or malformed TLV.
+/// invalid handle, null `tlv_bytes` with non-zero count, or malformed TLV
+/// (including trailing bytes after the last descriptor).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_config_set_stream_descriptors_for_video(
     cfg: *mut TstMuxConfig,
@@ -510,6 +515,16 @@ unsafe fn parse_tlv_list(
         descs.push(bytes[offset..offset + total].to_vec());
         offset += total;
     }
+    if offset != bytes.len() {
+        set_last_error(
+            TstError::InvalidConfig,
+            &format!(
+                "TLV byte stream has {} trailing bytes after tlv_count descriptors",
+                bytes.len() - offset
+            ),
+        );
+        return Err(TstError::InvalidConfig as i32);
+    }
     Ok(descs)
 }
 
@@ -578,6 +593,40 @@ mod tests {
             result
         };
         assert_eq!(rc, TstError::InvalidConfig as i32);
+    }
+
+    // -----------------------------------------------------------------------
+    // exact consumption
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_program_descriptors_refuses_trailing_bytes() {
+        let bytes = [0xAB, 0x00, 0xFF]; // one TLV + one stray byte
+        unsafe {
+            let cfg = tst_mux_config_new();
+            let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+            let rc = tst_mux_config_set_program_descriptors(cfg, prog, bytes.as_ptr(), 3, 1);
+            assert_eq!(rc, TstError::InvalidConfig as i32);
+            let msg = std::ffi::CStr::from_ptr(crate::error::tst_get_last_error_str())
+                .to_string_lossy()
+                .into_owned();
+            assert!(msg.contains("trailing"), "{msg}");
+            tst_mux_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn set_program_descriptors_accepts_an_exactly_consumed_list() {
+        let bytes = [0xAB, 0x00, 0xCD, 0x01, 0x07];
+        unsafe {
+            let cfg = tst_mux_config_new();
+            let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+            assert_eq!(
+                tst_mux_config_set_program_descriptors(cfg, prog, bytes.as_ptr(), 5, 2),
+                0
+            );
+            tst_mux_config_free(cfg);
+        }
     }
 
     // -----------------------------------------------------------------------

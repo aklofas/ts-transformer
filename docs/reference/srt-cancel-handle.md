@@ -285,7 +285,7 @@ let factory = Box::new(move || -> Result<SrtTransport, TransportError> {
         Err(e) => Err(TransportError::Broken { msg: e.to_string(), errno_code: None, cause: BrokenCause::Unspecified }),
     }
 });
-let managed = ManagedRecvTransport::new_with_factory_cancel(initial, factory, ReconnectPolicy::default(), factory_cancel);
+let managed = ManagedRecvTransport::new_with_factory_cancel(initial, factory, ReconnectPolicy::default(), factory_cancel)?;
 // `managed.cancel_handle()` now wakes the re-accept as well as a live recv.
 ```
 

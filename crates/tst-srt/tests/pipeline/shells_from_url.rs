@@ -629,3 +629,32 @@ fn sender_from_url_refuses_listener_mode_with_an_option_error() {
     .expect("listener mode must be refused");
     assert!(matches!(err, SrtError::Option(_)), "{err:?}");
 }
+
+fn unpaced_unlimited() -> ReconnectPolicy {
+    ReconnectPolicy {
+        max_attempts: None,
+        backoff: BackoffStrategy::Constant(Duration::ZERO),
+        ..Default::default()
+    }
+}
+
+/// A refused policy never reaches a socket: nothing listens on port 1, so a
+/// connect attempt would take the connect timeout.
+#[test]
+fn managed_sender_from_url_refuses_an_unpaced_unlimited_policy_before_connecting() {
+    let url = SrtUrl::parse("srt://127.0.0.1:1").expect("parse");
+    let started = Instant::now();
+    let r = managed_sender_from_url(&url, unpaced_unlimited(), Default::default());
+    assert!(matches!(r, Err(SrtError::Option(_))), "got {:?}", r.err());
+    assert!(started.elapsed() < scaled(Duration::from_millis(500)));
+}
+
+/// The receive side is refused before it binds or accepts.
+#[test]
+fn managed_receiver_from_url_refuses_an_unpaced_unlimited_policy_before_binding() {
+    let url = SrtUrl::parse("srt://:0?mode=listener").expect("parse");
+    let started = Instant::now();
+    let r = managed_receiver_from_url(&url, unpaced_unlimited());
+    assert!(matches!(r, Err(SrtError::Option(_))), "got {:?}", r.err());
+    assert!(started.elapsed() < scaled(Duration::from_millis(500)));
+}

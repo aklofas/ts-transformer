@@ -40,7 +40,8 @@ fn reject_policy_surfaces_backpressure_when_gap_full() {
 
     let inner = ScriptedSend::always(broken("always broken (test)"))
         .with_counter(Arc::new(AtomicU32::new(0)));
-    let mut managed = ManagedTransport::new(inner, factory, policy);
+    let mut managed =
+        ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
 
     // The transport returns Broken and the bytes have nowhere to queue.
     // With Reject policy they MUST surface as Backpressure rather than be
@@ -153,7 +154,8 @@ fn drop_oldest_policy_does_not_surface_backpressure_on_overflow() {
     };
     let policy = ReconnectPolicy {
         max_attempts: None,
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
+        // Unlimited attempts need a non-zero wait to pass validation.
+        backoff: BackoffStrategy::Constant(Duration::from_millis(1)),
         gap_buffer_capacity: 2,
         overflow_policy: OverflowPolicy::DropOldest,
         mode: ReconnectMode::Background,
@@ -162,7 +164,8 @@ fn drop_oldest_policy_does_not_surface_backpressure_on_overflow() {
         broken: true,
         delivered: Arc::clone(&delivered),
     };
-    let mut managed = ManagedTransport::new(inner, factory, policy);
+    let mut managed =
+        ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
     let stats = managed.stats_handle();
 
     // Breaks the inner: queued, and the worker goes to the factory.

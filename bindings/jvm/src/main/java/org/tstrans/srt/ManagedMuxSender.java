@@ -86,7 +86,8 @@ public final class ManagedMuxSender extends NativeHandle {
      * @param programConfig the muxer program configuration
      * @param policy        reconnect tuning; {@code null} applies the defaults
      * @return a connected {@code ManagedMuxSender}
-     * @throws SrtException {@code CONFIG_INVALID} if the URL is malformed or uses
+     * @throws SrtException {@code CONFIG_INVALID} if the policy is zero backoff with unlimited
+     *     attempts (refused before connecting), or if the URL is malformed or uses
      *     a non-caller mode; {@code CONNECT_FAILED} on initial-connect failure
      * @throws MuxException {@code CONFIG_INVALID} if the muxer config is rejected
      */

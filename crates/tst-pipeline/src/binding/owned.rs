@@ -1510,7 +1510,8 @@ mod tests {
             backoff: BackoffStrategy::Constant(std::time::Duration::from_millis(50)),
             ..ReconnectPolicy::default()
         };
-        let managed = ManagedTransport::new(Lost, || Err::<Lost, _>(broken()), policy);
+        let managed = ManagedTransport::new(Lost, || Err::<Lost, _>(broken()), policy)
+            .expect("a default policy validates");
         let cancel = managed
             .cancel_handle()
             .expect("a managed transport has one");

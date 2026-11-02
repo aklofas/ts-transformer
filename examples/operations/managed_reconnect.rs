@@ -269,7 +269,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         overflow_policy: OverflowPolicy::DropOldest,
         ..Default::default()
     };
-    let managed = ManagedTransport::new(initial, factory, policy);
+    // A zero-backoff, unlimited-attempts policy is refused here.
+    let managed = ManagedTransport::new(initial, factory, policy)?;
 
     // The canonical sender shell: `MuxSender` composes the muxer
     // (`MuxerConfig::default`) with the transport. End-to-end the path is

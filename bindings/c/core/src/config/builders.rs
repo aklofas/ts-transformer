@@ -171,6 +171,10 @@ pub unsafe extern "C" fn tst_reconnect_policy_free(p: *mut TstReconnectPolicy) {
 }
 
 /// Set max reconnect attempts. `n < 0` means retry forever.
+///
+/// Unlimited attempts with a zero backoff (`tst_reconnect_policy_set_backoff_constant_ms`
+/// with 0, or an exponential base of 0) is refused by every `tst_managed_*_open`
+/// with `TST_E_INVALID_CONFIG`, before any connect: it would retry without pacing.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_reconnect_policy_set_max_attempts(
     p: *mut TstReconnectPolicy,

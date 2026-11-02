@@ -2162,6 +2162,29 @@ bindings = ["java:org.tstrans.srt.ManagedSender", "java:org.tstrans.srt.ManagedM
 scenario_ids = []
 tier = "A"
 
+# ReconnectPolicyError is what the managed constructors and ReconnectPolicy::validate
+# return for zero backoff with unlimited attempts; every binding reports it as its
+# config-invalid kind through the managed opens.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::reconnect::ReconnectPolicyError"
+owning_tests = ["crates/tst-pipeline/src/reconnect/mod.rs"]
+bindings = ["c:n/a(reported as TST_E_INVALID_CONFIG by tst_managed_*_open)", "python:n/a(SrtError CONFIG_INVALID from ManagedSender.from_url)", "java:n/a(SrtException CONFIG_INVALID from ManagedSender.fromUrl)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# ReconnectPolicy::validate is the public pre-check behind the managed constructors'
+# refusal; the bindings reach it only through the managed opens.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::reconnect::ReconnectPolicy::validate"
+owning_tests = ["crates/tst-pipeline/src/reconnect/mod.rs"]
+bindings = ["c:n/a(applied by tst_managed_*_open)", "python:n/a(applied by Managed*.from_url)", "java:n/a(applied by Managed*.fromUrl)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 # tst_pipeline::MuxSender graduated to [[surface]] once the JVM SRT binding
 # covered it; one org.tstrans.shells.MuxSender now serves every transport
 # (the per-transport org.tstrans.rtp.MuxSender is a deprecated subclass of it).

@@ -390,7 +390,8 @@ start from `SrtSocketConfig::sender_defaults()`.
 
 ```rust,ignore
 impl<T: Transport + 'static> ManagedTransport<T> {
-    pub fn new<F>(inner: T, factory: F, policy: ReconnectPolicy) -> Self
+    pub fn new<F>(inner: T, factory: F, policy: ReconnectPolicy)
+        -> Result<Self, ReconnectPolicyError>
     where F: Fn() -> Result<T, TransportError> + Send + Sync + 'static;
 }
 ```
@@ -476,6 +477,13 @@ Defaults (`ReconnectPolicy::default()`):
 - `mode: ReconnectMode::Blocking` — reconnect on the caller's thread.
   Set to `ReconnectMode::Background` to run reconnect on a per-outage
   worker thread instead; see the cookbook recipe linked above.
+
+`ReconnectPolicy::validate` refuses zero backoff with unlimited attempts
+(`max_attempts: None` and a zero `Constant` or `Exponential` base), which
+would retry with no pacing. `ManagedTransport::new`,
+`ManagedRecvTransport::new` and every managed open return the error as
+`ReconnectPolicyError::UnpacedUnlimitedRetry`, or the config-invalid kind in
+the bindings, before touching a socket.
 
 ## `BackoffStrategy`
 

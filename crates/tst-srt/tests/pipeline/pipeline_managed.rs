@@ -28,7 +28,8 @@ fn managed_recovers_from_brief_outage() {
         overflow_policy: OverflowPolicy::DropOldest,
         ..Default::default()
     };
-    let mut managed = ManagedTransport::new(inner, factory, policy);
+    let mut managed =
+        ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
 
     // Send 4 messages; first 3 fail (Broken) on the original inner; the
     // 4th triggers reconnect to a fresh mock and succeeds. The first 3
@@ -52,7 +53,8 @@ fn managed_rejects_oversize_through_inner() {
     let inner = MockTransport::new(1316);
     let factory = move || Ok::<MockTransport, _>(MockTransport::new(1316));
     let policy = ReconnectPolicy::default();
-    let mut managed = ManagedTransport::new(inner, factory, policy);
+    let mut managed =
+        ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
 
     let big = vec![0u8; 1317];
     let err = managed.send_bytes(&big).unwrap_err();
@@ -64,7 +66,8 @@ fn managed_close_propagates() {
     let inner = MockTransport::new(1316);
     let factory = move || Ok::<MockTransport, _>(MockTransport::new(1316));
     let policy = ReconnectPolicy::default();
-    let mut managed = ManagedTransport::new(inner, factory, policy);
+    let mut managed =
+        ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
 
     managed.close();
     // is_alive should be false after close.

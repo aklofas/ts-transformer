@@ -435,7 +435,9 @@ class ReconnectPolicy:
     - `overflow_policy = OverflowPolicy.DROP_OLDEST`
     - `mode = ReconnectMode.BLOCKING`
 
-    Raises `ValueError` if `gap_buffer_capacity == 0`.
+    Raises `ValueError` if `gap_buffer_capacity == 0`. `max_attempts=None`
+    with a zero backoff is accepted here but refused by every `Managed*.from_url`
+    with `SrtError(CONFIG_INVALID)`, before any connect.
     """
 
     def __new__(cls,

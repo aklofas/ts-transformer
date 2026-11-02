@@ -253,6 +253,8 @@ impl core::convert::From<tst_pipeline::raw_sender::RawSenderError> for tst_pipel
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_sender::RawSenderError) -> Self
 impl core::convert::From<tst_pipeline::receiver::ReceiverError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::receiver::ReceiverError) -> Self
+impl core::convert::From<tst_pipeline::reconnect::ReconnectPolicyError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::reconnect::ReconnectPolicyError) -> Self
 impl core::convert::From<tst_pipeline::sender::SenderError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::SenderError) -> Self
 impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::binding::kind::BindingError
@@ -780,6 +782,8 @@ impl core::convert::From<tst_pipeline::raw_sender::RawSenderError> for tst_pipel
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::raw_sender::RawSenderError) -> Self
 impl core::convert::From<tst_pipeline::receiver::ReceiverError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::receiver::ReceiverError) -> Self
+impl core::convert::From<tst_pipeline::reconnect::ReconnectPolicyError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::reconnect::ReconnectPolicyError) -> Self
 impl core::convert::From<tst_pipeline::sender::SenderError> for tst_pipeline::binding::kind::BindingError
 pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::sender::SenderError) -> Self
 impl core::convert::From<tst_pipeline::sender::TsFramingError> for tst_pipeline::binding::kind::BindingError
@@ -1291,8 +1295,8 @@ pub mod tst_pipeline::managed_receive
 pub struct tst_pipeline::managed_receive::ManagedRecvTransport<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_receive::ManagedRecvTransport<R>
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
-pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy) -> Self
-pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new_with_factory_cancel(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy, alloc::sync::Arc<tst_pipeline::managed_receive::FactoryCancel>) -> Self
+pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy) -> core::result::Result<Self, tst_pipeline::reconnect::ReconnectPolicyError>
+pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new_with_factory_cancel(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy, alloc::sync::Arc<tst_pipeline::managed_receive::FactoryCancel>) -> core::result::Result<Self, tst_pipeline::reconnect::ReconnectPolicyError>
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::reconnects_count(&self) -> u64
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::reconnects_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
@@ -1917,6 +1921,28 @@ impl core::marker::Unpin for tst_pipeline::reconnect::ReconnectMode
 impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ReconnectMode
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ReconnectMode
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ReconnectMode
+#[non_exhaustive] pub enum tst_pipeline::reconnect::ReconnectPolicyError
+pub tst_pipeline::reconnect::ReconnectPolicyError::UnpacedUnlimitedRetry
+impl core::clone::Clone for tst_pipeline::reconnect::ReconnectPolicyError
+pub fn tst_pipeline::reconnect::ReconnectPolicyError::clone(&self) -> tst_pipeline::reconnect::ReconnectPolicyError
+impl core::cmp::Eq for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::cmp::PartialEq for tst_pipeline::reconnect::ReconnectPolicyError
+pub fn tst_pipeline::reconnect::ReconnectPolicyError::eq(&self, &tst_pipeline::reconnect::ReconnectPolicyError) -> bool
+impl core::convert::From<tst_pipeline::reconnect::ReconnectPolicyError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::reconnect::ReconnectPolicyError) -> Self
+impl core::error::Error for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::fmt::Debug for tst_pipeline::reconnect::ReconnectPolicyError
+pub fn tst_pipeline::reconnect::ReconnectPolicyError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_pipeline::reconnect::ReconnectPolicyError
+pub fn tst_pipeline::reconnect::ReconnectPolicyError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::Freeze for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::Send for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::Sync for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::Unpin for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ReconnectPolicyError
 pub struct tst_pipeline::reconnect::GapBuffer
 pub tst_pipeline::reconnect::GapBuffer::bytes_dropped: u64
 pub tst_pipeline::reconnect::GapBuffer::messages_dropped: u64
@@ -1949,7 +1975,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ManagedSt
 pub struct tst_pipeline::reconnect::ManagedTransport<T: tst_core::transport::Transport>
 impl<T: tst_core::transport::Transport + 'static> tst_pipeline::reconnect::ManagedTransport<T>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
-pub fn tst_pipeline::reconnect::ManagedTransport<T>::new<F>(T, F, tst_pipeline::reconnect::ReconnectPolicy) -> Self where F: core::ops::function::Fn() -> core::result::Result<T, tst_core::transport::TransportError> + core::marker::Send + core::marker::Sync + 'static
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::new<F>(T, F, tst_pipeline::reconnect::ReconnectPolicy) -> core::result::Result<Self, tst_pipeline::reconnect::ReconnectPolicyError> where F: core::ops::function::Fn() -> core::result::Result<T, tst_core::transport::TransportError> + core::marker::Send + core::marker::Sync + 'static
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnects_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::stats_handle(&self) -> tst_pipeline::reconnect::ManagedStatsHandle
@@ -1995,6 +2021,7 @@ pub tst_pipeline::reconnect::ReconnectPolicy::mode: tst_pipeline::reconnect::Rec
 pub tst_pipeline::reconnect::ReconnectPolicy::overflow_policy: tst_pipeline::OverflowPolicy
 impl tst_pipeline::reconnect::ReconnectPolicy
 pub fn tst_pipeline::reconnect::ReconnectPolicy::next_delay(&self, u32) -> core::option::Option<core::time::Duration>
+pub fn tst_pipeline::reconnect::ReconnectPolicy::validate(&self) -> core::result::Result<(), tst_pipeline::reconnect::ReconnectPolicyError>
 impl core::clone::Clone for tst_pipeline::reconnect::ReconnectPolicy
 pub fn tst_pipeline::reconnect::ReconnectPolicy::clone(&self) -> tst_pipeline::reconnect::ReconnectPolicy
 impl core::default::Default for tst_pipeline::reconnect::ReconnectPolicy
@@ -2411,6 +2438,28 @@ impl core::marker::Unpin for tst_pipeline::reconnect::ReconnectMode
 impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ReconnectMode
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ReconnectMode
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ReconnectMode
+#[non_exhaustive] pub enum tst_pipeline::ReconnectPolicyError
+pub tst_pipeline::ReconnectPolicyError::UnpacedUnlimitedRetry
+impl core::clone::Clone for tst_pipeline::reconnect::ReconnectPolicyError
+pub fn tst_pipeline::reconnect::ReconnectPolicyError::clone(&self) -> tst_pipeline::reconnect::ReconnectPolicyError
+impl core::cmp::Eq for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::cmp::PartialEq for tst_pipeline::reconnect::ReconnectPolicyError
+pub fn tst_pipeline::reconnect::ReconnectPolicyError::eq(&self, &tst_pipeline::reconnect::ReconnectPolicyError) -> bool
+impl core::convert::From<tst_pipeline::reconnect::ReconnectPolicyError> for tst_pipeline::binding::kind::BindingError
+pub fn tst_pipeline::binding::kind::BindingError::from(tst_pipeline::reconnect::ReconnectPolicyError) -> Self
+impl core::error::Error for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::fmt::Debug for tst_pipeline::reconnect::ReconnectPolicyError
+pub fn tst_pipeline::reconnect::ReconnectPolicyError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_pipeline::reconnect::ReconnectPolicyError
+pub fn tst_pipeline::reconnect::ReconnectPolicyError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::Freeze for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::Send for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::Sync for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::Unpin for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ReconnectPolicyError
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ReconnectPolicyError
 #[non_exhaustive] pub enum tst_pipeline::SenderErrorSource
 pub tst_pipeline::SenderErrorSource::Framing(tst_pipeline::sender::TsFramingError)
 pub tst_pipeline::SenderErrorSource::Transport(tst_core::transport::TransportError)
@@ -2630,8 +2679,8 @@ impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::managed_demux_receiv
 pub struct tst_pipeline::ManagedRecvTransport<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_receive::ManagedRecvTransport<R>
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
-pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy) -> Self
-pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new_with_factory_cancel(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy, alloc::sync::Arc<tst_pipeline::managed_receive::FactoryCancel>) -> Self
+pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy) -> core::result::Result<Self, tst_pipeline::reconnect::ReconnectPolicyError>
+pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::new_with_factory_cancel(R, alloc::boxed::Box<(dyn core::ops::function::FnMut() -> core::result::Result<R, tst_core::transport::TransportError> + core::marker::Send)>, tst_pipeline::reconnect::ReconnectPolicy, alloc::sync::Arc<tst_pipeline::managed_receive::FactoryCancel>) -> core::result::Result<Self, tst_pipeline::reconnect::ReconnectPolicyError>
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::reconnects_count(&self) -> u64
 pub fn tst_pipeline::managed_receive::ManagedRecvTransport<R>::reconnects_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
@@ -2664,7 +2713,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ManagedSt
 pub struct tst_pipeline::ManagedTransport<T: tst_core::transport::Transport>
 impl<T: tst_core::transport::Transport + 'static> tst_pipeline::reconnect::ManagedTransport<T>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
-pub fn tst_pipeline::reconnect::ManagedTransport<T>::new<F>(T, F, tst_pipeline::reconnect::ReconnectPolicy) -> Self where F: core::ops::function::Fn() -> core::result::Result<T, tst_core::transport::TransportError> + core::marker::Send + core::marker::Sync + 'static
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::new<F>(T, F, tst_pipeline::reconnect::ReconnectPolicy) -> core::result::Result<Self, tst_pipeline::reconnect::ReconnectPolicyError> where F: core::ops::function::Fn() -> core::result::Result<T, tst_core::transport::TransportError> + core::marker::Send + core::marker::Sync + 'static
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnects_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::stats_handle(&self) -> tst_pipeline::reconnect::ManagedStatsHandle
@@ -3096,6 +3145,7 @@ pub tst_pipeline::ReconnectPolicy::mode: tst_pipeline::reconnect::ReconnectMode
 pub tst_pipeline::ReconnectPolicy::overflow_policy: tst_pipeline::OverflowPolicy
 impl tst_pipeline::reconnect::ReconnectPolicy
 pub fn tst_pipeline::reconnect::ReconnectPolicy::next_delay(&self, u32) -> core::option::Option<core::time::Duration>
+pub fn tst_pipeline::reconnect::ReconnectPolicy::validate(&self) -> core::result::Result<(), tst_pipeline::reconnect::ReconnectPolicyError>
 impl core::clone::Clone for tst_pipeline::reconnect::ReconnectPolicy
 pub fn tst_pipeline::reconnect::ReconnectPolicy::clone(&self) -> tst_pipeline::reconnect::ReconnectPolicy
 impl core::default::Default for tst_pipeline::reconnect::ReconnectPolicy

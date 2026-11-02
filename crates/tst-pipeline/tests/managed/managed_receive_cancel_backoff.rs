@@ -84,7 +84,8 @@ fn cancel_interrupts_the_backoff_wait() {
         ScriptedRecv::failing(broken("dead on arrival")),
         factory,
         policy,
-    );
+    )
+    .expect("a default policy validates");
     let cancel = managed.cancel_handle().expect("managed cancel handle");
 
     let canceller = std::thread::spawn(move || {

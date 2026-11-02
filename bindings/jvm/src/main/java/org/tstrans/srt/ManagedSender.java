@@ -58,7 +58,8 @@ public final class ManagedSender extends NativeHandle {
      * @param url {@code srt://host:port[?key=value&...]} with {@code mode=caller}
      * @param policy reconnect tuning; {@code null} applies the defaults
      * @return a connected {@code ManagedSender}
-     * @throws SrtException {@code CONFIG_INVALID} if the URL is malformed or
+     * @throws SrtException {@code CONFIG_INVALID} if the policy is zero backoff with unlimited
+     *     attempts (refused before connecting), or if the URL is malformed or
      *     uses a non-caller mode; {@code BROKEN} on initial-connect failure
      */
     public static ManagedSender fromUrl(String url, ReconnectPolicy policy) throws SrtException {
