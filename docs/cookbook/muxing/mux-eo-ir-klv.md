@@ -38,10 +38,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         prog.stream_descriptors_for_klv(
             0,
             vec![
-                // 0x26 + 0x27 are the canonical pair for stream_type=0x15 KLV;
-                // the muxer adds its KLVA Registration (0x05) alongside them.
+                // The muxer adds the KLVA Registration (0x05) and a
+                // metadata_STD descriptor (0x27) sized for its largest PES;
+                // a tag 0x27 given here would replace that one.
                 desc::metadata_klva(0x00),
-                desc::metadata_std(0, 0, 0),
                 // Plus a human label.
                 desc::user_private(b"KLV_SYNC")?,
             ],

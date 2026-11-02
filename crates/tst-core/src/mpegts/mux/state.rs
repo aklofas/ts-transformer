@@ -134,8 +134,9 @@ pub(super) const SYNC_KLV_STD_BUFFER_UNITS: u32 = 65;
 
 /// `metadata_STD_descriptor` input leak rate for synchronous KLV, in units
 /// of 400 bit/s (H.222.0 §2.6.63): 5 243 600 bit/s moves a maximal PES of
-/// 524 328 bits in under 100 ms, the default PSI interval. A longer
-/// configured interval needs less, so this covers every accepted one.
+/// 524 328 bits in under 100 ms, the default PSI interval. The value is a
+/// fixed envelope sized for that default; a caller with another delivery
+/// envelope supplies tag 0x27, which replaces the automatic one.
 pub(super) const SYNC_KLV_STD_INPUT_LEAK_RATE: u32 = 13_109;
 
 /// AV1-in-MPEG-2-TS binding §3.2 `ts_open_bitstream_unit()` start code.
