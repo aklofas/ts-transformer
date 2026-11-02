@@ -569,7 +569,16 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
         drop(unsafe { Box::from_raw(session) });
 
         Box::into_raw(Box::new(TstRtpDemuxReceiver {
-            inner: CHandle::new(receiver, cancel, RtpRecvSnap { end_reason }),
+            // The same cell on the handle too: a receive refused after
+            // `_cancel` records `Cancelled` there.
+            inner: CHandle::new(
+                receiver,
+                cancel,
+                RtpRecvSnap {
+                    end_reason: end_reason.clone(),
+                },
+            )
+            .with_end_reason(end_reason),
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
             rtsp_client: Mutex::new(Some(client)),

@@ -21,9 +21,10 @@ use tstrans::event::{TstEvent, TstEventKind};
 use tstrans::handle::TstRtspClientBuilder;
 use tstrans::rtp::{
     TstRtpDemuxReceiver, tst_rtp_demux_receiver_cancel, tst_rtp_demux_receiver_close,
-    tst_rtp_demux_receiver_next_event,
+    tst_rtp_demux_receiver_end_reason, tst_rtp_demux_receiver_next_event,
 };
 use tstrans::stats::TstServerStats;
+use tstrans::stream_end_reason::TstStreamEndReason;
 use tstrans::{
     TstRtspMountHandle, TstRtspServer, TstRtspSession, tst_rtsp_client_builder_auth_basic,
     tst_rtsp_client_builder_connect, tst_rtsp_client_builder_keepalive,
@@ -670,6 +671,49 @@ fn teardown_after_server_stop_returns_promptly() {
     );
     unsafe {
         tst_rtsp_mount_handle_free(mount);
+        tst_rtsp_server_free(server);
+    }
+}
+
+/// A cancel before the first receive ends a bridged session's receiver with
+/// CANCELLED: the receive is refused before it reaches the transport, so
+/// the handle itself records the reason.
+#[test]
+fn bridged_receiver_cancelled_before_receive_reads_cancelled() {
+    let (server, mount, port) = c_server();
+    let session = unsafe {
+        tst_rtsp_client_builder_connect(builder(&format!("rtsp://127.0.0.1:{port}/live")))
+    };
+    assert!(!session.is_null(), "{}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_rtsp_session_play(session) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    let rx = unsafe { tst_rtsp_session_into_demux_receiver(session, std::ptr::null()) };
+    assert!(!rx.is_null(), "{}", last_error_msg());
+
+    assert_eq!(unsafe { tst_rtp_demux_receiver_cancel(rx) }, 0);
+    let mut ev = TstEvent::default();
+    assert_eq!(
+        unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) },
+        TstError::Closed as i32
+    );
+    let mut reason = TstStreamEndReason::None;
+    assert_eq!(
+        unsafe { tst_rtp_demux_receiver_end_reason(rx, &mut reason) },
+        0
+    );
+    assert!(
+        matches!(reason, TstStreamEndReason::Cancelled),
+        "end reason after cancel-then-receive"
+    );
+
+    unsafe { tst_rtp_demux_receiver_close(rx) };
+    unsafe {
+        tst_rtsp_mount_handle_free(mount);
+        tst_rtsp_server_stop(server, 0);
         tst_rtsp_server_free(server);
     }
 }
