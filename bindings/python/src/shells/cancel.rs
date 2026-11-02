@@ -18,6 +18,10 @@ use crate::util::CancelSource;
 #[pyclass(frozen, name = "CancelHandle", module = "tstrans.shells")]
 pub(crate) struct PyCancelHandle {
     src: Arc<CancelSource>,
+    /// What `cancel()` fires. For a shell this is the `Owned`'s own handle,
+    /// which latches the data-plane gate and then fires `src`; otherwise
+    /// `src` itself.
+    fire: Option<Arc<dyn TransportCancel>>,
 }
 
 #[pymethods]
@@ -29,7 +33,10 @@ impl PyCancelHandle {
     /// The transport's cancel can wait (libsrt's close waits out the
     /// socket's linger), so it runs without the GIL.
     fn cancel(&self, py: Python<'_>) {
-        crate::util::allow_threads_parking(py, || TransportCancel::cancel(&*self.src));
+        crate::util::allow_threads_parking(py, || match &self.fire {
+            Some(fire) => fire.cancel(),
+            None => TransportCancel::cancel(&*self.src),
+        });
     }
 
     /// `True` once the shell was cancelled or closed through ANY handle
@@ -49,6 +56,21 @@ impl PyCancelHandle {
     pub(crate) fn from_source(src: &Arc<CancelSource>) -> Self {
         Self {
             src: Arc::clone(src),
+            fire: None,
+        }
+    }
+
+    /// A shell's handle: `cancel()` fires `owned_cancel` (the shell's
+    /// `Owned::cancel_arc`), whose latch the data-plane entries refuse on,
+    /// and which in turn fires `src`. `is_cancelled()` reads `src`, as
+    /// [`Self::from_source`] does.
+    pub(crate) fn for_shell(
+        src: &Arc<CancelSource>,
+        owned_cancel: Arc<dyn TransportCancel>,
+    ) -> Self {
+        Self {
+            src: Arc::clone(src),
+            fire: Some(owned_cancel),
         }
     }
 }

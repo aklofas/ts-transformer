@@ -68,6 +68,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stream-ID values in an SRT `AccessControl` (Rust `Debug`, Python repr) are redacted; the keys stay visible.
 - Rust `Debug` for `HlsConfig`, the WHEP bearer-token request holder and the SRT `AccessControl`, `StreamId` and socket types never prints a password, token or stream-ID value. The `InvalidPort` URL error redacts a port that is not digits, since a mistyped URL can put a password there. The shared helper is `tst_core::url::redact_url`.
 - The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
+### Changed — tst-c (BREAKING)
+
+- After `_cancel`, every receive (`_recv_ts`, `_recv_packet`, `_recv_event`, `_next_event`), send (`_send_ts`, `_send_*`), `_flush` and `_finish` on a shell returns `TST_E_CLOSED`, including when TS packets or a partial bundle were still buffered; a `Broken` seen with the cancel latch set is `TST_E_CLOSED` too. Previously buffered packets were delivered and sub-bundle sends, empty flushes and empty finishes returned 0 after a cancel, which contradicted the documented terminal-cancel contract. Only the caller's `_cancel` (or a cancel handle from it) counts: a `_finish` that closes the transport itself is not a cancel, so a second `_finish` stays 0. The H.264 receiver keeps draining to EOS on cancel (its own documented contract).
+
+### Changed — tst-py, tst-jni (BREAKING)
+
+- The same outcome in `Sender`, `Receiver`, `MuxSender` and `DemuxReceiver` and their `Managed*` twins: after `cancel_handle().cancel()` every receive, send, `flush()` and `finish()` raises `<Domain>Error(CLOSED)` / throws `<Domain>Exception(CLOSED)`, buffered data included. `MuxSender.finish()` after `cancel_handle().cancel()` raises `CLOSED`; after `close()` or a previous `finish()` it stays a quiet no-op, because only the caller's cancel counts, not the shell closing its own transport. The H.264 receiver keeps draining to EOS on cancel.
+
 ### Changed — tst-hls (BREAKING)
 
 `HlsPublisher` now refuses (new `HlsError::UntrustedOutputDir`) an `output_dir` that is a symlink, is not owned by the process user, or is writable by group or others (Unix). A missing directory is created with mode 0700, and segments, the playlist and served segment reads are opened without following symlinks. Previously another account could pre-create the default `temp_dir()/tstrans-hls` on a shared `/tmp`, or plant symlinks in it, to redirect or read the publisher's files. Create it not writable by group or others (for example 0700 or 0750) or use a private path. Bindings report the new error as the existing invalid-config kind.
@@ -158,7 +166,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Pairer::last_before_pts` kept its KLV history across a reconnect or a signalled time-base discontinuity, so a frame on the new clock could pair with metadata from the old one until eight new KLV samples had arrived (unreleased code: 0.9.0 held a single sample). The history is now cleared at `ReconnectDiscontinuity` and at a set `discontinuity_indicator` on the video or KLV PID; never-paired entries are emitted as `UnpairedKlv`. The KLV PES in flight at the flag completes after it on the old clock, so the first KLV sample after the flag whose PTS is within two seconds of the last KLV or video PTS before it is emitted as `UnpairedKlv` and never pairs. A restart that signals neither still needs a caller `flush()`.
 - `MuxPublisher` sends retained bytes before a cut and no longer offers bytes after `finish`'s closing cut; a forward gap no longer produces an `#EXTINF` above the target; a raw 33-bit PTS wrap no longer yields a zero-duration segment.
 - `ManagedStatsHandle::stats` no longer waits behind a Blocking-mode replay; `ManagedRecvTransport` returns `Ok(0)` for an empty buffer in every state; `Pairer::last_before_pts` pairs reordered frames; the nearest pairer releases frames buffered before a raw PTS wrap.
-- A mutator panic inside a binding call now cancels the shell's transport before dropping it, and drops it with the slot lock released, so a managed sender's final flush cannot park the binding; a panicking close whose value's `Drop` also panics is contained instead of aborting.
+- A mutator panic inside a binding call now cancels the shell's transport before dropping it, and drops it with the slot lock released, so a managed sender's final flush cannot park the binding; a cancel handle the caller already holds reads cancelled after such a panic. A panicking close whose value's `Drop` also panics is contained instead of aborting.
 
 ### Fixed — tst-srt
 

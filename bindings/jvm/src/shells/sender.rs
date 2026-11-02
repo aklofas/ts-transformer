@@ -96,7 +96,7 @@ jni_native! {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Sender") else {
             return;
         };
-        match REGISTRY.with_mut(handle as u64, |s| s.send_ts(&bytes)) {
+        match REGISTRY.with_mut_unless_cancelled(handle as u64, |s| s.send_ts(&bytes)) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => throw_binding(env, domain, &BindingError::from(e)),
             Err(state) => throw_state(env, domain, "Sender", &state),
@@ -110,7 +110,7 @@ jni_native! {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Sender") else {
             return;
         };
-        match REGISTRY.with_mut(handle as u64, |s| s.flush()) {
+        match REGISTRY.with_mut_unless_cancelled(handle as u64, |s| s.flush()) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => throw_binding(env, domain, &BindingError::from(e)),
             Err(state) => throw_state(env, domain, "Sender", &state),

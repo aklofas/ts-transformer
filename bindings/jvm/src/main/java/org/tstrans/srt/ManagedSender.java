@@ -81,6 +81,9 @@ public final class ManagedSender extends NativeHandle {
      * accepted by the libsrt send queue. On a Broken peer, an in-line reconnect
      * runs under the policy before the bytes are retried.
      *
+     * <p>After {@code cancelHandle().cancel()} this throws {@code SrtException}
+     * ({@code CLOSED}), buffered data included.
+     *
      * @param data TS bytes to send (any length; need not be packet-aligned)
      * @throws IllegalStateException if the sender is closed
      * @throws SrtException {@code BACKPRESSURE} on backpressure; {@code BROKEN}
@@ -93,6 +96,9 @@ public final class ManagedSender extends NativeHandle {
 
     /**
      * Flush any buffered partial TS bundle.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws {@code SrtException}
+     * ({@code CLOSED}), buffered data included.
      *
      * @throws IllegalStateException if the sender is closed
      * @throws SrtException {@code BROKEN} on transport failure

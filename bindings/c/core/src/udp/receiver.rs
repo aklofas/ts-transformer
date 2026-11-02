@@ -147,6 +147,10 @@ pub unsafe extern "C" fn tst_udp_receiver_cancel(p: *mut TstUdpReceiver) -> libc
 /// - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Safety
 ///
 /// `p` must be a valid non-freed `*mut TstUdpReceiver`. `buf` must be

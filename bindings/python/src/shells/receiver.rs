@@ -105,15 +105,19 @@ impl PyReceiver {
     #[pyo3(signature = (max_len = 1500))]
     fn recv_bytes(&self, py: Python<'_>, max_len: usize) -> PyResult<Py<PyBytes>> {
         let _cap = max_len.max(188);
-        let pkt =
-            crate::util::allow_threads_parking(py, || self.owned.with_mut(|r| r.next_packet()));
+        let pkt = crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut_unless_cancelled(|r| r.next_packet())
+        });
         let bytes = pyres(py, &self.owned.snapshot().domain, pkt)?;
         Ok(PyBytes::new(py, &bytes).unbind())
     }
 
     /// Shareable cancel handle (shared state, see `CancelHandle`).
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_source(&self.cancel))
+        Py::new(
+            py,
+            PyCancelHandle::for_shell(&self.cancel, self.owned.cancel_arc()),
+        )
     }
 
     /// Snapshot of the scheme-neutral 16-field wire stats.

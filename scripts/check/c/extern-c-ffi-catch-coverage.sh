@@ -5,8 +5,9 @@
 #   1. The body wraps work in `crate::panic::ffi_catch(...)` (the
 #      open-path + builder-setter pattern).
 #   2. The body uses `CHandle::with_inner_mut(...)` or
-#      `CHandle::with_inner_ref(...)` — both already wrap their closure
-#      in `catch_unwind` internally (see bindings/c/core/src/handle.rs).
+#      `CHandle::with_inner_ref(...)`, or their `_unless_cancelled` twins —
+#      all wrap their closure in `catch_unwind` internally (see
+#      bindings/c/core/src/handle.rs).
 #   3. The function name is in the trivially-infallible allowlist
 #      below (constant returns with no internal locking, panics, or
 #      allocation).
@@ -120,7 +121,7 @@ for entry in "${ENTRIES[@]}"; do
     # that turns a MATCH into a pipeline failure → a bogus MISSING. The race is
     # timing-dependent (flaky; surfaced on the macOS runner). A here-string has
     # no pipe, so there is no SIGPIPE to mask the match.
-    if grep -qE 'crate::panic::ffi_catch\(|^\s*ffi_catch\(|\.with_inner_(mut|ref)\(|with_mux_publisher\(|crate::transport_impls::' <<<"$body"; then
+    if grep -qE 'crate::panic::ffi_catch\(|^\s*ffi_catch\(|\.with_inner_(mut|ref)(_unless_cancelled)?\(|with_mux_publisher\(|crate::transport_impls::' <<<"$body"; then
         checked=$((checked + 1))
         continue
     fi
@@ -162,7 +163,7 @@ if [[ -f "$TI_FILE" ]]; then
         ti_body=$(awk -v start="$ti_lineno" \
             'NR>=start{print; if(NR>start && $0=="}"){exit}}' "$TI_FILE")
         # Here-string, not a pipe (same SIGPIPE rationale as the main loop).
-        if ! grep -qE 'with_inner_(mut|ref)\(|ffi_catch\(' <<<"$ti_body"; then
+        if ! grep -qE 'with_inner_(mut|ref)(_unless_cancelled)?\(|ffi_catch\(' <<<"$ti_body"; then
             echo "MISSING isolation in transport_impls.rs fn at line $ti_lineno"
             ti_missing=$((ti_missing + 1))
         fi

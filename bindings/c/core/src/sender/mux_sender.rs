@@ -88,6 +88,9 @@ pub unsafe extern "C" fn tst_mux_sender_open(
     })
 }
 
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_send_video(
     p: *mut TstMuxSender,
@@ -123,6 +126,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_video(
 /// Single-stream form: the mux sender must have exactly one KLV stream
 /// configured. Multi-stream callers use `tst_mux_sender_send_klv_to` with
 /// an explicit `TstKlvStreamHandle`.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 ///
 /// # Errors
 ///
@@ -160,6 +167,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_klv(
 ///
 /// On a single-stream sender, prefer `tst_mux_sender_send_video` — same
 /// effect, no handle required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_send_video_to(
     p: *mut TstMuxSender,
@@ -195,6 +206,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_video_to(
 ///
 /// On a single-stream sender, prefer `tst_mux_sender_send_klv` — same
 /// effect, no handle required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_send_klv_to(
     p: *mut TstMuxSender,
@@ -238,6 +253,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_klv_to(
 /// configured. Multi-stream callers use `tst_mux_sender_send_data_to`
 /// with an explicit `tst_data_stream_handle_t`.
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Errors
 ///
 /// Routed through `tst_get_last_error()` via the inner `MuxSender`
@@ -270,7 +289,7 @@ pub unsafe extern "C" fn tst_mux_sender_send_data(
     let pts = Pts90khz::new(pts_90khz);
     handle
         .inner
-        .with_inner_ref(|s| match s.send_data(slice, pts) {
+        .with_inner_ref_unless_cancelled(|s| match s.send_data(slice, pts) {
             Ok(()) => 0,
             Err(e) => record_shell_error(e),
         })
@@ -287,6 +306,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_data(
 ///
 /// On a single-stream sender, prefer `tst_mux_sender_send_data` — same
 /// effect, no handle required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_send_data_to(
     p: *mut TstMuxSender,
@@ -314,7 +337,7 @@ pub unsafe extern "C" fn tst_mux_sender_send_data_to(
     let pts = Pts90khz::new(pts_90khz);
     wrapper
         .inner
-        .with_inner_ref(|s| match s.send_data_to(stream, slice, pts) {
+        .with_inner_ref_unless_cancelled(|s| match s.send_data_to(stream, slice, pts) {
             Ok(()) => 0,
             Err(e) => record_shell_error(e),
         })
@@ -328,6 +351,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_data_to(
 ///
 /// `frames` is one or more pre-framed audio frames concatenated by the
 /// caller. PTS is required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_send_audio(
     p: *mut TstMuxSender,
@@ -351,6 +378,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_audio(
 ///
 /// On a single-stream sender, prefer `tst_mux_sender_send_audio` — same
 /// effect, no handle required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_send_audio_to(
     p: *mut TstMuxSender,
@@ -384,6 +415,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_audio_to(
 /// `payload` is one complete logical subtitle unit (DVB-sub composition
 /// page, teletext data field, CEA-708 service block, or WebVTT cue).
 /// PTS is required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_send_subtitle(
     p: *mut TstMuxSender,
@@ -410,6 +445,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_subtitle(
 ///
 /// On a single-stream sender, prefer `tst_mux_sender_send_subtitle` —
 /// same effect, no handle required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_send_subtitle_to(
     p: *mut TstMuxSender,
@@ -599,6 +638,10 @@ pub unsafe extern "C" fn tst_mux_sender_cancel(p: *mut TstMuxSender) -> libc::c_
 /// point, a call after `tst_mux_sender_close` has freed the pointer is a
 /// use-after-free, not an error code — `_close` consumes the handle.
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Safety
 ///
 /// `p` must be NULL or a valid, not-yet-closed `*mut tst_mux_sender_t`.
@@ -609,14 +652,16 @@ pub unsafe extern "C" fn tst_mux_sender_finish(p: *mut TstMuxSender) -> libc::c_
             set_last_error(TstError::InvalidConfig, "null sender pointer");
             return TstError::InvalidConfig as i32;
         };
-        // `CHandle::with_inner_ref(impl FnOnce(&T) -> i32) -> i32`: the
+        // `CHandle::with_inner_ref_unless_cancelled(impl FnOnce(&T) -> i32) -> i32`: the
         // closure returns the C code and `CHandle` folds `HandleState`
         // (already-closed / cancelled) into `record_binding_error` itself,
         // so there is no `Err(state)` arm here.
-        handle.inner.with_inner_ref(|s| match s.finish() {
-            Ok(()) => 0,
-            Err(e) => crate::error::record_shell_error(e),
-        })
+        handle
+            .inner
+            .with_inner_ref_unless_cancelled(|s| match s.finish() {
+                Ok(()) => 0,
+                Err(e) => crate::error::record_shell_error(e),
+            })
     })
 }
 
@@ -787,6 +832,9 @@ pub unsafe extern "C" fn tst_managed_mux_sender_open(
     })
 }
 
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_send_video(
     p: *mut TstManagedMuxSender,
@@ -816,6 +864,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_video(
 ///
 /// Single-stream form: see `tst_managed_mux_sender_send_klv_to` for the
 /// multi-stream variant.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 ///
 /// # Errors
 ///
@@ -852,6 +904,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_klv(
 ///
 /// On a single-stream sender, prefer `tst_managed_mux_sender_send_video` —
 /// same effect, no handle required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_send_video_to(
     p: *mut TstManagedMuxSender,
@@ -888,6 +944,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_video_to(
 ///
 /// On a single-stream sender, prefer `tst_managed_mux_sender_send_klv` —
 /// same effect, no handle required.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_send_klv_to(
     p: *mut TstManagedMuxSender,
@@ -913,6 +973,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_klv_to(
 
 /// Managed sibling of [`tst_mux_sender_send_audio`]. Same semantics; routes
 /// through the inner reconnecting transport.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_send_audio(
     p: *mut TstManagedMuxSender,
@@ -929,6 +993,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_audio(
 
 /// Managed sibling of [`tst_mux_sender_send_audio_to`]. Same semantics;
 /// `stream_handle` is stable across reconnects.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_send_audio_to(
     p: *mut TstManagedMuxSender,
@@ -954,6 +1022,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_audio_to(
 
 /// Managed sibling of [`tst_mux_sender_send_subtitle`]. Same semantics; routes
 /// through the inner reconnecting transport.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_send_subtitle(
     p: *mut TstManagedMuxSender,
@@ -972,6 +1044,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_subtitle(
 
 /// Managed sibling of [`tst_mux_sender_send_subtitle_to`]. Same semantics;
 /// `stream_handle` is stable across reconnects.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_send_subtitle_to(
     p: *mut TstManagedMuxSender,
@@ -1005,6 +1081,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_subtitle_to(
 /// Single-stream form: see `tst_managed_mux_sender_send_data_to` for the
 /// multi-stream variant.
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Errors
 ///
 /// Routed through `tst_get_last_error()`. Same code set as
@@ -1032,7 +1112,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data(
     let pts = Pts90khz::new(pts_90khz);
     handle
         .inner
-        .with_inner_ref(|s| match s.send_data(slice, pts) {
+        .with_inner_ref_unless_cancelled(|s| match s.send_data(slice, pts) {
             Ok(()) => 0,
             Err(e) => record_shell_error(e),
         })
@@ -1043,6 +1123,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data(
 /// reconnects. Out-of-range handles surface as `TST_E_INVALID_USAGE`.
 ///
 /// On a single-stream sender, prefer `tst_managed_mux_sender_send_data`.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_send_data_to(
     p: *mut TstManagedMuxSender,
@@ -1068,7 +1152,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data_to(
     let pts = Pts90khz::new(pts_90khz);
     wrapper
         .inner
-        .with_inner_ref(|s| match s.send_data_to(stream, slice, pts) {
+        .with_inner_ref_unless_cancelled(|s| match s.send_data_to(stream, slice, pts) {
             Ok(()) => 0,
             Err(e) => record_shell_error(e),
         })
@@ -1264,6 +1348,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_cancel(p: *mut TstManagedMuxSend
 /// pointer is a use-after-free, not an error code — `_close` consumes the
 /// handle.
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Safety
 ///
 /// `p` must be NULL or a valid, not-yet-closed
@@ -1275,10 +1363,12 @@ pub unsafe extern "C" fn tst_managed_mux_sender_finish(p: *mut TstManagedMuxSend
             set_last_error(TstError::InvalidConfig, "null managed sender pointer");
             return TstError::InvalidConfig as i32;
         };
-        handle.inner.with_inner_ref(|s| match s.finish() {
-            Ok(()) => 0,
-            Err(e) => crate::error::record_shell_error(e),
-        })
+        handle
+            .inner
+            .with_inner_ref_unless_cancelled(|s| match s.finish() {
+                Ok(()) => 0,
+                Err(e) => crate::error::record_shell_error(e),
+            })
     })
 }
 

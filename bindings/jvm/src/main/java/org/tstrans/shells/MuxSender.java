@@ -102,6 +102,9 @@ public class MuxSender extends NativeHandle {
      * Send one video access unit onto the lone configured video stream.
      * Annex-B framing for H.264/H.265/H.266; raw OBU stream for AV1.
      *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
+     *
      * @param nal      the access unit bytes
      * @param pts      90&nbsp;kHz presentation timestamp
      * @param keyFrame whether this access unit is a key frame
@@ -119,6 +122,9 @@ public class MuxSender extends NativeHandle {
      * Send one KLV blob onto the lone configured KLV stream. Pass raw KLV LS
      * bytes — for {@code SYNCHRONOUS_METADATA} streams the muxer auto-wraps the
      * AU-cell header; do not pre-wrap.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      *
      * @param klv               raw KLV LS bytes
      * @param pts               90&nbsp;kHz presentation timestamp
@@ -139,6 +145,9 @@ public class MuxSender extends NativeHandle {
      * {@code frames} is one or more pre-framed audio frames concatenated by the
      * caller (ADTS for AAC, MPEG-2 audio frames for MP2).
      *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
+     *
      * @param frames the encoded audio bytes
      * @param pts    90&nbsp;kHz presentation timestamp
      * @throws IllegalStateException if the sender is closed
@@ -152,6 +161,9 @@ public class MuxSender extends NativeHandle {
 
     /**
      * Send one subtitle payload onto the lone configured subtitle stream.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      *
      * @param payload the subtitle access-unit bytes
      * @param pts     90&nbsp;kHz presentation timestamp
@@ -174,6 +186,9 @@ public class MuxSender extends NativeHandle {
      * only when the stream was configured with {@code carriesPts = true}, but
      * it ALWAYS drives PSI/PCR pacing.
      *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
+     *
      * @param data raw payload bytes (caller's framing convention; at most
      *             65527 bytes with PTS, 65532 without)
      * @param pts  90&nbsp;kHz presentation timestamp
@@ -192,6 +207,9 @@ public class MuxSender extends NativeHandle {
 
     /**
      * Send one video access unit to a specific configured video stream.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      *
      * @param h        the target stream handle (from {@link #videoHandle()})
      * @param nal      the access unit bytes
@@ -213,6 +231,9 @@ public class MuxSender extends NativeHandle {
      * bytes — the muxer auto-wraps the AU-cell header for synchronous-metadata
      * streams; do not pre-wrap.
      *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
+     *
      * @param h                 the target stream handle (from {@link #klvHandle()})
      * @param klv               raw KLV LS bytes
      * @param pts               90&nbsp;kHz presentation timestamp
@@ -231,6 +252,9 @@ public class MuxSender extends NativeHandle {
     /**
      * Send one encoded audio frame to a specific configured audio stream.
      *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
+     *
      * @param h      the target stream handle (from {@link #audioHandle()})
      * @param frames the encoded audio bytes
      * @param pts    90&nbsp;kHz presentation timestamp
@@ -246,6 +270,9 @@ public class MuxSender extends NativeHandle {
 
     /**
      * Send one subtitle payload to a specific configured subtitle stream.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      *
      * @param h       the target stream handle (from {@link #subtitleHandle()})
      * @param payload the subtitle access-unit bytes
@@ -263,6 +290,9 @@ public class MuxSender extends NativeHandle {
     /**
      * Send one private-data payload to a specific configured data stream. Same
      * pass-through and PTS semantics as {@link #sendData}.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      *
      * @param h    the target stream handle (from {@link #dataHandle()})
      * @param data raw payload bytes (caller's framing convention; at most
@@ -395,9 +425,11 @@ public class MuxSender extends NativeHandle {
      *
      * <p>Unlike {@link #close()} this does NOT cancel first: a {@code send*}
      * parked on another thread holds the sender and {@code finish()} waits
-     * behind it — fire {@link #cancelHandle()} (or call {@link #close()})
-     * first if that is not wanted. The handle still needs a {@link #close()}
-     * afterwards.
+     * behind it — call {@link #close()} instead if that is not wanted. The
+     * handle still needs a {@link #close()} afterwards.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      *
      * @throws BindingException with the first drain error's kind
      */

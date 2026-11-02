@@ -125,6 +125,10 @@ pub unsafe extern "C" fn tst_receiver_close(p: *mut TstReceiver) {
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
 ///
 /// On any non-zero return the contents of `out_packet` are unspecified.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_receiver_recv_packet(
     p: *mut TstReceiver,
@@ -150,15 +154,17 @@ pub unsafe extern "C" fn tst_receiver_recv_packet(
     // handle nobody cancelled means the peer disconnected, which the caller
     // contract documents as TST_E_END_OF_STREAM.
     let cancelled = handle.inner.is_cancelled();
-    handle.inner.with_inner_mut(|rx| match rx.next_packet() {
-        Ok(pkt) => {
-            // SAFETY: out_packet non-null per guard above. The destination
-            // is documented as a caller-provided uint8_t[188] buffer.
-            unsafe { std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE) };
-            0
-        }
-        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
-    })
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
+            Ok(pkt) => {
+                // SAFETY: out_packet non-null per guard above. The destination
+                // is documented as a caller-provided uint8_t[188] buffer.
+                unsafe { std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE) };
+                0
+            }
+            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
+        })
 }
 
 /// Cancel a `tst_receiver_t`. Unblocks a thread parked in
@@ -341,6 +347,10 @@ fn managed_open_inner(
 /// inner reconnects transparently before returning an error only once
 /// the retry budget is exhausted.
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Asymmetry with `tst_receiver_recv_packet`
 ///
 /// The plain `tst_receiver_recv_packet` maps `TransportError::Broken`
@@ -377,14 +387,16 @@ pub unsafe extern "C" fn tst_managed_receiver_recv_packet(
     // Broken reaching here is a hard transport failure, not a peer close
     // (see the asymmetry note above).
     let cancelled = handle.inner.is_cancelled();
-    handle.inner.with_inner_mut(|rx| match rx.next_packet() {
-        Ok(pkt) => {
-            // SAFETY: out_packet non-null per guard above.
-            unsafe { std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE) };
-            0
-        }
-        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
-    })
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
+            Ok(pkt) => {
+                // SAFETY: out_packet non-null per guard above.
+                unsafe { std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE) };
+                0
+            }
+            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
+        })
 }
 
 /// Cancel a `tst_managed_receiver_t`. Unblocks a thread parked in

@@ -339,6 +339,7 @@ impl<E> core::marker::UnsafeUnpin for tst_pipeline::binding::owned::CloseFailure
 impl<E> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::RefUnwindSafe
 impl<E> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::owned::CloseFailure<E> where E: core::panic::unwind_safe::UnwindSafe
 #[non_exhaustive] pub enum tst_pipeline::binding::owned::HandleState
+pub tst_pipeline::binding::owned::HandleState::Cancelled
 pub tst_pipeline::binding::owned::HandleState::Closed
 pub tst_pipeline::binding::owned::HandleState::Panicked
 pub tst_pipeline::binding::owned::HandleState::Panicked::detail: alloc::string::String
@@ -375,7 +376,9 @@ pub fn tst_pipeline::binding::owned::Owned<T, S>::take(&self) -> core::option::O
 pub fn tst_pipeline::binding::owned::Owned<T, S>::try_with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::option::Option<core::result::Result<R, tst_pipeline::binding::owned::HandleState>>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_core::transport::EndReasonHandle) -> Self
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut_unless_cancelled<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref_blocking<R>(&self, tst_pipeline::binding::view::BlockingReason, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref_blocking_unless_cancelled<R>(&self, tst_pipeline::binding::view::BlockingReason, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::close(&self) -> core::result::Result<(), tst_pipeline::binding::owned::CloseFailure<<T as tst_pipeline::binding::owned::Close>::Error>>
 impl<T, S> core::ops::drop::Drop for tst_pipeline::binding::owned::Owned<T, S>
@@ -717,6 +720,7 @@ impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::Domain
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::Domain
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::Domain
 #[non_exhaustive] pub enum tst_pipeline::binding::HandleState
+pub tst_pipeline::binding::HandleState::Cancelled
 pub tst_pipeline::binding::HandleState::Closed
 pub tst_pipeline::binding::HandleState::Panicked
 pub tst_pipeline::binding::HandleState::Panicked::detail: alloc::string::String
@@ -867,7 +871,9 @@ pub fn tst_pipeline::binding::owned::Owned<T, S>::take(&self) -> core::option::O
 pub fn tst_pipeline::binding::owned::Owned<T, S>::try_with_ref<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> core::option::Option<core::result::Result<R, tst_pipeline::binding::owned::HandleState>>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_end_reason(self, tst_core::transport::EndReasonHandle) -> Self
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_mut_unless_cancelled<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref_blocking<R>(&self, tst_pipeline::binding::view::BlockingReason, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
+pub fn tst_pipeline::binding::owned::Owned<T, S>::with_ref_blocking_unless_cancelled<R>(&self, tst_pipeline::binding::view::BlockingReason, impl core::ops::function::FnOnce(&T) -> R) -> core::result::Result<R, tst_pipeline::binding::owned::HandleState>
 impl<T: tst_pipeline::binding::owned::Close, S> tst_pipeline::binding::owned::Owned<T, S>
 pub fn tst_pipeline::binding::owned::Owned<T, S>::close(&self) -> core::result::Result<(), tst_pipeline::binding::owned::CloseFailure<<T as tst_pipeline::binding::owned::Close>::Error>>
 impl<T, S> core::ops::drop::Drop for tst_pipeline::binding::owned::Owned<T, S>

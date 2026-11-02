@@ -196,7 +196,7 @@ impl PyManagedMuxSender {
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_mut(|s| s.send_video(slice, rust_pts, key_frame))
+                .with_mut_unless_cancelled(|s| s.send_video(slice, rust_pts, key_frame))
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -218,7 +218,7 @@ impl PyManagedMuxSender {
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_mut(|s| s.send_klv(slice, rust_pts, metadata_service_id))
+                .with_mut_unless_cancelled(|s| s.send_klv(slice, rust_pts, metadata_service_id))
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -238,7 +238,8 @@ impl PyManagedMuxSender {
         let coerced = crate::util::coerce_bytes_like(py, adts)?;
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
-            self.owned.with_mut(|s| s.send_audio(slice, rust_pts))
+            self.owned
+                .with_mut_unless_cancelled(|s| s.send_audio(slice, rust_pts))
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -258,7 +259,8 @@ impl PyManagedMuxSender {
         let coerced = crate::util::coerce_bytes_like(py, payload)?;
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
-            self.owned.with_mut(|s| s.send_subtitle(slice, rust_pts))
+            self.owned
+                .with_mut_unless_cancelled(|s| s.send_subtitle(slice, rust_pts))
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -279,7 +281,8 @@ impl PyManagedMuxSender {
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
-            self.owned.with_mut(|s| s.send_data(slice, rust_pts))
+            self.owned
+                .with_mut_unless_cancelled(|s| s.send_data(slice, rust_pts))
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -303,8 +306,9 @@ impl PyManagedMuxSender {
         let coerced = crate::util::coerce_bytes_like(py, nal)?;
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
-            self.owned
-                .with_mut(|s| s.send_video_to(handle_inner, slice, rust_pts, key_frame))
+            self.owned.with_mut_unless_cancelled(|s| {
+                s.send_video_to(handle_inner, slice, rust_pts, key_frame)
+            })
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -326,8 +330,9 @@ impl PyManagedMuxSender {
         let coerced = crate::util::coerce_bytes_like(py, klv)?;
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
-            self.owned
-                .with_mut(|s| s.send_klv_to(handle_inner, slice, rust_pts, metadata_service_id))
+            self.owned.with_mut_unless_cancelled(|s| {
+                s.send_klv_to(handle_inner, slice, rust_pts, metadata_service_id)
+            })
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -349,7 +354,7 @@ impl PyManagedMuxSender {
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_mut(|s| s.send_audio_to(handle_inner, slice, rust_pts))
+                .with_mut_unless_cancelled(|s| s.send_audio_to(handle_inner, slice, rust_pts))
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -371,7 +376,7 @@ impl PyManagedMuxSender {
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_mut(|s| s.send_subtitle_to(handle_inner, slice, rust_pts))
+                .with_mut_unless_cancelled(|s| s.send_subtitle_to(handle_inner, slice, rust_pts))
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -393,7 +398,7 @@ impl PyManagedMuxSender {
         let slice = coerced.as_bytes();
         let res = crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_mut(|s| s.send_data_to(handle_inner, slice, rust_pts))
+                .with_mut_unless_cancelled(|s| s.send_data_to(handle_inner, slice, rust_pts))
         });
         match res {
             Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
@@ -519,7 +524,10 @@ impl PyManagedMuxSender {
     /// send; that push raises `SrtError(CLOSED)`. Mirrors
     /// `ManagedSender.cancel_handle()`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_source(&self.cancel))
+        Py::new(
+            py,
+            PyCancelHandle::for_shell(&self.cancel, self.owned.cancel_arc()),
+        )
     }
 
     /// Close the sender. Fires the managed cancel BEFORE taking the slot,
@@ -537,14 +545,16 @@ impl PyManagedMuxSender {
     ///
     /// Unlike `close()` this does NOT cancel first: a push parked on
     /// another thread — including one waiting out a reconnect backoff —
-    /// keeps the slot and `finish()` waits behind it. Fire
-    /// `cancel_handle().cancel()` (or `close()`) first if that is not
-    /// wanted.
+    /// keeps the slot and `finish()` waits behind it; `close()` instead
+    /// if that is not wanted. After `cancel_handle().cancel()`, `finish()`
+    /// raises `CLOSED`, buffered data included.
     fn finish(&self, py: Python<'_>) -> PyResult<()> {
         // lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
         match crate::util::allow_threads_parking(py, || {
             self.owned
-                .with_ref_blocking(BlockingReason::IsItselfBlocking, |s| s.finish())
+                .with_ref_blocking_unless_cancelled(BlockingReason::IsItselfBlocking, |s| {
+                    s.finish()
+                })
         }) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(mux_sender_err(py, &SRT, e)),
@@ -729,8 +739,9 @@ impl PyManagedDemuxReceiver {
     /// transport-side failure the decorator did not absorb (a cancel arrives
     /// as `SrtError(CLOSED)`); `DemuxError` on demuxer failure.
     fn __next__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let res =
-            crate::util::allow_threads_parking(py, || self.owned.with_mut(|rx| rx.recv_event()));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut_unless_cancelled(|rx| rx.recv_event())
+        });
         match res {
             Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
             Ok(Ok(None)) => Err(pyo3::exceptions::PyStopIteration::new_err(())),
@@ -740,7 +751,10 @@ impl PyManagedDemuxReceiver {
     }
 
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_source(&self.cancel))
+        Py::new(
+            py,
+            PyCancelHandle::for_shell(&self.cancel, self.owned.cancel_arc()),
+        )
     }
 
     /// Wire-level transport stats (RTT, bytes received, etc.) sourced

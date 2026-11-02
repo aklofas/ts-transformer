@@ -74,6 +74,9 @@ public class Sender extends NativeHandle {
      * the bytes. Partial bundles are buffered until the next call or
      * {@link #flush()}.
      *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
+     *
      * @param data TS bytes to send (any length; need not be packet-aligned)
      * @throws IllegalStateException if the sender is closed
      * @throws BindingException the transport's exception: {@code BACKPRESSURE}
@@ -89,6 +92,9 @@ public class Sender extends NativeHandle {
     /**
      * Flush any buffered partial TS bundle. Use after the last {@link #sendBytes}
      * call in a logical unit to ensure all bytes reach the peer.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      *
      * @throws IllegalStateException if the sender is closed
      * @throws BindingException the transport's exception on failure

@@ -469,6 +469,36 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
         result
     }
 
+    /// [`Self::with_mut`] for a data-plane native (send / recv / next /
+    /// flush): [`Owned::with_mut_unless_cancelled`], so once the handle's
+    /// cancel latch is set the call reports [`HandleState::Cancelled`]
+    /// without running `f`, even with output still buffered. The panic
+    /// policy is [`Self::with_mut`]'s.
+    ///
+    /// # Errors
+    ///
+    /// [`HandleState::Closed`] for a `0`/absent/closed id,
+    /// [`HandleState::Cancelled`] after a cancel, otherwise whatever
+    /// `Owned::with_mut` reports.
+    pub(crate) fn with_mut_unless_cancelled<R>(
+        &self,
+        id: u64,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Result<R, HandleState> {
+        let Some(entry) = self.lease(id) else {
+            return Err(HandleState::Closed);
+        };
+        let result = entry.owned.with_mut_unless_cancelled(f);
+        if matches!(result, Err(HandleState::Panicked { .. })) {
+            // As in `with_mut`: the slot is already empty, keep the table in step.
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(id);
+        }
+        result
+    }
+
     /// Reader path (stats): [`Owned::with_ref_blocking`] — recovers a poisoned slot.
     /// BLOCKING: it waits behind a parked op, so it is only for reads that
     /// have no answer without the slot. Liveness goes through
@@ -486,6 +516,25 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
     ) -> Result<R, HandleState> {
         match self.lease(id) {
             Some(e) => e.owned.with_ref_blocking(why, f),
+            None => Err(HandleState::Closed),
+        }
+    }
+
+    /// [`Self::with_ref_blocking`] for a data-plane native that takes `&T`
+    /// (the muxing shells' `finish`): [`Owned::with_ref_blocking_unless_cancelled`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::with_ref_blocking`], plus [`HandleState::Cancelled`] after a
+    /// cancel.
+    pub(crate) fn with_ref_blocking_unless_cancelled<R>(
+        &self,
+        id: u64,
+        why: BlockingReason,
+        f: impl FnOnce(&T) -> R,
+    ) -> Result<R, HandleState> {
+        match self.lease(id) {
+            Some(e) => e.owned.with_ref_blocking_unless_cancelled(why, f),
             None => Err(HandleState::Closed),
         }
     }

@@ -2910,6 +2910,10 @@ struct tst_demux_receiver_t *tst_demux_receiver_open_with_config(const char *srt
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * On any non-zero return the contents of `*out_event` are unspecified.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
  int tst_demux_receiver_recv_event(struct tst_demux_receiver_t *p, struct tst_event_t *out_event);
 #endif
@@ -3949,6 +3953,10 @@ struct tst_managed_demux_receiver_t *tst_managed_demux_receiver_open_with_config
  * clean teardown (`CLEAN_TEARDOWN`) from a give-up-after-retries
  * (`TRANSPORT_FAILED`) or an explicit `_cancel` (`CANCELLED`).
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Threading and blocking behavior
  *
  * This call **blocks with no per-call timeout of its own**; see
@@ -4035,6 +4043,10 @@ int tst_managed_demux_receiver_recv_event(struct tst_managed_demux_receiver_t *p
  * point, a call after `tst_managed_mux_sender_close` has freed the
  * pointer is a use-after-free, not an error code — `_close` consumes the
  * handle.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -4162,6 +4174,10 @@ struct tst_managed_mux_sender_t *tst_managed_mux_sender_open(const char *srt_url
 /**
  * Managed sibling of [`tst_mux_sender_send_audio`]. Same semantics; routes
  * through the inner reconnecting transport.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_managed_mux_sender_send_audio(struct tst_managed_mux_sender_t *p,
@@ -4174,6 +4190,10 @@ int tst_managed_mux_sender_send_audio(struct tst_managed_mux_sender_t *p,
 /**
  * Managed sibling of [`tst_mux_sender_send_audio_to`]. Same semantics;
  * `stream_handle` is stable across reconnects.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_managed_mux_sender_send_audio_to(struct tst_managed_mux_sender_t *p,
@@ -4194,6 +4214,10 @@ int tst_managed_mux_sender_send_audio_to(struct tst_managed_mux_sender_t *p,
  *
  * Single-stream form: see `tst_managed_mux_sender_send_data_to` for the
  * multi-stream variant.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Errors
  *
@@ -4219,6 +4243,10 @@ int tst_managed_mux_sender_send_data(struct tst_managed_mux_sender_t *p,
  * reconnects. Out-of-range handles surface as `TST_E_INVALID_USAGE`.
  *
  * On a single-stream sender, prefer `tst_managed_mux_sender_send_data`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_managed_mux_sender_send_data_to(struct tst_managed_mux_sender_t *p,
@@ -4242,6 +4270,10 @@ int tst_managed_mux_sender_send_data_to(struct tst_managed_mux_sender_t *p,
  *
  * Single-stream form: see `tst_managed_mux_sender_send_klv_to` for the
  * multi-stream variant.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Errors
  *
@@ -4275,6 +4307,10 @@ int tst_managed_mux_sender_send_klv(struct tst_managed_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_managed_mux_sender_send_klv` —
  * same effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_managed_mux_sender_send_klv_to(struct tst_managed_mux_sender_t *p,
@@ -4288,6 +4324,10 @@ int tst_managed_mux_sender_send_klv_to(struct tst_managed_mux_sender_t *p,
 /**
  * Managed sibling of [`tst_mux_sender_send_subtitle`]. Same semantics; routes
  * through the inner reconnecting transport.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_managed_mux_sender_send_subtitle(struct tst_managed_mux_sender_t *p,
@@ -4300,6 +4340,10 @@ int tst_managed_mux_sender_send_subtitle(struct tst_managed_mux_sender_t *p,
 /**
  * Managed sibling of [`tst_mux_sender_send_subtitle_to`]. Same semantics;
  * `stream_handle` is stable across reconnects.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_managed_mux_sender_send_subtitle_to(struct tst_managed_mux_sender_t *p,
@@ -4310,6 +4354,11 @@ int tst_managed_mux_sender_send_subtitle_to(struct tst_managed_mux_sender_t *p,
 #endif
 
 #if defined(TST_HAS_SRT)
+/**
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ */
 
 int tst_managed_mux_sender_send_video(struct tst_managed_mux_sender_t *p,
                                       const uint8_t *nal,
@@ -4330,6 +4379,10 @@ int tst_managed_mux_sender_send_video(struct tst_managed_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_managed_mux_sender_send_video` —
  * same effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_managed_mux_sender_send_video_to(struct tst_managed_mux_sender_t *p,
@@ -4692,6 +4745,10 @@ struct tst_managed_receiver_t *tst_managed_receiver_open_listener(const char *sr
  * inner reconnects transparently before returning an error only once
  * the retry budget is exhausted.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Asymmetry with `tst_receiver_recv_packet`
  *
  * The plain `tst_receiver_recv_packet` maps `TransportError::Broken`
@@ -4753,6 +4810,11 @@ struct tst_managed_receiver_t *tst_managed_receiver_open_listener(const char *sr
 #endif
 
 #if defined(TST_HAS_SRT)
+/**
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ */
  int tst_managed_sender_flush(struct tst_managed_sender_t *p);
 #endif
 
@@ -4833,6 +4895,11 @@ struct tst_managed_sender_t *tst_managed_sender_open(const char *srt_url,
 #endif
 
 #if defined(TST_HAS_SRT)
+/**
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ */
  int tst_managed_sender_send_ts(struct tst_managed_sender_t *p, const uint8_t *bytes, size_t len);
 #endif
 
@@ -5545,6 +5612,10 @@ struct TstMuxPublisher *tst_mux_publisher_with_config_hls(struct TstPublisher *h
  * point, a call after `tst_mux_sender_close` has freed the pointer is a
  * use-after-free, not an error code — `_close` consumes the handle.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid, not-yet-closed `*mut tst_mux_sender_t`.
@@ -5650,6 +5721,10 @@ int tst_mux_sender_get_stream_codec_stats(struct tst_mux_sender_t *p,
  *
  * `frames` is one or more pre-framed audio frames concatenated by the
  * caller. PTS is required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_mux_sender_send_audio(struct tst_mux_sender_t *p,
@@ -5669,6 +5744,10 @@ int tst_mux_sender_send_audio(struct tst_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_mux_sender_send_audio` — same
  * effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_mux_sender_send_audio_to(struct tst_mux_sender_t *p,
@@ -5699,6 +5778,10 @@ int tst_mux_sender_send_audio_to(struct tst_mux_sender_t *p,
  * Single-stream form: the mux sender must have exactly one data stream
  * configured. Multi-stream callers use `tst_mux_sender_send_data_to`
  * with an explicit `tst_data_stream_handle_t`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Errors
  *
@@ -5735,6 +5818,10 @@ int tst_mux_sender_send_data(struct tst_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_mux_sender_send_data` — same
  * effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_mux_sender_send_data_to(struct tst_mux_sender_t *p,
@@ -5764,6 +5851,10 @@ int tst_mux_sender_send_data_to(struct tst_mux_sender_t *p,
  * Single-stream form: the mux sender must have exactly one KLV stream
  * configured. Multi-stream callers use `tst_mux_sender_send_klv_to` with
  * an explicit `TstKlvStreamHandle`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Errors
  *
@@ -5798,6 +5889,10 @@ int tst_mux_sender_send_klv(struct tst_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_mux_sender_send_klv` — same
  * effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_mux_sender_send_klv_to(struct tst_mux_sender_t *p,
@@ -5819,6 +5914,10 @@ int tst_mux_sender_send_klv_to(struct tst_mux_sender_t *p,
  * `payload` is one complete logical subtitle unit (DVB-sub composition
  * page, teletext data field, CEA-708 service block, or WebVTT cue).
  * PTS is required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_mux_sender_send_subtitle(struct tst_mux_sender_t *p,
@@ -5839,6 +5938,10 @@ int tst_mux_sender_send_subtitle(struct tst_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_mux_sender_send_subtitle` —
  * same effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_mux_sender_send_subtitle_to(struct tst_mux_sender_t *p,
@@ -5849,6 +5952,11 @@ int tst_mux_sender_send_subtitle_to(struct tst_mux_sender_t *p,
 #endif
 
 #if defined(TST_HAS_SRT)
+/**
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ */
 
 int tst_mux_sender_send_video(struct tst_mux_sender_t *p,
                               const uint8_t *nal,
@@ -5868,6 +5976,10 @@ int tst_mux_sender_send_video(struct tst_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_mux_sender_send_video` — same
  * effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
 
 int tst_mux_sender_send_video_to(struct tst_mux_sender_t *p,
@@ -6826,6 +6938,10 @@ int tst_receiver_get_socket_stats(struct tst_receiver_t *p,
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * On any non-zero return the contents of `out_packet` are unspecified.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  */
  int tst_receiver_recv_packet(struct tst_receiver_t *p, uint8_t *out_packet);
 #endif
@@ -7060,6 +7176,10 @@ int tst_rist_demux_receiver_get_stream_stats(struct TstRistDemuxReceiver *p,
  * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRistDemuxReceiver`. `out_event`
@@ -7177,6 +7297,10 @@ struct TstRistDemuxReceiver *tst_rist_demux_receiver_open(const char *url,
  * point, a call after `tst_rist_mux_sender_close` has freed the pointer is a
  * use-after-free, not an error code — `_close` consumes the handle.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid, not-yet-closed `*mut tst_rist_mux_sender_t`.
@@ -7285,6 +7409,10 @@ struct TstRistMuxSender *tst_rist_mux_sender_open(const char *url,
  * more ADTS frames or MPEG audio frames concatenated). `pts_90khz` is
  * the presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRistMuxSender`. `frames` must
@@ -7302,6 +7430,10 @@ int tst_rist_mux_sender_push_audio(struct TstRistMuxSender *p,
  * Push one audio frame buffer targeting a specific audio elementary stream.
  *
  * On a single-stream sender, prefer `tst_rist_mux_sender_push_audio`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -7327,6 +7459,10 @@ int tst_rist_mux_sender_push_audio_to(struct TstRistMuxSender *p,
  * §2.12.4.2. **Do not pre-wrap the AU cell on the caller side.**
  * `pts_90khz` is the presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRistMuxSender`. `klv` must be
@@ -7346,6 +7482,10 @@ int tst_rist_mux_sender_push_klv(struct TstRistMuxSender *p,
  * For `KlvStreamType::SynchronousMetadata` streams the muxer auto-wraps
  * the caller's bytes in a `Metadata_AU_cell` header (do not pre-wrap).
  * On a single-stream sender, prefer `tst_rist_mux_sender_push_klv`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -7368,6 +7508,10 @@ int tst_rist_mux_sender_push_klv_to(struct TstRistMuxSender *p,
  * `payload` is one complete logical subtitle unit. `pts_90khz` is the
  * presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRistMuxSender`. `payload` must
@@ -7385,6 +7529,10 @@ int tst_rist_mux_sender_push_subtitle(struct TstRistMuxSender *p,
  * Push one subtitle PES unit targeting a specific subtitle elementary stream.
  *
  * On a single-stream sender, prefer `tst_rist_mux_sender_push_subtitle`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -7412,6 +7560,10 @@ int tst_rist_mux_sender_push_subtitle_to(struct TstRistMuxSender *p,
  * Resolves only when exactly one video stream is configured; otherwise
  * rejects with `TST_E_INVALID_USAGE`.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRistMuxSender`. `nal` must be
@@ -7435,6 +7587,10 @@ int tst_rist_mux_sender_push_video(struct TstRistMuxSender *p,
  *
  * On a single-stream sender, prefer `tst_rist_mux_sender_push_video` —
  * same effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -7560,6 +7716,10 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -7750,6 +7910,10 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * for retransmission on a peer's NACK.
  *
  * Returns 0 on success, a negative `TST_E_*` code on failure.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -7989,6 +8153,10 @@ int tst_rtp_demux_receiver_get_stream_stats(struct TstRtpDemuxReceiver *p,
  * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRtpDemuxReceiver`. `out_event`
@@ -8096,6 +8264,10 @@ struct TstRtpDemuxReceiver *tst_rtp_demux_receiver_open(const char *url,
  * point, a call after `tst_rtp_mux_sender_close` has freed the pointer is a
  * use-after-free, not an error code — `_close` consumes the handle.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid, not-yet-closed `*mut tst_rtp_mux_sender_t`.
@@ -8197,6 +8369,10 @@ struct TstRtpMuxSender *tst_rtp_mux_sender_open(const char *url,
  * more ADTS frames or MPEG audio frames concatenated). `pts_90khz` is
  * the presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRtpMuxSender`. `frames` must
@@ -8214,6 +8390,10 @@ int tst_rtp_mux_sender_push_audio(struct TstRtpMuxSender *p,
  * Push one audio frame buffer targeting a specific audio elementary stream.
  *
  * On a single-stream sender, prefer `tst_rtp_mux_sender_push_audio`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -8239,6 +8419,10 @@ int tst_rtp_mux_sender_push_audio_to(struct TstRtpMuxSender *p,
  * §2.12.4.2. **Do not pre-wrap the AU cell on the caller side.**
  * `pts_90khz` is the presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRtpMuxSender`. `klv` must be
@@ -8258,6 +8442,10 @@ int tst_rtp_mux_sender_push_klv(struct TstRtpMuxSender *p,
  * For `KlvStreamType::SynchronousMetadata` streams the muxer auto-wraps
  * the caller's bytes in a `Metadata_AU_cell` header (do not pre-wrap).
  * On a single-stream sender, prefer `tst_rtp_mux_sender_push_klv`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -8280,6 +8468,10 @@ int tst_rtp_mux_sender_push_klv_to(struct TstRtpMuxSender *p,
  * `payload` is one complete logical subtitle unit. `pts_90khz` is the
  * presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRtpMuxSender`. `payload` must
@@ -8297,6 +8489,10 @@ int tst_rtp_mux_sender_push_subtitle(struct TstRtpMuxSender *p,
  * Push one subtitle PES unit targeting a specific subtitle elementary stream.
  *
  * On a single-stream sender, prefer `tst_rtp_mux_sender_push_subtitle`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -8324,6 +8520,10 @@ int tst_rtp_mux_sender_push_subtitle_to(struct TstRtpMuxSender *p,
  * Resolves only when exactly one video stream is configured; otherwise
  * rejects with `TST_E_INVALID_USAGE`.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstRtpMuxSender`. `nal` must be
@@ -8347,6 +8547,10 @@ int tst_rtp_mux_sender_push_video(struct TstRtpMuxSender *p,
  *
  * On a single-stream sender, prefer `tst_rtp_mux_sender_push_video` —
  * same effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -8510,6 +8714,10 @@ int tst_rtp_mux_sender_push_video_to(struct TstRtpMuxSender *p,
  *   deadline — retryable, the session stays alive (the same code SRT's
  *   recv-deadline expiry already returns to C consumers)
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -8675,6 +8883,10 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * may cause sync issues at the receiver.
  *
  * Returns 0 on success, a negative `TST_E_*` code on failure.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -10397,6 +10609,11 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  int tst_sender_config_set_max_unsynced_bytes(struct tst_sender_config_t *p, size_t n);
 
 #if defined(TST_HAS_SRT)
+/**
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ */
  int tst_sender_flush(struct tst_sender_t *p);
 #endif
 
@@ -10443,6 +10660,11 @@ int tst_sender_get_socket_stats(struct tst_sender_t *p,
 #endif
 
 #if defined(TST_HAS_SRT)
+/**
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ */
  int tst_sender_send_ts(struct tst_sender_t *p, const uint8_t *bytes, size_t len);
 #endif
 
@@ -10761,6 +10983,10 @@ int tst_tcp_demux_receiver_get_stream_stats(struct TstTcpDemuxReceiver *p,
  * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstTcpDemuxReceiver`. `out_event`
@@ -10994,6 +11220,10 @@ struct TstTcpDemuxReceiver *tst_tcp_demux_receiver_open(const char *url,
  * point, a call after `tst_tcp_mux_sender_close` has freed the pointer is a
  * use-after-free, not an error code — `_close` consumes the handle.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid, not-yet-closed `*mut tst_tcp_mux_sender_t`.
@@ -11103,6 +11333,10 @@ struct TstTcpMuxSender *tst_tcp_mux_sender_open(const char *url,
  * more ADTS frames or MPEG audio frames concatenated). `pts_90khz` is
  * the presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstTcpMuxSender`. `frames` must
@@ -11120,6 +11354,10 @@ int tst_tcp_mux_sender_push_audio(struct TstTcpMuxSender *p,
  * Push one audio frame buffer targeting a specific audio elementary stream.
  *
  * On a single-stream sender, prefer `tst_tcp_mux_sender_push_audio`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -11145,6 +11383,10 @@ int tst_tcp_mux_sender_push_audio_to(struct TstTcpMuxSender *p,
  * §2.12.4.2. **Do not pre-wrap the AU cell on the caller side.**
  * `pts_90khz` is the presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstTcpMuxSender`. `klv` must be
@@ -11164,6 +11406,10 @@ int tst_tcp_mux_sender_push_klv(struct TstTcpMuxSender *p,
  * For `KlvStreamType::SynchronousMetadata` streams the muxer auto-wraps
  * the caller's bytes in a `Metadata_AU_cell` header (do not pre-wrap).
  * On a single-stream sender, prefer `tst_tcp_mux_sender_push_klv`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -11186,6 +11432,10 @@ int tst_tcp_mux_sender_push_klv_to(struct TstTcpMuxSender *p,
  * `payload` is one complete logical subtitle unit. `pts_90khz` is the
  * presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstTcpMuxSender`. `payload` must
@@ -11203,6 +11453,10 @@ int tst_tcp_mux_sender_push_subtitle(struct TstTcpMuxSender *p,
  * Push one subtitle PES unit targeting a specific subtitle elementary stream.
  *
  * On a single-stream sender, prefer `tst_tcp_mux_sender_push_subtitle`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -11230,6 +11484,10 @@ int tst_tcp_mux_sender_push_subtitle_to(struct TstTcpMuxSender *p,
  * Resolves only when exactly one video stream is configured; otherwise
  * rejects with `TST_E_INVALID_USAGE`.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstTcpMuxSender`. `nal` must be
@@ -11253,6 +11511,10 @@ int tst_tcp_mux_sender_push_video(struct TstTcpMuxSender *p,
  *
  * On a single-stream sender, prefer `tst_tcp_mux_sender_push_video` —
  * same effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -11374,6 +11636,10 @@ int tst_tcp_mux_sender_push_video_to(struct TstTcpMuxSender *p,
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
  * - `TST_E_TRANSPORT` (-8) on transport failure, including a peer reset or read error
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -11551,6 +11817,10 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * TCP receiver re-synchronises on the 0x47 sync byte.
  *
  * Returns 0 on success, a negative `TST_E_*` code on failure.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -11738,6 +12008,10 @@ int tst_udp_demux_receiver_get_stream_stats(struct TstUdpDemuxReceiver *p,
  * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstUdpDemuxReceiver`. `out_event`
@@ -11844,6 +12118,10 @@ struct TstUdpDemuxReceiver *tst_udp_demux_receiver_open(const char *url,
  * point, a call after `tst_udp_mux_sender_close` has freed the pointer is a
  * use-after-free, not an error code — `_close` consumes the handle.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid, not-yet-closed `*mut tst_udp_mux_sender_t`.
@@ -11949,6 +12227,10 @@ struct TstUdpMuxSender *tst_udp_mux_sender_open(const char *url,
  * more ADTS frames or MPEG audio frames concatenated). `pts_90khz` is
  * the presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstUdpMuxSender`. `frames` must
@@ -11966,6 +12248,10 @@ int tst_udp_mux_sender_push_audio(struct TstUdpMuxSender *p,
  * Push one audio frame buffer targeting a specific audio elementary stream.
  *
  * On a single-stream sender, prefer `tst_udp_mux_sender_push_audio`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -11991,6 +12277,10 @@ int tst_udp_mux_sender_push_audio_to(struct TstUdpMuxSender *p,
  * §2.12.4.2. **Do not pre-wrap the AU cell on the caller side.**
  * `pts_90khz` is the presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstUdpMuxSender`. `klv` must be
@@ -12010,6 +12300,10 @@ int tst_udp_mux_sender_push_klv(struct TstUdpMuxSender *p,
  * For `KlvStreamType::SynchronousMetadata` streams the muxer auto-wraps
  * the caller's bytes in a `Metadata_AU_cell` header (do not pre-wrap).
  * On a single-stream sender, prefer `tst_udp_mux_sender_push_klv`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -12032,6 +12326,10 @@ int tst_udp_mux_sender_push_klv_to(struct TstUdpMuxSender *p,
  * `payload` is one complete logical subtitle unit. `pts_90khz` is the
  * presentation timestamp in 90 kHz ticks.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstUdpMuxSender`. `payload` must
@@ -12049,6 +12347,10 @@ int tst_udp_mux_sender_push_subtitle(struct TstUdpMuxSender *p,
  * Push one subtitle PES unit targeting a specific subtitle elementary stream.
  *
  * On a single-stream sender, prefer `tst_udp_mux_sender_push_subtitle`.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -12076,6 +12378,10 @@ int tst_udp_mux_sender_push_subtitle_to(struct TstUdpMuxSender *p,
  * Resolves only when exactly one video stream is configured; otherwise
  * rejects with `TST_E_INVALID_USAGE`.
  *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
+ *
  * # Safety
  *
  * `p` must be a valid non-freed `*mut TstUdpMuxSender`. `nal` must be
@@ -12099,6 +12405,10 @@ int tst_udp_mux_sender_push_video(struct TstUdpMuxSender *p,
  *
  * On a single-stream sender, prefer `tst_udp_mux_sender_push_video` —
  * same effect, no handle required.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -12217,6 +12527,10 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *
@@ -12382,6 +12696,10 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * may cause sync issues at the receiver.
  *
  * Returns 0 on success, a negative `TST_E_*` code on failure.
+ *
+ * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+ * bytes are still buffered; a call already past its receive when the
+ * cancel lands may still return its result.
  *
  * # Safety
  *

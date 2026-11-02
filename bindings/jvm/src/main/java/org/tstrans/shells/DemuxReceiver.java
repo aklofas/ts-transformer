@@ -143,6 +143,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * contract documented on the class: do not call this method concurrently
      * with an in-flight iteration on the same receiver.
      *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
+     *
      * @return the next {@link DemuxEvent}, or {@code null} at end of stream
      * @throws IllegalStateException if the receiver is closed
      * @throws BindingException the transport's exception: {@code CLOSED} if a
@@ -179,6 +182,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * contract forbids checked exceptions); a byte-sink exception (see
      * {@link #addByteSink}) is rethrown by the step after the callback threw,
      * and the receiver cannot be resumed.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      */
     @Override
     public Iterator<DemuxEvent> iterator() {

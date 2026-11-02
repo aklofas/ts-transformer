@@ -77,7 +77,7 @@ use crate::mpegts::{build_demux_config_from_args, convert_event, shell_muxer_sta
 use tst_pipeline::binding::view::StreamHandles;
 
 use super::ManagedSenderSnapshot;
-use super::errors::{srt_error, throw_srt, transport_error};
+use super::errors::{srt_error, throw_data_plane_state, throw_srt, transport_error};
 use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::shells::mux_sender::build_transport_stats;
 
@@ -142,10 +142,10 @@ fn with_mux_push(
     handle: jlong,
     op: impl FnOnce(&RustMuxSender<ManagedTransport<SrtTransport>>) -> Result<(), MuxSenderError>,
 ) {
-    match REGISTRY_MUX.with_mut(handle as u64, |jstruct| op(&jstruct.inner)) {
+    match REGISTRY_MUX.with_mut_unless_cancelled(handle as u64, |jstruct| op(&jstruct.inner)) {
         Ok(Ok(())) => {}
         Ok(Err(e)) => throw_managed_mux_sender_error(env, &e),
-        Err(state) => throw_handle_state(env, "ManagedMuxSender", &state),
+        Err(state) => throw_data_plane_state(env, "ManagedMuxSender", &state),
     }
 }
 
@@ -751,7 +751,7 @@ jni_native! {
     /// `finish()` gets from the shell itself.
     fn Java_org_tstrans_srt_ManagedMuxSender_nFinish(env, _class, handle: jlong) = () => {
         // lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
-        match REGISTRY_MUX.with_ref_blocking(
+        match REGISTRY_MUX.with_ref_blocking_unless_cancelled(
             handle as u64,
             BlockingReason::IsItselfBlocking,
             |jstruct| jstruct.inner.finish(),
@@ -761,7 +761,7 @@ jni_native! {
             // Closed between the Java-side `peekHandle()` and here, or closed
             // outright: stay quiet, exactly like a second `finish()`.
             Err(HandleState::Closed) => {}
-            Err(state) => throw_handle_state(env, "ManagedMuxSender", &state),
+            Err(state) => throw_data_plane_state(env, "ManagedMuxSender", &state),
         }
     }
 }
@@ -984,11 +984,11 @@ jni_native! {
     ) -> jobject = std::ptr::null_mut() => {
         // recv_event runs INSIDE the registry lease (under the resource lock,
         // single-threaded per the Receiver model).
-        let res = match REGISTRY_DEMUX.with_mut(handle as u64, |jstruct| jstruct.inner.recv_event())
+        let res = match REGISTRY_DEMUX.with_mut_unless_cancelled(handle as u64, |jstruct| jstruct.inner.recv_event())
         {
             Ok(res) => res,
             Err(state) => {
-                throw_handle_state(env, "ManagedDemuxReceiver", &state);
+                throw_data_plane_state(env, "ManagedDemuxReceiver", &state);
                 return JObject::null().into_raw();
             }
         };

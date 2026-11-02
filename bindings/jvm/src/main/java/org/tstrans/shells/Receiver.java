@@ -76,6 +76,9 @@ public class Receiver extends NativeHandle {
      * Receive one TS packet. Blocks until a packet is available. Defaults
      * {@code maxLen} to 1500.
      *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
+     *
      * @return a 188-byte TS packet
      * @throws IllegalStateException if the receiver is closed
      * @throws BindingException the transport's exception: {@code END_OF_STREAM}
@@ -91,6 +94,9 @@ public class Receiver extends NativeHandle {
      * Receive one TS packet. Blocks until a packet is available. The
      * {@code maxLen} parameter is accepted for API symmetry and does not alter
      * the one-packet-per-call quantum.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED}, buffered data included.
      *
      * @param maxLen hint for the maximum bytes to return (ignored)
      * @return a 188-byte TS packet

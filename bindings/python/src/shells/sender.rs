@@ -106,8 +106,9 @@ impl PySender {
     fn send_bytes(&self, py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<()> {
         let coerced = crate::util::coerce_bytes_like(py, data)?;
         let slice: &[u8] = coerced.as_bytes();
-        let res =
-            crate::util::allow_threads_parking(py, || self.owned.with_mut(|s| s.send_ts(slice)));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut_unless_cancelled(|s| s.send_ts(slice))
+        });
         pyres(py, &self.owned.snapshot().domain, res)
     }
 
@@ -115,13 +116,18 @@ impl PySender {
     /// the GIL. Call it before `close()` when the tail matters: `close()`
     /// cancels first and does not drain the framing buffer.
     fn flush(&self, py: Python<'_>) -> PyResult<()> {
-        let res = crate::util::allow_threads_parking(py, || self.owned.with_mut(|s| s.flush()));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut_unless_cancelled(|s| s.flush())
+        });
         pyres(py, &self.owned.snapshot().domain, res)
     }
 
     /// Shareable cancel handle (shared state, see `CancelHandle`).
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_source(&self.cancel))
+        Py::new(
+            py,
+            PyCancelHandle::for_shell(&self.cancel, self.owned.cancel_arc()),
+        )
     }
 
     /// Scheme-neutral 16-field wire stats. Waits (GIL released) for an

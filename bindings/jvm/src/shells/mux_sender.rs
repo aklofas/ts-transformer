@@ -85,7 +85,7 @@ fn with_push(env: &mut Env, handle: jlong, op: impl FnOnce(&Inner) -> Result<(),
     let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "MuxSender") else {
         return;
     };
-    match REGISTRY.with_mut(handle as u64, |inner| op(inner)) {
+    match REGISTRY.with_mut_unless_cancelled(handle as u64, |inner| op(inner)) {
         Ok(Ok(())) => {}
         Ok(Err(e)) => throw_mux_sender_error(env, domain, e),
         Err(state) => throw_state(env, domain, "MuxSender", &state),
@@ -562,7 +562,7 @@ jni_native! {
             return;
         };
         // lossless shutdown: drains the muxer through the transport, documented to wait behind a send in flight
-        match REGISTRY.with_ref_blocking(handle as u64, BlockingReason::IsItselfBlocking, |inner| {
+        match REGISTRY.with_ref_blocking_unless_cancelled(handle as u64, BlockingReason::IsItselfBlocking, |inner| {
             inner.finish()
         }) {
             Ok(Ok(())) => {}

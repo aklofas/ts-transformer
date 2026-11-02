@@ -150,6 +150,10 @@ pub unsafe extern "C" fn tst_tcp_sender_cancel(p: *mut TstTcpSender) -> libc::c_
 ///
 /// Returns 0 on success, a negative `TST_E_*` code on failure.
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Safety
 ///
 /// `p` must be a valid non-freed `*mut TstTcpSender`. `bytes` must be

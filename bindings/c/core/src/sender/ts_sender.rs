@@ -70,6 +70,9 @@ pub unsafe extern "C" fn tst_sender_open(
     })
 }
 
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_sender_send_ts(
     p: *mut TstSender,
@@ -84,22 +87,29 @@ pub unsafe extern "C" fn tst_sender_send_ts(
         Ok(s) => s,
         Err(code) => return code,
     };
-    handle.inner.with_inner_mut(|s| match s.send_ts(slice) {
-        Ok(()) => 0,
-        Err(e) => record_shell_error(e),
-    })
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|s| match s.send_ts(slice) {
+            Ok(()) => 0,
+            Err(e) => record_shell_error(e),
+        })
 }
 
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_sender_flush(p: *mut TstSender) -> libc::c_int {
     let Some(handle) = (unsafe { p.as_ref() }) else {
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    handle.inner.with_inner_mut(|s| match s.flush() {
-        Ok(()) => 0,
-        Err(e) => record_shell_error(e),
-    })
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|s| match s.flush() {
+            Ok(()) => 0,
+            Err(e) => record_shell_error(e),
+        })
 }
 
 #[unsafe(no_mangle)]
@@ -252,6 +262,9 @@ pub unsafe extern "C" fn tst_managed_sender_open(
     })
 }
 
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_sender_send_ts(
     p: *mut TstManagedSender,
@@ -266,22 +279,29 @@ pub unsafe extern "C" fn tst_managed_sender_send_ts(
         Ok(s) => s,
         Err(code) => return code,
     };
-    handle.inner.with_inner_mut(|s| match s.send_ts(slice) {
-        Ok(()) => 0,
-        Err(e) => record_shell_error(e),
-    })
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|s| match s.send_ts(slice) {
+            Ok(()) => 0,
+            Err(e) => record_shell_error(e),
+        })
 }
 
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_sender_flush(p: *mut TstManagedSender) -> libc::c_int {
     let Some(handle) = (unsafe { p.as_ref() }) else {
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    handle.inner.with_inner_mut(|s| match s.flush() {
-        Ok(()) => 0,
-        Err(e) => record_shell_error(e),
-    })
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|s| match s.flush() {
+            Ok(()) => 0,
+            Err(e) => record_shell_error(e),
+        })
 }
 
 #[unsafe(no_mangle)]

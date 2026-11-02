@@ -8,12 +8,12 @@
 use jni::Env;
 use tst_core::transport::TransportError;
 use tst_pipeline::ShellErrorKind;
-use tst_pipeline::binding::{BindingError, BindingErrorKind};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState};
 use tst_pipeline::receiver::{ReceiverError, ReceiverErrorSource};
 use tst_pipeline::sender::{SenderError, SenderErrorSource};
 use tst_srt::{SrtError, SrtUrlError};
 
-use crate::error::{Domain, throw_binding};
+use crate::error::{Domain, throw_binding, throw_handle_state};
 
 /// `org.tstrans.SrtException(Kind.<kind.name()>, message)`.
 pub(crate) fn throw_srt(env: &mut Env, kind: BindingErrorKind, message: &str) {
@@ -107,5 +107,17 @@ pub(crate) fn throw_receiver_error(env: &mut Env, e: &ReceiverError) {
         ReceiverErrorSource::Transport(t) => throw_recv_transport(env, e.kind, t),
         // `ReceiverErrorSource` is #[non_exhaustive]; a future arm keeps its Display text.
         _ => throw_srt(env, BindingErrorKind::SrtIo, &e.to_string()),
+    }
+}
+
+/// A [`HandleState`] failure of a managed SRT data-plane native. A call
+/// refused after a cancel is `SrtException(CLOSED)`, the same exception a
+/// cancelled transport operation throws; every other state keeps the one
+/// handle-state mapping (a closed handle is `IllegalStateException`).
+pub(crate) fn throw_data_plane_state(env: &mut Env, what: &str, state: &HandleState) {
+    if matches!(state, HandleState::Cancelled) {
+        throw_binding(env, Domain::Srt, &BindingError::from(state.clone()));
+    } else {
+        throw_handle_state(env, what, state);
     }
 }

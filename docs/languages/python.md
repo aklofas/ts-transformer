@@ -512,7 +512,10 @@ one `tstrans.shells.CancelHandle`. Both go through one Rust state machine
 (`tst_pipeline::binding::Owned`): **cancel first, then free**. A call
 parked on another thread (`send_bytes`, `recv_bytes`, `accept`,
 `__next__`, `recv`, `recv_au`, `accept_blocking`) ends promptly and
-`close()` returns without waiting behind it.
+`close()` returns without waiting behind it. After a cancel, every
+receive, send, `flush()` and `finish()` on a shell raises `CLOSED`,
+buffered data included; `tstrans.rtp.H264Receiver` is the exception and
+drains to end of stream.
 
 ```python
 tx = Sender.open("srt://host:9000?mode=caller")

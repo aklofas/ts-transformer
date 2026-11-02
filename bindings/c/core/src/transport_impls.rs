@@ -185,7 +185,7 @@ pub(crate) unsafe fn mux_sender_push_video<T: Transport, S>(
         Err(code) => return code,
     };
     let pts = Pts90khz::new(pts_90khz);
-    h.with_inner_ref(|s| match s.send_video(slice, pts, key_frame) {
+    h.with_inner_ref_unless_cancelled(|s| match s.send_video(slice, pts, key_frame) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -206,7 +206,7 @@ pub(crate) unsafe fn mux_sender_push_klv<T: Transport, S>(
         Err(code) => return code,
     };
     let pts = Pts90khz::new(pts_90khz);
-    h.with_inner_ref(|s| match s.send_klv(slice, pts, 0x00) {
+    h.with_inner_ref_unless_cancelled(|s| match s.send_klv(slice, pts, 0x00) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -227,7 +227,7 @@ pub(crate) unsafe fn mux_sender_push_audio<T: Transport, S>(
         Err(code) => return code,
     };
     let pts = Pts90khz::new(pts_90khz);
-    h.with_inner_ref(|s| match s.send_audio(slice, pts) {
+    h.with_inner_ref_unless_cancelled(|s| match s.send_audio(slice, pts) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -248,7 +248,7 @@ pub(crate) unsafe fn mux_sender_push_subtitle<T: Transport, S>(
         Err(code) => return code,
     };
     let pts = Pts90khz::new(pts_90khz);
-    h.with_inner_ref(|s| match s.send_subtitle(slice, pts) {
+    h.with_inner_ref_unless_cancelled(|s| match s.send_subtitle(slice, pts) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -280,7 +280,7 @@ pub(crate) unsafe fn mux_sender_push_video_to<T: Transport, S>(
         }
     };
     let pts = Pts90khz::new(pts_90khz);
-    h.with_inner_ref(|s| match s.send_video_to(stream, slice, pts, key_frame) {
+    h.with_inner_ref_unless_cancelled(|s| match s.send_video_to(stream, slice, pts, key_frame) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -308,7 +308,7 @@ pub(crate) unsafe fn mux_sender_push_klv_to<T: Transport, S>(
         }
     };
     let pts = Pts90khz::new(pts_90khz);
-    h.with_inner_ref(|s| match s.send_klv_to(stream, slice, pts, 0x00) {
+    h.with_inner_ref_unless_cancelled(|s| match s.send_klv_to(stream, slice, pts, 0x00) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -336,7 +336,7 @@ pub(crate) unsafe fn mux_sender_push_audio_to<T: Transport, S>(
         }
     };
     let pts = Pts90khz::new(pts_90khz);
-    h.with_inner_ref(|s| match s.send_audio_to(stream, slice, pts) {
+    h.with_inner_ref_unless_cancelled(|s| match s.send_audio_to(stream, slice, pts) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -364,7 +364,7 @@ pub(crate) unsafe fn mux_sender_push_subtitle_to<T: Transport, S>(
         }
     };
     let pts = Pts90khz::new(pts_90khz);
-    h.with_inner_ref(|s| match s.send_subtitle_to(stream, slice, pts) {
+    h.with_inner_ref_unless_cancelled(|s| match s.send_subtitle_to(stream, slice, pts) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -520,7 +520,7 @@ pub(crate) unsafe fn sender_send_ts<T: Transport, S>(
         Ok(s) => s,
         Err(code) => return code,
     };
-    h.with_inner_mut(|s| match s.send_ts(slice) {
+    h.with_inner_mut_unless_cancelled(|s| match s.send_ts(slice) {
         Ok(()) => 0,
         Err(e) => record_shell_error(e),
     })
@@ -677,7 +677,7 @@ pub(crate) unsafe fn receiver_recv_ts<R: RecvTransport, S>(
     // already covers a cancel that lands while the call is blocked. Keeping
     // both makes the intent explicit at every recv site.
     let cancelled = h.is_cancelled();
-    h.with_inner_mut(|rx| match rx.next_packet() {
+    h.with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
         Ok(pkt) => {
             // SAFETY: buf non-null + writable for >= TS_PACKET_SIZE bytes per guard above.
             unsafe {
@@ -826,7 +826,7 @@ pub(crate) unsafe fn demux_receiver_next_event<R: RecvTransport, S>(
     // already covers a cancel that lands while the call is blocked. Keeping
     // both makes the intent explicit at every recv site.
     let cancelled = inner.is_cancelled();
-    inner.with_inner_mut(|rx| match rx.recv_event() {
+    inner.with_inner_mut_unless_cancelled(|rx| match rx.recv_event() {
         Ok(Some(ev)) => {
             // Poison = a panic mid-write on another call; the arena is
             // rewritten before it is read, so recover (binding poison
