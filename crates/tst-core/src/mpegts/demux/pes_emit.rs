@@ -2437,6 +2437,42 @@ mod tests {
         }
     }
 
+    /// The discontinuity_indicator rides a continuation packet of an intact
+    /// PES A, which completes there and is walked on the old source's
+    /// framing: its carry (Body(103)) must still be forgotten before the new
+    /// source's first PES, which opens on a record.
+    #[test]
+    fn a_discontinuity_inside_a_pes_forgets_the_carry_that_pes_leaves() {
+        let mut p_a = loas_record(10);
+        p_a.extend_from_slice(&loas_record(400)[..300]);
+        let mut p_b = loas_record(40);
+        p_b.extend(loas_record(200));
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x101,
+            &[(0x11, 0x101, &[])],
+        );
+        let mut cc = 0;
+        let mut pkts = latm_pes(&mut cc, &p_a);
+        assert_eq!(pkts.len(), 2);
+        // Rebuild A's second packet with the flag: its payload follows
+        // `adaptation_field_length` + 1 bytes.
+        let tail = pkts[1];
+        let payload_start = 5 + usize::from(tail[4]);
+        pkts[1] = ts_packet(&PktSpec {
+            pid: 0x101,
+            cc: tail[3] & 0x0F,
+            discontinuity: true,
+            payload: &tail[payload_start..],
+            ..Default::default()
+        });
+        pkts.extend(latm_pes(&mut cc, &p_b));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert!(!latm_framing_on_0x101(&ev), "{ev:?}");
+    }
+
     /// The aggregate `pes_cap_total` drop loses the PES the same way.
     #[test]
     fn pes_cap_total_overflow_forgets_the_loas_carry() {
@@ -3133,6 +3169,27 @@ mod tests {
                 assert!(!spliced, "{name}: {ev:?}");
                 assert_eq!(sequence_gaps(&ev), vec![3], "{name}: {ev:?}");
             }
+        }
+
+        /// PES A opens with a heavily stuffed PUSI packet carrying fewer
+        /// than a PES header's bytes, and its later packets are lost. A can
+        /// yield neither a Complete nor a Malformed, so the continuity jump
+        /// itself discards the AU in progress.
+        #[test]
+        fn a_lost_pes_shorter_than_a_header_discards_the_au_in_progress() {
+            let mut pkts = cells_pes(0, &[(First, 10, b"AAA")]);
+            pkts.push(ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 1,
+                pusi: true,
+                payload: &[0x00, 0x00, 0x01, 0xFC],
+                ..Default::default()
+            }));
+            // CC 2 and 3 lost.
+            pkts.extend(cells_pes(4, &[(Last, 12, b"CCC")]));
+            let ev = run(StrictMode::Off, &pkts);
+            assert_eq!(metadata_count(&ev), 0, "{ev:?}");
+            assert_eq!(sequence_gaps(&ev), vec![3], "{ev:?}");
         }
 
         /// A continuity gap inside PES A, after its head: the head carries

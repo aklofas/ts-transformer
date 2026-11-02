@@ -195,7 +195,8 @@ impl super::demuxer::Demuxer {
 
     /// The PES that straddled a signalled reset on `pid` has ended (emitted
     /// or dropped): drop the old-clock PTS baseline it was judged against,
-    /// and the AU cells in progress from the old source.
+    /// and the old source's AU cells in progress and LOAS record position
+    /// (ISO/IEC 14496-3 §1.7.2), which that PES may have just advanced.
     pub(super) fn settle_after_pes(&mut self, pid: u16) {
         let Some(state) = self.pid_state.get_mut(&pid) else {
             return;
@@ -203,7 +204,8 @@ impl super::demuxer::Demuxer {
         if core::mem::take(&mut state.pts_baseline_clears_after_pes) {
             state.clear_pts_baseline();
         }
-        if core::mem::take(&mut state.au_discard_after_pes) {
+        if core::mem::take(&mut state.source_reset_after_pes) {
+            state.forget_latm_position();
             self.discard_au_in_progress(pid);
         }
     }
@@ -271,10 +273,7 @@ impl super::demuxer::Demuxer {
             if pkt.discontinuity_indicator {
                 let state = self.pid_state_mut(pkt.pid);
                 state.clear_continuity();
-                state.au_discard_after_pes = true;
-                // A new source: the old LOAS record position does not apply
-                // (ISO/IEC 14496-3 §1.7.2).
-                state.forget_latm_position();
+                state.source_reset_after_pes = true;
                 if let Some(stream) = self.lookup_stream(pkt.pid) {
                     self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
                 }
@@ -376,10 +375,7 @@ impl super::demuxer::Demuxer {
         }
         if pkt.discontinuity_indicator {
             let state = self.pid_state_mut(pkt.pid);
-            state.au_discard_after_pes = true;
-            // A new source: the old LOAS record position does not apply
-            // (ISO/IEC 14496-3 §1.7.2).
-            state.forget_latm_position();
+            state.source_reset_after_pes = true;
             if let Some(stream) = self.lookup_stream(pkt.pid) {
                 self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
             }

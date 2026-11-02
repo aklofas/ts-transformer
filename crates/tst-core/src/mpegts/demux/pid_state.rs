@@ -42,9 +42,9 @@ pub(super) struct PidState {
     /// `last_pts` is cleared so the next PES starts the new baseline.
     pub(super) pts_baseline_clears_after_pes: bool,
     /// A discontinuity was signalled on the PID (H.222.0 §2.4.3.5): the AU
-    /// cells in progress belong to the old source and are discarded once
-    /// the PES in flight has ended.
-    pub(super) au_discard_after_pes: bool,
+    /// cells in progress and the LOAS record position belong to the old
+    /// source and are dropped once the PES in flight has ended.
+    pub(super) source_reset_after_pes: bool,
     /// A PES without a PTS arrived since the last coded PTS on an audio or
     /// video PID; the next coded PTS judges the spacing around the run.
     pub(super) pts_less_since_pts: bool,
@@ -109,7 +109,7 @@ impl PidState {
         self.clear_continuity();
         self.clear_pts_baseline();
         self.pts_baseline_clears_after_pes = false;
-        self.au_discard_after_pes = false;
+        self.source_reset_after_pes = false;
         self.unwrap = None;
         self.latm_carry = None;
         self.latm_carry_tentative = false;
@@ -172,7 +172,7 @@ impl PidState {
             last_pkt_raw,
             last_pts,
             pts_baseline_clears_after_pes,
-            au_discard_after_pes,
+            source_reset_after_pes,
             pts_less_since_pts,
             pts_less_run_pcr,
             pts_less_run_reported,
@@ -197,7 +197,7 @@ impl PidState {
             && last_pkt_raw.is_none()
             && last_pts.is_none()
             && !pts_baseline_clears_after_pes
-            && !au_discard_after_pes
+            && !source_reset_after_pes
             && !pts_less_since_pts
             && pts_less_run_pcr.is_none()
             && !pts_less_run_reported
