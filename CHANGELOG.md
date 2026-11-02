@@ -30,9 +30,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 
 - `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch.
+
 ### Fixed — tst-core
 
 - The AC-3 audio stream descriptor (tag 0x81) the muxer adds to an `AudioCodec::Ac3` stream claimed at most two channels for every stream, so a 5.1 stream was mis-declared in the PMT. It now claims at most six (`num_channels` 0b1101), which covers every AC-3 coding mode. `bsid` 8 and `bsmod` 0 remain declared values the muxer does not check against the frames; supply your own tag 0x81 via `stream_descriptors_for_audio` for a bsid 6 or associated-service stream.
+- The `metadata_STD_descriptor` (tag 0x27) the muxer adds to a synchronous KLV stream declared a zero input leak rate and a zero-byte buffer, a target decoder that cannot hold any access unit (H.222.0 §2.6.63, §2.12.10). It now declares a 65 × 1024-byte buffer, which holds the largest PES the muxer emits (65 541 bytes), an input leak rate of 13 109 × 400 bit/s, which moves that PES within the default 100 ms PSI interval, and an output leak rate of 0 (removal at PTS). A caller-supplied tag 0x27 still replaces it.
 
 ### Fixed — tst-py, tst-jni, tst-core, tst-hls, tst-webrtc, tst-srt, tst-c
 
