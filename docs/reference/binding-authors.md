@@ -387,7 +387,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **26** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **27** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -670,6 +670,16 @@ baseline (by design)" for the full rationale.
       the observed section_number), 4 = `Malformed`; `NalHeader` `obu_type`
       4 = `Truncated`; `Av1ObuHeader` `obu_type` 3 = `Truncated`,
       4 = `InvalidEmulationPrevention`.
+    - `27` — new symbols `tst_udp_sender_flush`, `tst_tcp_sender_flush`,
+      `tst_rist_sender_flush`. Behaviour tightenings under the additive rule
+      (no existing symbol, layout, enum value or error code changed):
+      receive, send, flush and finish after a cancel return `TST_E_CLOSED`
+      and never buffered data; `tst_*_open_listener` forces listener mode;
+      `tst_rtsp_session_into_demux_receiver` refuses a cancelled session
+      (NULL + `TST_E_CLOSED`); the Annex-B sizing answer records
+      `TST_E_BUFFER_FULL`; demux-config PIDs above `0x1FFF` and TLV lists
+      with trailing bytes return `TST_E_INVALID_CONFIG`; a zero-backoff
+      unlimited reconnect policy is refused at `tst_managed_*_open`.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 

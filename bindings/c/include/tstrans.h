@@ -50,13 +50,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 26` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 27` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 26
+#define TST_ABI_VERSION_MINOR 27
 
 #define TST_CODEC_KIND_AUDIO 3
 
