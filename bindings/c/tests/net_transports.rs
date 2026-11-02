@@ -14,6 +14,8 @@ mod hls_publish_smoke;
 mod rist_cancel_from_other_thread;
 #[path = "transports/rist_open_smoke.rs"]
 mod rist_open_smoke;
+#[path = "transports/rist_sender_flush.rs"]
+mod rist_sender_flush;
 #[path = "transports/rtp_cancel_first.rs"]
 mod rtp_cancel_first;
 #[path = "transports/rtp_open_smoke.rs"]
