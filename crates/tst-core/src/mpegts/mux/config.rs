@@ -227,11 +227,10 @@ impl MuxerConfig {
     ///   then produces a Data spec that [`validate`](Self::validate)
     ///   rejects with a `ConfigInvalid` naming the stream and the
     ///   classified kind.
-    /// - **`carries_pts` is always `true`**, including for async KLV and
-    ///   Data streams: whether the PES carries a PTS is a PES-level
-    ///   property the PMT cannot declare, and PTS-carrying KLV is the
-    ///   STANAG 4609 norm. Callers that need a PTS-less stream build the
-    ///   config by hand.
+    /// - **`carries_pts`** is `true` for synchronous KLV (required) and for
+    ///   Data streams; `false` for asynchronous KLV (ST 1402-22). It is a
+    ///   PES-level property the PMT cannot declare, so the conversion
+    ///   applies the standard's rule rather than the source's.
     /// - **AV1 carriage**: [`Av1CarriageMode`] is a PES-level property absent
     ///   from the PMT — `from_program_map` always yields
     ///   `av1_carriage: Av1CarriageMode::Mpeg2TsBinding` (the spec-conformant
@@ -354,10 +353,10 @@ impl MuxerConfig {
                     kept.push((s.pid, true));
                 }
                 DemuxKind::KlvAsync => {
-                    // carries_pts is a PES-level property the PMT cannot declare;
-                    // true is the STANAG 4609 norm. Callers needing false build
-                    // the config by hand.
-                    prog.add_klv(s.pid, KlvStreamType::PrivateData, true);
+                    // ST 1402-22: the asynchronous method carries no PTS
+                    // (`PTS_DTS_flags` 00); a caller wanting timed 0x06 KLV
+                    // builds the config by hand.
+                    prog.add_klv(s.pid, KlvStreamType::PrivateData, false);
                     if let Some(tlvs) = tlvs {
                         prog.stream_descriptors_for_klv(klv_idx, tlvs)?;
                     }

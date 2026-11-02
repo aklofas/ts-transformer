@@ -198,8 +198,8 @@ them; DVB subtitling/teletext are the only such kinds.
 | `Audio(Aac)` — `0x0F` | `add_audio` | |
 | `Audio(AacLatm)` — `0x11` | `add_audio` | |
 | `Audio(Ac3)` — `0x81` | `add_audio` | AC-3 registration descriptor auto-re-emitted on the rebuilt PMT. |
-| `KlvSync { .. }` — `0x15` | `add_klv(pid, SynchronousMetadata, carries_pts=true)` | `carries_pts` is a PES-level property; the PMT cannot declare it. `true` is the STANAG 4609 norm. |
-| `KlvAsync` — `0x06` + `KLVA` registration | `add_klv(pid, PrivateData, carries_pts=true)` | Same `carries_pts` rule. Callers needing `false` build the config by hand. |
+| `KlvSync { .. }` — `0x15` | `add_klv(pid, SynchronousMetadata, carries_pts=true)` | Synchronous KLV requires a PTS. `carries_pts` is a PES-level property the PMT cannot declare, so the conversion applies the standard's rule. |
+| `KlvAsync` — `0x06` + `KLVA` registration | `add_klv(pid, PrivateData, carries_pts=false)` | Asynchronous KLV carries no PTS (ST 1402-22, `PTS_DTS_flags` 00). A caller wanting a PTS on a 0x06 stream builds the config by hand. |
 | `Subtitle(Cea708Standalone)` — `0x06` + `GA94` registration | `add_subtitle(pid, SubtitleCodec::Cea708Standalone)` | Registration descriptor auto-re-emitted. |
 | `Subtitle(WebVttInTs)` — `0x06` + `VTTC` registration | `add_subtitle(pid, SubtitleCodec::WebVttInTs)` | Registration descriptor auto-re-emitted. |
 | `Subtitle(DvbSubtitling)` / `Subtitle(DvbTeletext)` | **error (`ConfigInvalid`)** | DVB descriptor params (language, page IDs) are not recoverable from the PMT entry alone. Pass `StreamKindTag::Subtitle` in `drop` to exclude all subtitle streams. |

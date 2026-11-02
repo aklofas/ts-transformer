@@ -263,7 +263,7 @@ def test_every_representable_member_round_trips(kind, codec, stream_type):
             else KlvStreamType.PRIVATE_DATA
         )
         assert spec.stream_type is expected
-        assert spec.carries_pts is True
+        assert spec.carries_pts is (kind is StreamKindTag.KLV_SYNC)
 
 
 @pytest.mark.parametrize(
@@ -397,6 +397,6 @@ def test_sync_klv_reconstructs_without_codec():
     spec = cfg.programs[0].streams[1]
     assert isinstance(spec, KlvStreamSpec)
     assert spec.stream_type is KlvStreamType.SYNCHRONOUS_METADATA
-    # carries_pts is always True from from_program_map (PES-level
-    # property the PMT cannot declare; STANAG 4609 norm).
+    # Synchronous KLV carries a PTS; asynchronous KLV does not
+    # (ST 1402-22).
     assert spec.carries_pts is True
