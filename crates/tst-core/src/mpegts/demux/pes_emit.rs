@@ -210,6 +210,12 @@ impl super::demuxer::Demuxer {
                     self.handle_complete_pes(pes, damage);
                 }
                 ReassemblyOutcome::Overflow { pid } => {
+                    // A cap drop loses bytes without a continuity gap, so the
+                    // LOAS record position is unknown (ISO/IEC 14496-3
+                    // §1.7.2); `latm_unsynced` stays, as for the other losses.
+                    if let Some(state) = self.pid_state.get_mut(&pid) {
+                        state.forget_latm_position();
+                    }
                     if let Some(stream) = self.lookup_stream(pid) {
                         self.record_discontinuity(stream, DiscontinuityKind::PesOversize { pid });
                     }
@@ -218,6 +224,10 @@ impl super::demuxer::Demuxer {
                     // The aggregate cap drops the partials of every PID, so
                     // each of them lost a PES.
                     for pid in self.pes.take_total_overflow_pids() {
+                        // As for `Overflow`: the record position is unknown.
+                        if let Some(state) = self.pid_state.get_mut(&pid) {
+                            state.forget_latm_position();
+                        }
                         if let Some(stream) = self.lookup_stream(pid) {
                             self.record_discontinuity(stream, DiscontinuityKind::PesTotalOversize);
                         }
@@ -491,7 +501,7 @@ impl super::demuxer::Demuxer {
         // Its payload is not walked, so the LOAS record position is lost.
         // `latm_unsynced` stays: lost bytes are more evidence of trouble.
         if let Some(state) = self.pid_state.get_mut(&pes.pid) {
-            state.latm_carry = None;
+            state.forget_latm_position();
         }
         self.settle_after_pes(pes.pid);
         // Its cells are not walked, and the bytes it lost may hold a cell of
@@ -2254,6 +2264,95 @@ mod tests {
         let mut out = vec![0x56, 0xE0 | ((len >> 8) as u8 & 0x1F), (len & 0xFF) as u8];
         out.resize(3 + usize::from(len), 0);
         out
+    }
+
+    /// One unaligned (`data_alignment_indicator` = 0) LATM PES on 0x101,
+    /// advancing `cc`.
+    fn latm_pes(cc: &mut u8, payload: &[u8]) -> Vec<[u8; 188]> {
+        let pkts = pes_to_packets(
+            0x101,
+            *cc,
+            &pes_bytes(0xC0, Some(90_000), None, false, payload, true),
+        );
+        *cc = cc.wrapping_add(pkts.len() as u8) & 0x0F;
+        pkts
+    }
+
+    /// LATM 0x101 with the given caps. PES 1 leaves a Body(33) carry, PES 2
+    /// (400 bytes) overflows a 300-byte cap and is dropped, then `p3`. The
+    /// feed's events.
+    fn latm_cap_overflow_events(cap_per_pid: bool, p3: &[u8]) -> Vec<DemuxEvent> {
+        let mut b = DemuxerConfig::builder();
+        if cap_per_pid {
+            b.pes_cap_per_pid(300);
+        } else {
+            b.pes_cap_total(300);
+        }
+        let mut d = demuxer_with_streams(b.build(), 0x101, &[(0x11, 0x101, &[])]);
+        let record_b = loas_record(50);
+        let mut p1 = loas_record(10);
+        p1.extend_from_slice(&record_b[..20]);
+        let mut cc = 0;
+        let mut pkts = latm_pes(&mut cc, &p1);
+        pkts.extend(latm_pes(&mut cc, &[0u8; 400]));
+        pkts.extend(latm_pes(&mut cc, p3));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        drain_all_events(&mut d)
+    }
+
+    fn latm_framing_on_0x101(ev: &[DemuxEvent]) -> bool {
+        issues(ev)
+            .iter()
+            .any(|i| matches!(i, NonConformantIssue::LatmFraming { pid: 0x101, .. }))
+    }
+
+    /// LATM 0x101 with pes_cap_per_pid 300. PES 1 leaves a Body(33) carry. PES 2
+    /// (400 bytes) overflows the cap and is dropped. PES 3 starts on a record
+    /// boundary; the stale carry would walk it from byte 33.
+    #[test]
+    fn pes_cap_overflow_forgets_the_loas_carry() {
+        let ev = latm_cap_overflow_events(true, &loas_record(40));
+        assert!(
+            ev.iter().any(|e| matches!(
+                e,
+                DemuxEvent::Discontinuity {
+                    kind: DiscontinuityKind::PesOversize { pid: 0x101 },
+                    ..
+                }
+            )),
+            "{ev:?}"
+        );
+        assert!(!latm_framing_on_0x101(&ev), "{ev:?}");
+    }
+
+    /// After the overflow a PES that opens inside a record (DAI = 0, no syncword at
+    /// 0) takes the resync path, not the carry path: still no LatmFraming.
+    #[test]
+    fn pes_cap_overflow_then_unaligned_pes_resyncs_instead_of_walking_a_stale_carry() {
+        // 7 bytes of record tail (no 0x56), then a whole record: resync
+        // confirms the record at offset 7.
+        let mut p3 = vec![0u8; 7];
+        p3.extend(loas_record(40));
+        let ev = latm_cap_overflow_events(true, &p3);
+        assert!(!latm_framing_on_0x101(&ev), "{ev:?}");
+    }
+
+    /// The aggregate `pes_cap_total` drop loses the PES the same way.
+    #[test]
+    fn pes_cap_total_overflow_forgets_the_loas_carry() {
+        let ev = latm_cap_overflow_events(false, &loas_record(40));
+        assert!(
+            ev.iter().any(|e| matches!(
+                e,
+                DemuxEvent::Discontinuity {
+                    kind: DiscontinuityKind::PesTotalOversize,
+                    ..
+                }
+            )),
+            "{ev:?}"
+        );
+        assert!(!latm_framing_on_0x101(&ev), "{ev:?}");
     }
 
     fn latm_framing_count(ev: &[DemuxEvent]) -> usize {

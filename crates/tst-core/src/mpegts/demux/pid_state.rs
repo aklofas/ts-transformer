@@ -85,6 +85,14 @@ impl PidState {
         self.pts_less_run_reported = false;
     }
 
+    /// Bytes of the PID were lost: the LOAS record position is unknown
+    /// (ISO/IEC 14496-3 §1.7.2), so the next PES resyncs rather than walking
+    /// a stale carry. `latm_unsynced` stays: a loss is more evidence of
+    /// trouble.
+    pub(super) fn forget_latm_position(&mut self) {
+        self.latm_carry = None;
+    }
+
     /// Forget every timing baseline of the PID: continuity, PTS, unwrap,
     /// and the LATM record position.
     pub(super) fn clear_timing(&mut self) {
