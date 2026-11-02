@@ -68,9 +68,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stream-ID values in an SRT `AccessControl` (Rust `Debug`, Python repr) are redacted; the keys stay visible.
 - Rust `Debug` for `HlsConfig`, the WHEP bearer-token request holder and the SRT `AccessControl`, `StreamId` and socket types never prints a password, token or stream-ID value. The `InvalidPort` URL error redacts a port that is not digits, since a mistyped URL can put a password there. The shared helper is `tst_core::url::redact_url`.
 - The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
+
 ### Changed — tst-c (BREAKING)
 
-- After `_cancel`, every receive (`_recv_ts`, `_recv_packet`, `_recv_event`, `_next_event`), send (`_send_ts`, `_send_*`), `_flush` and `_finish` on a shell returns `TST_E_CLOSED`, including when TS packets or a partial bundle were still buffered; a `Broken` seen with the cancel latch set is `TST_E_CLOSED` too. Previously buffered packets were delivered and sub-bundle sends, empty flushes and empty finishes returned 0 after a cancel, which contradicted the documented terminal-cancel contract. Only the caller's `_cancel` (or a cancel handle from it) counts: a `_finish` that closes the transport itself is not a cancel, so a second `_finish` stays 0. The H.264 receiver keeps draining to EOS on cancel (its own documented contract).
+- After `_cancel`, every receive (`_recv_ts`, `_recv_packet`, `_recv_event`, `_next_event`), send (`_send_ts`, `_send_*`), `_flush` and `_finish` on a shell returns `TST_E_CLOSED`, including when TS packets or a partial bundle were still buffered; a `Broken` seen with the cancel latch set is `TST_E_CLOSED` too. Previously buffered packets were delivered and sub-bundle sends, empty flushes and empty finishes returned 0 after a cancel, which contradicted the documented terminal-cancel contract. Only the caller's `_cancel` counts: a `_finish` that closes the transport itself is not a cancel, so a second `_finish` stays 0.
 
 ### Changed — tst-py, tst-jni (BREAKING)
 

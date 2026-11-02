@@ -171,7 +171,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_cancel(p: *mut TstRistMuxSender) ->
 /// use-after-free, not an error code — `_close` consumes the handle.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -213,7 +213,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_finish(p: *mut TstRistMuxSender) ->
 /// rejects with `TST_E_INVALID_USAGE`.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -247,7 +247,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_push_video(
 /// `pts_90khz` is the presentation timestamp in 90 kHz ticks.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -276,7 +276,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_push_klv(
 /// the presentation timestamp in 90 kHz ticks.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -304,7 +304,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_push_audio(
 /// presentation timestamp in 90 kHz ticks.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -341,7 +341,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_push_subtitle(
 /// same effect, no handle required.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -380,7 +380,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_push_video_to(
 /// On a single-stream sender, prefer `tst_rist_mux_sender_push_klv`.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -415,7 +415,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_push_klv_to(
 /// On a single-stream sender, prefer `tst_rist_mux_sender_push_audio`.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -450,7 +450,7 @@ pub unsafe extern "C" fn tst_rist_mux_sender_push_audio_to(
 /// On a single-stream sender, prefer `tst_rist_mux_sender_push_subtitle`.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
