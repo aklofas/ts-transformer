@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_pipeline::DemuxReceiver;
-use tst_rtp::{ClockAlignment, PublishMountHandle, PublishMountStats, RtspServer};
+use tst_rtp::{
+    ClockAlignment, PublishMountHandle, PublishMountStats, RtspServer, RtspServerBuilder,
+};
 
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
@@ -437,12 +439,16 @@ fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
 }
 
 /// A graceful `stop()` while the adapter still holds KLV units (no sender
-/// reports, publisher still inside the fallback window): the publisher
-/// session's flush places them, and they reach the application transport
-/// before it reads `Closed`, not just the mount's counters.
+/// reports, publisher still inside the fallback window) and an open H.264
+/// access unit (its packet carries no marker): the publisher session's
+/// flush emits both, and they reach the application transport before it
+/// reads `Closed`, not just the mount's counters. The drain is scaled so a
+/// slow runner's session still ends inside it.
 #[test]
 fn held_klv_reaches_the_app_on_graceful_stop() {
-    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.graceful_shutdown_drain(scaled(Duration::from_secs(5)));
+    let server = b.build().unwrap();
     let mount = server.add_publish_mount("/pub").unwrap();
     server.start().unwrap();
     let port = server.local_addr().unwrap().port();
@@ -456,6 +462,23 @@ fn held_klv_reaches_the_app_on_graceful_stop() {
     for pkt in &video_packets {
         p.send_frame(v_rtp, pkt);
     }
+    // One more P slice in a single packet without the marker: the AU stays
+    // open until the flush.
+    let open_au = {
+        let mut nalu = vec![0x41];
+        nalu.extend(std::iter::repeat_n(0x5A, 299));
+        nalu
+    };
+    p.send_frame(
+        v_rtp,
+        &rtp_wrap(
+            7 + video_packets.len() as u16,
+            VIDEO_TS0 + AUS as u32 * H264_AU_STEP,
+            VIDEO_SSRC,
+            VIDEO_PT,
+            &open_au,
+        ),
+    );
     let units: Vec<Vec<u8>> = (0..3).map(klv_unit).collect();
     for (j, unit) in units.iter().enumerate() {
         let j = j as u32;
@@ -471,10 +494,11 @@ fn held_klv_reaches_the_app_on_graceful_stop() {
         );
     }
     let s = stats_when(&mount, scaled(Duration::from_secs(5)), |s| {
-        s.rtp_packets_received == video_packets.len() as u64 + 3
+        s.rtp_packets_received == video_packets.len() as u64 + 4
     });
-    assert_eq!(s.rtp_packets_received, video_packets.len() as u64 + 3);
+    assert_eq!(s.rtp_packets_received, video_packets.len() as u64 + 4);
     assert_eq!(s.klv_units_emitted, 0, "KLV must be held without reports");
+    assert_eq!(s.aus_emitted, AUS as u64, "the last AU must still be open");
 
     server.stop().unwrap();
 
@@ -485,6 +509,18 @@ fn held_klv_reaches_the_app_on_graceful_stop() {
     );
     let s = mount.stats();
     assert_eq!(s.klv_units_emitted, 3, "the flush placed every held unit");
+    assert_eq!(
+        s.aus_emitted,
+        AUS as u64 + 1,
+        "the flush emitted the open AU"
+    );
+    let video = video_pts(&events);
+    assert_eq!(
+        video.last().map(|last| last - video[0]),
+        Some(i64::from(AUS as u32 * H264_AU_STEP)),
+        "the flushed AU reaches the application ({} video samples)",
+        video.len()
+    );
     assert_eq!(s.frames_dropped_app, 0);
     let klv = klv_events(&events);
     assert_eq!(

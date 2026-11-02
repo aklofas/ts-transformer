@@ -400,8 +400,8 @@ fn tls_cert_pem_starts_an_rtsps_server() {
 #[test]
 fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
     use crate::fixtures::raw_rtsp::{request, session_id};
-    use crate::fixtures::{wait_for, wait_for_parked_fanout};
-    use std::time::{Duration, Instant};
+    use crate::fixtures::{push_until_fanout_parks, wait_for};
+    use std::time::Duration;
     let certs = SelfSignedCert::generate();
     let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").expect("URL parse");
     b.tls_cert(certs.cert_path.clone(), certs.key_path.clone());
@@ -447,30 +447,75 @@ fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
 
     // From here the peer never reads. Far more bytes than the loopback
     // socket buffers hold park the fanout's write with ciphertext pending;
-    // the write probe below proves it, since the broadcast drops whatever a
+    // the write probe proves it, since the broadcast drops whatever a
     // lagging fanout has not read and pushed bytes alone prove nothing.
-    const STALL_BYTES: u64 = 32 * 1024 * 1024;
     let mut nal = vec![0xBB; 32 * 1024];
     nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
-    let deadline = Instant::now() + scaled(Duration::from_secs(4));
     let mut i = 0i64;
-    while mount.stats().bytes_pushed < STALL_BYTES && Instant::now() < deadline {
-        mount
-            .push_video(
-                &nal,
-                tst_core::mpegts::common::Pts90khz::new(i * 3000),
-                true,
-            )
-            .expect("push must not fail on a stalled peer");
-        i += 1;
-    }
-    assert_eq!(mount.stats().peer_count, 1, "the peer is not subscribed");
     // A TLS frame write finishes only once its ciphertext is flushed, so a
     // parked write means ciphertext pending on the full socket.
-    wait_for_parked_fanout(&server, scaled(Duration::from_secs(10)));
+    push_until_fanout_parks(&server, scaled(Duration::from_secs(6)), || {
+        for _ in 0..8 {
+            mount
+                .push_video(
+                    &nal,
+                    tst_core::mpegts::common::Pts90khz::new(i * 3000),
+                    true,
+                )
+                .expect("push must not fail on a stalled peer");
+            i += 1;
+        }
+    });
+    assert_eq!(mount.stats().peer_count, 1, "the peer is not subscribed");
     server.stop().unwrap();
     wait_for(scaled(Duration::from_secs(6)), || {
         (server.stats().active_sessions == 0).then_some(())
     });
     drop(tls);
+}
+
+/// A hard cancel that fires while a graceful `stop()` waits out its drain
+/// closes a publish mount's application transport at once, as the cancel
+/// handle documents, not when the drain ends. A connection that never
+/// starts its TLS handshake holds the drain open: the handshake waits for
+/// its own deadline, not for the server's cancel.
+#[test]
+fn a_hard_cancel_during_a_graceful_drain_closes_publish_transports_at_once() {
+    use std::time::{Duration, Instant};
+    use tst_core::transport::{RecvTransport, TransportError};
+    let certs = SelfSignedCert::generate();
+    let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").expect("URL parse");
+    b.tls_cert(certs.cert_path.clone(), certs.key_path.clone());
+    let drain = scaled(Duration::from_secs(3));
+    b.graceful_shutdown_drain(drain);
+    b.tls_handshake_timeout(drain * 4);
+    let server = b.build().expect("server build");
+    let handle = server.add_publish_mount("/p").expect("add_publish_mount");
+    server.start().expect("server start");
+    let port = server.local_addr().expect("local_addr").port();
+    let mut app = handle.into_recv_transport().unwrap();
+    app.set_recv_timeout(Some(drain * 2));
+
+    let _silent = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    crate::fixtures::wait_for(scaled(Duration::from_secs(5)), || {
+        (server.stats().active_sessions == 1).then_some(())
+    });
+    let cancel = server.cancel_handle();
+    std::thread::scope(|s| {
+        let stopping = s.spawn(|| server.stop());
+        // stop() is in its drain once the listener has stopped accepting;
+        // a cancel that lands earlier must close the transport just as fast.
+        std::thread::sleep(Duration::from_millis(200));
+        let fired = Instant::now();
+        cancel.cancel();
+        let mut buf = vec![0u8; 2048];
+        let r = app.recv_bytes(&mut buf);
+        let took = fired.elapsed();
+        assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
+        assert!(
+            took < drain / 2,
+            "the transport closed {took:?} after the hard cancel; the drain is {drain:?}"
+        );
+        stopping.join().unwrap().unwrap();
+    });
 }
