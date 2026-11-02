@@ -21,11 +21,19 @@ use alloc::string::String;
 /// happens to the slot is `Owned`'s decision (a mutator panic drops `T`, a
 /// reader panic keeps it).
 ///
+/// The payload is dropped inside a boundary of its own once its message is
+/// read: a payload raised with `panic_any` may have a `Drop` that panics,
+/// and that panic must not escape this helper either.
+///
 /// Without `std` there is no unwinding (the target aborts on panic), so
 /// this is `Ok(f())`.
 #[cfg(feature = "std")]
 pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
-    std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)).map_err(|p| payload_message(&*p))
+    std::panic::catch_unwind(core::panic::AssertUnwindSafe(f)).map_err(|p| {
+        let detail = payload_message(&*p);
+        let _ = std::panic::catch_unwind(core::panic::AssertUnwindSafe(move || drop(p)));
+        detail
+    })
 }
 
 /// Without `std` nothing unwinds (a panic aborts the target), so this runs
@@ -97,5 +105,20 @@ mod tests {
         assert_eq!(payload_message(&*s), "as &str");
         let s: Box<dyn core::any::Any + Send> = Box::new(String::from("as String"));
         assert_eq!(payload_message(&*s), "as String");
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn catch_contains_a_payload_whose_drop_panics() {
+        struct DropPanics;
+        impl Drop for DropPanics {
+            fn drop(&mut self) {
+                panic!("payload drop boom")
+            }
+        }
+        assert_eq!(
+            catch(|| -> u32 { std::panic::panic_any(DropPanics) }),
+            Err(String::from("non-string panic payload"))
+        );
     }
 }
