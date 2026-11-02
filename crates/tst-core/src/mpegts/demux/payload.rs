@@ -670,6 +670,19 @@ pub fn iter_au_cells(
 ) -> impl Iterator<
     Item = Result<(crate::mpegts::au_cell::AuCellHeader, &[u8]), crate::error::KlvDecodeError>,
 > + '_ {
+    iter_au_cells_with_end(payload).map(|cell| cell.map(|(header, inner, _)| (header, inner)))
+}
+
+/// [`iter_au_cells`], with each cell's end offset in `payload` (its 5-byte
+/// header plus `inner`).
+pub(crate) fn iter_au_cells_with_end(
+    payload: &[u8],
+) -> impl Iterator<
+    Item = Result<
+        (crate::mpegts::au_cell::AuCellHeader, &[u8], usize),
+        crate::error::KlvDecodeError,
+    >,
+> + '_ {
     use crate::mpegts::au_cell::read_metadata_au_cell;
     let mut offset = 0usize;
     core::iter::from_fn(move || {
@@ -680,7 +693,7 @@ pub fn iter_au_cells(
         match read_metadata_au_cell(remaining) {
             Ok((header, inner)) => {
                 offset += 5 + inner.len();
-                Some(Ok((header, inner)))
+                Some(Ok((header, inner, offset)))
             }
             Err(e) => {
                 // Stop at the first parse error.
