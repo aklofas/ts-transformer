@@ -671,7 +671,7 @@ baseline (by design)" for the full rationale.
       4 = `Truncated`; `Av1ObuHeader` `obu_type` 3 = `Truncated`,
       4 = `InvalidEmulationPrevention`.
     - `27` — new symbols `tst_udp_sender_flush`, `tst_tcp_sender_flush`,
-      `tst_rist_sender_flush`. Behaviour tightenings under the additive rule
+      `tst_rtp_sender_flush`, `tst_rist_sender_flush`. Behaviour tightenings under the additive rule
       (no existing symbol, layout, enum value or error code changed):
       receive, send, flush and finish after a cancel return `TST_E_CLOSED`
       and never buffered data; `tst_*_open_listener` forces listener mode;

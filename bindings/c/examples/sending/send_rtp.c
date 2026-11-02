@@ -298,17 +298,28 @@ int main(int argc, char **argv) {
     /*
      * ── Step 6: Close the sender ─────────────────────────────────────────
      *
-     * tst_rtp_sender_close flushes any buffered bytes, closes the UDP
-     * socket, and frees all associated memory. Safe to call with a valid
-     * non-NULL pointer at any time, including after a send failure.
+     * Flush first. The sender sends one datagram per seven-packet bundle,
+     * so 100 packets leave as 14 bundles and the last two stay buffered.
+     * tst_rtp_sender_close is cancel-first and abortive: it discards that
+     * buffered tail, so tst_rtp_sender_flush must run before it for a
+     * lossless end of stream. close then closes the UDP socket and frees
+     * all associated memory; it is safe on a valid non-NULL pointer at any
+     * time, including after a send failure.
      *
      * WHY not tst_rtp_sender_cancel first?
-     *   cancel() signals a blocked recv/send to unblock without flushing —
+     *   cancel() signals a blocked send to unblock without flushing —
      *   useful when the sender is blocked in a multi-threaded context.
-     *   Our single-threaded loop has already exited, so close() is
-     *   sufficient: it will flush any pending buffers before tearing down
-     *   the socket.
+     *   Our single-threaded loop has already exited, so flush + close is
+     *   all that is needed.
      */
+    if (exit_code == 0) {
+        int flush_rc = tst_rtp_sender_flush(sender);
+        if (flush_rc != 0) {
+            fprintf(stderr, "[send_rtp] tst_rtp_sender_flush failed (rc=%d): %s\n",
+                    flush_rc, tst_get_last_error_str());
+            exit_code = 1;
+        }
+    }
     tst_rtp_sender_close(sender);
     fprintf(stderr, "[send_rtp] sender closed.\n");
 
