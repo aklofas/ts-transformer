@@ -64,14 +64,16 @@
  *   covers every default-configured sender.  If a sender is configured
  *   with a custom (larger) payload size and sends a message that exceeds
  *   RECV_BUF_LEN, tst_raw_receiver_recv returns TST_E_TOO_LARGE instead
- *   of truncating — the recv loop below handles this correctly.
+ *   of truncating — and that message is gone: the call consumed it, so a
+ *   retry cannot recover it.  The recv loop below counts the loss and
+ *   grows a heap buffer so LATER messages of that size fit.
  *
  * WHY not stack-allocate a much larger buffer "just in case"?
  *   Large stack buffers can overflow the default 8 MB stack on Linux
- *   (ulimit -s).  The recv loop retries after TST_E_TOO_LARGE with a
- *   heap-allocated fallback.  For production code you would read the
- *   sender's configured payload size via the SRT stats API and size the
- *   buffer accordingly.
+ *   (ulimit -s).  The heap buffer the loop allocates after a
+ *   TST_E_TOO_LARGE only serves the messages that follow.  The real fix
+ *   is to size the buffer from the sender's configured payload size
+ *   (its pkt_size) before the first receive, so nothing is ever dropped.
  */
 #define RECV_BUF_LEN 1500
 
