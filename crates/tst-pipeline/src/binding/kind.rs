@@ -1190,7 +1190,7 @@ impl From<HandleState> for BindingError {
                 BindingError::new(BindingErrorKind::PanicCaught, detail)
             }
             HandleState::Cancelled => {
-                BindingError::new(BindingErrorKind::Closed, "handle was cancelled")
+                BindingError::new(BindingErrorKind::Closed, "cancelled from another thread")
             }
         }
     }
