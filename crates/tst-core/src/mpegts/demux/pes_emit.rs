@@ -216,7 +216,8 @@ impl super::demuxer::Demuxer {
                     let damage = damage_next_complete
                         .take_if(|(pid, _)| *pid == pes.pid)
                         .map(|(_, reason)| reason);
-                    self.handle_complete_pes(pes, damage);
+                    let gap = damage.and_then(|_| self.pes.take_gap(pes.pid));
+                    self.handle_complete_pes(pes, damage, gap);
                 }
                 ReassemblyOutcome::Overflow { pid } => {
                     // A cap drop loses bytes without a continuity gap, so the
@@ -300,12 +301,18 @@ impl super::demuxer::Demuxer {
     /// is queued directly before the PES's first `Sample`/`Metadata`, after
     /// any other issue the PES raised, or on its own if the PES yields no
     /// event (a damaged synchronous-KLV PES whose AU cells only buffer gets
-    /// a standalone marker).
-    pub(super) fn handle_complete_pes(&mut self, pes: PesPayload, damage: Option<&'static str>) {
+    /// a standalone marker). `gap` is the payload offset where a continuity
+    /// gap lost bytes, if one did.
+    pub(super) fn handle_complete_pes(
+        &mut self,
+        pes: PesPayload,
+        damage: Option<&'static str>,
+        gap: Option<usize>,
+    ) {
         let pid = pes.pid;
         let damaged = damage.is_some();
         let mut damage = damage;
-        self.emit_complete_pes(pes, &mut damage);
+        self.emit_complete_pes(pes, &mut damage, gap);
         // Judged on its own clock above; a pending reset applies from the
         // next PES on.
         self.settle_after_pes(pid);
@@ -640,7 +647,12 @@ impl super::demuxer::Demuxer {
         reject
     }
 
-    fn emit_complete_pes(&mut self, pes: PesPayload, damage: &mut Option<&'static str>) {
+    fn emit_complete_pes(
+        &mut self,
+        pes: PesPayload,
+        damage: &mut Option<&'static str>,
+        gap: Option<usize>,
+    ) {
         let kind = match self.stream_kind(pes.pid) {
             Some(k) => k,
             None => return,
@@ -816,6 +828,8 @@ impl super::demuxer::Demuxer {
                 // one metadata_AU_wrapper, so each PES starts a new count.
                 self.au_reassembler.begin_wrapper(pes.pid);
                 let cells: Vec<_> = iter_au_cells(&pes.payload).collect();
+                let base = pes.payload.as_ptr().addr();
+                let mut gap = gap;
                 for cell_result in cells {
                     let (header, inner) = match cell_result {
                         Ok(pair) => pair,
@@ -828,6 +842,15 @@ impl super::demuxer::Demuxer {
                             break;
                         }
                     };
+                    // A cell ending past the continuity gap follows the lost
+                    // bytes, which may have held a cell of the AU in
+                    // progress; the wrapper's first cell sets the sequence,
+                    // so the gap would go unseen. Cells wholly before the
+                    // gap arrived intact and still complete the AU.
+                    if gap.is_some_and(|g| inner.as_ptr().addr() - base + inner.len() > g) {
+                        gap = None;
+                        self.discard_au_in_progress(pes.pid);
+                    }
 
                     // Replay loop: process_cell may report ConcurrentFirst
                     // (a new First/Complete arrived while a buffer was
@@ -3220,6 +3243,51 @@ mod tests {
                 assert_eq!(metadata_count(&ev), 0, "{mode:?}: {ev:?}");
                 assert_eq!(sequence_gaps(&ev), vec![3], "{mode:?}: {ev:?}");
             }
+        }
+
+        /// PES A's header packet arrives, the packet with its Middle 11 is
+        /// lost, and the packet with its Last 12 arrives. The loss precedes
+        /// A's first surviving cell, so that Last must not complete the
+        /// First 10 held from the PES before.
+        #[test]
+        fn a_loss_before_the_first_surviving_cell_discards_the_au_in_progress() {
+            let mut body = Vec::new();
+            for (cfi, seq, inner) in [(Middle, 11u8, b"BBB"), (Last, 12, b"CCC")] {
+                write_metadata_au_cell(
+                    &mut body,
+                    AuCellHeader {
+                        metadata_service_id: 0,
+                        sequence_number: seq,
+                        cell_fragment_indication: cfi,
+                        decoder_config_flag: false,
+                        random_access_indicator: true,
+                    },
+                    inner,
+                )
+                .unwrap();
+            }
+            let a = pes_bytes(0xFC, Some(90_000), None, true, &body, true);
+            // A 14-byte PES header, then two 8-byte cells.
+            assert_eq!(a.len(), 14 + 16);
+            let packet = |cc: u8, pusi: bool, payload: &[u8]| {
+                ts_packet(&PktSpec {
+                    pid: 0x101,
+                    cc,
+                    pusi,
+                    payload,
+                    ..Default::default()
+                })
+            };
+            let mut pkts = cells_pes(0, &[(First, 10, b"AAA")]);
+            pkts.push(packet(1, true, &a[..14]));
+            // CC 2, carrying Middle 11, lost.
+            pkts.push(packet(3, false, &a[22..]));
+            for mode in [StrictMode::Off, StrictMode::TimingOnly] {
+                let ev = run(mode, &pkts);
+                assert_eq!(metadata_count(&ev), 0, "{mode:?}: {ev:?}");
+            }
+            let ev = run(StrictMode::Off, &pkts);
+            assert_eq!(sequence_gaps(&ev), vec![3], "{ev:?}");
         }
 
         /// A continuity gap inside PES A, after its head: the head carries
