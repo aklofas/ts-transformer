@@ -311,3 +311,30 @@ fn with_config_hls_valid_config_still_publishes() {
     assert!(entries.iter().any(|n| n.ends_with(".ts")), "{entries:?}");
     assert!(entries.iter().any(|n| n.ends_with(".m3u8")), "{entries:?}");
 }
+
+/// `(NULL, 0)` is a documented no-op: it opens no segment. After a finish
+/// the finished code still wins over the no-op.
+#[test]
+fn empty_push_opens_no_segment() {
+    let dir = tempfile::tempdir().unwrap();
+    let (publisher, _addr) = hls_publisher_on_loopback(dir.path());
+    assert_eq!(
+        unsafe { tst_publisher_push_ts(publisher, std::ptr::null(), 0) },
+        0,
+        "empty push: {}",
+        unsafe { tst_get_last_error() }
+    );
+    let segments: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "ts"))
+        .collect();
+    assert!(segments.is_empty(), "segments opened: {segments:?}");
+
+    assert_eq!(unsafe { tst_publisher_finish(publisher) }, 0);
+    assert_eq!(
+        unsafe { tst_publisher_push_ts(publisher, std::ptr::null(), 0) },
+        TstError::HlsFinished as i32
+    );
+    unsafe { tst_publisher_free(publisher) };
+}
