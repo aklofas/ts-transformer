@@ -174,6 +174,15 @@ impl super::demuxer::Demuxer {
         if pkt.payload_unit_start && !self.pes.has_pid(pkt.pid) {
             self.settle_after_pes(pkt.pid);
         }
+        // A PES in flight shorter than a PES header ends here with no
+        // outcome and no cell: an AU in progress cannot be known to continue
+        // across it.
+        if pkt.payload_unit_start
+            && self.pes.has_pid(pkt.pid)
+            && !self.pes.in_flight_holds_header(pkt.pid)
+        {
+            self.discard_au_in_progress(pkt.pid);
+        }
         let (outcomes, old_count) = self.pes.push_split(
             pkt.pid,
             pkt.payload,
@@ -3190,6 +3199,27 @@ mod tests {
             let ev = run(StrictMode::Off, &pkts);
             assert_eq!(metadata_count(&ev), 0, "{ev:?}");
             assert_eq!(sequence_gaps(&ev), vec![3], "{ev:?}");
+        }
+
+        /// A PES shorter than a PES header, with no continuity gap, sits
+        /// between First 10 and Last 12: it carried no cell, so the AU
+        /// cannot be known to continue across it and is discarded.
+        #[test]
+        fn a_pes_shorter_than_a_header_discards_the_au_in_progress() {
+            let mut pkts = cells_pes(0, &[(First, 10, b"AAA")]);
+            pkts.push(ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 1,
+                pusi: true,
+                payload: &[0x00, 0x00, 0x01, 0xFC],
+                ..Default::default()
+            }));
+            pkts.extend(cells_pes(2, &[(Last, 12, b"CCC")]));
+            for mode in [StrictMode::Off, StrictMode::TimingOnly] {
+                let ev = run(mode, &pkts);
+                assert_eq!(metadata_count(&ev), 0, "{mode:?}: {ev:?}");
+                assert_eq!(sequence_gaps(&ev), vec![3], "{mode:?}: {ev:?}");
+            }
         }
 
         /// A continuity gap inside PES A, after its head: the head carries
