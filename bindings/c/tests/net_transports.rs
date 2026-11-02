@@ -18,6 +18,8 @@ mod rist_open_smoke;
 mod rtp_cancel_first;
 #[path = "transports/rtp_open_smoke.rs"]
 mod rtp_open_smoke;
+#[path = "transports/rtp_sender_flush.rs"]
+mod rtp_sender_flush;
 #[path = "transports/rtsp_client_connect.rs"]
 mod rtsp_client_connect;
 #[path = "transports/rtsp_publish_smoke.rs"]

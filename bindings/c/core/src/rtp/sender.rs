@@ -73,6 +73,10 @@ pub unsafe extern "C" fn tst_rtp_sender_open(url: *const c_char) -> *mut TstRtpS
 /// invalid; passing the same non-null pointer twice is undefined
 /// behavior (use-after-free on the consumed `Box`).
 ///
+/// Close is cancel-first and abortive: up to six buffered packets that
+/// no `tst_rtp_sender_flush` has sent are discarded. Call `_flush` first for
+/// a lossless end of stream.
+///
 /// # Safety
 ///
 /// `p` must be NULL or a valid non-freed `*mut TstRtpSender` returned
@@ -122,6 +126,28 @@ pub unsafe extern "C" fn tst_rtp_sender_send_ts(
         return TstError::InvalidConfig as i32;
     };
     unsafe { crate::transport_impls::sender_send_ts(&handle.inner, bytes, len) }
+}
+
+/// Send any buffered partial bundle now.
+///
+/// Call before `tst_rtp_sender_close`: `_close` is cancel-first and
+/// discards up to six buffered packets.
+///
+/// Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
+/// NULL pointer, or the transport's negative `TST_E_*` code.
+///
+/// # Safety
+///
+/// `p` must be a valid non-freed `*mut TstRtpSender`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtp_sender_flush(p: *mut TstRtpSender) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null rtp sender pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        crate::transport_impls::sender_flush(&handle.inner)
+    })
 }
 
 /// Cancel a `tst_rtp_sender_t`. Signals the underlying RTP socket to
@@ -233,6 +259,9 @@ mod tests {
         };
         null_send_ts_returns_invalid_config => invalid_config {
             tst_rtp_sender_send_ts(std::ptr::null_mut(), std::ptr::null(), 0)
+        };
+        null_flush_returns_invalid_config => invalid_config {
+            tst_rtp_sender_flush(std::ptr::null_mut())
         };
         null_get_stats_returns_invalid_config => invalid_config {
             let mut stats = TstSenderStats::default();

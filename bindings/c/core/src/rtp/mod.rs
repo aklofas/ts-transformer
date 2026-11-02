@@ -49,9 +49,9 @@ pub use receiver::{
     tst_rtp_receiver_reset_stats, tst_rtp_recv_open,
 };
 pub use sender::{
-    TstRtpSender, tst_rtp_sender_cancel, tst_rtp_sender_close, tst_rtp_sender_get_socket_stats,
-    tst_rtp_sender_get_stats, tst_rtp_sender_open, tst_rtp_sender_reset_stats,
-    tst_rtp_sender_send_ts,
+    TstRtpSender, tst_rtp_sender_cancel, tst_rtp_sender_close, tst_rtp_sender_flush,
+    tst_rtp_sender_get_socket_stats, tst_rtp_sender_get_stats, tst_rtp_sender_open,
+    tst_rtp_sender_reset_stats, tst_rtp_sender_send_ts,
 };
 
 /// A parsed `rtp://` URL → an RTP send socket, recording `TST_E_RTP_TRANSPORT`.

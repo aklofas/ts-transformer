@@ -329,6 +329,7 @@ tst_rtp_receiver_reset_stats
 tst_rtp_recv_open
 tst_rtp_sender_cancel
 tst_rtp_sender_close
+tst_rtp_sender_flush
 tst_rtp_sender_get_socket_stats
 tst_rtp_sender_get_stats
 tst_rtp_sender_open

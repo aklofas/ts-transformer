@@ -8855,12 +8855,33 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * invalid; passing the same non-null pointer twice is undefined
  * behavior (use-after-free on the consumed `Box`).
  *
+ * Close is cancel-first and abortive: up to six buffered packets that
+ * no `tst_rtp_sender_flush` has sent are discarded. Call `_flush` first for
+ * a lossless end of stream.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid non-freed `*mut TstRtpSender` returned
  * by `tst_rtp_sender_open`.
  */
  void tst_rtp_sender_close(struct TstRtpSender *p);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Send any buffered partial bundle now.
+ *
+ * Call before `tst_rtp_sender_close`: `_close` is cancel-first and
+ * discards up to six buffered packets.
+ *
+ * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
+ * NULL pointer, or the transport's negative `TST_E_*` code.
+ *
+ * # Safety
+ *
+ * `p` must be a valid non-freed `*mut TstRtpSender`.
+ */
+ int tst_rtp_sender_flush(struct TstRtpSender *p);
 #endif
 
 #if defined(TST_HAS_RTP)
