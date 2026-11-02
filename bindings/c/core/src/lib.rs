@@ -173,8 +173,9 @@ pub use rtsp::client::builder::tst_rtsp_client_builder_keepalive;
 pub use rtsp::client::builder::tst_rtsp_client_builder_transport_pref;
 #[cfg(feature = "rtp")]
 pub use rtsp::client::session::{
-    TstRtspSession, tst_rtsp_client_builder_connect, tst_rtsp_session_into_demux_receiver,
-    tst_rtsp_session_play, tst_rtsp_session_teardown_and_free,
+    TstRtspSession, tst_rtsp_client_builder_connect, tst_rtsp_session_cancel,
+    tst_rtsp_session_into_demux_receiver, tst_rtsp_session_play,
+    tst_rtsp_session_teardown_and_free,
 };
 #[cfg(feature = "rtp")]
 pub use rtsp::server::builder::tst_rtsp_server_builder_new;

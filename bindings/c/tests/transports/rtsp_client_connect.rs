@@ -16,7 +16,7 @@ use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
     tst_mux_config_free, tst_mux_config_new,
 };
-use tstrans::error::TstError;
+use tstrans::error::{TstError, tst_get_last_error};
 use tstrans::event::{TstEvent, TstEventKind};
 use tstrans::handle::TstRtspClientBuilder;
 use tstrans::rtp::{
@@ -32,7 +32,7 @@ use tstrans::{
     tst_rtsp_mount_handle_free, tst_rtsp_mount_push_video, tst_rtsp_server_add_unicast_mount,
     tst_rtsp_server_builder_new, tst_rtsp_server_builder_start, tst_rtsp_server_free,
     tst_rtsp_server_get_stats, tst_rtsp_server_local_addr, tst_rtsp_server_stop,
-    tst_rtsp_session_into_demux_receiver, tst_rtsp_session_play,
+    tst_rtsp_session_cancel, tst_rtsp_session_into_demux_receiver, tst_rtsp_session_play,
     tst_rtsp_session_teardown_and_free,
 };
 
@@ -711,6 +711,41 @@ fn bridged_receiver_cancelled_before_receive_reads_cancelled() {
     );
 
     unsafe { tst_rtp_demux_receiver_close(rx) };
+    unsafe {
+        tst_rtsp_mount_handle_free(mount);
+        tst_rtsp_server_stop(server, 0);
+        tst_rtsp_server_free(server);
+    }
+}
+
+/// A cancelled session has no keepalive left, so bridging it would hand back
+/// a receiver the server reaps after its session timeout. The bridge refuses
+/// it with `TST_E_CLOSED` and leaves the allocation with the caller.
+#[test]
+fn bridge_after_session_cancel_returns_null_and_closed_and_keeps_the_session() {
+    let (server, mount, port) = c_server();
+    let session = unsafe {
+        tst_rtsp_client_builder_connect(builder(&format!("rtsp://127.0.0.1:{port}/live")))
+    };
+    assert!(!session.is_null(), "{}", last_error_msg());
+    assert_eq!(unsafe { tst_rtsp_session_cancel(session) }, 0);
+    let rx = unsafe { tst_rtsp_session_into_demux_receiver(session, std::ptr::null()) };
+    if !rx.is_null() {
+        unsafe { tst_rtp_demux_receiver_close(rx) };
+        panic!("the bridge returned a receiver for a cancelled session");
+    }
+    assert_eq!(
+        unsafe { tst_get_last_error() },
+        TstError::Closed as i32,
+        "{}",
+        last_error_msg()
+    );
+    let rc = unsafe { tst_rtsp_session_teardown_and_free(session) };
+    assert!(
+        rc == 0 || rc == TstError::Closed as i32,
+        "teardown returned {rc}: {}",
+        last_error_msg()
+    );
     unsafe {
         tst_rtsp_mount_handle_free(mount);
         tst_rtsp_server_stop(server, 0);

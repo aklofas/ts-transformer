@@ -205,6 +205,10 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_next_event(
 /// After cancel, `_next_event` returns `TST_E_CLOSED`. The handle must
 /// still be `_close`'d to free.
 ///
+/// For a receiver returned by `tst_rtsp_session_into_demux_receiver` this
+/// is the cancel that stops the receive side: the session handle was spent
+/// by the bridge, so `tst_rtsp_session_cancel` no longer applies.
+///
 /// # Safety
 ///
 /// `p` must be NULL or a valid non-freed `*mut TstRtpDemuxReceiver`.

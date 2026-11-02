@@ -7934,6 +7934,10 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * After cancel, `_next_event` returns `TST_E_CLOSED`. The handle must
  * still be `_close`'d to free.
  *
+ * For a receiver returned by `tst_rtsp_session_into_demux_receiver` this
+ * is the cancel that stops the receive side: the session handle was spent
+ * by the bridge, so `tst_rtsp_session_cancel` no longer applies.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid non-freed `*mut TstRtpDemuxReceiver`.
@@ -10443,6 +10447,11 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  * a bridged receiver use `tst_rtp_demux_receiver_cancel`. After the bridge
  * returns NULL the session is still valid and this call is allowed.
  *
+ * A cancel is terminal for the session: a later
+ * [`tst_rtsp_session_into_demux_receiver`] refuses it with `TST_E_CLOSED`,
+ * and the session is then only good for
+ * [`tst_rtsp_session_teardown_and_free`].
+ *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if `session` is NULL.
  *
  * # Safety
@@ -10480,10 +10489,20 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  * `tst_rtp_demux_receiver_cancel` stops only the data plane; the control
  * connection stays up until close.
  *
+ * A session already cancelled with [`tst_rtsp_session_cancel`] is refused:
+ * the call returns NULL with `TST_E_CLOSED`, because its keepalive has
+ * exited and the server would reap the session after its timeout. The
+ * bridge hands the control connection to the receiver; after a non-NULL
+ * return the session handle is spent and the receiver's own cancel,
+ * `tst_rtp_demux_receiver_cancel`, is the one that stops the receive side.
+ *
  * Ownership: a non-NULL return consumes `session` and frees it, so the
- * caller must not use or free it again. A NULL return leaves `session`
- * untouched: it is still the caller's, to free with
- * [`tst_rtsp_session_teardown_and_free`].
+ * caller must not use or free it again. A NULL return never frees
+ * `session`: the allocation is still the caller's to release with
+ * [`tst_rtsp_session_teardown_and_free`]. Its state may already be closed
+ * (after a cancel, or after a panic between taking the control pair and
+ * building the receiver), in which case teardown reports `TST_E_CLOSED`
+ * and only frees.
  *
  * The returned `tst_rtp_demux_receiver_t` must eventually be freed with
  * `tst_rtp_demux_receiver_close`.  Returns NULL on failure.

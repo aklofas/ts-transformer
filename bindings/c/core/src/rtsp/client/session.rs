@@ -436,6 +436,11 @@ fn poisoned() -> libc::c_int {
 /// a bridged receiver use `tst_rtp_demux_receiver_cancel`. After the bridge
 /// returns NULL the session is still valid and this call is allowed.
 ///
+/// A cancel is terminal for the session: a later
+/// [`tst_rtsp_session_into_demux_receiver`] refuses it with `TST_E_CLOSED`,
+/// and the session is then only good for
+/// [`tst_rtsp_session_teardown_and_free`].
+///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if `session` is NULL.
 ///
 /// # Safety
@@ -485,10 +490,20 @@ pub unsafe extern "C" fn tst_rtsp_session_cancel(session: *mut TstRtspSession) -
 /// `tst_rtp_demux_receiver_cancel` stops only the data plane; the control
 /// connection stays up until close.
 ///
+/// A session already cancelled with [`tst_rtsp_session_cancel`] is refused:
+/// the call returns NULL with `TST_E_CLOSED`, because its keepalive has
+/// exited and the server would reap the session after its timeout. The
+/// bridge hands the control connection to the receiver; after a non-NULL
+/// return the session handle is spent and the receiver's own cancel,
+/// `tst_rtp_demux_receiver_cancel`, is the one that stops the receive side.
+///
 /// Ownership: a non-NULL return consumes `session` and frees it, so the
-/// caller must not use or free it again. A NULL return leaves `session`
-/// untouched: it is still the caller's, to free with
-/// [`tst_rtsp_session_teardown_and_free`].
+/// caller must not use or free it again. A NULL return never frees
+/// `session`: the allocation is still the caller's to release with
+/// [`tst_rtsp_session_teardown_and_free`]. Its state may already be closed
+/// (after a cancel, or after a panic between taking the control pair and
+/// building the receiver), in which case teardown reports `TST_E_CLOSED`
+/// and only frees.
 ///
 /// The returned `tst_rtp_demux_receiver_t` must eventually be freed with
 /// `tst_rtp_demux_receiver_close`.  Returns NULL on failure.
@@ -509,6 +524,16 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
             set_last_error(TstError::InvalidConfig, "null rtsp session pointer");
             return std::ptr::null_mut();
         };
+
+        // A cancel already stopped the client's keepalive: a receiver built
+        // from it would be reaped by the server after its session timeout.
+        if handle.rtsp_cancel.is_cancelled() {
+            set_last_error(
+                TstError::Closed,
+                "rtsp session was cancelled; teardown_and_free it",
+            );
+            return std::ptr::null_mut();
+        }
 
         // Step 1: move the (RtspClient, RtspSession) pair out of the Mutex.
         // Every early return below leaves the allocation alone: a NULL
