@@ -23,9 +23,11 @@ use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tstrans::error::TstError;
 use tstrans::event::{TstEvent, TstEventKind, TstStreamKindTag};
 use tstrans::rtp::{
-    tst_rtp_demux_receiver_cancel, tst_rtp_demux_receiver_close, tst_rtp_demux_receiver_next_event,
+    tst_rtp_demux_receiver_cancel, tst_rtp_demux_receiver_close, tst_rtp_demux_receiver_end_reason,
+    tst_rtp_demux_receiver_next_event,
 };
 use tstrans::stats::TstServerStats;
+use tstrans::stream_end_reason::TstStreamEndReason;
 use tstrans::{
     TstRtspClockAlignment, TstRtspPublishMountStats, TstRtspPublishShape, TstRtspPublisherInfo,
     test_last_error_code, tst_rtsp_publish_mount_cancel, tst_rtsp_publish_mount_free,
@@ -759,4 +761,48 @@ fn rtsp_publish_server_local_addr() {
     );
     unsafe { tst_rtsp_publish_mount_free(m) };
     unsafe { tst_rtsp_server_free(server) };
+}
+
+/// A cancel before the first receive ends a mount's receiver with
+/// CANCELLED: the receive is refused before it reaches the transport, so
+/// the handle itself records the reason.
+#[test]
+fn rtsp_publish_mount_receiver_cancelled_before_receive_reads_cancelled() {
+    let (server, _port) = start_server(false);
+    let path = CString::new("/pub").unwrap();
+    let m = unsafe { tst_rtsp_server_add_publish_mount(server, path.as_ptr()) };
+    assert!(
+        !m.is_null(),
+        "add_publish_mount: {}",
+        test_last_error_code()
+    );
+    let rx = unsafe { tst_rtsp_publish_mount_into_demux_receiver(m, std::ptr::null()) };
+    assert!(
+        !rx.is_null(),
+        "into_demux_receiver: {}",
+        test_last_error_code()
+    );
+
+    assert_eq!(unsafe { tst_rtp_demux_receiver_cancel(rx) }, 0);
+    let mut ev = TstEvent::default();
+    assert_eq!(
+        unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) },
+        TstError::Closed as i32
+    );
+    let mut reason = TstStreamEndReason::None;
+    assert_eq!(
+        unsafe { tst_rtp_demux_receiver_end_reason(rx, &mut reason) },
+        0
+    );
+    assert!(
+        matches!(reason, TstStreamEndReason::Cancelled),
+        "end reason after cancel-then-receive"
+    );
+
+    unsafe { tst_rtp_demux_receiver_close(rx) };
+    unsafe { tst_rtsp_publish_mount_free(m) };
+    unsafe {
+        tst_rtsp_server_stop(server, 0);
+        tst_rtsp_server_free(server);
+    }
 }

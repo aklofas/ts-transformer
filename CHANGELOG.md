@@ -71,7 +71,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-c (BREAKING)
 
-- After `_cancel`, every receive (`_recv_ts`, `_recv_packet`, `_recv_event`, `_next_event`), send (`_send_ts`, `_send_*`), `_flush` and `_finish` on a shell returns `TST_E_CLOSED`, including when TS packets or a partial bundle were still buffered; a `Broken` seen with the cancel latch set is `TST_E_CLOSED` too. Previously buffered packets were delivered and sub-bundle sends, empty flushes and empty finishes returned 0 after a cancel, which contradicted the documented terminal-cancel contract. Only the caller's `_cancel` counts: a `_finish` that closes the transport itself is not a cancel, so a second `_finish` stays 0.
+- After `_cancel`, every receive (`_recv_ts`, `_recv_packet`, `_recv_event`, `_next_event`), send (`_send_ts`, `_send_*`), `_flush` and `_finish` on a shell returns `TST_E_CLOSED`, including when TS packets or a partial bundle were still buffered; a `Broken` seen with the cancel latch set is `TST_E_CLOSED` too. Previously buffered packets were delivered and sub-bundle sends, empty flushes and empty finishes returned 0 after a cancel, which contradicted the documented terminal-cancel contract. Only the caller's `_cancel` counts: a `_finish` that closes the transport itself is not a cancel, so a second `_finish` stays 0. A receive refused this way records `CANCELLED` for `_end_reason`, including on a demux receiver bridged from an RTSP session or a publish mount.
 
 ### Changed — tst-py, tst-jni (BREAKING)
 
