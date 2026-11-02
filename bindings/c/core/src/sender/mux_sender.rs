@@ -715,16 +715,15 @@ pub(crate) fn require_caller_mode(url: &tst_srt::SrtUrl) -> Result<(), ()> {
     Ok(())
 }
 
-/// Like [`parse_c_srt_url`] but more forgiving for listener-mode entry points:
-/// if the URL omits both a host and `?mode=listener` (e.g. `srt://:7000`),
-/// inject `?mode=listener` and retry. This lets `_open_listener` entry points
-/// accept the clean `srt://:port` form directly — the `_listener` suffix in
-/// the function name is the authoritative listener-mode signal, so requiring
-/// the URL to also carry `?mode=listener` is redundant.
+/// Parse the URL of a `_open_listener` entry point. The `_listener` suffix is
+/// authoritative: the returned [`tst_srt::SrtUrl`] always has
+/// `mode == Mode::Listener`, and a host in the URL names the local bind
+/// address (`0.0.0.0`, an interface address), never a dial target. An empty
+/// host (`srt://:7000`) binds the wildcard address.
 ///
-/// Any error other than [`tst_srt::SrtUrlError::MissingHost`] is returned
-/// unchanged (the first-pass error is already recorded in the thread-local
-/// last-error by `parse_c_srt_url`).
+/// An explicit `?mode=` other than `listener` is refused with
+/// `TST_E_INVALID_CONFIG`, as is a URL that is not valid UTF-8; the bytes are
+/// decoded once and never reparsed lossily.
 ///
 /// Called by `tst_*_open_listener` entry points. Plain `tst_*_open` entry
 /// points keep the strict parse via `parse_c_srt_url` (an empty host is
@@ -732,36 +731,49 @@ pub(crate) fn require_caller_mode(url: &tst_srt::SrtUrl) -> Result<(), ()> {
 pub(crate) unsafe fn parse_c_srt_url_listener(
     srt_url: *const libc::c_char,
 ) -> Result<tst_srt::SrtUrl, ()> {
-    // First-pass: the fast common path (URL already has a host or already
-    // carries ?mode=listener).
-    let first = unsafe { parse_c_srt_url(srt_url) };
-    if first.is_ok() {
-        return first;
-    }
-    // First pass failed and already recorded the error. To branch on
-    // MissingHost specifically, re-parse here directly. The cost is negligible
-    // (one extra string parse on an error path).
     if srt_url.is_null() {
-        // Null pointer: already handled by parse_c_srt_url above.
+        set_last_error(TstError::InvalidConfig, "null srt_url");
         return Err(());
     }
-    let s = unsafe { std::ffi::CStr::from_ptr(srt_url) }
-        .to_string_lossy()
-        .into_owned();
-    match tst_srt::SrtUrl::parse(&s) {
-        Err(tst_srt::SrtUrlError::MissingHost) => {}
-        _ => {
-            // Some other error (or unexpectedly Ok) — the first pass already
-            // recorded it; return the original Err(()).
+    let s = match unsafe { std::ffi::CStr::from_ptr(srt_url) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_last_error(TstError::InvalidConfig, "srt_url is not valid utf-8");
             return Err(());
         }
+    };
+    let explicit_other_mode = s
+        .split_once('?')
+        .map(|(_, q)| {
+            q.split('&').any(|kv| {
+                kv.split_once('=')
+                    .is_some_and(|(k, v)| k == "mode" && v != "listener")
+            })
+        })
+        .unwrap_or(false);
+    if explicit_other_mode {
+        set_last_error(
+            TstError::InvalidConfig,
+            "`_open_listener` entry points accept only `mode=listener`; \
+             drop the `mode=` key or use the plain `_open`",
+        );
+        return Err(());
     }
-    // MissingHost on an empty-host URL — inject mode=listener and retry.
-    let sep = if s.contains('?') { '&' } else { '?' };
-    let augmented = format!("{s}{sep}mode=listener");
-    tst_srt::SrtUrl::parse(&augmented).map_err(|e| {
-        set_last_error(TstError::InvalidConfig, &format!("invalid srt url: {e}"));
-    })
+    let parsed = match tst_srt::SrtUrl::parse(s) {
+        Err(tst_srt::SrtUrlError::MissingHost) => {
+            let sep = if s.contains('?') { '&' } else { '?' };
+            tst_srt::SrtUrl::parse(&format!("{s}{sep}mode=listener"))
+        }
+        other => other,
+    };
+    parsed
+        .map(|mut url| {
+            url.mode = tst_srt::url::Mode::Listener;
+            url
+        })
+        .map_err(|e| {
+            set_last_error(TstError::InvalidConfig, &format!("invalid srt url: {e}"));
+        })
 }
 
 // ------------------------------------------------------------------
@@ -1467,5 +1479,53 @@ mod tests {
             );
             tst_mux_config_free(cfg);
         }
+    }
+
+    fn listener_parse(bytes: &[u8]) -> Result<tst_srt::SrtUrl, ()> {
+        let url = CString::new(bytes).unwrap();
+        unsafe { parse_c_srt_url_listener(url.as_ptr()) }
+    }
+
+    fn last_error_text() -> String {
+        unsafe { std::ffi::CStr::from_ptr(crate::error::tst_get_last_error_str()) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn listener_parse_forces_listener_mode_on_a_host_bearing_url() {
+        let url = listener_parse(b"srt://0.0.0.0:7000").expect("host-bearing url parses");
+        assert_eq!(url.mode, tst_srt::url::Mode::Listener);
+    }
+
+    #[test]
+    fn listener_parse_accepts_the_empty_host_form() {
+        let url = listener_parse(b"srt://:7000?passphrase=0123456789abcdef")
+            .expect("empty-host url parses");
+        assert_eq!(url.mode, tst_srt::url::Mode::Listener);
+        assert!(url.config.passphrase.is_some(), "passphrase kept");
+    }
+
+    #[test]
+    fn listener_parse_refuses_an_explicit_caller_or_rendezvous_mode() {
+        for m in ["caller", "rendezvous"] {
+            let url = format!("srt://127.0.0.1:7000?mode={m}");
+            assert!(listener_parse(url.as_bytes()).is_err(), "{m}");
+            assert_eq!(
+                unsafe { crate::error::tst_get_last_error() },
+                TstError::InvalidConfig as i32
+            );
+            assert!(last_error_text().contains("mode="), "{}", last_error_text());
+        }
+    }
+
+    #[test]
+    fn listener_parse_refuses_invalid_utf8_without_a_lossy_retry() {
+        assert!(listener_parse(b"srt://:7000?passphrase=\xff\xfe0123456789abcdef").is_err());
+        assert!(
+            last_error_text().contains("not valid utf-8"),
+            "{}",
+            last_error_text()
+        );
     }
 }

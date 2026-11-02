@@ -168,3 +168,56 @@ fn loopback_ts_sender_to_ts_receiver_delivers_aligned_packets_and_eos() {
         );
     }
 }
+
+#[test]
+fn open_listener_with_an_explicit_host_binds_instead_of_dialing() {
+    let port: u16 = 28_000 + ((std::process::id() as u16 + 500) % 1000);
+    let (ready_tx, ready_rx) = mpsc::channel::<()>();
+
+    let receiver_thread = thread::spawn(move || {
+        let url = CString::new(format!("srt://127.0.0.1:{port}")).unwrap();
+        let rx = unsafe { tst_receiver_open_listener(url.as_ptr()) };
+        assert!(
+            !rx.is_null(),
+            "open_listener with a host must bind: {}",
+            last_error_msg()
+        );
+        ready_tx.send(()).expect("ready channel dropped");
+        let mut buf = [0u8; 188];
+        let rc = unsafe { tst_receiver_recv_packet(rx, buf.as_mut_ptr()) };
+        assert_eq!(rc, 0, "recv_packet: {}", last_error_msg());
+        assert_eq!(buf[0], 0x47);
+        unsafe { tst_receiver_close(rx) };
+    });
+
+    let sender_thread = thread::spawn(move || {
+        let url = CString::new(format!("srt://127.0.0.1:{port}")).unwrap();
+        let cfg = unsafe { tst_sender_config_new() };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let tx = loop {
+            let handle = unsafe { tst_sender_open(url.as_ptr(), cfg) };
+            if !handle.is_null() {
+                break handle;
+            }
+            if std::time::Instant::now() > deadline {
+                unsafe { tst_sender_config_free(cfg) };
+                panic!("tst_sender_open timed out after 5s: {}", last_error_msg());
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+        ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("receiver did not signal ready within 5s");
+        let stream = synthetic_ts(7);
+        let rc = unsafe { tst_sender_send_ts(tx, stream.as_ptr(), stream.len()) };
+        assert_eq!(rc, 0, "send_ts: {}", last_error_msg());
+        thread::sleep(Duration::from_millis(1000));
+        unsafe {
+            tst_sender_close(tx);
+            tst_sender_config_free(cfg);
+        }
+    });
+
+    receiver_thread.join().expect("receiver thread panicked");
+    sender_thread.join().expect("sender thread panicked");
+}
