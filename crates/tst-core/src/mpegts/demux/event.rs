@@ -354,10 +354,11 @@ pub enum MultiCellAuReason {
     /// `First`. Either the stream started mid-AU (e.g. seek into a recording)
     /// or a `First` cell was lost upstream.
     Orphan,
-    /// A cell's `sequence_number` did not follow the previous cell on its
-    /// PID mod 256 while an AU was being buffered there. H.222.0
-    /// §2.12.4.2 numbers every cell on the PID independent of
-    /// `metadata_service_id`, so the lost cell may belong to any service:
+    /// A cell's `sequence_number` did not follow the previous cell of the
+    /// same PES mod 256 while an AU was being buffered on its PID. H.222.0
+    /// Table 2-156 numbers every cell of one `metadata_AU_wrapper` (one PES)
+    /// independent of `metadata_service_id`, so the lost cell may belong to
+    /// any service; the first cell of a PES is never a gap:
     /// every in-flight AU on the PID is dropped and `dropped_bytes` sums
     /// them (plus the arriving cell when it is a continuation).
     SequenceGap,

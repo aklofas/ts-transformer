@@ -2869,9 +2869,10 @@ mod tests {
     // in-flight AU, and the demuxer replays it: the Complete still emits.
     #[test]
     fn a_gap_on_a_complete_cell_reports_the_lost_au_and_still_emits_the_cell() {
+        use crate::mpegts::au_cell::write_metadata_au_cell;
         use crate::mpegts::au_cell::{AuCellHeader, CellFragmentIndication};
         use crate::mpegts::demux::event::{MetadataKind, MultiCellAuReason};
-        use crate::mpegts::demux::test_support::{au_cell_pes_packets, issues};
+        use crate::mpegts::demux::test_support::{issues, pes_bytes, pes_to_packets};
         let cell = |service, seq, cfi| AuCellHeader {
             metadata_service_id: service,
             sequence_number: seq,
@@ -2892,19 +2893,23 @@ mod tests {
         .unwrap();
         drain_all_events(&mut d);
 
-        feed_packets(
-            &mut d,
-            &au_cell_pes_packets(0x0101, 0, cell(0, 0, CellFragmentIndication::First), b"ab"),
+        // One PES (H.222.0 Table 2-156 numbers the cells of one wrapper):
+        // cell 1 is lost; cell 2 is another service's Complete.
+        let mut cells = Vec::new();
+        write_metadata_au_cell(&mut cells, cell(0, 0, CellFragmentIndication::First), b"ab")
+            .unwrap();
+        write_metadata_au_cell(
+            &mut cells,
+            cell(1, 2, CellFragmentIndication::Complete),
+            b"c",
         )
         .unwrap();
-        // Cell 1 is lost; cell 2 is another service's Complete.
         feed_packets(
             &mut d,
-            &au_cell_pes_packets(
+            &pes_to_packets(
                 0x0101,
-                1,
-                cell(1, 2, CellFragmentIndication::Complete),
-                b"c",
+                0,
+                &pes_bytes(0xFC, Some(90_000), None, true, &cells, true),
             ),
         )
         .unwrap();

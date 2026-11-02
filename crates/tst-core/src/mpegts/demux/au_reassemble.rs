@@ -130,6 +130,13 @@ impl AuCellReassembler {
         self.total_buffered = self.total_buffered.saturating_sub(dropped_len);
     }
 
+    /// Start a new `metadata_AU_wrapper` (one PES) on `pid`: forget the
+    /// last `sequence_number`, so the wrapper's first cell sets the
+    /// baseline. In-flight fragments of every service on the PID are kept.
+    pub(crate) fn begin_wrapper(&mut self, pid: u16) {
+        self.last_seq.remove(&pid);
+    }
+
     /// Feed one AU cell into the reassembler. Returns the outcome.
     ///
     /// For `ConcurrentFirst` failures, and for `SequenceGap` failures on a
@@ -139,10 +146,22 @@ impl AuCellReassembler {
     /// of the state table and either buffers (if the new cell is `First`)
     /// or emits (if `Complete`).
     ///
-    /// A sequence gap is a PID-level event: §2.12.4.2 numbers every cell
-    /// on the PID, so a lost cell may have belonged to any service. A gap
-    /// drops every in-flight reassembly on the PID and reports one
-    /// `SequenceGap` covering all of them.
+    /// `sequence_number` continuity is scoped to one `metadata_AU_wrapper`
+    /// (one PES, H.222.0 Table 2-156): the caller calls
+    /// [`begin_wrapper`](Self::begin_wrapper) before a PES's first cell, that
+    /// cell sets the baseline and is never a gap, and each later cell of the
+    /// PES must increment it (mod 256). An AU whose First cell closes one PES
+    /// and whose Last cell opens the next therefore reassembles whether the
+    /// producer restarts at 0 per PES or counts across PES. A whole lost PES
+    /// is the continuity counter's to report, not this check's. A new
+    /// producer on a continuing channel (a fresh `Muxer`, which starts every
+    /// synchronous KLV stream at 0) is likewise not a gap.
+    ///
+    /// Within a wrapper a sequence gap is a PID-level event: the number
+    /// counts every cell of the PES, whatever its service, so a lost cell
+    /// may have belonged to any service. A gap drops every in-flight
+    /// reassembly on the PID and reports one `SequenceGap` covering all of
+    /// them.
     pub(crate) fn process_cell<'a>(
         &'a mut self,
         pid: u16,
@@ -400,7 +419,7 @@ mod tests {
     }
 
     /// H.222.0 §2.12.4.2: metadata_service_id distinguishes services on one PID,
-    /// and sequence_number counts every cell on the PID, whatever its service.
+    /// and sequence_number counts every cell of a PES, whatever its service.
     #[test]
     fn interleaved_services_on_one_pid_reassemble_independently() {
         use CellFragmentIndication::{First, Last};
@@ -974,5 +993,66 @@ mod tests {
         assert!(r.total_buffered > 0);
         r.reset_all();
         assert_eq!(r.total_buffered, 0);
+    }
+
+    #[test]
+    fn a_new_wrapper_may_restart_the_sequence_without_a_gap() {
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.begin_wrapper(0x101);
+        assert!(matches!(
+            r.process_cell(0x101, hdr(CellFragmentIndication::First, 0), b"AAA"),
+            ReassembleOutcome::Buffered
+        ));
+        r.begin_wrapper(0x101);
+        match r.process_cell(0x101, hdr(CellFragmentIndication::Last, 0), b"BBB") {
+            ReassembleOutcome::Emit {
+                payload,
+                cell_count,
+                ..
+            } => {
+                assert_eq!(payload, b"AAABBB");
+                assert_eq!(cell_count, 2);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_new_wrapper_may_also_continue_the_sequence() {
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.begin_wrapper(0x101);
+        assert!(matches!(
+            r.process_cell(0x101, hdr(CellFragmentIndication::First, 0), b"AAA"),
+            ReassembleOutcome::Buffered
+        ));
+        r.begin_wrapper(0x101);
+        match r.process_cell(0x101, hdr(CellFragmentIndication::Last, 1), b"BBB") {
+            ReassembleOutcome::Emit {
+                payload,
+                cell_count,
+                ..
+            } => {
+                assert_eq!(payload, b"AAABBB");
+                assert_eq!(cell_count, 2);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_gap_inside_one_wrapper_is_still_a_gap() {
+        let mut r = AuCellReassembler::new(1 << 20);
+        r.begin_wrapper(0x101);
+        assert!(matches!(
+            r.process_cell(0x101, hdr(CellFragmentIndication::First, 0), b"AAA"),
+            ReassembleOutcome::Buffered
+        ));
+        assert!(matches!(
+            r.process_cell(0x101, hdr(CellFragmentIndication::Last, 2), b"BBB"),
+            ReassembleOutcome::Failure {
+                reason: MultiCellAuReason::SequenceGap,
+                ..
+            }
+        ));
     }
 }

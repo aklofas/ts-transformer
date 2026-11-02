@@ -720,6 +720,9 @@ impl super::demuxer::Demuxer {
                 // mutably to call process_cell + queue.push_back. Each
                 // `inner` slice still borrows from pes.payload; ownership
                 // of the outer Vec doesn't change that.
+                // H.222.0 Table 2-156: sequence_number counts the cells of
+                // one metadata_AU_wrapper, so each PES starts a new count.
+                self.au_reassembler.begin_wrapper(pes.pid);
                 let cells: Vec<_> = iter_au_cells(&pes.payload).collect();
                 for cell_result in cells {
                     let (header, inner) = match cell_result {

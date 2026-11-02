@@ -719,7 +719,10 @@ dropped_bytes, reason }` with `reason: MultiCellAuReason` one of
 `OverflowTotal` / `TooManyPids`; the per-PID accumulation buffer is
 capped by `DemuxerConfig::au_cell_cap_per_pid` (default 1 MiB), with
 `au_cell_cap_total` and `au_cell_max_in_flight_pids` bounding the
-aggregate across PIDs. ST 0601 records fit well below the fragmentation
+aggregate across PIDs. Sequence numbers are checked within one PES (the
+`metadata_AU_wrapper`, H.222.0 Table 2-156); the first cell of a PES may
+carry any number, so producers that restart at 0 per PES and producers
+that count across PES both reassemble. ST 0601 records fit well below the fragmentation
 threshold, so on real streams this path is idle.
 
 ## Wire-format details: PES `stream_id`
