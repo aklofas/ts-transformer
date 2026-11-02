@@ -118,6 +118,68 @@ fn single_complete_cell_emits_sample_with_was_reassembled_false() {
     );
 }
 
+/// One AU split across two PES: its First cell closes PES A and its Last
+/// cell opens PES B, with the cell headers rewritten to `seq_a` / `seq_b`.
+/// The demuxer must deliver exactly one reassembled "AAABBB" and no
+/// `MultiCellAu`.
+fn assert_au_split_across_two_pes_reassembles(seq_a: u8, seq_b: u8) {
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
+    pump_video(&mut mux, 8, 90_000);
+    mux.push_klv(b"AAA", Pts90khz::new(90_000), 0x00).unwrap();
+    mux.push_klv(b"BBB", Pts90khz::new(91_000), 0x00).unwrap();
+    let mut ts = drain(&mut mux);
+    let off0 = locate_nth_au_cell_offset(KLV_PID, &ts, 0).expect("PUSI 0 found");
+    let off1 = locate_nth_au_cell_offset(KLV_PID, &ts, 1).expect("PUSI 1 found");
+    patch_au_cell(&mut ts, off0, CellFragmentIndication::First, seq_a, b"AAA");
+    patch_au_cell(&mut ts, off1, CellFragmentIndication::Last, seq_b, b"BBB");
+
+    let events = collect_events(&ts);
+    let metas: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, DemuxEvent::Metadata { .. }))
+        .collect();
+    assert_eq!(metas.len(), 1, "exactly one reassembled AU: {events:?}");
+    match metas[0] {
+        DemuxEvent::Metadata {
+            kind:
+                MetadataKind::KlvSyncAuCell {
+                    was_reassembled,
+                    cell_count,
+                    ..
+                },
+            payload,
+            ..
+        } => {
+            assert!(*was_reassembled);
+            assert_eq!(*cell_count, 2);
+            assert_eq!(payload.as_slice(), b"AAABBB");
+        }
+        _ => unreachable!(),
+    }
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            DemuxEvent::NonConformant {
+                issue: NonConformantIssue::MultiCellAu { .. },
+                ..
+            }
+        )),
+        "no MultiCellAu: {events:?}",
+    );
+}
+
+/// Per-wrapper numbering (H.222.0 Table 2-156): First seq 0 in PES A, Last seq 0 in PES B.
+#[test]
+fn au_split_across_two_pes_with_per_wrapper_numbering_reassembles() {
+    assert_au_split_across_two_pes_reassembles(0, 0);
+}
+
+/// Continuing numbering (our muxer's shape): First 7 in PES A, Last 8 in PES B — also one AU.
+#[test]
+fn au_split_across_two_pes_with_continuing_numbering_reassembles() {
+    assert_au_split_across_two_pes_reassembles(7, 8);
+}
+
 // ── Test 2: 3-cell AU across 3 PESes ────────────────────────────────────
 
 #[test]
@@ -340,15 +402,23 @@ fn sequence_gap_emits_nonconformant_no_sample() {
     pump_video(&mut mux, 8, 90_000);
     let a = b"AAA";
     let b = b"BBB";
-    mux.push_klv(a, Pts90khz::new(90_000), 0x00).unwrap();
-    mux.push_klv(b, Pts90khz::new(91_000), 0x00).unwrap();
+    // H.222.0 Table 2-156 numbers the cells of one PES, so the gap is
+    // inside one PES: the muxer wraps an 11-byte blob in one 16-byte cell,
+    // overwritten here with two 8-byte cells.
+    mux.push_klv(&[0u8; 11], Pts90khz::new(90_000), 0x00)
+        .unwrap();
     let mut ts = drain(&mut mux);
 
     let off0 = locate_nth_au_cell_offset(KLV_PID, &ts, 0).expect("PUSI 0 found");
-    let off1 = locate_nth_au_cell_offset(KLV_PID, &ts, 1).expect("PUSI 1 found");
     // First cell at seq=10; expected next = 11. Patch second to seq=13 → gap.
     patch_au_cell(&mut ts, off0, CellFragmentIndication::First, 10, a);
-    patch_au_cell(&mut ts, off1, CellFragmentIndication::Middle, 13, b);
+    patch_au_cell(
+        &mut ts,
+        off0 + 5 + a.len(),
+        CellFragmentIndication::Middle,
+        13,
+        b,
+    );
 
     let events = collect_events(&ts);
     assert!(

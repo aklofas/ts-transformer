@@ -462,15 +462,23 @@ fn tolerance_mode_active_buffer_sequence_gap_still_emits_existing_failure() {
     let part_b = b"EEE";
     let mut mux = h264_sync_klv_muxer(KLV_PID);
     pump_video(&mut mux, 8, 90_000);
-    mux.push_klv(part_a, Pts90khz::new(90_000), 0x00).unwrap();
-    mux.push_klv(part_b, Pts90khz::new(91_000), 0x00).unwrap();
+    // H.222.0 Table 2-156 numbers the cells of one PES, so the gap is
+    // inside one PES: the muxer wraps an 11-byte blob in one 16-byte cell,
+    // overwritten here with two 8-byte cells.
+    mux.push_klv(&[0u8; 11], Pts90khz::new(90_000), 0x00)
+        .unwrap();
     let mut ts = drain(&mut mux);
 
     let off0 = locate_nth_au_cell_offset(KLV_PID, &ts, 0).expect("PUSI 0");
-    let off1 = locate_nth_au_cell_offset(KLV_PID, &ts, 1).expect("PUSI 1");
     patch_au_cell(&mut ts, off0, CellFragmentIndication::First, 10, part_a);
     // Skip seq 11 — go straight to 12 to trigger SequenceGap.
-    patch_au_cell(&mut ts, off1, CellFragmentIndication::Middle, 12, part_b);
+    patch_au_cell(
+        &mut ts,
+        off0 + 5 + part_a.len(),
+        CellFragmentIndication::Middle,
+        12,
+        part_b,
+    );
 
     let mut builder = DemuxerConfig::builder();
     builder.cfi_tolerance(true);
