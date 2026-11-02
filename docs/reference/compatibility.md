@@ -261,7 +261,7 @@ aren't yet wrapped are reachable via `tstrans-srt-sys`.
 | H.222.0 § 2.12.4.2 sync metadata AU cell wrapping | ✅ Full | `mpegts::au_cell::write_metadata_au_cell` / `read_metadata_au_cell`. Auto-wrapped inside `Muxer::push_klv` for `KlvStreamType::SynchronousMetadata` streams; PTS in PES header per § 2.12.4.1. |
 | Variable-length PES splitting | ⏳ Planned | Required for ≥ 65 000-byte KLV records (rare in practice). |
 | KLVA registration descriptor (`stream_type 0x06` + `0x05 "KLVA"`) | ✅ Full | Detected/recognised on decode side; emitted by muxer on the KLV PID. |
-| Audio carriage (mux side) | ✅ Full | MP2 / AAC ADTS / AAC LATM / AC-3; `Muxer::push_audio` / `push_audio_to`; PTS-only PES headers. AC-3 streams auto-emit `registration_descriptor` `format_identifier="AC-3"` per ATSC A/53 Part 3 §5.1 (caller-Registration suppression). Optional `iso_639_language_descriptor` auto-emit via `MuxerConfigBuilder::add_audio_with_language(pid, codec, lang)` per ISO/IEC 13818-1 §2.6.18 (caller-tag-0x0A suppression). |
+| Audio carriage (mux side) | ✅ Full | MP2 / AAC ADTS / AAC LATM / AC-3; `Muxer::push_audio` / `push_audio_to`; PTS-only PES headers. AC-3 streams auto-emit `registration_descriptor` `format_identifier="AC-3"` per ATSC A/53 Part 3 §5.1 (caller-Registration suppression); the auto `AC-3_audio_stream_descriptor` (tag 0x81) declares ≤ 6 channels, bsid 8, bsmod 0; override with a caller tag 0x81. Optional `iso_639_language_descriptor` auto-emit via `MuxerConfigBuilder::add_audio_with_language(pid, codec, lang)` per ISO/IEC 13818-1 §2.6.18 (caller-tag-0x0A suppression). |
 | Audio carriage (demux side) | ✅ Full | Typed `AudioCodec`; raw PES bytes in `SamplePayload::Audio { frames }`. |
 
 ---

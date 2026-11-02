@@ -110,6 +110,16 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Scope when added:** Case-by-case; each carries its own
   descriptor + stream_type + PES framing.
 
+## Explicit AC-3 audio descriptor fields (`bsid`, `bsmod`, channel layout, service type)
+
+- **Status:** Deferred. The automatic descriptor declares ≤ 6 channels,
+  bsid 8, bsmod 0.
+- **Why deferred:** The PMT descriptor cache is built in `Muxer::new`,
+  before any syncframe exists, and deriving the fields from the first
+  frame would move the PMT.
+- **Trigger to revisit:** A consumer with a bsid 6 or associated-service
+  stream, and in any case before 1.0.
+
 ## Async / reactor exposure
 
 - **Status:** Not implemented; the public API is sync blocking.

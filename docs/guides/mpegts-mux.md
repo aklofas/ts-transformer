@@ -1013,6 +1013,25 @@ AV01 precedent:
   hard-requires the AV01 marker for receiver classification; AC-3
   on `stream_type 0x81` can be classified without the descriptor.
 
+### AC-3 audio stream descriptor (tag 0x81)
+
+`AudioCodec::Ac3` streams also auto-emit the ATSC `AC-3_audio_stream_descriptor`
+(A/52 Annex A.4) with these values:
+
+- `sample_rate_code` 0b111 (any rate)
+- `bsid` 8
+- `bit_rate_code` 0b110010 (upper limit, 640 kb/s)
+- `surround_mode` not indicated
+- `bsmod` 0
+- `num_channels` 0b1101 (at most six channels, every AC-3 coding mode)
+- `full_svc` 1
+
+`bsid` and `bsmod` are assumptions: the muxer never parses a syncframe, so it
+cannot check them against the stream. For a bsid 6 or associated-service
+stream, build the descriptor with `descriptors::ac3_audio_stream_descriptor`
+and pass it through `stream_descriptors_for_audio`; a caller tag 0x81
+suppresses the automatic one.
+
 DVB-shaped AC-3 (`stream_type 0x06` + DVB AC-3 descriptor `0x6A`)
 remains a separate path; see `deferred-features.md`.
 
