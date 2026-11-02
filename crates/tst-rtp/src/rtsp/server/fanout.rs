@@ -33,7 +33,38 @@ pub(crate) enum PeerTransport {
         /// SETUP-allocated channel for RTP (server's response Transport
         /// header carried e.g. `interleaved=0-1`; RTP rides 0, RTCP 1).
         rtp_channel: u8,
+        /// The server's [`InterleavedWriteProbe`].
+        probe: Arc<InterleavedWriteProbe>,
     },
+}
+
+/// Server-wide counters of TCP-interleaved RTP frame writes, read through
+/// `RtspServer::interleaved_write_probe` by tests that need a fanout parked
+/// on a peer that stopped reading.
+#[derive(Default)]
+pub(crate) struct InterleavedWriteProbe {
+    /// Frames whose write holds a session's writer lock and has not
+    /// finished (an aborted fanout leaves this count too).
+    pub(crate) in_flight: AtomicU64,
+    /// Frames written and flushed in full.
+    pub(crate) written: AtomicU64,
+}
+
+/// One frame in [`InterleavedWriteProbe::in_flight`] for as long as it
+/// lives.
+struct InFlight<'a>(&'a AtomicU64);
+
+impl<'a> InFlight<'a> {
+    fn enter(n: &'a AtomicU64) -> Self {
+        n.fetch_add(1, Ordering::Relaxed);
+        Self(n)
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// Per-peer dropped-frame counter, observable from outside the task.
@@ -153,7 +184,7 @@ pub(crate) fn spawn_peer_fanout(
                                     return;
                                 }
                             }
-                            PeerTransport::Interleaved { writer, rtp_channel } => {
+                            PeerTransport::Interleaved { writer, rtp_channel, probe } => {
                                 // RFC 7826 §14: `$<channel:u8><length:u16-BE><payload>`.
                                 framed.clear();
                                 framed.push(b'$');
@@ -161,6 +192,7 @@ pub(crate) fn spawn_peer_fanout(
                                 framed.extend_from_slice(&(datagram.len() as u16).to_be_bytes());
                                 framed.extend_from_slice(&datagram);
                                 let mut g = writer.lock().await;
+                                let in_flight = InFlight::enter(&probe.in_flight);
                                 if let Err(e) = crate::rtsp::server::session::write_flushed(&mut **g, &framed).await {
                                     tracing::warn!(
                                         target: "tst_rtp::server",
@@ -169,6 +201,8 @@ pub(crate) fn spawn_peer_fanout(
                                     );
                                     return;
                                 }
+                                drop(in_flight);
+                                probe.written.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     }

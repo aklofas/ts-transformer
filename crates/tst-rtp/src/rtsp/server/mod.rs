@@ -89,6 +89,8 @@ pub(crate) struct ServerState {
     /// Publisher counters, shared with every publish mount so its receive
     /// path ticks them lock-free.
     pub(crate) publish_counters: Arc<crate::rtsp::server::publish::mount::ServerCounters>,
+    /// TCP-interleaved frame write counters, shared with every fanout.
+    pub(crate) interleaved_writes: Arc<crate::rtsp::server::fanout::InterleavedWriteProbe>,
     /// `start()` flips this once; `start()` returns AlreadyStarted on the
     /// second call.
     pub(crate) started: AtomicBool,
@@ -466,6 +468,7 @@ pub(crate) fn test_state() -> Arc<ServerState> {
         total_rtp_packets_sent: AtomicU64::new(0),
         total_rtp_bytes_sent: AtomicU64::new(0),
         publish_counters: Arc::default(),
+        interleaved_writes: Arc::default(),
         started: AtomicBool::new(true),
         shutdown: AtomicBool::new(false),
         local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
@@ -565,6 +568,7 @@ impl RtspServer {
             total_rtp_packets_sent: AtomicU64::new(0),
             total_rtp_bytes_sent: AtomicU64::new(0),
             publish_counters: Arc::default(),
+            interleaved_writes: Arc::default(),
             started: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             local_addr: std::sync::Mutex::new(None),
@@ -1330,6 +1334,21 @@ impl RtspServer {
     /// everything else above holds.
     pub fn cancel_handle(&self) -> RtspServerCancelHandle {
         self.state.hard_cancel.clone()
+    }
+
+    /// Test probe, not a stable API: `(in_flight, written)` over every
+    /// session's TCP-interleaved RTP frames. `in_flight` counts frames
+    /// whose write holds the session's writer lock and has not finished;
+    /// `written` counts frames written and flushed in full. A non-zero
+    /// `in_flight` with `written` unchanged means a fanout is parked on a
+    /// peer that stopped reading, holding that session's writer.
+    #[doc(hidden)]
+    pub fn interleaved_write_probe(&self) -> (u64, u64) {
+        let p = &self.state.interleaved_writes;
+        (
+            p.in_flight.load(Ordering::Relaxed),
+            p.written.load(Ordering::Relaxed),
+        )
     }
 
     /// Snapshot of aggregate server stats.

@@ -23,7 +23,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::RtspServer;
 
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
-use crate::fixtures::wait_for;
+use crate::fixtures::{wait_for, wait_for_parked_fanout};
 
 /// A stalled TCP-interleaved peer does not block the muxer push path.
 #[test]
@@ -36,7 +36,12 @@ fn slow_peer_does_not_block_muxer() {
 
     // Raw TCP-interleaved handshake. SETUP uses the bare mount path (the
     // server's extract_mount_path does not strip a trailing trackID segment).
-    let mut peer = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let peer = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+    // Before connect, so the window the peer advertises stays small.
+    peer.set_recv_buffer_size(64 * 1024).unwrap();
+    peer.connect(&std::net::SocketAddr::from(([127, 0, 0, 1], port)).into())
+        .unwrap();
+    let mut peer: TcpStream = peer.into();
     peer.set_read_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     let setup_resp = request(
@@ -95,12 +100,13 @@ const STALL_BYTES: u64 = 32 * 1024 * 1024;
 
 /// A TCP-interleaved peer that played `/live` and then stopped reading, with
 /// its server-side fanout parked on the full socket (holding the session's
-/// writer lock). Returns once the mount has pushed [`STALL_BYTES`] to its one
-/// subscriber; panics if a bounded push loop ends short of that.
+/// writer lock). Returns once the server's write probe shows that parked
+/// write; panics if it never does.
 ///
-/// Pushed bytes, not `frames_dropped_total`, prove the stall: a fanout
-/// parked on a full plain-TCP socket never calls `recv` again, so it never
-/// sees `Lagged` and the drop counter stays 0.
+/// Pushed bytes alone do not prove the stall: the broadcast drops frames a
+/// lagging fanout has not read, so a mount can push far more than ever
+/// reaches the socket. The peer's small receive buffer only makes the
+/// socket fill sooner.
 fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
     let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
@@ -108,7 +114,12 @@ fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
     let port = server.local_addr().unwrap().port();
     let base = format!("rtsp://127.0.0.1:{port}/live");
 
-    let mut peer = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let peer = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+    // Before connect, so the window the peer advertises stays small.
+    peer.set_recv_buffer_size(64 * 1024).unwrap();
+    peer.connect(&std::net::SocketAddr::from(([127, 0, 0, 1], port)).into())
+        .unwrap();
+    let mut peer: TcpStream = peer.into();
     peer.set_read_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     // The server reads this side, so a write cannot park; bound it anyway.
@@ -141,13 +152,8 @@ fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
             .expect("push must not fail on a stalled peer");
         i += 1;
     }
-    let stats = mount.stats();
-    assert_eq!(stats.peer_count, 1, "the peer is not subscribed");
-    assert!(
-        stats.bytes_pushed >= STALL_BYTES,
-        "pushed only {} bytes, too few to fill the peer's socket",
-        stats.bytes_pushed
-    );
+    assert_eq!(mount.stats().peer_count, 1, "the peer is not subscribed");
+    wait_for_parked_fanout(&server, scaled(Duration::from_secs(10)));
     (server, peer, port)
 }
 
