@@ -148,7 +148,8 @@ server.start()?;
 let rules = server.mount_rules();
 let pw = SecretString::from("amber-secret".to_string());
 // "/amber" takes its own publisher credential. Its read side is `Inherit`,
-// which means the server-wide setting (open here), not the default rule.
+// which takes the default rule's read side, itself `Inherit`: the
+// server-wide setting (open here).
 rules.set(
     "/amber",
     MountRule::new(
@@ -159,11 +160,13 @@ rules.set(
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`Inherit` is the server-wide behavior (the builder's credential, else open),
-`Open` waives a builder credential, `Require` replaces it for that path and
-direction (the builder's own credential does not open a `Require` path), and
-`Refuse` answers `403`, `404`, `453` or `503`. A `Require` challenge uses the
-builder's scheme and realm when it configured a credential, else the table's
+A path rule's `Inherit` takes the table's default rule for that direction;
+the default rule's `Inherit` is the server-wide behavior (the builder's
+credential, else open). `Open` waives a builder credential, `Require` replaces
+it for that path and direction (the builder's own credential does not open a
+`Require` path), and `Refuse` answers `403`, `404`, `453` or `503`. A
+`Require` challenge uses the builder's scheme and realm when it configured a
+credential, else the table's
 (`set_challenge`, Digest MD5 and realm `tstrans` by default).
 
 A realm may not contain control bytes (`set_challenge` and the builder refuse

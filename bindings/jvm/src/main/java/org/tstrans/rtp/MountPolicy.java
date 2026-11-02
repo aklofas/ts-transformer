@@ -30,9 +30,8 @@ public final class MountPolicy {
     /**
      * The server-wide setting: the config's credential if one was configured, else open.
      *
-     * <p>A path rule's {@code inherit()} does not fall back to the table's default rule.
-     * Under a default of {@code refuse(...)}, a path rule with one direction left {@code
-     * inherit()} leaves that direction as open as the server itself is.
+     * <p>A path rule's {@code inherit()} takes the table's default rule for that direction;
+     * the default rule's {@code inherit()} is the server-wide setting.
      */
     public static MountPolicy inherit() { return INHERIT; }
 

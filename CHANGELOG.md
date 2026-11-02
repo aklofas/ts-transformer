@@ -40,6 +40,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 
+- A path rule's `Inherit` now falls back to the table's default rule, and only the default rule's `Inherit` means the server-wide setting; before, a default of `Refuse` left a path rule's `Inherit` side as open as the server itself. Mount rules are unreleased, so no shipped table changes meaning.
 - `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch.
 
 ### Fixed — tst-core

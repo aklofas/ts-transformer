@@ -6,8 +6,8 @@
 //! an entry uses it; every other path uses the table's default rule. A table
 //! nobody edits holds `Inherit` for both directions, which leaves the
 //! server-wide credential from the builder in charge, as before. A path
-//! rule's `Inherit` means that same server-wide setting, never the default
-//! rule.
+//! rule's `Inherit` takes the table's default rule for that direction; the
+//! default rule's `Inherit` is the server-wide setting.
 //!
 //! **Stability: Experimental.**
 
@@ -108,9 +108,8 @@ pub enum MountPolicy {
     /// The server-wide setting: the builder's credential if one was
     /// configured, else open.
     ///
-    /// A path rule's `Inherit` does not fall back to the table's default
-    /// rule. Under a default of `Refuse`, a path rule with one direction left
-    /// `Inherit` leaves that direction as open as the server itself is.
+    /// A path rule's `Inherit` takes the table's default rule for that
+    /// direction; the default rule's `Inherit` is the server-wide setting.
     Inherit,
     /// Allow without credentials.
     Open,
@@ -390,15 +389,19 @@ impl MountRules {
         self.inner.closed.load(Ordering::Acquire)
     }
 
-    /// The policy for `dir` on `path`: the path's own rule, else the default.
+    /// The policy for `dir` on `path`: the path's own rule, else (no rule, or
+    /// the rule's `Inherit` for `dir`) the default rule's policy for `dir`.
     pub(crate) fn policy_for(&self, path: &str, dir: Direction) -> MountPolicy {
         let pick = |rule: &MountRule| match dir {
             Direction::Publish => rule.publish.clone(),
             Direction::Read => rule.read.clone(),
         };
-        match read(&self.inner.rules).get(path) {
-            Some(rule) => pick(rule),
-            None => pick(&read(&self.inner.default)),
+        // Bind the path rule's pick first so the `rules` guard is released
+        // before `default` is read.
+        let own = read(&self.inner.rules).get(path).map(pick);
+        match own {
+            Some(policy) if !matches!(policy, MountPolicy::Inherit) => policy,
+            _ => pick(&read(&self.inner.default)),
         }
     }
 
@@ -479,6 +482,40 @@ mod tests {
         assert!(!t.remove("/amber").unwrap());
         assert!(matches!(
             t.policy_for("/amber", Direction::Publish),
+            MountPolicy::Inherit
+        ));
+    }
+
+    #[test]
+    fn a_path_rules_inherit_falls_back_to_the_table_default() {
+        let t = table();
+        t.set_default(MountRule::both(MountPolicy::Refuse(RefuseStatus::NotFound)))
+            .unwrap();
+        t.set(
+            "/amber",
+            MountRule::new(MountPolicy::Open, MountPolicy::Inherit),
+        )
+        .unwrap();
+        assert!(matches!(
+            t.policy_for("/amber", Direction::Publish),
+            MountPolicy::Open
+        ));
+        assert!(matches!(
+            t.policy_for("/amber", Direction::Read),
+            MountPolicy::Refuse(RefuseStatus::NotFound)
+        ));
+    }
+
+    #[test]
+    fn inherit_through_an_inherit_default_is_the_server_setting() {
+        let t = table();
+        t.set(
+            "/amber",
+            MountRule::new(MountPolicy::Open, MountPolicy::Inherit),
+        )
+        .unwrap();
+        assert!(matches!(
+            t.policy_for("/amber", Direction::Read),
             MountPolicy::Inherit
         ));
     }
