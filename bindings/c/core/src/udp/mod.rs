@@ -49,9 +49,9 @@ pub use receiver::{
     tst_udp_receiver_reset_stats, tst_udp_recv_open,
 };
 pub use sender::{
-    TstUdpSender, tst_udp_sender_cancel, tst_udp_sender_close, tst_udp_sender_get_socket_stats,
-    tst_udp_sender_get_stats, tst_udp_sender_open, tst_udp_sender_reset_stats,
-    tst_udp_sender_send_ts,
+    TstUdpSender, tst_udp_sender_cancel, tst_udp_sender_close, tst_udp_sender_flush,
+    tst_udp_sender_get_socket_stats, tst_udp_sender_get_stats, tst_udp_sender_open,
+    tst_udp_sender_reset_stats, tst_udp_sender_send_ts,
 };
 
 /// `url` → a UDP send transport, recording `TST_E_UDP_CONFIG` or the build error.

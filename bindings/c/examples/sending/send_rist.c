@@ -46,7 +46,8 @@
  *   3. Opening a tst_rist_sender_t and checking for NULL + last-error.
  *   4. Synthesising structurally valid 188-byte TS null packets as "payload".
  *   5. Pushing 100 of those packets via tst_rist_sender_send_ts.
- *   6. Closing cleanly via tst_rist_sender_close.
+ *   6. Flushing the buffered tail with tst_rist_sender_flush, then closing via
+ *      tst_rist_sender_close.
  *
  * Encrypted variant — use this URL instead (requires mbedtls feature):
  *   rist://host:8000?aes-type=256&secret=my-pre-shared-key&buffer=200&profile=main
@@ -272,10 +273,22 @@ int main(int argc, char **argv) {
     /*
      * ── Step 6: Close the sender ─────────────────────────────────────────
      *
-     * tst_rist_sender_close drains the RIST send queue, sends RTCP BYE,
-     * tears down the librist context, and frees all associated memory.
-     * Safe to call on any valid non-NULL pointer, including after a failure.
+     * Flush first. The sender sends one datagram per seven-packet bundle,
+     * so 100 packets leave as 14 bundles and the last two stay buffered.
+     * tst_rist_sender_close is cancel-first and abortive: it discards that
+     * buffered tail, so tst_rist_sender_flush must run before it for a
+     * lossless end of stream. close then closes the socket and frees all
+     * associated memory; it is safe on a valid non-NULL pointer at any time,
+     * including after a send failure.
      */
+    if (exit_code == 0) {
+        int flush_rc = tst_rist_sender_flush(sender);
+        if (flush_rc != 0) {
+            fprintf(stderr, "[send_rist] tst_rist_sender_flush failed (rc=%d): %s\n",
+                    flush_rc, tst_get_last_error_str());
+            exit_code = 1;
+        }
+    }
     tst_rist_sender_close(sender);
     fprintf(stderr, "[send_rist] sender closed.\n");
 

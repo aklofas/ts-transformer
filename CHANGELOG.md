@@ -248,6 +248,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 invalid emulation prevention. No struct layout changes.
 - C ABI minor 26 → 27 (`TST_ABI_VERSION_MINOR`): additive `tst_{udp,tcp,rist}_sender_flush` and the tightened contracts listed in this section's entries.
+- New `tst_udp_sender_flush`, `tst_tcp_sender_flush` and `tst_rist_sender_flush` send the buffered partial bundle (ABI 0.27). `tst_*_sender_close` and `tst_*_mux_sender_close` stay cancel-first and abortive; call `_flush` / `_finish` first for a lossless end of stream. The C examples do.
 - C: the enum-valued parameter of `tst_mux_config_add_video_stream`, `tst_mux_config_add_klv_stream`, `tst_mux_config_add_audio_stream`, `tst_mux_config_add_audio_stream_with_language`, `tst_sender_config_set_framing_mode`, `tst_reconnect_policy_set_overflow_policy`, `tst_reconnect_policy_set_mode` and `tst_misp_time_extract` is now spelled `int32_t`. The value and calling convention are unchanged, and existing C and C++ calls compile as before. The one exception is code that stores one of these functions in a function pointer declared with the old enum parameter type.
 
 ### Changed — tst-srt

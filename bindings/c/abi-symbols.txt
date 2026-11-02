@@ -286,6 +286,7 @@ tst_rist_receiver_reset_stats
 tst_rist_recv_open
 tst_rist_sender_cancel
 tst_rist_sender_close
+tst_rist_sender_flush
 tst_rist_sender_get_socket_stats
 tst_rist_sender_get_stats
 tst_rist_sender_open
@@ -461,6 +462,7 @@ tst_tcp_receiver_reset_stats
 tst_tcp_recv_open
 tst_tcp_sender_cancel
 tst_tcp_sender_close
+tst_tcp_sender_flush
 tst_tcp_sender_get_socket_stats
 tst_tcp_sender_get_stats
 tst_tcp_sender_open
@@ -501,6 +503,7 @@ tst_udp_receiver_reset_stats
 tst_udp_recv_open
 tst_udp_sender_cancel
 tst_udp_sender_close
+tst_udp_sender_flush
 tst_udp_sender_get_socket_stats
 tst_udp_sender_get_stats
 tst_udp_sender_open
