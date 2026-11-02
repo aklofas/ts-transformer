@@ -163,7 +163,8 @@ impl AuCellReassembler {
     /// producer restarts at 0 per PES or counts across PES. A whole lost PES
     /// is the continuity counter's to report, not this check's: a PES lost
     /// or damaged on the way (a continuity_counter jump, a reassembly cap, an
-    /// unparseable or zero-length PES, a truncated cell) or a signalled
+    /// unparseable or zero-length PES, a truncated cell, a PES not shaped as
+    /// AU cells) or a signalled
     /// discontinuity (H.222.0 §2.4.3.5) discards the AU still in progress
     /// once the cells that did arrive are walked, and reports the gap (see
     /// [`discard_pid`](Self::discard_pid)).
