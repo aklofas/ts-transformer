@@ -518,7 +518,7 @@ unsafe fn parse_tlv_list(
     if offset != bytes.len() {
         set_last_error(
             TstError::InvalidConfig,
-            &format!(
+            &alloc::format!(
                 "TLV byte stream has {} trailing bytes after tlv_count descriptors",
                 bytes.len() - offset
             ),
