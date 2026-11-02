@@ -115,7 +115,8 @@ fn managed_socket_stats_forwards_when_alive_and_none_after_close() {
             cause: tst_core::transport::BrokenCause::Unspecified,
         })
     };
-    let mut managed = ManagedTransport::new(initial_transport, factory, ReconnectPolicy::default());
+    let mut managed = ManagedTransport::new(initial_transport, factory, ReconnectPolicy::default())
+        .expect("a default policy validates");
 
     managed
         .send_bytes(&[0u8; 188])

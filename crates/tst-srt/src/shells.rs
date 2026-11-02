@@ -75,6 +75,12 @@ fn open_error_to_transport(e: SrtError) -> TransportError {
     }
 }
 
+/// A refused [`ReconnectPolicy`] as the option error every managed open
+/// reports; checked before any socket is touched.
+fn policy_refused(e: tst_pipeline::ReconnectPolicyError) -> SrtError {
+    SrtError::Option(OptionError::OutOfRange(e.to_string()))
+}
+
 /// One open, dispatched on the URL's mode.
 fn open(url: &SrtUrl, slot: &FactoryCancel) -> Result<SrtTransport, SrtError> {
     match url.mode {
@@ -94,24 +100,22 @@ fn open(url: &SrtUrl, slot: &FactoryCancel) -> Result<SrtTransport, SrtError> {
 ///
 /// # Errors
 ///
-/// Whatever the initial [`SrtUrl::connect`] / [`SrtUrl::accept_one`]
-/// returned; the managed transport is not built.
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - Whatever the initial [`SrtUrl::connect`] / [`SrtUrl::accept_one`]
+///   returned; the managed transport is not built.
 pub fn managed_recv_transport_from_url(
     url: &SrtUrl,
     policy: ReconnectPolicy,
     factory_cancel: Arc<FactoryCancel>,
 ) -> Result<ManagedRecvTransport<SrtTransport>, SrtError> {
+    policy.validate().map_err(policy_refused)?;
     let initial = open(url, &factory_cancel)?;
     let url = url.clone();
     let slot = Arc::clone(&factory_cancel);
     let factory: Box<dyn FnMut() -> Result<SrtTransport, TransportError> + Send> =
         Box::new(move || open(&url, &slot).map_err(open_error_to_transport));
-    Ok(ManagedRecvTransport::new_with_factory_cancel(
-        initial,
-        factory,
-        policy,
-        factory_cancel,
-    ))
+    ManagedRecvTransport::new_with_factory_cancel(initial, factory, policy, factory_cancel)
+        .map_err(policy_refused)
 }
 
 /// The observers for a receive-side decorator, taken BEFORE it moves into
@@ -139,7 +143,8 @@ fn recv_handles(managed: &ManagedRecvTransport<SrtTransport>) -> ManagedHandles 
 ///
 /// # Errors
 ///
-/// The initial open's error (see [`managed_recv_transport_from_url`]).
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_demux_receiver_from_url(
     url: &SrtUrl,
     policy: ReconnectPolicy,
@@ -156,7 +161,8 @@ pub fn managed_demux_receiver_from_url(
 ///
 /// # Errors
 ///
-/// The initial open's error (see [`managed_recv_transport_from_url`]).
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_demux_receiver_from_url_with_cancel(
     url: &SrtUrl,
     policy: ReconnectPolicy,
@@ -180,7 +186,8 @@ pub fn managed_demux_receiver_from_url_with_cancel(
 ///
 /// # Errors
 ///
-/// The initial open's error (see [`managed_recv_transport_from_url`]).
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_receiver_from_url(
     url: &SrtUrl,
     policy: ReconnectPolicy,
@@ -196,7 +203,8 @@ pub fn managed_receiver_from_url(
 ///
 /// # Errors
 ///
-/// The initial open's error (see [`managed_recv_transport_from_url`]).
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_receiver_from_url_with_cancel(
     url: &SrtUrl,
     policy: ReconnectPolicy,
@@ -213,7 +221,8 @@ pub fn managed_receiver_from_url_with_cancel(
 ///
 /// # Errors
 ///
-/// The initial open's error (see [`managed_recv_transport_from_url`]).
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - The initial open's error (see [`managed_recv_transport_from_url`]).
 pub fn managed_raw_receiver_from_url(
     url: &SrtUrl,
     policy: ReconnectPolicy,
@@ -252,13 +261,15 @@ fn managed_transport_from_url(
     if url.mode == Mode::Listener {
         return Err(callers_only());
     }
+    policy.validate().map_err(policy_refused)?;
     let initial = url.connect()?;
     let url = url.clone();
-    Ok(ManagedTransport::new(
+    ManagedTransport::new(
         initial,
         move || url.connect().map_err(open_error_to_transport),
         policy,
-    ))
+    )
+    .map_err(policy_refused)
 }
 
 /// The observers for a send-side decorator, taken BEFORE it moves into a
@@ -290,6 +301,7 @@ fn send_handles(managed: &ManagedTransport<SrtTransport>) -> (ManagedHandles, Ma
 /// # Errors
 ///
 /// - [`SrtError::Option`] — `?mode=listener` (refused before connecting).
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - [`SrtError::Connect`] — the initial connect failed.
 /// - [`SrtError::Mux`] — `config` was rejected by the muxer; the connected
 ///   transport is dropped.
@@ -318,8 +330,9 @@ pub fn managed_mux_sender_from_url(
 ///
 /// # Errors
 ///
-/// [`SrtError::Option`] for `?mode=listener`; otherwise the initial
-/// connect's [`SrtError::Connect`].
+/// - [`SrtError::Option`] — `?mode=listener` (refused before connecting).
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Connect`] — the initial connect failed.
 pub fn managed_sender_from_url(
     url: &SrtUrl,
     policy: ReconnectPolicy,
@@ -342,8 +355,9 @@ pub fn managed_sender_from_url(
 ///
 /// # Errors
 ///
-/// [`SrtError::Option`] for `?mode=listener`; otherwise the initial
-/// connect's [`SrtError::Connect`].
+/// - [`SrtError::Option`] — `?mode=listener` (refused before connecting).
+/// - - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Connect`] — the initial connect failed.
 pub fn managed_raw_sender_from_url(
     url: &SrtUrl,
     policy: ReconnectPolicy,

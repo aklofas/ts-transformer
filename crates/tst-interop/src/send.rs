@@ -398,7 +398,7 @@ pub fn run_managed(
         OverflowPolicy::Reject => "reject",
     }
     .to_string();
-    let managed = ManagedTransport::new(initial, factory, policy);
+    let managed = ManagedTransport::new(initial, factory, policy).map_err(|e| e.to_string())?;
     // Taken BEFORE the transport moves into the sender shell, which is
     // the only moment it can be: the handle shares the transport's
     // counters and outlives it, so the snapshot below is read after the
@@ -483,7 +483,8 @@ mod tests {
                 })
             },
             ReconnectPolicy::default(),
-        );
+        )
+        .expect("a default policy validates");
         let handle = managed.stats_handle();
         let line = heartbeat_line(120, 1, 1, 1, 0, 188, Some(&handle));
         assert!(line.ends_with(" reconnects=0 gap_len=0"), "{line}");

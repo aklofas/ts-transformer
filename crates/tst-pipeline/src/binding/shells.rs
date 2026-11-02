@@ -291,7 +291,8 @@ mod tests {
             Source(Arc::clone(&closed)),
             factory,
             ReconnectPolicy::default(),
-        );
+        )
+        .expect("a default policy validates");
         let owned = Owned::new(
             ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default()),
             cancel(),

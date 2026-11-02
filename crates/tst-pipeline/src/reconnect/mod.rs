@@ -64,6 +64,10 @@ pub enum ReconnectMode {
 pub struct ReconnectPolicy {
     /// Maximum reconnect attempts before giving up. None = retry forever.
     /// Default: `Some(10)`.
+    ///
+    /// `None` with a zero backoff is refused by [`ReconnectPolicy::validate`]
+    /// and by every managed constructor: it would retry in a tight loop with
+    /// no pacing.
     pub max_attempts: Option<u32>,
 
     /// Backoff strategy between attempts. Default: exponential 100ms..=10s.
@@ -105,7 +109,36 @@ impl Default for ReconnectPolicy {
     }
 }
 
+/// Why a [`ReconnectPolicy`] was refused by [`ReconnectPolicy::validate`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ReconnectPolicyError {
+    /// `max_attempts` is `None` and the backoff waits zero time.
+    #[error(
+        "zero backoff with unlimited attempts would retry without pacing; set max_attempts or a non-zero backoff"
+    )]
+    UnpacedUnlimitedRetry,
+}
+
 impl ReconnectPolicy {
+    /// Check the policy is usable.
+    ///
+    /// # Errors
+    ///
+    /// [`ReconnectPolicyError::UnpacedUnlimitedRetry`] when `max_attempts` is
+    /// `None` and the backoff is `Constant(0)` or an `Exponential` with a
+    /// zero `base`. A zero backoff with a bounded `max_attempts` is allowed.
+    pub fn validate(&self) -> Result<(), ReconnectPolicyError> {
+        let zero_wait = match &self.backoff {
+            BackoffStrategy::Constant(d) => d.is_zero(),
+            BackoffStrategy::Exponential { base, .. } => base.is_zero(),
+        };
+        if self.max_attempts.is_none() && zero_wait {
+            return Err(ReconnectPolicyError::UnpacedUnlimitedRetry);
+        }
+        Ok(())
+    }
+
     /// Compute the wait before the next reconnect attempt, or `None` if the
     /// budget is exhausted.
     ///
@@ -245,7 +278,7 @@ impl ManagedStatsHandle {
 /// ```ignore
 /// let factory = || SrtTransport::connect(...);
 /// let inner = factory()?;
-/// let managed = ManagedTransport::new(inner, factory, ReconnectPolicy::default());
+/// let managed = ManagedTransport::new(inner, factory, ReconnectPolicy::default()).expect("a default policy validates");
 /// let sender = MuxSender::new(managed, config)?;
 /// // sender now silently reconnects on transport breakage
 /// ```
@@ -406,10 +439,22 @@ pub struct ManagedTransport<T: Transport> {
 }
 
 impl<T: Transport + 'static> ManagedTransport<T> {
-    pub fn new<F>(inner: T, factory: F, policy: ReconnectPolicy) -> Self
+    /// Wrap `inner`, rebuilding it with `factory` under `policy`.
+    ///
+    /// # Errors
+    ///
+    /// [`ReconnectPolicyError::UnpacedUnlimitedRetry`] when the policy has
+    /// zero backoff and unlimited attempts; `inner` is dropped and nothing
+    /// else is allocated.
+    pub fn new<F>(
+        inner: T,
+        factory: F,
+        policy: ReconnectPolicy,
+    ) -> Result<Self, ReconnectPolicyError>
     where
         F: Fn() -> Result<T, TransportError> + Send + Sync + 'static,
     {
+        policy.validate()?;
         let gap = GapBuffer::new(policy.gap_buffer_capacity, policy.overflow_policy);
         let active = Arc::new(CancelSlot::new());
         if let Some(h) = inner.cancel_handle() {
@@ -421,7 +466,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         shared
             .max_payload
             .store(inner.max_payload(), std::sync::atomic::Ordering::Relaxed);
-        Self {
+        Ok(Self {
             inner: Arc::new(Mutex::new(Some(inner))),
             factory: Arc::new(factory),
             policy,
@@ -431,7 +476,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             shared,
             bg_thread: Mutex::new(None),
             active,
-        }
+        })
     }
 
     /// Obtain a cloneable stats observer. Call **before** moving this
@@ -1349,7 +1394,8 @@ mod cancel_tests {
                 cause: BrokenCause::Unspecified,
             })
         };
-        let mut managed = ManagedTransport::new(NoopT, factory, ReconnectPolicy::default());
+        let mut managed = ManagedTransport::new(NoopT, factory, ReconnectPolicy::default())
+            .expect("a default policy validates");
 
         // Sanity-check: happy path returns the inner transport's values.
         assert_eq!(managed.max_payload(), 4242, "pre-poison: inner sentinel");
@@ -1395,7 +1441,8 @@ mod cancel_tests {
                 cause: BrokenCause::Unspecified,
             })
         };
-        let managed = ManagedTransport::new(inner, factory, ReconnectPolicy::default());
+        let managed = ManagedTransport::new(inner, factory, ReconnectPolicy::default())
+            .expect("a default policy validates");
 
         let handle = managed.cancel_handle().expect("cancellable inner -> Some");
         handle.cancel();
@@ -1427,7 +1474,8 @@ mod cancel_tests {
             backoff: BackoffStrategy::Constant(std::time::Duration::from_millis(0)),
             ..Default::default()
         };
-        let mut managed = ManagedTransport::new(inner, factory, policy);
+        let mut managed =
+            ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
 
         // Trigger cancel before any send.
         let h = managed.cancel_handle().unwrap();
@@ -1490,7 +1538,8 @@ mod cancel_tests {
             backoff: BackoffStrategy::Constant(std::time::Duration::from_secs(30)),
             ..Default::default()
         };
-        let mut managed = ManagedTransport::new(BrokenT, factory, policy);
+        let mut managed =
+            ManagedTransport::new(BrokenT, factory, policy).expect("a default policy validates");
         let cancel = managed
             .cancel_handle()
             .expect("managed always has a handle");
@@ -1546,7 +1595,8 @@ mod cancel_tests {
             backoff: BackoffStrategy::Constant(std::time::Duration::from_millis(0)),
             ..Default::default()
         };
-        let mut managed = ManagedTransport::new(inner, factory, policy);
+        let mut managed =
+            ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
         let stats = managed.stats_handle();
         let s0 = stats.stats().expect("no poison");
         assert_eq!((s0.reconnect_attempts, s0.reconnect_successes), (0, 0));
@@ -1594,7 +1644,8 @@ mod cancel_tests {
             backoff: BackoffStrategy::Constant(std::time::Duration::from_millis(0)),
             ..Default::default()
         };
-        let mut managed = ManagedTransport::new(inner, factory, policy);
+        let mut managed =
+            ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
         let attempts = managed.attempts_handle();
         let reconnects = managed.reconnects_handle();
         let reconnecting = managed.reconnecting_handle();
@@ -1685,7 +1736,8 @@ mod cancel_tests {
             backoff: BackoffStrategy::Constant(std::time::Duration::from_millis(0)),
             ..Default::default()
         };
-        let mut managed = ManagedTransport::new(inner, factory, policy);
+        let mut managed =
+            ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
         // Obtain BEFORE the move — the only way a binding can reach them.
         let attempts = managed.attempts_handle();
         let reconnects = managed.reconnects_handle();
@@ -1754,7 +1806,8 @@ mod cancel_tests {
             overflow_policy: overflow,
             mode: ReconnectMode::Background,
         };
-        let mut managed = ManagedTransport::new(BrokenT, factory, policy);
+        let mut managed =
+            ManagedTransport::new(BrokenT, factory, policy).expect("a default policy validates");
         managed
             .send_bytes(b"queued")
             .expect("the break is accepted into the gap buffer");
@@ -1828,7 +1881,8 @@ mod cancel_tests {
                 cause: BrokenCause::Unspecified,
             })
         };
-        let mut managed = ManagedTransport::new(NoopT, factory, ReconnectPolicy::default());
+        let mut managed = ManagedTransport::new(NoopT, factory, ReconnectPolicy::default())
+            .expect("a default policy validates");
         assert!(managed.is_alive(), "pre-cancel: inner is alive");
 
         managed
@@ -1844,5 +1898,88 @@ mod cancel_tests {
             !managed.is_alive(),
             "cancel latched `closed`, but is_alive() still reported the inner's answer (NoopT is always alive)"
         );
+    }
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn policy(max_attempts: Option<u32>, backoff: BackoffStrategy) -> ReconnectPolicy {
+        ReconnectPolicy {
+            max_attempts,
+            backoff,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn validate_refuses_zero_constant_backoff_with_unlimited_attempts() {
+        let p = policy(None, BackoffStrategy::Constant(Duration::ZERO));
+        assert_eq!(
+            p.validate(),
+            Err(ReconnectPolicyError::UnpacedUnlimitedRetry)
+        );
+    }
+
+    #[test]
+    fn validate_refuses_zero_exponential_base_with_unlimited_attempts() {
+        let p = policy(
+            None,
+            BackoffStrategy::Exponential {
+                base: Duration::ZERO,
+                max: Duration::from_secs(10),
+            },
+        );
+        assert_eq!(
+            p.validate(),
+            Err(ReconnectPolicyError::UnpacedUnlimitedRetry)
+        );
+    }
+
+    #[test]
+    fn validate_accepts_zero_backoff_with_bounded_attempts() {
+        let p = policy(Some(3), BackoffStrategy::Constant(Duration::ZERO));
+        assert_eq!(p.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_the_default() {
+        assert_eq!(ReconnectPolicy::default().validate(), Ok(()));
+    }
+
+    struct DropFlagTransport(Arc<AtomicBool>);
+    impl Drop for DropFlagTransport {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    impl tst_core::transport::Transport for DropFlagTransport {
+        fn send_bytes(&mut self, _bytes: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn managed_transport_new_refuses_an_unpaced_unlimited_policy() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let r = ManagedTransport::new(
+            DropFlagTransport(Arc::clone(&dropped)),
+            || Err(TransportError::Closed),
+            policy(None, BackoffStrategy::Constant(Duration::ZERO)),
+        );
+        assert!(matches!(
+            r,
+            Err(ReconnectPolicyError::UnpacedUnlimitedRetry)
+        ));
+        assert!(dropped.load(Ordering::SeqCst), "inner was dropped");
     }
 }

@@ -213,6 +213,7 @@ fn managed_send_on(wire: &Arc<Wire>, policy: ReconnectPolicy) -> ManagedTranspor
         refuse,
         policy,
     )
+    .expect("a default policy validates")
 }
 
 fn managed_recv(wire: &Arc<Wire>) -> ManagedRecvTransport<MockRecv> {
@@ -224,6 +225,7 @@ fn managed_recv(wire: &Arc<Wire>) -> ManagedRecvTransport<MockRecv> {
         Box::new(refuse),
         policy(),
     )
+    .expect("a default policy validates")
 }
 
 #[test]

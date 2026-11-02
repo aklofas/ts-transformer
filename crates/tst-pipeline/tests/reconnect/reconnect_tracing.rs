@@ -30,7 +30,8 @@ fn sender_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
 
     let inner = ScriptedSend::always(broken("always broken (test)"))
         .with_counter(Arc::new(AtomicU32::new(0)));
-    let mut managed = ManagedTransport::new(inner, factory, policy);
+    let mut managed =
+        ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
 
     // Drive the reconnect path: a single send triggers Broken → enqueue →
     // reconnect_and_drain → 3 factory failures → give-up.

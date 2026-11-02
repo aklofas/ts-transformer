@@ -167,9 +167,10 @@ fn park_factory(
 fn policy(mode: ReconnectMode) -> ReconnectPolicy {
     ReconnectPolicy {
         max_attempts: None,
-        // Zero backoff: these tests are about the cancel path, not the
+        // Near-zero backoff: these tests are about the cancel path, not the
         // cadence, and a real wait would only slow the reconnect they need.
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
+        // Unlimited attempts need a non-zero wait to pass validation.
+        backoff: BackoffStrategy::Constant(Duration::from_millis(1)),
         gap_buffer_capacity: 64,
         overflow_policy: OverflowPolicy::DropOldest,
         mode,
@@ -211,7 +212,8 @@ fn cancel_completes_while_a_direct_send_is_parked() {
         entered: Arc::clone(&entered),
         cancelled: Arc::clone(&cancelled),
     };
-    let managed = ManagedTransport::new(inner, dead_factory(), policy(ReconnectMode::Blocking));
+    let managed = ManagedTransport::new(inner, dead_factory(), policy(ReconnectMode::Blocking))
+        .expect("a default policy validates");
     let cancel = managed
         .cancel_handle()
         .expect("managed always hands out a cancel handle");
@@ -254,7 +256,8 @@ fn cancel_completes_while_an_inline_gap_drain_is_parked() {
             Arc::clone(&calls),
         ),
         policy(ReconnectMode::Blocking),
-    );
+    )
+    .expect("a default policy validates");
     let cancel = managed
         .cancel_handle()
         .expect("managed always hands out a cancel handle");
@@ -305,7 +308,8 @@ fn cancel_completes_while_the_background_worker_drain_is_parked() {
             Arc::clone(&calls),
         ),
         policy(ReconnectMode::Background),
-    );
+    )
+    .expect("a default policy validates");
     let cancel = managed
         .cancel_handle()
         .expect("managed always hands out a cancel handle");
@@ -358,7 +362,8 @@ fn close_wakes_background_drain() {
             Arc::clone(&calls),
         ),
         policy(ReconnectMode::Background),
-    );
+    )
+    .expect("a default policy validates");
 
     managed
         .send_bytes(b"x")
@@ -424,7 +429,8 @@ fn drop_wakes_background_drain() {
             Arc::clone(&calls),
         ),
         policy(ReconnectMode::Background),
-    );
+    )
+    .expect("a default policy validates");
 
     managed
         .send_bytes(b"x")

@@ -149,7 +149,7 @@ pub use receiver::{Receiver, ReceiverConfig, ReceiverError, ReceiverErrorSource,
 #[cfg(feature = "std")]
 pub use reconnect::{
     BackoffStrategy, GapBuffer, ManagedStatsHandle, ManagedTransport, ManagedTransportStats,
-    OverflowPolicy, ReconnectMode, ReconnectPolicy,
+    OverflowPolicy, ReconnectMode, ReconnectPolicy, ReconnectPolicyError,
 };
 pub use sender::{
     Sender, SenderConfig, SenderError, SenderErrorSource, SenderStats, TsFramingMode,

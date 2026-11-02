@@ -270,7 +270,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         gap_buffer_capacity: 4,
         overflow_policy: OverflowPolicy::DropOldest,
     };
-    let managed = ManagedTransport::new(initial, factory, policy);
+    // A zero-backoff, unlimited-attempts policy is refused here.
+    let managed = ManagedTransport::new(initial, factory, policy)?;
 
     // Grab the stats handle BEFORE moving `managed` into the sender shell.
     // `MuxSender::new` takes `managed` by value — once it's moved, there's

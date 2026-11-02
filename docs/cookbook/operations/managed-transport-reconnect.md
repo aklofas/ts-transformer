@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         overflow_policy: OverflowPolicy::DropOldest,
         mode: ReconnectMode::Blocking,
     };
-    let managed = ManagedTransport::new(initial, factory, policy);
+    let managed = ManagedTransport::new(initial, factory, policy)?;
     let _sender = MuxSender::new(managed, MuxerConfig::default())?;
     Ok(())
 }
@@ -111,7 +111,7 @@ let policy = ReconnectPolicy {
     gap_buffer_capacity: 256,
     overflow_policy: OverflowPolicy::DropOldest,
 };
-let managed = ManagedTransport::new(initial, factory, policy);
+let managed = ManagedTransport::new(initial, factory, policy)?;
 
 // Grab the stats handle BEFORE moving `managed` into the sender shell —
 // the shell takes ownership of `managed`, but the handle keeps reading

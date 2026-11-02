@@ -230,8 +230,13 @@ pub unsafe extern "C" fn tst_demux_config_set_strict_mode(
     })
 }
 
+/// Highest valid MPEG-TS PID (13 bits).
+const MAX_PID: u16 = 0x1FFF;
+
 /// Add a `klv_pid` → `video_pid` KLV-link override. Bypasses PMT-descriptor
-/// inference. Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`.
+/// inference. Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg` or a
+/// PID above `0x1FFF` (the 13-bit PID range; such an override could never
+/// match a packet).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_config_add_link_klv(
     cfg: *mut TstDemuxConfig,
@@ -246,6 +251,15 @@ pub unsafe extern "C" fn tst_demux_config_add_link_klv(
             );
             return crate::error::TstError::InvalidConfig as i32;
         };
+        for pid in [klv_pid, video_pid] {
+            if pid > MAX_PID {
+                crate::error::set_last_error(
+                    crate::error::TstError::InvalidConfig,
+                    &format!("pid 0x{pid:X} exceeds the 13-bit PID range (max 0x1FFF)"),
+                );
+                return crate::error::TstError::InvalidConfig as i32;
+            }
+        }
         cfg.klv_link_overrides.push((klv_pid, video_pid));
         0
     })
@@ -259,8 +273,8 @@ pub unsafe extern "C" fn tst_demux_config_add_link_klv(
 /// into single integers. The implementation table below covers the
 /// common cases — extend if a consumer asks for a kind not listed.
 ///
-/// Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg` or
-/// unrecognized `stream_kind`.
+/// Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`, a `pid` above
+/// `0x1FFF` (the 13-bit PID range) or unrecognized `stream_kind`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_config_add_treat_as(
     cfg: *mut TstDemuxConfig,
@@ -275,6 +289,13 @@ pub unsafe extern "C" fn tst_demux_config_add_treat_as(
             );
             return crate::error::TstError::InvalidConfig as i32;
         };
+        if pid > MAX_PID {
+            crate::error::set_last_error(
+                crate::error::TstError::InvalidConfig,
+                &format!("pid 0x{pid:X} exceeds the 13-bit PID range (max 0x1FFF)"),
+            );
+            return crate::error::TstError::InvalidConfig as i32;
+        }
         use tst_core::mpegts::demux::{AudioCodec, StreamKind, SubtitleCodec, VideoCodec};
         // Flat mapping: 100..=103 = Video H264/H265/H266/AV1;
         //               200..=203 = Audio MP2/AAC/AacLatm/AC3;
@@ -574,6 +595,38 @@ mod tests {
         set_sync_buf_cap_null_cfg_returns_invalid_config => invalid_config {
             tst_demux_config_set_sync_buf_cap(core::ptr::null_mut(), 1024)
         };
+    }
+
+    #[test]
+    fn add_treat_as_refuses_a_pid_above_0x1fff() {
+        unsafe {
+            let cfg = tst_demux_config_new();
+            assert_eq!(
+                tst_demux_config_add_treat_as(cfg, 0x2000, 100),
+                crate::error::TstError::InvalidConfig as i32
+            );
+            assert_eq!(
+                crate::error::tst_get_last_error(),
+                crate::error::TstError::InvalidConfig as i32
+            );
+            assert_eq!(tst_demux_config_add_treat_as(cfg, 0x1FFF, 100), 0);
+            tst_demux_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn add_link_klv_refuses_a_pid_above_0x1fff() {
+        unsafe {
+            let cfg = tst_demux_config_new();
+            for (klv, video) in [(0x2000, 0x101), (0x101, 0x2000)] {
+                assert_eq!(
+                    tst_demux_config_add_link_klv(cfg, klv, video),
+                    crate::error::TstError::InvalidConfig as i32
+                );
+            }
+            assert_eq!(tst_demux_config_add_link_klv(cfg, 0x1FFF, 0x1FFF), 0);
+            tst_demux_config_free(cfg);
+        }
     }
 
     #[test]

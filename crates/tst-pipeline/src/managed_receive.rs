@@ -18,7 +18,7 @@
 //! ```ignore
 //! let factory = || SrtTransport::connect(addr, &cfg);
 //! let inner = factory()?;
-//! let managed = ManagedRecvTransport::new(inner, Box::new(factory), ReconnectPolicy::default());
+//! let managed = ManagedRecvTransport::new(inner, Box::new(factory), ReconnectPolicy::default())?;
 //! let rx = DemuxReceiver::new(managed);
 //! ```
 //!
@@ -71,7 +71,7 @@
 
 use crate::reconnect::background::Shutdown;
 use crate::reconnect::latch::Latch;
-use crate::reconnect::{ReconnectMode, ReconnectPolicy};
+use crate::reconnect::{ReconnectMode, ReconnectPolicy, ReconnectPolicyError};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::{debug, info, warn};
@@ -203,11 +203,16 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
     /// `factory` is called when `inner` later fails; on the very first
     /// `recv_bytes` it is not consulted because `inner` is provided
     /// up-front. Subsequent reconnects build via `factory` only.
+    ///
+    /// # Errors
+    ///
+    /// [`ReconnectPolicyError::UnpacedUnlimitedRetry`]: zero backoff with
+    /// unlimited attempts. `inner` is dropped.
     pub fn new(
         inner: R,
         factory: Box<dyn FnMut() -> Result<R, TransportError> + Send>,
         policy: ReconnectPolicy,
-    ) -> Self {
+    ) -> Result<Self, ReconnectPolicyError> {
         Self::build(inner, factory, policy, None)
     }
 
@@ -216,12 +221,16 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
     /// listener-mode re-accept). The managed transport's cancel handle
     /// fires the slot; the factory installs its wake handle into it around
     /// its blocking call.
+    ///
+    /// # Errors
+    ///
+    /// As [`new`](Self::new).
     pub fn new_with_factory_cancel(
         inner: R,
         factory: Box<dyn FnMut() -> Result<R, TransportError> + Send>,
         policy: ReconnectPolicy,
         factory_cancel: Arc<FactoryCancel>,
-    ) -> Self {
+    ) -> Result<Self, ReconnectPolicyError> {
         Self::build(inner, factory, policy, Some(factory_cancel))
     }
 
@@ -230,7 +239,8 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
         factory: Box<dyn FnMut() -> Result<R, TransportError> + Send>,
         policy: ReconnectPolicy,
         factory_cancel: Option<Arc<FactoryCancel>>,
-    ) -> Self {
+    ) -> Result<Self, ReconnectPolicyError> {
+        policy.validate()?;
         if policy.mode == ReconnectMode::Background {
             // Recv-side has no gap buffer and no background worker — there
             // is nothing for the caller's thread to be freed from. Warn
@@ -247,7 +257,7 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
             active.install(h);
         }
         let last_live_max_payload = inner.max_payload();
-        Self {
+        Ok(Self {
             inner: Some(inner),
             factory,
             policy,
@@ -261,7 +271,7 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
             last_live_max_payload,
             shutdown: Arc::new(Shutdown::new()),
             factory_cancel,
-        }
+        })
     }
 
     /// Total number of successful factory rebuilds since construction.
@@ -625,13 +635,52 @@ mod tests {
         }
     }
 
-    /// Build a policy with no real wait time so tests don't sleep.
+    /// Build a policy with next to no wait time so tests don't sleep. An
+    /// unlimited policy needs a non-zero wait to pass validation.
     fn fast_policy(max_attempts: Option<u32>) -> ReconnectPolicy {
+        let wait_ms = if max_attempts.is_none() { 1 } else { 0 };
         ReconnectPolicy {
             max_attempts,
-            backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
+            backoff: BackoffStrategy::Constant(Duration::from_millis(wait_ms)),
             ..Default::default()
         }
+    }
+
+    fn unpaced_unlimited() -> ReconnectPolicy {
+        ReconnectPolicy {
+            max_attempts: None,
+            backoff: BackoffStrategy::Constant(Duration::ZERO),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn managed_recv_transport_new_refuses_an_unpaced_unlimited_policy() {
+        let r = ManagedRecvTransport::new(
+            FlakyRecv {
+                calls: 0,
+                ok_until: 1,
+            },
+            Box::new(|| Err(TransportError::Closed)),
+            unpaced_unlimited(),
+        );
+        assert!(matches!(
+            r,
+            Err(ReconnectPolicyError::UnpacedUnlimitedRetry)
+        ));
+        let r = ManagedRecvTransport::new_with_factory_cancel(
+            FlakyRecv {
+                calls: 0,
+                ok_until: 1,
+            },
+            Box::new(|| Err(TransportError::Closed)),
+            unpaced_unlimited(),
+            Arc::new(FactoryCancel::default()),
+        );
+        assert!(matches!(
+            r,
+            Err(ReconnectPolicyError::UnpacedUnlimitedRetry)
+        ));
     }
 
     /// On `Broken` from the inner, the decorator rebuilds via the factory
@@ -653,7 +702,8 @@ mod tests {
             calls: 0,
             ok_until: 1,
         };
-        let mut managed = ManagedRecvTransport::new(initial, factory, fast_policy(Some(5)));
+        let mut managed = ManagedRecvTransport::new(initial, factory, fast_policy(Some(5)))
+            .expect("a default policy validates");
 
         let mut buf = [0u8; 8];
         // First call: from initial inner, returns Ok(1).
@@ -686,7 +736,8 @@ mod tests {
             },
             Box::new(factory),
             fast_policy(Some(2)),
-        );
+        )
+        .expect("a default policy validates");
         let mut bytes = [0u8; 1];
         let first = rx.recv_bytes(&mut bytes);
         let again = rx.recv_bytes(&mut bytes);
@@ -717,7 +768,8 @@ mod tests {
             },
             Box::new(factory),
             fast_policy(None),
-        );
+        )
+        .expect("a default policy validates");
         let mut bytes = [0u8; 1];
         assert_eq!(
             rx.recv_bytes(&mut bytes),
@@ -744,7 +796,8 @@ mod tests {
             calls: 0,
             ok_until: 0,
         }; // breaks immediately
-        let mut managed = ManagedRecvTransport::new(initial, factory, fast_policy(Some(2)));
+        let mut managed = ManagedRecvTransport::new(initial, factory, fast_policy(Some(2)))
+            .expect("a default policy validates");
 
         let mut buf = [0u8; 8];
         let err = managed.recv_bytes(&mut buf).unwrap_err();
@@ -784,7 +837,8 @@ mod tests {
         });
 
         let mut managed =
-            ManagedRecvTransport::new(BackpressureRecv, factory, fast_policy(Some(5)));
+            ManagedRecvTransport::new(BackpressureRecv, factory, fast_policy(Some(5)))
+                .expect("a default policy validates");
 
         let mut buf = [0u8; 8];
         let err = managed.recv_bytes(&mut buf).unwrap_err();
@@ -812,7 +866,8 @@ mod tests {
             calls: 0,
             ok_until: 1,
         };
-        let mut managed = ManagedRecvTransport::new(initial, factory, fast_policy(Some(5)));
+        let mut managed = ManagedRecvTransport::new(initial, factory, fast_policy(Some(5)))
+            .expect("a default policy validates");
 
         managed.close();
         assert!(!managed.is_alive());
@@ -917,7 +972,8 @@ mod tests {
             calls: 0,
             ok_until: 1,
         };
-        let mut m = ManagedRecvTransport::new(initial, factory, fast_policy(Some(2)));
+        let mut m = ManagedRecvTransport::new(initial, factory, fast_policy(Some(2)))
+            .expect("a default policy validates");
         assert_eq!(m.max_payload(), 9000, "live inner's ceiling");
 
         let mut buf = [0u8; 16];
@@ -946,7 +1002,8 @@ mod tests {
             calls: 0,
             ok_until: 1,
         };
-        let mut m = ManagedRecvTransport::new(initial, factory, fast_policy(Some(5)));
+        let mut m = ManagedRecvTransport::new(initial, factory, fast_policy(Some(5)))
+            .expect("a default policy validates");
 
         let mut buf = [0u8; 16];
         let _ = m.recv_bytes(&mut buf); // initial serves 1
@@ -967,7 +1024,8 @@ mod tests {
                 cancelled: cancelled_cl.clone(),
             })
         });
-        let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)));
+        let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
+            .expect("a default policy validates");
 
         let h = managed.cancel_handle().expect("cancellable inner -> Some");
         h.cancel();
@@ -991,7 +1049,8 @@ mod tests {
                 cancelled: cancelled_cl.clone(),
             })
         });
-        let mut managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)));
+        let mut managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
+            .expect("a default policy validates");
 
         managed
             .cancel_handle()

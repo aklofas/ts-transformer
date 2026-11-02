@@ -130,3 +130,27 @@ fn recv_side_reconnect_attempts_counts_attempts_not_successes() {
 
     unsafe { tst_managed_demux_receiver_close(h) };
 }
+
+/// Zero backoff with unlimited attempts is refused at open, before any
+/// connect (nothing listens on port 1).
+#[test]
+fn managed_sender_open_refuses_zero_backoff_with_unlimited_attempts() {
+    use tstrans::sender::ts_sender::tst_managed_sender_open;
+    unsafe {
+        let policy = tst_reconnect_policy_new();
+        assert_eq!(tst_reconnect_policy_set_max_attempts(policy, -1), 0);
+        assert_eq!(tst_reconnect_policy_set_backoff_constant_ms(policy, 0), 0);
+        let url = CString::new("srt://127.0.0.1:1").unwrap();
+        let started = Instant::now();
+        let tx = tst_managed_sender_open(url.as_ptr(), std::ptr::null(), policy);
+        assert!(tx.is_null());
+        assert_eq!(
+            tstrans::error::tst_get_last_error(),
+            TstError::InvalidConfig as i32,
+            "{}",
+            last_error_msg()
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        tst_reconnect_policy_free(policy);
+    }
+}

@@ -1419,6 +1419,13 @@ impl From<TsFramingError> for BindingError {
     }
 }
 
+#[cfg(feature = "std")]
+impl From<crate::ReconnectPolicyError> for BindingError {
+    fn from(e: crate::ReconnectPolicyError) -> Self {
+        BindingError::new(BindingErrorKind::ConfigInvalid, e.to_string())
+    }
+}
+
 // Shell-error structs project by `source` — the same split Python and the
 // JVM apply — so `MuxSender::send_video(bad NAL)` is INVALID_NAL, not the
 // coarser INPUT_MALFORMED.

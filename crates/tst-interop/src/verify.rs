@@ -4274,7 +4274,8 @@ mod tests {
                 Ok(Box::new(Scripted(chunks)) as Box<dyn RecvTransport>)
             },
             policy,
-        );
+        )
+        .expect("a default policy validates");
 
         let hdr = corruption_header();
         let wire = wire_for("baseline", 3.0);

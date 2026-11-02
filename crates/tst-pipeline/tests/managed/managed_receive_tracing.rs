@@ -32,7 +32,8 @@ fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
     };
 
     let inner = ScriptedRecv::failing(broken("always broken (test)")).with_alive(true);
-    let mut managed = ManagedRecvTransport::new(inner, factory, policy);
+    let mut managed =
+        ManagedRecvTransport::new(inner, factory, policy).expect("a default policy validates");
 
     // Drive the reconnect path: a single recv triggers Broken → drop inner →
     // factory failures within the policy budget → give-up returns Closed.
@@ -76,7 +77,8 @@ fn receiver_background_mode_warns_and_behaves_as_blocking() {
     };
 
     let inner = ScriptedRecv::failing(broken("always broken (test)")).with_alive(true);
-    let mut managed = ManagedRecvTransport::new(inner, factory, policy);
+    let mut managed =
+        ManagedRecvTransport::new(inner, factory, policy).expect("a default policy validates");
 
     // The construction-time warning fires immediately, regardless of
     // whether recv_bytes is ever called.

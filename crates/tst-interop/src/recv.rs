@@ -257,7 +257,7 @@ pub(crate) fn managed_teed_transport(
     initial_raw: Box<dyn RecvTransport>,
     mut dial: impl FnMut() -> Result<Box<dyn RecvTransport>, String> + Send + 'static,
     policy: ReconnectPolicy,
-) -> (TeedManagedRecv, Arc<Mutex<transport::TeeState>>) {
+) -> Result<(TeedManagedRecv, Arc<Mutex<transport::TeeState>>), String> {
     let (initial_teed, tap) = Teeing::new(initial_raw);
     let tap_for_factory = Arc::clone(&tap);
     let factory: ManagedRecvFactory = Box::new(move || {
@@ -276,9 +276,10 @@ pub(crate) fn managed_teed_transport(
         transport::tee_resync(&tap_for_factory);
         Ok(Teeing::with_tap(raw, Arc::clone(&tap_for_factory)))
     });
-    let managed = ManagedRecvTransport::new(initial_teed, factory, policy);
+    let managed =
+        ManagedRecvTransport::new(initial_teed, factory, policy).map_err(|e| e.to_string())?;
     transport::tee_watch_reconnects(&tap, managed.reconnects_handle());
-    (managed, tap)
+    Ok((managed, tap))
 }
 
 /// The receive-side coordinate to stamp `ev` with: folds the tee's new
@@ -680,7 +681,7 @@ pub fn run_managed(
         ..ReconnectPolicy::default()
     };
     let (managed, tap) =
-        managed_teed_transport(initial_raw, move || transport::make_recv(&dial_url), policy);
+        managed_teed_transport(initial_raw, move || transport::make_recv(&dial_url), policy)?;
     // Built per-profile, not `ManagedDemuxReceiver::new` — see
     // `profiles::demuxer_config`'s doc comment.
     let mut rx = ManagedDemuxReceiver::with_demux_options(
