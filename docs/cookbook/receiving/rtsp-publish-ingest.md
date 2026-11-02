@@ -124,8 +124,9 @@ connection, or an ANNOUNCE on a reader's, answers `455`.
 By default one credential (the builder's `auth_basic` or `auth_digest_*`)
 guards every name, for publishers and readers alike. `server.mount_rules()`
 returns a table you edit while the server runs: a rule per mount path, plus a
-default for every other path. Each rule holds a publish policy (ANNOUNCE and
-RECORD) and a read policy (DESCRIBE, SETUP and PLAY).
+default for every other path. A rule's path must be canonical (`/amber`, never
+`/amber/`); `set` refuses anything else. Each rule holds a publish policy
+(ANNOUNCE and RECORD) and a read policy (DESCRIBE, SETUP and PLAY).
 
 ```rust,no_run
 use secrecy::SecretString;

@@ -31,6 +31,46 @@ fn started_with_mount(b: RtspServerBuilder) -> RtspServer {
     server
 }
 
+/// A mount and a rule can only exist under one key, so a path the server
+/// resolves differently from its registration cannot be served past the
+/// rule. `add_mount("/live/")` is refused; `/live` with a `Refuse` read rule
+/// answers 403 for `/live`, `/live/` and `/live//` alike.
+#[test]
+fn a_mount_and_its_rule_share_one_key() {
+    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
+        .unwrap()
+        .build()
+        .unwrap();
+    assert!(matches!(
+        server.add_mount("/live/", make_muxer_cfg()),
+        Err(tst_rtp::RtspServerError::InvalidMountPath { .. })
+    ));
+    server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server
+        .mount_rules()
+        .set(
+            "/live",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Refuse(RefuseStatus::Forbidden),
+            ),
+        )
+        .unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    for suffix in ["/live", "/live/", "/live//"] {
+        let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+            .unwrap();
+        let resp = request(
+            &mut tcp,
+            &format!("DESCRIBE rtsp://127.0.0.1:{port}{suffix} RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+        );
+        assert!(resp.starts_with("RTSP/1.0 403"), "{suffix}: {resp}");
+    }
+    server.stop().unwrap();
+}
+
 /// Two handles are one table, and `stop()` closes it.
 #[test]
 fn mount_rules_handle_is_live_across_clones_and_closes_with_stop() {
@@ -1011,18 +1051,26 @@ fn a_publisher_refused_mid_session_can_publish_another_mount_on_the_same_connect
     server.stop().unwrap();
 }
 
-/// A rule set at a path with a trailing slash governs the mount requests
-/// resolve that path to: an on-demand ANNOUNCE to `/amber/` (or `/amber`)
-/// meets the `/amber/` rule's refusal rather than the open default.
+/// A rule is set under the canonical key only, and governs every request
+/// spelling that resolves to it: `set("/amber/")` is refused, and an
+/// on-demand ANNOUNCE to `/amber/` (or `/amber`) meets the `/amber` rule's
+/// refusal rather than the open default.
 #[test]
-fn a_rule_set_with_a_trailing_slash_governs_the_announce() {
+fn a_canonical_rule_governs_the_announce_on_every_spelling() {
     let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
     b.accept_unregistered_publishers(true);
     let server = started(b);
+    assert!(matches!(
+        server.mount_rules().set(
+            "/amber/",
+            publish_rule(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+        ),
+        Err(MountRuleError::InvalidMountPath { .. })
+    ));
     server
         .mount_rules()
         .set(
-            "/amber/",
+            "/amber",
             publish_rule(MountPolicy::Refuse(RefuseStatus::Forbidden)),
         )
         .unwrap();

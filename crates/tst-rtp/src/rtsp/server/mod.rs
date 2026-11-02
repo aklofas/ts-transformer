@@ -250,9 +250,12 @@ impl std::fmt::Debug for RtspServer {
 }
 
 /// Shared path validation for `add_mount` / `add_multicast_mount` /
-/// `add_publish_mount`: must start with `/` and avoid the URL-reserved
-/// characters that would make the `extract_mount_path` lookup in
-/// `handlers.rs` ambiguous.
+/// `add_publish_mount`, `MountRules::set` / `remove` and the on-demand
+/// ANNOUNCE: must start with `/`, avoid the URL-reserved characters and
+/// control bytes, and be canonical. A path is canonical when the request
+/// normalizer (`handlers::extract_mount_path`) returns it unchanged and it
+/// has no empty segment, so a mount, a rule and a request lookup can only
+/// meet under one key.
 pub(crate) fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
     if path.is_empty() || !path.starts_with('/') {
         return Err(RtspServerError::InvalidMountPath {
@@ -274,6 +277,20 @@ pub(crate) fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
     if path.bytes().any(|b| b < 0x20 || b == 0x7F) {
         return Err(RtspServerError::InvalidMountPath {
             detail: "path contains a control byte".to_string(),
+        });
+    }
+    // The normalizer keeps an interior empty segment, so `/a//b` is a key
+    // no request spelling other than itself reaches; refuse it outright.
+    if path.contains("//") {
+        return Err(RtspServerError::InvalidMountPath {
+            detail: "path has an empty segment".to_string(),
+        });
+    }
+    // Safe to echo: the control-byte check above already ran.
+    let canonical = handlers::extract_mount_path(path);
+    if canonical != path {
+        return Err(RtspServerError::InvalidMountPath {
+            detail: format!("path is not canonical; use {canonical:?}"),
         });
     }
     Ok(())
@@ -1424,6 +1441,33 @@ mod listener_tests {
 #[cfg(test)]
 mod add_mount_tests {
     use super::*;
+    #[test]
+    fn a_non_canonical_mount_path_is_invalid() {
+        for p in [
+            "/live/",
+            "/live//",
+            "/a//b",
+            "/live/trackID=0",
+            "/live/stream=1",
+            "/live/streamid=2",
+        ] {
+            assert!(
+                matches!(
+                    validate_mount_path(p),
+                    Err(RtspServerError::InvalidMountPath { .. })
+                ),
+                "{p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn root_is_canonical_and_accepted() {
+        assert!(validate_mount_path("/").is_ok());
+        assert!(validate_mount_path("/live").is_ok());
+        assert!(validate_mount_path("/a/b").is_ok());
+    }
+
     #[test]
     fn a_mount_path_with_a_control_byte_is_invalid() {
         for p in ["/a\0b", "/a\tb", "/a\nb", "/a\rb", "/a\x7fb", "/\x01"] {

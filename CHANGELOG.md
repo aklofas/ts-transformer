@@ -34,6 +34,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-core, tst-py (BREAKING)
 
 - `MuxerConfig::from_program_map` maps an asynchronous KLV stream (`StreamKind::KlvAsync`, stream_type 0x06) to `carries_pts: false`, so its remuxed PES packets carry `PTS_DTS_flags` 00 as MISB ST 1402 (ST 1402-22) requires for the asynchronous method. Before, they carried the source PTS, which the conversion's documentation called the STANAG 4609 norm. Synchronous KLV (0x15) and data streams keep `carries_pts: true`. A caller that wants a PTS on a 0x06 stream builds the config by hand. Python `MuxerConfig.from_program_map` changes the same way.
+### Changed — tst-rtp (BREAKING)
+
+- `add_mount`, `add_multicast_mount` and `add_publish_mount` refuse a non-canonical path (`/live/`, `/live//`, `/live/trackID=0`) with `InvalidMountPath`; `MountRules::set` and `remove` refuse the same paths instead of normalizing them. Why: a mount registered under one spelling and a rule under another were two keys, so a restrictive rule did not govern the mount; one canonical key closes that. Mount rules are unreleased; the mount registration change affects every release since 0.1.0 only for paths with a trailing slash, which were unreachable by `RtspClient` anyway.
 
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 

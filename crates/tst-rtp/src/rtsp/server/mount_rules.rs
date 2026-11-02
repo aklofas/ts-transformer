@@ -20,7 +20,6 @@ use secrecy::SecretString;
 
 use crate::rtsp::server::auth::Credential;
 use crate::rtsp::server::builder::AuthScheme;
-use crate::rtsp::server::handlers::extract_mount_path;
 use crate::rtsp::server::validate_mount_path;
 
 /// One username and password a client may present.
@@ -205,10 +204,12 @@ struct Inner {
 /// Handle to one server's per-path rules, from
 /// [`RtspServer::mount_rules`](crate::RtspServer::mount_rules).
 ///
-/// A path is keyed the way the server resolves a request URI to a mount: a
-/// trailing `/`, and a trailing per-media control segment (`trackID=`,
-/// `streamid=` or `stream=`), are dropped. A rule set at `/amber/` therefore
-/// governs `/amber`, and is the same entry as one set at `/amber`.
+/// A rule's `path` must be canonical: the exact key a request resolves to
+/// (no trailing slash, no empty segment, no trailing `trackID=`/`streamid=`/
+/// `stream=` segment), the same rule `add_mount` applies. `set("/amber/")`
+/// is refused with [`MountRuleError::InvalidMountPath`]; use `/amber`. A
+/// request for `/amber/` or `/amber/trackID=0` resolves to `/amber` and so
+/// meets that rule.
 ///
 /// A clone is the same table. Usable from any thread, including while the
 /// server runs; an edit applies from the next request on. After the server
@@ -259,6 +260,18 @@ fn check_policy(policy: &MountPolicy) -> Result<(), MountRuleError> {
     Ok(())
 }
 
+/// The mount-path gate `add_mount` applies, mapped to the rules table's
+/// error.
+fn check_path(path: &str) -> Result<(), MountRuleError> {
+    validate_mount_path(path).map_err(|e| MountRuleError::InvalidMountPath {
+        path: path.to_string(),
+        detail: match e {
+            crate::error::RtspServerError::InvalidMountPath { detail } => detail,
+            other => other.to_string(),
+        },
+    })
+}
+
 pub(crate) fn check_rule(rule: &MountRule) -> Result<(), MountRuleError> {
     check_policy(&rule.publish)?;
     check_policy(&rule.read)
@@ -284,12 +297,14 @@ impl MountRules {
         }
     }
 
-    /// Set the rule for `path`, replacing any earlier one. `path` is keyed
-    /// as the type-level docs describe (`/amber/` names `/amber`).
+    /// Set the rule for `path`, replacing any earlier one.
     ///
     /// # Errors
     /// - [`MountRuleError::InvalidMountPath`] if `path` is not a valid mount
-    ///   path.
+    ///   path. `path` must be canonical: the exact key a request resolves to
+    ///   (no trailing slash, no empty segment, no trailing `trackID=`/
+    ///   `streamid=`/`stream=` segment). `set("/amber/")` is refused with
+    ///   `InvalidMountPath`; use `/amber`.
     /// - [`MountRuleError::EmptyCredentials`] if a `Require` policy holds no
     ///   credential or a credential with an empty username.
     /// - [`MountRuleError::DuplicateUsername`] if a `Require` policy lists a
@@ -297,29 +312,24 @@ impl MountRules {
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set(&self, path: &str, rule: MountRule) -> Result<(), MountRuleError> {
         self.ensure_open()?;
-        validate_mount_path(path).map_err(|e| MountRuleError::InvalidMountPath {
-            path: path.to_string(),
-            detail: match e {
-                crate::error::RtspServerError::InvalidMountPath { detail } => detail,
-                other => other.to_string(),
-            },
-        })?;
+        check_path(path)?;
         check_rule(&rule)?;
-        write(&self.inner.rules).insert(extract_mount_path(path), rule);
+        write(&self.inner.rules).insert(path.to_string(), rule);
         Ok(())
     }
 
     /// Remove the rule for `path`; the path then follows the default.
-    /// Returns whether a rule was present. `path` is keyed as in
-    /// [`Self::set`].
+    /// Returns whether a rule was present.
     ///
     /// # Errors
+    /// - [`MountRuleError::InvalidMountPath`] if `path` is not a valid mount
+    ///   path. `path` must be canonical, as in [`Self::set`]:
+    ///   `remove("/amber/")` is refused with `InvalidMountPath`; use `/amber`.
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn remove(&self, path: &str) -> Result<bool, MountRuleError> {
         self.ensure_open()?;
-        Ok(write(&self.inner.rules)
-            .remove(&extract_mount_path(path))
-            .is_some())
+        check_path(path)?;
+        Ok(write(&self.inner.rules).remove(path).is_some())
     }
 
     /// Set the rule every path without its own entry follows.
@@ -520,27 +530,30 @@ mod tests {
     }
 
     #[test]
-    fn a_trailing_slash_keys_the_rule_on_the_path_requests_resolve_to() {
+    fn set_and_remove_refuse_a_non_canonical_key() {
         let t = table();
-        t.set(
-            "/amber/",
-            MountRule::both(MountPolicy::Refuse(RefuseStatus::Forbidden)),
-        )
-        .unwrap();
-        assert!(matches!(
-            t.policy_for("/amber", Direction::Publish),
-            MountPolicy::Refuse(RefuseStatus::Forbidden)
-        ));
+        for path in ["/amber/", "/amber//", "/amber/stream=1", "/amber/trackID=0"] {
+            assert!(
+                matches!(
+                    t.set(path, MountRule::both(MountPolicy::Open)),
+                    Err(MountRuleError::InvalidMountPath { .. })
+                ),
+                "set {path:?}"
+            );
+            assert!(
+                matches!(t.remove(path), Err(MountRuleError::InvalidMountPath { .. })),
+                "remove {path:?}"
+            );
+        }
+        assert!(t.is_empty());
         t.set("/amber", MountRule::both(MountPolicy::Open)).unwrap();
-        assert_eq!(t.len(), 1, "/amber and /amber/ are one entry");
         assert!(matches!(
             t.policy_for("/amber", Direction::Read),
             MountPolicy::Open
         ));
-        assert!(t.remove("/amber/").unwrap());
-        assert!(t.is_empty());
+        // A child-looking key is its own entry, never the parent's.
         assert!(matches!(
-            t.policy_for("/amber", Direction::Publish),
+            t.policy_for("/amber/stream=1", Direction::Read),
             MountPolicy::Inherit
         ));
     }
@@ -577,7 +590,18 @@ mod tests {
             .build()
             .unwrap();
         let t = table();
-        for path in ["", "amber", "/amber/", "/a b", "/../x", "/ok"] {
+        for path in [
+            "",
+            "amber",
+            "/amber/",
+            "/a b",
+            "/../x",
+            "/ok",
+            "/amber//",
+            "/amber/stream=1",
+            "/amber/trackID=0",
+            "/",
+        ] {
             let rule_err = t.set(path, MountRule::default()).is_err();
             let mount_err = server.add_publish_mount(path).is_err();
             assert_eq!(rule_err, mount_err, "path {path:?}");

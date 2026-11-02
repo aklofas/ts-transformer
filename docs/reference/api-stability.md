@@ -25,9 +25,10 @@ once the workspace reaches 1.0:
 - **Internal** — public solely for the binding-canonical workflow or
   documented extension points (`demux::low_level`); no stability promise.
 
-No workspace module is currently classified Experimental — the tier
-exists for future use (a new module can land there before earning
-Provisional status).
+One workspace module is currently classified Experimental: tst-rtp's
+`rtsp::server::mount_rules` (the per-path rules table, an override row
+below). A new module can land in this tier before earning Provisional
+status.
 
 ## Classification table
 
@@ -123,6 +124,7 @@ needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 | tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `ConnectError` is now `RtpConnectError` and stays as a deprecated alias, removed in 0.10.0; `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` | — |
 | tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing; `UrlError` is now `RtpUrlError` and stays as a deprecated alias, removed in 0.10.0 | — |
 | tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module. `RtspClientBuilder`, `RtspServerBuilder` and `RtspServerCancelHandle` (in `rtsp::client` and `rtsp::server`, formerly in `builder` and `cancel`) keep the Stable tier they had | the server builder, mount and publisher-role surface unchanged for one minor, with publisher resource budgets settled |
+| tst-rtp | rtsp::server::mount_rules | Experimental | per-path rules table merged after 0.9.0; key canonicalisation and the Inherit fallback changed in 0.9.1; may change again without notice until the first release that ships it | one release with no change to the key rule or the fallback |
 | tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 | the segment and playlist contract unchanged for one minor, with low-latency HLS either added or confirmed out of the surface |
 | tst-rist | (crate) | Provisional | profile coverage still evolving | the supported profiles and URL keys fixed, and one minor with no signature change |
 | tst-rist | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
