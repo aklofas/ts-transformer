@@ -93,12 +93,12 @@ pub unsafe extern "C" fn tst_rist_sender_open(url: *const c_char) -> *mut TstRis
 /// Close and free a `tst_rist_sender_t`.
 ///
 /// Safe to call with `NULL` (no-op). After this call the pointer is
+/// invalid; passing the same non-null pointer twice is undefined
+/// behavior (use-after-free on the consumed `Box`).
 ///
 /// Close is cancel-first and abortive: up to six buffered packets that
 /// no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first for
 /// a lossless end of stream.
-/// invalid; passing the same non-null pointer twice is undefined
-/// behavior (use-after-free on the consumed `Box`).
 ///
 /// # Safety
 ///

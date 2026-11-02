@@ -7809,12 +7809,12 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * Close and free a `tst_rist_sender_t`.
  *
  * Safe to call with `NULL` (no-op). After this call the pointer is
+ * invalid; passing the same non-null pointer twice is undefined
+ * behavior (use-after-free on the consumed `Box`).
  *
  * Close is cancel-first and abortive: up to six buffered packets that
  * no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first for
  * a lossless end of stream.
- * invalid; passing the same non-null pointer twice is undefined
- * behavior (use-after-free on the consumed `Box`).
  *
  * # Safety
  *
@@ -11768,12 +11768,12 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * Close and free a `tst_tcp_sender_t`.
  *
  * Safe to call with `NULL` (no-op). After this call the pointer is
+ * invalid; passing the same non-null pointer twice is undefined
+ * behavior (use-after-free on the consumed `Box`).
  *
  * Close is cancel-first and abortive: up to six buffered packets that
  * no `tst_tcp_sender_flush` has sent are discarded. Call `_flush` first for
  * a lossless end of stream.
- * invalid; passing the same non-null pointer twice is undefined
- * behavior (use-after-free on the consumed `Box`).
  *
  * # Safety
  *
@@ -12683,12 +12683,12 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * Close and free a `tst_udp_sender_t`.
  *
  * Safe to call with `NULL` (no-op). After this call the pointer is
+ * invalid; passing the same non-null pointer twice is undefined
+ * behavior (use-after-free on the consumed `Box`).
  *
  * Close is cancel-first and abortive: up to six buffered packets that
  * no `tst_udp_sender_flush` has sent are discarded. Call `_flush` first for
  * a lossless end of stream.
- * invalid; passing the same non-null pointer twice is undefined
- * behavior (use-after-free on the consumed `Box`).
  *
  * # Safety
  *
