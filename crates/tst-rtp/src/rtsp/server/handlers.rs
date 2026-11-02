@@ -318,16 +318,15 @@ pub(crate) fn extract_mount_path(uri: &str) -> String {
     let is_control = |seg: &str| {
         seg.starts_with("trackID=") || seg.starts_with("streamid=") || seg.starts_with("stream=")
     };
-    // Each pass strips one control segment; repeat until none is left
-    // (`/live/trackID=0/trackID=1` is `/live`).
-    let mut path = normalize_mount_path(uri, is_control);
-    loop {
-        let next = normalize_mount_path(&path, is_control);
-        if next == path {
-            return path;
-        }
-        path = next;
+    // Normalize once, then strip control segments off the same slice until
+    // none is left (`/live/trackID=0/trackID=1` is `/live`). Each step
+    // reads only the segment and slashes it removes, so the walk is linear
+    // in the URI length and the result is the only allocation.
+    let mut path = normalized_path(uri);
+    while let Some(shorter) = strip_last_segment(path, is_control) {
+        path = shorter;
     }
+    path.to_string()
 }
 
 /// Shared normalization for [`extract_mount_path`] and the publisher
@@ -338,6 +337,15 @@ pub(crate) fn extract_mount_path(uri: &str) -> String {
 /// `strip_last` says it's a per-media control segment (not part of the
 /// registered mount path), then strip every trailing slash again.
 fn normalize_mount_path(uri: &str, strip_last: impl FnOnce(&str) -> bool) -> String {
+    let path = normalized_path(uri);
+    strip_last_segment(path, strip_last)
+        .unwrap_or(path)
+        .to_string()
+}
+
+/// [`normalize_mount_path`] up to the control-segment step: `uri` without
+/// scheme, authority, query or trailing slashes. Never allocates.
+fn normalized_path(uri: &str) -> &str {
     // Strip scheme + authority if present.
     let path_start = if let Some(after_scheme) = uri.strip_prefix("rtsp://") {
         after_scheme
@@ -356,25 +364,28 @@ fn normalize_mount_path(uri: &str, strip_last: impl FnOnce(&str) -> bool) -> Str
     // of the mount as registered.
     let path = path_start.split('?').next().unwrap_or(path_start);
     // "/live/" and "/live//" resolve to the mount registered at "/live".
-    let path = trim_trailing_slashes(path);
-    // Strip a trailing per-media control segment, per `strip_last`. SDP
-    // `a=control:trackID=N` (the canonical form per RFC 7826 §C.1.1), or
-    // `a=control:stream=N` (gst-rtsp-server's convention), causes a SETUP
-    // URI of `<base>/trackID=N` or `<base>/stream=N`. SETUP matches
-    // against the base mount path; the control segment is per-media and
-    // not part of the registered mount.
-    let path = match path.rfind('/') {
-        Some(last_slash) if strip_last(&path[last_slash + 1..]) => {
-            // Keep the leading slash if it's the only one (root mount).
-            if last_slash == 0 {
-                "/"
-            } else {
-                trim_trailing_slashes(&path[..last_slash])
-            }
-        }
-        _ => path,
-    };
-    path.to_string()
+    trim_trailing_slashes(path)
+}
+
+/// `path` (already without trailing slashes) minus its last `/`-delimited
+/// segment and the slashes before it, when `strip_last` says that segment
+/// is a per-media control segment; `None` otherwise. SDP
+/// `a=control:trackID=N` (the canonical form per RFC 7826 §C.1.1), or
+/// `a=control:stream=N` (gst-rtsp-server's convention), causes a SETUP
+/// URI of `<base>/trackID=N` or `<base>/stream=N`. SETUP matches against
+/// the base mount path; the control segment is per-media and not part of
+/// the registered mount. A `Some` is always shorter than `path`.
+fn strip_last_segment(path: &str, strip_last: impl FnOnce(&str) -> bool) -> Option<&str> {
+    let last_slash = path.rfind('/')?;
+    if !strip_last(&path[last_slash + 1..]) {
+        return None;
+    }
+    // Keep the leading slash if it's the only one (root mount).
+    Some(if last_slash == 0 {
+        "/"
+    } else {
+        trim_trailing_slashes(&path[..last_slash])
+    })
 }
 
 /// `path` without its trailing slashes; the bare root `"/"` (and any
@@ -1295,6 +1306,67 @@ mod tests {
         assert_eq!(extract_mount_path("/live//trackID=0"), "/live");
         assert_eq!(extract_mount_path("/live//"), "/live");
         assert_eq!(extract_mount_path("/trackID=0/"), "/");
+    }
+
+    /// The normalizer as it was written before the single-pass walk: one
+    /// full normalization per control segment until a fixed point.
+    fn extract_mount_path_by_repeated_passes(uri: &str) -> String {
+        let is_control = |seg: &str| {
+            seg.starts_with("trackID=")
+                || seg.starts_with("streamid=")
+                || seg.starts_with("stream=")
+        };
+        let mut path = normalize_mount_path(uri, is_control);
+        loop {
+            let next = normalize_mount_path(&path, is_control);
+            if next == path {
+                return path;
+            }
+            path = next;
+        }
+    }
+
+    #[test]
+    fn single_pass_normalizer_matches_the_repeated_pass_definition() {
+        let heads = ["", "/", "rtsp://h:8554", "rtsps://h", "rtsp://h/", "x"];
+        let segs = [
+            "/live",
+            "/",
+            "//",
+            "/trackID=0",
+            "/streamid=1",
+            "/stream=2",
+            "/audio",
+            "/trackID",
+        ];
+        let tails = ["", "?q=1", "/?q=/trackID=0", "/"];
+        for head in heads {
+            for a in segs {
+                for b in segs {
+                    for c in segs {
+                        for tail in tails {
+                            let uri = format!("{head}{a}{b}{c}{tail}");
+                            assert_eq!(
+                                extract_mount_path(&uri),
+                                extract_mount_path_by_repeated_passes(&uri),
+                                "uri {uri:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn many_trailing_control_segments_normalize_to_the_mount() {
+        // A request URI within the 64 KiB header cap can carry thousands
+        // of control segments; all of them go, and the walk is linear.
+        let uri = format!("rtsp://h:8554/live{}", "/stream=0".repeat(7_000));
+        assert!(uri.len() < crate::rtsp::message::MAX_RTSP_MESSAGE_BYTES);
+        assert_eq!(extract_mount_path(&uri), "/live");
+        let uri = format!("/a//{}/", "trackID=1//streamid=2/".repeat(2_000));
+        assert_eq!(extract_mount_path(&uri), "/a");
     }
 
     #[test]
