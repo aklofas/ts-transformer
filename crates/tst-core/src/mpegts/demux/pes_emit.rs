@@ -153,7 +153,7 @@ impl super::demuxer::Demuxer {
         if pkt.payload_unit_start && !self.pes.has_pid(pkt.pid) {
             self.settle_pts_baseline(pkt.pid);
         }
-        let outcomes = self.pes.push(
+        let (outcomes, old_count) = self.pes.push_split(
             pkt.pid,
             pkt.payload,
             pkt.payload_unit_start,
@@ -164,13 +164,18 @@ impl super::demuxer::Demuxer {
         // `Complete` it describes. Lenient mode carries the reason into that
         // PES's emission; a strict mode applies its verdict now and drops
         // the PES's events (its timing still counts).
-        // A PUSI ends whatever PES was in flight on the PID, completed or
-        // dropped (cap, damage), so a reset that waited on it settles after
-        // this packet's outcomes.
+        // A PUSI ends whatever PES was in flight on the PID — completed,
+        // dropped (cap, damage), unparseable or too short to parse — so a
+        // reset that waited on it settles once that PES's outcomes are done:
+        // before the first outcome of the PES that starts in this packet, or
+        // after the loop when there is none.
         let settles = pkt.payload_unit_start;
         let mut drop_next_complete: Option<u16> = None;
         let mut damage_next_complete: Option<(u16, &'static str)> = None;
-        for outcome in outcomes {
+        for (idx, outcome) in outcomes.into_iter().enumerate() {
+            if settles && idx == old_count {
+                self.settle_pts_baseline(pkt.pid);
+            }
             match outcome {
                 ReassemblyOutcome::Complete(pes) => {
                     if drop_next_complete == Some(pes.pid) {
@@ -218,9 +223,10 @@ impl super::demuxer::Demuxer {
                     // outcomes of this packet go with it (strict is fatal
                     // for the stream anyway).
                     if let Err(err) = self.surface_malformed_pes(pid, reason) {
-                        // The PUSI still ends the PES in flight: settle a
-                        // pending time-base reset first, so a caller that
-                        // keeps feeding is judged on the new clock.
+                        // The same rule on the early return: the PUSI still
+                        // ends the PES in flight, so settle a pending
+                        // time-base reset first and a caller that keeps
+                        // feeding is judged on the new clock.
                         if settles {
                             self.settle_pts_baseline(pkt.pid);
                         }
@@ -1723,6 +1729,91 @@ mod tests {
         let ev = drain_all_events(&mut d);
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(missing_pts_count(&ev, 0x101), 0, "{ev:?}");
+    }
+
+    /// Audio 0x101 (also the PCR_PID). PES A (PTS 900_000) completes. PES B
+    /// starts bounded with PES_packet_length 0x0100 (so it stays in flight
+    /// through the next packet and is closed only by the PUSI after it) and an
+    /// unparseable header (`PES_header_data_length` 0xFF past the bytes that
+    /// arrive). A packet with discontinuity_indicator and a PCR announces a new
+    /// clock (`forget_program_pts`: B is in flight, so the clear is deferred).
+    /// The next PUSI packet ends B — parse error, no `Complete` — and carries
+    /// the start of PES C with PTS 1_000 on the new clock; C completes either
+    /// inside that packet or in the packet after it. C must not be judged
+    /// against A's PTS (judged so, it is a backward step past the 1 s
+    /// `PtsAnomaly` threshold).
+    #[test]
+    fn unparseable_pes_at_a_pusi_settles_the_pending_reset_before_the_new_pes() {
+        let run = |mode, c_len: usize| {
+            let mut d = audio_demuxer(mode);
+            let a = pes_to_packets(
+                0x101,
+                0,
+                &pes_bytes(0xC0, Some(900_000), None, true, &[0xAA; 20], true),
+            );
+            let b_bad = ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 1,
+                pusi: true,
+                discontinuity: false,
+                rai: false,
+                pcr: None,
+                scrambling: 0,
+                payload: &[
+                    0x00, 0x00, 0x01, 0xC0, 0x01, 0x00, 0x80, 0x80, 0xFF, 0x00, 0x00,
+                ],
+            });
+            let splice = ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 2,
+                pusi: false,
+                discontinuity: true,
+                rai: false,
+                pcr: Some(300 * 1_000),
+                scrambling: 0,
+                payload: &[0xFF; 10],
+            });
+            let c = pes_to_packets(
+                0x101,
+                3,
+                &pes_bytes(0xC0, Some(1_000), None, true, &vec![0xCC; c_len], true),
+            );
+            let next_cc = (3 + c.len() as u8) & 0x0F;
+            let later = pes_to_packets(
+                0x101,
+                next_cc,
+                &pes_bytes(0xC0, Some(2_000), None, true, &[0xDD; 20], true),
+            );
+            let mut pkts = a;
+            pkts.extend([b_bad, splice]);
+            pkts.extend(c);
+            pkts.extend(later);
+            let r = feed_packets(&mut d, &pkts);
+            d.flush();
+            (r, drain_all_events(&mut d))
+        };
+        // 20 bytes: C completes inside its PUSI packet; 300 bytes: in the next.
+        for c_len in [20, 300] {
+            let (r, ev) = run(StrictMode::Off, c_len);
+            assert!(r.is_ok(), "c_len {c_len}: {r:?}");
+            assert!(
+                !issues(&ev)
+                    .iter()
+                    .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
+                "c_len {c_len}: {ev:?}"
+            );
+            assert!(
+                issues(&ev)
+                    .iter()
+                    .any(|i| matches!(i, NonConformantIssue::MalformedPes { pid: 0x101, .. })),
+                "c_len {c_len}: B's parse error is still reported: {ev:?}"
+            );
+            let (r, _) = run(StrictMode::TimingOnly, c_len);
+            assert!(
+                r.is_ok(),
+                "c_len {c_len}: TimingOnly must not reject C's PTS on the new clock: {r:?}"
+            );
+        }
     }
 
     /// Full mode returns the damage error at the PUSI that ends the PES
