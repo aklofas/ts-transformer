@@ -223,32 +223,52 @@ fn main() {
         // The floor is ours, not pkg-config's: an older host librist predates
         // the fixes the vendored tree carries, and one built against another
         // crypto backend would link a second TLS stack.
-        match pkg_config::Config::new()
+        let static_probe = pkg_config::Config::new()
             .cargo_metadata(false)
             .statik(true)
-            .probe("librist")
-        {
-            Ok(probe) => {
-                match host_lib::host_lib_verdict(
-                    &probe.version,
-                    (0, 2, 20),
-                    &probe.libs,
-                    feat_mbedtls,
-                ) {
-                    Ok(()) => pkg_config::Config::new()
-                        .probe("librist")
-                        .map(|lib| lib.include_paths)
-                        .unwrap_or_else(|_| build_vendored(feat_mbedtls, sanitizer.as_deref())),
-                    Err(reason) => {
-                        println!(
-                            "cargo:warning={}",
-                            host_lib::vendored_warning("librist", &reason)
-                        );
-                        build_vendored(feat_mbedtls, sanitizer.as_deref())
-                    }
+            .probe("librist");
+        let installed_version = match &static_probe {
+            Ok(_) => None,
+            Err(_) => pkg_config::Config::new()
+                .cargo_metadata(false)
+                .probe("librist")
+                .ok()
+                .map(|lib| lib.version),
+        };
+        let error_text = static_probe.as_ref().err().map(ToString::to_string);
+        let probe = match (&static_probe, &error_text) {
+            (Ok(lib), _) => host_lib::StaticProbe::Found {
+                version: &lib.version,
+                libs: &lib.libs,
+            },
+            (Err(_), error) => host_lib::StaticProbe::Failed {
+                error: error.as_deref().unwrap_or_default(),
+                installed_version: installed_version.as_deref(),
+            },
+        };
+        // The admission probe above is static so `Libs.private` reveals the
+        // crypto backend; the metadata probe below is plain so the emitted link
+        // lines match what the distribution ships (a static-only install fails
+        // loudly at link time, which is the right outcome). The plain probe in
+        // the failure branch runs only after a failed static one, so a machine
+        // with no host library makes two cheap failing calls and stays silent.
+        match host_lib::host_lib_decision("librist", (0, 2, 20), feat_mbedtls, probe) {
+            host_lib::HostLibDecision::Link => match pkg_config::Config::new().probe("librist") {
+                Ok(lib) => lib.include_paths,
+                Err(e) => {
+                    println!(
+                        "cargo:warning={}",
+                        host_lib::metadata_probe_failed_warning("librist", &e.to_string())
+                    );
+                    build_vendored(feat_mbedtls, sanitizer.as_deref())
                 }
+            },
+            host_lib::HostLibDecision::Vendored { warning } => {
+                if let Some(w) = warning {
+                    println!("cargo:warning={w}");
+                }
+                build_vendored(feat_mbedtls, sanitizer.as_deref())
             }
-            Err(_) => build_vendored(feat_mbedtls, sanitizer.as_deref()),
         }
     };
 
