@@ -216,6 +216,8 @@ impl super::demuxer::Demuxer {
                     if let Some(state) = self.pid_state.get_mut(&pid) {
                         state.forget_latm_position();
                     }
+                    // The dropped PES may hold a cell of the AU in progress.
+                    self.discard_au_in_progress(pid);
                     if let Some(stream) = self.lookup_stream(pid) {
                         self.record_discontinuity(stream, DiscontinuityKind::PesOversize { pid });
                     }
@@ -228,6 +230,7 @@ impl super::demuxer::Demuxer {
                         if let Some(state) = self.pid_state.get_mut(&pid) {
                             state.forget_latm_position();
                         }
+                        self.discard_au_in_progress(pid);
                         if let Some(stream) = self.lookup_stream(pid) {
                             self.record_discontinuity(stream, DiscontinuityKind::PesTotalOversize);
                         }
@@ -241,6 +244,8 @@ impl super::demuxer::Demuxer {
                         stream,
                         NonConformantIssue::ZeroLengthPesNonVideo { pid, stream_id },
                     );
+                    // The partial is dropped with its cells.
+                    self.discard_au_in_progress(pid);
                 }
                 ReassemblyOutcome::Malformed { pid, reason }
                     if is_damage_reason(reason) && self.options.strict == StrictMode::Off =>
@@ -257,14 +262,20 @@ impl super::demuxer::Demuxer {
                         // The same rule on the early return: the PUSI still
                         // ends the PES in flight, so settle a pending
                         // time-base reset first and a caller that keeps
-                        // feeding is judged on the new clock.
+                        // feeding is judged on the new clock. The PES is
+                        // never walked, so the AU in progress goes with it.
                         if settles {
                             self.settle_after_pes(pkt.pid);
                         }
+                        self.discard_au_in_progress(pid);
                         return Err(err);
                     }
                     if is_damage_reason(reason) {
                         drop_next_complete = Some(pid);
+                    } else {
+                        // Unparseable: no `Complete` follows, so the PES and
+                        // any cell of the AU in progress it carried are lost.
+                        self.discard_au_in_progress(pid);
                     }
                 }
             }
@@ -796,8 +807,8 @@ impl super::demuxer::Demuxer {
                             // Truncated / malformed trailing cell. Stop
                             // walking — earlier cells in this PES already
                             // emitted or buffered; the partial tail is
-                            // dropped silently (the prior detect-only path
-                            // never surfaced this either).
+                            // dropped, and with it any AU still in progress.
+                            self.discard_au_in_progress(pes.pid);
                             break;
                         }
                     };
@@ -2814,7 +2825,7 @@ mod tests {
             AuCellHeader, CellFragmentIndication, write_metadata_au_cell,
         };
         use crate::mpegts::demux::event::MultiCellAuReason;
-        use CellFragmentIndication::{First, Last, Middle};
+        use CellFragmentIndication::{Complete, First, Last, Middle};
 
         fn klv_demuxer(mode: StrictMode) -> Demuxer {
             let mut b = DemuxerConfig::builder();
@@ -2945,6 +2956,126 @@ mod tests {
                 assert_eq!(metadata_count(&ev), 0, "{name}: {ev:?}");
                 assert_eq!(sequence_gaps(&ev), vec![3], "{name}: {ev:?}");
             }
+        }
+
+        /// `klv_demuxer` with a per-PID PES cap.
+        fn klv_demuxer_capped(cap: usize) -> Demuxer {
+            let mut b = DemuxerConfig::builder();
+            b.pes_cap_per_pid(cap);
+            let mut d = demuxer_with_streams(b.build(), 0x1FFF, &[(0x15, 0x101, &[])]);
+            drain_all_events(&mut d);
+            d
+        }
+
+        /// First 10 in P0, Last 12 in P2, and P1 lost on the way without a
+        /// continuity gap: dropped by the PES cap, unparseable, zero-length
+        /// on a non-video PID, or ending in a truncated cell. Each loss
+        /// discards the AU in progress: no spliced Metadata, a gap report.
+        #[test]
+        fn a_pes_lost_without_a_continuity_gap_discards_the_au_in_progress() {
+            let first = cells_pes(0, &[(First, 10, b"AAA")]);
+            let one = |payload: &[u8]| {
+                vec![ts_packet(&PktSpec {
+                    pid: 0x101,
+                    cc: 1,
+                    pusi: true,
+                    payload,
+                    ..Default::default()
+                })]
+            };
+            // PES_header_data_length 0xFF past the 8 bytes PES_packet_length
+            // declares.
+            let unparseable = one(&[
+                0x00, 0x00, 0x01, 0xFC, 0x00, 0x08, 0x80, 0x80, 0xFF, 0, 0, 0, 0, 0,
+            ]);
+            // H.222.0 §2.4.3.7: PES_packet_length 0 is legal only for video.
+            let zero_length = one(&[0x00, 0x00, 0x01, 0xFC, 0x00, 0x00, 0x80, 0x00, 0x00, 0xAB]);
+            // A whole Middle 11 cell, then a Middle 12 cell whose
+            // AU_cell_data_length runs past the PES (a valid first cell keeps
+            // the PES on the AU-cell path).
+            let mut truncated = Vec::new();
+            for (seq, inner) in [(11u8, &b"BBB"[..]), (12, &[0xBB; 40][..])] {
+                write_metadata_au_cell(
+                    &mut truncated,
+                    AuCellHeader {
+                        metadata_service_id: 0,
+                        sequence_number: seq,
+                        cell_fragment_indication: Middle,
+                        decoder_config_flag: false,
+                        random_access_indicator: true,
+                    },
+                    inner,
+                )
+                .unwrap();
+            }
+            truncated.truncate(8 + 20);
+            let truncated = pes_to_packets(
+                0x101,
+                1,
+                &pes_bytes(0xFC, Some(90_000), None, true, &truncated, true),
+            );
+            let oversize = cells_pes(1, &[(Middle, 11, &[0xBB; 400])]);
+            // Bytes dropped: First 10, plus Middle 11 when the walk reached it.
+            for (name, middle, capped, dropped) in [
+                ("pes cap", oversize, true, 3),
+                ("unparseable", unparseable, false, 3),
+                ("zero length", zero_length, false, 3),
+                ("truncated cell", truncated, false, 6),
+            ] {
+                let mut d = if capped {
+                    klv_demuxer_capped(300)
+                } else {
+                    klv_demuxer(StrictMode::Off)
+                };
+                // P2's counter follows P1's packets: no continuity gap.
+                let last = cells_pes(1 + middle.len() as u8, &[(Last, 12, b"CCC")]);
+                let mut pkts = first.clone();
+                pkts.extend(middle);
+                pkts.extend(last);
+                let r = feed_packets(&mut d, &pkts);
+                assert!(r.is_ok(), "{name}: {r:?}");
+                d.flush();
+                let ev = drain_all_events(&mut d);
+                assert_eq!(metadata_count(&ev), 0, "{name}: {ev:?}");
+                assert_eq!(sequence_gaps(&ev), vec![dropped], "{name}: {ev:?}");
+            }
+        }
+
+        /// A continuity gap inside PES A, after its head: the head carries
+        /// the AU's Last cell intact, so the AU is delivered, marked by the
+        /// PES's `MalformedPes`, and no gap is reported.
+        #[test]
+        fn a_lost_tail_after_the_last_cell_still_delivers_the_au() {
+            let first = cells_pes(0, &[(First, 10, b"AAA")]);
+            // A: Last 11 in its first packet, then a Complete cell whose
+            // tail is in the lost second packet.
+            let a = cells_pes(1, &[(Last, 11, b"CCC"), (Complete, 12, &[0xDD; 200])]);
+            assert_eq!(a.len(), 2);
+            let mut pkts = first;
+            pkts.push(a[0]);
+            pkts.extend(cells_pes(3, &[(Complete, 13, b"E")]));
+            let ev = run(StrictMode::Off, &pkts);
+            let metas: Vec<(usize, Vec<u8>)> = ev
+                .iter()
+                .enumerate()
+                .filter_map(|(i, e)| match e {
+                    DemuxEvent::Metadata { payload, .. } => Some((i, payload.to_vec())),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(metas.len(), 2, "{ev:?}");
+            assert_eq!(metas[0].1, b"AAACCC", "{ev:?}");
+            assert!(
+                matches!(
+                    &ev[metas[0].0 - 1],
+                    DemuxEvent::NonConformant {
+                        issue: NonConformantIssue::MalformedPes { pid: 0x101, .. },
+                        ..
+                    }
+                ),
+                "{ev:?}"
+            );
+            assert!(sequence_gaps(&ev).is_empty(), "{ev:?}");
         }
     }
 
