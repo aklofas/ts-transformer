@@ -149,10 +149,17 @@ pub(crate) enum LoasResync {
 /// for the next PES to settle. A lone `0x56` in the last byte is a candidate
 /// whose header continues into the next PES.
 pub(crate) fn resync_loas(payload: &[u8]) -> LoasResync {
-    // Record boundaries a refuted walk passed through: a walk reaching one
-    // fails the same way, so each boundary is walked at most once and the
-    // search stays linear in the payload.
-    let mut refuted = Vec::new();
+    resync_loas_counting(payload, &mut 0)
+}
+
+/// [`resync_loas`], adding to `steps` each record boundary it walks.
+fn resync_loas_counting(payload: &[u8], steps: &mut usize) -> LoasResync {
+    // Record boundaries a refuted walk passed through, one bit per payload
+    // offset: a walk reaching one fails the same way, so each boundary is
+    // walked at most once and the search stays linear in the payload.
+    let mut refuted: Vec<u64> = Vec::new();
+    let is_refuted = |refuted: &[u64], pos: usize| refuted[pos / 64] & (1 << (pos % 64)) != 0;
+    let mut visited = Vec::new();
     for at in 0..payload.len().min(MAX_LOAS_RECORD_BYTES) {
         let rest = &payload[at..];
         if !opens_loas_header(rest) {
@@ -169,22 +176,30 @@ pub(crate) fn resync_loas(payload: &[u8]) -> LoasResync {
             return LoasResync::Unconfirmed(LoasCarry::Body(first_record_end - payload.len()));
         }
         if refuted.is_empty() {
-            refuted.resize(payload.len(), false);
+            refuted.resize(payload.len().div_ceil(64), 0);
         }
         // The walk visits each record boundary from `at` until one is
         // refuted or lacks the syncword.
-        let mut visited = Vec::new();
+        visited.clear();
         let mut pos = at;
-        while pos < payload.len() - 2 && !refuted[pos] && starts_with_loas_sync(&payload[pos..]) {
+        while pos < payload.len() - 2
+            && !is_refuted(&refuted, pos)
+            && starts_with_loas_sync(&payload[pos..])
+        {
             visited.push(pos);
             pos += 3 + record_body_len(&payload[pos..]);
         }
-        let reached_refuted = pos < payload.len() && refuted[pos];
-        if !reached_refuted && let Ok(carry) = walk_loas(payload, at) {
-            return LoasResync::Confirmed(carry);
+        *steps += visited.len();
+        let reached_refuted = pos < payload.len() && is_refuted(&refuted, pos);
+        if !reached_refuted {
+            // The same boundaries again, to the walk's verdict.
+            *steps += visited.len();
+            if let Ok(carry) = walk_loas(payload, at) {
+                return LoasResync::Confirmed(carry);
+            }
         }
-        for p in visited {
-            refuted[p] = true;
+        for &p in &visited {
+            refuted[p / 64] |= 1 << (p % 64);
         }
     }
     LoasResync::NoCandidate
@@ -443,6 +458,27 @@ mod tests {
             resync_loas(&buf),
             LoasResync::Unconfirmed(LoasCarry::Body(503))
         );
+    }
+
+    /// A 64 KiB chain of empty records ending in junk offers a candidate
+    /// every third byte of the window, each one refuted at the end of the
+    /// same chain: the boundary memo walks the chain once, not once per
+    /// candidate.
+    #[test]
+    fn resync_loas_walks_a_refuted_chain_once() {
+        let mut buf = Vec::new();
+        while buf.len() + 3 <= 65_532 {
+            buf.extend_from_slice(&[0x56, 0xE0, 0x00]);
+        }
+        buf.resize(65_536, 0x00);
+        let mut steps = 0;
+        assert_eq!(
+            resync_loas_counting(&buf, &mut steps),
+            LoasResync::NoCandidate
+        );
+        // One pass over 21 844 boundaries, plus the walk that refutes it;
+        // a walk per candidate would be about 2 700 times that.
+        assert_eq!(steps, 2 * 21_844);
     }
 
     /// Candidates are still searched only in the first
