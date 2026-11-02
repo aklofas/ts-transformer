@@ -12,7 +12,7 @@ use crate::common::{build_h264_au, drain_mux, dummy_klv};
 
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::Demuxer;
+use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DiscontinuityKind};
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };
@@ -153,5 +153,104 @@ fn last_before_pts_pairs_async_klv_at_lower_cadence() {
     assert!(
         paired >= 10,
         "expected ≥10 Paired, got paired={paired} uv={unpaired_video}"
+    );
+}
+
+/// Set `discontinuity_indicator` on the `nth` (0-based) payload-unit-start
+/// packet of `pid`. The muxer's one-packet test PES carries a stuffing
+/// adaptation field, so the flag byte already exists.
+fn flag_discontinuity_on_nth_pusi(bytes: &mut [u8], pid: u16, nth: usize) {
+    let mut seen = 0;
+    for pkt in bytes.chunks_exact_mut(188) {
+        let pkt_pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
+        if pkt_pid != pid || pkt[1] & 0x40 == 0 {
+            continue;
+        }
+        if seen == nth {
+            assert!(
+                pkt[3] & 0x20 != 0 && pkt[4] > 0,
+                "target packet has no adaptation-field flags byte"
+            );
+            pkt[5] |= 0x80;
+            return;
+        }
+        seen += 1;
+    }
+    panic!("pid {pid:#x} has no payload-unit-start packet #{nth}");
+}
+
+/// A signalled discontinuity on the video PID, through the real demuxer.
+/// The demuxer reports the flag before it completes the previous unbounded
+/// video PES (the flagged packet's PUSI is what ends it), so the old-clock
+/// frame in flight leaves unpaired after the history is cleared.
+#[test]
+fn last_before_pts_clears_at_a_signalled_video_discontinuity() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(VIDEO_PID, MuxVideoCodec::H264);
+        prog.add_klv(KLV_PID, KlvStreamType::PrivateData, true);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    // Old clock: two frames, each preceded by its KLV.
+    for pts in [90_000, 93_000] {
+        mux.push_klv(&dummy_klv(), Pts90khz::new(pts), 0x00)
+            .unwrap();
+        mux.push_video(&build_h264_au(0xAA), Pts90khz::new(pts), true)
+            .unwrap();
+    }
+    // New clock, later than every old-clock PTS so the old KLV would be
+    // eligible if it were kept. Its first frame is the flagged packet.
+    mux.push_video(&build_h264_au(0xBB), Pts90khz::new(900_000), true)
+        .unwrap();
+    mux.push_klv(&dummy_klv(), Pts90khz::new(900_000), 0x00)
+        .unwrap();
+    mux.push_video(&build_h264_au(0xBB), Pts90khz::new(903_000), true)
+        .unwrap();
+    let mut bytes = drain_mux(&mut mux);
+    flag_discontinuity_on_nth_pusi(&mut bytes, VIDEO_PID, 2);
+
+    let mut demux = Demuxer::new();
+    let mut pairer = Pairer::last_before_pts(VIDEO_PID, KLV_PID, None);
+    let mut out = Vec::new();
+    demux.feed(&bytes).unwrap();
+    demux.flush();
+    while let Some(e) = demux.next_event() {
+        out.extend(pairer.feed(e));
+    }
+    out.extend(pairer.flush());
+
+    // Project to (video PTS, KLV PTS) shapes; keep only the video-PID
+    // signalled discontinuity among the pass-throughs.
+    let shape: Vec<String> = out
+        .iter()
+        .filter_map(|o| match o {
+            PairerOutput::Paired { video, klv } => Some(format!(
+                "paired {} {}",
+                video.pts.as_ticks(),
+                klv.pts.as_ticks()
+            )),
+            PairerOutput::UnpairedVideo(v) => Some(format!("video {}", v.pts.as_ticks())),
+            PairerOutput::UnpairedKlv(k) => Some(format!("klv {}", k.pts.as_ticks())),
+            PairerOutput::PassThrough(DemuxEvent::Discontinuity {
+                stream,
+                kind: DiscontinuityKind::AdaptationFieldFlag,
+            }) if stream.pid == VIDEO_PID => Some("discontinuity".to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            "paired 90000 90000",
+            "klv 93000",
+            "discontinuity",
+            "video 93000",
+            "paired 900000 900000",
+            "paired 903000 900000",
+        ],
+        "full output: {out:?}"
     );
 }
