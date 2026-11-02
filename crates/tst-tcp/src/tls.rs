@@ -98,7 +98,8 @@ pub(crate) enum HandshakeStep {
     Progress,
 }
 
-/// One socket step of a handshake: flush, then at most one `read_tls`.
+/// One socket step of a handshake: one `write_tls` while output is pending
+/// (a partial write ends the step), then at most one `read_tls`.
 /// `StreamOwned`'s lazy `complete_io` loops until the handshake ends, so a
 /// peer delivering a byte inside every socket tick would keep it there; one
 /// step per call lets the caller observe a cancel in between.
@@ -112,6 +113,11 @@ where
     let mut flushed = false;
     while conn.wants_write() {
         match conn.write_tls(sock) {
+            // A partial write took up to a socket tick: end the step so the
+            // caller reads its flags before the next one. A peer draining a
+            // large flight a little per tick would otherwise hold the loop
+            // until the whole flight is out.
+            Ok(_) if conn.wants_write() => return Ok(HandshakeStep::Progress),
             Ok(_) => flushed = true,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             // The peer is not reading: report the tick unless this step

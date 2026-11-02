@@ -296,6 +296,114 @@ fn cancel_wakes_a_send_parked_on_a_dripping_tls_handshake() {
     );
 }
 
+/// A server certificate flight far larger than the socket buffers, read by
+/// the peer a few KB per tick: every handshake write makes partial progress.
+/// The cancel must reach the send within a tick or so, not after the whole
+/// flight has drained.
+#[test]
+fn cancel_wakes_a_send_writing_a_slowly_read_tls_handshake_flight() {
+    use std::io::Read;
+
+    // The same certificate many times over: about 1.3 MB of Certificate
+    // message. The server sends whatever chain it is given.
+    const CHAIN_COPIES: usize = 3000;
+    let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+        .expect("rcgen self-signed cert generation");
+    let dir = tempfile::tempdir().expect("create tempdir for TLS fixture");
+    let cert = dir.path().join("chain.pem");
+    let key = dir.path().join("key.pem");
+    std::fs::write(&cert, generated.cert.pem().repeat(CHAIN_COPIES)).expect("write chain.pem");
+    std::fs::write(&key, generated.signing_key.serialize_pem()).expect("write key.pem");
+    let flight_bytes = generated.cert.der().len() * CHAIN_COPIES;
+    // A small send buffer on the accepted socket: loopback otherwise
+    // autotunes it past the whole flight and the first write takes it all.
+    let listener = TcpListener::from_url(&format!(
+        "tcps://127.0.0.1:0?listen=1&sndbuf=8192&cert={}&key={}",
+        cert.display(),
+        key.display(),
+    ))
+    .expect("TLS listener bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    // A real ClientHello over a socket with a small receive buffer, so the
+    // flight backs up into the server's send buffer at once.
+    let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+        .expect("client socket");
+    sock.set_recv_buffer_size(4096).expect("SO_RCVBUF");
+    sock.connect(&addr.into()).expect("raw connect");
+    let mut stream: TcpStream = sock.into();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("protocol versions")
+        .with_root_certificates(rustls::RootCertStore::empty())
+        .with_no_client_auth();
+    let mut hello =
+        rustls::ClientConnection::new(Arc::new(config), "localhost".try_into().unwrap())
+            .expect("client connection");
+    while hello.wants_write() {
+        hello.write_tls(&mut stream).expect("ClientHello");
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let drained = Arc::new(AtomicUsize::new(0));
+    let reader = {
+        let (stop, drained) = (stop.clone(), drained.clone());
+        thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let end = Instant::now() + scaled(Duration::from_secs(60));
+            while !stop.load(Ordering::Acquire) && Instant::now() < end {
+                match stream.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => drained.fetch_add(n, Ordering::AcqRel),
+                };
+                thread::park_timeout(Duration::from_millis(50));
+            }
+        })
+    };
+
+    let mut conn = listener.accept_blocking().expect("server accept");
+    let h = conn.cancel_handle();
+    let (tx, rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let deadline = Instant::now() + scaled(Duration::from_secs(30));
+        let r = loop {
+            match conn.send_bytes(&[0x47; 188]) {
+                Err(TransportError::Backpressure { .. }) if Instant::now() < deadline => {}
+                other => break other,
+            }
+        };
+        let _ = tx.send((r, Instant::now()));
+    });
+
+    wait_for(
+        "64 KB of the flight to drain",
+        scaled(Duration::from_secs(10)),
+        || drained.load(Ordering::Acquire) >= 64 * 1024,
+    );
+    let cancelled_at = Instant::now();
+    h.cancel();
+    let result = rx.recv_timeout(scaled(Duration::from_secs(40)));
+    let drained_at_return = drained.load(Ordering::Acquire);
+    stop.store(true, Ordering::Release);
+    let _ = reader.join();
+    let (result, returned_at) = result.expect("the cancelled send must return");
+    let _ = worker.join();
+    let latency = returned_at.saturating_duration_since(cancelled_at);
+    assert!(
+        drained_at_return < flight_bytes / 2,
+        "the flight drained ({drained_at_return} of {flight_bytes} bytes) before the send returned"
+    );
+    assert!(
+        latency < scaled(Duration::from_secs(1)),
+        "the send returned {latency:?} after the cancel"
+    );
+    assert!(
+        matches!(result, Err(TransportError::ExplicitClose)),
+        "{result:?}"
+    );
+}
+
 /// The normal shape: server sends first against a real rustls client. The
 /// stepped handshake completes across its flights; a tick without the
 /// client's next flight is a retryable Backpressure, never a dead latch.
