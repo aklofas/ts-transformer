@@ -9661,8 +9661,8 @@ int tst_rtsp_publish_mount_get_stats(const struct tst_rtsp_publish_mount_t *moun
  *
  * A take on a mount already closed by `remove_mount` or `stop` (but never
  * taken) still succeeds, and the receiver reads `TST_E_END_OF_STREAM` at
- * once. The server's hard cancel (`tst_rtsp_cancel_handle_cancel`) does not
- * end it.
+ * once. The server's hard cancel (`tst_rtsp_cancel_handle_cancel`) closes
+ * every publish mount as `stop` does, so it ends the receiver too.
  *
  * `demux_cfg` may be NULL (default options). Returns NULL with last-error
  * on failure; free the receiver with `tst_rtp_demux_receiver_close`.
@@ -10319,8 +10319,9 @@ void tst_rtsp_server_builder_tls_cert_pem(struct TstRtspServerBuilder *builder,
  * queue; a demux receiver taken from it then reads `TST_E_END_OF_STREAM`
  * at once. Treat it as already expired.
  *
- * The server's hard cancel (`tst_rtsp_cancel_handle_cancel`) does not wake
- * this call; `tst_rtsp_server_stop` does. Do not call
+ * `tst_rtsp_server_stop` and the server's hard cancel
+ * (`tst_rtsp_cancel_handle_cancel`) both wake this call with
+ * `TST_E_CLOSED`. Do not call
  * `tst_rtsp_server_free` while another thread is inside this call: stop
  * the server first, let the call return, then free.
  *

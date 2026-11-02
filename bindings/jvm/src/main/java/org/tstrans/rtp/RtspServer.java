@@ -16,9 +16,10 @@ import org.tstrans.mpegts.MuxerConfig;
  * <p><b>Closing:</b> {@link #close()} performs a graceful stop (RFC 7826 §13.5.1
  * Notice 5402 server-initiated teardown of active sessions) then frees the native
  * server. Use try-with-resources. {@link #stop(long)} is the explicit graceful
- * shutdown; {@link #cancelHandle()} returns a cross-thread hard-cancel. Only
- * {@code stop()} and {@code close()} end publish mounts' receivers and wake a
- * parked {@link #nextPublisher(long)}; the hard cancel does neither.
+ * shutdown; {@link #cancelHandle()} returns a cross-thread hard-cancel. All
+ * three ({@code stop()}, {@code close()} and the hard cancel) end publish
+ * mounts' receivers and wake a parked {@link #nextPublisher(long)}; only the
+ * hard cancel skips the Notice 5402 teardown.
  *
  * <p><b>Publisher role:</b> {@link #addPublishMount(String)}, {@link
  * #nextPublisher(long)} and {@link #removeMount(String)} accept encoders that push
