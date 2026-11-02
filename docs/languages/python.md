@@ -549,6 +549,17 @@ alternative). Dropping a `Managed*` shell without `close()` is abortive
 too: the drop cancels first, with the GIL released, rather than retrying
 the reconnect policy.
 
+Every native-owning class (`srt.Socket`, `rtp.RtspServer`,
+`rtp.RtspSession`, `webrtc.WhepServer`, `hls.MuxPublisher`, the shells and
+transports) closes when collected, with the GIL released, so other threads
+keep running. The collecting thread itself waits for the native close (an
+SRT linger, a TEARDOWN, a server drain, thread joins); use `with` or call
+`close()` to choose when that wait happens. A `MuxPublisher` collected
+without `finish_into_publisher()` is abortive: bytes a failed push
+retained are discarded and no closing cut is written;
+`finish_into_publisher()` then `HlsPublisher.finish()` is the graceful
+path.
+
 **Exit with a shell still open.** You should still `close()` (or use
 `with`) every shell, but forgetting to is no longer fatal: at interpreter
 exit `tstrans` cancels every shell that is still open before libsrt's own

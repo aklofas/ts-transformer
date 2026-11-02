@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 
 import pytest
 
-from tstrans import _native, rist, shells, tcp, udp
+from tstrans import rist, shells, tcp, udp
 from _builders.ports import free_tcp_port, free_udp_port
+from _builders.native_hooks import shells_hook as _hook
 
 
 @pytest.mark.parametrize("module", [udp, tcp, rist])
@@ -42,15 +42,6 @@ def test_tcp_listener_handle_is_the_shells_class():
         assert handle.is_cancelled()
     finally:
         listener.close()
-
-
-def _hook(name):
-    f = getattr(_native.shells, name, None)
-    if f is None:
-        if os.environ.get("TSTRANS_EXPECT_TEST_HOOKS") == "1":
-            pytest.fail("TSTRANS_EXPECT_TEST_HOOKS=1 but py-test-hooks is not built")
-        pytest.skip("built without py-test-hooks")
-    return f
 
 
 def test_cancel_releases_the_gil_while_the_transport_cancel_runs():

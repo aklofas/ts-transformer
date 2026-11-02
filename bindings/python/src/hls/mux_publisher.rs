@@ -84,6 +84,18 @@ pub(crate) struct PyMuxPublisher {
     finished: AtomicBool,
 }
 
+/// A `MuxPublisher` collected without `finish_into_publisher()` is
+/// abortive: bytes a failed push retained are discarded and no closing cut
+/// is written. The publisher's own teardown runs with the GIL released.
+impl Drop for PyMuxPublisher {
+    fn drop(&mut self) {
+        let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(mp) = taken {
+            crate::util::drop_blocking(move || drop(mp.abort()));
+        }
+    }
+}
+
 impl PyMuxPublisher {
     /// Run `f` on the shell. The mutex is taken, used and released with
     /// the GIL released; the exception is built afterwards.

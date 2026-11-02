@@ -300,6 +300,15 @@ where
     });
 }
 
+/// The native teardown of a class's implicit drop: `tp_dealloc` holds the
+/// GIL, so `attach` hands back the current token and the closure runs
+/// detached, under the same exit park as `close()`. Nothing is raised:
+/// there is no caller.
+#[allow(dead_code)] // dead only in a transport-less build, as `close_owned`.
+pub(crate) fn drop_blocking<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    Python::attach(|py| allow_threads_parking(py, f))
+}
+
 /// Cancel every still-live shell at interpreter exit.
 ///
 /// A thread parked inside libsrt when the process exits deadlocks teardown:

@@ -374,6 +374,11 @@ class MuxPublisher:
     Construct via ``MuxPublisher.with_config_hls(publisher, program_config)``
     — which *consumes* the ``HlsPublisher``. Recover the publisher (e.g. to
     ``finish()`` it cleanly) via ``finish_into_publisher()``.
+
+    A ``MuxPublisher`` collected without ``finish_into_publisher()`` is
+    abortive: bytes a failed push retained are discarded and no closing cut
+    is written; ``finish_into_publisher()`` then ``HlsPublisher.finish()`` is
+    the graceful path.
     """
 
     @staticmethod
