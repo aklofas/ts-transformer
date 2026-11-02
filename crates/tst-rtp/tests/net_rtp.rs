@@ -11,3 +11,6 @@ mod ports;
 mod loopback_multicast;
 #[path = "rtp/loopback_unicast.rs"]
 mod loopback_unicast;
+#[cfg(unix)]
+#[path = "rtp/signal_interrupt.rs"]
+mod signal_interrupt;

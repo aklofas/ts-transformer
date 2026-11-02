@@ -1,11 +1,11 @@
 //! The sending half: [`RtpTransport`].
 
-use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 
 use tst_core::cancel::CANCEL_POLL_INTERVAL;
 use tst_core::net::udp_socket::{apply_multicast_send_knobs, set_socket_buffers};
+use tst_core::net::{SendClass, classify_send_error};
 use tst_core::transport::{BrokenCause, SocketStats, Transport, TransportCancel, TransportError};
 
 use super::{RtpConnectError, random_u32, udp_err_to_connect};
@@ -154,13 +154,8 @@ impl Transport for RtpTransport {
                     self.packets_sent += 1;
                     return Ok(());
                 }
-                Err(e)
-                    if e.kind() == io::ErrorKind::WouldBlock
-                        || e.kind() == io::ErrorKind::TimedOut =>
-                {
-                    // Timeout — re-check cancel and retry.
-                    continue;
-                }
+                // Timeout or EINTR — re-check cancel and retry.
+                Err(e) if classify_send_error(&e) == SendClass::Transient => continue,
                 Err(e) => {
                     self.socket = None;
                     return Err(TransportError::Broken {
