@@ -134,6 +134,19 @@ pub(super) fn validate_annex_b(nal: &[u8]) -> Result<(), MuxError> {
 /// H.264 distinguishable via the PMT `stream_type` + `AV01`
 /// registration descriptor — the §3.2 start code only marks OBU
 /// boundaries within an AV1 PES.)
+/// `metadata_STD_descriptor` buffer size for synchronous KLV, in units of
+/// 1024 bytes (H.222.0 §2.6.63): 66 560 bytes hold the largest PES the
+/// synchronous path emits, 6 prefix bytes plus a `PES_packet_length` of
+/// 65 535. A caller with a different delivery envelope supplies its own
+/// tag 0x27, which suppresses the automatic one.
+pub(super) const SYNC_KLV_STD_BUFFER_UNITS: u32 = 65;
+
+/// `metadata_STD_descriptor` input leak rate for synchronous KLV, in units
+/// of 400 bit/s (H.222.0 §2.6.63): 5 243 600 bit/s moves a maximal PES of
+/// 524 328 bits in under 100 ms, the default PSI interval. A longer
+/// configured interval needs less, so this covers every accepted one.
+pub(super) const SYNC_KLV_STD_INPUT_LEAK_RATE: u32 = 13_109;
+
 pub(super) const AV1_TS_OBU_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
 
 /// Escape-encode a SINGLE AV1 OBU unit body (no start code emitted).
@@ -530,6 +543,8 @@ pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u
         // a non-zero service_id supplies its own metadata_klva, which
         // suppresses the auto-emit per-tag below. Async KLV (0x06) does
         // NOT carry these — RP 217 / ST 1402.2 §9.4.2 require only KLVA.
+        // The metadata_std values are literal STD parameters (§2.6.63), so
+        // they declare a buffer and input rate that hold a maximal PES.
         if matches!(
             spec,
             StreamSpec::Klv {
@@ -543,7 +558,11 @@ pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u
                 bytes.extend_from_slice(&crate::mpegts::descriptors::metadata_klva(0));
             }
             if !caller_has_metadata_std {
-                bytes.extend_from_slice(&crate::mpegts::descriptors::metadata_std(0, 0, 0));
+                bytes.extend_from_slice(&crate::mpegts::descriptors::metadata_std(
+                    SYNC_KLV_STD_INPUT_LEAK_RATE,
+                    SYNC_KLV_STD_BUFFER_UNITS,
+                    0, // output leak rate: access units leave at their PTS
+                ));
             }
         }
         // AV1 auto-emit: AV01 registration_descriptor (binding §2.1).

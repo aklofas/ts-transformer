@@ -166,6 +166,43 @@ fn cache_suppresses_klva_auto_emit_when_caller_supplies_registration() {
 }
 
 #[test]
+fn cache_sync_klv_metadata_std_declares_buffer_for_largest_pes() {
+    // H.222.0 §2.6.63 / §2.12.10: BSn and Rxn are literal STD parameters; a
+    // zero buffer cannot hold any access unit. The automatic descriptor
+    // declares an envelope that holds the largest PES this muxer emits.
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_klv(0x101, KlvStreamType::SynchronousMetadata, true);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let muxer = Muxer::new(cfg).unwrap();
+    let std_tlv = &muxer.pmt_descriptor_caches[0][1][17..28];
+    assert_eq!(
+        std_tlv,
+        &crate::mpegts::descriptors::metadata_std(
+            crate::mpegts::mux::state::SYNC_KLV_STD_INPUT_LEAK_RATE,
+            crate::mpegts::mux::state::SYNC_KLV_STD_BUFFER_UNITS,
+            0,
+        )[..]
+    );
+    let field = |i: usize| {
+        ((std_tlv[i] as u32 & 0x3F) << 16) | ((std_tlv[i + 1] as u32) << 8) | std_tlv[i + 2] as u32
+    };
+    assert_eq!(field(2), 13_109);
+    assert_eq!(field(5), 65);
+    assert_eq!(field(8), 0);
+    // The constant is tied to the PES cap, not chosen by hand.
+    assert!(
+        crate::mpegts::mux::state::SYNC_KLV_STD_BUFFER_UNITS as usize * 1024
+            >= 6 + u16::MAX as usize
+    );
+    assert_eq!(muxer.pmt_descriptor_caches[0][1].len(), 28);
+}
+
+#[test]
 fn cache_auto_emits_klva_on_sync_klv() {
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
@@ -192,6 +229,11 @@ fn cache_auto_emits_klva_on_sync_klv() {
     assert_eq!(&muxer.pmt_descriptor_caches[0][1][2..6], b"KLVA");
     assert_eq!(muxer.pmt_descriptor_caches[0][1][6], 0x26);
     assert_eq!(muxer.pmt_descriptor_caches[0][1][17], 0x27);
+    // The caller's zero-valued 0x27 survives verbatim.
+    assert_eq!(
+        &muxer.pmt_descriptor_caches[0][1][17..28],
+        &crate::mpegts::descriptors::metadata_std(0, 0, 0)[..]
+    );
 }
 
 #[test]

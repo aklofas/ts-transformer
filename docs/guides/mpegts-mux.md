@@ -771,7 +771,7 @@ descriptor types real-world senders actually emit:
 |---|---|---|
 | `registration(format_id, additional)` | 0x05 | "KLVA" on KLV PIDs (the muxer auto-emits it on every KLV PID), "HDMV" + trailing bytes on video PIDs |
 | `metadata_klva(service_id)` | 0x26 | Canonical KLVA Metadata descriptor for `stream_type=0x15` KLV |
-| `metadata_std(in, buf, out)` | 0x27 | STD-buffer dimensions, paired with 0x26 |
+| `metadata_std(in, buf, out)` | 0x27 | STD-buffer dimensions, paired with 0x26 (the muxer's automatic 0x27 on a synchronous KLV PID declares input 13 109 × 400 bit/s, buffer 65 × 1024 bytes, output 0; your own tag 0x27 replaces it) |
 | `user_private(payload)` | 0xFF | De-facto label slot used in the wild ("VIDEO-ARS", "KLV_SYNC") |
 | `user_private_with_tag(tag, payload)` | 0x40..=0xFF | Vendor-defined label slots |
 | `component(content, type, tag, lang, text)` | 0x50 | Textbook DVB free-text label |
@@ -807,7 +807,7 @@ prog.stream_descriptors_for_klv(
     0,
     vec![
         desc::metadata_klva(0x00),
-        desc::metadata_std(0, 0, 0),
+        desc::metadata_std(0, 0, 0), // override: zero means a zero-byte buffer
         desc::user_private(b"KLV_SYNC")?,
     ],
 )?;

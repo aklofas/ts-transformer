@@ -142,8 +142,10 @@ pub fn metadata_klva(service_id: u8) -> Vec<u8> {
 }
 
 /// Metadata STD descriptor (tag 0x27) — H.222.0 §2.6.62 — STD-buffer
-/// dimensions for a Metadata-in-PES stream. All-zero values match the
-/// "no rate-shaping declared" shape Family B uses.
+/// dimensions for a Metadata-in-PES stream. A zero `buffer_size` declares
+/// a zero-byte buffer and a zero rate a zero leak (§2.6.63 defines no
+/// "unspecified" value); the muxer's automatic descriptor declares a real
+/// envelope, see the mux guide.
 ///
 /// Each rate field is 22 bits (top 2 bits reserved = `11`).
 pub fn metadata_std(input_leak_rate: u32, buffer_size: u32, output_leak_rate: u32) -> Vec<u8> {
