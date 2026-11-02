@@ -132,6 +132,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-c
 
+- `tst_raw_receiver_recv` / `tst_managed_raw_receiver_recv` document that a `TST_E_TOO_LARGE` message is consumed, not retained; `recv_raw_to_file.c` no longer retries for it.
 - `tst_*_open_listener` (all eight receiver entry points) binds and listens on any URL, host-bearing or not; `srt://0.0.0.0:7000` used to dial out. An explicit `?mode=caller` / `?mode=rendezvous` on these entry points is refused with `TST_E_INVALID_CONFIG`. A URL with invalid UTF-8 is refused once; it was previously reparsed with U+FFFD in place of the caller's bytes (a passphrase could change silently).
 - `tst_rtsp_session_into_demux_receiver` returns NULL with `TST_E_CLOSED` after `tst_rtsp_session_cancel`; it used to hand back a receiver whose keepalive thread had already exited, so the server reaped the session after its timeout. The NULL-return contract now says the allocation is retained while its state may be closed.
 - The `mbedtls` feature now reaches the RIST transport, so encrypted `rist://` URLs open instead of returning `TST_E_RIST_ENCRYPTION_DISABLED`.

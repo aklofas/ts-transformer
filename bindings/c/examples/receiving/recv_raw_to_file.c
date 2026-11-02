@@ -160,15 +160,19 @@ int main(int argc, char **argv) {
     size_t heap_buf_len = 0;
 
     uint64_t total_msgs  = 0;
+    uint64_t lost_msgs   = 0;  /* messages dropped by TST_E_TOO_LARGE */
     uint64_t total_bytes = 0;
 
     for (;;) {
         size_t got = 0;
-        int rc = tst_raw_receiver_recv(rx, stack_buf, sizeof(stack_buf), &got);
+        /* Use the grown heap buffer once a TST_E_TOO_LARGE has allocated it. */
+        uint8_t *rbuf = heap_buf ? heap_buf : stack_buf;
+        size_t   rlen = heap_buf ? heap_buf_len : sizeof(stack_buf);
+        int rc = tst_raw_receiver_recv(rx, rbuf, rlen, &got);
 
         /* ── rc == 0: normal message received ── */
         if (rc == 0) {
-            if (fwrite(stack_buf, 1, got, out) != got) {
+            if (fwrite(rbuf, 1, got, out) != got) {
                 perror("fwrite");
                 /* File write error — tear down and exit. */
                 tst_raw_receiver_close(rx);
@@ -220,9 +224,11 @@ int main(int argc, char **argv) {
         /* ── rc == TST_E_TOO_LARGE: message exceeded the buffer ── */
         if (rc == TST_E_TOO_LARGE) {
             /*
-             * The sender transmitted a single message larger than
-             * RECV_BUF_LEN.  The message is still queued in the libsrt
-             * receive buffer; grow the heap fallback and retry.
+             * The sender transmitted a single message larger than the
+             * buffer.  That message has been DEQUEUED and is lost: a
+             * retry receives the NEXT message, not this one.  Count the
+             * loss, then grow the heap fallback so later messages of
+             * this size fit.
              *
              * WHY not just use a 64 KB stack buffer everywhere?
              *   Stack space is a finite, per-thread resource.  Reserving
@@ -257,23 +263,9 @@ int main(int argc, char **argv) {
             }
             heap_buf     = tmp;
             heap_buf_len = new_len;
+            lost_msgs   += 1;
 
-            /* Retry the recv with the larger buffer. */
-            rc = tst_raw_receiver_recv(rx, heap_buf, heap_buf_len, &got);
-            if (rc == 0) {
-                if (fwrite(heap_buf, 1, got, out) != got) {
-                    perror("fwrite (heap path)");
-                    tst_raw_receiver_close(rx);
-                    free(heap_buf);
-                    fclose(out);
-                    return 4;
-                }
-                total_bytes += (uint64_t)got;
-                total_msgs  += 1;
-                continue;
-            }
-            /* If the retry failed, fall through to the transport-error
-             * handler below with the new rc value. */
+            continue;
         }
 
         /* ── any other return code is a transport or library error ── */
@@ -304,7 +296,8 @@ int main(int argc, char **argv) {
     fclose(out);
 
     fprintf(stdout,
-            "wrote %" PRIu64 " bytes (%" PRIu64 " messages) to %s\n",
-            total_bytes, total_msgs, argv[1]);
+            "wrote %" PRIu64 " bytes (%" PRIu64 " messages) to %s"
+            " (%" PRIu64 " oversized messages lost)\n",
+            total_bytes, total_msgs, argv[1], lost_msgs);
     return 0;
 }

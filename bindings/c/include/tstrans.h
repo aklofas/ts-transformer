@@ -4491,8 +4491,9 @@ struct tst_managed_raw_receiver_t *tst_managed_raw_receiver_open_listener(const 
 
 #if defined(TST_HAS_SRT)
 /**
- * Block until one message arrives. Semantics match `tst_raw_receiver_recv`;
- * on transport failure the managed inner reconnects transparently before
+ * Block until one message arrives. Semantics match `tst_raw_receiver_recv`,
+ * including that a `TST_E_TOO_LARGE` message is dequeued and lost; on
+ * transport failure the managed inner reconnects transparently before
  * returning an error only once the retry budget is exhausted.
  *
  * # Asymmetry with `tst_raw_receiver_recv`
@@ -6718,8 +6719,11 @@ int tst_raw_receiver_get_socket_stats(struct tst_raw_receiver_t *p,
  * - `TST_E_TRANSPORT` (-8) on a transport failure other than a clean
  *   peer disconnect (peer FIN surfaces as `TST_E_END_OF_STREAM`; see
  *   the `TransportError::Broken` arm in this function for details)
- * - `TST_E_TOO_LARGE` (-6) if the inbound message exceeds `len`
- *   (`*out_len` is left unmodified)
+ * - `TST_E_TOO_LARGE` (-6) if the inbound message exceeds `len`: the
+ *   message has been DEQUEUED and is lost (`*out_len` is left
+ *   unmodified). Size `len` for the largest message the sender can emit
+ *   (SRT: the sender's `pkt_size`, default 1316); a retry with a larger
+ *   buffer receives the NEXT message.
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  */
  int tst_raw_receiver_recv(struct tst_raw_receiver_t *p, uint8_t *buf, size_t len, size_t *out_len);
