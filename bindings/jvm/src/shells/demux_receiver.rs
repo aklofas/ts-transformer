@@ -334,6 +334,36 @@ jni_native! {
 }
 
 jni_native! {
+    /// `nGateCached(handle)` — the cancel gate of `nNext` for an event the
+    /// Java iterator already holds from `hasNext()`: after
+    /// `cancelHandle().cancel()` it throws what `nNext` throws, so a cached
+    /// event is buffered output like any other. An event delivered by a pull
+    /// whose sink deferred a close still goes out, as `nNext` promises.
+    fn Java_org_tstrans_shells_DemuxReceiver_nGateCached(
+        env,
+        _class,
+        handle: jlong,
+    ) = () => {
+        let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
+            return;
+        };
+        if refuse_reentry(env, handle, "iterator next()") {
+            return;
+        }
+        let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.clone()) else {
+            crate::error::throw_closed(env, "DemuxReceiver");
+            return;
+        };
+        if sinks.close_pending.load(Ordering::Acquire) {
+            return;
+        }
+        if let Err(state) = REGISTRY.with_mut_unless_cancelled(handle as u64, |_| ()) {
+            throw_state(env, domain, "DemuxReceiver", &state);
+        }
+    }
+}
+
+jni_native! {
     /// `nAddByteSink(handle, consumer)` — register a fan-out `Consumer<byte[]>` that
     /// fires once per 188-byte TS packet before demux. See the module doc
     /// for the discipline: the closure upcalls under the receiver's slot,

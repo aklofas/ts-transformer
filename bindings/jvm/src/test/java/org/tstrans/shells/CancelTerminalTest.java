@@ -5,9 +5,12 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.util.Iterator;
 import org.junit.jupiter.api.Test;
+import org.tstrans.TcpException;
 import org.tstrans.TestSupport;
 import org.tstrans.UdpException;
+import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.rtp.H264Receiver;
 
 /**
@@ -61,6 +64,21 @@ class CancelTerminalTest {
             UdpException e = assertThrows(UdpException.class, tx::finish,
                 "an empty finish after cancel is CLOSED, not a quiet no-op");
             assertEquals("CLOSED", ShellPeers.kindName(e));
+        }
+    }
+
+    /** An event {@code hasNext()} already holds is buffered output too. */
+    @Test
+    void demuxIteratorCancelBetweenHasNextAndNextThrowsClosed() throws Exception {
+        try (DemuxReceiverByteSinkFailureTest.Pair p = new DemuxReceiverByteSinkFailureTest.Pair()) {
+            p.write(DemuxReceiverByteSinkFailureTest.eventPackets());
+            Iterator<DemuxEvent> it = p.rx.iterator();
+            assertTrue(ShellPeers.within(5_000, "first hasNext", it::hasNext));
+            p.rx.cancelHandle().cancel();
+            RuntimeException e = assertThrows(RuntimeException.class, it::next,
+                "the event cached by hasNext() must not be served after cancel");
+            assertInstanceOf(TcpException.class, e.getCause());
+            assertEquals("CLOSED", ShellPeers.kindName(e.getCause()));
         }
     }
 

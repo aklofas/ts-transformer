@@ -184,7 +184,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * and the receiver cannot be resumed.
      *
      * <p>After {@code cancelHandle().cancel()} this throws the transport's
-     * {@code CLOSED}, buffered data included.
+     * {@code CLOSED}, buffered data included: an event {@code hasNext()}
+     * already returned {@code true} for is not served by a {@code next()}
+     * after the cancel.
      */
     @Override
     public Iterator<DemuxEvent> iterator() {
@@ -203,8 +205,19 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
                 return true;
             }
             @Override public DemuxEvent next() {
+                boolean cached = peeked != null;
                 if (!hasNext()) throw new NoSuchElementException();
-                DemuxEvent e = peeked; peeked = null; return e;
+                DemuxEvent e = peeked; peeked = null;
+                // An event held since hasNext() is buffered output: a cancel
+                // that landed in between refuses it, as a fresh pull would.
+                if (cached) {
+                    try {
+                        nGateCached(peekHandle());
+                    } catch (BindingException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                }
+                return e;
             }
         };
     }
@@ -406,6 +419,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
         long pesCapTotal, boolean cfi, int av1, long auCellCap, boolean lenientPsi,
         long syncBufCap, boolean unwrapTimestamps) throws BindingException;
     private static native DemuxEvent nNext(long handle) throws BindingException;
+    private static native void nGateCached(long handle) throws BindingException;
     private static native void nAddByteSink(long handle, Consumer<byte[]> callback);
     private static native long nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);

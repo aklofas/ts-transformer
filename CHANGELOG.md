@@ -75,7 +75,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-py, tst-jni (BREAKING)
 
-- The same outcome in `Sender`, `Receiver`, `MuxSender` and `DemuxReceiver` and their `Managed*` twins: after `cancel_handle().cancel()` every receive, send, `flush()` and `finish()` raises `<Domain>Error(CLOSED)` / throws `<Domain>Exception(CLOSED)`, buffered data included. `MuxSender.finish()` after `cancel_handle().cancel()` raises `CLOSED`; after `close()` or a previous `finish()` it stays a quiet no-op, because only the caller's cancel counts, not the shell closing its own transport. The H.264 receiver keeps draining to EOS on cancel.
+- The same outcome in `Sender`, `Receiver`, `MuxSender` and `DemuxReceiver` and their `Managed*` twins: after `cancel_handle().cancel()` every receive, send, `flush()` and `finish()` raises `<Domain>Error(CLOSED)` / throws `<Domain>Exception(CLOSED)`, buffered data included. `MuxSender.finish()` after `cancel_handle().cancel()` raises `CLOSED`; after `close()` or a previous `finish()` it stays a quiet no-op, because only the caller's cancel counts, not the shell closing its own transport. On the JVM this includes an event an iterator's `hasNext()` already returned `true` for: a `next()` after the cancel throws instead of serving it. The H.264 receiver keeps draining to EOS on cancel.
 
 ### Changed — tst-hls (BREAKING)
 
