@@ -440,15 +440,16 @@ fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
     );
     assert!(play.contains("200 OK"), "PLAY: {play}");
 
-    // From here the peer never reads: large access units over the whole
-    // window fill its socket buffers and the server's TLS buffer (the
-    // first dropped frame only says the fanout fell behind, not that the
+    // From here the peer never reads. Far more bytes than the loopback
+    // socket buffers hold park the fanout's write with ciphertext pending
+    // (a dropped frame would only say the fanout fell behind, not that the
     // socket is full).
+    const STALL_BYTES: u64 = 32 * 1024 * 1024;
     let mut nal = vec![0xBB; 32 * 1024];
     nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
-    let deadline = Instant::now() + scaled(Duration::from_secs(2));
+    let deadline = Instant::now() + scaled(Duration::from_secs(4));
     let mut i = 0i64;
-    while Instant::now() < deadline {
+    while mount.stats().bytes_pushed < STALL_BYTES && Instant::now() < deadline {
         mount
             .push_video(
                 &nal,
@@ -458,9 +459,12 @@ fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
             .expect("push must not fail on a stalled peer");
         i += 1;
     }
+    let stats = mount.stats();
+    assert_eq!(stats.peer_count, 1, "the peer is not subscribed");
     assert!(
-        mount.stats().frames_dropped_total > 0,
-        "the peer's socket never filled"
+        stats.bytes_pushed >= STALL_BYTES,
+        "pushed only {} bytes, too few to fill the peer's socket",
+        stats.bytes_pushed
     );
     server.stop().unwrap();
     wait_for(scaled(Duration::from_secs(6)), || {

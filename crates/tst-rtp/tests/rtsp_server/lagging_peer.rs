@@ -89,10 +89,18 @@ fn slow_peer_does_not_block_muxer() {
     server.stop().ok();
 }
 
+/// Bytes pushed to a peer that does not read, far beyond what the loopback
+/// socket buffers on either side hold, so the fanout's write is parked.
+const STALL_BYTES: u64 = 32 * 1024 * 1024;
+
 /// A TCP-interleaved peer that played `/live` and then stopped reading, with
 /// its server-side fanout parked on the full socket (holding the session's
-/// writer lock). Returns once the mount has dropped frames for the peer, or
-/// after a bounded push loop.
+/// writer lock). Returns once the mount has pushed [`STALL_BYTES`] to its one
+/// subscriber; panics if a bounded push loop ends short of that.
+///
+/// Pushed bytes, not `frames_dropped_total`, prove the stall: a fanout
+/// parked on a full plain-TCP socket never calls `recv` again, so it never
+/// sees `Lagged` and the drop counter stays 0.
 fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
     let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
@@ -125,14 +133,21 @@ fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
     // does not parse the payload.
     let mut nal = vec![0xBB; 32 * 1024];
     nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
-    let deadline = Instant::now() + scaled(Duration::from_secs(2));
+    let deadline = Instant::now() + scaled(Duration::from_secs(4));
     let mut i = 0i64;
-    while mount.stats().frames_dropped_total == 0 && Instant::now() < deadline {
+    while mount.stats().bytes_pushed < STALL_BYTES && Instant::now() < deadline {
         mount
             .push_video(&nal, Pts90khz::new(i * 3000), true)
             .expect("push must not fail on a stalled peer");
         i += 1;
     }
+    let stats = mount.stats();
+    assert_eq!(stats.peer_count, 1, "the peer is not subscribed");
+    assert!(
+        stats.bytes_pushed >= STALL_BYTES,
+        "pushed only {} bytes, too few to fill the peer's socket",
+        stats.bytes_pushed
+    );
     (server, peer, port)
 }
 

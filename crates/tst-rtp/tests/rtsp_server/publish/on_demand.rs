@@ -123,6 +123,8 @@ fn an_on_demand_announce_on_a_path_with_an_empty_segment_is_404_and_creates_noth
 /// A consumer that takes a queued mount and at once closes it (the way an
 /// ingest router drops a name it does not know) must never turn a
 /// legitimate ANNOUNCE into 403: the mount is claimed before it is queued.
+/// On code that queued before claiming, this fails only when the race
+/// lands; the server's unit tests are the deterministic check.
 #[test]
 fn a_consumer_closing_the_queued_mount_at_once_never_refuses_the_announce() {
     let server = on_demand_server();
@@ -172,7 +174,9 @@ fn stop_wakes_a_parked_next_publisher() {
 fn hard_cancel_wakes_a_parked_next_publisher_with_shutdown() {
     let server = on_demand_server();
     std::thread::scope(|s| {
-        let parked = s.spawn(|| server.next_publisher(Duration::from_secs(60)));
+        // An unwoken call returns Ok(None) at its timeout, which the match
+        // below fails.
+        let parked = s.spawn(|| server.next_publisher(scaled(Duration::from_secs(5))));
         std::thread::sleep(Duration::from_millis(200));
         server.cancel_handle().cancel();
         let r = parked.join().unwrap();
