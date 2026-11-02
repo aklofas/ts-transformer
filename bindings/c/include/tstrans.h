@@ -2484,6 +2484,8 @@ extern "C" {
  * `out_cap >= *out_len` from the query call, the conversion is written
  * into `out`, `*out_len` is set to the actual byte count written (equal
  * to the previously-queried size), and this returns 0.
+ * The sizing answer records `TST_E_BUFFER_FULL` in last error like every
+ * other negative return.
  *
  * Returns `TST_E_INVALID_CONFIG` (-1) without touching `*out_len` if
  * `out_len` is NULL, `annexb` is NULL with `annexb_len > 0`, or

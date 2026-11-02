@@ -70,6 +70,8 @@ fn ranges_overlap(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> boo
 /// `out_cap >= *out_len` from the query call, the conversion is written
 /// into `out`, `*out_len` is set to the actual byte count written (equal
 /// to the previously-queried size), and this returns 0.
+/// The sizing answer records `TST_E_BUFFER_FULL` in last error like every
+/// other negative return.
 ///
 /// Returns `TST_E_INVALID_CONFIG` (-1) without touching `*out_len` if
 /// `out_len` is NULL, `annexb` is NULL with `annexb_len > 0`, or
@@ -127,6 +129,10 @@ pub unsafe extern "C" fn tst_annexb_to_length_prefixed(
         }
         if out.is_null() || out_cap < needed {
             *out_len_ref = needed;
+            set_last_error(
+                TstError::BufferFull,
+                "sizing answer: out is NULL or out_cap is too small; *out_len holds the required size",
+            );
             return TstError::BufferFull as i32;
         }
         // Only the `needed` bytes this call will actually write are
