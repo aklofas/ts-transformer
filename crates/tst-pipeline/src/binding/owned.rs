@@ -269,8 +269,8 @@ impl<T, S> Owned<T, S> {
     /// transport) sees a cancelled transport and returns, and no other
     /// thread waits on the slot meanwhile. That drop runs inside its own
     /// panic boundary: a panicking `T::Drop` is swallowed and the closure's
-    /// original panic is what is reported. Readers ([`Self::with_ref_blocking`]) keep the slot: a `&T`
-    /// closure can only mutate through interior mutability, and every such
+    /// original panic is what is reported. Readers ([`Self::with_ref_blocking`]) keep
+    /// the slot: a `&T` closure can only mutate through interior mutability, and every such
     /// interior (transport mutex, atomics) carries its own poison/latch
     /// rule, which contains a reader panic.
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R, HandleState> {
@@ -1750,7 +1750,7 @@ mod tests {
         let e: BindingError = HandleState::Cancelled.into();
         assert_eq!(
             (e.kind, e.detail.as_str()),
-            (BindingErrorKind::Closed, "handle was cancelled")
+            (BindingErrorKind::Closed, "cancelled from another thread")
         );
     }
 
