@@ -71,7 +71,7 @@ pub unsafe extern "C" fn tst_sender_open(
 }
 
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_sender_send_ts(
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn tst_sender_send_ts(
 }
 
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_sender_flush(p: *mut TstSender) -> libc::c_int {
@@ -263,7 +263,7 @@ pub unsafe extern "C" fn tst_managed_sender_open(
 }
 
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_sender_send_ts(
@@ -288,7 +288,7 @@ pub unsafe extern "C" fn tst_managed_sender_send_ts(
 }
 
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_sender_flush(p: *mut TstManagedSender) -> libc::c_int {

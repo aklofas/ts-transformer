@@ -166,7 +166,7 @@ pub unsafe extern "C" fn tst_rist_sender_cancel(p: *mut TstRistSender) -> libc::
 /// Returns 0 on success, a negative `TST_E_*` code on failure.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
