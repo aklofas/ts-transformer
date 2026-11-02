@@ -143,8 +143,10 @@ class Sender:
     @staticmethod
     def from_url(url: str) -> Sender:
         """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
-    def send_bytes(self, data: _BytesLike) -> None: ...
-    def flush(self) -> None: ...
+    def send_bytes(self, data: _BytesLike) -> None:
+        """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
+    def flush(self) -> None:
+        """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
     def srt_stats(self) -> SrtStats:
@@ -181,7 +183,8 @@ class Receiver:
     @staticmethod
     def from_url(url: str) -> Receiver:
         """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
-    def recv_bytes(self, max_len: int = ...) -> bytes: ...
+    def recv_bytes(self, max_len: int = ...) -> bytes:
+        """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
     def srt_stats(self) -> SrtStats:
@@ -210,7 +213,8 @@ class MuxSender:
     Construct via `MuxSender.open(url, program_config)`. Send methods accept any
     bytes-like input (`bytes`, `bytearray`, `memoryview`, NumPy `uint8`).
     `pts` is keyword-only on every send method. The muxer + transport work
-    runs with the GIL released.
+    runs with the GIL released. After ``cancel_handle().cancel()`` every
+    send method raises ``CLOSED``, buffered data included.
     """
 
     @classmethod
@@ -302,7 +306,9 @@ class MuxSender:
         The sender is closed either way; a second ``finish()`` is a no-op,
         and so is a ``finish()`` after ``close()``. It does NOT free the
         handle — call ``close()`` (or use the ``with`` block) to release it.
-        Unlike ``close()`` this does not cancel a parked send first."""
+        Unlike ``close()`` this does not cancel a parked send first.
+        After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered
+        data included."""
     def is_alive(self) -> bool: ...
     def __enter__(self) -> MuxSender: ...
     def __exit__(
@@ -355,7 +361,8 @@ class DemuxReceiver:
         """Deprecated: use `DemuxReceiver.open`. Emits DeprecationWarning;
         removed in 0.10.0."""
     def __iter__(self) -> Iterator[DemuxEvent]: ...
-    def __next__(self) -> DemuxEvent: ...
+    def __next__(self) -> DemuxEvent:
+        """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     # Register a fan-out callback invoked with every 188-byte TS packet
     # (as `bytes`) BEFORE demuxing, in registration order. If the
     # callback raises, the exception is re-raised fail-loud from the next

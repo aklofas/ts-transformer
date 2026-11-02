@@ -93,7 +93,12 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
             )
         } {
             Some(inner) => Box::into_raw(Box::new(TstRtpDemuxReceiver {
-                inner,
+                // The same cell, attached to the handle too: a receive refused
+                // after `_cancel` records `Cancelled` there.
+                inner: {
+                    let end_reason = inner.snapshot().end_reason.clone();
+                    inner.with_end_reason(end_reason)
+                },
                 arena: Mutex::new(EventArena::new()),
                 stream_stats_buf: Mutex::new(Vec::new()),
                 rtsp_client: Mutex::new(None),
@@ -165,6 +170,10 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_close(p: *mut TstRtpDemuxReceive
 ///   unrecoverable packet malformation, or a malformed PES)
 /// - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 ///
 /// # Safety
 ///

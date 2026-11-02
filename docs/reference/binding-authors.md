@@ -261,7 +261,11 @@ wrappers — and on the RTSP control plane: a cancelled `RtspClient` call
 and `tst_core::transport::conformance` pins it in each crate's
 `tests/*conformance.rs`. Bindings therefore project one kind for a cancel:
 `TstError::Closed` (−7) / `<Domain>Error(CLOSED)` / `<Domain>Exception(CLOSED)`, via
-`BindingErrorKind`. The detail is `cancelled from another thread` wherever
+`BindingErrorKind`. Bindings refuse a data-plane call (receive, send, flush,
+finish) after a cancel at the `Owned` entry
+(`Owned::with_mut_unless_cancelled` / `with_ref_blocking_unless_cancelled`,
+`HandleState::Cancelled`), buffered output included; the H.264 receiver's
+drain to end of stream is the documented exception. The detail is `cancelled from another thread` wherever
 the `BindingError` reaches the caller unchanged — the Rust binding layer,
 Python, the JVM, and the C **send** path. The C **receive** path is the one
 exception: a receive that ends `EndOfStream` goes through

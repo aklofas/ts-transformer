@@ -169,6 +169,9 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * are wrapped in an unchecked {@link RuntimeException} (the {@code Iterator}
      * contract forbids checked exceptions). The stream emits exactly one
      * {@link DemuxEvent.ReconnectDiscontinuity} after each transport reconnect.
+     *
+     * <p>After {@code cancelHandle().cancel()} this throws {@code SrtException}
+     * ({@code CLOSED}), buffered data included.
      */
     @Override
     public Iterator<DemuxEvent> iterator() {

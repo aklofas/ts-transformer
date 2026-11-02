@@ -366,8 +366,9 @@ impl PyDemuxReceiver {
         if self.close_pending.swap(false, Ordering::AcqRel) {
             return self.finish_deferred_close(py);
         }
-        let res =
-            crate::util::allow_threads_parking(py, || self.owned.with_mut(|rx| rx.recv_event()));
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut_unless_cancelled(|rx| rx.recv_event())
+        });
         // Fail-loud: surface any sink exception captured during this
         // `recv_event` (the slot guard has been dropped above, so touching
         // `sink_error` here can't nest under it). Take it so a resumed
@@ -402,7 +403,10 @@ impl PyDemuxReceiver {
     /// Return a shareable cancel handle. Calling `.cancel()` on the
     /// returned handle wakes any thread currently parked in `__next__`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_source(&self.cancel))
+        Py::new(
+            py,
+            PyCancelHandle::for_shell(&self.cancel, self.owned.cancel_arc()),
+        )
     }
 
     /// Snapshot of the scheme-neutral 16-field wire stats.

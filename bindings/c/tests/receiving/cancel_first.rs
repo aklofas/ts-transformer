@@ -231,6 +231,63 @@ fn plain_mux_sender_cancel_then_push_reports_plain_srt_cancel_code() {
     drop(peer);
 }
 
+#[test]
+fn plain_sender_cancel_then_partial_send_reports_closed() {
+    use tstrans::config::{tst_sender_config_free, tst_sender_config_new};
+    use tstrans::sender::ts_sender::{
+        tst_sender_cancel, tst_sender_close, tst_sender_open, tst_sender_send_ts,
+    };
+    let peer = PeerListener::spawn();
+    let url = CString::new(format!("srt://127.0.0.1:{}", peer.port)).unwrap();
+    let cfg = unsafe { tst_sender_config_new() };
+    let tx = unsafe { tst_sender_open(url.as_ptr(), cfg) };
+    unsafe { tst_sender_config_free(cfg) };
+    assert!(!tx.is_null(), "open: {}", last_error_msg());
+    assert_eq!(unsafe { tst_sender_cancel(tx) }, 0, "cancel rc");
+    // ONE packet, no flush: a partial bundle the shell would only buffer.
+    let pkt = &seven_null_packets()[..188];
+    let rc = unsafe { tst_sender_send_ts(tx, pkt.as_ptr(), pkt.len()) };
+    assert_eq!(
+        rc,
+        TstError::Closed as i32,
+        "a buffered send after cancel: {}",
+        last_error_msg()
+    );
+    unsafe { tst_sender_close(tx) };
+    drop(peer);
+}
+
+#[test]
+fn plain_mux_sender_cancel_then_finish_reports_closed() {
+    use tstrans::config::{
+        TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
+        tst_mux_config_free, tst_mux_config_new,
+    };
+    use tstrans::sender::mux_sender::{
+        tst_mux_sender_cancel, tst_mux_sender_close, tst_mux_sender_finish, tst_mux_sender_open,
+    };
+    let peer = PeerListener::spawn();
+    let url = CString::new(format!("srt://127.0.0.1:{}", peer.port)).unwrap();
+    let (tx, cfg) = unsafe {
+        let cfg = tst_mux_config_new();
+        let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        (tst_mux_sender_open(url.as_ptr(), cfg), cfg)
+    };
+    assert!(!tx.is_null(), "open: {}", last_error_msg());
+    unsafe { tst_mux_config_free(cfg) };
+    assert_eq!(unsafe { tst_mux_sender_cancel(tx) }, 0, "cancel rc");
+    let rc = unsafe { tst_mux_sender_finish(tx) };
+    assert_eq!(
+        rc,
+        TstError::Closed as i32,
+        "finish after cancel: {}",
+        last_error_msg()
+    );
+    unsafe { tst_mux_sender_close(tx) };
+    drop(peer);
+}
+
 // ---------------------------------------------------------------- receivers
 
 /// Park `recv` (a closure that runs the blocking C call) on a reader

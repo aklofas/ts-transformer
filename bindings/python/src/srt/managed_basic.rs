@@ -169,7 +169,9 @@ impl PyManagedSender {
         pyres(
             py,
             &SRT,
-            crate::util::allow_threads_parking(py, || self.owned.with_mut(|s| s.send_ts(slice))),
+            crate::util::allow_threads_parking(py, || {
+                self.owned.with_mut_unless_cancelled(|s| s.send_ts(slice))
+            }),
         )
     }
 
@@ -179,7 +181,9 @@ impl PyManagedSender {
         pyres(
             py,
             &SRT,
-            crate::util::allow_threads_parking(py, || self.owned.with_mut(|s| s.flush())),
+            crate::util::allow_threads_parking(py, || {
+                self.owned.with_mut_unless_cancelled(|s| s.flush())
+            }),
         )
     }
 
@@ -188,7 +192,10 @@ impl PyManagedSender {
     /// and forwards into the current inner transport's cancel handle
     /// to wake any thread parked in `send_bytes`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_source(&self.cancel))
+        Py::new(
+            py,
+            PyCancelHandle::for_shell(&self.cancel, self.owned.cancel_arc()),
+        )
     }
 
     /// Scheme-neutral wire stats from the current inner transport.
@@ -406,7 +413,9 @@ impl PyManagedReceiver {
         let bytes = pyres(
             py,
             &SRT,
-            crate::util::allow_threads_parking(py, || self.owned.with_mut(|r| r.next_packet())),
+            crate::util::allow_threads_parking(py, || {
+                self.owned.with_mut_unless_cancelled(|r| r.next_packet())
+            }),
         )?;
         Ok(PyBytes::new(py, &bytes).unbind())
     }
@@ -424,7 +433,10 @@ impl PyManagedReceiver {
     /// transport's cancel handle to wake any thread parked in
     /// `recv_bytes`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
-        Py::new(py, PyCancelHandle::from_source(&self.cancel))
+        Py::new(
+            py,
+            PyCancelHandle::for_shell(&self.cancel, self.owned.cancel_arc()),
+        )
     }
 
     /// Scheme-neutral wire stats from the current inner transport. Waits

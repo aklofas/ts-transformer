@@ -1046,7 +1046,10 @@ try (Socket sock = new Builder("srt://host:9000")
 
 Obtain a `org.tstrans.shells.CancelHandle` from an open `Sender`, `Receiver`,
 `MuxSender` or `DemuxReceiver` (and their `Managed*` twins) and call `cancel()` from another
-thread to unblock a parked `sendBytes` / `send*` / `recvBytes` / `next()` call:
+thread to unblock a parked `sendBytes` / `send*` / `recvBytes` / `next()` call.
+After a cancel, every receive, send, `flush()` and `finish()` on these shells
+throws `CLOSED`, buffered data included; `org.tstrans.rtp.H264Receiver` is the
+exception and drains to end of stream:
 
 ```java
 var tx = Sender.open("srt://host:9000?mode=caller");

@@ -622,7 +622,18 @@ where
         // The ambiguous end of stream still consults the latch so a caller
         // close and a peer EOS can be told apart.
         K::EndOfStream => record_recv_closed(cancelled),
-        K::Broken if broken_is_eos && !cancelled => {
+        // A cancel can land between the transport's failure and its own
+        // latch read, so the failure surfaces as `Broken` although the
+        // caller cancelled. With the C-side latch set it is the caller's
+        // close, never a transport failure.
+        K::Broken if cancelled => {
+            set_last_error(
+                TstError::Closed,
+                "receiver was cancelled or closed by caller",
+            );
+            TstError::Closed as i32
+        }
+        K::Broken if broken_is_eos => {
             record_eos();
             TstError::EndOfStream as i32
         }
@@ -763,6 +774,25 @@ mod tests {
             record_recv_error(eos(), true, false),
             TstError::Closed as i32
         );
+    }
+
+    /// A cancel landing between the transport's failure and its own latch
+    /// read reaches here as `Broken` with the C-side latch set: the caller
+    /// cancelled, so it is -7, not a transport failure.
+    #[cfg(feature = "std")]
+    #[test]
+    fn record_recv_error_maps_broken_with_the_latch_set_to_closed() {
+        use tst_pipeline::BrokenCause;
+        let broken = tst_pipeline::ReceiverError::from(TransportError::Broken {
+            msg: "x".into(),
+            errno_code: None,
+            cause: BrokenCause::Unspecified,
+        });
+        assert_eq!(
+            record_recv_error(broken, true, false),
+            TstError::Closed as i32
+        );
+        assert_eq!(unsafe { tst_get_last_error() }, TstError::Closed as i32);
     }
 
     /// With the fold off a `Broken` is a transport failure that keeps the

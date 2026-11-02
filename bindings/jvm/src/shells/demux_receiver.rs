@@ -284,7 +284,7 @@ jni_native! {
             return JObject::null().into_raw();
         }
         // recv_event runs INSIDE the slot; the byte sinks fire during it.
-        let res = match REGISTRY.with_mut(handle as u64, |jdr| jdr.inner.recv_event()) {
+        let res = match REGISTRY.with_mut_unless_cancelled(handle as u64, |jdr| jdr.inner.recv_event()) {
             Ok(v) => v,
             Err(state) => {
                 throw_state(env, domain, "DemuxReceiver", &state);

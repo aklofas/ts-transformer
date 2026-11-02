@@ -34,6 +34,13 @@
 //!   lock, fires [`Owned::cancel`], and only then drops the value, inside
 //!   its own panic boundary (later calls → [`HandleState::Closed`]). A
 //!   panicking READER keeps the value.
+//! - **Cancel is terminal for the data plane**: a binding's receive, send,
+//!   flush and finish entries go through [`Owned::with_mut_unless_cancelled`]
+//!   / [`Owned::with_ref_blocking_unless_cancelled`], which refuse with
+//!   [`HandleState::Cancelled`] once the cancel latch is set, so buffered
+//!   packets or bytes are never delivered or sent after a cancel. Everything
+//!   else (stats, config, the H.264 receiver's drain to end of stream,
+//!   `close`) stays on the ungated entries.
 //! - **Double close is quiet**: the second `close()` is `Ok(())`.
 //! - **Implicit drop cancels first**: dropping an `Owned` whose slot still
 //!   holds a value (a binding object freed or collected without `close()`)
@@ -81,12 +88,13 @@ pub trait Close {
     fn close(&mut self) -> Result<(), Self::Error>;
 }
 
-/// Why [`Owned::with_mut`] / [`Owned::with_ref_blocking`] could not run the closure.
+/// Why [`Owned::with_mut`] / [`Owned::with_ref_blocking`] (or their
+/// `_unless_cancelled` twins) could not run the closure.
 ///
-/// The only three failure modes of the state machine; each has exactly one
-/// mapping per binding, implemented once in `binding::kind`: `Closed` →
-/// the binding's `CLOSED` kind, `Poisoned` → its internal-error kind,
-/// `Panicked` → its panic kind.
+/// The failure modes of the state machine; each has exactly one mapping
+/// per binding, implemented once in `binding::kind`: `Closed` and
+/// `Cancelled` → the binding's `CLOSED` kind, `Poisoned` → its
+/// internal-error kind, `Panicked` → its panic kind.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandleState {
@@ -103,6 +111,10 @@ pub enum HandleState {
         /// Panic message (or `"non-string panic payload"`).
         detail: String,
     },
+    /// The handle's cancel latch is set and this entry refuses to run the
+    /// closure; the slot still holds the value. Only the `_unless_cancelled`
+    /// entries report it.
+    Cancelled,
 }
 
 /// Why [`Owned::close`] did not complete cleanly.
@@ -262,9 +274,24 @@ impl<T, S> Owned<T, S> {
     /// interior (transport mutex, atomics) carries its own poison/latch
     /// rule, which contains a reader panic.
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R, HandleState> {
+        self.with_mut_gated(false, f)
+    }
+
+    /// [`Self::with_mut`], refusing with [`HandleState::Cancelled`] after a
+    /// cancel when `gated`. The slot is checked first: an emptied slot is
+    /// `Closed` whether or not a cancel preceded it.
+    fn with_mut_gated<R>(
+        &self,
+        gated: bool,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Result<R, HandleState> {
         let mut guard = self.inner.lock().map_err(|_| HandleState::Poisoned)?;
         if guard.is_none() {
             return Err(HandleState::Closed);
+        }
+        if gated && self.cancel_requested() {
+            self.record_cancelled_end();
+            return Err(HandleState::Cancelled);
         }
         match panic::catch(|| f(guard.as_mut().expect("checked non-empty above"))) {
             Ok(r) => Ok(r),
@@ -286,6 +313,66 @@ impl<T, S> Owned<T, S> {
         }
     }
 
+    /// [`Self::with_mut`] for a data-plane entry (receive, send, flush,
+    /// finish): refuses with [`HandleState::Cancelled`] once the handle is
+    /// cancelled, so a cancel is terminal even for output the shell still
+    /// buffers. Otherwise exactly [`Self::with_mut`].
+    ///
+    /// The gate reads the handle's own cancel latch, set by the binding's
+    /// cancel entry ([`Self::cancel`], [`Self::cancel_arc`]); not a
+    /// transport-internal close, so a second `finish()` stays idempotent.
+    ///
+    /// The gate is read once the slot is held, after the empty-slot check,
+    /// so a call after `close()` still reports [`HandleState::Closed`]. A
+    /// call already inside the closure when the cancel lands is ended by the
+    /// transport's own cancel handle, not by this check. A refused call records
+    /// [`EndReason::Cancelled`] on an attached end-reason handle unless a
+    /// reason was already recorded.
+    ///
+    /// # Errors
+    ///
+    /// [`HandleState::Cancelled`], or whatever [`Self::with_mut`] reports.
+    pub fn with_mut_unless_cancelled<R>(
+        &self,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Result<R, HandleState> {
+        self.with_mut_gated(true, f)
+    }
+
+    /// [`Self::with_ref_blocking`] for a data-plane entry that takes `&T`
+    /// (the muxing shells' sends and `finish`): the same cancel gate as
+    /// [`Self::with_mut_unless_cancelled`].
+    ///
+    /// # Errors
+    ///
+    /// [`HandleState::Cancelled`], or whatever [`Self::with_ref_blocking`]
+    /// reports.
+    pub fn with_ref_blocking_unless_cancelled<R>(
+        &self,
+        why: BlockingReason,
+        f: impl FnOnce(&T) -> R,
+    ) -> Result<R, HandleState> {
+        self.with_ref_gated(true, why, f)
+    }
+
+    /// The handle's own cancel latch, set by [`Self::cancel`] and by a handle
+    /// from [`Self::cancel_arc`]. Unlike [`Self::is_cancelled`] it ignores the
+    /// transport's latch, which the shell's own `finish()` / `close()` fires
+    /// internally.
+    fn cancel_requested(&self) -> bool {
+        self.cancel.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// A gated entry refused after a cancel: the stream ended by cancel,
+    /// though the receiver never ran to record it. First record wins, so an
+    /// end of stream the receiver saw earlier is kept.
+    fn record_cancelled_end(&self) {
+        #[cfg(feature = "std")]
+        if let Some(h) = &self.end_reason {
+            h.record(EndReason::Cancelled);
+        }
+    }
+
     /// Run `f` on `&T` (stats, `is_alive`, `repr`). Recovers a poisoned
     /// mutex; otherwise the same contract as [`Self::with_mut`]. BLOCKING:
     /// it waits behind a call parked in the slot, and `why` names, at the
@@ -296,11 +383,25 @@ impl<T, S> Owned<T, S> {
     /// [`HandleState::Closed`], [`HandleState::Panicked`] — never `Poisoned`.
     pub fn with_ref_blocking<R>(
         &self,
+        why: BlockingReason,
+        f: impl FnOnce(&T) -> R,
+    ) -> Result<R, HandleState> {
+        self.with_ref_gated(false, why, f)
+    }
+
+    /// [`Self::with_ref_blocking`] with the gate of [`Self::with_mut_gated`].
+    fn with_ref_gated<R>(
+        &self,
+        gated: bool,
         _why: BlockingReason,
         f: impl FnOnce(&T) -> R,
     ) -> Result<R, HandleState> {
         let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let t = guard.as_ref().ok_or(HandleState::Closed)?;
+        if gated && self.cancel_requested() {
+            self.record_cancelled_end();
+            return Err(HandleState::Cancelled);
+        }
         panic::catch(|| f(t)).map_err(|detail| HandleState::Panicked { detail })
     }
 
@@ -1596,5 +1697,116 @@ mod tests {
         ));
         assert!(owned.is_closed());
         assert!(!owned.inner.is_poisoned());
+    }
+
+    // ---- cancel-gated data-plane entries ----
+
+    #[test]
+    fn with_mut_unless_cancelled_refuses_after_cancel_and_keeps_the_slot() {
+        let f = fixture();
+        assert_eq!(
+            f.owned.with_mut_unless_cancelled(|m| m.n),
+            Ok(0),
+            "runs before a cancel"
+        );
+        f.owned.cancel();
+        assert_eq!(
+            f.owned.with_mut_unless_cancelled(|m| m.n),
+            Err(HandleState::Cancelled)
+        );
+        assert!(!f.owned.is_closed(), "the value stays until close()");
+        assert_eq!(
+            f.owned.with_mut(|m| m.n),
+            Ok(0),
+            "plain with_mut is NOT gated: the H.264 drain path relies on it"
+        );
+    }
+
+    #[test]
+    fn with_ref_blocking_unless_cancelled_refuses_after_cancel() {
+        let f = fixture();
+        let why = BlockingReason::NoAnswerWithoutSlot;
+        assert_eq!(
+            f.owned.with_ref_blocking_unless_cancelled(why, |m| m.n),
+            Ok(0),
+            "runs before a cancel"
+        );
+        f.owned.cancel_arc().cancel(); // a handed-out handle gates it too
+        assert_eq!(
+            f.owned.with_ref_blocking_unless_cancelled(why, |m| m.n),
+            Err(HandleState::Cancelled)
+        );
+        assert!(!f.owned.is_closed(), "the value stays until close()");
+        assert_eq!(
+            f.owned.with_ref_blocking(why, |m| m.n),
+            Ok(0),
+            "plain with_ref_blocking is NOT gated"
+        );
+    }
+
+    #[test]
+    fn cancelled_state_maps_to_the_closed_kind() {
+        use crate::binding::{BindingError, BindingErrorKind};
+        let e: BindingError = HandleState::Cancelled.into();
+        assert_eq!(
+            (e.kind, e.detail.as_str()),
+            (BindingErrorKind::Closed, "handle was cancelled")
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn a_gated_refusal_records_cancelled_unless_a_reason_is_already_recorded() {
+        let f = fixture();
+        f.owned.cancel();
+        let _ = f.owned.with_mut_unless_cancelled(|m| m.n);
+        assert_eq!(f.owned.end_reason(), Some(EndReason::Cancelled));
+
+        let g = fixture();
+        g.end_reason.record(EndReason::EndOfStream);
+        g.owned.cancel();
+        let why = BlockingReason::NoAnswerWithoutSlot;
+        let _ = g.owned.with_ref_blocking_unless_cancelled(why, |m| m.n);
+        assert_eq!(
+            g.owned.end_reason(),
+            Some(EndReason::EndOfStream),
+            "the first recorded reason wins"
+        );
+    }
+
+    #[test]
+    fn a_gated_call_after_close_reports_closed_not_cancelled() {
+        // `close()` cancels first, but an emptied slot is `Closed`: a binding's
+        // `finish()` after `close()` stays a quiet no-op.
+        let f = fixture();
+        assert!(f.owned.close().is_ok());
+        assert!(f.owned.is_cancelled());
+        assert_eq!(
+            f.owned.with_mut_unless_cancelled(|m| m.n),
+            Err(HandleState::Closed)
+        );
+        assert_eq!(
+            f.owned
+                .with_ref_blocking_unless_cancelled(BlockingReason::IsItselfBlocking, |m| m.n),
+            Err(HandleState::Closed)
+        );
+    }
+
+    #[test]
+    fn the_gate_ignores_a_transport_internal_latch() {
+        // The shell's own `finish()` closes its transport, which fires the
+        // transport's handle: that is not a caller cancel.
+        let f = fixture();
+        f.cancel.cancel(); // the transport-side handle only
+        assert!(
+            f.owned.is_cancelled(),
+            "is_cancelled still ORs the transport latch"
+        );
+        assert_eq!(f.owned.with_mut_unless_cancelled(|m| m.n), Ok(0));
+        assert_eq!(
+            f.owned
+                .with_ref_blocking_unless_cancelled(BlockingReason::IsItselfBlocking, |m| m.n),
+            Ok(0)
+        );
     }
 }

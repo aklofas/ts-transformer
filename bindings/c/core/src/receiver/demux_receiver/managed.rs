@@ -235,6 +235,10 @@ fn managed_open_inner(
 /// clean teardown (`CLEAN_TEARDOWN`) from a give-up-after-retries
 /// (`TRANSPORT_FAILED`) or an explicit `_cancel` (`CANCELLED`).
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Threading and blocking behavior
 ///
 /// This call **blocks with no per-call timeout of its own**; see
@@ -278,20 +282,22 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_recv_event(
     // a Broken reaching here is a hard transport failure (see the asymmetry
     // note above). The latch is read on both sides of the park.
     let cancelled = handle.inner.is_cancelled();
-    handle.inner.with_inner_mut(|rx| match rx.recv_event() {
-        Ok(Some(ev)) => {
-            // Poison = a panic mid-write on another call; the arena is
-            // rewritten before it is read, so recover (binding poison
-            // policy: readers recover).
-            let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
-            unsafe {
-                crate::event::convert(&mut arena, &ev, &mut *out_event);
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|rx| match rx.recv_event() {
+            Ok(Some(ev)) => {
+                // Poison = a panic mid-write on another call; the arena is
+                // rewritten before it is read, so recover (binding poison
+                // policy: readers recover).
+                let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
+                unsafe {
+                    crate::event::convert(&mut arena, &ev, &mut *out_event);
+                }
+                0
             }
-            0
-        }
-        Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
-        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
-    })
+            Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
+            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
+        })
 }
 
 /// Cancel a `tst_managed_demux_receiver_t`. Same shape as the plain

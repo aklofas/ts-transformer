@@ -91,7 +91,7 @@ jni_native! {
         // `next_packet` may park; the closure holds the slot for its duration.
         // `cancelHandle().cancel()` / a concurrent `close()` (which cancels
         // before it takes the slot) wakes a parked recv.
-        match REGISTRY.with_mut(handle as u64, |r| r.next_packet()) {
+        match REGISTRY.with_mut_unless_cancelled(handle as u64, |r| r.next_packet()) {
             Ok(Ok(bytes)) => match env.byte_array_from_slice(&bytes) {
                 Ok(arr) => arr.into_raw(),
                 Err(_) => std::ptr::null_mut(),

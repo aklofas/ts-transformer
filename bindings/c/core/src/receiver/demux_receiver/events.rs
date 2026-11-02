@@ -34,6 +34,10 @@ use crate::event::TstEvent;
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
 ///
 /// On any non-zero return the contents of `*out_event` are unspecified.
+///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_receiver_recv_event(
     p: *mut TstDemuxReceiver,
@@ -53,27 +57,29 @@ pub unsafe extern "C" fn tst_demux_receiver_recv_event(
     // retries internally, so a Broken reaching a PLAIN receiver is a peer
     // close).
     let cancelled = handle.inner.is_cancelled();
-    handle.inner.with_inner_mut(|rx| match rx.recv_event() {
-        Ok(Some(ev)) => {
-            // Poison = a panic mid-write on another call; the arena is
-            // rewritten before it is read, so recover (binding poison
-            // policy: readers recover).
-            let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
-            // SAFETY: out_event non-null per guard above. event::convert
-            // writes through the pointer; pointer fields on the result
-            // alias the arena Vecs (held under the arena Mutex for the
-            // duration of this call; the arena Mutex is released before
-            // the closure returns, but Vec base pointers are stable
-            // until the next convert() call which re-clears them — see
-            // the design §4.5 lifetime contract).
-            unsafe {
-                crate::event::convert(&mut arena, &ev, &mut *out_event);
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|rx| match rx.recv_event() {
+            Ok(Some(ev)) => {
+                // Poison = a panic mid-write on another call; the arena is
+                // rewritten before it is read, so recover (binding poison
+                // policy: readers recover).
+                let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
+                // SAFETY: out_event non-null per guard above. event::convert
+                // writes through the pointer; pointer fields on the result
+                // alias the arena Vecs (held under the arena Mutex for the
+                // duration of this call; the arena Mutex is released before
+                // the closure returns, but Vec base pointers are stable
+                // until the next convert() call which re-clears them — see
+                // the design §4.5 lifetime contract).
+                unsafe {
+                    crate::event::convert(&mut arena, &ev, &mut *out_event);
+                }
+                0
             }
-            0
-        }
-        Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
-        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
-    })
+            Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
+            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
+        })
 }
 
 /// Cancel a `tst_demux_receiver_t`. Unblocks a thread parked in

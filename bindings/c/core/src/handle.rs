@@ -68,6 +68,32 @@ impl<T, S> CHandle<T, S> {
         }
     }
 
+    /// [`Self::with_inner_mut`] for a data-plane entry (receive, send,
+    /// flush, finish): after `_cancel` it returns `TST_E_CLOSED` without
+    /// running `f`, even when the shell still buffers packets or bytes
+    /// (`Owned::with_mut_unless_cancelled`).
+    #[allow(dead_code)] // consumed by the data-path entry points
+    pub(crate) fn with_inner_mut_unless_cancelled(&self, f: impl FnOnce(&mut T) -> i32) -> i32 {
+        match self.0.with_mut_unless_cancelled(f) {
+            Ok(rc) => rc,
+            Err(state) => record_binding_error(BindingError::from(state)),
+        }
+    }
+
+    /// Reader twin of [`Self::with_inner_mut_unless_cancelled`], for the
+    /// muxing shells' `&self` sends and `_finish`. Those wait behind a send
+    /// in flight, which is the call's own blocking, not a getter's.
+    #[allow(dead_code)] // consumed by the mux-sender push and finish entry points
+    pub(crate) fn with_inner_ref_unless_cancelled(&self, f: impl FnOnce(&T) -> i32) -> i32 {
+        match self
+            .0
+            .with_ref_blocking_unless_cancelled(BlockingReason::IsItselfBlocking, f)
+        {
+            Ok(rc) => rc,
+            Err(state) => record_binding_error(BindingError::from(state)),
+        }
+    }
+
     /// Run `f` against `&T` WITHOUT touching the last-error channel on
     /// any path: a closed handle or a caught panic returns `default`. For
     /// side-channel queries documented never to clobber a caller's

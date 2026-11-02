@@ -15,7 +15,9 @@
 //!   sender's `ManagedStatsHandle`) become the entry's `Owned` SNAPSHOT, so
 //!   every counter/stats/cancel read is lock-free.
 //! - Per-call methods go through `with_mut` / `with_ref_blocking`; a `HandleState`
-//!   becomes the one Java mapping in `error::throw_handle_state`.
+//!   becomes the one Java mapping in `error::throw_handle_state`. The data-plane
+//!   natives (send, flush, recv) use the `_unless_cancelled` twins, and a call
+//!   refused after a cancel throws `SrtException(CLOSED)`.
 //! - `nClose` cancels first, then takes + tears down, via `OwnedRegistry::close`:
 //!   a parked `send`/`recv` ends with `SrtException(CLOSED)` instead of holding
 //!   `close()` for the reconnect budget.
@@ -45,8 +47,7 @@ use tst_pipeline::{
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use super::ManagedSenderSnapshot;
-use super::errors::{throw_receiver_error, throw_sender_error, throw_srt};
-use crate::error::throw_handle_state;
+use super::errors::{throw_data_plane_state, throw_receiver_error, throw_sender_error, throw_srt};
 use crate::generated::stats_shells::build_socket_stats;
 use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::handle::OwnedRegistry;
@@ -171,10 +172,10 @@ jni_native! {
             }
         };
 
-        match REGISTRY_SENDER.with_mut(handle as u64, |jstruct| jstruct.inner.send_ts(&bytes)) {
+        match REGISTRY_SENDER.with_mut_unless_cancelled(handle as u64, |jstruct| jstruct.inner.send_ts(&bytes)) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => throw_sender_error(env, &e),
-            Err(state) => throw_handle_state(env, "ManagedSender", &state),
+            Err(state) => throw_data_plane_state(env, "ManagedSender", &state),
         }
     }
 }
@@ -182,10 +183,10 @@ jni_native! {
 jni_native! {
     /// Flush any buffered partial TS bundle. Throws `SrtException` on failure.
     fn Java_org_tstrans_srt_ManagedSender_nFlush(env, _class, handle: jlong) = () => {
-        match REGISTRY_SENDER.with_mut(handle as u64, |jstruct| jstruct.inner.flush()) {
+        match REGISTRY_SENDER.with_mut_unless_cancelled(handle as u64, |jstruct| jstruct.inner.flush()) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => throw_sender_error(env, &e),
-            Err(state) => throw_handle_state(env, "ManagedSender", &state),
+            Err(state) => throw_data_plane_state(env, "ManagedSender", &state),
         }
     }
 }
@@ -408,11 +409,11 @@ jni_native! {
         _max_len: jint,
     ) -> jbyteArray = std::ptr::null_mut() => {
         let res = match REGISTRY_RECEIVER
-            .with_mut(handle as u64, |jstruct| jstruct.inner.next_packet())
+            .with_mut_unless_cancelled(handle as u64, |jstruct| jstruct.inner.next_packet())
         {
             Ok(res) => res,
             Err(state) => {
-                throw_handle_state(env, "ManagedReceiver", &state);
+                throw_data_plane_state(env, "ManagedReceiver", &state);
                 return std::ptr::null_mut();
             }
         };

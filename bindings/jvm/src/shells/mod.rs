@@ -49,14 +49,14 @@ fn domain_or_closed<T: Send + 'static, H: Send + Sync + 'static>(
 }
 
 /// A [`HandleState`] failure of a native that reached the registry. A slot
-/// taken by a concurrent `close()` is the transport's own `CLOSED` in the
-/// shell's domain, as Python raises it; a poisoned slot and a panic keep the
-/// one handle-state mapping.
+/// taken by a concurrent `close()`, and a data-plane call refused after a
+/// cancel, are the transport's own `CLOSED` in the shell's domain, as Python
+/// raises them; a poisoned slot and a panic keep the one handle-state mapping.
 /// Only the operations that can park (send, receive, iterate, finish) use this;
 /// the stats and accessor natives throw `IllegalStateException` for a closed
 /// handle through `throw_handle_state`, the established JVM idiom.
 fn throw_state(env: &mut Env, domain: Domain, what: &str, state: &HandleState) {
-    if matches!(state, HandleState::Closed) {
+    if matches!(state, HandleState::Closed | HandleState::Cancelled) {
         throw_binding(env, domain, &BindingError::from(state.clone()));
     } else {
         throw_handle_state(env, what, state);

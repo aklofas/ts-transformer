@@ -40,7 +40,7 @@ struct SendPtr(*mut TstUdpReceiver);
 unsafe impl Send for SendPtr {}
 
 /// One MPEG-TS null packet (PID 0x1FFF) — what the rescue burst is made of.
-fn ts_null_packet() -> [u8; 188] {
+pub(crate) fn ts_null_packet() -> [u8; 188] {
     let mut p = [0xFFu8; 188];
     p[0] = 0x47;
     p[1] = 0x1F;

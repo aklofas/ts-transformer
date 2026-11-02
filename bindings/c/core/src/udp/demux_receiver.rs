@@ -166,6 +166,10 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_cancel(p: *mut TstUdpDemuxReceiv
 /// - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Safety
 ///
 /// `p` must be a valid non-freed `*mut TstUdpDemuxReceiver`. `out_event`

@@ -73,7 +73,13 @@ pub unsafe extern "C" fn tst_rtp_recv_open(url: *const c_char) -> *mut TstRtpRec
                 end_reason: t.end_reason_handle(),
             },
         ) {
-            Some(inner) => Box::into_raw(Box::new(TstRtpReceiver { inner })),
+            Some(inner) => {
+                // The same cell, attached to the handle too: a receive refused
+                // after `_cancel` records `Cancelled` there.
+                let end_reason = inner.snapshot().end_reason.clone();
+                let inner = inner.with_end_reason(end_reason);
+                Box::into_raw(Box::new(TstRtpReceiver { inner }))
+            }
             None => std::ptr::null_mut(),
         }
     })
@@ -130,6 +136,10 @@ pub unsafe extern "C" fn tst_rtp_receiver_close(p: *mut TstRtpReceiver) {
 ///   recv-deadline expiry already returns to C consumers)
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
 ///
+/// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
+/// bytes are still buffered; a call already past its receive when the
+/// cancel lands may still return its result.
+///
 /// # Safety
 ///
 /// `p` must be a valid non-freed `*mut TstRtpReceiver`. `buf` must be
@@ -164,17 +174,19 @@ pub unsafe extern "C" fn tst_rtp_receiver_recv_ts(
     // park, and `broken_is_eos` is `false`: only plain SRT shells fold a
     // Broken into end of stream, so here it stays a hard transport error.
     let cancelled = handle.inner.is_cancelled();
-    handle.inner.with_inner_mut(|rx| match rx.next_packet() {
-        Ok(pkt) => {
-            // SAFETY: buf non-null + writable for >= TS_PACKET_SIZE bytes per guard.
-            unsafe {
-                std::ptr::copy_nonoverlapping(pkt.as_ptr(), buf, TS_PACKET_SIZE);
-                *out_n = TS_PACKET_SIZE;
+    handle
+        .inner
+        .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
+            Ok(pkt) => {
+                // SAFETY: buf non-null + writable for >= TS_PACKET_SIZE bytes per guard.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(pkt.as_ptr(), buf, TS_PACKET_SIZE);
+                    *out_n = TS_PACKET_SIZE;
+                }
+                0
             }
-            0
-        }
-        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
-    })
+            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
+        })
 }
 
 /// Cancel a `tst_rtp_receiver_t`. Signals the underlying RTP socket to
