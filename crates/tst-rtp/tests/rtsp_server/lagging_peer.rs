@@ -23,7 +23,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::RtspServer;
 
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
-use crate::fixtures::{wait_for, wait_for_parked_fanout};
+use crate::fixtures::{push_until_fanout_parks, wait_for};
 
 /// A stalled TCP-interleaved peer does not block the muxer push path.
 #[test]
@@ -94,13 +94,9 @@ fn slow_peer_does_not_block_muxer() {
     server.stop().ok();
 }
 
-/// Bytes pushed to a peer that does not read, far beyond what the loopback
-/// socket buffers on either side hold, so the fanout's write is parked.
-const STALL_BYTES: u64 = 32 * 1024 * 1024;
-
 /// A TCP-interleaved peer that played `/live` and then stopped reading, with
 /// its server-side fanout parked on the full socket (holding the session's
-/// writer lock). Returns once the server's write probe shows that parked
+/// writer lock). Pushes until the server's write probe shows that parked
 /// write; panics if it never does.
 ///
 /// Pushed bytes alone do not prove the stall: the broadcast drops frames a
@@ -144,16 +140,16 @@ fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
     // does not parse the payload.
     let mut nal = vec![0xBB; 32 * 1024];
     nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
-    let deadline = Instant::now() + scaled(Duration::from_secs(4));
     let mut i = 0i64;
-    while mount.stats().bytes_pushed < STALL_BYTES && Instant::now() < deadline {
-        mount
-            .push_video(&nal, Pts90khz::new(i * 3000), true)
-            .expect("push must not fail on a stalled peer");
-        i += 1;
-    }
+    push_until_fanout_parks(&server, scaled(Duration::from_secs(6)), || {
+        for _ in 0..8 {
+            mount
+                .push_video(&nal, Pts90khz::new(i * 3000), true)
+                .expect("push must not fail on a stalled peer");
+            i += 1;
+        }
+    });
     assert_eq!(mount.stats().peer_count, 1, "the peer is not subscribed");
-    wait_for_parked_fanout(&server, scaled(Duration::from_secs(10)));
     (server, peer, port)
 }
 

@@ -36,8 +36,9 @@ use self::cancel::RtspServerCancelHandle;
 use self::mount_rules::MountRules;
 use crate::url::RtspScheme;
 
-/// How often a parked [`RtspServer::next_publisher`] re-checks the shutdown
-/// flag, the same period as the listener's hard-cancel poll.
+/// How often a parked [`RtspServer::next_publisher`], and a graceful
+/// [`RtspServer::stop`] waiting out its drain, re-check the shutdown flag:
+/// the same period as the listener's hard-cancel poll.
 const NEXT_PUBLISHER_SLICE: Duration = Duration::from_millis(100);
 
 /// Bound of the on-demand publish-mount queue (see
@@ -1172,8 +1173,23 @@ impl RtspServer {
             // The listener bounds its own drain by `graceful_shutdown_drain`;
             // the margin only covers its scheduling.
             let bound = self.state.builder.graceful_shutdown_drain + Duration::from_millis(500);
+            let state = &self.state;
+            // The listener is in its own drain and no longer polls the hard
+            // cancel, so this wait does: a hard cancel closes the publish
+            // side within one poll, as it does outside a graceful stop. The
+            // wait itself still ends with the sessions or the bound.
+            let hard_cancel = async {
+                while !state.hard_cancel.is_cancelled() {
+                    tokio::time::sleep(NEXT_PUBLISHER_SLICE).await;
+                }
+                state.shut_down();
+                std::future::pending::<()>().await
+            };
             rt.block_on(async move {
-                let _ = tokio::time::timeout(bound, ended.wait_for(|done| *done)).await;
+                tokio::select! {
+                    _ = tokio::time::timeout(bound, ended.wait_for(|done| *done)) => {}
+                    () = hard_cancel => {}
+                }
             });
         }
         // Every publish mount's application transport now reads `Closed`.
@@ -1328,7 +1344,9 @@ impl RtspServer {
     /// poll; no Notice is sent.
     ///
     /// `cancel()` is one atomic store, so the transports are closed by the
-    /// running listener (within 100 ms), by [`Self::stop`] or by Drop. On a
+    /// running listener (within 100 ms; while a graceful [`Self::stop`]
+    /// waits out its drain, that `stop()` does it within 100 ms instead),
+    /// by [`Self::stop`] or by Drop. On a
     /// server that was never started, a publish mount's application
     /// transport therefore stays open until the server is dropped;
     /// everything else above holds.
