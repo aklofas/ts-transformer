@@ -102,14 +102,16 @@
  * write from a handler) and fires the server's hard cancel, which only
  * stores an atomic flag (the same pattern as send_rtsp_server.c).
  *
- * WHY the hard cancel here, and WHY it is not the shutdown itself:
+ * WHY the hard cancel here:
  *   The hard cancel makes the listener stop accepting within ~100 ms, so
  *   no new publisher slips in while the process is shutting down, and it
- *   aborts every RTSP session at its next poll.  It does NOT end a publish
- *   mount's application transport and does NOT wake a call parked in
- *   `tst_rtsp_server_next_publisher` (that call keeps timing out with
- *   TST_E_BUFFER_FULL).  Only `tst_rtsp_server_stop` does both, so the
- *   main loop notices the flag within one 1 s timeout and calls stop.
+ *   aborts every RTSP session at its next poll.  It is terminal for the
+ *   publish side, as `tst_rtsp_server_stop` is: every publish mount is
+ *   closed (each demux thread's receiver reads TST_E_END_OF_STREAM) and a
+ *   call parked in `tst_rtsp_server_next_publisher` wakes with
+ *   TST_E_CLOSED, so the main loop leaves at once instead of waiting out
+ *   its 1 s timeout.  The `tst_rtsp_server_stop` that follows then skips
+ *   the Notice and the drain wait: the server is already down.
  *
  *   Trade-off: because the sessions are already aborted, publishers see
  *   their connection drop instead of the RTSP Notice 5402 that stop would
@@ -366,7 +368,7 @@ int main(int argc, char **argv) {
      *                           the announcing publisher already holds it.
      *   TST_E_BUFFER_FULL (-4) — the retryable "nothing arrived in time";
      *                           `mount` is NULL.
-     *   TST_E_CLOSED (-7)     — the server was stopped.
+     *   TST_E_CLOSED (-7)     — the server was stopped or hard-cancelled.
      *
      * The 1 s timeout is what lets this loop notice the stop flag and print
      * stats on time; it is not a liveness bound on publishers.  Concurrent
@@ -459,8 +461,10 @@ int main(int argc, char **argv) {
      *      closes every publish mount, and waits out the drain window.  A
      *      closed mount ends its receiver: each demux thread's
      *      `_next_event` returns TST_E_END_OF_STREAM once the queue drains.
-     *      The hard cancel fired by the signal handler does NOT do this,
-     *      which is why stop, not the cancel, ends the threads.
+     *      After the signal handler's hard cancel the mounts are already
+     *      closed and this skips the Notice and the drain wait; it is still
+     *      called so a loop that left for another reason shuts down the
+     *      same way.
      *   3. Join the threads: no call is in flight on any receiver after
      *      this, so closing them is safe.
      *   4. Close each receiver and free each mount handle (independent

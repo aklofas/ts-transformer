@@ -393,7 +393,9 @@ class RtspServerCancelHandle:
     """Cross-thread hard-cancel handle for an `RtspServer`. Frozen.
 
     Calling `.cancel()` aborts every in-flight session at its next poll
-    boundary, bypassing the graceful Notice-5402 path.
+    boundary, bypassing the graceful Notice-5402 path. Like `stop()`, it
+    ends every publish mount's receiver and wakes a parked `next_publisher`
+    with `RtspError(SERVER)`.
     """
 
     def cancel(self) -> None: ...

@@ -57,7 +57,9 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Returned by [`RtspServer.cancel_handle()`][PyRtspServer::cancel_handle].
 /// Cloning is cheap (`Arc`); multiple holders can race the cancel call
 /// (idempotent). Calling `.cancel()` aborts every in-flight session at
-/// its next poll boundary, bypassing the graceful Notice-5402 path.
+/// its next poll boundary, bypassing the graceful Notice-5402 path. Like
+/// `stop()`, it ends every publish mount's receiver and wakes a parked
+/// `next_publisher` with `RtspError(SERVER)`.
 ///
 /// Note: this is the server-flavoured cancel handle. The `CancelHandle` for
 /// `Sender` / `Receiver` is a distinct type (the server token is
