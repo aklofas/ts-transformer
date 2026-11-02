@@ -485,7 +485,15 @@ impl super::demuxer::Demuxer {
         }
         diff.added = stream_infos
             .iter()
-            .map(|s| (s.pid, s.kind, program_number, s.stream_type.as_byte()))
+            .map(|s| {
+                (
+                    s.pid,
+                    s.kind,
+                    program_number,
+                    s.stream_type.as_byte(),
+                    crate::mpegts::descriptors::find_descriptor_tag(&s.raw_descriptors, 0x56),
+                )
+            })
             .collect();
         diff
     }
@@ -1476,6 +1484,7 @@ mod tests {
         assert!(state.stats.is_some() && state.codec.is_some() && state.subtitle_seen);
         assert!(state.stream_kind.is_none() && state.program.is_none());
         assert!(state.stream_type.is_none() && state.cc.is_none() && state.last_pts.is_none());
+        assert!(!state.teletext_ebu_profile);
         assert!(!state.dup && state.last_pkt_raw.is_none() && state.unwrap.is_none());
         assert!(
             state.latm_carry.is_none()
@@ -1498,6 +1507,7 @@ mod tests {
             stream_kind: Some(StreamKind::Unknown(0xFC)),
             program: Some(1),
             stream_type: Some(0xFC),
+            teletext_ebu_profile: true,
             cc: Some(3),
             dup: true,
             last_pkt_raw: Some([0x47; 188]),

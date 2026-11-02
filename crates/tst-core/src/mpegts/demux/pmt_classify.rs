@@ -152,7 +152,9 @@ pub(super) fn stream_type_from_kind(k: &StreamKind) -> u8 {
 /// Priority (most-specific first):
 ///   1. `subtitling_descriptor` (tag 0x59, ETSI EN 300 468) → DVB subtitling.
 ///   2. `teletext_descriptor` (tag 0x56) or `VBI_teletext_descriptor`
-///      (tag 0x46) → DVB teletext.
+///      (tag 0x46) → DVB teletext; only a 0x56 PID is checked against
+///      EN 300 472 §4.3, a 0x46-only PID is delivered opaque (EN 300 468
+///      §6.2.48).
 ///   3. `registration_descriptor` (tag 0x05) format_identifier `"VTTC"` →
 ///      WebVTT-in-MPEG-TS.
 ///   4. `registration_descriptor` format_identifier `"GA94"` → CEA-708

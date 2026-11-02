@@ -1108,6 +1108,10 @@ impl super::demuxer::Demuxer {
                 // DvbSubDataIdentifier issue; strict mode suppresses the
                 // sample so consumers can fail closed.
                 let raw = &pes.payload;
+                let teletext_ebu_profile = self
+                    .pid_state
+                    .get(&pes.pid)
+                    .is_some_and(|s| s.teletext_ebu_profile);
                 let surfaced_payload = if alignment_rejected {
                     // Strict-mode alignment rejection suppresses the sample so
                     // the receive loop can fail closed (parallel to the
@@ -1134,7 +1138,9 @@ impl super::demuxer::Demuxer {
                                 if reject { None } else { Some(raw.to_vec()) }
                             }
                         },
-                        SubtitleCodec::DvbTeletext if !teletext_data_field_ok(raw) => {
+                        SubtitleCodec::DvbTeletext
+                            if teletext_ebu_profile && !teletext_data_field_ok(raw) =>
+                        {
                             let issue = NonConformantIssue::MalformedPes {
                                 pid: pes.pid,
                                 reason: TELETEXT_DATA_FIELD_MALFORMED,
@@ -2940,5 +2946,45 @@ mod tests {
                 assert_eq!(sequence_gaps(&ev), vec![3], "{name}: {ev:?}");
             }
         }
+    }
+
+    /// A PID signalled only by VBI_teletext_descriptor (0x46) carrying a VBI data
+    /// unit (id 0xC3, EN 301 775) is delivered, not reported as malformed.
+    #[test]
+    fn vbi_teletext_descriptor_only_pid_is_not_held_to_the_ebu_data_unit_rule() {
+        let vbi: &[u8] = &[0x46, 0x05, b'e', b'n', b'g', 0x10, 0x88];
+        let run = |mode| {
+            let mut d = demuxer_with_streams(
+                DemuxerConfig::builder().strict(mode).build(),
+                0x103,
+                &[(0x06, 0x103, vbi)],
+            );
+            let r = feed_packets(
+                &mut d,
+                &pes_to_packets(
+                    0x103,
+                    0,
+                    &teletext_pes(36, &teletext_data_field(0x99, 0xC3, 0x2C)),
+                ),
+            );
+            d.flush();
+            (r, drain_all_events(&mut d))
+        };
+        let (r, ev) = run(StrictMode::Off);
+        assert!(r.is_ok());
+        assert!(
+            malformed_index(&ev, 0x103, TELETEXT_DATA_FIELD_MALFORMED).is_none(),
+            "{ev:?}"
+        );
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x103)),
+            "{ev:?}"
+        );
+        let (r, _) = run(StrictMode::Full);
+        assert!(
+            r.is_ok(),
+            "Full must not reject VBI data on a 0x46-only PID: {r:?}"
+        );
     }
 }

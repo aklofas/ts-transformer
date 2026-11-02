@@ -24,6 +24,11 @@ pub(super) struct PidState {
     pub(super) program: Option<u16>,
     /// PMT `stream_type` byte that declared the PID, set with `stream_kind`.
     pub(super) stream_type: Option<u8>,
+    /// The declaring PMT entry carries `teletext_descriptor` (tag 0x56), the
+    /// signalling EN 300 472 §4.3's data-unit rule applies to; set with
+    /// `stream_kind`. A PID signalled only by `VBI_teletext_descriptor`
+    /// (tag 0x46) is not held to it (EN 300 468 §6.2.48).
+    pub(super) teletext_ebu_profile: bool,
     /// Last continuity counter seen on a payload-bearing packet.
     pub(super) cc: Option<u8>,
     /// The packet before the current one was a spec-legal duplicate
@@ -118,6 +123,7 @@ impl PidState {
         self.stream_kind = None;
         self.program = None;
         self.stream_type = None;
+        self.teletext_ebu_profile = false;
         self.subtitle_missing_descriptor_emitted = false;
         self.av1_registration_malformed_emitted = false;
         self.subtitle_descriptor_ambiguous_emitted = false;
@@ -160,6 +166,7 @@ impl PidState {
             stream_kind,
             program,
             stream_type,
+            teletext_ebu_profile,
             cc,
             dup,
             last_pkt_raw,
@@ -184,6 +191,7 @@ impl PidState {
         stream_kind.is_none()
             && program.is_none()
             && stream_type.is_none()
+            && !teletext_ebu_profile
             && cc.is_none()
             && !dup
             && last_pkt_raw.is_none()
@@ -216,10 +224,11 @@ pub(super) fn set_once(flag: &mut bool) -> bool {
 /// touching `Demuxer::pid_state`; applied by `Demuxer::apply_topology_diff`.
 #[derive(Debug, Default)]
 pub(super) struct TopologyDiff {
-    /// `(pid, kind, program_number, stream_type)` for every accepted PMT
-    /// stream: sets the PID's kind, owner and PMT `stream_type` byte (new and
-    /// persisting PIDs alike).
-    pub(super) added: Vec<(u16, StreamKind, u16, u8)>,
+    /// `(pid, kind, program_number, stream_type, teletext_ebu_profile)` for
+    /// every accepted PMT stream: sets the PID's kind, owner, PMT
+    /// `stream_type` byte and whether it carries `teletext_descriptor` (new
+    /// and persisting PIDs alike).
+    pub(super) added: Vec<(u16, StreamKind, u16, u8, bool)>,
     /// Elementary PIDs that left the topology: their state goes, their
     /// lifetime counters stay until `reset_stats`.
     pub(super) retired: Vec<u16>,

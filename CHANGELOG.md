@@ -181,7 +181,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - NAL units shorter than their header are reported as `Truncated`.
 - Component descriptor text honours the EN 300 468 Annex A character-set selector. The multi-byte selectors (0x11 ISO/IEC 10646, 0x12 KS X 1001, 0x13 GB-2312, 0x14 Big5) are not transcoded: the label comes from the next descriptor.
 - Aggregate PES overflow reports a discontinuity for every PID it drops.
-- DVB subtitle and teletext PES envelopes are checked and reported.
+- DVB subtitle PES envelopes, and teletext PES envelopes on PIDs signalled by `teletext_descriptor` (0x56), are checked and reported; a PID signalled only by `VBI_teletext_descriptor` (0x46) stays `DvbTeletext` and is delivered without the EN 300 472 data-unit check.
 - `StrictMode::Full` checks all four reserved bits before a PMT's `program_info_length` (Table 2-33).
 - A `discontinuity_indicator` on an adaptation-field-only packet resets the PID's continuity baseline (H.222.0 §2.4.3.5), so the payload packet that follows the signalled reset is no longer reported as a `ContinuityJump` and the PES before it is no longer marked damaged.
 
