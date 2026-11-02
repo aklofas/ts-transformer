@@ -7855,6 +7855,11 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * Call before `tst_rist_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.
  *
+ * The flush hands the tail to librist, whose context teardown does not drain
+ * its own output queue: a `_close` issued at once can still drop packets
+ * librist has not transmitted yet (seen on Windows). For a lossless end of
+ * stream, give the link time to send them before closing.
+ *
  * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
  * NULL pointer, or the transport's negative `TST_E_*` code.
  *
