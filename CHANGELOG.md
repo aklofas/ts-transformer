@@ -162,6 +162,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Python: `RawBytes` hashes as the `bytes` it equals; `MuxError.pid` is populated; `udp`/`tcp`/`hls` stubs name the canonical exception classes.
 - Python: `transmux(src, src)` without `atomic=True` raises `ValueError` instead of truncating the source; a failed atomic promotion removes its `*.partial`.
 
+### Fixed — tst-core
+
+- A PES header whose `PES_header_data_length` ends before the PTS no longer yields a PTS read past the header.
+- PES `stream_id` handling follows Table 2-21.
+- A byte-identical duplicate packet that carries `discontinuity_indicator` is discarded instead of replayed into the PES (H.222.0 §2.4.3.5).
+- A PCR carried in a scrambled packet now updates the time base (the adaptation field is never scrambled, §2.4.3.2).
+- A strict verdict applies only to the packet that raised it.
+- `feed_aligned` discards a partial packet left by an earlier `feed`.
+- A PAT is identified by transport stream id, version and its complete program list (every section of a multi-section table), not by version alone; a changed transport stream id retires every program's tracker, PMT dedup state and PID state, so the new stream's same-version PMT is adopted. Lifetime counters survive.
+- A continuity gap on a PSI PID resets the section assembler so a splice cannot join two sections.
+- A PAT section outside its `last_section_number` range is reported; unparseable PSI is reported as `Malformed` instead of being ignored.
+- Programs that share a PMT PID are all tracked.
+- AU cells are tracked per service, and a sequence gap resets that PID's AU state.
+- The AU `cell_count` is bounded.
+- The KLV link heuristic reads only the descriptor's private data; `MissingMetadataDescriptor` fires only when the descriptor is absent and no link can be inferred.
+- AV1 binding streams are walked as `ts_open_bitstream_unit`s, and truncation and invalid emulation prevention are reported.
+- NAL units shorter than their header are reported as `Truncated`.
+- Component descriptor text honours the EN 300 468 Annex A character-set selector. The multi-byte selectors (0x11 ISO/IEC 10646, 0x12 KS X 1001, 0x13 GB-2312, 0x14 Big5) are not transcoded: the label comes from the next descriptor.
+- Aggregate PES overflow reports a discontinuity for every PID it drops.
+- DVB subtitle and teletext PES envelopes are checked and reported.
+
 ### Fixed — tst-pipeline
 
 - `Pairer::last_before_pts` kept its KLV history across a reconnect or a signalled time-base discontinuity, so a frame on the new clock could pair with metadata from the old one until eight new KLV samples had arrived (unreleased code: 0.9.0 held a single sample). The history is now cleared at `ReconnectDiscontinuity` and at a set `discontinuity_indicator` on the video or KLV PID; never-paired entries are emitted as `UnpairedKlv`. The KLV PES in flight at the flag completes after it on the old clock, so the first KLV sample after the flag whose PTS is within two seconds of the last KLV or video PTS before it is emitted as `UnpairedKlv` and never pairs. A restart that signals neither still needs a caller `flush()`.
@@ -6534,7 +6555,6 @@ The integrator-facing changes at a glance (full detail in the sections below):
   12/12 outage-window reconnects, statistically clean drop rates on both
   legs, and flat memory on all six processes, at ~1.9 Mb/s of GOP-structured
   traffic per leg through a seeded impairment proxy.
-
 
 ### Added
 

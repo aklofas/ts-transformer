@@ -322,20 +322,31 @@ impl super::demuxer::Demuxer {
         };
 
         // A repeat of the applied table — nothing changed, skip the diff. The
-        // identity includes transport_stream_id and CRC_32, not just
-        // version_number: a new transport stream may restart at the same
-        // version (H.222.0 §2.4.4.5).
-        let identity = (parsed.transport_stream_id, version, section_crc(section));
-        if Some(identity) == self.pat_identity {
+        // identity is transport_stream_id, version_number and the complete
+        // program list, not the version alone: a new transport stream may
+        // restart at the same version (H.222.0 §2.4.4.5), and a multi-section
+        // table changes when any of its sections does.
+        let tsid_changed = self
+            .pat_identity
+            .as_ref()
+            .is_some_and(|(tsid, _, _)| *tsid != parsed.transport_stream_id);
+        let repeat = self.pat_identity.as_ref().is_some_and(|(tsid, v, p)| {
+            *tsid == parsed.transport_stream_id && *v == version && *p == programs
+        });
+        if repeat {
             return;
         }
-        self.pat_identity = Some(identity);
-        self.apply_pat_programs(&programs);
+        self.apply_pat_programs(&programs, tsid_changed);
+        self.pat_identity = Some((parsed.transport_stream_id, version, programs));
     }
 
     /// Apply the program list from a newly-complete PAT version, performing
     /// the topology diff (remove programs that disappeared, add new programs).
-    pub(super) fn apply_pat_programs(&mut self, programs: &[PatEntry]) {
+    /// `retire_all` retires every current program and PMT PID first: a
+    /// changed `transport_stream_id` is another multiplex's version
+    /// namespace (H.222.0 §2.4.4.5), so nothing from the old one may answer
+    /// for the new.
+    pub(super) fn apply_pat_programs(&mut self, programs: &[PatEntry], retire_all: bool) {
         // Map each program_number in the new PAT to its PMT PID (skip
         // program 0). Several programs may share one PMT PID (H.222.0
         // §2.4.4.8), so the program, not the PID, is the key.
@@ -356,7 +367,7 @@ impl super::demuxer::Demuxer {
             .programs
             .iter()
             .filter(|(program_number, tracker)| {
-                new_pmt.get(*program_number).copied() != Some(tracker.pmt_pid)
+                retire_all || new_pmt.get(*program_number).copied() != Some(tracker.pmt_pid)
             })
             .map(|(program_number, _)| *program_number)
             .collect();
@@ -373,9 +384,11 @@ impl super::demuxer::Demuxer {
             }
         }
         // A PMT PID retires — its PSI assembly buffer and continuity state
-        // go — only once no program of the new PAT uses it.
+        // go — once no program of the new PAT uses it, or on a new transport
+        // stream, so a reused PMT PID restarts its section assembly and
+        // continuity; the seeding loop below recreates its assembler.
         for &pmt_pid in &self.pmt_pids {
-            if !new_pmt_pids.contains(&pmt_pid) {
+            if retire_all || !new_pmt_pids.contains(&pmt_pid) {
                 self.psi_assemblers.remove(&pmt_pid);
                 diff.retired_pmt_pids.push(pmt_pid);
             }
@@ -857,18 +870,6 @@ impl super::demuxer::Demuxer {
         // No tracker found — no suppression.
         true
     }
-}
-
-/// The CRC_32 trailer of a section that already parsed, so its
-/// `section_length` is known to fit the slice.
-fn section_crc(section: &[u8]) -> u32 {
-    let total = 3 + ((((section[1] & 0x0F) as usize) << 8) | section[2] as usize);
-    u32::from_be_bytes([
-        section[total - 4],
-        section[total - 3],
-        section[total - 2],
-        section[total - 1],
-    ])
 }
 
 #[cfg(test)]
@@ -2947,6 +2948,155 @@ mod tests {
         assert!(
             found.contains(&NonConformantIssue::MissingMetadataDescriptor),
             "{found:?}"
+        );
+    }
+
+    #[test]
+    fn pat_tsid_change_retires_the_tracker_and_adopts_the_same_version_pmt() {
+        use crate::codec::VideoCodec;
+        use crate::mpegts::demux::test_support::{feed_packets, pes_bytes, pes_to_packets};
+        // TSID 1: program 1 on PMT PID 0x1000, PMT v0 declares video 0x100 (0x1B).
+        // TSID 2: same program number, same PMT PID, PMT v0 declares video 0x200.
+        let mut d = Demuxer::new();
+        d.feed(&wrap_section_in_ts_packet_cc(
+            0x0000,
+            &build_pat_section(1, 0, &[(1, 0x1000)]),
+            0,
+        ))
+        .unwrap();
+        d.feed(&wrap_section_in_ts_packet_cc(
+            0x1000,
+            &build_pmt_section_with(1, 0x100, 0, &[], &[(0x1B, 0x100, &[])]),
+            0,
+        ))
+        .unwrap();
+        // A counted item (bounded PES, its Sample creates the stats entry) and then a
+        // PES in flight (unbounded, closed only by the next PUSI) on 0x100 before the switch.
+        feed_packets(
+            &mut d,
+            &pes_to_packets(
+                0x100,
+                0,
+                &pes_bytes(0xE0, Some(90_000), None, true, &[0xAA; 20], true),
+            ),
+        )
+        .unwrap();
+        feed_packets(
+            &mut d,
+            &pes_to_packets(
+                0x100,
+                1,
+                &pes_bytes(0xE0, Some(93_000), None, true, &[0xAA; 400], false),
+            ),
+        )
+        .unwrap();
+        d.feed(&wrap_section_in_ts_packet_cc(
+            0x0000,
+            &build_pat_section(2, 0, &[(1, 0x1000)]),
+            1,
+        ))
+        .unwrap();
+        d.feed(&wrap_section_in_ts_packet_cc(
+            0x1000,
+            &build_pmt_section_with(1, 0x200, 0, &[], &[(0x1B, 0x200, &[])]),
+            1,
+        ))
+        .unwrap();
+        let ev = drain_events(&mut d);
+        let maps = ev
+            .iter()
+            .filter(|e| matches!(e, DemuxEvent::ProgramMap(_)))
+            .count();
+        assert_eq!(
+            maps, 2,
+            "the new transport stream's PMT must be adopted: {ev:?}"
+        );
+        assert_eq!(
+            d.stream_kind(0x200),
+            Some(StreamKind::Video(VideoCodec::H264))
+        );
+        assert_eq!(
+            d.stream_kind(0x100),
+            None,
+            "the old transport stream's PID is retired"
+        );
+        assert!(!d.pes.has_pid(0x100), "the old PES partial is dropped");
+        assert!(
+            d.pid_state.get(&0x100).is_some_and(|s| s.stats.is_some()),
+            "lifetime counters survive"
+        );
+    }
+
+    #[test]
+    fn pat_tsid_change_with_a_moved_program_seeds_every_new_pmt_pid() {
+        // TSID 1: programs 1 → 0x1000, 2 → 0x1001. TSID 2: 1 → 0x1000, 2 → 0x1002.
+        // After the switch no tracker survives, and PMT PIDs 0x1000 and 0x1002
+        // are seeded; 0x1001 is gone.
+        let mut d = Demuxer::new();
+        d.feed(&wrap_section_in_ts_packet_cc(
+            0x0000,
+            &build_pat_section(1, 0, &[(1, 0x1000), (2, 0x1001)]),
+            0,
+        ))
+        .unwrap();
+        d.feed(&wrap_section_in_ts_packet_cc(
+            0x1000,
+            &build_pmt_section_with(1, 0x100, 0, &[], &[(0x1B, 0x100, &[])]),
+            0,
+        ))
+        .unwrap();
+        d.feed(&wrap_section_in_ts_packet_cc(
+            0x1001,
+            &build_pmt_section_with(2, 0x101, 0, &[], &[(0x1B, 0x101, &[])]),
+            0,
+        ))
+        .unwrap();
+        assert!(d.programs.values().all(|t| t.pmt_version == Some(0)));
+        d.feed(&wrap_section_in_ts_packet_cc(
+            0x0000,
+            &build_pat_section(2, 0, &[(1, 0x1000), (2, 0x1002)]),
+            1,
+        ))
+        .unwrap();
+        assert_eq!(d.pmt_pids, hashbrown::HashSet::from([0x1000, 0x1002]));
+        assert!(d.psi_assemblers.contains_key(&0x1000) && d.psi_assemblers.contains_key(&0x1002));
+        assert!(!d.psi_assemblers.contains_key(&0x1001));
+        assert!(
+            d.programs.values().all(|t| t.pmt_version.is_none()),
+            "fresh trackers only"
+        );
+    }
+
+    #[test]
+    fn multi_section_pat_identity_covers_every_section() {
+        use crate::mpegts::demux::test_support::build_pat_section_numbered;
+        // v0: section 0 {1 → 0x1000}, section 1 {2 → 0x1001} (last_section_number 1).
+        // Re-sent at v0 with section 0 changed to {3 → 0x1002}, section 1 unchanged.
+        // An identity built from the completing section alone sees a repeat.
+        let mut d = Demuxer::new();
+        let mut cc = 0u8;
+        for (n, programs) in [(0u8, &[(1u16, 0x1000u16)][..]), (1, &[(2, 0x1001)][..])] {
+            d.feed(&wrap_section_in_ts_packet_cc(
+                0x0000,
+                &build_pat_section_numbered(1, 0, n, 1, programs),
+                cc,
+            ))
+            .unwrap();
+            cc += 1;
+        }
+        for (n, programs) in [(0u8, &[(3u16, 0x1002u16)][..]), (1, &[(2, 0x1001)][..])] {
+            d.feed(&wrap_section_in_ts_packet_cc(
+                0x0000,
+                &build_pat_section_numbered(1, 0, n, 1, programs),
+                cc,
+            ))
+            .unwrap();
+            cc += 1;
+        }
+        assert!(
+            d.programs.contains_key(&3) && !d.programs.contains_key(&1),
+            "{:?}",
+            d.programs.keys()
         );
     }
 }

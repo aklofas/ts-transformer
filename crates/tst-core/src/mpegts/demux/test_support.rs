@@ -18,6 +18,18 @@ pub(crate) fn build_pat_section(
     version: u8,
     programs: &[(u16, u16)],
 ) -> Vec<u8> {
+    build_pat_section_numbered(transport_stream_id, version, 0, 0, programs)
+}
+
+/// One section of a (possibly multi-section) PAT; `programs` is
+/// `(program_number, pmt_pid)`.
+pub(crate) fn build_pat_section_numbered(
+    transport_stream_id: u16,
+    version: u8,
+    section_number: u8,
+    last_section_number: u8,
+    programs: &[(u16, u16)],
+) -> Vec<u8> {
     let section_length = 5 + 4 * programs.len() + 4;
     let mut s = Vec::with_capacity(3 + section_length);
     s.push(0x00); // table_id = PAT
@@ -25,8 +37,8 @@ pub(crate) fn build_pat_section(
     s.push((section_length & 0xFF) as u8);
     s.extend_from_slice(&transport_stream_id.to_be_bytes());
     s.push(0xC1 | ((version & 0x1F) << 1)); // reserved | version | current_next=1
-    s.push(0x00); // section_number
-    s.push(0x00); // last_section_number
+    s.push(section_number);
+    s.push(last_section_number);
     for &(pn, pid) in programs {
         s.extend_from_slice(&pn.to_be_bytes());
         s.push(0xE0 | ((pid >> 8) as u8 & 0x1F));

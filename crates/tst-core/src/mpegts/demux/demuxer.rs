@@ -21,6 +21,7 @@ use crate::mpegts::demux::event::{
 };
 use crate::mpegts::demux::pes::{Reassembler, ReassemblyOutcome, is_damage_reason};
 use crate::mpegts::demux::pid_state::{PidState, TopologyDiff};
+use crate::mpegts::demux::psi::PatEntry;
 use crate::mpegts::demux::psi_assembler::PsiSectionAssembler;
 use crate::mpegts::demux::strict::StrictMode;
 #[cfg(test)]
@@ -87,9 +88,12 @@ pub struct Demuxer {
     /// PMT-bound packets.
     pub(super) pmt_pids: HashSet<u16>,
     /// Identity of the last applied PAT: `(transport_stream_id,
-    /// version_number, CRC_32 of the completing section)`. A PAT that
-    /// differs in any of the three triggers the diff (programs added/removed).
-    pub(super) pat_identity: Option<(u16, u8, u32)>,
+    /// version_number, the complete program list of every section)`. A PAT
+    /// that differs in any of the three triggers the diff. A new transport
+    /// stream may restart at the same version (H.222.0 §2.4.4.5), and a
+    /// multi-section table's content is the union of its sections, so
+    /// neither the version nor one section's CRC_32 identifies the table.
+    pub(super) pat_identity: Option<(u16, u8, Vec<PatEntry>)>,
     /// Everything remembered per PID (kind, owner, continuity, timing,
     /// unwrap, counters, once-flags) in one map. See `pid_state.rs`.
     pub(super) pid_state: HashMap<u16, PidState>,
