@@ -108,6 +108,8 @@ class LastSeenMicrosTest {
                 "lastSeenMicros must be null before any event has been demuxed");
             assertNull(rx.lastSeenMicros(0x1FFF),
                 "lastSeenMicros must be null for an unrecognized PID");
+            assertThrows(IllegalArgumentException.class, () -> rx.lastSeenMicros(0x2000));
+            assertThrows(IllegalArgumentException.class, () -> rx.lastSeenMicros(0x10101));
 
             // Hard no-hang safety net, the same shape as the managed test below:
             // JUnit's @Timeout cannot interrupt a thread parked in a native
@@ -222,6 +224,8 @@ class LastSeenMicrosTest {
                 "lastSeenMicros must be null before any event has been demuxed");
             assertNull(rx.lastSeenMicros(0x1FFF),
                 "lastSeenMicros must be null for an unrecognized PID");
+            assertThrows(IllegalArgumentException.class, () -> rx.lastSeenMicros(0x2000));
+            assertThrows(IllegalArgumentException.class, () -> rx.lastSeenMicros(0x10101));
 
             // Hard no-hang safety net (same as SrtManagedLiveTest): a cancel handle
             // obtained BEFORE iterating — the documented happy-path moment.

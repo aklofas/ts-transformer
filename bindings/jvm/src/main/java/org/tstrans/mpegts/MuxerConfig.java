@@ -148,10 +148,43 @@ public final class MuxerConfig {
         private final List<Boolean> carriesPts = new ArrayList<>();
         private final java.util.Map<Integer, byte[][]> dataDescs = new java.util.LinkedHashMap<>();
 
-        public Builder programNumber(int v) { this.programNumber = v; return this; }
-        public Builder pmtPid(int v) { this.pmtPid = v; return this; }
-        /** Pin the PCR PID to a configured stream's PID. Default: auto-resolve (first video, else KLV/audio). */
-        public Builder pcrPid(int v) { this.pcrPid = v; return this; }
+        /**
+         * @throws IllegalArgumentException if {@code v} is outside 0..=0xFFFF
+         */
+        public Builder programNumber(int v) {
+            if (v < 0 || v > 0xFFFF) {
+                throw new IllegalArgumentException(
+                    "programNumber must be in 0..=0xFFFF, got " + v);
+            }
+            this.programNumber = v;
+            return this;
+        }
+        /**
+         * @throws IllegalArgumentException if {@code v} is outside 0x0010..=0x1FFE
+         */
+        public Builder pmtPid(int v) {
+            requirePid(v, "pmtPid");
+            this.pmtPid = v;
+            return this;
+        }
+        /**
+         * Pin the PCR PID to a configured stream's PID. Default: auto-resolve (first video, else KLV/audio).
+         *
+         * @param v -1 (auto-resolve) or a PID in 0x0010..=0x1FFE
+         * @throws IllegalArgumentException if {@code v} is neither
+         */
+        public Builder pcrPid(int v) {
+            if (v != -1) requirePid(v, "pcrPid");
+            this.pcrPid = v;
+            return this;
+        }
+
+        private static void requirePid(int pid, String name) {
+            if (pid < 0x0010 || pid > 0x1FFE) {
+                throw new IllegalArgumentException(
+                    name + " must be in 0x0010..=0x1FFE, got 0x" + Integer.toHexString(pid));
+            }
+        }
         public Builder pcrIntervalMs(int v) { this.pcrIntervalMs = v; return this; }
         public Builder psiIntervalMs(int v) { this.psiIntervalMs = v; return this; }
         public Builder bufferPackets(int v) { this.bufferPackets = v; return this; }

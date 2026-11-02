@@ -280,10 +280,9 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * Wall-clock time the stream identified by {@code pid} last carried a
      * demuxed item through this receiver (last emitted event), as a
      * Unix-epoch microsecond count. {@code null} if {@code pid} was never
-     * seen — including an unrecognized PID (plain {@code int}-to-{@code
-     * u16} cast, no range check, same as the {@code pmtPid}/{@code pcrPid}
-     * parameters elsewhere in this binding) or before any event has
-     * arrived. Unlike {@link #socketStats()}, this reads the demuxer-side
+     * seen — including an unrecognized PID — or before any event has
+     * arrived. {@code pid} must be in 0..=0x1FFF, else
+     * {@link IllegalArgumentException}. Unlike {@link #socketStats()}, this reads the demuxer-side
      * counters (not the live transport), so it is unaffected by a
      * mid-reconnect gap.
      *
@@ -298,9 +297,14 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * @param pid the stream PID to query
      * @return the last-seen timestamp in Unix-epoch microseconds, or
      *     {@code null}
+     * @throws IllegalArgumentException if {@code pid} is outside 0..=0x1FFF
      * @throws IllegalStateException if the receiver is closed
      */
     public Long lastSeenMicros(int pid) {
+        if (pid < 0 || pid > 0x1FFF) {
+            throw new IllegalArgumentException(
+                "pid must be in 0..=0x1FFF, got 0x" + Integer.toHexString(pid));
+        }
         ensureOpen("ManagedDemuxReceiver is closed");
         long v = nLastSeenMicros(peekHandle(), pid);
         return v < 0 ? null : v;

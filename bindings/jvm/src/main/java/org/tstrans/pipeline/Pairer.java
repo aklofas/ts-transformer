@@ -22,8 +22,21 @@ import org.tstrans.mpegts.DemuxerStats;
 public final class Pairer extends NativeHandle {
     static { org.tstrans.NativeLoader.load(); }
 
-    /** Construct for the given video + KLV PIDs with default configs. */
+    private static void requirePid(int pid, String name) {
+        if (pid < 0x0010 || pid > 0x1FFE) {
+            throw new IllegalArgumentException(
+                name + " must be in 0x0010..=0x1FFE, got 0x" + Integer.toHexString(pid));
+        }
+    }
+
+    /**
+     * Construct for the given video + KLV PIDs with default configs.
+     *
+     * @throws IllegalArgumentException if either PID is outside 0x0010..=0x1FFE
+     */
     public Pairer(int videoPid, int klvPid) {
+        requirePid(videoPid, "videoPid");
+        requirePid(klvPid, "klvPid");
         setHandle(nOpen(videoPid, klvPid));
     }
 
@@ -34,8 +47,13 @@ public final class Pairer extends NativeHandle {
      * {@code nOpenWithConfig} are the Java enum ORDINALS — the Rust side maps by
      * ordinal in the SAME declaration order as {@link org.tstrans.mpegts.StrictMode}
      * / {@link org.tstrans.mpegts.Av1CarriageMode}.
+     *
+     * @throws IllegalArgumentException if either PID is outside 0x0010..=0x1FFE
+     *     or {@code config} is null
      */
     public Pairer(int videoPid, int klvPid, PairingDemuxerConfig config) {
+        requirePid(videoPid, "videoPid");
+        requirePid(klvPid, "klvPid");
         if (config == null) throw new IllegalArgumentException("config must be non-null");
         PairerConfig pc = config.pairer();
         boolean buffered = pc.mode() instanceof PairerMode.Buffered;

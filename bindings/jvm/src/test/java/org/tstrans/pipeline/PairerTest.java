@@ -229,4 +229,10 @@ class PairerTest {
         pairer.close();
         assertThrows(IllegalStateException.class, () -> pairer.feed(new byte[] {0x47}));
     }
+
+    @Test
+    void outOfRangePidRejected() {
+        assertThrows(IllegalArgumentException.class, () -> new Pairer(0x10101, 0x102));
+        assertThrows(IllegalArgumentException.class, () -> new Pairer(0x101, -1));
+    }
 }
