@@ -73,6 +73,7 @@
 #include "tstrans.h"
 
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -102,18 +103,32 @@
  *   is the simplest cross-platform mechanism for this.
  */
 static volatile sig_atomic_t g_stop_requested = 0;
-static struct tst_rtsp_cancel_handle_t *g_cancel_handle = NULL;
+/*
+ * g_handler_active counts signal handlers currently running.  POSIX may
+ * deliver a process-directed SIGINT/SIGTERM to ANY thread that does not
+ * block it, including a library worker thread, so a handler can still be
+ * inside the cancel call when main starts tearing down.  Restoring the
+ * default disposition stops NEW handler runs but not one already in
+ * flight; teardown therefore (1) restores SIG_DFL, (2) waits for this
+ * count to reach zero, (3) clears the handle global, (4) frees the handle.
+ * The wait is bounded: after step 1 no new handler can start, and a
+ * handler that began earlier only reads the global once and makes one
+ * atomic-flag call.  atomic_int is lock-free, hence async-signal-safe.
+ */
+static atomic_int g_handler_active = 0;
+static struct tst_rtsp_cancel_handle_t *volatile g_cancel_handle = NULL;
 
 static void sigint_handler(int sig) {
     (void)sig;
     g_stop_requested = 1;
-    /* Read the global once: the main thread NULLs it before freeing the
-     * handle, and a second read could see a different value than the test. */
+    atomic_fetch_add(&g_handler_active, 1);
+    /* Read the global once: test and use must see the same value. */
     struct tst_rtsp_cancel_handle_t *h = g_cancel_handle;
     /* tst_rtsp_cancel_handle_cancel is atomic-flag-set — safe in a handler. */
     if (h) {
         tst_rtsp_cancel_handle_cancel(h);
     }
+    atomic_fetch_sub(&g_handler_active, 1);
 }
 
 /* ── Synthetic H.264 NAL ────────────────────────────────────────────────────
@@ -525,12 +540,14 @@ int main(int argc, char **argv) {
     mount = NULL;
 
     /*
-     * Why restore the default disposition first?
-     *   The handler dereferences g_cancel_handle. A SIGINT that lands between
-     *   the free and the NULL store, or a second Ctrl-C afterwards, would
-     *   cancel a freed handle. With SIG_DFL back in place a late signal just
-     *   ends the process, and the global is cleared before the free so no
-     *   handler run can read the pointer being released.
+     * Why this order?
+     *   The handler dereferences g_cancel_handle and may run on any thread,
+     *   including one of the server's own.  (1) SIG_DFL stops new handler
+     *   runs: a late Ctrl-C just ends the process.  (2) Waiting for
+     *   g_handler_active to drain lets a run already in flight finish; it is
+     *   bounded because nothing can start a new one.  (3) Clearing the global
+     *   and then (4) freeing the handle is now safe: no handler is running
+     *   and none can read the pointer being released.
      */
     struct sigaction dfl;
     memset(&dfl, 0, sizeof dfl);
@@ -538,6 +555,10 @@ int main(int argc, char **argv) {
     sigemptyset(&dfl.sa_mask);
     sigaction(SIGINT, &dfl, NULL);
     sigaction(SIGTERM, &dfl, NULL);
+    while (atomic_load(&g_handler_active) != 0) {
+        /* spin: a handler that started before the line above finishes in
+         * microseconds */
+    }
     struct tst_rtsp_cancel_handle_t *cancel = g_cancel_handle;
     g_cancel_handle = NULL;
     if (cancel) {
