@@ -130,28 +130,64 @@ pub(crate) fn find_loas_sync(payload: &[u8]) -> Option<usize> {
         .position(starts_with_loas_sync)
 }
 
-/// Resync on a PES that may open inside a record: walk from the first
-/// [`find_loas_sync`] candidate, trusting it only when a whole record
-/// follows it inside the payload. A false `0x56 0b111x_xxxx` pair in a
-/// record's tail carries a bogus length that usually runs past the PES, so
-/// an unconfirmed candidate is never turned into a carry.
-///
-/// Returns the walk's carry (see [`walk_loas`]) when confirmed; `None` when
-/// there is no candidate, the first record does not fit, or the walk fails.
-pub(crate) fn resync_loas(payload: &[u8]) -> Option<Option<LoasCarry>> {
-    let at = find_loas_sync(payload)?;
-    let header = payload.get(at..at + 3)?;
-    let first_record_end = at + 3 + ((usize::from(header[1] & 0x1F) << 8) | usize::from(header[2]));
-    if first_record_end > payload.len() {
-        return None;
+/// What a resync on a PES that may open inside a record found
+/// ([`resync_loas`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoasResync {
+    /// A whole record follows the first candidate and the walk from it
+    /// succeeds: the walk's carry (see [`walk_loas`]).
+    Confirmed(Option<LoasCarry>),
+    /// The first candidate's record, or its header, runs past the PES: what
+    /// it would owe the next PES, which confirms or refutes it.
+    Unconfirmed(LoasCarry),
+    /// No candidate within the first [`MAX_LOAS_RECORD_BYTES`] bytes, or the
+    /// first candidate's record fits but the walk from it fails (the
+    /// candidate is refuted inside the PES).
+    NoCandidate,
+}
+
+/// Resync on a PES that may open inside a record from its first
+/// [`find_loas_sync`] candidate. A false `0x56 0b111x_xxxx` pair in a
+/// record's tail usually carries a bogus length that runs past the PES, so a
+/// candidate is trusted only when a whole record follows it inside the
+/// payload; one whose record runs past the PES is reported `Unconfirmed`, for
+/// the next PES to settle. A lone `0x56` in the last byte is a candidate whose
+/// header continues into the next PES.
+pub(crate) fn resync_loas(payload: &[u8]) -> LoasResync {
+    let trailing_sync = payload
+        .len()
+        .checked_sub(1)
+        .filter(|&last| last < MAX_LOAS_RECORD_BYTES && payload[last] == LOAS_SYNC_BYTE0);
+    let Some(at) = find_loas_sync(payload).or(trailing_sync) else {
+        return LoasResync::NoCandidate;
+    };
+    let rest = &payload[at..];
+    if rest.len() < 3 {
+        return match split_header_carry(rest) {
+            Ok(Some(carry)) => LoasResync::Unconfirmed(carry),
+            _ => LoasResync::NoCandidate,
+        };
     }
-    walk_loas(payload, at).ok()
+    let first_record_end = at + 3 + ((usize::from(rest[1] & 0x1F) << 8) | usize::from(rest[2]));
+    if first_record_end > payload.len() {
+        return LoasResync::Unconfirmed(LoasCarry::Body(first_record_end - payload.len()));
+    }
+    match walk_loas(payload, at) {
+        Ok(carry) => LoasResync::Confirmed(carry),
+        Err(_) => LoasResync::NoCandidate,
+    }
 }
 
 /// `true` when `bytes` begins with the 11-bit LOAS syncword `0x2B7`.
 pub(crate) fn starts_with_loas_sync(bytes: &[u8]) -> bool {
     matches!(bytes, [b0, b1, ..]
         if *b0 == LOAS_SYNC_BYTE0 && (*b1 & LOAS_SYNC_BYTE1_MASK) == LOAS_SYNC_BYTE1_VALUE)
+}
+
+/// `true` when `bytes` can open a LOAS header: it starts with the syncword,
+/// or it is the header's first byte alone (the rest is in the next PES).
+pub(crate) fn opens_loas_header(bytes: &[u8]) -> bool {
+    starts_with_loas_sync(bytes) || bytes == [LOAS_SYNC_BYTE0]
 }
 
 /// What the last LOAS record of a PES still owes the next PES
@@ -332,15 +368,50 @@ mod tests {
     fn resync_loas_trusts_a_candidate_only_when_a_whole_record_follows() {
         let mut buf = vec![0x00; 4];
         buf.extend_from_slice(&build_loas_record(8));
-        assert_eq!(resync_loas(&buf), Some(None));
+        assert_eq!(resync_loas(&buf), LoasResync::Confirmed(None));
         buf.extend_from_slice(&build_loas_record(50)[..20]);
-        assert_eq!(resync_loas(&buf), Some(Some(LoasCarry::Body(33))));
-        // False pair whose length (0xFF) runs past the payload.
+        assert_eq!(
+            resync_loas(&buf),
+            LoasResync::Confirmed(Some(LoasCarry::Body(33)))
+        );
+        // A pair whose length (0xFF) runs past the payload: 4 + 3 + 0xFF =
+        // 262 against a 19-byte payload.
         let mut tail = vec![0x00; 4];
         tail.extend_from_slice(&[0x56, 0xE0, 0xFF, 0x00]);
         tail.extend_from_slice(&build_loas_record(8));
-        assert_eq!(resync_loas(&tail), None);
-        assert_eq!(resync_loas(&[0x00, 0x56, 0xE0]), None);
+        assert_eq!(
+            resync_loas(&tail),
+            LoasResync::Unconfirmed(LoasCarry::Body(262 - tail.len()))
+        );
+        // A candidate in the last two bytes: its header continues.
+        assert_eq!(
+            resync_loas(&[0x00, 0x56, 0xE0]),
+            LoasResync::Unconfirmed(LoasCarry::Header {
+                bytes: [0x56, 0xE0],
+                len: 2
+            })
+        );
+        assert_eq!(
+            resync_loas(&[0x00, 0x00, 0x56]),
+            LoasResync::Unconfirmed(LoasCarry::Header {
+                bytes: [0x56, 0x00],
+                len: 1
+            })
+        );
+        assert_eq!(resync_loas(&[0x00; 64]), LoasResync::NoCandidate);
+        // The first record fits but no syncword follows it: refuted.
+        let mut refuted = vec![0x00; 4];
+        refuted.extend_from_slice(&[0x56, 0xE0, 0x02, 0x00, 0x00, 0x11, 0x22, 0x33]);
+        assert_eq!(resync_loas(&refuted), LoasResync::NoCandidate);
+    }
+
+    #[test]
+    fn opens_loas_header_accepts_a_syncword_or_a_lone_first_byte() {
+        assert!(opens_loas_header(&[0x56, 0xE0, 0x05]));
+        assert!(opens_loas_header(&[0x56]));
+        assert!(!opens_loas_header(&[0x56, 0x00]));
+        assert!(!opens_loas_header(&[0x00]));
+        assert!(!opens_loas_header(&[]));
     }
 
     #[test]
