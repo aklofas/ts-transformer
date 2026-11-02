@@ -480,7 +480,12 @@ pub(crate) struct PySocket {
 /// released (`srt_close` can wait out the linger).
 impl Drop for PySocket {
     fn drop(&mut self) {
-        let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
+        // `&mut self`: no other holder, so no lock to wait for.
+        let taken = self
+            .inner
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         if let Some(socket) = taken {
             crate::util::drop_blocking(move || socket.close());
         }

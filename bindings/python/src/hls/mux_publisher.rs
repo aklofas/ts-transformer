@@ -89,7 +89,12 @@ pub(crate) struct PyMuxPublisher {
 /// is written. The publisher's own teardown runs with the GIL released.
 impl Drop for PyMuxPublisher {
     fn drop(&mut self) {
-        let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
+        // `&mut self`: no other holder, so no lock to wait for.
+        let taken = self
+            .inner
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         if let Some(mp) = taken {
             crate::util::drop_blocking(move || drop(mp.abort()));
         }
