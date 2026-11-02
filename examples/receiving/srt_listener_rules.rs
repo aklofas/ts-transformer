@@ -146,8 +146,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // the operator listed gets its original rule back; plain
             // `remove` would drop it and the default `Reject(NotFound)` would
             // then lock the publisher out for good. Only a name that had no
-            // rule is removed. The lock is held across the edit so a
-            // concurrent accept of the same name sees count and rule agree.
+            // rule is removed. Correctness rests on the accept side counting
+            // BEFORE it sets Conflict: a worker only restores the rule when
+            // the count reaches zero, and a newer publisher is always
+            // counted by then. The lock keeps the count edits ordered.
             if let Some(id) = id {
                 let mut live = live.lock().unwrap();
                 let n = live.get_mut(&id).expect("counted at accept");

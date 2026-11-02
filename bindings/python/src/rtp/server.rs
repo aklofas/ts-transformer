@@ -491,8 +491,8 @@ pub struct PyRtspServer {
     /// hold references; the underlying Rust `RtspServer` is the unique
     /// owner of its tokio Runtime (dropped on the last Arc drop).
     /// `ManuallyDrop` so `Drop` can move the `Arc` into a GIL-released
-    /// closure. Clone it with `Arc::clone(&self.inner)`: `.clone()` would
-    /// clone the `ManuallyDrop` and leak the reference.
+    /// closure. Take references through `server()`: `.clone()` on the
+    /// field would clone the `ManuallyDrop` and leak the reference.
     inner: ManuallyDrop<Arc<RustRtspServer>>,
     /// The server's hard cancel, registered with the interpreter-exit hook
     /// like every other shell's source, so a thread parked in
@@ -517,6 +517,14 @@ impl Drop for PyRtspServer {
             let _ = server.stop();
             drop(server);
         });
+    }
+}
+
+impl PyRtspServer {
+    /// A new reference to the server. Always go through this rather than
+    /// `self.inner.clone()`, which compiles but leaks the `Arc`.
+    fn server(&self) -> Arc<RustRtspServer> {
+        Arc::clone(&self.inner)
     }
 }
 
@@ -668,7 +676,7 @@ impl PyRtspServer {
         program_config: PyRef<'_, PyMuxerProgramConfig>,
     ) -> PyResult<PyMountHandle> {
         let muxer_cfg = build_single_program_muxer_config(&program_config)?;
-        let server = Arc::clone(&self.inner);
+        let server = self.server();
         let path_owned = path.to_string();
         let res = crate::util::allow_threads_parking(py, move || {
             server.add_mount(&path_owned, muxer_cfg)
@@ -702,7 +710,7 @@ impl PyRtspServer {
             url.push_str("&iface=");
             url.push_str(i);
         }
-        let server = Arc::clone(&self.inner);
+        let server = self.server();
         let path_owned = path.to_string();
         let res = crate::util::allow_threads_parking(py, move || {
             server.add_multicast_mount(&path_owned, muxer_cfg, &url)
@@ -720,7 +728,7 @@ impl PyRtspServer {
     /// - `RtspError(MOUNT)` for an invalid or duplicate path.
     /// - `RtspError(SERVER)` if the server has been stopped.
     pub fn add_publish_mount(&self, py: Python<'_>, path: &str) -> PyResult<PyPublishMount> {
-        let server = Arc::clone(&self.inner);
+        let server = self.server();
         let path_owned = path.to_string();
         let handle =
             crate::util::allow_threads_parking(py, move || server.add_publish_mount(&path_owned))
@@ -775,7 +783,7 @@ impl PyRtspServer {
                 None => SLICE,
                 Some(d) => d.saturating_duration_since(Instant::now()).min(SLICE),
             };
-            let server = Arc::clone(&self.inner);
+            let server = self.server();
             let got = crate::util::allow_threads_parking(py, move || server.next_publisher(wait))
                 .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
             if let Some(handle) = got {
@@ -799,7 +807,7 @@ impl PyRtspServer {
     /// - `RtspError(MOUNT)` when no mount is registered at `path`.
     /// - `RtspError(SERVER)` if the server has been stopped.
     pub fn remove_mount(&self, py: Python<'_>, path: &str) -> PyResult<()> {
-        let server = Arc::clone(&self.inner);
+        let server = self.server();
         let path_owned = path.to_string();
         crate::util::allow_threads_parking(py, move || server.remove_mount(&path_owned))
             .map_err(|e| raise(py, &RTSP, BindingError::from(e)))
@@ -837,7 +845,7 @@ impl PyRtspServer {
         // `drain_ms` arg is accepted for API stability — future Rust
         // additions will route it through.
         let _ = drain_ms;
-        let server = Arc::clone(&self.inner);
+        let server = self.server();
         crate::util::allow_threads_parking(py, move || server.stop())
             .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(())
@@ -871,7 +879,7 @@ impl PyRtspServer {
         let _ = (exc_type, exc_value, traceback);
         // Best-effort stop: if the server wasn't started (extremely rare
         // in a `with` block) or already shut down, swallow NotStarted.
-        let server = Arc::clone(&self.inner);
+        let server = self.server();
         match crate::util::allow_threads_parking(py, move || server.stop()) {
             Ok(_) => Ok(false),
             Err(tst_rtp::error::RtspServerError::NotStarted) => Ok(false),
