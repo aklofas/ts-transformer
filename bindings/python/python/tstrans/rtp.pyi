@@ -573,8 +573,9 @@ class MountPolicy:
 @final
 class MountRule:
     """The publish and read policies for one mount path (or the default). A
-    direction left out inherits: it follows the server-wide `auth` setting
-    (open when there is none), not the table's default rule."""
+    direction left out inherits: a path rule's `inherit()` takes the table's
+    default rule for that direction; the default rule's `inherit()` is the
+    server-wide `auth` setting (open when there is none)."""
 
     def __new__(
         cls,

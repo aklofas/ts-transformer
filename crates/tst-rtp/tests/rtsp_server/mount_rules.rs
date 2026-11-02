@@ -71,6 +71,36 @@ fn a_mount_and_its_rule_share_one_key() {
     server.stop().unwrap();
 }
 
+/// A path rule's `Inherit` side takes the table's default rule: a default of
+/// `Refuse(Forbidden)` refuses a DESCRIBE of `/a` whose rule opens only the
+/// publish side.
+#[test]
+fn a_path_rules_inherit_read_side_takes_the_default_refuse() {
+    let server = started_with_mount(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let rules = server.mount_rules();
+    rules
+        .set_default(MountRule::both(MountPolicy::Refuse(
+            RefuseStatus::Forbidden,
+        )))
+        .unwrap();
+    rules
+        .set(
+            "/a",
+            MountRule::new(MountPolicy::Open, MountPolicy::Inherit),
+        )
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    let resp = request(
+        &mut tcp,
+        &format!("DESCRIBE rtsp://127.0.0.1:{port}/a RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+    );
+    assert!(resp.starts_with("RTSP/1.0 403"), "{resp}");
+    server.stop().unwrap();
+}
+
 /// Two handles are one table, and `stop()` closes it.
 #[test]
 fn mount_rules_handle_is_live_across_clones_and_closes_with_stop() {
@@ -139,11 +169,18 @@ fn builder_default_mount_rule_seeds_the_table() {
     );
     assert_eq!(server.stats().mounts, 0);
 
-    // A rule for the path lifts the default; Inherit with no builder
-    // credential is open, so the on-demand mount is created as before.
+    // A path rule's Inherit takes the default rule, so it does not lift
+    // the refusal.
     server
         .mount_rules()
         .set("/new", MountRule::default())
+        .unwrap();
+    assert_eq!(p.announce("/new", SDP_MP2T), 404);
+    // An Open rule for the path lifts the default, so the on-demand mount is
+    // created as before.
+    server
+        .mount_rules()
+        .set("/new", MountRule::both(MountPolicy::Open))
         .unwrap();
     assert_eq!(p.announce("/new", SDP_MP2T), 200);
     let handle = server

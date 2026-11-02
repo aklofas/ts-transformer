@@ -58,10 +58,9 @@ pub(crate) struct PyMountPolicy {
 #[pymethods]
 impl PyMountPolicy {
     /// The server-wide setting: the config's `auth` credential if one was
-    /// configured, else open. A path rule's `inherit()` does not fall back to
-    /// the table's default rule: under a default of `refuse(...)`, a path rule
-    /// with one direction left `inherit()` leaves that direction as open as
-    /// the server itself is.
+    /// configured, else open. A path rule's `inherit()` takes the table's
+    /// default rule for that direction; the default rule's `inherit()` is the
+    /// server-wide setting.
     #[staticmethod]
     fn inherit() -> Self {
         Self {
@@ -118,8 +117,9 @@ impl PyMountPolicy {
 }
 
 /// The publish and read policies for one mount path (or the default). A
-/// direction left out inherits: it follows the server-wide `auth` setting
-/// (open when there is none), not the table's default rule.
+/// direction left out inherits: a path rule's `inherit()` takes the table's
+/// default rule for that direction; the default rule's `inherit()` is the
+/// server-wide `auth` setting (open when there is none).
 #[pyclass(name = "MountRule", module = "tstrans.rtp", frozen)]
 pub(crate) struct PyMountRule {
     pub(crate) rule: MountRule,
@@ -163,9 +163,9 @@ impl PyMountRules {
 
 #[pymethods]
 impl PyMountRules {
-    /// Set the rule for `path`, replacing any earlier one. The path is keyed
-    /// the way the server resolves a request URI, so `/amber/` names
-    /// `/amber`. Raises
+    /// Set the rule for `path`, replacing any earlier one. A rule's path
+    /// must be canonical (`/amber`, never `/amber/`); `set` refuses anything
+    /// else. Raises
     /// `RtspError(MOUNT)` for an invalid path, a credential with an empty
     /// username or a username listed twice, `RtspError(SERVER)` once the server is stopped.
     fn set(&self, py: Python<'_>, path: &str, rule: &PyMountRule) -> PyResult<()> {

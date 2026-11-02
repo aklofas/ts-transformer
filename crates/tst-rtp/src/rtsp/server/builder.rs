@@ -246,8 +246,9 @@ impl RtspServerBuilder {
 
     /// Set the rule every mount path without its own entry in
     /// [`RtspServer::mount_rules`](crate::rtsp::server::RtspServer::mount_rules)
-    /// falls back to. The default is [`MountRule::default`], which inherits
-    /// the server-wide credential for both directions. The rule is checked
+    /// falls back to, and the rule a path rule's `Inherit` direction takes.
+    /// The default is [`MountRule::default`], which inherits the server-wide
+    /// credential for both directions. The rule is checked
     /// at [`build`](Self::build), as
     /// [`MountRules::set_default`](crate::MountRules::set_default) checks it.
     pub fn default_mount_rule(&mut self, rule: MountRule) -> &mut Self {
