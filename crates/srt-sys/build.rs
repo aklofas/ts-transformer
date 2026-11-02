@@ -235,8 +235,15 @@ fn main() {
             .probe("srt");
         let installed_version = match &static_probe {
             Ok(_) => None,
+            // A presence probe: plain `--libs` only. `--static` (also set by
+            // `*_STATIC` or `PKG_CONFIG_ALL_STATIC`) and `--cflags` both make
+            // pkg-config resolve `Requires.private`, so an installed library
+            // with an unresolvable private dependency would fail here too and
+            // take the silent nothing-installed path instead of the warning.
             Err(_) => pkg_config::Config::new()
                 .cargo_metadata(false)
+                .statik(false)
+                .probe_cflags(false)
                 .probe("srt")
                 .ok()
                 .map(|lib| lib.version),
