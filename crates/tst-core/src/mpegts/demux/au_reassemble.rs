@@ -130,6 +130,14 @@ impl AuCellReassembler {
         self.total_buffered = self.total_buffered.saturating_sub(dropped_len);
     }
 
+    /// Packets of `pid` were lost (a continuity_counter jump): discard every
+    /// service's AU in progress on the PID and forget the last
+    /// `sequence_number`. Returns the discarded bytes when any AU was held.
+    pub(crate) fn discard_pid(&mut self, pid: u16) -> Option<usize> {
+        self.last_seq.remove(&pid);
+        self.drop_pid_buffers(pid)
+    }
+
     /// Start a new `metadata_AU_wrapper` (one PES) on `pid`: forget the
     /// last `sequence_number`, so the wrapper's first cell sets the
     /// baseline. In-flight fragments of every service on the PID are kept.
@@ -153,7 +161,9 @@ impl AuCellReassembler {
     /// PES must increment it (mod 256). An AU whose First cell closes one PES
     /// and whose Last cell opens the next therefore reassembles whether the
     /// producer restarts at 0 per PES or counts across PES. A whole lost PES
-    /// is the continuity counter's to report, not this check's. A new
+    /// is the continuity counter's to report, not this check's: a
+    /// continuity_counter jump on the PID discards any AU in progress and
+    /// reports the gap (see [`discard_pid`](Self::discard_pid)). A new
     /// producer on a continuing channel (a fresh `Muxer`, which starts every
     /// synchronous KLV stream at 0) is likewise not a gap.
     ///

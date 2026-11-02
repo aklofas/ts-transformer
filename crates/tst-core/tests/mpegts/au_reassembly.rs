@@ -36,7 +36,8 @@ use crate::common::mux_demux::{
 use tst_core::mpegts::au_cell::{AuCellHeader, CellFragmentIndication, write_metadata_au_cell};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
-    DemuxEvent, Demuxer, DemuxerConfig, MetadataKind, NonConformantIssue, event::MultiCellAuReason,
+    DemuxEvent, Demuxer, DemuxerConfig, DiscontinuityKind, MetadataKind, NonConformantIssue,
+    event::MultiCellAuReason,
 };
 use tst_core::mpegts::mux::Muxer;
 
@@ -178,6 +179,65 @@ fn au_split_across_two_pes_with_per_wrapper_numbering_reassembles() {
 #[test]
 fn au_split_across_two_pes_with_continuing_numbering_reassembles() {
     assert_au_split_across_two_pes_reassembles(7, 8);
+}
+
+/// H.222.0 §2.4.3.3: a continuity_counter jump on the PID means packets
+/// were lost, so the AU in progress is discarded and reported, even though
+/// sequence continuity itself is judged within one PES. First 10 | Middle 11
+/// (its PES lost) | Last 12 → `ContinuityJump`, then `MultiCellAu
+/// { SequenceGap }`, and no reassembled AU.
+#[test]
+fn a_lost_middle_pes_discards_the_au_in_progress() {
+    let mut mux = h264_sync_klv_muxer(KLV_PID);
+    pump_video(&mut mux, 8, 90_000);
+    mux.push_klv(b"AAA", Pts90khz::new(90_000), 0x00).unwrap();
+    mux.push_klv(b"BBB", Pts90khz::new(91_000), 0x00).unwrap();
+    mux.push_klv(b"CCC", Pts90khz::new(92_000), 0x00).unwrap();
+    let mut ts = drain(&mut mux);
+    let off0 = locate_nth_au_cell_offset(KLV_PID, &ts, 0).expect("PUSI 0 found");
+    let off1 = locate_nth_au_cell_offset(KLV_PID, &ts, 1).expect("PUSI 1 found");
+    let off2 = locate_nth_au_cell_offset(KLV_PID, &ts, 2).expect("PUSI 2 found");
+    patch_au_cell(&mut ts, off0, CellFragmentIndication::First, 10, b"AAA");
+    patch_au_cell(&mut ts, off1, CellFragmentIndication::Middle, 11, b"BBB");
+    patch_au_cell(&mut ts, off2, CellFragmentIndication::Last, 12, b"CCC");
+    // The Middle cell's PES fits one TS packet; lose that packet.
+    let lost = off1 / 188 * 188;
+    assert_ne!(lost, off2 / 188 * 188, "PES B and C share no packet");
+    ts.drain(lost..lost + 188);
+
+    let events = collect_events(&ts);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, DemuxEvent::Metadata { .. })),
+        "no reassembled AU: {events:?}",
+    );
+    let jump = events.iter().position(|e| {
+        matches!(
+            e,
+            DemuxEvent::Discontinuity {
+                stream,
+                kind: DiscontinuityKind::ContinuityJump { .. },
+            } if stream.pid == KLV_PID
+        )
+    });
+    let gap = events.iter().position(|e| {
+        matches!(
+            e,
+            DemuxEvent::NonConformant {
+                issue: NonConformantIssue::MultiCellAu {
+                    pid: KLV_PID,
+                    dropped_bytes: 3,
+                    reason: MultiCellAuReason::SequenceGap,
+                },
+                ..
+            }
+        )
+    });
+    assert!(
+        matches!((jump, gap), (Some(j), Some(g)) if j < g),
+        "ContinuityJump then MultiCellAu SequenceGap: {events:?}",
+    );
 }
 
 // ── Test 2: 3-cell AU across 3 PESes ────────────────────────────────────
