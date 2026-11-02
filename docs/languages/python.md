@@ -360,7 +360,8 @@ single-program sources are supported (a second program raises
 `os.replace`s it into place only on clean exit, so no partial output can
 appear at the destination. A failed promotion removes the `*.partial`.
 Without `atomic=True`, a `dst` that is `src` (or a link to it) raises
-`ValueError` instead of truncating the source.
+`ValueError` instead of truncating the source; the check runs at construction
+and again when the output opens, so an alias created in between is caught too.
 
 ## SRT transport (`tstrans.srt`)
 
