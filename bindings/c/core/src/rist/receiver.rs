@@ -172,6 +172,9 @@ pub unsafe extern "C" fn tst_rist_receiver_cancel(p: *mut TstRistReceiver) -> li
 /// - `TST_E_CLOSED` (-7) if the handle was `_close`'d
 /// - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
+/// - `TST_E_BUFFER_FULL` (-4) when nothing arrived within one ~100 ms librist
+///   poll: the handle is live, call again (the RIST receive is a poll, not a
+///   park; see the module doc)
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
 /// bytes are still buffered; a call already past its receive when the

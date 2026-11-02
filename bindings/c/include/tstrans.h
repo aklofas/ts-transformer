@@ -7191,6 +7191,9 @@ int tst_rist_demux_receiver_get_stream_stats(struct TstRistDemuxReceiver *p,
  * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
  *   unrecoverable packet malformation, or a malformed PES)
  * - `TST_E_TOO_LARGE` (-6) when the pre-sync buffer outgrew `sync_buf_cap`
+ * - `TST_E_BUFFER_FULL` (-4) when nothing arrived within one ~100 ms librist
+ *   poll: the handle is live, call again (the RIST receive is a poll, not a
+ *   park; see the module doc)
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
@@ -7737,6 +7740,9 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
+ * - `TST_E_BUFFER_FULL` (-4) when nothing arrived within one ~100 ms librist
+ *   poll: the handle is live, call again (the RIST receive is a poll, not a
+ *   park; see the module doc)
  *
  * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
  * bytes are still buffered; a call already past its receive when the
