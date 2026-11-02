@@ -491,12 +491,12 @@ impl TcpTransport {
     fn drive_tls_handshake(&mut self) -> Result<(), TransportError> {
         use crate::tls::{HandshakeStep, is_poll_timeout};
         loop {
-            if !self.alive.load(Ordering::Acquire) || self.cancel.is_cancelled() {
-                return Err(self.dead_error());
-            }
             let InnerStream::Tls(tls) = &mut self.inner else {
                 return Ok(());
             };
+            if !self.alive.load(Ordering::Acquire) || self.cancel.is_cancelled() {
+                return Err(self.dead_error());
+            }
             match tls.handshake_step() {
                 Ok(HandshakeStep::Done) => return Ok(()),
                 Ok(HandshakeStep::Progress) => continue,
