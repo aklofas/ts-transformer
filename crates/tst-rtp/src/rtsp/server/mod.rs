@@ -844,6 +844,12 @@ impl RtspServer {
                 None => NEXT_PUBLISHER_SLICE,
             };
             match rx.recv_timeout(slice) {
+                // A shutdown that landed while this call waited is terminal
+                // even when a mount was already buffered: the mount stays in
+                // the table, where the shutdown path closes it.
+                Ok(_) if self.state.is_shut_down() => {
+                    return Err(RtspServerError::Shutdown);
+                }
                 Ok(state) => {
                     return Ok(Some(crate::rtsp::server::publish::PublishMountHandle {
                         state,
@@ -1727,6 +1733,46 @@ mod graceful_shutdown_tests {
             crate::rtsp::server::session::session_writer(tokio::io::sink()),
         );
         assert_eq!(entry.peer, peer);
+    }
+
+    /// A mount that reaches the queue after the hard cancel fired is never
+    /// handed to a `next_publisher` call already parked on the queue: the
+    /// call returns `Shutdown`, the terminal outcome, not the mount.
+    #[test]
+    fn a_parked_next_publisher_returns_shutdown_not_a_mount_queued_after_a_hard_cancel() {
+        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        b.accept_unregistered_publishers(true);
+        let server = b.build().unwrap();
+        std::thread::scope(|s| {
+            let parked = s.spawn(|| server.next_publisher(Duration::from_secs(30)));
+            // Parked: past its shutdown check and holding the receiver.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while server.publish_queue_rx.try_lock().is_ok() {
+                assert!(std::time::Instant::now() < deadline, "never parked");
+                std::thread::yield_now();
+            }
+            server.cancel_handle().cancel();
+            let mount = crate::rtsp::server::publish::mount::PublishMountState::new_on_demand(
+                "/late",
+                8,
+                server.state.publish_counters.clone(),
+            );
+            server
+                .state
+                .publish_queue_tx
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("a never-started server keeps its queue sender")
+                .try_send(mount)
+                .unwrap();
+            let r = parked.join().unwrap();
+            assert!(
+                matches!(r, Err(RtspServerError::Shutdown)),
+                "got {:?}",
+                r.as_ref().map(|h| h.is_some())
+            );
+        });
     }
 }
 
