@@ -14,6 +14,7 @@
 //! path were ever coupled to peer drain (e.g. a bounded blocking channel), this
 //! loop would stall and nextest's per-test timeout would fail it.
 
+use std::io::Write;
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 use tst_test_helpers::timing::scaled;
@@ -22,6 +23,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::RtspServer;
 
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
+use crate::fixtures::wait_for;
 
 /// A stalled TCP-interleaved peer does not block the muxer push path.
 #[test]
@@ -85,4 +87,78 @@ fn slow_peer_does_not_block_muxer() {
 
     drop(peer);
     server.stop().ok();
+}
+
+/// A TCP-interleaved peer that played `/live` and then stopped reading, with
+/// its server-side fanout parked on the full socket (holding the session's
+/// writer lock). Returns once the mount has dropped frames for the peer, or
+/// after a bounded push loop.
+fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let base = format!("rtsp://127.0.0.1:{port}/live");
+
+    let mut peer = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    peer.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    // The server reads this side, so a write cannot park; bound it anyway.
+    peer.set_write_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    let setup_resp = request(
+        &mut peer,
+        &format!(
+            "SETUP {base} RTSP/1.0\r\nCSeq: 1\r\n\
+             Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        ),
+    );
+    assert!(setup_resp.starts_with("RTSP/1.0 200"), "{setup_resp}");
+    let sid = session_id(&setup_resp);
+    let play_resp = request(
+        &mut peer,
+        &format!("PLAY {base} RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert!(play_resp.starts_with("RTSP/1.0 200"), "{play_resp}");
+
+    // Large access units fill the peer's socket buffers quickly; the muxer
+    // does not parse the payload.
+    let mut nal = vec![0xBB; 32 * 1024];
+    nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
+    let deadline = Instant::now() + scaled(Duration::from_secs(2));
+    let mut i = 0i64;
+    while mount.stats().frames_dropped_total == 0 && Instant::now() < deadline {
+        mount
+            .push_video(&nal, Pts90khz::new(i * 3000), true)
+            .expect("push must not fail on a stalled peer");
+        i += 1;
+    }
+    (server, peer, port)
+}
+
+/// A session whose peer stopped reading must still end on stop(), whatever
+/// reply it was writing: the unparseable-request reply shares the fanout's
+/// writer lock and used to wait for it without a bound.
+#[test]
+fn stop_ends_a_stalled_session_that_was_answering_an_unparseable_request() {
+    let (server, mut peer, _port) = stalled_playing_peer();
+    peer.write_all(b"NOT AN RTSP LINE\r\n\r\n").unwrap();
+    std::thread::sleep(scaled(Duration::from_millis(200)));
+    server.stop().unwrap();
+    wait_for(scaled(Duration::from_secs(6)), || {
+        (server.stats().active_sessions == 0).then_some(())
+    });
+}
+
+/// Same, for the 413 reply to an over-cap request.
+#[test]
+fn stop_ends_a_stalled_session_that_was_answering_413() {
+    let (server, mut peer, _port) = stalled_playing_peer();
+    // Past the 64 KiB header cap, with no CRLFCRLF.
+    peer.write_all(&vec![b'A'; 70 * 1024]).unwrap();
+    std::thread::sleep(scaled(Duration::from_millis(200)));
+    server.stop().unwrap();
+    wait_for(scaled(Duration::from_secs(6)), || {
+        (server.stats().active_sessions == 0).then_some(())
+    });
 }
