@@ -37,8 +37,8 @@ use tstrans::rist::{
     tst_rist_demux_receiver_cancel, tst_rist_demux_receiver_close,
     tst_rist_demux_receiver_next_event, tst_rist_demux_receiver_open, tst_rist_mux_sender_cancel,
     tst_rist_mux_sender_close, tst_rist_mux_sender_finish, tst_rist_mux_sender_open,
-    tst_rist_receiver_cancel, tst_rist_receiver_close, tst_rist_recv_open, tst_rist_sender_cancel,
-    tst_rist_sender_close, tst_rist_sender_open,
+    tst_rist_receiver_cancel, tst_rist_receiver_close, tst_rist_receiver_recv_ts,
+    tst_rist_recv_open, tst_rist_sender_cancel, tst_rist_sender_close, tst_rist_sender_open,
 };
 
 // ---------------------------------------------------------------------------
@@ -312,4 +312,29 @@ fn rist_cancel_entry_points_return_ok_and_null_is_invalid_config() {
         unsafe { tst_rist_demux_receiver_cancel(std::ptr::null_mut()) },
         TstError::InvalidConfig as i32
     );
+}
+
+/// With no sender, `tst_rist_receiver_recv_ts` is a poll: it returns the
+/// retryable `TST_E_BUFFER_FULL` after one librist poll tick and the handle
+/// stays live for the next call.
+#[test]
+fn rist_receiver_idle_poll_returns_buffer_full() {
+    use crate::common::scaled;
+    use std::time::{Duration, Instant};
+
+    let url = CString::new("rist://@127.0.0.1:0").unwrap();
+    let rx = unsafe { tst_rist_recv_open(url.as_ptr()) };
+    assert!(!rx.is_null(), "open: {}", unsafe { tst_get_last_error() });
+    let mut buf = [0u8; 188];
+    let mut out_n = 0usize;
+    for call in 0..2 {
+        let started = Instant::now();
+        let rc = unsafe { tst_rist_receiver_recv_ts(rx, buf.as_mut_ptr(), buf.len(), &mut out_n) };
+        assert_eq!(rc, TstError::BufferFull as i32, "call {call}");
+        assert!(
+            started.elapsed() < scaled(Duration::from_secs(2)),
+            "call {call}"
+        );
+    }
+    unsafe { tst_rist_receiver_close(rx) };
 }

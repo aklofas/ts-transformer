@@ -210,12 +210,14 @@ int main(int argc, char **argv) {
      *   TST_E_TRANSPORT      → transport-layer failure (librist I/O error).
      *   TST_E_INVALID_CONFIG → null buf or buf_len < 188 (programming error).
      *
-     * WHY does RIST recv block rather than timeout?
-     *   The receiver holds open until either the sender closes (graceful EOF)
-     *   or the session_timeout expires (network silence). In a real application
-     *   use a dedicated receive thread or a select/poll loop if you need
-     *   non-blocking behaviour. The session timeout can be configured via
-     *   `?session_timeout=N` ms on the bind URL.
+     *   TST_E_BUFFER_FULL    → nothing arrived within one ~100 ms poll; retry.
+     *
+     * WHY is the RIST receive a poll rather than a blocking call?
+     *   Each call waits about 100 ms for a packet and returns
+     *   TST_E_BUFFER_FULL when none came, so a single-threaded loop stays
+     *   responsive and a cancel from another thread ends it at the next
+     *   tick. The loop below simply asks again. The session timeout (network
+     *   silence) can be configured via `?session_timeout=N` ms on the bind URL.
      */
     uint8_t buf[TS_PACKET_SIZE];
     size_t out_n = 0;
@@ -235,6 +237,17 @@ int main(int argc, char **argv) {
                     "total packets: %lld\n",
                     total_packets);
             break;
+        }
+
+        if (rc == TST_E_BUFFER_FULL) {
+            /*
+             * An idle poll tick, not an error: the RIST receive waits about
+             * 100 ms for a packet and reports TST_E_BUFFER_FULL when none
+             * arrived. The handle is live, so ask again. The documented start
+             * order (receiver first) lands here on every tick until the
+             * sender appears.
+             */
+            continue;
         }
 
         if (rc != 0) {
