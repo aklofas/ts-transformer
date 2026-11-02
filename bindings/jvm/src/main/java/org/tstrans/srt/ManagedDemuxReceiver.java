@@ -171,7 +171,9 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * {@link DemuxEvent.ReconnectDiscontinuity} after each transport reconnect.
      *
      * <p>After {@code cancelHandle().cancel()} this throws {@code SrtException}
-     * ({@code CLOSED}), buffered data included.
+     * ({@code CLOSED}), buffered data included: an event {@code hasNext()}
+     * already returned {@code true} for is not served by a {@code next()}
+     * after the cancel.
      */
     @Override
     public Iterator<DemuxEvent> iterator() {
@@ -190,8 +192,19 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
                 return true;
             }
             @Override public DemuxEvent next() {
+                boolean cached = peeked != null;
                 if (!hasNext()) throw new NoSuchElementException();
-                DemuxEvent e = peeked; peeked = null; return e;
+                DemuxEvent e = peeked; peeked = null;
+                // An event held since hasNext() is buffered output: a cancel
+                // that landed in between refuses it, as a fresh pull would.
+                if (cached) {
+                    try {
+                        nGateCached(peekHandle());
+                    } catch (SrtException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                }
+                return e;
             }
         };
     }
@@ -379,6 +392,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
         int av1, long auCellCap, boolean lenientPsi, long syncBufCap,
         boolean unwrapTimestamps) throws SrtException;
     private static native DemuxEvent nNext(long handle) throws SrtException, DemuxException;
+    private static native void nGateCached(long handle) throws SrtException;
     private static native long nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);
     private static native SocketStats nSrtStats(long handle);

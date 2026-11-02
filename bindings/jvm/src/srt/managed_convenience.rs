@@ -1017,6 +1017,22 @@ jni_native! {
 }
 
 jni_native! {
+    /// `nGateCached(handle)` — the cancel gate of `nNext` for an event the
+    /// Java iterator already holds from `hasNext()`: after
+    /// `cancelHandle().cancel()` it throws what `nNext` throws, so a cached
+    /// event is buffered output like any other.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nGateCached(
+        env,
+        _class,
+        handle: jlong,
+    ) = () => {
+        if let Err(state) = REGISTRY_DEMUX.with_mut_unless_cancelled(handle as u64, |_| ()) {
+            throw_data_plane_state(env, "ManagedDemuxReceiver", &state);
+        }
+    }
+}
+
+jni_native! {
     /// `nCancelHandle(handle)` — return a shareable cancel handle that wakes a thread
     /// parked in `nNext`. Lock-free: the target was captured at open, so this returns
     /// promptly even while another thread is parked in `nNext` (a blocked receive or
