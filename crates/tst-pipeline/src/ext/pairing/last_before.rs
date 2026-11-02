@@ -16,7 +16,9 @@
 //! on (H.222.0 §2.4.3.5), whichever PID carried the flag. Only one PES is in
 //! flight per PID, so only the first KLV PES completed after the flag can be
 //! old. It is taken as old when its PTS lies within [`OLD_CLOCK_WINDOW`] of
-//! the newest KLV PTS before the flag, and leaves as `UnpairedKlv` without
+//! the newest KLV PTS or the newest video PTS before the flag (the video
+//! reference covers KLV sent rarely or on change, and a flag before any
+//! KLV), and leaves as `UnpairedKlv` without
 //! entering the history. A new clock that lands that close loses its first
 //! KLV sample the same way: unpaired, never paired across clocks.
 
@@ -39,8 +41,12 @@ const OLD_CLOCK_WINDOW: i64 = 2 * 90_000;
 enum InFlight {
     /// Nothing old can be in flight.
     No,
-    /// A discontinuity was signalled; holds the newest KLV PTS before it.
-    Suspect(Pts90khz),
+    /// A discontinuity was signalled; holds the newest KLV and video PTS
+    /// before it (at least one is `Some`).
+    Suspect {
+        klv: Option<Pts90khz>,
+        video: Option<Pts90khz>,
+    },
     /// The old-clock PES was found; its further cells share this PTS.
     Old(Pts90khz),
 }
@@ -54,6 +60,8 @@ pub(super) struct LastBeforeState {
     history: VecDeque<KlvSlot>,
     /// PTS of the newest KLV sample since the last reconnect.
     last_klv_pts: Option<Pts90khz>,
+    /// PTS of the newest video sample since the last reconnect.
+    last_video_pts: Option<Pts90khz>,
     in_flight: InFlight,
 }
 
@@ -70,6 +78,7 @@ impl LastBeforeState {
             freshness_ticks,
             history: VecDeque::with_capacity(LAST_BEFORE_DEPTH + 1),
             last_klv_pts: None,
+            last_video_pts: None,
             in_flight: InFlight::No,
         }
     }
@@ -83,9 +92,13 @@ impl LastBeforeState {
                     // A reconnect resets the demuxer, so no PES survives it.
                     if matches!(other, DemuxEvent::ReconnectDiscontinuity) {
                         self.last_klv_pts = None;
+                        self.last_video_pts = None;
                         self.in_flight = InFlight::No;
-                    } else if let Some(pts) = self.last_klv_pts {
-                        self.in_flight = InFlight::Suspect(pts);
+                    } else if self.last_klv_pts.is_some() || self.last_video_pts.is_some() {
+                        self.in_flight = InFlight::Suspect {
+                            klv: self.last_klv_pts,
+                            video: self.last_video_pts,
+                        };
                     }
                     let mut out = self.flush();
                     out.push(PairerOutput::PassThrough(other));
@@ -120,6 +133,7 @@ impl LastBeforeState {
     }
 
     fn handle_video(&mut self, v: VideoSample) -> Vec<PairerOutput> {
+        self.last_video_pts = Some(v.pts);
         // The latest-timestamped entry at or before the video, not the
         // latest-arrived: KLV may arrive out of PTS order. Ties go to the
         // newer arrival. Freshness is then checked on that entry alone.
@@ -153,7 +167,10 @@ impl LastBeforeState {
         self.last_klv_pts = Some(k.pts);
         let old = match self.in_flight {
             InFlight::No => false,
-            InFlight::Suspect(before) => super::pts_distance(k.pts, before) <= OLD_CLOCK_WINDOW,
+            InFlight::Suspect { klv, video } => [klv, video]
+                .into_iter()
+                .flatten()
+                .any(|before| super::pts_distance(k.pts, before) <= OLD_CLOCK_WINDOW),
             InFlight::Old(pts) => k.pts == pts,
         };
         if old {
@@ -329,6 +346,41 @@ mod tests {
         assert!(matches!(
             &s.feed(video_event(far))[..],
             [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == far
+        ));
+    }
+
+    #[test]
+    fn a_slow_klv_feed_is_judged_against_the_video_clock_too() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        // KLV every 10 s: the in-flight PES is far from the last KLV PTS
+        // but near the last frame.
+        s.feed(klv_event(90_000));
+        s.feed(video_event(990_000));
+        s.feed(af_discontinuity(VIDEO_PID));
+        let out = s.feed(klv_event(990_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == 990_000),
+            "got {out:?}"
+        );
+        assert!(matches!(
+            &s.feed(video_event(9_000_000))[..],
+            [PairerOutput::UnpairedVideo(_)]
+        ));
+    }
+
+    #[test]
+    fn a_flag_before_any_klv_is_judged_against_the_video_clock() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(video_event(90_000));
+        s.feed(af_discontinuity(VIDEO_PID));
+        let out = s.feed(klv_event(93_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == 93_000),
+            "got {out:?}"
+        );
+        assert!(matches!(
+            &s.feed(video_event(900_000))[..],
+            [PairerOutput::UnpairedVideo(_)]
         ));
     }
 
