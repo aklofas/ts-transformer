@@ -653,7 +653,7 @@ fn zeros_then(zeros: usize, rest: &[u8]) -> Vec<u8> {
 /// 2000-byte record's body (no candidate), PES 2 is the record's tail (100 B)
 /// plus the start of a 1500-byte record (candidate, record overruns the PES),
 /// PES 3 is that record's remainder plus a complete 20-byte record (confirms).
-/// No LatmFraming issue; today the two "unsynced" PES raise MissingSyncword.
+/// No LatmFraming issue: a count of candidate-free PES would flag PES 1 and 2.
 #[test]
 fn demux_c11_latm_pes_smaller_than_a_record_after_a_join_is_not_flagged() {
     let record = build_valid_loas_record(1500);
@@ -682,9 +682,9 @@ fn demux_c11_latm_false_candidate_is_dropped_without_an_issue() {
 /// zeros. PES 2: 100 zeros + header(1500) + 297 bytes (tentative Body(1203)).
 /// PES 3: 1203 zeros + header(500) + 20 bytes (confirms at 1203; walk leaves
 /// Body(480)). PES 4: 530 zeros — no syncword at 480 → MissingSyncword at once.
-/// Today the two-PES rule also raises exactly once, but at PES 2; the
-/// assertion therefore pins WHERE: the LatmFraming event's index in `events`
-/// is greater than the index of the third Sample on 0x150.
+/// The assertion pins WHERE: the LatmFraming event's index in `events` is
+/// greater than the index of the third Sample on 0x150, so an issue raised
+/// at PES 2 (before the candidate is confirmed) does not pass.
 #[test]
 fn demux_c11_latm_confirmed_tentative_carry_is_enforced() {
     let pes2 = zeros_then(100, &build_valid_loas_record(1500)[..300]);
