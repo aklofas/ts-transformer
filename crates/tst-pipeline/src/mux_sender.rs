@@ -1063,6 +1063,15 @@ impl<T: Transport> MuxSender<T> {
         drained
     }
 
+    /// Drop the bytes a failed send retained, without offering them to the
+    /// transport. A poisoned lock is recovered.
+    #[cfg(feature = "std")]
+    pub(crate) fn discard_pending(&self) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.pending_bytes.clear();
+        inner.pending_front_sent = 0;
+    }
+
     /// Consume the sender and hand back the owned transport.
     ///
     /// Best-effort: `pending_bytes` retained from a prior transient
