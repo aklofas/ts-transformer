@@ -29,7 +29,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-core, tst-py, tst-jni, tst-c (BREAKING)
 
-- `MuxerConfig::validate` (so `MuxerConfigBuilder::build` and `Muxer::new`) refuses a configuration in which two synchronous KLV streams declare the same `metadata_service_id`, whether both were left to the automatic `metadata_descriptor` (service 0) or caller descriptors repeat an id, within one program or across programs (`MuxError::ConfigInvalid`, naming the id and both PIDs). H.222.0 §2.12.9.2 requires the id to be unique within the transport stream, and a receiver keyed on it could not tell the two services apart. Give each further synchronous stream its own `metadata_klva(<id>)` through `stream_descriptors_for_klv` (C `tst_mux_config_set_stream_descriptors_for_klv`, Python `stream_descriptors_for_klv`) and pass that id to `push_klv_to`. The JVM builder has no KLV descriptor setter yet, so a JVM configuration holds one synchronous KLV stream per transport stream; use `PRIVATE_DATA` for further KLV streams. Bindings report the refusal as the existing invalid-config kind.
+- `MuxerConfig::validate` (so `MuxerConfigBuilder::build` and `Muxer::new`) refuses a configuration in which two synchronous KLV streams declare the same `metadata_service_id`, whether both were left to the automatic `metadata_descriptor` (service 0) or caller descriptors repeat an id, within one program or across programs (`MuxError::ConfigInvalid`, naming the id and both PIDs). H.222.0 §2.12.9.2 requires the id to be unique within the transport stream, and a receiver keyed on it could not tell the two services apart. Give each further synchronous stream its own `metadata_klva(<id>)` through `stream_descriptors_for_klv` (C `tst_mux_config_set_stream_descriptors_for_klv`, Python `stream_descriptors_for_klv`) and pass that id to `push_klv_to`. The JVM builder has no KLV descriptor setter yet, so a JVM configuration holds one synchronous KLV stream per transport stream; use `PRIVATE_DATA` for further KLV streams. Bindings report the refusal as the existing invalid-config kind. `MuxerConfig::from_program_map` therefore fails on a source PMT with two synchronous KLV streams that do not declare distinct service ids; it remuxed such a source before.
 
 ### Changed — tst-core, tst-py (BREAKING)
 
@@ -43,6 +43,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The AC-3 audio stream descriptor (tag 0x81) the muxer adds to an `AudioCodec::Ac3` stream claimed at most two channels for every stream, so a 5.1 stream was mis-declared in the PMT. It now claims at most six (`num_channels` 0b1101), which covers every AC-3 coding mode. `bsid` 8 and `bsmod` 0 remain declared values the muxer does not check against the frames; supply your own tag 0x81 via `stream_descriptors_for_audio` for a bsid 6 or associated-service stream.
 - The `metadata_STD_descriptor` (tag 0x27) the muxer adds to a synchronous KLV stream declared a zero input leak rate and a zero-byte buffer, a target decoder that cannot hold any access unit (H.222.0 §2.6.63, §2.12.10). It now declares a 65 × 1024-byte buffer, which holds the largest PES the muxer emits (65 541 bytes), an input leak rate of 13 109 × 400 bit/s, which moves that PES within the default 100 ms PSI interval, and an output leak rate of 0 (removal at PTS). A caller-supplied tag 0x27 still replaces it.
+- A PES header whose `PES_header_data_length` ends before the PTS no longer yields a PTS read past the header.
+- PES `stream_id` handling follows Table 2-21.
+- A byte-identical duplicate packet that carries `discontinuity_indicator` is discarded instead of replayed into the PES (H.222.0 §2.4.3.5).
+- A PCR carried in a scrambled packet now updates the time base (the adaptation field is never scrambled, §2.4.3.2).
+- A strict verdict applies only to the packet that raised it.
+- `feed_aligned` discards a partial packet left by an earlier `feed`.
+- A PAT is identified by transport stream id, version and CRC, not by version alone.
+- A continuity gap on a PSI PID resets the section assembler so a splice cannot join two sections.
+- A PAT section outside its `last_section_number` range is reported; unparseable PSI is reported as `Malformed` instead of being ignored.
+- Programs that share a PMT PID are all tracked.
+- AU cells are tracked per service, and a sequence gap resets that PID's AU state.
+- The AU `cell_count` is bounded.
+- The KLV link heuristic reads only the descriptor's private data; `MissingMetadataDescriptor` fires only when the descriptor is absent and no link can be inferred.
+- AV1 binding streams are walked as `ts_open_bitstream_unit`s, and truncation and invalid emulation prevention are reported.
+- NAL units shorter than their header are reported as `Truncated`.
+- Component descriptor text honours the EN 300 468 Annex A character-set selector. The multi-byte selectors (0x11 ISO/IEC 10646, 0x12 KS X 1001, 0x13 GB-2312, 0x14 Big5) are not transcoded: the label comes from the next descriptor.
+- Aggregate PES overflow reports a discontinuity for every PID it drops.
+- DVB subtitle and teletext PES envelopes are checked and reported.
 
 ### Fixed — tst-py, tst-jni, tst-core, tst-hls, tst-webrtc, tst-srt, tst-c
 
@@ -132,27 +150,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Python: a byte sink calling its own receiver raises `RuntimeError` instead of deadlocking; `close()` from the sink delivers the event in flight and ends the iteration on the next pull; a cycle through another receiver's sink is refused the same way.
 - Python: `RawBytes` hashes as the `bytes` it equals; `MuxError.pid` is populated; `udp`/`tcp`/`hls` stubs name the canonical exception classes.
 - Python: `transmux(src, src)` without `atomic=True` raises `ValueError` instead of truncating the source; a failed atomic promotion removes its `*.partial`.
-
-### Fixed — tst-core
-
-- A PES header whose `PES_header_data_length` ends before the PTS no longer yields a PTS read past the header.
-- PES `stream_id` handling follows Table 2-21.
-- A byte-identical duplicate packet that carries `discontinuity_indicator` is discarded instead of replayed into the PES (H.222.0 §2.4.3.5).
-- A PCR carried in a scrambled packet now updates the time base (the adaptation field is never scrambled, §2.4.3.2).
-- A strict verdict applies only to the packet that raised it.
-- `feed_aligned` discards a partial packet left by an earlier `feed`.
-- A PAT is identified by transport stream id, version and CRC, not by version alone.
-- A continuity gap on a PSI PID resets the section assembler so a splice cannot join two sections.
-- A PAT section outside its `last_section_number` range is reported; unparseable PSI is reported as `Malformed` instead of being ignored.
-- Programs that share a PMT PID are all tracked.
-- AU cells are tracked per service, and a sequence gap resets that PID's AU state.
-- The AU `cell_count` is bounded.
-- The KLV link heuristic reads only the descriptor's private data; `MissingMetadataDescriptor` fires only when the descriptor is absent and no link can be inferred.
-- AV1 binding streams are walked as `ts_open_bitstream_unit`s, and truncation and invalid emulation prevention are reported.
-- NAL units shorter than their header are reported as `Truncated`.
-- Component descriptor text honours the EN 300 468 Annex A character-set selector. The multi-byte selectors (0x11 ISO/IEC 10646, 0x12 KS X 1001, 0x13 GB-2312, 0x14 Big5) are not transcoded: the label comes from the next descriptor.
-- Aggregate PES overflow reports a discontinuity for every PID it drops.
-- DVB subtitle and teletext PES envelopes are checked and reported.
 
 ### Fixed — tst-pipeline
 
