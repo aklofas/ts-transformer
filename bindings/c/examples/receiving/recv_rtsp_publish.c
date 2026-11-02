@@ -88,7 +88,6 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,31 +119,18 @@
  *   let `tst_rtsp_server_stop` do everything.
  * ---------------------------------------------------------------------- */
 static volatile sig_atomic_t g_stop = 0;
-/*
- * g_handler_active counts signal handlers currently running.  POSIX may
- * deliver a process-directed SIGINT/SIGTERM to ANY thread that does not
- * block it, including a library worker thread, so a handler can still be
- * inside the cancel call when main starts tearing down.  Restoring the
- * default disposition stops NEW handler runs but not one already in
- * flight; teardown therefore (1) restores SIG_DFL, (2) waits for this
- * count to reach zero, (3) clears the handle global, (4) frees the handle.
- * The wait is bounded: after step 1 no new handler can start, and a
- * handler that began earlier only reads the global once and makes one
- * atomic-flag call.  atomic_int is lock-free, hence async-signal-safe.
- */
-static atomic_int g_handler_active = 0;
+/* Set by main() before the handler can run; cleared by main() before it frees
+ * the handle.  The handler runs only on the main thread (see main()). */
 static tst_rtsp_cancel_handle_t *volatile g_cancel = NULL;
 
 static void handle_signal(int sig) {
     (void) sig;
     g_stop = 1;
-    atomic_fetch_add(&g_handler_active, 1);
     /* Copy the global once: test and use must see the same value. */
     tst_rtsp_cancel_handle_t *cancel = g_cancel;
     if (cancel != NULL) {
         tst_rtsp_cancel_handle_cancel(cancel);
     }
-    atomic_fetch_sub(&g_handler_active, 1);
 }
 
 /* -------------------------------------------------------------------------
@@ -315,6 +301,26 @@ static double now_s(void) {
 }
 
 int main(int argc, char **argv) {
+    /*
+     * ── Pin signal delivery to this thread (do this before ANY tst_* call) ──
+     *
+     * Why block SIGINT/SIGTERM first?
+     *   A new thread inherits the signal mask of the thread that creates it,
+     *   and a process-directed signal is delivered to any thread that does
+     *   not block it.  The library and this program's demux threads are
+     *   created while the signals are blocked, so every one of them starts
+     *   with them blocked and the handler can only ever run on this thread.
+     *   A handler on this thread cannot overlap the teardown code below: it
+     *   interrupts it between instructions.  The guarantee rests on mask
+     *   inheritance, which POSIX specifies for thread creation.  The signals
+     *   are unblocked only while the accept loop waits in next_publisher.
+     */
+    sigset_t sigs;
+    sigemptyset(&sigs);
+    sigaddset(&sigs, SIGINT);
+    sigaddset(&sigs, SIGTERM);
+    pthread_sigmask(SIG_BLOCK, &sigs, NULL);
+
     /* The server binds an IP literal (no DNS on the server side).
      * 0.0.0.0 accepts publishers on every interface; 8554 is the
      * conventional RTSP alternate port (554 needs privileges). */
@@ -407,7 +413,13 @@ int main(int argc, char **argv) {
 
     while (!g_stop) {
         tst_rtsp_publish_mount_t *mount = NULL;
+        /* Unblocked only while waiting here; blocked again before the loop
+         * opens receivers and starts demux threads, which therefore inherit
+         * the blocked mask.  A signal that arrives while blocked stays
+         * pending and is delivered at the next unblock. */
+        pthread_sigmask(SIG_UNBLOCK, &sigs, NULL);
         int rc = tst_rtsp_server_next_publisher(server, 1000, &mount);
+        pthread_sigmask(SIG_BLOCK, &sigs, NULL);
         if (rc == 0) {
             const char *path = tst_rtsp_publish_mount_path(mount);
             printf("[%s] new publish mount\n", path);
@@ -501,16 +513,12 @@ int main(int argc, char **argv) {
         tst_rtsp_publish_mount_free(slots[i].mount);
     }
 
-    /* Teardown order for the signal handler (see g_handler_active): the
-     * handler may run on any thread, including a demux worker.
-     * (1) restore the default disposition so no NEW handler can start,
-     * (2) wait for one already in flight to finish (bounded: it makes one
-     *     atomic-flag call), (3) clear the global, (4) free the handle. */
+    /* Teardown order for the signal handler: it runs only on this thread
+     * (see the mask set at the top of main), so it cannot overlap this code.
+     * (1) restore the default disposition so a late Ctrl-C ends the process
+     *     instead of running the handler, (2) clear the global, (3) free. */
     signal(SIGINT, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
-    while (atomic_load(&g_handler_active) != 0) {
-        /* spin: finishes in microseconds */
-    }
     tst_rtsp_cancel_handle_t *cancel = g_cancel;
     g_cancel = NULL;
     tst_rtsp_cancel_handle_free(cancel);
