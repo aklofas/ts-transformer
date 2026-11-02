@@ -252,7 +252,7 @@ fn main() {
         // loudly at link time, which is the right outcome). The plain probe in
         // the failure branch runs only after a failed static one, so a machine
         // with no host library makes two cheap failing calls and stays silent.
-        match host_lib::host_lib_decision("librist", (0, 2, 20), feat_mbedtls, probe) {
+        match host_lib::host_lib_decision("librist", "librist", (0, 2, 20), feat_mbedtls, probe) {
             host_lib::HostLibDecision::Link => match pkg_config::Config::new().probe("librist") {
                 Ok(lib) => lib.include_paths,
                 Err(e) => {
