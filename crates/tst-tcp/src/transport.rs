@@ -83,6 +83,11 @@ impl InnerStream {
 ///   remainder and observes the flag at its next ~100 ms write-timeout tick,
 ///   returning `ExplicitClose` (the prefix stays on the wire; the transport
 ///   is dead);
+/// - an accepted `tcps://` transport's first send drives the lazy TLS server
+///   handshake one socket step at a time and re-reads the flag between
+///   steps, so a cancel during a peer's slow handshake returns
+///   `ExplicitClose` within ~100 ms; a tick with no bytes from the peer is a
+///   zero-progress `Backpressure`;
 /// - a parked `accept_blocking` observes the flag at its next ~5 ms poll
 ///   (`ACCEPT_POLL_INTERVAL`, shorter than the ~100 ms above — see that
 ///   constant's doc for why) and returns [`crate::error::TcpError::Closed`]
@@ -435,6 +440,8 @@ impl Transport for TcpTransport {
                 max: self.pkt_size,
             });
         }
+        #[cfg(feature = "tls")]
+        self.drive_tls_handshake()?;
         match write_loop(msg, &self.alive, &self.cancel, |b| self.inner.write(b)) {
             Ok(()) => {
                 self.stats.send_calls = self.stats.send_calls.saturating_add(1);
@@ -476,6 +483,45 @@ impl Transport for TcpTransport {
 }
 
 impl TcpTransport {
+    /// Finish a pending TLS handshake before the first application write,
+    /// one socket step at a time with the cancel and liveness flags read
+    /// between steps. `Ok` at once when the handshake is done (every
+    /// connected caller, and an accepted stream after its first I/O).
+    #[cfg(feature = "tls")]
+    fn drive_tls_handshake(&mut self) -> Result<(), TransportError> {
+        use crate::tls::{HandshakeStep, is_poll_timeout};
+        loop {
+            if !self.alive.load(Ordering::Acquire) || self.cancel.is_cancelled() {
+                return Err(self.dead_error());
+            }
+            let InnerStream::Tls(tls) = &mut self.inner else {
+                return Ok(());
+            };
+            match tls.handshake_step() {
+                Ok(HandshakeStep::Done) => return Ok(()),
+                Ok(HandshakeStep::Progress) => continue,
+                Err(e) if is_poll_timeout(&e) => {
+                    // Zero progress, nothing wrong with the socket: the same
+                    // Backpressure a silent peer produced inside the lazy
+                    // handshake of the first write.
+                    return Err(TransportError::Backpressure {
+                        msg: format!("TLS handshake waiting on the peer: {e}"),
+                        errno_code: e.raw_os_error(),
+                    });
+                }
+                Err(e) => {
+                    self.alive.store(false, Ordering::Release);
+                    self.stats.send_errors = self.stats.send_errors.saturating_add(1);
+                    return Err(TransportError::Broken {
+                        msg: format!("TLS handshake failed: {e}"),
+                        errno_code: e.raw_os_error(),
+                        cause: BrokenCause::Unspecified,
+                    });
+                }
+            }
+        }
+    }
+
     /// The receive loop behind `recv_bytes`; the caller records the end.
     fn recv_once(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         if buf.is_empty() {
