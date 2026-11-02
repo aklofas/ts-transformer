@@ -796,7 +796,7 @@ demuxer's classification cascade on `stream_type = 0x06`:
 ```
 Priority on stream_type 0x06 (first match wins):
   1. subtitling_descriptor (tag 0x59) → Subtitle(DvbSubtitling)
-  2. teletext_descriptor (tag 0x56) or VBI_teletext (0x46) → Subtitle(DvbTeletext)
+  2. teletext_descriptor (tag 0x56) or VBI_teletext (0x46) → Subtitle(DvbTeletext) (the EN 300 472 data-unit check applies only to 0x56; a 0x46-only PID is delivered opaque, EN 300 468 §6.2.48)
   3. registration_descriptor format_identifier "VTTC" → Subtitle(WebVttInTs)
   4. registration_descriptor format_identifier "GA94" → Subtitle(Cea708Standalone)
   5. registration_descriptor format_identifier "KLVA" → KlvAsync (existing)

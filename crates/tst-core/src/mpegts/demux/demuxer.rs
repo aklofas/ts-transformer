@@ -753,9 +753,10 @@ impl Demuxer {
                 state.codec = None;
             }
         }
-        for (pid, kind, program, stream_type) in diff.added {
+        for (pid, kind, program, stream_type, teletext_ebu_profile) in diff.added {
             let state = self.pid_state_mut(pid);
             state.stream_kind = Some(kind);
+            state.teletext_ebu_profile = teletext_ebu_profile;
             state.program = Some(program);
             state.stream_type = Some(stream_type);
             // Counters outlive retirement, so a re-declared or retyped PID
