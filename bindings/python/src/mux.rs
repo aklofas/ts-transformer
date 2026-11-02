@@ -963,8 +963,8 @@ impl PyMuxerConfig {
     /// `carries_pts` is True for synchronous KLV (required) and data
     /// streams; False for asynchronous KLV (ST 1402-22). It is a
     /// PES-level property the PMT cannot declare, so the conversion
-    /// applies the standard's rule rather than the source's. Audio language is recovered from the
-    /// first ISO 639 language descriptor (tag 0x0A) on the stream's
+    /// applies the standard's rule rather than the source's. Audio
+    /// language is recovered from the first ISO 639 language descriptor (tag 0x0A) on the stream's
     /// `raw_descriptors` when it carries a plausible lowercase
     /// ISO 639-2 code. The demuxed `pcr_pid` is copied iff it equals
     /// the PID of a kept video or audio stream; KLV, data, and

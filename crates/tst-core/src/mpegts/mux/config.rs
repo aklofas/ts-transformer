@@ -262,6 +262,10 @@ impl MuxerConfig {
     ///   ([`MuxError::KlvPidUsedAsPcrPid`](crate::error::MuxError::KlvPidUsedAsPcrPid)).
     /// - `klv_links` are ignored — the muxer re-derives metadata linkage
     ///   from its own configuration.
+    /// - **Synchronous KLV service ids**: a source with two synchronous KLV
+    ///   streams that do not declare distinct `metadata_service_id`s is
+    ///   refused (H.222.0 §2.12.9.2); build the config by hand with
+    ///   `stream_descriptors_for_klv`.
     ///
     /// # Errors
     ///
