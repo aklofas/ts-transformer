@@ -109,6 +109,17 @@ and that source_rejected stays 0.
 """
 
 [[platform_skip]]
+file = "crates/tst-rtp/tests/net_rtp.rs"
+platform = "windows-msvc"
+capability = "unix_signals"
+class = "portability"
+note = """
+Only the `rtp/signal_interrupt.rs` module is `#[cfg(unix)]`: a handled signal
+interrupting a parked receive (EINTR) has no Winsock equivalent, so the test has
+no Windows counterpart. Every other test in the binary runs on every platform.
+"""
+
+[[platform_skip]]
 file = "crates/tst-rtp/tests/h264/udp_loopback.rs"
 platform = "macos-arm64,windows-msvc"
 capability = "second_loopback_address"
