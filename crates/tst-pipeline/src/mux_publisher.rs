@@ -567,6 +567,19 @@ impl<P: Publisher + Send> MuxPublisher<P> {
         }
         Ok(self.0.into_inner().into_publisher())
     }
+
+    /// Return the publisher without draining or cutting.
+    ///
+    /// Bytes retained by a failed push and the muxer's undrained packets are
+    /// discarded, no closing cut is issued, and [`Publisher::finish`] is not
+    /// called, so the publisher comes back unfinished. [`Drop`] keeps its
+    /// best-effort drain; this is the abortive counterpart to [`finish`].
+    ///
+    /// [`finish`]: MuxPublisher::finish
+    pub fn abort(self) -> P {
+        self.0.discard_pending();
+        self.0.into_inner().into_publisher()
+    }
 }
 
 /// Error returned by [`MuxPublisher`] methods.
@@ -1378,6 +1391,32 @@ mod tests {
         let mp = MuxPublisher::with_config(p, test_muxer_config()).unwrap();
         mp.push_video(&big_au(), Pts90khz::new(0), true).unwrap();
         accepted_before_cut(&mp.finish().unwrap().ops, &[])
+    }
+
+    /// `abort` returns the publisher without re-offering retained bytes or cutting.
+    #[test]
+    fn abort_discards_retained_bytes_and_cuts_nothing() {
+        let mp = MuxPublisher::with_config(
+            FailAt {
+                ops: vec![],
+                fail: vec![0],
+            },
+            test_muxer_config(),
+        )
+        .unwrap();
+        assert!(mp.push_video(&h264_au(), Pts90khz::new(0), true).is_err());
+        let p = mp.abort();
+        let pushes = p.ops.iter().filter(|o| matches!(o, Op::Push(_))).count();
+        assert_eq!(
+            pushes, 1,
+            "only the failed offer; abort re-offered: {:?}",
+            p.ops
+        );
+        assert!(
+            !p.ops.iter().any(|o| matches!(o, Op::Cut(_))),
+            "abort cut a segment: {:?}",
+            p.ops
+        );
     }
 
     #[test]

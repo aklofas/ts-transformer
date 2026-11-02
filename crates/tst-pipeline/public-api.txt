@@ -1340,6 +1340,7 @@ impl<E> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::mux_publisher:
 impl<E> core::panic::unwind_safe::UnwindSafe for tst_pipeline::mux_publisher::MuxPublisherError<E> where E: core::panic::unwind_safe::UnwindSafe
 pub struct tst_pipeline::mux_publisher::MuxPublisher<P: tst_core::publisher::Publisher + core::marker::Send>(_)
 impl<P: tst_core::publisher::Publisher + core::marker::Send> tst_pipeline::mux_publisher::MuxPublisher<P>
+pub fn tst_pipeline::mux_publisher::MuxPublisher<P>::abort(self) -> P
 pub fn tst_pipeline::mux_publisher::MuxPublisher<P>::cut_segment(&self) -> core::result::Result<(), tst_pipeline::mux_publisher::MuxPublisherError<<P as tst_core::publisher::Publisher>::Error>>
 pub fn tst_pipeline::mux_publisher::MuxPublisher<P>::finish(self) -> core::result::Result<P, tst_pipeline::mux_publisher::MuxPublisherError<<P as tst_core::publisher::Publisher>::Error>>
 pub fn tst_pipeline::mux_publisher::MuxPublisher<P>::publisher_stats(&self) -> tst_core::publisher::PublisherStats
@@ -2753,6 +2754,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::Manage
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ManagedTransportStats
 pub struct tst_pipeline::MuxPublisher<P: tst_core::publisher::Publisher + core::marker::Send>(_)
 impl<P: tst_core::publisher::Publisher + core::marker::Send> tst_pipeline::mux_publisher::MuxPublisher<P>
+pub fn tst_pipeline::mux_publisher::MuxPublisher<P>::abort(self) -> P
 pub fn tst_pipeline::mux_publisher::MuxPublisher<P>::cut_segment(&self) -> core::result::Result<(), tst_pipeline::mux_publisher::MuxPublisherError<<P as tst_core::publisher::Publisher>::Error>>
 pub fn tst_pipeline::mux_publisher::MuxPublisher<P>::finish(self) -> core::result::Result<P, tst_pipeline::mux_publisher::MuxPublisherError<<P as tst_core::publisher::Publisher>::Error>>
 pub fn tst_pipeline::mux_publisher::MuxPublisher<P>::publisher_stats(&self) -> tst_core::publisher::PublisherStats

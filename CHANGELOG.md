@@ -250,6 +250,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-pipeline
 
+- `MuxPublisher::abort(self) -> P` returns the publisher without draining bytes a failed push retained and without a closing cut (additive; `Drop` keeps its best-effort drain). The Python HLS binding uses it for an implicit drop.
 - `Sender` and `MuxSender` split messages to the transport's `max_payload()` in whole TS packets and refuse a ceiling below 188 bytes with `TooLarge` (input not consumed); retained bytes are re-split after a ceiling shrink.
 - `Sender` RECOVER mode keeps the packets before a lost sync and the data after it; STRICT mode rejects a call atomically (no state change, `input_consumed = Some(false)` is now accurate); `flush` checks every packet's sync byte.
 
