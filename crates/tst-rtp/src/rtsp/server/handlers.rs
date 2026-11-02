@@ -776,6 +776,16 @@ pub(crate) fn bind_server_udp_pair(
     ))
 }
 
+/// Returns the UDP target address for a unicast PLAY: preserves the
+/// client's IP from the TCP control connection and substitutes the
+/// RTP port that the client advertised in its SETUP `client_port` field.
+///
+/// Separating this from `handle_play` makes it directly unit-testable
+/// without setting up a full `ServerState`.
+pub(crate) fn compute_udp_play_target(peer: SocketAddr, client_rtp_port: u16) -> SocketAddr {
+    SocketAddr::new(peer.ip(), client_rtp_port)
+}
+
 /// PLAY handler — RFC 7826 §10.5 / RFC 2326 §11.2.
 ///
 /// Subscribes the session to the mount's broadcast fanout channel and
@@ -799,15 +809,6 @@ pub(crate) fn bind_server_udp_pair(
 /// the per-peer fanout task can write RFC 7826 §14 `$<channel><len>`
 /// frames on the same TCP as the RTSP control responses; the
 /// `AsyncMutex` around the writer serializes the two writers.
-/// Returns the UDP target address for a unicast PLAY: preserves the
-/// client's IP from the TCP control connection and substitutes the
-/// RTP port that the client advertised in its SETUP `client_port` field.
-///
-/// Separating this from `handle_play` makes it directly unit-testable
-/// without setting up a full `ServerState`.
-pub(crate) fn compute_udp_play_target(peer: SocketAddr, client_rtp_port: u16) -> SocketAddr {
-    SocketAddr::new(peer.ip(), client_rtp_port)
-}
 pub(crate) fn handle_play(
     req: &RtspRequest,
     state: &Arc<ServerState>,

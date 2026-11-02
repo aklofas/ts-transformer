@@ -120,6 +120,32 @@ fn an_on_demand_announce_on_a_path_with_an_empty_segment_is_404_and_creates_noth
     server.stop().unwrap();
 }
 
+/// A consumer that takes a queued mount and at once closes it (the way an
+/// ingest router drops a name it does not know) must never turn a
+/// legitimate ANNOUNCE into 403: the mount is claimed before it is queued.
+#[test]
+fn a_consumer_closing_the_queued_mount_at_once_never_refuses_the_announce() {
+    let server = on_demand_server();
+    let port = server.local_addr().unwrap().port();
+    std::thread::scope(|s| {
+        let consumer = s.spawn(|| {
+            for _ in 0..50 {
+                let m = server
+                    .next_publisher(scaled(Duration::from_secs(5)))
+                    .unwrap()
+                    .expect("a mount");
+                server.remove_mount(m.mount_path()).unwrap();
+            }
+        });
+        for i in 0..50 {
+            let mut p = RawPublisher::connect(port);
+            assert_eq!(p.announce(&format!("/d{i}"), SDP_MP2T), 200, "announce {i}");
+        }
+        consumer.join().unwrap();
+    });
+    server.stop().unwrap();
+}
+
 /// `stop()` wakes a `next_publisher` parked on another thread with
 /// `Shutdown`, well before its own timeout.
 #[test]

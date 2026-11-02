@@ -726,9 +726,9 @@ impl RtspServer {
     /// on demand (see
     /// [`RtspServerBuilder::accept_unregistered_publishers`]). Mounts come
     /// out in the order their ANNOUNCEs created them; the announcing
-    /// publisher already holds each one's publisher slot. Returns
-    /// `Ok(None)` when none arrived in time, and always does when the flag
-    /// is off.
+    /// publisher holds each one's publisher slot before the handle is
+    /// queued, so a handle you take is never unclaimed. Returns `Ok(None)`
+    /// when none arrived in time, and always does when the flag is off.
     ///
     /// Concurrent callers are served one at a time, each mount to exactly
     /// one of them. A call made while another caller is waiting can
