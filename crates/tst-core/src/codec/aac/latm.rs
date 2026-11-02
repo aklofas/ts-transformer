@@ -45,6 +45,8 @@
 //! Strict mode (`StrictMode::Full`): the `Sample` event is suppressed
 //! and the issue propagates as `DemuxError::StrictRejection`.
 
+use alloc::vec::Vec;
+
 /// First wire byte of the 11-bit LOAS syncword (`0x2B7 >> 3`).
 const LOAS_SYNC_BYTE0: u8 = 0x56;
 /// Top 3 bits of byte 1 must equal `0b111` (low 3 bits of the 11-bit
@@ -120,62 +122,77 @@ pub fn validate_latm_sync(pes_payload: &[u8]) -> Result<u16, LatmFramingKind> {
 /// `audioMuxLengthBytes` of at most `0x1FFF`.
 pub(crate) const MAX_LOAS_RECORD_BYTES: usize = 3 + 0x1FFF;
 
-/// Offset of the first byte-aligned LOAS syncword candidate in `payload`,
-/// searched only within its first [`MAX_LOAS_RECORD_BYTES`] bytes: the tail
-/// of a record carried in from an earlier PES is never longer than that.
-pub(crate) fn find_loas_sync(payload: &[u8]) -> Option<usize> {
-    payload
-        .windows(2)
-        .take(MAX_LOAS_RECORD_BYTES)
-        .position(starts_with_loas_sync)
-}
-
 /// What a resync on a PES that may open inside a record found
 /// ([`resync_loas`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LoasResync {
-    /// A whole record follows the first candidate and the walk from it
-    /// succeeds: the walk's carry (see [`walk_loas`]).
+    /// A whole record follows the first unrefuted candidate and the walk
+    /// from it succeeds: the walk's carry (see [`walk_loas`]).
     Confirmed(Option<LoasCarry>),
-    /// The first candidate's record, or its header, runs past the PES: what
-    /// it would owe the next PES, which confirms or refutes it.
+    /// The first unrefuted candidate's record, or its header, runs past the
+    /// PES: what it would owe the next PES, which confirms or refutes it.
     Unconfirmed(LoasCarry),
-    /// No candidate within the first [`MAX_LOAS_RECORD_BYTES`] bytes, or the
-    /// first candidate's record fits but the walk from it fails (the
-    /// candidate is refuted inside the PES).
+    /// Every candidate within the first [`MAX_LOAS_RECORD_BYTES`] bytes, if
+    /// any, is refuted inside the PES: its record fits but the walk from it
+    /// fails.
     NoCandidate,
 }
 
-/// Resync on a PES that may open inside a record from its first
-/// [`find_loas_sync`] candidate. A false `0x56 0b111x_xxxx` pair in a
-/// record's tail usually carries a bogus length that runs past the PES, so a
-/// candidate is trusted only when a whole record follows it inside the
-/// payload; one whose record runs past the PES is reported `Unconfirmed`, for
-/// the next PES to settle. A lone `0x56` in the last byte is a candidate whose
-/// header continues into the next PES.
+/// Resync on a PES that may open inside a record. Candidates (a byte-aligned
+/// syncword) are searched only within the first [`MAX_LOAS_RECORD_BYTES`]
+/// bytes: the tail of a record carried in from an earlier PES is never
+/// longer than that. A false `0x56 0b111x_xxxx` pair in a record's tail
+/// usually carries a bogus length that runs past the PES, so a candidate is
+/// trusted only when a whole record follows it inside the payload and the
+/// walk from it succeeds; a candidate refuted that way is skipped for the
+/// next one. One whose record runs past the PES is reported `Unconfirmed`,
+/// for the next PES to settle. A lone `0x56` in the last byte is a candidate
+/// whose header continues into the next PES.
 pub(crate) fn resync_loas(payload: &[u8]) -> LoasResync {
-    let trailing_sync = payload
-        .len()
-        .checked_sub(1)
-        .filter(|&last| last < MAX_LOAS_RECORD_BYTES && payload[last] == LOAS_SYNC_BYTE0);
-    let Some(at) = find_loas_sync(payload).or(trailing_sync) else {
-        return LoasResync::NoCandidate;
-    };
-    let rest = &payload[at..];
-    if rest.len() < 3 {
-        return match split_header_carry(rest) {
-            Ok(Some(carry)) => LoasResync::Unconfirmed(carry),
-            _ => LoasResync::NoCandidate,
-        };
+    // Record boundaries a refuted walk passed through: a walk reaching one
+    // fails the same way, so each boundary is walked at most once and the
+    // search stays linear in the payload.
+    let mut refuted = Vec::new();
+    for at in 0..payload.len().min(MAX_LOAS_RECORD_BYTES) {
+        let rest = &payload[at..];
+        if !opens_loas_header(rest) {
+            continue;
+        }
+        if rest.len() < 3 {
+            return match split_header_carry(rest) {
+                Ok(Some(carry)) => LoasResync::Unconfirmed(carry),
+                _ => LoasResync::NoCandidate,
+            };
+        }
+        let first_record_end = at + 3 + record_body_len(rest);
+        if first_record_end > payload.len() {
+            return LoasResync::Unconfirmed(LoasCarry::Body(first_record_end - payload.len()));
+        }
+        if refuted.is_empty() {
+            refuted.resize(payload.len(), false);
+        }
+        // The walk visits each record boundary from `at` until one is
+        // refuted or lacks the syncword.
+        let mut visited = Vec::new();
+        let mut pos = at;
+        while pos < payload.len() - 2 && !refuted[pos] && starts_with_loas_sync(&payload[pos..]) {
+            visited.push(pos);
+            pos += 3 + record_body_len(&payload[pos..]);
+        }
+        let reached_refuted = pos < payload.len() && refuted[pos];
+        if !reached_refuted && let Ok(carry) = walk_loas(payload, at) {
+            return LoasResync::Confirmed(carry);
+        }
+        for p in visited {
+            refuted[p] = true;
+        }
     }
-    let first_record_end = at + 3 + ((usize::from(rest[1] & 0x1F) << 8) | usize::from(rest[2]));
-    if first_record_end > payload.len() {
-        return LoasResync::Unconfirmed(LoasCarry::Body(first_record_end - payload.len()));
-    }
-    match walk_loas(payload, at) {
-        Ok(carry) => LoasResync::Confirmed(carry),
-        Err(_) => LoasResync::NoCandidate,
-    }
+    LoasResync::NoCandidate
+}
+
+/// The 13-bit `audioMuxLengthBytes` of the LOAS header `header` opens.
+fn record_body_len(header: &[u8]) -> usize {
+    (usize::from(header[1] & 0x1F) << 8) | usize::from(header[2])
 }
 
 /// `true` when `bytes` begins with the 11-bit LOAS syncword `0x2B7`.
@@ -356,12 +373,12 @@ mod tests {
     }
 
     #[test]
-    fn find_loas_sync_looks_only_within_one_record() {
+    fn resync_loas_looks_only_within_one_record() {
         let mut buf = vec![0x00; MAX_LOAS_RECORD_BYTES - 1];
         buf.extend_from_slice(&build_loas_record(0));
-        assert_eq!(find_loas_sync(&buf), Some(MAX_LOAS_RECORD_BYTES - 1));
+        assert_eq!(resync_loas(&buf), LoasResync::Confirmed(None));
         buf.insert(0, 0x00);
-        assert_eq!(find_loas_sync(&buf), None);
+        assert_eq!(resync_loas(&buf), LoasResync::NoCandidate);
     }
 
     #[test]
@@ -403,6 +420,43 @@ mod tests {
         let mut refuted = vec![0x00; 4];
         refuted.extend_from_slice(&[0x56, 0xE0, 0x02, 0x00, 0x00, 0x11, 0x22, 0x33]);
         assert_eq!(resync_loas(&refuted), LoasResync::NoCandidate);
+    }
+
+    /// A refuted candidate in a record's tail does not end the search: the
+    /// first real record later in the window is found.
+    #[test]
+    fn resync_loas_searches_past_a_refuted_candidate() {
+        // A 100-byte tail whose false pair at offset 4 declares a 2-byte
+        // record ending at 9, where no syncword follows; then nine records.
+        let mut buf = vec![0x00; 100];
+        buf[4..7].copy_from_slice(&[0x56, 0xE0, 0x02]);
+        for _ in 0..9 {
+            buf.extend_from_slice(&build_loas_record(1000));
+        }
+        assert_eq!(buf.len(), 9127);
+        assert_eq!(resync_loas(&buf), LoasResync::Confirmed(None));
+        // Past a refuted candidate, a later one whose record runs past the
+        // payload is held for the next PES.
+        buf.truncate(100);
+        buf.extend_from_slice(&build_loas_record(1000)[..500]);
+        assert_eq!(
+            resync_loas(&buf),
+            LoasResync::Unconfirmed(LoasCarry::Body(503))
+        );
+    }
+
+    /// Candidates are still searched only in the first
+    /// `MAX_LOAS_RECORD_BYTES` bytes, however many are refuted on the way.
+    #[test]
+    fn resync_loas_keeps_its_window_past_refuted_candidates() {
+        let mut buf = Vec::new();
+        while buf.len() + 4 <= MAX_LOAS_RECORD_BYTES {
+            // A 0-length record at each candidate, then a non-syncword byte.
+            buf.extend_from_slice(&[0x56, 0xE0, 0x00, 0x00]);
+        }
+        buf.resize(MAX_LOAS_RECORD_BYTES, 0x00);
+        buf.extend_from_slice(&build_loas_record(8));
+        assert_eq!(resync_loas(&buf), LoasResync::NoCandidate);
     }
 
     #[test]

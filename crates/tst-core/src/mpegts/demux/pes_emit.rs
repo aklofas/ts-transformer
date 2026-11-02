@@ -2505,6 +2505,40 @@ mod tests {
         assert!(!latm_framing_on_0x101(&ev), "{ev:?}");
     }
 
+    /// LATM 0x101 under `StrictMode::Full`: feed `payloads` as unaligned
+    /// PES; the feed result and the events.
+    fn latm_full_mode_events(payloads: &[Vec<u8>]) -> (Result<(), DemuxError>, Vec<DemuxEvent>) {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().strict(StrictMode::Full).build(),
+            0x101,
+            &[(0x11, 0x101, &[])],
+        );
+        let mut cc = 0;
+        let mut pkts = Vec::new();
+        for payload in payloads {
+            pkts.extend(latm_pes(&mut cc, payload));
+        }
+        let r = feed_packets(&mut d, &pkts);
+        d.flush();
+        (r, drain_all_events(&mut d))
+    }
+
+    /// A PID's first PES opens in a record's 100-byte tail holding a false
+    /// syncword pair, then nine whole records: the refuted pair does not
+    /// hide them, so the PES counts no unsynced bytes and is delivered.
+    #[test]
+    fn a_refuted_candidate_does_not_hide_the_records_after_it() {
+        let mut p = vec![0x00; 100];
+        p[4..7].copy_from_slice(&[0x56, 0xE0, 0x02]);
+        for _ in 0..9 {
+            p.extend(loas_record(1000));
+        }
+        let (r, ev) = latm_full_mode_events(&[p]);
+        assert!(r.is_ok(), "{r:?}");
+        assert!(!latm_framing_on_0x101(&ev), "{ev:?}");
+        assert_eq!(sample_count(&ev, 0x101), 1, "{ev:?}");
+    }
+
     /// The aggregate `pes_cap_total` drop loses the PES the same way.
     #[test]
     fn pes_cap_total_overflow_forgets_the_loas_carry() {
