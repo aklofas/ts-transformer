@@ -162,8 +162,10 @@ impl AuCellReassembler {
     /// and whose Last cell opens the next therefore reassembles whether the
     /// producer restarts at 0 per PES or counts across PES. A whole lost PES
     /// is the continuity counter's to report, not this check's: a
-    /// continuity_counter jump on the PID discards any AU in progress and
-    /// reports the gap (see [`discard_pid`](Self::discard_pid)). A new
+    /// continuity_counter jump on the PID, a PES that lost bytes, or a
+    /// signalled discontinuity (H.222.0 §2.4.3.5) discards any AU in
+    /// progress and reports the gap (see [`discard_pid`](Self::discard_pid)).
+    /// A new
     /// producer on a continuing channel (a fresh `Muxer`, which starts every
     /// synchronous KLV stream at 0) is likewise not a gap.
     ///

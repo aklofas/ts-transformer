@@ -165,7 +165,7 @@ impl super::demuxer::Demuxer {
     /// `pcr_pid`, so the first PTS on the new time base is not judged against
     /// the old one. A PES already in flight started on the old clock: it
     /// keeps the old baseline, and the baseline is dropped once it ends
-    /// (`settle_pts_baseline`).
+    /// (`settle_after_pes`).
     pub(super) fn forget_program_pts(&mut self, pcr_pid: u16) {
         let Self {
             programs,
@@ -193,13 +193,18 @@ impl super::demuxer::Demuxer {
         }
     }
 
-    /// The PES that straddled a time-base reset on `pid` has ended (emitted
-    /// or dropped): drop the old-clock PTS baseline it was judged against.
-    pub(super) fn settle_pts_baseline(&mut self, pid: u16) {
-        if let Some(state) = self.pid_state.get_mut(&pid)
-            && core::mem::take(&mut state.pts_baseline_clears_after_pes)
-        {
+    /// The PES that straddled a signalled reset on `pid` has ended (emitted
+    /// or dropped): drop the old-clock PTS baseline it was judged against,
+    /// and the AU cells in progress from the old source.
+    pub(super) fn settle_after_pes(&mut self, pid: u16) {
+        let Some(state) = self.pid_state.get_mut(&pid) else {
+            return;
+        };
+        if core::mem::take(&mut state.pts_baseline_clears_after_pes) {
             state.clear_pts_baseline();
+        }
+        if core::mem::take(&mut state.au_discard_after_pes) {
+            self.discard_au_in_progress(pid);
         }
     }
 
@@ -264,7 +269,9 @@ impl super::demuxer::Demuxer {
         // packet seeds a new one.
         if !pkt.has_payload {
             if pkt.discontinuity_indicator {
-                self.pid_state_mut(pkt.pid).clear_continuity();
+                let state = self.pid_state_mut(pkt.pid);
+                state.clear_continuity();
+                state.au_discard_after_pes = true;
                 if let Some(stream) = self.lookup_stream(pkt.pid) {
                     self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
                 }
@@ -364,10 +371,11 @@ impl super::demuxer::Demuxer {
             // check possible. A duplicate flag cannot be set without a cc
             // (they clear together), so there is nothing to clear.
         }
-        if pkt.discontinuity_indicator
-            && let Some(stream) = self.lookup_stream(pkt.pid)
-        {
-            self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
+        if pkt.discontinuity_indicator {
+            self.pid_state_mut(pkt.pid).au_discard_after_pes = true;
+            if let Some(stream) = self.lookup_stream(pkt.pid) {
+                self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
+            }
         }
         let state = self.pid_state_mut(pkt.pid);
         state.cc = Some(pkt.continuity_counter);

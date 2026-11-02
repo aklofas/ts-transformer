@@ -17,7 +17,7 @@
 use crate::error::DemuxError;
 use crate::mpegts::common::{Pts90khz, StreamTypeCode};
 use crate::mpegts::demux::event::{
-    AdaptationFieldKind, DemuxEvent, MultiCellAuReason, NonConformantIssue, StreamId, StreamKind,
+    AdaptationFieldKind, DemuxEvent, NonConformantIssue, StreamId, StreamKind,
 };
 use crate::mpegts::demux::pes::{Reassembler, ReassemblyOutcome, is_damage_reason};
 use crate::mpegts::demux::pid_state::{PidState, TopologyDiff};
@@ -679,19 +679,7 @@ impl Demuxer {
             // AU level.
             if cc_jumped {
                 self.pes.mark_damaged(pkt.pid);
-                if let Some(dropped_bytes) = self.au_reassembler.discard_pid(pkt.pid) {
-                    let stream = self.lookup_stream(pkt.pid).unwrap_or_else(|| {
-                        StreamId::anonymous(pkt.pid, self.program_number_for_pid(pkt.pid))
-                    });
-                    self.queue_nonconformant(
-                        stream,
-                        NonConformantIssue::MultiCellAu {
-                            pid: pkt.pid,
-                            dropped_bytes,
-                            reason: MultiCellAuReason::SequenceGap,
-                        },
-                    );
-                }
+                self.discard_au_in_progress(pkt.pid);
             }
             self.handle_pes_packet(&pkt)?;
         }
