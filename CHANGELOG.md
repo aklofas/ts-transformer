@@ -182,6 +182,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Component descriptor text honours the EN 300 468 Annex A character-set selector. The multi-byte selectors (0x11 ISO/IEC 10646, 0x12 KS X 1001, 0x13 GB-2312, 0x14 Big5) are not transcoded: the label comes from the next descriptor.
 - Aggregate PES overflow reports a discontinuity for every PID it drops.
 - DVB subtitle and teletext PES envelopes are checked and reported.
+- `StrictMode::Full` checks all four reserved bits before a PMT's `program_info_length` (Table 2-33).
 
 ### Fixed — tst-pipeline
 
