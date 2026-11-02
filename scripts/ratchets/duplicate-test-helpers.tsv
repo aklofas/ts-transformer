@@ -5,7 +5,7 @@
 # reason of every row that already exists). For new code, move the helper
 # into the crate's tests/common or into tst-test-helpers instead.
 bindings/c/tests/receiving/exit_with_parked_call.rs	reserve_port	twin of crates/tst-srt/tests/common/mod.rs (Rust crate vs C-binding test crate); no shared crate between them
-bindings/c/tests/transports/udp_close_cancels_first.rs	ts_null_packet	cross-crate twin of the tst-udp null-packet helper; the C-binding test crate cannot depend on it
+bindings/c/tests/common/mod.rs	ts_null_packet	cross-crate twin of the tst-udp null-packet helper; the C-binding test crate cannot depend on it
 bindings/jvm/src/test/java/org/tstrans/srt/SrtManagedCloseCancelsFirstTest.java	rescue	identical body to SrtPlainCloseCancelsFirstTest; parameter types differ (ManagedMuxSender vs MuxSender)
 bindings/jvm/src/test/java/org/tstrans/srt/SrtPlainCloseCancelsFirstTest.java	rescue	identical body to SrtManagedCloseCancelsFirstTest; parameter types differ (MuxSender vs ManagedMuxSender)
 crates/tst-core/tests/mpegts/demux_local.rs	fixtures_dir	cross-crate twin; the one copy belongs in tst-test-helpers
