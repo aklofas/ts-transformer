@@ -595,11 +595,16 @@ pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u
             //                      the table's maximum)
             //   surround_mode    = 0b00  (not indicated)
             //   bsmod            = 0     (CM, complete main)
-            //   num_channels     = 0b1001 (MSB=1 upper-limit mode: ≤2
-            //                      encoded channels — typical for ISR
-            //                      payloads)
+            //   num_channels     = 0b1101 (MSB=1 upper-limit mode: ≤6
+            //                      channels, covering every AC-3 `acmod`;
+            //                      A/52 Table A4.5)
             //   full_svc         = true  (complete program — no associated
             //                      service overlay)
+            //
+            // `bsid` and `bsmod` are declared, not derived from the frames
+            // (`push_audio` never parses a syncframe), although A/52
+            // §A.4.3 wants them to equal the elementary stream's; a
+            // bsid 6 or associated-service stream supplies its own tag 0x81.
             //
             // Suppression: when the caller supplies any descriptor with
             // tag 0x81, we honor it verbatim (caller intent wins).
@@ -615,7 +620,7 @@ pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u
                     0b110010, // bit_rate_code: MSB=1 upper-limit, 640 kbps
                     0,        // surround_mode: not indicated
                     0,        // bsmod: CM (complete main)
-                    0b1001,   // num_channels: MSB=1 upper-limit, ≤2 channels
+                    0b1101,   // num_channels: MSB=1 upper-limit, ≤6 channels
                     true,     // full_svc: complete program
                 ));
             }

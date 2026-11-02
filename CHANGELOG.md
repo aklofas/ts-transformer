@@ -30,6 +30,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 
 - `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch.
+### Fixed — tst-core
+
+- The AC-3 audio stream descriptor (tag 0x81) the muxer adds to an `AudioCodec::Ac3` stream claimed at most two channels for every stream, so a 5.1 stream was mis-declared in the PMT. It now claims at most six (`num_channels` 0b1101), which covers every AC-3 coding mode. `bsid` 8 and `bsmod` 0 remain declared values the muxer does not check against the frames; supply your own tag 0x81 via `stream_descriptors_for_audio` for a bsid 6 or associated-service stream.
+
 ### Fixed — tst-py, tst-jni, tst-core, tst-hls, tst-webrtc, tst-srt, tst-c
 
 - Python reprs and error text no longer print URL passwords or the values of the `passphrase`, `secret`, `token`, `auth_pass`, `password`, `streamid` and `srt_streamid` query keys; each shows `<redacted>` instead. This covers the RIST, SRT, TCP and UDP builders, `RtspClientConfig` and the transport open errors, including the unsupported-scheme errors. Java `toString()` and exception text does the same for `RtspClientConfig`, `RtspServerConfig` and `WhepServerConfig`.

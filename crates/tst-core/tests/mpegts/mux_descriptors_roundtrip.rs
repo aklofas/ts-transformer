@@ -477,6 +477,14 @@ fn ac3_audio_stream_descriptor_auto_emits_on_pmt() {
     // byte0 high 3 bits = sample_rate_code (0b111 = any per Table A4.2);
     // bsid = 8 in low 5 bits → (7 << 5) | 8 = 0xE8.
     assert_eq!(ac3_audio[0].data[0], 0xE8);
+    // byte1 = bit_rate_code 0b110010 (upper limit, 640 kb/s) << 2 | surround_mode 0.
+    assert_eq!(ac3_audio[0].data[1], 0xC8);
+    // byte2 = bsmod 0 << 5 | num_channels 0b1101 ("<= 6", A/52 Table A4.5) << 1 | full_svc 1.
+    assert_eq!(
+        ac3_audio[0].data[2], 0x1B,
+        "num_channels must cover every AC-3 acmod"
+    );
+    assert_eq!((ac3_audio[0].data[2] >> 1) & 0x0F, 0b1101);
 }
 
 #[test]
@@ -529,4 +537,6 @@ fn ac3_audio_descriptor_suppressed_when_caller_supplies() {
     // Caller's payload survives verbatim (body bytes 0xE8 are the byte0
     // shape; caller's emits byte0 = (0<<5)|8 = 0x08).
     assert_eq!(ac3_audio[0].data[0], 0x08);
+    // The surviving descriptor is the caller's, body bytes unchanged.
+    assert_eq!(ac3_audio[0].data, caller_desc[2..].to_vec());
 }
