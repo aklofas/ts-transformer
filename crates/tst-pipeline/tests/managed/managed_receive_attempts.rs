@@ -67,7 +67,7 @@ fn attempts_count_factory_calls_and_reconnects_count_successes() {
         fail_twice_then_succeed(Arc::clone(&calls)),
         fast_policy(Some(10)),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     let attempts = managed.attempts_handle();
     let reconnects = managed.reconnects_handle();
     assert_eq!(
@@ -111,7 +111,7 @@ fn managed_demux_receiver_exposes_the_transport_attempts_counter() {
         fail_twice_then_succeed(Arc::new(AtomicU32::new(0))),
         fast_policy(Some(10)),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     let from_transport = managed.attempts_handle();
     let rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
     assert!(
@@ -151,7 +151,7 @@ fn attempts_handle_reads_while_the_owner_is_parked_in_the_factory() {
 
     let mut managed =
         ManagedRecvTransport::new(Scripted { good: false }, factory, fast_policy(Some(10)))
-            .expect("a default policy validates");
+            .expect("the policy validates");
     // Obtain BEFORE the move — the only way a binding can reach it.
     let attempts = managed.attempts_handle();
     let mut buf = [0u8; 16];
@@ -196,7 +196,7 @@ fn attempts_handles_are_plain_shared_atomics() {
         fail_twice_then_succeed(Arc::new(AtomicU32::new(0))),
         fast_policy(Some(10)),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     let _: Arc<AtomicU64> = managed.attempts_handle();
     let rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
     let _: Arc<AtomicU64> = rx.attempts_handle();
@@ -208,7 +208,7 @@ fn managed_over(inner: ScriptedRecv) -> ManagedRecvTransport<ScriptedRecv> {
         Box::new(|| Err(broken("factory down"))),
         fast_policy(Some(0)),
     )
-    .expect("a default policy validates")
+    .expect("the policy validates")
 }
 
 /// A receiver whose reconnect budget is spent: one failed read latched `closed`.

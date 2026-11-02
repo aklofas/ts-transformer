@@ -116,7 +116,7 @@ fn managed_socket_stats_forwards_when_alive_and_none_after_close() {
         })
     };
     let mut managed = ManagedTransport::new(initial_transport, factory, ReconnectPolicy::default())
-        .expect("a default policy validates");
+        .expect("the policy validates");
 
     managed
         .send_bytes(&[0u8; 188])

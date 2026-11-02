@@ -84,7 +84,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-pipeline, tst-srt, tst-c, tst-py, tst-jni (BREAKING)
 
-- `ManagedTransport::new`, `ManagedRecvTransport::new` and `ManagedRecvTransport::new_with_factory_cancel` return `Result<Self, ReconnectPolicyError>`: a `ReconnectPolicy` with zero backoff and unlimited attempts (`max_attempts = None` with `Constant(0)` or `Exponential { base: 0, .. }`) is refused at construction and by every managed open (`tst_srt::shells::managed_*_from_url`, `tst_managed_*_open`, Python `Managed*.from_url`, JVM `Managed*.fromUrl`) with the config-invalid kind. Such a policy re-dialled in a tight loop with no pacing; it was never useful. Append `?` (or `.expect`) to direct constructor calls; `ReconnectPolicy::validate` is public for callers who want the check earlier.
+- `ManagedTransport::new`, `ManagedRecvTransport::new` and `ManagedRecvTransport::new_with_factory_cancel` return `Result<Self, ReconnectPolicyError>`: a `ReconnectPolicy` with zero backoff and unlimited attempts (`max_attempts = None` with `Constant(0)` or `Exponential` with a zero base or a zero cap) is refused at construction and by every managed open (`tst_srt::shells::managed_*_from_url`, `tst_managed_*_open`, Python `Managed*.from_url`, JVM `Managed*.fromUrl`) with the config-invalid kind. Such a policy re-dialled in a tight loop with no pacing; it was never useful. Append `?` (or `.expect`) to direct constructor calls; `ReconnectPolicy::validate` is public for callers who want the check earlier.
 
 ### Changed — tst-c (BREAKING)
 

@@ -136,7 +136,7 @@ pub struct ManagedDemuxReceiverConfig {}
 ///
 /// let factory = Box::new(|| SrtTransport::connect(addr, &cfg));
 /// let inner = SrtTransport::connect(addr, &cfg)?;
-/// let managed = ManagedRecvTransport::new(inner, factory, ReconnectPolicy::default()).expect("a default policy validates");
+/// let managed = ManagedRecvTransport::new(inner, factory, ReconnectPolicy::default()).expect("the policy validates");
 /// let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 ///
 /// for ev in &mut rx {
@@ -579,7 +579,7 @@ mod tests {
         // max_attempts=Some(0) → budget rejected on first attempt;
         // ManagedRecvTransport latches closed and returns Closed.
         let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(0)))
-            .expect("a default policy validates");
+            .expect("the policy validates");
         let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
         let mut saw_reconnect = false;
@@ -645,7 +645,7 @@ mod tests {
             }
         });
         let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(3)))
-            .expect("a default policy validates");
+            .expect("the policy validates");
         let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
         let mut saw_reconnect = false;
@@ -770,7 +770,7 @@ mod tests {
             }
         });
         let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
-            .expect("a default policy validates");
+            .expect("the policy validates");
         let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
         let mut discontinuities = 0;
@@ -836,7 +836,7 @@ mod tests {
             })
         });
         let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(0)))
-            .expect("a default policy validates");
+            .expect("the policy validates");
         let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
         let mut count = 0;

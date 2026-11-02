@@ -6995,7 +6995,7 @@ int tst_reconnect_policy_set_backoff_exponential_ms(struct tst_reconnect_policy_
  * Set max reconnect attempts. `n < 0` means retry forever.
  *
  * Unlimited attempts with a zero backoff (`tst_reconnect_policy_set_backoff_constant_ms`
- * with 0, or an exponential base of 0) is refused by every `tst_managed_*_open`
+ * with 0, or an exponential base or cap of 0) is refused by every `tst_managed_*_open`
  * with `TST_E_INVALID_CONFIG`, before any connect: it would retry without pacing.
  */
  int tst_reconnect_policy_set_max_attempts(struct tst_reconnect_policy_t *p, int32_t n);

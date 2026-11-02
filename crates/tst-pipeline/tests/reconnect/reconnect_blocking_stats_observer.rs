@@ -76,8 +76,8 @@ fn stats_return_while_a_blocking_replay_is_parked() {
             })
         }
     };
-    let managed = ManagedTransport::new(first, factory, fast_policy(Some(3)))
-        .expect("a default policy validates");
+    let managed =
+        ManagedTransport::new(first, factory, fast_policy(Some(3))).expect("the policy validates");
     let stats = managed.stats_handle();
     let mut sender = managed;
     let send = std::thread::spawn(move || sender.send_bytes(&[0x47; 188]));

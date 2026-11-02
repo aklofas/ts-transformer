@@ -108,7 +108,7 @@ fn factory_success_after_cancel_is_not_drained_into() {
         dead: true,
     };
     let mut managed =
-        ManagedTransport::new(initial, factory, policy).expect("a default policy validates");
+        ManagedTransport::new(initial, factory, policy).expect("the policy validates");
     *handle_cell.lock().unwrap() = managed.cancel_handle();
 
     let result = managed.send_bytes(&[0x47; 188]);
@@ -205,7 +205,7 @@ fn cancel_during_post_reconnect_drain_reports_explicit_close() {
         dead: true,
     };
     let mut managed =
-        ManagedTransport::new(initial, factory, policy).expect("a default policy validates");
+        ManagedTransport::new(initial, factory, policy).expect("the policy validates");
     *handle_cell.lock().unwrap() = managed.cancel_handle();
 
     let result = managed.send_bytes(&[0x47; 188]);

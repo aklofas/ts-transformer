@@ -484,7 +484,7 @@ mod tests {
             },
             ReconnectPolicy::default(),
         )
-        .expect("a default policy validates");
+        .expect("the policy validates");
         let handle = managed.stats_handle();
         let line = heartbeat_line(120, 1, 1, 1, 0, 188, Some(&handle));
         assert!(line.ends_with(" reconnects=0 gap_len=0"), "{line}");

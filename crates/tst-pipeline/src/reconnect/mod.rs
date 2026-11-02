@@ -113,7 +113,8 @@ impl Default for ReconnectPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReconnectPolicyError {
-    /// `max_attempts` is `None` and the backoff waits zero time.
+    /// `max_attempts` is `None` and the backoff waits zero time (a zero
+    /// `Constant`, or an `Exponential` with a zero base or a zero cap).
     #[error(
         "zero backoff with unlimited attempts would retry without pacing; set max_attempts or a non-zero backoff"
     )]
@@ -127,11 +128,13 @@ impl ReconnectPolicy {
     ///
     /// [`ReconnectPolicyError::UnpacedUnlimitedRetry`] when `max_attempts` is
     /// `None` and the backoff is `Constant(0)` or an `Exponential` with a
-    /// zero `base`. A zero backoff with a bounded `max_attempts` is allowed.
+    /// zero `base` or a zero `max`. A zero backoff with a bounded `max_attempts` is allowed.
     pub fn validate(&self) -> Result<(), ReconnectPolicyError> {
         let zero_wait = match &self.backoff {
             BackoffStrategy::Constant(d) => d.is_zero(),
-            BackoffStrategy::Exponential { base, .. } => base.is_zero(),
+            // `next_delay` caps every wait at `max`, so a zero cap is as
+            // unpaced as a zero base.
+            BackoffStrategy::Exponential { base, max } => base.is_zero() || max.is_zero(),
         };
         if self.max_attempts.is_none() && zero_wait {
             return Err(ReconnectPolicyError::UnpacedUnlimitedRetry);
@@ -278,7 +281,7 @@ impl ManagedStatsHandle {
 /// ```ignore
 /// let factory = || SrtTransport::connect(...);
 /// let inner = factory()?;
-/// let managed = ManagedTransport::new(inner, factory, ReconnectPolicy::default()).expect("a default policy validates");
+/// let managed = ManagedTransport::new(inner, factory, ReconnectPolicy::default()).expect("the policy validates");
 /// let sender = MuxSender::new(managed, config)?;
 /// // sender now silently reconnects on transport breakage
 /// ```
@@ -1395,7 +1398,7 @@ mod cancel_tests {
             })
         };
         let mut managed = ManagedTransport::new(NoopT, factory, ReconnectPolicy::default())
-            .expect("a default policy validates");
+            .expect("the policy validates");
 
         // Sanity-check: happy path returns the inner transport's values.
         assert_eq!(managed.max_payload(), 4242, "pre-poison: inner sentinel");
@@ -1442,7 +1445,7 @@ mod cancel_tests {
             })
         };
         let managed = ManagedTransport::new(inner, factory, ReconnectPolicy::default())
-            .expect("a default policy validates");
+            .expect("the policy validates");
 
         let handle = managed.cancel_handle().expect("cancellable inner -> Some");
         handle.cancel();
@@ -1475,7 +1478,7 @@ mod cancel_tests {
             ..Default::default()
         };
         let mut managed =
-            ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
+            ManagedTransport::new(inner, factory, policy).expect("the policy validates");
 
         // Trigger cancel before any send.
         let h = managed.cancel_handle().unwrap();
@@ -1539,7 +1542,7 @@ mod cancel_tests {
             ..Default::default()
         };
         let mut managed =
-            ManagedTransport::new(BrokenT, factory, policy).expect("a default policy validates");
+            ManagedTransport::new(BrokenT, factory, policy).expect("the policy validates");
         let cancel = managed
             .cancel_handle()
             .expect("managed always has a handle");
@@ -1596,7 +1599,7 @@ mod cancel_tests {
             ..Default::default()
         };
         let mut managed =
-            ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
+            ManagedTransport::new(inner, factory, policy).expect("the policy validates");
         let stats = managed.stats_handle();
         let s0 = stats.stats().expect("no poison");
         assert_eq!((s0.reconnect_attempts, s0.reconnect_successes), (0, 0));
@@ -1645,7 +1648,7 @@ mod cancel_tests {
             ..Default::default()
         };
         let mut managed =
-            ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
+            ManagedTransport::new(inner, factory, policy).expect("the policy validates");
         let attempts = managed.attempts_handle();
         let reconnects = managed.reconnects_handle();
         let reconnecting = managed.reconnecting_handle();
@@ -1737,7 +1740,7 @@ mod cancel_tests {
             ..Default::default()
         };
         let mut managed =
-            ManagedTransport::new(inner, factory, policy).expect("a default policy validates");
+            ManagedTransport::new(inner, factory, policy).expect("the policy validates");
         // Obtain BEFORE the move — the only way a binding can reach them.
         let attempts = managed.attempts_handle();
         let reconnects = managed.reconnects_handle();
@@ -1807,7 +1810,7 @@ mod cancel_tests {
             mode: ReconnectMode::Background,
         };
         let mut managed =
-            ManagedTransport::new(BrokenT, factory, policy).expect("a default policy validates");
+            ManagedTransport::new(BrokenT, factory, policy).expect("the policy validates");
         managed
             .send_bytes(b"queued")
             .expect("the break is accepted into the gap buffer");
@@ -1882,7 +1885,7 @@ mod cancel_tests {
             })
         };
         let mut managed = ManagedTransport::new(NoopT, factory, ReconnectPolicy::default())
-            .expect("a default policy validates");
+            .expect("the policy validates");
         assert!(managed.is_alive(), "pre-cancel: inner is alive");
 
         managed
@@ -1930,6 +1933,21 @@ mod validate_tests {
             BackoffStrategy::Exponential {
                 base: Duration::ZERO,
                 max: Duration::from_secs(10),
+            },
+        );
+        assert_eq!(
+            p.validate(),
+            Err(ReconnectPolicyError::UnpacedUnlimitedRetry)
+        );
+    }
+
+    #[test]
+    fn validate_refuses_zero_exponential_max_with_unlimited_attempts() {
+        let p = policy(
+            None,
+            BackoffStrategy::Exponential {
+                base: Duration::from_millis(100),
+                max: Duration::ZERO,
             },
         );
         assert_eq!(

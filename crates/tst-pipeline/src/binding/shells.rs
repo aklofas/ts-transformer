@@ -292,7 +292,7 @@ mod tests {
             factory,
             ReconnectPolicy::default(),
         )
-        .expect("a default policy validates");
+        .expect("the policy validates");
         let owned = Owned::new(
             ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default()),
             cancel(),

@@ -93,7 +93,7 @@ fn managed_demux_receiver_flushes_final_video_au_on_cancel() {
         cancel: Arc::clone(&cancel_cell),
     };
     let managed = ManagedRecvTransport::new(source, never_reconnect(), fast_policy(Some(5)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
     let end_reason = rx.end_reason_handle();
     *cancel_cell.lock().unwrap() = rx.cancel_handle();
@@ -154,7 +154,7 @@ fn managed_demux_receiver_byte_sink_sees_every_packet() {
         cancel: Arc::new(Mutex::new(None)),
     };
     let managed = ManagedRecvTransport::new(source, never_reconnect(), fast_policy(Some(0)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
 
     let seen = Arc::new(AtomicUsize::new(0));

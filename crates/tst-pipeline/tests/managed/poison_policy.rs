@@ -102,7 +102,7 @@ fn cancel_during_active_recv_returns_explicit_close() {
     });
 
     let mut managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(5)))
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let cancel_handle = managed
         .cancel_handle()
         .expect("cancel_handle returned None");
@@ -140,7 +140,7 @@ fn peer_eos_returns_closed_not_explicit_close() {
         factory,
         fast_policy(Some(2)),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     let mut buf = [0u8; 1316];
     let result = managed.recv_bytes(&mut buf);
     // After 2 attempts the budget is exhausted; returns Closed (not ExplicitClose).
@@ -179,7 +179,7 @@ fn poisoned_inner_lock_returns_broken_not_panic() {
     let factory = || Ok(OkTransport);
     let managed = Arc::new(
         ManagedTransport::new(OkTransport, factory, fast_policy(Some(2)))
-            .expect("a default policy validates"),
+            .expect("the policy validates"),
     );
 
     use std::sync::Mutex;
@@ -274,7 +274,7 @@ fn successful_reconnect_does_not_deadlock() {
         factory,
         fast_policy(Some(3)),
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
 
     // First send: fails with Broken, triggers reconnect, fresh transport
     // installs successfully via reconnect_and_drain. If transport_guard is

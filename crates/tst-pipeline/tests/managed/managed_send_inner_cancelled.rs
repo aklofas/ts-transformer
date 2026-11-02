@@ -118,7 +118,7 @@ fn rig(
         delivered: Arc::clone(&delivered),
     };
     let managed =
-        ManagedTransport::new(initial, factory, policy(mode)).expect("a default policy validates");
+        ManagedTransport::new(initial, factory, policy(mode)).expect("the policy validates");
     let stats = managed.stats_handle();
     Rig {
         managed,

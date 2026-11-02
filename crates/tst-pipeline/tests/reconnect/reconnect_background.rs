@@ -105,7 +105,7 @@ fn background_send_never_blocks_during_outage() {
     // half of it and needs no scaling.
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_secs(60)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     for i in 0..20u8 {
         let t0 = Instant::now();
         managed
@@ -127,7 +127,7 @@ fn background_reconnect_drains_fifo_then_resumes_direct() {
     rig.push_outcome(SendStep::Broken); // msg 1: breaks the inner (msg 1 must be queued, not lost)
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(20)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(2), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
 
     managed.send_bytes(&[0]).unwrap();
     managed.send_bytes(&[1]).unwrap(); // break -> enqueued, worker spawned
@@ -156,7 +156,7 @@ fn background_dropoldest_evicts_and_counts_deterministically() {
     let mut policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(200)));
     policy.gap_buffer_capacity = 2;
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(3), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let stats = managed.stats_handle();
 
     for i in 0..6u8 {
@@ -209,8 +209,8 @@ fn background_worker_panic_recovers_via_abnormal_give_up() {
         ))
     };
 
-    let mut managed = ManagedTransport::new(rig.transport(), factory, policy)
-        .expect("a default policy validates");
+    let mut managed =
+        ManagedTransport::new(rig.transport(), factory, policy).expect("the policy validates");
     let stats = managed.stats_handle();
 
     managed.send_bytes(&[0]).unwrap(); // breaks the inner; enqueued; worker spawns and panics
@@ -269,7 +269,7 @@ fn flap_cycles_never_wedge_or_hang() {
     // so each cycle is a fast break -> queue -> reconnect -> drain -> empty
     // flap.
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(0), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let stats = managed.stats_handle();
 
     // u32 index encoding: each message's payload is its 4-byte LE global
@@ -349,7 +349,7 @@ fn flap_cycles_never_wedge_or_hang() {
     let rig2 = Rig::new();
     let policy2 = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(300)));
     let mut managed2 = ManagedTransport::new(rig2.transport(), rig2.factory(3), policy2)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let stats2 = managed2.stats_handle();
 
     let mut next_idx2: u32 = 0;
@@ -415,7 +415,7 @@ fn background_give_up_reports_broken_once_then_restarts_budget() {
         BackoffStrategy::Constant(Duration::from_millis(10)),
     );
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let stats = managed.stats_handle();
 
     managed.send_bytes(&[0]).unwrap(); // break -> worker starts, 2 attempts, gives up
@@ -459,7 +459,7 @@ fn background_none_budget_never_gives_up() {
     rig.push_outcome(SendStep::Broken);
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(5)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let stats = managed.stats_handle();
     managed.send_bytes(&[0]).unwrap();
     wait_until(Duration::from_secs(10), || {
@@ -481,7 +481,7 @@ fn close_joins_worker_promptly_mid_backoff() {
     // 30s bound; the interruptible wait makes close return in milliseconds.
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_secs(60)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     managed.send_bytes(&[0]).unwrap(); // worker parks in the 60s wait
     let t0 = Instant::now();
     managed.close();
@@ -503,7 +503,7 @@ fn drop_detaches_without_blocking_and_worker_quiesces() {
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(5)));
     let calls = Arc::clone(&rig.factory_calls);
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     managed.send_bytes(&[0]).unwrap();
     wait_until(Duration::from_secs(10), || {
         calls.load(Ordering::SeqCst) >= 2
@@ -534,7 +534,7 @@ fn cancel_handle_stops_background_worker() {
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(5)));
     let calls = Arc::clone(&rig.factory_calls);
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     let cancel = managed
         .cancel_handle()
         .expect("managed always has a handle");
@@ -562,7 +562,7 @@ fn drain_backpressure_retries_same_message_without_loss() {
     rig.push_outcome(SendStep::Backpressure);
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(0), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     managed.send_bytes(&[0]).unwrap();
     managed.send_bytes(&[1]).unwrap();
     // ...then the script runs dry (=> Ok): the worker's 20ms retry loop
@@ -580,7 +580,7 @@ fn drain_break_resumes_reconnect_with_front_message_retained() {
     rig.push_outcome(SendStep::Broken); // ...and breaks on msg 1 mid-drain
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(10)));
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(0), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     managed.send_bytes(&[0]).unwrap();
     managed.send_bytes(&[1]).unwrap();
     managed.send_bytes(&[2]).unwrap();
@@ -604,7 +604,7 @@ fn background_reject_full_returns_backpressure_immediately() {
         mode: ReconnectMode::Background,
     };
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     managed.send_bytes(&[0]).unwrap(); // break -> queued (gap: [0])
     managed.send_bytes(&[1]).unwrap(); // gate -> gap: [0,1] == capacity
     let t0 = Instant::now();
@@ -636,7 +636,7 @@ fn oversized_after_ceiling_shrink_drops_and_counts_instead_of_wedging() {
         rig.factory_with_payload(0, 4),
         policy,
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     managed.send_bytes(&[9; 100]).unwrap(); // breaks -> 100-byte msg queued
     managed.send_bytes(&[1, 2, 3]).unwrap(); // small follower
     wait_until(Duration::from_secs(10), || {
@@ -784,8 +784,7 @@ fn gated_rig(policy: ReconnectPolicy) -> GatedRig {
         breaks: true,
         alive: true,
     };
-    let managed =
-        ManagedTransport::new(initial, factory, policy).expect("a default policy validates");
+    let managed = ManagedTransport::new(initial, factory, policy).expect("the policy validates");
     GatedRig {
         managed,
         gate,
@@ -978,7 +977,7 @@ fn size_pre_check_follows_the_published_ceiling_across_a_rebuild() {
         rig.factory_with_payload(0, 100),
         policy,
     )
-    .expect("a default policy validates");
+    .expect("the policy validates");
     let stats = managed.stats_handle();
 
     match managed.send_bytes(&[0u8; 9]).unwrap_err() {
@@ -1018,7 +1017,7 @@ fn stress_pump_vs_flapping_sink_delivery_is_fifo_subsequence() {
         mode: ReconnectMode::Background,
     };
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(0), policy)
-        .expect("a default policy validates");
+        .expect("the policy validates");
     // 2000 sends, a scripted break every 40th — breaks land on direct
     // sends AND drain sends (whichever pops the script next), exercising
     // both fault paths under pump/worker interleaving.
@@ -1065,8 +1064,8 @@ fn background_worker_thread_is_named_tst_reconnect() {
         Err(broken("factory down"))
     };
     let policy = bg_policy(None, BackoffStrategy::Constant(Duration::from_millis(20)));
-    let mut managed = ManagedTransport::new(rig.transport(), factory, policy)
-        .expect("a default policy validates");
+    let mut managed =
+        ManagedTransport::new(rig.transport(), factory, policy).expect("the policy validates");
     managed.send_bytes(&[0]).unwrap();
     let name = name_rx
         .recv_timeout(Duration::from_secs(10))
