@@ -400,7 +400,7 @@ fn tls_cert_pem_starts_an_rtsps_server() {
 #[test]
 fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
     use crate::fixtures::raw_rtsp::{request, session_id};
-    use crate::fixtures::wait_for;
+    use crate::fixtures::{wait_for, wait_for_parked_fanout};
     use std::time::{Duration, Instant};
     let certs = SelfSignedCert::generate();
     let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").expect("URL parse");
@@ -419,7 +419,12 @@ fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
         .with_no_client_auth();
     let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
     let conn = rustls::ClientConnection::new(std::sync::Arc::new(config), name).unwrap();
-    let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let tcp = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+    // Before connect, so the window the peer advertises stays small.
+    tcp.set_recv_buffer_size(64 * 1024).unwrap();
+    tcp.connect(&std::net::SocketAddr::from(([127, 0, 0, 1], port)).into())
+        .unwrap();
+    let tcp: std::net::TcpStream = tcp.into();
     tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     tcp.set_write_timeout(Some(scaled(Duration::from_secs(5))))
@@ -441,9 +446,9 @@ fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
     assert!(play.contains("200 OK"), "PLAY: {play}");
 
     // From here the peer never reads. Far more bytes than the loopback
-    // socket buffers hold park the fanout's write with ciphertext pending
-    // (a dropped frame would only say the fanout fell behind, not that the
-    // socket is full).
+    // socket buffers hold park the fanout's write with ciphertext pending;
+    // the write probe below proves it, since the broadcast drops whatever a
+    // lagging fanout has not read and pushed bytes alone prove nothing.
     const STALL_BYTES: u64 = 32 * 1024 * 1024;
     let mut nal = vec![0xBB; 32 * 1024];
     nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
@@ -459,13 +464,10 @@ fn stop_ends_an_rtsps_session_whose_peer_stopped_reading() {
             .expect("push must not fail on a stalled peer");
         i += 1;
     }
-    let stats = mount.stats();
-    assert_eq!(stats.peer_count, 1, "the peer is not subscribed");
-    assert!(
-        stats.bytes_pushed >= STALL_BYTES,
-        "pushed only {} bytes, too few to fill the peer's socket",
-        stats.bytes_pushed
-    );
+    assert_eq!(mount.stats().peer_count, 1, "the peer is not subscribed");
+    // A TLS frame write finishes only once its ciphertext is flushed, so a
+    // parked write means ciphertext pending on the full socket.
+    wait_for_parked_fanout(&server, scaled(Duration::from_secs(10)));
     server.stop().unwrap();
     wait_for(scaled(Duration::from_secs(6)), || {
         (server.stats().active_sessions == 0).then_some(())

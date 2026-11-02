@@ -891,6 +891,7 @@ pub(crate) fn handle_play(
             crate::rtsp::server::fanout::PeerTransport::Interleaved {
                 writer,
                 rtp_channel: channels.0,
+                probe: state.interleaved_writes.clone(),
             }
         }
         // The multicast mount returned above.
@@ -1097,6 +1098,7 @@ mod tests {
             total_rtp_packets_sent: AtomicU64::new(0),
             total_rtp_bytes_sent: AtomicU64::new(0),
             publish_counters: Default::default(),
+            interleaved_writes: Default::default(),
             started: AtomicBool::new(true),
             shutdown: AtomicBool::new(false),
             local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
@@ -1183,6 +1185,7 @@ mod tests {
             total_rtp_packets_sent: AtomicU64::new(0),
             total_rtp_bytes_sent: AtomicU64::new(0),
             publish_counters: Default::default(),
+            interleaved_writes: Default::default(),
             started: AtomicBool::new(true),
             shutdown: AtomicBool::new(false),
             local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
@@ -1219,6 +1222,7 @@ mod tests {
             total_rtp_packets_sent: AtomicU64::new(0),
             total_rtp_bytes_sent: AtomicU64::new(0),
             publish_counters: Default::default(),
+            interleaved_writes: Default::default(),
             started: AtomicBool::new(true),
             shutdown: AtomicBool::new(false),
             local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),

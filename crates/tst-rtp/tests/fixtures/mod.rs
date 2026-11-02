@@ -29,3 +29,26 @@ pub fn wait_for<T>(budget: Duration, mut f: impl FnMut() -> Option<T>) -> T {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// Wait until a fanout is parked on a peer that stopped reading: one
+/// TCP-interleaved frame write holds its session's writer lock and no
+/// frame write has finished for 300 ms (see
+/// `RtspServer::interleaved_write_probe`). A running fanout finishes a
+/// frame every few microseconds, and a parked one never does again while
+/// its peer keeps not reading, so the wait cannot pass early on a slow
+/// runner, only take longer. Panics after `budget`.
+#[cfg(feature = "rtsp-server")]
+pub fn wait_for_parked_fanout(server: &tst_rtp::RtspServer, budget: Duration) {
+    let quiet = Duration::from_millis(300);
+    let mut last = server.interleaved_write_probe();
+    let mut since = Instant::now();
+    wait_for(budget, || {
+        let now = server.interleaved_write_probe();
+        if now.0 == 0 || now.1 != last.1 {
+            last = now;
+            since = Instant::now();
+            return None;
+        }
+        (since.elapsed() >= quiet).then_some(())
+    });
+}
