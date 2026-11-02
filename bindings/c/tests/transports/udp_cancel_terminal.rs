@@ -8,6 +8,8 @@
 
 use std::ffi::CString;
 use std::net::UdpSocket;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
@@ -21,7 +23,7 @@ use tstrans::udp::{
     tst_udp_sender_open, tst_udp_sender_send_ts,
 };
 
-use crate::common::last_error_msg;
+use crate::common::{last_error_msg, scaled};
 use crate::udp_close_cancels_first::ts_null_packet;
 
 /// Bind :0, read the port, drop: the C receiver handle has no local-port
@@ -47,9 +49,24 @@ fn udp_receiver_cancel_then_recv_returns_closed_not_buffered_packets() {
     let s = UdpSocket::bind("127.0.0.1:0").unwrap();
     s.send_to(&burst, ("127.0.0.1", port)).unwrap();
 
+    // `udp://` has no `recv_timeout` key, so a lost datagram would park the
+    // first receive until the test runner kills the binary. The watchdog
+    // cancels the receiver instead, which fails the assertion below.
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+    let rx_addr = rx as usize;
+    let watchdog = std::thread::spawn(move || {
+        if done_rx
+            .recv_timeout(scaled(Duration::from_secs(5)))
+            .is_err()
+        {
+            unsafe { tst_udp_receiver_cancel(rx_addr as *mut _) };
+        }
+    });
     let mut buf = vec![0u8; 188];
     let mut n = 0usize;
     let rc_first = unsafe { tst_udp_receiver_recv_ts(rx, buf.as_mut_ptr(), buf.len(), &mut n) };
+    let _ = done_tx.send(());
+    watchdog.join().unwrap();
     assert_eq!(rc_first, 0, "first recv: {}", last_error_msg());
     assert_eq!(n, 188);
 
