@@ -435,3 +435,61 @@ fn a_klv_source_restart_under_provisional_alignment_stays_on_the_video_line() {
     assert_eq!(p.teardown("/pub"), 200);
     server.stop().ok();
 }
+
+/// A graceful `stop()` while the adapter still holds KLV units (no sender
+/// reports, publisher still inside the fallback window): the publisher
+/// session's flush places them, and they reach the application transport
+/// before it reads `Closed`, not just the mount's counters.
+#[test]
+fn held_klv_reaches_the_app_on_graceful_stop() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_publish_mount("/pub").unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut app_t = mount.clone().into_recv_transport().unwrap();
+    // Quiet detector, deliberately unscaled (same as above).
+    app_t.set_recv_timeout(Some(Duration::from_secs(2)));
+    let mut app = DemuxReceiver::new(app_t);
+
+    let (mut p, (v_rtp, _), (k_rtp, _)) = two_track_publisher(port);
+    let video_packets = h264_rtp_packets(AUS, VIDEO_PT, 7, VIDEO_SSRC, VIDEO_TS0);
+    for pkt in &video_packets {
+        p.send_frame(v_rtp, pkt);
+    }
+    let units: Vec<Vec<u8>> = (0..3).map(klv_unit).collect();
+    for (j, unit) in units.iter().enumerate() {
+        let j = j as u32;
+        p.send_frame(
+            k_rtp,
+            &klv_rtp_packet(
+                900 + j as u16,
+                KLV_TS0 + j * KLV_STEP,
+                KLV_SSRC,
+                KLV_PT,
+                unit,
+            ),
+        );
+    }
+    let s = stats_when(&mount, scaled(Duration::from_secs(5)), |s| {
+        s.rtp_packets_received == video_packets.len() as u64 + 3
+    });
+    assert_eq!(s.rtp_packets_received, video_packets.len() as u64 + 3);
+    assert_eq!(s.klv_units_emitted, 0, "KLV must be held without reports");
+
+    server.stop().unwrap();
+
+    let events = demux_until_quiet(
+        &mut app,
+        Instant::now() + scaled(Duration::from_secs(20)),
+        "app",
+    );
+    let s = mount.stats();
+    assert_eq!(s.klv_units_emitted, 3, "the flush placed every held unit");
+    assert_eq!(s.frames_dropped_app, 0);
+    let klv = klv_events(&events);
+    assert_eq!(
+        klv.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>(),
+        units,
+        "every flushed KLV unit reaches the application"
+    );
+}

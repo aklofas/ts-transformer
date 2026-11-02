@@ -151,12 +151,21 @@ impl ServerState {
     /// is set before the mounts snapshot, so a registration re-checking it
     /// under the mounts lock cannot insert a mount the snapshot missed.
     pub(crate) fn shut_down(&self) {
+        self.refuse_publish_work();
+        self.close_publish_mounts();
+    }
+
+    /// The first half of [`Self::shut_down`]: close the on-demand queue,
+    /// set `shutdown` and close the rules table, but leave every publish
+    /// mount's application transport open. Graceful `stop()` runs this,
+    /// lets publisher sessions flush their adapters into those transports,
+    /// then closes them. Idempotent.
+    pub(crate) fn refuse_publish_work(&self) {
         self.publish_queue_tx
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take();
         self.shutdown.store(true, Ordering::Release);
-        self.close_publish_mounts();
         // A `MountRules` clone outlives the server; its edits are refused.
         self.mount_rules.close();
     }
@@ -165,7 +174,7 @@ impl ServerState {
     /// mounts lock, release it, then close each (synchronous, never
     /// blocks). A parked or later `recv_bytes` on a mount's application
     /// transport then reads `Closed`.
-    fn close_publish_mounts(&self) {
+    pub(crate) fn close_publish_mounts(&self) {
         let publish_mounts: Vec<_> = self
             .mounts
             .lock()
@@ -1091,13 +1100,16 @@ impl RtspServer {
     /// for the ANNOUNCE write — there's no `Session:` value to put on
     /// the wire — and proceed straight to per-session cancel.
     ///
-    /// Publisher sessions are treated like readers (notice, cancel).
-    /// Every publish mount's application transport (see
+    /// Publisher sessions are treated like readers (notice, cancel). A
+    /// [`Self::next_publisher`] call waiting on another thread wakes with
+    /// [`RtspServerError::Shutdown`] at once, and an ANNOUNCE that would
+    /// create an on-demand mount answers `503`. Once the sessions have
+    /// ended (or the drain window has passed), every publish mount's
+    /// application transport (see
     /// [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
-    /// is then ended: a parked or later `recv_bytes` on it returns
-    /// `TransportError::Closed`. A [`Self::next_publisher`] call waiting
-    /// on another thread wakes with [`RtspServerError::Shutdown`], and an
-    /// ANNOUNCE that would create an on-demand mount answers `503`.
+    /// is ended: it first delivers what each publisher session flushed on
+    /// its way out, then a parked or later `recv_bytes` on it returns
+    /// `TransportError::Closed`.
     ///
     /// Blocks the calling thread on the server's runtime, drain included:
     /// never call it from inside a tokio runtime (see [`RtspServer`]).
@@ -1121,11 +1133,12 @@ impl RtspServer {
         if self.state.shutdown.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        // The publish side ends first: a parked `next_publisher` wakes with
-        // `Shutdown`, every publish mount's application transport reads
-        // `Closed` (idempotent with the publisher session's own
-        // `end_publisher` on its way out), and rule edits are refused.
-        self.state.shut_down();
+        // New publish work is refused first: a parked `next_publisher` wakes
+        // with `Shutdown`, an on-demand ANNOUNCE answers 503, and rule edits
+        // are refused. The application transports stay open until the
+        // sessions have drained (below), so a publisher session's final
+        // adapter flush still reaches them.
+        self.state.refuse_publish_work();
         // Snapshot the active session list. Iterate + send Notice 5402
         // ANNOUNCE + cancel each. The per-session task is responsible
         // for flushing any in-flight RTP + closing the TCP cleanly
@@ -1153,6 +1166,10 @@ impl RtspServer {
                 let _ = tokio::time::timeout(bound, ended.wait_for(|done| *done)).await;
             });
         }
+        // Every publish mount's application transport now reads `Closed`.
+        // A publisher session that outlived the drain loses what it flushes
+        // later; the drain bound keeps `stop()` bounded.
+        self.state.close_publish_mounts();
         // Explicitly shutdown each per-session TCP write half so peers
         // see FIN immediately instead of relying on Arc-drop. Without
         // this, lingering `SessionWriter` clones (held
