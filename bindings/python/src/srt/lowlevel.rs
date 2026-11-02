@@ -464,7 +464,7 @@ impl PyBuilder {
 /// Held by reference until consumed via `into_sender()` /
 /// `into_receiver()` (each consumes the handle; the underlying
 /// `tst_srt::SrtSocket` moves into the new wrapper). `close()` is a manual
-/// teardown; the destructor closes too.
+/// teardown; a `Socket` collected without it closes with the GIL released.
 #[pyclass(name = "Socket", module = "tstrans.srt")]
 pub(crate) struct PySocket {
     /// `&self` everywhere (cross-thread `close()` / getters never trip
@@ -474,6 +474,17 @@ pub(crate) struct PySocket {
     /// only after the guard is already dropped). `Option` so the `into_*`
     /// promotions and `close()` can take the handle.
     inner: Mutex<Option<SrtSocket>>,
+}
+
+/// A `Socket` collected without `close()`: the same close, with the GIL
+/// released (`srt_close` can wait out the linger).
+impl Drop for PySocket {
+    fn drop(&mut self) {
+        let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(socket) = taken {
+            crate::util::drop_blocking(move || socket.close());
+        }
+    }
 }
 
 impl PySocket {

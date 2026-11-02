@@ -15,6 +15,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-py (BREAKING)
 
+- An `hls.MuxPublisher` collected without `finish_into_publisher()` no longer re-offers bytes a failed push retained and writes no closing cut: the implicit drop is abortive; `finish_into_publisher()` then `finish()` is the graceful path. A collector-driven retry against the file system, with the interpreter stalled, was never a dependable way to deliver a segment.
 - `EncryptionKey.aes128`, `aes192` and `aes256` raise `ValueError` for a `bytes` secret that is not valid UTF-8. The secret was converted lossily, so distinct byte secrets collided on the same key and the derived key differed from a peer that used the raw bytes. A `str` secret and a UTF-8 `bytes` secret behave as before.
 
 ### Security — tst-srt, tstrans-srt-sys
@@ -180,7 +181,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-py
 
 - At interpreter exit the RTSP server is hard-cancelled with the other shells, so a daemon thread parked in `RtspServer.next_publisher(None)` ends and an earlier-registered `atexit` handler that joins it no longer hangs the exit.
-- A Python shell object dropped without `close()` now cancels its transport first and closes with the GIL released, so a lost peer can no longer hold the drop in a reconnect loop with the interpreter stalled. This covers every shell and transport class (the udp/tcp/rtp/rist transports, `TcpListener`, the SRT `Listener`, the shells, `H264Receiver`). (C's `tst_*_close` and the JVM's `close()` already cancel first.)
+- A Python shell object dropped without `close()` now cancels its transport first and closes with the GIL released, so a lost peer can no longer hold the drop in a reconnect loop with the interpreter stalled. This covers every shell and transport class (the udp/tcp/rtp/rist transports, `TcpListener`, the SRT `Listener`, the shells, `H264Receiver`) and the native-owning `srt.Socket`, `rtp.RtspServer`, `rtp.RtspSession`, `webrtc.WhepServer` and `hls.MuxPublisher`, whose teardown (an SRT linger, a TEARDOWN with joins, a server drain, WHEP thread joins) ran with the GIL held when the object was collected. (C's `tst_*_close` and the JVM's `close()` already cancel first.)
 - Python: `CancelHandle.cancel()` and the raw `udp` builders release the GIL (an SRT close with linger, a hostname lookup).
 - Python: a refused mux/demux config passed to `Socket.into_mux_sender`/`into_demux_receiver`, `RtspSession.into_demux_receiver` or `MuxPublisher.with_config_hls` leaves the source handle usable.
 - Python: the interpreter-exit hook reaches a `ManagedReceiver`/`ManagedDemuxReceiver` first accept, and a shell opened after the hook ran (for example in an `atexit` handler) is born cancelled, so it cannot park.

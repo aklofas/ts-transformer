@@ -223,7 +223,7 @@ class WhepServer:
     closes this object, after which every method raises
     ``WebrtcError(CLOSED)``; the native server is freed when the last
     reference goes. Dropping the last reference also stops the server
-    (bounded, the GIL held), so use ``with`` (exit = close) or call
+    (bounded, the GIL released), so use ``with`` (exit = close) or call
     ``close()``. A ``MountHandle`` does not keep its server alive.
     """
 

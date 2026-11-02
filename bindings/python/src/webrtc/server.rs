@@ -32,12 +32,23 @@ use super::{closed, int_in_range, webrtc_err};
 ///
 /// `close()` stops the server and closes this object. The native server is
 /// freed when the last reference goes, and dropping the last reference
-/// also stops it (bounded, the GIL held), so use `with` or call `close()`.
+/// also stops it (bounded, the GIL released), so use `with` or call `close()`.
 /// A `MountHandle` does not keep its server alive.
 #[pyclass(name = "WhepServer", module = "tstrans.webrtc", frozen)]
 pub struct PyWhepServer {
     inner: Arc<WhepServer>,
     closed: AtomicBool,
+}
+
+/// A server collected without `close()` stops with the GIL released; the
+/// field's `Arc` drop then finds the threads already joined.
+impl Drop for PyWhepServer {
+    fn drop(&mut self) {
+        if !self.closed.swap(true, Ordering::AcqRel) {
+            let server = Arc::clone(&self.inner);
+            crate::util::drop_blocking(move || server.stop());
+        }
+    }
 }
 
 impl PyWhepServer {

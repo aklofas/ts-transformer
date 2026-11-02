@@ -113,3 +113,30 @@ pub(crate) fn slow_cancel_handle_for_test(delay_ms: u64) -> PyCancelHandle {
     });
     PyCancelHandle::from_source(&cancel_source(&inner))
 }
+
+/// A class whose implicit drop takes `delay`, like a native teardown
+/// waiting out a linger or a join. Test-only.
+#[cfg(feature = "py-test-hooks")]
+#[pyclass(name = "_SlowDropForTest", module = "tstrans.shells")]
+pub(crate) struct PySlowDropForTest {
+    delay: std::time::Duration,
+}
+
+#[cfg(feature = "py-test-hooks")]
+impl Drop for PySlowDropForTest {
+    fn drop(&mut self) {
+        let delay = self.delay;
+        crate::util::drop_blocking(|| std::thread::sleep(delay));
+    }
+}
+
+/// `_slow_drop_for_test(delay_ms)` -> an object whose implicit drop
+/// blocks for `delay_ms`.
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+#[pyo3(name = "_slow_drop_for_test")]
+pub(crate) fn slow_drop_for_test(delay_ms: u64) -> PySlowDropForTest {
+    PySlowDropForTest {
+        delay: std::time::Duration::from_millis(delay_ms),
+    }
+}

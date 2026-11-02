@@ -756,6 +756,25 @@ pub struct PyRtspSession {
     h264_depay_config: Arc<Mutex<Option<H264DepayConfig>>>,
 }
 
+/// A session collected without `teardown()`: the client's own drop sends a
+/// best-effort TEARDOWN and joins its threads, with the GIL released.
+impl Drop for PyRtspSession {
+    fn drop(&mut self) {
+        let client = self.client.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if client.is_some() || session.is_some() {
+            crate::util::drop_blocking(move || {
+                drop(client);
+                drop(session);
+            });
+        }
+    }
+}
+
 #[pymethods]
 impl PyRtspSession {
     /// Send PAUSE. Server stops emitting RTP; session remains valid

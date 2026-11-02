@@ -358,6 +358,9 @@ class RtspSession:
     consumed (by either method) raises `RtspError(CLOSED)`. Both directions
     are guarded — calling the wrong method on a fresh session raises
     `RtspError(PROTOCOL)` and leaves the data plane in place.
+
+    A session collected without `teardown()` sends a best-effort TEARDOWN
+    (500 ms bound) and joins its threads with the GIL released.
     """
 
     def pause(self) -> None: ...
@@ -732,6 +735,9 @@ class RtspServer:
     for the server's lifetime; `__exit__` (or explicit `.stop()`) sends
     an RFC 7826 §13.5.1 Notice 5402 ("Server-Initiated TEARDOWN") to
     each active session before closing.
+
+    A server collected without `stop()` is stopped with the GIL released
+    (the collecting thread waits the drain window).
     """
 
     @staticmethod

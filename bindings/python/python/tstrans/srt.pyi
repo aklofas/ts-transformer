@@ -194,7 +194,9 @@ class Socket:
     — each consumes the handle; the underlying `tst_srt::Socket` moves
     into the new wrapper.
 
-    `close()` is a manual teardown; the destructor closes too.
+    `close()` is a manual teardown; a `Socket` collected without `close()`
+    closes with the GIL released; the collecting thread waits for libsrt's
+    close (up to the linger), other threads keep running.
     """
 
     def into_sender(self) -> Sender: ...
