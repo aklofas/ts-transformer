@@ -1975,6 +1975,14 @@ mod tests {
                     .any(|i| matches!(i, NonConformantIssue::MalformedPes { pid: 0x101, .. })),
                 "c_len {c_len}: B's parse error is still reported: {ev:?}"
             );
+            assert!(
+                ev.iter().any(|e| matches!(
+                    e,
+                    DemuxEvent::Sample { stream, pts, .. }
+                        if stream.pid == 0x101 && *pts == Pts90khz::new(1_000)
+                )),
+                "c_len {c_len}: C is delivered: {ev:?}"
+            );
             let (r, _) = run(StrictMode::TimingOnly, c_len);
             assert!(
                 r.is_ok(),
