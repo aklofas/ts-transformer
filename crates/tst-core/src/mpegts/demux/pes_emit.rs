@@ -556,7 +556,8 @@ impl super::demuxer::Demuxer {
     ///     carry is held tentatively. The next PES confirms it when a
     ///     syncword (or a lone first header byte) sits where the record
     ///     ends, and the carry is then enforced like any other; otherwise
-    ///     the candidate was false and is dropped without an issue.
+    ///     the candidate was false and is dropped without an issue, and that
+    ///     PES is resynced as one whose position is unknown.
     ///   - No candidate: the payload counts towards the unsynced bytes. A
     ///     LOAS stream starts a record within every `MAX_LOAS_RECORD_BYTES`
     ///     (`3 + 0x1FFF`) window and a record start is always a candidate,
@@ -574,7 +575,9 @@ impl super::demuxer::Demuxer {
         let state = self.pid_state_mut(pes.pid);
         let len = pes.payload.len();
         let tentative = core::mem::take(&mut state.latm_carry_tentative);
-        let start = match state.latm_carry.take() {
+        // The record boundary this PES is walked from, when the carry
+        // knows it.
+        let known = match state.latm_carry.take() {
             _ if damaged => return false,
             Some(carry) => match carry.resolve(&pes.payload) {
                 Ok(LoasCarry::Body(n)) if len <= n => {
@@ -582,20 +585,26 @@ impl super::demuxer::Demuxer {
                     state.latm_carry_tentative = tentative;
                     return false;
                 }
-                // The candidate's record ends here without a syncword: it
-                // was false. Dropped silently; this PES is not re-examined.
+                // The candidate's record ends here without a syncword, or
+                // its header completes without one: it was false. Dropped
+                // silently, and this PES is resynced like one whose
+                // position is unknown.
                 Ok(LoasCarry::Body(n)) if tentative && !opens_loas_header(&pes.payload[n..]) => {
-                    return false;
+                    None
                 }
-                Ok(LoasCarry::Body(n)) => n,
+                Ok(LoasCarry::Body(n)) => Some(n),
                 Ok(header) => {
                     state.latm_carry = Some(header);
                     state.latm_carry_tentative = tentative;
                     return false;
                 }
-                Err(_) if tentative => return false,
+                Err(_) if tentative => None,
                 Err(kind) => return self.raise_latm_framing(pes.pid, kind, stream),
             },
+            None => None,
+        };
+        let start = match known {
+            Some(n) => n,
             None if pes.data_alignment_indicator || starts_with_loas_sync(&pes.payload) => 0,
             None => match resync_loas(&pes.payload) {
                 LoasResync::Confirmed(carry) => {
@@ -2537,6 +2546,40 @@ mod tests {
         assert!(r.is_ok(), "{r:?}");
         assert!(!latm_framing_on_0x101(&ev), "{ev:?}");
         assert_eq!(sample_count(&ev, 0x101), 1, "{ev:?}");
+    }
+
+    /// A tentative candidate is refuted by the next PES, either where its
+    /// record ends (a `Body` carry) or as its header completes (a `Header`
+    /// carry). That PES is resynced: its own record is found, so the carry
+    /// it leaves covers the PES after it, and the 8 000 candidate-free bytes
+    /// counted before the false candidate do not reach the
+    /// `MissingSyncword` threshold.
+    #[test]
+    fn a_refuted_tentative_candidate_resyncs_the_pes_that_refutes_it() {
+        // 0x56 0xE5 0x00: a 1283-byte record from offset 50, past the PES.
+        let mut body_false = vec![0x00; 50];
+        body_false.extend_from_slice(&[0x56, 0xE5, 0x00]);
+        body_false.resize(300, 0x00);
+        // A lone 0x56 last: a header continued into the next PES.
+        let mut header_false = vec![0x00; 300];
+        header_false[299] = 0x56;
+        // No syncword where the false record ends (1033) or as the header
+        // completes; a record at 1040, then one that runs 303 bytes on.
+        let mut refuting = vec![0x00; 1040];
+        refuting.extend(loas_record(20));
+        refuting.extend_from_slice(&loas_record(400)[..100]);
+        for (name, false_pes) in [("body", body_false), ("header", header_false)] {
+            let payloads = [
+                vec![0x00; 8000],
+                false_pes,
+                refuting.clone(),
+                vec![0x00; 300],
+            ];
+            let (r, ev) = latm_full_mode_events(&payloads);
+            assert!(r.is_ok(), "{name}: {r:?}");
+            assert!(!latm_framing_on_0x101(&ev), "{name}: {ev:?}");
+            assert_eq!(sample_count(&ev, 0x101), 4, "{name}: {ev:?}");
+        }
     }
 
     /// The aggregate `pes_cap_total` drop loses the PES the same way.
