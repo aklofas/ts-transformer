@@ -34,6 +34,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-core, tst-py (BREAKING)
 
 - `MuxerConfig::from_program_map` maps an asynchronous KLV stream (`StreamKind::KlvAsync`, stream_type 0x06) to `carries_pts: false`, so its remuxed PES packets carry `PTS_DTS_flags` 00 as MISB ST 1402 (ST 1402-22) requires for the asynchronous method. Before, they carried the source PTS, which the conversion's documentation called the STANAG 4609 norm. Synchronous KLV (0x15) and data streams keep `carries_pts: true`. A caller that wants a PTS on a 0x06 stream builds the config by hand. Python `MuxerConfig.from_program_map` changes the same way.
+
 ### Changed — tst-rtp (BREAKING)
 
 - `RtspServer::cancel_handle().cancel()` is now terminal for the publish side, as `stop()` and dropping the server are: a parked or later `next_publisher` returns `Shutdown`, publish mounts' application transports read `Closed`, and mount registration, rule edits and `start()` are refused. On a server that was never started the same holds, except that publish mounts' application transports stay open until the server is dropped (the cancel is one atomic store, safe from a signal handler, and no listener runs to close them). Before, a hard cancel left the queue, the transports and the rules table live, so a `next_publisher` call waited to its timeout and a `DemuxReceiver` on a publish mount kept waiting. The C, Python and JVM server cancel handles carry the same change. Why: one terminal outcome for every shutdown path.
