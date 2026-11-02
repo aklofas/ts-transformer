@@ -1237,3 +1237,24 @@ fn rules_edited_while_clients_request_never_deadlock_or_tear() {
     drop(winner);
     server.stop().unwrap();
 }
+
+/// A hard cancel closes the rules table and refuses mount registration even
+/// on a server that was never started.
+#[test]
+fn hard_cancel_on_a_never_started_server_closes_the_rules_table() {
+    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
+        .unwrap()
+        .build()
+        .unwrap();
+    let rules = server.mount_rules();
+    server.cancel_handle().cancel();
+    assert!(rules.is_closed());
+    assert!(matches!(
+        rules.set("/a", MountRule::default()),
+        Err(MountRuleError::Closed)
+    ));
+    assert!(matches!(
+        server.add_publish_mount("/a"),
+        Err(tst_rtp::RtspServerError::Shutdown)
+    ));
+}

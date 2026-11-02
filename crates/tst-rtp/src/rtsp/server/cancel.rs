@@ -5,11 +5,14 @@
 
 /// Cancel handle for an `RtspServer`.
 ///
-/// `cancel()` is the HARD cancel — equivalent to a SIGKILL on the
-/// server's tokio Runtime tasks: the listener stops accepting new
-/// connections, per-session tasks abort at their next poll, and no
-/// RTSP TEARDOWN-style notification is sent to connected clients
-/// (clients will see TCP RST or a half-closed connection).
+/// `cancel()` is the HARD cancel. The listener observes the flag within
+/// 100 ms, stops accepting, fires the session cancel token so parked
+/// sessions end, performs the same shutdown bookkeeping as
+/// `RtspServer::stop` (a parked `next_publisher` returns `Shutdown`,
+/// publish mounts' application transports read `Closed`, registration and
+/// rule edits are refused) without the Notice 5402, and drains sessions for
+/// `graceful_shutdown_drain`. Clients see the connection close with no
+/// RTSP TEARDOWN-style notification.
 ///
 /// For graceful shutdown with session-end notification + bounded drain,
 /// use `RtspServer::stop` instead.

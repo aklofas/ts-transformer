@@ -18,6 +18,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use secrecy::SecretString;
 
+use crate::rtsp::server::RtspServerCancelHandle;
 use crate::rtsp::server::auth::Credential;
 use crate::rtsp::server::builder::AuthScheme;
 use crate::rtsp::server::validate_mount_path;
@@ -198,6 +199,9 @@ struct Inner {
     default: RwLock<MountRule>,
     challenge: RwLock<(AuthScheme, String)>,
     closed: AtomicBool,
+    /// The owning server's hard cancel: the table is closed once it fires,
+    /// even on a server whose listener never ran to close it.
+    hard_cancel: RtspServerCancelHandle,
 }
 
 /// Handle to one server's per-path rules, from
@@ -277,13 +281,18 @@ pub(crate) fn check_rule(rule: &MountRule) -> Result<(), MountRuleError> {
 }
 
 impl MountRules {
-    pub(crate) fn new(default: MountRule, challenge: (AuthScheme, String)) -> Self {
+    pub(crate) fn new(
+        default: MountRule,
+        challenge: (AuthScheme, String),
+        hard_cancel: RtspServerCancelHandle,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 rules: RwLock::new(HashMap::new()),
                 default: RwLock::new(default),
                 challenge: RwLock::new(challenge),
                 closed: AtomicBool::new(false),
+                hard_cancel,
             }),
         }
     }
@@ -386,7 +395,7 @@ impl MountRules {
 
     /// Whether the server has shut down, after which edits are refused.
     pub fn is_closed(&self) -> bool {
-        self.inner.closed.load(Ordering::Acquire)
+        self.inner.closed.load(Ordering::Acquire) || self.inner.hard_cancel.is_cancelled()
     }
 
     /// The policy for `dir` on `path`: the path's own rule, else (no rule, or
@@ -418,6 +427,7 @@ impl MountRules {
         Self::new(
             MountRule::default(),
             (AuthScheme::DigestMd5, "tstrans".to_string()),
+            RtspServerCancelHandle::new(),
         )
     }
 
@@ -439,6 +449,7 @@ mod tests {
         MountRules::new(
             MountRule::default(),
             (AuthScheme::DigestMd5, "tstrans".into()),
+            RtspServerCancelHandle::new(),
         )
     }
 

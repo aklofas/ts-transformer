@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use tst_core::transport::RecvTransport;
+use tst_core::transport::{RecvTransport, TransportError};
 use tst_rtp::{RtspServer, RtspServerBuilder, RtspServerError};
 
 use crate::fixtures::raw_rtsp::scaled;
@@ -164,4 +164,39 @@ fn stop_wakes_a_parked_next_publisher() {
             r.as_ref().err()
         );
     });
+}
+
+/// A hard cancel ends the publish side as `stop()` does: a parked
+/// `next_publisher` wakes with `Shutdown`, and so does a later call.
+#[test]
+fn hard_cancel_wakes_a_parked_next_publisher_with_shutdown() {
+    let server = on_demand_server();
+    std::thread::scope(|s| {
+        let parked = s.spawn(|| server.next_publisher(Duration::from_secs(60)));
+        std::thread::sleep(Duration::from_millis(200));
+        server.cancel_handle().cancel();
+        let r = parked.join().unwrap();
+        assert!(
+            matches!(r, Err(RtspServerError::Shutdown)),
+            "got {:?}",
+            r.as_ref().err()
+        );
+    });
+    assert!(matches!(
+        server.next_publisher(Duration::from_millis(10)),
+        Err(RtspServerError::Shutdown)
+    ));
+}
+
+/// A hard cancel ends a publish mount's application transport with `Closed`.
+#[test]
+fn hard_cancel_ends_a_publish_mounts_app_transport_with_closed() {
+    let server = on_demand_server();
+    let handle = server.add_publish_mount("/p").unwrap();
+    let mut app = handle.into_recv_transport().unwrap();
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+    server.cancel_handle().cancel();
+    let mut buf = vec![0u8; 2048];
+    let r = app.recv_bytes(&mut buf);
+    assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
 }
