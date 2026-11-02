@@ -183,6 +183,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Aggregate PES overflow reports a discontinuity for every PID it drops.
 - DVB subtitle and teletext PES envelopes are checked and reported.
 - `StrictMode::Full` checks all four reserved bits before a PMT's `program_info_length` (Table 2-33).
+- A `discontinuity_indicator` on an adaptation-field-only packet resets the PID's continuity baseline (H.222.0 §2.4.3.5), so the payload packet that follows the signalled reset is no longer reported as a `ContinuityJump` and the PES before it is no longer marked damaged.
 
 ### Fixed — tst-pipeline
 

@@ -2366,4 +2366,108 @@ mod tests {
         assert!(issues(&ev).is_empty(), "{ev:?}");
         assert_eq!(sample_count(&ev, 0x103), 1, "{ev:?}");
     }
+
+    fn adaptation_only_stream(
+        flag: bool,
+        af_cc: u8,
+        pes2_cc: u8,
+    ) -> (Vec<[u8; 188]>, impl Fn(StrictMode) -> Demuxer) {
+        let video = |mode| {
+            demuxer_with_streams(
+                DemuxerConfig::builder().strict(mode).build(),
+                0x100,
+                &[(0x02, 0x101, &[])],
+            )
+        };
+        let mut pkts = pes_to_packets(
+            0x101,
+            0,
+            &pes_bytes(0xE0, Some(90_000), None, true, &[0xAA; 600], false),
+        );
+        pkts.push(ts_packet(&PktSpec {
+            pid: 0x101,
+            cc: af_cc,
+            pusi: false,
+            discontinuity: flag,
+            rai: false,
+            pcr: None,
+            scrambling: 0,
+            payload: &[],
+        }));
+        pkts.extend(pes_to_packets(
+            0x101,
+            pes2_cc,
+            &pes_bytes(0xE0, Some(93_000), None, true, &[0xBB; 100], false),
+        ));
+        (pkts, video)
+    }
+
+    fn count_flag_and_jump(ev: &[DemuxEvent]) -> (usize, usize) {
+        let n = |want_flag: bool| {
+            ev.iter()
+                .filter(|e| match e {
+                    DemuxEvent::Discontinuity { kind, .. } => match kind {
+                        DiscontinuityKind::AdaptationFieldFlag => want_flag,
+                        DiscontinuityKind::ContinuityJump { .. } => !want_flag,
+                        _ => false,
+                    },
+                    _ => false,
+                })
+                .count()
+        };
+        (n(true), n(false))
+    }
+
+    /// Video 0x101 on a program whose PCR_PID is 0x100: unbounded PES at CC 0..3,
+    /// an adaptation-only packet with discontinuity_indicator and CC 10, then
+    /// the next PES at CC 11. H.222.0 §2.4.3.5 permits that reset. stream_type
+    /// 0x02 (MPEG-2 video) is `StreamKind::Unknown(0x02)`: a video PID whose
+    /// payload tst-core does not parse, so the 0xAA filler raises no codec issue
+    /// and the PES surfaces as `SamplePayload::Unknown`.
+    #[test]
+    fn flagged_adaptation_only_packet_resets_the_continuity_baseline() {
+        let (pkts, video) = adaptation_only_stream(true, 10, 11);
+        let mut d = video(StrictMode::Off);
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(count_flag_and_jump(&ev), (1, 0), "{ev:?}");
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::MalformedPes { .. })),
+            "{ev:?}"
+        );
+        assert_eq!(
+            ev.iter()
+                .filter(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x101))
+                .count(),
+            2,
+            "{ev:?}"
+        );
+        let mut strict = video(StrictMode::Full);
+        assert!(
+            feed_packets(&mut strict, &pkts).is_ok(),
+            "Full must not reject a permitted reset"
+        );
+    }
+
+    /// Without the flag an adaptation-only packet's counter is simply not compared
+    /// (§2.4.3.3: not incremented on such packets); the baseline stays CC 3.
+    #[test]
+    fn adaptation_only_packet_without_the_flag_leaves_the_baseline_alone() {
+        let (pkts, video) = adaptation_only_stream(false, 7, 4);
+        let mut d = video(StrictMode::Off);
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(count_flag_and_jump(&ev), (0, 0), "{ev:?}");
+        assert_eq!(
+            ev.iter()
+                .filter(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x101))
+                .count(),
+            2,
+            "{ev:?}"
+        );
+    }
 }

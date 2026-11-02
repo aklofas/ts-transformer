@@ -258,9 +258,17 @@ impl super::demuxer::Demuxer {
             return (false, false);
         }
         // Adaptation-field-only packets (afc='10') do not carry a payload and
-        // do not increment the continuity_counter — they are neither duplicates
-        // nor CC advances. Skip CC validation entirely to avoid misclassification.
+        // do not increment the continuity_counter (H.222.0 §2.4.3.3), so their
+        // counter is never compared. Their discontinuity_indicator is still
+        // honoured (§2.4.3.5): the baseline is forgotten so the next payload
+        // packet seeds a new one.
         if !pkt.has_payload {
+            if pkt.discontinuity_indicator {
+                self.pid_state_mut(pkt.pid).clear_continuity();
+                if let Some(stream) = self.lookup_stream(pkt.pid) {
+                    self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
+                }
+            }
             return (false, false);
         }
         let mut real_jump = false;
