@@ -2,6 +2,10 @@
 //! and the one-socket-read-at-a-time TLS read still delivers whole plaintext
 //! and a clean EOF on `close_notify`.
 //!
+//! Accepted-side send path: a cancel reaches a send parked in the lazy TLS
+//! server handshake; a silent peer is `Backpressure`, a peer EOF
+//! mid-handshake is `Broken`.
+//!
 //! Only compiled with the `tls` feature (the crate's default).
 
 #![cfg(feature = "tls")]
@@ -210,4 +214,153 @@ fn close_notify_is_a_clean_eof() {
         ),
         "{result:?}"
     );
+}
+
+/// Sibling of the recv test: a peer dripping handshake bytes faster than
+/// the socket tick must not hide a cancel from a parked SEND on the
+/// accepted transport (the accepted side's handshake is lazy and runs
+/// inside the first write).
+#[test]
+fn cancel_wakes_a_send_parked_on_a_dripping_tls_handshake() {
+    let (_dir, cert, key) = gen_cert();
+    let listener = tls_listener(&cert, &key);
+    let addr = listener.local_addr().expect("local_addr");
+
+    // Same raw dripping client as the recv test: a handshake record header
+    // announcing 255 bytes, then one zero byte every 50 ms.
+    let stop = Arc::new(AtomicBool::new(false));
+    let dripped = Arc::new(AtomicUsize::new(0));
+    let drip = {
+        let (stop, dripped) = (stop.clone(), dripped.clone());
+        thread::spawn(move || {
+            let mut s = TcpStream::connect(addr).expect("raw connect");
+            s.write_all(&[0x16, 0x03, 0x01, 0x00, 0xff])
+                .expect("record header");
+            let end = Instant::now() + Duration::from_secs(60);
+            while !stop.load(Ordering::Acquire) && Instant::now() < end {
+                if s.write_all(&[0x00]).is_err() {
+                    break;
+                }
+                dripped.fetch_add(1, Ordering::AcqRel);
+                thread::park_timeout(Duration::from_millis(50));
+            }
+        })
+    };
+
+    let mut conn = listener.accept_blocking().expect("server accept");
+    let h = conn.cancel_handle();
+    let about_to_send = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel();
+    let worker = {
+        let about_to_send = about_to_send.clone();
+        thread::spawn(move || {
+            about_to_send.store(true, Ordering::Release);
+            let _ = tx.send(conn.send_bytes(&[0x47; 188]));
+        })
+    };
+
+    wait_for(
+        "the worker to reach send",
+        scaled(Duration::from_secs(5)),
+        || about_to_send.load(Ordering::Acquire),
+    );
+    let base = dripped.load(Ordering::Acquire);
+    wait_for(
+        "20 more dripped bytes",
+        scaled(Duration::from_secs(10)),
+        || dripped.load(Ordering::Acquire) >= base + 20,
+    );
+    h.cancel();
+
+    let result = rx.recv_timeout(scaled(Duration::from_secs(10)));
+    stop.store(true, Ordering::Release);
+    let _ = drip.join();
+    let result = result.expect("the cancelled send must return");
+    let _ = worker.join();
+    assert!(
+        matches!(result, Err(TransportError::ExplicitClose)),
+        "{result:?}"
+    );
+}
+
+/// The normal shape: server sends first against a real rustls client. The
+/// stepped handshake completes across its flights; a tick without the
+/// client's next flight is a retryable Backpressure, never a dead latch.
+#[test]
+fn accepted_send_before_any_recv_completes_the_handshake() {
+    let (_dir, cert, key) = gen_cert();
+    let listener = tls_listener(&cert, &key);
+    let port = listener.local_addr().expect("local_addr").port();
+
+    let (handles, results) = serve_one(listener, |conn| {
+        let deadline = Instant::now() + scaled(Duration::from_secs(10));
+        loop {
+            match conn.send_bytes(&[0x47; 188]) {
+                Ok(()) => return Ok(Transport::is_alive(conn)),
+                Err(TransportError::Backpressure { .. }) if Instant::now() < deadline => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    });
+
+    let mut client = tls_caller(port, &cert);
+    let mut buf = [0u8; 1316];
+    let n = client.recv_bytes(&mut buf).expect("client recv");
+    assert_eq!(n, 188);
+    assert_eq!(&buf[..188], &[0x47; 188][..]);
+    assert!(await_result(&handles, &results).expect("server send"));
+    Transport::close(&mut client);
+}
+
+/// A peer that connects and says nothing: zero-progress Backpressure after
+/// one tick, transport alive, exactly as before this change.
+#[test]
+fn accepted_send_against_a_silent_peer_is_backpressure_and_stays_alive() {
+    let (_dir, cert, key) = gen_cert();
+    let listener = tls_listener(&cert, &key);
+    let addr = listener.local_addr().expect("local_addr");
+
+    let _silent = TcpStream::connect(addr).expect("raw connect");
+    let mut conn = listener.accept_blocking().expect("server accept");
+    let r = conn.send_bytes(&[0x47; 188]);
+    assert!(
+        matches!(r, Err(TransportError::Backpressure { .. })),
+        "{r:?}"
+    );
+    assert!(Transport::is_alive(&conn));
+}
+
+/// A peer that closes mid-handshake: Broken, dead, never ExplicitClose.
+#[test]
+fn accepted_send_peer_eof_mid_handshake_is_broken() {
+    let (_dir, cert, key) = gen_cert();
+    let listener = tls_listener(&cert, &key);
+    let addr = listener.local_addr().expect("local_addr");
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let client = {
+        let dropped = dropped.clone();
+        thread::spawn(move || {
+            let mut s = TcpStream::connect(addr).expect("raw connect");
+            s.write_all(&[0x16, 0x03, 0x01, 0x00, 0xff])
+                .expect("record header");
+            drop(s);
+            dropped.store(true, Ordering::Release);
+        })
+    };
+
+    let mut conn = listener.accept_blocking().expect("server accept");
+    wait_for(
+        "the raw client to drop its stream",
+        scaled(Duration::from_secs(5)),
+        || dropped.load(Ordering::Acquire),
+    );
+    let _ = client.join();
+    let r = conn.send_bytes(&[0x47; 188]);
+    assert!(matches!(r, Err(TransportError::Broken { .. })), "{r:?}");
+    assert!(!Transport::is_alive(&conn));
+    assert!(matches!(
+        conn.send_bytes(&[0x47; 188]),
+        Err(TransportError::Closed)
+    ));
 }

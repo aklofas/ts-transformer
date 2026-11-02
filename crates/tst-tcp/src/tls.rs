@@ -40,6 +40,18 @@ impl TlsStream {
         }
     }
 
+    /// Flush what rustls wants written, then make at most ONE `read_tls`
+    /// and process it. Errors: the poll tick (`WouldBlock`/`TimedOut`) when
+    /// nothing arrived; `UnexpectedEof` on `read_tls` == 0; `InvalidData`
+    /// wrapping the rustls error when processing fails (the queued alert is
+    /// flushed best-effort first); `Interrupted` is retried inside.
+    pub(crate) fn handshake_step(&mut self) -> io::Result<HandshakeStep> {
+        match self {
+            Self::Client(s) => handshake_step(&mut s.conn, &mut s.sock),
+            Self::Server(s) => handshake_step(&mut s.conn, &mut s.sock),
+        }
+    }
+
     /// Best-effort TLS shutdown: consume whatever the peer already sent,
     /// queue a `close_notify` alert, make one attempt to flush it, then shut
     /// the TCP socket down in both directions.
@@ -75,6 +87,62 @@ impl TlsStream {
             }
         }
     }
+}
+
+/// One step of the lazy server handshake, driven by the first send.
+pub(crate) enum HandshakeStep {
+    /// `is_handshaking()` is false: application writes may proceed.
+    Done,
+    /// Bytes were flushed or read and processed; still handshaking. The
+    /// caller re-checks its cancel and liveness flags, then steps again.
+    Progress,
+}
+
+/// One socket step of a handshake: flush, then at most one `read_tls`.
+/// `StreamOwned`'s lazy `complete_io` loops until the handshake ends, so a
+/// peer delivering a byte inside every socket tick would keep it there; one
+/// step per call lets the caller observe a cancel in between.
+fn handshake_step<C, D>(conn: &mut C, sock: &mut TcpStream) -> io::Result<HandshakeStep>
+where
+    C: std::ops::DerefMut<Target = rustls::ConnectionCommon<D>>,
+{
+    if !conn.is_handshaking() {
+        return Ok(HandshakeStep::Done);
+    }
+    let mut flushed = false;
+    while conn.wants_write() {
+        match conn.write_tls(sock) {
+            Ok(_) => flushed = true,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            // The peer is not reading: report the tick unless this step
+            // already moved bytes.
+            Err(e) if is_poll_timeout(&e) && flushed => return Ok(HandshakeStep::Progress),
+            Err(e) => return Err(e),
+        }
+    }
+    if !conn.wants_read() {
+        return Ok(HandshakeStep::Progress);
+    }
+    let n = loop {
+        match conn.read_tls(sock) {
+            Ok(n) => break n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) if is_poll_timeout(&e) && flushed => return Ok(HandshakeStep::Progress),
+            Err(e) => return Err(e),
+        }
+    };
+    if n == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "peer closed the connection during the TLS handshake",
+        ));
+    }
+    if let Err(e) = conn.process_new_packets() {
+        // Best effort: let the peer see the alert rustls queued.
+        let _ = conn.write_tls(sock);
+        return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+    }
+    Ok(HandshakeStep::Progress)
 }
 
 /// One step of a TLS read: buffered plaintext first; otherwise flush any
@@ -123,7 +191,7 @@ where
 
 /// The socket's poll interval elapsing (Linux spells it `WouldBlock`,
 /// Windows `TimedOut`).
-fn is_poll_timeout(e: &io::Error) -> bool {
+pub(crate) fn is_poll_timeout(e: &io::Error) -> bool {
     matches!(
         e.kind(),
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
@@ -249,8 +317,10 @@ fn native_roots(
 /// same pair `classify_send_error` treats as transient) both come back to
 /// the deadline check, so the budget is a wall-clock bound to within one
 /// socket-timeout tick. `EINTR` is retried. The server half stays lazy
-/// (`accept_tls`): an accept has no connect budget, and the server's
-/// handshake completes on its first I/O as before.
+/// (`accept_tls`): an accept has no connect budget. Its first send steps the
+/// handshake one socket operation at a time under the transport's cancel
+/// and liveness flags, and its first receive steps it inside
+/// `read_stepwise`.
 fn complete_client_handshake(
     conn: &mut ClientConnection,
     sock: &mut TcpStream,
@@ -327,6 +397,9 @@ pub(crate) fn tls_load_error(e: tst_core::net::tls::TlsLoadError) -> TcpError {
 }
 
 /// Accept a TLS connection (called by TcpListener::accept_blocking when tls_config is set).
+///
+/// The handshake is not run here: the returned transport's first I/O drives
+/// it, one socket step at a time, so a cancel can end it.
 pub fn accept_tls(
     socket: TcpStream,
     peer: SocketAddr,
