@@ -23,8 +23,7 @@ use tstrans::udp::{
     tst_udp_sender_flush, tst_udp_sender_open, tst_udp_sender_send_ts,
 };
 
-use crate::common::{last_error_msg, scaled};
-use crate::udp_close_cancels_first::ts_null_packet;
+use crate::common::{last_error_msg, scaled, ts_null_packet};
 
 /// Bind :0, read the port, drop: the C receiver handle has no local-port
 /// getter.

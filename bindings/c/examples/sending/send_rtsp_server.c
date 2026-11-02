@@ -249,12 +249,13 @@ int main(int argc, char **argv) {
      *   not block it.  The library spawns threads inside its calls.  Blocking
      *   the two signals here, before anything is spawned, makes every thread
      *   created before the unblock start with them blocked, so the handler
-     *   can only ever run on this thread.  A handler on this thread cannot overlap the teardown
-     *   code below: it interrupts it between instructions.  The guarantee
-     *   rests on the mask being inherited, which POSIX specifies for
-     *   pthread_create and which the library's threads (created while the
-     *   mask is blocked) therefore share.  The signals are unblocked again
-     *   once the handler is installed and the library objects exist.
+     *   can only ever run on this thread.  A handler on this thread cannot
+     *   overlap the teardown code below: it interrupts it between
+     *   instructions.  The guarantee rests on the mask being inherited,
+     *   which POSIX specifies for pthread_create and which the library's
+     *   threads (created while the mask is blocked) therefore share.  The
+     *   signals are unblocked again once the handler is installed and the
+     *   library objects exist.
      */
     sigset_t sigs;
     sigemptyset(&sigs);

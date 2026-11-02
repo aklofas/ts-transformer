@@ -298,8 +298,9 @@ int main(int argc, char **argv) {
     /*
      * ── Step 6: Close the sender ─────────────────────────────────────────
      *
-     * Flush first. The sender sends one datagram per seven-packet bundle,
-     * so 100 packets leave as 14 bundles and the last two stay buffered.
+     * Flush first. The sender bundles seven packets (RTP sends each bundle
+     * as 6+1 datagrams), so 100 packets leave as 14 bundles and the last two
+     * stay buffered.
      * tst_rtp_sender_close is cancel-first and abortive: it discards that
      * buffered tail, so tst_rtp_sender_flush must run before it for a
      * lossless end of stream. close then closes the UDP socket and frees

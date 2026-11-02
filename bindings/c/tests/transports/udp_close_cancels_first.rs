@@ -34,20 +34,12 @@ use tstrans::udp::{
     TstUdpReceiver, tst_udp_receiver_close, tst_udp_receiver_recv_ts, tst_udp_recv_open,
 };
 
+use crate::common::ts_null_packet;
+
 /// `_close` is documented callable from any thread; the raw pointer just
 /// needs to cross the thread boundary to get there.
 struct SendPtr(*mut TstUdpReceiver);
 unsafe impl Send for SendPtr {}
-
-/// One MPEG-TS null packet (PID 0x1FFF) — what the rescue burst is made of.
-pub(crate) fn ts_null_packet() -> [u8; 188] {
-    let mut p = [0xFFu8; 188];
-    p[0] = 0x47;
-    p[1] = 0x1F;
-    p[2] = 0xFF;
-    p[3] = 0x10;
-    p
-}
 
 /// Discover a free loopback port the way the Python suite does: bind :0,
 /// read the port, drop — then open the C receiver on it (the C ABI has no

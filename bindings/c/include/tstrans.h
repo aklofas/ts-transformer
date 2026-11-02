@@ -4475,9 +4475,9 @@ struct tst_managed_raw_receiver_t *tst_managed_raw_receiver_open(const char *srt
  * Explicit listener-mode open for the managed receiver. Forces
  * listener mode — the `_listener` suffix is authoritative: a host in the
  * URL names the bind address, never a dial target, and an explicit
- * `?mode=` other than `listener` is refused with `TST_E_INVALID_CONFIG`. On peer disconnect the managed
- * wrapper re-binds a fresh listener socket and accepts the next
- * incoming connection. Note: the re-bind + re-accept may block
+ * `?mode=` other than `listener` is refused with `TST_E_INVALID_CONFIG`.
+ * On peer disconnect the managed wrapper re-binds a fresh listener socket
+ * and accepts the next incoming connection. Note: the re-bind + re-accept may block
  * significantly between attempts depending on the reconnect policy;
  * `_cancel` wakes both the backoff wait and a re-accept parked with no
  * peer, so a cancel lands promptly in that window too.
@@ -4729,9 +4729,9 @@ struct tst_managed_receiver_t *tst_managed_receiver_open(const char *srt_url,
  * Explicit listener-mode open for the managed receiver. Forces
  * listener mode — the `_listener` suffix is authoritative: a host in the
  * URL names the bind address, never a dial target, and an explicit
- * `?mode=` other than `listener` is refused with `TST_E_INVALID_CONFIG`. On peer disconnect the managed
- * wrapper re-binds a fresh listener socket and accepts the next
- * incoming connection. Note: the re-bind + re-accept may block
+ * `?mode=` other than `listener` is refused with `TST_E_INVALID_CONFIG`.
+ * On peer disconnect the managed wrapper re-binds a fresh listener socket
+ * and accepts the next incoming connection. Note: the re-bind + re-accept may block
  * significantly between attempts depending on the reconnect policy;
  * `_cancel` wakes both the backoff wait and a re-accept parked with no
  * peer, so a cancel lands promptly in that window too.
@@ -6712,9 +6712,6 @@ int tst_raw_receiver_get_socket_stats(struct tst_raw_receiver_t *p,
  * Empty-host URLs like `srt://:7000` are accepted directly; the parser's
  * requirement for an explicit `?mode=listener` does not apply here because
  * the entry-point name is already the authoritative listener signal.
- *
- * Accepting (not rejecting) `mode=caller` matches what most C consumers
- * expect from a `_listener`-suffixed entry point.
  */
  struct tst_raw_receiver_t *tst_raw_receiver_open_listener(const char *srt_url);
 #endif

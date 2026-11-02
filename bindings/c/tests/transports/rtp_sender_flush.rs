@@ -16,8 +16,7 @@ use tstrans::rtp::{
     tst_rtp_sender_close, tst_rtp_sender_flush, tst_rtp_sender_open, tst_rtp_sender_send_ts,
 };
 
-use crate::common::{last_error_msg, scaled};
-use crate::udp_close_cancels_first::ts_null_packet;
+use crate::common::{last_error_msg, scaled, ts_null_packet};
 
 const RTP_HEADER: usize = 12;
 

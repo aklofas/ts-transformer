@@ -293,9 +293,9 @@ pub unsafe extern "C" fn tst_managed_receiver_open(
 /// Explicit listener-mode open for the managed receiver. Forces
 /// listener mode — the `_listener` suffix is authoritative: a host in the
 /// URL names the bind address, never a dial target, and an explicit
-/// `?mode=` other than `listener` is refused with `TST_E_INVALID_CONFIG`. On peer disconnect the managed
-/// wrapper re-binds a fresh listener socket and accepts the next
-/// incoming connection. Note: the re-bind + re-accept may block
+/// `?mode=` other than `listener` is refused with `TST_E_INVALID_CONFIG`.
+/// On peer disconnect the managed wrapper re-binds a fresh listener socket
+/// and accepts the next incoming connection. Note: the re-bind + re-accept may block
 /// significantly between attempts depending on the reconnect policy;
 /// `_cancel` wakes both the backoff wait and a re-accept parked with no
 /// peer, so a cancel lands promptly in that window too.

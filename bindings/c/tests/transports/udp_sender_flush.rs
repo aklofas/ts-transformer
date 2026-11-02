@@ -14,8 +14,7 @@ use tstrans::udp::{
     tst_udp_sender_close, tst_udp_sender_flush, tst_udp_sender_open, tst_udp_sender_send_ts,
 };
 
-use crate::common::{last_error_msg, scaled};
-use crate::udp_close_cancels_first::ts_null_packet;
+use crate::common::{last_error_msg, scaled, ts_null_packet};
 
 fn open_pair() -> (UdpSocket, *mut tstrans::udp::TstUdpSender) {
     let rx = UdpSocket::bind("127.0.0.1:0").unwrap();
