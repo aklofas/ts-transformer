@@ -24,7 +24,7 @@ use crate::mpegts::demux::event::{
     SamplePayload, StreamId, StreamKind, SubtitleCodec,
 };
 use crate::mpegts::demux::payload::{
-    DvbSubStripResult, KlvShape, classify_klv, iter_au_cells, strip_dvb_sub_envelope,
+    DvbSubStripResult, KlvShape, classify_klv, iter_au_cells_with_end, strip_dvb_sub_envelope,
     teletext_data_field_ok,
 };
 use crate::mpegts::demux::pes::{PesPayload, ReassemblyOutcome, is_damage_reason};
@@ -836,12 +836,11 @@ impl super::demuxer::Demuxer {
                 // H.222.0 Table 2-156: sequence_number counts the cells of
                 // one metadata_AU_wrapper, so each PES starts a new count.
                 self.au_reassembler.begin_wrapper(pes.pid);
-                let cells: Vec<_> = iter_au_cells(&pes.payload).collect();
-                let base = pes.payload.as_ptr().addr();
+                let cells: Vec<_> = iter_au_cells_with_end(&pes.payload).collect();
                 let mut gap = gap;
                 for cell_result in cells {
-                    let (header, inner) = match cell_result {
-                        Ok(pair) => pair,
+                    let (header, inner, cell_end) = match cell_result {
+                        Ok(cell) => cell,
                         Err(_) => {
                             // Truncated / malformed trailing cell. Stop
                             // walking — earlier cells in this PES already
@@ -856,7 +855,7 @@ impl super::demuxer::Demuxer {
                     // progress; the wrapper's first cell sets the sequence,
                     // so the gap would go unseen. Cells wholly before the
                     // gap arrived intact and still complete the AU.
-                    if gap.is_some_and(|g| inner.as_ptr().addr() - base + inner.len() > g) {
+                    if gap.is_some_and(|g| cell_end > g) {
                         gap = None;
                         self.discard_au_in_progress(pes.pid);
                     }
