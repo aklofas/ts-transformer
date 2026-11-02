@@ -724,6 +724,13 @@ impl super::demuxer::Demuxer {
             StreamKind::KlvSync { .. } | StreamKind::KlvAsync => {
                 let shape = classify_klv(&pes.payload);
 
+                // A PES not walked as AU cells (async or other shape) may
+                // have been the next part of an AU in progress on a sync PID:
+                // that AU cannot continue across it.
+                if !matches!(shape, KlvShape::Sync) {
+                    self.discard_au_in_progress(pes.pid);
+                }
+
                 // Async-shape PIDs (bare SMPTE UL) — bypass the AU cell
                 // reassembler entirely. One emit per PES.
                 if let KlvShape::Async { klv } = shape {
@@ -3087,6 +3094,44 @@ mod tests {
                 let ev = drain_all_events(&mut d);
                 assert_eq!(metadata_count(&ev), 0, "{name}: {ev:?}");
                 assert_eq!(sequence_gaps(&ev), vec![dropped], "{name}: {ev:?}");
+            }
+        }
+
+        /// A PES on the synchronous-KLV PID that is not walked as AU cells
+        /// (a bare KLV record, or bytes of neither shape) sits between First
+        /// 10 and Last 12: the AU cannot be known to continue across it, so
+        /// it is discarded and reported, and no spliced AU is delivered.
+        #[test]
+        fn a_pes_not_walked_as_cells_discards_the_au_in_progress() {
+            // SMPTE 336M UL prefix + BER length 1 + one byte: async shape.
+            let mut bare_klv = vec![
+                0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00,
+                0x00, 0x00,
+            ];
+            bare_klv.extend_from_slice(&[0x01, 0xAB]);
+            let other = vec![0xFFu8; 12];
+            for (name, body) in [("async", bare_klv), ("other", other)] {
+                let mut pkts = cells_pes(0, &[(First, 10, b"AAA")]);
+                let middle = pes_to_packets(
+                    0x101,
+                    1,
+                    &pes_bytes(0xFC, Some(90_000), None, true, &body, true),
+                );
+                let next = 1 + middle.len() as u8;
+                pkts.extend(middle);
+                pkts.extend(cells_pes(next, &[(Last, 12, b"CCC")]));
+                let ev = run(StrictMode::Off, &pkts);
+                let spliced = ev.iter().any(|e| {
+                    matches!(
+                        e,
+                        DemuxEvent::Metadata {
+                            kind: MetadataKind::KlvSyncAuCell { .. },
+                            ..
+                        }
+                    )
+                });
+                assert!(!spliced, "{name}: {ev:?}");
+                assert_eq!(sequence_gaps(&ev), vec![3], "{name}: {ev:?}");
             }
         }
 
