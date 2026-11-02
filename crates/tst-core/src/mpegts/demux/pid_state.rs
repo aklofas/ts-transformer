@@ -53,9 +53,13 @@ pub(super) struct PidState {
     /// AAC-LATM: what the last LOAS record still owes the next PES
     /// (ISO/IEC 14496-3 §1.7.2); `None` = unknown.
     pub(super) latm_carry: Option<crate::codec::aac::latm::LoasCarry>,
-    /// AAC-LATM: consecutive carry-unknown PES that showed no LOAS record,
-    /// saturating at the count that raised the issue.
-    pub(super) latm_unsynced: u8,
+    /// AAC-LATM: `latm_carry` comes from a syncword candidate whose record
+    /// ran past its PES; the next PES confirms or refutes it.
+    pub(super) latm_carry_tentative: bool,
+    /// AAC-LATM: consecutive carry-unknown payload bytes that showed no LOAS
+    /// syncword candidate; past `MAX_LOAS_RECORD_BYTES` the issue is raised
+    /// and the count stops mattering until a confirmed walk resets it.
+    pub(super) latm_unsynced_bytes: usize,
     /// Public per-stream counters, created on the first event.
     pub(super) stats: Option<StreamStats>,
     /// Codec counters, created on the first counted event.
@@ -87,10 +91,11 @@ impl PidState {
 
     /// Bytes of the PID were lost: the LOAS record position is unknown
     /// (ISO/IEC 14496-3 §1.7.2), so the next PES resyncs rather than walking
-    /// a stale carry. `latm_unsynced` stays: a loss is more evidence of
-    /// trouble.
+    /// a stale carry. `latm_unsynced_bytes` stays: a loss is more evidence
+    /// of trouble.
     pub(super) fn forget_latm_position(&mut self) {
         self.latm_carry = None;
+        self.latm_carry_tentative = false;
     }
 
     /// Forget every timing baseline of the PID: continuity, PTS, unwrap,
@@ -102,7 +107,8 @@ impl PidState {
         self.au_discard_after_pes = false;
         self.unwrap = None;
         self.latm_carry = None;
-        self.latm_unsynced = 0;
+        self.latm_carry_tentative = false;
+        self.latm_unsynced_bytes = 0;
     }
 
     /// What `Demuxer::reset_sync` clears. Counters (`stats`, `codec`) and
@@ -165,7 +171,8 @@ impl PidState {
             pts_less_run_reported,
             unwrap,
             latm_carry,
-            latm_unsynced,
+            latm_carry_tentative,
+            latm_unsynced_bytes,
             stats,
             codec,
             subtitle_missing_descriptor_emitted,
@@ -188,7 +195,8 @@ impl PidState {
             && !pts_less_run_reported
             && unwrap.is_none()
             && latm_carry.is_none()
-            && *latm_unsynced == 0
+            && !latm_carry_tentative
+            && *latm_unsynced_bytes == 0
             && stats.is_none()
             && codec.is_none()
             && !subtitle_missing_descriptor_emitted

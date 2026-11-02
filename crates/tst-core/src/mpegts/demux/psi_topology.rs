@@ -1477,7 +1477,11 @@ mod tests {
         assert!(state.stream_kind.is_none() && state.program.is_none());
         assert!(state.stream_type.is_none() && state.cc.is_none() && state.last_pts.is_none());
         assert!(!state.dup && state.last_pkt_raw.is_none() && state.unwrap.is_none());
-        assert!(state.latm_carry.is_none() && state.latm_unsynced == 0);
+        assert!(
+            state.latm_carry.is_none()
+                && !state.latm_carry_tentative
+                && state.latm_unsynced_bytes == 0
+        );
         assert!(!state.pts_baseline_clears_after_pes && !state.pts_less_since_pts);
         assert!(state.pts_less_run_pcr.is_none() && !state.pts_less_run_reported);
         assert!(!state.sync_pes_shape_emitted && !state.subtitle_missing_descriptor_emitted);
@@ -1508,7 +1512,8 @@ mod tests {
                 last_unwrapped: 1,
             }),
             latm_carry: Some(crate::codec::aac::latm::LoasCarry::Body(7)),
-            latm_unsynced: 1,
+            latm_carry_tentative: true,
+            latm_unsynced_bytes: 1,
             stats: Some(StreamStats::default()),
             codec: Some(StreamCodecCounters::new(CodecKind::Video)),
             subtitle_missing_descriptor_emitted: true,

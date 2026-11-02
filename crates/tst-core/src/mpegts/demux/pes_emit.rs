@@ -212,7 +212,7 @@ impl super::demuxer::Demuxer {
                 ReassemblyOutcome::Overflow { pid } => {
                     // A cap drop loses bytes without a continuity gap, so the
                     // LOAS record position is unknown (ISO/IEC 14496-3
-                    // §1.7.2); `latm_unsynced` stays, as for the other losses.
+                    // §1.7.2); `latm_unsynced_bytes` stays, as for the other losses.
                     if let Some(state) = self.pid_state.get_mut(&pid) {
                         state.forget_latm_position();
                     }
@@ -499,7 +499,7 @@ impl super::demuxer::Demuxer {
             let _ = self.record_pes_timing(&pes, stream);
         }
         // Its payload is not walked, so the LOAS record position is lost.
-        // `latm_unsynced` stays: lost bytes are more evidence of trouble.
+        // `latm_unsynced_bytes` stays: lost bytes are more evidence of trouble.
         if let Some(state) = self.pid_state.get_mut(&pes.pid) {
             state.forget_latm_position();
         }
@@ -522,59 +522,85 @@ impl super::demuxer::Demuxer {
     ///   0, a missing syncword flagged at once.
     /// - Carry unknown otherwise (after a gap, or a PID's first PES with
     ///   `data_alignment_indicator` = 0): the PES may open inside a record,
-    ///   so it resyncs on the first syncword candidate within one record's
-    ///   length, trusted only when a whole record follows it inside the PES
-    ///   (`resync_loas`). A PES without a confirmed resync stores no carry
-    ///   and counts as unsynced; the second such PES in a row raises
-    ///   `MissingSyncword` once, re-armed only by a successful walk. A false
-    ///   positive needs two consecutive carry-unknown PES that both fail to
-    ///   confirm: each lies wholly inside one record (at most `3 + 0x1FFF`
-    ///   bytes) or opens a record's tail whose first candidate is a false
-    ///   syncword.
+    ///   so it resyncs on its first syncword candidate (`resync_loas`):
+    ///   - Confirmed (a whole record follows it inside the PES): the walk's
+    ///     carry is adopted.
+    ///   - Unconfirmed (its record, or its header, runs past the PES): the
+    ///     carry is held tentatively. The next PES confirms it when a
+    ///     syncword (or a lone first header byte) sits where the record
+    ///     ends, and the carry is then enforced like any other; otherwise
+    ///     the candidate was false and is dropped without an issue.
+    ///   - No candidate: the payload counts towards the unsynced bytes. A
+    ///     LOAS stream starts a record within every `MAX_LOAS_RECORD_BYTES`
+    ///     (`3 + 0x1FFF`) window and a record start is always a candidate,
+    ///     so more than that many consecutive candidate-free bytes cannot be
+    ///     LOAS: `MissingSyncword` is raised once when the count first
+    ///     exceeds it, and not again until a confirmed walk resets it. A
+    ///     count of PES would not do: several small PES fit inside one
+    ///     record.
     /// - A damaged PES lost bytes, so it is not walked and the carry is lost.
     fn check_latm_framing(&mut self, pes: &PesPayload, damaged: bool, stream: StreamId) -> bool {
         use crate::codec::aac::latm::{
-            LatmFramingKind, LoasCarry, resync_loas, starts_with_loas_sync, walk_loas,
+            LatmFramingKind, LoasCarry, LoasResync, MAX_LOAS_RECORD_BYTES, opens_loas_header,
+            resync_loas, starts_with_loas_sync, walk_loas,
         };
-        /// Consecutive unsynced PES that raise `MissingSyncword`.
-        const UNSYNCED_LIMIT: u8 = 2;
         let state = self.pid_state_mut(pes.pid);
         let len = pes.payload.len();
+        let tentative = core::mem::take(&mut state.latm_carry_tentative);
         let start = match state.latm_carry.take() {
             _ if damaged => return false,
             Some(carry) => match carry.resolve(&pes.payload) {
                 Ok(LoasCarry::Body(n)) if len <= n => {
                     state.latm_carry = Some(LoasCarry::Body(n - len));
+                    state.latm_carry_tentative = tentative;
+                    return false;
+                }
+                // The candidate's record ends here without a syncword: it
+                // was false. Dropped silently; this PES is not re-examined.
+                Ok(LoasCarry::Body(n)) if tentative && !opens_loas_header(&pes.payload[n..]) => {
                     return false;
                 }
                 Ok(LoasCarry::Body(n)) => n,
                 Ok(header) => {
                     state.latm_carry = Some(header);
+                    state.latm_carry_tentative = tentative;
                     return false;
                 }
+                Err(_) if tentative => return false,
                 Err(kind) => return self.raise_latm_framing(pes.pid, kind, stream),
             },
             None if pes.data_alignment_indicator || starts_with_loas_sync(&pes.payload) => 0,
-            None => {
-                if let Some(carry) = resync_loas(&pes.payload) {
+            None => match resync_loas(&pes.payload) {
+                LoasResync::Confirmed(carry) => {
                     state.latm_carry = carry;
-                    state.latm_unsynced = 0;
+                    state.latm_unsynced_bytes = 0;
                     return false;
                 }
-                if state.latm_unsynced >= UNSYNCED_LIMIT {
+                LoasResync::Unconfirmed(carry) => {
+                    state.latm_carry = Some(carry);
+                    state.latm_carry_tentative = true;
                     return false;
                 }
-                state.latm_unsynced += 1;
-                if state.latm_unsynced < UNSYNCED_LIMIT {
-                    return false;
+                LoasResync::NoCandidate => {
+                    let before = state.latm_unsynced_bytes;
+                    state.latm_unsynced_bytes = before.saturating_add(len);
+                    if before > MAX_LOAS_RECORD_BYTES
+                        || state.latm_unsynced_bytes <= MAX_LOAS_RECORD_BYTES
+                    {
+                        return false;
+                    }
+                    return self.raise_latm_framing(
+                        pes.pid,
+                        LatmFramingKind::MissingSyncword,
+                        stream,
+                    );
                 }
-                return self.raise_latm_framing(pes.pid, LatmFramingKind::MissingSyncword, stream);
-            }
+            },
         };
         match walk_loas(&pes.payload, start) {
             Ok(carry) => {
                 state.latm_carry = carry;
-                state.latm_unsynced = 0;
+                state.latm_unsynced_bytes = 0;
                 false
             }
             Err(kind) => self.raise_latm_framing(pes.pid, kind, stream),
