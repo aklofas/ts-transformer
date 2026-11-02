@@ -372,6 +372,13 @@ impl Reassembler {
         self.by_pid.contains_key(&pid)
     }
 
+    /// `true` when the PES in flight on `pid` already holds the 6-byte PES
+    /// packet start (H.222.0 §2.4.3.6), so finishing it yields a `Complete`
+    /// or a `Malformed`; a shorter partial finishes with neither.
+    pub(crate) fn in_flight_holds_header(&self, pid: u16) -> bool {
+        self.by_pid.get(&pid).is_some_and(|p| p.buf.len() >= 6)
+    }
+
     pub fn buffered_bytes(&self) -> usize {
         self.total_buffered
     }

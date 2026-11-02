@@ -677,13 +677,15 @@ impl Demuxer {
             // A multi-cell AU may span PES, so an AU in progress on the PID
             // may have lost a cell too: discard it and report the gap at the
             // AU level.
-            // With a PES in flight, that PES carries the loss: it discards
-            // the AU once walked (lenient) or dropped (strict), so a Last
-            // cell that arrived intact in its head still completes the AU.
+            // A PES in flight that already holds a PES header carries the
+            // loss: it discards the AU once walked (lenient) or dropped
+            // (strict), so a Last cell that arrived intact in its head still
+            // completes the AU. A shorter partial finishes with no outcome,
+            // so the jump itself discards.
             if cc_jumped {
-                let in_flight = self.pes.has_pid(pkt.pid);
+                let carried = self.pes.in_flight_holds_header(pkt.pid);
                 self.pes.mark_damaged(pkt.pid);
-                if !in_flight {
+                if !carried {
                     self.discard_au_in_progress(pkt.pid);
                 }
             }
