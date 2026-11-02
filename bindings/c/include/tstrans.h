@@ -7266,6 +7266,10 @@ struct TstRistDemuxReceiver *tst_rist_demux_receiver_open(const char *url,
  *
  * Safe to call with `NULL` (no-op).
  *
+ * Close is cancel-first and abortive: packets still buffered are
+ * discarded. Call `tst_rist_mux_sender_finish` first for a lossless end of
+ * stream.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid non-freed `*mut TstRistMuxSender` returned
@@ -7805,6 +7809,10 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * Close and free a `tst_rist_sender_t`.
  *
  * Safe to call with `NULL` (no-op). After this call the pointer is
+ *
+ * Close is cancel-first and abortive: up to six buffered packets that
+ * no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first for
+ * a lossless end of stream.
  * invalid; passing the same non-null pointer twice is undefined
  * behavior (use-after-free on the consumed `Box`).
  *
@@ -7814,6 +7822,23 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * by `tst_rist_sender_open`.
  */
  void tst_rist_sender_close(struct TstRistSender *p);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
+ * Send any buffered partial bundle now.
+ *
+ * Call before `tst_rist_sender_close`: `_close` is cancel-first and
+ * discards up to six buffered packets.
+ *
+ * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
+ * NULL pointer, or the transport's negative `TST_E_*` code.
+ *
+ * # Safety
+ *
+ * `p` must be a valid non-freed `*mut TstRistSender`.
+ */
+ int tst_rist_sender_flush(struct TstRistSender *p);
 #endif
 
 #if defined(TST_HAS_RIST)
@@ -8236,6 +8261,10 @@ struct TstRtpDemuxReceiver *tst_rtp_demux_receiver_open(const char *url,
  * Close and free a `tst_rtp_mux_sender_t`.
  *
  * Safe to call with `NULL` (no-op).
+ *
+ * Close is cancel-first and abortive: packets still buffered are
+ * discarded. Call `tst_rtp_mux_sender_finish` first for a lossless end of
+ * stream.
  *
  * # Safety
  *
@@ -11209,6 +11238,10 @@ struct TstTcpDemuxReceiver *tst_tcp_demux_receiver_open(const char *url,
  *
  * Safe to call with `NULL` (no-op).
  *
+ * Close is cancel-first and abortive: packets still buffered are
+ * discarded. Call `tst_tcp_mux_sender_finish` first for a lossless end of
+ * stream.
+ *
  * # Safety
  *
  * `p` must be NULL or a valid non-freed `*mut TstTcpMuxSender` returned
@@ -11735,6 +11768,10 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * Close and free a `tst_tcp_sender_t`.
  *
  * Safe to call with `NULL` (no-op). After this call the pointer is
+ *
+ * Close is cancel-first and abortive: up to six buffered packets that
+ * no `tst_tcp_sender_flush` has sent are discarded. Call `_flush` first for
+ * a lossless end of stream.
  * invalid; passing the same non-null pointer twice is undefined
  * behavior (use-after-free on the consumed `Box`).
  *
@@ -11744,6 +11781,23 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * by `tst_tcp_sender_open` or `tst_tcp_listener_accept_sender`.
  */
  void tst_tcp_sender_close(struct TstTcpSender *p);
+#endif
+
+#if defined(TST_HAS_TCP)
+/**
+ * Send any buffered partial bundle now.
+ *
+ * Call before `tst_tcp_sender_close`: `_close` is cancel-first and
+ * discards up to six buffered packets.
+ *
+ * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
+ * NULL pointer, or the transport's negative `TST_E_*` code.
+ *
+ * # Safety
+ *
+ * `p` must be a valid non-freed `*mut TstTcpSender`.
+ */
+ int tst_tcp_sender_flush(struct TstTcpSender *p);
 #endif
 
 #if defined(TST_HAS_TCP)
@@ -12106,6 +12160,10 @@ struct TstUdpDemuxReceiver *tst_udp_demux_receiver_open(const char *url,
  * Close and free a `tst_udp_mux_sender_t`.
  *
  * Safe to call with `NULL` (no-op).
+ *
+ * Close is cancel-first and abortive: packets still buffered are
+ * discarded. Call `tst_udp_mux_sender_finish` first for a lossless end of
+ * stream.
  *
  * # Safety
  *
@@ -12625,6 +12683,10 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * Close and free a `tst_udp_sender_t`.
  *
  * Safe to call with `NULL` (no-op). After this call the pointer is
+ *
+ * Close is cancel-first and abortive: up to six buffered packets that
+ * no `tst_udp_sender_flush` has sent are discarded. Call `_flush` first for
+ * a lossless end of stream.
  * invalid; passing the same non-null pointer twice is undefined
  * behavior (use-after-free on the consumed `Box`).
  *
@@ -12634,6 +12696,23 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * by `tst_udp_sender_open`.
  */
  void tst_udp_sender_close(struct TstUdpSender *p);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
+ * Send any buffered partial bundle now.
+ *
+ * Call before `tst_udp_sender_close`: `_close` is cancel-first and
+ * discards up to six buffered packets.
+ *
+ * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
+ * NULL pointer, or the transport's negative `TST_E_*` code.
+ *
+ * # Safety
+ *
+ * `p` must be a valid non-freed `*mut TstUdpSender`.
+ */
+ int tst_udp_sender_flush(struct TstUdpSender *p);
 #endif
 
 #if defined(TST_HAS_UDP)

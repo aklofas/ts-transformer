@@ -2,8 +2,8 @@
 //! whole-TS-packet datagrams that each fit the ceiling.
 //!
 //! Seven packets against a 1128-byte (six-packet) ceiling must arrive as
-//! a 1128-byte datagram then a 188-byte one. The C sender has no flush
-//! entry point: `tst_udp_sender_close` flushes the buffered tail.
+//! a 1128-byte datagram then a 188-byte one. Both leave during the send;
+//! no flush is needed for a whole bundle.
 #![cfg(feature = "udp")]
 
 use std::ffi::CString;

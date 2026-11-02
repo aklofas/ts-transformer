@@ -20,7 +20,7 @@ use tstrans::udp::{
     tst_udp_mux_sender_cancel, tst_udp_mux_sender_close, tst_udp_mux_sender_finish,
     tst_udp_mux_sender_open, tst_udp_receiver_cancel, tst_udp_receiver_close,
     tst_udp_receiver_recv_ts, tst_udp_recv_open, tst_udp_sender_cancel, tst_udp_sender_close,
-    tst_udp_sender_open, tst_udp_sender_send_ts,
+    tst_udp_sender_flush, tst_udp_sender_open, tst_udp_sender_send_ts,
 };
 
 use crate::common::{last_error_msg, scaled};
@@ -96,8 +96,12 @@ fn udp_sender_cancel_then_partial_send_and_flush_return_closed() {
         "after cancel: {}",
         last_error_msg()
     );
-    // The UDP sender has no `_flush` entry point yet; the matching flush
-    // assertion arrives with that symbol.
+    assert_eq!(
+        unsafe { tst_udp_sender_flush(tx) },
+        TstError::Closed as i32,
+        "flush after cancel: {}",
+        last_error_msg()
+    );
     unsafe { tst_udp_sender_close(tx) };
 }
 

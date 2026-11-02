@@ -28,7 +28,8 @@
  *   3. Opening a tst_tcp_sender_t and checking for NULL + last-error.
  *   4. Synthesising structurally valid 188-byte TS null packets as payload.
  *   5. Pushing 100 of those packets via tst_tcp_sender_send_ts.
- *   6. Closing cleanly via tst_tcp_sender_close.
+ *   6. Flushing the buffered tail with tst_tcp_sender_flush, then closing via
+ *      tst_tcp_sender_close.
  *
  * No cancel API on TCP handles (the TCP transport does not expose a cancel
  * handle). A single-threaded sender like this one simply runs its loop to
@@ -243,11 +244,22 @@ int main(int argc, char **argv) {
     /*
      * ── Step 6: Close the sender ─────────────────────────────────────────
      *
-     * tst_tcp_sender_close flushes any pending bytes (TCP will deliver
-     * them), sends a FIN to the peer, closes the socket, and frees all
-     * associated memory. Safe to call on a valid non-NULL pointer at any
-     * time including after a send failure.
+     * Flush first. The sender sends one datagram per seven-packet bundle,
+     * so 100 packets leave as 14 bundles and the last two stay buffered.
+     * tst_tcp_sender_close is cancel-first and abortive: it discards that
+     * buffered tail, so tst_tcp_sender_flush must run before it for a
+     * lossless end of stream. close then closes the socket and frees all
+     * associated memory; it is safe on a valid non-NULL pointer at any time,
+     * including after a send failure.
      */
+    if (exit_code == 0) {
+        int flush_rc = tst_tcp_sender_flush(sender);
+        if (flush_rc != 0) {
+            fprintf(stderr, "[send_tcp] tst_tcp_sender_flush failed (rc=%d): %s\n",
+                    flush_rc, tst_get_last_error_str());
+            exit_code = 1;
+        }
+    }
     tst_tcp_sender_close(sender);
     fprintf(stderr, "[send_tcp] sender closed.\n");
 

@@ -63,9 +63,9 @@ pub use receiver::{
     tst_tcp_receiver_reset_stats, tst_tcp_recv_open,
 };
 pub use sender::{
-    TstTcpSender, tst_tcp_sender_cancel, tst_tcp_sender_close, tst_tcp_sender_get_socket_stats,
-    tst_tcp_sender_get_stats, tst_tcp_sender_open, tst_tcp_sender_reset_stats,
-    tst_tcp_sender_send_ts,
+    TstTcpSender, tst_tcp_sender_cancel, tst_tcp_sender_close, tst_tcp_sender_flush,
+    tst_tcp_sender_get_socket_stats, tst_tcp_sender_get_stats, tst_tcp_sender_open,
+    tst_tcp_sender_reset_stats, tst_tcp_sender_send_ts,
 };
 
 /// `url` → a TCP transport (send or receive), recording `TST_E_TCP_CONFIG`

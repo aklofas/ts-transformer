@@ -78,6 +78,10 @@ pub unsafe extern "C" fn tst_rtp_mux_sender_open(
 ///
 /// Safe to call with `NULL` (no-op).
 ///
+/// Close is cancel-first and abortive: packets still buffered are
+/// discarded. Call `tst_rtp_mux_sender_finish` first for a lossless end of
+/// stream.
+///
 /// # Safety
 ///
 /// `p` must be NULL or a valid non-freed `*mut TstRtpMuxSender` returned

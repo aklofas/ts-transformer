@@ -526,6 +526,15 @@ pub(crate) unsafe fn sender_send_ts<T: Transport, S>(
     })
 }
 
+/// Generic body for `tst_*_sender_flush`: send the buffered partial bundle.
+#[cfg(any(feature = "rtp", feature = "udp", feature = "tcp", feature = "rist"))]
+pub(crate) fn sender_flush<T: Transport, S>(h: &CHandle<Sender<T>, S>) -> i32 {
+    h.with_inner_mut_unless_cancelled(|s| match s.flush() {
+        Ok(()) => 0,
+        Err(e) => record_shell_error(e),
+    })
+}
+
 /// Generic body for `tst_*_sender_get_stats`.
 ///
 /// # Safety

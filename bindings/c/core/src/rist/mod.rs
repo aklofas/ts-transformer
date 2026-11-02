@@ -63,9 +63,9 @@ pub use receiver::{
     tst_rist_receiver_reset_stats, tst_rist_recv_open,
 };
 pub use sender::{
-    TstRistSender, tst_rist_sender_cancel, tst_rist_sender_close, tst_rist_sender_get_socket_stats,
-    tst_rist_sender_get_stats, tst_rist_sender_open, tst_rist_sender_reset_stats,
-    tst_rist_sender_send_ts,
+    TstRistSender, tst_rist_sender_cancel, tst_rist_sender_close, tst_rist_sender_flush,
+    tst_rist_sender_get_socket_stats, tst_rist_sender_get_stats, tst_rist_sender_open,
+    tst_rist_sender_reset_stats, tst_rist_sender_send_ts,
 };
 
 /// `url` → a RIST sender, recording `TST_E_RIST_CONFIG` or the connect error.

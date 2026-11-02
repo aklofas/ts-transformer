@@ -87,3 +87,4 @@ unchanged (484) and the test leaf-name multiset is byte-identical before/after
 | (new) | `transports/udp_cancel_terminal.rs` |
 | (new) | `transports/udp_close_cancels_first.rs` |
 | `udp_open_smoke.rs` | `transports/udp_open_smoke.rs` |
+| (new) | `transports/udp_sender_flush.rs` |

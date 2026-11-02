@@ -34,3 +34,5 @@ mod udp_close_cancels_first;
 mod udp_open_smoke;
 #[path = "transports/udp_sender_ceiling.rs"]
 mod udp_sender_ceiling;
+#[path = "transports/udp_sender_flush.rs"]
+mod udp_sender_flush;

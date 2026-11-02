@@ -93,6 +93,10 @@ pub unsafe extern "C" fn tst_rist_sender_open(url: *const c_char) -> *mut TstRis
 /// Close and free a `tst_rist_sender_t`.
 ///
 /// Safe to call with `NULL` (no-op). After this call the pointer is
+///
+/// Close is cancel-first and abortive: up to six buffered packets that
+/// no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first for
+/// a lossless end of stream.
 /// invalid; passing the same non-null pointer twice is undefined
 /// behavior (use-after-free on the consumed `Box`).
 ///
@@ -184,6 +188,28 @@ pub unsafe extern "C" fn tst_rist_sender_send_ts(
         return TstError::InvalidConfig as i32;
     };
     unsafe { crate::transport_impls::sender_send_ts(&handle.inner, bytes, len) }
+}
+
+/// Send any buffered partial bundle now.
+///
+/// Call before `tst_rist_sender_close`: `_close` is cancel-first and
+/// discards up to six buffered packets.
+///
+/// Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
+/// NULL pointer, or the transport's negative `TST_E_*` code.
+///
+/// # Safety
+///
+/// `p` must be a valid non-freed `*mut TstRistSender`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rist_sender_flush(p: *mut TstRistSender) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null rist sender pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        crate::transport_impls::sender_flush(&handle.inner)
+    })
 }
 
 /// Snapshot stats for a `tst_rist_sender_t` into `*out`.
