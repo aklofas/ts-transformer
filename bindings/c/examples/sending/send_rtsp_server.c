@@ -107,9 +107,12 @@ static struct tst_rtsp_cancel_handle_t *g_cancel_handle = NULL;
 static void sigint_handler(int sig) {
     (void)sig;
     g_stop_requested = 1;
+    /* Read the global once: the main thread NULLs it before freeing the
+     * handle, and a second read could see a different value than the test. */
+    struct tst_rtsp_cancel_handle_t *h = g_cancel_handle;
     /* tst_rtsp_cancel_handle_cancel is atomic-flag-set — safe in a handler. */
-    if (g_cancel_handle) {
-        tst_rtsp_cancel_handle_cancel(g_cancel_handle);
+    if (h) {
+        tst_rtsp_cancel_handle_cancel(h);
     }
 }
 
@@ -521,9 +524,24 @@ int main(int argc, char **argv) {
     tst_rtsp_mount_handle_free(mount);
     mount = NULL;
 
-    if (g_cancel_handle) {
-        tst_rtsp_cancel_handle_free(g_cancel_handle);
-        g_cancel_handle = NULL;
+    /*
+     * Why restore the default disposition first?
+     *   The handler dereferences g_cancel_handle. A SIGINT that lands between
+     *   the free and the NULL store, or a second Ctrl-C afterwards, would
+     *   cancel a freed handle. With SIG_DFL back in place a late signal just
+     *   ends the process, and the global is cleared before the free so no
+     *   handler run can read the pointer being released.
+     */
+    struct sigaction dfl;
+    memset(&dfl, 0, sizeof dfl);
+    dfl.sa_handler = SIG_DFL;
+    sigemptyset(&dfl.sa_mask);
+    sigaction(SIGINT, &dfl, NULL);
+    sigaction(SIGTERM, &dfl, NULL);
+    struct tst_rtsp_cancel_handle_t *cancel = g_cancel_handle;
+    g_cancel_handle = NULL;
+    if (cancel) {
+        tst_rtsp_cancel_handle_free(cancel);
     }
 
     int stop_rc = tst_rtsp_server_stop(server, /*drain_ms=*/0);

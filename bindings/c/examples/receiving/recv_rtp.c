@@ -21,8 +21,8 @@
  *   - Full event-kind dispatch: ProgramMap / Sample / Metadata /
  *     Discontinuity / NonConformant / ReconnectDiscontinuity
  *   - SIGINT graceful shutdown via `tst_rtp_demux_receiver_cancel`:
- *     the signal handler pokes the receiver and _next_event returns
- *     TST_E_CLOSED within one I/O cycle without a busy-spin or timeout
+ *     the signal handler flags the receiver and _next_event returns
+ *     TST_E_CLOSED at its next poll tick, with no busy-spin
  *
  * What it doesn't show (see the listed examples for those):
  *   - KLV hex-dump or typed ST 0601 decode → recv_klv_to_stdout.c
@@ -96,18 +96,20 @@ static void on_sigint(int sig) {
 
     /*
      * Why call cancel from the signal handler?
-     *   tst_rtp_demux_receiver_next_event blocks on the UDP socket.
-     *   Without a cancel, the only way to wake it would be a timeout
-     *   or a sentinel packet.  tst_rtp_demux_receiver_cancel is
-     *   signal-safe: it pokes an internal wakeup pipe so the blocked
-     *   _next_event returns TST_E_CLOSED on the next I/O cycle, typically
-     *   within milliseconds.  The handle still needs _close after the loop.
+     *   tst_rtp_demux_receiver_next_event polls the UDP socket in short
+     *   ticks. tst_rtp_demux_receiver_cancel only flags the transport (an
+     *   atomic store, so it is signal-safe); there is no wakeup pipe. The
+     *   parked _next_event notices the flag at its next poll tick and
+     *   returns TST_E_CLOSED. The handle still needs _close after the loop.
      *
-     *   The cast drops volatile — cancel takes a plain pointer, which is
-     *   fine here because we only ever call it once from the handler and
-     *   the handle lifetime is guaranteed for the duration of main().
+     *   The cast drops volatile — cancel takes a plain pointer. main()
+     *   restores the default disposition and clears g_receiver before the
+     *   close, so the handler never sees a freed handle.
      */
-    tst_rtp_demux_receiver_cancel((TstRtpDemuxReceiver *)g_receiver);
+    TstRtpDemuxReceiver *rx = (TstRtpDemuxReceiver *)g_receiver;
+    if (rx) {
+        tst_rtp_demux_receiver_cancel(rx);
+    }
 }
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
@@ -428,6 +430,11 @@ int main(int argc, char **argv) {
                 "tst_rtp_demux_receiver_next_event failed (rc=%d): %s\n",
                 rc,
                 tst_get_last_error_str());
+        /* Why first? A Ctrl-C during or after the close must not run the
+         * handler against a freed receiver: restore the default
+         * disposition and clear the global before the handle is released. */
+        signal(SIGINT, SIG_DFL);
+        g_receiver = NULL;
         tst_rtp_demux_receiver_close(rx);
         return 2;
     }
@@ -439,7 +446,12 @@ int main(int argc, char **argv) {
      *
      * Do NOT access any ev.u.* pointer-fields after this call — they
      * borrow from the arena that _close just freed.
+     *
+     * Restore the default SIGINT disposition and clear g_receiver first, so
+     * the handler cannot reach the receiver while or after it is freed.
      */
+    signal(SIGINT, SIG_DFL);
+    g_receiver = NULL;
     tst_rtp_demux_receiver_close(rx);
     return 0;
 }

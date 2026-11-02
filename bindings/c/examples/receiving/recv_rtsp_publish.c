@@ -124,8 +124,11 @@ static tst_rtsp_cancel_handle_t *g_cancel = NULL;
 static void handle_signal(int sig) {
     (void) sig;
     g_stop = 1;
-    if (g_cancel != NULL) {
-        tst_rtsp_cancel_handle_cancel(g_cancel);
+    /* Copy the global once: the main thread NULLs it before freeing the
+     * handle, so test and use the same local value. */
+    tst_rtsp_cancel_handle_t *cancel = g_cancel;
+    if (cancel != NULL) {
+        tst_rtsp_cancel_handle_cancel(cancel);
     }
 }
 
