@@ -272,6 +272,9 @@ impl super::demuxer::Demuxer {
                 let state = self.pid_state_mut(pkt.pid);
                 state.clear_continuity();
                 state.au_discard_after_pes = true;
+                // A new source: the old LOAS record position does not apply
+                // (ISO/IEC 14496-3 §1.7.2).
+                state.forget_latm_position();
                 if let Some(stream) = self.lookup_stream(pkt.pid) {
                     self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
                 }
@@ -372,7 +375,11 @@ impl super::demuxer::Demuxer {
             // (they clear together), so there is nothing to clear.
         }
         if pkt.discontinuity_indicator {
-            self.pid_state_mut(pkt.pid).au_discard_after_pes = true;
+            let state = self.pid_state_mut(pkt.pid);
+            state.au_discard_after_pes = true;
+            // A new source: the old LOAS record position does not apply
+            // (ISO/IEC 14496-3 §1.7.2).
+            state.forget_latm_position();
             if let Some(stream) = self.lookup_stream(pkt.pid) {
                 self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
             }

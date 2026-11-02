@@ -2381,6 +2381,47 @@ mod tests {
         assert!(!latm_framing_on_0x101(&ev), "{ev:?}");
     }
 
+    /// H.222.0 §2.4.3.5: a discontinuity_indicator starts a new source, so
+    /// the old source's LOAS carry (Body(33) after PES 1) must not walk the
+    /// new source's first PES, whether the flag rides that PES's first
+    /// packet or an adaptation-only packet before it.
+    #[test]
+    fn a_signalled_discontinuity_forgets_the_loas_carry() {
+        let record_b = loas_record(50);
+        let mut p1 = loas_record(10);
+        p1.extend_from_slice(&record_b[..20]);
+        let new_source = pes_bytes(0xC0, Some(90_000), None, false, &loas_record(40), true);
+        for af_only in [false, true] {
+            let mut d = demuxer_with_streams(
+                DemuxerConfig::builder().build(),
+                0x101,
+                &[(0x11, 0x101, &[])],
+            );
+            let mut cc = 0;
+            let mut pkts = latm_pes(&mut cc, &p1);
+            if af_only {
+                pkts.push(ts_packet(&PktSpec {
+                    pid: 0x101,
+                    cc: 0,
+                    discontinuity: true,
+                    ..Default::default()
+                }));
+            }
+            pkts.push(ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 9,
+                pusi: true,
+                discontinuity: !af_only,
+                payload: &new_source,
+                ..Default::default()
+            }));
+            feed_packets(&mut d, &pkts).unwrap();
+            d.flush();
+            let ev = drain_all_events(&mut d);
+            assert!(!latm_framing_on_0x101(&ev), "af_only {af_only}: {ev:?}");
+        }
+    }
+
     /// The aggregate `pes_cap_total` drop loses the PES the same way.
     #[test]
     fn pes_cap_total_overflow_forgets_the_loas_carry() {
