@@ -762,6 +762,13 @@ Use this when:
 - You're interoperating with a sender stack that uses tag 0xFF
   (user-private) labels on every PID.
 
+Each synchronous KLV stream's `metadata_descriptor` service id must be
+unique within the transport stream (H.222.0 §2.12.9.2). The automatic
+descriptor declares service 0, so a second synchronous stream, in the same
+or another program, needs `metadata_klva(<id>)` supplied through
+`stream_descriptors_for_klv`, and `push_klv_to` on it passes that id.
+`MuxerConfig::validate` refuses a repeated id.
+
 ### Building descriptor TLVs
 
 The `mpegts::descriptors` module ships byte-builders for the

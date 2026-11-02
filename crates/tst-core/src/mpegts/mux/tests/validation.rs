@@ -372,3 +372,97 @@ fn ac3_pmt_within_budget_builds_and_pushes() {
         &[0x0B, 0x77, 0, 0, 0, 0],
     );
 }
+
+/// Program 1 = video 0x101 + sync KLV 0x102 (no descriptors); program 2
+/// (number 2, PMT 0x1100) = video 0x201 + sync KLV 0x202 carrying `descs_p2`.
+fn two_sync_klv_programs(descs_p2: Vec<Vec<u8>>) -> MuxerConfigBuilder {
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p1.add_video(0x101, VideoCodec::H264);
+    p1.add_klv(0x102, KlvStreamType::SynchronousMetadata, true);
+    let mut p2 = MuxerProgramConfigBuilder::new(2, 0x1100);
+    p2.add_video(0x201, VideoCodec::H264);
+    p2.add_klv(0x202, KlvStreamType::SynchronousMetadata, true);
+    if !descs_p2.is_empty() {
+        p2.stream_descriptors_for_klv(0, descs_p2).unwrap();
+    }
+    let mut b = MuxerConfig::builder();
+    b.add_program(p1.build());
+    b.add_program(p2.build());
+    b
+}
+
+#[test]
+fn validate_rejects_auto_service_id_zero_on_two_programs() {
+    match two_sync_klv_programs(Vec::new()).build() {
+        Err(MuxError::ConfigInvalid { reason }) => {
+            assert!(reason.contains("metadata_service_id 0"), "{reason}");
+            assert!(
+                reason.contains("0x0102") && reason.contains("0x0202"),
+                "{reason}"
+            );
+        }
+        other => panic!("expected ConfigInvalid, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_rejects_caller_service_id_colliding_with_auto_zero() {
+    assert!(
+        two_sync_klv_programs(vec![crate::mpegts::descriptors::metadata_klva(0)])
+            .build()
+            .is_err()
+    );
+}
+
+#[test]
+fn validate_accepts_distinct_caller_service_ids_across_programs() {
+    let cfg = two_sync_klv_programs(vec![crate::mpegts::descriptors::metadata_klva(1)])
+        .build()
+        .unwrap();
+    let muxer = Muxer::new(cfg).unwrap();
+    // Cache = KLVA registration (6) + auto 0x27 (11) + the caller's 0x26 (11);
+    // the caller's service byte is the 10th byte of that last TLV.
+    assert_eq!(muxer.pmt_descriptor_caches[1][1][26], 1);
+}
+
+#[test]
+fn validate_rejects_same_service_id_on_two_sync_klv_pids_in_one_program() {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x100, VideoCodec::H264);
+    prog.add_klv(0x101, KlvStreamType::SynchronousMetadata, true);
+    prog.add_klv(0x102, KlvStreamType::SynchronousMetadata, true);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    assert!(matches!(b.build(), Err(MuxError::ConfigInvalid { .. })));
+}
+
+#[test]
+fn validate_accepts_single_sync_klv_with_async_elsewhere() {
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p1.add_video(0x101, VideoCodec::H264);
+    p1.add_klv(0x102, KlvStreamType::SynchronousMetadata, true);
+    let mut p2 = MuxerProgramConfigBuilder::new(2, 0x1100);
+    p2.add_video(0x201, VideoCodec::H264);
+    p2.add_klv(0x202, KlvStreamType::PrivateData, false);
+    let mut b = MuxerConfig::builder();
+    b.add_program(p1.build());
+    b.add_program(p2.build());
+    let cfg = b.build().unwrap();
+    Muxer::new(cfg).unwrap();
+}
+
+#[test]
+fn metadata_descriptor_service_id_parses_short_and_long_forms() {
+    use crate::mpegts::mux::state::metadata_descriptor_service_id as id;
+    assert_eq!(id(&crate::mpegts::descriptors::metadata_klva(7)), Some(7));
+    // Table 2-89 long form: application_format 0xFFFF + identifier, format 0xFF + "KLVA".
+    assert_eq!(
+        id(&[
+            0x26, 0x0D, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0xFF, b'K', b'L', b'V', b'A', 0x09,
+            0x0F
+        ]),
+        Some(9)
+    );
+    assert_eq!(id(&[0x26, 0x02, 0x01, 0x00]), None);
+    assert_eq!(id(&crate::mpegts::descriptors::metadata_std(0, 0, 0)), None);
+}
