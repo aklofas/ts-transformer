@@ -97,8 +97,8 @@ pub unsafe extern "C" fn tst_rist_sender_open(url: *const c_char) -> *mut TstRis
 /// behavior (use-after-free on the consumed `Box`).
 ///
 /// Close is cancel-first and abortive: up to six buffered packets that
-/// no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first for
-/// a lossless end of stream.
+/// no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first to
+/// send what is buffered.
 ///
 /// # Safety
 ///
@@ -192,13 +192,17 @@ pub unsafe extern "C" fn tst_rist_sender_send_ts(
 
 /// Send any buffered partial bundle now.
 ///
+/// The sender syncs on the first three TS packets it is given; a stream
+/// shorter than that never syncs and its bytes are dropped, so `_flush`
+/// cannot deliver a one- or two-packet stream.
+///
 /// Call before `tst_rist_sender_close`: `_close` is cancel-first and
 /// discards up to six buffered packets.
 ///
 /// The flush hands the tail to librist, whose context teardown does not drain
 /// its own output queue: a `_close` issued at once can still drop packets
-/// librist has not transmitted yet (seen on Windows). For a lossless end of
-/// stream, give the link time to send them before closing.
+/// librist has not transmitted yet (seen on Windows). To let them out, give the
+/// link time to send them before closing.
 ///
 /// Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
 /// NULL pointer, or the transport's negative `TST_E_*` code.

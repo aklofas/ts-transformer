@@ -7839,8 +7839,8 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * behavior (use-after-free on the consumed `Box`).
  *
  * Close is cancel-first and abortive: up to six buffered packets that
- * no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first for
- * a lossless end of stream.
+ * no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first to
+ * send what is buffered.
  *
  * # Safety
  *
@@ -7854,13 +7854,17 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
+ * The sender syncs on the first three TS packets it is given; a stream
+ * shorter than that never syncs and its bytes are dropped, so `_flush`
+ * cannot deliver a one- or two-packet stream.
+ *
  * Call before `tst_rist_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.
  *
  * The flush hands the tail to librist, whose context teardown does not drain
  * its own output queue: a `_close` issued at once can still drop packets
- * librist has not transmitted yet (seen on Windows). For a lossless end of
- * stream, give the link time to send them before closing.
+ * librist has not transmitted yet (seen on Windows). To let them out, give the
+ * link time to send them before closing.
  *
  * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
  * NULL pointer, or the transport's negative `TST_E_*` code.
@@ -8862,8 +8866,8 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * behavior (use-after-free on the consumed `Box`).
  *
  * Close is cancel-first and abortive: up to six buffered packets that
- * no `tst_rtp_sender_flush` has sent are discarded. Call `_flush` first for
- * a lossless end of stream.
+ * no `tst_rtp_sender_flush` has sent are discarded. Call `_flush` first to
+ * send what is buffered.
  *
  * # Safety
  *
@@ -8876,6 +8880,10 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
 #if defined(TST_HAS_RTP)
 /**
  * Send any buffered partial bundle now.
+ *
+ * The sender syncs on the first three TS packets it is given; a stream
+ * shorter than that never syncs and its bytes are dropped, so `_flush`
+ * cannot deliver a one- or two-packet stream.
  *
  * Call before `tst_rtp_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.
@@ -11827,8 +11835,8 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * behavior (use-after-free on the consumed `Box`).
  *
  * Close is cancel-first and abortive: up to six buffered packets that
- * no `tst_tcp_sender_flush` has sent are discarded. Call `_flush` first for
- * a lossless end of stream.
+ * no `tst_tcp_sender_flush` has sent are discarded. Call `_flush` first to
+ * send what is buffered.
  *
  * # Safety
  *
@@ -11841,6 +11849,10 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
 #if defined(TST_HAS_TCP)
 /**
  * Send any buffered partial bundle now.
+ *
+ * The sender syncs on the first three TS packets it is given; a stream
+ * shorter than that never syncs and its bytes are dropped, so `_flush`
+ * cannot deliver a one- or two-packet stream.
  *
  * Call before `tst_tcp_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.
@@ -11940,8 +11952,9 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * sender will accept any non-zero length but non-aligned buffers
  * may cause sync issues at the receiver.
  *
- * TCP is a reliable bytestream: the library writes all `len` bytes before
- * returning (or returns an error). Unlike UDP there is no datagram
+ * TCP is a reliable bytestream: the library writes whole bundles to the
+ * socket before returning (or returns an error); a partial bundle stays
+ * buffered until a later send fills it or `_flush` sends it. Unlike UDP there is no datagram
  * boundary, so the receiver MUST have its own framing — this library's
  * TCP receiver re-synchronises on the 0x47 sync byte.
  *
@@ -12742,8 +12755,8 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * behavior (use-after-free on the consumed `Box`).
  *
  * Close is cancel-first and abortive: up to six buffered packets that
- * no `tst_udp_sender_flush` has sent are discarded. Call `_flush` first for
- * a lossless end of stream.
+ * no `tst_udp_sender_flush` has sent are discarded. Call `_flush` first to
+ * send what is buffered.
  *
  * # Safety
  *
@@ -12756,6 +12769,10 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
 #if defined(TST_HAS_UDP)
 /**
  * Send any buffered partial bundle now.
+ *
+ * The sender syncs on the first three TS packets it is given; a stream
+ * shorter than that never syncs and its bytes are dropped, so `_flush`
+ * cannot deliver a one- or two-packet stream.
  *
  * Call before `tst_udp_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.

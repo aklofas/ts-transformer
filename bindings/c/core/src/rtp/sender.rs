@@ -74,8 +74,8 @@ pub unsafe extern "C" fn tst_rtp_sender_open(url: *const c_char) -> *mut TstRtpS
 /// behavior (use-after-free on the consumed `Box`).
 ///
 /// Close is cancel-first and abortive: up to six buffered packets that
-/// no `tst_rtp_sender_flush` has sent are discarded. Call `_flush` first for
-/// a lossless end of stream.
+/// no `tst_rtp_sender_flush` has sent are discarded. Call `_flush` first to
+/// send what is buffered.
 ///
 /// # Safety
 ///
@@ -129,6 +129,10 @@ pub unsafe extern "C" fn tst_rtp_sender_send_ts(
 }
 
 /// Send any buffered partial bundle now.
+///
+/// The sender syncs on the first three TS packets it is given; a stream
+/// shorter than that never syncs and its bytes are dropped, so `_flush`
+/// cannot deliver a one- or two-packet stream.
 ///
 /// Call before `tst_rtp_sender_close`: `_close` is cancel-first and
 /// discards up to six buffered packets.
