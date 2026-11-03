@@ -5297,8 +5297,9 @@ int tst_mux_config_set_pcr_pid(struct tst_mux_config_t *cfg,
  * The list must be consumed exactly: `tlv_count` descriptors that do not
  * end at `tlv_total_len` are refused.
  *
- * Calling with `tlv_total_len == 0` or `tlv_count == 0` clears any
- * previously set program descriptors for this program.
+ * Calling with `tlv_count == 0` and `tlv_total_len == 0` clears any
+ * previously set program descriptors for this program. Exactly one of
+ * them zero is refused with `TST_E_INVALID_CONFIG` and changes nothing.
  *
  * Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
  * null `tlv_bytes` with non-zero count, invalid program handle, or a
@@ -5356,8 +5357,9 @@ int tst_mux_config_set_stream_descriptors_for_klv(struct tst_mux_config_t *cfg,
  * `video` is a handle previously returned by `tst_mux_config_add_video_stream`.
  * The TLV byte format is the same as `tst_mux_config_set_program_descriptors`.
  *
- * Calling with `tlv_total_len == 0` or `tlv_count == 0` clears any
- * previously set stream descriptors for this stream.
+ * Calling with `tlv_count == 0` and `tlv_total_len == 0` clears any
+ * previously set stream descriptors for this stream. Exactly one of
+ * them zero is refused with `TST_E_INVALID_CONFIG` and changes nothing.
  *
  * Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
  * invalid handle, null `tlv_bytes` with non-zero count, or malformed TLV

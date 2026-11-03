@@ -218,8 +218,9 @@ unsafe fn set_descriptors<K: DescriptorStream>(
 /// The list must be consumed exactly: `tlv_count` descriptors that do not
 /// end at `tlv_total_len` are refused.
 ///
-/// Calling with `tlv_total_len == 0` or `tlv_count == 0` clears any
-/// previously set program descriptors for this program.
+/// Calling with `tlv_count == 0` and `tlv_total_len == 0` clears any
+/// previously set program descriptors for this program. Exactly one of
+/// them zero is refused with `TST_E_INVALID_CONFIG` and changes nothing.
 ///
 /// Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
 /// null `tlv_bytes` with non-zero count, invalid program handle, or a
@@ -243,10 +244,6 @@ pub unsafe extern "C" fn tst_mux_config_set_program_descriptors(
             set_last_error(TstError::InvalidUsage, "invalid program handle");
             return TstError::InvalidUsage as i32;
         }
-        if tlv_total_len == 0 || tlv_count == 0 {
-            cfg.programs[prog_idx].program_descriptors = Vec::new();
-            return 0;
-        }
         let descs = unsafe {
             match parse_tlv_list(tlv_bytes, tlv_total_len, tlv_count) {
                 Ok(d) => d,
@@ -267,8 +264,9 @@ pub unsafe extern "C" fn tst_mux_config_set_program_descriptors(
 /// `video` is a handle previously returned by `tst_mux_config_add_video_stream`.
 /// The TLV byte format is the same as `tst_mux_config_set_program_descriptors`.
 ///
-/// Calling with `tlv_total_len == 0` or `tlv_count == 0` clears any
-/// previously set stream descriptors for this stream.
+/// Calling with `tlv_count == 0` and `tlv_total_len == 0` clears any
+/// previously set stream descriptors for this stream. Exactly one of
+/// them zero is refused with `TST_E_INVALID_CONFIG` and changes nothing.
 ///
 /// Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
 /// invalid handle, null `tlv_bytes` with non-zero count, or malformed TLV
@@ -471,14 +469,24 @@ pub unsafe extern "C" fn tst_mux_config_add_data_descriptor(
 //
 // # Safety
 // Caller must ensure `tlv_bytes` is valid for `tlv_total_len` bytes when
-// `tlv_total_len > 0` and `tlv_count > 0`.
+// `tlv_total_len > 0`.
 unsafe fn parse_tlv_list(
     tlv_bytes: *const u8,
     tlv_total_len: usize,
     tlv_count: usize,
 ) -> Result<Vec<Vec<u8>>, crate::c_types::c_int> {
-    if tlv_total_len == 0 || tlv_count == 0 {
+    if tlv_total_len == 0 && tlv_count == 0 {
         return Ok(Vec::new());
+    }
+    // Exactly one zero is a caller length bug; clearing would hide it.
+    if tlv_total_len == 0 || tlv_count == 0 {
+        set_last_error(
+            TstError::InvalidConfig,
+            &alloc::format!(
+                "tlv_count ({tlv_count}) and tlv_total_len ({tlv_total_len}) must both be zero to clear or both non-zero"
+            ),
+        );
+        return Err(TstError::InvalidConfig as i32);
     }
     if tlv_bytes.is_null() {
         set_last_error(
