@@ -642,7 +642,7 @@ class ReleaseModeTests(unittest.TestCase):
     def test_release_mode_requires_the_corpus_archive(self):
         rec = collect(release=True, archives=archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE)))
         self.assertEqual(rec["verdict"], "NO-GO")
-        self.assertIn("corpus: no corpus archive for the soaked tree %s" % SHA[:12], rec["verdict_reasons"])
+        self.assertIn("corpus: no corpus archive on a tree equivalent to the qualified commit %s" % SHA[:12], rec["verdict_reasons"])
         failed = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
                                archive_row("corpus-rel", "corpus", SHA, overall_pass=False))
         rec = collect(release=True, archives=failed)
@@ -1485,6 +1485,14 @@ class ReleaseEligibleTests(unittest.TestCase):
             with self.assertRaises(SystemExit, msg=bad) as e:
                 self.gh_cli(return_value=bad)
             self.assertEqual(e.exception.code, 2)
+
+    def test_release_eligible_cli_a_statement_with_a_null_predicate_exits_2(self):
+        import base64
+        payload = base64.b64encode(json.dumps({"predicate": None}).encode()).decode()
+        bad = json.dumps({"attestations": [{"bundle": {"dsseEnvelope": {"payload": payload}}}]})
+        with self.assertRaises(SystemExit) as e:
+            self.gh_cli(return_value=bad)
+        self.assertEqual(e.exception.code, 2)
 
     def test_release_eligible_cli_a_non_object_record_exits_2(self):
         p = os.path.join(self.tmp, "cli4.json")
