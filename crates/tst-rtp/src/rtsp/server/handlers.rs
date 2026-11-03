@@ -346,6 +346,14 @@ fn normalize_mount_path(uri: &str, strip_last: impl FnOnce(&str) -> bool) -> Str
 /// [`normalize_mount_path`] up to the control-segment step: `uri` without
 /// scheme, authority, query or trailing slashes. Never allocates.
 fn normalized_path(uri: &str) -> &str {
+    // "/live/" and "/live//" resolve to the mount registered at "/live".
+    trim_trailing_slashes(request_path(uri))
+}
+
+/// `uri` without scheme, authority and query string, and nothing else: the
+/// path exactly as the peer spelled it. An on-demand ANNOUNCE validates this
+/// form, because the normalised key would silently rename `/new/` to `/new`.
+pub(crate) fn request_path(uri: &str) -> &str {
     // Strip scheme + authority if present.
     let path_start = if let Some(after_scheme) = uri.strip_prefix("rtsp://") {
         after_scheme
@@ -362,9 +370,7 @@ fn normalized_path(uri: &str) -> &str {
     };
     // Strip any trailing query string; v1 matches the bare path component
     // of the mount as registered.
-    let path = path_start.split('?').next().unwrap_or(path_start);
-    // "/live/" and "/live//" resolve to the mount registered at "/live".
-    trim_trailing_slashes(path)
+    path_start.split('?').next().unwrap_or(path_start)
 }
 
 /// `path` (already without trailing slashes) minus its last `/`-delimited
@@ -1121,6 +1127,14 @@ mod tests {
             headers,
             body: Bytes::new(),
         }
+    }
+
+    #[test]
+    fn request_path_keeps_trailing_slashes_and_control_segments() {
+        assert_eq!(request_path("rtsp://h/new/?x=1"), "/new/");
+        assert_eq!(request_path("rtsp://h:554/new/trackID=0"), "/new/trackID=0");
+        assert_eq!(request_path("rtsps://h"), "/");
+        assert_eq!(request_path("/a//b"), "/a//b");
     }
 
     #[test]

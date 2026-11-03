@@ -120,6 +120,53 @@ fn an_on_demand_announce_on_a_path_with_an_empty_segment_is_404_and_creates_noth
     server.stop().unwrap();
 }
 
+/// An on-demand ANNOUNCE whose raw path is not canonical (trailing slash,
+/// control segment) is refused rather than renamed to the canonical mount,
+/// and a canonical ANNOUNCE afterwards still creates the mount.
+#[test]
+fn an_on_demand_announce_on_a_non_canonical_path_is_404_and_creates_nothing() {
+    let server = on_demand_server();
+    let port = server.local_addr().unwrap().port();
+    for path in [
+        "/new/",
+        "/new//",
+        "/new/trackID=0",
+        "/new/stream=1",
+        "/new/streamid=0",
+    ] {
+        let mut p = RawPublisher::connect(port);
+        assert_eq!(p.announce(path, SDP_MP2T), 404, "{path}");
+        assert!(
+            server
+                .next_publisher(Duration::from_millis(100))
+                .unwrap()
+                .is_none(),
+            "{path} queued a mount"
+        );
+    }
+    assert_eq!(server.stats().mounts, 0);
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/new", SDP_MP2T), 200);
+    let h = server
+        .next_publisher(scaled(Duration::from_secs(5)))
+        .unwrap()
+        .expect("the canonical ANNOUNCE queued a mount");
+    assert_eq!(h.mount_path(), "/new");
+    server.stop().unwrap();
+}
+
+/// A registered mount is still reached through a trailing-slash spelling.
+#[test]
+fn announce_on_a_registered_mount_with_a_trailing_slash_still_claims_it() {
+    let server = on_demand_server();
+    let port = server.local_addr().unwrap().port();
+    let mount = server.add_publish_mount("/live").unwrap();
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/live/", SDP_MP2T), 200);
+    assert!(mount.publisher().is_some());
+    server.stop().unwrap();
+}
+
 /// A consumer that takes a queued mount and at once closes it (the way an
 /// ingest router drops a name it does not know) must never turn a
 /// legitimate ANNOUNCE into 403: the mount is claimed before it is queued.
