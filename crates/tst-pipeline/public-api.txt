@@ -964,12 +964,13 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::D
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverErrorSource
 pub struct tst_pipeline::demux_receiver::DemuxReceiver<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::demux_receiver::DemuxReceiver<R>
-pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::add_byte_sink(&mut self, tst_pipeline::demux_receiver::ByteSink)
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::close(&mut self)
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::is_alive(&self) -> bool
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::new(R) -> Self
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::recv_event(&mut self) -> core::result::Result<core::option::Option<tst_core::mpegts::demux::event::DemuxEvent>, tst_pipeline::demux_receiver::DemuxReceiverError>
+pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::ts_bytes_demuxed(&self) -> u64
+pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::ts_bytes_demuxed_handle(&self) -> tst_pipeline::demux_receiver::TsBytesDemuxedHandle
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::with_demux_options(R, tst_core::mpegts::demux::types::DemuxerConfig) -> Self
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::demux_receiver::DemuxReceiver<R>
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::reset_stats(&mut self)
@@ -988,11 +989,11 @@ pub type tst_pipeline::demux_receiver::DemuxReceiver<R>::Error = core::convert::
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::demux_receiver::DemuxReceiver<R>
-impl<R> !core::marker::Sync for tst_pipeline::demux_receiver::DemuxReceiver<R>
+impl<R> core::marker::Sync for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::Sync
 impl<R> core::marker::Unpin for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::Unpin
 impl<R> core::marker::UnsafeUnpin for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::UnsafeUnpin
-impl<R> !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::DemuxReceiver<R>
-impl<R> !core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiver<R>
+impl<R> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::panic::unwind_safe::RefUnwindSafe
+impl<R> core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::panic::unwind_safe::UnwindSafe
 #[non_exhaustive] pub struct tst_pipeline::demux_receiver::DemuxReceiverError
 pub tst_pipeline::demux_receiver::DemuxReceiverError::kind: tst_pipeline::shell_error::ShellErrorKind
 pub tst_pipeline::demux_receiver::DemuxReceiverError::source: tst_pipeline::demux_receiver::DemuxReceiverErrorSource
@@ -1043,7 +1044,20 @@ impl core::marker::Unpin for tst_pipeline::demux_receiver::DemuxReceiverStats
 impl core::marker::UnsafeUnpin for tst_pipeline::demux_receiver::DemuxReceiverStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverStats
-pub type tst_pipeline::demux_receiver::ByteSink = alloc::boxed::Box<(dyn core::ops::function::FnMut(&[u8]) + core::marker::Send)>
+pub struct tst_pipeline::demux_receiver::TsBytesDemuxedHandle(_)
+impl tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+pub fn tst_pipeline::demux_receiver::TsBytesDemuxedHandle::get(&self) -> u64
+impl core::clone::Clone for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+pub fn tst_pipeline::demux_receiver::TsBytesDemuxedHandle::clone(&self) -> tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::fmt::Debug for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+pub fn tst_pipeline::demux_receiver::TsBytesDemuxedHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::marker::Send for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::marker::Sync for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::marker::Unpin for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::marker::UnsafeUnpin for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
 pub mod tst_pipeline::ext
 pub mod tst_pipeline::ext::file_transport
 pub struct tst_pipeline::ext::file_transport::FileTransport
@@ -1243,7 +1257,6 @@ impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::ext::pairing::VideoS
 pub mod tst_pipeline::managed_demux_receiver
 pub struct tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
-pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::add_byte_sink(&mut self, tst_pipeline::demux_receiver::ByteSink)
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self)
@@ -1259,6 +1272,8 @@ pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::reset_stat
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::stats(&self) -> tst_pipeline::demux_receiver::DemuxReceiverStats
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::stream_codec_stats(&self, u16) -> core::option::Option<tst_core::mpegts::stats::StreamCodecStats>
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::ts_bytes_demuxed(&self) -> u64
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::ts_bytes_demuxed_handle(&self) -> tst_pipeline::demux_receiver::TsBytesDemuxedHandle
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::with_demux_options(tst_pipeline::managed_receive::ManagedRecvTransport<R>, tst_core::mpegts::demux::types::DemuxerConfig, tst_pipeline::managed_demux_receiver::ManagedDemuxReceiverConfig) -> Self
 impl<R: tst_core::transport::RecvTransport> core::fmt::Debug for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -2536,12 +2551,13 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::TsFramingMode
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::TsFramingMode
 pub struct tst_pipeline::DemuxReceiver<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::demux_receiver::DemuxReceiver<R>
-pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::add_byte_sink(&mut self, tst_pipeline::demux_receiver::ByteSink)
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::close(&mut self)
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::is_alive(&self) -> bool
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::new(R) -> Self
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::recv_event(&mut self) -> core::result::Result<core::option::Option<tst_core::mpegts::demux::event::DemuxEvent>, tst_pipeline::demux_receiver::DemuxReceiverError>
+pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::ts_bytes_demuxed(&self) -> u64
+pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::ts_bytes_demuxed_handle(&self) -> tst_pipeline::demux_receiver::TsBytesDemuxedHandle
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::with_demux_options(R, tst_core::mpegts::demux::types::DemuxerConfig) -> Self
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::demux_receiver::DemuxReceiver<R>
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::reset_stats(&mut self)
@@ -2560,11 +2576,11 @@ pub type tst_pipeline::demux_receiver::DemuxReceiver<R>::Error = core::convert::
 pub fn tst_pipeline::demux_receiver::DemuxReceiver<R>::close(&mut self) -> core::result::Result<(), core::convert::Infallible>
 impl<R> core::marker::Freeze for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::Freeze
 impl<R> core::marker::Send for tst_pipeline::demux_receiver::DemuxReceiver<R>
-impl<R> !core::marker::Sync for tst_pipeline::demux_receiver::DemuxReceiver<R>
+impl<R> core::marker::Sync for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::Sync
 impl<R> core::marker::Unpin for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::Unpin
 impl<R> core::marker::UnsafeUnpin for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::marker::UnsafeUnpin
-impl<R> !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::DemuxReceiver<R>
-impl<R> !core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiver<R>
+impl<R> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::panic::unwind_safe::RefUnwindSafe
+impl<R> core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiver<R> where R: core::panic::unwind_safe::UnwindSafe
 #[non_exhaustive] pub struct tst_pipeline::DemuxReceiverError
 pub tst_pipeline::DemuxReceiverError::kind: tst_pipeline::shell_error::ShellErrorKind
 pub tst_pipeline::DemuxReceiverError::source: tst_pipeline::demux_receiver::DemuxReceiverErrorSource
@@ -2634,7 +2650,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::GapBuffer
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::GapBuffer
 pub struct tst_pipeline::ManagedDemuxReceiver<R: tst_core::transport::RecvTransport>
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
-pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::add_byte_sink(&mut self, tst_pipeline::demux_receiver::ByteSink)
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::attempts_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::close(&mut self)
@@ -2650,6 +2665,8 @@ pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::reset_stat
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::stats(&self) -> tst_pipeline::demux_receiver::DemuxReceiverStats
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::stream_codec_stats(&self, u16) -> core::option::Option<tst_core::mpegts::stats::StreamCodecStats>
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::ts_bytes_demuxed(&self) -> u64
+pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::ts_bytes_demuxed_handle(&self) -> tst_pipeline::demux_receiver::TsBytesDemuxedHandle
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::with_demux_options(tst_pipeline::managed_receive::ManagedRecvTransport<R>, tst_core::mpegts::demux::types::DemuxerConfig, tst_pipeline::managed_demux_receiver::ManagedDemuxReceiverConfig) -> Self
 impl<R: tst_core::transport::RecvTransport> core::fmt::Debug for tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>
 pub fn tst_pipeline::managed_demux_receiver::ManagedDemuxReceiver<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -3261,6 +3278,20 @@ impl core::marker::Unpin for tst_pipeline::SenderStats
 impl core::marker::UnsafeUnpin for tst_pipeline::SenderStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::SenderStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::SenderStats
+pub struct tst_pipeline::TsBytesDemuxedHandle(_)
+impl tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+pub fn tst_pipeline::demux_receiver::TsBytesDemuxedHandle::get(&self) -> u64
+impl core::clone::Clone for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+pub fn tst_pipeline::demux_receiver::TsBytesDemuxedHandle::clone(&self) -> tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::fmt::Debug for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+pub fn tst_pipeline::demux_receiver::TsBytesDemuxedHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::marker::Send for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::marker::Sync for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::marker::Unpin for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::marker::UnsafeUnpin for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::TsBytesDemuxedHandle
 pub trait tst_pipeline::ShellError: core::error::Error
 pub fn tst_pipeline::ShellError::errno_code(&self) -> core::option::Option<i32>
 pub fn tst_pipeline::ShellError::kind(&self) -> tst_pipeline::shell_error::ShellErrorKind
@@ -3282,7 +3313,6 @@ pub fn tst_pipeline::receiver::ReceiverError::kind(&self) -> tst_pipeline::shell
 impl tst_pipeline::shell_error::ShellError for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::errno_code(&self) -> core::option::Option<i32>
 pub fn tst_pipeline::sender::SenderError::kind(&self) -> tst_pipeline::shell_error::ShellErrorKind
-pub type tst_pipeline::ByteSink = alloc::boxed::Box<(dyn core::ops::function::FnMut(&[u8]) + core::marker::Send)>
 pub type tst_pipeline::FactoryCancel = tst_core::cancel::CancelSlot
 pub type tst_pipeline::RawRecvStats = tst_pipeline::raw_receiver::RawReceiverStats
 pub type tst_pipeline::RawSendStats = tst_pipeline::raw_sender::RawSenderStats
