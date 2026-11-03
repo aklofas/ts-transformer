@@ -698,7 +698,15 @@ rvc() {
     RVC_CARGO_TOML="$tmp/rvc/Cargo.toml" RVC_PYPROJECT="$tmp/rvc/pyproject.toml" \
     RVC_PY_CARGO="$tmp/rvc/py-cargo.toml" RVC_C_LIB="$tmp/rvc/lib.rs" \
     RVC_C_HEADER="$tmp/rvc/tstrans.h" RVC_PY_TEST="$tmp/rvc/test_version.py" \
-    RVC_DEP_TOMLS="$tmp/rvc/dep-crate.toml" GITHUB_REF_NAME="" bash "$R_RVC" "$@"
+    RVC_DEP_TOMLS="$tmp/rvc/dep-crate.toml" GITHUB_REF_NAME="${rvc_ref_name-}" bash "$R_RVC" "$@"
+}
+# rvc_ref <ref_type|-> <ref_name>: run the rail as that ref; "-" leaves GITHUB_REF_TYPE unset.
+rvc_ref() {
+    rvc_ref_name="$2"
+    if [ "$1" = "-" ]; then unset GITHUB_REF_TYPE; else export GITHUB_REF_TYPE="$1"; fi
+    rvc; local rc=$?
+    unset GITHUB_REF_TYPE rvc_ref_name
+    return $rc
 }
 rvc_fixtures "0.2.0"
 expect "release version: all sources consistent" 0 rvc
@@ -712,6 +720,19 @@ printf '[dependencies]\ntst-core = { path = "../tst-core", version = "0.1.0" }\n
 expect "release version: internal dep version key flipped to 0.1.0" 1 rvc
 rvc_fixtures "0.2.0"
 expect "release version: internal dep version key restored" 0 rvc
+expect "release version: tag v0.2.0 matches" 0 rvc_ref tag v0.2.0
+expect_out "release version: tag v0.2.0 matches" "OK"
+expect "release version: tag vnext is refused" 1 rvc_ref tag vnext
+expect_out "release version: tag vnext is refused" "not vMAJOR.MINOR.PATCH"
+expect "release version: tag v0.2.0-rc1 is refused" 1 rvc_ref tag v0.2.0-rc1
+expect_out "release version: tag v0.2.0-rc1 is refused" "not vMAJOR.MINOR.PATCH"
+expect "release version: tag v-test is refused" 1 rvc_ref tag v-test
+expect "release version: tag v9.9.9 mismatches the sources" 1 rvc_ref tag v9.9.9
+expect_out "release version: tag v9.9.9 mismatches the sources" "does not match"
+expect "release version: a branch named vendor-bump is not a tag" 0 rvc_ref branch vendor-bump
+expect "release version: a branch named v0.2.0-fix is not a tag" 0 rvc_ref branch v0.2.0-fix
+expect "release version: unset ref type, v0.2.0-rc1 is refused" 1 rvc_ref - v0.2.0-rc1
+expect "release version: unset ref type, v0.2.0 matches" 0 rvc_ref - v0.2.0
 
 # ---- ci-run-select (scripts/ci/ci-run-select.jq) ----
 CIS="$DIR/../ci/ci-run-select.jq"

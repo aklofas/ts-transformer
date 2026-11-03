@@ -132,6 +132,7 @@ jobs:
         # at publish time because it is the specific guard against stranding
         # the ordered publish mid-sequence (internal dep `version` keys ==
         # workspace version).
+        # A tag that is not `vMAJOR.MINOR.PATCH` fails here.
         run: bash scripts/check/repo/release-version-consistency.sh
 
       - name: Install build prerequisites
