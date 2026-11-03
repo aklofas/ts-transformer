@@ -308,6 +308,8 @@ impl PyBuilder {
         Ok(slf)
     }
 
+    /// `SRTO_CONNTIMEO` in milliseconds: the deadline for the whole connect,
+    /// shared across the host's resolved addresses.
     fn connect_timeout_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyRefMut<'_, Self> {
         slf.socket_cfg.connect_timeout = Some(Duration::from_millis(ms.into()));
         slf

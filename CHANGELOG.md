@@ -9,6 +9,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — tst-srt, tst-py, tst-jni
+
+- `SrtSocketConfig::peer_idle_timeout` (`SRTO_PEERIDLETIMEO`), the matching setter on `SrtSocketBuilder` and `SrtListenerBuilder`, the `peeridletimeo` URL key (milliseconds), Python `peer_idle_timeout_ms` and JVM `peerIdleTimeoutMs`; the C package takes it through the URL. libsrt breaks a silent connection only after the idle time has elapsed and more than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not detect a silent peer sooner; raise it for links whose loss bursts outlast the default, and keep it well above the burst length or healthy connections break. `crates/srt-sys/README.md` gains a recipe for cross-compiling to aarch64 from an x86_64 Linux host.
+
 ### Security — tst-rist, tst-py
 
 - An encrypted RIST Main-profile receiver delivered packets it had not decrypted. A packet carrying the GRE key bit with an all-zero nonce, or with a fresh nonce arriving inside librist's rekey throttle after a burst of undecryptable packets, was passed on as if it were plaintext, so a peer without the passphrase could inject clear media. Affected: `tst-rist` and `tst-py` 0.6.0 through 0.9.0 (the vendored librist 0.2.20 first shipped in 0.6.0; librist 0.2.16 and 0.2.18 ended the session on a zero nonce and dropped the packet, so 0.1.0 through 0.5.x are not affected). The C package refused every encrypted `rist://` URL before this release, and the JVM has no RIST binding, so neither is affected. The vendored librist build now drops any packet the PSK decrypt did not decrypt. Every host librist the build accepts (0.2.20 and later) still carries the defect until upstream ships a fix; build with `RIST_FORCE_VENDORED=1` to get the fixed copy.
@@ -271,6 +275,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An unset `key_length` no longer writes `SRTO_PBKEYLEN`, so libsrt negotiates the length: a passphrase-only sender now adopts a peer's AES-256 instead of forcing AES-128. `KeyLength::default()` is still `Aes128`.
 - A malformed percent escape in a URL query now fails with an error that names the offset and the key, never the value. The same holds for `rist://` URLs.
 - A repeated URL key has every occurrence validated, so an invalid one anywhere is an error; the last valid one still wins.
+- `connect_timeout` (`conntimeo`, `connect_timeout_ms`, `connectTimeoutMs`) is now the budget for the whole connect, shared across the addresses the host resolves to: each address gets the remaining time divided by the addresses left. A host with several addresses gives each less than the full timeout; a single-address host is unchanged. Since 0.1.0 each address received the full timeout, so a silent first address could cost the timeout once per address. libsrt checks a blocking connect's deadline about once a second, so each attempt against a silent address costs at least one second, and a budget below about a second per address may not reach a later address.
 
 ### Changed — tst-rist
 

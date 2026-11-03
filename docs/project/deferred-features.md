@@ -173,6 +173,28 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** libsrt adds a filter type that's hard to
   compose by string.
 
+## Happy-Eyeballs (RFC 8305) connect racing
+
+- **Status:** Not implemented. `SrtSocket::connect_with` dials the host's
+  resolved addresses one at a time, sharing the `connect_timeout` budget.
+- **Why deferred:** A raced loser can complete its handshake on a dual-stack
+  listener and appear there as a brief duplicate caller with the same stream
+  ID. Over radio links a handshake routinely outlasts a 250 ms stagger, so
+  the duplicate would be common, not rare.
+- **Trigger to revisit:** A design that prevents or hides the duplicate
+  caller from the listener's side.
+
+## Sub-5 s silent-peer detection
+
+- **Status:** Not available. libsrt's own `SRTO_PEERIDLETIMEO` cannot break a
+  silent connection before about 5.1 s, because it also waits for more than
+  16 expiry timers at their 300 ms minimum interval, so `peer_idle_timeout`
+  only lengthens detection.
+- **Why deferred:** A faster detector has to live above libsrt, for example a
+  `ManagedTransport` watchdog on socket statistics: no packet or ACK received
+  for a configured window marks the link broken and triggers a reconnect.
+- **Trigger to revisit:** A consumer that needs failover in under 5 s.
+
 ## Peer-address decisions at SRT handshake time
 
 - **Status:** Deferred. Listen rules are keyed by stream ID; a decision that
@@ -631,9 +653,8 @@ mean **Deferred**. An entry whose feature has shipped must never read
   (`SRTO_KMPREANNOUNCE`), `kmrefreshrate` (`SRTO_KMREFRESHRATE`),
   `maxrexmitbw` (`SRTO_MAXREXMITBW`), `messageapi` (`SRTO_MESSAGEAPI`),
   `mininputbw` (`SRTO_MININPUTBW`), `minversion` (`SRTO_MINVERSION`),
-  `nakreport` (`SRTO_NAKREPORT`), `peeridletimeo` (`SRTO_PEERIDLETIMEO`),
-  `retransmitalgo` (`SRTO_RETRANSMITALGO`), `snddropdelay`
-  (`SRTO_SNDDROPDELAY`), `transtype` (`SRTO_TRANSTYPE`), `tsbpdmode`
+  `nakreport` (`SRTO_NAKREPORT`), `retransmitalgo`
+  (`SRTO_RETRANSMITALGO`), `snddropdelay` (`SRTO_SNDDROPDELAY`), `transtype` (`SRTO_TRANSTYPE`), `tsbpdmode`
   (`SRTO_TSBPDMODE`).
 - **Why deferred:** Each key needs a new `SrtSocketBuilder` setter on
   `tst-srt` (the Category C keys `enforcedencryption` / `kmrefreshrate` /

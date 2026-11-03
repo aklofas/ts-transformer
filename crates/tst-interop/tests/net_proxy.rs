@@ -1358,7 +1358,7 @@ fn spawn_counting_relay(forward: SocketAddr) -> CountingRelay {
 /// # How long the outage has to be, and why the test takes 13 seconds
 ///
 /// An SRT connection that stops hearing from its peer breaks after
-/// libsrt's peer-idle timeout, 5 s. `peeridletimeo` exists but cannot
+/// libsrt's peer-idle timeout, 5 s. `peeridletimeo` exists, but it cannot
 /// shorten the 5 s floor. Every reconnect test over a silent link therefore
 /// pays those 5 s, and the numbers below follow from that one. Measured on an
 /// idle machine, from the start of the outage:

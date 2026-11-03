@@ -55,14 +55,16 @@ pub struct SrtSocketConfig {
     /// set it to 15s where it is unset.
     pub connect_timeout: Option<Duration>,
     /// `SRTO_PEERIDLETIMEO`: how long the connection may hear nothing from
-    /// the peer before it breaks. `None` keeps libsrt's 5 s default. It
-    /// bounds how fast a silent peer is detected, and so how soon a
-    /// `ManagedTransport` reconnects and re-resolves the host. Values near
-    /// the link's loss-burst length break healthy connections under packet
-    /// loss. `Duration::ZERO` is refused when the socket is configured. libsrt also requires more than 16 missed expiry timers
-    /// (about 5 s at its 300 ms minimum interval) before it breaks a silent
-    /// connection, so a value below that does not detect a silent peer
-    /// sooner; it only matters when raised above it.
+    /// the peer before it breaks. `None` keeps libsrt's 5 s default.
+    /// `Duration::ZERO` is refused when the socket is configured.
+    ///
+    /// libsrt breaks a silent connection only after this time has elapsed
+    /// and more than 16 expiry timers (about 5 s, at its 300 ms minimum
+    /// interval) have fired, so a value below about 5 s does not detect a
+    /// silent peer sooner. Raise it for links whose loss bursts outlast the
+    /// default, and keep it well above the burst length or healthy
+    /// connections break. A longer value delays the `ManagedTransport`
+    /// reconnect, and with it the host re-resolve, after a silent peer.
     pub peer_idle_timeout: Option<Duration>,
     /// SRT linger timeout. `None` preserves libsrt's default — which is
     /// `l_onoff=0, l_linger=0` (linger off; close returns immediately and
@@ -285,9 +287,8 @@ impl SrtSocketConfig {
 /// `overhead_bandwidth_pct`, `payload_size`, `udp_recv_buffer_bytes`,
 /// `udp_send_buffer_bytes`, `loss_max_ttl`, `too_late_packet_drop`,
 /// `packet_filter`, `congestion`, `recv_timeout`, `peer_idle_timeout` and
-/// `linger`. The rest
-/// (`connect_timeout`, `stream_id`, `role`) are caller-side and are stored
-/// but not applied. `send_timeout` is not applied to the listener either,
+/// `linger`. The rest (`connect_timeout`, `stream_id`, `role`) are
+/// caller-side and are stored but not applied. `send_timeout` is not applied to the listener either,
 /// but accepted sockets get it, and `recv_timeout`, from this config.
 /// Accepted sockets inherit the PRE options through libsrt.
 #[must_use]

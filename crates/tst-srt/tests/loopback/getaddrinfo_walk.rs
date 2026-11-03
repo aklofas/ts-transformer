@@ -98,9 +98,10 @@ fn walk_over_silent_addresses_fails_within_one_budget() {
         Err(SrtConnectError::TimedOut) => {}
         other => panic!("expected TimedOut, got {other:?}"),
     }
-    // Each address gets a third of the budget, but libsrt checks the
-    // connect deadline once a second, so the last attempt can run up to a
-    // second past the budget. Unscaled on purpose: the wrong behaviour (a
+    // The first address gets a third of the budget and each later one an
+    // even split of what is left, but libsrt checks the connect deadline
+    // once a second, so the last attempt can run up to a second past the
+    // budget. Unscaled on purpose: the wrong behaviour (a
     // full budget per address) takes at least 4.5 s, so the bound is the
     // budget plus that second plus 1.5 s of scheduling slack.
     assert!(
@@ -110,7 +111,7 @@ fn walk_over_silent_addresses_fails_within_one_budget() {
     );
     assert!(
         elapsed >= Duration::from_millis(1200),
-        "every silent address should have been dialled; elapsed={elapsed:?}",
+        "at least two silent addresses should have been dialled; elapsed={elapsed:?}",
     );
     drop(silent_a);
     drop(silent_b);
