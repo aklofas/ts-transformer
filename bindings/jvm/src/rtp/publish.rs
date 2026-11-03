@@ -32,7 +32,7 @@ use tst_rtp::rtsp::server::publish::{
 use crate::handle::HandleRegistry;
 use crate::mpegts::build_demux_config_from_args;
 
-use super::demux_receiver_handle_from_transport;
+use super::demux_receiver_handle_from_mount_transport;
 use super::errors::server_error_to_jvm;
 
 /// Per-type leased-handle registry for `org.tstrans.rtp.PublishMount`. No
@@ -254,7 +254,7 @@ jni_native! {
                 return 0;
             }
         };
-        match demux_receiver_handle_from_transport(transport, opts) {
+        match demux_receiver_handle_from_mount_transport(transport, opts) {
             Ok(h) => h,
             Err(e) => {
                 let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.detail));

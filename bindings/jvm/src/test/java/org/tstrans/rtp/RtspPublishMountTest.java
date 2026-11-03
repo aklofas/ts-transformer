@@ -160,6 +160,37 @@ class RtspPublishMountTest {
 
     @Test
     @Timeout(30)
+    void cancelBeatsEventsAlreadyQueued() throws Exception {
+        assumeLinux();
+        byte[] ts = offlineTs();
+        try (RtspServer server = start(false);
+             PublishMount mount = server.addPublishMount("/cam");
+             DemuxReceiver rx = mount.intoDemuxReceiver();
+             RawPublisher pub = new RawPublisher(port(server), "/cam")) {
+            int bundles = 0;
+            for (int off = 0; off < ts.length; off += 7 * 188) {
+                int len = Math.min(7 * 188, ts.length - off);
+                byte[] bundle = new byte[len];
+                System.arraycopy(ts, off, bundle, 0, len);
+                pub.sendRtp(bundle);
+                bundles++;
+            }
+            long sent = bundles;
+            assertTrue(waitFor(() -> mount.stats().rtpPacketsReceived() == sent),
+                () -> "stats never reached " + sent + " packets: " + mount.stats());
+            // One read pulls a whole bundle into the shell, so more events are
+            // already queued behind the one returned.
+            assertNotNull(rx.recvEvent());
+            mount.cancel();
+            RtpException e = assertThrows(RtpException.class, rx::recvEvent,
+                "a queued event came out after the mount cancel");
+            assertEquals(RtpException.Kind.CLOSED, e.kind());
+            assertEquals(EndReason.CANCELLED, rx.endReason());
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void receiverCloseFromAnotherThreadEndsAParkedReadWithClosed() throws Exception {
         assumeLinux();
         try (RtspServer server = start(false);

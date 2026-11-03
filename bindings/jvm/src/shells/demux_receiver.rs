@@ -43,7 +43,7 @@ use jni::objects::{Global, JObject, JString, JThrowable, JValue};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
-use tst_core::transport::RecvTransport;
+use tst_core::transport::{RecvTransport, TransportCancel};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 use tst_pipeline::{
@@ -68,9 +68,9 @@ struct JniDemuxReceiver {
     inner: RustDemuxReceiver<Box<dyn RecvTransport>>,
 }
 
-/// Byte-sink state shared by the sink closures and `nNext`. It lives in the
-/// snapshot, outside the slot, because the closures run while `nNext` holds
-/// the slot.
+/// Byte-sink state shared by the sink closures and `nNext`, plus the publish
+/// mount's cancel latch. It lives in the snapshot, outside the slot, because
+/// the closures run while `nNext` holds the slot.
 #[derive(Default)]
 struct SinkState {
     /// The exception that ended the receive, until `nNext` rethrows it.
@@ -82,6 +82,26 @@ struct SinkState {
     /// runs under, or the next one, ends the iteration so Java can finish
     /// the close. A plain close clears it.
     close_pending: AtomicBool,
+    /// The application-cancel latch of the publish mount this receiver was
+    /// taken from; `None` on every other receiver. The shared binding layer
+    /// reads only a handle's own latch, so this layer carries the mount's
+    /// cancel across: a mount cancel must beat events already queued, like
+    /// the receiver's own cancel.
+    mount_cancel: Option<Arc<dyn TransportCancel>>,
+}
+
+/// Latches the receiver's own cancel when its mount was cancelled, so the
+/// gate refuses with CLOSED before the shell returns queued events. A mount
+/// cancel racing this call may still lose to it, like any concurrent cancel.
+fn observe_mount_cancel(handle: jlong, sinks: &SinkState) {
+    if sinks
+        .mount_cancel
+        .as_ref()
+        .is_some_and(|c| c.is_cancelled())
+        && let Some(view) = REGISTRY.cancel_view(handle as u64)
+    {
+        view.0.cancel();
+    }
 }
 
 thread_local! {
@@ -175,6 +195,24 @@ pub(crate) fn register(
     opened: Opened<Box<dyn RecvTransport>>,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> jlong {
+    register_with(opened, opts, None)
+}
+
+/// [`register`] for the transport of a publish mount, whose cancel latch the
+/// mount's `cancel()` sets.
+pub(crate) fn register_publish_mount(
+    opened: Opened<Box<dyn RecvTransport>>,
+    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+) -> jlong {
+    let mount_cancel = Arc::clone(&opened.cancel);
+    register_with(opened, opts, Some(mount_cancel))
+}
+
+fn register_with(
+    opened: Opened<Box<dyn RecvTransport>>,
+    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+    mount_cancel: Option<Arc<dyn TransportCancel>>,
+) -> jlong {
     let Opened {
         transport,
         cancel,
@@ -193,7 +231,10 @@ pub(crate) fn register(
         cancel,
         Snapshot {
             domain,
-            handles: Arc::new(SinkState::default()),
+            handles: Arc::new(SinkState {
+                mount_cancel,
+                ..SinkState::default()
+            }),
         },
     );
     if let Some(h) = end_reason {
@@ -283,6 +324,7 @@ jni_native! {
             throw_state(env, domain, "DemuxReceiver", &HandleState::Closed);
             return JObject::null().into_raw();
         }
+        observe_mount_cancel(handle, &sinks);
         // recv_event runs INSIDE the slot; the byte sinks fire during it.
         let res = match REGISTRY.with_mut_unless_cancelled(handle as u64, |jdr| jdr.inner.recv_event()) {
             Ok(v) => v,
@@ -357,6 +399,7 @@ jni_native! {
         if sinks.close_pending.load(Ordering::Acquire) {
             return;
         }
+        observe_mount_cancel(handle, &sinks);
         if let Err(state) = REGISTRY.with_mut_unless_cancelled(handle as u64, |_| ()) {
             throw_state(env, domain, "DemuxReceiver", &state);
         }

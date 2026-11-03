@@ -285,7 +285,7 @@ impl PyPublishMount {
         let transport =
             crate::util::allow_threads_parking(py, move || handle.into_recv_transport())
                 .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
-        PyDemuxReceiver::from_opened(py, crate::rtp::transport::opened_recv(transport), opts)
+        PyDemuxReceiver::from_publish_mount(py, crate::rtp::transport::opened_recv(transport), opts)
     }
 
     fn __repr__(&self) -> String {
