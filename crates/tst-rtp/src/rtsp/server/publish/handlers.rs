@@ -17,7 +17,7 @@ use std::time::SystemTime;
 use crate::rtsp::message::{RtspRequest, RtspResponse};
 use crate::rtsp::server::handlers::{
     bind_server_udp_pair, check_auth, control_segment, error_response, extract_mount_path,
-    generate_session_id, handle_not_valid_in_state, last_path_segment,
+    generate_session_id, handle_not_valid_in_state, last_path_segment, request_path,
 };
 use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::session::{Role, ServerSessionState};
@@ -151,7 +151,7 @@ pub(crate) fn handle_announce(
                 return error_response(req, 461, "Unsupported Transport");
             }
             None if state.builder.accept_unregistered_publishers
-                && validate_mount_path(&mount_path).is_ok() =>
+                && validate_mount_path(request_path(&req.uri)).is_ok() =>
             {
                 match create_on_demand_mount(state, &mut mounts, &mount_path, info) {
                     Some(claimed) => claimed,
