@@ -836,15 +836,15 @@ fn sync_klv_push_auto_wraps_with_5_byte_au_cell_header() {
     assert!(hdr.random_access_indicator);
     assert_eq!(body, &inner_klv[..]);
 
-    // Push second blob; sequence_number must increment.
+    // Push second blob; sequence_number restarts at 0 in every PES.
     mux.push_klv(&inner_klv, Pts90khz::new(90_000 * 2), 0x00)
         .unwrap();
     let n2 = mux.pull(&mut buf);
     let pes2 = reassemble_pes_payload_for_pid(&buf, n2, 0x1031);
     let (hdr2, _) = read_metadata_au_cell(&pes2).expect("valid AU cell header");
     assert_eq!(
-        hdr2.sequence_number, 1,
-        "sequence_number must increment per push"
+        hdr2.sequence_number, 0,
+        "sequence_number restarts at 0 in every PES"
     );
 }
 

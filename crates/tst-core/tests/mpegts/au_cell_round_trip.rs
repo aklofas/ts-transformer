@@ -113,66 +113,94 @@ fn private_data_klv_does_not_auto_wrap() {
     assert_eq!(async_klv_seen, 1, "exactly one async KLV event expected");
 }
 
-#[test]
-fn sync_klv_sequence_number_increments_across_pushes() {
-    // Verifies the muxer's per-stream sequence_number counter increments
-    // mod 256 across push_klv calls. Validates by reading the AU cell
-    // header out of the emitted PES payload directly.
-    let cfg = {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x1011, VideoCodec::H264);
-        prog.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    };
-    let mut mux = Muxer::new(cfg).unwrap();
-
-    let inner = synthetic_klv_ls();
-
-    let next_seq_num = |mux: &mut Muxer| {
-        let mut pes_payload = Vec::new();
-        let mut buf = vec![0u8; 1316];
-        loop {
-            let n = mux.pull(&mut buf);
-            if n == 0 {
-                break;
+/// Drains the muxer and returns the PES payload bytes (after the PES header)
+/// carried on the KLV PID.
+fn klv_pes_payload(mux: &mut Muxer) -> Vec<u8> {
+    let mut pes_payload = Vec::new();
+    let mut buf = vec![0u8; 1316];
+    loop {
+        let n = mux.pull(&mut buf);
+        if n == 0 {
+            break;
+        }
+        for pkt in buf[..n].chunks_exact(188) {
+            let pid = ((pkt[1] as u16 & 0x1F) << 8) | pkt[2] as u16;
+            if pid != 0x1031 {
+                continue;
             }
-            for pkt in buf[..n].chunks_exact(188) {
-                let pid = ((pkt[1] as u16 & 0x1F) << 8) | pkt[2] as u16;
-                if pid != 0x1031 {
-                    continue;
-                }
-                let payload_unit_start = (pkt[1] & 0x40) != 0;
-                let adaptation_present = (pkt[3] & 0x20) != 0;
-                let mut idx = 4usize;
-                if adaptation_present {
-                    let af_len = pkt[idx] as usize;
-                    idx += 1 + af_len;
-                }
-                if payload_unit_start && idx + 9 <= 188 {
-                    let pes_header_data_length = pkt[idx + 8] as usize;
-                    idx += 9 + pes_header_data_length;
-                }
-                if idx < 188 {
-                    pes_payload.extend_from_slice(&pkt[idx..188]);
-                }
+            let payload_unit_start = (pkt[1] & 0x40) != 0;
+            let adaptation_present = (pkt[3] & 0x20) != 0;
+            let mut idx = 4usize;
+            if adaptation_present {
+                let af_len = pkt[idx] as usize;
+                idx += 1 + af_len;
+            }
+            if payload_unit_start && idx + 9 <= 188 {
+                let pes_header_data_length = pkt[idx + 8] as usize;
+                idx += 9 + pes_header_data_length;
+            }
+            if idx < 188 {
+                pes_payload.extend_from_slice(&pkt[idx..188]);
             }
         }
-        let (hdr, _) = read_metadata_au_cell(&pes_payload).unwrap();
-        hdr.sequence_number
-    };
+    }
+    pes_payload
+}
 
-    mux.push_klv(&inner, Pts90khz::new(90_000), 0x00).unwrap();
-    assert_eq!(next_seq_num(&mut mux), 0);
+fn sync_klv_mux() -> Muxer {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x1011, VideoCodec::H264);
+    prog.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    Muxer::new(b.build().unwrap()).unwrap()
+}
 
-    mux.push_klv(&inner, Pts90khz::new(90_000 * 2), 0x00)
-        .unwrap();
-    assert_eq!(next_seq_num(&mut mux), 1);
+#[test]
+fn sync_klv_sequence_number_restarts_at_zero_in_every_pes() {
+    // H.222.0 Table 2-156 numbers cells within one metadata_AU_wrapper (one
+    // PES); the muxer emits one cell per PES, so every cell carries 0.
+    let mut mux = sync_klv_mux();
+    let inner = synthetic_klv_ls();
 
-    mux.push_klv(&inner, Pts90khz::new(90_000 * 3), 0x00)
-        .unwrap();
-    assert_eq!(next_seq_num(&mut mux), 2);
+    for i in 1..=3i64 {
+        mux.push_klv(&inner, Pts90khz::new(90_000 * i), 0x00)
+            .unwrap();
+        let payload = klv_pes_payload(&mut mux);
+        let (hdr, _) = read_metadata_au_cell(&payload).unwrap();
+        assert_eq!(hdr.sequence_number, 0, "push {i}");
+        // Byte 1 of the cell is the spec's sequence_number position.
+        assert_eq!(payload[1], 0, "push {i}: wire byte 1");
+    }
+}
+
+#[test]
+fn sync_klv_per_pes_numbering_round_trips_without_issues() {
+    let mut mux = sync_klv_mux();
+    let inner = synthetic_klv_ls();
+    let mut ts = Vec::new();
+    for i in 1..=4i64 {
+        mux.push_klv(&inner, Pts90khz::new(90_000 * i), 0x00)
+            .unwrap();
+        ts.extend_from_slice(&drain(&mut mux));
+    }
+
+    let mut dem = Demuxer::new();
+    dem.feed(&ts).unwrap();
+    let mut seen = 0;
+    while let Some(evt) = dem.next_event() {
+        match evt {
+            DemuxEvent::Metadata { kind, payload, .. } => {
+                assert!(matches!(kind, MetadataKind::KlvSyncAuCell { .. }));
+                assert_eq!(payload, inner);
+                seen += 1;
+            }
+            DemuxEvent::NonConformant { issue, .. } => panic!("unexpected issue: {issue:?}"),
+            _ => {}
+        }
+    }
+    assert_eq!(seen, 4);
+    assert_eq!(dem.stats().nonconformant, 0);
 }
 
 // ── MultiCellAu detect-only tests ────────────────────────────────────────────

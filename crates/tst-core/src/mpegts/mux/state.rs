@@ -27,10 +27,6 @@ pub(super) struct KlvStreamState {
     pub(super) pid: u16,
     pub(super) stream_type: KlvStreamType,
     pub(super) carries_pts: bool,
-    /// For `SynchronousMetadata` streams: incrementing AU cell `sequence_number`,
-    /// wraps modulo 256 per H.222.0 §2.12.4.2 Table 2-156 semantics. Unused
-    /// for `PrivateData` streams.
-    pub(super) au_cell_sequence_number: u8,
 }
 
 /// Per-audio-stream cached state.
@@ -425,7 +421,6 @@ pub(super) fn collect_stream_states(
                 pid: *pid,
                 stream_type: *stream_type,
                 carries_pts: *carries_pts,
-                au_cell_sequence_number: 0,
             }),
             _ => None,
         })
