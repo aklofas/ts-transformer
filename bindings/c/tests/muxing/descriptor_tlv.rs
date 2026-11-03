@@ -20,7 +20,11 @@ const NAL_SPS: &[u8] = &[
 
 // User-private tags, so no stream-kind classification rule objects to them.
 const PROGRAM_TLV: &[u8] = &[0xA1, 0x03, 0x11, 0x22, 0x33];
-const STREAM_TLV: &[u8] = &[0xA0, 0x04, 0xDE, 0xAD, 0xBE, 0xEF];
+// One distinct TLV per stream so a survive-assertion can only be met by
+// that stream's own PMT entry.
+const VIDEO_TLV: &[u8] = &[0xA0, 0x04, 0xDE, 0xAD, 0xBE, 0xEF];
+const KLV_TLV: &[u8] = &[0xA2, 0x04, 0xC0, 0xFF, 0xEE, 0x01];
+const DATA_TLV: &[u8] = &[0xA3, 0x04, 0xFA, 0xCE, 0xB0, 0x0C];
 
 type Setter = unsafe fn(*mut TstMuxConfig, u32, *const u8, usize, usize) -> i32;
 
@@ -61,9 +65,9 @@ unsafe fn fixture() -> Fixture {
             video,
             handles: [
                 ("program", prog.0 as u32, set_program, PROGRAM_TLV),
-                ("video", video, set_video, STREAM_TLV),
-                ("klv", klv, set_klv, STREAM_TLV),
-                ("data", data, set_data, STREAM_TLV),
+                ("video", video, set_video, VIDEO_TLV),
+                ("klv", klv, set_klv, KLV_TLV),
+                ("data", data, set_data, DATA_TLV),
             ],
         }
     }
