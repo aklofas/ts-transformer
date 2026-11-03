@@ -844,6 +844,8 @@ class SrtManagedLiveTest {
      */
     @Test
     void fromUrlToAClosedPortThrowsConnectFailedOrTimeout() throws Exception {
+        assumeTrue(isLinux(),
+            "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
         int port;
         try (var probe = new java.net.DatagramSocket(0)) {
             port = probe.getLocalPort();
@@ -867,6 +869,8 @@ class SrtManagedLiveTest {
      * (a formatted message, not a deliberate kind map), so a change shows up here. */
     @Test
     void fromUrlOnAHeldPortThrowsBroken() throws Exception {
+        assumeTrue(isLinux(),
+            "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
         try (var held = new java.net.DatagramSocket(0, java.net.InetAddress.getByName("127.0.0.1"))) {
             int port = held.getLocalPort();
             // Bounded so a platform where the bind succeeds (SO_REUSEADDR) and
