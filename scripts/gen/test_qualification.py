@@ -26,7 +26,8 @@ SUBS = {
 }
 CONTEXT = {
     "label": "main at 1a2b3c4d",
-    "source": {"sha": SHA, "ref": "refs/heads/main", "dirty": False, "submodules": SUBS},
+    "source": {"sha": SHA, "ref": "refs/heads/main", "dirty": False, "submodules": SUBS,
+               "workflow_sha": SHA},
     "toolchain": {"rust": "rustc 1.85.1", "nightly_public_api": "nightly-2026-07-03",
                   "cbindgen": "0.29.2", "tools": {"abidiff": "2.4.0"}},
     "host": {"runner": "ubuntu-24.04", "arch": "x86_64", "kernel": "6.8.0"},
@@ -386,6 +387,17 @@ class RenderTests(unittest.TestCase):
             rc, _, err = self.run_cli(["render", "--json", jf, "--root", tmp, "--check"])
             self.assertEqual(rc, 1)
             self.assertIn("must hold a GO record", err)
+
+    def test_render_check_accepts_a_record_without_a_workflow_sha(self):
+        tmp = tempfile.mkdtemp()
+        self._page(tmp)
+        jf = os.path.join(tmp, "q.json")
+        rec = json.loads(json.dumps(self.rec))
+        del rec["source"]["workflow_sha"]
+        put(jf, rec)
+        self.assertEqual(self.run_cli(["render", "--json", jf, "--root", tmp, "--write"])[0], 0)
+        rc, _, err = self.run_cli(["render", "--json", jf, "--root", tmp, "--check"])
+        self.assertEqual(rc, 0, err)
 
     def test_replace_block_inserts_above_the_anchor_it_is_given(self):
         text = "# P\n\n## Other heading\n"
@@ -1095,7 +1107,7 @@ class TagAndEquivalenceTests(unittest.TestCase):
             qualified = git(root, "rev-parse", "HEAD")
             # The archive table and the fuzz manifest stay untracked, so the diff is the two documents.
             def mutate(f):
-                f["context.json"].update(source=dict(CONTEXT["source"], sha=qualified))
+                f["context.json"].update(source=dict(CONTEXT["source"], sha=qualified, workflow_sha=qualified))
                 f["ci.json"]["head_sha"] = qualified
             art, _ = build(os.path.join(d, "a"), mutate)
             put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
@@ -1117,6 +1129,87 @@ class TagAndEquivalenceTests(unittest.TestCase):
         self.assertEqual(rec["label"], CONTEXT["label"])
         self.assertEqual(rec["release_vm"]["soak"]["equivalence"],
                          {"soaked": SHA, "qualified": SHA, "changed_release_documents": []})
+
+
+class WorkflowBindingTests(unittest.TestCase):
+    def _repo(self, d):
+        root = os.path.join(d, "root")
+        os.makedirs(root)
+        git(root, "init", "-q", "-b", "main")
+        for f in (".github/workflows/x.yml", ".github/dependabot.yml", "scripts/gen/q.py", "README"):
+            os.makedirs(os.path.dirname(os.path.join(root, f)), exist_ok=True)
+            spit(os.path.join(root, f), "1\n")
+        git(root, "add", ".")
+        git(root, "commit", "-q", "-m", "A")
+        a = git(root, "rev-parse", "HEAD")
+        spit(os.path.join(root, "README"), "2\n")
+        git(root, "commit", "-q", "-am", "B")
+        return root, a, git(root, "rev-parse", "HEAD")
+
+    def _run(self, d, root, sha, workflow_sha, label=None):
+        def mutate(f):
+            src = dict(CONTEXT["source"], sha=sha, workflow_sha=workflow_sha)
+            f["context.json"].update(source=src)
+            if label:
+                f["context.json"]["label"] = label
+            f["ci.json"]["head_sha"] = sha
+        art, _ = build(os.path.join(d, "a"), mutate)
+        put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
+        put(os.path.join(root, "tests/coverage/evidence-archives.toml"), ARCHIVES)
+        return q.collect(art, root)
+
+    def _differs(self, path):
+        with tempfile.TemporaryDirectory() as d:
+            root, a, b = self._repo(d)
+            spit(os.path.join(root, path), "changed\n")
+            git(root, "commit", "-q", "-am", "W")
+            w = git(root, "rev-parse", "HEAD")
+            # B is the qualified commit; W (a descendant) is the dispatched ref's tip.
+            rec = self._run(d, root, b, w)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("source: workflow definitions at %s differ from the qualified commit "
+                      "(1 path(s) under .github/ or scripts/gen/)" % w[:12], rec["verdict_reasons"])
+
+    def test_collect_requires_a_workflow_sha(self):
+        def m(f):
+            del f["context.json"]["source"]["workflow_sha"]
+        err = io.StringIO()
+        with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(err):
+            collect(m)
+        self.assertEqual(e.exception.code, 2)
+        self.assertIn("source.workflow_sha", err.getvalue())
+
+    def test_a_matching_workflow_commit_is_a_go(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, a, b = self._repo(d)
+            rec = self._run(d, root, b, a)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["source"]["workflow_sha"], a)
+
+    def test_a_differing_workflow_definition_is_a_reason(self):
+        self._differs(".github/workflows/x.yml")
+
+    def test_a_workflow_definition_change_outside_workflows_still_counts(self):
+        self._differs(".github/dependabot.yml")
+
+    def test_a_collector_change_counts(self):
+        self._differs("scripts/gen/q.py")
+
+    def test_an_unresolvable_workflow_sha_is_a_reason(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, a, b = self._repo(d)
+            rec = self._run(d, root, b, "f" * 40)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertTrue(any(r.startswith("source: git could not resolve " + "f" * 12)
+                            for r in rec["verdict_reasons"]), rec["verdict_reasons"])
+
+    def test_a_pr_rehearsal_skips_the_workflow_comparison(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, a, b = self._repo(d)
+            with mock.patch.object(q, "changed_workflow_definitions", side_effect=AssertionError("git called")):
+                rec = self._run(d, root, b, "e" * 40, label="PR #7 at " + b[:8])
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertFalse(any(r.startswith("source:") for r in rec["verdict_reasons"]))
 
 
 ARM_CENSUS = {"arch": "linux-aarch64", "shape": "subset", "total": 70, "pass": 60, "fail": 2,
