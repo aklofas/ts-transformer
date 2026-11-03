@@ -258,7 +258,7 @@ def changed_release_documents(root, tree, sha):
 
 
 def _newest(rows):
-    """The row with the latest date; on equal dates the later row in the file."""
+    """The row with the latest date; on equal dates the later row in the file is the newer."""
     best = None
     for r in rows:
         if best is None or r["date"] >= best["date"]:
@@ -271,34 +271,57 @@ def _by_date(rows):
     return [r for _, r in sorted(enumerate(rows), key=lambda p: (p[1]["date"], p[0]), reverse=True)]
 
 
-def _soak_entry(root, sha, s):
+def _changed(root, sha, tree, memo):
+    """The paths outside the release documents that differ between archive `tree` and
+    the qualified `sha`: [] when they are the same tree or differ only in release
+    documents, None when git could not resolve `tree` (the error text is kept in
+    memo[tree][1]). One git call per tree: `memo` holds the answer."""
+    if tree not in memo:
+        if tree == sha:
+            memo[tree] = ([], None)
+        else:
+            try:
+                memo[tree] = (changed_paths(root, tree, sha), None)
+            except QualificationError as err:
+                memo[tree] = (None, str(err))
+    return memo[tree][0]
+
+
+def _stands_for(root, sha, tree, memo):
+    """True when archive `tree` is equivalent to `sha`, False when it is not, None when
+    git could not resolve it."""
+    changed = _changed(root, sha, tree, memo)
+    return None if changed is None else changed == []
+
+
+def _soak_entry(root, sha, s, memo):
     e = {"id": s["id"], "tree": s["tree"], "date": s["date"],
          "overall_pass": s["overall_pass"], "expected_duration_s": s.get("expected_duration_s"),
          "legs": s.get("legs"), "waiver": s.get("waiver"), "disposition": disposition(s),
          "changed_paths": 0, "git_error": None}
-    if s["tree"] != sha:
-        try:
-            e["changed_paths"] = len(changed_paths(root, s["tree"], sha))
-        except QualificationError as err:
-            e["changed_paths"] = None
-            e["git_error"] = str(err)
+    changed = _changed(root, sha, s["tree"], memo)
+    if changed is None:
+        e["changed_paths"] = None
+        e["git_error"] = memo[s["tree"]][1]
+    else:
+        e["changed_paths"] = len(changed)
     return e
 
 
-def _pick_soak(root, sha, soaks):
+def _pick_soak(root, sha, soaks, memo):
     """The newest 72-hour soak that stands for `sha` (same tree, or no change under
     release documents since); else the newest 72-hour soak; else the newest of any
     duration. Git runs at most once per 72-hour archive."""
     long = [s for s in _by_date(soaks) if s.get("expected_duration_s") == RELEASE_SOAK_S]
     first = None
     for s in long:
-        e = _soak_entry(root, sha, s)
+        e = _soak_entry(root, sha, s, memo)
         if e["git_error"] is None and e["changed_paths"] == 0:
             return e
         first = first or e
     if first is not None:
         return first
-    return _soak_entry(root, sha, _by_date(soaks)[0])
+    return _soak_entry(root, sha, _by_date(soaks)[0], memo)
 
 
 def _check_sha(sha, what="source.sha"):
@@ -319,17 +342,22 @@ def _raw_verdict_reason(kind, entry):
 def release_vm(root, sha, archives, release, expected_files):
     """The release gate: the chosen soak archive (see _pick_soak) must stand for
     `sha`, have passed and declared 72 hours, and a passing corpus archive must
-    exist for the soaked tree. A waived archive never passes: a release needs the
-    harness's own pass. Outside release mode the same entries, and their
+    exist for the qualified tree. "Stands for" means the archive's tree is `sha` or
+    differs from it only in release documents; negative evidence follows the same
+    rule for both kinds: a newer failed soak, or a newer failed corpus row, on an
+    equivalent tree counts against the archive (rows are ordered by date, then by
+    file position, the later row being the newer). A waived archive never passes:
+    a release needs the harness's own pass. Outside release mode the same entries, and their
     dispositions, are recorded for information and `reasons` stays empty."""
     reasons = []
+    memo = {}
     soak, corpus = None, None
     soaks = [a for a in archives if a["kind"] == "soak"]
     _check_sha(sha)
     if not soaks:
         reasons.append("soak: no 72-hour soak archive for this tree (%s)" % str(sha)[:12])
     else:
-        soak = _pick_soak(root, sha, soaks)
+        soak = _pick_soak(root, sha, soaks, memo)
         if soak["git_error"] is not None:
             reasons.append("soak: git could not resolve %s: %s" % (soak["tree"], soak["git_error"]))
         else:
@@ -353,8 +381,13 @@ def release_vm(root, sha, archives, release, expected_files):
             chosen = next(a for a in soaks if a["id"] == soak["id"])
             key = lambda a: (a["date"], order[id(a)])
             for a in _by_date(soaks):
-                if a["tree"] == soak["tree"] and disposition(a) != "pass" and key(a) > key(chosen):
-                    reasons.append("soak: archive %s, a newer run on the same tree, recorded overall_pass=false"
+                if disposition(a) == "pass" or key(a) <= key(chosen):
+                    continue
+                eq = _stands_for(root, sha, a["tree"], memo)
+                if eq is None:
+                    reasons.append("soak: git could not resolve %s: %s" % (a["tree"], memo[a["tree"]][1]))
+                elif eq:
+                    reasons.append("soak: archive %s, a newer run on an equivalent tree, recorded overall_pass=false"
                                    % a["id"])
             if soak["expected_duration_s"] != RELEASE_SOAK_S:
                 reasons.append("soak: archive %s declares %s s, not %d"
@@ -363,7 +396,16 @@ def release_vm(root, sha, archives, release, expected_files):
                 reasons.append("soak: archive %s ran legs %s; the release soak needs %s"
                                % (soak["id"], ", ".join(soak.get("legs") or ()) or "none (undeclared)",
                                   ", ".join(RELEASE_SOAK_LEGS)))
-            c = _newest([a for a in archives if a["kind"] == "corpus" and a["tree"] == soak["tree"]])
+            candidates = []
+            for a in archives:
+                if a["kind"] != "corpus":
+                    continue
+                eq = _stands_for(root, sha, a["tree"], memo)
+                if eq is None:
+                    reasons.append("corpus: git could not resolve %s: %s" % (a["tree"], memo[a["tree"]][1]))
+                elif eq:
+                    candidates.append(a)
+            c = _newest(candidates)
             if c is None:
                 reasons.append("corpus: no corpus archive for the soaked tree %s" % soak["tree"][:12])
             else:

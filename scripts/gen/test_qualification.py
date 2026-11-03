@@ -789,9 +789,94 @@ class ReleaseModeTests(unittest.TestCase):
             rec = collect(release=True, archives=rows)
             self.assertEqual(rec["verdict"], "NO-GO", dur)
             # A newer failed 72-hour row is itself the chosen archive.
-            want = ("soak: archive soak-bad, a newer run on the same tree, recorded overall_pass=false"
+            want = ("soak: archive soak-bad, a newer run on an equivalent tree, recorded overall_pass=false"
                     if dur == 3600 else "soak: archive soak-bad recorded overall_pass=false")
             self.assertIn(want, rec["verdict_reasons"])
+
+    def _diffs(self, diffs, rows):
+        with mock.patch.object(q, "changed_paths", side_effect=lambda root, tree, sha: diffs[tree]) as m:
+            return collect(release=True, archives=rows), m
+
+    def test_a_newer_failed_soak_on_an_equivalent_tree_is_a_reason(self):
+        D = "d" * 40
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17", legs=FIVE),
+                             archive_row("soak-bad", "soak", D, date="2026-10-18", duration=3600,
+                                         overall_pass=False),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        rec, _ = self._diffs({D: []}, rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: archive soak-bad, a newer run on an equivalent tree, recorded overall_pass=false",
+                      rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-72")
+
+    def test_a_newer_failed_soak_on_a_non_equivalent_tree_does_not_count(self):
+        D = "d" * 40
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17", legs=FIVE),
+                             archive_row("soak-bad", "soak", D, date="2026-10-18", duration=3600,
+                                         overall_pass=False),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        rec, _ = self._diffs({D: ["crates/x.rs"]}, rows)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+
+    def _corpus_rows(self, D, bad_order=False):
+        a = archive_row("corpus-rel", "corpus", SHA, date="2026-10-17", counts=COUNTS)
+        b = archive_row("corpus-bad", "corpus", D, date="2026-10-18", overall_pass=False, counts=COUNTS)
+        return archives_toml(archive_row("soak-72", "soak", SHA, legs=FIVE), a, b)
+
+    def test_a_newer_failed_corpus_on_an_equivalent_tree_is_a_reason(self):
+        D = "d" * 40
+        rec, _ = self._diffs({D: []}, self._corpus_rows(D))
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(rec["release_vm"]["corpus"]["id"], "corpus-bad")
+        self.assertIn("corpus: archive corpus-bad recorded overall_pass=false", rec["verdict_reasons"])
+
+    def test_a_newer_failed_corpus_on_a_non_equivalent_tree_does_not_count(self):
+        D = "d" * 40
+        rec, _ = self._diffs({D: ["crates/x.rs"]}, self._corpus_rows(D))
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["corpus"]["id"], "corpus-rel")
+
+    def test_an_unresolvable_newer_soak_tree_is_a_reason(self):
+        D = "d" * 40
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17", legs=FIVE),
+                             archive_row("soak-bad", "soak", D, date="2026-10-18", duration=3600,
+                                         overall_pass=False),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        with mock.patch.object(q, "changed_paths", side_effect=q.QualificationError("fatal: bad object")):
+            rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: git could not resolve %s: fatal: bad object" % D, rec["verdict_reasons"])
+
+    def test_an_unresolvable_corpus_tree_is_a_reason(self):
+        D = "d" * 40
+        with mock.patch.object(q, "changed_paths", side_effect=q.QualificationError("fatal: bad object")):
+            rec = collect(release=True, archives=self._corpus_rows(D))
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("corpus: git could not resolve %s: fatal: bad object" % D, rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["corpus"]["id"], "corpus-rel")
+
+    def test_equal_date_rows_are_ordered_by_file_position(self):
+        for kind in ("corpus", "soak"):
+            def row(i, ok):
+                extra = dict(counts=COUNTS) if kind == "corpus" else dict(legs=FIVE)
+                return archive_row(i, kind, SHA, overall_pass=ok, **extra)
+            other = (archive_row("soak-rel", "soak", SHA, legs=FIVE) if kind == "corpus"
+                     else archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+            fail_last = collect(release=True, archives=archives_toml(other, row("a", True), row("b", False)))
+            self.assertEqual(fail_last["verdict"], "NO-GO", kind)
+            fail_first = collect(release=True, archives=archives_toml(other, row("b", False), row("a", True)))
+            self.assertEqual(fail_first["verdict"], "GO", (kind, fail_first["verdict_reasons"]))
+
+    def test_git_runs_once_per_archive_tree(self):
+        D = "d" * 40
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17", legs=FIVE),
+                             archive_row("soak-x", "soak", D, date="2026-10-18", duration=3600, overall_pass=False),
+                             archive_row("soak-y", "soak", D, date="2026-10-19", duration=3600, overall_pass=False),
+                             archive_row("corpus-rel", "corpus", SHA, date="2026-10-17", counts=COUNTS),
+                             archive_row("corpus-bad", "corpus", D, date="2026-10-18", overall_pass=False,
+                                         counts=COUNTS))
+        _, m = self._diffs({D: []}, rows)
+        self.assertEqual([c.args[1] for c in m.call_args_list].count(D), 1)
 
     def test_a_newer_short_soak_does_not_hide_the_72_hour_one(self):
         rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17", legs=FIVE),

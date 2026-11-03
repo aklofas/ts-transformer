@@ -228,6 +228,11 @@ merge commit, and the qualification run checks that nothing under
      the date and the release that fixes the cause). A release needs a raw
      pass, so a harness defect is fixed and the soak rerun.
 
+   Rows are judged by `date`, newest first; two rows with the same date are
+   ordered by their position in the file, the later row being the newer. The
+   gate reads a soak or corpus row for any commit whose tree matches the
+   qualified one outside the release documents.
+
    The same PR adds the soak to the runs table on the
    [validation evidence page](/docs/project/validation-evidence.md).
 8. **Destroy the VM** once both archives are harvested and checked.
@@ -261,8 +266,11 @@ merge commit, and the qualification run checks that nothing under
     document, because the soak's browser leg runs it. A `v*` tag push
     applies the same gate. The gate
     judges the newest 72-hour soak that stands for the commit. A newer failed
-    soak of any declared duration on the same tree is a reason for NO-GO,
-    while a newer passing short run never replaces the 72-hour pass. Without
+    soak of any declared duration on the same or an equivalent tree is a
+    reason for NO-GO, while a newer passing short run never replaces the
+    72-hour pass. The newest corpus row on an equivalent tree is the one
+    judged, so a newer failed corpus run blocks and a newer passing one
+    replaces an earlier failure. Without
     the input the record is a mid-cycle one and states that the gate was not
     applied.
 
