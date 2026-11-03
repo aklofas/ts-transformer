@@ -103,6 +103,8 @@ def read_json(path):
 
 CORPUS_COUNTS = ("files", "identical", "changed_explained", "invariant_failures",
                  "parse_failures", "replay_files", "replay_paths", "replay_failed")
+# A passing corpus row cannot also record any of these.
+FAILURE_COUNTS = ("parse_failures", "invariant_failures", "replay_failed")
 
 
 def parse_archives(text):
@@ -182,6 +184,10 @@ def validate_archives(rows):
             for k in present:
                 if isinstance(r[k], bool) or not isinstance(r[k], int) or r[k] < 0:
                     problems.append("%s: %s must be an integer, 0 or more" % (i, k))
+            if r.get("overall_pass") is True:
+                for k in FAILURE_COUNTS:
+                    if isinstance(r.get(k), int) and not isinstance(r[k], bool) and r[k] > 0:
+                        problems.append("corpus row %s passes with %s = %d" % (i, k, r[k]))
     return problems
 
 
@@ -367,6 +373,9 @@ def release_vm(root, sha, archives, release, expected_files):
                                        % (c["id"], c["files"], expected_files))
                     if not c["replay_files"] > 0:
                         reasons.append("corpus: archive %s replayed no files" % c["id"])
+                    for k in ("parse_failures", "invariant_failures"):
+                        if c[k] != 0:
+                            reasons.append("corpus: archive %s has %s = %s" % (c["id"], k, c[k]))
                     if c["replay_failed"] != 0:
                         reasons.append("corpus: archive %s has %s failed replay(s)"
                                        % (c["id"], c["replay_failed"]))
