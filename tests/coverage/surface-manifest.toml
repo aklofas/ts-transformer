@@ -52,6 +52,10 @@ item_regex = '::(clone|eq|ne|fmt|hash|cmp|partial_cmp|default)$'
 reason = "trait method (derived or std trait impl)"
 
 [[exempt_rule]]
+item_regex = '^tst_pipeline::reconnect::ReconnectPolicy::with_[a-z_]+$'
+reason = "consuming field setter; the policy is exercised through every managed-transport test"
+
+[[exempt_rule]]
 item_regex = '^rist_sys::'
 reason = "bindgen surface"
 
