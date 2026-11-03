@@ -702,8 +702,8 @@ with DemuxReceiver.open("srt://:9000?mode=listener") as rx:
 ```
 
 `rx.ts_bytes_demuxed()` returns the aligned TS bytes the receiver fed its
-demuxer. It is a lock-free read: it answers while another thread is parked
-in `next()` and returns the last value after `close()`.
+demuxer. It never waits for a parked `__next__`: it answers while another
+thread is parked in it and returns the last value after `close()`.
 
 To record or forward the raw packets, compose a `Receiver` with a `Demuxer`.
 Each chunk is a whole number of 188-byte packets:
