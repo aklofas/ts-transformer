@@ -45,6 +45,12 @@ pub(super) struct PidState {
     /// cells in progress and the LOAS record position belong to the old
     /// source and are dropped once the PES in flight has ended.
     pub(super) source_reset_after_pes: bool,
+    /// The discontinuity was signalled after the start of the PES in flight
+    /// (on a continuation or adaptation-only packet), so that PES's cells
+    /// may follow the reset: the AU in progress is dropped before it is
+    /// walked. A flagged PUSI does not set it, since every byte of the PES
+    /// it ends precedes the flag.
+    pub(super) source_reset_in_pes: bool,
     /// A PES without a PTS arrived since the last coded PTS on an audio or
     /// video PID; the next coded PTS judges the spacing around the run.
     pub(super) pts_less_since_pts: bool,
@@ -110,6 +116,7 @@ impl PidState {
         self.clear_pts_baseline();
         self.pts_baseline_clears_after_pes = false;
         self.source_reset_after_pes = false;
+        self.source_reset_in_pes = false;
         self.unwrap = None;
         self.latm_carry = None;
         self.latm_carry_tentative = false;
@@ -173,6 +180,7 @@ impl PidState {
             last_pts,
             pts_baseline_clears_after_pes,
             source_reset_after_pes,
+            source_reset_in_pes,
             pts_less_since_pts,
             pts_less_run_pcr,
             pts_less_run_reported,
@@ -198,6 +206,7 @@ impl PidState {
             && last_pts.is_none()
             && !pts_baseline_clears_after_pes
             && !source_reset_after_pes
+            && !source_reset_in_pes
             && !pts_less_since_pts
             && pts_less_run_pcr.is_none()
             && !pts_less_run_reported

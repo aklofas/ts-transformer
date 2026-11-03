@@ -312,15 +312,17 @@ impl super::demuxer::Demuxer {
         let pid = pes.pid;
         let damaged = damage.is_some();
         let mut damage = damage;
-        // A reset signalled while this PES was in flight may precede its
-        // cells, so the AU in progress belongs to the old source: discard it
-        // before the walk, or a Last cell after the reset would complete it.
-        // The flag's position is not kept, so a Last cell wholly before the
-        // flag in this PES is dropped with it.
+        // A reset signalled after this PES started may precede its cells,
+        // so the AU in progress belongs to the old source: discard it before
+        // the walk, or a Last cell after the reset would complete it. The
+        // flag's position is not kept, so a Last cell wholly before the flag
+        // in this PES is dropped with it, and an AU begun in this PES is
+        // dropped by the settle below. A flagged PUSI that ends this PES
+        // does not count: all of the PES precedes it.
         if self
             .pid_state
             .get(&pid)
-            .is_some_and(|state| state.source_reset_after_pes)
+            .is_some_and(|state| state.source_reset_in_pes)
         {
             self.discard_au_in_progress(pid);
         }
@@ -3219,29 +3221,81 @@ mod tests {
             let mut control = a;
             control.extend([b_start, b_cont(2, false)]);
 
-            let payloads = |ev: &[DemuxEvent]| -> Vec<Vec<u8>> {
-                ev.iter()
-                    .filter_map(|e| match e {
-                        DemuxEvent::Metadata { payload, .. } => Some(payload.clone()),
-                        _ => None,
-                    })
-                    .collect()
-            };
             let ev = run(StrictMode::Off, &with_c(control, 3));
             assert_eq!(
-                payloads(&ev),
-                vec![b"AAABBB".to_vec(), b"CCC".to_vec()],
+                au_outcomes(&ev),
+                vec!["metadata AAABBB", "metadata CCC"],
                 "{ev:?}"
             );
-            assert!(sequence_gaps(&ev).is_empty(), "{ev:?}");
             for (name, pkts) in [
                 ("continuation", with_c(on_continuation, 3)),
                 ("adaptation-only", with_c(adaptation_only, 10)),
             ] {
                 let ev = run(StrictMode::Off, &pkts);
-                assert_eq!(payloads(&ev), vec![b"CCC".to_vec()], "{name}: {ev:?}");
-                assert_eq!(sequence_gaps(&ev), vec![3], "{name}: {ev:?}");
+                assert_eq!(
+                    au_outcomes(&ev),
+                    vec!["gap 3", "metadata CCC"],
+                    "{name}: {ev:?}"
+                );
             }
+        }
+
+        /// `ev` reduced to the AU-cell outcomes, in queue order: each
+        /// Metadata payload, each `SequenceGap` report and each
+        /// `MalformedPes` marker on PID 0x101.
+        fn au_outcomes(ev: &[DemuxEvent]) -> Vec<String> {
+            ev.iter()
+                .filter_map(|e| match e {
+                    DemuxEvent::Metadata { payload, .. } => {
+                        Some(format!("metadata {}", String::from_utf8_lossy(payload)))
+                    }
+                    DemuxEvent::NonConformant {
+                        issue:
+                            NonConformantIssue::MultiCellAu {
+                                pid: 0x101,
+                                dropped_bytes,
+                                reason: MultiCellAuReason::SequenceGap,
+                            },
+                        ..
+                    } => Some(format!("gap {dropped_bytes}")),
+                    DemuxEvent::NonConformant {
+                        issue: NonConformantIssue::MalformedPes { pid: 0x101, .. },
+                        ..
+                    } => Some("malformed".into()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// A flagged PUSI ends a PES cut short by a source switch: every byte
+        /// of that PES precedes the flag, so the intact Last cell at its head
+        /// still completes the AU in progress. PES B carries Last 11 and the
+        /// start of a First 12 that never ends; PES C's PUSI carries the flag
+        /// and a counter break.
+        #[test]
+        fn a_flagged_pusi_ending_a_short_pes_keeps_the_last_cell_before_it() {
+            let mut pkts = cells_pes(0, &[(First, 10, b"AAA")]);
+            let b = cells_pes(1, &[(Last, 11, b"BBB"), (First, 12, &[0xBB; 200])]);
+            assert_eq!(b.len(), 2);
+            pkts.push(b[0]);
+            let c = cells_pes(0, &[(Complete, 13, b"CCC")]);
+            let payload_start = 5 + usize::from(c[0][4]);
+            pkts.push(ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 7,
+                pusi: true,
+                discontinuity: true,
+                payload: &c[0][payload_start..],
+                ..Default::default()
+            }));
+            let ev = run(StrictMode::Off, &pkts);
+            // The damage marker directly precedes the damaged PES's first
+            // Metadata.
+            assert_eq!(
+                au_outcomes(&ev),
+                vec!["malformed", "metadata AAABBB", "metadata CCC"],
+                "{ev:?}"
+            );
         }
 
         /// `klv_demuxer` with a per-PID PES cap.

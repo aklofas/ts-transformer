@@ -1514,6 +1514,7 @@ mod tests {
             last_pts: Some(90_000),
             pts_baseline_clears_after_pes: true,
             source_reset_after_pes: true,
+            source_reset_in_pes: true,
             pts_less_since_pts: true,
             pts_less_run_pcr: Some(0),
             pts_less_run_reported: true,
