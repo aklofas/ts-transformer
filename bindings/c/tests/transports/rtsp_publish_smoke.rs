@@ -24,9 +24,9 @@ use tstrans::error::TstError;
 use tstrans::event::{TstEvent, TstEventKind, TstStreamKindTag};
 use tstrans::rtp::{
     tst_rtp_demux_receiver_cancel, tst_rtp_demux_receiver_close, tst_rtp_demux_receiver_end_reason,
-    tst_rtp_demux_receiver_next_event,
+    tst_rtp_demux_receiver_get_stats, tst_rtp_demux_receiver_next_event,
 };
-use tstrans::stats::TstServerStats;
+use tstrans::stats::{TstDemuxReceiverStats, TstServerStats};
 use tstrans::stream_end_reason::TstStreamEndReason;
 use tstrans::{
     TstRtspClockAlignment, TstRtspPublishMountStats, TstRtspPublishShape, TstRtspPublisherInfo,
@@ -653,6 +653,18 @@ fn rtsp_publish_mount_cancel_beats_buffered_events() {
     // already queued behind the one returned.
     let mut ev = TstEvent::default();
     assert_eq!(unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) }, 0);
+    // The shell consumed more TS packets than the one event it returned,
+    // so the next read has queued input to serve without the cancel.
+    let mut rx_stats = TstDemuxReceiverStats::default();
+    assert_eq!(
+        unsafe { tst_rtp_demux_receiver_get_stats(rx, &mut rx_stats) },
+        0
+    );
+    assert!(
+        rx_stats.packets_received > 1,
+        "only {} packet(s) consumed before the cancel",
+        rx_stats.packets_received
+    );
     assert_eq!(unsafe { tst_rtsp_publish_mount_cancel(m) }, 0);
     assert_eq!(
         unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) },

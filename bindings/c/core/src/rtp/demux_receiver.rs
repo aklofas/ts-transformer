@@ -62,7 +62,9 @@ pub struct TstRtpDemuxReceiver {
 
 impl TstRtpDemuxReceiver {
     /// Latches the receiver's own cancel when its mount was cancelled, so
-    /// the gate refuses with CLOSED before the shell returns queued events.
+    /// the gate refuses with CLOSED before the shell returns queued events;
+    /// a cancel racing this call may still lose to it, like any concurrent
+    /// `_cancel`.
     fn observe_mount_cancel(&self) {
         if self.mount_cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
             self.inner.cancel();

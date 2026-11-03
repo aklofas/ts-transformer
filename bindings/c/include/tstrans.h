@@ -5302,8 +5302,9 @@ int tst_mux_config_set_pcr_pid(struct tst_mux_config_t *cfg,
  * them zero is refused with `TST_E_INVALID_CONFIG` and changes nothing.
  *
  * Returns 0 on success or a negative `TST_E_*` code on: null `cfg`,
- * null `tlv_bytes` with non-zero count, invalid program handle, or a
- * malformed TLV byte stream (truncated length or body, or trailing
+ * null `tlv_bytes` with non-zero count, invalid program handle, exactly
+ * one of `tlv_count` / `tlv_total_len` zero (`TST_E_INVALID_CONFIG`), or
+ * a malformed TLV byte stream (truncated length or body, or trailing
  * bytes after the last descriptor).
  */
 
