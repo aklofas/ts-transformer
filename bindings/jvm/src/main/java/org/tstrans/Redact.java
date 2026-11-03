@@ -8,16 +8,17 @@ package org.tstrans;
  * {@code user:password@host} userinfo and the values of the query keys {@code passphrase},
  * {@code secret}, {@code token}, {@code auth_pass}, {@code password}, {@code streamid} and
  * {@code srt_streamid} become {@code <redacted>}. Key matching is exact and lower-case, after
- * percent-decoding the key name. A {@code scheme://} span runs to the end of the input, or to the
- * closing quote when it opens right after one, and is scrubbed whole: a quote or a space inside a
- * password or a value does not end it. Text outside any such span is scrubbed one whitespace-
- * (ASCII or U+00A0) or quote-delimited token at a time.
+ * percent-decoding the key name. A {@code scheme://} span is scrubbed whole. It runs to the end
+ * of the input, or, when it opens right after a quote, to the last matching quote before the next
+ * URL; with no such quote it runs to the end of the input. Text outside any such span is scrubbed
+ * one whitespace- (ASCII or U+00A0) or quote-delimited token at a time.
  *
  * <p>The scrub is a heuristic that errs toward redacting, so malformed text around a credential
  * may be redacted with it. The accepted over-redactions: any later {@code @} ends the userinfo,
  * so {@code srt://h:9000/a@b} loses {@code 9000/a}; a raw {@code ?} before the last {@code @} is
- * password text, so {@code srt://h:1?mail=a@b} loses {@code 1?mail=a}; a stray quote after a
- * quoted URL extends it to the end of the input.
+ * password text, so {@code srt://h:1?mail=a@b} loses {@code 1?mail=a}; text after a quoted URL,
+ * up to the last matching quote, is treated as part of the URL, so {@code 'srt://h?token=x' can't}
+ * loses {@code x' can}.
  */
 public final class Redact {
     private static final String[] SECRET_KEYS =
@@ -37,8 +38,8 @@ public final class Redact {
             }
             int start = span[0];
             tokens(url.substring(pos, start), out);
-            // A URL runs to the end of the input, or to the closing quote when it opens right
-            // after one: quotes and spaces inside it are part of a password or a value.
+            // A quote or a space can sit inside a password or a value, so a quoted URL runs to the
+            // last matching quote, not the first.
             int end = url.length();
             if (start > 0) {
                 char q = url.charAt(start - 1);
@@ -54,29 +55,22 @@ public final class Redact {
     }
 
     /**
-     * Where a span opened by quote {@code q} ends: the first {@code q} at or after {@code from}
-     * followed by a separator, a closing bracket, {@code ,} or {@code ;}, or by the end of the
-     * input, and after which the rest of the input holds an even number of {@code q}. A {@code q}
-     * inside a password or a value does not close it, a balanced pair of later quotes stays
-     * outside the span, and an odd stray {@code q} extends it to the end of the input.
+     * Where a span opened by quote {@code q} ends: the last {@code q} at or after {@code from}
+     * and before the next URL, not counting the {@code q} that opens that URL; the end of the
+     * input when there is no such {@code q}. Stopping before the next URL keeps a second quoted
+     * URL its own span.
      */
     private static int closingQuote(String s, int from, char q) {
-        int after = 0;
-        for (int i = s.indexOf(q, from); i >= 0; i = s.indexOf(q, i + 1)) {
-            after++;
-        }
-        for (int i = s.indexOf(q, from); i >= 0; i = s.indexOf(q, i + 1)) {
-            after--;
-            boolean closes = i + 1 == s.length();
-            if (!closes) {
-                char c = s.charAt(i + 1);
-                closes = isSeparator(c) || c == ',' || c == ';' || c == ')' || c == ']' || c == '}';
-            }
-            if (closes && after % 2 == 0) {
-                return i;
+        int[] next = nextUrl(s, from);
+        int limit = s.length();
+        if (next != null) {
+            limit = next[0];
+            if (limit > 0 && s.charAt(limit - 1) == q) {
+                limit--;
             }
         }
-        return s.length();
+        int i = s.lastIndexOf(q, limit - 1);
+        return i >= from ? i : s.length();
     }
 
     /** Offsets of the next {@code scheme://} at or after {@code from}: scheme start, text after. */
