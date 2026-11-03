@@ -167,6 +167,7 @@ fn build_socket_config(
     connect_timeout_ms: &JObject,
     recv_timeout_ms: &JObject,
     send_timeout_ms: &JObject,
+    peer_idle_timeout_ms: &JObject,
     peer_latency_ms: &JObject,
     recv_latency_ms: &JObject,
     max_bandwidth_bps: &JObject,
@@ -231,6 +232,11 @@ fn build_socket_config(
         cfg.send_timeout = Some(Duration::from_millis(ms as u64));
     }
 
+    // peer_idle_timeout_ms
+    if let Some(ms) = unbox_nullable_int(env, peer_idle_timeout_ms)? {
+        cfg.peer_idle_timeout = Some(Duration::from_millis(ms as u64));
+    }
+
     // peer_latency_ms (caller-only; not in SrtListenerConfig)
     if let Some(ms) = unbox_nullable_int(env, peer_latency_ms)? {
         cfg.peer_latency = Some(Duration::from_millis(ms as u64));
@@ -270,6 +276,7 @@ fn build_listener_config(
     congestion: &JString,
     recv_timeout_ms: &JObject,
     send_timeout_ms: &JObject,
+    peer_idle_timeout_ms: &JObject,
     recv_latency_ms: &JObject,
     max_bandwidth_bps: &JObject,
     mss: &JObject,
@@ -309,6 +316,10 @@ fn build_listener_config(
 
     if let Some(ms) = unbox_nullable_int(env, send_timeout_ms)? {
         cfg.socket.send_timeout = Some(Duration::from_millis(ms as u64));
+    }
+
+    if let Some(ms) = unbox_nullable_int(env, peer_idle_timeout_ms)? {
+        cfg.socket.peer_idle_timeout = Some(Duration::from_millis(ms as u64));
     }
 
     if let Some(ms) = unbox_nullable_int(env, recv_latency_ms)? {
@@ -354,6 +365,7 @@ jni_native! {
         connect_timeout_ms: JObject<'local>,
         recv_timeout_ms: JObject<'local>,
         send_timeout_ms: JObject<'local>,
+        peer_idle_timeout_ms: JObject<'local>,
         peer_latency_ms: JObject<'local>,
         recv_latency_ms: JObject<'local>,
         max_bandwidth_bps: JObject<'local>,
@@ -397,6 +409,7 @@ jni_native! {
             &connect_timeout_ms,
             &recv_timeout_ms,
             &send_timeout_ms,
+            &peer_idle_timeout_ms,
             &peer_latency_ms,
             &recv_latency_ms,
             &max_bandwidth_bps,
@@ -466,6 +479,7 @@ jni_native! {
         connect_timeout_ms: JObject<'local>, // accepted but ignored (a listener does not apply connect_timeout)
         recv_timeout_ms: JObject<'local>,
         send_timeout_ms: JObject<'local>,
+        peer_idle_timeout_ms: JObject<'local>,
         peer_latency_ms: JObject<'local>, // accepted but ignored (a listener does not apply peer_latency)
         recv_latency_ms: JObject<'local>,
         max_bandwidth_bps: JObject<'local>,
@@ -506,6 +520,7 @@ jni_native! {
             &congestion,
             &recv_timeout_ms,
             &send_timeout_ms,
+            &peer_idle_timeout_ms,
             &recv_latency_ms,
             &max_bandwidth_bps,
             &mss,

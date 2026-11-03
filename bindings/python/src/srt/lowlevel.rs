@@ -191,6 +191,7 @@ impl PyBuilder {
         connect_timeout_ms = None,
         recv_timeout_ms = None,
         send_timeout_ms = None,
+        peer_idle_timeout_ms = None,
     ))]
     fn new(
         py: Python<'_>,
@@ -202,6 +203,7 @@ impl PyBuilder {
         connect_timeout_ms: Option<u32>,
         recv_timeout_ms: Option<u32>,
         send_timeout_ms: Option<u32>,
+        peer_idle_timeout_ms: Option<u32>,
     ) -> PyResult<Self> {
         let mut b = Self {
             url: url.to_string(),
@@ -236,6 +238,11 @@ impl PyBuilder {
             let d = Duration::from_millis(ms.into());
             b.socket_cfg.send_timeout = Some(d);
             b.listener_cfg.socket.send_timeout = Some(d);
+        }
+        if let Some(ms) = peer_idle_timeout_ms {
+            let d = Duration::from_millis(ms.into());
+            b.socket_cfg.peer_idle_timeout = Some(d);
+            b.listener_cfg.socket.peer_idle_timeout = Some(d);
         }
         Ok(b)
     }
@@ -317,6 +324,13 @@ impl PyBuilder {
         let d = Duration::from_millis(ms.into());
         slf.socket_cfg.send_timeout = Some(d);
         slf.listener_cfg.socket.send_timeout = Some(d);
+        slf
+    }
+
+    fn peer_idle_timeout_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyRefMut<'_, Self> {
+        let d = Duration::from_millis(ms.into());
+        slf.socket_cfg.peer_idle_timeout = Some(d);
+        slf.listener_cfg.socket.peer_idle_timeout = Some(d);
         slf
     }
 

@@ -50,6 +50,7 @@ public final class Builder {
     private Integer connectTimeoutMs;
     private Integer recvTimeoutMs;
     private Integer sendTimeoutMs;
+    private Integer peerIdleTimeoutMs;
     private Integer peerLatencyMs;
     private Integer recvLatencyMs;
     private Long maxBandwidthBps;
@@ -112,6 +113,18 @@ public final class Builder {
     public Builder sendTimeoutMs(int ms) { this.sendTimeoutMs = requireNonNegative(ms, "sendTimeoutMs"); return this; }
 
     /**
+     * Set {@code SRTO_PEERIDLETIMEO} in milliseconds: how long the connection may hear
+     * nothing from the peer before it breaks (libsrt default 5000). Chainable.
+     *
+     * <p>libsrt breaks a silent connection only after the idle time has elapsed and more
+     * than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not
+     * detect a silent peer sooner; raise it for links whose loss bursts outlast the
+     * default. Zero is refused when the socket is configured ({@code CONFIG_INVALID}).
+     * @throws IllegalArgumentException if {@code ms} is negative.
+     */
+    public Builder peerIdleTimeoutMs(int ms) { this.peerIdleTimeoutMs = requireNonNegative(ms, "peerIdleTimeoutMs"); return this; }
+
+    /**
      * Set {@code SRTO_PEERLATENCY} in milliseconds (caller side only). Chainable.
      * @throws IllegalArgumentException if {@code ms} is negative.
      */
@@ -168,7 +181,7 @@ public final class Builder {
         return new Socket(nConnect(
             url, mode.ordinal(),
             latencyMs, passphrase, streamId, congestion,
-            connectTimeoutMs, recvTimeoutMs, sendTimeoutMs,
+            connectTimeoutMs, recvTimeoutMs, sendTimeoutMs, peerIdleTimeoutMs,
             peerLatencyMs, recvLatencyMs,
             maxBandwidthBps, mss, payloadSize
         ));
@@ -195,7 +208,7 @@ public final class Builder {
         return new Listener(nListen(
             url, mode.ordinal(),
             latencyMs, passphrase, streamId, congestion,
-            connectTimeoutMs, recvTimeoutMs, sendTimeoutMs,
+            connectTimeoutMs, recvTimeoutMs, sendTimeoutMs, peerIdleTimeoutMs,
             peerLatencyMs, recvLatencyMs,
             maxBandwidthBps, mss, payloadSize
         ));
@@ -222,7 +235,7 @@ public final class Builder {
     private static native long nConnect(
         String url, int mode,
         Integer latencyMs, String passphrase, String streamId, String congestion,
-        Integer connectTimeoutMs, Integer recvTimeoutMs, Integer sendTimeoutMs,
+        Integer connectTimeoutMs, Integer recvTimeoutMs, Integer sendTimeoutMs, Integer peerIdleTimeoutMs,
         Integer peerLatencyMs, Integer recvLatencyMs,
         Long maxBandwidthBps, Integer mss, Integer payloadSize
     ) throws SrtException;
@@ -230,7 +243,7 @@ public final class Builder {
     private static native long nListen(
         String url, int mode,
         Integer latencyMs, String passphrase, String streamId, String congestion,
-        Integer connectTimeoutMs, Integer recvTimeoutMs, Integer sendTimeoutMs,
+        Integer connectTimeoutMs, Integer recvTimeoutMs, Integer sendTimeoutMs, Integer peerIdleTimeoutMs,
         Integer peerLatencyMs, Integer recvLatencyMs,
         Long maxBandwidthBps, Integer mss, Integer payloadSize
     ) throws SrtException;
