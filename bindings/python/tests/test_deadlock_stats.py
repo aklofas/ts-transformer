@@ -1,18 +1,20 @@
 """Regression test for the GIL-mutex ABBA deadlock in DemuxReceiver.
 
-The deadlock path:
-  - Thread A (iterator): holds inner Mutex inside recv_event (under allow_threads),
-    then the registered byte sink fires Python::with_gil -> blocks re-taking GIL.
-  - Thread B (stats caller): holds GIL (normal Python thread), then calls
-    stats() / socket_stats() which lock inner Mutex -> blocks on the lock.
-  => permanent deadlock.
+The deadlock path (it needed a Python callback on the receive thread; the
+callback is gone, the lock ordering it exposed is still the contract):
+  - Thread A (iterator): holds the inner Mutex inside recv_event (under
+    allow_threads) and must never wait for the GIL while holding it.
+  - Thread B (stats caller): holds the GIL, then calls stats() /
+    socket_stats() / ts_bytes_demuxed(), which must not block behind the
+    inner Mutex.
 
-Fix: release the GIL before acquiring the inner Mutex in stats() / socket_stats()
-(matching the existing pattern in close() / add_byte_sink()).
+Fix: release the GIL before acquiring the inner Mutex in stats() /
+socket_stats(); ts_bytes_demuxed() is a lock-free atomic read.
 
-This test verifies the fix by hammering stats/socket_stats from the main thread
-while an iterator thread runs with a registered byte sink. A wall-clock watchdog
-asserts no single stats call takes longer than 5 seconds.
+This test hammers all three getters from the main thread while an iterator
+thread runs against a live feeder. A wall-clock watchdog asserts no single
+call takes longer than 5 seconds, every counter read is >= the previous one,
+and the final counter read is positive (the race was exercised).
 """
 
 from __future__ import annotations
@@ -45,14 +47,14 @@ _HAMMER_COUNT = 200
 # --------------------------------------------------------------------------- #
 
 
-def test_srt_demux_receiver_stats_no_deadlock_with_byte_sink() -> None:
-    """Hammering stats()/socket_stats() while a byte sink fires in the
-    iterator thread must not deadlock. Before the fix, the first stats()
-    call would block permanently.
+def test_srt_demux_receiver_stats_no_deadlock_while_iterating() -> None:
+    """Hammering stats()/socket_stats()/ts_bytes_demuxed() while the
+    iterator thread receives must not deadlock. Before the fix, the first
+    stats() call would block permanently.
 
-    Construction: MuxSender (caller) → DemuxReceiver (listener), one
-    registered byte sink, iterator on a daemon thread, main thread hammers
-    stats/socket_stats with a wall-clock deadline per call.
+    Construction: MuxSender (caller) → DemuxReceiver (listener), iterator on
+    a daemon thread, main thread hammers the getters with a wall-clock
+    deadline per call.
     """
     port = _free_tcp_port()
     listener_url = f"srt://:{port}?mode=listener"
@@ -81,17 +83,8 @@ def test_srt_demux_receiver_stats_no_deadlock_with_byte_sink() -> None:
 
     rx = rx_box[0]
 
-    # Register a byte sink that does real Python work (ensures the
-    # GIL-reacquire path fires on every TS packet during recv_event).
-    sink_counts: list[int] = [0]
-
-    def counting_sink(_pkt: bytes) -> None:
-        sink_counts[0] += 1
-
-    rx.add_byte_sink(counting_sink)
-
     # Start the feeder: push a continuous stream of NALs so the receiver
-    # is always busy and the byte sink fires regularly.
+    # is always busy and the receiver counter advances.
     feeder_stop = threading.Event()
     feeder_err: list[BaseException] = []
 
@@ -105,7 +98,7 @@ def test_srt_demux_receiver_stats_no_deadlock_with_byte_sink() -> None:
                     key_frame=(i % 4 == 0),
                 )
                 i += 1
-                time.sleep(0.001)  # ~1 kpps — fast enough to keep sink firing
+                time.sleep(0.001)  # ~1 kpps — fast enough to keep the receiver busy
         except Exception as exc:  # noqa: BLE001
             feeder_err.append(exc)
 
@@ -131,13 +124,14 @@ def test_srt_demux_receiver_stats_no_deadlock_with_byte_sink() -> None:
     iter_t = threading.Thread(target=iterator, daemon=True)
     iter_t.start()
 
-    # Give the feeder and iterator time to settle — we need the sink to be
-    # actively firing when we start hammering stats.
+    # Give the feeder and iterator time to settle — the receiver must be
+    # actively receiving when we start hammering the getters.
     time.sleep(0.3)
 
     # Main-thread hammer: call stats() + socket_stats() repeatedly with a
     # per-call deadline. Under the deadlock, the first call hangs forever.
     stats_errs: list[str] = []
+    last_count = 0
     for i in range(_HAMMER_COUNT):
         # stats()
         deadline = time.monotonic() + _STATS_CALL_DEADLINE_S
@@ -162,8 +156,8 @@ def test_srt_demux_receiver_stats_no_deadlock_with_byte_sink() -> None:
             rx.close()
             pytest.fail(
                 f"stats() call #{i} deadlocked (did not return within "
-                f"{_STATS_CALL_DEADLINE_S}s). Byte sink fired {sink_counts[0]} "
-                f"times before the hang."
+                f"{_STATS_CALL_DEADLINE_S}s). Counter read {last_count} "
+                f"bytes before the hang."
             )
         stats_thread.join()
 
@@ -190,10 +184,15 @@ def test_srt_demux_receiver_stats_no_deadlock_with_byte_sink() -> None:
             rx.close()
             pytest.fail(
                 f"socket_stats() call #{i} deadlocked (did not return within "
-                f"{_STATS_CALL_DEADLINE_S}s). Byte sink fired {sink_counts[0]} "
-                f"times before the hang."
+                f"{_STATS_CALL_DEADLINE_S}s). Counter read {last_count} "
+                f"bytes before the hang."
             )
         ss_thread.join()
+
+        # ts_bytes_demuxed(): monotonic, never behind the inner Mutex.
+        count = rx.ts_bytes_demuxed()
+        assert count >= last_count, f"counter went backwards: {last_count} -> {count}"
+        last_count = count
 
     # Cleanup.
     feeder_stop.set()
@@ -203,9 +202,9 @@ def test_srt_demux_receiver_stats_no_deadlock_with_byte_sink() -> None:
     rx.close()
     iter_t.join(timeout=2.0)
 
-    # The byte sink must have actually fired during the hammering — if it
-    # didn't, the race wasn't exercised and the test is vacuous.
-    assert sink_counts[0] > 0, (
-        "byte sink never fired during the test — the race was not exercised; "
-        "check the feeder / iterator setup"
+    # The counter must have advanced during the hammering — if it did not,
+    # the race wasn't exercised and the test is vacuous.
+    assert last_count > 0, (
+        "the demux counter never advanced during the test — the race was not "
+        "exercised; check the feeder / iterator setup"
     )

@@ -126,47 +126,92 @@ fn receiver_emits_events_through_canned_transport() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: Byte sinks see every TS byte pulled from the transport.
+// Test 2: the counter covers every aligned packet; Receiver + Demuxer composes.
 // ---------------------------------------------------------------------------
 
-/// Confirms that `add_byte_sink` receives every TS packet byte before the
-/// demuxer processes it. The total bytes seen by the sink must equal the total
-/// bytes produced by the muxer (within ±188 bytes to account for the
-/// Receiver syncer's internal packet alignment buffer, which may withhold
-/// up to one packet until sync is confirmed).
-///
-/// The ±188 window is intentionally loose: `Receiver` may buffer one packet
-/// internally during VERIFY-phase sync before emitting it, so the sink can
-/// see up to one packet fewer than `total`. The upper bound guards against
-/// double-delivery bugs.
+/// `ts_bytes_demuxed` counts every aligned TS packet the shell hands to its
+/// demuxer. On a clean stream the syncer's confirmation is peek-only (see
+/// the `Receiver` "Sync lock and the trailing window" rule), so nothing is
+/// withheld and the count equals the muxer output exactly, and equals the
+/// receiver's own `bytes_received`.
 #[test]
-fn byte_sinks_see_every_chunk() {
-    use std::sync::{Arc, Mutex};
-
+fn ts_bytes_demuxed_counts_every_aligned_packet() {
     let mut m = build_and_preload_muxer();
 
     let (chunks, total) = drain_to_chunks(&mut m, 1316);
 
     let mut rx = DemuxReceiver::new(ScriptedRecv::new(chunks, TransportError::Closed));
 
-    // Shared counter: the sink accumulates bytes across all packets.
-    let captured = Arc::new(Mutex::new(0usize));
-    let cap = captured.clone();
-    rx.add_byte_sink(Box::new(move |b| {
-        *cap.lock().unwrap() += b.len();
-    }));
-
-    // Drive the receiver to EOF. ScriptedRecv here only emits Closed (never
-    // Broken), so any Err here would be a Demux strict-mode rejection — none
-    // are expected on a clean stream. The `is_some` discard pattern is safe
-    // *here*; production code should match each `Item` and surface errors.
+    // ScriptedRecv here only emits Closed (never Broken), so any Err would be
+    // a strict-mode rejection, none of which are expected on a clean stream.
     while rx.next().is_some() {}
 
-    let saw = *captured.lock().unwrap();
-    assert!(
-        saw >= total.saturating_sub(188) && saw <= total + 188,
-        "byte sink saw {saw} bytes; expected {total} ± 188"
+    assert_eq!(rx.ts_bytes_demuxed(), total as u64);
+    assert_eq!(rx.ts_bytes_demuxed(), rx.stats().bytes_received);
+}
+
+/// `(variant name, pid, pts)` per event: the comparison key of the trace test.
+fn event_key(e: &DemuxEvent) -> (String, Option<u16>, Option<i64>) {
+    let dbg = format!("{e:?}");
+    let name = dbg
+        .split(|c: char| !c.is_alphanumeric())
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    match e {
+        DemuxEvent::Sample { stream, pts, .. } | DemuxEvent::Metadata { stream, pts, .. } => {
+            (name, Some(stream.pid), Some(pts.as_ticks()))
+        }
+        DemuxEvent::Discontinuity { stream, .. } | DemuxEvent::NonConformant { stream, .. } => {
+            (name, Some(stream.pid), None)
+        }
+        _ => (name, None, None),
+    }
+}
+
+/// The documented composition (`Receiver` for the raw packets, a `Demuxer`
+/// fed with each) observes exactly what `DemuxReceiver` observes: the packets
+/// are whole, aligned, concatenate to the muxer output byte for byte, and the
+/// events are the same sequence.
+#[test]
+fn receiver_demuxer_composition_is_an_exact_trace() {
+    use tst_core::mpegts::demux::{Demuxer, DemuxerConfig};
+    use tst_pipeline::{Receiver, ReceiverConfig};
+
+    let mut m = build_and_preload_muxer();
+    let (chunks, total) = drain_to_chunks(&mut m, 1316);
+    let written: Vec<u8> = chunks.iter().flatten().copied().collect();
+    assert_eq!(written.len(), total);
+
+    // Reference: the shell's own event sequence.
+    let mut shell = DemuxReceiver::new(ScriptedRecv::new(chunks.clone(), TransportError::Closed));
+    let expected: Vec<_> = (&mut shell).map(|i| event_key(&i.unwrap())).collect();
+    assert!(!expected.is_empty());
+
+    // Composition.
+    let mut rx = Receiver::new(
+        ScriptedRecv::new(chunks, TransportError::Closed),
+        ReceiverConfig::default(),
     );
+    let mut demux = Demuxer::with_config(DemuxerConfig::default());
+    let mut bytes = Vec::new();
+    let mut got = Vec::new();
+    while let Ok(pkt) = rx.next_packet() {
+        assert_eq!(pkt.len(), 188);
+        assert_eq!(pkt[0], 0x47);
+        bytes.extend_from_slice(&pkt);
+        demux.feed_aligned(&pkt).unwrap();
+        while let Some(e) = demux.next_event() {
+            got.push(event_key(&e));
+        }
+    }
+    demux.flush();
+    while let Some(e) = demux.next_event() {
+        got.push(event_key(&e));
+    }
+
+    assert_eq!(bytes, written);
+    assert_eq!(got, expected);
 }
 
 // ---------------------------------------------------------------------------
