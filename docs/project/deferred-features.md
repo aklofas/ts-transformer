@@ -96,6 +96,29 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** Scheduled for 0.9.1, sooner if a player is
   seen to stall or skip after a source restart.
 
+## Synchronous KLV `Metadata_AU_cell` numbering mode
+
+- **Status:** Deferred decision. The muxer numbers each synchronous-metadata
+  (`stream_type 0x15`) AU cell within its PES from 0, which is what
+  ITU-T H.222.0 Table 2-156 describes (the count is scoped to one
+  `metadata_AU_wrapper`) and what the most widely deployed open-source
+  MPEG-TS ingest (mediamtx, via mediacommon) both reads and writes; its
+  reader drops any PES whose first cell is not 0. There is no option to
+  choose another numbering.
+- **Why deferred:** field producers disagree with each other and with that
+  reader. One real gimbal encoder in the maintainers' capture set counts
+  continuously across PES (and marks every single-cell AU with
+  `cell_fragment_indication` `'00'`); ffmpeg emits no AU cell at all for
+  synchronous KLV. No reader is known that *requires* cross-PES continuity
+  or a non-zero start, so a numbering knob today would reproduce one
+  vendor's non-conformant shape for no consumer. tst-core's demuxer
+  accepts every one of these shapes, so decoding is unaffected either way.
+- **Trigger to revisit:** a consumer whose downstream reader demands
+  cross-PES continuity or a particular start value. The knob would then be a
+  per-KLV-stream option beside `carries_pts` on `add_klv` (the stream's wire
+  shape is chosen there; `av1_carriage` is the precedent for a per-format
+  choice where ecosystems disagree), with the per-PES-from-0 default kept.
+
 ## Other PMT entries / auxiliary services
 
 - **Status:** SCTE-35 splice info, EMM/ECM (conditional access), and
