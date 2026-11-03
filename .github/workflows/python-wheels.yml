@@ -81,6 +81,7 @@ jobs:
         # version to equal the tag, so a tag can never build/publish a
         # mismatched wheel. On workflow_dispatch / PR there is no tag, so this
         # just asserts the six version sources agree with each other.
+        # A tag that is not `vMAJOR.MINOR.PATCH` fails here.
         run: bash scripts/check/repo/release-version-consistency.sh
 
   linux-wheel:

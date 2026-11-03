@@ -33,7 +33,11 @@
 #
 # Run it:    bash scripts/check/repo/release-version-consistency.sh
 # Tag check: bash scripts/check/repo/release-version-consistency.sh 0.2.0
-#            (or, on a v* tag build, GITHUB_REF_NAME=vX.Y.Z is honoured)
+#            (or, on a tag build, GITHUB_REF_TYPE=tag GITHUB_REF_NAME=vX.Y.Z is
+#            honoured; a tag that is not exactly vMAJOR.MINOR.PATCH fails. A
+#            GITHUB_REF_TYPE of branch never reads the name as a tag. With
+#            GITHUB_REF_TYPE unset, a name starting v<digit> is treated as a
+#            tag under the same rule.)
 #
 # Overridable (scripts/ratchets/tests/self_test.sh points these at temp fixtures):
 #   RVC_CARGO_TOML   workspace Cargo.toml
@@ -117,11 +121,22 @@ internal_dep_versions() { # <file>
 run_check() { # [EXPECTED_VERSION]
   local expected="${1:-}"
 
-  # If no explicit expected version, honour a v* tag ref.
+  # If no explicit expected version, honour a tag ref. Only vMAJOR.MINOR.PATCH
+  # is a release tag: anything else that looks like a tag fails here, before
+  # any publish workflow writes to a registry. A branch name is never a tag.
   if [ -z "$expected" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
-    case "$GITHUB_REF_NAME" in
-      v[0-9]*) expected="${GITHUB_REF_NAME#v}" ;;
+    local is_tag=0
+    case "${GITHUB_REF_TYPE:-}" in
+      tag) is_tag=1 ;;
+      "") case "$GITHUB_REF_NAME" in v[0-9]*) is_tag=1 ;; esac ;;
     esac
+    if [ "$is_tag" -eq 1 ]; then
+      if ! printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo "FAIL: tag '$GITHUB_REF_NAME' is not vMAJOR.MINOR.PATCH; only such tags publish (prereleases have no C version macro)" >&2
+        return 1
+      fi
+      expected="${GITHUB_REF_NAME#v}"
+    fi
   fi
 
   # Parallel arrays of source-label and extracted version (no assoc arrays).

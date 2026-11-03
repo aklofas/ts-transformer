@@ -344,6 +344,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The soak, corpus and ARM64 status cells of the 1.0 exit criteria are rendered from the qualification record; a waiver names the release it stood in for from the record's tag or the waived archive, never from the CHANGELOG.
 - The qualification record names the tag on a tag push and lists the release documents that changed since the soaked tree, and the bundle carries `TREE-EQUIVALENCE.txt`, the proof that nothing under `crates/` or `bindings/` changed between the soaked and the qualified commit.
 - The Python URL-corpus test takes its scheme families from the corpus header.
+- The version rail refuses a tag that is not `vMAJOR.MINOR.PATCH` (`vnext`, `v1.2.3-rc1`), so the three publish workflows stop before any registry write; a branch name is never read as a tag.
 
 ### Changed — tst-interop
 
