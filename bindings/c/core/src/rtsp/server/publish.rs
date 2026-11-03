@@ -562,7 +562,8 @@ pub unsafe extern "C" fn tst_rtsp_publish_mount_publisher_info(
 
 /// End the application side of the mount: a demux receiver taken from it,
 /// parked or not, reads `TST_E_CLOSED` (the same outcome as
-/// `tst_rtp_demux_receiver_cancel`). Does not affect the publisher or
+/// `tst_rtp_demux_receiver_cancel`; events already queued are not
+/// returned). Does not affect the publisher or
 /// PLAY readers, and does not remove the mount. Idempotent.
 ///
 /// Returns `0` or `TST_E_INVALID_CONFIG` for a NULL handle.
@@ -633,6 +634,7 @@ pub unsafe extern "C" fn tst_rtsp_publish_mount_into_demux_receiver(
         // Both observers are captured before the transport moves into the
         // shell, exactly as `tst_rtsp_session_into_demux_receiver` does.
         let cancel = cancel_or_latch(transport.cancel_handle());
+        let mount_cancel = Some(Arc::clone(&cancel));
         let end_reason = transport.end_reason_handle();
         // SAFETY: caller guarantees NULL or a live demux config.
         let receiver = if let Some(cfg) = unsafe { demux_cfg.as_ref() } {
@@ -656,6 +658,7 @@ pub unsafe extern "C" fn tst_rtsp_publish_mount_into_demux_receiver(
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
             rtsp_client: Mutex::new(None),
+            mount_cancel,
         }))
     })
 }
