@@ -117,6 +117,9 @@ impl LastBeforeState {
                         self.last_video_pts = None;
                         self.in_flight = InFlight::No;
                         self.video_in_flight = None;
+                        // The new connection may lay its programs out differently; the
+                        // PCR PID is relearned from its video program map.
+                        self.pcr_pid = None;
                     } else if self.last_klv_pts.is_some() || self.last_video_pts.is_some() {
                         self.in_flight = InFlight::Suspect {
                             klv: self.last_klv_pts,
@@ -597,6 +600,26 @@ mod tests {
             matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 0),
             "got {out:?}"
         );
+    }
+
+    #[test]
+    fn a_reconnect_forgets_the_pcr_pid_until_the_new_video_program_map() {
+        const AUDIO_PID: u16 = 0x101;
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(program_map(1, AUDIO_PID, &[VIDEO_PID, KLV_PID, AUDIO_PID]));
+        s.feed(DemuxEvent::ReconnectDiscontinuity);
+        s.feed(klv_event(50));
+        // Before the new connection's video program map arrives, a flag on the old PCR
+        // PID belongs to nobody the pairer knows and must not drain the history.
+        let out = s.feed(af_discontinuity(AUDIO_PID));
+        assert!(
+            matches!(&out[..], [PairerOutput::PassThrough(_)]),
+            "got {out:?}"
+        );
+        assert!(matches!(
+            &s.feed(video_event(100))[..],
+            [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 50
+        ));
     }
 
     #[test]
