@@ -126,7 +126,7 @@ fn umask_child_writes_hls_files() {
 fn segments_and_playlist_are_never_group_or_other_writable() {
     let root = scratch("umask");
     let d = root.join("out");
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "umask_child_writes_hls_files",
@@ -134,9 +134,35 @@ fn segments_and_playlist_are_never_group_or_other_writable() {
             "--nocapture",
         ])
         .env(UMASK_CHILD_ENV, &d)
-        .status()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
-    assert!(status.success(), "child failed: {status}");
+    // A wedged child must fail this test, not hang it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let out = child.wait_with_output().unwrap();
+            panic!(
+                "child still running after 30 s; stdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    if !status.success() {
+        let out = child.wait_with_output().unwrap();
+        panic!(
+            "child failed: {status}; stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
     let mut seen = Vec::new();
     for entry in std::fs::read_dir(&d).unwrap() {
         let entry = entry.unwrap();
