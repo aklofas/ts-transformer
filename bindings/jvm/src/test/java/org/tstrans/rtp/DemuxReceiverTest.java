@@ -17,7 +17,7 @@ import org.tstrans.shells.DemuxReceiver;
 /**
  * Unit tests for the public {@link DemuxReceiver#recvEvent()} checked-exception
  * receive method — the non-iterator counterpart to {@link
- * DemuxReceiver#iterator()}. The live cross-binding round-trip + byte-sink
+ * DemuxReceiver#iterator()}. The live cross-binding round-trip
  * fixture lives in {@link RtpMuxDemuxLoopbackTest}; this file is scoped to
  * {@code recvEvent()}'s own contract: a persistent {@code ?recv_timeout=}
  * deadline must surface as a directly catchable checked {@link RtpException}

@@ -735,8 +735,14 @@ with shells.Receiver.open("tcp://127.0.0.1:9000") as rx:
 
 Flush at the end, also after an error, or the last access unit is lost. A
 `DemuxReceiver` resets its demux state across a managed reconnect; this
-loop does not, so drop the packet read across a reconnect and start a fresh
-`Demuxer`.
+loop does not. The binding raw receivers carry no reconnect boundary:
+`reconnect_attempts()` counts factory attempts, failures included, and a
+`recv_bytes()` chunk holds many packets, so the packet that crossed cannot be
+found. Over a reconnecting source use `ManagedDemuxReceiver`, which drops the
+spliced packet itself and exposes `ts_bytes_demuxed()`, or accept that one
+spliced packet may reach the demuxer. The exact recipe
+(`reconnects_handle()` plus `reset_sync()`) is in the
+[pipeline guide](/docs/guides/pipeline.md).
 
 `rx.last_seen_micros(pid)` returns the epoch-microsecond timestamp of
 the most recent item this receiver emitted for `pid`, or `None` if

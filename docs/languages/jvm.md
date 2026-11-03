@@ -1306,8 +1306,13 @@ Gotchas:
 - **Flush at the end, also after an error.** Without `demux.flush()` the last
   access unit is lost.
 - **Reconnects are yours.** A `DemuxReceiver` resets its demux state across a
-  reconnect; this loop does not. Over a managed receiver, drop the packet read
-  across a reconnect and start a fresh `Demuxer`.
+  reconnect; this loop does not. The binding raw receivers carry no reconnect
+  boundary: `reconnectAttempts()` counts factory attempts, failures included,
+  and a `recvBytes()` chunk holds many packets, so the packet that crossed
+  cannot be found. Over a reconnecting source use `ManagedDemuxReceiver`, which
+  drops the spliced packet itself and exposes `tsBytesDemuxed()`, or accept
+  that one spliced packet may reach the demuxer. The exact recipe is in the
+  [pipeline guide](/docs/guides/pipeline.md).
 - **No user code on the library's thread.** Your loop owns the recorder and
   every error it raises.
 

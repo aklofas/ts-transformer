@@ -1,4 +1,4 @@
-//! mux_to_hls — read an MPEG-TS file and re-mux to HLS segments + playlist.
+//! mux_to_hls — push a .ts file's bytes through the HLS publisher.
 //!
 //! WHY this example exists:
 //!   Exercises the `Publisher` trait family end to end: MuxPublisher →
