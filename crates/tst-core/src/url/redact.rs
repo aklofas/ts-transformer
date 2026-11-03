@@ -28,11 +28,11 @@ const REDACTED: &str = "<redacted>";
 ///   `srt_streamid`. The match is case-sensitive: `Token=x` is not scrubbed. Key
 ///   names are percent-decoded first, so `pass%70hrase=x` is scrubbed too.
 ///
-/// The input need not be a valid URL. A `scheme://` span runs to the end of
-/// the input, or to the closing quote when it opens right after one, and is
-/// scrubbed whole: a quote or a space inside a password or a value does not
-/// end it. Text outside any such span is scrubbed one whitespace- (ASCII or
-/// U+00A0) or quote-delimited token at a time.
+/// The input need not be a valid URL. A `scheme://` span is scrubbed whole.
+/// It runs to the end of the input, or, when it opens right after a quote,
+/// to the last matching quote before the next URL; with no such quote it
+/// runs to the end of the input. Text outside any such span is scrubbed one
+/// whitespace- (ASCII or U+00A0) or quote-delimited token at a time.
 ///
 /// The scrub is a heuristic that errs toward redacting, so malformed text
 /// around a credential may be redacted with it. The accepted over-redactions:
@@ -40,8 +40,8 @@ const REDACTED: &str = "<redacted>";
 /// - any later `@` ends the userinfo, so `srt://h:9000/a@b` loses `9000/a`;
 /// - a raw `?` before the last `@` is password text, so `srt://h:1?mail=a@b`
 ///   loses `1?mail=a`;
-/// - a stray quote after a quoted URL extends it to the end of the input, so
-///   `'srt://h?token=x' can't` loses everything after `token=`.
+/// - text after a quoted URL, up to the last matching quote, is treated as
+///   part of the URL, so `'srt://h?token=x' can't` loses `x' can`.
 ///
 /// ```
 /// use tst_core::url::redact_url;
@@ -56,9 +56,8 @@ pub fn redact_url(url: &str) -> String {
     let mut pos = 0;
     while let Some((start, after_scheme)) = next_url(url, pos) {
         redact_tokens(&url[pos..start], &mut out);
-        // A URL runs to the end of the input, or to the closing quote when
-        // it opens right after one: quotes and spaces inside it are part
-        // of a password or a value, never delimiters.
+        // A quote or a space can sit inside a password or a value, so a
+        // quoted URL runs to the last matching quote, not the first.
         let end = match url[..start].chars().next_back() {
             Some(q @ ('"' | '\'')) => closing_quote(url, after_scheme, q),
             _ => url.len(),
@@ -70,26 +69,17 @@ pub fn redact_url(url: &str) -> String {
     out
 }
 
-/// Where a span opened by quote `q` ends: the first `q` at or after `from`
-/// that is followed by a separator, a closing bracket, `,` or `;`, or by the
-/// end of the input, and after which the rest of the input holds an even
-/// number of `q`. A `q` inside a password or a value does not close it, a
-/// balanced pair of later quotes stays outside the span, and an odd stray
-/// `q` extends it to the end of the input.
+/// Where a span opened by quote `q` ends: the last `q` at or after `from`
+/// and before the next URL, not counting the `q` that opens that URL; the
+/// end of the input when there is no such `q`. Stopping before the next URL
+/// keeps a second quoted URL its own span.
 fn closing_quote(s: &str, from: usize, q: char) -> usize {
-    let mut after = s[from..].matches(q).count();
-    for (n, _) in s[from..].match_indices(q) {
-        let i = from + n;
-        after -= 1;
-        let closes = s[i + 1..]
-            .chars()
-            .next()
-            .is_none_or(|c| is_separator(c) || matches!(c, ',' | ';' | ')' | ']' | '}'));
-        if closes && after.is_multiple_of(2) {
-            return i;
-        }
-    }
-    s.len()
+    let limit = match next_url(s, from) {
+        Some((start, _)) if s[..start].ends_with(q) => start - q.len_utf8(),
+        Some((start, _)) => start,
+        None => s.len(),
+    };
+    s[from..limit].rfind(q).map_or(s.len(), |n| from + n)
 }
 
 /// Byte offsets of the next `scheme://` at or after `from`: where the scheme
@@ -410,9 +400,10 @@ mod tests {
             redact_url("\"srt://h:1?passphrase=a\"b\""),
             "\"srt://h:1?passphrase=<redacted>\""
         );
+        // Accepted over-redaction: a later quoted word joins the span.
         assert_eq!(
             redact_url("(see 'srt://h?token=abc', 'x')"),
-            "(see 'srt://h?token=<redacted>', 'x')"
+            "(see 'srt://h?token=<redacted>')"
         );
     }
 
