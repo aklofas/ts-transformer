@@ -45,3 +45,17 @@ pub(crate) fn demux_receiver_handle_from_transport(
         opts,
     ))
 }
+
+/// [`demux_receiver_handle_from_transport`] for a publish mount's transport:
+/// the receiver also observes the mount's `cancel()`, so a mount cancel
+/// beats events already queued.
+pub(crate) fn demux_receiver_handle_from_mount_transport(
+    transport: RtpRecvTransport,
+    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+) -> Result<jlong, BindingError> {
+    let cancel = rtp_cancel(RecvTransport::cancel_handle(&transport), "RtpRecvTransport")?;
+    Ok(crate::shells::demux_receiver::register_publish_mount(
+        Opened::new(Box::new(transport), cancel, Domain::Rtp),
+        opts,
+    ))
+}

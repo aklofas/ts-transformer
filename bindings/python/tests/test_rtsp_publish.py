@@ -317,6 +317,31 @@ def test_cancel_closes_the_receiver_with_closed_kind():
             rx.close()
 
 
+def test_cancel_beats_events_already_queued():
+    with _start() as server:
+        mount = server.add_publish_mount("/cam")
+        rx = mount.into_demux_receiver()
+        pub = RawPublisher(_port(server), "/cam")
+        try:
+            bundles = _muxed_bundles(20)
+            for bundle in bundles:
+                pub.send_rtp(bundle)
+            assert _wait_for(
+                lambda: mount.stats().rtp_packets_received == len(bundles)
+            ), mount.stats()
+            # One read pulls a whole bundle into the shell, so more events
+            # are already queued behind the one returned.
+            next(rx)
+            mount.cancel()
+            with pytest.raises(RtpError) as ei:
+                next(rx)
+            assert ei.value.kind == RtpErrorKind.CLOSED
+            assert rx.end_reason() == EndReason.CANCELLED
+        finally:
+            pub.close()
+            rx.close()
+
+
 def test_remove_mount_ends_a_parked_receiver_with_end_of_stream():
     with _start() as server:
         mount = server.add_publish_mount("/cam")

@@ -30,7 +30,7 @@ use pyo3::Py;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyType};
 
-use tst_core::transport::RecvTransport;
+use tst_core::transport::{RecvTransport, TransportCancel};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened, Owned};
 use tst_pipeline::{
@@ -127,6 +127,12 @@ pub(crate) struct PyDemuxReceiver {
     /// slot is held by the `__next__` the sink runs under, so the close
     /// only cancels there and that `__next__` finishes it.
     close_pending: AtomicBool,
+    /// The application-cancel latch of the publish mount this receiver was
+    /// taken from; `None` on every other receiver. The shared binding layer
+    /// reads only a handle's own latch, so this layer carries the mount's
+    /// cancel across: a mount cancel must beat events already queued, like
+    /// the receiver's own cancel.
+    mount_cancel: Option<Arc<dyn TransportCancel>>,
 }
 
 impl Drop for PyDemuxReceiver {
@@ -173,7 +179,31 @@ impl PyDemuxReceiver {
             cancel,
             sink_error: Arc::new(Mutex::new(None)),
             close_pending: AtomicBool::new(false),
+            mount_cancel: None,
         })
+    }
+
+    /// [`Self::from_opened`] for the transport of a publish mount, whose
+    /// cancel latch the mount's `cancel()` sets.
+    pub(crate) fn from_publish_mount(
+        py: Python<'_>,
+        opened: Opened<Box<dyn RecvTransport>>,
+        opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+    ) -> PyResult<Self> {
+        let mount_cancel = Arc::clone(&opened.cancel);
+        let mut rx = Self::from_opened(py, opened, opts)?;
+        rx.mount_cancel = Some(mount_cancel);
+        Ok(rx)
+    }
+
+    /// Latches the receiver's own cancel when its mount was cancelled, so
+    /// the gate refuses with CLOSED before the shell returns queued events.
+    /// A mount cancel racing this call may still lose to it, like any
+    /// concurrent cancel.
+    fn observe_mount_cancel(&self) {
+        if self.mount_cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+            self.owned.cancel();
+        }
     }
 
     /// This receiver's `IN_SINK` key: the address of its `sink_error`,
@@ -366,6 +396,7 @@ impl PyDemuxReceiver {
         if self.close_pending.swap(false, Ordering::AcqRel) {
             return self.finish_deferred_close(py);
         }
+        self.observe_mount_cancel();
         let res = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut_unless_cancelled(|rx| rx.recv_event())
         });
@@ -534,9 +565,7 @@ impl PyDemuxReceiver {
         if self.in_own_sink() {
             // The cancel can reach native teardown; release the GIL for it.
             let cancel = &*self.cancel;
-            crate::util::allow_threads_parking(py, || {
-                tst_core::transport::TransportCancel::cancel(cancel)
-            });
+            crate::util::allow_threads_parking(py, || TransportCancel::cancel(cancel));
             self.close_pending.store(true, Ordering::Release);
             return Ok(());
         }
