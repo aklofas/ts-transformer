@@ -122,6 +122,7 @@ pub enum MountPolicy {
 
 /// The publish and read policies for one mount path (or the default).
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct MountRule {
     /// Policy for a client that publishes (`ANNOUNCE`/`RECORD`) to the path.
     pub publish: MountPolicy,

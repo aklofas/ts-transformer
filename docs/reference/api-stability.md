@@ -30,6 +30,12 @@ One workspace module is currently classified Experimental: tst-rtp's
 below). A new module can land in this tier before earning Provisional
 status.
 
+`#[doc(hidden)]` modules, such as tst-webrtc's `server::http` and
+`server::negotiate`, are test seams and stay hidden. Their growable enums
+carry `#[non_exhaustive]` like any other. `WhepServer::bind_with_clock` is
+the one named exception: a supplied `Clock` runs user code on the media
+thread, so it is a test-only entry point and not part of the supported API.
+
 ## Classification table
 
 One row per (crate, top-level public module), plus explicit override rows

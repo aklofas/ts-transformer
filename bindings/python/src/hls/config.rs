@@ -58,16 +58,6 @@ impl From<PyHlsMode> for tst_hls::HlsMode {
     }
 }
 
-impl From<tst_hls::HlsMode> for PyHlsMode {
-    fn from(m: tst_hls::HlsMode) -> Self {
-        match m {
-            tst_hls::HlsMode::Live => Self::LIVE,
-            tst_hls::HlsMode::Event => Self::EVENT,
-            tst_hls::HlsMode::Vod => Self::VOD,
-        }
-    }
-}
-
 #[pymethods]
 impl PyHlsMode {
     fn __repr__(&self) -> &'static str {

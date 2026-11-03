@@ -25,6 +25,7 @@ const MAX_MAX_VIEWERS: u64 = 64;
 ///
 /// Its `Debug` output shows `token` as `<redacted>`.
 #[derive(Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct WhepUrl {
     /// The literal IP address the signalling endpoint binds on.
     pub addr: IpAddr,

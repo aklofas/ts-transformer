@@ -393,7 +393,7 @@ impl core::marker::UnsafeUnpin for tst_webrtc::stats::SessionStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_webrtc::stats::SessionStats
 impl core::panic::unwind_safe::UnwindSafe for tst_webrtc::stats::SessionStats
 pub mod tst_webrtc::url
-pub struct tst_webrtc::url::WhepUrl
+#[non_exhaustive] pub struct tst_webrtc::url::WhepUrl
 pub tst_webrtc::url::WhepUrl::addr: core::net::ip_addr::IpAddr
 pub tst_webrtc::url::WhepUrl::advertise: core::option::Option<core::net::ip_addr::IpAddr>
 pub tst_webrtc::url::WhepUrl::cert: core::option::Option<alloc::string::String>

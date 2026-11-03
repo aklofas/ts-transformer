@@ -7,6 +7,7 @@ use crate::rtcp::ingest::SrAnchor;
 
 /// RTCP-specific protocol counters.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct RtcpStats {
     /// Receiver reports the peer sent to this socket. A peer that only sends
     /// media (a camera, an RTSP server) sends sender reports, not receiver

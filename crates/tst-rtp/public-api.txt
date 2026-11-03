@@ -458,7 +458,7 @@ impl core::marker::UnsafeUnpin for tst_rtp::rtcp::ingest::SrAnchor
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
 pub mod tst_rtp::rtcp::stats
-pub struct tst_rtp::rtcp::stats::RtcpStats
+#[non_exhaustive] pub struct tst_rtp::rtcp::stats::RtcpStats
 pub tst_rtp::rtcp::stats::RtcpStats::cumulative_lost_send: u32
 pub tst_rtp::rtcp::stats::RtcpStats::fraction_lost_q8: u8
 pub tst_rtp::rtcp::stats::RtcpStats::interarrival_jitter_us: u32
@@ -932,7 +932,7 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountCredential
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountCredential
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountCredential
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountCredential
-pub struct tst_rtp::rtsp::server::mount_rules::MountRule
+#[non_exhaustive] pub struct tst_rtp::rtsp::server::mount_rules::MountRule
 pub tst_rtp::rtsp::server::mount_rules::MountRule::publish: tst_rtp::rtsp::server::mount_rules::MountPolicy
 pub tst_rtp::rtsp::server::mount_rules::MountRule::read: tst_rtp::rtsp::server::mount_rules::MountPolicy
 impl tst_rtp::rtsp::server::mount_rules::MountRule
@@ -2046,7 +2046,7 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::mount::MountHandle
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount::MountHandle
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount::MountHandle
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount::MountHandle
-pub struct tst_rtp::MountRule
+#[non_exhaustive] pub struct tst_rtp::MountRule
 pub tst_rtp::MountRule::publish: tst_rtp::rtsp::server::mount_rules::MountPolicy
 pub tst_rtp::MountRule::read: tst_rtp::rtsp::server::mount_rules::MountPolicy
 impl tst_rtp::rtsp::server::mount_rules::MountRule
@@ -2257,7 +2257,7 @@ impl core::marker::Unpin for tst_rtp::rtcp::ReportBlock
 impl core::marker::UnsafeUnpin for tst_rtp::rtcp::ReportBlock
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::ReportBlock
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::ReportBlock
-pub struct tst_rtp::RtcpStats
+#[non_exhaustive] pub struct tst_rtp::RtcpStats
 pub tst_rtp::RtcpStats::cumulative_lost_send: u32
 pub tst_rtp::RtcpStats::fraction_lost_q8: u8
 pub tst_rtp::RtcpStats::interarrival_jitter_us: u32
