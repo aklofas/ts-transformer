@@ -48,6 +48,16 @@ pub struct SrtSocketConfig {
     /// [`Self::receiver_defaults`] and [`SrtUrl::connect`](crate::SrtUrl::connect)
     /// set it to 15s where it is unset.
     pub connect_timeout: Option<Duration>,
+    /// `SRTO_PEERIDLETIMEO`: how long the connection may hear nothing from
+    /// the peer before it breaks. `None` keeps libsrt's 5 s default. It
+    /// bounds how fast a silent peer is detected, and so how soon a
+    /// `ManagedTransport` reconnects and re-resolves the host. Values near
+    /// the link's loss-burst length break healthy connections under packet
+    /// loss. `Duration::ZERO` is refused when the socket is configured. libsrt also requires more than 16 missed expiry timers
+    /// (about 5 s at its 300 ms minimum interval) before it breaks a silent
+    /// connection, so a value below that does not detect a silent peer
+    /// sooner; it only matters when raised above it.
+    pub peer_idle_timeout: Option<Duration>,
     /// SRT linger timeout. `None` preserves libsrt's default — which is
     /// `l_onoff=0, l_linger=0` (linger off; close returns immediately and
     /// data still queued in the send buffer is dropped). Note: this differs
@@ -150,6 +160,7 @@ impl SrtSocketConfig {
             send_timeout,
             recv_timeout,
             connect_timeout,
+            peer_idle_timeout,
             linger,
             latency,
             peer_latency,
@@ -267,7 +278,8 @@ impl SrtSocketConfig {
 /// `send_buf_bytes`, `max_bandwidth`, `input_bandwidth`,
 /// `overhead_bandwidth_pct`, `payload_size`, `udp_recv_buffer_bytes`,
 /// `udp_send_buffer_bytes`, `loss_max_ttl`, `too_late_packet_drop`,
-/// `packet_filter`, `congestion`, `recv_timeout` and `linger`. The rest
+/// `packet_filter`, `congestion`, `recv_timeout`, `peer_idle_timeout` and
+/// `linger`. The rest
 /// (`connect_timeout`, `stream_id`, `role`) are caller-side and are stored
 /// but not applied. `send_timeout` is not applied to the listener either,
 /// but accepted sockets get it, and `recv_timeout`, from this config.

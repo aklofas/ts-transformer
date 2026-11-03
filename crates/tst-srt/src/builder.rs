@@ -77,6 +77,19 @@ impl SrtSocketBuilder {
         self.config.connect_timeout = Some(t);
         self
     }
+    /// Set `SRTO_PEERIDLETIMEO` — how long the connection may hear nothing
+    /// from the peer before it breaks (libsrt default 5s). It bounds how fast
+    /// a silent peer is detected, and so how soon a `ManagedTransport`
+    /// reconnects and re-resolves the host. Values near the link's loss-burst
+    /// length break healthy connections under packet loss. Zero is refused
+    /// when the socket is configured. libsrt also requires more than 16
+    /// missed expiry timers (about 5s at its 300ms minimum interval) before it
+    /// breaks a silent connection, so a value below that does not detect a
+    /// silent peer sooner; it only matters when raised above it.
+    pub fn peer_idle_timeout(&mut self, t: Duration) -> &mut Self {
+        self.config.peer_idle_timeout = Some(t);
+        self
+    }
     /// Set `SRTO_LINGER` — drop/close grace period for unsent data.
     /// `None` preserves libsrt's default — which is `l_onoff=0, l_linger=0`
     /// (linger off; close returns immediately and libsrt's internal queue
@@ -378,6 +391,19 @@ impl SrtListenerBuilder {
         self.config.reuse_addr = on;
         self
     }
+    /// Set `SRTO_PEERIDLETIMEO` — how long the connection may hear nothing
+    /// from the peer before it breaks (libsrt default 5s). It bounds how fast
+    /// a silent peer is detected, and so how soon a `ManagedTransport`
+    /// reconnects and re-resolves the host. Values near the link's loss-burst
+    /// length break healthy connections under packet loss. Zero is refused
+    /// when the socket is configured. libsrt also requires more than 16
+    /// missed expiry timers (about 5s at its 300ms minimum interval) before it
+    /// breaks a silent connection, so a value below that does not detect a
+    /// silent peer sooner; it only matters when raised above it.
+    pub fn peer_idle_timeout(&mut self, t: Duration) -> &mut Self {
+        self.config.socket.peer_idle_timeout = Some(t);
+        self
+    }
     pub fn recv_timeout(&mut self, t: Duration) -> &mut Self {
         self.config.socket.recv_timeout = Some(t);
         self
@@ -456,6 +482,21 @@ mod tests {
 
         assert_eq!(cfg.backlog, 10);
         assert!(!cfg.reuse_addr);
+    }
+
+    #[test]
+    fn peer_idle_timeout_setters_match_the_struct_field() {
+        let sock = SrtSocketBuilder::new()
+            .peer_idle_timeout(Duration::from_secs(2))
+            .config();
+        assert_eq!(sock.peer_idle_timeout, Some(Duration::from_secs(2)));
+        let lis = SrtListenerBuilder::new()
+            .peer_idle_timeout(Duration::from_secs(2))
+            .config();
+        assert_eq!(lis.socket.peer_idle_timeout, Some(Duration::from_secs(2)));
+        assert_eq!(SrtSocketBuilder::new().config().peer_idle_timeout, None);
+        assert_eq!(SrtSocketConfig::sender_defaults().peer_idle_timeout, None);
+        assert_eq!(SrtSocketConfig::receiver_defaults().peer_idle_timeout, None);
     }
 
     #[test]

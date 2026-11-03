@@ -112,6 +112,7 @@ pub fn tst_srt::builder::SrtListenerBuilder::overhead_bandwidth_pct(&mut self, u
 pub fn tst_srt::builder::SrtListenerBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::peer_idle_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
@@ -151,6 +152,7 @@ pub fn tst_srt::builder::SrtSocketBuilder::overhead_bandwidth_pct(&mut self, u8)
 pub fn tst_srt::builder::SrtSocketBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::peer_idle_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::receiver_defaults(&mut self) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
@@ -209,6 +211,7 @@ pub tst_srt::config::SrtSocketConfig::overhead_bandwidth_pct: core::option::Opti
 pub tst_srt::config::SrtSocketConfig::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
 pub tst_srt::config::SrtSocketConfig::passphrase: core::option::Option<tst_srt::options::Passphrase>
 pub tst_srt::config::SrtSocketConfig::payload_size: core::option::Option<u16>
+pub tst_srt::config::SrtSocketConfig::peer_idle_timeout: core::option::Option<core::time::Duration>
 pub tst_srt::config::SrtSocketConfig::peer_latency: core::option::Option<core::time::Duration>
 pub tst_srt::config::SrtSocketConfig::recv_buf_bytes: core::option::Option<u32>
 pub tst_srt::config::SrtSocketConfig::recv_latency: core::option::Option<core::time::Duration>
@@ -1648,6 +1651,7 @@ pub fn tst_srt::builder::SrtListenerBuilder::overhead_bandwidth_pct(&mut self, u
 pub fn tst_srt::builder::SrtListenerBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtListenerBuilder::peer_idle_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
 pub fn tst_srt::builder::SrtListenerBuilder::recv_latency(&mut self, core::time::Duration) -> &mut Self
@@ -1729,6 +1733,7 @@ pub fn tst_srt::builder::SrtSocketBuilder::overhead_bandwidth_pct(&mut self, u8)
 pub fn tst_srt::builder::SrtSocketBuilder::packet_filter(&mut self, tst_srt::options::PacketFilter) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::passphrase(&mut self, tst_srt::options::Passphrase) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::payload_size(&mut self, u16) -> &mut Self
+pub fn tst_srt::builder::SrtSocketBuilder::peer_idle_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::peer_latency(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::receiver_defaults(&mut self) -> &mut Self
 pub fn tst_srt::builder::SrtSocketBuilder::recv_buf_bytes(&mut self, u32) -> &mut Self
@@ -1767,6 +1772,7 @@ pub tst_srt::SrtSocketConfig::overhead_bandwidth_pct: core::option::Option<u8>
 pub tst_srt::SrtSocketConfig::packet_filter: core::option::Option<tst_srt::options::PacketFilter>
 pub tst_srt::SrtSocketConfig::passphrase: core::option::Option<tst_srt::options::Passphrase>
 pub tst_srt::SrtSocketConfig::payload_size: core::option::Option<u16>
+pub tst_srt::SrtSocketConfig::peer_idle_timeout: core::option::Option<core::time::Duration>
 pub tst_srt::SrtSocketConfig::peer_latency: core::option::Option<core::time::Duration>
 pub tst_srt::SrtSocketConfig::recv_buf_bytes: core::option::Option<u32>
 pub tst_srt::SrtSocketConfig::recv_latency: core::option::Option<core::time::Duration>
