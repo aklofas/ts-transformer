@@ -221,7 +221,7 @@
         },
         "srt": {
           "aliases": 9,
-          "keys": 23,
+          "keys": 24,
           "no_invalid": []
         },
         "tcp": {
@@ -310,6 +310,22 @@
           "role": "caller",
           "scheme": "srt",
           "url": "srt://127.0.0.1:31104?conntimeo=1500"
+        },
+        {
+          "case": "explicit",
+          "expect": {
+            "host": "127.0.0.1",
+            "keys": {
+              "mode": "caller",
+              "peeridletimeo": "2500"
+            },
+            "port": 31178,
+            "scheme": "srt"
+          },
+          "key": "peeridletimeo",
+          "role": "caller",
+          "scheme": "srt",
+          "url": "srt://127.0.0.1:31178?peeridletimeo=2500"
         },
         {
           "case": "explicit",
@@ -1034,6 +1050,26 @@
           "role": "caller",
           "scheme": "srt",
           "url": "srt://127.0.0.1:31151?conntimeo=-1"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "CONFIG_INVALID"
+          },
+          "key": "peeridletimeo",
+          "role": "caller",
+          "scheme": "srt",
+          "url": "srt://127.0.0.1:31179?peeridletimeo=0"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "CONFIG_INVALID"
+          },
+          "key": "peeridletimeo",
+          "role": "caller",
+          "scheme": "srt",
+          "url": "srt://127.0.0.1:31180?peeridletimeo=-1"
         },
         {
           "case": "invalid",

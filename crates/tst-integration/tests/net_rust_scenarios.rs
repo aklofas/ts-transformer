@@ -646,6 +646,7 @@ mod url_corpus_leg {
             }),
         );
         put_opt(&mut k, "conntimeo", c.connect_timeout.map(ms));
+        put_opt(&mut k, "peeridletimeo", c.peer_idle_timeout.map(ms));
         put_opt(&mut k, "fc", c.flow_window_packets);
         put_opt(&mut k, "inputbw", c.input_bandwidth);
         put_opt(&mut k, "latency", c.latency.map(ms));
