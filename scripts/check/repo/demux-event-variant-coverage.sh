@@ -39,6 +39,13 @@ if [ "${#variants[@]}" -eq 0 ]; then
     exit 1
 fi
 
+# Independent count: the variant lines of the enum, however they open.
+expected=$(awk '/^pub enum DemuxEvent /{b=1;next} b&&/^}/{b=0} b&&/^    [A-Z]/{n++} END{print n+0}' "$RUST_ENUM_FILE")
+if [ "${#variants[@]}" -lt 6 ] || [ "${#variants[@]}" -ne "$expected" ]; then
+    echo "FAIL: extracted ${#variants[@]} DemuxEvent variants (${variants[*]}), independent count $expected, floor 6" >&2
+    exit 1
+fi
+
 fail=0
 for entry in "${MATCHERS[@]}"; do
     rel="${entry%%|*}"
@@ -54,8 +61,10 @@ for entry in "${MATCHERS[@]}"; do
         fail=1
         continue
     fi
+    # Comments never count: a variant named only in a `//` line is not an arm.
+    code=$(echo "$body" | grep -vE '^[[:space:]]*//' || true)
     for v in "${variants[@]}"; do
-        if ! echo "$body" | grep -qE "DemuxEvent::${v}\b"; then
+        if ! echo "$code" | grep -qE "^[[:space:]]*(\|[[:space:]]*)?DemuxEvent::${v}\b"; then
             echo "ERROR: $rel: no arm for DemuxEvent::${v}" >&2
             fail=1
         fi
