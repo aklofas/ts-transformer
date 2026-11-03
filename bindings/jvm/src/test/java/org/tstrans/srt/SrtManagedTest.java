@@ -203,4 +203,44 @@ class SrtManagedTest {
         assertEquals(5L, s.gapBytesDropped());
         assertTrue(s.reconnecting());
     }
+
+    /**
+     * An initial connect that nobody answers is a connect failure or a
+     * timeout from the native layer, never {@code BROKEN}.
+     */
+    @Test
+    void fromUrlToAClosedPortThrowsConnectFailedOrTimeout() throws Exception {
+        int port;
+        try (var probe = new java.net.DatagramSocket(0)) {
+            port = probe.getLocalPort();
+        }
+        var e = assertThrows(
+            SrtException.class,
+            () -> ManagedSender.fromUrl(
+                "srt://127.0.0.1:" + port + "?mode=caller&connect_timeout=500",
+                ReconnectPolicy.builder().maxAttempts(1).build()
+            )
+        );
+        assertTrue(
+            e.kind() == SrtException.Kind.CONNECT_FAILED || e.kind() == SrtException.Kind.TIMEOUT,
+            "got " + e.kind()
+        );
+    }
+
+    /** A listener URL whose port is already held fails the initial bind; the
+     * native layer reports that path as {@code BROKEN}. */
+    @Test
+    void fromUrlOnAHeldPortThrowsBroken() throws Exception {
+        try (var held = new java.net.DatagramSocket(0, java.net.InetAddress.getByName("127.0.0.1"))) {
+            int port = held.getLocalPort();
+            var e = assertThrows(
+                SrtException.class,
+                () -> ManagedReceiver.fromUrl(
+                    "srt://127.0.0.1:" + port + "?mode=listener",
+                    ReconnectPolicy.builder().maxAttempts(1).build()
+                )
+            );
+            assertEquals(SrtException.Kind.BROKEN, e.kind());
+        }
+    }
 }

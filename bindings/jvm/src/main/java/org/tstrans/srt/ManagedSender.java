@@ -60,7 +60,8 @@ public final class ManagedSender extends NativeHandle {
      * @return a connected {@code ManagedSender}
      * @throws SrtException {@code CONFIG_INVALID} if the policy is zero backoff with unlimited
      *     attempts (refused before connecting), or if the URL is malformed or
-     *     uses a non-caller mode; {@code BROKEN} on initial-connect failure
+     *     uses a non-caller mode; {@code CONNECT_FAILED} or {@code TIMEOUT} on
+     *     initial-connect failure
      */
     public static ManagedSender fromUrl(String url, ReconnectPolicy policy) throws SrtException {
         PolicyArgs p = PolicyArgs.from(policy);
