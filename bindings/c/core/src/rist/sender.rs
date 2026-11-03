@@ -192,9 +192,9 @@ pub unsafe extern "C" fn tst_rist_sender_send_ts(
 
 /// Send any buffered partial bundle now.
 ///
-/// The sender syncs on the first three TS packets it is given; a stream
-/// shorter than that never syncs and its bytes are dropped, so `_flush`
-/// cannot deliver a one- or two-packet stream.
+/// In the default recover mode the sender emits nothing until it has seen
+/// three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
+/// in the sender: `_flush` does not send them and `_close` discards them.
 ///
 /// Call before `tst_rist_sender_close`: `_close` is cancel-first and
 /// discards up to six buffered packets.

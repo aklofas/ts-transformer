@@ -7854,9 +7854,9 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
- * The sender syncs on the first three TS packets it is given; a stream
- * shorter than that never syncs and its bytes are dropped, so `_flush`
- * cannot deliver a one- or two-packet stream.
+ * In the default recover mode the sender emits nothing until it has seen
+ * three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
+ * in the sender: `_flush` does not send them and `_close` discards them.
  *
  * Call before `tst_rist_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.
@@ -8881,9 +8881,9 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
- * The sender syncs on the first three TS packets it is given; a stream
- * shorter than that never syncs and its bytes are dropped, so `_flush`
- * cannot deliver a one- or two-packet stream.
+ * In the default recover mode the sender emits nothing until it has seen
+ * three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
+ * in the sender: `_flush` does not send them and `_close` discards them.
  *
  * Call before `tst_rtp_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.
@@ -11850,9 +11850,9 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
- * The sender syncs on the first three TS packets it is given; a stream
- * shorter than that never syncs and its bytes are dropped, so `_flush`
- * cannot deliver a one- or two-packet stream.
+ * In the default recover mode the sender emits nothing until it has seen
+ * three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
+ * in the sender: `_flush` does not send them and `_close` discards them.
  *
  * Call before `tst_tcp_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.
@@ -11954,9 +11954,10 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  *
  * TCP is a reliable bytestream: the library writes whole bundles to the
  * socket before returning (or returns an error); a partial bundle stays
- * buffered until a later send fills it or `_flush` sends it. Unlike UDP there is no datagram
- * boundary, so the receiver MUST have its own framing — this library's
- * TCP receiver re-synchronises on the 0x47 sync byte.
+ * buffered until a later send fills it or `_flush` sends it. Unlike UDP
+ * there is no datagram boundary, so the receiver MUST have its own
+ * framing; this library's TCP receiver re-synchronises on the 0x47 sync
+ * byte.
  *
  * Returns 0 on success, a negative `TST_E_*` code on failure.
  *
@@ -12770,9 +12771,9 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
- * The sender syncs on the first three TS packets it is given; a stream
- * shorter than that never syncs and its bytes are dropped, so `_flush`
- * cannot deliver a one- or two-packet stream.
+ * In the default recover mode the sender emits nothing until it has seen
+ * three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
+ * in the sender: `_flush` does not send them and `_close` discards them.
  *
  * Call before `tst_udp_sender_close`: `_close` is cancel-first and
  * discards up to six buffered packets.
