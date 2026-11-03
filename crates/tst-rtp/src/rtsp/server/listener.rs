@@ -21,9 +21,6 @@ use crate::rtsp::server::ServerState;
 /// until either the hard cancel handle is flipped or the graceful
 /// cancellation token fires.
 pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServerError> {
-    // Reports "every session task has ended" to `RtspServer::stop` on every
-    // way out of this function, the drain below included.
-    let _ended = SessionsEnded(state.sessions_ended.clone());
     // Bind. `state.builder.bind_url` is guaranteed to be IP-literal at
     // builder time (validate_for_server_bind enforced it).
     let bind_addr = format!(
@@ -69,6 +66,12 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
     // start() returning Ok guarantees local_addr() is populated.
     *state.local_addr.lock().unwrap() = Some(local);
     tracing::info!(target: "tst_rtp::server", "RTSP server listening at {local}");
+    // Reports "every session task has ended" to `RtspServer::stop` on every
+    // way out after a successful bind, the drain below included. Installed
+    // only now, before start() hears of the success: a failed bind ran no
+    // session, and latching the flag there would let a retried server's
+    // `stop()` skip its drain.
+    let _ended = SessionsEnded(state.sessions_ended.clone());
     if let Some(tx) = startup_tx {
         // Best-effort: start() may have timed out and dropped the receiver.
         let _ = tx.send(Ok(local));

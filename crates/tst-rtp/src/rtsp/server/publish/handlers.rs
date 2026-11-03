@@ -114,6 +114,12 @@ pub(crate) fn handle_announce(
             return error_response(req, 415, "Unsupported Media Type");
         }
     };
+    // Admission closes when `stop()` begins; the mounts' application
+    // transports close only after its drain, so running publishers still
+    // flush into them.
+    if state.is_shut_down() {
+        return error_response(req, 503, "Service Unavailable");
+    }
     let mount_path = extract_mount_path(&req.uri);
     let info = PublisherInfo {
         peer: session.peer_addr,
@@ -133,6 +139,12 @@ pub(crate) fn handle_announce(
                 let Some(generation) = m.try_begin_publisher(info) else {
                     return error_response(req, 403, "Forbidden");
                 };
+                // `stop()` may have begun since the check above: release the
+                // claim so the mount is left as this ANNOUNCE found it.
+                if state.is_shut_down() {
+                    m.end_publisher();
+                    return error_response(req, 503, "Service Unavailable");
+                }
                 (m, generation)
             }
             Some(MountEntry::Local(_)) => {
@@ -405,6 +417,7 @@ pub(crate) fn handle_setup_record(
 /// - 455 Method Not Valid in This State — no publisher on this session,
 ///   its announced tracks aren't all SETUP yet, or the mount no longer
 ///   holds this session's publisher slot (removed or closed meanwhile).
+/// - 503 Service Unavailable — the server is stopping.
 pub(crate) fn handle_record(
     req: &RtspRequest,
     state: &Arc<ServerState>,
@@ -425,6 +438,12 @@ pub(crate) fn handle_record(
     // refuse rather than feed a mount nothing reads from.
     if !publish.mount.holds_publisher(publish.slot_generation) {
         return handle_not_valid_in_state(req);
+    }
+    // No recording starts once `stop()` has begun; the application
+    // transports stay open until its drain ends, for the publishers
+    // already recording.
+    if state.is_shut_down() {
+        return error_response(req, 503, "Service Unavailable");
     }
     publish.recording = true;
     for idx in 0..publish.tracks.len() {
@@ -766,6 +785,55 @@ mod tests {
         rec.headers
             .insert("session".into(), s.session_id().unwrap().to_owned());
         assert_eq!(handle_record(&rec, &st, &mut s).status, 455);
+        assert!(!s.publisher().unwrap().recording);
+    }
+
+    #[test]
+    fn announce_on_a_free_registered_mount_after_shutdown_is_503() {
+        // `stop()`'s first step, before its Notice and drain: admission is
+        // closed while the mounts' application transports stay open.
+        let st = test_state();
+        let m = super::super::mount::PublishMountState::new("/pub", 8, st.publish_counters.clone());
+        st.mounts
+            .lock()
+            .unwrap()
+            .insert("/pub".into(), MountEntry::Publish(m.clone()));
+        st.refuse_publish_work();
+        let mut s = ServerSessionState::new();
+        let r = handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s);
+        assert_eq!(r.status, 503);
+        assert_eq!(
+            st.publish_counters
+                .active_publishers
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert!(m.publisher.lock().unwrap().info.is_none());
+        assert!(s.publisher().is_none());
+    }
+
+    #[test]
+    fn record_after_shutdown_is_refused() {
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+        let mut setup = req(RtspMethod::Setup, "rtsp://h/pub/streamid=0");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
+        );
+        assert_eq!(
+            crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s).status,
+            200
+        );
+        st.refuse_publish_work();
+        let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
+        rec.headers
+            .insert("session".into(), s.session_id().unwrap().to_owned());
+        assert_eq!(handle_record(&rec, &st, &mut s).status, 503);
         assert!(!s.publisher().unwrap().recording);
     }
 

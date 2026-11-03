@@ -1568,6 +1568,26 @@ mod listener_tests {
             "second bind should have failed"
         );
     }
+
+    #[test]
+    fn a_failed_bind_leaves_sessions_ended_false() {
+        let blocker = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = blocker.local_addr().unwrap().port();
+        let server = RtspServer::bind(&format!("rtsp://127.0.0.1:{port}")).unwrap();
+        let e = server.start().unwrap_err();
+        assert!(matches!(e, RtspServerError::BindAddrInUse), "got {e:?}");
+        // start() returns as soon as the failed listener reports, before
+        // that task has finished exiting: give it the time to flip the
+        // flag if it were going to.
+        let mut ended = server.state.sessions_ended.subscribe();
+        let flipped = server.runtime.as_ref().unwrap().block_on(async {
+            tokio::time::timeout(Duration::from_millis(500), ended.wait_for(|d| *d))
+                .await
+                .is_ok()
+        });
+        assert!(!flipped, "a failed bind latched sessions_ended");
+        assert!(!*server.state.sessions_ended.borrow());
+    }
 }
 
 #[cfg(test)]
