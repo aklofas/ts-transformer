@@ -9,6 +9,7 @@ use crate::rtsp::client::RtspClient;
 use crate::rtsp::client::keepalive::{KEEPALIVE_CSEQ_BASE, handle_keepalive_response};
 use crate::rtsp::message::{RtspFraming, RtspMethod, RtspRequest, RtspResponse};
 use crate::sdp::Sdp;
+use tst_core::net::io_classify::{RecvAction, classify_recv_error};
 
 /// Response shape returned by [`RtspClient::options`]. Exposes the
 /// server's advertised methods (parsed from the `Public:` header) plus
@@ -253,7 +254,8 @@ impl RtspClient {
     ///    the shorter of the configured read timeout and a 100 ms tick
     ///    (and by the time left on the request deadline), so each
     ///    `WouldBlock`/`TimedOut` round-trip is a cancel-check
-    ///    opportunity. Holding the lock through the whole exchange
+    ///    opportunity, and a read interrupted by a handled signal
+    ///    (`Interrupted`) is retried the same way. Holding the lock through the whole exchange
     ///    means the keepalive thread waits if a request is in flight —
     ///    correct since RTSP isn't pipelined.
     ///
@@ -289,7 +291,8 @@ impl RtspClient {
     /// is allowed to outlast the time left on the deadline, so the
     /// configured socket read timeout does not stretch it; the non-pump
     /// path shortens the socket's read timeout as needed and restores
-    /// the configured value before returning.
+    /// the configured value before returning. A read interrupted by a
+    /// handled signal (`Interrupted`) is retried, never surfaced.
     pub(crate) fn send_and_read_with_deadline(
         &mut self,
         request_bytes: &[u8],
@@ -422,11 +425,9 @@ impl RtspClient {
                         }
                     }
                 }
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut =>
-                {
-                    // read timeout; check cancel + retry
+                Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => {
+                    // read timeout or a handled signal (EINTR); the
+                    // accumulated buffer is kept, check cancel + retry
                     continue;
                 }
                 Err(e) => return Err(RtspError::Io(e.kind())),

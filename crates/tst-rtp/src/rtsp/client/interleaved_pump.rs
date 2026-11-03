@@ -54,6 +54,7 @@ use crate::rtsp::message::{
     RtspFraming, RtspResponse, pump_accumulation_exceeded, rtsp_frame_decision,
 };
 use crate::transport::record_end;
+use tst_core::net::io_classify::{RecvAction, classify_recv_error};
 use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// Bounded depth of the media (RTP/data) hand-off queue.
@@ -180,12 +181,14 @@ pub(crate) use crate::rtsp::framing::parse_binary_frame_header;
 /// - `reader.read()` returns `Ok(0)` (EOF).
 /// - `cancel` is set and the next `read()` returns
 ///   [`std::io::ErrorKind::TimedOut`] / [`std::io::ErrorKind::WouldBlock`].
+///   A read that returns [`std::io::ErrorKind::Interrupted`] (a handled
+///   signal) is retried the same way and never ends the pump.
 /// - `data_tx.try_send()` fails with `Disconnected` (the receiver was
 ///   dropped). A `Full` on `data_tx` is NOT fatal — it drops the newest
 ///   media frame and ticks `media_frames_dropped`.
 /// - `rtcp_tx` / `ctrl_tx` `try_send()` returns `Full` — a control-plane
 ///   flood is hostile, so the pump fails the session by exiting.
-/// - `reader.read()` returns a non-timeout error (logged at WARN).
+/// - `reader.read()` returns any other error (logged at WARN).
 ///
 /// Returns `Err` if the OS refuses to spawn the thread (resource
 /// exhaustion). This MUST be propagated rather than `.expect()`'d — the
@@ -243,13 +246,12 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                         return;
                     }
                     Ok(n) => n,
-                    Err(e)
-                        if e.kind() == std::io::ErrorKind::TimedOut
-                            || e.kind() == std::io::ErrorKind::WouldBlock =>
-                    {
+                    Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => {
                         // The TcpStream is configured with a 100 ms read
                         // timeout in RtspClient::connect_with — loop back
-                        // to recheck the cancel flag.
+                        // to recheck the cancel flag. A read interrupted
+                        // by a handled signal (EINTR) is the same
+                        // non-event.
                         continue;
                     }
                     Err(e) => {
@@ -1466,6 +1468,78 @@ mod tests {
         assert!(
             matches!(end_reason.get(), Some(EndReason::CleanTeardown)),
             "clean EOF must record CleanTeardown, got {:?}",
+            end_reason.get()
+        );
+    }
+
+    /// Yields a scripted sequence of read results, then EOF.
+    struct ScriptedReader(std::collections::VecDeque<std::io::Result<Vec<u8>>>);
+
+    impl Read for ScriptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self.0.pop_front() {
+                None => Ok(0),
+                Some(Err(e)) => Err(e),
+                Some(Ok(bytes)) => {
+                    buf[..bytes.len()].copy_from_slice(&bytes);
+                    Ok(bytes.len())
+                }
+            }
+        }
+    }
+
+    fn spawn_scripted(
+        script: Vec<std::io::Result<Vec<u8>>>,
+    ) -> (JoinHandle<()>, mpsc::Receiver<Bytes>, EndReasonHandle) {
+        let (dt, dr, rt, _rr, ct, _cr, cancel, stats) = make_args();
+        let end_reason = EndReasonHandle::default();
+        let handle = spawn_client_pump(
+            ScriptedReader(script.into()),
+            dt,
+            rt,
+            ct,
+            InterleavedChannels { rtp: 0, rtcp: 1 },
+            cancel,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(Mutex::new(AuthState::default())),
+            None,
+            stats,
+            end_reason.clone(),
+        )
+        .unwrap();
+        (handle, dr, end_reason)
+    }
+
+    /// A read interrupted by a handled signal is retried, not fatal.
+    #[test]
+    fn pump_retries_an_interrupted_read() {
+        let mut frame = vec![b'$', 0u8, 0x00, 20];
+        frame.extend_from_slice(&valid_rtp_header());
+        frame.extend_from_slice(b"PAYLOAD!");
+        let (handle, dr, end_reason) = spawn_scripted(vec![
+            Err(std::io::Error::from(std::io::ErrorKind::Interrupted)),
+            Ok(frame),
+        ]);
+        let packet = dr.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(packet.len(), 20);
+        let _ = handle.join();
+        assert!(
+            matches!(end_reason.get(), Some(EndReason::CleanTeardown)),
+            "an interrupted read must not end the stream, got {:?}",
+            end_reason.get()
+        );
+    }
+
+    /// A reset is still terminal: only the retry classes loop.
+    #[test]
+    fn pump_still_fails_on_a_reset_read() {
+        let (handle, _dr, end_reason) = spawn_scripted(vec![Err(std::io::Error::from(
+            std::io::ErrorKind::ConnectionReset,
+        ))]);
+        let _ = handle.join();
+        assert!(
+            matches!(end_reason.get(), Some(EndReason::TransportFailed { .. })),
+            "a reset read must record TransportFailed, got {:?}",
             end_reason.get()
         );
     }
