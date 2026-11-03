@@ -66,7 +66,6 @@ const GROUP3_REJECTED: &[(&str, &str)] = &[
     ("mininputbw", "SRTO_MININPUTBW"),
     ("minversion", "SRTO_MINVERSION"),
     ("nakreport", "SRTO_NAKREPORT"),
-    ("peeridletimeo", "SRTO_PEERIDLETIMEO"),
     ("rcvbuf", "SRTO_RCVBUF"),
     ("retransmitalgo", "SRTO_RETRANSMITALGO"),
     ("sndbuf", "SRTO_SNDBUF"),
@@ -464,6 +463,18 @@ fn set_connect_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Appl
     Ok(())
 }
 
+fn set_peer_idle_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
+    let n = parse_i32_nonneg("peeridletimeo", value)?;
+    if n == 0 {
+        return Err(SrtUrlError::InvalidValue {
+            key: "peeridletimeo".to_string(),
+            detail: "must be positive, got 0".to_string(),
+        });
+    }
+    c.peer_idle_timeout = Some(Duration::from_millis(n as u64));
+    Ok(())
+}
+
 fn set_flow_window(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     // libsrt-URL canonical key is `fc` (flow control window); `ffs` is
     // the ffmpeg-style alias (flight flag size).
@@ -757,6 +768,13 @@ pub const URL_KEYS: &[QueryKey<SrtSocketConfig, SrtUrlError>] = &[
         set_key_length,
     ),
     QueryKey::new(
+        "peeridletimeo",
+        &[],
+        "Peer idle timeout; libsrt breaks a silent connection only after more than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not detect a silent peer sooner",
+        "milliseconds",
+        set_peer_idle_timeout,
+    ),
+    QueryKey::new(
         "peerlatency",
         &[],
         "Latency the peer should use when receiving",
@@ -913,6 +931,19 @@ mod tests {
     fn url_conntimeo_parses() {
         let u = SrtUrl::parse("srt://h:9000?conntimeo=10000").unwrap();
         assert_eq!(u.config.connect_timeout, Some(Duration::from_millis(10000)));
+    }
+
+    #[test]
+    fn url_peeridletimeo_parses_and_refuses_bad_values() {
+        let u = SrtUrl::parse("srt://h:9000?peeridletimeo=2500").unwrap();
+        assert_eq!(
+            u.config.peer_idle_timeout,
+            Some(Duration::from_millis(2500))
+        );
+        for bad in ["0", "-1", "abc"] {
+            let e = SrtUrl::parse(&format!("srt://h:9000?peeridletimeo={bad}")).unwrap_err();
+            assert!(e.to_string().contains("peeridletimeo"), "{bad}: {e}");
+        }
     }
 
     #[test]

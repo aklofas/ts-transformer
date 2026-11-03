@@ -28,6 +28,7 @@ const GROUP1_KEYS: &[&str] = &[
     "packetfilter",
     "congestion",
     "conntimeo",
+    "peeridletimeo",
     "linger",
     "udprcvbuf",
     "udpsndbuf",
@@ -52,7 +53,6 @@ const GROUP3_KEYS: &[&str] = &[
     "mininputbw",
     "minversion",
     "nakreport",
-    "peeridletimeo",
     "rcvbuf",
     "retransmitalgo",
     "sndbuf",
@@ -104,6 +104,9 @@ fn group1_keys_all_parse_and_wire() {
         }),
         ("conntimeo", "10000", |c| {
             c.connect_timeout == Some(Duration::from_millis(10_000))
+        }),
+        ("peeridletimeo", "2500", |c| {
+            c.peer_idle_timeout == Some(Duration::from_millis(2500))
         }),
         ("linger", "5", |c| c.linger == Some(Duration::from_secs(5))),
         ("udprcvbuf", "2000000", |c| {

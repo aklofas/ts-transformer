@@ -426,7 +426,6 @@ fn all_group3_keys_reject_with_srto() {
         "mininputbw",
         "minversion",
         "nakreport",
-        "peeridletimeo",
         "rcvbuf",
         "retransmitalgo",
         "sndbuf",
