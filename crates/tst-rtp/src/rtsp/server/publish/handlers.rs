@@ -839,6 +839,42 @@ mod tests {
     }
 
     #[test]
+    fn during_stop_a_repeat_record_is_200_and_a_new_announce_is_503() {
+        let (st, _m) = state_with_publish_mount();
+        let mut s = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut s).status,
+            200
+        );
+        let mut setup = req(RtspMethod::Setup, "rtsp://h/pub/streamid=0");
+        setup.headers.insert(
+            "transport".into(),
+            "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record".into(),
+        );
+        assert_eq!(
+            crate::rtsp::server::handlers::handle_setup(&setup, &st, &mut s).status,
+            200
+        );
+        let mut rec = req(RtspMethod::Record, "rtsp://h/pub");
+        rec.headers
+            .insert("session".into(), s.session_id().unwrap().to_owned());
+        assert_eq!(handle_record(&rec, &st, &mut s).status, 200);
+        assert!(s.publisher().unwrap().recording);
+        st.refuse_publish_work();
+        assert_eq!(
+            handle_record(&rec, &st, &mut s).status,
+            200,
+            "a session already recording is not refused a repeat RECORD"
+        );
+        let mut fresh = ServerSessionState::new();
+        assert_eq!(
+            handle_announce(&announce("rtsp://h/pub", SDP_MP2T), &st, &mut fresh).status,
+            503,
+            "a new ANNOUNCE during stop is refused"
+        );
+    }
+
+    #[test]
     fn record_racing_remove_mount_is_455_once_the_entry_is_gone() {
         // A publisher whose SETUP was answered before `remove_mount` took
         // the entry, and whose session's mount mirror the sessions snapshot

@@ -128,9 +128,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-rtp
 
 - An `rtp://` receive or send interrupted by a handled signal (`EINTR`, for example a `SIGINT` handler on the receiving thread) no longer ends the transport as `Broken`; it is retried like the socket's poll tick, as the UDP and TCP transports already did. Windows is unaffected (no `EINTR`).
-
 - The RTSP client's TCP-interleaved receive and its request/response reader now retry a read interrupted by a handled signal (`EINTR`) instead of ending the stream with `TransportFailed` or failing the request with `RtspError::Io`. Affected every release since 0.1.0.
-
 - The RTSP server's replies to an unparseable request, its `413` for an over-cap request and its close after TEARDOWN now wait for the connection's writer under the same idle bound and cancel as every other reply, so a session whose peer stopped reading ends on `stop()` or a hard cancel instead of outliving the server.
 - A graceful `RtspServer::stop()` now closes each publish mount's application transport only after the publisher sessions have drained (bounded by `graceful_shutdown_drain` plus 500 ms), so the H.264 access unit and the KLV units a publisher's adapter still held reach the application before it reads `Closed`. Before, the transports closed first and the final flush was counted in the mount's stats but never delivered. A hard cancel, including one that fires during that drain, and dropping the server still close them at once.
 - An `rtsps://` session whose peer stopped reading now ends within 500 ms of leaving its request loop. Its exit shut the TLS write half down without a bound, which flushes close_notify and any pending ciphertext first, so the session held its `active_sessions` slot until the server was dropped.
@@ -141,6 +139,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The RTSP server refuses a realm holding a control byte (CR, LF or any other) with `MountRuleError::InvalidRealm` from `set_challenge` and `InvalidConfig` from the server builder, and escapes a quote or backslash in a realm in the `WWW-Authenticate` header. A realm with CR/LF could previously inject header lines, and a quote ended the realm early. The server builder also refuses an empty username, which no client could ever present.
 - A publisher's SETUP for a path other than its announced mount now answers `404`, like a missing mount. Before, it answered `455`, `461` or a role refusal, which showed that the mount exists and what type it is, even behind a `Refuse(NotFound)` rule.
 - The RTSP server's three-strikes `401` counter now resets only after a `2xx` to a request that passed a credential check. A `2xx` from an open mount or a mount without credentials no longer clears it, so a client could previously interleave open requests to guess credentials without being disconnected.
+- An on-demand `ANNOUNCE` whose path is not canonical (trailing slash, control segment) is now refused with `404` instead of creating the mount under the canonical name.
 
 ### Fixed — tstrans-srt-sys, tstrans-rist-sys
 

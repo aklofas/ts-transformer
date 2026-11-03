@@ -1115,9 +1115,8 @@ impl RtspServer {
     /// [`Self::next_publisher`] call waiting on another thread wakes with
     /// [`RtspServerError::Shutdown`] at once, and once stop begins every
     /// ANNOUNCE, and every RECORD from a session not yet recording,
-    /// answers `503`. Once the sessions have
-    /// ended (or the drain window has passed), every publish mount's
-    /// application transport (see
+    /// answers `503`. Once the sessions have ended (or the drain window has
+    /// passed), every publish mount's application transport (see
     /// [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
     /// is ended: it first delivers what each publisher session flushed on
     /// its way out, then a parked or later `recv_bytes` on it returns
