@@ -52,6 +52,22 @@ pub struct TstRtpDemuxReceiver {
     /// its keepalive and (for TCP-interleaved) the pump that feeds this
     /// receiver alive; dropping it on close sends TEARDOWN.
     pub(crate) rtsp_client: Mutex<Option<tst_rtp::RtspClient>>,
+    /// The application-cancel latch of the publish mount this receiver was
+    /// bridged from; `None` on every other receiver. The shared binding
+    /// layer reads only a handle's own latch, so this layer carries the
+    /// mount's cancel across: a mount cancel must beat events already
+    /// queued, like the receiver's own cancel.
+    pub(crate) mount_cancel: Option<std::sync::Arc<dyn tst_core::transport::TransportCancel>>,
+}
+
+impl TstRtpDemuxReceiver {
+    /// Latches the receiver's own cancel when its mount was cancelled, so
+    /// the gate refuses with CLOSED before the shell returns queued events.
+    fn observe_mount_cancel(&self) {
+        if self.mount_cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+            self.inner.cancel();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +118,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
                 arena: Mutex::new(EventArena::new()),
                 stream_stats_buf: Mutex::new(Vec::new()),
                 rtsp_client: Mutex::new(None),
+                mount_cancel: None,
             })),
             None => std::ptr::null_mut(),
         }
@@ -172,7 +189,9 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_close(p: *mut TstRtpDemuxReceive
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
-/// bytes are still buffered; a call already past its receive when the
+/// bytes are still buffered, and the same holds after
+/// `tst_rtsp_publish_mount_cancel` on the mount the receiver was taken
+/// from; a call already past its receive when the
 /// cancel lands may still return its result.
 ///
 /// # Safety
@@ -188,6 +207,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_next_event(
         set_last_error(TstError::InvalidConfig, "null rtp demux receiver pointer");
         return TstError::InvalidConfig as i32;
     };
+    handle.observe_mount_cancel();
     // The generic body owns the null-check on `out_event`, the cancel-aware
     // relabel (it reads the latch off the `CHandle` itself) and the arena
     // borrow. `broken_is_eos = false`: only plain SRT shells fold Broken into EOS.

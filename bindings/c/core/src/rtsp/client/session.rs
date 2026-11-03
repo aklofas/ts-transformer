@@ -607,6 +607,7 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
             arena: Mutex::new(EventArena::new()),
             stream_stats_buf: Mutex::new(Vec::new()),
             rtsp_client: Mutex::new(Some(client)),
+            mount_cancel: None,
         }))
     })
 }

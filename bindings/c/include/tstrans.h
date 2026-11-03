@@ -8212,7 +8212,9 @@ int tst_rtp_demux_receiver_get_stream_stats(struct TstRtpDemuxReceiver *p,
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
  *
  * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
- * bytes are still buffered; a call already past its receive when the
+ * bytes are still buffered, and the same holds after
+ * `tst_rtsp_publish_mount_cancel` on the mount the receiver was taken
+ * from; a call already past its receive when the
  * cancel lands may still return its result.
  *
  * # Safety
@@ -9668,7 +9670,8 @@ tst_subtitle_stream_handle_t tst_rtsp_mount_subtitle_handle(const struct TstRtsp
 /**
  * End the application side of the mount: a demux receiver taken from it,
  * parked or not, reads `TST_E_CLOSED` (the same outcome as
- * `tst_rtp_demux_receiver_cancel`). Does not affect the publisher or
+ * `tst_rtp_demux_receiver_cancel`; events already queued are not
+ * returned). Does not affect the publisher or
  * PLAY readers, and does not remove the mount. Idempotent.
  *
  * Returns `0` or `TST_E_INVALID_CONFIG` for a NULL handle.

@@ -619,6 +619,62 @@ fn rtsp_publish_mount_cancel_wakes_parked_receiver() {
     unsafe { tst_rtsp_server_free(server) };
 }
 
+/// A mount cancel is terminal for the bridged receiver: events already
+/// queued behind it are not returned, and the end reason is CANCELLED.
+#[test]
+fn rtsp_publish_mount_cancel_beats_buffered_events() {
+    let (server, port) = start_server(false);
+    let path = CString::new("/pub").unwrap();
+    let m = unsafe { tst_rtsp_server_add_publish_mount(server, path.as_ptr()) };
+    assert!(
+        !m.is_null(),
+        "add_publish_mount: {}",
+        test_last_error_code()
+    );
+    let rx = unsafe { tst_rtsp_publish_mount_into_demux_receiver(m, std::ptr::null()) };
+    assert!(
+        !rx.is_null(),
+        "into_demux_receiver: {}",
+        test_last_error_code()
+    );
+
+    let (mut tcp, ch) = publish_mp2t(port, "/pub");
+    for pkt in &mp2t_rtp_packets(5) {
+        send_frame(&mut tcp, ch, pkt);
+    }
+    tcp.flush().unwrap();
+    assert!(
+        wait_for(Duration::from_secs(5), || stats(m).rtp_packets_received
+            == 5),
+        "mount never counted 5 RTP packets"
+    );
+
+    // One read pulls the whole burst into the shell, so more events are
+    // already queued behind the one returned.
+    let mut ev = TstEvent::default();
+    assert_eq!(unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) }, 0);
+    assert_eq!(unsafe { tst_rtsp_publish_mount_cancel(m) }, 0);
+    assert_eq!(
+        unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) },
+        TstError::Closed as i32,
+        "a queued event came out after the mount cancel"
+    );
+    let mut reason = TstStreamEndReason::None;
+    assert_eq!(
+        unsafe { tst_rtp_demux_receiver_end_reason(rx, &mut reason) },
+        0
+    );
+    assert!(matches!(reason, TstStreamEndReason::Cancelled));
+
+    drop(tcp);
+    unsafe { tst_rtp_demux_receiver_close(rx) };
+    unsafe { tst_rtsp_publish_mount_free(m) };
+    unsafe {
+        tst_rtsp_server_stop(server, 0);
+        tst_rtsp_server_free(server);
+    }
+}
+
 /// NULL arguments are `TST_E_INVALID_CONFIG` everywhere, and the free
 /// functions accept NULL.
 #[test]
