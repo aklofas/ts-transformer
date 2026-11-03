@@ -40,8 +40,8 @@ pub use demux_receiver::{
     tst_tcp_demux_receiver_get_socket_stats, tst_tcp_demux_receiver_get_stats,
     tst_tcp_demux_receiver_get_stream_codec_stats,
     tst_tcp_demux_receiver_get_stream_last_seen_micros, tst_tcp_demux_receiver_get_stream_stats,
-    tst_tcp_demux_receiver_next_event, tst_tcp_demux_receiver_open,
-    tst_tcp_demux_receiver_reset_stats,
+    tst_tcp_demux_receiver_get_ts_bytes_demuxed, tst_tcp_demux_receiver_next_event,
+    tst_tcp_demux_receiver_open, tst_tcp_demux_receiver_reset_stats,
 };
 pub use listener::{
     TstTcpListener, tst_tcp_listener_accept_receiver, tst_tcp_listener_accept_sender,

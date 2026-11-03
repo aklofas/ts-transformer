@@ -387,7 +387,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **27** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **28** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -680,6 +680,15 @@ baseline (by design)" for the full rationale.
       `TST_E_BUFFER_FULL`; demux-config PIDs above `0x1FFF` and TLV lists
       with trailing bytes return `TST_E_INVALID_CONFIG`; a zero-backoff
       unlimited reconnect policy is refused at `tst_managed_*_open`.
+    - `28` — new symbols `tst_demux_receiver_get_ts_bytes_demuxed`,
+      `tst_managed_demux_receiver_get_ts_bytes_demuxed`,
+      `tst_rtp_demux_receiver_get_ts_bytes_demuxed`,
+      `tst_udp_demux_receiver_get_ts_bytes_demuxed`,
+      `tst_tcp_demux_receiver_get_ts_bytes_demuxed` and
+      `tst_rist_demux_receiver_get_ts_bytes_demuxed`: the aligned TS bytes the
+      receiver's demuxer has been fed since open, read without waiting for a
+      thread parked in the receive. No existing symbol, layout, enum value or
+      error code changed.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 

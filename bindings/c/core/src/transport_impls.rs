@@ -100,7 +100,8 @@ pub(crate) fn open_receiver<U, R: RecvTransport, S>(
     })
 }
 
-/// `DemuxReceiver<R>`, with `demux_cfg`'s options when it is non-null.
+/// `DemuxReceiver<R>`, with `demux_cfg`'s options when it is non-null, and
+/// the handle onto its TS-byte counter (read without the slot).
 ///
 /// # Safety
 /// `demux_cfg` is NULL or a live `TstDemuxConfig`.
@@ -110,7 +111,10 @@ pub(crate) unsafe fn open_demux_receiver<U, R: RecvTransport, S>(
     demux_cfg: *const TstDemuxConfig,
     make: impl FnOnce(U) -> Option<R>,
     snap: impl FnOnce(&R) -> S,
-) -> Option<CHandle<DemuxReceiver<R>, S>> {
+) -> Option<(
+    CHandle<DemuxReceiver<R>, S>,
+    tst_pipeline::TsBytesDemuxedHandle,
+)> {
     crate::panic::ffi_catch(None, || {
         let transport = make(url?)?;
         let snapshot = snap(&transport);
@@ -119,7 +123,32 @@ pub(crate) unsafe fn open_demux_receiver<U, R: RecvTransport, S>(
             None => DemuxReceiver::new(transport),
         };
         let cancel = cancel_or_latch(receiver.cancel_handle());
-        Some(CHandle::new(receiver, cancel, snapshot))
+        let counter = receiver.ts_bytes_demuxed_handle();
+        Some((CHandle::new(receiver, cancel, snapshot), counter))
+    })
+}
+
+/// Body of every `tst_*_demux_receiver_get_ts_bytes_demuxed`: `counter` is
+/// the handle's construction-time capture (`None` for a null handle).
+///
+/// # Safety
+/// `out` is NULL or writable.
+pub(crate) unsafe fn read_ts_bytes_demuxed(
+    counter: Option<&tst_pipeline::TsBytesDemuxedHandle>,
+    out: *mut u64,
+) -> i32 {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(counter) = counter else {
+            set_last_error(TstError::InvalidConfig, "null demux receiver pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        if out.is_null() {
+            set_last_error(TstError::InvalidConfig, "null out pointer");
+            return TstError::InvalidConfig as i32;
+        }
+        // SAFETY: non-null per the guard above.
+        unsafe { *out = counter.get() };
+        0
     })
 }
 

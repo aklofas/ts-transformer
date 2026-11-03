@@ -33,6 +33,8 @@ use crate::stream_end_reason::{TstStreamEndReason, convert_end_reason};
 /// Returned by [`tst_rtp_demux_receiver_open`]. Freed with
 /// [`tst_rtp_demux_receiver_close`].
 pub struct TstRtpDemuxReceiver {
+    /// Aligned TS bytes fed to the demuxer; read without the slot.
+    pub(crate) ts_bytes_demuxed: tst_pipeline::TsBytesDemuxedHandle,
     /// Slot + cancel handle + cancel latch, plus the construction-constant
     /// end-reason cell in the snapshot. Captured from the underlying
     /// `RtpRecvTransport` both by `tst_rtp_demux_receiver_open` and by
@@ -110,7 +112,8 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
                 },
             )
         } {
-            Some(inner) => Box::into_raw(Box::new(TstRtpDemuxReceiver {
+            Some((inner, ts_bytes_demuxed)) => Box::into_raw(Box::new(TstRtpDemuxReceiver {
+                ts_bytes_demuxed,
                 // The same cell, attached to the handle too: a receive refused
                 // after `_cancel` records `Cancelled` there.
                 inner: {
@@ -124,6 +127,36 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_open(
             })),
             None => std::ptr::null_mut(),
         }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// TS byte counter
+// ---------------------------------------------------------------------------
+
+/// Read the count of aligned TS bytes this receiver's demuxer has been fed
+/// since open into `*out`.
+///
+/// Lock-free: it never waits for a thread parked in `tst_rtp_demux_receiver_next_event`, and it is
+/// not reset by `tst_rtp_demux_receiver_reset_stats`. It stays readable after `tst_rtp_demux_receiver_cancel`; after
+/// `tst_rtp_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+/// `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid non-freed `*mut TstRtpDemuxReceiver` returned by this
+/// family's open function. `out` must be NULL or point to a writable
+/// `uint64_t`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtp_demux_receiver_get_ts_bytes_demuxed(
+    p: *mut TstRtpDemuxReceiver,
+    out: *mut u64,
+) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        // SAFETY: `p` is NULL or live and `out` NULL or writable, per the
+        // contract above.
+        let counter = unsafe { p.as_ref() }.map(|h| &h.ts_bytes_demuxed);
+        unsafe { crate::transport_impls::read_ts_bytes_demuxed(counter, out) }
     })
 }
 

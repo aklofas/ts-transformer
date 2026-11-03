@@ -26,14 +26,18 @@ use tstrans::config::{
 use tstrans::error::TstError;
 use tstrans::event::{TstEvent, TstEventKind};
 use tstrans::receiver::demux_receiver::{
-    tst_demux_receiver_close, tst_demux_receiver_get_stream_last_seen_micros,
+    tst_demux_receiver_cancel, tst_demux_receiver_close, tst_demux_receiver_get_stats,
+    tst_demux_receiver_get_stream_last_seen_micros, tst_demux_receiver_get_ts_bytes_demuxed,
     tst_demux_receiver_open_listener, tst_demux_receiver_recv_event,
 };
 use tstrans::sender::mux_sender::{
     tst_mux_sender_close, tst_mux_sender_open, tst_mux_sender_send_video,
 };
+use tstrans::sender::raw_sender::{tst_raw_sender_close, tst_raw_sender_open};
 
-use crate::common::last_error_msg;
+use tstrans::stats::TstDemuxReceiverStats;
+
+use crate::common::{last_error_msg, parked, scaled};
 
 #[test]
 fn loopback_mux_sender_to_demux_receiver_delivers_pmt_and_sample_and_eos() {
@@ -85,6 +89,17 @@ fn loopback_mux_sender_to_demux_receiver_delivers_pmt_and_sample_and_eos() {
             }
             panic!("recv_event failed (rc={rc}): {}", last_error_msg());
         }
+
+        // The plain shell splices nothing, so the counter is exactly what
+        // the transport delivered.
+        let mut n = 0u64;
+        let rc = unsafe { tst_demux_receiver_get_ts_bytes_demuxed(rx, &mut n) };
+        assert_eq!(rc, 0, "get_ts_bytes_demuxed: {}", last_error_msg());
+        let mut stats = TstDemuxReceiverStats::default();
+        assert_eq!(unsafe { tst_demux_receiver_get_stats(rx, &mut stats) }, 0);
+        assert!(n > 0, "the counter stayed zero after a delivered stream");
+        assert_eq!(n % 188, 0, "the counter must count whole TS packets");
+        assert_eq!(n, stats.bytes_received);
 
         unsafe { tst_demux_receiver_close(rx) };
 
@@ -331,4 +346,66 @@ fn loopback_last_seen_micros_reports_after_sample_and_zero_for_unknown_pid() {
 
     receiver_thread.join().expect("receiver thread panicked");
     sender_thread.join().expect("sender thread panicked");
+}
+
+/// The counter is a lock-free read: it answers while another thread is parked
+/// in `_recv_event` (which holds the handle's slot) and after `_cancel`.
+#[test]
+fn loopback_ts_bytes_demuxed_answers_while_recv_event_is_parked_and_after_cancel() {
+    let port: u16 = 41_000 + (std::process::id() as u16 % 500);
+    let (ready_tx, ready_rx) = mpsc::channel::<()>();
+
+    // A connected pair that never sends: the receive stays parked.
+    let peer = thread::spawn(move || {
+        let url = CString::new(format!("srt://127.0.0.1:{port}")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let tx = loop {
+            let h = unsafe { tst_raw_sender_open(url.as_ptr(), std::ptr::null()) };
+            if !h.is_null() {
+                break h;
+            }
+            if std::time::Instant::now() > deadline {
+                panic!("tst_raw_sender_open timed out: {}", last_error_msg());
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+        // Hold the connection until the receiver side is done.
+        let _ = ready_rx.recv_timeout(scaled(Duration::from_secs(30)));
+        unsafe { tst_raw_sender_close(tx) };
+    });
+
+    let url = CString::new(format!("srt://:{port}")).unwrap();
+    let rx = unsafe { tst_demux_receiver_open_listener(url.as_ptr()) };
+    assert!(!rx.is_null(), "open_listener: {}", last_error_msg());
+
+    let rc = parked(
+        rx,
+        |rx| {
+            let mut ev = TstEvent::default();
+            unsafe { tst_demux_receiver_recv_event(rx, &mut ev) }
+        },
+        |rx| {
+            let started = std::time::Instant::now();
+            let mut n = u64::MAX;
+            let rc = unsafe { tst_demux_receiver_get_ts_bytes_demuxed(rx, &mut n) };
+            assert_eq!(rc, 0, "counter while parked: {}", last_error_msg());
+            assert_eq!(n, 0, "nothing was sent");
+            assert!(
+                started.elapsed() < scaled(Duration::from_secs(5)),
+                "the counter waited for the parked receive"
+            );
+            unsafe { tst_demux_receiver_cancel(rx) }
+        },
+        |rx| unsafe { tst_demux_receiver_close(rx) },
+    );
+    assert_eq!(rc, TstError::Closed as i32);
+
+    let mut n = u64::MAX;
+    let rc = unsafe { tst_demux_receiver_get_ts_bytes_demuxed(rx, &mut n) };
+    assert_eq!(rc, 0, "counter after cancel: {}", last_error_msg());
+    assert_eq!(n, 0);
+
+    unsafe { tst_demux_receiver_close(rx) };
+    let _ = ready_tx.send(());
+    peer.join().expect("peer thread");
 }

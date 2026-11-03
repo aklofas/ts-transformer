@@ -41,8 +41,9 @@ pub use managed::{
     tst_managed_demux_receiver_get_socket_stats, tst_managed_demux_receiver_get_stats,
     tst_managed_demux_receiver_get_stream_codec_stats,
     tst_managed_demux_receiver_get_stream_last_seen_micros,
-    tst_managed_demux_receiver_get_stream_stats, tst_managed_demux_receiver_open,
-    tst_managed_demux_receiver_open_listener, tst_managed_demux_receiver_open_listener_with_config,
+    tst_managed_demux_receiver_get_stream_stats, tst_managed_demux_receiver_get_ts_bytes_demuxed,
+    tst_managed_demux_receiver_open, tst_managed_demux_receiver_open_listener,
+    tst_managed_demux_receiver_open_listener_with_config,
     tst_managed_demux_receiver_open_with_config, tst_managed_demux_receiver_recv_event,
     tst_managed_demux_receiver_reset_stats,
 };
@@ -66,6 +67,8 @@ use tst_srt::SrtUrl;
 // ------------------------------------------------------------------
 
 pub struct TstDemuxReceiver {
+    /// Aligned TS bytes fed to the demuxer; read without the slot.
+    pub(crate) ts_bytes_demuxed: tst_pipeline::TsBytesDemuxedHandle,
     /// Slot + cancel handle + cancel latch in one; see `TstReceiver`.
     pub(super) inner: CHandle<DemuxReceiver<SrtTransport>>,
     /// Reusable per-handle backing storage for `_recv_event` output.
@@ -163,11 +166,39 @@ fn open_inner(
         None => DemuxReceiver::new(transport),
     };
     let cancel = cancel_or_latch(rx.cancel_handle());
+    let ts_bytes_demuxed = rx.ts_bytes_demuxed_handle();
     Box::into_raw(Box::new(TstDemuxReceiver {
+        ts_bytes_demuxed,
         inner: CHandle::new(rx, cancel, ()),
         arena: Mutex::new(EventArena::new()),
         stream_stats_buf: Mutex::new(Vec::new()),
     }))
+}
+
+/// Read the count of aligned TS bytes this receiver's demuxer has been fed
+/// since open into `*out`.
+///
+/// Lock-free: it never waits for a thread parked in `tst_demux_receiver_recv_event`, and it is
+/// not reset by `tst_demux_receiver_reset_stats`. It stays readable after `tst_demux_receiver_cancel`; after
+/// `tst_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+/// `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid non-freed `*mut TstDemuxReceiver` returned by one of
+/// the `tst_demux_receiver_open*` functions. `out` must be NULL or point to a writable
+/// `uint64_t`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_demux_receiver_get_ts_bytes_demuxed(
+    p: *mut TstDemuxReceiver,
+    out: *mut u64,
+) -> libc::c_int {
+    crate::panic::ffi_catch(crate::error::TstError::Internal as i32, || {
+        // SAFETY: `p` is NULL or live and `out` NULL or writable, per the
+        // contract above.
+        let counter = unsafe { p.as_ref() }.map(|h| &h.ts_bytes_demuxed);
+        unsafe { crate::transport_impls::read_ts_bytes_demuxed(counter, out) }
+    })
 }
 
 /// Close and free a `tst_demux_receiver_t`.
