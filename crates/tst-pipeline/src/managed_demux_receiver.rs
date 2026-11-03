@@ -243,6 +243,19 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
         self.inner.add_byte_sink(sink);
     }
 
+    /// See [`DemuxReceiver::ts_bytes_demuxed`]. Continues across a
+    /// reconnect; the packet dropped at the splice is not counted.
+    #[must_use]
+    pub fn ts_bytes_demuxed(&self) -> u64 {
+        self.inner.ts_bytes_demuxed()
+    }
+
+    /// See [`DemuxReceiver::ts_bytes_demuxed_handle`].
+    #[must_use]
+    pub fn ts_bytes_demuxed_handle(&self) -> crate::TsBytesDemuxedHandle {
+        self.inner.ts_bytes_demuxed_handle()
+    }
+
     /// Pull one [`DemuxEvent`].
     ///
     /// Detects transport reconnects between iterations: when the
