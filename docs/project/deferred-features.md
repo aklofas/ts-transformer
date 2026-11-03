@@ -2022,7 +2022,7 @@ and the two below.
 - **Trigger to revisit:** the demuxer reporting PTS absence, or a consumer
   needing a producer-side PTS on asynchronous records.
 
-### `ManagedTransport` around a segmented publisher
+## `ManagedTransport` around a segmented publisher
 
 - **Status:** Unsupported. A `MuxSender` over `Segmented<P>` (the HLS
   segment-cutting wrapper) is not supported under `ManagedTransport`.
@@ -2033,7 +2033,7 @@ and the two below.
 - **Trigger to revisit:** The publisher-side cut logic landing, or a
   consumer that needs reconnecting segmented output earlier.
 
-### Empty reserved config types
+## Empty reserved config types
 
 - **Status:** Standing choice. Four config types carry no fields today
   and stay `#[non_exhaustive]` so a field can be added without a break.
@@ -2042,7 +2042,7 @@ and the two below.
 - **Trigger to revisit:** Maintainer decision; no consumer trigger
   recorded.
 
-### URL schemes are exact lowercase
+## URL schemes are exact lowercase
 
 - **Status:** Deferred. Every transport URL parser matches its scheme
   byte for byte in lowercase (`srt://`, `rtsps://`); `SRT://host` is
@@ -2053,7 +2053,7 @@ and the two below.
 - **Trigger to revisit:** Maintainer decision; no consumer trigger
   recorded.
 
-### `tstrans.h` is not strict ISO C
+## `tstrans.h` is not strict ISO C
 
 - **Status:** Deferred. The header declares a frozen struct with no
   members, which strict ISO C does not allow (compilers accept it as an
@@ -2063,7 +2063,7 @@ and the two below.
 - **Trigger to revisit:** The 1.0 ABI freeze, where the struct gains a
   member that strict ISO C accepts.
 
-### Windows ownership and ACL checks for native-cache and HLS directories
+## Windows ownership and ACL checks for native-cache and HLS directories
 
 - **Status:** Deferred. The JVM native-library cache and the HLS output
   directory check owner, mode and symlinks on Unix. Windows applies no
@@ -2072,21 +2072,21 @@ and the two below.
   layout. Services that share one temporary directory (LocalSystem) are
   the exposed case, and a correct ACL check needs Windows-specific code
   and runners to prove it.
-- **Trigger to revisit:** A later release, where the
-  HLS Windows check and the JVM cache-root hardening are paired.
+- **Trigger to revisit:** Pairing the HLS Windows check with the JVM
+  cache-root hardening.
 
-### Bounded drain when a RIST sender closes
+## Bounded drain when a RIST sender closes
 
 - **Status:** Deferred. Closing a RIST sender frees librist's queue
   without a final send pass, so packets still queued are lost.
   Flush-then-close races on every platform; callers wait after
   `flush()` before closing.
 - **Why deferred:** The drain has to live inside the `tst-rist` close
-  (Rust and C) with a documented bound, and the bound needs a ruling.
-- **Trigger to revisit:** A later release, or a consumer
-  that loses the tail of a RIST stream at close.
+  (Rust and C) with a documented bound, and the bound is undecided.
+- **Trigger to revisit:** A consumer that loses the tail of a RIST
+  stream at close.
 
-### Per-viewer WHEP panic containment
+## Per-viewer WHEP panic containment
 
 - **Status:** Deferred. A panic while serving one WHEP viewer is
   contained around the offer application only; no other part of a
