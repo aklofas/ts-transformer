@@ -63,6 +63,10 @@ deferred — see `deferred-features.md` for triggers to revisit.
 | Windows MinGW (gcc)          | Deferred                | —                                 | See `deferred-features.md`                     |
 | macOS x86_64 (Intel)         | Deferred                | —                                 | See `deferred-features.md`                     |
 
+Cross-compiling Linux x86_64 to aarch64 is not a CI leg, but the `srt-sys`
+build supports it; the toolchain recipe is in
+[`crates/srt-sys/README.md`](/crates/srt-sys/README.md).
+
 The CI legs behind the Tier 1 rows, from the `build` matrix in
 `.github/workflows/ci.yml`:
 

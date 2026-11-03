@@ -12,6 +12,33 @@ libsrt is present.
 libclang (for bindgen) — see the `bindgen` crate's requirements for
 platform-specific libclang setup.
 
+## Cross-compiling (Linux x86_64 to aarch64)
+
+libsrt is C++, so the cross toolchain needs the C++ compiler as well as the
+C one. On a Debian-based x86_64 host:
+
+```sh
+apt-get install --no-install-recommends \
+    cmake make clang libclang-dev g++ \
+    gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+rustup target add aarch64-unknown-linux-gnu
+
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
+export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu="--sysroot=/usr/aarch64-linux-gnu"
+
+cargo build --release --target aarch64-unknown-linux-gnu
+```
+
+- A C-only cross compiler fails late, once CMake reaches the libsrt sources.
+- bindgen runs libclang for the host, so it needs the `--sysroot` argument
+  above to find the target's headers.
+- By default the pkg-config probe for a system libsrt is refused when cross-compiling,
+  so the bundled libsrt is built; `SRT_FORCE_VENDORED=1` makes that explicit.
+- libsrt links the C++ standard library dynamically. The runtime image needs
+  `libstdc++`; a Debian slim image has it, a distroless static image does not.
+
 **Stability: Internal.** This crate is an implementation detail of the
 tstrans workspace. You should not depend on it directly.
 

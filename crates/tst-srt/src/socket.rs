@@ -236,10 +236,11 @@ impl SrtSocket {
             } else {
                 let left = u32::try_from(total - index).unwrap_or(u32::MAX);
                 // libsrt's blocking connect waits for a reply in one-second
-                // slices (srtcore/queue.cpp:1705) and tests the deadline only
-                // between them (srtcore/core.cpp:4056), so an attempt against
-                // a silent address can overrun its share by up to a second;
-                // the next share comes from the time actually left.
+                // slices (`CRcvQueue::recvfrom`, srtcore/queue.cpp) and tests
+                // the deadline only between them (`CUDT::startConnect`,
+                // srtcore/core.cpp), so an attempt against a silent address
+                // can overrun its share by up to a second; the next share
+                // comes from the time actually left.
                 let share = deadline.saturating_duration_since(Instant::now()) / left;
                 // A 0 ms SRTO_CONNTIMEO would still cost libsrt's one-second
                 // poll: a spent budget ends the walk instead of dialling.
@@ -553,8 +554,8 @@ impl Drop for SrtSocket {
 // Helpers (private to crate; shared by socket.rs and listener.rs)
 // ============================================================================
 
-/// libsrt's `SRTO_CONNTIMEO` default (`DEF_CONNTIMEO_S`,
-/// `srtcore/socketconfig.h:203`): the connect budget when the config leaves
+/// libsrt's `SRTO_CONNTIMEO` default (`CSrtConfig::DEF_CONNTIMEO_S` in
+/// `srtcore/socketconfig.h`): the connect budget when the config leaves
 /// `connect_timeout` unset.
 const LIBSRT_DEFAULT_CONNTIMEO: Duration = Duration::from_secs(3);
 

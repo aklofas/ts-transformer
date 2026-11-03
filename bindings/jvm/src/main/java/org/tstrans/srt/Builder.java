@@ -95,7 +95,8 @@ public final class Builder {
     public Builder congestion(String c) { this.congestion = c; return this; }
 
     /**
-     * Set {@code SRTO_CONNTIMEO} in milliseconds. Chainable.
+     * Set {@code SRTO_CONNTIMEO} in milliseconds: the deadline for the whole
+     * connect, shared across the host's resolved addresses. Chainable.
      * @throws IllegalArgumentException if {@code ms} is negative.
      */
     public Builder connectTimeoutMs(int ms) { this.connectTimeoutMs = requireNonNegative(ms, "connectTimeoutMs"); return this; }
