@@ -120,7 +120,8 @@ public final class Builder {
      * <p>libsrt breaks a silent connection only after the idle time has elapsed and more
      * than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not
      * detect a silent peer sooner; raise it for links whose loss bursts outlast the
-     * default. Zero is refused when the socket is configured ({@code CONFIG_INVALID}).
+     * default. Zero and values above 2147483 (libsrt multiplies the value by 1000 into an
+     * {@code int}) are refused when the socket is configured ({@code CONFIG_INVALID}).
      * @throws IllegalArgumentException if {@code ms} is negative.
      */
     public Builder peerIdleTimeoutMs(int ms) { this.peerIdleTimeoutMs = requireNonNegative(ms, "peerIdleTimeoutMs"); return this; }
