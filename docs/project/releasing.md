@@ -56,8 +56,9 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 
 The steps run in this order. From step 3 until the tag, nothing that ships
 changes: the soak and the real-capture corpus run judge the release-prep
-merge commit, and the qualification run checks that nothing under
-`crates/` or `bindings/` changed after it.
+merge commit, and the qualification run checks that nothing outside
+the release documents (`CHANGELOG.md`, `docs/` Markdown,
+`tests/coverage/evidence-archives.toml`) changed after it.
 
 1. **Version consistency (release preflight).** The rail checks six sources —
    workspace `Cargo.toml`, `bindings/python/pyproject.toml`, the tst-py

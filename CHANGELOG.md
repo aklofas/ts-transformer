@@ -342,7 +342,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The harness verdict in `tests/coverage/evidence-archives.toml` is never edited: a maintainer's waiver is an `[archive.waiver]` table beside it, and a release needs a raw pass.
 - `qualification.py collect` has no option that admits a waiver: every collect records a waived archive's disposition, outside release mode with no reasons, and a release collect refuses it.
 - The soak, corpus and ARM64 status cells of the 1.0 exit criteria are rendered from the qualification record; a waiver names the release it stood in for from the record's tag or the waived archive, never from the CHANGELOG.
-- The qualification record names the tag on a tag push and lists the release documents that changed since the soaked tree, and the bundle carries `TREE-EQUIVALENCE.txt`, the proof that nothing under `crates/` or `bindings/` changed between the soaked and the qualified commit.
+- The qualification record names the tag on a tag push and lists the release documents that changed since the soaked tree, and the bundle carries `TREE-EQUIVALENCE.txt`, the collector's tree-equivalence decision.
 - The Python URL-corpus test takes its scheme families from the corpus header.
 - The version rail refuses a tag that is not `vMAJOR.MINOR.PATCH` (`vnext`, `v1.2.3-rc1`), so the three publish workflows stop before any registry write; a branch name is never read as a tag.
 - The C ABI rail pins the eight functions whose enum parameters were retyped to `int32_t`: their header prototypes may differ from the previous tag's only by that retype, any other change fails, and the suppression that admits the retype expires once the comparison baseline is v0.9.1 or later.
