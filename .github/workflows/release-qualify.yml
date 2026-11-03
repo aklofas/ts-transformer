@@ -637,8 +637,9 @@ jobs:
           done
           cp "$RUNNER_TEMP"/downloaded/c-package/*.tar.gz "$B/" || echo "::warning::no C package was produced"
           # The tree-equivalence proof: the soak ran on an earlier commit than the
-          # one qualified, so the bundle shows that nothing under crates/ or
-          # bindings/ changed between them and lists everything that did.
+          # one qualified, so the bundle shows the collector's decision: the
+          # paths outside the release documents (none for a GO) and the release
+          # documents that changed.
           read -r soaked qualified tag < <(python3 - "$B/qualification.json" <<'PY'
           import json, sys
           rec = json.load(open(sys.argv[1]))
@@ -654,9 +655,24 @@ jobs:
             if [ "$soaked" = "-" ]; then
               echo "(this record cites no soak archive whose tree resolved)"
             else
-              stat="$(git diff --stat "$soaked..$qualified" -- crates bindings)"
-              echo "${stat:-(no changes under crates/ or bindings/)}"
+              echo "paths outside the release documents:"
+              stat="$(git diff --stat "$soaked..$qualified" -- . ':!CHANGELOG.md' ':!docs/' ':!tests/coverage/evidence-archives.toml')"
+              webrtc="$(git diff --name-only "$soaked..$qualified" -- docs/webrtc/ | grep -v '\.md$' || true)"
+              echo "${stat:-(none)}"
+              [ -z "$webrtc" ] || printf '%s\n' "$webrtc"
               echo
+              echo "release documents that changed:"
+              python3 - "$B/qualification.json" <<'PY'
+          import json, sys
+          rec = json.load(open(sys.argv[1]))
+          soak = (rec.get("release_vm") or {}).get("soak") or {}
+          docs = (soak.get("equivalence") or {}).get("changed_release_documents")
+          print("\n".join(docs) if docs else "(none)")
+          print()
+          print("changed_paths (outside the release documents):", soak.get("changed_paths"))
+          PY
+              echo
+              echo "all paths that differ:"
               git diff --name-only "$soaked..$qualified"
             fi
           } > "$B/TREE-EQUIVALENCE.txt"

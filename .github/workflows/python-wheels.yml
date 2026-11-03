@@ -360,8 +360,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     needs: version-preflight
-    # Best-effort: the Windows wheel is built but not runtime-verified on
-    # this leg; it does not gate the publish.
+    # Best-effort: the Windows wheel is built and import-smoked on this
+    # leg, but a failure here does not gate the publish.
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
