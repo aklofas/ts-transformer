@@ -121,7 +121,7 @@ Winsock equivalent. Every other test in the binary runs on every platform.
 
 [[platform_skip]]
 file = "crates/tst-rtp/tests/rtsp_client/signal_interrupt.rs"
-platform = "macos"
+platform = "macos-arm64"
 capability = "per_thread_lookup"
 class = "portability"
 note = """
