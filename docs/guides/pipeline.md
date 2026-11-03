@@ -7,7 +7,7 @@
 > - The 4-quadrant matrix: `MuxSender` / `Sender` / `DemuxReceiver` / `Receiver` and when to pick each
 > - How `Transport` + `RecvTransport` traits decouple the pipeline from libsrt
 > - How `ManagedTransport` wraps a `Transport` for automatic reconnect with exponential backoff
-> - The `add_byte_sink` fan-out pattern for tee-ing streams to multiple consumers
+> - Counting demuxed bytes and composing `Receiver` + `Demuxer` for raw access
 > - How `Pairer` aligns KLV records with video access units (sync + sample-and-hold)
 > - When to use `RawSender` / `RawReceiver` for already-muxed bytes
 
@@ -626,7 +626,8 @@ counterpart to `Transport`).
 impl<R: RecvTransport> DemuxReceiver<R> {
     pub fn new(transport: R) -> Self;
     pub fn with_demux_options(transport: R, options: DemuxerConfig) -> Self;
-    pub fn add_byte_sink(&mut self, sink: ByteSink);
+    pub fn ts_bytes_demuxed(&self) -> u64;
+    pub fn ts_bytes_demuxed_handle(&self) -> TsBytesDemuxedHandle;
     pub fn recv_event(&mut self) -> Result<Option<DemuxEvent>, DemuxReceiverError>;
     pub fn is_alive(&self) -> bool;
     pub fn close(&mut self);
@@ -671,33 +672,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Mirroring [../examples/receiving/srt_recv_typed.rs](/examples/receiving/srt_recv_typed.rs).
 
-### `add_byte_sink` fan-out
+### Raw TS access: count or compose
+
+`DemuxReceiver` keeps no hook that hands raw bytes to your code. Two tools
+cover the need, and neither runs your code on a library thread.
+
+**Count.** `ts_bytes_demuxed()` returns the aligned TS bytes the shell fed
+its demuxer. `ts_bytes_demuxed_handle()` returns a cloneable
+`TsBytesDemuxedHandle` that reads the same counter and outlives the shell.
+The count is a lock-free atomic read. It never waits on a parked receive,
+and it keeps its last value after close. The C getters are
+`tst_<family>_get_ts_bytes_demuxed`, and the Python and JVM methods are
+`ts_bytes_demuxed()` and `tsBytesDemuxed()`.
+
+| Situation | `ts_bytes_demuxed` | `stats().bytes_received` |
+|---|---|---|
+| Syncer not yet locked (garbage before 4 aligned packets) | not counted | same |
+| Each aligned packet fed to the demuxer, a strict-mode rejection included | +188, before parsing | +188 |
+| The packet read across a reconnect (managed), and bytes the sync reset drops | not counted | the packet counted, the dropped bytes not |
+| After a reconnect | continues from the old value | continues |
+| `reset_stats()` | unchanged | back to 0 |
+| Read while another thread is parked in `recv_event` | returns at once | waits for the slot (bindings) |
+| After cancel or close | last value (C: the pointer is freed at close) | as before |
+| `--no-default-features` | absent | available |
+
+**Compose.** To record, relay or inspect the packets, pull them from a
+`Receiver` and feed the same packet to a `Demuxer`:
 
 ```rust,ignore
-pub type ByteSink = Box<dyn FnMut(&[u8]) + Send>;
-
-impl<R: RecvTransport> DemuxReceiver<R> {
-    pub fn add_byte_sink(&mut self, sink: ByteSink);
+let mut rx = Receiver::new(transport, ReceiverConfig::default());
+let mut demux = Demuxer::with_config(DemuxerConfig::default());
+loop {
+    let pkt = match rx.next_packet() {
+        Ok(pkt) => pkt,
+        Err(e) if e.kind == ShellErrorKind::EndOfStream => break,
+        Err(_) => break, // still falls through to the flush below
+    };
+    recording.send_bytes(&pkt)?;      // your consumer
+    demux.feed_aligned(&pkt)?;
+    while let Some(ev) = demux.next_event() { /* handle ev */ }
 }
+demux.flush();
+while let Some(ev) = demux.next_event() { /* handle ev */ }
 ```
 
-Register a callback that sees every 188-byte TS packet pulled from the
-transport, in registration order, before the demuxer parses them. The
-canonical "save raw `.ts` to disk AND parse for KLV in one pass"
-workflow. Multiple sinks may be registered; each sees the same bytes.
+The loop is yours, so two duties are too:
 
-Contract:
+- **End of input flushes the demuxer.** A clean end and a terminal error
+  both end in `flush`, then a last drain. Without it the final length-0
+  (unbounded) PES, usually the last video access unit, is lost.
+- **A reconnect resets both halves.** Over a `ManagedRecvTransport`, watch
+  `reconnects_handle()`. When it rises, drop the packet read across the
+  rise and call `reset_sync()` on the `Receiver` and on the `Demuxer`, so
+  neither stitches a packet of the dead link onto the new one.
+  `ManagedDemuxReceiver` does this for you; the composition does not.
 
-- Sinks fire once per TS packet (188 bytes — NOT 1316; the demuxer
-  pulls 1316-byte SRT messages and breaks them down to packet-aligned
-  chunks before the sinks fire).
-- Sinks fire in registration order, all before the demuxer feed.
-- The slice is valid only for the duration of the call. Copy bytes
-  into an owned buffer if they need to outlive the callback.
-- Sinks must not panic — a panic unwinds through `recv_event`.
-- Sinks run synchronously on the receive thread. For high-throughput
-  workflows or expensive work, push to a channel and let a worker
-  thread do the slow work.
+The bindings compose the same way: loop `recv_bytes()` (`recvBytes()` on the
+JVM) on a `Receiver`, write each chunk, call `Demuxer.feed(chunk)`, then
+iterate `next_event()` (`nextEvent()`), and `flush()` at the end. Every chunk
+is a whole number of 188-byte packets.
 
 Mirroring [../examples/operations/tee_disk_and_demux.rs](/examples/operations/tee_disk_and_demux.rs).
 
@@ -976,8 +1009,8 @@ Receive side:
 - [../examples/pairing/pair_sync_klv.rs](/examples/pairing/pair_sync_klv.rs)
   — nearest-PTS pairing of KLV records with video AUs.
 - [../examples/operations/tee_disk_and_demux.rs](/examples/operations/tee_disk_and_demux.rs)
-  — `add_byte_sink` fan-out: write `.ts` to disk while consuming
-  typed events, in a single pass.
+  — `Receiver` + `Demuxer` composition: write `.ts` to disk while
+  consuming typed events, in a single pass.
 
 ## See also
 

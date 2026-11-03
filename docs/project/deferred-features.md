@@ -96,6 +96,23 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** Scheduled for 0.9.1, sooner if a player is
   seen to stall or skip after a source restart.
 
+## Raw TS observation on a receiver shell
+
+- **Status:** Deferred. `DemuxReceiver` counts the aligned TS bytes it feeds
+  its demuxer (`ts_bytes_demuxed`), but it offers no hook that hands those
+  bytes to the caller, and no built-in recording or forwarding target.
+- **Why deferred:** composing `Receiver` with `Demuxer::feed_aligned` already
+  gives raw access, with the caller's own loop owning every consumer and
+  every error. A callback on the shell ran user code on the library's
+  pulling thread, which is the shape this design avoids.
+- **Trigger:** a named consumer that the composition cannot serve. Two
+  shapes are then acceptable. A `RawTs` event, only as a bounded post-sync
+  batch the shell emits: never one event per transport read, because the
+  syncer spans reads, and never switched on through `DemuxerConfig`. Or
+  tees to built-in native targets only, never a host callback or
+  `Publisher`, attached or detached only while no pull is parked, with
+  receiver close cancelling the target first.
+
 ## Synchronous KLV `Metadata_AU_cell` numbering mode
 
 - **Status:** Deferred decision. The muxer numbers each synchronous-metadata

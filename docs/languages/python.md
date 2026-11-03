@@ -583,7 +583,7 @@ and it does not include the closes themselves: a connected sender with
 unsent data takes up to its linger time (`?linger=` on the URL) to close.
 
 A thread whose native call returns after the exit hook has run (a woken
-receive, a `next_publisher` slice, a byte sink) does not re-enter Python
+receive, a `next_publisher` slice) does not re-enter Python
 right away: it parks for up to 3 s, as CPython does with daemon threads,
 instead of aborting the exit. The process normally ends during that park,
 so the call the hook wakes does not raise in the worker, nothing is
@@ -701,14 +701,36 @@ with DemuxReceiver.open("srt://:9000?mode=listener") as rx:
                 ...
 ```
 
-`add_byte_sink(callback)` fans out every 188-byte TS packet (as `bytes`)
-to a callback BEFORE demuxing — register it before iterating. If the
-callback raises, the error re-raises from the next iteration step and
-iteration stops. Keep the sink cheap (it runs on the recv-loop thread) and
-never re-enter the receiver from it: a same-receiver call from the sink
-raises `RuntimeError` (so does a cycle through another receiver's sink),
-except `close()`, which delivers the event in flight, if any, and ends
-the iteration on the next pull (at once when there was no event).
+`rx.ts_bytes_demuxed()` returns the aligned TS bytes the receiver fed its
+demuxer. It is a lock-free read: it answers while another thread is parked
+in `next()` and returns the last value after `close()`.
+
+To record or forward the raw packets, compose a `Receiver` with a `Demuxer`.
+Each chunk is a whole number of 188-byte packets:
+
+```python
+with shells.Receiver.open("tcp://127.0.0.1:9000") as rx:
+    demux = Demuxer()
+    while True:
+        try:
+            chunk = rx.recv_bytes()
+        except TcpError as exc:
+            if exc.kind == TcpErrorKind.END_OF_STREAM:
+                break
+            raise
+        recorder.write(chunk)              # your consumer
+        demux.feed(chunk)
+        while (ev := demux.next_event()) is not None:
+            ...
+    demux.flush()                          # the final unbounded PES
+    while (ev := demux.next_event()) is not None:
+        ...
+```
+
+Flush at the end, also after an error, or the last access unit is lost. A
+`DemuxReceiver` resets its demux state across a managed reconnect; this
+loop does not, so drop the packet read across a reconnect and start a fresh
+`Demuxer`.
 
 `rx.last_seen_micros(pid)` returns the epoch-microsecond timestamp of
 the most recent item this receiver emitted for `pid`, or `None` if
@@ -939,7 +961,6 @@ with MuxSender.open("rtp://127.0.0.1:5004", program) as s:
     s.send_video(nal, pts=Pts90khz.from_raw(0), key_frame=True)
 
 with DemuxReceiver.open("rtp://0.0.0.0:5004") as rx:
-    rx.add_byte_sink(lambda pkt: record(pkt))   # each raw 188-byte TS packet
     for event in rx:
         if isinstance(event, DemuxEvent.Video):
             ...

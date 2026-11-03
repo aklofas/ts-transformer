@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — tst-pipeline, tst-jni, tst-py (BREAKING)
+
+- `DemuxReceiver::add_byte_sink`, `ManagedDemuxReceiver::add_byte_sink` and `ByteSink`, JVM `DemuxReceiver.addByteSink` and Python `DemuxReceiver.add_byte_sink` are removed: the sink ran user code on the library's pulling thread. To count bytes, read the new `ts_bytes_demuxed()` (`tsBytesDemuxed()` on the JVM; a `TsBytesDemuxedHandle` in Rust), which never waits on the receive slot and keeps its value after close. To record, relay or inspect packets, pull them from a `Receiver` and feed a `Demuxer` ([pipeline guide](docs/guides/pipeline.md)).
+
+### Added — tst-c
+
+- `tst_demux_receiver_get_ts_bytes_demuxed`, `tst_managed_demux_receiver_get_ts_bytes_demuxed` and the `rtp`/`udp`/`tcp`/`rist` twins report the aligned TS bytes a demux receiver fed its demuxer (ABI 0.28, additive).
+
 ### Changed — tst-core, tst-py, tst-jni, tst-c (BREAKING)
 
 - `MuxerConfig::validate` (so `MuxerConfigBuilder::build` and `Muxer::new`) refuses a configuration in which two synchronous KLV streams declare the same `metadata_service_id`, whether both were left to the automatic `metadata_descriptor` (service 0) or caller descriptors repeat an id, within one program or across programs (`MuxError::ConfigInvalid`, naming the id and both PIDs). H.222.0 §2.12.9.2 requires the id to be unique within the transport stream, and a receiver keyed on it could not tell the two services apart. Give each further synchronous stream its own `metadata_klva(<id>)` through `stream_descriptors_for_klv` (C `tst_mux_config_set_stream_descriptors_for_klv`, Python `stream_descriptors_for_klv`) and pass that id to `push_klv_to`. The JVM builder has no KLV descriptor setter yet, so a JVM configuration holds one synchronous KLV stream per transport stream; use `PRIVATE_DATA` for further KLV streams. Bindings report the refusal as the existing invalid-config kind. `MuxerConfig::from_program_map` therefore fails on a source PMT with two synchronous KLV streams that do not declare distinct service ids; it remuxed such a source before.
@@ -205,8 +213,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Two JVMs starting at once on a temp directory could fail to load the native library, or delete a library another JVM was about to load. Each JVM now stages its own file, reuses a cached library only after checking its size and SHA-256, and the loader never deletes cache entries. On Windows, a publish that collides with another JVM replacing the same cached file at the same instant is retried briefly instead of failing the load.
 - `Socket.intoMuxSender(null)` and `intoDemuxReceiver(null)` no longer leak the native socket, and a config the native layer refuses no longer destroys the socket; the corrected retry succeeds.
 - `Io.parseFile` closes its input when the native library cannot load.
-- A byte sink that throws now ends the receive at once: `next()` rethrows its exception and the receiver stays cancelled.
-- A byte sink calling `stats()`, `next()` or `close()` on its own receiver no longer deadlocks. `close()` cancels the receiver, so the in-flight `next()` still returns the event it produced and iteration then ends, and the sink is not called again; the other calls throw `IllegalStateException`.
 - Values documented as immutable no longer hand out mutable state: `MuxerConfig`'s array accessors copy, and the KLV records take a shallow copy of the lists they are given (the elements stay caller-owned). The `NalUnit` factories copy their input array.
 - `MuxerFileSink.push*` and `commit()` after `close()` throw `IllegalStateException("MuxerFileSink is closed")` before the muxer is touched.
 - The KLV forced-error test natives are no longer in the shipped native library.
@@ -218,7 +224,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Python: `CancelHandle.cancel()` and the raw `udp` builders release the GIL (an SRT close with linger, a hostname lookup).
 - Python: a refused mux/demux config passed to `Socket.into_mux_sender`/`into_demux_receiver`, `RtspSession.into_demux_receiver` or `MuxPublisher.with_config_hls` leaves the source handle usable.
 - Python: the interpreter-exit hook reaches a `ManagedReceiver`/`ManagedDemuxReceiver` first accept, and a shell opened after the hook ran (for example in an `atexit` handler) is born cancelled, so it cannot park.
-- Python: a byte sink calling its own receiver raises `RuntimeError` instead of deadlocking; `close()` from the sink delivers the event in flight and ends the iteration on the next pull; a cycle through another receiver's sink is refused the same way.
 - Python: `RawBytes` hashes as the `bytes` it equals; `MuxError.pid` is populated; `udp`/`tcp`/`hls` stubs name the canonical exception classes.
 - Python: `transmux(src, src)` without `atomic=True` raises `ValueError` instead of truncating the source; the check runs again when the output file opens, so a `dst` linked to `src` after construction no longer truncates it; a failed atomic promotion removes its `*.partial`.
 

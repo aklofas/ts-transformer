@@ -1265,39 +1265,46 @@ try (DemuxReceiver rx = DemuxReceiver.open("srt://:9000?mode=listener")) {
 // a RuntimeException — the Iterator contract forbids checked exceptions).
 ```
 
-### Tee the raw stream: `addByteSink`
+### Raw stream access: `tsBytesDemuxed` and `Receiver` + `Demuxer`
 
-`DemuxReceiver.addByteSink` fans out every **188-byte TS packet** — as a fresh
-`byte[]` — to a callback BEFORE the demuxer parses it. Useful for record-to-disk
-or a parallel parser without consuming the event iterator:
+`rx.tsBytesDemuxed()` returns the aligned TS bytes the receiver fed its
+demuxer. It is a lock-free read: it answers while `next()` is parked on
+another thread and returns the last value after `close()`.
+
+To record or forward the raw packets, pull them from a `Receiver` and feed a
+`Demuxer` yourself. Each chunk is a whole number of 188-byte packets:
 
 ```java
-try (DemuxReceiver rx = DemuxReceiver.open("srt://:9000?mode=listener")) {
-    rx.addByteSink(pkt -> recorder.write(pkt));  // pkt.length == 188
-    for (DemuxEvent e : rx) {
-        // ... normal event handling continues unaffected ...
+try (Receiver rx = Receiver.open("srt://:9000?mode=listener");
+     Demuxer demux = new Demuxer()) {
+    while (true) {
+        byte[] chunk;
+        try {
+            chunk = rx.recvBytes();
+        } catch (SrtException e) {
+            if (e.kind() == SrtException.Kind.END_OF_STREAM) break;
+            throw e;
+        }
+        recorder.write(chunk);                  // your consumer
+        demux.feed(chunk);
+        for (DemuxEvent ev; (ev = demux.nextEvent()) != null; ) {
+            // ... normal event handling ...
+        }
     }
+    demux.flush();                               // the final unbounded PES
+    for (DemuxEvent ev; (ev = demux.nextEvent()) != null; ) { /* ... */ }
 }
 ```
 
 Gotchas:
 
-- **Fires per 188-byte packet, ahead of demux.** Each callback gets exactly one
-  raw TS packet (the SRT live-mode quantum), before parsing.
-- **Keep it cheap.** The sink runs on the receiver's own recv-loop thread; a slow
-  sink throttles the receiver.
-- **Re-entry is limited.** From inside the sink, only `close()`,
-  `cancelHandle()`, `isAlive()` and `endReason()` may be called on the same
-  `DemuxReceiver`; `next()`, `stats()`, `socketStats()`, `lastSeenMicros()`
-  and `addByteSink()` throw `IllegalStateException`, also when reached through
-  another receiver the sink drives. `close()` from the sink cancels: the
-  in-flight iteration step still returns the event it produced, if any, and
-  the iteration then ends (at once when the step produced none).
-- **Fail-loud, and final.** If the sink throws, the receiver is cancelled, the
-  sink is not called again, and the next iteration step rethrows that
-  exception. The receiver cannot be resumed.
-- **Register before iterating** (or between `next()` calls) — `addByteSink` is
-  not safe to call concurrently with an in-flight `next()`.
+- **Flush at the end, also after an error.** Without `demux.flush()` the last
+  access unit is lost.
+- **Reconnects are yours.** A `DemuxReceiver` resets its demux state across a
+  reconnect; this loop does not. Over a managed receiver, drop the packet read
+  across a reconnect and start a fresh `Demuxer`.
+- **No user code on the library's thread.** Your loop owns the recorder and
+  every error it raises.
 
 ### Per-stream staleness: `lastSeenMicros`
 
@@ -1599,7 +1606,6 @@ try (MuxSender s = MuxSender.open("rtp://127.0.0.1:5004", program)) {
 }
 
 try (DemuxReceiver rx = DemuxReceiver.open("rtp://0.0.0.0:5004")) {
-    rx.addByteSink(pkt -> record(pkt)); // fans out each raw 188-byte TS packet
     for (DemuxEvent e : rx) {
         if (e instanceof DemuxEvent.Video v) { /* ... */ }
     }
@@ -1620,10 +1626,7 @@ try (DemuxReceiver rx = DemuxReceiver.open("rtp://0.0.0.0:5004")) {
 - RTP/UDP is connectionless: a remote sender closing does **not** end a
   `DemuxReceiver` iteration. Break out of the loop on a sentinel event (or close
   the receiver) rather than waiting for end-of-stream.
-- `addByteSink` callbacks run on the receiver's own thread; from inside one,
-  only `close()`, `cancelHandle()`, `isAlive()` and `endReason()` may be called
-  on the same receiver. Sample payloads and byte-sink buffers are heap `byte[]`
-  copies.
+- Sample payloads are heap `byte[]` copies.
 
 `rx.lastSeenMicros(pid)` returns the Unix-epoch microsecond timestamp of the
 most recent item this receiver emitted for `pid`, or `null` if that PID has
@@ -2618,59 +2621,13 @@ Gotchas:
   same state. `HlsException.Kind.FINISHED` is still declared because the
   Rust library can raise it. `close()` on `HlsPublisher` / `MuxPublisher` is
   quiet (finish, errors dropped); `finish()` throws.
-- **A byte-sink exception ends the `DemuxReceiver`.** The receiver is
-  cancelled and the sink is not called again; the exception is rethrown once.
-  Python re-raises a sink error from the next pull but keeps the receiver
-  usable, so its iteration can resume after the error is caught.
 
-The Rust page's "Where this binding differs from the Rust core" section
-treats Rust as the canonical surface; everything here is a subset of it.
-See [`/docs/languages/rust.md`](/docs/languages/rust.md) for the full
-surface and [`/docs/languages/python.md`](/docs/languages/python.md) for the
-Python binding's gaps.
-
-### Moving from 0.8
-
-Deprecated in 0.9.0, removed in 0.10.0. Each old shell class is a
-`@Deprecated(forRemoval = true)` subclass of its replacement and keeps its
-0.8 `fromUrl` factories, which still accept only their own scheme
-(`srt://` or `rtp://`; another scheme throws `CONFIG_INVALID`).
-
-The instance methods the subclasses inherit (`sendBytes`, `sendVideo`,
-`recvBytes`, `recvEvent`, ...) declare `throws BindingException` (plus
-`MuxException` on `MuxSender`, `DemuxException` on `recvEvent`), not
-`SrtException` / `RtpException`. A 0.8 call site that
-catches only `SrtException` or `RtpException` around them no longer
-compiles: catch `BindingException`, which every transport exception
-extends.
-
-| 0.8 | 0.9 |
-|---|---|
-| `org.tstrans.srt.{Sender, Receiver, MuxSender, DemuxReceiver}`, `org.tstrans.rtp.{MuxSender, DemuxReceiver}` | `org.tstrans.shells.*`, opened with `Class.open(url, ...)` |
-| `org.tstrans.rtp.Sender` / `Receiver` | `org.tstrans.rtp.Transport` / `RecvTransport` |
-| the `pktSize` argument of the rtp shell factories | the `?pkt_size=` URL key (`rtp.Transport.fromUrl` still takes `pktSize`) |
-
-Removed in 0.9.0 with no deprecated alias: the per-package `CancelHandle`,
-`SocketStats`, `TransportStats`, `RecvEndReason` and `StreamEndReason` of
-`org.tstrans.srt` and `org.tstrans.rtp`. Use the one
-`org.tstrans.shells.{CancelHandle, SocketStats, TransportStats, EndReason}`.
-
-`ManagedSender` / `ManagedReceiver` / `ManagedMuxSender` /
-`ManagedDemuxReceiver` keep `fromUrl`: they are SRT-specific.
-
-## Surface by package
-
-- **`org.tstrans.Version`** — the bootstrap; proves the
-  cargo → cdylib → Gradle → Java → JNI build pipeline and native loader.
-- **mpegts demux** — `org.tstrans.mpegts.Demuxer` + `DemuxEvent` + `DemuxerConfig`.
-- **mpegts mux** — `org.tstrans.mpegts.Muxer` + `MuxerConfig` + push family + `pull`.
-- **klv** — typed KLV decode/encode (ST 0601 / 0102 / 0605 / 0903, plus ST 0806 RVT, ST 1010 SDCC-FLP, and the ST 0805 KLV → CoT conversion layer) under `org.tstrans.klv`.
 - **codec** — H.264 / H.265 / H.266 / AV1 + audio parsers under
   `org.tstrans.codec`; typed elementary-stream payloads (NAL / OBU / ADTS).
 - **io** — file inspection helpers (`Io.parseFile`, `probe`, `extractKlv`, `Muxer.writeFile`).
 - **shells** — `Sender` / `Receiver` / `MuxSender` / `DemuxReceiver` over every
   transport URL, with `CancelHandle` / `SocketStats` / `TransportStats` /
-  `EndReason` and the `DemuxReceiver.addByteSink` fan-out.
+  `EndReason` and the `DemuxReceiver.tsBytesDemuxed` counter.
 - **srt** — `Builder` / `Socket` / `Listener` / `SrtStats`; the
   `ReconnectPolicy` / `BackoffStrategy` / `OverflowPolicy` types; the
   `Managed*` reconnect wrappers.
