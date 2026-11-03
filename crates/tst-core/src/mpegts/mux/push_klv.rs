@@ -142,14 +142,15 @@ impl Muxer {
         let klv_pid = k.pid;
         let klv_carries_pts = k.carries_pts;
         let is_sync = k.stream_type == KlvStreamType::SynchronousMetadata;
-        let seq_num = k.au_cell_sequence_number;
 
         // Auto-wrap sync KLV in an H.222.0 §2.12.4.2 Metadata_AU_cell header.
         // PrivateData streams pass payload through as-is (caller controls shape).
         let wrapped_storage: Option<Vec<u8>> = if is_sync {
             let header = crate::mpegts::au_cell::AuCellHeader {
                 metadata_service_id, // caller-supplied; see push_klv_to doc comment.
-                sequence_number: seq_num,
+                // Table 2-156 numbers cells within one metadata_AU_wrapper (one PES);
+                // one record per PES means one cell per wrapper, so always 0.
+                sequence_number: 0,
                 cell_fragment_indication: crate::mpegts::au_cell::CellFragmentIndication::Complete,
                 decoder_config_flag: false,
                 random_access_indicator: true, // ST 0601 records are self-contained.
@@ -239,10 +240,6 @@ impl Muxer {
         // KLV LS per call). Wire-format records-per-PES > 1 are not
         // possible through this API.
         crate::mpegts::stats::bump_klv_counters(&mut self.stream_codec_counters, klv_pid, 1);
-        if is_sync {
-            self.klv_streams[prog_idx][within_idx].au_cell_sequence_number =
-                seq_num.wrapping_add(1);
-        }
 
         Ok(())
     }

@@ -415,7 +415,7 @@ encode_to_vec(&ls)                       → inner KLV bytes
 mux.push_klv(&inner, pts, service_id)    → muxer prepends 5-byte AU cell
                                            header (with metadata_service_id
                                            = service_id, sequence_number
-                                           per-stream-counter, CFI=Complete,
+                                           0 (numbered within the PES), CFI=Complete,
                                            RAI=true), emits PES carrying the
                                            AU cell, PTS in the PES header
                                            (per § 2.12.4.1).

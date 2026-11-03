@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! metadata_service_id          u8        // typically 0x00 per ST 1402.2 App. B
-//! sequence_number              u8        // increments mod 256 per cell
+//! sequence_number              u8        // position of the cell within its PES's wrapper, from 0
 //! cell_fragment_indication     u(2)   \
 //! decoder_config_flag          u(1)    \  packed into 1 byte
 //! random_access_indicator      u(1)    /  (2+1+1+4 bits)
@@ -52,8 +52,9 @@ pub enum CellFragmentIndication {
 pub struct AuCellHeader {
     /// `metadata_service_id` u8. ST 1402.2 App. B Table 2: `0x00` typical.
     pub metadata_service_id: u8,
-    /// `sequence_number` u8. Increments mod 256 per cell, independent of
-    /// `metadata_service_id` (per Table 2-156 semantics).
+    /// `sequence_number` u8. Position of the cell within its PES's
+    /// `metadata_AU_wrapper`, from 0, independent of `metadata_service_id`
+    /// (per Table 2-156 semantics).
     pub sequence_number: u8,
     /// `cell_fragment_indication` u(2). For single-cell AUs use `Complete`.
     pub cell_fragment_indication: CellFragmentIndication,

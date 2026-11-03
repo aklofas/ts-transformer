@@ -692,6 +692,11 @@ The wrapper substrate lives at `mpegts::au_cell`
 `read_metadata_au_cell`) for callers that need to construct or parse
 AU cells outside the mux/demux machinery.
 
+The muxer numbers cells within each PES from 0 (Table 2-156 scopes
+`sequence_number` to one `metadata_AU_wrapper`), so every emitted cell
+carries 0. Readers that scope continuity per PES, mediamtx included,
+therefore accept the stream.
+
 ### Caller-supplied `metadata_service_id`
 
 `Muxer::push_klv*` and `MuxSender::send_klv*` take a
