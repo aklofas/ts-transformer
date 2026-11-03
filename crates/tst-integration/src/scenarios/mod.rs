@@ -686,9 +686,11 @@ pub fn demux_to_core_events(ts_bytes: &[u8]) -> Vec<CoreEvent> {
                     code: nonconformant_issue_code(&issue),
                 });
             }
+            // Diagnostics, and any event kind added later, carry no golden data.
             DemuxEvent::Discontinuity { .. } | DemuxEvent::ReconnectDiscontinuity => {
                 /* diagnostic — skip */
             }
+            _ => {}
         }
     }
 

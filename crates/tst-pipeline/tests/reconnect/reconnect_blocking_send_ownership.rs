@@ -53,13 +53,12 @@ fn managed_break_then_backpressure() -> (ManagedTransport<ScriptedSend>, Rig) {
             ))
         }
     };
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        gap_buffer_capacity: 64,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode: ReconnectMode::Blocking,
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)))
+        .with_gap_buffer_capacity(64)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(ReconnectMode::Blocking);
     (
         ManagedTransport::new(initial, factory, policy).expect("the policy validates"),
         Rig {
@@ -246,13 +245,12 @@ fn managed_break_then(
             }
         }
     };
-    let policy = ReconnectPolicy {
-        max_attempts: Some(1),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        gap_buffer_capacity: 64,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode: ReconnectMode::Blocking,
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(1))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)))
+        .with_gap_buffer_capacity(64)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(ReconnectMode::Blocking);
     (
         ManagedTransport::new(initial, factory, policy).expect("the policy validates"),
         Rig {
@@ -384,13 +382,12 @@ fn sender_over_blocking_managed_resplits_a_bundle_after_the_ceiling_shrinks() {
             Ok(ScriptedSend::scripted(Arc::default(), Arc::clone(&wire)).with_max_payload(188))
         }
     };
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        gap_buffer_capacity: 64,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode: ReconnectMode::Blocking,
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)))
+        .with_gap_buffer_capacity(64)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(ReconnectMode::Blocking);
     let managed = ManagedTransport::new(initial, factory, policy).expect("the policy validates");
     let stats = managed.stats_handle();
     let mut sender = Sender::new(managed, SenderConfig::default());

@@ -79,15 +79,16 @@ pub(crate) fn build_reconnect_policy(
         1 => ReconnectMode::Background,
         _ => ReconnectMode::Blocking,
     };
-    Some(ReconnectPolicy {
-        max_attempts: if max_attempts_present {
-            Some(max_attempts.max(0) as u32)
-        } else {
-            None
-        },
-        backoff,
-        gap_buffer_capacity: gap_buffer_capacity.max(1) as usize,
-        overflow_policy: overflow,
-        mode: recon_mode,
-    })
+    Some(
+        ReconnectPolicy::default()
+            .with_max_attempts(if max_attempts_present {
+                Some(max_attempts.max(0) as u32)
+            } else {
+                None
+            })
+            .with_backoff(backoff)
+            .with_gap_buffer_capacity(gap_buffer_capacity.max(1) as usize)
+            .with_overflow_policy(overflow)
+            .with_mode(recon_mode),
+    )
 }

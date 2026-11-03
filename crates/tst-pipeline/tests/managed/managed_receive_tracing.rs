@@ -25,11 +25,9 @@ fn receiver_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
     });
 
     // Cap attempts low + zero backoff so the test is fast.
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)));
 
     let inner = ScriptedRecv::failing(broken("always broken (test)")).with_alive(true);
     let mut managed =
@@ -69,12 +67,10 @@ fn receiver_background_mode_warns_and_behaves_as_blocking() {
         Err(broken("test factory always fails"))
     });
 
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        mode: ReconnectMode::Background,
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)))
+        .with_mode(ReconnectMode::Background);
 
     let inner = ScriptedRecv::failing(broken("always broken (test)")).with_alive(true);
     let mut managed =

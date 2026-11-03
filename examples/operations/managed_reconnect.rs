@@ -259,16 +259,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     outage. Fine for a file or batch sender; wrong for a thread that
     //     is also draining a live encoder.
     // ---------------------------------------------------------------------
-    let policy = ReconnectPolicy {
-        max_attempts: Some(20),
-        backoff: BackoffStrategy::Exponential {
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(20))
+        .with_backoff(BackoffStrategy::Exponential {
             base: Duration::from_millis(50),
             max: Duration::from_secs(2),
-        },
-        gap_buffer_capacity: 256,
-        overflow_policy: OverflowPolicy::DropOldest,
-        ..Default::default()
-    };
+        })
+        .with_gap_buffer_capacity(256)
+        .with_overflow_policy(OverflowPolicy::DropOldest);
     // A zero-backoff, unlimited-attempts policy is refused here.
     let managed = ManagedTransport::new(initial, factory, policy)?;
 

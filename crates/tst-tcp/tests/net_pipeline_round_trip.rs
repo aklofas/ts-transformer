@@ -74,11 +74,9 @@ fn managed_tcp_recv_cancel_unblocks_parked_read() {
             cause: BrokenCause::Unspecified,
         })
     });
-    let policy = ReconnectPolicy {
-        max_attempts: Some(0),
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(0))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
 
     let mut managed =
         ManagedRecvTransport::new(inner, factory, policy).expect("the policy validates");

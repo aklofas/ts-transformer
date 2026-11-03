@@ -60,11 +60,9 @@ fn cancel_wakes_a_factory_parked_on_its_installed_handle() {
             Err(TransportError::ExplicitClose)
         });
 
-    let policy = ReconnectPolicy {
-        max_attempts: Some(5),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(5))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)));
     let mut managed = ManagedRecvTransport::new_with_factory_cancel(
         ScriptedRecv::failing(broken("dead on arrival")),
         factory,
@@ -165,11 +163,9 @@ fn factory_observed_cancel_is_terminal_and_not_retried() {
             }
         });
 
-    let policy = ReconnectPolicy {
-        max_attempts: Some(2),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(2))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)));
     let canceller_slot = Arc::clone(&factory_cancel);
     let mut managed = ManagedRecvTransport::new_with_factory_cancel(
         ScriptedRecv::failing(broken("dead on arrival")),
@@ -284,11 +280,9 @@ fn factory_success_after_cancel_is_not_delivered() {
             })
         });
 
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
     // The initial inner carries its OWN flag: `fresh_flag` must only be
     // reachable through the connection the factory built, or the assertion
     // below would pass on the pre-fix code.

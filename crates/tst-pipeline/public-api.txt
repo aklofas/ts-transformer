@@ -1018,7 +1018,7 @@ impl core::marker::Unpin for tst_pipeline::demux_receiver::DemuxReceiverError
 impl core::marker::UnsafeUnpin for tst_pipeline::demux_receiver::DemuxReceiverError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverError
-pub struct tst_pipeline::demux_receiver::DemuxReceiverStats
+#[non_exhaustive] pub struct tst_pipeline::demux_receiver::DemuxReceiverStats
 pub tst_pipeline::demux_receiver::DemuxReceiverStats::bytes_received: u64
 pub tst_pipeline::demux_receiver::DemuxReceiverStats::discontinuities: u64
 pub tst_pipeline::demux_receiver::DemuxReceiverStats::nonconformant: u64
@@ -1489,7 +1489,7 @@ impl core::marker::Unpin for tst_pipeline::mux_sender::MuxSenderError
 impl core::marker::UnsafeUnpin for tst_pipeline::mux_sender::MuxSenderError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::mux_sender::MuxSenderError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::mux_sender::MuxSenderError
-pub struct tst_pipeline::mux_sender::MuxSenderStats
+#[non_exhaustive] pub struct tst_pipeline::mux_sender::MuxSenderStats
 pub tst_pipeline::mux_sender::MuxSenderStats::bytes_sent: u64
 pub tst_pipeline::mux_sender::MuxSenderStats::packets_sent: u64
 pub tst_pipeline::mux_sender::MuxSenderStats::pending_bytes_queued: u64
@@ -1592,7 +1592,7 @@ impl core::marker::Unpin for tst_pipeline::raw_receiver::RawReceiverError
 impl core::marker::UnsafeUnpin for tst_pipeline::raw_receiver::RawReceiverError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::raw_receiver::RawReceiverError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::raw_receiver::RawReceiverError
-pub struct tst_pipeline::raw_receiver::RawReceiverStats
+#[non_exhaustive] pub struct tst_pipeline::raw_receiver::RawReceiverStats
 pub tst_pipeline::raw_receiver::RawReceiverStats::bytes_received: u64
 pub tst_pipeline::raw_receiver::RawReceiverStats::packets_received: u64
 impl core::clone::Clone for tst_pipeline::raw_receiver::RawReceiverStats
@@ -1693,7 +1693,7 @@ impl core::marker::Unpin for tst_pipeline::raw_sender::RawSenderError
 impl core::marker::UnsafeUnpin for tst_pipeline::raw_sender::RawSenderError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::raw_sender::RawSenderError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::raw_sender::RawSenderError
-pub struct tst_pipeline::raw_sender::RawSenderStats
+#[non_exhaustive] pub struct tst_pipeline::raw_sender::RawSenderStats
 pub tst_pipeline::raw_sender::RawSenderStats::bytes_sent: u64
 pub tst_pipeline::raw_sender::RawSenderStats::packets_sent: u64
 impl core::clone::Clone for tst_pipeline::raw_sender::RawSenderStats
@@ -1834,7 +1834,7 @@ impl core::marker::Unpin for tst_pipeline::receiver::ReceiverError
 impl core::marker::UnsafeUnpin for tst_pipeline::receiver::ReceiverError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::receiver::ReceiverError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::receiver::ReceiverError
-pub struct tst_pipeline::receiver::ReceiverStats
+#[non_exhaustive] pub struct tst_pipeline::receiver::ReceiverStats
 pub tst_pipeline::receiver::ReceiverStats::bytes_received: u64
 pub tst_pipeline::receiver::ReceiverStats::bytes_skipped_for_sync: u64
 pub tst_pipeline::receiver::ReceiverStats::packets_received: u64
@@ -1858,7 +1858,7 @@ impl core::marker::UnsafeUnpin for tst_pipeline::receiver::ReceiverStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::receiver::ReceiverStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::receiver::ReceiverStats
 pub mod tst_pipeline::reconnect
-pub enum tst_pipeline::reconnect::BackoffStrategy
+#[non_exhaustive] pub enum tst_pipeline::reconnect::BackoffStrategy
 pub tst_pipeline::reconnect::BackoffStrategy::Constant(core::time::Duration)
 pub tst_pipeline::reconnect::BackoffStrategy::Exponential
 pub tst_pipeline::reconnect::BackoffStrategy::Exponential::base: core::time::Duration
@@ -1880,7 +1880,7 @@ impl core::marker::Unpin for tst_pipeline::reconnect::BackoffStrategy
 impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::BackoffStrategy
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::BackoffStrategy
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::BackoffStrategy
-pub enum tst_pipeline::reconnect::OverflowPolicy
+#[non_exhaustive] pub enum tst_pipeline::reconnect::OverflowPolicy
 pub tst_pipeline::reconnect::OverflowPolicy::DropOldest
 pub tst_pipeline::reconnect::OverflowPolicy::Reject
 impl core::clone::Clone for tst_pipeline::OverflowPolicy
@@ -2014,7 +2014,7 @@ impl core::marker::Unpin for tst_pipeline::reconnect::ManagedTransportStats
 impl core::marker::UnsafeUnpin for tst_pipeline::reconnect::ManagedTransportStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::reconnect::ManagedTransportStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::reconnect::ManagedTransportStats
-pub struct tst_pipeline::reconnect::ReconnectPolicy
+#[non_exhaustive] pub struct tst_pipeline::reconnect::ReconnectPolicy
 pub tst_pipeline::reconnect::ReconnectPolicy::backoff: tst_pipeline::reconnect::BackoffStrategy
 pub tst_pipeline::reconnect::ReconnectPolicy::gap_buffer_capacity: usize
 pub tst_pipeline::reconnect::ReconnectPolicy::max_attempts: core::option::Option<u32>
@@ -2023,6 +2023,11 @@ pub tst_pipeline::reconnect::ReconnectPolicy::overflow_policy: tst_pipeline::Ove
 impl tst_pipeline::reconnect::ReconnectPolicy
 pub fn tst_pipeline::reconnect::ReconnectPolicy::next_delay(&self, u32) -> core::option::Option<core::time::Duration>
 pub fn tst_pipeline::reconnect::ReconnectPolicy::validate(&self) -> core::result::Result<(), tst_pipeline::reconnect::ReconnectPolicyError>
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_backoff(self, tst_pipeline::reconnect::BackoffStrategy) -> Self
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_gap_buffer_capacity(self, usize) -> Self
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_max_attempts(self, core::option::Option<u32>) -> Self
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_mode(self, tst_pipeline::reconnect::ReconnectMode) -> Self
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_overflow_policy(self, tst_pipeline::OverflowPolicy) -> Self
 impl core::clone::Clone for tst_pipeline::reconnect::ReconnectPolicy
 pub fn tst_pipeline::reconnect::ReconnectPolicy::clone(&self) -> tst_pipeline::reconnect::ReconnectPolicy
 impl core::default::Default for tst_pipeline::reconnect::ReconnectPolicy
@@ -2175,7 +2180,7 @@ impl core::marker::Unpin for tst_pipeline::sender::SenderError
 impl core::marker::UnsafeUnpin for tst_pipeline::sender::SenderError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::sender::SenderError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::sender::SenderError
-pub struct tst_pipeline::sender::SenderStats
+#[non_exhaustive] pub struct tst_pipeline::sender::SenderStats
 pub tst_pipeline::sender::SenderStats::bytes_pushed: u64
 pub tst_pipeline::sender::SenderStats::bytes_skipped_for_sync: u64
 pub tst_pipeline::sender::SenderStats::packets_sent: u64
@@ -2262,7 +2267,7 @@ pub fn tst_pipeline::receiver::ReceiverError::kind(&self) -> tst_pipeline::shell
 impl tst_pipeline::shell_error::ShellError for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::errno_code(&self) -> core::option::Option<i32>
 pub fn tst_pipeline::sender::SenderError::kind(&self) -> tst_pipeline::shell_error::ShellErrorKind
-pub enum tst_pipeline::BackoffStrategy
+#[non_exhaustive] pub enum tst_pipeline::BackoffStrategy
 pub tst_pipeline::BackoffStrategy::Constant(core::time::Duration)
 pub tst_pipeline::BackoffStrategy::Exponential
 pub tst_pipeline::BackoffStrategy::Exponential::base: core::time::Duration
@@ -2346,7 +2351,7 @@ impl core::marker::Unpin for tst_pipeline::mux_sender::MuxSenderErrorSource
 impl core::marker::UnsafeUnpin for tst_pipeline::mux_sender::MuxSenderErrorSource
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::mux_sender::MuxSenderErrorSource
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::mux_sender::MuxSenderErrorSource
-pub enum tst_pipeline::OverflowPolicy
+#[non_exhaustive] pub enum tst_pipeline::OverflowPolicy
 pub tst_pipeline::OverflowPolicy::DropOldest
 pub tst_pipeline::OverflowPolicy::Reject
 impl core::clone::Clone for tst_pipeline::OverflowPolicy
@@ -2585,7 +2590,7 @@ impl core::marker::Unpin for tst_pipeline::demux_receiver::DemuxReceiverError
 impl core::marker::UnsafeUnpin for tst_pipeline::demux_receiver::DemuxReceiverError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::demux_receiver::DemuxReceiverError
-pub struct tst_pipeline::DemuxReceiverStats
+#[non_exhaustive] pub struct tst_pipeline::DemuxReceiverStats
 pub tst_pipeline::DemuxReceiverStats::bytes_received: u64
 pub tst_pipeline::DemuxReceiverStats::discontinuities: u64
 pub tst_pipeline::DemuxReceiverStats::nonconformant: u64
@@ -2865,7 +2870,7 @@ impl core::marker::Unpin for tst_pipeline::mux_sender::MuxSenderError
 impl core::marker::UnsafeUnpin for tst_pipeline::mux_sender::MuxSenderError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::mux_sender::MuxSenderError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::mux_sender::MuxSenderError
-pub struct tst_pipeline::MuxSenderStats
+#[non_exhaustive] pub struct tst_pipeline::MuxSenderStats
 pub tst_pipeline::MuxSenderStats::bytes_sent: u64
 pub tst_pipeline::MuxSenderStats::packets_sent: u64
 pub tst_pipeline::MuxSenderStats::pending_bytes_queued: u64
@@ -2950,7 +2955,7 @@ impl core::marker::Unpin for tst_pipeline::raw_receiver::RawReceiverError
 impl core::marker::UnsafeUnpin for tst_pipeline::raw_receiver::RawReceiverError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::raw_receiver::RawReceiverError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::raw_receiver::RawReceiverError
-pub struct tst_pipeline::RawReceiverStats
+#[non_exhaustive] pub struct tst_pipeline::RawReceiverStats
 pub tst_pipeline::RawReceiverStats::bytes_received: u64
 pub tst_pipeline::RawReceiverStats::packets_received: u64
 impl core::clone::Clone for tst_pipeline::raw_receiver::RawReceiverStats
@@ -3032,7 +3037,7 @@ impl core::marker::Unpin for tst_pipeline::raw_sender::RawSenderError
 impl core::marker::UnsafeUnpin for tst_pipeline::raw_sender::RawSenderError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::raw_sender::RawSenderError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::raw_sender::RawSenderError
-pub struct tst_pipeline::RawSenderStats
+#[non_exhaustive] pub struct tst_pipeline::RawSenderStats
 pub tst_pipeline::RawSenderStats::bytes_sent: u64
 pub tst_pipeline::RawSenderStats::packets_sent: u64
 impl core::clone::Clone for tst_pipeline::raw_sender::RawSenderStats
@@ -3116,7 +3121,7 @@ impl core::marker::Unpin for tst_pipeline::receiver::ReceiverError
 impl core::marker::UnsafeUnpin for tst_pipeline::receiver::ReceiverError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::receiver::ReceiverError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::receiver::ReceiverError
-pub struct tst_pipeline::ReceiverStats
+#[non_exhaustive] pub struct tst_pipeline::ReceiverStats
 pub tst_pipeline::ReceiverStats::bytes_received: u64
 pub tst_pipeline::ReceiverStats::bytes_skipped_for_sync: u64
 pub tst_pipeline::ReceiverStats::packets_received: u64
@@ -3139,7 +3144,7 @@ impl core::marker::Unpin for tst_pipeline::receiver::ReceiverStats
 impl core::marker::UnsafeUnpin for tst_pipeline::receiver::ReceiverStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::receiver::ReceiverStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::receiver::ReceiverStats
-pub struct tst_pipeline::ReconnectPolicy
+#[non_exhaustive] pub struct tst_pipeline::ReconnectPolicy
 pub tst_pipeline::ReconnectPolicy::backoff: tst_pipeline::reconnect::BackoffStrategy
 pub tst_pipeline::ReconnectPolicy::gap_buffer_capacity: usize
 pub tst_pipeline::ReconnectPolicy::max_attempts: core::option::Option<u32>
@@ -3148,6 +3153,11 @@ pub tst_pipeline::ReconnectPolicy::overflow_policy: tst_pipeline::OverflowPolicy
 impl tst_pipeline::reconnect::ReconnectPolicy
 pub fn tst_pipeline::reconnect::ReconnectPolicy::next_delay(&self, u32) -> core::option::Option<core::time::Duration>
 pub fn tst_pipeline::reconnect::ReconnectPolicy::validate(&self) -> core::result::Result<(), tst_pipeline::reconnect::ReconnectPolicyError>
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_backoff(self, tst_pipeline::reconnect::BackoffStrategy) -> Self
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_gap_buffer_capacity(self, usize) -> Self
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_max_attempts(self, core::option::Option<u32>) -> Self
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_mode(self, tst_pipeline::reconnect::ReconnectMode) -> Self
+pub fn tst_pipeline::reconnect::ReconnectPolicy::with_overflow_policy(self, tst_pipeline::OverflowPolicy) -> Self
 impl core::clone::Clone for tst_pipeline::reconnect::ReconnectPolicy
 pub fn tst_pipeline::reconnect::ReconnectPolicy::clone(&self) -> tst_pipeline::reconnect::ReconnectPolicy
 impl core::default::Default for tst_pipeline::reconnect::ReconnectPolicy
@@ -3229,7 +3239,7 @@ impl core::marker::Unpin for tst_pipeline::sender::SenderError
 impl core::marker::UnsafeUnpin for tst_pipeline::sender::SenderError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::sender::SenderError
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::sender::SenderError
-pub struct tst_pipeline::SenderStats
+#[non_exhaustive] pub struct tst_pipeline::SenderStats
 pub tst_pipeline::SenderStats::bytes_pushed: u64
 pub tst_pipeline::SenderStats::bytes_skipped_for_sync: u64
 pub tst_pipeline::SenderStats::packets_sent: u64

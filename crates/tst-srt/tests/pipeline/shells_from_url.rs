@@ -49,11 +49,9 @@ const PEER_TICK: Duration = Duration::from_millis(10);
 /// No reconnect budget and no backoff: a peer that goes away ends the
 /// stream at once instead of re-dialling a port nobody listens on.
 fn no_reconnect() -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts: Some(0),
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    }
+    ReconnectPolicy::default()
+        .with_max_attempts(Some(0))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO))
 }
 
 fn video_only_config() -> MuxerConfig {
@@ -469,11 +467,9 @@ fn recv_handles_attempts_count_failed_factory_calls_not_successes() {
         "srt://127.0.0.1:{port}?x-recvtimeout=1000&conntimeo=300"
     ))
     .expect("parse");
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
     let (mut rx, handles) =
         managed_receiver_from_url(&url, policy).expect("managed_receiver_from_url");
     rx.next_packet().expect("the stream is live before the cut");
@@ -631,11 +627,9 @@ fn sender_from_url_refuses_listener_mode_with_an_option_error() {
 }
 
 fn unpaced_unlimited() -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts: None,
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    }
+    ReconnectPolicy::default()
+        .with_max_attempts(None)
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO))
 }
 
 /// A refused policy never reaches a socket: nothing listens on port 1, so a

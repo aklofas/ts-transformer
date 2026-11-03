@@ -213,9 +213,9 @@ fn main() {
             }
             // Only emitted by `ManagedDemuxReceiver` (tst-pipeline) on
             // transport reconnect; not produced by the file-driven
-            // `Demuxer` this example uses. Included to satisfy
-            // exhaustive matching.
-            DemuxEvent::ReconnectDiscontinuity => {}
+            // `Demuxer` this example uses. `DemuxEvent` is non-exhaustive,
+            // so the wildcard also absorbs variants added later.
+            _ => {}
         }
     }
 }

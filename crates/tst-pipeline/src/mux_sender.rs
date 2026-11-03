@@ -70,6 +70,7 @@ use crate::shell_error::ShellErrorKind;
 /// Stats snapshot for [`MuxSender`].
 #[must_use]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct MuxSenderStats {
     /// Cumulative bytes successfully handed off to the transport.
     pub bytes_sent: u64,

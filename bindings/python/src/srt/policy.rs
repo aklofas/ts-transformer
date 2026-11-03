@@ -94,6 +94,9 @@ impl PyBackoffStrategy {
         match self.inner {
             RustBackoff::Constant(_) => "constant",
             RustBackoff::Exponential { .. } => "exponential",
+            // `BackoffStrategy` is non-exhaustive; a strategy this binding
+            // predates reads as the default shape.
+            _ => "exponential",
         }
     }
 
@@ -104,6 +107,7 @@ impl PyBackoffStrategy {
         match self.inner {
             RustBackoff::Constant(d) => duration_to_ms(d),
             RustBackoff::Exponential { base, .. } => duration_to_ms(base),
+            _ => 0,
         }
     }
 
@@ -114,6 +118,7 @@ impl PyBackoffStrategy {
         match self.inner {
             RustBackoff::Constant(d) => duration_to_ms(d),
             RustBackoff::Exponential { max, .. } => duration_to_ms(max),
+            _ => 0,
         }
     }
 
@@ -127,6 +132,7 @@ impl PyBackoffStrategy {
                 duration_to_ms(base),
                 duration_to_ms(max),
             ),
+            _ => "BackoffStrategy(<unknown>)".to_string(),
         }
     }
 }
@@ -172,6 +178,9 @@ impl From<RustOverflow> for PyOverflowPolicy {
         match p {
             RustOverflow::DropOldest => PyOverflowPolicy::DROP_OLDEST,
             RustOverflow::Reject => PyOverflowPolicy::REJECT,
+            // `OverflowPolicy` is non-exhaustive; a policy this binding
+            // predates reads as the default.
+            _ => PyOverflowPolicy::DROP_OLDEST,
         }
     }
 }
@@ -278,13 +287,12 @@ impl PyReconnectPolicy {
         }
         let backoff_inner = backoff.map(|b| b.inner).unwrap_or_default();
         Ok(Self {
-            inner: RustPolicy {
-                max_attempts,
-                backoff: backoff_inner,
-                gap_buffer_capacity,
-                overflow_policy: overflow_policy.into(),
-                mode: mode.into(),
-            },
+            inner: RustPolicy::default()
+                .with_max_attempts(max_attempts)
+                .with_backoff(backoff_inner)
+                .with_gap_buffer_capacity(gap_buffer_capacity)
+                .with_overflow_policy(overflow_policy.into())
+                .with_mode(mode.into()),
         })
     }
 
@@ -331,6 +339,7 @@ impl PyReconnectPolicy {
         let overflow_repr = match self.inner.overflow_policy {
             RustOverflow::DropOldest => "OverflowPolicy.DROP_OLDEST",
             RustOverflow::Reject => "OverflowPolicy.REJECT",
+            _ => "OverflowPolicy.DROP_OLDEST",
         };
         let mode_repr = match self.inner.mode {
             RustReconnectMode::Blocking => "ReconnectMode.BLOCKING",

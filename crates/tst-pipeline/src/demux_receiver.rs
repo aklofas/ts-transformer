@@ -585,6 +585,7 @@ impl crate::shell_error::ShellError for DemuxReceiverError {
 /// `Receiver::stats()` directly to read them.
 #[must_use]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DemuxReceiverStats {
     pub bytes_received: u64,
     pub packets_received: u64,

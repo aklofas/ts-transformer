@@ -772,6 +772,12 @@ pub(crate) fn convert(
             // TstEvent::default()` above.
             out.kind = TstEventKind::ReconnectDiscontinuity as c_int;
         }
+        // `DemuxEvent` is non-exhaustive, so the compiler no longer proves
+        // every variant is projected; the demux-event-variant-coverage rail
+        // does, which makes this arm unreachable while the rail passes. A
+        // variant that slips through leaves the zeroed event (kind 0, which
+        // matches no TST_EVENT_* constant) rather than a wrong payload.
+        _ => {}
     }
 }
 

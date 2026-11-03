@@ -676,10 +676,7 @@ pub fn run_managed(
 ) -> Result<VerifyReport, String> {
     let initial_raw = transport::make_recv(url)?;
     let dial_url = url.to_string();
-    let policy = ReconnectPolicy {
-        max_attempts: None,
-        ..ReconnectPolicy::default()
-    };
+    let policy = ReconnectPolicy::default().with_max_attempts(None);
     let (managed, tap) =
         managed_teed_transport(initial_raw, move || transport::make_recv(&dial_url), policy)?;
     // Built per-profile, not `ManagedDemuxReceiver::new` — see

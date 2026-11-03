@@ -68,13 +68,11 @@ impl RecvTransport for ParkedRecv {
 }
 
 fn fast_policy(max_attempts: Option<u32>) -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts,
-        backoff: BackoffStrategy::Constant(Duration::from_millis(1)),
-        gap_buffer_capacity: 16,
-        overflow_policy: tst_pipeline::reconnect::OverflowPolicy::DropOldest,
-        ..Default::default()
-    }
+    ReconnectPolicy::default()
+        .with_max_attempts(max_attempts)
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
+        .with_gap_buffer_capacity(16)
+        .with_overflow_policy(tst_pipeline::reconnect::OverflowPolicy::DropOldest)
 }
 
 // ----------------------------------------------------------------

@@ -200,11 +200,9 @@ fn managed_receive_reconnects_through_factory() {
     let initial = ScriptedRecv::new(VecDeque::new(), TransportError::Closed);
 
     // Zero-delay constant backoff so the test doesn't actually sleep.
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)));
 
     let mut managed =
         ManagedRecvTransport::new(initial, factory, policy).expect("the policy validates");

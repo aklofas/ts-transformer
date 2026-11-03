@@ -16,6 +16,7 @@ pub use crate::mpegts::demux::ts::{AdaptationFieldKind, PcrMalformedKind};
 
 /// Top-level event emitted by `Demuxer::next_event`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DemuxEvent {
     /// PSI topology — emitted on PAT/PMT discovery and on each PSI
     /// version-bump. Carries declared linkage info with provenance.

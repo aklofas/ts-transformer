@@ -22,6 +22,7 @@ use background::{Install, ManagedShared, Shutdown, install_fresh_inner};
 use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BackoffStrategy {
     /// Fixed wait between attempts.
     Constant(Duration),
@@ -61,6 +62,7 @@ pub enum ReconnectMode {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ReconnectPolicy {
     /// Maximum reconnect attempts before giving up. None = retry forever.
     /// Default: `Some(10)`.
@@ -123,6 +125,41 @@ pub enum ReconnectPolicyError {
 }
 
 impl ReconnectPolicy {
+    /// Set [`max_attempts`](Self::max_attempts).
+    #[must_use]
+    pub fn with_max_attempts(mut self, max_attempts: Option<u32>) -> Self {
+        self.max_attempts = max_attempts;
+        self
+    }
+
+    /// Set [`backoff`](Self::backoff).
+    #[must_use]
+    pub fn with_backoff(mut self, backoff: BackoffStrategy) -> Self {
+        self.backoff = backoff;
+        self
+    }
+
+    /// Set [`gap_buffer_capacity`](Self::gap_buffer_capacity).
+    #[must_use]
+    pub fn with_gap_buffer_capacity(mut self, gap_buffer_capacity: usize) -> Self {
+        self.gap_buffer_capacity = gap_buffer_capacity;
+        self
+    }
+
+    /// Set [`overflow_policy`](Self::overflow_policy).
+    #[must_use]
+    pub fn with_overflow_policy(mut self, overflow_policy: OverflowPolicy) -> Self {
+        self.overflow_policy = overflow_policy;
+        self
+    }
+
+    /// Set [`mode`](Self::mode).
+    #[must_use]
+    pub fn with_mode(mut self, mode: ReconnectMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
     /// Check the policy is usable.
     ///
     /// # Errors

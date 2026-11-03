@@ -61,13 +61,12 @@ impl Transport for Inner {
 }
 
 fn policy(mode: ReconnectMode) -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(1)),
-        gap_buffer_capacity: 8,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode,
-    }
+    ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
+        .with_gap_buffer_capacity(8)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(mode)
 }
 
 /// What the factory hands back, by call.

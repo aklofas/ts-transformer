@@ -165,16 +165,15 @@ fn park_factory(
 }
 
 fn policy(mode: ReconnectMode) -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts: None,
+    ReconnectPolicy::default()
+        .with_max_attempts(None)
         // Near-zero backoff: these tests are about the cancel path, not the
         // cadence, and a real wait would only slow the reconnect they need.
         // Unlimited attempts need a non-zero wait to pass validation.
-        backoff: BackoffStrategy::Constant(Duration::from_millis(1)),
-        gap_buffer_capacity: 64,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode,
-    }
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
+        .with_gap_buffer_capacity(64)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(mode)
 }
 
 /// Fire `cancel` on its own thread; report whether it returned in time.

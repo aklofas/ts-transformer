@@ -12,6 +12,7 @@ use alloc::string::String;
 /// descriptor or a hardcoded PSI label populates it.
 #[must_use]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct StreamStats {
     pub pid: u16,
     pub stream_type: StreamTypeCode,

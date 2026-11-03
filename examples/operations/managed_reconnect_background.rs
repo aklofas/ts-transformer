@@ -260,16 +260,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     way to notice frames going missing; that's what `stats_handle()`
     //     is for.
     // ---------------------------------------------------------------------
-    let policy = ReconnectPolicy {
-        mode: ReconnectMode::Background,
-        max_attempts: Some(20),
-        backoff: BackoffStrategy::Exponential {
+    let policy = ReconnectPolicy::default()
+        .with_mode(ReconnectMode::Background)
+        .with_max_attempts(Some(20))
+        .with_backoff(BackoffStrategy::Exponential {
             base: Duration::from_millis(50),
             max: Duration::from_millis(500),
-        },
-        gap_buffer_capacity: 4,
-        overflow_policy: OverflowPolicy::DropOldest,
-    };
+        })
+        .with_gap_buffer_capacity(4)
+        .with_overflow_policy(OverflowPolicy::DropOldest);
     // A zero-backoff, unlimited-attempts policy is refused here.
     let managed = ManagedTransport::new(initial, factory, policy)?;
 

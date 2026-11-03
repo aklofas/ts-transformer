@@ -180,16 +180,15 @@ fn policy() -> ReconnectPolicy {
 }
 
 fn policy_in(mode: ReconnectMode) -> ReconnectPolicy {
-    ReconnectPolicy {
+    ReconnectPolicy::default()
         // One attempt, zero backoff: the kit never wants a reconnect, and the
         // factories below refuse anyway — the budget just keeps a refusal
         // from looping.
-        max_attempts: Some(1),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        gap_buffer_capacity: 64,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode,
-    }
+        .with_max_attempts(Some(1))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)))
+        .with_gap_buffer_capacity(64)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(mode)
 }
 
 fn refuse<T>() -> Result<T, TransportError> {
@@ -337,11 +336,11 @@ fn managed_send_parked_in_inner_is_interrupted_in_place() {
 #[test]
 fn managed_send_cancel_outranks_a_full_reject_buffer() {
     for mode in [ReconnectMode::Blocking, ReconnectMode::Background] {
-        let o = cancel_a_send_parked_in_the_inner(ReconnectPolicy {
-            gap_buffer_capacity: 0,
-            overflow_policy: OverflowPolicy::Reject,
-            ..policy_in(mode)
-        });
+        let o = cancel_a_send_parked_in_the_inner(
+            policy_in(mode)
+                .with_gap_buffer_capacity(0)
+                .with_overflow_policy(OverflowPolicy::Reject),
+        );
         assert!(
             matches!(o.result, Err(TransportError::ExplicitClose)),
             "{mode:?}: got {:?}",

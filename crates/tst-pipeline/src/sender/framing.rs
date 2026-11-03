@@ -59,6 +59,7 @@ pub enum TsFramingError {
 
 #[must_use]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SenderStats {
     pub bytes_pushed: u64,
     pub bytes_skipped_for_sync: u64,

@@ -94,11 +94,9 @@ fn factory_success_after_cancel_is_not_drained_into() {
         })
     };
 
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
     // The initial inner carries its OWN flag and counter: `fresh_*` must
     // only be reachable through the connection the factory built, or the
     // assertions below would pass on the pre-fix code.
@@ -194,11 +192,9 @@ fn cancel_during_post_reconnect_drain_reports_explicit_close() {
         })
     };
 
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
     let initial = DrainRaceInner {
         handle: Arc::new(Mutex::new(None)),
         fired: Arc::new(AtomicBool::new(false)),

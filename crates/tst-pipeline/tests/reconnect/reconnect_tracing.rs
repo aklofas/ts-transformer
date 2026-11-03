@@ -22,11 +22,9 @@ fn sender_reconnect_emits_info_on_attempt_and_warn_on_give_up() {
         || -> Result<ScriptedSend, TransportError> { Err(broken("test factory always fails")) };
 
     // Cap attempts low + zero backoff so the test is fast.
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)));
 
     let inner = ScriptedSend::always(broken("always broken (test)"))
         .with_counter(Arc::new(AtomicU32::new(0)));

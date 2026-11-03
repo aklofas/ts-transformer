@@ -87,6 +87,7 @@ impl crate::shell_error::ShellError for RawSenderError {
 /// this layer.
 #[must_use]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RawSenderStats {
     /// Bytes that succeeded through the transport.
     pub bytes_sent: u64,

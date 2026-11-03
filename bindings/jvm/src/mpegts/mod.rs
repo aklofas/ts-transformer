@@ -481,9 +481,11 @@ fn closed(env: &mut Env) {
 
 /// Convert one `DemuxEvent` to a Java `DemuxEvent` record.
 ///
-/// `DemuxEvent` is not marked non-exhaustive, so this match is exhaustive and
-/// every variant builds a record. `Err(())` — a JNI call failed (exception
-/// pending).
+/// `DemuxEvent` is non-exhaustive, so the compiler cannot prove every variant
+/// builds a record; the demux-event-variant-coverage rail does, and the
+/// wildcard arm is unreachable while it passes. `Err(())` — a JNI call failed
+/// (exception pending), or a variant the rail should have caught reached the
+/// wildcard (an `IllegalStateException` is pending).
 pub(crate) fn convert_event<'local>(
     env: &mut Env<'local>,
     ev: &DemuxEvent,
@@ -689,6 +691,13 @@ pub(crate) fn convert_event<'local>(
                 )
                 .map_err(|_| ())?;
             Ok(obj)
+        }
+        _ => {
+            let _ = env.throw_new(
+                FindClass(jni_str!("java/lang/IllegalStateException")),
+                JNIString::from(format!("unhandled DemuxEvent variant: {ev:?}")),
+            );
+            Err(())
         }
     }
 }

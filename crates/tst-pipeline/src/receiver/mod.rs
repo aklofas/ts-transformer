@@ -35,6 +35,7 @@ use crate::shell_error::ShellErrorKind;
 /// (initial lock-on and re-locks after losing sync mid-stream).
 #[must_use]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ReceiverStats {
     /// Total bytes returned to callers as valid 188-byte TS packets.
     pub bytes_received: u64,

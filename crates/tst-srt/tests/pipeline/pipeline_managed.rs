@@ -21,13 +21,11 @@ fn managed_recovers_from_brief_outage() {
         Ok::<MockTransport, _>(t)
     };
 
-    let policy = ReconnectPolicy {
-        max_attempts: Some(5),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(1)),
-        gap_buffer_capacity: 10,
-        overflow_policy: OverflowPolicy::DropOldest,
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(5))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
+        .with_gap_buffer_capacity(10)
+        .with_overflow_policy(OverflowPolicy::DropOldest);
     let mut managed = ManagedTransport::new(inner, factory, policy).expect("the policy validates");
 
     // Send 4 messages; first 3 fail (Broken) on the original inner; the

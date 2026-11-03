@@ -49,16 +49,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(SrtTransport::new(socket))
     };
     let initial = factory()?;
-    let policy = ReconnectPolicy {
-        max_attempts: Some(20),
-        backoff: BackoffStrategy::Exponential {
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(20))
+        .with_backoff(BackoffStrategy::Exponential {
             base: Duration::from_millis(100),
             max: Duration::from_secs(10),
-        },
-        gap_buffer_capacity: 256,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode: ReconnectMode::Blocking,
-    };
+        })
+        .with_gap_buffer_capacity(256)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(ReconnectMode::Blocking);
     let managed = ManagedTransport::new(initial, factory, policy)?;
     let _sender = MuxSender::new(managed, MuxerConfig::default())?;
     Ok(())
@@ -99,18 +98,17 @@ The same guarantee does **not** apply to every query on a sender shell:
 Obtain the managed stats handle before moving the transport into the sender:
 
 ```rust,ignore
-let policy = ReconnectPolicy {
-    mode: ReconnectMode::Background,
-    max_attempts: Some(20),
-    backoff: BackoffStrategy::Exponential {
+let policy = ReconnectPolicy::default()
+    .with_mode(ReconnectMode::Background)
+    .with_max_attempts(Some(20))
+    .with_backoff(BackoffStrategy::Exponential {
         base: Duration::from_millis(100),
         max: Duration::from_secs(10),
-    },
+    })
     // Size this one: worst-case outage × messages per second. Whatever
     // does not fit is evicted (DropOldest) or refused (Reject).
-    gap_buffer_capacity: 256,
-    overflow_policy: OverflowPolicy::DropOldest,
-};
+    .with_gap_buffer_capacity(256)
+    .with_overflow_policy(OverflowPolicy::DropOldest);
 let managed = ManagedTransport::new(initial, factory, policy)?;
 
 // Grab the stats handle BEFORE moving `managed` into the sender shell —
