@@ -70,8 +70,8 @@ class CancelTerminalTest {
     /** An event {@code hasNext()} already holds is buffered output too. */
     @Test
     void demuxIteratorCancelBetweenHasNextAndNextThrowsClosed() throws Exception {
-        try (DemuxReceiverByteSinkFailureTest.Pair p = new DemuxReceiverByteSinkFailureTest.Pair()) {
-            p.write(DemuxReceiverByteSinkFailureTest.eventPackets());
+        try (DemuxReceiverTestSupport.Pair p = new DemuxReceiverTestSupport.Pair()) {
+            p.write(DemuxReceiverTestSupport.eventPackets());
             Iterator<DemuxEvent> it = p.rx.iterator();
             assertTrue(ShellPeers.within(5_000, "first hasNext", it::hasNext));
             p.rx.cancelHandle().cancel();

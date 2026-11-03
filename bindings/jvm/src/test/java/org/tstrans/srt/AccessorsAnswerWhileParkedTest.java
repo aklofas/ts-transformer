@@ -350,12 +350,15 @@ class AccessorsAnswerWhileParkedTest {
             });
             reader.awaitParked("next()");
             boolean alive = answer("ManagedDemuxReceiver.isAlive()", rx::isAlive);
+            long n = answer("ManagedDemuxReceiver.tsBytesDemuxed()", rx::tsBytesDemuxed);
             reader.assertStillParked("next()");
             assertTrue(alive, "a parked receive means the receiver is open");
+            assertEquals(0L, n);
         } finally {
             rx.close();
             peer.close();
         }
         assertFalse(rx.isAlive());
+        assertEquals(0L, rx.tsBytesDemuxed());
     }
 }

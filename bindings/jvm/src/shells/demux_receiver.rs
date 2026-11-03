@@ -39,7 +39,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use jni::Env;
 use jni::jni_sig;
 use jni::jni_str;
-use jni::objects::{Global, JObject, JString, JThrowable, JValue};
+use jni::objects::{Global, JLongArray, JObject, JString, JThrowable, JValue};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
@@ -48,6 +48,7 @@ use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
+    TsBytesDemuxedHandle,
 };
 
 use super::cancel::cancel_view_handle;
@@ -151,8 +152,28 @@ fn refuse_reentry(env: &mut Env, handle: jlong, method: &str) -> bool {
     true
 }
 
-static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<Arc<SinkState>>>> =
+/// The construction-time constants of a receiver, read without the slot.
+struct RxSnap {
+    /// Reader for the demuxer's fed-byte counter; outlives the shell.
+    ts_bytes_demuxed: TsBytesDemuxedHandle,
+    sinks: Arc<SinkState>,
+}
+
+static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<RxSnap>>> =
     LazyLock::new(OwnedRegistry::new);
+
+/// A counter value as a `jlong`, saturating.
+pub(crate) fn counter_to_jlong(v: u64) -> jlong {
+    i64::try_from(v).unwrap_or(i64::MAX)
+}
+
+/// Write `v` into `out[0]`; a null or empty array is left alone.
+pub(crate) fn write_counter_out(env: &mut Env, out: &JLongArray, v: u64) {
+    if out.is_null() {
+        return;
+    }
+    let _ = out.set_region(env, 0, &[counter_to_jlong(v)]);
+}
 
 /// Throw a `recv_event` failure: demux-sourced ones keep `DemuxException`;
 /// transport-sourced ones are thrown in the shell's `domain`. The peer-EOS rule:
@@ -225,16 +246,20 @@ fn register_with(
         None => RustDemuxReceiver::new(transport),
         Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
     };
+    let ts_bytes_demuxed = inner.ts_bytes_demuxed_handle();
     let jdr = JniDemuxReceiver { inner };
     let mut owned = Owned::new(
         jdr,
         cancel,
         Snapshot {
             domain,
-            handles: Arc::new(SinkState {
-                mount_cancel,
-                ..SinkState::default()
-            }),
+            handles: RxSnap {
+                ts_bytes_demuxed,
+                sinks: Arc::new(SinkState {
+                    mount_cancel,
+                    ..SinkState::default()
+                }),
+            },
         },
     );
     if let Some(h) = end_reason {
@@ -309,7 +334,7 @@ jni_native! {
         if refuse_reentry(env, handle, "recvEvent() / iterator next()") {
             return JObject::null().into_raw();
         }
-        let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.clone()) else {
+        let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.sinks.clone()) else {
             crate::error::throw_closed(env, "DemuxReceiver");
             return JObject::null().into_raw();
         };
@@ -392,7 +417,7 @@ jni_native! {
         if refuse_reentry(env, handle, "iterator next()") {
             return;
         }
-        let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.clone()) else {
+        let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.sinks.clone()) else {
             crate::error::throw_closed(env, "DemuxReceiver");
             return;
         };
@@ -441,7 +466,7 @@ jni_native! {
         // The shared sink state and the receiver's own cancel are read off
         // the entry without the slot.
         let (Some(sinks), Some(cancel)) = (
-            REGISTRY.snapshot(handle as u64, |s| s.handles.clone()),
+            REGISTRY.snapshot(handle as u64, |s| s.handles.sinks.clone()),
             REGISTRY.cancel_view(handle as u64),
         ) else {
             throw_handle_state(env, "DemuxReceiver", &HandleState::Closed);
@@ -699,7 +724,7 @@ jni_native! {
         if let Some(cancel) = REGISTRY.cancel_view(handle as u64) {
             cancel.0.cancel();
         }
-        if let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.clone()) {
+        if let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.sinks.clone()) {
             sinks.close_pending.store(true, Ordering::Release);
         }
         true
@@ -707,31 +732,55 @@ jni_native! {
 }
 
 jni_native! {
-    /// `nClose(handle)` — cancel first, then take the receiver and close it.
+    /// `nClose(handle, tsBytesOut)` — cancel first, then take the receiver and close it.
     /// Returns the end-reason snapshot (`EndReason$Snapshot`), null when the
-    /// close lost the race (a double `close()` is safe).
+    /// close lost the race (a double `close()` is safe). Writes the fed-byte
+    /// count, read after the registry take, into `tsBytesOut[0]`.
     fn Java_org_tstrans_shells_DemuxReceiver_nClose<'local>(
         env,
         _class,
         handle: jlong,
+        ts_bytes_out: JLongArray<'local>,
     ) -> JObject<'local> = JObject::null() => {
         // Cleared before and after, so this completed close wins over a
         // deferral. Java zeroes the handle before this runs, so a sink's
         // close() normally never reaches `nDeferClose`; the after-clear covers
         // a sink that read the handle just before that claim.
-        let sinks = REGISTRY.snapshot(handle as u64, |s| s.handles.clone());
+        let snap = REGISTRY.snapshot(handle as u64, |s| {
+            (s.handles.sinks.clone(), s.handles.ts_bytes_demuxed.clone())
+        });
         let clear = || {
-            if let Some(s) = &sinks {
+            if let Some((s, _)) = &snap {
                 s.close_pending.store(false, Ordering::Release);
             }
         };
         clear();
         let closed = REGISTRY.close_with_end_reason(handle as u64, |mut jdr| jdr.inner.close());
         clear();
+        // The take is done: the shell has stopped feeding the demuxer.
+        if closed.is_some()
+            && let Some((_, counter)) = &snap
+        {
+            write_counter_out(env, &ts_bytes_out, counter.get());
+        }
         match closed {
             Some(reason) => build_close_snapshot(env, reason).unwrap_or_else(|_| JObject::null()),
             None => JObject::null(),
         }
+    }
+}
+
+jni_native! {
+    /// `nTsBytesDemuxed(handle)` — aligned TS bytes the demuxer was fed; `-1`
+    /// when the entry is gone. Reads the registry snapshot, never the slot.
+    fn Java_org_tstrans_shells_DemuxReceiver_nTsBytesDemuxed(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jlong = -1 => {
+        REGISTRY
+            .snapshot(handle as u64, |s| s.handles.ts_bytes_demuxed.get())
+            .map_or(-1, counter_to_jlong)
     }
 }
 

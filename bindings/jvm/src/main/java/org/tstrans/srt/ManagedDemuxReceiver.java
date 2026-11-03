@@ -2,6 +2,7 @@ package org.tstrans.srt;
 
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.concurrent.atomic.AtomicLong;
 import org.tstrans.DemuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
@@ -76,6 +77,9 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     // endReason()'s javadoc for why: once closed, peekHandle() is 0 and the
     // native registry entry is gone for good).
     private volatile EndReason closedEndReason;
+    // The largest fed-byte count any read or the close saw, so a read never
+    // goes backwards across close().
+    private final AtomicLong tsBytesSeen = new AtomicLong();
 
     /** Package-private constructor from a native handle. */
     ManagedDemuxReceiver(long h) { setHandle(h); }
@@ -367,6 +371,20 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     }
 
     /**
+     * Aligned TS bytes this receiver fed its demuxer since it opened. Never waits on
+     * the receive slot, so it answers while another thread is parked in {@code next()};
+     * after {@link #close()} it returns the value at close. A read never returns less
+     * than an earlier one.
+     *
+     * @return the byte count, a multiple of 188
+     */
+    public long tsBytesDemuxed() {
+        long h = peekHandle();
+        long v = h == 0 ? -1 : nTsBytesDemuxed(h);
+        return tsBytesSeen.accumulateAndGet(v, Math::max);
+    }
+
+    /**
      * Return {@code true} while the receiver owns a live transport.
      *
      * @return liveness state of the underlying SRT socket
@@ -380,7 +398,9 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
         // Runs at most once per receiver: NativeHandle.close() only calls this for
         // the caller that atomically claimed a non-zero handle. `-1` (nothing was
         // recorded) maps to null, which is what the field already held.
-        closedEndReason = EndReason.fromWireValue(nClose(h));
+        long[] tsBytesOut = {-1};
+        closedEndReason = EndReason.fromWireValue(nClose(h, tsBytesOut));
+        tsBytesSeen.accumulateAndGet(tsBytesOut[0], Math::max);
     }
 
     // --- Natives ---
@@ -404,6 +424,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     private static native long nReconnectAttempts(long handle);
     private static native long nLastSeenMicros(long handle, int pid);
     private static native int nEndReason(long handle);
-    private static native int nClose(long handle);
+    private static native int nClose(long handle, long[] tsBytesOut);
+    private static native long nTsBytesDemuxed(long handle);
     private static native boolean nIsAlive(long handle);
 }
