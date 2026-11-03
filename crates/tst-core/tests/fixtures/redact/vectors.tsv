@@ -9,6 +9,12 @@ rtsp://u:pa?ss=word@h/x	rtsp://u:<redacted>@h/x
 srt://h:1?mail=a@b	srt://h:<redacted>@b
 # Accepted over-redaction: any later @ ends the userinfo.
 srt://h:9000/a@b	srt://h:<redacted>@b
+# A secret query value holding an @ is redacted through its end, merged with the userinfo mask.
+srt://h:9000?passphrase=prefix@tail-sentinel	srt://h:<redacted>
+srt://u:p@h?passphrase=a@b	srt://u:<redacted>
+srt://h?streamid=a@b	srt://h?streamid=<redacted>
+# A non-secret value holding an @ with no colon before it is not userinfo.
+srt://h?x=a@b	srt://h?x=a@b
 
 # A URL opened right after a quote runs to the last matching quote before the next URL opened by
 # the same quote, when that quote is followed by a separator, , ; . : ) ] } or the end; otherwise

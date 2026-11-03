@@ -1,5 +1,8 @@
 package org.tstrans;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Removes secrets from URL text before it reaches a {@code toString()} or an exception message.
  *
@@ -18,9 +21,11 @@ package org.tstrans;
  * <p>The scrub is a heuristic that errs toward redacting, so malformed text around a credential
  * may be redacted with it. The accepted over-redactions: any later {@code @} ends the userinfo,
  * so {@code srt://h:9000/a@b} loses {@code 9000/a}; a raw {@code ?} before the last {@code @} is
- * password text, so {@code srt://h:1?mail=a@b} loses {@code 1?mail=a}; text after a quoted URL,
- * up to the last matching quote, is treated as part of the URL, so
- * {@code 'srt://h?token=x' or 'y'} loses {@code x' or 'y}; when that last quote is followed by
+ * password text, so {@code srt://h:1?mail=a@b} loses {@code 1?mail=a}; a secret value holding an
+ * {@code @} is redacted together with that userinfo, so {@code srt://u:p@h?passphrase=a@b} loses
+ * everything after {@code u:}; text after a quoted URL, up to the last matching quote, is
+ * treated as part of the URL, so {@code 'srt://h?token=x' or 'y'} loses {@code x' or 'y}; when
+ * that last quote is followed by
  * other text, the URL runs on to the next quoted URL or the end, so
  * {@code 'srt://h?token=x' can't} loses everything after {@code token=}.
  *
@@ -140,48 +145,65 @@ public final class Redact {
 
     private static void token(String token, StringBuilder out) {
         int scheme = token.indexOf("://");
-        String head = scheme < 0 ? "" : token.substring(0, scheme + 3);
-        String rest = scheme < 0 ? token : token.substring(scheme + 3);
-        StringBuilder scrubbed = new StringBuilder(token.length());
-        scrubbed.append(head);
-        userinfo(rest, scrubbed);
-        queryValues(scrubbed.toString(), out);
+        int rest = scheme < 0 ? 0 : scheme + 3;
+        // Both masks come from the original text: a secret value holding an @ (?passphrase=a@b)
+        // also reads as userinfo, and masking the userinfo first would hide the key and leave
+        // the value's tail visible.
+        List<int[]> masks = secretValueRanges(token, rest);
+        int[] userinfo = userinfoMask(token.substring(rest));
+        if (userinfo != null) {
+            masks.add(new int[] {rest + userinfo[0], rest + userinfo[1]});
+        }
+        masks.sort((a, b) -> a[0] != b[0] ? Integer.compare(a[0], b[0])
+            : Integer.compare(a[1], b[1]));
+        int copied = 0;
+        for (int m = 0; m < masks.size(); m++) {
+            int from = masks.get(m)[0];
+            int to = masks.get(m)[1];
+            while (m + 1 < masks.size() && masks.get(m + 1)[0] <= to) {
+                to = Math.max(to, masks.get(m + 1)[1]);
+                m++;
+            }
+            out.append(token, copied, from).append(REDACTED);
+            copied = to;
+        }
+        out.append(token, copied, token.length());
     }
 
     /**
-     * The password sits before the last {@code @}; it may contain {@code /}, {@code @} or a raw
-     * {@code ?} ({@code u:pa?ss=w@h}). A {@code ?} with no {@code @} after it starts the query.
+     * The password in the userinfo that precedes the last {@code @}, as {@code {from, to}} offsets
+     * of {@code rest}, or null. It may contain {@code /}, {@code @} or a raw {@code ?}
+     * ({@code u:pa?ss=w@h}). A {@code ?} with no {@code @} after it starts the query.
      */
-    private static void userinfo(String rest, StringBuilder out) {
+    private static int[] userinfoMask(String rest) {
         int q = rest.indexOf('?');
         int lastAt = rest.lastIndexOf('@');
         int limit = q < 0 || lastAt > q ? rest.length() : q;
         int at = rest.lastIndexOf('@', limit - 1);
         int colon = at < 0 ? -1 : rest.indexOf(':');
-        if (at >= 0 && colon >= 0 && colon < at) {
-            out.append(rest, 0, colon + 1).append(REDACTED).append(rest, at, rest.length());
-        } else {
-            out.append(rest);
-        }
+        return at >= 0 && colon >= 0 && colon < at ? new int[] {colon + 1, at} : null;
     }
 
-    private static void queryValues(String token, StringBuilder out) {
-        int i = 0;
-        int copied = 0;
+    /**
+     * Offsets of the values of secret {@code key=value} pairs in {@code token} at or after
+     * {@code from}. A value runs to the next {@code &} or the end of the token.
+     */
+    private static List<int[]> secretValueRanges(String token, int from) {
+        List<int[]> ranges = new ArrayList<>();
+        int i = from;
         while (i < token.length()) {
             int keyLen = (i == 0 || !isWord(token.charAt(i - 1))) ? secretKeyLen(token, i) : -1;
             if (keyLen >= 0) {
                 int valueStart = i + keyLen + 1;
                 int amp = token.indexOf('&', valueStart);
                 int valueEnd = amp < 0 ? token.length() : amp;
-                out.append(token, copied, valueStart).append(REDACTED);
-                copied = valueEnd;
+                ranges.add(new int[] {valueStart, valueEnd});
                 i = valueEnd;
             } else {
                 i++;
             }
         }
-        out.append(token, copied, token.length());
+        return ranges;
     }
 
     /**
