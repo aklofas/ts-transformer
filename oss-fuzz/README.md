@@ -69,7 +69,7 @@ build and run machinery packaged as GitHub Actions. It consumes the same
 | `.clusterfuzzlite/project.yaml` | `language: rust` (the only field the tooling reads) |
 | `.clusterfuzzlite/Dockerfile` | Twin of `oss-fuzz/Dockerfile`; `COPY`s the checkout instead of cloning main |
 | `.clusterfuzzlite/build.sh` | Shim that `exec`s `oss-fuzz/build.sh`, so the two bundles cannot drift |
-| `.github/workflows/clusterfuzzlite-pr.yml` | On PRs touching `crates/`, `bindings/`, the bundles: 600 s of `code-change` fuzzing under ASan |
+| `.github/workflows/clusterfuzzlite-pr.yml` | On PRs touching `crates/`, `bindings/`, the bundles: 300 s of `code-change` fuzzing under ASan, split across the selected targets (about 7.5 s each when all 40 are selected): a smoke run, not exploration |
 | `.github/workflows/clusterfuzzlite-batch.yml` | Daily 04:00 UTC (and `workflow_dispatch`): 3600 s batch fuzz, corpus prune (2400 s, split across the targets as a per-target floor), coverage report |
 
 A crash in the PR job fails the check and attaches the reproducer as a run

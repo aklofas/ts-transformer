@@ -67,8 +67,11 @@ merge commit, and the qualification run checks that nothing under
    ```bash
    bash scripts/check/repo/release-version-consistency.sh
    ```
-   It must report all-consistent at the release version before you tag. The
-   same rail runs in CI on the tag and gates both publish workflows.
+   It must report all-consistent at the release version before you tag. `ci`
+   runs on pushes to `main` and on pull requests, never on a tag; it enforces
+   that the six sources agree. Each of the three publish workflows runs the
+   same rail on the tag and also requires the tag to be `vMAJOR.MINOR.PATCH`
+   and equal to the source version.
 
    The rail does **not** cover everything the version sweep must touch —
    also update by hand:
@@ -127,8 +130,10 @@ merge commit, and the qualification run checks that nothing under
    `ci-health` run's `ALERT` lines all have a row there; one that does not is
    a finding to settle before the soak starts.
 5. **Dry-run the wheels:**
-   `gh workflow run python-wheels.yml` builds every wheel + sdist and skips
-   publish (publish is tag-gated). Confirm all legs are green, and watch for a
+   `gh workflow run python-wheels.yml --ref <ref>` builds every wheel + sdist
+   and skips publish (publish is tag-gated). `<ref>` is a branch or tag whose
+   head is the frozen commit (the same rule as step 6's `--dispatch-wheels`);
+   a bare dispatch builds the default branch's tip, not the candidate. Confirm all legs are green, and watch for a
    leg sitting *queued* — that is the v0.1.0 failure mode.
 6. **The release VM.** One dedicated cloud VM runs the corpus phase and then
    the soak, both on the frozen commit. Four scripts under `scripts/interop/`
@@ -294,11 +299,11 @@ merge commit, and the qualification run checks that nothing under
     The run's bundle holds `qualification.json`, the rendered
     `qualification.md`, `TREE-EQUIVALENCE.txt`, the SBOMs, `SHA256SUMS`, the
     build attestations and the C package. Download it from the run's
-    artefacts. `TREE-EQUIVALENCE.txt` names the soaked and the qualified
-    commit (and the tag on a tag push), shows that nothing under `crates/` or
-    `bindings/` changed between them, and lists every path that did; the
-    record's `release_vm.soak.equivalence` lists the release documents among
-    them.
+    artefacts. `TREE-EQUIVALENCE.txt` lists the collector's decision: the
+    soaked and qualified commits (and the tag on a tag push), every path that
+    differs, the release documents among them, and the paths outside the
+    release documents (none for a GO). The record's
+    `release_vm.soak.equivalence` lists the release documents too.
 11. **Commit the record.** In a docs-only PR, add the run's
     `qualification.json` as `docs/project/qualification.json` (CI's
     `check-qualification` step verifies the page matches it) and render the
@@ -356,9 +361,9 @@ merge commit, and the qualification run checks that nothing under
       tree both records name in `release_vm`, and the equivalence file shows
       that tree differs from the qualified one in release documents only.
 
-    A red nightly `ci` run on the release tip is rerun
-    (`gh run rerun <id> --failed`) or explained before tagging, because the
-    tag-time qualification reads the latest `ci` run on the sha.
+    The tag-time qualification reads the newest `push` or `workflow_dispatch`
+    `ci` run on the sha, which is the record PR's merge push. A red one is
+    rerun (`gh run rerun <id> --failed`) or fixed before tagging.
 
 ## Release procedure
 
