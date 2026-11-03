@@ -70,7 +70,8 @@ public final class ManagedReceiver extends NativeHandle {
      * @return a connected {@code ManagedReceiver}
      * @throws SrtException {@code CONFIG_INVALID} if the policy is zero backoff with unlimited
      *     attempts (refused before connecting), or if the URL is malformed or
-     *     uses a non-listener mode; {@code BROKEN} on initial bind failure
+     *     uses a non-listener mode; {@code BROKEN} on an initial bind or accept failure (including an
+     *     accept timeout)
      */
     public static ManagedReceiver fromUrl(String url, ReconnectPolicy policy) throws SrtException {
         PolicyArgs p = PolicyArgs.from(policy);
