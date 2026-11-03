@@ -28,6 +28,7 @@ from tstrans.exceptions import RtpError, RtpErrorKind, SrtError, SrtErrorKind
 from tstrans.mpegts import DemuxEvent, Muxer, MuxerConfigBuilder, Pts90khz
 
 from _builders.mux_programs import video_only_program as _video_only_program
+from _builders.srt_pair import make_srt_pair as _make_srt_pair
 from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port as _free_udp_port
 from test_exit_with_parked_shell import _run
@@ -50,40 +51,6 @@ def _build_minimal_ts_bytes() -> bytes:
             break
         out.extend(scratch[:n])
     return bytes(out)
-
-
-# --------------------------------------------------------------------------- #
-# SRT loopback harness (mirror of test_srt_mux_demux.py)                      #
-# --------------------------------------------------------------------------- #
-
-
-def _make_srt_pair(
-    port: int,
-) -> Tuple[tstrans.shells.MuxSender, tstrans.shells.DemuxReceiver]:
-    listener_url = f"srt://:{port}?mode=listener"
-    caller_url = f"srt://127.0.0.1:{port}?mode=caller"
-
-    rx_box: list[tstrans.shells.DemuxReceiver] = []
-    rx_err: list[BaseException] = []
-
-    def accept_worker() -> None:
-        try:
-            rx_box.append(shells.DemuxReceiver.open(listener_url))
-        except BaseException as exc:  # noqa: BLE001
-            rx_err.append(exc)
-
-    t = threading.Thread(target=accept_worker, daemon=True)
-    t.start()
-    time.sleep(0.1)
-    sender = shells.MuxSender.open(caller_url, _video_only_program())
-    t.join(timeout=5.0)
-    if rx_err:
-        sender.close()
-        raise rx_err[0]
-    if not rx_box:
-        sender.close()
-        raise RuntimeError("SRT DemuxReceiver did not accept within 5 s")
-    return sender, rx_box[0]
 
 
 # --------------------------------------------------------------------------- #

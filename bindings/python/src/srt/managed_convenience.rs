@@ -38,6 +38,7 @@ use pyo3::prelude::*;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned};
 use tst_pipeline::{
     ManagedDemuxReceiver as RustManagedDemuxReceiver, ManagedTransport, MuxSender as RustMuxSender,
+    TsBytesDemuxedHandle,
 };
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
@@ -641,7 +642,7 @@ pub(crate) struct PyManagedDemuxReceiver {
     /// Live receiver behind a mutex so a concurrent `__next__` /
     /// `close()` from different Python threads serialise cleanly.
     /// `Option` so `close()` can take + drop the inner shell.
-    owned: Owned<RustManagedDemuxReceiver<SrtTransport>>,
+    owned: Owned<RustManagedDemuxReceiver<SrtTransport>, TsBytesDemuxedHandle>,
     /// Cancel handle pulled from the receiver at construction. Held
     /// outside the mutex so `close()` can fire it BEFORE acquiring the
     /// lock — wakes any thread parked in `__next__`'s `recv_event`,
@@ -714,8 +715,10 @@ impl PyManagedDemuxReceiver {
         })
         .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         let cancel = CancelSource::new(handles.cancel);
+        let ts_bytes = receiver.ts_bytes_demuxed_handle();
         Ok(Self {
-            owned: Owned::new(receiver, cancel.as_dyn(), ()).with_end_reason(handles.end_reason),
+            owned: Owned::new(receiver, cancel.as_dyn(), ts_bytes)
+                .with_end_reason(handles.end_reason),
             cancel,
             attempts: handles.attempts,
         })
@@ -829,6 +832,13 @@ impl PyManagedDemuxReceiver {
         Ok(last_seen
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_micros() as u64))
+    }
+
+    /// Aligned TS bytes the demuxer has been fed, across reconnects.
+    /// Returns the last value after `close()` and never waits for a
+    /// parked `__next__`.
+    fn ts_bytes_demuxed(&self) -> u64 {
+        self.owned.snapshot().get()
     }
 
     /// Why this receive session ended — a `tstrans.shells.EndReason`

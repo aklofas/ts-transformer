@@ -35,6 +35,7 @@ use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
+    TsBytesDemuxedHandle,
 };
 
 use crate::generated::stats_mpegts::MuxerStats;
@@ -112,7 +113,7 @@ pub(crate) struct PyDemuxReceiver {
     /// `recv_event` holds the slot only inside `with_mut`, under
     /// `py.detach`; `close()` (cancel-first) ends it instead of
     /// waiting behind it.
-    owned: Owned<RustDemuxReceiver<Box<dyn RecvTransport>>, Snapshot<()>>,
+    owned: Owned<RustDemuxReceiver<Box<dyn RecvTransport>>, Snapshot<TsBytesDemuxedHandle>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
     /// First exception raised by a registered byte sink (see
@@ -163,12 +164,13 @@ impl PyDemuxReceiver {
             None => RustDemuxReceiver::new(transport),
             Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
         };
+        let ts_bytes = receiver.ts_bytes_demuxed_handle();
         let mut owned = Owned::new(
             receiver,
             cancel.as_dyn(),
             Snapshot {
                 domain,
-                handles: (),
+                handles: ts_bytes,
             },
         );
         if let Some(h) = end_reason {
@@ -461,6 +463,13 @@ impl PyDemuxReceiver {
             }),
         )?;
         Py::new(py, SocketStats::from(&core))
+    }
+
+    /// Aligned TS bytes the demuxer has been fed. Unchanged by `stats()`
+    /// reads, returns the last value after `close()`, and never waits for
+    /// a parked `__next__`.
+    fn ts_bytes_demuxed(&self) -> u64 {
+        self.owned.snapshot().handles.get()
     }
 
     /// Tuple of `(SocketStats, MuxerStats)`. Same shape as
