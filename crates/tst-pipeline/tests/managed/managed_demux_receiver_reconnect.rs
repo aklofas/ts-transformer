@@ -124,6 +124,55 @@ fn connection_drops_mid_ts_packet_reconnect_resyncs_cleanly() {
     assert_eq!(rx.reconnects_count(), 1);
 }
 
+/// The reconnect splice drop is not counted: after one reconnect the
+/// transport-layer `bytes_received` exceeds the demuxer-fed counter by
+/// exactly the one dropped packet.
+#[test]
+fn managed_demux_receiver_reconnect_splice_is_not_counted() {
+    let p1_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet_tei(0x0100, i as u8)).collect();
+    let mut p1 = pack_chunk(&p1_packets);
+    p1.extend_from_slice(&[0x47, 0xAA, 0xBB, 0xCC]);
+    p1.extend_from_slice(&[0xDE; 46]);
+
+    let inner = ScriptedRecv::new(vec![p1], broken("phase 1 ended (test)")).with_max_payload(4096);
+    let calls = Arc::new(AtomicU32::new(0));
+    let calls_cl = calls.clone();
+    let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
+        let n = calls_cl.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            let p2: Vec<[u8; 188]> = (0..5).map(|i| ts_packet_tei(0x0200, i as u8)).collect();
+            Ok(
+                ScriptedRecv::new(vec![pack_chunk(&p2)], broken("phase 2 ended (test)"))
+                    .with_max_payload(4096),
+            )
+        } else {
+            Err(broken("no more rebuilds"))
+        }
+    });
+    let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
+        .expect("the policy validates");
+    let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
+
+    let mut fed = 0u64;
+    let mut iters = 0;
+    loop {
+        iters += 1;
+        assert!(iters < 1000, "test loop should bound");
+        match rx.recv_event() {
+            Ok(Some(DemuxEvent::NonConformant {
+                issue: tst_core::mpegts::demux::NonConformantIssue::TransportErrorPacket { .. },
+                ..
+            })) => fed += 1,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+    assert!(fed >= 5, "fed = {fed}");
+    assert_eq!(rx.reconnects_count(), 1);
+    assert_eq!(rx.ts_bytes_demuxed(), 188 * fed);
+    assert_eq!(rx.stats().bytes_received - rx.ts_bytes_demuxed(), 188);
+}
+
 // ---------------------------------------------------------------------------
 // Test 2 — Reconnect discontinuity event IS surfaced to caller
 // ---------------------------------------------------------------------------

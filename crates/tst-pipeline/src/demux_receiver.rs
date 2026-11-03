@@ -156,6 +156,10 @@ pub struct DemuxReceiver<R: RecvTransport> {
     ts: Receiver<R>,
     demux: Demuxer,
     byte_sinks: Vec<ByteSink>,
+    /// Aligned TS bytes handed to the demuxer; see
+    /// [`DemuxReceiver::ts_bytes_demuxed`].
+    #[cfg(feature = "std")]
+    ts_bytes_demuxed: Arc<AtomicU64>,
     /// Set when a terminal transport error (`TransportBroken` / `Closed`)
     /// is observed but `Demuxer::flush` produced queued events first — the
     /// events drain through `recv_event`'s normal fast path on subsequent
@@ -168,6 +172,21 @@ pub struct DemuxReceiver<R: RecvTransport> {
     /// Lifetime span — see [`crate::shell_error::ShellSpan`] for the
     /// unwind-safe rationale. Private; never exposed publicly.
     _span: crate::shell_error::ShellSpan,
+}
+
+/// Reader for [`DemuxReceiver::ts_bytes_demuxed`] that does not borrow the
+/// shell. Obtain it with [`DemuxReceiver::ts_bytes_demuxed_handle`].
+#[cfg(feature = "std")]
+#[derive(Clone, Debug)]
+pub struct TsBytesDemuxedHandle(Arc<AtomicU64>);
+
+#[cfg(feature = "std")]
+impl TsBytesDemuxedHandle {
+    /// Current value of the counter.
+    #[must_use]
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
 }
 
 impl<R: RecvTransport> core::fmt::Debug for DemuxReceiver<R> {
@@ -200,6 +219,8 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             ts: Receiver::new(transport, ReceiverConfig::default()),
             demux: Demuxer::with_config(options),
             byte_sinks: Vec::new(),
+            #[cfg(feature = "std")]
+            ts_bytes_demuxed: Arc::new(AtomicU64::new(0)),
             terminal_error: None,
             #[cfg(feature = "std")]
             reconnect_epoch: None,
@@ -214,6 +235,34 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// registered; each sees the same bytes.
     pub fn add_byte_sink(&mut self, sink: ByteSink) {
         self.byte_sinks.push(sink);
+    }
+
+    /// Total aligned TS bytes this shell has handed to its demuxer, in
+    /// multiples of 188. Lock-free; never takes the shell, so it can be read
+    /// from another thread while a `recv_event` is parked.
+    ///
+    /// - Counted: every aligned packet fed to the demuxer, including ones a
+    ///   strict-mode demuxer then rejects.
+    /// - Not counted: bytes the syncer is still holding, bytes it skipped
+    ///   before locking, and the one packet a managed shell drops at a
+    ///   reconnect.
+    /// - Monotonic from creation: `reset_stats`, a reconnect, `cancel` and
+    ///   `close` never lower it, so it can exceed
+    ///   [`DemuxReceiverStats::bytes_received`] after a reset or reconnect.
+    ///
+    /// Absent without the `std` feature.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn ts_bytes_demuxed(&self) -> u64 {
+        self.ts_bytes_demuxed.load(Ordering::Relaxed)
+    }
+
+    /// A cheap, cloneable reader of [`Self::ts_bytes_demuxed`] that outlives
+    /// the shell and reads without touching it.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn ts_bytes_demuxed_handle(&self) -> TsBytesDemuxedHandle {
+        TsBytesDemuxedHandle(Arc::clone(&self.ts_bytes_demuxed))
     }
 
     /// Drop the syncer's buffered bytes and the demuxer's PSI/PES/CC state
@@ -449,6 +498,14 @@ impl<R: RecvTransport> DemuxReceiver<R> {
                 self.reset_for_reconnect();
                 continue;
             }
+            // Counted here, after the splice drop above: a dropped packet
+            // never reaches this line. Strict-mode rejections below still
+            // count, since the packet was handed to the demuxer.
+            #[cfg(feature = "std")]
+            self.ts_bytes_demuxed.fetch_add(
+                tst_core::mpegts::common::TS_PACKET_SIZE as u64,
+                Ordering::Relaxed,
+            );
             // Fan-out to byte sinks in registration order before demuxing.
             for sink in &mut self.byte_sinks {
                 sink(&pkt);
@@ -756,15 +813,64 @@ mod stats_tests {
         let st = r.stats();
         assert!(st.packets_received > 0, "packets were counted");
         assert!(!st.per_stream.is_empty(), "the stream was counted");
+        #[cfg(feature = "std")]
+        let n = {
+            let n = r.ts_bytes_demuxed();
+            assert!(n > 0);
+            assert_eq!(n, st.bytes_received);
+            n
+        };
 
         r.reset_stats();
         let st = r.stats();
         assert_eq!(st.packets_received, 0);
         assert_eq!(st.bytes_received, 0);
         assert!(st.per_stream.is_empty());
+        #[cfg(feature = "std")]
+        assert_eq!(r.ts_bytes_demuxed(), n, "reset_stats leaves the counter");
 
         // A later access unit still demuxes (parser state kept); the last
         // read carries no PSI.
         while !is_sample(&r.recv_event().unwrap().expect("a sample after the reset")) {}
+        #[cfg(feature = "std")]
+        assert!(r.ts_bytes_demuxed() > n);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn ts_bytes_demuxed_handle_outlives_the_shell() {
+        let (first, second) = two_reads_of_one_stream();
+        let mut r = DemuxReceiver::new(CannedRecv {
+            chunks: VecDeque::from([first, second]),
+            alive: true,
+        });
+        let h = r.ts_bytes_demuxed_handle();
+        while r.recv_event().unwrap().is_some() {}
+        let recorded = r.ts_bytes_demuxed();
+        assert!(recorded > 0);
+        drop(r);
+        assert_eq!(h.get(), recorded);
+        assert_eq!(recorded % 188, 0);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn ts_bytes_demuxed_is_zero_before_sync_lock() {
+        let mut bytes = Vec::new();
+        for _ in 0..3 {
+            let mut p = [0xFFu8; 188];
+            p[0] = 0x47;
+            p[1] = 0x1F;
+            p[2] = 0xFF;
+            p[3] = 0x10;
+            bytes.extend_from_slice(&p);
+        }
+        bytes.extend_from_slice(&[0xAB; 100]);
+        let mut r = DemuxReceiver::new(CannedRecv {
+            chunks: VecDeque::from([bytes]),
+            alive: true,
+        });
+        assert!(r.recv_event().unwrap().is_none());
+        assert_eq!((r.ts_bytes_demuxed(), r.stats().bytes_received), (0, 0));
     }
 }

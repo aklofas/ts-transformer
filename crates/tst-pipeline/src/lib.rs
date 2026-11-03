@@ -121,6 +121,8 @@ pub mod sender;
 pub mod shell_error;
 
 // Top-level re-exports of the most common types.
+#[cfg(feature = "std")]
+pub use demux_receiver::TsBytesDemuxedHandle;
 pub use demux_receiver::{
     ByteSink, DemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource, DemuxReceiverStats,
 };

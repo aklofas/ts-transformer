@@ -213,3 +213,97 @@ fn managed_receive_reconnects_through_factory() {
     assert_eq!(buf[0], 0x47);
     assert!(*attempts.lock().unwrap() >= 1);
 }
+
+// ---------------------------------------------------------------------------
+// The counter is readable while a `recv_event` is parked.
+// ---------------------------------------------------------------------------
+
+/// Serves its chunks, then blocks until the shared flag is set (by the
+/// cancel handle) and reports `Closed`.
+struct ParkingRecv {
+    chunks: VecDeque<Vec<u8>>,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RecvTransport for ParkingRecv {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        if let Some(v) = self.chunks.pop_front() {
+            let n = v.len().min(buf.len());
+            buf[..n].copy_from_slice(&v[..n]);
+            return Ok(n);
+        }
+        while !self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        Err(TransportError::Closed)
+    }
+
+    fn max_payload(&self) -> usize {
+        1316
+    }
+
+    fn is_alive(&self) -> bool {
+        true
+    }
+
+    fn close(&mut self) {}
+
+    fn cancel_handle(
+        &self,
+    ) -> Option<std::sync::Arc<dyn tst_core::transport::TransportCancel + Send + Sync>> {
+        Some(std::sync::Arc::new(crate::common::FlagCancel(
+            self.cancelled.clone(),
+        )))
+    }
+}
+
+/// A reader of the counter never takes the shell slot: it finishes while
+/// another thread is parked inside `recv_event`.
+#[test]
+fn ts_bytes_demuxed_reads_while_a_recv_event_is_parked() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    let mut m = build_and_preload_muxer();
+    let (chunks, _) = drain_to_chunks(&mut m, 1316);
+    let all: Vec<u8> = chunks.into_iter().flatten().collect();
+    // The syncer locks on 4 aligned packets, then releases every packet it
+    // verified, so five served packets are all counted.
+    let served = all[..188 * 5].to_vec();
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let rx = DemuxReceiver::new(ParkingRecv {
+        chunks: VecDeque::from([served]),
+        cancelled: cancelled.clone(),
+    });
+    let handle = rx.ts_bytes_demuxed_handle();
+    let cancel: Arc<dyn tst_core::transport::TransportCancel> =
+        Arc::new(crate::common::FlagCancel(cancelled));
+    let owned = Arc::new(tst_pipeline::binding::Owned::new(
+        rx,
+        cancel,
+        handle.clone(),
+    ));
+
+    let o = owned.clone();
+    let a = std::thread::spawn(move || {
+        let _ = o.with_mut(|rx| while rx.recv_event().is_ok_and(|e| e.is_some()) {});
+    });
+
+    assert!(
+        crate::common::wait_for(Duration::from_secs(10), || owned.snapshot().get()
+            == 5 * 188),
+        "counter = {}",
+        owned.snapshot().get()
+    );
+    assert!(!a.is_finished(), "thread A must still be parked");
+
+    let o = owned.clone();
+    let reader = std::thread::spawn(move || o.snapshot().get());
+    assert!(crate::common::wait_for(Duration::from_secs(10), || reader.is_finished()));
+    assert_eq!(reader.join().unwrap(), 5 * 188);
+
+    owned.cancel();
+    a.join().unwrap();
+}
