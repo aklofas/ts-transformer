@@ -1,4 +1,4 @@
-//! `peer_idle_timeout` (`SRTO_PEERIDLETIMEO`): zero is refused, a listener's
+//! `peer_idle_timeout` (`SRTO_PEERIDLETIMEO`): a value below one millisecond is refused, a listener's
 //! value reaches its accepted sockets, and a caller's value is applied
 //! before connect.
 
@@ -22,26 +22,30 @@ fn peer_idle_timeout_ms(handle: srt_sys::SRTSOCKET) -> i32 {
 }
 
 #[test]
-fn zero_is_refused_on_caller_and_listener() {
+fn below_one_millisecond_is_refused_on_caller_and_listener() {
     require_loopback!();
     // libsrt accepts 0 and then breaks the connection on the first timer
     // tick, so the option layer refuses it before anything is dialled.
-    let caller = SrtSocketBuilder::new()
-        .peer_idle_timeout(Duration::ZERO)
-        .connect("127.0.0.1:9");
-    assert!(
-        matches!(caller, Err(SrtConnectError::InvalidOption(_))),
-        "caller: {:?}",
-        caller.err()
-    );
-    let listener = SrtListenerBuilder::new()
-        .peer_idle_timeout(Duration::ZERO)
-        .bind("127.0.0.1:0");
-    assert!(
-        matches!(listener, Err(BindError::InvalidOption(_))),
-        "listener: {:?}",
-        listener.err()
-    );
+    // A positive sub-millisecond duration truncates to 0 ms, so it is
+    // refused as well.
+    for value in [Duration::ZERO, Duration::from_micros(1)] {
+        let caller = SrtSocketBuilder::new()
+            .peer_idle_timeout(value)
+            .connect("127.0.0.1:9");
+        assert!(
+            matches!(caller, Err(SrtConnectError::InvalidOption(_))),
+            "caller {value:?}: {:?}",
+            caller.err()
+        );
+        let listener = SrtListenerBuilder::new()
+            .peer_idle_timeout(value)
+            .bind("127.0.0.1:0");
+        assert!(
+            matches!(listener, Err(BindError::InvalidOption(_))),
+            "listener {value:?}: {:?}",
+            listener.err()
+        );
+    }
 }
 
 #[test]

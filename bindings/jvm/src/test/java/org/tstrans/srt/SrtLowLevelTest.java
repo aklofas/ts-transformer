@@ -1,6 +1,8 @@
 package org.tstrans.srt;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.isLinux;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
 
@@ -149,6 +151,7 @@ class SrtLowLevelTest {
      */
     @Test
     void positivePeerIdleTimeoutAcceptedOnLoopback() throws Exception {
+        assumeTrue(isLinux(), "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
         try (var lst = new Builder("srt://127.0.0.1:0?mode=listener").listener()
                 .peerIdleTimeoutMs(8000).listen()) {
             int port = lst.localAddr().port();
