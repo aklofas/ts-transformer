@@ -30,8 +30,10 @@ pub(crate) const REDACTED: &str = "<redacted>";
 ///
 /// The input need not be a valid URL. A `scheme://` span is scrubbed whole.
 /// It runs to the end of the input, or, when it opens right after a quote,
-/// to the last matching quote before the next URL; with no such quote it
-/// runs to the end of the input. Text outside any such span is scrubbed one
+/// to the last matching quote before the next URL opened by the same quote,
+/// when that quote ends the text or is followed by a separator, `,`, `;`,
+/// `.`, `:` or a closing bracket. Otherwise it runs to that next URL, or to
+/// the end of the input. Text outside any such span is scrubbed one
 /// whitespace- (ASCII or U+00A0) or quote-delimited token at a time.
 ///
 /// The scrub is a heuristic that errs toward redacting, so malformed text
@@ -41,7 +43,10 @@ pub(crate) const REDACTED: &str = "<redacted>";
 /// - a raw `?` before the last `@` is password text, so `srt://h:1?mail=a@b`
 ///   loses `1?mail=a`;
 /// - text after a quoted URL, up to the last matching quote, is treated as
-///   part of the URL, so `'srt://h?token=x' can't` loses `x' can`.
+///   part of the URL, so `'srt://h?token=x' or 'y'` loses `x' or 'y`;
+/// - when that last quote is followed by other text, the URL runs on to the
+///   next quoted URL or the end, so `'srt://h?token=x' can't` loses
+///   everything after `token=`.
 ///
 /// One residual is not covered: a password or a secret value that itself
 /// holds a quote, a space and a quote before a scheme
@@ -89,7 +94,24 @@ fn closing_quote(s: &str, from: usize, q: char) -> usize {
         }
         search = after_scheme;
     }
-    s[from..limit].rfind(q).map_or(s.len(), |n| from + n)
+    let Some(n) = s[from..limit].rfind(q) else {
+        return s.len();
+    };
+    let i = from + n;
+    // A quote followed by more text (`'srt://u:p'w@h`) sits inside a
+    // password or a value; closing there would leave the rest visible.
+    if i + 1 == limit || s[i + 1..].chars().next().is_none_or(follows_closing_quote) {
+        i
+    } else {
+        limit
+    }
+}
+
+/// Characters that may follow the quote that closes a quoted URL: a token
+/// separator, `,`, `;`, `.`, `:` or a closing bracket. The Java `Redact`
+/// uses the identical set.
+fn follows_closing_quote(c: char) -> bool {
+    is_separator(c) || matches!(c, ',' | ';' | '.' | ':' | ')' | ']' | '}')
 }
 
 /// Byte offsets of the next `scheme://` at or after `from`: where the scheme
