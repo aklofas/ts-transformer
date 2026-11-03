@@ -830,6 +830,21 @@ fn apply_common_options(
     if let Some(d) = opts.linger {
         set_linger(handle, d)?;
     }
+    if let Some(d) = opts.peer_idle_timeout {
+        // SRTO_PEERIDLETIMEO is a PRE option: set before connect or on the
+        // listening socket, and accepted sockets inherit it. libsrt accepts
+        // 0, after which the connection breaks on the first timer tick.
+        if d.is_zero() {
+            return Err(OptionError::OutOfRange(
+                "peer_idle_timeout must be greater than zero".into(),
+            ));
+        }
+        set_int(
+            handle,
+            srt_sys::SRT_SOCKOPT_SRTO_PEERIDLETIMEO,
+            duration_to_ms(d),
+        )?;
+    }
     if let Some(d) = opts.peer_latency {
         set_int(
             handle,
