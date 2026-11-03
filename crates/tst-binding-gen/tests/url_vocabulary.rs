@@ -911,6 +911,7 @@ const SRT_PARSE: &[Row] = &[
             ("x-recvtimeout", "none"),
             ("x-sendtimeout", "none"),
             ("conntimeo", "none"),
+            ("peeridletimeo", "none"),
             ("linger", "none"),
             ("udprcvbuf", "none"),
             ("udpsndbuf", "none"),
@@ -1355,9 +1356,17 @@ const SRT_PARSE: &[Row] = &[
         ),
     ),
     (
-        "srt://192.0.2.10:9000?peeridletimeo=1",
+        "srt://192.0.2.10:9000?peeridletimeo=2500",
+        A(&[("peeridletimeo", "2500")]),
+    ),
+    (
+        "srt://192.0.2.10:9000?peeridletimeo=0",
+        R("invalid value for 'peeridletimeo': must be positive, got 0"),
+    ),
+    (
+        "srt://192.0.2.10:9000?peeridletimeo=-1",
         R(
-            "option 'peeridletimeo' (libsrt SRTO_PEERIDLETIMEO) is recognized but not yet exposed by this library; see deferred-features.md",
+            "invalid value for 'peeridletimeo': expected a decimal integer without sign or leading zeros, got '-1'",
         ),
     ),
     (
@@ -1520,6 +1529,7 @@ fn effective_srt(url: &str) -> Effective {
         ("x-recvtimeout", ms(cfg.recv_timeout)),
         ("x-sendtimeout", ms(cfg.send_timeout)),
         ("conntimeo", ms(cfg.connect_timeout)),
+        ("peeridletimeo", ms(cfg.peer_idle_timeout)),
         ("linger", secs(cfg.linger)),
         ("udprcvbuf", show(&cfg.udp_recv_buffer_bytes)),
         ("udpsndbuf", show(&cfg.udp_send_buffer_bytes)),
