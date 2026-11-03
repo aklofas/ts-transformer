@@ -156,6 +156,7 @@ class Builder:
         connect_timeout_ms: Optional[int] = ...,
         recv_timeout_ms: Optional[int] = ...,
         send_timeout_ms: Optional[int] = ...,
+        peer_idle_timeout_ms: Optional[int] = ...,
     ) -> Builder: ...
 
     # Mode setters — chainable.
@@ -171,6 +172,17 @@ class Builder:
     def connect_timeout_ms(self, ms: int) -> Builder: ...
     def recv_timeout_ms(self, ms: int) -> Builder: ...
     def send_timeout_ms(self, ms: int) -> Builder: ...
+    def peer_idle_timeout_ms(self, ms: int) -> Builder:
+        """`SRTO_PEERIDLETIMEO` in milliseconds: how long the connection may
+        hear nothing from the peer before it breaks (libsrt default 5000).
+
+        libsrt breaks a silent connection only after the idle time has
+        elapsed and more than 16 expiry timers (about 5 s) have fired, so
+        values below about 5 s do not detect a silent peer sooner; raise it
+        for links whose loss bursts outlast the default. Zero is refused when
+        the socket is configured (`SrtError`, `CONFIG_INVALID`). Also accepted
+        as the `peer_idle_timeout_ms` constructor kwarg.
+        """
     def peer_latency_ms(self, ms: int) -> Builder: ...
     def recv_latency_ms(self, ms: int) -> Builder: ...
     def max_bandwidth_bps(self, bps: int) -> Builder: ...

@@ -5340,3 +5340,11 @@ owning_tests = ["crates/tst-core/src/url/redact.rs", "bindings/jvm/src/test/java
 bindings = ["c:n/a(the C binding returns error codes and copies no URL text through this helper; no C twin)", "python:n/a(internal: the binding's reprs and error text call it; no Python-visible symbol)", "java:org.tstrans.Redact.url", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
+
+[[exempt]]
+item = "tst_srt::builder::SrtSocketBuilder::peer_idle_timeout"
+reason = "caller builder setter for the peer idle timeout; Python reaches it as Builder.peer_idle_timeout_ms, the JVM as Builder.peerIdleTimeoutMs, URLs as the peeridletimeo key"
+
+[[exempt]]
+item = "tst_srt::builder::SrtListenerBuilder::peer_idle_timeout"
+reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the same Builder knob and a listener URL's peeridletimeo key"

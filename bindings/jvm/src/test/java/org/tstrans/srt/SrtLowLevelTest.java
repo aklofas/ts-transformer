@@ -124,4 +124,36 @@ class SrtLowLevelTest {
         var e = assertThrows(SrtException.class, b::connect);
         assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
+
+    /** A zero peer-idle timeout is refused when the socket is configured. */
+    @Test
+    void zeroPeerIdleTimeoutRefusedOnConnectAndListen() {
+        var c = assertThrows(SrtException.class,
+            () -> new Builder("srt://127.0.0.1:9000").caller().peerIdleTimeoutMs(0).connect());
+        assertEquals(SrtException.Kind.CONFIG_INVALID, c.kind());
+        var l = assertThrows(SrtException.class,
+            () -> new Builder("srt://127.0.0.1:0?mode=listener").listener().peerIdleTimeoutMs(0).listen());
+        assertEquals(SrtException.Kind.CONFIG_INVALID, l.kind());
+    }
+
+    @Test
+    void negativePeerIdleTimeoutRejected() {
+        assertThrows(IllegalArgumentException.class,
+            () -> new Builder("srt://127.0.0.1:9000").peerIdleTimeoutMs(-1));
+    }
+
+    /** A positive peer-idle timeout is applied on both ends of a loopback connection. */
+    @Test
+    void positivePeerIdleTimeoutAcceptedOnLoopback() throws Exception {
+        try (var lst = new Builder("srt://127.0.0.1:0?mode=listener").listener()
+                .peerIdleTimeoutMs(8000).listen()) {
+            int port = lst.localAddr().port();
+            try (var sock = new Builder("srt://127.0.0.1:" + port).caller()
+                    .peerIdleTimeoutMs(8000).connect();
+                 var accepted = lst.accept(5000)) {
+                assertNotNull(accepted);
+                assertNotNull(sock);
+            }
+        }
+    }
 }

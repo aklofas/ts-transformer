@@ -290,3 +290,40 @@ def test_url_value_overrides_kwarg_value() -> None:
     # rejected the value). TIMEOUT/CONNECT_FAILED means we got past
     # config to the actual handshake.
     assert exc_info.value.kind in (SrtErrorKind.TIMEOUT, SrtErrorKind.CONNECT_FAILED)
+
+
+# --------------------------------------------------------------------------- #
+# peer_idle_timeout_ms                                                        #
+# --------------------------------------------------------------------------- #
+
+
+def test_zero_peer_idle_timeout_is_refused_on_connect_and_listen() -> None:
+    """Zero is refused when the socket is configured, as CONFIG_INVALID."""
+    with pytest.raises(SrtError) as caller:
+        tstrans.srt.Builder("srt://127.0.0.1:9000", peer_idle_timeout_ms=0).connect()
+    assert caller.value.kind == SrtErrorKind.CONFIG_INVALID
+    with pytest.raises(SrtError) as lst:
+        tstrans.srt.Builder("srt://127.0.0.1:0?mode=listener").peer_idle_timeout_ms(0).listen()
+    assert lst.value.kind == SrtErrorKind.CONFIG_INVALID
+
+
+def test_negative_peer_idle_timeout_is_rejected() -> None:
+    with pytest.raises(OverflowError):
+        tstrans.srt.Builder("srt://127.0.0.1:9000").peer_idle_timeout_ms(-1)
+
+
+def test_positive_peer_idle_timeout_is_applied_on_loopback() -> None:
+    """Both ends set the knob (kwarg and chained setter) and still connect."""
+    with tstrans.srt.Builder("srt://127.0.0.1:0?mode=listener").peer_idle_timeout_ms(8000).listen() as lst:
+        _, port = lst.local_addr()
+        box: list[tstrans.srt.Socket] = []
+        t = threading.Thread(target=lambda: box.append(lst.accept(timeout_ms=5000)), daemon=True)
+        t.start()
+        sock = tstrans.srt.Builder(f"srt://127.0.0.1:{port}", peer_idle_timeout_ms=8000).connect()
+        t.join(timeout=5.0)
+        try:
+            assert box and sock.is_alive() and box[0].is_alive()
+        finally:
+            sock.close()
+            for a in box:
+                a.close()

@@ -307,8 +307,8 @@ def _wait_until_parked(progress: list[int], what: str, budget_s: float = 20.0) -
     worker's send loop is then parked inside one native call.
 
     A fixed short sleep is not enough: libsrt only marks a caller socket
-    Broken after its 5 s peer-idle timeout, and `?peeridletimeo=` is on
-    tst-srt's rejected-URL-keys list, so for ~5 s after the peer drop the
+    Broken after its 5 s peer-idle timeout, and `?peeridletimeo=` cannot
+    shorten that window below about 5 s, so for ~5 s after the peer drop the
     sender happily keeps sending into the void. Closing in that window
     would land between two sends and prove nothing.
     """
