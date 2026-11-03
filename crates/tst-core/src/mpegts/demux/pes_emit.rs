@@ -312,9 +312,21 @@ impl super::demuxer::Demuxer {
         let pid = pes.pid;
         let damaged = damage.is_some();
         let mut damage = damage;
+        // A reset signalled while this PES was in flight may precede its
+        // cells, so the AU in progress belongs to the old source: discard it
+        // before the walk, or a Last cell after the reset would complete it.
+        // The flag's position is not kept, so a Last cell wholly before the
+        // flag in this PES is dropped with it.
+        if self
+            .pid_state
+            .get(&pid)
+            .is_some_and(|state| state.source_reset_after_pes)
+        {
+            self.discard_au_in_progress(pid);
+        }
         self.emit_complete_pes(pes, &mut damage, gap);
-        // Judged on its own clock above; a pending reset applies from the
-        // next PES on.
+        // Judged on its own clock above; the rest of a pending reset applies
+        // from the next PES on.
         self.settle_after_pes(pid);
         if let Some(reason) = damage {
             let stream = self
@@ -3037,6 +3049,11 @@ mod tests {
 
         /// One PES (stream_id 0xFC, PTS 90 000) carrying `cells` back to back.
         fn cells_pes(cc: u8, cells: &[(CellFragmentIndication, u8, &[u8])]) -> Vec<[u8; 188]> {
+            pes_to_packets(0x101, cc, &cells_pes_bytes(cells))
+        }
+
+        /// The bytes of the PES `cells_pes` packetizes.
+        fn cells_pes_bytes(cells: &[(CellFragmentIndication, u8, &[u8])]) -> Vec<u8> {
             let mut body = Vec::new();
             for &(cfi, seq, inner) in cells {
                 let header = AuCellHeader {
@@ -3048,11 +3065,7 @@ mod tests {
                 };
                 write_metadata_au_cell(&mut body, header, inner).unwrap();
             }
-            pes_to_packets(
-                0x101,
-                cc,
-                &pes_bytes(0xFC, Some(90_000), None, true, &body, true),
-            )
+            pes_bytes(0xFC, Some(90_000), None, true, &body, true)
         }
 
         fn metadata_count(ev: &[DemuxEvent]) -> usize {
@@ -3154,6 +3167,79 @@ mod tests {
             for (name, pkts) in [("pusi", flagged), ("adaptation-only", af_only)] {
                 let ev = run(StrictMode::Off, &pkts);
                 assert_eq!(metadata_count(&ev), 0, "{name}: {ev:?}");
+                assert_eq!(sequence_gaps(&ev), vec![3], "{name}: {ev:?}");
+            }
+        }
+
+        /// The flag rides a continuation packet of the PES whose Last cell
+        /// would complete the old source's AU: PES B's PUSI packet carries
+        /// only its 14-byte PES header and the next packet carries the cell,
+        /// so the whole cell arrives after the reset. The flag either sits on
+        /// that continuation packet or on an adaptation-only packet between
+        /// the two. The AU in progress is discarded before B is walked; a
+        /// Complete cell in the PES after B still emits.
+        #[test]
+        fn a_discontinuity_on_a_continuation_packet_discards_the_au_in_progress() {
+            let a = cells_pes(0, &[(First, 10, b"AAA")]);
+            let b = cells_pes_bytes(&[(Last, 11, b"BBB")]);
+            let (b_header, b_cell) = b.split_at(14);
+            let b_start = ts_packet(&PktSpec {
+                pid: 0x101,
+                cc: 1,
+                pusi: true,
+                payload: b_header,
+                ..Default::default()
+            });
+            let b_cont = |cc, discontinuity| {
+                ts_packet(&PktSpec {
+                    pid: 0x101,
+                    cc,
+                    discontinuity,
+                    payload: b_cell,
+                    ..Default::default()
+                })
+            };
+            let with_c = |mut pkts: Vec<[u8; 188]>, cc| {
+                pkts.extend(cells_pes(cc, &[(Complete, 12, b"CCC")]));
+                pkts
+            };
+            let mut on_continuation = a.clone();
+            on_continuation.extend([b_start, b_cont(2, true)]);
+            let mut adaptation_only = a.clone();
+            adaptation_only.extend([
+                b_start,
+                ts_packet(&PktSpec {
+                    pid: 0x101,
+                    cc: 9,
+                    discontinuity: true,
+                    ..Default::default()
+                }),
+                b_cont(9, false),
+            ]);
+            let mut control = a;
+            control.extend([b_start, b_cont(2, false)]);
+
+            let payloads = |ev: &[DemuxEvent]| -> Vec<Vec<u8>> {
+                ev.iter()
+                    .filter_map(|e| match e {
+                        DemuxEvent::Metadata { payload, .. } => Some(payload.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let ev = run(StrictMode::Off, &with_c(control, 3));
+            assert_eq!(
+                payloads(&ev),
+                vec![b"AAABBB".to_vec(), b"CCC".to_vec()],
+                "{ev:?}"
+            );
+            assert!(sequence_gaps(&ev).is_empty(), "{ev:?}");
+            for (name, pkts) in [
+                ("continuation", with_c(on_continuation, 3)),
+                ("adaptation-only", with_c(adaptation_only, 10)),
+            ] {
+                let ev = run(StrictMode::Off, &pkts);
+                assert_eq!(payloads(&ev), vec![b"CCC".to_vec()], "{name}: {ev:?}");
                 assert_eq!(sequence_gaps(&ev), vec![3], "{name}: {ev:?}");
             }
         }
