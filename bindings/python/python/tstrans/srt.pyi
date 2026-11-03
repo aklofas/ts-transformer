@@ -181,11 +181,11 @@ class Builder:
         libsrt breaks a silent connection only after the idle time has
         elapsed and more than 16 expiry timers (about 5 s) have fired, so
         values below about 5 s do not detect a silent peer sooner; raise it
-        for links whose loss bursts outlast the default. Zero, sub-millisecond
-        values and values above 2147483 ms (libsrt multiplies the value by
-        1000 into an int) are refused when the socket is configured
-        (`SrtError`, `CONFIG_INVALID`). Also accepted
-        as the `peer_idle_timeout_ms` constructor kwarg.
+        for links whose loss bursts outlast the default. Zero and values
+        above 2147483 ms (libsrt multiplies the value by 1000 into an int)
+        are refused when the socket is configured (`SrtError`,
+        `CONFIG_INVALID`). Also accepted as the `peer_idle_timeout_ms`
+        constructor kwarg.
         """
     def peer_latency_ms(self, ms: int) -> Builder: ...
     def recv_latency_ms(self, ms: int) -> Builder: ...

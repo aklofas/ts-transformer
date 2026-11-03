@@ -68,7 +68,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-core, tst-jni
 
 - `redact_url` no longer panics on a multi-byte character directly before a `scheme://` (reachable from the Python and JVM shell opens with an unsupported scheme), and redacts conservatively where a password's end is ambiguous: a raw `?` before the last `@` is treated as part of the userinfo, and a quoted URL runs to the last matching quote before the next URL opened by the same quote character, so text after a quoted URL may be redacted with it. A password or secret value that itself contains a quote, a space and a quote before a scheme is still not protected. Java `Redact.url` follows the same rules.
-- `Debug` of `ParsedUrl` and `UrlError` no longer prints the URL password or secret query values.
 
 ### Fixed — tst-core
 
@@ -101,6 +100,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Python reprs and error text no longer print URL passwords or the values of the `passphrase`, `secret`, `token`, `auth_pass`, `password`, `streamid` and `srt_streamid` query keys; each shows `<redacted>` instead. This covers the RIST, SRT, TCP and UDP builders, `RtspClientConfig` and the transport open errors, including the unsupported-scheme errors. Java `toString()` and exception text does the same for `RtspClientConfig`, `RtspServerConfig` and `WhepServerConfig`.
 - Stream-ID values in an SRT `AccessControl` (Rust `Debug`, Python repr) are redacted; the keys stay visible.
 - Rust `Debug` for `HlsConfig`, the WHEP bearer-token request holder and the SRT `AccessControl`, `StreamId` and socket types never prints a password, token or stream-ID value. The `InvalidPort` URL error redacts a port that is not digits, since a mistyped URL can put a password there. The shared helper is `tst_core::url::redact_url`.
+- Rust `Debug` of `ParsedUrl` and `UrlError` no longer prints the URL password or secret query values. Every release through 0.9.0 is affected: both types derived `Debug` since 0.1.0.
 - The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
 ### Changed — tst-hls (BREAKING)
 
