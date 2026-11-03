@@ -19,6 +19,10 @@ package org.tstrans;
  * password text, so {@code srt://h:1?mail=a@b} loses {@code 1?mail=a}; text after a quoted URL,
  * up to the last matching quote, is treated as part of the URL, so {@code 'srt://h?token=x' can't}
  * loses {@code x' can}.
+ *
+ * <p>One residual is not covered: a password that itself holds a quote, a space and a quote
+ * before a scheme ({@code 'srt://u:x' 'y://z@h'}) reads as two quoted URLs, so the first part of
+ * it stays visible.
  */
 public final class Redact {
     private static final String[] SECRET_KEYS =
@@ -56,17 +60,17 @@ public final class Redact {
 
     /**
      * Where a span opened by quote {@code q} ends: the last {@code q} at or after {@code from}
-     * and before the next URL, not counting the {@code q} that opens that URL; the end of the
-     * input when there is no such {@code q}. Stopping before the next URL keeps a second quoted
-     * URL its own span.
+     * and before the next URL that is itself opened by {@code q}, not counting that opening
+     * {@code q}; the end of the input when there is no such {@code q}. Stopping there keeps a
+     * second quoted URL its own span, while a bare scheme-looking word inside the quoted text (a
+     * password holding {@code y://}) does not end it.
      */
     private static int closingQuote(String s, int from, char q) {
-        int[] next = nextUrl(s, from);
         int limit = s.length();
-        if (next != null) {
-            limit = next[0];
-            if (limit > 0 && s.charAt(limit - 1) == q) {
-                limit--;
+        for (int[] next = nextUrl(s, from); next != null; next = nextUrl(s, next[1])) {
+            if (next[0] > 0 && s.charAt(next[0] - 1) == q) {
+                limit = next[0] - 1;
+                break;
             }
         }
         int i = s.lastIndexOf(q, limit - 1);
