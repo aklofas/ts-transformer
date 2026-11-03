@@ -1,34 +1,15 @@
 //! A handled signal that interrupts a parked RTP receive (EINTR) must not
 //! end the transport. Unix only: Winsock has no EINTR.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use crate::ports::free_rtp_port_base;
+use crate::signal::{DELIVERED, install_handler};
 use tst_core::transport::{RecvTransport, Transport};
 use tst_rtp::{RtpRecvTransport, RtpTransport};
-
-static DELIVERED: AtomicUsize = AtomicUsize::new(0);
-
-extern "C" fn on_sigusr1(_: libc::c_int) {
-    DELIVERED.fetch_add(1, Ordering::SeqCst);
-}
-
-/// Install a SIGUSR1 handler WITHOUT `SA_RESTART`, so an interrupted
-/// `recvfrom` returns `EINTR` on every Unix (Linux returns it even with
-/// `SA_RESTART` once `SO_RCVTIMEO` is set; macOS needs the flag absent).
-fn install_handler() {
-    // SAFETY: a zeroed sigaction is valid; the handler touches one atomic.
-    unsafe {
-        let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = on_sigusr1 as *const () as usize;
-        sa.sa_flags = 0;
-        libc::sigemptyset(&mut sa.sa_mask);
-        assert_eq!(libc::sigaction(libc::SIGUSR1, &sa, std::ptr::null_mut()), 0);
-    }
-}
 
 #[test]
 fn recv_survives_a_handled_signal_and_delivers_the_next_datagram() {

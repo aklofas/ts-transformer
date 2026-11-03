@@ -35,6 +35,9 @@ mod recv_timeout;
 #[path = "rtsp_client/setup_play.rs"]
 mod setup_play;
 #[cfg(unix)]
+#[path = "fixtures/signal.rs"]
+mod signal;
+#[cfg(unix)]
 #[path = "rtsp_client/signal_interrupt.rs"]
 mod signal_interrupt;
 #[path = "rtsp_client/stream_end_reason.rs"]
