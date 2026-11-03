@@ -181,14 +181,16 @@ merge commit, and the qualification run checks that nothing under
      `--accept <sha256> --because <text>`.
    - From a machine with an authenticated `gh`,
      `release-vm-soak.sh ci-green <full sha> ubuntu@<vm> --dispatch-wheels <ref>`
-     dispatches the wheels dry run and creates `~/ci-green` on the VM once
-     `ci`, `jvm-jar` and `python-wheels` have each succeeded on the commit.
+     dispatches the wheels dry run and, once the newest push or dispatch run of
+     `ci`, `jvm-jar` and `python-wheels` has succeeded on the commit, writes the
+     sha into `~/ci-green` on the VM.
      `<ref>` is a branch or tag whose head is the frozen commit (`main`
      while it still points there; otherwise push one, for example
      `git push origin <sha>:refs/heads/release/X.Y.Z`): a workflow dispatch
      takes no commit, and the script refuses a ref that has moved on.
    - On the VM, `release-vm-soak.sh launch <full sha> --outdir ~/soak-X.Y.Z
-     --wait-marker ~/ci-green` waits for that marker, runs the pre-flight
+     --wait-marker ~/ci-green` waits for that marker and refuses one written for another commit, so a
+     reused VM cannot launch on a stale marker, then runs the pre-flight
      (soak.sh's own memory gate and the rtsp-publish disk rule, which needs
      1.2 × the pre-generated stream's peak free — about 141 GiB for 72 hours),
      launches `soak.sh` detached so no session limit can end it, and reports
