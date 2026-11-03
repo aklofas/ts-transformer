@@ -95,8 +95,8 @@ impl PyBackoffStrategy {
             RustBackoff::Constant(_) => "constant",
             RustBackoff::Exponential { .. } => "exponential",
             // `BackoffStrategy` is non-exhaustive; a strategy this binding
-            // predates reads as the default shape.
-            _ => "exponential",
+            // predates is reported as unknown.
+            _ => "unknown",
         }
     }
 
