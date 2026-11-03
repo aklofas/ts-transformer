@@ -353,10 +353,13 @@ impl Pairer {
     /// leave unpaired (`UnpairedKlv`, `UnpairedVideo`) when their PTS lies
     /// within two seconds of the newest PTS before the flag (for KLV, of the
     /// newest KLV or video PTS). A new clock that lands within two seconds of
-    /// the old one loses that one pairing the same way. A flag on a PCR-only
-    /// PID that is not the video program's PCR PID, and an encoder restart that
-    /// signals nothing (a silent clock jump), are invisible to the pairer: call
-    /// [`Self::flush`] at that boundary yourself.
+    /// the old one loses its first KLV sample (every frame until the next sample
+    /// is unpaired) and its first video frame the same way. A flag on any other
+    /// PID, and an encoder restart that signals nothing (a silent clock jump),
+    /// are invisible to the pairer: call [`Self::flush`] at that boundary
+    /// yourself. The video program's PCR PID counts only when that PID also
+    /// carries an elementary stream; a PID that carries only PCR produces no
+    /// demuxer event, so call [`Self::flush`] at such a restart.
     ///
     /// # Example
     ///
@@ -395,7 +398,8 @@ impl Pairer {
     }
 
     /// Drain remaining state at end-of-stream. Idempotent; it drops the KLV
-    /// history and every epoch marker, so the next `feed` starts fresh.
+    /// history and every epoch marker, so the next `feed` starts fresh; the
+    /// program's PCR PID is kept.
     pub fn flush(&mut self) -> Vec<PairerOutput> {
         let outputs = match &mut self.state {
             PairerState::Nearest(s) => s.flush(),

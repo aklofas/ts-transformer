@@ -12,7 +12,9 @@
 //! or the PCR PID of the program carrying the video (learned from its
 //! `ProgramMap`); never-used entries leave as `UnpairedKlv` ahead of the
 //! passed-through event. A flag on any other PID, and a silent restart, are
-//! invisible: the caller flushes.
+//! invisible: the caller flushes. The PCR PID counts only when that PID also
+//! carries an elementary stream; a PID that carries only PCR produces no
+//! demuxer event, so the caller flushes at such a restart.
 //!
 //! A signalled discontinuity does not end the PES in flight on the KLV or
 //! video PID: it completes after the flag, on the old clock its header was
@@ -24,8 +26,9 @@
 //! rarely or on change, and a flag before any KLV); a video sample, within
 //! [`OLD_CLOCK_WINDOW`] of the newest video PTS. Each leaves as `UnpairedKlv`
 //! or `UnpairedVideo`, and a KLV one does not enter the history. A new clock
-//! that lands within the window of the old one loses that one pairing the same
-//! way.
+//! that lands within the window of the old one loses its first KLV sample
+//! (every frame until the next sample is unpaired) and its first video frame
+//! the same way.
 
 use super::types::{KlvSample, PairerOutput, VideoSample};
 use std::collections::VecDeque;
