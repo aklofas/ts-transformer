@@ -255,9 +255,10 @@ impl RtspClient {
     ///    (and by the time left on the request deadline), so each
     ///    `WouldBlock`/`TimedOut` round-trip is a cancel-check
     ///    opportunity, and a read interrupted by a handled signal
-    ///    (`Interrupted`) is retried the same way. Holding the lock through the whole exchange
-    ///    means the keepalive thread waits if a request is in flight —
-    ///    correct since RTSP isn't pipelined.
+    ///    (`Interrupted`) is retried the same way. Holding the lock
+    ///    through the whole exchange means the keepalive thread waits
+    ///    if a request is in flight — correct since RTSP isn't
+    ///    pipelined.
     ///
     /// 2. **Pump active** (TCP-interleaved post-SETUP): writes happen
     ///    under the stream mutex (briefly, then released). The response
