@@ -692,7 +692,7 @@ and it keeps its last value after close. The C getters are
 | The packet read across a reconnect (managed), and bytes the sync reset drops | not counted | the packet counted, the dropped bytes not |
 | After a reconnect | continues from the old value | continues |
 | `reset_stats()` | unchanged | back to 0 |
-| Read while another thread is parked in `recv_event` | returns at once | waits for the slot (bindings) |
+| Read while another thread is parked in `recv_event` | returns at once | `stats()` waits for the slot (bindings) |
 | After cancel or close | last value (C: the pointer is freed at close) | as before |
 | `--no-default-features` | absent | available |
 

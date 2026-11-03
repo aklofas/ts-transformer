@@ -1268,13 +1268,15 @@ try (DemuxReceiver rx = DemuxReceiver.open("srt://:9000?mode=listener")) {
 ### Raw stream access: `tsBytesDemuxed` and `Receiver` + `Demuxer`
 
 `rx.tsBytesDemuxed()` returns the aligned TS bytes the receiver fed its
-demuxer. It never waits on the receive slot: it answers while `next()` is
-parked on another thread and returns the last value after `close()`.
+demuxer. It answers while `next()` is parked and never waits on the receive
+slot, and returns the last value after `close()`.
 
 To record or forward the raw packets, pull them from a `Receiver` and feed a
 `Demuxer` yourself. Each chunk is a whole number of 188-byte packets:
 
 ```java
+// import org.tstrans.TcpException; org.tstrans.mpegts.{Demuxer, DemuxEvent};
+// org.tstrans.shells.Receiver
 try (Receiver rx = Receiver.open("tcp://127.0.0.1:9000");
      Demuxer demux = new Demuxer()) {
     try {
