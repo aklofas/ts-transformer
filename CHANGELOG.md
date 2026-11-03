@@ -11,7 +11,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-srt, tst-py, tst-jni
 
-- `SrtSocketConfig::peer_idle_timeout` (`SRTO_PEERIDLETIMEO`), the matching setter on `SrtSocketBuilder` and `SrtListenerBuilder`, the `peeridletimeo` URL key (milliseconds), Python `peer_idle_timeout_ms` and JVM `peerIdleTimeoutMs`; the C package takes it through the URL. libsrt breaks a silent connection only after the idle time has elapsed and more than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not detect a silent peer sooner; raise it for links whose loss bursts outlast the default, and keep it well above the burst length or healthy connections break. `crates/srt-sys/README.md` gains a recipe for cross-compiling to aarch64 from an x86_64 Linux host.
+- `SrtSocketConfig::peer_idle_timeout` (`SRTO_PEERIDLETIMEO`), the matching setter on `SrtSocketBuilder` and `SrtListenerBuilder`, the `peeridletimeo` URL key (milliseconds), Python `peer_idle_timeout_ms` and JVM `peerIdleTimeoutMs`; the C package takes it through the URL. libsrt breaks a silent connection only after the idle time has elapsed and more than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not detect a silent peer sooner; raise it for links whose loss bursts outlast the default, and keep it well above the burst length or healthy connections break.
 
 ### Security — tst-rist, tst-py
 
@@ -27,10 +27,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A listener with a passphrase (builder, URL or config field) admitted a handshake-v4 SRT caller (libsrt before 1.3.0) that never sent key material, so that caller connected unencrypted (every release since 0.1.0, which already had `SrtListenerBuilder::passphrase`). The listener now refuses every handshake-v4 caller wherever a passphrase applies, including a legacy encoder that holds the right passphrase and would have keyed after connecting: libsrt admits a v4 caller that never keys and the listen hook cannot tell the two apart. The listener refuses it with `RejectReason::VersionUnsupported` (1505) internally; no reject code reaches a v4 caller, which sees the connection closed. Upgrade such a caller to libsrt 1.3 or later. The same refusal applies where an `AcceptWith` listen rule decides the caller (the listen rules are unreleased, so only unreleased code was affected). Earlier releases (0.1.0 to 0.9.0) have no library-level workaround: a passphrase listener there admits a handshake-v4 caller that never keys, so do not expose it to untrusted networks, or upgrade.
 - A handshake that carried its stream ID twice, or a stream ID with an interior NUL, could make the listen rules decide on a different identity than the one `SrtSocket::stream_id()` reported. The listen rules are unreleased, so only unreleased code was affected. The vendored libsrt now refuses a handshake with a repeated stream-ID block, and `accept` closes any accepted socket whose stream ID differs from the one the rules matched and keeps waiting, which also covers a host libsrt. The libsrt patch ships in `tstrans-srt-sys`; `embedded/freertos-srt` builds pristine libsrt without it (it has no listener rules).
 
-### Changed — tst-srt, tst-py, tst-jni (BREAKING)
+### Changed — tst-srt, tst-py, tst-jni, tst-c (BREAKING)
 
 - A listener with a passphrase refuses every handshake-v4 caller (see Security above); a v4 caller that relied on a passphrase listener must move to libsrt 1.3 or later.
 - `StreamId::new`, `ListenRules::set` and the `?streamid=` URL key refuse a stream ID or rule key holding a NUL byte (`StreamIdError::InteriorNul`, `ListenRuleError::InteriorNul`; `ListenRules::remove` of such a key returns `false`; Python and JVM report `CONFIG_INVALID`). libsrt's listen hook sees the stream ID as a C string, so a NUL-bearing ID could never match its own rule.
+- `connect_timeout` (`conntimeo`, `connect_timeout_ms`, `connectTimeoutMs`) is now the budget for the whole connect, shared across the addresses the host resolves to: each address gets the remaining time divided by the addresses left. A host with several addresses gives each less than the full timeout; a single-address host is unchanged. Since 0.1.0 each address received the full timeout, so a silent first address could cost the timeout once per address. libsrt checks a blocking connect's deadline about once a second, so each attempt against a silent address costs at least one second, and a budget below about a second per address may not reach a later address. The C package takes the change through the `conntimeo` URL key. Workaround: a multi-address host whose first address is live but slow may now time out where it connected before; raise `connect_timeout` to cover every address, or connect to a literal address.
 
 ### Changed — tst-core, tst-py, tst-jni, tst-c (BREAKING)
 
@@ -275,7 +276,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An unset `key_length` no longer writes `SRTO_PBKEYLEN`, so libsrt negotiates the length: a passphrase-only sender now adopts a peer's AES-256 instead of forcing AES-128. `KeyLength::default()` is still `Aes128`.
 - A malformed percent escape in a URL query now fails with an error that names the offset and the key, never the value. The same holds for `rist://` URLs.
 - A repeated URL key has every occurrence validated, so an invalid one anywhere is an error; the last valid one still wins.
-- `connect_timeout` (`conntimeo`, `connect_timeout_ms`, `connectTimeoutMs`) is now the budget for the whole connect, shared across the addresses the host resolves to: each address gets the remaining time divided by the addresses left. A host with several addresses gives each less than the full timeout; a single-address host is unchanged. Since 0.1.0 each address received the full timeout, so a silent first address could cost the timeout once per address. libsrt checks a blocking connect's deadline about once a second, so each attempt against a silent address costs at least one second, and a budget below about a second per address may not reach a later address.
 
 ### Changed — tst-rist
 
@@ -369,6 +369,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Docs — project pages
 
+- `crates/srt-sys/README.md` (`tstrans-srt-sys`) gains a recipe for cross-compiling to aarch64 from an x86_64 Linux host.
 - `docs/project/release-findings.md` is a new ledger of defects that escaped the release qualification, each with the class of test that now covers it, seeded with the 0.9.0 escapes.
 - `docs/project/real-capture-testing.md` describes the annotation bounds, `klv-missing`, the baseline manifest and the replay's restart and pacing counts; `docs/project/releasing.md` the one-time manifest repair of an older baseline, the corpus baseline's promotion under the tag's name, and the crates.io rehearsal.
 

@@ -654,8 +654,8 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `maxrexmitbw` (`SRTO_MAXREXMITBW`), `messageapi` (`SRTO_MESSAGEAPI`),
   `mininputbw` (`SRTO_MININPUTBW`), `minversion` (`SRTO_MINVERSION`),
   `nakreport` (`SRTO_NAKREPORT`), `retransmitalgo`
-  (`SRTO_RETRANSMITALGO`), `snddropdelay` (`SRTO_SNDDROPDELAY`), `transtype` (`SRTO_TRANSTYPE`), `tsbpdmode`
-  (`SRTO_TSBPDMODE`).
+  (`SRTO_RETRANSMITALGO`), `snddropdelay` (`SRTO_SNDDROPDELAY`), `transtype`
+  (`SRTO_TRANSTYPE`), `tsbpdmode` (`SRTO_TSBPDMODE`).
 - **Why deferred:** Each key needs a new `SrtSocketBuilder` setter on
   `tst-srt` (the Category C keys `enforcedencryption` / `kmrefreshrate` /
   `kmpreannounce` / `iptos` / `ipttl` / `snddropdelay` / `transtype` /

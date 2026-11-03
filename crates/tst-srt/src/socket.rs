@@ -242,9 +242,13 @@ impl SrtSocket {
                 // can overrun its share by up to a second; the next share
                 // comes from the time actually left.
                 let share = deadline.saturating_duration_since(Instant::now()) / left;
-                // A 0 ms SRTO_CONNTIMEO would still cost libsrt's one-second
-                // poll: a spent budget ends the walk instead of dialling.
-                if duration_to_ms(share) == 0 {
+                // The first address is always dialled, with whatever is left.
+                // A later address with nothing left is not: a 0 ms
+                // SRTO_CONNTIMEO would still cost libsrt's one-second poll,
+                // so a spent budget ends the walk. A sub-round-trip budget
+                // does not make the dial succeed (libsrt fails it after the
+                // induction reply, srtcore/core.cpp).
+                if index > 0 && duration_to_ms(share) == 0 {
                     return Err(last_err.unwrap_or(SrtConnectError::TimedOut));
                 }
                 Some(share)
