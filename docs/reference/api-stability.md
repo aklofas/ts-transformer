@@ -32,9 +32,10 @@ status.
 
 `#[doc(hidden)]` modules, such as tst-webrtc's `server::http` and
 `server::negotiate`, are test seams and stay hidden. Their growable enums
-carry `#[non_exhaustive]` like any other. `WhepServer::bind_with_clock` is
-the one named exception: a supplied `Clock` runs user code on the media
-thread, so it is a test-only entry point and not part of the supported API.
+carry `#[non_exhaustive]` like any other. No library entry point runs user
+code on a library thread, with one named exception: `WhepServer::bind_with_clock`
+takes a `Clock` that runs on the media thread, so it is a test-only entry
+point and not part of the supported API.
 
 ## Classification table
 

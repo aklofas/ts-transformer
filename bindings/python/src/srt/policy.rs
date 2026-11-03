@@ -177,14 +177,18 @@ impl From<PyOverflowPolicy> for RustOverflow {
     }
 }
 
-impl From<RustOverflow> for PyOverflowPolicy {
-    fn from(p: RustOverflow) -> Self {
+impl TryFrom<RustOverflow> for PyOverflowPolicy {
+    type Error = PyErr;
+
+    fn try_from(p: RustOverflow) -> PyResult<Self> {
         match p {
-            RustOverflow::DropOldest => PyOverflowPolicy::DROP_OLDEST,
-            RustOverflow::Reject => PyOverflowPolicy::REJECT,
-            // `OverflowPolicy` is non-exhaustive; a policy this binding
-            // predates reads as the default.
-            _ => PyOverflowPolicy::DROP_OLDEST,
+            RustOverflow::DropOldest => Ok(PyOverflowPolicy::DROP_OLDEST),
+            RustOverflow::Reject => Ok(PyOverflowPolicy::REJECT),
+            // `OverflowPolicy` is non-exhaustive: a policy this binding
+            // predates is an error, never a silent default.
+            _ => Err(pyo3::exceptions::PyValueError::new_err(
+                "unknown overflow policy",
+            )),
         }
     }
 }
@@ -323,8 +327,8 @@ impl PyReconnectPolicy {
 
     /// What to do when the gap buffer is full during an outage.
     #[getter]
-    pub fn overflow_policy(&self) -> PyOverflowPolicy {
-        self.inner.overflow_policy.into()
+    pub fn overflow_policy(&self) -> PyResult<PyOverflowPolicy> {
+        self.inner.overflow_policy.try_into()
     }
 
     /// Where the reconnect loop runs: `ReconnectMode.BLOCKING` (default,
@@ -343,7 +347,7 @@ impl PyReconnectPolicy {
         let overflow_repr = match self.inner.overflow_policy {
             RustOverflow::DropOldest => "OverflowPolicy.DROP_OLDEST",
             RustOverflow::Reject => "OverflowPolicy.REJECT",
-            _ => "OverflowPolicy.DROP_OLDEST",
+            _ => "OverflowPolicy(<unknown>)",
         };
         let mode_repr = match self.inner.mode {
             RustReconnectMode::Blocking => "ReconnectMode.BLOCKING",

@@ -51,7 +51,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-core, tst-pipeline, tst-rtp, tst-hls, tst-webrtc (BREAKING)
 
-- `DemuxEvent`, `StreamStats`, `BackoffStrategy`, `ReconnectPolicy`, `OverflowPolicy`, the pipeline stats records (`RawReceiverStats`, `SenderStats`, `RawSenderStats`, `ReceiverStats`, `DemuxReceiverStats`, `MuxSenderStats`), `MountRule`, `RtcpStats`, `HlsMode`, `WhepUrl` and the WHEP server's hidden HTTP seam types (`Method`, `HeadParse`, `Route`, `Negotiated`) are now `#[non_exhaustive]`, so a new variant or field is no longer a breaking change. Outside the defining crate a struct literal (functional update included) and an exhaustive `match` no longer compile. Migration: build a `ReconnectPolicy` with `ReconnectPolicy::default()` and the new chainable `with_max_attempts`, `with_backoff`, `with_gap_buffer_capacity`, `with_overflow_policy` and `with_mode` setters; build a stats record with `T::default()` and field assignment; add a wildcard arm to a `match` on an enum.
+- `DemuxEvent`, `StreamStats`, `BackoffStrategy`, `ReconnectPolicy`, `OverflowPolicy`, the pipeline stats records (`RawReceiverStats`, `SenderStats`, `RawSenderStats`, `ReceiverStats`, `DemuxReceiverStats`, `MuxSenderStats`), `MuxerStats`, `DemuxerStats`, `PairerStats`, `MountRule`, `RtcpStats`, `HlsMode`, `WhepUrl` and the WHEP server's hidden HTTP seam types (`Method`, `HeadParse`, `Route`, `Negotiated`) are now `#[non_exhaustive]`, so a new variant or field is no longer a breaking change. Outside the defining crate a struct literal (functional update included) and an exhaustive `match` no longer compile. Migration: build a `ReconnectPolicy` with `ReconnectPolicy::default()` and the new chainable `with_max_attempts`, `with_backoff`, `with_gap_buffer_capacity`, `with_overflow_policy` and `with_mode` setters; build a stats record with `T::default()` and field assignment; add a wildcard arm to a `match` on an enum; build a `MountRule` with `MountRule::new` and a `WhepUrl` with `WhepUrl::parse`.
 
 ### Changed — tst-rtp (BREAKING)
 
@@ -294,7 +294,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-py
 
-- `BackoffStrategy.base_ms` and `max_ms` raise `ValueError` for a backoff strategy the binding does not know; they previously returned 0.
 - The RIST sender and receiver builders apply `profile()` and `encryption()` in call order, so `.encryption(k).profile(RistProfile.SIMPLE)` now raises `RistError(INVALID_CONFIG)` at build where it used to build an encrypted Main-profile peer; `.profile(RistProfile.SIMPLE).encryption(k)` still builds Main.
 
 ### Changed — tst-udp

@@ -1187,10 +1187,9 @@ pub(crate) fn shell_muxer_stats(
     ts_bytes_emitted: u64,
     programs_configured: u64,
 ) -> tst_core::mpegts::mux::MuxerStats {
-    tst_core::mpegts::mux::MuxerStats {
-        ts_packets_emitted,
-        ts_bytes_emitted,
-        programs_configured: u32::try_from(programs_configured).unwrap_or(u32::MAX),
-        ..Default::default()
-    }
+    let mut stats = tst_core::mpegts::mux::MuxerStats::default();
+    stats.ts_packets_emitted = ts_packets_emitted;
+    stats.ts_bytes_emitted = ts_bytes_emitted;
+    stats.programs_configured = u32::try_from(programs_configured).unwrap_or(u32::MAX);
+    stats
 }

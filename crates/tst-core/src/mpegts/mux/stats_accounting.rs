@@ -29,6 +29,7 @@ crate::binding_record! {
     /// can always index by a known PID without first checking for key
     /// presence.
     #[must_use]
+    #[non_exhaustive]
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
     pub struct MuxerStats {
         /// Total 188-byte TS packets drained from the muxer.

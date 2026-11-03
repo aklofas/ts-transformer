@@ -23,6 +23,7 @@ crate::binding_record! {
     /// receiver discovers topology rather than configuring it up front. PSI
     /// PIDs (PAT 0x0000, active PMT PID) get hardcoded labels "PAT" / "PMT".
     #[must_use]
+    #[non_exhaustive]
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
     pub struct DemuxerStats {
         /// Number of `ProgramMap` events emitted (one per PMT version seen).

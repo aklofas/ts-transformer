@@ -152,16 +152,19 @@ jni_native! {
         _class,
     ) -> jobjectArray = std::ptr::null_mut() => {
         let build = |env: &mut Env| -> jni::errors::Result<jobjectArray> {
+            let named: Vec<(i32, &'static str)> = RejectReason::PREDEFINED
+                .iter()
+                .filter_map(|reason| Some((reason.raw(), reason.name()?)))
+                .collect();
             let rows = env.new_object_array(
-                RejectReason::PREDEFINED.len() as i32,
+                named.len() as i32,
                 FindClass(jni_str!("java/lang/String")),
                 JObject::null(),
             )?;
-            for (i, reason) in RejectReason::PREDEFINED.iter().enumerate() {
-                let name = reason.name().unwrap_or_default();
+            for (i, (raw, name)) in named.iter().enumerate() {
                 // One frame per row so the String locals do not pile up.
                 env.with_local_frame(4, |inner| -> jni::errors::Result<()> {
-                    let row = inner.new_string(format!("{} {name}", reason.raw()))?;
+                    let row = inner.new_string(format!("{raw} {name}"))?;
                     rows.set_element(inner, i, &row)
                 })?;
             }

@@ -469,13 +469,11 @@ impl PyManagedMuxSender {
                     })
             }),
         )?;
-        let mux_stats = tst_core::mpegts::mux::MuxerStats {
-            ts_packets_emitted: pipe.packets_sent,
-            ts_bytes_emitted: pipe.bytes_sent,
-            programs_configured: pipe.programs_configured,
-            subtitle_streams_configured: 0,
-            per_stream: pipe.per_stream,
-        };
+        let mut mux_stats = tst_core::mpegts::mux::MuxerStats::default();
+        mux_stats.ts_packets_emitted = pipe.packets_sent;
+        mux_stats.ts_bytes_emitted = pipe.bytes_sent;
+        mux_stats.programs_configured = pipe.programs_configured;
+        mux_stats.per_stream = pipe.per_stream;
         let sock_py = Py::new(py, SocketStats::from(&sock))?;
         let mux_py = Py::new(py, MuxerStats::from(&mux_stats))?;
         Ok((sock_py, mux_py))

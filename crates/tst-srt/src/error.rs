@@ -851,6 +851,24 @@ mod tests {
     }
 
     #[test]
+    fn predefined_table_covers_every_typed_code_in_the_range() {
+        for raw in 1000..2000 {
+            let reason = RejectReason::from_raw(raw);
+            if matches!(reason, RejectReason::Other(_)) {
+                continue;
+            }
+            assert!(
+                RejectReason::PREDEFINED.contains(&reason),
+                "code {raw} maps to {reason:?} but is missing from PREDEFINED"
+            );
+            assert!(reason.name().is_some(), "code {raw} has no name");
+        }
+        for entry in RejectReason::PREDEFINED {
+            assert_eq!(RejectReason::from_raw(entry.raw()), entry);
+        }
+    }
+
+    #[test]
     fn validation_error_displays() {
         let e = PassphraseError::InvalidLength(5);
         assert_eq!(

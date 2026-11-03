@@ -1160,7 +1160,7 @@ impl core::marker::Unpin for tst_pipeline::ext::pairing::PairerConfig
 impl core::marker::UnsafeUnpin for tst_pipeline::ext::pairing::PairerConfig
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::ext::pairing::PairerConfig
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::ext::pairing::PairerConfig
-pub struct tst_pipeline::ext::pairing::PairerStats
+#[non_exhaustive] pub struct tst_pipeline::ext::pairing::PairerStats
 pub tst_pipeline::ext::pairing::PairerStats::paired: u64
 pub tst_pipeline::ext::pairing::PairerStats::pass_through: u64
 pub tst_pipeline::ext::pairing::PairerStats::unpaired_klv: u64
