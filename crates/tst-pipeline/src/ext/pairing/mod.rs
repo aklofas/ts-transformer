@@ -343,22 +343,20 @@ impl Pairer {
     /// The KLV history is cleared when the demuxer signals a new time base: at
     /// `DemuxEvent::ReconnectDiscontinuity` (emitted by `ManagedDemuxReceiver`
     /// after a reconnect) and at a `Discontinuity { kind: AdaptationFieldFlag }`
-    /// on the video or KLV PID (a set `discontinuity_indicator`, H.222.0
-    /// §2.4.3.5). Entries that never paired are emitted as `UnpairedKlv` ahead
-    /// of the passed-through event, so old-clock metadata cannot attach to a
-    /// new-clock frame. The video frame in flight at a signalled discontinuity
-    /// on the video PID is emitted unpaired: the demuxer reports the flag
-    /// before the flagged packet completes that frame. An encoder restart that signals neither (a silent clock
-    /// jump) is invisible to the pairer: call [`Self::flush`] at that boundary
-    /// yourself.
+    /// on the video PID, the KLV PID or the PCR PID of the program carrying the
+    /// video (a set `discontinuity_indicator`, H.222.0 §2.4.3.5; the PCR PID is
+    /// learned from that program's `ProgramMap`). Entries that never paired are
+    /// emitted as `UnpairedKlv` ahead of the passed-through event.
     ///
-    /// A KLV PES in flight at a signalled discontinuity completes after it with
-    /// a PTS on the old clock. The first KLV sample after the flag whose PTS is
-    /// within two seconds of the newest KLV or video PTS before it is taken to be that
-    /// PES and emitted as `UnpairedKlv` without entering the history. The video
-    /// PES in flight is old the same way, whichever PID carried the flag: the
-    /// first video sample after the flag whose PTS is within two seconds of the
-    /// newest video PTS before it is emitted as `UnpairedVideo`.
+    /// The PES in flight at a flag completes after it on the old clock. The
+    /// first KLV sample and the first video sample completing after a flag
+    /// leave unpaired (`UnpairedKlv`, `UnpairedVideo`) when their PTS lies
+    /// within two seconds of the newest PTS before the flag (for KLV, of the
+    /// newest KLV or video PTS). A new clock that lands within two seconds of
+    /// the old one loses that one pairing the same way. A flag on a PCR-only
+    /// PID that is not the video program's PCR PID, and an encoder restart that
+    /// signals nothing (a silent clock jump), are invisible to the pairer: call
+    /// [`Self::flush`] at that boundary yourself.
     ///
     /// # Example
     ///
@@ -396,8 +394,8 @@ impl Pairer {
         outputs
     }
 
-    /// Drain remaining state at end-of-stream. Idempotent; subsequent
-    /// `feed` calls work normally with no carryover.
+    /// Drain remaining state at end-of-stream. Idempotent; it drops the KLV
+    /// history and every epoch marker, so the next `feed` starts fresh.
     pub fn flush(&mut self) -> Vec<PairerOutput> {
         let outputs = match &mut self.state {
             PairerState::Nearest(s) => s.flush(),

@@ -887,7 +887,7 @@ in the cookbook) when:
 | Async-KLV (1–10 Hz) against video frames | `Pairer::last_before_pts(...)` | n/a (past-only) |
 | EO + IR sharing one async-KLV stream | Two `Pairer::last_before_pts` instances side-by-side | n/a |
 
-`last_before_pts` clears its history at a reconnect or a signalled discontinuity on either routed PID; flush it yourself at a silent encoder restart.
+`last_before_pts` clears its history at a reconnect and at a signalled discontinuity on the video, KLV or program-clock PID; the first KLV and the first video completing after a flag within two seconds of the pre-flag clock leave unpaired, and a new clock landing that close loses that one pairing. A flag on any other PID and a silent encoder restart are invisible, so flush it yourself there.
 
 See the `Pairer` recipes in the [cookbook's pairing section](../cookbook/index.md#-pairing--align-klv-with-video-frames) for runnable patterns.
 
