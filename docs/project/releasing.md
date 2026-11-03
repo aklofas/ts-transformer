@@ -57,7 +57,7 @@ each in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 The steps run in this order. From step 3 until the tag, nothing that ships
 changes: the soak and the real-capture corpus run judge the release-prep
 merge commit, and the qualification run checks that nothing outside
-the release documents (`CHANGELOG.md`, `docs/` Markdown,
+the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code under `docs/webrtc/`,
 `tests/coverage/evidence-archives.toml`) changed after it.
 
 1. **Version consistency (release preflight).** The rail checks six sources —
@@ -252,8 +252,11 @@ the release documents (`CHANGELOG.md`, `docs/` Markdown,
     ```
     The commit must be on `main` or be a `v*` tag; the run's `resolve` job
     refuses anything else. Dispatch from a ref whose workflows match the
-    commit (`main` while it still points there, or a branch pushed at the
-    frozen commit): `resolve` and the collector refuse a commit whose
+    commit (`main` while it points at the frozen commit; if `.github/` or
+    `scripts/gen/` changes on main after the freeze, that is a thaw, so
+    re-freeze; a dispatch from any other ref produces an attestation
+    `release-eligible` refuses at tag time, because it accepts only
+    `refs/heads/main` or a release tag): `resolve` and the collector refuse a commit whose
     `.github/` or `scripts/gen/` differs from the workflow definitions that
     ran. One run calls the wheels, JVM, interop,
     sanitizer, fuzz, ABI and semver legs in rehearsal mode (nothing is
@@ -264,7 +267,7 @@ the release documents (`CHANGELOG.md`, `docs/` Markdown,
     commit, and the interop census matches `expectations.toml`. `release=true` adds the release gate: GO
     also needs a passing soak archive that declares 259 200 seconds and all
     five legs (srt, rist, rtsp-publish, rtsp-publish-es, whep), and a
-    passing corpus archive for the soaked tree that swept the declared
+    newest corpus archive on a tree equivalent to the qualified commit, which passed, swept the declared
     `expected_files` count and replayed all five paths (at least one file,
     none failed), with no change outside `CHANGELOG.md`,
     `docs/` and `tests/coverage/evidence-archives.toml` between the soaked
@@ -347,7 +350,9 @@ the release documents (`CHANGELOG.md`, `docs/` Markdown,
     - it is not a pull-request rehearsal;
     - the commit differs from the record's `source.sha` in release documents only;
     - a build-provenance attestation by `release-qualify.yml` covers the
-      committed file's sha256, so the file is the bundle's, byte for byte.
+      committed file's sha256, so the file is the bundle's, byte for byte;
+      the signature's identity must be `release-qualify.yml` on `main` or a
+      release tag.
 
     `render --check` is unchanged: a committed GO of a main or tag commit is
     admissible, and historical records stay admissible mid-cycle. Three commits and two records are
@@ -417,6 +422,12 @@ Release; the committed record stays the one step 10 collected.
    from the CHANGELOG highlights block and publish it; do not create a second
    Release by hand. If the record is not a GO, no draft is created: read the
    reasons, then create the Release by hand.
+7. **Retire the enum-retype suppression.** After the tag whose baseline
+   carries the enum retype (v0.9.1), delete the enum-retype
+   `[suppress_function]` block in `bindings/c/abi.suppr` and the self-test
+   rows and fixtures that borrow its name (`retype*` under
+   `scripts/check/c/tests/abi-fixtures/` and the `retype:` rows). The ABI
+   rail fails with "expired" once `--old-tag` is v0.9.1 or later.
 
 ## crates.io publish (Rust crates)
 

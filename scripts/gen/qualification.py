@@ -422,7 +422,7 @@ def release_vm(root, sha, archives, release, expected_files):
                 if disposition(a) != "pass" and (c is None or (a["date"], cpos[id(a)]) > (c["date"], cpos[id(c)])):
                     reasons.append("corpus: git could not resolve %s: %s" % (a["tree"], memo[a["tree"]][1]))
             if c is None:
-                reasons.append("corpus: no corpus archive for the soaked tree %s" % soak["tree"][:12])
+                reasons.append("corpus: no corpus archive on a tree equivalent to the qualified commit %s" % soak["tree"][:12])
             else:
                 corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"],
                           "note": c["note"], "waiver": c.get("waiver"), "disposition": disposition(c)}
@@ -1015,7 +1015,12 @@ def attestation_statements(gh_output_json):
 
 
 def _workflow(stmt):
-    return stmt.get("predicate", {}).get("buildDefinition", {}).get("externalParameters", {}).get("workflow", {})
+    node = stmt
+    for key in ("predicate", "buildDefinition", "externalParameters", "workflow"):
+        node = node.get(key, {})
+        if not isinstance(node, dict):
+            raise ValueError("an attestation statement has a malformed %s" % key)
+    return node
 
 
 def _covers(stmt, digest, repo):
@@ -1083,6 +1088,8 @@ def cmd_release_eligible(args):
                     run_gh(["api", "repos/%s/attestations/sha256:%s" % (repo, digest)]))
                 if not all(isinstance(s, dict) for s in attestations):
                     raise ValueError("an attestation statement is not a JSON object")
+                for s in attestations:
+                    _workflow(s)
             except subprocess.CalledProcessError as e:
                 # No attestation at all is a 404: a reason, not a tooling failure.
                 if "404" not in (e.stderr or ""):

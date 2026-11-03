@@ -144,8 +144,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           bash scripts/gen/qualification.sh release-eligible --sha "$GITHUB_SHA"
+          # The signed certificate identity carries the workflow path and the ref, so this
+          # binds the same rule release-eligible applies to the payload.
           gh attestation verify docs/project/qualification.json -R "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-qualify.yml"
+            --cert-identity-regex "^https://github\.com/$GITHUB_REPOSITORY/\.github/workflows/release-qualify\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$"
 
       - name: Install build prerequisites
         run: |
