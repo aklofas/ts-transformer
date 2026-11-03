@@ -10,15 +10,19 @@ package org.tstrans;
  * {@code srt_streamid} become {@code <redacted>}. Key matching is exact and lower-case, after
  * percent-decoding the key name. A {@code scheme://} span is scrubbed whole. It runs to the end
  * of the input, or, when it opens right after a quote, to the last matching quote before the next
- * URL; with no such quote it runs to the end of the input. Text outside any such span is scrubbed
- * one whitespace- (ASCII or U+00A0) or quote-delimited token at a time.
+ * URL opened by the same quote, when that quote ends the text or is followed by a separator,
+ * {@code ,}, {@code ;}, {@code .}, {@code :} or a closing bracket. Otherwise it runs to that next
+ * URL, or to the end of the input. Text outside any such span is scrubbed one whitespace- (ASCII
+ * or U+00A0) or quote-delimited token at a time.
  *
  * <p>The scrub is a heuristic that errs toward redacting, so malformed text around a credential
  * may be redacted with it. The accepted over-redactions: any later {@code @} ends the userinfo,
  * so {@code srt://h:9000/a@b} loses {@code 9000/a}; a raw {@code ?} before the last {@code @} is
  * password text, so {@code srt://h:1?mail=a@b} loses {@code 1?mail=a}; text after a quoted URL,
- * up to the last matching quote, is treated as part of the URL, so {@code 'srt://h?token=x' can't}
- * loses {@code x' can}.
+ * up to the last matching quote, is treated as part of the URL, so
+ * {@code 'srt://h?token=x' or 'y'} loses {@code x' or 'y}; when that last quote is followed by
+ * other text, the URL runs on to the next quoted URL or the end, so
+ * {@code 'srt://h?token=x' can't} loses everything after {@code token=}.
  *
  * <p>One residual is not covered: a password or a secret value that itself holds a quote, a
  * space and a quote before a scheme ({@code 'srt://u:x' 'y://z@h'}) reads as two quoted URLs,
@@ -74,7 +78,24 @@ public final class Redact {
             }
         }
         int i = s.lastIndexOf(q, limit - 1);
-        return i >= from ? i : s.length();
+        if (i < from) {
+            return s.length();
+        }
+        // A quote followed by more text ('srt://u:p'w@h) sits inside a password or a value;
+        // closing there would leave the rest visible.
+        if (i + 1 == limit || i + 1 == s.length() || followsClosingQuote(s.charAt(i + 1))) {
+            return i;
+        }
+        return limit;
+    }
+
+    /**
+     * Characters that may follow the quote that closes a quoted URL: a token separator,
+     * {@code ,}, {@code ;}, {@code .}, {@code :} or a closing bracket; identical to the Rust helper.
+     */
+    private static boolean followsClosingQuote(char c) {
+        return isSeparator(c) || c == ',' || c == ';' || c == '.' || c == ':' || c == ')' || c == ']'
+            || c == '}';
     }
 
     /** Offsets of the next {@code scheme://} at or after {@code from}: scheme start, text after. */

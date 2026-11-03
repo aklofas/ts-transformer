@@ -10,8 +10,9 @@ srt://h:1?mail=a@b	srt://h:<redacted>@b
 # Accepted over-redaction: any later @ ends the userinfo.
 srt://h:9000/a@b	srt://h:<redacted>@b
 
-# A URL opened right after a quote runs to the last matching quote before the next URL
-# (or the end of the input): text up to that quote is treated as part of the URL.
+# A URL opened right after a quote runs to the last matching quote before the next URL opened by
+# the same quote, when that quote is followed by a separator, , ; . : ) ] } or the end; otherwise
+# it runs to that next URL or the end of the input.
 'rtsp://u:hunter' two@h/x'	'rtsp://u:<redacted>@h/x'
 'rtsp://cam:hun',ter2@h/live'	'rtsp://cam:<redacted>@h/live'
 'srt://h?token=pre' fix'	'srt://h?token=<redacted>'
@@ -19,16 +20,22 @@ bad url 'srt://h?passphrase=abc' here	bad url 'srt://h?passphrase=<redacted>' he
 # Accepted over-redaction: a later quoted word joins the URL's span.
 (see 'srt://h?token=abc', 'x')	(see 'srt://h?token=<redacted>')
 'srt://a?token=x' and 'srt://b?token=y'	'srt://a?token=<redacted>' and 'srt://b?token=<redacted>'
-# Accepted over-redaction: an apostrophe later in the text extends the span to it.
-open 'srt://h?passphrase=abc' failed: can't connect	open 'srt://h?passphrase=<redacted>'t connect
+# Accepted over-redaction: an apostrophe inside a later word extends the span to the end.
+open 'srt://h?passphrase=abc' failed: can't connect	open 'srt://h?passphrase=<redacted>
 'rtsp://cam:hun',ter2@h/live' can't	'rtsp://cam:<redacted>@h/live' can't
 'srt://u:p' s@h' isn't it	'srt://u:<redacted>@h' isn't it
 'srt://u:p' x' s@h'	'srt://u:<redacted>@h'
 "srt://u:p" x" s@h"	"srt://u:<redacted>@h"
-'srt://h?token=a' b' can't	'srt://h?token=<redacted>'t
+'srt://h?token=a' b' can't	'srt://h?token=<redacted>
 # Only a later URL opened by the same quote ends the span; a bare scheme-looking word does not.
 'srt://u:x' y://z@h'	'srt://u:<redacted>@h'
 'srt://h?token=a' b://c'	'srt://h?token=<redacted>'
+# A quote inside a secret with no closing quote after it does not end the span.
+'srt://u:p'w@h	'srt://u:<redacted>@h
+open 'srt://u:p'w@h: timeout	open 'srt://u:<redacted>@h: timeout
+"srt://u:p"w@h	"srt://u:<redacted>@h
+'srt://h?token=a'b	'srt://h?token=<redacted>
+'srt://u:p'w@h failed; retry 'srt://x'	'srt://u:<redacted>@h failed; retry 'srt://x'
 
 # A multi-byte character directly before a scheme.
 “srt://u:p@h”	“srt://u:<redacted>@h”
