@@ -10,7 +10,7 @@ inputs:
     description: "linux-x86_64 | linux-aarch64 | macos-aarch64 | windows-x86_64"
     required: true
   runner:
-    description: "The job's runs-on label (ubuntu-latest | ubuntu-24.04-arm | macos-15 | windows-latest)"
+    description: "The job's runs-on label (ubuntu-24.04 | ubuntu-24.04-arm | macos-15 | windows-latest)"
     required: true
 runs:
   using: composite
@@ -27,7 +27,7 @@ runs:
     # librist (tst-rist, behind org.tstrans.shells' rist:// dispatch) builds with
     # meson + ninja and needs pkg-config; cmake is pre-installed.
     - name: Install build prerequisites (Linux)
-      if: inputs.runner == 'ubuntu-latest' || inputs.runner == 'ubuntu-24.04-arm'
+      if: inputs.runner == 'ubuntu-24.04' || inputs.runner == 'ubuntu-24.04-arm'
       shell: bash
       run: |
         sudo apt-get -o Acquire::Retries=5 update

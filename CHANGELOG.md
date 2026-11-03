@@ -383,6 +383,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — CI
 
+- Linux CI jobs run on the `ubuntu-24.04` image, and every Linux job frees the unused preinstalled toolsets and records the free disk before and after at its start (the Ubuntu 26 `ubuntu-latest` image ran out of disk on about one job a day).
 - A test that skips for want of a host capability (loopback multicast, ffprobe, TSDuck) fails where CI sets `TST_REQUIRE_<CAP>=1`, and is listed in the job summary where it does not (`TST_CAPABILITY_LOG`). The Linux legs require `MULTICAST`. The IPv6 UDP multicast test records `MULTICAST_V6` and skips on every host until the receiver accepts `?iface=` for IPv6.
 - The no_std job installs its QEMU and ARM toolchain packages with five fetch retries under a ten-minute bound, then retries once through `archive.ubuntu.com`, so a slow Azure apt mirror cannot run the install past the job timeout.
 - cargo-deny also checks the fuzz and embedded workspaces against the same policy, with `--locked`, and a manifest the job names must exist.

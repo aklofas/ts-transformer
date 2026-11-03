@@ -68,7 +68,7 @@ env:
 jobs:
   asan:
     name: ASan (pure-Rust crates, nightly)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
     if: github.event_name != 'pull_request' || inputs.ref != ''
@@ -136,7 +136,7 @@ jobs:
           path: ${{ runner.temp }}/sanitizer-asan.json
   asan-native:
     name: ASan (native-linking crates, nightly)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
     if: github.event_name != 'pull_request' || inputs.ref != ''
@@ -233,7 +233,7 @@ jobs:
           path: ${{ runner.temp }}/sanitizer-asan-native.json
   tsan-native:
     name: TSan (native-linking crates, nightly)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     # Hard-gating since 2026-09-08 (phase-in closed a day early after five
     # consecutive job-level-green nightlies from the 2026-09-04 tst-rist
@@ -314,7 +314,7 @@ jobs:
           path: ${{ runner.temp }}/sanitizer-tsan-native.json
   tsan:
     name: TSan (pure-Rust crates, nightly)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     # Nightly + dispatch only; the PR path runs tsan-native alone (see on:).
     if: github.event_name != 'pull_request' || inputs.ref != ''
