@@ -169,7 +169,7 @@ pub(crate) fn counter_to_jlong(v: u64) -> jlong {
 
 /// Write `v` into `out[0]`; a null or empty array is left alone.
 pub(crate) fn write_counter_out(env: &mut Env, out: &JLongArray, v: u64) {
-    if out.is_null() {
+    if out.is_null() || !out.len(env).is_ok_and(|n| n >= 1) {
         return;
     }
     let _ = out.set_region(env, 0, &[counter_to_jlong(v)]);

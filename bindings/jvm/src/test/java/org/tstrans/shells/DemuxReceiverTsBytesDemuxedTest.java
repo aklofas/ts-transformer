@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
@@ -69,17 +70,28 @@ class DemuxReceiverTsBytesDemuxedTest {
             feedAndDrain(p);
             long n = p.rx.tsBytesDemuxed();
             AtomicBoolean stop = new AtomicBoolean();
-            CompletableFuture<Long> reader = CompletableFuture.supplyAsync(() -> {
-                long prev = 0;
-                while (!stop.get()) {
-                    long v = p.rx.tsBytesDemuxed();
-                    if (v < prev) throw new AssertionError("went from " + prev + " to " + v);
-                    prev = v;
+            CountDownLatch firstRead = new CountDownLatch(1);
+            CompletableFuture<Long> reader = new CompletableFuture<>();
+            Thread t = new Thread(() -> {
+                try {
+                    long prev = 0;
+                    do {
+                        long v = p.rx.tsBytesDemuxed();
+                        if (v < prev) throw new AssertionError("went from " + prev + " to " + v);
+                        prev = v;
+                        firstRead.countDown();
+                    } while (!stop.get());
+                    reader.complete(prev);
+                } catch (Throwable e) {
+                    reader.completeExceptionally(e);
                 }
-                return prev;
-            });
-            Thread.sleep(TestSupport.scaledMs(20));
+            }, "ts-bytes-reader");
+            t.setDaemon(true);
+            t.start();
+            assertTrue(firstRead.await(TestSupport.scaledMs(5_000), TimeUnit.MILLISECONDS));
             p.rx.close();
+            // Keep reading after the close so the closed path is exercised too.
+            Thread.sleep(TestSupport.scaledMs(50));
             stop.set(true);
             assertEquals(n, reader.get(TestSupport.scaledMs(5_000), TimeUnit.MILLISECONDS));
             assertEquals(n, p.rx.tsBytesDemuxed());
