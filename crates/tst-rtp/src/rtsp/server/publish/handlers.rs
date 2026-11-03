@@ -63,8 +63,8 @@ fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
 ///   are off, or the path is not one a mount could be registered under).
 /// - 503 Service Unavailable — on-demand mounts are on but the queue of
 ///   mounts the application has not taken yet is full, the table already
-///   holds the cap of on-demand mounts, or the server is stopping; no
-///   mount is created.
+///   holds the cap of on-demand mounts; no mount is created.
+/// - 503 — the server is stopping (any mount).
 /// - 461 Unsupported Transport — the mount exists but is a local
 ///   (muxer-backed) mount, which never accepts a publisher.
 /// - 403 Forbidden — the mount already has a publisher.
@@ -441,8 +441,9 @@ pub(crate) fn handle_record(
     }
     // No recording starts once `stop()` has begun; the application
     // transports stay open until its drain ends, for the publishers
-    // already recording.
-    if state.is_shut_down() {
+    // already recording. A repeated RECORD from a session that is already
+    // recording is not a new start: an admitted publisher is never refused.
+    if !publish.recording && state.is_shut_down() {
         return error_response(req, 503, "Service Unavailable");
     }
     publish.recording = true;

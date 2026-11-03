@@ -1113,8 +1113,9 @@ impl RtspServer {
     ///
     /// Publisher sessions are treated like readers (notice, cancel). A
     /// [`Self::next_publisher`] call waiting on another thread wakes with
-    /// [`RtspServerError::Shutdown`] at once, and an ANNOUNCE that would
-    /// create an on-demand mount answers `503`. Once the sessions have
+    /// [`RtspServerError::Shutdown`] at once, and once stop begins every
+    /// ANNOUNCE, and every RECORD from a session not yet recording,
+    /// answers `503`. Once the sessions have
     /// ended (or the drain window has passed), every publish mount's
     /// application transport (see
     /// [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
