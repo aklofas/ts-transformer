@@ -52,7 +52,7 @@ item_regex = '::(clone|eq|ne|fmt|hash|cmp|partial_cmp|default)$'
 reason = "trait method (derived or std trait impl)"
 
 [[exempt_rule]]
-item_regex = '^tst_pipeline::reconnect::ReconnectPolicy::with_[a-z_]+$'
+item_regex = '^tst_pipeline::reconnect::ReconnectPolicy::with_(max_attempts|backoff|gap_buffer_capacity|overflow_policy|mode)$'
 reason = "consuming field setter; the policy is exercised through every managed-transport test"
 
 [[exempt_rule]]
