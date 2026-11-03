@@ -60,7 +60,8 @@ pub(super) struct LastBeforeState {
     video_pid: u16,
     klv_pid: u16,
     /// PCR PID of the program carrying `video_pid`, once its program map has
-    /// passed. Kept when a later map drops the video PID. A flag there resets the time base both paired PIDs run on.
+    /// passed. Kept when a later map drops the video PID. A flag there resets
+    /// the time base both paired PIDs run on.
     pcr_pid: Option<u16>,
     freshness_ticks: Option<i64>,
     /// Oldest at the front. An entry stays after it pairs; one that
