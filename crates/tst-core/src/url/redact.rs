@@ -28,15 +28,20 @@ const REDACTED: &str = "<redacted>";
 ///   `srt_streamid`. The match is case-sensitive: `Token=x` is not scrubbed. Key
 ///   names are percent-decoded first, so `pass%70hrase=x` is scrubbed too.
 ///
-/// The scrub errs toward redacting: any later `@` ends the userinfo, so
-/// `srt://h:9000/a@b` loses `9000/a`. That over-redaction is accepted.
-///
 /// The input need not be a valid URL. A `scheme://` span runs to the end of
 /// the input, or to the closing quote when it opens right after one, and is
 /// scrubbed whole: a quote or a space inside a password or a value does not
 /// end it. Text outside any such span is scrubbed one whitespace- (ASCII or
-/// U+00A0) or quote-delimited token at a time. A malformed URL, or a longer
-/// message that embeds one, never leaks either kind of secret.
+/// U+00A0) or quote-delimited token at a time.
+///
+/// The scrub is a heuristic that errs toward redacting, so malformed text
+/// around a credential may be redacted with it. The accepted over-redactions:
+///
+/// - any later `@` ends the userinfo, so `srt://h:9000/a@b` loses `9000/a`;
+/// - a raw `?` before the last `@` is password text, so `srt://h:1?mail=a@b`
+///   loses `1?mail=a`;
+/// - a stray quote after a quoted URL extends it to the end of the input, so
+///   `'srt://h?token=x' can't` loses everything after `token=`.
 ///
 /// ```
 /// use tst_core::url::redact_url;
@@ -67,18 +72,24 @@ pub fn redact_url(url: &str) -> String {
 
 /// Where a span opened by quote `q` ends: the first `q` at or after `from`
 /// that is followed by a separator, a closing bracket, `,` or `;`, or by the
-/// end of the input. A `q` inside a password or a value does not close it.
+/// end of the input, and after which the rest of the input holds an even
+/// number of `q`. A `q` inside a password or a value does not close it, a
+/// balanced pair of later quotes stays outside the span, and an odd stray
+/// `q` extends it to the end of the input.
 fn closing_quote(s: &str, from: usize, q: char) -> usize {
-    s[from..]
-        .match_indices(q)
-        .map(|(n, _)| from + n)
-        .find(|&i| {
-            s[i + 1..]
-                .chars()
-                .next()
-                .is_none_or(|c| is_separator(c) || matches!(c, ',' | ';' | ')' | ']' | '}'))
-        })
-        .unwrap_or(s.len())
+    let mut after = s[from..].matches(q).count();
+    for (n, _) in s[from..].match_indices(q) {
+        let i = from + n;
+        after -= 1;
+        let closes = s[i + 1..]
+            .chars()
+            .next()
+            .is_none_or(|c| is_separator(c) || matches!(c, ',' | ';' | ')' | ']' | '}'));
+        if closes && after.is_multiple_of(2) {
+            return i;
+        }
+    }
+    s.len()
 }
 
 /// Byte offsets of the next `scheme://` at or after `from`: where the scheme
@@ -88,8 +99,10 @@ fn next_url(s: &str, from: usize) -> Option<(usize, usize)> {
     while let Some(n) = s[search..].find("://") {
         let sep = search + n;
         let start = s[from..sep]
-            .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')))
-            .map_or(from, |i| from + i + 1);
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-')))
+            .map_or(from, |(i, c)| from + i + c.len_utf8());
         if start < sep {
             return Some((start, sep + 3));
         }
@@ -132,15 +145,14 @@ fn redact_token(token: &str, out: &mut String) {
     redact_query_values(&scrubbed, out);
 }
 
-/// Redact the password in the userinfo that precedes the last `@` before
-/// any `?`. The password may itself contain `/` or `@`, so the split is
-/// taken from the right, as a client would not and a leak would. A `?`
-/// whose following text reaches an `@` with no `=` in between is password
-/// text too (`u:pa?ss@h`), not the start of a query.
+/// Redact the password in the userinfo that precedes the last `@`. The
+/// password may itself contain `/`, `@` or a raw `?` (`u:pa?ss=w@h`), so the
+/// split is taken from the right, as a client would not and a leak would. A
+/// `?` with no `@` after it starts the query.
 fn redact_userinfo(rest: &str, out: &mut String) {
     let query = rest.find('?');
     let limit = match (query, rest.rfind('@')) {
-        (Some(q), Some(at)) if at > q && !rest[q..at].contains('=') => rest.len(),
+        (Some(q), Some(at)) if at > q => rest.len(),
         (Some(q), _) => q,
         (None, _) => rest.len(),
     };
@@ -334,8 +346,10 @@ mod tests {
             redact_url("rtsp://admin:pa?ss@cam/s?token=t"),
             "rtsp://admin:<redacted>@cam/s?token=<redacted>"
         );
-        // A real query holding an `@` after an `=` is not userinfo.
-        assert_eq!(redact_url("srt://h:1?mail=a@b"), "srt://h:1?mail=a@b");
+        // Accepted over-redaction: a `?` before the last `@` is userinfo
+        // even with an `=` after it, so a query value holding an `@` is
+        // scrubbed as a password.
+        assert_eq!(redact_url("srt://h:1?mail=a@b"), "srt://h:<redacted>@b");
     }
 
     #[test]
@@ -399,6 +413,39 @@ mod tests {
         assert_eq!(
             redact_url("(see 'srt://h?token=abc', 'x')"),
             "(see 'srt://h?token=<redacted>', 'x')"
+        );
+    }
+
+    /// The vectors `org.tstrans.Redact` is tested against too.
+    #[test]
+    fn shared_vectors_match() {
+        let table = include_str!("../../tests/fixtures/redact/vectors.tsv");
+        let mut rows = 0;
+        for (n, line) in table.lines().enumerate() {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let (input, expected) = line.split_once('\t').expect("input<TAB>expected");
+            assert_eq!(redact_url(input), expected, "vectors.tsv line {}", n + 1);
+            rows += 1;
+        }
+        assert!(rows > 0, "vectors.tsv holds no rows");
+    }
+
+    #[test]
+    fn a_multibyte_char_before_a_scheme_does_not_panic() {
+        assert_eq!(
+            redact_url("\u{201c}srt://u:p@h\u{201d}"),
+            "\u{201c}srt://u:<redacted>@h\u{201d}"
+        );
+        assert_eq!(
+            redact_url("\u{e9}srt://u:p@h"),
+            "\u{e9}srt://u:<redacted>@h"
+        );
+        assert_eq!(
+            redact_url("\u{a0}srt://u:p@h"),
+            "\u{a0}srt://u:<redacted>@h"
         );
     }
 

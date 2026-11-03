@@ -138,6 +138,10 @@ tasks.test {
     inputs.dir("../../crates/tst-integration/tests/fixtures/scenarios")
         .withPropertyName("scenarioFixtures")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    // RedactionTest reads the redaction vectors tst-core's tests share.
+    inputs.file("../../crates/tst-core/tests/fixtures/redact/vectors.tsv")
+        .withPropertyName("redactVectors")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     // -Xcheck:jni: HotSpot's built-in JNI verifier. It catches the
     // JNI-semantic bug class — invalid/stale handles, local-ref leaks,
     // env misuse across threads — which memory sanitizers

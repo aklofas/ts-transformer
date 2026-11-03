@@ -44,6 +44,14 @@ def test_an_unknown_scheme_is_a_value_error() -> None:
         Sender.open("http://127.0.0.1:1")
 
 
+def test_a_multibyte_char_before_a_scheme_is_a_value_error() -> None:
+    with pytest.raises(ValueError, match="unsupported URL scheme") as raised:
+        Sender.open("\u201csrt://u:p@h\u201d")
+    message = str(raised.value)
+    assert "<redacted>" in message
+    assert ":p@" not in message
+
+
 def test_closed_errors_are_raised_in_the_transport_domain() -> None:
     port = free_udp_port()
     tx = Sender.open(f"udp://127.0.0.1:{port}")

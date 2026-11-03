@@ -5,8 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.tstrans.rtp.RtspClientConfig;
 import org.tstrans.rtp.RtspServerConfig;
@@ -91,7 +96,8 @@ class RedactionTest {
         assertEquals("rtsp://admin:<redacted>@cam/s", Redact.url("rtsp://admin:pa?ss@cam/s"));
         assertEquals("rtsp://admin:<redacted>@cam/s?token=<redacted>",
             Redact.url("rtsp://admin:pa?ss@cam/s?token=t"));
-        assertEquals("srt://h:1?mail=a@b", Redact.url("srt://h:1?mail=a@b"));
+        // Accepted over-redaction: a query value holding an @ is read as userinfo.
+        assertEquals("srt://h:<redacted>@b", Redact.url("srt://h:1?mail=a@b"));
     }
 
     @Test
@@ -134,6 +140,30 @@ class RedactionTest {
             Redact.url("\"srt://h:1?passphrase=a\"b\""));
         assertEquals("(see 'srt://h?token=<redacted>', 'x')",
             Redact.url("(see 'srt://h?token=abc', 'x')"));
+    }
+
+    /** The vectors {@code tst_core::url::redact_url}'s tests read too. */
+    @Test
+    void sharedVectorsMatchTheRustHelper() throws IOException {
+        Path file = Path.of(System.getProperty("user.dir"), "..", "..",
+                "crates/tst-core/tests/fixtures/redact/vectors.tsv").normalize();
+        List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+        int rows = 0;
+        for (int n = 0; n < lines.size(); n++) {
+            String line = lines.get(n);
+            if (line.endsWith("\r")) {
+                line = line.substring(0, line.length() - 1);
+            }
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
+            int tab = line.indexOf('\t');
+            assertTrue(tab >= 0, "vectors.tsv line " + (n + 1) + ": input<TAB>expected");
+            assertEquals(line.substring(tab + 1), Redact.url(line.substring(0, tab)),
+                "vectors.tsv line " + (n + 1));
+            rows++;
+        }
+        assertTrue(rows > 0, "vectors.tsv holds no rows");
     }
 
     @Test
