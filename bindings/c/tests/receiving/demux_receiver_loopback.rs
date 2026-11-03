@@ -352,7 +352,7 @@ fn loopback_last_seen_micros_reports_after_sample_and_zero_for_unknown_pid() {
 /// in `_recv_event` (which holds the handle's slot) and after `_cancel`.
 #[test]
 fn loopback_ts_bytes_demuxed_answers_while_recv_event_is_parked_and_after_cancel() {
-    let port: u16 = 41_000 + (std::process::id() as u16 % 500);
+    let port = crate::common::free_udp_port();
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
 
     // A connected pair that never sends: the receive stays parked.
