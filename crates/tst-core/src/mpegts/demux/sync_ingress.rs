@@ -204,6 +204,7 @@ impl super::demuxer::Demuxer {
         if core::mem::take(&mut state.pts_baseline_clears_after_pes) {
             state.clear_pts_baseline();
         }
+        state.source_reset_in_pes = false;
         if core::mem::take(&mut state.source_reset_after_pes) {
             state.forget_latm_position();
             self.discard_au_in_progress(pid);
@@ -274,6 +275,7 @@ impl super::demuxer::Demuxer {
                 let state = self.pid_state_mut(pkt.pid);
                 state.clear_continuity();
                 state.source_reset_after_pes = true;
+                state.source_reset_in_pes = true;
                 if let Some(stream) = self.lookup_stream(pkt.pid) {
                     self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
                 }
@@ -376,6 +378,7 @@ impl super::demuxer::Demuxer {
         if pkt.discontinuity_indicator {
             let state = self.pid_state_mut(pkt.pid);
             state.source_reset_after_pes = true;
+            state.source_reset_in_pes |= !pkt.payload_unit_start;
             if let Some(stream) = self.lookup_stream(pkt.pid) {
                 self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
             }
