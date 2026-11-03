@@ -103,22 +103,26 @@ impl PyBackoffStrategy {
     /// Base wait in milliseconds. For the constant variant, equals the
     /// fixed wait.
     #[getter]
-    pub fn base_ms(&self) -> u64 {
+    pub fn base_ms(&self) -> PyResult<u64> {
         match self.inner {
-            RustBackoff::Constant(d) => duration_to_ms(d),
-            RustBackoff::Exponential { base, .. } => duration_to_ms(base),
-            _ => 0,
+            RustBackoff::Constant(d) => Ok(duration_to_ms(d)),
+            RustBackoff::Exponential { base, .. } => Ok(duration_to_ms(base)),
+            _ => Err(pyo3::exceptions::PyValueError::new_err(
+                "unknown backoff strategy",
+            )),
         }
     }
 
     /// Maximum wait in milliseconds. For the constant variant, equals
     /// the fixed wait (no growth).
     #[getter]
-    pub fn max_ms(&self) -> u64 {
+    pub fn max_ms(&self) -> PyResult<u64> {
         match self.inner {
-            RustBackoff::Constant(d) => duration_to_ms(d),
-            RustBackoff::Exponential { max, .. } => duration_to_ms(max),
-            _ => 0,
+            RustBackoff::Constant(d) => Ok(duration_to_ms(d)),
+            RustBackoff::Exponential { max, .. } => Ok(duration_to_ms(max)),
+            _ => Err(pyo3::exceptions::PyValueError::new_err(
+                "unknown backoff strategy",
+            )),
         }
     }
 
