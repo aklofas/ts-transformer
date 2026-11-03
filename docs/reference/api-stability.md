@@ -32,10 +32,14 @@ status.
 
 `#[doc(hidden)]` modules, such as tst-webrtc's `server::http` and
 `server::negotiate`, are test seams and stay hidden. Their growable enums
-carry `#[non_exhaustive]` like any other. No library entry point runs user
-code on a library thread, with one named exception: `WhepServer::bind_with_clock`
-takes a `Clock` that runs on the media thread, so it is a test-only entry
-point and not part of the supported API.
+carry `#[non_exhaustive]` like any other. The request-path hooks (SRT listen
+rules, RTSP mount rules) are data tables, never callbacks, so user code never
+decides a handshake or a request on a library thread. User code does run on a
+library thread in two named places: the connect factory of
+[`ReconnectMode::Background`](/crates/tst-pipeline/src/reconnect/mod.rs), which
+is documented and supported, and `WhepServer::bind_with_clock`, whose `Clock`
+runs on the media thread and which is a test-only entry point, not part of the
+supported API.
 
 ## Classification table
 

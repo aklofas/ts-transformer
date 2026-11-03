@@ -20,11 +20,29 @@ MATCHERS=(
     "bindings/jvm/src/mpegts/mod.rs|pub(crate) fn convert_event"
 )
 
+# Drops Rust block comments, nested ones included, keeping every newline so
+# line-anchored patterns still see the original layout.
+strip_block_comments() {
+    awk '
+        {
+            out = ""
+            n = length($0)
+            for (i = 1; i <= n; i++) {
+                two = substr($0, i, 2)
+                if (two == "/*") { depth++; i++; continue }
+                if (depth > 0 && two == "*/") { depth--; i++; continue }
+                if (depth == 0) out = out substr($0, i, 1)
+            }
+            print out
+        }
+    '
+}
+
 # Portable read-into-array pattern (bash 3.2+) — no `mapfile`/`readarray`.
 variants=()
 while IFS= read -r v; do
     variants+=("$v")
-done < <(awk '
+done < <(strip_block_comments < "$RUST_ENUM_FILE" | awk '
     /^pub enum DemuxEvent / { in_block = 1; next }
     in_block && /^}/ { in_block = 0 }
     in_block && /^    [A-Z][A-Za-z0-9]*[ ({,]/ {
@@ -32,7 +50,7 @@ done < <(awk '
         sub(/[ {(,].*$/, "")
         print
     }
-' "$RUST_ENUM_FILE")
+')
 
 if [ "${#variants[@]}" -eq 0 ]; then
     echo "FAIL: extracted 0 DemuxEvent variants — awk pattern may have drifted from $RUST_ENUM_FILE" >&2
@@ -40,7 +58,7 @@ if [ "${#variants[@]}" -eq 0 ]; then
 fi
 
 # Independent count: the variant lines of the enum, however they open.
-expected=$(awk '/^pub enum DemuxEvent /{b=1;next} b&&/^}/{b=0} b&&/^    [A-Z]/{n++} END{print n+0}' "$RUST_ENUM_FILE")
+expected=$(strip_block_comments < "$RUST_ENUM_FILE" | awk '/^pub enum DemuxEvent /{b=1;next} b&&/^}/{b=0} b&&/^    [A-Z]/{n++} END{print n+0}')
 if [ "${#variants[@]}" -lt 6 ] || [ "${#variants[@]}" -ne "$expected" ]; then
     echo "FAIL: extracted ${#variants[@]} DemuxEvent variants (${variants[*]}), independent count $expected, floor 6" >&2
     exit 1
@@ -51,17 +69,17 @@ for entry in "${MATCHERS[@]}"; do
     rel="${entry%%|*}"
     sig="${entry#*|}"
     file="$ROOT/$rel"
-    body=$(awk -v sig="$sig" '
+    body=$(strip_block_comments < "$file" | awk -v sig="$sig" '
         index($0, sig) == 1 { in_fn = 1 }
         in_fn { print }
         in_fn && /^}/ { in_fn = 0 }
-    ' "$file")
+    ')
     if [ -z "$body" ]; then
         echo "FAIL: could not locate '$sig' in $rel" >&2
         fail=1
         continue
     fi
-    # Comments never count: a variant named only in a `//` line is not an arm.
+    # Comments never count: a variant named only in a `//` line or a block comment is not an arm.
     code=$(echo "$body" | grep -vE '^[[:space:]]*//' || true)
     for v in "${variants[@]}"; do
         if ! echo "$code" | grep -qE "^[[:space:]]*(\|[[:space:]]*)?DemuxEvent::${v}\b"; then
