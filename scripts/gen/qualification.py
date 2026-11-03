@@ -17,7 +17,9 @@ Artefact directory read by `collect` (a missing file is a missing leg, never a p
                                        python-wheels, c-abi, fuzz, semver-checks and
                                        "sanitizers" (the workflow's own conclusion, a
                                        required leg beside its four jobs)
-  ci.json                              {conclusion, run_url} of the ci workflow on the sha
+  ci.json                              {conclusion, run_url, event, run_id, run_attempt, head_sha}
+                                       of the newest full ci run on the sha (push or
+                                       workflow_dispatch; pull_request only for a PR rehearsal)
   interop-evidence/{results,inventory}.json
   interop-census-aarch64.json          {arch, shape, total, pass, fail, expected_unsupported,
                                        skipped, stale} of the linux-aarch64 subset job, if it ran
@@ -480,6 +482,24 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None):
     return ("GO" if not reasons else "NO-GO"), reasons
 
 
+CI_FULL_EVENTS = ("push", "workflow_dispatch")
+
+
+def _ci_conclusion(ci_in, label, sha):
+    """The ci leg's conclusion: the run's own, unless the run cannot stand for this record."""
+    if ci_in is None:
+        return None
+    event = ci_in.get("event")
+    if event is None:
+        return "ineligible: event missing"
+    if event not in CI_FULL_EVENTS and not (event == "pull_request" and str(label).startswith("PR #")):
+        return "ineligible: " + str(event)
+    head = ci_in.get("head_sha")
+    if head != sha:
+        return "ineligible: head_sha %s is not the qualified commit" % str(head)[:12]
+    return ci_in.get("conclusion")
+
+
 def collect(art, root, release=False, tag=None):
     ctx = read_json(os.path.join(art, "context.json"))
     if ctx is None:
@@ -534,7 +554,8 @@ def collect(art, root, release=False, tag=None):
     elif abi_in.get("verdict") != "compatible":
         c = "failure"
     add("c-abi", c, u)
-    add("ci (on this sha)", (ci_in or {}).get("conclusion"), (ci_in or {}).get("run_url"))
+    add("ci (on this sha)", _ci_conclusion(ci_in, ctx.get("label", ""), ctx.get("source", {}).get("sha", "")),
+        (ci_in or {}).get("run_url"))
     c, u = entry("semver-checks")
     add("semver-checks", c, u, required=False)
 
@@ -568,6 +589,7 @@ def collect(art, root, release=False, tag=None):
         "host": ctx.get("host", {}),
         "peers": {k: peers_all[k] for k in peers_all} if peers_all else {},
         "legs": legs,
+        "ci": None if ci_in is None else {k: ci_in.get(k) for k in ("event", "run_id", "run_attempt", "head_sha")},
         "interop": interop,
         "fuzz": fuzz,
         "abi": abi_in,

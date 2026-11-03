@@ -382,29 +382,34 @@ jobs:
       contents: read
       actions: read
     steps:
-      - name: Wait for the ci workflow's run on the SHA, then read its conclusion
-        # ci runs on every push to main and on every PR head, and on a tag push
-        # it runs in parallel with this workflow, so it may still be queued or
-        # running: wait for it (the job timeout bounds the wait). Nothing is
-        # re-run. No ci run at all on the first look (a dispatch on an unpushed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+
+      - name: Wait for the ci workflow's newest full run on the SHA, then read it
+        # ci runs on pushes to main, on PR heads and on dispatches, never on a tag
+        # (a tag qualification reads the push run of the record PR's merge). Only
+        # a push or workflow_dispatch run counts, because test-main-extra skips on
+        # pull_request (ci.yml); a rehearsal on a PR head admits its own PR run.
+        # The newest eligible run is waited for while it is queued or running.
+        # Nothing is re-run. No eligible run at all (a dispatch on an unpushed
         # commit) is recorded as "missing", which is a NO-GO.
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.resolve.outputs.ref }}
+          ALLOW_PR: ${{ github.event_name == 'pull_request' }}
         run: |
           mkdir -p "$RUNNER_TEMP/ci-record"
           while :; do
             gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=50" > "$RUNNER_TEMP/ci-runs.json"
-            jq '[.workflow_runs[] | {status, conclusion, url:.html_url, created_at}] | sort_by(.created_at) | last // null
-                | if . == null then {status:"completed", conclusion:"missing", run_url:""}
-                  else {status, conclusion:(.conclusion // "missing"), run_url:.url} end' \
+            jq -f scripts/ci/ci-run-select.jq --arg allow_pr "$ALLOW_PR" \
               "$RUNNER_TEMP/ci-runs.json" > "$RUNNER_TEMP/ci-record/ci-state.json"
             status="$(jq -r .status "$RUNNER_TEMP/ci-record/ci-state.json")"
             if [ "$status" = completed ]; then break; fi
             echo "ci on $SHA is $status; waiting 60 s"
             sleep 60
           done
-          jq '{conclusion, run_url}' "$RUNNER_TEMP/ci-record/ci-state.json" > "$RUNNER_TEMP/ci-record/ci.json"
+          jq 'del(.status)' "$RUNNER_TEMP/ci-record/ci-state.json" > "$RUNNER_TEMP/ci-record/ci.json"
           rm "$RUNNER_TEMP/ci-record/ci-state.json"
           cat "$RUNNER_TEMP/ci-record/ci.json"
 

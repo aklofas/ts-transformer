@@ -34,7 +34,8 @@ CONTEXT = {
 LEGS = {n: {"conclusion": "success", "run_url": "https://example.test/run/" + str(i)}
         for i, n in enumerate(["interop", "jvm-jar", "python-wheels", "c-abi", "fuzz"])}
 LEGS["sanitizers"] = {"conclusion": "success", "run_url": "https://example.test/run/san"}
-CI = {"conclusion": "success", "run_url": "https://example.test/run/ci"}
+CI = {"conclusion": "success", "run_url": "https://example.test/run/ci", "event": "push",
+      "run_id": 41, "run_attempt": 1, "head_sha": SHA}
 RESULTS = {"summary": {"total": 159, "pass": 94, "fail": 0, "expected_unsupported": 65,
                        "skipped_tool_missing": 0, "stale_expectations": []},
            "inventory": {"shape": "full", "declared_cells": 159, "expected_full_cells": 159,
@@ -214,6 +215,52 @@ class VerdictTests(unittest.TestCase):
         rec = collect(m)
         self.assertEqual(leg(rec, "fuzz")["conclusion"], "missing")
         self.assertEqual(rec["verdict"], "NO-GO")
+
+
+class CiRunTests(unittest.TestCase):
+    def _ci(self, label=None, **ci):
+        def m(f):
+            f["ci.json"] = dict(CI, **ci)
+            if label:
+                f["context.json"] = dict(CONTEXT, label=label)
+        return collect(m)
+
+    def test_ci_fields_are_recorded(self):
+        rec = self._ci(event="push", run_id=41, run_attempt=2)
+        self.assertEqual(rec["ci"], {"event": "push", "run_id": 41, "run_attempt": 2, "head_sha": SHA})
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+
+    def test_a_pull_request_ci_run_is_ineligible_for_a_main_record(self):
+        rec = self._ci(event="pull_request")
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(leg(rec, "ci (on this sha)")["conclusion"], "ineligible: pull_request")
+        self.assertIn("ci (on this sha): ineligible: pull_request", rec["verdict_reasons"])
+
+    def test_a_pull_request_ci_run_is_eligible_for_a_pr_rehearsal_record(self):
+        rec = self._ci(label="PR #7 at 1a2b3c4d", event="pull_request")
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+
+    def test_a_ci_run_without_an_event_is_ineligible(self):
+        def m(f):
+            f["ci.json"] = {"conclusion": "success", "run_url": "https://example.test/run/ci"}
+        rec = collect(m)
+        self.assertEqual(leg(rec, "ci (on this sha)")["conclusion"], "ineligible: event missing")
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIsNone(rec["ci"]["event"])
+
+    def test_a_ci_run_on_another_commit_is_ineligible(self):
+        other = "f" * 40
+        rec = self._ci(head_sha=other)
+        self.assertEqual(leg(rec, "ci (on this sha)")["conclusion"],
+                         "ineligible: head_sha %s is not the qualified commit" % other[:12])
+        self.assertEqual(rec["verdict"], "NO-GO")
+
+    def test_missing_ci_json_is_still_missing(self):
+        def m(f):
+            f["ci.json"] = None
+        rec = collect(m)
+        self.assertEqual(leg(rec, "ci (on this sha)")["conclusion"], "missing")
+        self.assertIsNone(rec["ci"])
 
 
 class HoleTests(unittest.TestCase):
@@ -1047,8 +1094,10 @@ class TagAndEquivalenceTests(unittest.TestCase):
             git(root, "commit", "-q", "-am", "B")
             qualified = git(root, "rev-parse", "HEAD")
             # The archive table and the fuzz manifest stay untracked, so the diff is the two documents.
-            art, _ = build(os.path.join(d, "a"), lambda f: f["context.json"].update(
-                source=dict(CONTEXT["source"], sha=qualified)))
+            def mutate(f):
+                f["context.json"].update(source=dict(CONTEXT["source"], sha=qualified))
+                f["ci.json"]["head_sha"] = qualified
+            art, _ = build(os.path.join(d, "a"), mutate)
             put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
             put(os.path.join(root, "tests/coverage/evidence-archives.toml"), archives_toml(
                 archive_row("soak-rel", "soak", soaked, legs=FIVE),
