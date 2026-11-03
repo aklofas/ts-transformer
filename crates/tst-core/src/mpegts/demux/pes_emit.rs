@@ -3040,6 +3040,7 @@ mod tests {
         };
         use crate::mpegts::demux::event::MultiCellAuReason;
         use CellFragmentIndication::{Complete, First, Last, Middle};
+        use alloc::string::String;
 
         fn klv_demuxer(mode: StrictMode) -> Demuxer {
             let mut b = DemuxerConfig::builder();
