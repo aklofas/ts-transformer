@@ -20,9 +20,9 @@ package org.tstrans;
  * up to the last matching quote, is treated as part of the URL, so {@code 'srt://h?token=x' can't}
  * loses {@code x' can}.
  *
- * <p>One residual is not covered: a password or a secret value that itself holds a quote, a space and a quote
- * before a scheme ({@code 'srt://u:x' 'y://z@h'}) reads as two quoted URLs, so the first part of
- * it stays visible.
+ * <p>One residual is not covered: a password or a secret value that itself holds a quote, a
+ * space and a quote before a scheme ({@code 'srt://u:x' 'y://z@h'}) reads as two quoted URLs,
+ * so the first part of it stays visible.
  */
 public final class Redact {
     private static final String[] SECRET_KEYS =
