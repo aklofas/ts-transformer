@@ -69,6 +69,11 @@ const PORT_PROXY_CONTROL_PROXY: u16 = 33037;
 const PORT_THROTTLE_RECV: u16 = 33039;
 #[cfg(feature = "mbedtls")]
 const PORT_THROTTLE_PROXY: u16 = 33041;
+/// Main profile: the encrypted receiver and the proxy for the lockout-recovery test.
+#[cfg(feature = "mbedtls")]
+const PORT_LOCKOUT_RECV: u16 = 33111;
+#[cfg(feature = "mbedtls")]
+const PORT_LOCKOUT_PROXY: u16 = 33113;
 #[cfg(not(windows))]
 const RTCP_CHILD_ENV: &str = "TST_RIST_RTCP_COLLISION_CHILD";
 #[cfg(not(windows))]
@@ -598,14 +603,46 @@ enum Rewrite {
     /// the receiver's rekey throttle window. Rounds start at least 15 ms apart so the
     /// first copy of each round is outside the previous round's window.
     ThrottleSchedule,
+    /// Once [`ProxyHandle::arm`] is called, flip the RTP version bits of every
+    /// keyed data-path datagram until `garbage` media datagrams have been
+    /// flipped. CTR mode flips the same plaintext bits, so each data packet
+    /// decrypts to an invalid header: one decryption-failure strike under the
+    /// sender's own nonce, with no valid packet between strikes to decay the
+    /// count. Then, 50 ms on, one header-only datagram under
+    /// a nonce no sender uses (same key slot), so the sender's nonce is fresh
+    /// again; 50 ms later every datagram is forwarded unchanged.
+    GarbageThenPass { garbage: u32 },
+}
+
+/// For a keyed, sequenced GRE datagram on librist's data path, the offsets of
+/// its key (nonce) field, of its encrypted payload, and of the first byte of
+/// the RTP or RTCP header inside that payload. The payload opens with the
+/// 4-byte port subheader, after a 4-byte VSF subheader when the protocol is
+/// VSF (`0xCCE0`, the GRE version 2 framing) rather than reduced (`0x88B6`).
+#[cfg(feature = "mbedtls")]
+fn keyed_data_offsets(dgram: &[u8]) -> Option<(usize, usize, usize)> {
+    if dgram.len() < 4 || dgram[0] & 0x30 != 0x30 {
+        return None;
+    }
+    let subheaders = match [dgram[2], dgram[3]] {
+        [0x88, 0xb6] => 4,
+        [0xcc, 0xe0] => 8,
+        _ => return None,
+    };
+    let nonce = 4 + if dgram[0] & 0x80 != 0 { 4 } else { 0 };
+    let payload = nonce + 8;
+    Some((nonce, payload, payload + subheaders))
 }
 
 /// Stops the proxy thread when dropped.
 #[cfg(feature = "mbedtls")]
 struct ProxyHandle {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Datagrams given a zero nonce, or throttle rounds emitted.
+    /// Datagrams given a zero nonce, throttle rounds emitted, or garbage and
+    /// nonce-reset datagrams sent.
     rewritten: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Starts [`Rewrite::GarbageThenPass`]; the other rewrites ignore it.
+    armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -613,6 +650,10 @@ struct ProxyHandle {
 impl ProxyHandle {
     fn rewritten(&self) -> usize {
         self.rewritten.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -643,9 +684,12 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
     let stop_thread = Arc::clone(&stop);
     let rewritten = Arc::new(AtomicUsize::new(0));
     let rewritten_thread = Arc::clone(&rewritten);
+    let armed = Arc::new(AtomicBool::new(false));
+    let armed_thread = Arc::clone(&armed);
     let thread = thread::spawn(move || {
         let mut sender: Option<SocketAddr> = None;
         let mut round: u8 = 0;
+        let mut garbled: u32 = 0;
         let mut buf = vec![0u8; 65536];
         while !stop_thread.load(Ordering::SeqCst) {
             let (n, from) = match sock.recv_from(&mut buf) {
@@ -688,12 +732,44 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
                 }
                 continue;
             }
+            if let Rewrite::GarbageThenPass { garbage } = rewrite {
+                // The RTP (or RTCP) header's top two bits must read 0b10.
+                if let Some((nonce, payload, rtp)) = keyed_data_offsets(&dgram)
+                    && armed_thread.load(Ordering::SeqCst)
+                    && garbled < garbage
+                    && dgram.len() > rtp
+                {
+                    dgram[rtp] ^= 0xc0;
+                    let _ = sock.send_to(&dgram, receiver);
+                    // Only a datagram carrying a whole TS packet is surely
+                    // media; a smaller one may be a control message, which
+                    // takes no strike.
+                    if dgram.len() >= rtp + 12 + 188 {
+                        garbled += 1;
+                        rewritten_thread.fetch_add(1, Ordering::SeqCst);
+                    }
+                    if garbled == garbage {
+                        // Past librist's 10 ms rekey throttle either side.
+                        thread::sleep(Duration::from_millis(50));
+                        // Header plus four bytes: the decrypt rekeys, then the
+                        // datagram is too short to strike.
+                        let mut reset = dgram[..payload + 4].to_vec();
+                        reset[nonce] = (reset[nonce] & 0x80) | 0x5a;
+                        reset[nonce + 1..nonce + 4].copy_from_slice(&[0xa5, 0x5a, 0xa5]);
+                        let _ = sock.send_to(&reset, receiver);
+                        rewritten_thread.fetch_add(1, Ordering::SeqCst);
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                    continue;
+                }
+            }
             let _ = sock.send_to(&dgram, receiver);
         }
     });
     ProxyHandle {
         stop,
         rewritten,
+        armed,
         thread: Some(thread),
     }
 }
@@ -853,5 +929,130 @@ fn main_profile_encrypted_receiver_drops_clear_packets_inside_the_rekey_throttle
         collected.is_empty(),
         "encrypted receiver delivered {} clear packet(s)",
         collected.len()
+    );
+}
+
+/// Seven undecryptable packets latch librist's PSK lockout, which then drops
+/// every packet until a fresh nonce rekeys the key; upstream rekeyed but never
+/// cleared the latch, so after one burst of garbage the receiver refused even a
+/// legitimate sender with the right passphrase until it was recreated. Here the
+/// burst is the sender's own first datagrams made undecryptable, then a
+/// datagram under another nonce and the sender's nonce again: both rekeys
+/// succeed, so the stream must resume.
+#[cfg(feature = "mbedtls")]
+#[cfg_attr(
+    not(librist_source_fixups),
+    ignore = "needs the vendored librist build: a system librist keeps the PSK lockout"
+)]
+#[test]
+fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    const GARBAGE: u32 = 12;
+    let psk = "loopback-test-secret-keep-private";
+    let before = synthetic_ts_packet(0xdd);
+    let filler = synthetic_ts_packet(0xee);
+    let pkts: Vec<[u8; 188]> = (1..=20).map(synthetic_ts_packet).collect();
+
+    let mut recv = RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{PORT_LOCKOUT_RECV}"))
+        .unwrap()
+        .profile(RistProfile::Main)
+        .encryption(EncryptionKey::aes256(psk))
+        .listen()
+        .expect("listen");
+    let proxy = spawn_key_bit_proxy(
+        PORT_LOCKOUT_PROXY,
+        PORT_LOCKOUT_RECV,
+        Rewrite::GarbageThenPass { garbage: GARBAGE },
+    );
+
+    let wanted = pkts.clone();
+    let (tx_payloads, rx_payloads) = mpsc::channel::<Vec<Vec<u8>>>();
+    let _recv_thread = thread::spawn(move || {
+        // Runs until every numbered packet arrived or 12 s passed; inside the
+        // nextest network kill (20 s).
+        let mut out = Vec::new();
+        let mut buf = vec![0u8; recv.max_payload() + 64];
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(12) {
+            match recv.recv_bytes(&mut buf) {
+                Ok(n) => out.push(buf[..n].to_vec()),
+                Err(TransportError::Backpressure { .. }) => {}
+                Err(e) => {
+                    eprintln!("recv error: {e:?}");
+                    break;
+                }
+            }
+            if wanted
+                .iter()
+                .all(|w| out.iter().any(|o| o.as_slice() == w.as_slice()))
+            {
+                break;
+            }
+        }
+        let _ = tx_payloads.send(out);
+    });
+
+    thread::sleep(Duration::from_millis(300));
+    let mut send = RistTransportBuilder::new(&format!("rist://127.0.0.1:{PORT_LOCKOUT_PROXY}"))
+        .unwrap()
+        .profile(RistProfile::Main)
+        .encryption(EncryptionKey::aes256(psk))
+        .connect()
+        .expect("connect");
+
+    // Before the flow forms the sender emits only sparse control traffic, so
+    // the burst starts once it carries media: the filler and the retransmits
+    // the dropped datagrams provoke supply it.
+    thread::sleep(Duration::from_millis(1200));
+    for _ in 0..5 {
+        send.send_bytes(&before).expect("send before the burst");
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(300));
+    proxy.arm();
+    let burst_deadline = Instant::now() + Duration::from_secs(6);
+    while proxy.rewritten() <= GARBAGE as usize && Instant::now() < burst_deadline {
+        send.send_bytes(&filler).expect("send filler");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let rewritten = proxy.rewritten();
+    assert!(
+        rewritten > GARBAGE as usize,
+        "the proxy sent {rewritten} of {} garbage and nonce-reset datagrams, so the case proves nothing",
+        GARBAGE + 1
+    );
+
+    // Settle past the proxy's two 50 ms pauses and the receiver's recovery.
+    thread::sleep(Duration::from_millis(500));
+    for p in &pkts {
+        send.send_bytes(p).expect("send");
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let collected = rx_payloads
+        .recv_timeout(Duration::from_secs(15))
+        .expect("recv thread didn't return in time");
+    drop(proxy);
+    for got in &collected {
+        assert!(
+            got.as_slice() == before.as_slice()
+                || got.as_slice() == filler.as_slice()
+                || pkts.iter().any(|p| got.as_slice() == p.as_slice()),
+            "decrypted payload mismatch"
+        );
+    }
+    assert!(
+        collected
+            .iter()
+            .any(|got| got.as_slice() == before.as_slice()),
+        "control: nothing arrived before the burst, so the case proves nothing"
+    );
+    let delivered = pkts
+        .iter()
+        .filter(|p| collected.iter().any(|got| got.as_slice() == p.as_slice()))
+        .count();
+    assert!(
+        delivered >= 15,
+        "expected at least 15 of 20 packets after the lockout; got {delivered}"
     );
 }
