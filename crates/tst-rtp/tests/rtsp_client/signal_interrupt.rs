@@ -21,22 +21,23 @@ use crate::signal::{DELIVERED, install_handler};
 #[cfg(target_os = "linux")]
 use tst_core::transport::RecvTransport;
 
-// The `pumps.len() == 1` assertion and the shared `DELIVERED` counter assume
-// nextest's one-process-per-test.
+// Robust under plain `cargo test` too: the pump is identified by diffing the
+// thread list around this client's setup, and signal counts are compared
+// before/after.
 
 #[test]
 fn describe_survives_a_handled_signal() {
     install_handler();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
+    let (go_tx, go_rx) = mpsc::channel::<()>();
     let server = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
         let mut leftover = Vec::new();
         let req = read_request(&mut sock, &mut leftover);
         assert_eq!(method_of(&req), "DESCRIBE", "unexpected request: {req}");
-        // Answer only after the client is parked in its response read and
-        // has been signalled several times.
-        std::thread::sleep(Duration::from_millis(300));
+        // Answer only after the test has signalled the client.
+        go_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         let cseq = cseq_of(&req);
         sock.write_all(
             format!(
@@ -64,17 +65,22 @@ fn describe_survives_a_handled_signal() {
         let _ = out_tx.send(r);
     });
     let tid = tid_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let before = DELIVERED.load(Ordering::SeqCst);
     for _ in 0..5 {
         std::thread::sleep(Duration::from_millis(40));
         // SAFETY: the worker is alive until describe() returns.
         unsafe { libc::pthread_kill(tid as libc::pthread_t, libc::SIGUSR1) };
     }
+    assert!(
+        DELIVERED.load(Ordering::SeqCst) > before,
+        "no signal delivered"
+    );
+    go_tx.send(()).unwrap();
     let r = out_rx
         .recv_timeout(Duration::from_secs(10))
         .expect("describe returned");
     worker.join().unwrap();
     server.join().unwrap();
-    assert!(DELIVERED.load(Ordering::SeqCst) >= 1, "no signal delivered");
     r.expect("DESCRIBE survives a handled signal");
 }
 
@@ -134,6 +140,7 @@ fn interleaved_recv_survives_a_handled_signal() {
     });
 
     let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
+    let pumps_before = find_threads("rtsp-interleave");
     let mut client = RtspClient::connect(&url).unwrap();
     let sdp = client.describe().unwrap();
     let session = client.setup_mp2t_auto(&sdp).unwrap();
@@ -142,14 +149,22 @@ fn interleaved_recv_survives_a_handled_signal() {
     client.play().unwrap();
 
     let before = DELIVERED.load(Ordering::SeqCst);
-    let pumps = find_threads("rtsp-interleave");
-    assert_eq!(pumps.len(), 1, "expected one pump thread, found {pumps:?}");
+    // Pumps of other tests in this process may be alive: signal only the
+    // threads this client added.
+    let pumps: Vec<_> = find_threads("rtsp-interleave")
+        .into_iter()
+        .filter(|t| !pumps_before.contains(t))
+        .collect();
+    assert!(!pumps.is_empty(), "this client's pump thread not found");
     for _ in 0..5 {
         std::thread::sleep(Duration::from_millis(40));
         // SAFETY: the pump thread is alive while the client is.
-        let rc =
-            unsafe { libc::syscall(libc::SYS_tgkill, libc::getpid(), pumps[0], libc::SIGUSR1) };
-        assert_eq!(rc, 0);
+        for &tid in &pumps {
+            // A thread another test's pump started and ended in the
+            // meantime may be gone (ESRCH); the delivered-count check below
+            // proves this client's pump took signals.
+            let _ = unsafe { libc::syscall(libc::SYS_tgkill, libc::getpid(), tid, libc::SIGUSR1) };
+        }
     }
     assert!(
         DELIVERED.load(Ordering::SeqCst) > before,
