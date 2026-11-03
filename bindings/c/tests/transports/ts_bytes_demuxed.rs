@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 use tstrans::error::TstError;
 use tstrans::event::TstEvent;
 
-use crate::common::{parked, scaled};
+use crate::common::scaled;
+use crate::common_net::parked;
 
 /// Park `recv` on a reader thread; from this thread read the counter
 /// (it must be zero and answer promptly), cancel, and read it again.
@@ -110,7 +111,7 @@ fn udp_ts_bytes_demuxed_equals_bytes_received() {
     use tstrans::stats::TstDemuxReceiverStats;
     use tstrans::udp::*;
 
-    let port = crate::common::free_udp_port();
+    let port = crate::common_net::free_udp_port();
     let url = CString::new(format!("udp://127.0.0.1:{port}")).unwrap();
     let h = unsafe { tst_udp_demux_receiver_open(url.as_ptr(), std::ptr::null()) };
     assert!(!h.is_null());
@@ -146,10 +147,10 @@ fn udp_ts_bytes_demuxed_equals_bytes_received() {
     unsafe { tst_udp_demux_receiver_close(h) };
 
     fn parked_reader(h: *mut TstUdpDemuxReceiver) -> std::thread::JoinHandle<()> {
-        let p = crate::common::SendPtr(h);
+        let p = crate::common_net::SendPtr(h);
         std::thread::spawn(move || {
             let p = p;
-            let crate::common::SendPtr(h) = p;
+            let crate::common_net::SendPtr(h) = p;
             let mut ev = TstEvent::default();
             unsafe { tst_udp_demux_receiver_next_event(h, &mut ev) };
         })

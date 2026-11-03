@@ -9,7 +9,7 @@
 //! hangs.
 #![cfg(feature = "rtp")]
 
-use crate::common::parked;
+use crate::common_net::parked;
 use std::ffi::CString;
 use tstrans::error::TstError;
 use tstrans::event::TstEvent;
