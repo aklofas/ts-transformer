@@ -71,11 +71,15 @@ jobs:
     name: version preflight
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # No submodules: the rail only reads version strings from tracked files.
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
       - name: Assert version consistency (and tag == source version on tag builds)
         # On a v* tag push GITHUB_REF_NAME (e.g. v0.2.0) forces the source
         # version to equal the tag, so a tag can never build/publish a
@@ -83,6 +87,18 @@ jobs:
         # just asserts the six version sources agree with each other.
         # A tag that is not `vMAJOR.MINOR.PATCH` fails here.
         run: bash scripts/check/repo/release-version-consistency.sh
+
+      # The publish workflows do not wait for the tag's own qualification run
+      # (releasing.md §6), so each one checks the committed record itself.
+      - name: The committed record is release-eligible for this tag
+        # A call from release-qualify (dry_run) runs before the record exists.
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/gen/qualification.sh release-eligible --sha "$GITHUB_SHA"
+          gh attestation verify docs/project/qualification.json -R "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-qualify.yml"
 
   linux-wheel:
     name: wheel (linux-${{ matrix.target }})

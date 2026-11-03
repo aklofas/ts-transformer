@@ -10,6 +10,13 @@
             docs/project/validation-evidence.md and docs/project/1.0-exit-criteria.md
   checksums --dir DIR                                  write DIR/SHA256SUMS
   archives  [--root DIR]                               validate tests/coverage/evidence-archives.toml
+  release-eligible --sha SHA [--json FILE] [--root DIR] [--repo OWNER/NAME] [--skip-attestation]
+            exit 0 when the committed record may release the commit SHA (a tag's), 1 with
+            one reason per failed rule, 2 when the record, SHA or `gh` is unusable. Rules:
+            the record is a release-mode qualification; its verdict is GO; it is not a
+            pull-request rehearsal; SHA differs from the record's commit only in release
+            documents; and a build-provenance attestation by release-qualify.yml covers
+            the committed file's sha256 (so the file is the bundle's, byte for byte)
 
 Artefact directory read by `collect` (a missing file is a missing leg, never a pass):
   context.json                         label, source{sha,workflow_sha,ref,dirty,submodules}, toolchain, host
@@ -33,6 +40,7 @@ makes `collect` exit 2 and a wrongly shaped one fails the run; either way NO rec
 written, so the job that runs it must never use `continue-on-error`. Stdlib only.
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -988,6 +996,90 @@ def cmd_render(args):
     return 0
 
 
+ATTESTATION_WORKFLOW = ".github/workflows/release-qualify.yml"
+SLSA_PROVENANCE = "https://slsa.dev/provenance/v1"
+
+
+def run_gh(args):
+    """The stdout of `gh <args>`; raises OSError or CalledProcessError."""
+    return subprocess.run(["gh"] + list(args), capture_output=True, text=True, check=True).stdout
+
+
+def attestation_statements(gh_output_json):
+    """The in-toto statements of a `gh api .../attestations/sha256:<digest>` response."""
+    out = []
+    for a in json.loads(gh_output_json).get("attestations", []):
+        payload = a["bundle"]["dsseEnvelope"]["payload"]
+        out.append(json.loads(base64.b64decode(payload)))
+    return out
+
+
+def _attests(stmt, digest, repo):
+    wf = stmt.get("predicate", {}).get("buildDefinition", {}).get("externalParameters", {}).get("workflow", {})
+    return (stmt.get("predicateType") == SLSA_PROVENANCE
+            and any(s.get("digest", {}).get("sha256") == digest for s in stmt.get("subject", []))
+            and wf.get("path") == ATTESTATION_WORKFLOW
+            and wf.get("repository") == "https://github.com/" + repo)
+
+
+def release_eligible(rec, root, sha, digest, attestations, repo=None):
+    """The reasons the committed record may not release commit `sha`; [] when it may.
+    `attestations` None skips the attestation rule."""
+    why = []
+    if rec.get("release_vm", {}).get("release_mode") is not True:
+        why.append("the record is not a release qualification (`release_vm.release_mode` is false)")
+    if rec.get("verdict") != "GO":
+        why.append("the record's verdict is NO-GO")
+    if str(rec.get("label", "")).startswith("PR #"):
+        why.append("the record is a pull-request rehearsal")
+    rec_sha = rec.get("source", {}).get("sha", "")
+    try:
+        changed = changed_paths(root, rec_sha, sha)
+    except QualificationError as e:
+        why.append("git could not resolve %s or %s: %s" % (rec_sha[:12], sha[:12], e))
+    else:
+        if changed:
+            why.append("the record's commit %s differs from %s outside the release documents (%d path(s)): %s"
+                       % (rec_sha[:12], sha[:12], len(changed), ", ".join(changed[:5])))
+    if attestations is not None and not any(_attests(s, digest, repo) for s in attestations):
+        why.append("no build-provenance attestation by release-qualify.yml covers sha256:%s; "
+                   "commit the bundle's qualification.json byte for byte" % digest)
+    return why
+
+
+def cmd_release_eligible(args):
+    if not re.fullmatch(r"[0-9a-f]{40}", args.sha):
+        die("--sha is not a 40-hex commit: %r" % args.sha)
+    try:
+        with open(args.json, "rb") as f:
+            raw = f.read()
+        rec = json.loads(raw)
+    except (OSError, ValueError) as e:
+        die("cannot read %s: %s" % (args.json, e))
+    digest = hashlib.sha256(raw).hexdigest()
+    attestations = None
+    if not args.skip_attestation:
+        try:
+            repo = args.repo or os.environ.get("GITHUB_REPOSITORY") or run_gh(
+                ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]).strip()
+            try:
+                attestations = attestation_statements(
+                    run_gh(["api", "repos/%s/attestations/sha256:%s" % (repo, digest)]))
+            except subprocess.CalledProcessError as e:
+                # No attestation at all is a 404: a reason, not a tooling failure.
+                if "404" not in (e.stderr or ""):
+                    raise
+                attestations = []
+        except (OSError, subprocess.CalledProcessError, ValueError, KeyError) as e:
+            die("gh could not list the attestations: %s" % (getattr(e, "stderr", None) or e))
+    why = release_eligible(rec, args.root, args.sha, digest, attestations, repo=None if attestations is None else repo)
+    for w in why:
+        print("qualification: not release-eligible: " + w, file=sys.stderr)
+    if not why:
+        print("qualification: release-eligible (%s, %s)" % (rec["label"], rec["verdict"]))
+    return 1 if why else 0
+
+
 def write_checksums(d):
     names = sorted(n for n in os.listdir(d)
                    if n != "SHA256SUMS" and os.path.isfile(os.path.join(d, n)))
@@ -1022,7 +1114,15 @@ def main(argv=None):
     k.add_argument("--dir", required=True)
     v = sub.add_parser("archives")
     v.add_argument("--root", default=".")
+    e = sub.add_parser("release-eligible")
+    e.add_argument("--sha", required=True)
+    e.add_argument("--json", default="docs/project/qualification.json")
+    e.add_argument("--root", default=".")
+    e.add_argument("--repo")
+    e.add_argument("--skip-attestation", action="store_true")
     args = ap.parse_args(argv)
+    if args.cmd == "release-eligible":
+        return cmd_release_eligible(args)
     if args.cmd == "collect":
         rec = collect(args.artifacts, args.root, release=args.release, tag=args.tag)
         with open(args.out, "w") as f:

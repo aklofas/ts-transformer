@@ -333,7 +333,18 @@ merge commit, and the qualification run checks that nothing under
     | HLS segment probe | the `hls/{ffmpeg,tsp}-pull` cells and `crates/tst-hls/tests/net_hls_e2e.rs` |
     | PTS-rollover and PCR-jitter checks | removed; they never ran |
 13. **Tag** the commit that carries the qualification record from step 11,
-    following the release procedure below. Three commits and two records are
+    following the release procedure below. Before tagging, run
+    `bash scripts/gen/qualification.sh release-eligible --sha <the commit you will tag>`
+    with `gh` signed in. It exits non-zero, naming each reason, unless:
+    - the record is a release-mode qualification (`release_vm.release_mode`);
+    - its verdict is GO;
+    - it is not a pull-request rehearsal;
+    - the commit differs from the record's `source.sha` in release documents only;
+    - a build-provenance attestation by `release-qualify.yml` covers the
+      committed file's sha256, so the file is the bundle's, byte for byte.
+
+    `render --check` is unchanged: a committed GO of a main or tag commit is
+    admissible, and historical records stay admissible mid-cycle. Three commits and two records are
     involved, each in one place:
     - the committed `docs/project/qualification.json` was collected on the
       commit it names (`source.sha`), the one step 10 qualified; the tag sits
@@ -363,7 +374,9 @@ Release; the committed record stays the one step 10 collected.
    git push origin vX.Y.Z
    ```
 2. The tag triggers all three publish workflows (`crates-io.yml` is
-   covered in its own section below):
+   covered in its own section below). Each one, and the Release attach in
+   `release-qualify.yml`, first runs `release-eligible` (step 13) and stops
+   on a record that is not release-eligible for the tagged commit:
    - **python-wheels.yml** builds wheels + sdist and **publishes to PyPI via
      OIDC trusted publishing.** **Watch the publish job:** if any required
      wheel leg is cancelled or stuck queued, the `needs:`-gated publish job

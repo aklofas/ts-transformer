@@ -347,6 +347,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The version rail refuses a tag that is not `vMAJOR.MINOR.PATCH` (`vnext`, `v1.2.3-rc1`), so the three publish workflows stop before any registry write; a branch name is never read as a tag.
 - The C ABI rail pins the eight functions whose enum parameters were retyped to `int32_t`: their header prototypes may differ from the previous tag's only by that retype, any other change fails, and the suppression that admits the retype expires once the comparison baseline is v0.9.1 or later.
 - The macOS wheel job installs the wheel it built into the runner's Python and imports the native transports and WebRTC before uploading, like the Linux and Windows jobs.
+- `qualification.py release-eligible --sha <commit>` checks that the committed record is a release-mode GO of a main or tag commit, that the commit differs from the record's only in release documents, and that a build-provenance attestation by `release-qualify.yml` covers the committed file; the tag-push Release attach and the three publish workflows run it before any upload. `render --check` is unchanged.
 
 ### Changed — tst-interop
 

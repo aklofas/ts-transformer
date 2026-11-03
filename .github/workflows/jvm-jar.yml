@@ -213,12 +213,16 @@ jobs:
     environment:
       name: maven-central
       url: https://central.sonatype.com/publishing/deployments
+    permissions:
+      contents: read
+      attestations: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # no submodules: publishing rebuilds the jar from staged native libs,
         # not from cargo.
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
@@ -238,6 +242,16 @@ jobs:
 
       - name: Assert version consistency (tag == source version)
         run: bash scripts/check/repo/release-version-consistency.sh
+
+      # The publish workflows do not wait for the tag's own qualification run
+      # (releasing.md §6), so each one checks the committed record itself.
+      - name: The committed record is release-eligible for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/gen/qualification.sh release-eligible --sha "$GITHUB_SHA"
+          gh attestation verify docs/project/qualification.json -R "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-qualify.yml"
 
       # Builds + signs the fat jar + sources + javadoc and uploads them to the
       # Central Portal in STAGED state (automaticRelease=false in build.gradle.kts).
