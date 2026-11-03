@@ -485,6 +485,17 @@ class CorpusCountTests(unittest.TestCase):
         self.assertNotIn("Release-only checks", text)
         self.assertNotIn("real-capture corpus:", text)
 
+    def test_a_passing_corpus_row_with_failures_is_rejected(self):
+        for field in ("parse_failures", "invariant_failures", "replay_failed"):
+            with self.subTest(field=field):
+                probs = q.validate_archives(self.rows(**dict(COUNTS, **{field: 2})))
+                self.assertTrue(any(field in p and "passes" in p and "row c " in p for p in probs), probs)
+
+    def test_a_failing_corpus_row_with_failure_counts_is_valid(self):
+        rows = q.parse_archives(archives_toml(archive_row(
+            "c", "corpus", SHA, overall_pass=False, counts=dict(COUNTS, parse_failures=3, replay_failed=1))))
+        self.assertEqual(q.validate_archives(rows), [])
+
 
 class ReleaseModeTests(unittest.TestCase):
     def test_mid_cycle_record_is_go_without_a_soak(self):
@@ -554,6 +565,20 @@ class ReleaseModeTests(unittest.TestCase):
         rec = collect(release=True, archives=short)
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIn("soak: archive soak-rel declares 3600 s, not 259200", rec["verdict_reasons"])
+
+    def test_release_mode_is_no_go_for_a_pass_contradicting_its_counts(self):
+        for field in ("parse_failures", "invariant_failures", "replay_failed"):
+            with self.subTest(field=field):
+                toml = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                                     archive_row("corpus-rel", "corpus", SHA, counts=dict(COUNTS, **{field: 1})))
+                with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()) as err:
+                    collect(release=True, archives=toml)
+                self.assertIn(field, err.getvalue())
+                rows = q.parse_archives(toml)
+                gate = q.release_vm("/nonexistent", SHA, rows, True, COUNTS["files"])
+                self.assertTrue(any(("failed replay" if field == "replay_failed" else field) in r
+                                    for r in gate["reasons"]),
+                                gate["reasons"])
 
     def test_release_mode_requires_the_corpus_archive(self):
         rec = collect(release=True, archives=archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE)))
@@ -689,8 +714,7 @@ class ReleaseModeTests(unittest.TestCase):
         self.assertEqual(rec["verdict"], "NO-GO")
 
     def test_release_mode_rejects_a_one_path_corpus_row(self):
-        for bad in (dict(COUNTS, replay_paths=1), dict(COUNTS, replay_files=0),
-                    dict(COUNTS, replay_failed=1)):
+        for bad in (dict(COUNTS, replay_paths=1), dict(COUNTS, replay_files=0)):
             rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
                                  archive_row("corpus-rel", "corpus", SHA, counts=bad))
             rec = collect(release=True, archives=rows)
