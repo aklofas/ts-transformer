@@ -11,9 +11,7 @@ import static org.tstrans.TestSupport.syntheticH264Idr;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
@@ -47,12 +45,9 @@ import org.tstrans.shells.DemuxReceiver;
  *       consistent with the offline path — without depending on a hardcoded
  *       golden hash (which would be brittle for a multi-push stream and would
  *       drift if the synthetic IDR or push count changed).</li>
- *   <li><b>The byte-sink fan-out delivers raw 188-byte TS packets before
- *       demux.</b> A sink registered on the {@code DemuxReceiver} before
- *       iteration records per-packet observations; the test asserts at least
- *       one packet was fanned out and at least one was exactly 188 bytes (the
- *       SRT live-mode TS quantum), proving the tee fires on the raw transport
- *       stream ahead of the demuxer.</li>
+ *   <li><b>The demux counter covers whole TS packets.</b> After the drain,
+ *       {@code tsBytesDemuxed()} is positive and a multiple of 188 (the SRT
+ *       live-mode TS quantum).</li>
  *   <li><b>Private-data streams round-trip byte-faithfully.</b> The config
  *       declares a raw-{@code stream_type} 0xF0 data stream; the sender pushes
  *       one distinctive record via the lone-data-stream {@code pushData}
@@ -127,9 +122,8 @@ class SrtMuxDemuxLoopbackTest {
         CompletableFuture<String> shaFuture = new CompletableFuture<>();
         CompletableFuture<DemuxEvent.UnknownSample> dataFuture = new CompletableFuture<>();
 
-        // Byte-sink observations (populated on the receiver thread, read on main).
-        AtomicInteger sinkCount = new AtomicInteger();
-        ConcurrentLinkedQueue<Integer> sinkLens = new ConcurrentLinkedQueue<>();
+        // The receiver thread reports the demux counter just before closing.
+        CompletableFuture<Long> bytesFuture = new CompletableFuture<>();
 
         Thread receiverThread = new Thread(() -> {
             Listener listener = null;
@@ -149,13 +143,6 @@ class SrtMuxDemuxLoopbackTest {
                 // `nIntoDemuxReceiverWithConfig` native, which otherwise has no
                 // live-socket coverage anywhere in the suite.
                 rx = sock.intoDemuxReceiver(DemuxerConfig.builder().build());
-
-                // Register the byte sink BEFORE iterating: it fires per 188-byte
-                // TS packet ahead of the demuxer. Keep it cheap (just record).
-                rx.addByteSink(pkt -> {
-                    sinkCount.incrementAndGet();
-                    sinkLens.add(pkt.length);
-                });
 
                 // Drain to the first typed Video event with a non-empty payload
                 // AND the first private-data UnknownSample.
@@ -206,7 +193,10 @@ class SrtMuxDemuxLoopbackTest {
                 // (its handle is zeroed → close() is a no-op there); closing it
                 // here frees the accepted socket if an exception fired before/
                 // during intoDemuxReceiver().
-                if (rx != null) rx.close();
+                if (rx != null) {
+                    bytesFuture.complete(rx.tsBytesDemuxed());
+                    rx.close();
+                }
                 if (sock != null) sock.close();
                 if (listener != null) listener.close();
             }
@@ -273,18 +263,17 @@ class SrtMuxDemuxLoopbackTest {
         assertArrayEquals(DATA_PAYLOAD, dataBytes,
             "private-data payload must arrive verbatim (pass-through, no framing)");
 
-        // Byte-sink fan-out: at least one packet, at least one exactly 188 bytes.
-        assertTrue(sinkCount.get() >= 1,
-            "byte sink must have observed at least one TS packet before demux");
-        assertTrue(sinkLens.stream().anyMatch(len -> len == 188),
-            "byte sink must have observed at least one raw 188-byte TS packet "
-                + "(the SRT live-mode quantum) ahead of the demuxer");
+        long n;
+        try {
+            n = bytesFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new AssertionError("receiver thread did not report the demux counter", e);
+        }
+        assertTrue(n > 0, "the demux counter must have seen the stream");
+        assertEquals(0, n % 188, "the counter counts whole TS packets");
 
         receiverThread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SEC));
     }
-
-    // A throwing byte sink is covered over TCP, where the stream is fully
-    // scripted: see org.tstrans.shells.DemuxReceiverByteSinkFailureTest.
 
     // ── helpers ─────────────────────────────────────────────────────────────
 

@@ -9,7 +9,6 @@
 
 use crate::common::{broken, build_h264_au, drain_mux, fast_policy, to_ts_packets};
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tst_core::TransportError;
@@ -138,11 +137,11 @@ fn managed_demux_receiver_flushes_final_video_au_on_cancel() {
     );
 }
 
-/// Byte sinks were plain-shell-only (`rg byte_sink managed_demux_receiver.rs`
-/// → 0 hits). After the fold every aligned packet the managed shell parses
-/// is fanned out first, in registration order, exactly as on `DemuxReceiver`.
+/// The managed shell's `ts_bytes_demuxed` counts every aligned packet it parsed
+/// and handed to the demuxer, exactly as on `DemuxReceiver`. With no reconnect
+/// nothing is dropped, so the count is the packet total times 188.
 #[test]
-fn managed_demux_receiver_byte_sink_sees_every_packet() {
+fn managed_demux_receiver_ts_bytes_demuxed_counts_every_parsed_packet() {
     let packets = three_au_stream();
     let expected = packets.len();
     // No cancel in the cell: the source exhausts with Broken, the factory
@@ -156,14 +155,6 @@ fn managed_demux_receiver_byte_sink_sees_every_packet() {
     let managed = ManagedRecvTransport::new(source, never_reconnect(), fast_policy(Some(0)))
         .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
-
-    let seen = Arc::new(AtomicUsize::new(0));
-    let seen_cl = Arc::clone(&seen);
-    rx.add_byte_sink(Box::new(move |pkt: &[u8]| {
-        assert_eq!(pkt.len(), 188, "sinks see whole TS packets");
-        assert_eq!(pkt[0], 0x47, "sinks see aligned packets");
-        seen_cl.fetch_add(1, Ordering::SeqCst);
-    }));
 
     let mut samples = 0usize;
     loop {
@@ -179,9 +170,9 @@ fn managed_demux_receiver_byte_sink_sees_every_packet() {
         "all three AUs demuxed (last one via the EOS flush)"
     );
     assert_eq!(
-        seen.load(Ordering::SeqCst),
-        expected,
-        "the sink must see every packet the managed shell parsed (no reconnect → nothing dropped)"
+        rx.ts_bytes_demuxed(),
+        (expected * 188) as u64,
+        "the counter must cover every packet the managed shell parsed (no reconnect → nothing dropped)"
     );
     assert_eq!(
         rx.end_reason_handle().get(),

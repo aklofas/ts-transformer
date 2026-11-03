@@ -119,11 +119,10 @@ class RtpConvenienceTest {
         TransportStats st = rx.stats();
         assertNotNull(st.socketStats());
         assertNotNull(st.muxerStats());
-        // addByteSink before iterating is allowed.
-        rx.addByteSink(pkt -> { /* no-op */ });
         rx.close();
         assertFalse(rx.isAlive());
-        assertThrows(IllegalStateException.class, () -> rx.addByteSink(pkt -> {}));
+        // Nothing was ever demuxed; the counter stays readable after close.
+        assertEquals(0, rx.tsBytesDemuxed());
         assertThrows(IllegalStateException.class, rx::stats);
         rx.close(); // idempotent
     }

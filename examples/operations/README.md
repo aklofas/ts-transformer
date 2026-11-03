@@ -38,16 +38,19 @@ recovering.
 Cookbook: [Survive a flaky transport with reconnect + gap buffer](../../docs/cookbook/operations/managed-transport-reconnect.md)
 (same page as §1 — covers both `ReconnectMode` variants).
 
-## 3. `tee_disk_and_demux.rs` — fan-out byte-sink pattern
+## 3. `tee_disk_and_demux.rs` — record and demux in one pass
 
 ```sh
 cargo run -p tst-examples --example tee_disk_and_demux -- <input.ts> <output.ts>
 ```
 
-Use `add_byte_sink` on a `DemuxReceiver` to fan TS bytes out to multiple
-consumers without copying: write to disk and feed a live demux loop in
-one pass. The shape that wires the receiver into both archival and
-analysis paths.
+Compose a `Receiver` (aligned 188-byte packets), a `FileTransport` (the
+recording) and a `Demuxer` (typed events) in one loop: each packet is sent
+to the file, fed to the demuxer, and the events are drained. No callback
+runs on a library thread. The example also spells out what the composition
+leaves to the caller: flush the demuxer on a terminal error as well as at
+clean end, and on a reconnecting transport drop the packet read across the
+reconnect and reset both halves.
 
 Adjacent cookbook recipes: [Print live `Stats` from a sender](../../docs/cookbook/operations/print-live-stats.md),
 [Inject WebVTT POI cues into a live MPEG-TS uplink](../../docs/cookbook/operations/inject-webvtt-cues.md).

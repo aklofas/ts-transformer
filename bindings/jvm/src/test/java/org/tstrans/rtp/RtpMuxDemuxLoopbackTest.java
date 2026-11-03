@@ -12,9 +12,7 @@ import static org.tstrans.TestSupport.syntheticH264Idr;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.tstrans.RtpException;
 import org.tstrans.mpegts.DemuxEvent;
@@ -35,7 +33,7 @@ import org.tstrans.shells.DemuxReceiver;
  *       expected SHA is the first Video sample's NAL-payload digest from an
  *       OFFLINE {@link Muxer}→{@link Demuxer} run of the identical config + pushes;
  *       the live SHA must equal it.</li>
- *   <li>The byte-sink fan-out delivers raw 188-byte TS packets before demux.</li>
+ *   <li>The demux counter covers whole TS packets: positive and a multiple of 188.</li>
  *   <li>Private-data streams round-trip byte-faithfully: a raw-{@code stream_type}
  *       0xF0 data stream's records (pushed via the lone-data-stream
  *       {@code pushData} shorthand) must surface as
@@ -77,14 +75,8 @@ class RtpMuxDemuxLoopbackTest {
         int port = freeUdpPort();
 
         // Construct the receiver on MAIN (UDP bind does not block) so the watchdog
-        // can close() it cross-thread. Register the byte sink before iterating.
-        AtomicInteger sinkCount = new AtomicInteger();
-        ConcurrentLinkedQueue<Integer> sinkLens = new ConcurrentLinkedQueue<>();
+        // can close() it cross-thread.
         DemuxReceiver rx = DemuxReceiver.open("rtp://127.0.0.1:" + port);
-        rx.addByteSink(pkt -> {
-            sinkCount.incrementAndGet();
-            sinkLens.add(pkt.length);
-        });
 
         CompletableFuture<String> shaFuture = new CompletableFuture<>();
         CompletableFuture<DemuxEvent.UnknownSample> dataFuture = new CompletableFuture<>();
@@ -221,10 +213,9 @@ class RtpMuxDemuxLoopbackTest {
         assertArrayEquals(DATA_PAYLOAD, dataBytes,
             "private-data payload must arrive verbatim (pass-through, no framing)");
 
-        assertTrue(sinkCount.get() >= 1,
-            "byte sink must have observed at least one TS packet before demux");
-        assertTrue(sinkLens.stream().anyMatch(len -> len == 188),
-            "byte sink must have observed at least one raw 188-byte TS packet ahead of the demuxer");
+        long n = rx.tsBytesDemuxed();
+        assertTrue(n > 0, "the demux counter must have seen the stream");
+        assertEquals(0, n % 188, "the counter counts whole TS packets");
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
