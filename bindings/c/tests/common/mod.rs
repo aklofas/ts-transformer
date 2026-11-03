@@ -82,3 +82,10 @@ pub(crate) fn parked<T: 'static>(
     reader.join().expect("reader thread");
     rc.expect("_cancel did not wake the parked receive within 10 s")
 }
+
+/// A UDP port the kernel just handed out: bind :0, read it, drop the socket.
+/// For handles with no local-port getter; libsrt binds the same UDP space.
+pub(crate) fn free_udp_port() -> u16 {
+    let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    s.local_addr().unwrap().port()
+}

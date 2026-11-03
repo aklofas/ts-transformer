@@ -110,7 +110,7 @@ fn udp_ts_bytes_demuxed_equals_bytes_received() {
     use tstrans::stats::TstDemuxReceiverStats;
     use tstrans::udp::*;
 
-    let port: u16 = 52_000 + (std::process::id() as u16 % 1000);
+    let port = crate::common::free_udp_port();
     let url = CString::new(format!("udp://127.0.0.1:{port}")).unwrap();
     let h = unsafe { tst_udp_demux_receiver_open(url.as_ptr(), std::ptr::null()) };
     assert!(!h.is_null());
