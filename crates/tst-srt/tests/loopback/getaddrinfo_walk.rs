@@ -165,10 +165,13 @@ fn walk_dials_the_first_address_even_with_no_budget_left() {
         elapsed >= Duration::from_millis(800),
         "the first address must be dialled even with a spent budget; elapsed={elapsed:?}",
     );
-    // The second address sees a spent budget and is not dialled.
+    // A second dial would cost at least two more one-second slices (about
+    // 4 s), so 3.5 s still proves the second address was not dialled while
+    // leaving 1.5 s for slow runners.
     assert!(
-        elapsed < Duration::from_secs(3),
-        "a spent budget must not dial the second address; elapsed={elapsed:?}",
+        elapsed < Duration::from_millis(3500),
+        "a spent budget must not dial the second address (a second dial would \
+         cost at least two more one-second slices, about 4 s); elapsed={elapsed:?}",
     );
     drop(silent_a);
     drop(silent_b);
