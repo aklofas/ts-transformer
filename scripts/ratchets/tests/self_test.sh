@@ -713,6 +713,34 @@ expect "release version: internal dep version key flipped to 0.1.0" 1 rvc
 rvc_fixtures "0.2.0"
 expect "release version: internal dep version key restored" 0 rvc
 
+# ---- ci-run-select (scripts/ci/ci-run-select.jq) ----
+CIS="$DIR/../ci/ci-run-select.jq"
+mkdir -p "$tmp/ci"
+run() { # <id> <event> <created_at> <status> <conclusion>
+    printf '{"id":%s,"event":"%s","created_at":"%s","status":"%s","conclusion":%s,"html_url":"u/%s","run_attempt":1,"head_sha":"abc"}' "$1" "$2" "$3" "$4" "$5" "$1"
+}
+page() { printf '{"workflow_runs":[%s]}\n' "$(IFS=,; echo "$*")"; }
+page "$(run 1 push 2026-11-01T10:00:00Z completed '"failure"')" "$(run 2 pull_request 2026-11-01T11:00:00Z completed '"success"')" > "$tmp/ci/pr-newer.json"
+page "$(run 1 push 2026-11-01T10:00:00Z completed '"failure"')" "$(run 3 push 2026-11-01T12:00:00Z completed '"success"')" > "$tmp/ci/push-newer.json"
+page "$(run 4 push 2026-11-01T10:00:00Z completed '"failure"')" "$(run 5 push 2026-11-01T10:00:00Z completed '"success"')" > "$tmp/ci/tie.json"
+page "$(run 1 push 2026-11-01T10:00:00Z completed '"failure"')" "$(run 6 workflow_dispatch 2026-11-01T13:00:00Z completed '"success"')" > "$tmp/ci/dispatch.json"
+page "$(run 2 pull_request 2026-11-01T11:00:00Z completed '"success"')" > "$tmp/ci/only-pr.json"
+page "$(run 1 push 2026-11-01T10:00:00Z completed '"success"')" "$(run 7 push 2026-11-01T14:00:00Z in_progress null)" > "$tmp/ci/running.json"
+cis() { jq -r -f "$CIS" --arg allow_pr "$1" "$tmp/ci/$2.json" | jq -r "$3"; }
+cis_row() { # <desc> <allow_pr> <page> <jq expr> <want>
+    expect "$1" 0 cis "$2" "$3" "$4"; expect_out "$1" "$5"
+}
+cis_row "ci-run-select: a newer pull_request success does not displace an older push failure (id)" false pr-newer .run_id 1
+cis_row "ci-run-select: a newer pull_request success does not displace an older push failure (conclusion)" false pr-newer .conclusion failure
+cis_row "ci-run-select: a newer push run wins" false push-newer .run_id 3
+cis_row "ci-run-select: equal created_at, the higher id wins" false tie .run_id 5
+cis_row "ci-run-select: a workflow_dispatch run is eligible" false dispatch .run_id 6
+cis_row "ci-run-select: no eligible run reads missing" false only-pr .conclusion missing
+cis_row "ci-run-select: no eligible run has a null run_id" false only-pr .run_id null
+cis_row "ci-run-select: allow_pr true admits the pull_request run" true only-pr .run_id 2
+cis_row "ci-run-select: newest in progress (run)" false running .run_id 7
+cis_row "ci-run-select: newest in progress (status)" false running .status in_progress
+
 # ---- roster (scripts/lib/roster.sh) + roster-sync (scripts/check/repo/roster-sync.sh) ----
 ROSTER="$DIR/../lib/roster.sh"; RSYNC="$DIR/../check/repo/roster-sync.sh"
 mkdir -p "$tmp/ro"
