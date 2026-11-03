@@ -124,7 +124,7 @@ pub mod shell_error;
 #[cfg(feature = "std")]
 pub use demux_receiver::TsBytesDemuxedHandle;
 pub use demux_receiver::{
-    ByteSink, DemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource, DemuxReceiverStats,
+    DemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource, DemuxReceiverStats,
 };
 #[cfg(feature = "std")]
 pub use managed_demux_receiver::{ManagedDemuxReceiver, ManagedDemuxReceiverConfig};

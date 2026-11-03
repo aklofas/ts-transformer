@@ -16,7 +16,6 @@ from __future__ import annotations
 import enum
 from typing import (
     Any,
-    Callable,
     Iterator,
     Optional,
     Tuple,
@@ -363,20 +362,6 @@ class DemuxReceiver:
     def __iter__(self) -> Iterator[DemuxEvent]: ...
     def __next__(self) -> DemuxEvent:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
-    # Register a fan-out callback invoked with every 188-byte TS packet
-    # (as `bytes`) BEFORE demuxing, in registration order. If the
-    # callback raises, the exception is re-raised fail-loud from the next
-    # `__next__` and iteration stops. Append-only for the receiver's life.
-    # Inside the callback (also when reached through another receiver the
-    # callback drives), `close()` on this same receiver is deferred: it
-    # cancels; the in-flight `__next__` delivers its event, if any, and the
-    # iteration ends with `StopIteration` on the next pull (at once when
-    # there was no event).
-    # `__next__`, `add_byte_sink`, `stats`, `socket_stats` and
-    # `last_seen_micros` on this receiver raise `RuntimeError` there;
-    # `cancel_handle`, `is_alive`, `end_reason`, `end_detail` and other
-    # receivers are unaffected.
-    def add_byte_sink(self, callback: Callable[[bytes], None]) -> None: ...
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
     def ts_bytes_demuxed(self) -> int:

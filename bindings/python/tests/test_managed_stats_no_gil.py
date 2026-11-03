@@ -10,8 +10,7 @@ The bug (before fix):
   (GIL released), `socket_stats()` would wait for it while holding the GIL —
   freezing all Python threads for the duration of one `recv_event()` call.
 
-  This is distinct from the byte-sink ABBA deadlock in `DemuxReceiver` — it
-  is a temporary GIL freeze rather than a permanent deadlock, but still
+  This is a temporary GIL freeze rather than a permanent deadlock, but it
   degrades interpreter responsiveness.
 
 The fix:

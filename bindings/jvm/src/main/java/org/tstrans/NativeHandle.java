@@ -125,11 +125,7 @@ public abstract class NativeHandle implements AutoCloseable {
      *           interaction that claims or frees the handle — the atomic claim in this
      *           base implementation is the double-free guarantee, and bypassing or
      *           duplicating it breaks the idempotency contract above. A native call
-     *           that claims and frees nothing is allowed. One exception to calling
-     *           {@code super.close()}: a close that is deferred because the resource is
-     *           held further up the calling thread may return without it, provided
-     *           the close is later completed through {@code super.close()} (see
-     *           {@code org.tstrans.shells.DemuxReceiver#close()}).
+     *           that claims and frees nothing is allowed.
      */
     @Override
     public void close() {

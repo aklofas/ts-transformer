@@ -18,7 +18,7 @@
 //! shell's epoch observer, and records the [`EndReason`] from the
 //! inner shell's terminal results. Everything else — the stream-end
 //! flush on `EndOfStream` **and** `Closed`, the deferred terminal error,
-//! byte sinks, stats — is the plain shell's, one contract for both.
+//! stats — is the plain shell's, one contract for both.
 //!
 //! # The bug this fixes
 //!
@@ -95,7 +95,7 @@
 //! Mirrors [`DemuxReceiver`]'s shutdown patterns
 //! (Drop / `close()` / cross-thread `cancel_handle().cancel()`).
 
-use crate::demux_receiver::{ByteSink, DemuxReceiver, DemuxReceiverError};
+use crate::demux_receiver::{DemuxReceiver, DemuxReceiverError};
 use crate::managed_receive::ManagedRecvTransport;
 use crate::shell_error::ShellErrorKind;
 use std::sync::Arc;
@@ -233,14 +233,6 @@ impl<R: RecvTransport> ManagedDemuxReceiver<R> {
             end_reason: EndReasonHandle::default(),
             _span: std::panic::AssertUnwindSafe(span),
         }
-    }
-
-    /// Register a byte-fanout sink — see [`DemuxReceiver::add_byte_sink`]
-    /// for the contract. One managed-shell addition: the first aligned
-    /// packet after a reconnect is discarded before parsing (the
-    /// data-loss budget above) and is not shown to sinks either.
-    pub fn add_byte_sink(&mut self, sink: ByteSink) {
-        self.inner.add_byte_sink(sink);
     }
 
     /// See [`DemuxReceiver::ts_bytes_demuxed`]. Continues across a
