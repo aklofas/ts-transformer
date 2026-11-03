@@ -1038,7 +1038,9 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
     }
     thread::sleep(Duration::from_millis(300));
     proxy.arm();
-    let burst_deadline = Instant::now() + Duration::from_secs(6);
+    // 3 s keeps the burst well clear of the receiver's 14 s cap, so the drain
+    // after the numbered packets is never cut short.
+    let burst_deadline = Instant::now() + Duration::from_secs(3);
     while proxy.rewritten() < GARBAGE as usize && Instant::now() < burst_deadline {
         send.send_bytes(&filler).expect("send filler");
         thread::sleep(Duration::from_millis(20));
