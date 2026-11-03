@@ -1357,12 +1357,12 @@ class ArmCensusTests(unittest.TestCase):
 
 
 def make_attestation(digest, path=".github/workflows/release-qualify.yml", repo="o/r",
-                     predicate_type="https://slsa.dev/provenance/v1"):
+                     ref="refs/heads/main", predicate_type="https://slsa.dev/provenance/v1"):
     import base64
     stmt = {"_type": "https://in-toto.io/Statement/v1", "predicateType": predicate_type,
             "subject": [{"name": "qualification.json", "digest": {"sha256": digest}}],
             "predicate": {"buildDefinition": {"externalParameters": {"workflow": {
-                "path": path, "repository": "https://github.com/" + repo, "ref": "refs/heads/main"}}}}}
+                "path": path, "repository": "https://github.com/" + repo, "ref": ref}}}}}
     payload = base64.b64encode(json.dumps(stmt).encode()).decode()
     return json.dumps({"attestations": [{"bundle": {"dsseEnvelope": {"payload": payload}}}]})
 
@@ -1452,6 +1452,46 @@ class ReleaseEligibleTests(unittest.TestCase):
     def test_release_eligible_refuses_another_predicate_type(self):
         r = self.check(attestations=self.att(predicate_type="https://example.test/other"))
         self.assertEqual(r, [self.BYTE_FOR_BYTE % self.digest])
+
+    def test_release_eligible_names_an_attestation_from_another_ref(self):
+        r = self.check(attestations=self.att(ref="refs/heads/feature-x"))
+        self.assertEqual(len(r), 1)
+        self.assertIn("from main or a release tag covers sha256:" + self.digest, r[0])
+        self.assertIn("found ref refs/heads/feature-x", r[0])
+
+    def test_release_eligible_accepts_an_attestation_from_a_release_tag(self):
+        self.assertEqual(self.check(attestations=self.att(ref="refs/tags/v1.2.3")), [])
+        self.assertNotEqual(self.check(attestations=self.att(ref="refs/tags/v1.2.3-rc1")), [])
+
+    def gh_cli(self, **gh):
+        rec_path = os.path.join(self.tmp, "cli3", "qualification.json")
+        os.makedirs(os.path.dirname(rec_path), exist_ok=True)
+        spit(rec_path, json.dumps(self.rec, indent=2) + "\n")
+        base = ["--sha", self.tag_sha, "--json", rec_path, "--root", self.root, "--repo", "o/r"]
+        with mock.patch.object(q, "run_gh", **gh), contextlib.redirect_stderr(io.StringIO()):
+            return self.run_cli(*base)
+
+    def test_release_eligible_cli_a_404_is_a_reason_and_other_gh_failures_exit_2(self):
+        e404 = subprocess.CalledProcessError(1, ["gh"], stderr="gh: Not Found (HTTP 404)")
+        rc, err = self.gh_cli(side_effect=e404)
+        self.assertEqual(rc, 1)
+        e500 = subprocess.CalledProcessError(1, ["gh"], stderr="HTTP 500")
+        with self.assertRaises(SystemExit) as e:
+            self.gh_cli(side_effect=e500)
+        self.assertEqual(e.exception.code, 2)
+
+    def test_release_eligible_cli_malformed_gh_output_exits_2(self):
+        for bad in ('{"attestations": [{"bundle": null}]}', '[]', '{"attestations": [{"bundle": {"dsseEnvelope": {"payload": null}}}]}'):
+            with self.assertRaises(SystemExit, msg=bad) as e:
+                self.gh_cli(return_value=bad)
+            self.assertEqual(e.exception.code, 2)
+
+    def test_release_eligible_cli_a_non_object_record_exits_2(self):
+        p = os.path.join(self.tmp, "cli4.json")
+        spit(p, "[1]")
+        with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()):
+            self.run_cli("--sha", self.tag_sha, "--json", p, "--root", self.root, "--skip-attestation")
+        self.assertEqual(e.exception.code, 2)
 
     def run_cli(self, *argv):
         out, err = io.StringIO(), io.StringIO()

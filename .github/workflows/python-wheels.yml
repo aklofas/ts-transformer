@@ -91,7 +91,7 @@ jobs:
       # The publish workflows do not wait for the tag's own qualification run
       # (releasing.md §6), so each one checks the committed record itself.
       - name: The committed record is release-eligible for this tag
-        # A call from release-qualify (dry_run) runs before the record exists.
+        # A dry-run call never publishes; release-qualify's attach checks the same record.
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !inputs.dry_run
         env:
           GH_TOKEN: ${{ github.token }}
