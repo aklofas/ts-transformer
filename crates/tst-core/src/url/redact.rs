@@ -48,10 +48,11 @@ pub(crate) const REDACTED: &str = "<redacted>";
 ///   next quoted URL or the end, so `'srt://h?token=x' can't` loses
 ///   everything after `token=`.
 ///
-/// One residual is not covered: a password or a secret value that itself
-/// holds a quote, a space and a quote before a scheme
-/// (`'srt://u:x' 'y://z@h'`) reads as two quoted URLs, so the first part of
-/// it stays visible.
+/// One residual is not covered: a password or secret value that holds the
+/// quote character followed by a space or by `,` `;` `.` `:` `)` `]` `}` is
+/// not protected. That quote reads as the end of the quoted URL, so the rest
+/// of the secret stays visible (`'srt://u:p' w@h` is unchanged). It cannot be
+/// told apart from a well-formed quoted URL followed by text.
 ///
 /// ```
 /// use tst_core::url::redact_url;

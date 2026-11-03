@@ -36,6 +36,12 @@ open 'srt://u:p'w@h: timeout	open 'srt://u:<redacted>@h: timeout
 "srt://u:p"w@h	"srt://u:<redacted>@h
 'srt://h?token=a'b	'srt://h?token=<redacted>
 'srt://u:p'w@h failed; retry 'srt://x'	'srt://u:<redacted>@h failed; retry 'srt://x'
+# Documented residual, pinned so a rule change shows here: a secret holding the quote followed by
+# a space or , ; . : ) ] } reads as the end of the quoted URL, and the rest stays visible.
+'srt://u:p' w@h	'srt://u:p' w@h
+'srt://u:p',w@h	'srt://u:p',w@h
+'srt://u:p'.w@h: timeout	'srt://u:p'.w@h: timeout
+'srt://h?token=a';b	'srt://h?token=<redacted>';b
 
 # A multi-byte character directly before a scheme.
 “srt://u:p@h”	“srt://u:<redacted>@h”
