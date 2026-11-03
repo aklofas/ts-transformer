@@ -459,14 +459,12 @@ impl PyDemuxReceiver {
                     // Re-shape the demux side as a MuxerStats projection so callers
                     // get the same `(SocketStats, MuxerStats)` tuple shape on both
                     // MuxSender + DemuxReceiver.
-                    let mux_stats = tst_core::mpegts::mux::MuxerStats {
-                        ts_packets_emitted: combined.packets_received,
-                        ts_bytes_emitted: combined.bytes_received,
-                        programs_configured: u32::try_from(combined.program_maps_seen)
-                            .unwrap_or(u32::MAX),
-                        subtitle_streams_configured: 0,
-                        per_stream: combined.per_stream,
-                    };
+                    let mut mux_stats = tst_core::mpegts::mux::MuxerStats::default();
+                    mux_stats.ts_packets_emitted = combined.packets_received;
+                    mux_stats.ts_bytes_emitted = combined.bytes_received;
+                    mux_stats.programs_configured =
+                        u32::try_from(combined.program_maps_seen).unwrap_or(u32::MAX);
+                    mux_stats.per_stream = combined.per_stream;
                     (sock_stats, mux_stats)
                 })
         });

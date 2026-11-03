@@ -6118,7 +6118,7 @@ impl core::marker::Unpin for tst_core::mpegts::demux::DemuxerConfigBuilder
 impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::DemuxerConfigBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::DemuxerConfigBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::DemuxerConfigBuilder
-pub struct tst_core::mpegts::demux::DemuxerStats
+#[non_exhaustive] pub struct tst_core::mpegts::demux::DemuxerStats
 pub tst_core::mpegts::demux::DemuxerStats::discontinuities: u64
 pub tst_core::mpegts::demux::DemuxerStats::nonconformant: u64
 pub tst_core::mpegts::demux::DemuxerStats::per_stream: alloc::collections::btree::map::BTreeMap<u16, tst_core::mpegts::stats::StreamStats>
@@ -6883,7 +6883,7 @@ impl core::marker::Unpin for tst_core::mpegts::mux::MuxerProgramConfigBuilder
 impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::MuxerProgramConfigBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::MuxerProgramConfigBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::MuxerProgramConfigBuilder
-pub struct tst_core::mpegts::mux::MuxerStats
+#[non_exhaustive] pub struct tst_core::mpegts::mux::MuxerStats
 pub tst_core::mpegts::mux::MuxerStats::per_stream: alloc::collections::btree::map::BTreeMap<u16, tst_core::mpegts::stats::StreamStats>
 pub tst_core::mpegts::mux::MuxerStats::programs_configured: u32
 pub tst_core::mpegts::mux::MuxerStats::subtitle_streams_configured: u32

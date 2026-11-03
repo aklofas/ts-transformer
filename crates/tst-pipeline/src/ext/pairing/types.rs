@@ -151,6 +151,7 @@ tst_core::binding_record! {
     /// Counter snapshot for telemetry. Symmetric with the rest of
     /// `tst-pipeline`.
     #[must_use]
+    #[non_exhaustive]
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
     pub struct PairerStats {
         /// Video units emitted together with their KLV.
