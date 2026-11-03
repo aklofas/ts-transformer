@@ -278,12 +278,13 @@ which the iterator turns into `None`. Peer-disconnect or unrecoverable
 link errors surface as `Err(DemuxReceiverError::Transport(Broken(_)))`;
 strict-mode rejections surface as `Err(DemuxReceiverError::Demux(_))`.
 
-`DemuxReceiver::add_byte_sink` is the fan-out hook: register a callback
-(`Box<dyn FnMut(&[u8]) + Send>`), and the callback receives every
-188-byte TS packet pulled from the transport — in registration order,
-before the demuxer parses them. The canonical use case is a
-"write-to-disk + forward-via-RTP + demux-for-KLV" workflow where
-multiple consumers tee off the same byte stream in one pass.
+`DemuxReceiver::ts_bytes_demuxed` is a lock-free count of the aligned TS
+bytes fed to the demuxer; it answers while a receive is parked and keeps
+its value after close. For raw access, compose instead: pull aligned
+packets from a `Receiver`, write or forward each one, and feed the same
+packet to a `Demuxer` with `feed_aligned`. The caller's loop owns every
+consumer, so no user code runs on a library thread. The canonical use case
+is a "write-to-disk + demux-for-KLV" workflow in one pass.
 
 `ManagedRecvTransport<R>` is the receive-side reconnect decorator,
 sibling to `ManagedTransport<T>`. It implements `RecvTransport`, so it
@@ -456,7 +457,7 @@ an entry in [`docs/project/deferred-features.md`](/docs/project/deferred-feature
 - Other typed MISB sets — ST 0102 (Security LS), ST 0903 (top-level VMTI + per-target `VTargetPack`), and ST 0806 (RVT, plus nested POI/AOI/User Defined sub-sets) ship as sibling-layer typed views over the substrate; nested VMTI sets (VMask / VTracker / VChip / Algorithm Series / Ontology Series) remain pass-through.
 - Owned-projection variants on borrowed iterator types — `VTargetSeriesIter`, `KlvIterator`, and the indexed NAL iterator are borrow-coupled today; cross-language wrappability needs owned-by-value variants.
 - `serde` for typed KLV records — pure additive; behind a feature flag when added. (`klv` is already `no_std`-capable with the rest of `tst-core`.)
-- `tst-c` receiver surface — fully shipped (`tst_raw_receiver_t`, `tst_receiver_t`, `tst_demux_receiver_t` + typed `tst_event_t` tagged union + multi-program demux), not deferred. Listed here for cross-reference only. The C ABI has no `add_byte_sink` fan-out and no `tst_pairer_t`; the Pairer gap is tracked in `docs/project/deferred-features.md` ("`pipeline::ext::pairing` C ABI exposure").
+- `tst-c` receiver surface — fully shipped (`tst_raw_receiver_t`, `tst_receiver_t`, `tst_demux_receiver_t` + typed `tst_event_t` tagged union + multi-program demux), not deferred. Listed here for cross-reference only. The C ABI has no `tst_pairer_t`; the Pairer gap is tracked in `docs/project/deferred-features.md` ("`pipeline::ext::pairing` C ABI exposure").
 - Mirroring the `docs/` guide tree into rustdoc — not planned; each published crate's README is already rendered on crates.io / docs.rs, and the transport crates lift it into their crate-level rustdoc.
 
 See [`docs/project/deferred-features.md`](/docs/project/deferred-features.md) for the

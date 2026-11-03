@@ -887,8 +887,8 @@ Four runnable examples cover the demuxer's surface:
 - `cargo run -p tst-examples --example pair_sync_klv` — [examples/pairing/pair_sync_klv.rs](/examples/pairing/pair_sync_klv.rs)
   — nearest-PTS pairing of KLV records with video AUs.
 - `cargo run -p tst-examples --example tee_disk_and_demux` — [examples/operations/tee_disk_and_demux.rs](/examples/operations/tee_disk_and_demux.rs)
-  — `add_byte_sink` fan-out: write `.ts` to disk while consuming typed
-  events, all in one pass.
+  — `Receiver` + `Demuxer` composition: write `.ts` to disk while consuming
+  typed events, all in one pass.
 
 Two more examples drive `Demuxer` directly:
 

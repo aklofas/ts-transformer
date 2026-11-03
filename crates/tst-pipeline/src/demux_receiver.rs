@@ -4,9 +4,56 @@
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
 //! Mirrors the `MuxSender` shape on the receive side: one transport in,
-//! `DemuxEvent`s out. To observe the raw TS bytes alongside the events, see
-//! the composition section of the pipeline guide;
-//! [`DemuxReceiver::ts_bytes_demuxed`] counts the bytes handed to the demuxer.
+//! `DemuxEvent`s out.
+//!
+//! # Raw TS access
+//!
+//! The shell offers no hook that hands raw bytes to caller code. To count,
+//! read [`DemuxReceiver::ts_bytes_demuxed`] (or a
+//! [`TsBytesDemuxedHandle`] that outlives the shell): the aligned TS bytes
+//! fed to the demuxer, read without waiting on a parked receive. To record,
+//! relay or inspect packets, compose a [`Receiver`] with a [`Demuxer`] and
+//! own the loop:
+//!
+//! ```no_run
+//! use tst_core::mpegts::demux::{Demuxer, DemuxerConfig};
+//! use tst_pipeline::{Receiver, ReceiverConfig, RecvTransport, ShellErrorKind, TransportError};
+//!
+//! /// Stands in for any real transport.
+//! struct Source;
+//! impl RecvTransport for Source {
+//!     fn recv_bytes(&mut self, _buf: &mut [u8]) -> Result<usize, TransportError> {
+//!         Err(TransportError::Closed)
+//!     }
+//!     fn max_payload(&self) -> usize { 1316 }
+//!     fn is_alive(&self) -> bool { true }
+//! }
+//!
+//! let mut rx = Receiver::new(Source, ReceiverConfig::default());
+//! let mut demux = Demuxer::with_config(DemuxerConfig::default());
+//! let mut recorded: Vec<u8> = Vec::new();
+//! loop {
+//!     let pkt = match rx.next_packet() {
+//!         Ok(pkt) => pkt,
+//!         Err(e) if e.kind == ShellErrorKind::EndOfStream => break,
+//!         // A terminal error also falls through to the flush below.
+//!         Err(_) => break,
+//!     };
+//!     recorded.extend_from_slice(&pkt); // your consumer
+//!     if demux.feed_aligned(&pkt).is_err() {
+//!         break;
+//!     }
+//!     while let Some(_event) = demux.next_event() { /* handle it */ }
+//! }
+//! demux.flush();
+//! while let Some(_event) = demux.next_event() { /* handle it */ }
+//! ```
+//!
+//! The loop leaves two duties to the caller. Both a clean end and a terminal
+//! error must `flush` the demuxer, or the last length-0 PES is lost. Over a
+//! `ManagedRecvTransport`, a rise of `reconnects_handle()` means the packet
+//! just read belongs to the new link: drop it and call `reset_sync()` on the
+//! [`Receiver`] and the [`Demuxer`]. `ManagedDemuxReceiver` does both for you.
 //!
 //! # Stream-end flush
 //!
