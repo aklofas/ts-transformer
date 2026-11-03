@@ -9,11 +9,8 @@
 //! hangs.
 #![cfg(feature = "rtp")]
 
+use crate::common::parked;
 use std::ffi::CString;
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
-
 use tstrans::error::TstError;
 use tstrans::event::TstEvent;
 use tstrans::rtp::demux_receiver::{
@@ -23,45 +20,6 @@ use tstrans::rtp::demux_receiver::{
 use tstrans::rtp::receiver::{
     tst_rtp_receiver_cancel, tst_rtp_receiver_close, tst_rtp_receiver_recv_ts, tst_rtp_recv_open,
 };
-
-/// `_cancel` is documented callable from any thread; the raw pointer just
-/// needs to cross the thread boundary to get there.
-struct SendPtr<T>(*mut T);
-unsafe impl<T> Send for SendPtr<T> {}
-
-/// Park `recv` on a reader thread, cancel from this thread, return the code
-/// the reader observed. Nothing ever sends to the socket, so the receive is
-/// genuinely parked.
-///
-/// `rescue` is what frees the reader if the cancel does NOT wake it: it owns
-/// the handle and closes it, which ends the parked call so the thread can be
-/// joined. Without it the watchdog would fail the test and then HANG in
-/// `join()` — the same shape `receiving/cancel_first.rs` uses for its peer.
-fn parked<T: 'static>(
-    h: *mut T,
-    recv: impl Fn(*mut T) -> i32 + Send + 'static,
-    cancel: impl FnOnce(*mut T) -> i32,
-    rescue: impl FnOnce(*mut T),
-) -> i32 {
-    let (tx, rx) = mpsc::channel::<i32>();
-    let p = SendPtr(h);
-    let reader = thread::spawn(move || {
-        let p = p; // whole-struct capture: SendPtr is Send, its field is not
-        let SendPtr(h) = p;
-        tx.send(recv(h)).unwrap();
-    });
-    thread::sleep(Duration::from_millis(200)); // let the reader park
-    assert_eq!(cancel(h), 0);
-    let rc = rx.recv_timeout(Duration::from_secs(10)).ok();
-    if rc.is_none() {
-        // Close the handle so the parked recv returns, then drain and join
-        // before asserting: a failure must be a failure, never a wedge.
-        rescue(h);
-        let _ = rx.recv_timeout(Duration::from_secs(5));
-    }
-    reader.join().expect("reader thread");
-    rc.expect("_cancel did not wake the parked rtp recv within 10 s")
-}
 
 #[test]
 fn rtp_receiver_parked_recv_ts_cancelled_reports_closed() {

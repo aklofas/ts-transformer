@@ -27,7 +27,8 @@ use tstrans::error::TstError;
 use tstrans::event::TstEvent;
 use tstrans::receiver::demux_receiver::managed::{
     TstManagedDemuxReceiver, tst_managed_demux_receiver_cancel, tst_managed_demux_receiver_close,
-    tst_managed_demux_receiver_open_listener, tst_managed_demux_receiver_recv_event,
+    tst_managed_demux_receiver_get_ts_bytes_demuxed, tst_managed_demux_receiver_open_listener,
+    tst_managed_demux_receiver_recv_event,
 };
 use tstrans::sender::raw_sender::{tst_raw_sender_close, tst_raw_sender_open, tst_raw_sender_send};
 
@@ -89,8 +90,9 @@ fn loopback_cancel_wakes_managed_listener_parked_in_reaccept() {
                 break rc;
             }
         };
+        // The main thread frees the handle after the join: it reads the
+        // counter after `_cancel`, so the reader must not free it first.
         done_tx.send((rc, started.elapsed())).expect("done channel");
-        unsafe { tst_managed_demux_receiver_close(rx) };
     });
 
     // Step 2: first peer connects, sends, disconnects.
@@ -114,15 +116,30 @@ fn loopback_cancel_wakes_managed_listener_parked_in_reaccept() {
     // backoff (default policy: 100 ms) and park in the re-accept.
     thread::sleep(Duration::from_millis(1000));
 
+    // The counter answers while the reader is parked in the re-accept: it
+    // never takes the slot the parked `_recv_event` holds.
+    let mut before = 0u64;
+    let rc = unsafe { tst_managed_demux_receiver_get_ts_bytes_demuxed(rx_ptr, &mut before) };
+    assert_eq!(rc, 0, "counter while parked: {}", last_error_msg());
+
     // Step 3: cancel from this thread.
     let t0 = Instant::now();
     let rc = unsafe { tst_managed_demux_receiver_cancel(rx_ptr) };
     assert_eq!(rc, 0, "_cancel returned {rc}: {}", last_error_msg());
 
+    let mut after = 0u64;
+    let rc = unsafe { tst_managed_demux_receiver_get_ts_bytes_demuxed(rx_ptr, &mut after) };
+    assert_eq!(rc, 0, "counter after cancel: {}", last_error_msg());
+    assert!(
+        after >= before,
+        "the counter went backwards across cancel: {before} -> {after}"
+    );
+
     match done_rx.recv_timeout(Duration::from_secs(3)) {
         Ok((rc, _)) => {
             let woke_after = t0.elapsed();
             reader.join().expect("reader thread");
+            unsafe { tst_managed_demux_receiver_close(rx_ptr) };
             assert_eq!(
                 rc,
                 TstError::Closed as i32,
@@ -140,6 +157,7 @@ fn loopback_cancel_wakes_managed_listener_parked_in_reaccept() {
             let _ = done_rx.recv_timeout(Duration::from_secs(5));
             unsafe { tst_raw_sender_close(rescue) };
             reader.join().expect("reader thread");
+            unsafe { tst_managed_demux_receiver_close(rx_ptr) };
             panic!("_cancel did not wake the managed listener parked in re-accept within 3 s");
         }
     }

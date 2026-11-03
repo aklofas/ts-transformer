@@ -30,6 +30,8 @@ mod rtsp_publish_smoke;
 mod tcp_open_smoke;
 #[path = "transports/tcps_loopback.rs"]
 mod tcps_loopback;
+#[path = "transports/ts_bytes_demuxed.rs"]
+mod ts_bytes_demuxed;
 #[path = "transports/udp_cancel_terminal.rs"]
 mod udp_cancel_terminal;
 #[path = "transports/udp_close_cancels_first.rs"]

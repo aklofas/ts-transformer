@@ -52,6 +52,9 @@ use tst_srt::SrtUrl;
 use crate::stream_end_reason::{TstStreamEndReason, convert_end_reason};
 
 pub struct TstManagedDemuxReceiver {
+    /// Aligned TS bytes fed to the demuxer across every connection; read
+    /// without the slot.
+    pub(crate) ts_bytes_demuxed: tst_pipeline::TsBytesDemuxedHandle,
     /// Snapshot = the five lock-free observers (`ManagedHandles`) captured
     /// at open, BEFORE the receiver moved into the slot: cancel, end
     /// reason, successful rebuilds, factory attempts, reconnect-in-progress.
@@ -209,7 +212,9 @@ fn managed_open_inner(
     };
     let end_reason = handles.end_reason.clone();
     let cancel = Arc::clone(&handles.cancel);
+    let ts_bytes_demuxed = rx.ts_bytes_demuxed_handle();
     Box::into_raw(Box::new(TstManagedDemuxReceiver {
+        ts_bytes_demuxed,
         inner: CHandle::new(rx, cancel, handles).with_end_reason(end_reason),
         arena: Mutex::new(EventArena::new()),
         stream_stats_buf: Mutex::new(Vec::new()),
@@ -406,6 +411,33 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_end_reason(
         // SAFETY: out non-null per guard above.
         unsafe { *out = reason };
         0
+    })
+}
+
+/// Read the count of aligned TS bytes this receiver's demuxer has been fed
+/// since open into `*out`.
+///
+/// Lock-free: it never waits for a thread parked in `tst_managed_demux_receiver_recv_event`, and it is
+/// not reset by `tst_managed_demux_receiver_reset_stats`. It stays readable after `tst_managed_demux_receiver_cancel`; after
+/// `tst_managed_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+/// `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+/// The count spans reconnects, so it keeps growing across a re-accept.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid non-freed `*mut TstManagedDemuxReceiver` returned by one of
+/// the `tst_managed_demux_receiver_open*` functions. `out` must be NULL or point to a writable
+/// `uint64_t`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_managed_demux_receiver_get_ts_bytes_demuxed(
+    p: *mut TstManagedDemuxReceiver,
+    out: *mut u64,
+) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        // SAFETY: `p` is NULL or live and `out` NULL or writable, per the
+        // contract above.
+        let counter = unsafe { p.as_ref() }.map(|h| &h.ts_bytes_demuxed);
+        unsafe { crate::transport_impls::read_ts_bytes_demuxed(counter, out) }
     })
 }
 

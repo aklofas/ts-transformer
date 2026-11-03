@@ -593,7 +593,9 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
         // and the caller does not use it after a non-NULL return.
         drop(unsafe { Box::from_raw(session) });
 
+        let ts_bytes_demuxed = receiver.ts_bytes_demuxed_handle();
         Box::into_raw(Box::new(TstRtpDemuxReceiver {
+            ts_bytes_demuxed,
             // The same cell on the handle too: a receive refused after
             // `_cancel` records `Cancelled` there.
             inner: CHandle::new(

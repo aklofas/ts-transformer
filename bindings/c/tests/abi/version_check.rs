@@ -97,6 +97,6 @@ fn abi_minor_matches_compile_time_const() {
 }
 
 #[test]
-fn abi_minor_is_27() {
-    assert_eq!(TST_ABI_VERSION_MINOR, 27);
+fn abi_minor_is_28() {
+    assert_eq!(TST_ABI_VERSION_MINOR, 28);
 }
