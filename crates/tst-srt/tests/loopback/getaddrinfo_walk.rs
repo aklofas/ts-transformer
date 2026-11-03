@@ -173,6 +173,27 @@ fn walk_dials_the_first_address_even_with_no_budget_left() {
         "a spent budget must not dial the second address (a second dial would \
          cost at least two more one-second slices, about 4 s); elapsed={elapsed:?}",
     );
+    // Direct evidence: the first silent socket received the handshake, the
+    // second received nothing.
+    let mut buf = [0u8; 1500];
+    silent_a
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("read timeout a");
+    silent_b
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("read timeout b");
+    assert!(
+        silent_a.recv_from(&mut buf).is_ok(),
+        "the first address must have received the handshake datagram",
+    );
+    let second = silent_b.recv_from(&mut buf);
+    assert!(
+        matches!(&second, Err(e) if matches!(
+            e.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        )),
+        "the second address must receive nothing; got {second:?}",
+    );
     drop(silent_a);
     drop(silent_b);
 }
