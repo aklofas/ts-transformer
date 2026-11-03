@@ -389,6 +389,13 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/surface-manifest.sh
 
+      - name: check-demux-event-variant-coverage (every DemuxEvent variant has an explicit arm in each binding matcher)
+        # DemuxEvent is #[non_exhaustive], so the C, Python and JVM matchers keep
+        # a wildcard arm and the compiler no longer proves every variant is
+        # projected; this rail does. Gated to linux-x86_64 — a source-text check.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/demux-event-variant-coverage.sh
+
       - name: check-doc-tables (generated doc tables match ci.yml, sanitizers.yml, fuzz-targets.toml, Cargo features)
         # The build-target, sanitizer, fuzz and feature tables are written by
         # scripts/gen/doc-tables.sh; this fails when one drifts from its source.
@@ -773,7 +780,8 @@ jobs:
           # MountKind, AudioPolicy, KlvCarriage and MountConfig.
           # 202->203 (2026-10-19): +tst-webrtc sei::KlvSei.
           # 203->207 (2026-10-19): +tst-webrtc stats::{MountStats, ServerStats, SessionStats, IceState}.
-          BASELINE=219
+          # 219->238 (2026-11-03): +11 growable event, policy and stats types, +MountRule, RtcpStats, HlsMode, WhepUrl and the hidden WHEP HTTP seam types.
+          BASELINE=238
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2
