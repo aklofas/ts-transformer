@@ -26,7 +26,7 @@ test-hooks = []
 tst-core = { path = "../tst-core", version = "0.9.0" }
 tst-pipeline = { path = "../tst-pipeline", version = "0.9.0" }
 # The RFC 6184 / RFC 7798 packetizers. Without default features the crate is
-# tokio-free (no RTSP client or server), which keeps this crate's tree free of
+# tokio-free (no RTSP server), which keeps this crate's tree free of
 # tokio too; scripts/ratchets/dependency-lattice.tsv holds that line.
 tst-rtp = { path = "../tst-rtp", version = "0.9.0", default-features = false }
 thiserror = { workspace = true }

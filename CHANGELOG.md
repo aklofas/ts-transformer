@@ -21,6 +21,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `SrtSocketConfig::peer_idle_timeout` (`SRTO_PEERIDLETIMEO`), the matching setter on `SrtSocketBuilder` and `SrtListenerBuilder`, the `peeridletimeo` URL key (milliseconds), Python `peer_idle_timeout_ms` and JVM `peerIdleTimeoutMs`; the C package takes it through the URL. libsrt breaks a silent connection only after the idle time has elapsed and more than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not detect a silent peer sooner; raise it for links whose loss bursts outlast the default, and keep it well above the burst length or healthy connections break.
 
+### Added — tst-srt, tst-rtp
+
+- `RejectReason::PREDEFINED` and `RejectReason::name` give the predefined SRT reject reasons one canonical table, and `RefuseStatus::from_code` maps an RTSP status code to a refusal; the Python and JVM bindings use them instead of carrying their own copies.
+
 ### Security — tst-rist, tst-py
 
 - An encrypted RIST Main-profile receiver delivered packets it had not decrypted. A packet carrying the GRE key bit with an all-zero nonce, or with a fresh nonce arriving inside librist's rekey throttle after a burst of undecryptable packets, was passed on as if it were plaintext, so a peer without the passphrase could inject clear media. Affected: `tst-rist` and `tst-py` 0.6.0 through 0.9.0 (the vendored librist 0.2.20 first shipped in 0.6.0; librist 0.2.16 and 0.2.18 ended the session on a zero nonce and dropped the packet, so 0.1.0 through 0.5.x are not affected). The C package refused every encrypted `rist://` URL before this release, and the JVM has no RIST binding, so neither is affected. The vendored librist build now drops any packet the PSK decrypt did not decrypt. Every host librist the build accepts (0.2.20 and later) still carries the defect until upstream ships a fix; build with `RIST_FORCE_VENDORED=1` to get the fixed copy.
@@ -44,6 +48,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-core, tst-py (BREAKING)
 
 - `MuxerConfig::from_program_map` maps an asynchronous KLV stream (`StreamKind::KlvAsync`, stream_type 0x06) to `carries_pts: false`, so its remuxed PES packets carry `PTS_DTS_flags` 00 as MISB ST 1402 (ST 1402-22) requires for the asynchronous method. Before, they carried the source PTS, which the conversion's documentation called the STANAG 4609 norm. Synchronous KLV (0x15) and data streams keep `carries_pts: true`. A caller that wants a PTS on a 0x06 stream builds the config by hand. Python `MuxerConfig.from_program_map` changes the same way.
+
+### Changed — tst-core, tst-pipeline, tst-rtp, tst-hls, tst-webrtc (BREAKING)
+
+- `DemuxEvent`, `StreamStats`, `BackoffStrategy`, `ReconnectPolicy`, `OverflowPolicy`, the pipeline stats records (`RawReceiverStats`, `SenderStats`, `RawSenderStats`, `ReceiverStats`, `DemuxReceiverStats`, `MuxSenderStats`), `MountRule`, `RtcpStats`, `HlsMode`, `WhepUrl` and the WHEP server's hidden HTTP seam types (`Method`, `HeadParse`, `Route`, `Negotiated`) are now `#[non_exhaustive]`, so a new variant or field is no longer a breaking change. Outside the defining crate a struct literal (functional update included) and an exhaustive `match` no longer compile. Migration: build a `ReconnectPolicy` with `ReconnectPolicy::default()` and the new chainable `with_max_attempts`, `with_backoff`, `with_gap_buffer_capacity`, `with_overflow_policy` and `with_mode` setters; build a stats record with `T::default()` and field assignment; add a wildcard arm to a `match` on an enum.
 
 ### Changed — tst-rtp (BREAKING)
 
@@ -286,6 +294,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-py
 
+- `BackoffStrategy.base_ms` and `max_ms` raise `ValueError` for a backoff strategy the binding does not know; they previously returned 0.
 - The RIST sender and receiver builders apply `profile()` and `encryption()` in call order, so `.encryption(k).profile(RistProfile.SIMPLE)` now raises `RistError(INVALID_CONFIG)` at build where it used to build an encrypted Main-profile peer; `.profile(RistProfile.SIMPLE).encryption(k)` still builds Main.
 
 ### Changed — tst-udp

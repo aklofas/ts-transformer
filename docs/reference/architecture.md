@@ -83,11 +83,12 @@ The layering rule is one-directional: lower layers do not depend on upper
 layers. `tst-core` depends on no other workspace crate and on no native
 library. `tst-pipeline` depends on `tst-core` only. The transport crates
 (and `tst-webrtc`, which also depends on `tst-rtp` for its packetizers)
-depend on `tst-core` and on `tst-pipeline` — not for the shells (a shell
-and a transport still meet through the `Transport` / `RecvTransport`
-traits, not through a crate dependency) but for `tst_pipeline::binding`,
-the one error-kind vocabulary and handle model every language binding
-is built from. Each transport crate's `opener` module opens its URL scheme
+depend on `tst-core` and on `tst-pipeline`. For most of them the edge is
+`tst_pipeline::binding` only — a shell and a transport meet through the
+`Transport` / `RecvTransport` traits, not through a crate dependency — and
+that module is the one error-kind vocabulary and handle model every language
+binding is built from. `tst-srt` is the exception: it also composes the
+pipeline shells and the managed reconnect wrappers around its own transports. Each transport crate's `opener` module opens its URL scheme
 into `tst_pipeline::binding::Opened`, which the Python and JVM bindings wrap
 in one shell class per shell; `tst-rtp` additionally wraps the shells for its RTSP
 mount surface. Binding crates (`tst-c` via `tst-c-core`, `tst-py`, `tst-jni`,
