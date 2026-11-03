@@ -316,8 +316,8 @@ impl super::demuxer::Demuxer {
         // so the AU in progress belongs to the old source: discard it before
         // the walk, or a Last cell after the reset would complete it. The
         // flag's position is not kept, so a Last cell wholly before the flag
-        // in this PES is dropped with it, and an AU begun in this PES is
-        // dropped by the settle below. A flagged PUSI that ends this PES
+        // in this PES is dropped with it; the walk drops a multi-cell AU
+        // completed inside this PES, and the settle below one begun in it. A flagged PUSI that ends this PES
         // does not count: all of the PES precedes it.
         if self
             .pid_state
@@ -850,6 +850,15 @@ impl super::demuxer::Demuxer {
                 // H.222.0 Table 2-156: sequence_number counts the cells of
                 // one metadata_AU_wrapper, so each PES starts a new count.
                 self.au_reassembler.begin_wrapper(pes.pid);
+                // A reset signalled inside this PES sits at an unknown cell
+                // boundary: a multi-cell AU that completes here may join
+                // cells from both sides of it, so it is dropped. The AU in
+                // progress before this PES was already discarded, and a
+                // single Complete cell cannot straddle the reset.
+                let reset_in_pes = self
+                    .pid_state
+                    .get(&pes.pid)
+                    .is_some_and(|state| state.source_reset_in_pes);
                 let cells: Vec<_> = iter_au_cells_with_end(&pes.payload).collect();
                 let mut gap = gap;
                 for cell_result in cells {
@@ -906,6 +915,17 @@ impl super::demuxer::Demuxer {
                                         .clear_after_emit(pes.pid, emit_header.metadata_service_id);
                                 }
                                 let meta_len = payload_vec.len();
+                                if was_reassembled && reset_in_pes {
+                                    self.queue_nonconformant(
+                                        stream,
+                                        NonConformantIssue::MultiCellAu {
+                                            pid: pes.pid,
+                                            dropped_bytes: meta_len,
+                                            reason: MultiCellAuReason::SequenceGap,
+                                        },
+                                    );
+                                    continue;
+                                }
                                 self.record_item(&stream, program_number, meta_len);
                                 self.pid_state_mut(stream.pid)
                                     .codec_mut(CodecKind::Klv)
@@ -3266,6 +3286,47 @@ mod tests {
                     _ => None,
                 })
                 .collect()
+        }
+
+        /// The flag rides a continuation packet inside one PES, between its
+        /// First 10 and Last 11 cells: the AU they form may straddle the
+        /// reset, so it is dropped as a gap of both cells' bytes. The
+        /// Complete 12 cell after it cannot splice and still emits.
+        #[test]
+        fn a_discontinuity_inside_a_pes_drops_an_au_completed_across_it() {
+            let pes = cells_pes_bytes(&[
+                (First, 10, b"AAA"),
+                (Last, 11, b"BBB"),
+                (Complete, 12, b"CCC"),
+            ]);
+            // The 14-byte PES header and the 8-byte First cell.
+            let (head, tail) = pes.split_at(22);
+            let pkts = |discontinuity| {
+                [
+                    ts_packet(&PktSpec {
+                        pid: 0x101,
+                        cc: 0,
+                        pusi: true,
+                        payload: head,
+                        ..Default::default()
+                    }),
+                    ts_packet(&PktSpec {
+                        pid: 0x101,
+                        cc: 1,
+                        discontinuity,
+                        payload: tail,
+                        ..Default::default()
+                    }),
+                ]
+            };
+            let ev = run(StrictMode::Off, &pkts(false));
+            assert_eq!(
+                au_outcomes(&ev),
+                vec!["metadata AAABBB", "metadata CCC"],
+                "{ev:?}"
+            );
+            let ev = run(StrictMode::Off, &pkts(true));
+            assert_eq!(au_outcomes(&ev), vec!["gap 6", "metadata CCC"], "{ev:?}");
         }
 
         /// A flagged PUSI ends a PES cut short by a source switch: every byte
