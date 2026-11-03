@@ -716,7 +716,10 @@ impl PyTcpListenerBuilder {
     }
 
     fn __repr__(&self) -> String {
-        format!("ListenerBuilder(bind={:?})", self.bind_addr)
+        format!(
+            "ListenerBuilder(bind={:?})",
+            self.bind_addr.as_deref().map(redact_url)
+        )
     }
 }
 

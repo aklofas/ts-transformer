@@ -112,3 +112,8 @@ def test_hls_from_url_error_never_echoes_the_malformed_host():
     with pytest.raises(Exception) as exc:
         hls.HlsPublisherBuilder().from_url(f"hls://u:{SECRET}:8080/ss@10.0.0.5:8888/p")
     assert SECRET not in str(exc.value), str(exc.value)
+
+
+def test_tcp_listener_builder_repr():
+    url = f"tcps://u:{SECRET}@127.0.0.1:7000"
+    _clean(repr(tcp.Listener.builder().bind(url)), "127.0.0.1:7000")
