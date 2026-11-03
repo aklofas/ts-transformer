@@ -51,7 +51,7 @@ use tst_pipeline::binding::view::BlockingReason;
 
 use jni::Env;
 use jni::jni_str;
-use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JLongArray, JObject, JString};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject};
 
@@ -64,6 +64,7 @@ use tst_pipeline::binding::{BindingErrorKind, HandleState, ManagedHandles, Owned
 use tst_pipeline::{
     DemuxReceiverError, DemuxReceiverErrorSource, ManagedDemuxReceiver as RustManagedDemuxReceiver,
     ManagedTransport, MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource,
+    TsBytesDemuxedHandle,
 };
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
@@ -798,8 +799,16 @@ struct JniManagedDemuxReceiver {
 /// Per-type `Owned`-backed registry for `org.tstrans.srt.ManagedDemuxReceiver`.
 /// `OwnedRegistry::close` cancels first, and the public cancel handle reads the
 /// same `Owned` entry lock-free.
-static REGISTRY_DEMUX: LazyLock<OwnedRegistry<JniManagedDemuxReceiver, ManagedHandles>> =
+static REGISTRY_DEMUX: LazyLock<OwnedRegistry<JniManagedDemuxReceiver, ManagedDemuxSnap>> =
     LazyLock::new(OwnedRegistry::new);
+
+/// The construction-time constants of a managed demux receiver, read without
+/// the slot.
+struct ManagedDemuxSnap {
+    handles: ManagedHandles,
+    /// Reader for the demuxer's fed-byte counter; outlives the shell.
+    ts_bytes_demuxed: TsBytesDemuxedHandle,
+}
 
 /// Shared construction body for `nFromUrl` / `nFromUrlWithConfig`: parse the URL
 /// (accepting BOTH listener and caller mode), do the initial
@@ -871,6 +880,7 @@ fn build_demux_from_url(
     // the C ABI's `tst_managed_demux_receiver_close` already have.
     let cancel = Arc::clone(&handles.cancel);
     let end_reason = handles.end_reason.clone();
+    let ts_bytes_demuxed = inner.ts_bytes_demuxed_handle();
     REGISTRY_DEMUX.insert(
         Owned::new(
             JniManagedDemuxReceiver {
@@ -878,7 +888,10 @@ fn build_demux_from_url(
                 end_reason: end_reason.clone(),
             },
             cancel,
-            handles,
+            ManagedDemuxSnap {
+                handles,
+                ts_bytes_demuxed,
+            },
         )
         .with_end_reason(end_reason),
     ) as jlong
@@ -1160,7 +1173,7 @@ jni_native! {
     ) -> jlong = 0 => {
         REGISTRY_DEMUX
             .snapshot(handle as u64, |h| {
-                h.attempts.load(Ordering::Acquire) as jlong
+                h.handles.attempts.load(Ordering::Acquire) as jlong
             })
             .unwrap_or_else(|| {
                 crate::error::throw_closed(env, "ManagedDemuxReceiver");
@@ -1200,21 +1213,42 @@ jni_native! {
     /// for a follow-up `nEndReason`. `-1` when nothing was recorded, including the
     /// double-close no-op — which `NativeHandle.close()`'s `getAndSet(0)` already
     /// makes unreachable from Java: `nativeClose` runs at most once per receiver.
-    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nClose(
-        _env,
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nClose<'local>(
+        env,
         _class,
         handle: jlong,
+        ts_bytes_out: JLongArray<'local>,
     ) -> jint = -1 => {
+        // The counter is cloned out first: the take below removes the entry.
+        let counter = REGISTRY_DEMUX.snapshot(handle as u64, |s| s.ts_bytes_demuxed.clone());
         // Atomic + idempotent: the winning close gets the shell back for teardown.
         // Read the reason AFTER `inner.close()` so a reason recorded by the
         // teardown itself is included.
         let reason = if let Some(mut jstruct) = REGISTRY_DEMUX.close(handle as u64) {
             jstruct.inner.close();
+            // The shell has stopped feeding the demuxer.
+            if let Some(counter) = &counter {
+                crate::shells::demux_receiver::write_counter_out(env, &ts_bytes_out, counter.get());
+            }
             jstruct.end_reason.get()
         } else {
             None
         };
         crate::shells::end_reason::wire_value(reason.as_ref())
+    }
+}
+
+jni_native! {
+    /// `nTsBytesDemuxed(handle)` — aligned TS bytes the demuxer was fed; `-1`
+    /// when the entry is gone. Reads the registry snapshot, never the slot.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nTsBytesDemuxed(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jlong = -1 => {
+        REGISTRY_DEMUX
+            .snapshot(handle as u64, |s| s.ts_bytes_demuxed.get())
+            .map_or(-1, crate::shells::demux_receiver::counter_to_jlong)
     }
 }
 

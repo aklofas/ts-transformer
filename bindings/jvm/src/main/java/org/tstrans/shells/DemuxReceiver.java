@@ -2,6 +2,7 @@ package org.tstrans.shells;
 
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import org.tstrans.BindingException;
 import org.tstrans.DemuxException;
@@ -58,6 +59,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     // Set by a close() from this receiver's own byte sink, which only
     // cancels; the pull that then reports end of stream completes the close.
     private volatile boolean closeDeferred;
+    // The largest fed-byte count any read or the close saw, so a read never
+    // goes backwards across close().
+    private final AtomicLong tsBytesSeen = new AtomicLong();
 
     /** Wrap a native handle returned by {@link #openHandle(String)}. */
     protected DemuxReceiver(long handle) { setHandle(handle); }
@@ -399,6 +403,20 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     /**
+     * Aligned TS bytes this receiver fed its demuxer since it opened. Never waits on
+     * the receive slot, so it answers while another thread is parked in {@code next()};
+     * after {@link #close()} it returns the value at close. A read never returns less
+     * than an earlier one.
+     *
+     * @return the byte count, a multiple of 188
+     */
+    public long tsBytesDemuxed() {
+        long h = peekHandle();
+        long v = h == 0 ? -1 : nTsBytesDemuxed(h);
+        return tsBytesSeen.accumulateAndGet(v, Math::max);
+    }
+
+    /**
      * Return {@code true} while the receiver owns a live transport.
      *
      * @return liveness state of the underlying transport
@@ -409,7 +427,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     @Override protected void nativeClose(long h) {
-        EndReason.Snapshot snapshot = nClose(h);
+        long[] tsBytesOut = {-1};
+        EndReason.Snapshot snapshot = nClose(h, tsBytesOut);
+        tsBytesSeen.accumulateAndGet(tsBytesOut[0], Math::max);
         if (snapshot != null) {
             closedEndDetail = snapshot.detail();
             closedEndReason = snapshot.reason();
@@ -432,6 +452,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     private static native int nEndReason(long handle);
     private static native String nEndDetail(long handle);
     private static native boolean nDeferClose(long handle);
-    private static native EndReason.Snapshot nClose(long handle);
+    private static native EndReason.Snapshot nClose(long handle, long[] tsBytesOut);
+    private static native long nTsBytesDemuxed(long handle);
     private static native boolean nIsAlive(long handle);
 }
