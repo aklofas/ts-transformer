@@ -237,7 +237,9 @@ created it first, so create your own directory with mode 0700 or set
 `output_dir` to a private path. Missing parent directories are also created
 with mode 0700. The check refuses a directory owned by another user even when
 running as root, so for a container volume point `output_dir` at a fresh
-subdirectory the publisher creates. Other platforms make no such check.
+subdirectory the publisher creates. Files are created with mode 0644 at
+most (the umask can only narrow it), so another account can read but never
+modify segments or the playlist. Other platforms make no such check.
 
 Concurrent publishers must each use a **distinct `output_dir`** (and a
 distinct bind port if each runs its own server) — two publishers writing the

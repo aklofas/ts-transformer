@@ -60,7 +60,10 @@ pub struct HlsConfig {
     /// without following symbolic links. The default path under the system
     /// temp directory is therefore refused on a shared `/tmp` when another
     /// account created it first: create it yourself with mode 0700 or point
-    /// `output_dir` at a private path. On other platforms no check is made.
+    /// `output_dir` at a private path. Files are created with mode 0644 at
+    /// most (the umask can only narrow it), so another account can read but
+    /// never modify segments or the playlist. On other platforms no check is
+    /// made.
     ///
     /// Missing parent directories are also created 0700. The check refuses a
     /// directory owned by another user even when running as root; for a
