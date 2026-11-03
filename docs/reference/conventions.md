@@ -57,6 +57,7 @@ need a formatted reason. New error variants should also prefer the
 | `T::new(...)` | **Primary constructor.** Takes all required arguments. Use this for the canonical way to construct. |
 | `T::from_<format>(...)` | **Parsing constructor.** Decodes from a wire format / encoding (`from_bytes`, `from_str_strict`, `from_u8`, `from_h273`, `from_raw`, `from_pts`, `from_millis`, `from_env`, `from_file`). Always reads from input. |
 | `T::with_<aspect>(...)` | **Variant constructor.** Takes one optional behavioral knob in addition to the required args. Useful when the knob is part of construction (not chainable later). Example: `Demuxer::with_config(config)`. |
+| `value.with_<field>(x) -> Self` | **Consuming setter.** Takes `self`, sets one field and returns it, so calls chain. Used where a type is `#[non_exhaustive]` and cannot be built with a struct expression outside its crate. Example: `ReconnectPolicy::default().with_max_attempts(..).with_backoff(..)`. |
 | `T::default()` | **Zero-arg fallback.** Only when `Default` is implementable and meaningful. |
 | `T::builder(...)` | **Builder factory.** Returns a builder type that produces `T`. Use the builder pattern (see "Builder vs Default" below) when the rule applies. |
 
@@ -254,6 +255,16 @@ let cfg = bldr.build()?;
 // NOT supported (Rust compile error E0639):
 let cfg = SrtSocketConfig { payload_size: Some(1316), ..Default::default() };
 ```
+
+**Other `#[non_exhaustive]` types** follow the same rule: no struct
+expression, including struct-update syntax, outside the defining crate.
+Build a policy with `default()` and its `with_*` setters, a stats record
+with `T::default()` and field assignment, a `MountRule` with
+`MountRule::new`, and a `WhepUrl` with `WhepUrl::parse`. Every `match` on
+a growable enum needs a wildcard arm. The migration entry is in the
+CHANGELOG under the API-shape change, and
+[`docs/guides/pipeline.md`](/docs/guides/pipeline.md) shows the
+patterns in use.
 
 ---
 

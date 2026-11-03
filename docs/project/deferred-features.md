@@ -2022,6 +2022,80 @@ and the two below.
 - **Trigger to revisit:** the demuxer reporting PTS absence, or a consumer
   needing a producer-side PTS on asynchronous records.
 
+### `ManagedTransport` around a segmented publisher
+
+- **Status:** Unsupported. A `MuxSender` over `Segmented<P>` (the HLS
+  segment-cutting wrapper) is not supported under `ManagedTransport`.
+- **Why deferred:** The cut logic belongs inside the publisher, so a
+  managed wrapper sees one transport rather than a cutter in front of it.
+  That move is scheduled before 1.0 (the 0.9.2 release plan, package P8);
+  until then the combination is documented as unsupported.
+- **Trigger to revisit:** The publisher-side cut logic landing, or a
+  consumer that needs reconnecting segmented output earlier.
+
+### Empty reserved config types
+
+- **Status:** Standing choice. Four config types carry no fields today
+  and stay `#[non_exhaustive]` so a field can be added without a break.
+- **Why deferred:** Removing them and re-adding a type later costs more
+  than keeping an empty one; the pre-1.0 policy would allow either.
+- **Trigger to revisit:** Maintainer decision; no consumer trigger
+  recorded.
+
+### URL schemes are exact lowercase
+
+- **Status:** Deferred. Every transport URL parser matches its scheme
+  byte for byte in lowercase (`srt://`, `rtsps://`); `SRT://host` is
+  refused as an unknown scheme. The behaviour is documented.
+- **Why deferred:** RFC 3986 makes schemes case-insensitive, but a single
+  exact form keeps URL dispatch identical across Rust, C, Python and the
+  JVM and keeps the shared URL corpus small.
+- **Trigger to revisit:** Maintainer decision; no consumer trigger
+  recorded.
+
+### `tstrans.h` is not strict ISO C
+
+- **Status:** Deferred. The header declares a frozen struct with no
+  members, which strict ISO C does not allow (compilers accept it as an
+  extension; `-Wpedantic` reports it).
+- **Why deferred:** The struct is part of the frozen ABI, and changing
+  its layout is an ABI break.
+- **Trigger to revisit:** The 1.0 ABI freeze, where the struct gains a
+  member that strict ISO C accepts.
+
+### Windows ownership and ACL checks for native-cache and HLS directories
+
+- **Status:** Deferred. The JVM native-library cache and the HLS output
+  directory check owner, mode and symlinks on Unix. Windows applies no
+  ACL or reparse-point check, and the cache root's ACL is not hardened.
+- **Why deferred:** A per-user temporary directory is the common Windows
+  layout. Services that share one temporary directory (LocalSystem) are
+  the exposed case, and a correct ACL check needs Windows-specific code
+  and runners to prove it.
+- **Trigger to revisit:** The 0.9.2 HTTP-servers package (P7), where the
+  HLS Windows check and the JVM cache-root hardening are paired.
+
+### Bounded drain when a RIST sender closes
+
+- **Status:** Deferred. Closing a RIST sender frees librist's queue
+  without a final send pass, so packets still queued are lost.
+  Flush-then-close races on every platform; callers wait after
+  `flush()` before closing.
+- **Why deferred:** The drain has to live inside the `tst-rist` close
+  (Rust and C) with a documented bound, and the bound needs a ruling.
+- **Trigger to revisit:** The 0.9.2 transports package, or a consumer
+  that loses the tail of a RIST stream at close.
+
+### Per-viewer WHEP panic containment
+
+- **Status:** Deferred. A panic while serving one WHEP viewer is
+  contained around the offer application only; no other part of a
+  viewer's handling is wrapped per viewer.
+- **Why deferred:** Containing each viewer is a design question for the
+  WHEP server (what it reports and does with a viewer ended by a panic).
+- **Trigger to revisit:** The 0.9.2 WHEP server design, or a panic
+  reaching a deployed server.
+
 ## Resolved (historical)
 
 Entries whose feature shipped, one line each: the release it landed in and
