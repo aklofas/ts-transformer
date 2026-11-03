@@ -146,3 +146,10 @@ note = "Prints the subtitle-interop tool matrix for a human; asserts nothing. Ru
 
 # --- Environmental / live-resource unit tests -------------------------------
 
+
+[[skip]]
+test = "umask_child_writes_hls_files"
+crate = "tst-hls"
+path = "crates/tst-hls/tests/net_output_dir_trust.rs"
+class = "environmental"
+note = "Re-exec child of segments_and_playlist_are_never_group_or_other_writable; runs only when the parent spawns it, because the umask it sets is process-wide."
