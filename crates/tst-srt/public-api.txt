@@ -499,6 +499,8 @@ pub tst_srt::error::RejectReason::Unsecure
 pub tst_srt::error::RejectReason::Version
 pub tst_srt::error::RejectReason::VersionUnsupported
 impl tst_srt::error::RejectReason
+pub const tst_srt::error::RejectReason::PREDEFINED: [tst_srt::error::RejectReason; 21]
+pub fn tst_srt::error::RejectReason::name(&self) -> core::option::Option<&'static str>
 pub fn tst_srt::error::RejectReason::raw(&self) -> i32
 impl core::clone::Clone for tst_srt::error::RejectReason
 pub fn tst_srt::error::RejectReason::clone(&self) -> tst_srt::error::RejectReason

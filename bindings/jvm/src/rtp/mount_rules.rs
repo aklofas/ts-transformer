@@ -101,15 +101,9 @@ fn read_policy(
             Some(MountPolicy::Require(creds))
         }
         3 => {
-            let s = match status {
-                403 => RefuseStatus::Forbidden,
-                404 => RefuseStatus::NotFound,
-                453 => RefuseStatus::NotEnoughBandwidth,
-                503 => RefuseStatus::ServiceUnavailable,
-                other => {
-                    throw_illegal_argument(env, &format!("unknown refuse status {other}"));
-                    return None;
-                }
+            let Some(s) = u16::try_from(status).ok().and_then(RefuseStatus::from_code) else {
+                throw_illegal_argument(env, &format!("unknown refuse status {status}"));
+                return None;
             };
             Some(MountPolicy::Refuse(s))
         }

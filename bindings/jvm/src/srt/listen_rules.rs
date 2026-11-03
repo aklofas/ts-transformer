@@ -18,37 +18,10 @@ use super::lowlevel::listener_rules;
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
 
-/// The typed predefined reasons and their `org.tstrans.srt.RejectReason`
-/// constant names; `RejectReasonTableTest` holds the Java side to this list.
-const PREDEFINED: [(RejectReason, &str); 21] = [
-    (RejectReason::Fallback, "FALLBACK"),
-    (RejectReason::KeyNotSupported, "KEY_NOT_SUPPORTED"),
-    (RejectReason::Filepath, "FILEPATH"),
-    (RejectReason::HostNotFound, "HOST_NOT_FOUND"),
-    (RejectReason::BadRequest, "BAD_REQUEST"),
-    (RejectReason::Unauthorized, "UNAUTHORIZED"),
-    (RejectReason::Overload, "OVERLOAD"),
-    (RejectReason::Forbidden, "FORBIDDEN"),
-    (RejectReason::NotFound, "NOT_FOUND"),
-    (RejectReason::BadMode, "BAD_MODE"),
-    (RejectReason::Unacceptable, "UNACCEPTABLE"),
-    (RejectReason::Conflict, "CONFLICT"),
-    (RejectReason::NotSupportedMedia, "NOT_SUPPORTED_MEDIA"),
-    (RejectReason::Locked, "LOCKED"),
-    (RejectReason::FailedDependency, "FAILED_DEPENDENCY"),
-    (RejectReason::InternalServerError, "INTERNAL_SERVER_ERROR"),
-    (RejectReason::Unimplemented, "UNIMPLEMENTED"),
-    (RejectReason::Gateway, "GATEWAY"),
-    (RejectReason::Down, "DOWN"),
-    (RejectReason::VersionUnsupported, "VERSION_UNSUPPORTED"),
-    (RejectReason::NoRoom, "NO_ROOM"),
-];
-
 /// The typed variant for a predefined code, `Other(code)` for any other.
 fn reason_from_code(code: i32) -> RejectReason {
-    PREDEFINED
-        .iter()
-        .map(|(r, _)| *r)
+    RejectReason::PREDEFINED
+        .into_iter()
         .find(|r| r.raw() == code)
         .unwrap_or(RejectReason::Other(code))
 }
@@ -180,11 +153,12 @@ jni_native! {
     ) -> jobjectArray = std::ptr::null_mut() => {
         let build = |env: &mut Env| -> jni::errors::Result<jobjectArray> {
             let rows = env.new_object_array(
-                PREDEFINED.len() as i32,
+                RejectReason::PREDEFINED.len() as i32,
                 FindClass(jni_str!("java/lang/String")),
                 JObject::null(),
             )?;
-            for (i, (reason, name)) in PREDEFINED.iter().enumerate() {
+            for (i, reason) in RejectReason::PREDEFINED.iter().enumerate() {
+                let name = reason.name().unwrap_or_default();
                 // One frame per row so the String locals do not pile up.
                 env.with_local_frame(4, |inner| -> jni::errors::Result<()> {
                     let row = inner.new_string(format!("{} {name}", reason.raw()))?;

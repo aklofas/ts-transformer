@@ -91,6 +91,18 @@ impl RefuseStatus {
         }
     }
 
+    /// The status for a numeric RTSP code; `None` unless it is 403, 404, 453
+    /// or 503. Inverse of [`RefuseStatus::code`].
+    pub fn from_code(code: u16) -> Option<Self> {
+        match code {
+            403 => Some(Self::Forbidden),
+            404 => Some(Self::NotFound),
+            453 => Some(Self::NotEnoughBandwidth),
+            503 => Some(Self::ServiceUnavailable),
+            _ => None,
+        }
+    }
+
     /// The reason phrase for the status line.
     pub(crate) fn reason(self) -> &'static str {
         match self {
@@ -441,6 +453,19 @@ impl MountRules {
 mod tests {
     use super::*;
     use crate::RtspServerBuilder;
+
+    #[test]
+    fn from_code_round_trips_every_refuse_status() {
+        for s in [
+            RefuseStatus::Forbidden,
+            RefuseStatus::NotFound,
+            RefuseStatus::NotEnoughBandwidth,
+            RefuseStatus::ServiceUnavailable,
+        ] {
+            assert_eq!(RefuseStatus::from_code(s.code()), Some(s));
+        }
+        assert_eq!(RefuseStatus::from_code(500), None);
+    }
 
     fn pw(s: &str) -> SecretString {
         SecretString::new(s.into())
