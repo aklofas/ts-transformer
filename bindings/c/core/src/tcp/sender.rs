@@ -85,8 +85,8 @@ pub unsafe extern "C" fn tst_tcp_sender_open(url: *const c_char) -> *mut TstTcpS
 /// behavior (use-after-free on the consumed `Box`).
 ///
 /// Close is cancel-first and abortive: up to six buffered packets that
-/// no `tst_tcp_sender_flush` has sent are discarded. Call `_flush` first for
-/// a lossless end of stream.
+/// no `tst_tcp_sender_flush` has sent are discarded. Call `_flush` first to
+/// send what is buffered.
 ///
 /// # Safety
 ///
@@ -147,8 +147,9 @@ pub unsafe extern "C" fn tst_tcp_sender_cancel(p: *mut TstTcpSender) -> libc::c_
 /// sender will accept any non-zero length but non-aligned buffers
 /// may cause sync issues at the receiver.
 ///
-/// TCP is a reliable bytestream: the library writes all `len` bytes before
-/// returning (or returns an error). Unlike UDP there is no datagram
+/// TCP is a reliable bytestream: the library writes whole bundles to the
+/// socket before returning (or returns an error); a partial bundle stays
+/// buffered until a later send fills it or `_flush` sends it. Unlike UDP there is no datagram
 /// boundary, so the receiver MUST have its own framing — this library's
 /// TCP receiver re-synchronises on the 0x47 sync byte.
 ///
@@ -176,6 +177,10 @@ pub unsafe extern "C" fn tst_tcp_sender_send_ts(
 }
 
 /// Send any buffered partial bundle now.
+///
+/// The sender syncs on the first three TS packets it is given; a stream
+/// shorter than that never syncs and its bytes are dropped, so `_flush`
+/// cannot deliver a one- or two-packet stream.
 ///
 /// Call before `tst_tcp_sender_close`: `_close` is cancel-first and
 /// discards up to six buffered packets.
