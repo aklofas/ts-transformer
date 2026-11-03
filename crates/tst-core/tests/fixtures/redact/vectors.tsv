@@ -35,3 +35,4 @@ open 'srt://h?passphrase=abc' failed: can't connect	open 'srt://h?passphrase=<re
 ésrt://u:p@h	ésrt://u:<redacted>@h
 é://h	é://h
 😀srt://u:p@h	😀srt://u:<redacted>@h
+'srt://u:pw' rtsp://v:q@c	'srt://u:pw' rtsp://v:<redacted>@c

@@ -15,7 +15,7 @@ const SECRET_KEYS: [&str; 7] = [
     "srt_streamid",
 ];
 
-const REDACTED: &str = "<redacted>";
+pub(crate) const REDACTED: &str = "<redacted>";
 
 /// Return `url` with its secrets replaced by `<redacted>`.
 ///
@@ -43,7 +43,7 @@ const REDACTED: &str = "<redacted>";
 /// - text after a quoted URL, up to the last matching quote, is treated as
 ///   part of the URL, so `'srt://h?token=x' can't` loses `x' can`.
 ///
-/// One residual is not covered: a password that itself holds a quote, a
+/// One residual is not covered: a password or a secret value that itself holds a quote, a
 /// space and a quote before a scheme (`'srt://u:x' 'y://z@h'`) reads as two
 /// quoted URLs, so the first part of it stays visible.
 ///
