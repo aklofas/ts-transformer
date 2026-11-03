@@ -24,8 +24,9 @@ fn peer_idle_timeout_ms(handle: srt_sys::SRTSOCKET) -> i32 {
 #[test]
 fn below_one_millisecond_is_refused_on_caller_and_listener() {
     require_loopback!();
-    // libsrt accepts 0 and then breaks the connection on the first timer
-    // tick, so the option layer refuses it before anything is dialled.
+    // libsrt accepts 0, which silently means "the floor": a silent
+    // connection then breaks once more than 16 expiry timers (about 5 s)
+    // have fired. The option layer refuses it before anything is dialled.
     // A positive sub-millisecond duration truncates to 0 ms, so it is
     // refused as well.
     for value in [Duration::ZERO, Duration::from_micros(1)] {
@@ -46,6 +47,44 @@ fn below_one_millisecond_is_refused_on_caller_and_listener() {
             listener.err()
         );
     }
+}
+
+#[test]
+fn above_the_libsrt_ceiling_is_refused_on_caller_and_listener() {
+    require_loopback!();
+    // libsrt multiplies the millisecond value by 1000 into an int.
+    let value = Duration::from_millis(2_147_484);
+    let caller = SrtSocketBuilder::new()
+        .peer_idle_timeout(value)
+        .connect("127.0.0.1:9");
+    assert!(
+        matches!(caller, Err(SrtConnectError::InvalidOption(_))),
+        "caller: {:?}",
+        caller.err()
+    );
+    let listener = SrtListenerBuilder::new()
+        .peer_idle_timeout(value)
+        .bind("127.0.0.1:0");
+    assert!(
+        matches!(listener, Err(BindError::InvalidOption(_))),
+        "listener: {:?}",
+        listener.err()
+    );
+}
+
+#[test]
+fn the_libsrt_ceiling_is_accepted() {
+    require_loopback!();
+    let mut lb = SrtListenerBuilder::new();
+    lb.peer_idle_timeout(Duration::from_millis(2_147_483));
+    let fixture = crate::common::Loopback::bind_with(lb);
+    let port = fixture.port;
+    let accept = fixture.spawn_accept(|sock| peer_idle_timeout_ms(sock.raw_handle()));
+    accept.wait_ready();
+    let _caller = SrtSocketBuilder::new()
+        .connect(("127.0.0.1", port))
+        .expect("connect");
+    assert_eq!(accept.join(), 2_147_483);
 }
 
 #[test]

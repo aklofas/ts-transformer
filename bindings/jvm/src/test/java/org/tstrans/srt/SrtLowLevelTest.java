@@ -138,6 +138,17 @@ class SrtLowLevelTest {
         assertEquals(SrtException.Kind.CONFIG_INVALID, l.kind());
     }
 
+    /** libsrt multiplies the millisecond value by 1000 into an int, so 2147484 ms is refused. */
+    @Test
+    void peerIdleTimeoutAboveCeilingRefusedOnConnectAndListen() {
+        var c = assertThrows(SrtException.class,
+            () -> new Builder("srt://127.0.0.1:9000").caller().peerIdleTimeoutMs(2_147_484).connect());
+        assertEquals(SrtException.Kind.CONFIG_INVALID, c.kind());
+        var l = assertThrows(SrtException.class,
+            () -> new Builder("srt://127.0.0.1:0?mode=listener").listener().peerIdleTimeoutMs(2_147_484).listen());
+        assertEquals(SrtException.Kind.CONFIG_INVALID, l.kind());
+    }
+
     @Test
     void negativePeerIdleTimeoutRejected() {
         assertThrows(IllegalArgumentException.class,

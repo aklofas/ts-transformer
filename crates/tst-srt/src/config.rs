@@ -56,7 +56,9 @@ pub struct SrtSocketConfig {
     pub connect_timeout: Option<Duration>,
     /// `SRTO_PEERIDLETIMEO`: how long the connection may hear nothing from
     /// the peer before it breaks. `None` keeps libsrt's 5 s default.
-    /// `Duration::ZERO` is refused when the socket is configured.
+    /// `Duration::ZERO` and anything above 2 147 483 ms are refused when the
+    /// socket is configured: libsrt stores milliseconds in an `int` and
+    /// multiplies by 1000.
     ///
     /// libsrt breaks a silent connection only after this time has elapsed
     /// and more than 16 expiry timers (about 5 s, at its 300 ms minimum

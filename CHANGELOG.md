@@ -19,7 +19,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-srt, tst-py, tst-jni
 
-- `SrtSocketConfig::peer_idle_timeout` (`SRTO_PEERIDLETIMEO`), the matching setter on `SrtSocketBuilder` and `SrtListenerBuilder`, the `peeridletimeo` URL key (milliseconds), Python `peer_idle_timeout_ms` and JVM `peerIdleTimeoutMs`; the C package takes it through the URL. libsrt breaks a silent connection only after the idle time has elapsed and more than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not detect a silent peer sooner; raise it for links whose loss bursts outlast the default, and keep it well above the burst length or healthy connections break.
+- `SrtSocketConfig::peer_idle_timeout` (`SRTO_PEERIDLETIMEO`), the matching setter on `SrtSocketBuilder` and `SrtListenerBuilder`, the `peeridletimeo` URL key (milliseconds), Python `peer_idle_timeout_ms` and JVM `peerIdleTimeoutMs`; the C package takes it through the URL. libsrt breaks a silent connection only after the idle time has elapsed and more than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not detect a silent peer sooner; raise it for links whose loss bursts outlast the default, and keep it well above the burst length or healthy connections break. Zero and values above 2147483 ms are refused (libsrt multiplies the value by 1000 into an `int`).
 
 ### Added — tst-srt, tst-rtp
 

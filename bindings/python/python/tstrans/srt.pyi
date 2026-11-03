@@ -177,6 +177,8 @@ class Builder:
     def peer_idle_timeout_ms(self, ms: int) -> Builder:
         """`SRTO_PEERIDLETIMEO` in milliseconds: how long the connection may
         hear nothing from the peer before it breaks (libsrt default 5000).
+        Zero and values above 2147483 are refused at connect/listen time
+        (libsrt multiplies the value by 1000 into an int).
 
         libsrt breaks a silent connection only after the idle time has
         elapsed and more than 16 expiry timers (about 5 s) have fired, so

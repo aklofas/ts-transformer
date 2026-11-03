@@ -563,6 +563,10 @@ impl Drop for SrtSocket {
 /// `connect_timeout` unset.
 const LIBSRT_DEFAULT_CONNTIMEO: Duration = Duration::from_secs(3);
 
+/// Largest `SRTO_PEERIDLETIMEO` (ms) libsrt can carry: it multiplies the
+/// value by 1000 into an `int`.
+pub(crate) const MAX_PEER_IDLE_TIMEOUT_MS: u32 = (i32::MAX / 1000) as u32;
+
 pub(crate) fn duration_to_ms(d: Duration) -> i32 {
     d.as_millis().min(i32::MAX as u128) as i32
 }
@@ -892,14 +896,24 @@ fn apply_common_options(
     if let Some(d) = opts.peer_idle_timeout {
         // SRTO_PEERIDLETIMEO is a PRE option: set before connect or on the
         // listening socket, and accepted sockets inherit it. libsrt accepts
-        // 0, after which the connection breaks on the first timer tick.
+        // 0, which silently means "the floor": with no time condition left a
+        // silent connection breaks once more than 16 expiry timers (about
+        // 5 s) have fired. 0 is refused for that reason, not because it
+        // breaks at once. libsrt stores milliseconds in an int and multiplies
+        // by 1000, so larger values overflow and are refused too.
         // Checked on the millisecond value libsrt receives, so a positive
         // sub-millisecond duration cannot truncate to the 0 refused here.
+        if d.as_millis() > u128::from(MAX_PEER_IDLE_TIMEOUT_MS) {
+            return Err(OptionError::OutOfRange(format!(
+                "peer_idle_timeout must be between 1 ms and {MAX_PEER_IDLE_TIMEOUT_MS} ms, got {} ms",
+                d.as_millis()
+            )));
+        }
         let ms = duration_to_ms(d);
         if ms == 0 {
-            return Err(OptionError::OutOfRange(
-                "peer_idle_timeout must be at least 1 ms".into(),
-            ));
+            return Err(OptionError::OutOfRange(format!(
+                "peer_idle_timeout must be between 1 ms and {MAX_PEER_IDLE_TIMEOUT_MS} ms, got under 1 ms"
+            )));
         }
         set_int(handle, srt_sys::SRT_SOCKOPT_SRTO_PEERIDLETIMEO, ms)?;
     }

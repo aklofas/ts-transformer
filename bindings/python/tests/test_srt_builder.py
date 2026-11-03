@@ -307,6 +307,20 @@ def test_zero_peer_idle_timeout_is_refused_on_connect_and_listen() -> None:
     assert lst.value.kind == SrtErrorKind.CONFIG_INVALID
 
 
+def test_peer_idle_timeout_above_the_ceiling_is_refused_on_connect_and_listen() -> None:
+    """libsrt multiplies the millisecond value by 1000 into an int, so 2147484 ms is refused."""
+    with pytest.raises(SrtError) as caller:
+        tstrans.srt.Builder(
+            "srt://127.0.0.1:9000", peer_idle_timeout_ms=2_147_484
+        ).connect()
+    assert caller.value.kind == SrtErrorKind.CONFIG_INVALID
+    with pytest.raises(SrtError) as lst:
+        tstrans.srt.Builder("srt://127.0.0.1:0?mode=listener").peer_idle_timeout_ms(
+            2_147_484
+        ).listen()
+    assert lst.value.kind == SrtErrorKind.CONFIG_INVALID
+
+
 def test_negative_peer_idle_timeout_is_rejected() -> None:
     with pytest.raises(OverflowError):
         tstrans.srt.Builder("srt://127.0.0.1:9000").peer_idle_timeout_ms(-1)

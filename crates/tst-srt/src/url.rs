@@ -471,6 +471,15 @@ fn set_peer_idle_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Ap
             detail: "must be positive, got 0".to_string(),
         });
     }
+    if n as u32 > crate::socket::MAX_PEER_IDLE_TIMEOUT_MS {
+        return Err(SrtUrlError::InvalidValue {
+            key: "peeridletimeo".to_string(),
+            detail: format!(
+                "must be at most {} (ms), got {n}",
+                crate::socket::MAX_PEER_IDLE_TIMEOUT_MS
+            ),
+        });
+    }
     c.peer_idle_timeout = Some(Duration::from_millis(n as u64));
     Ok(())
 }
@@ -940,7 +949,12 @@ mod tests {
             u.config.peer_idle_timeout,
             Some(Duration::from_millis(2500))
         );
-        for bad in ["0", "-1", "abc"] {
+        let u = SrtUrl::parse("srt://h:9000?peeridletimeo=2147483").unwrap();
+        assert_eq!(
+            u.config.peer_idle_timeout,
+            Some(Duration::from_millis(2_147_483))
+        );
+        for bad in ["0", "-1", "abc", "2147484"] {
             let e = SrtUrl::parse(&format!("srt://h:9000?peeridletimeo={bad}")).unwrap_err();
             assert!(e.to_string().contains("peeridletimeo"), "{bad}: {e}");
         }
