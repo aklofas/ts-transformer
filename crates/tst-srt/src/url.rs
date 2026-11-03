@@ -679,7 +679,7 @@ pub const URL_KEYS: &[QueryKey<SrtSocketConfig, SrtUrlError>] = &[
     QueryKey::new(
         "conntimeo",
         &["connect_timeout"],
-        "Connect deadline",
+        "Deadline for the whole connect, shared across the resolved addresses; polled about once a second",
         "milliseconds",
         set_connect_timeout,
     ),

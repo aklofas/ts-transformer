@@ -153,7 +153,12 @@ defaults:
 | `role`            | `Role::Receiver` (default)  | `Sender`      | `Receiver`      |
 
 The 15 s `connect_timeout` accommodates LOS interruptions, antenna
-repointing, and radio warm-up. The 5 s sender-side `linger` lets a small
+repointing, and radio warm-up. It is the deadline for the whole connect,
+shared across the host's resolved addresses: each address gets the
+remaining time divided by the addresses left, and a single address gets
+the whole budget. libsrt polls the connect deadline about once a second,
+so each attempt against a silent address costs at least one second, and a
+budget below about a second per address may not reach a later address. The 5 s sender-side `linger` lets a small
 backlog flush on graceful close without stalling a `ManagedTransport`
 reconnect cycle. The `role` flag drives `SRTO_SENDER` for HSv4-peer
 compatibility (older Teradek/Makito gear, cable-industry hardware);
@@ -678,7 +683,7 @@ when both name the same option.
 | `fc` | `SRTO_FC` | INT | u32 range; ffmpeg-style alias `ffs` |
 | `packetfilter` | `SRTO_PACKETFILTER` | STRING | filter spec |
 | `congestion` | `SRTO_CONGESTION` | ENUM | `live` or `file` (lowercase); ffmpeg-style alias `smoother` (libsrt's pre-1.4.1 name) |
-| `conntimeo` | `SRTO_CONNTIMEO` | INT (ms) | non-negative; ffmpeg-style alias `connect_timeout` |
+| `conntimeo` | `SRTO_CONNTIMEO` | INT (ms) | non-negative; the whole connect's deadline, shared across the resolved addresses and polled about once a second; ffmpeg-style alias `connect_timeout` |
 | `peeridletimeo` | `SRTO_PEERIDLETIMEO` | INT (ms) | positive; libsrt breaks a silent connection only after more than 16 expiry timers (about 5 s) have fired, so values below about 5 s do not detect a silent peer sooner |
 | `linger` | `SRTO_LINGER` | INT (seconds) | non-negative; matches ffmpeg URL units; `0` closes immediately |
 | `udprcvbuf` | `SRTO_UDP_RCVBUF` | INT (bytes) | kernel UDP recv buffer; ffmpeg-style alias `recv_buffer_size`; Linux clamps to `net.core.rmem_max` |

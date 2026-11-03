@@ -71,8 +71,13 @@ impl SrtSocketBuilder {
         self.config.recv_timeout = Some(t);
         self
     }
-    /// Set `SRTO_CONNTIMEO` — maximum handshake-wait duration on `connect`.
-    /// libsrt default 3s; recommend 10–15s for radio links.
+    /// Set the connect budget (`SRTO_CONNTIMEO`): the deadline for the whole
+    /// `connect`, shared across the host's resolved addresses (each gets the
+    /// remaining time divided by the addresses left; a single address gets
+    /// the whole budget). libsrt polls the connect deadline about once a
+    /// second, so each attempt against a silent address costs at least one
+    /// second, and a budget below about a second per address may not reach a
+    /// later address. libsrt default 3s; recommend 10–15s for radio links.
     pub fn connect_timeout(&mut self, t: Duration) -> &mut Self {
         self.config.connect_timeout = Some(t);
         self

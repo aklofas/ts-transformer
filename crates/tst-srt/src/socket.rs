@@ -12,7 +12,7 @@ use os_socketaddr::OsSocketAddr;
 use std::ffi::{c_char, c_int};
 use std::mem;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 
 const SRT_INVALID_SOCK: srt_sys::SRTSOCKET = -1;
@@ -166,7 +166,18 @@ impl SrtSocket {
     /// VPNs, some corporate networks), this lets the v4 fallback succeed
     /// instead of failing fast on `[::1]`. Mirrors ffmpeg's
     /// `getaddrinfo(AF_UNSPEC)` + `ai_next` walk in
-    /// `libavformat/libsrt.c`. Sequential, no Happy Eyeballs.
+    /// `libavformat/libsrt.c`. Sequential, no Happy Eyeballs: only one
+    /// handshake is ever in flight, so a slow address can never complete
+    /// late as a second connection to the same listener.
+    ///
+    /// `connect_timeout` (libsrt's 3 s default when unset) is the deadline
+    /// for the whole connect, shared across the resolved addresses: each
+    /// address gets the remaining time divided by the addresses left, and a
+    /// single address gets the whole budget. A rejected handshake fails at
+    /// once and leaves the rest of the budget to the next address. libsrt
+    /// polls the connect deadline about once a second, so each attempt
+    /// against a silent address costs at least one second, and a budget
+    /// below about a second per address may not reach a later address.
     ///
     /// # Panics
     ///
@@ -200,13 +211,43 @@ impl SrtSocket {
         };
         ensure_initialized();
 
+        // The budget covers the handshakes only, so the clock starts after
+        // resolution. A single address keeps the configured timeout as it
+        // is; several share it, so a silent first address cannot spend the
+        // whole budget N times over.
+        // Capped at what SRTO_CONNTIMEO can carry (`duration_to_ms`
+        // saturates there anyway), so the deadline addition cannot overflow.
+        let budget = config
+            .connect_timeout
+            .unwrap_or(LIBSRT_DEFAULT_CONNTIMEO)
+            .min(Duration::from_millis(i32::MAX as u64));
+        let deadline = Instant::now() + budget;
+        let total = addrs.len();
+
         let mut last_err: Option<SrtConnectError> = None;
-        for sa in addrs {
+        for (index, sa) in addrs.into_iter().enumerate() {
             // Process exit started during the walk (it cancelled the
             // attempt before this one): stop, do not dial the next address.
             if crate::exit_guard::is_exiting() {
                 return Err(last_err.unwrap_or_else(refused_connect));
             }
+            let share = if total == 1 {
+                None
+            } else {
+                let left = u32::try_from(total - index).unwrap_or(u32::MAX);
+                // libsrt's blocking connect waits for a reply in one-second
+                // slices (srtcore/queue.cpp:1705) and tests the deadline only
+                // between them (srtcore/core.cpp:4056), so an attempt against
+                // a silent address can overrun its share by up to a second;
+                // the next share comes from the time actually left.
+                let share = deadline.saturating_duration_since(Instant::now()) / left;
+                // A 0 ms SRTO_CONNTIMEO would still cost libsrt's one-second
+                // poll: a spent budget ends the walk instead of dialling.
+                if duration_to_ms(share) == 0 {
+                    return Err(last_err.unwrap_or(SrtConnectError::TimedOut));
+                }
+                Some(share)
+            };
             // Each iteration starts on a fresh handle. libsrt PRE options
             // must be set before srt_connect; once a handle has been
             // through a failed srt_connect we can't reuse it cleanly.
@@ -216,7 +257,15 @@ impl SrtSocket {
                 continue;
             }
 
-            if let Err(e) = apply_socket_config(handle, config) {
+            let configured = apply_socket_config(handle, config).and_then(|()| match share {
+                Some(share) => set_int(
+                    handle,
+                    srt_sys::SRT_SOCKOPT_SRTO_CONNTIMEO,
+                    duration_to_ms(share),
+                ),
+                None => Ok(()),
+            });
+            if let Err(e) = configured {
                 unsafe { srt_sys::srt_close(handle) };
                 last_err = Some(SrtConnectError::InvalidOption(e));
                 continue;
@@ -503,6 +552,11 @@ impl Drop for SrtSocket {
 // ============================================================================
 // Helpers (private to crate; shared by socket.rs and listener.rs)
 // ============================================================================
+
+/// libsrt's `SRTO_CONNTIMEO` default (`DEF_CONNTIMEO_S`,
+/// `srtcore/socketconfig.h:203`): the connect budget when the config leaves
+/// `connect_timeout` unset.
+const LIBSRT_DEFAULT_CONNTIMEO: Duration = Duration::from_secs(3);
 
 pub(crate) fn duration_to_ms(d: Duration) -> i32 {
     d.as_millis().min(i32::MAX as u128) as i32
