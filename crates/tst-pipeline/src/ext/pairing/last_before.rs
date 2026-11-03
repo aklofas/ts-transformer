@@ -10,23 +10,22 @@
 //! The history is cleared at an epoch boundary: `ReconnectDiscontinuity`, or
 //! `Discontinuity { kind: AdaptationFieldFlag }` on the video PID, the KLV PID
 //! or the PCR PID of the program carrying the video (learned from its
-//! `ProgramMap`); never-used entries leave as `UnpairedKlv` ahead of the passed-through event.
+//! `ProgramMap`); never-used entries leave as `UnpairedKlv` ahead of the
+//! passed-through event. A flag on any other PID, and a silent restart, are
+//! invisible: the caller flushes.
 //!
-//! A signalled discontinuity does not end the KLV PES in flight on the KLV
-//! PID: it completes after the flag, on the old clock its header was coded
-//! on (H.222.0 §2.4.3.5), whichever PID carried the flag. Only one PES is in
-//! flight per PID, so only the first KLV PES completed after the flag can be
-//! old. It is taken as old when its PTS lies within [`OLD_CLOCK_WINDOW`] of
-//! the newest KLV PTS or the newest video PTS before the flag (the video
-//! reference covers KLV sent rarely or on change, and a flag before any
-//! KLV), and leaves as `UnpairedKlv` without
-//! entering the history. A new clock that lands that close loses its first
-//! KLV sample the same way: unpaired, never paired across clocks.
-//!
-//! The video PES in flight at the flag is old for the same reason. When the
-//! first video completed after the flag lies within [`OLD_CLOCK_WINDOW`] of
-//! the newest video PTS before it, it leaves as `UnpairedVideo`: the flag
-//! drained the history, so only new-clock KLV could pair with it.
+//! A signalled discontinuity does not end the PES in flight on the KLV or
+//! video PID: it completes after the flag, on the old clock its header was
+//! coded on (H.222.0 §2.4.3.5), whichever PID carried the flag. Only one PES
+//! is in flight per PID, so only the first KLV sample and the first video
+//! sample completing after the flag can be old. A KLV sample is taken as old
+//! when its PTS lies within [`OLD_CLOCK_WINDOW`] of the newest KLV PTS or the
+//! newest video PTS before the flag (the video reference covers KLV sent
+//! rarely or on change, and a flag before any KLV); a video sample, within
+//! [`OLD_CLOCK_WINDOW`] of the newest video PTS. Each leaves as `UnpairedKlv`
+//! or `UnpairedVideo`, and a KLV one does not enter the history. A new clock
+//! that lands within the window of the old one loses that one pairing the same
+//! way.
 
 use super::types::{KlvSample, PairerOutput, VideoSample};
 use std::collections::VecDeque;
@@ -61,7 +60,7 @@ pub(super) struct LastBeforeState {
     video_pid: u16,
     klv_pid: u16,
     /// PCR PID of the program carrying `video_pid`, once its program map has
-    /// passed. A flag there resets the time base both paired PIDs run on.
+    /// passed. Kept when a later map drops the video PID. A flag there resets the time base both paired PIDs run on.
     pcr_pid: Option<u16>,
     freshness_ticks: Option<i64>,
     /// Oldest at the front. An entry stays after it pairs; one that
@@ -390,6 +389,24 @@ mod tests {
         s.feed(program_map(2, 0x201, &[0x201, 0x202]));
         s.feed(klv_event(90_000));
         let out = s.feed(af_discontinuity(0x201));
+        assert!(
+            matches!(&out[..], [PairerOutput::PassThrough(_)]),
+            "got {out:?}"
+        );
+        let out = s.feed(video_event(93_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 90_000),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_flag_on_a_non_pcr_audio_pid_of_the_same_program_keeps_the_history() {
+        const AUDIO_PID: u16 = 0x103;
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(program_map(1, VIDEO_PID, &[VIDEO_PID, AUDIO_PID, KLV_PID]));
+        s.feed(klv_event(90_000));
+        let out = s.feed(af_discontinuity(AUDIO_PID));
         assert!(
             matches!(&out[..], [PairerOutput::PassThrough(_)]),
             "got {out:?}"
