@@ -132,7 +132,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Record first, then demux. Doing the write first means a demux
         // error can never cost you bytes of the capture.
-        recording.send_bytes(&pkt)?;
+        if let Err(e) = recording.send_bytes(&pkt) {
+            eprintln!("recording error: {e}");
+            break;
+        }
         if let Err(e) = demux.feed_aligned(&pkt) {
             eprintln!("demux error: {e}");
             break;

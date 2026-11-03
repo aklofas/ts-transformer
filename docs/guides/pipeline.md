@@ -708,7 +708,10 @@ loop {
         Err(e) if e.kind == ShellErrorKind::EndOfStream => break,
         Err(_) => break, // still falls through to the flush below
     };
-    recording.send_bytes(&pkt)?;      // your consumer
+    if let Err(e) = recording.send_bytes(&pkt) { // your consumer
+        eprintln!("recording error: {e}");
+        break; // falls through to the flush below
+    }
     demux.feed_aligned(&pkt)?;
     while let Some(ev) = demux.next_event() { /* handle ev */ }
 }

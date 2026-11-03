@@ -265,7 +265,8 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     ///   reconnect.
     /// - Monotonic from creation: `reset_stats`, a reconnect, `cancel` and
     ///   `close` never lower it, so it can exceed
-    ///   [`DemuxReceiverStats::bytes_received`] after a reset or reconnect.
+    ///   [`DemuxReceiverStats::bytes_received`] after `reset_stats`. After a
+    ///   reconnect `bytes_received` leads by the dropped splice packet.
     ///
     /// Absent without the `std` feature.
     #[cfg(feature = "std")]

@@ -11,7 +11,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-pipeline, tst-jni, tst-py (BREAKING)
 
-- `DemuxReceiver::add_byte_sink`, `ManagedDemuxReceiver::add_byte_sink` and `ByteSink`, JVM `DemuxReceiver.addByteSink` and Python `DemuxReceiver.add_byte_sink` are removed: the sink ran user code on the library's pulling thread. To count bytes, read the new `ts_bytes_demuxed()` (`tsBytesDemuxed()` on the JVM; a `TsBytesDemuxedHandle` in Rust), which never waits on the receive slot and keeps its value after close. To record, relay or inspect packets, pull them from a `Receiver` and feed a `Demuxer` ([pipeline guide](docs/guides/pipeline.md)).
+- `DemuxReceiver::add_byte_sink`, `ManagedDemuxReceiver::add_byte_sink` and `ByteSink`, JVM `DemuxReceiver.addByteSink` and Python `DemuxReceiver.add_byte_sink` are removed: the sink ran user code on the library's pulling thread. To count bytes, read the new `ts_bytes_demuxed()` (`tsBytesDemuxed()` on the JVM; a `TsBytesDemuxedHandle` in Rust), which never waits on the receive slot and keeps its value after close. To record, relay or inspect packets, pull them from a `Receiver` and feed a `Demuxer` ([pipeline guide](docs/guides/pipeline.md)). `DemuxReceiver` is now `Sync` and `UnwindSafe` whenever its transport is (the removed boxed sink closure was its only non-`Sync` field).
 
 ### Added — tst-c
 

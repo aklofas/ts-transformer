@@ -152,6 +152,7 @@ fn managed_demux_receiver_reconnect_splice_is_not_counted() {
     let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
         .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
+    let h = rx.ts_bytes_demuxed_handle();
 
     let mut fed = 0u64;
     let mut iters = 0;
@@ -171,6 +172,7 @@ fn managed_demux_receiver_reconnect_splice_is_not_counted() {
     assert_eq!(rx.reconnects_count(), 1);
     assert_eq!(rx.ts_bytes_demuxed(), 188 * fed);
     assert_eq!(rx.stats().bytes_received - rx.ts_bytes_demuxed(), 188);
+    assert_eq!(h.get(), rx.ts_bytes_demuxed());
 }
 
 // ---------------------------------------------------------------------------

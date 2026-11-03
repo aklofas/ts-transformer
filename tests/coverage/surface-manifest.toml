@@ -2128,15 +2128,6 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
-item = "tst_pipeline::TsBytesDemuxedHandle::get"
-owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
-bindings = ["c:n/a(read handle; the C getter reads the counter through the receiver)", "python:n/a(read handle; the binding reads the counter through the receiver)", "java:n/a(read handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
-tier = "A"
-
-[[surface]]
-kind = "rust"
-crate = "tst-pipeline"
 item = "tst_pipeline::DemuxReceiver::ts_bytes_demuxed"
 owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
 bindings = ["c:tst_demux_receiver_get_ts_bytes_demuxed", "python:tstrans.shells.DemuxReceiver.ts_bytes_demuxed", "java:org.tstrans.shells.DemuxReceiver.tsBytesDemuxed", "swift:deferred", "kotlin:deferred"]
@@ -2165,7 +2156,7 @@ tier = "A"
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::ManagedDemuxReceiver::ts_bytes_demuxed_handle"
-owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
 bindings = ["c:n/a(Rust-only handle; the C getter reads the counter through the receiver)", "python:n/a(Rust-only handle; the binding reads the counter through the receiver)", "java:n/a(Rust-only handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
