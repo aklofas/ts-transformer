@@ -398,6 +398,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — dependencies
 
 - The crates take their `tracing` and `rustls` requirements from the workspace; no resolved feature set changes.
+- The FreeRTOS kernel in the embedded reference port is V11.3.3 (was
+  V11.3.2). The one kernel change fixes a type confusion in
+  `xQueueSelectFromSet` (GHSA-56j9-g43f-8g6v, medium): the queue set
+  passed in is now checked to be a queue set. No ts-transformer
+  product reached it — neither the reference port, lwIP nor the POSIX
+  shim uses queue sets and `configUSE_QUEUE_SETS` is off — so V11.3.2
+  builds were not exposed; the pin moves to stay on the patched line.
 
 ### Docs — project pages
 
