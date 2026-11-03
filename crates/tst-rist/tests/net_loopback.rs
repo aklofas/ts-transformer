@@ -608,9 +608,10 @@ enum Rewrite {
     /// flipped. CTR mode flips the same plaintext bits, so each data packet
     /// decrypts to an invalid header: one decryption-failure strike under the
     /// sender's own nonce, with no valid packet between strikes to decay the
-    /// count. Then, 50 ms on, one header-only datagram under
-    /// a nonce no sender uses (same key slot), so the sender's nonce is fresh
-    /// again; 50 ms later every datagram is forwarded unchanged.
+    /// count. Then every datagram is forwarded unchanged; once
+    /// [`ProxyHandle::release`] is called, the proxy waits 50 ms, sends one
+    /// header-only datagram under a nonce no sender uses (same key slot), so
+    /// the sender's nonce is fresh again, and waits another 50 ms.
     GarbageThenPass { garbage: u32 },
 }
 
@@ -643,6 +644,8 @@ struct ProxyHandle {
     rewritten: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Starts [`Rewrite::GarbageThenPass`]; the other rewrites ignore it.
     armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Sends [`Rewrite::GarbageThenPass`]'s nonce-reset datagram.
+    released: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -654,6 +657,11 @@ impl ProxyHandle {
 
     fn arm(&self) {
         self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn release(&self) {
+        self.released
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -686,12 +694,24 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
     let rewritten_thread = Arc::clone(&rewritten);
     let armed = Arc::new(AtomicBool::new(false));
     let armed_thread = Arc::clone(&armed);
+    let released = Arc::new(AtomicBool::new(false));
+    let released_thread = Arc::clone(&released);
     let thread = thread::spawn(move || {
         let mut sender: Option<SocketAddr> = None;
         let mut round: u8 = 0;
         let mut garbled: u32 = 0;
+        let mut reset: Option<Vec<u8>> = None;
         let mut buf = vec![0u8; 65536];
         while !stop_thread.load(Ordering::SeqCst) {
+            if released_thread.load(Ordering::SeqCst)
+                && let Some(reset) = reset.take()
+            {
+                // Past librist's 10 ms rekey throttle either side.
+                thread::sleep(Duration::from_millis(50));
+                let _ = sock.send_to(&reset, receiver);
+                rewritten_thread.fetch_add(1, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(50));
+            }
             let (n, from) = match sock.recv_from(&mut buf) {
                 Ok(r) => r,
                 Err(_) => continue,
@@ -749,16 +769,12 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
                         rewritten_thread.fetch_add(1, Ordering::SeqCst);
                     }
                     if garbled == garbage {
-                        // Past librist's 10 ms rekey throttle either side.
-                        thread::sleep(Duration::from_millis(50));
                         // Header plus four bytes: the decrypt rekeys, then the
                         // datagram is too short to strike.
-                        let mut reset = dgram[..payload + 4].to_vec();
-                        reset[nonce] = (reset[nonce] & 0x80) | 0x5a;
-                        reset[nonce + 1..nonce + 4].copy_from_slice(&[0xa5, 0x5a, 0xa5]);
-                        let _ = sock.send_to(&reset, receiver);
-                        rewritten_thread.fetch_add(1, Ordering::SeqCst);
-                        thread::sleep(Duration::from_millis(50));
+                        let mut r = dgram[..payload + 4].to_vec();
+                        r[nonce] = (r[nonce] & 0x80) | 0x5a;
+                        r[nonce + 1..nonce + 4].copy_from_slice(&[0xa5, 0x5a, 0xa5]);
+                        reset = Some(r);
                     }
                     continue;
                 }
@@ -770,6 +786,7 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
         stop,
         rewritten,
         armed,
+        released,
         thread: Some(thread),
     }
 }
@@ -936,9 +953,10 @@ fn main_profile_encrypted_receiver_drops_clear_packets_inside_the_rekey_throttle
 /// every packet until a fresh nonce rekeys the key; upstream rekeyed but never
 /// cleared the latch, so after one burst of garbage the receiver refused even a
 /// legitimate sender with the right passphrase until it was recreated. Here the
-/// burst is the sender's own first datagrams made undecryptable, then a
-/// datagram under another nonce and the sender's nonce again: both rekeys
-/// succeed, so the stream must resume.
+/// burst is the sender's own first datagrams made undecryptable. The test
+/// first checks that the lockout holds (unchanged packets under the same nonce
+/// are refused), then sends a datagram under another nonce and the sender's
+/// nonce again: both rekeys succeed, so the stream must resume.
 #[cfg(feature = "mbedtls")]
 #[cfg_attr(
     not(librist_source_fixups),
@@ -951,6 +969,7 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
     let psk = "loopback-test-secret-keep-private";
     let before = synthetic_ts_packet(0xdd);
     let filler = synthetic_ts_packet(0xee);
+    let held = synthetic_ts_packet(0xcc);
     let pkts: Vec<[u8; 188]> = (1..=20).map(synthetic_ts_packet).collect();
 
     let mut recv = RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{PORT_LOCKOUT_RECV}"))
@@ -965,23 +984,32 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
         Rewrite::GarbageThenPass { garbage: GARBAGE },
     );
 
+    // Shared so the test can read what arrived while the lockout holds.
+    let delivered_so_far = std::sync::Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+    let out = std::sync::Arc::clone(&delivered_so_far);
     let wanted = pkts.clone();
-    let (tx_payloads, rx_payloads) = mpsc::channel::<Vec<Vec<u8>>>();
+    // Set once the numbered packets are sent: the drain ends 3 s later even
+    // if one was lost.
+    let drain_until = std::sync::Arc::new(Mutex::new(None::<Instant>));
+    let until = std::sync::Arc::clone(&drain_until);
+    let (tx_done, rx_done) = mpsc::channel::<()>();
     let _recv_thread = thread::spawn(move || {
-        // Runs until every numbered packet arrived or 12 s passed; inside the
+        // Runs until every numbered packet arrived or 14 s passed; inside the
         // nextest network kill (20 s).
-        let mut out = Vec::new();
         let mut buf = vec![0u8; recv.max_payload() + 64];
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(12) {
+        while start.elapsed() < Duration::from_secs(14)
+            && until.lock().unwrap().is_none_or(|t| Instant::now() < t)
+        {
             match recv.recv_bytes(&mut buf) {
-                Ok(n) => out.push(buf[..n].to_vec()),
+                Ok(n) => out.lock().unwrap().push(buf[..n].to_vec()),
                 Err(TransportError::Backpressure { .. }) => {}
                 Err(e) => {
                     eprintln!("recv error: {e:?}");
                     break;
                 }
             }
+            let out = out.lock().unwrap();
             if wanted
                 .iter()
                 .all(|w| out.iter().any(|o| o.as_slice() == w.as_slice()))
@@ -989,7 +1017,7 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
                 break;
             }
         }
-        let _ = tx_payloads.send(out);
+        let _ = tx_done.send(());
     });
 
     thread::sleep(Duration::from_millis(300));
@@ -1011,32 +1039,65 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
     thread::sleep(Duration::from_millis(300));
     proxy.arm();
     let burst_deadline = Instant::now() + Duration::from_secs(6);
-    while proxy.rewritten() <= GARBAGE as usize && Instant::now() < burst_deadline {
+    while proxy.rewritten() < GARBAGE as usize && Instant::now() < burst_deadline {
         send.send_bytes(&filler).expect("send filler");
         thread::sleep(Duration::from_millis(20));
     }
     let rewritten = proxy.rewritten();
     assert!(
-        rewritten > GARBAGE as usize,
-        "the proxy sent {rewritten} of {} garbage and nonce-reset datagrams, so the case proves nothing",
-        GARBAGE + 1
+        rewritten >= GARBAGE as usize,
+        "the proxy flipped {rewritten} of {GARBAGE} media datagrams, so the case proves nothing"
     );
 
-    // Settle past the proxy's two 50 ms pauses and the receiver's recovery.
-    thread::sleep(Duration::from_millis(500));
+    // The latch holds: packets the proxy now forwards unchanged, under the
+    // sender's nonce, are refused. 1.5 s is past the receiver's ~1 s buffer,
+    // so a receiver that accepted them would have delivered them by then.
+    thread::sleep(Duration::from_millis(100));
+    for _ in 0..10 {
+        send.send_bytes(&held).expect("send while locked out");
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(1500));
+    {
+        let so_far = delivered_so_far.lock().unwrap();
+        let after_burst = so_far
+            .iter()
+            .filter(|got| got.as_slice() != before.as_slice())
+            .count();
+        assert_eq!(
+            after_burst, 0,
+            "the receiver delivered {after_burst} packet(s) after the burst, so no lockout engaged"
+        );
+    }
+
+    proxy.release();
+    let reset_deadline = Instant::now() + Duration::from_secs(2);
+    while proxy.rewritten() <= GARBAGE as usize && Instant::now() < reset_deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        proxy.rewritten() > GARBAGE as usize,
+        "the proxy never sent its nonce-reset datagram"
+    );
+    // Settle past the receiver's recovery.
+    thread::sleep(Duration::from_millis(300));
     for p in &pkts {
         send.send_bytes(p).expect("send");
         thread::sleep(Duration::from_millis(20));
     }
 
-    let collected = rx_payloads
+    *drain_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(3));
+    rx_done
         .recv_timeout(Duration::from_secs(15))
         .expect("recv thread didn't return in time");
     drop(proxy);
+    let collected = delivered_so_far.lock().unwrap().clone();
+    // A filler or held packet may still arrive as a retransmit after recovery.
     for got in &collected {
         assert!(
             got.as_slice() == before.as_slice()
                 || got.as_slice() == filler.as_slice()
+                || got.as_slice() == held.as_slice()
                 || pkts.iter().any(|p| got.as_slice() == p.as_slice()),
             "decrypted payload mismatch"
         );
