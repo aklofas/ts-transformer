@@ -122,10 +122,12 @@ jobs:
       # Required to mint the OIDC token crates.io exchanges for a
       # temporary publish token.
       id-token: write
+      attestations: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Assert version consistency
         # On a v* tag push this also forces source version == tag. Re-asserted
@@ -134,6 +136,16 @@ jobs:
         # workspace version).
         # A tag that is not `vMAJOR.MINOR.PATCH` fails here.
         run: bash scripts/check/repo/release-version-consistency.sh
+
+      # The publish workflows do not wait for the tag's own qualification run
+      # (releasing.md §6), so each one checks the committed record itself.
+      - name: The committed record is release-eligible for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/gen/qualification.sh release-eligible --sha "$GITHUB_SHA"
+          gh attestation verify docs/project/qualification.json -R "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-qualify.yml"
 
       - name: Install build prerequisites
         run: |

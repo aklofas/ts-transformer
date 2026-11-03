@@ -1356,6 +1356,145 @@ class ArmCensusTests(unittest.TestCase):
         self.assertEqual(e.exception.code, 2)
 
 
+def make_attestation(digest, path=".github/workflows/release-qualify.yml", repo="o/r",
+                     predicate_type="https://slsa.dev/provenance/v1"):
+    import base64
+    stmt = {"_type": "https://in-toto.io/Statement/v1", "predicateType": predicate_type,
+            "subject": [{"name": "qualification.json", "digest": {"sha256": digest}}],
+            "predicate": {"buildDefinition": {"externalParameters": {"workflow": {
+                "path": path, "repository": "https://github.com/" + repo, "ref": "refs/heads/main"}}}}}
+    payload = base64.b64encode(json.dumps(stmt).encode()).decode()
+    return json.dumps({"attestations": [{"bundle": {"dsseEnvelope": {"payload": payload}}}]})
+
+
+class ReleaseEligibleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        root = cls.root = os.path.join(cls.tmp, "root")
+        os.makedirs(os.path.join(root, "docs"))
+        git(root, "init", "-q", "-b", "main")
+        for f in ("CHANGELOG.md", "docs/x.md", "README"):
+            spit(os.path.join(root, f), "1\n")
+        git(root, "add", ".")
+        git(root, "commit", "-q", "-m", "A")
+        cls.record_sha = git(root, "rev-parse", "HEAD")
+        spit(os.path.join(root, "docs/x.md"), "2\n")
+        git(root, "commit", "-q", "-am", "B")
+        cls.tag_sha = git(root, "rev-parse", "HEAD")
+        spit(os.path.join(root, "README"), "2\n")
+        git(root, "commit", "-q", "-am", "C")
+        cls.code_sha = git(root, "rev-parse", "HEAD")
+        rec = collect(release=True, archives=RELEASE_OK)
+        rec["source"]["sha"] = cls.record_sha
+        cls.rec = rec
+        cls.json_path = os.path.join(cls.tmp, "docs/project/qualification.json")
+        os.makedirs(os.path.dirname(cls.json_path))
+        text = json.dumps(rec, indent=2) + "\n"
+        spit(cls.json_path, text)
+        import hashlib
+        cls.digest = hashlib.sha256(text.encode()).hexdigest()
+
+    def rec_with(self, **top):
+        r = json.loads(json.dumps(self.rec))
+        for k, v in top.items():
+            if k == "release_mode":
+                r["release_vm"]["release_mode"] = v
+            else:
+                r[k] = v
+        return r
+
+    def att(self, **kw):
+        return q.attestation_statements(make_attestation(kw.pop("digest", self.digest), **kw))
+
+    def check(self, rec=None, sha=None, attestations=None):
+        return q.release_eligible(rec or self.rec, self.root, sha or self.tag_sha, self.digest,
+                                  self.att() if attestations is None else attestations, repo="o/r")
+
+    def test_release_eligible_passes_for_a_docs_only_tag_commit(self):
+        self.assertEqual(self.check(), [])
+
+    def test_release_eligible_refuses_a_mid_cycle_record(self):
+        r = self.check(self.rec_with(release_mode=False))
+        self.assertIn("the record is not a release qualification (`release_vm.release_mode` is false)", r)
+
+    def test_release_eligible_refuses_a_no_go(self):
+        self.assertIn("the record's verdict is NO-GO", self.check(self.rec_with(verdict="NO-GO")))
+
+    def test_release_eligible_refuses_a_pr_rehearsal(self):
+        self.assertIn("the record is a pull-request rehearsal", self.check(self.rec_with(label="PR #9 at abc")))
+
+    def test_release_eligible_refuses_a_tag_on_a_different_tree(self):
+        r = self.check(sha=self.code_sha)
+        self.assertEqual(len(r), 1)
+        self.assertIn("differs from %s outside the release documents (1 path(s))" % self.code_sha[:12], r[0])
+        self.assertIn(self.record_sha[:12], r[0])
+
+    def test_release_eligible_reports_an_unresolvable_commit(self):
+        r = self.check(sha="f" * 40)
+        self.assertTrue(r[0].startswith("git could not resolve"), r)
+
+    BYTE_FOR_BYTE = "no build-provenance attestation by release-qualify.yml covers sha256:%s; " \
+                    "commit the bundle's qualification.json byte for byte"
+
+    def test_release_eligible_refuses_a_record_whose_digest_has_no_attestation(self):
+        r = self.check(attestations=self.att(digest="0" * 64))
+        self.assertEqual(r, [self.BYTE_FOR_BYTE % self.digest])
+
+    def test_release_eligible_refuses_an_attestation_by_another_workflow(self):
+        r = self.check(attestations=self.att(path=".github/workflows/ci.yml"))
+        self.assertEqual(r, [self.BYTE_FOR_BYTE % self.digest])
+
+    def test_release_eligible_refuses_an_attestation_by_another_repository(self):
+        r = self.check(attestations=self.att(repo="evil/r"))
+        self.assertEqual(r, [self.BYTE_FOR_BYTE % self.digest])
+
+    def test_release_eligible_refuses_another_predicate_type(self):
+        r = self.check(attestations=self.att(predicate_type="https://example.test/other"))
+        self.assertEqual(r, [self.BYTE_FOR_BYTE % self.digest])
+
+    def run_cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = q.main(["release-eligible"] + list(argv))
+        return rc, err.getvalue()
+
+    def test_release_eligible_cli_exit_codes(self):
+        rec_path = os.path.join(self.tmp, "cli", "qualification.json")
+        os.makedirs(os.path.dirname(rec_path))
+        spit(rec_path, json.dumps(self.rec, indent=2) + "\n")
+        base = ["--json", rec_path, "--root", self.root, "--skip-attestation"]
+        self.assertEqual(self.run_cli("--sha", self.tag_sha, *base)[0], 0)
+        rc, err = self.run_cli("--sha", self.code_sha, *base)
+        self.assertEqual(rc, 1)
+        self.assertIn("qualification: not release-eligible: ", err)
+        with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()):
+            self.run_cli("--sha", self.tag_sha, "--json", os.path.join(self.tmp, "nope.json"),
+                         "--root", self.root, "--skip-attestation")
+        self.assertEqual(e.exception.code, 2)
+        with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()):
+            self.run_cli("--sha", "abc", *base)
+        self.assertEqual(e.exception.code, 2)
+
+    def test_release_eligible_cli_checks_the_attestation_through_gh(self):
+        rec_path = os.path.join(self.tmp, "cli2", "qualification.json")
+        os.makedirs(os.path.dirname(rec_path))
+        text = json.dumps(self.rec, indent=2) + "\n"
+        spit(rec_path, text)
+        base = ["--sha", self.tag_sha, "--json", rec_path, "--root", self.root, "--repo", "o/r"]
+        with mock.patch.object(q, "run_gh", return_value=make_attestation(self.digest)) as gh:
+            self.assertEqual(self.run_cli(*base)[0], 0)
+        self.assertIn("repos/o/r/attestations/sha256:" + self.digest, gh.call_args[0][0])
+        with mock.patch.object(q, "run_gh", return_value=make_attestation("0" * 64)):
+            rc, err = self.run_cli(*base)
+        self.assertEqual(rc, 1)
+        self.assertIn("byte for byte", err)
+        with mock.patch.object(q, "run_gh", side_effect=OSError("no gh")), \
+                self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()):
+            self.run_cli(*base)
+        self.assertEqual(e.exception.code, 2)
+
+
 class ChecksumTests(unittest.TestCase):
     def test_checksums_cover_the_files_not_the_sums_file(self):
         tmp = tempfile.mkdtemp()
