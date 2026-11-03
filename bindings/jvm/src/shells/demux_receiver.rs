@@ -11,41 +11,21 @@
 //! cross-thread stop is `cancelHandle().cancel()` (or `close()`, which cancels
 //! first), which wakes a parked `recv_event`.
 //!
-//! `add_byte_sink` discipline (the load-bearing piece): the registered
-//! `Box<dyn FnMut(&[u8]) + Send>` runs on the receiver's own thread inside
-//! `recv_event`, attaches to the JVM, and upcalls a `Consumer<byte[]>`. No
-//! Java monitor is held across the upcall, but the receiver's slot is:
-//! `nNext` holds it for the whole `recv_event` call (`REGISTRY.with_mut`),
-//! so a native that takes the slot (`next()`, `stats()`, `socketStats()`,
-//! `lastSeenMicros()`, `addByteSink()`) called from the sink would relock it
-//! on the same thread. [`IN_SINK`] marks every receiver whose sink is running
-//! on this thread, and those natives throw `IllegalStateException` for a
-//! marked receiver instead. `close()` from the sink is deferred
-//! (`nDeferClose`): it only cancels; `nNext` then reports end of stream and
-//! the Java side completes the close. `cancelHandle()` / `isAlive()` /
+//! Slot discipline: `nNext` holds the receiver's slot for the whole
+//! `recv_event` call (`REGISTRY.with_mut`). `cancelHandle()` / `isAlive()` /
 //! `endReason()` stay lock-free and `close()` cancels before it takes the
-//! slot, so other threads can still stop a receiver whose sink is running.
-//! A callback exception ends the receive: the sink stores it (as a
-//! `Global`) in [`SinkState`], cancels the receiver so the in-flight
-//! `recv_event` returns, and never upcalls again; `nNext` rethrows it once
-//! the slot is released.
+//! slot, so other threads can still stop a receiver whose `nNext` is parked.
 
-use crate::jutil::FindClass;
 use crate::panic::jni_native;
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 
 use jni::Env;
-use jni::jni_sig;
-use jni::jni_str;
-use jni::objects::{Global, JLongArray, JObject, JString, JThrowable, JValue};
-use jni::strings::JNIString;
+use jni::objects::{JLongArray, JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 
 use tst_core::transport::{RecvTransport, TransportCancel};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
     TsBytesDemuxedHandle,
@@ -69,94 +49,34 @@ struct JniDemuxReceiver {
     inner: RustDemuxReceiver<Box<dyn RecvTransport>>,
 }
 
-/// Byte-sink state shared by the sink closures and `nNext`, plus the publish
-/// mount's cancel latch. It lives in the snapshot, outside the slot, because
-/// the closures run while `nNext` holds the slot.
-#[derive(Default)]
-struct SinkState {
-    /// The exception that ended the receive, until `nNext` rethrows it.
-    error: Mutex<Option<Global<JThrowable<'static>>>>,
-    /// Latched by the first failing callback: no sink is called again and
-    /// the receiver stays ended.
-    failed: AtomicBool,
-    /// Set by a `close()` from this receiver's own sink; the `nNext` it
-    /// runs under, or the next one, ends the iteration so Java can finish
-    /// the close. A plain close clears it.
-    close_pending: AtomicBool,
-    /// The application-cancel latch of the publish mount this receiver was
-    /// taken from; `None` on every other receiver. The shared binding layer
-    /// reads only a handle's own latch, so this layer carries the mount's
-    /// cancel across: a mount cancel must beat events already queued, like
-    /// the receiver's own cancel.
-    mount_cancel: Option<Arc<dyn TransportCancel>>,
-}
-
-/// Latches the receiver's own cancel when its mount was cancelled, so the
-/// gate refuses with CLOSED before the shell returns queued events. A mount
-/// cancel racing this call may still lose to it, like any concurrent cancel.
-fn observe_mount_cancel(handle: jlong, sinks: &SinkState) {
-    if sinks
-        .mount_cancel
-        .as_ref()
-        .is_some_and(|c| c.is_cancelled())
-        && let Some(view) = REGISTRY.cancel_view(handle as u64)
-    {
+/// Latches the receiver's own cancel when its publish mount was cancelled, so
+/// the gate refuses with CLOSED before the shell returns queued events. A
+/// mount cancel racing this call may still lose to it, like any concurrent
+/// cancel.
+fn observe_mount_cancel(handle: jlong) {
+    let cancelled = REGISTRY
+        .snapshot(handle as u64, |s| {
+            s.handles
+                .mount_cancel
+                .as_ref()
+                .is_some_and(|c| c.is_cancelled())
+        })
+        .unwrap_or(false);
+    if cancelled && let Some(view) = REGISTRY.cancel_view(handle as u64) {
         view.0.cancel();
     }
-}
-
-thread_local! {
-    /// The keys of every receiver whose byte sink is running on this
-    /// thread, innermost last. A stack, not a single key: A's sink may pull
-    /// B, and B's sink may then call into A, whose slot is still held.
-    static IN_SINK: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Pops this sink's key on scope exit, unwind included.
-struct InSinkGuard;
-
-impl InSinkGuard {
-    fn enter(key: u64) -> Self {
-        IN_SINK.with(|s| s.borrow_mut().push(key));
-        Self
-    }
-}
-
-impl Drop for InSinkGuard {
-    fn drop(&mut self) {
-        IN_SINK.with(|s| {
-            s.borrow_mut().pop();
-        });
-    }
-}
-
-/// `true` when called on this thread from inside a byte sink of the
-/// receiver `handle`, however many receivers deep.
-fn in_own_sink(handle: jlong) -> bool {
-    IN_SINK.with(|s| s.borrow().contains(&(handle as u64)))
-}
-
-/// Throw `IllegalStateException` and return `true` when `method` is called
-/// from the receiver's own sink, where taking the slot would deadlock.
-fn refuse_reentry(env: &mut Env, handle: jlong, method: &str) -> bool {
-    if !in_own_sink(handle) {
-        return false;
-    }
-    let _ = env.throw_new(
-        FindClass(jni_str!("java/lang/IllegalStateException")),
-        JNIString::from(format!(
-            "DemuxReceiver.{method} called from this receiver's own byte sink; only \
-             close(), cancelHandle(), isAlive() and endReason() are allowed there"
-        )),
-    );
-    true
 }
 
 /// The construction-time constants of a receiver, read without the slot.
 struct RxSnap {
     /// Reader for the demuxer's fed-byte counter; outlives the shell.
     ts_bytes_demuxed: TsBytesDemuxedHandle,
-    sinks: Arc<SinkState>,
+    /// The application-cancel latch of the publish mount this receiver was
+    /// taken from; `None` on every other receiver. The shared binding layer
+    /// reads only a handle's own latch, so this layer carries the mount's
+    /// cancel across: a mount cancel must beat events already queued, like
+    /// the receiver's own cancel.
+    mount_cancel: Option<Arc<dyn TransportCancel>>,
 }
 
 static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<RxSnap>>> =
@@ -255,10 +175,7 @@ fn register_with(
             domain,
             handles: RxSnap {
                 ts_bytes_demuxed,
-                sinks: Arc::new(SinkState {
-                    mount_cancel,
-                    ..SinkState::default()
-                }),
+                mount_cancel,
             },
         },
     );
@@ -321,8 +238,7 @@ jni_native! {
     /// `nNext(handle)` — block until the next `DemuxEvent`, returning it as a Java
     /// object; Java `null` on a clean end (the peer closed, or the demuxer
     /// drained), which ends the Java iterator. Throws the transport's exception /
-    /// `DemuxException` on a recv-side error, or re-raises a captured byte-sink
-    /// exception fail-loud.
+    /// `DemuxException` on a recv-side error.
     fn Java_org_tstrans_shells_DemuxReceiver_nNext<'local>(
         env,
         _class,
@@ -331,26 +247,8 @@ jni_native! {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
             return JObject::null().into_raw();
         };
-        if refuse_reentry(env, handle, "recvEvent() / iterator next()") {
-            return JObject::null().into_raw();
-        }
-        let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.sinks.clone()) else {
-            crate::error::throw_closed(env, "DemuxReceiver");
-            return JObject::null().into_raw();
-        };
-        // The previous pull delivered its event after its sink deferred a
-        // close: end the iteration now, and Java finishes the close.
-        if sinks.close_pending.load(Ordering::Acquire) {
-            return JObject::null().into_raw();
-        }
-        // A sink failure, rethrown by an earlier call, ended the receive for
-        // good: what the demuxer still queues came from packets after it.
-        if sinks.failed.load(Ordering::Acquire) {
-            throw_state(env, domain, "DemuxReceiver", &HandleState::Closed);
-            return JObject::null().into_raw();
-        }
-        observe_mount_cancel(handle, &sinks);
-        // recv_event runs INSIDE the slot; the byte sinks fire during it.
+        observe_mount_cancel(handle);
+        // recv_event runs INSIDE the slot.
         let res = match REGISTRY.with_mut_unless_cancelled(handle as u64, |jdr| jdr.inner.recv_event()) {
             Ok(v) => v,
             Err(state) => {
@@ -358,23 +256,6 @@ jni_native! {
                 return JObject::null().into_raw();
             }
         };
-
-        // A sink exception wins over `res`: the sink already cancelled the
-        // receiver, and an event this `recv_event` returned is discarded.
-        let captured = sinks.error.lock().ok().and_then(|mut s| s.take());
-        if let Some(global) = captured {
-            if let Ok(local) = env.new_local_ref(&global) {
-                let _ = env.throw(local);
-            }
-            return JObject::null().into_raw();
-        }
-
-        // A close deferred by a sink during this pull: deliver the event the
-        // pull produced, if any (the next call ends the iteration); with
-        // none, end it now, whatever the cancel made `recv_event` return.
-        if sinks.close_pending.load(Ordering::Acquire) && !matches!(res, Ok(Some(_))) {
-            return JObject::null().into_raw();
-        }
 
         match res {
             Ok(None) => JObject::null().into_raw(),
@@ -404,8 +285,7 @@ jni_native! {
     /// `nGateCached(handle)` — the cancel gate of `nNext` for an event the
     /// Java iterator already holds from `hasNext()`: after
     /// `cancelHandle().cancel()` it throws what `nNext` throws, so a cached
-    /// event is buffered output like any other. An event delivered by a pull
-    /// whose sink deferred a close still goes out, as `nNext` promises.
+    /// event is buffered output like any other.
     fn Java_org_tstrans_shells_DemuxReceiver_nGateCached(
         env,
         _class,
@@ -414,129 +294,9 @@ jni_native! {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "DemuxReceiver") else {
             return;
         };
-        if refuse_reentry(env, handle, "iterator next()") {
-            return;
-        }
-        let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.sinks.clone()) else {
-            crate::error::throw_closed(env, "DemuxReceiver");
-            return;
-        };
-        if sinks.close_pending.load(Ordering::Acquire) {
-            return;
-        }
-        observe_mount_cancel(handle, &sinks);
+        observe_mount_cancel(handle);
         if let Err(state) = REGISTRY.with_mut_unless_cancelled(handle as u64, |_| ()) {
             throw_state(env, domain, "DemuxReceiver", &state);
-        }
-    }
-}
-
-jni_native! {
-    /// `nAddByteSink(handle, consumer)` — register a fan-out `Consumer<byte[]>` that
-    /// fires once per 188-byte TS packet before demux. See the module doc
-    /// for the discipline: the closure upcalls under the receiver's slot,
-    /// with no Java monitor held, and a callback exception cancels the receiver.
-    fn Java_org_tstrans_shells_DemuxReceiver_nAddByteSink<'local>(
-        env,
-        _class,
-        handle: jlong,
-        consumer: JObject<'local>,
-    ) = () => {
-        if refuse_reentry(env, handle, "addByteSink()") {
-            return;
-        }
-        // Capture owned `Send` state for the closure: a cached `JavaVM` (to attach
-        // the receiver thread per packet), a `Global` to the consumer (local refs
-        // can't cross the call). These touch `env`, so build them BEFORE leasing.
-        let vm = match env.get_java_vm() {
-            Ok(vm) => vm,
-            Err(e) => {
-                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                return;
-            }
-        };
-        let consumer = match env.new_global_ref(&consumer) {
-            Ok(g) => g,
-            Err(e) => {
-                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                return;
-            }
-        };
-
-        // The shared sink state and the receiver's own cancel are read off
-        // the entry without the slot.
-        let (Some(sinks), Some(cancel)) = (
-            REGISTRY.snapshot(handle as u64, |s| s.handles.sinks.clone()),
-            REGISTRY.cancel_view(handle as u64),
-        ) else {
-            throw_handle_state(env, "DemuxReceiver", &HandleState::Closed);
-            return;
-        };
-        // A failed receiver never calls a sink again; one registered now
-        // would silently never run.
-        if sinks.failed.load(Ordering::Acquire) {
-            throw_handle_state(env, "DemuxReceiver", &HandleState::Closed);
-            return;
-        }
-        let cancel = cancel.0;
-        let registered = REGISTRY.with_mut(handle as u64, |jdr| {
-            jdr.inner.add_byte_sink(Box::new(move |pkt: &[u8]| {
-                // Runs on the receiver's own thread inside recv_event, under
-                // the receiver's slot and with no Java monitor held. Touches
-                // only `consumer`, `sinks` and `cancel`, never the receiver.
-                // After a failure, or a close() from a sink, the packets the
-                // pull still feeds from its buffer reach no sink.
-                if sinks.failed.load(Ordering::Acquire)
-                    || sinks.close_pending.load(Ordering::Acquire)
-                {
-                    return;
-                }
-                // Marks this receiver for the callback's duration, so a call
-                // back into it is refused or deferred instead of relocking.
-                let _in_sink = InSinkGuard::enter(handle as u64);
-                // Scoped: the thread is detached again when the closure ends
-                // unless it was already attached, as with the 0.21 guard. It
-                // also pushes a local frame per call (each packet's byte[]
-                // local is freed on return) and, under the default
-                // PreReThrowPostCatch policy, stashes a pending exception
-                // before the callback and re-throws it after; do not swap it
-                // for a permanent attach.
-                let _ = vm.attach_current_thread_for_scope(|env| -> jni::errors::Result<()> {
-                    let arr = match env.byte_array_from_slice(pkt) {
-                        Ok(a) => a,
-                        // OOM-only: clear the pending JavaException before bailing so the
-                        // next packet's fanout doesn't run JNI calls under a stale exception.
-                        Err(_) => {
-                            env.exception_clear();
-                            return Ok(());
-                        }
-                    };
-                    let _ = env.call_method(
-                        &consumer,
-                        jni_str!("accept"),
-                        jni_sig!("(Ljava/lang/Object;)V"),
-                        &[JValue::Object(&arr.into())],
-                    );
-                    // The first callback exception ends the receive: store it
-                    // for `nNext`, then cancel so the in-flight recv_event
-                    // returns instead of waiting for an event.
-                    if env.exception_check()
-                        && let Some(exc) = env.exception_occurred() {
-                            env.exception_clear();
-                            if !sinks.failed.swap(true, Ordering::AcqRel) {
-                                if let Ok(mut s) = sinks.error.lock()
-                                    && let Ok(g) = env.new_global_ref(&exc) {
-                                        *s = Some(g);
-                                    }
-                                cancel.cancel();
-                            }
-                        }
-                    Ok(())
-                });
-            }));
-        });
-        if let Err(state) = registered {
-            throw_handle_state(env, "DemuxReceiver", &state);
         }
     }
 }
@@ -555,9 +315,6 @@ jni_native! {
         handle: jlong,
         pid: jint,
     ) -> jlong = -1 => {
-        if refuse_reentry(env, handle, "lastSeenMicros()") {
-            return -1;
-        }
         // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
         let last_seen = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -609,9 +366,6 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
-        if refuse_reentry(env, handle, "socketStats()") {
-            return JObject::null();
-        }
         // counters live inside the shell and have no value to report while a parked call holds it
         let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -640,9 +394,6 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
-        if refuse_reentry(env, handle, "stats()") {
-            return JObject::null();
-        }
         // counters live inside the shell and have no value to report while a parked call holds it
         let combined = match REGISTRY.with_ref_blocking(
             handle as u64,
@@ -709,29 +460,6 @@ jni_native! {
 }
 
 jni_native! {
-    /// `nDeferClose(handle)` — from inside this receiver's own byte sink,
-    /// whose `nNext` holds the slot: cancel, mark the close pending and
-    /// return `true`; the iteration then ends and Java completes the close.
-    /// Elsewhere it does nothing and returns `false`. Never takes the slot.
-    fn Java_org_tstrans_shells_DemuxReceiver_nDeferClose(
-        _env,
-        _class,
-        handle: jlong,
-    ) -> jboolean = false => {
-        if !in_own_sink(handle) {
-            return false;
-        }
-        if let Some(cancel) = REGISTRY.cancel_view(handle as u64) {
-            cancel.0.cancel();
-        }
-        if let Some(sinks) = REGISTRY.snapshot(handle as u64, |s| s.handles.sinks.clone()) {
-            sinks.close_pending.store(true, Ordering::Release);
-        }
-        true
-    }
-}
-
-jni_native! {
     /// `nClose(handle, tsBytesOut)` — cancel first, then take the receiver and close it.
     /// Returns the end-reason snapshot (`EndReason$Snapshot`), null when the
     /// close lost the race (a double `close()` is safe). Writes the fed-byte
@@ -742,24 +470,11 @@ jni_native! {
         handle: jlong,
         ts_bytes_out: JLongArray<'local>,
     ) -> JObject<'local> = JObject::null() => {
-        // Cleared before and after, so this completed close wins over a
-        // deferral. Java zeroes the handle before this runs, so a sink's
-        // close() normally never reaches `nDeferClose`; the after-clear covers
-        // a sink that read the handle just before that claim.
-        let snap = REGISTRY.snapshot(handle as u64, |s| {
-            (s.handles.sinks.clone(), s.handles.ts_bytes_demuxed.clone())
-        });
-        let clear = || {
-            if let Some((s, _)) = &snap {
-                s.close_pending.store(false, Ordering::Release);
-            }
-        };
-        clear();
+        let ts_bytes = REGISTRY.snapshot(handle as u64, |s| s.handles.ts_bytes_demuxed.clone());
         let closed = REGISTRY.close_with_end_reason(handle as u64, |mut jdr| jdr.inner.close());
-        clear();
         // The take is done: the shell has stopped feeding the demuxer.
         if closed.is_some()
-            && let Some((_, counter)) = &snap
+            && let Some(counter) = &ts_bytes
         {
             write_counter_out(env, &ts_bytes_out, counter.get());
         }

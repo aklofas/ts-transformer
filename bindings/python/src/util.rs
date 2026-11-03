@@ -98,9 +98,9 @@ static INTERPRETER_EXITING: AtomicBool = AtomicBool::new(false);
 /// the interpreter and must keep running.
 static EXIT_HOOK_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
 
-/// `true` once the exit hook has run on another thread. Byte-sink
-/// callbacks check it before `Python::attach`.
-#[allow(dead_code)] // byte-sink callers are srt/rtp-feature-gated.
+/// `true` once the exit hook has run on another thread. Read by
+/// [`allow_threads_parking`].
+#[allow(dead_code)] // dead only in a transport-less build, like its caller
 pub(crate) fn exiting() -> bool {
     INTERPRETER_EXITING.load(Ordering::Acquire)
         && EXIT_HOOK_THREAD.get() != Some(&std::thread::current().id())

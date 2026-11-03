@@ -5,9 +5,8 @@
 //! # Architecture
 //!
 //! `JniH264Receiver` boxes the Rust `H264Receiver` behind the standard
-//! `OwnedRegistry<T, S>`. Unlike `DemuxReceiver` there is NO byte-sink
-//! registration and the inner value is NOT wrapped in `Arc<Mutex>` — the
-//! single-iterator contract means one thread owns the receiver; any cross-thread
+//! `OwnedRegistry<T, S>`. The inner value is NOT wrapped in
+//! `Arc<Mutex>` — the single-iterator contract means one thread owns the receiver; any cross-thread
 //! stop routes through the cancel handle (held separately so `close()` can fire
 //! it without taking the resource lock). This matches tst-py's `PyH264Receiver`.
 //!

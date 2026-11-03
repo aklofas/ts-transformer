@@ -3,7 +3,6 @@ package org.tstrans.shells;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 import org.tstrans.BindingException;
 import org.tstrans.DemuxException;
 import org.tstrans.NativeHandle;
@@ -35,8 +34,7 @@ import org.tstrans.mpegts.DemuxerConfig;
  * <p><b>Thread safety:</b> a single {@code DemuxReceiver} is intended to be
  * iterated from one thread; the sanctioned cross-thread wake is
  * {@link #cancelHandle()}'s {@code cancel()}, which wakes a thread parked in
- * iteration. {@link #addByteSink} is a single-iterator op: register sinks before
- * iterating, or between {@code next()} calls.
+ * iteration.
  *
  * <p><b>Closing:</b> use try-with-resources or call {@link #close()} explicitly.
  * {@code close()} is memory-safe against ANY concurrent native call: it claims the
@@ -45,8 +43,8 @@ import org.tstrans.mpegts.DemuxerConfig;
  * {@link IllegalStateException}. After close, further calls throw
  * {@code IllegalStateException}.
  *
- * <p><b>Byte-copy posture (JDK 17):</b> sample payloads and the byte-sink
- * callbacks deliver heap {@code byte[]} copies; a zero-copy path (FFM
+ * <p><b>Byte-copy posture (JDK 17):</b> sample payloads are heap
+ * {@code byte[]} copies; a zero-copy path (FFM
  * {@code MemorySegment}) is JDK-22+ only and will be added in a future release.
  */
 public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> {
@@ -56,9 +54,6 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     // then. Written once by nativeClose, read by endReason()/endDetail().
     private volatile EndReason closedEndReason;
     private volatile String closedEndDetail;
-    // Set by a close() from this receiver's own byte sink, which only
-    // cancels; the pull that then reports end of stream completes the close.
-    private volatile boolean closeDeferred;
     // The largest fed-byte count any read or the close saw, so a read never
     // goes backwards across close().
     private final AtomicLong tsBytesSeen = new AtomicLong();
@@ -163,18 +158,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     private DemuxEvent pull() throws BindingException {
-        DemuxEvent e;
-        try {
-            e = nNext(peekHandle());
-        } catch (Throwable t) {
-            // A sink that closed the receiver and then threw: the exception
-            // wins, but the close completes now, since a failed receiver is
-            // usually not pulled again.
-            if (closeDeferred) close();
-            throw t;
-        }
-        if (e == null && closeDeferred) close();
-        return e;
+        return nNext(peekHandle());
     }
 
     /**
@@ -183,9 +167,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * (the peer closed: iteration ends), or an error occurs. Checked
      * {@link BindingException}s (the transport's exception, {@link DemuxException})
      * surfaced by the native pull are wrapped in an unchecked {@link RuntimeException} (the {@code Iterator}
-     * contract forbids checked exceptions); a byte-sink exception (see
-     * {@link #addByteSink}) is rethrown by the step after the callback threw,
-     * and the receiver cannot be resumed.
+     * contract forbids checked exceptions).
      *
      * <p>After {@code cancelHandle().cancel()} this throws the transport's
      * {@code CLOSED}, buffered data included: an event {@code hasNext()}
@@ -224,43 +206,6 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
                 return e;
             }
         };
-    }
-
-    /**
-     * Register a fan-out callback that receives every 188-byte TS packet — as a
-     * fresh {@code byte[]} — BEFORE the demuxer parses it. Sinks fire in
-     * registration order; registration is append-only for the receiver's
-     * lifetime (there is no removal). Useful for tee'ing the raw transport
-     * stream (record-to-disk, parallel parser, etc.) without consuming the event
-     * iterator.
-     *
-     * <p><b>Fail-loud:</b> if the callback throws, the receiver is cancelled, the
-     * callback is not called again (sinks registered after one that deferred a
-     * close skip the packet on which the deferral happened), and the next
-     * iteration step rethrows that exception; the receiver cannot be resumed.
-     *
-     * <p><b>Registration timing:</b> register sinks BEFORE iterating, or between
-     * {@code next()} calls. This method is NOT safe to call concurrently with an
-     * in-flight {@code next()} (single-threaded contract); the only sanctioned
-     * cross-thread stop is {@link #cancelHandle()}{@code .cancel()}.
-     *
-     * <p><b>Re-entrancy:</b> the callback runs on the receiver's own thread
-     * inside the recv loop. The callback must not call this receiver's methods
-     * except {@code close()}, {@code cancelHandle()}, {@code isAlive()} and
-     * {@code endReason()}; any other call throws {@code IllegalStateException}.
-     * The same holds when the call reaches this receiver through another
-     * receiver the callback drives. {@code close()} from the callback cancels;
-     * the in-flight iteration step still returns the event it produced, if any,
-     * and the iteration then returns end of stream (at once when the step
-     * produced none). Keep the callback cheap — a slow sink throttles the
-     * receiver.
-     *
-     * @param callback invoked with a fresh {@code byte[]} per 188-byte TS packet
-     * @throws IllegalStateException if the receiver is closed
-     */
-    public void addByteSink(Consumer<byte[]> callback) {
-        ensureOpen("DemuxReceiver is closed");
-        nAddByteSink(peekHandle(), callback);
     }
 
     /**
@@ -378,28 +323,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * slot the parked recv holds, so that iteration ends promptly with the
      * transport's {@code CLOSED} and {@code close()} returns without waiting for
      * data. Same contract as the Python and C twins.
-     *
-     * <p>Called from this receiver's own byte sink (see {@link #addByteSink}),
-     * whose iteration step holds the receiver, {@code close()} only cancels; the
-     * iteration then ends and completes the close. A {@code close()} from
-     * anywhere else cancels, waits for an in-flight iteration step to return,
-     * and then closes; it wins over such a deferred close.
      */
     @Override public void close() {
-        long h = peekHandle();
-        // The deferral claims nothing: the handle stays set for the pull
-        // that completes the close through super.close().
-        if (h != 0 && nDeferClose(h)) {
-            closeDeferred = true;
-            return;
-        }
-        // Cleared on both sides so this completed close wins over a deferral.
-        // super.close() zeroes the handle before it cancels, so a sink's
-        // close() normally sees 0 and does nothing; the second clear covers a
-        // sink that read the handle just before that claim.
-        closeDeferred = false;
         super.close();
-        closeDeferred = false;
     }
 
     /**
@@ -444,14 +370,12 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
         long syncBufCap, boolean unwrapTimestamps) throws BindingException;
     private static native DemuxEvent nNext(long handle) throws BindingException;
     private static native void nGateCached(long handle) throws BindingException;
-    private static native void nAddByteSink(long handle, Consumer<byte[]> callback);
     private static native long nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);
     private static native TransportStats nStats(long handle);
     private static native long nLastSeenMicros(long handle, int pid);
     private static native int nEndReason(long handle);
     private static native String nEndDetail(long handle);
-    private static native boolean nDeferClose(long handle);
     private static native EndReason.Snapshot nClose(long handle, long[] tsBytesOut);
     private static native long nTsBytesDemuxed(long handle);
     private static native boolean nIsAlive(long handle);

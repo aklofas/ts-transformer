@@ -22,8 +22,24 @@ from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port as _free_udp_port
 from _builders.srt_pair import make_srt_pair as _make_srt_pair
-from test_byte_sink import _build_minimal_ts_bytes
 from test_srt_managed_convenience import NAL_IDR, _make_managed_pair
+
+NAL_AUD = b"\x00\x00\x00\x01\x09\xF0"
+
+
+def _build_minimal_ts_bytes() -> bytes:
+    """Mux one key AUD NAL → drained TS bytes (PAT/PMT + a sample)."""
+    cfg = MuxerConfigBuilder().add_program(_video_only_program()).build()
+    mux = Muxer(cfg)
+    mux.push_video(NAL_AUD, pts=Pts90khz.from_raw(0), key_frame=True)
+    out = bytearray()
+    scratch = bytearray(188 * 32)
+    while True:
+        n = mux.pull(scratch)
+        if n == 0:
+            break
+        out.extend(scratch[:n])
+    return bytes(out)
 
 
 def _drain(rx) -> None:

@@ -32,7 +32,7 @@
 //! `OwnedRegistry::with_mut`), never a dereferenced address. `MuxSender` push methods
 //! share the slot (every `send_*` takes `&self` + internal mutex; concurrent
 //! pushes are sound). `ManagedDemuxReceiver::nNext` takes it mutably
-//! (`recv_event` is `&mut self`). The receiver has NO byte sink.
+//! (`recv_event` is `&mut self`).
 //!
 //! ## Stats drift
 //!
@@ -784,7 +784,7 @@ jni_native! {
 // ---------------------------------------------------------------------------
 
 /// Native backing for `org.tstrans.srt.ManagedDemuxReceiver`. Single-threaded
-/// box (NO inner mutex, NO byte sink). The attempt counters and
+/// box (NO inner mutex). The attempt counters and
 /// the cancel target live in the entry's `Owned` snapshot ([`ManagedHandles`]).
 struct JniManagedDemuxReceiver {
     inner: RustManagedDemuxReceiver<SrtTransport>,
@@ -988,8 +988,7 @@ jni_native! {
     /// `nNext(handle)` — block until the next `DemuxEvent`, returning it as a Java
     /// object; Java `null` on clean EOF. Throws `SrtException` / `DemuxException` on
     /// a recv-side error. Emits `DemuxEvent.ReconnectDiscontinuity` once after each
-    /// transport reconnect. No byte sink, so no captured-exception
-    /// drain.
+    /// transport reconnect.
     fn Java_org_tstrans_srt_ManagedDemuxReceiver_nNext<'local>(
         env,
         _class,

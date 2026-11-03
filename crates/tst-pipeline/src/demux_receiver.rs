@@ -3,19 +3,10 @@
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! Mirrors the `MuxSender` shape on the receive side. Includes
-//! `add_byte_sink` for fan-out: callbacks see every 188-byte TS packet
-//! pulled from the transport, in registration order, before the demuxer
-//! parses them. Useful for "write to disk + forward via RTP + demux for
-//! KLV" workflows where multiple consumers tee off the same byte stream.
-//!
-//! # Byte-sink contract
-//!
-//! - Sinks are called once per TS packet (188 bytes), in the order they were
-//!   registered via [`DemuxReceiver::add_byte_sink`].
-//! - The slice passed to the sink is valid only for the duration of the call.
-//!   Copy bytes into an owned buffer if they need to outlive the callback.
-//! - Sinks must not panic. A panicking sink will unwind through `recv_event`.
+//! Mirrors the `MuxSender` shape on the receive side: one transport in,
+//! `DemuxEvent`s out. To observe the raw TS bytes alongside the events, see
+//! the composition section of the pipeline guide;
+//! [`DemuxReceiver::ts_bytes_demuxed`] counts the bytes handed to the demuxer.
 //!
 //! # Stream-end flush
 //!
@@ -51,10 +42,8 @@
 use crate::binding::kind::{coarsen, kind_of_demux, kind_of_transport};
 use crate::receiver::{Receiver, ReceiverConfig, ReceiverErrorSource};
 use crate::shell_error::ShellErrorKind;
-use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use core::sync::atomic::{AtomicU64, Ordering};
 use tracing::info_span;
@@ -62,11 +51,6 @@ use tst_core::error::DemuxError;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig};
 use tst_core::transport::RecvTransport;
 use tst_core::transport::TransportError;
-
-/// Type alias for a boxed byte-fanout callback registered via
-/// [`DemuxReceiver::add_byte_sink`]. The callback receives one TS packet (188
-/// bytes) per call.
-pub type ByteSink = Box<dyn FnMut(&[u8]) + Send>;
 
 /// Reconnect-epoch observer installed by `ManagedDemuxReceiver` (std only:
 /// the counter it watches is `ManagedRecvTransport`'s `Arc<AtomicU64>`,
@@ -88,8 +72,7 @@ struct ReconnectEpoch {
     pending: bool,
 }
 
-/// Full receive shell: `RecvTransport → Receiver → Demuxer`, with optional
-/// byte-sink fan-out.
+/// Full receive shell: `RecvTransport → Receiver → Demuxer`.
 ///
 /// `R` is any [`RecvTransport`] — typically an SRT-specific transport for live
 /// connections, or a test mock (e.g. `CannedTransport` in the integration
@@ -99,7 +82,6 @@ struct ReconnectEpoch {
 ///
 /// ```ignore
 /// let mut rx = DemuxReceiver::new(transport);
-/// rx.add_byte_sink(Box::new(|pkt| { /* write pkt to disk, etc. */ }));
 /// for result in &mut rx {
 ///     match result.unwrap() {
 ///         DemuxEvent::ProgramMap(pmt) => { /* inspect PMT */ }
@@ -155,7 +137,6 @@ struct ReconnectEpoch {
 pub struct DemuxReceiver<R: RecvTransport> {
     ts: Receiver<R>,
     demux: Demuxer,
-    byte_sinks: Vec<ByteSink>,
     /// Aligned TS bytes handed to the demuxer; see
     /// [`DemuxReceiver::ts_bytes_demuxed`].
     #[cfg(feature = "std")]
@@ -193,7 +174,6 @@ impl<R: RecvTransport> core::fmt::Debug for DemuxReceiver<R> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DemuxReceiver")
             .field("is_alive", &self.is_alive())
-            .field("byte_sinks", &self.byte_sinks.len())
             .field("transport_kind", &core::any::type_name::<R>())
             .finish()
     }
@@ -218,7 +198,6 @@ impl<R: RecvTransport> DemuxReceiver<R> {
         Self {
             ts: Receiver::new(transport, ReceiverConfig::default()),
             demux: Demuxer::with_config(options),
-            byte_sinks: Vec::new(),
             #[cfg(feature = "std")]
             ts_bytes_demuxed: Arc::new(AtomicU64::new(0)),
             terminal_error: None,
@@ -226,15 +205,6 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             reconnect_epoch: None,
             _span: core::panic::AssertUnwindSafe(span),
         }
-    }
-
-    /// Register a byte-fanout sink.
-    ///
-    /// The sink is called once per 188-byte TS packet, in registration order,
-    /// before the demuxer processes the packet. Multiple sinks can be
-    /// registered; each sees the same bytes.
-    pub fn add_byte_sink(&mut self, sink: ByteSink) {
-        self.byte_sinks.push(sink);
     }
 
     /// Total aligned TS bytes this shell has handed to its demuxer, in
@@ -492,8 +462,8 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             // from dead-tail bytes plus fresh ones — drop it, reset the
             // sync/demux state, and let the syncer re-lock on the next
             // fresh bytes (the documented data-loss budget on reconnect).
-            // Byte sinks do not see the dropped packet: it was never
-            // parsed, and its bytes are not trustworthy.
+            // The dropped packet was never parsed and its bytes are not
+            // trustworthy.
             if self.observe_reconnect() {
                 self.reset_for_reconnect();
                 continue;
@@ -506,10 +476,6 @@ impl<R: RecvTransport> DemuxReceiver<R> {
                 tst_core::mpegts::common::TS_PACKET_SIZE as u64,
                 Ordering::Relaxed,
             );
-            // Fan-out to byte sinks in registration order before demuxing.
-            for sink in &mut self.byte_sinks {
-                sink(&pkt);
-            }
             // Feed to demuxer via the aligned fast path — the Receiver
             // transport layer already produces [u8; 188] packets so no sync
             // buffering or 0x47 hunt is needed.  In lenient mode this only
@@ -722,6 +688,7 @@ impl<R: RecvTransport> DemuxReceiver<R> {
 #[cfg(test)]
 mod stats_tests {
     use super::*;
+    use alloc::vec::Vec;
     use std::collections::VecDeque;
     use tst_core::transport::RecvTransport;
     use tst_core::transport::TransportError;
