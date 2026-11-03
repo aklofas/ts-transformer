@@ -12,7 +12,9 @@
   archives  [--root DIR]                               validate tests/coverage/evidence-archives.toml
 
 Artefact directory read by `collect` (a missing file is a missing leg, never a pass):
-  context.json                         label, source{sha,ref,dirty,submodules}, toolchain, host
+  context.json                         label, source{sha,workflow_sha,ref,dirty,submodules}, toolchain, host
+                                       (workflow_sha: the commit the workflow definitions ran from;
+                                       a main or tag record is refused when .github/ or scripts/gen/ differ)
   legs.json                            {leg: {conclusion, run_url}} for interop, jvm-jar,
                                        python-wheels, c-abi, fuzz, semver-checks and
                                        "sanitizers" (the workflow's own conclusion, a
@@ -241,6 +243,15 @@ def changed_paths(root, tree, sha):
     return [l for l in _diff_names(root, tree, sha) if not _is_release_document(l)]
 
 
+WORKFLOW_DEFINITION_PATHS = (".github/", "scripts/gen/")
+
+
+def changed_workflow_definitions(root, workflow_sha, sha):
+    """The paths under WORKFLOW_DEFINITION_PATHS that differ between the commit the
+    workflows ran from and the qualified commit `sha`."""
+    return [l for l in _diff_names(root, workflow_sha, sha) if l.startswith(WORKFLOW_DEFINITION_PATHS)]
+
+
 def changed_release_documents(root, tree, sha):
     """The release-document paths that differ between commits `tree` and `sha`, sorted."""
     return sorted(l for l in _diff_names(root, tree, sha) if _is_release_document(l))
@@ -290,9 +301,9 @@ def _pick_soak(root, sha, soaks):
     return _soak_entry(root, sha, _by_date(soaks)[0])
 
 
-def _check_sha(sha):
+def _check_sha(sha, what="source.sha"):
     if not re.fullmatch(r"[0-9a-f]{40}", str(sha)):
-        raise QualificationError("context.json source.sha is not a 40-hex commit: %r" % (sha,))
+        raise QualificationError("context.json %s is not a 40-hex commit: %r" % (what, sha))
 
 
 def _raw_verdict_reason(kind, entry):
@@ -446,7 +457,7 @@ def _interop(art):
     return rec, dict(inv.get("tools", {}))
 
 
-def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None):
+def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None, source_reasons=()):
     reasons = []
     if abi is not None and abi.get("verdict") != "compatible":
         reasons.append("c-abi: abi.json verdict is %r, not 'compatible'" % abi.get("verdict"))
@@ -477,6 +488,7 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None):
         if fuzz["targets_run"] != fuzz["targets_declared"]:
             reasons.append("fuzz: ran %d of %d declared targets"
                            % (fuzz["targets_run"], fuzz["targets_declared"]))
+    reasons.extend(source_reasons)
     if release_vm is not None and release_vm["release_mode"]:
         reasons.extend(release_vm["reasons"])
     return ("GO" if not reasons else "NO-GO"), reasons
@@ -506,6 +518,7 @@ def collect(art, root, release=False, tag=None):
         die("context.json is missing from " + art)
     try:
         _check_sha(ctx.get("source", {}).get("sha", ""))
+        _check_sha(ctx.get("source", {}).get("workflow_sha"), "source.workflow_sha")
     except QualificationError as e:
         die(str(e))
     legs_in = read_json(os.path.join(art, "legs.json")) or {}
@@ -576,7 +589,22 @@ def collect(art, root, release=False, tag=None):
         gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release, expected_files)
     except QualificationError as e:
         die(str(e))
-    v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate)
+    sha, workflow_sha = ctx["source"]["sha"], ctx["source"]["workflow_sha"]
+    source_reasons = []
+    # A pull request run executes the merge commit's workflows, which are not in the
+    # checkout, and the rehearsal exists to test the head's own definitions.
+    if not str(ctx.get("label", "")).startswith("PR #") and workflow_sha != sha:
+        try:
+            changed = changed_workflow_definitions(root, workflow_sha, sha)
+        except QualificationError as e:
+            source_reasons.append("source: git could not resolve %s: %s" % (workflow_sha[:12], e))
+        else:
+            if changed:
+                source_reasons.append(
+                    "source: workflow definitions at %s differ from the qualified commit "
+                    "(%d path(s) under .github/ or scripts/gen/)" % (workflow_sha[:12], len(changed)))
+    v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate,
+                         source_reasons)
     source, label = dict(ctx.get("source", {})), ctx.get("label", "unlabelled")
     if tag:
         source["tag"], label = tag, "tag " + tag

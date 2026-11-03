@@ -240,11 +240,17 @@ merge commit, and the qualification run checks that nothing under
     gh workflow run release-qualify.yml -f sha=<the full 40-hex commit sha> -f release=true
     ```
     The commit must be on `main` or be a `v*` tag; the run's `resolve` job
-    refuses anything else. One run calls the wheels, JVM, interop,
+    refuses anything else. Dispatch from a ref whose workflows match the
+    commit (`main` while it still points there, or a branch pushed at the
+    frozen commit): `resolve` and the collector refuse a commit whose
+    `.github/` or `scripts/gen/` differs from the workflow definitions that
+    ran. One run calls the wheels, JVM, interop,
     sanitizer, fuzz, ABI and semver legs in rehearsal mode (nothing is
     published) and writes a record. The run must end **GO**: every leg
-    succeeded on that commit, the tree was clean, and the interop census
-    matches `expectations.toml`. `release=true` adds the release gate: GO
+    succeeded on that commit, the tree was clean, the `ci` result came from a
+    push or dispatch run rather than a pull-request run, no workflow
+    definition under `.github/` or `scripts/gen/` differs from the qualified
+    commit, and the interop census matches `expectations.toml`. `release=true` adds the release gate: GO
     also needs a passing soak archive that declares 259 200 seconds and all
     five legs (srt, rist, rtsp-publish, rtsp-publish-es, whep), and a
     passing corpus archive for the soaked tree that swept the declared
