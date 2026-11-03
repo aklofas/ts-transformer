@@ -125,35 +125,35 @@ pub enum ReconnectPolicyError {
 }
 
 impl ReconnectPolicy {
-    /// Set [`max_attempts`](Self::max_attempts).
+    /// Sets `max_attempts`; see the field's documentation.
     #[must_use]
     pub fn with_max_attempts(mut self, max_attempts: Option<u32>) -> Self {
         self.max_attempts = max_attempts;
         self
     }
 
-    /// Set [`backoff`](Self::backoff).
+    /// Sets `backoff`; see the field's documentation.
     #[must_use]
     pub fn with_backoff(mut self, backoff: BackoffStrategy) -> Self {
         self.backoff = backoff;
         self
     }
 
-    /// Set [`gap_buffer_capacity`](Self::gap_buffer_capacity).
+    /// Sets `gap_buffer_capacity`; see the field's documentation.
     #[must_use]
     pub fn with_gap_buffer_capacity(mut self, gap_buffer_capacity: usize) -> Self {
         self.gap_buffer_capacity = gap_buffer_capacity;
         self
     }
 
-    /// Set [`overflow_policy`](Self::overflow_policy).
+    /// Sets `overflow_policy`; see the field's documentation.
     #[must_use]
     pub fn with_overflow_policy(mut self, overflow_policy: OverflowPolicy) -> Self {
         self.overflow_policy = overflow_policy;
         self
     }
 
-    /// Set [`mode`](Self::mode).
+    /// Sets `mode`; see the field's documentation.
     #[must_use]
     pub fn with_mode(mut self, mode: ReconnectMode) -> Self {
         self.mode = mode;
@@ -1944,6 +1944,28 @@ mod cancel_tests {
 
 #[cfg(test)]
 mod validate_tests {
+    #[test]
+    fn with_setters_match_the_field_literal() {
+        let chained = ReconnectPolicy::default()
+            .with_max_attempts(Some(3))
+            .with_backoff(BackoffStrategy::Constant(Duration::from_millis(7)))
+            .with_gap_buffer_capacity(5)
+            .with_overflow_policy(OverflowPolicy::Reject)
+            .with_mode(ReconnectMode::Background);
+        let literal = ReconnectPolicy {
+            max_attempts: Some(3),
+            backoff: BackoffStrategy::Constant(Duration::from_millis(7)),
+            gap_buffer_capacity: 5,
+            overflow_policy: OverflowPolicy::Reject,
+            mode: ReconnectMode::Background,
+        };
+        assert_eq!(chained.max_attempts, literal.max_attempts);
+        assert_eq!(chained.backoff, literal.backoff);
+        assert_eq!(chained.gap_buffer_capacity, literal.gap_buffer_capacity);
+        assert_eq!(chained.overflow_policy, literal.overflow_policy);
+        assert_eq!(chained.mode, literal.mode);
+    }
+
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
 
