@@ -702,27 +702,33 @@ with DemuxReceiver.open("srt://:9000?mode=listener") as rx:
 ```
 
 `rx.ts_bytes_demuxed()` returns the aligned TS bytes the receiver fed its
-demuxer. It never waits for a parked `__next__`: it answers while another
-thread is parked in it and returns the last value after `close()`.
+demuxer. It answers while `__next__` is parked and never waits on the receive
+slot, and returns the last value after `close()`.
 
 To record or forward the raw packets, compose a `Receiver` with a `Demuxer`.
 Each chunk is a whole number of 188-byte packets:
 
 ```python
+from tstrans import shells
+from tstrans.exceptions import TcpError, TcpErrorKind
+from tstrans.mpegts import Demuxer
+
 with shells.Receiver.open("tcp://127.0.0.1:9000") as rx:
     demux = Demuxer()
-    while True:
-        try:
-            chunk = rx.recv_bytes()
-        except TcpError as exc:
-            if exc.kind == TcpErrorKind.END_OF_STREAM:
-                break
-            raise
-        recorder.write(chunk)              # your consumer
-        demux.feed(chunk)
-        while (ev := demux.next_event()) is not None:
-            ...
-    demux.flush()                          # the final unbounded PES
+    try:
+        while True:
+            try:
+                chunk = rx.recv_bytes()
+            except TcpError as exc:
+                if exc.kind == TcpErrorKind.END_OF_STREAM:
+                    break
+                raise
+            recorder.write(chunk)              # your consumer
+            demux.feed(chunk)
+            while (ev := demux.next_event()) is not None:
+                ...
+    finally:
+        demux.flush()                          # the final unbounded PES
     while (ev := demux.next_event()) is not None:
         ...
 ```
