@@ -847,13 +847,41 @@ class ReleaseModeTests(unittest.TestCase):
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIn("soak: git could not resolve %s: fatal: bad object" % D, rec["verdict_reasons"])
 
+    def _unresolvable(self, rows):
+        with mock.patch.object(q, "changed_paths", side_effect=q.QualificationError("fatal: bad object")):
+            return collect(release=True, archives=rows)
+
     def test_an_unresolvable_corpus_tree_is_a_reason(self):
         D = "d" * 40
-        with mock.patch.object(q, "changed_paths", side_effect=q.QualificationError("fatal: bad object")):
-            rec = collect(release=True, archives=self._corpus_rows(D))
+        rec = self._unresolvable(self._corpus_rows(D))
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIn("corpus: git could not resolve %s: fatal: bad object" % D, rec["verdict_reasons"])
         self.assertEqual(rec["release_vm"]["corpus"]["id"], "corpus-rel")
+
+    def test_an_unresolvable_older_corpus_row_is_ignored(self):
+        D = "d" * 40
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-old", "corpus", D, date="2026-10-10", overall_pass=False,
+                                         counts=COUNTS),
+                             archive_row("corpus-rel", "corpus", SHA, date="2026-10-17", counts=COUNTS))
+        rec = self._unresolvable(rows)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+
+    def test_an_unresolvable_passing_corpus_row_is_ignored(self):
+        D = "d" * 40
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, date="2026-10-17", counts=COUNTS),
+                             archive_row("corpus-new", "corpus", D, date="2026-10-18", counts=COUNTS))
+        rec = self._unresolvable(rows)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-bad", "corpus", SHA, date="2026-10-17", overall_pass=False,
+                                         counts=COUNTS),
+                             archive_row("corpus-new", "corpus", D, date="2026-10-18", counts=COUNTS))
+        rec = self._unresolvable(rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("corpus: archive corpus-bad recorded overall_pass=false", rec["verdict_reasons"])
+        self.assertFalse(any("could not resolve" in r for r in rec["verdict_reasons"]))
 
     def test_equal_date_rows_are_ordered_by_file_position(self):
         for kind in ("corpus", "soak"):

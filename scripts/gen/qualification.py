@@ -396,16 +396,23 @@ def release_vm(root, sha, archives, release, expected_files):
                 reasons.append("soak: archive %s ran legs %s; the release soak needs %s"
                                % (soak["id"], ", ".join(soak.get("legs") or ()) or "none (undeclared)",
                                   ", ".join(RELEASE_SOAK_LEGS)))
-            candidates = []
+            candidates, unresolved = [], []
             for a in archives:
                 if a["kind"] != "corpus":
                     continue
                 eq = _stands_for(root, sha, a["tree"], memo)
                 if eq is None:
-                    reasons.append("corpus: git could not resolve %s: %s" % (a["tree"], memo[a["tree"]][1]))
+                    unresolved.append(a)
                 elif eq:
                     candidates.append(a)
             c = _newest(candidates)
+            # An unresolvable tree matters only where the row could be the newest
+            # equivalent one and would fail: a pass, or a row older than the
+            # chosen candidate, cannot change the verdict.
+            cpos = {id(a): i for i, a in enumerate(archives)}
+            for a in unresolved:
+                if disposition(a) != "pass" and (c is None or (a["date"], cpos[id(a)]) > (c["date"], cpos[id(c)])):
+                    reasons.append("corpus: git could not resolve %s: %s" % (a["tree"], memo[a["tree"]][1]))
             if c is None:
                 reasons.append("corpus: no corpus archive for the soaked tree %s" % soak["tree"][:12])
             else:
