@@ -11,10 +11,13 @@ package org.tstrans;
  * percent-decoding the key name. A {@code scheme://} span runs to the end of the input, or to the
  * closing quote when it opens right after one, and is scrubbed whole: a quote or a space inside a
  * password or a value does not end it. Text outside any such span is scrubbed one whitespace-
- * (ASCII or U+00A0) or quote-delimited token at a time, so a malformed URL, or a message that
- * embeds one, never leaks either kind of secret. It errs toward
- * redacting: any later {@code @} ends the userinfo, so {@code srt://h:9000/a@b} loses
- * {@code 9000/a}.
+ * (ASCII or U+00A0) or quote-delimited token at a time.
+ *
+ * <p>The scrub is a heuristic that errs toward redacting, so malformed text around a credential
+ * may be redacted with it. The accepted over-redactions: any later {@code @} ends the userinfo,
+ * so {@code srt://h:9000/a@b} loses {@code 9000/a}; a raw {@code ?} before the last {@code @} is
+ * password text, so {@code srt://h:1?mail=a@b} loses {@code 1?mail=a}; a stray quote after a
+ * quoted URL extends it to the end of the input.
  */
 public final class Redact {
     private static final String[] SECRET_KEYS =
@@ -53,15 +56,23 @@ public final class Redact {
     /**
      * Where a span opened by quote {@code q} ends: the first {@code q} at or after {@code from}
      * followed by a separator, a closing bracket, {@code ,} or {@code ;}, or by the end of the
-     * input. A {@code q} inside a password or a value does not close it.
+     * input, and after which the rest of the input holds an even number of {@code q}. A {@code q}
+     * inside a password or a value does not close it, a balanced pair of later quotes stays
+     * outside the span, and an odd stray {@code q} extends it to the end of the input.
      */
     private static int closingQuote(String s, int from, char q) {
+        int after = 0;
         for (int i = s.indexOf(q, from); i >= 0; i = s.indexOf(q, i + 1)) {
-            if (i + 1 == s.length()) {
-                return i;
+            after++;
+        }
+        for (int i = s.indexOf(q, from); i >= 0; i = s.indexOf(q, i + 1)) {
+            after--;
+            boolean closes = i + 1 == s.length();
+            if (!closes) {
+                char c = s.charAt(i + 1);
+                closes = isSeparator(c) || c == ',' || c == ';' || c == ')' || c == ']' || c == '}';
             }
-            char c = s.charAt(i + 1);
-            if (isSeparator(c) || c == ',' || c == ';' || c == ')' || c == ']' || c == '}') {
+            if (closes && after % 2 == 0) {
                 return i;
             }
         }
@@ -117,20 +128,13 @@ public final class Redact {
     }
 
     /**
-     * The password sits before the last {@code @} that precedes any {@code ?}; it may contain
-     * {@code /} or {@code @}. A {@code ?} whose following text reaches an {@code @} with no
-     * {@code =} in between is password text too ({@code u:pa?ss@h}).
+     * The password sits before the last {@code @}; it may contain {@code /}, {@code @} or a raw
+     * {@code ?} ({@code u:pa?ss=w@h}). A {@code ?} with no {@code @} after it starts the query.
      */
     private static void userinfo(String rest, StringBuilder out) {
         int q = rest.indexOf('?');
         int lastAt = rest.lastIndexOf('@');
-        int limit = q < 0 ? rest.length() : q;
-        if (q >= 0 && lastAt > q) {
-            int eq = rest.indexOf('=', q);
-            if (eq < 0 || eq > lastAt) {
-                limit = rest.length();
-            }
-        }
+        int limit = q < 0 || lastAt > q ? rest.length() : q;
         int at = rest.lastIndexOf('@', limit - 1);
         int colon = at < 0 ? -1 : rest.indexOf(':');
         if (at >= 0 && colon >= 0 && colon < at) {
