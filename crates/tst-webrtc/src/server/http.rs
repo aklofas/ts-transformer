@@ -29,6 +29,7 @@ pub const ALLOW_METHODS: &str = "POST, DELETE, OPTIONS";
 
 /// The request method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Method {
     /// `POST`: an SDP offer that creates a session.
     Post,
@@ -74,6 +75,7 @@ impl std::fmt::Debug for Request {
 
 /// The outcome of [`parse_head`].
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HeadParse {
     /// The blank line ending the head has not arrived yet; read more.
     Incomplete,
@@ -200,6 +202,7 @@ fn is_token_byte(b: u8) -> bool {
 
 /// Where a request goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Route {
     /// `POST /<mount>`: create a session on the mount.
     CreateSession {

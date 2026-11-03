@@ -27,7 +27,7 @@ impl core::marker::UnsafeUnpin for tst_hls::builder::HlsPublisherBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_hls::builder::HlsPublisherBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_hls::builder::HlsPublisherBuilder
 pub mod tst_hls::config
-pub enum tst_hls::config::HlsMode
+#[non_exhaustive] pub enum tst_hls::config::HlsMode
 pub tst_hls::config::HlsMode::Event
 pub tst_hls::config::HlsMode::Live
 pub tst_hls::config::HlsMode::Vod
@@ -208,7 +208,7 @@ impl core::marker::Unpin for tst_hls::error::HlsError
 impl core::marker::UnsafeUnpin for tst_hls::error::HlsError
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_hls::error::HlsError
 impl !core::panic::unwind_safe::UnwindSafe for tst_hls::error::HlsError
-pub enum tst_hls::HlsMode
+#[non_exhaustive] pub enum tst_hls::HlsMode
 pub tst_hls::HlsMode::Event
 pub tst_hls::HlsMode::Live
 pub tst_hls::HlsMode::Vod

@@ -22,6 +22,7 @@ use crate::VideoCodec;
 
 /// The negotiation outcome for one session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Negotiated {
     /// The video media and payload type the mount sends on.
     Video {

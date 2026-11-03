@@ -6,6 +6,7 @@ use std::time::Duration;
 
 /// HLS playlist mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum HlsMode {
     /// LIVE — rolling-window playlist; older segments evict from disk and
     /// playlist.  Never carries ENDLIST, not even after [`Publisher::finish`].

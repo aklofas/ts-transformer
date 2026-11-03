@@ -826,6 +826,7 @@ mod url_corpus_leg {
                 HlsMode::Live => "live",
                 HlsMode::Event => "event",
                 HlsMode::Vod => "vod",
+                _ => "unknown",
             },
         );
         if let Some((user, pass)) = &c.basic_auth {
