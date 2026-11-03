@@ -453,6 +453,7 @@ deferred-features list; see
 ## `ReconnectPolicy`
 
 ```rust,ignore
+#[non_exhaustive]
 pub struct ReconnectPolicy {
     pub max_attempts: Option<u32>,
     pub backoff: BackoffStrategy,
@@ -461,6 +462,10 @@ pub struct ReconnectPolicy {
     pub mode: ReconnectMode,
 }
 ```
+
+The struct is `#[non_exhaustive]`: start from `ReconnectPolicy::default()` and
+override fields with the `with_max_attempts` / `with_backoff` /
+`with_gap_buffer_capacity` / `with_overflow_policy` / `with_mode` setters.
 
 Defaults (`ReconnectPolicy::default()`):
 

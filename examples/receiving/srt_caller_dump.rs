@@ -217,8 +217,9 @@ fn handle_event(event: &DemuxEvent, args: &Args, stats: &mut Stats) {
         }
         // Only emitted by `ManagedDemuxReceiver` (tst-pipeline) shells
         // that own reconnect; not produced by plain `DemuxReceiver`.
-        // Included for exhaustive matching.
-        DemuxEvent::ReconnectDiscontinuity => {}
+        // `DemuxEvent` is non-exhaustive, so the wildcard also absorbs
+        // variants added later.
+        _ => {}
     }
 }
 

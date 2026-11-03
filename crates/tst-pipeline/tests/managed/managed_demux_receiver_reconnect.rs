@@ -172,6 +172,7 @@ fn reconnect_event_is_observable_via_public_api() {
             Ok(Some(DemuxEvent::Metadata { .. })) => events.push("metadata"),
             Ok(Some(DemuxEvent::Discontinuity { .. })) => events.push("discontinuity"),
             Ok(Some(DemuxEvent::NonConformant { .. })) => events.push("nonconformant"),
+            Ok(Some(_)) => events.push("other"),
             Ok(None) => break,
             Err(_) => break,
         }

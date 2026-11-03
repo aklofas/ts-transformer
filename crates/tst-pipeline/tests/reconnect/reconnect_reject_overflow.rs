@@ -30,13 +30,11 @@ fn reject_policy_surfaces_backpressure_when_gap_full() {
     let factory =
         || -> Result<ScriptedSend, TransportError> { Err(broken("factory always fails")) };
     // The buffer refuses BEFORE any reconnect is attempted.
-    let policy = ReconnectPolicy {
-        max_attempts: Some(1),
-        backoff: BackoffStrategy::Constant(Duration::from_millis(0)),
-        gap_buffer_capacity: 0,
-        overflow_policy: OverflowPolicy::Reject,
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(1))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)))
+        .with_gap_buffer_capacity(0)
+        .with_overflow_policy(OverflowPolicy::Reject);
 
     let inner = ScriptedSend::always(broken("always broken (test)"))
         .with_counter(Arc::new(AtomicU32::new(0)));
@@ -151,14 +149,13 @@ fn drop_oldest_policy_does_not_surface_backpressure_on_overflow() {
             })
         }
     };
-    let policy = ReconnectPolicy {
-        max_attempts: None,
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(None)
         // Unlimited attempts need a non-zero wait to pass validation.
-        backoff: BackoffStrategy::Constant(Duration::from_millis(1)),
-        gap_buffer_capacity: 2,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode: ReconnectMode::Background,
-    };
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
+        .with_gap_buffer_capacity(2)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(ReconnectMode::Background);
     let inner = Link {
         broken: true,
         delivered: Arc::clone(&delivered),

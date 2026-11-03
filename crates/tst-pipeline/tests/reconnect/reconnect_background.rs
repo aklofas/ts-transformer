@@ -74,13 +74,12 @@ impl Rig {
 }
 
 fn bg_policy(max_attempts: Option<u32>, backoff: BackoffStrategy) -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts,
-        backoff,
-        gap_buffer_capacity: 64,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode: ReconnectMode::Background,
-    }
+    ReconnectPolicy::default()
+        .with_max_attempts(max_attempts)
+        .with_backoff(backoff)
+        .with_gap_buffer_capacity(64)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(ReconnectMode::Background)
 }
 
 /// Poll until `cond` or panic after `deadline`.
@@ -596,13 +595,13 @@ fn drain_break_resumes_reconnect_with_front_message_retained() {
 fn background_reject_full_returns_backpressure_immediately() {
     let rig = Rig::new();
     rig.push_outcome(SendStep::Broken);
-    let policy = ReconnectPolicy {
-        max_attempts: None,
-        backoff: BackoffStrategy::Constant(Duration::from_secs(60)), // park the worker far away
-        gap_buffer_capacity: 2,
-        overflow_policy: OverflowPolicy::Reject,
-        mode: ReconnectMode::Background,
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(None)
+        .with_backoff(BackoffStrategy::Constant(Duration::from_secs(60)))
+        // park the worker far away
+        .with_gap_buffer_capacity(2)
+        .with_overflow_policy(OverflowPolicy::Reject)
+        .with_mode(ReconnectMode::Background);
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(u32::MAX), policy)
         .expect("the policy validates");
     managed.send_bytes(&[0]).unwrap(); // break -> queued (gap: [0])
@@ -1009,13 +1008,12 @@ fn size_pre_check_follows_the_published_ceiling_across_a_rebuild() {
 #[test]
 fn stress_pump_vs_flapping_sink_delivery_is_fifo_subsequence() {
     let rig = Rig::new();
-    let policy = ReconnectPolicy {
-        max_attempts: None,
-        backoff: BackoffStrategy::Constant(Duration::from_millis(1)),
-        gap_buffer_capacity: 8,
-        overflow_policy: OverflowPolicy::DropOldest,
-        mode: ReconnectMode::Background,
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(None)
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
+        .with_gap_buffer_capacity(8)
+        .with_overflow_policy(OverflowPolicy::DropOldest)
+        .with_mode(ReconnectMode::Background);
     let mut managed = ManagedTransport::new(rig.transport(), rig.factory(0), policy)
         .expect("the policy validates");
     // 2000 sends, a scripted break every 40th — breaks land on direct

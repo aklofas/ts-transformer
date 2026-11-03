@@ -1109,6 +1109,8 @@ impl Tally {
                 // nothing until it reports a program map again.
                 self.pcr_pids_declared.clear();
             }
+            // A variant this verifier does not know carries no evidence for it.
+            _ => {}
         }
     }
 
@@ -1412,6 +1414,7 @@ impl Tally {
             }
             DemuxEvent::ReconnectDiscontinuity => a.on_reconnect(at),
             DemuxEvent::ProgramMap(m) => a.on_program_map(m.program_number, m.pmt_pid, m.pcr_pid),
+            _ => {}
         }
     }
 
@@ -4262,11 +4265,9 @@ mod tests {
         let mut first: VecDeque<Vec<u8>> = (0..7).map(|_| nulls(7)).collect();
         first.push_back(nulls(4)); // 53 packets, then the break
         let mut fresh = Some(VecDeque::from(vec![nulls(7)]));
-        let policy = ReconnectPolicy {
-            max_attempts: Some(1),
-            backoff: BackoffStrategy::Constant(std::time::Duration::ZERO),
-            ..ReconnectPolicy::default()
-        };
+        let policy = ReconnectPolicy::default()
+            .with_max_attempts(Some(1))
+            .with_backoff(BackoffStrategy::Constant(std::time::Duration::ZERO));
         let (mut managed, tap) = crate::recv::managed_teed_transport(
             Box::new(Scripted(first)),
             move || {

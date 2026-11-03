@@ -29,6 +29,7 @@
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum OverflowPolicy {
     /// Drop the oldest queued message to make room (default).
     #[default]

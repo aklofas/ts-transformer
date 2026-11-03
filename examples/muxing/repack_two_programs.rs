@@ -320,12 +320,10 @@ fn repack_event(
         // emits this variant. Included for exhaustive matching.
         | DemuxEvent::ReconnectDiscontinuity => {}
 
-        // Guard: exhaustive match so future DemuxEvent variants cause a
-        // compile error here rather than being silently swallowed.
-        DemuxEvent::Sample { .. } => {
-            // Non-video sample (audio, subtitle, unknown stream_type).
-            // Skipped — the output config is video+KLV only.
-        }
+        // `DemuxEvent` is non-exhaustive, so this arm also absorbs variants
+        // added later. Non-video samples (audio, subtitle, unknown
+        // stream_type) land here too: the output config is video+KLV only.
+        _ => {}
     }
 
     Ok(())

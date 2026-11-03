@@ -24,6 +24,7 @@ use crate::shell_error::ShellErrorKind;
 /// Aggregate receive stats for [`RawReceiver`].
 #[must_use]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RawReceiverStats {
     /// Total bytes received from the transport.
     pub bytes_received: u64,

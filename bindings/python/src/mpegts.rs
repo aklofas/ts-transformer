@@ -275,6 +275,12 @@ pub(crate) fn convert_event(py: Python<'_>, ev: &DemuxEvent) -> PyResult<Py<PyAn
                 .getattr(intern!(py, "ReconnectDiscontinuity"))?;
             Ok(cls.call0()?.into())
         }
+        // `DemuxEvent` is non-exhaustive, so the compiler no longer proves
+        // every variant is projected; the demux-event-variant-coverage rail
+        // does, which makes this arm unreachable while the rail passes.
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unhandled DemuxEvent variant: {ev:?}"
+        ))),
     }
 }
 

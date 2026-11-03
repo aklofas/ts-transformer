@@ -4655,7 +4655,7 @@ impl core::marker::Unpin for tst_core::mpegts::demux::event::Av1ObuHeaderKind
 impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::Av1ObuHeaderKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::Av1ObuHeaderKind
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::Av1ObuHeaderKind
-pub enum tst_core::mpegts::demux::event::DemuxEvent
+#[non_exhaustive] pub enum tst_core::mpegts::demux::event::DemuxEvent
 pub tst_core::mpegts::demux::event::DemuxEvent::Discontinuity
 pub tst_core::mpegts::demux::event::DemuxEvent::Discontinuity::kind: tst_core::mpegts::demux::event::DiscontinuityKind
 pub tst_core::mpegts::demux::event::DemuxEvent::Discontinuity::stream: tst_core::mpegts::demux::event::StreamId
@@ -5528,7 +5528,7 @@ impl core::marker::Unpin for tst_core::mpegts::demux::event::Av1ObuHeaderKind
 impl core::marker::UnsafeUnpin for tst_core::mpegts::demux::event::Av1ObuHeaderKind
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::demux::event::Av1ObuHeaderKind
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::demux::event::Av1ObuHeaderKind
-pub enum tst_core::mpegts::demux::DemuxEvent
+#[non_exhaustive] pub enum tst_core::mpegts::demux::DemuxEvent
 pub tst_core::mpegts::demux::DemuxEvent::Discontinuity
 pub tst_core::mpegts::demux::DemuxEvent::Discontinuity::kind: tst_core::mpegts::demux::event::DiscontinuityKind
 pub tst_core::mpegts::demux::DemuxEvent::Discontinuity::stream: tst_core::mpegts::demux::event::StreamId
@@ -6975,7 +6975,7 @@ impl core::marker::Unpin for tst_core::mpegts::stats::StreamCodecStats
 impl core::marker::UnsafeUnpin for tst_core::mpegts::stats::StreamCodecStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::stats::StreamCodecStats
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::stats::StreamCodecStats
-pub struct tst_core::mpegts::stats::StreamStats
+#[non_exhaustive] pub struct tst_core::mpegts::stats::StreamStats
 pub tst_core::mpegts::stats::StreamStats::bytes: u64
 pub tst_core::mpegts::stats::StreamStats::discontinuities: u64
 pub tst_core::mpegts::stats::StreamStats::items: u64
@@ -7003,7 +7003,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::stats::Stream
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::stats::StreamStats
 pub fn tst_core::mpegts::stats::demux_subtitle_codec_label(tst_core::mpegts::demux::event::SubtitleCodec) -> &'static str
 pub fn tst_core::mpegts::stats::subtitle_codec_label(&tst_core::mpegts::mux::SubtitleCodec) -> &'static str
-pub struct tst_core::mpegts::StreamStats
+#[non_exhaustive] pub struct tst_core::mpegts::StreamStats
 pub tst_core::mpegts::StreamStats::bytes: u64
 pub tst_core::mpegts::StreamStats::discontinuities: u64
 pub tst_core::mpegts::StreamStats::items: u64

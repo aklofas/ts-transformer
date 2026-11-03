@@ -377,11 +377,9 @@ pub fn run_managed(
             cause: BrokenCause::Unspecified,
         })
     };
-    let policy = ReconnectPolicy {
-        max_attempts: None,
-        mode,
-        ..ReconnectPolicy::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(None)
+        .with_mode(mode);
     let gap_buffer_capacity = policy.gap_buffer_capacity as u64;
     // Named here, from the policy the transport is about to be built
     // with, because the stats handle read after the run reports counters
@@ -396,6 +394,7 @@ pub fn run_managed(
     let overflow_policy = match policy.overflow_policy {
         OverflowPolicy::DropOldest => "drop_oldest",
         OverflowPolicy::Reject => "reject",
+        _ => "unknown",
     }
     .to_string();
     let managed = ManagedTransport::new(initial, factory, policy).map_err(|e| e.to_string())?;

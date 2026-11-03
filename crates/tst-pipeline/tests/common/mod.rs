@@ -48,11 +48,9 @@ impl TransportCancel for FlagCancel {
 /// Reconnect immediately (zero backoff), `max_attempts` times; every other
 /// field at its default.
 pub fn fast_policy(max_attempts: Option<u32>) -> ReconnectPolicy {
-    ReconnectPolicy {
-        max_attempts,
-        backoff: BackoffStrategy::Constant(Duration::ZERO),
-        ..Default::default()
-    }
+    ReconnectPolicy::default()
+        .with_max_attempts(max_attempts)
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO))
 }
 
 /// Latch-and-poll with a bounded watchdog — never a wall-clock assert.

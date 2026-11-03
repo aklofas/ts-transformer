@@ -68,11 +68,9 @@ fn cancel_interrupts_the_backoff_wait() {
     // before 60 s. The cancel lands once the loop has committed to that
     // wait, and the 30 s bound below is half the wait it must cut short, so it needs
     // no scaling.
-    let policy = ReconnectPolicy {
-        max_attempts: Some(3),
-        backoff: BackoffStrategy::Constant(Duration::from_secs(60)),
-        ..Default::default()
-    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_secs(60)));
     // The canceller waits for the backoff event instead of guessing with a
     // sleep: a cancel that landed earlier would be caught by the loop's own
     // cancel check and pass even against a wait that cannot be interrupted.
