@@ -8,14 +8,18 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use tst_core::transport::RecvTransport;
 use tst_rtp::RtspClient;
 
-use crate::fixtures::raw_rtsp_server::{
-    SDP_BODY, answer_describe_and_setup, cseq_of, method_of, read_request,
-};
+use crate::fixtures::raw_rtsp_server::{SDP_BODY, cseq_of, method_of, read_request};
+// Used only by the Linux-gated interleaved test below; an unused import fails the
+// macOS build under `-D warnings`.
+#[cfg(target_os = "linux")]
+use crate::fixtures::raw_rtsp_server::answer_describe_and_setup;
+#[cfg(target_os = "linux")]
 use crate::fixtures::rtp_packets::build_rtp_packet;
 use crate::signal::{DELIVERED, install_handler};
+#[cfg(target_os = "linux")]
+use tst_core::transport::RecvTransport;
 
 // The `pumps.len() == 1` assertion and the shared `DELIVERED` counter assume
 // nextest's one-process-per-test.
