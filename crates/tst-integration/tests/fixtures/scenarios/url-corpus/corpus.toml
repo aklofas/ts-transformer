@@ -57,7 +57,7 @@
 schema_version = 0
 
 [schemes.srt]
-keys = 23        # 22 table keys + `mode`, which the URL level consumes
+keys = 24        # 23 table keys + `mode`, which the URL level consumes
 aliases = 9
 no_invalid = []
 
@@ -223,6 +223,14 @@ case = "explicit"
 key = "conntimeo"
 url = "srt://127.0.0.1:31104?conntimeo=1500"
 expect = { scheme = "srt", host = "127.0.0.1", port = 31104, keys = { mode = "caller", conntimeo = "1500" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "peeridletimeo"
+url = "srt://127.0.0.1:31178?peeridletimeo=2500"
+expect = { scheme = "srt", host = "127.0.0.1", port = 31178, keys = { mode = "caller", peeridletimeo = "2500" } }
 
 [[url]]
 scheme = "srt"
@@ -597,6 +605,22 @@ role = "caller"
 case = "invalid"
 key = "conntimeo"
 url = "srt://127.0.0.1:31151?conntimeo=-1"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "peeridletimeo"
+url = "srt://127.0.0.1:31179?peeridletimeo=0"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "peeridletimeo"
+url = "srt://127.0.0.1:31180?peeridletimeo=-1"
 expect = { error_kind = "CONFIG_INVALID" }
 
 [[url]]
