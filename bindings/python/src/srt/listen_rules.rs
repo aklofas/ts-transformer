@@ -21,38 +21,10 @@ use crate::util::CancelSource;
 /// The lowest code a rule may reject with; libsrt owns the codes below.
 const FIRST_APPLICATION_REASON: i32 = 1000;
 
-/// The typed predefined reasons and their `tstrans.srt.RejectReason` member
-/// names; `test_reject_reason_table_matches_native` holds the Python enum to
-/// this list.
-const PREDEFINED: [(RejectReason, &str); 21] = [
-    (RejectReason::Fallback, "FALLBACK"),
-    (RejectReason::KeyNotSupported, "KEY_NOT_SUPPORTED"),
-    (RejectReason::Filepath, "FILEPATH"),
-    (RejectReason::HostNotFound, "HOST_NOT_FOUND"),
-    (RejectReason::BadRequest, "BAD_REQUEST"),
-    (RejectReason::Unauthorized, "UNAUTHORIZED"),
-    (RejectReason::Overload, "OVERLOAD"),
-    (RejectReason::Forbidden, "FORBIDDEN"),
-    (RejectReason::NotFound, "NOT_FOUND"),
-    (RejectReason::BadMode, "BAD_MODE"),
-    (RejectReason::Unacceptable, "UNACCEPTABLE"),
-    (RejectReason::Conflict, "CONFLICT"),
-    (RejectReason::NotSupportedMedia, "NOT_SUPPORTED_MEDIA"),
-    (RejectReason::Locked, "LOCKED"),
-    (RejectReason::FailedDependency, "FAILED_DEPENDENCY"),
-    (RejectReason::InternalServerError, "INTERNAL_SERVER_ERROR"),
-    (RejectReason::Unimplemented, "UNIMPLEMENTED"),
-    (RejectReason::Gateway, "GATEWAY"),
-    (RejectReason::Down, "DOWN"),
-    (RejectReason::VersionUnsupported, "VERSION_UNSUPPORTED"),
-    (RejectReason::NoRoom, "NO_ROOM"),
-];
-
 /// The typed variant for a predefined code, `Other(code)` for any other.
 fn reason_from_code(code: i32) -> RejectReason {
-    PREDEFINED
-        .iter()
-        .map(|(r, _)| *r)
+    RejectReason::PREDEFINED
+        .into_iter()
         .find(|r| r.raw() == code)
         .unwrap_or(RejectReason::Other(code))
 }
@@ -60,7 +32,10 @@ fn reason_from_code(code: i32) -> RejectReason {
 /// `(code, name)` for each predefined reject reason, in code order.
 #[pyfunction]
 fn _reject_reason_table() -> Vec<(i32, &'static str)> {
-    PREDEFINED.iter().map(|(r, n)| (r.raw(), *n)).collect()
+    RejectReason::PREDEFINED
+        .iter()
+        .filter_map(|r| r.name().map(|n| (r.raw(), n)))
+        .collect()
 }
 
 /// The rule as written; the passphrase is validated when the rule is

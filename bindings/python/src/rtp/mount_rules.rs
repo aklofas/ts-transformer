@@ -95,17 +95,11 @@ impl PyMountPolicy {
     /// 453 or 503). Raises `ValueError` for any other code.
     #[staticmethod]
     fn refuse(status: u16) -> PyResult<Self> {
-        let status = match status {
-            403 => RefuseStatus::Forbidden,
-            404 => RefuseStatus::NotFound,
-            453 => RefuseStatus::NotEnoughBandwidth,
-            503 => RefuseStatus::ServiceUnavailable,
-            other => {
-                return Err(PyValueError::new_err(format!(
-                    "refuse status {other} is not one of 403, 404, 453, 503"
-                )));
-            }
-        };
+        let status = RefuseStatus::from_code(status).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "refuse status {status} is not one of 403, 404, 453, 503"
+            ))
+        })?;
         Ok(Self {
             inner: MountPolicy::Refuse(status),
         })

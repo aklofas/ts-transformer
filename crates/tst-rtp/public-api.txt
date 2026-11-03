@@ -901,6 +901,7 @@ pub tst_rtp::rtsp::server::mount_rules::RefuseStatus::NotFound
 pub tst_rtp::rtsp::server::mount_rules::RefuseStatus::ServiceUnavailable
 impl tst_rtp::rtsp::server::mount_rules::RefuseStatus
 pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::code(self) -> u16
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::from_code(u16) -> core::option::Option<Self>
 impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::RefuseStatus
 pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::clone(&self) -> tst_rtp::rtsp::server::mount_rules::RefuseStatus
 impl core::cmp::Eq for tst_rtp::rtsp::server::mount_rules::RefuseStatus
@@ -1641,6 +1642,7 @@ pub tst_rtp::RefuseStatus::NotFound
 pub tst_rtp::RefuseStatus::ServiceUnavailable
 impl tst_rtp::rtsp::server::mount_rules::RefuseStatus
 pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::code(self) -> u16
+pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::from_code(u16) -> core::option::Option<Self>
 impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::RefuseStatus
 pub fn tst_rtp::rtsp::server::mount_rules::RefuseStatus::clone(&self) -> tst_rtp::rtsp::server::mount_rules::RefuseStatus
 impl core::cmp::Eq for tst_rtp::rtsp::server::mount_rules::RefuseStatus

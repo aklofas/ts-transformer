@@ -519,6 +519,60 @@ impl SrtErrno {
 }
 
 impl RejectReason {
+    /// The predefined reasons (`SRT_REJX_*`, 1000..=1999) in code order.
+    pub const PREDEFINED: [RejectReason; 21] = [
+        RejectReason::Fallback,
+        RejectReason::KeyNotSupported,
+        RejectReason::Filepath,
+        RejectReason::HostNotFound,
+        RejectReason::BadRequest,
+        RejectReason::Unauthorized,
+        RejectReason::Overload,
+        RejectReason::Forbidden,
+        RejectReason::NotFound,
+        RejectReason::BadMode,
+        RejectReason::Unacceptable,
+        RejectReason::Conflict,
+        RejectReason::NotSupportedMedia,
+        RejectReason::Locked,
+        RejectReason::FailedDependency,
+        RejectReason::InternalServerError,
+        RejectReason::Unimplemented,
+        RejectReason::Gateway,
+        RejectReason::Down,
+        RejectReason::VersionUnsupported,
+        RejectReason::NoRoom,
+    ];
+
+    /// The upper-case name of a predefined reason, such as `"FORBIDDEN"`;
+    /// `None` for internal, user-defined and unrecognised reasons.
+    pub fn name(&self) -> Option<&'static str> {
+        match self {
+            RejectReason::Fallback => Some("FALLBACK"),
+            RejectReason::KeyNotSupported => Some("KEY_NOT_SUPPORTED"),
+            RejectReason::Filepath => Some("FILEPATH"),
+            RejectReason::HostNotFound => Some("HOST_NOT_FOUND"),
+            RejectReason::BadRequest => Some("BAD_REQUEST"),
+            RejectReason::Unauthorized => Some("UNAUTHORIZED"),
+            RejectReason::Overload => Some("OVERLOAD"),
+            RejectReason::Forbidden => Some("FORBIDDEN"),
+            RejectReason::NotFound => Some("NOT_FOUND"),
+            RejectReason::BadMode => Some("BAD_MODE"),
+            RejectReason::Unacceptable => Some("UNACCEPTABLE"),
+            RejectReason::Conflict => Some("CONFLICT"),
+            RejectReason::NotSupportedMedia => Some("NOT_SUPPORTED_MEDIA"),
+            RejectReason::Locked => Some("LOCKED"),
+            RejectReason::FailedDependency => Some("FAILED_DEPENDENCY"),
+            RejectReason::InternalServerError => Some("INTERNAL_SERVER_ERROR"),
+            RejectReason::Unimplemented => Some("UNIMPLEMENTED"),
+            RejectReason::Gateway => Some("GATEWAY"),
+            RejectReason::Down => Some("DOWN"),
+            RejectReason::VersionUnsupported => Some("VERSION_UNSUPPORTED"),
+            RejectReason::NoRoom => Some("NO_ROOM"),
+            _ => None,
+        }
+    }
+
     /// Map a raw reject code (from `srt_getrejectreason`) to a typed variant.
     ///
     /// See [`RejectReason`] for the category split. Codes outside the typed
@@ -753,6 +807,48 @@ pub type ConnectError = SrtConnectError;
 #[allow(clippy::unnecessary_cast)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn predefined_table_matches_the_binding_contract() {
+        let expected: [(i32, &str); 21] = [
+            (1000, "FALLBACK"),
+            (1001, "KEY_NOT_SUPPORTED"),
+            (1002, "FILEPATH"),
+            (1003, "HOST_NOT_FOUND"),
+            (1400, "BAD_REQUEST"),
+            (1401, "UNAUTHORIZED"),
+            (1402, "OVERLOAD"),
+            (1403, "FORBIDDEN"),
+            (1404, "NOT_FOUND"),
+            (1405, "BAD_MODE"),
+            (1406, "UNACCEPTABLE"),
+            (1409, "CONFLICT"),
+            (1415, "NOT_SUPPORTED_MEDIA"),
+            (1423, "LOCKED"),
+            (1424, "FAILED_DEPENDENCY"),
+            (1500, "INTERNAL_SERVER_ERROR"),
+            (1501, "UNIMPLEMENTED"),
+            (1502, "GATEWAY"),
+            (1503, "DOWN"),
+            (1505, "VERSION_UNSUPPORTED"),
+            (1507, "NO_ROOM"),
+        ];
+        assert_eq!(RejectReason::PREDEFINED.len(), 21);
+        for (reason, (code, name)) in RejectReason::PREDEFINED.iter().zip(expected) {
+            assert_eq!(reason.raw(), code);
+            assert_eq!(reason.name(), Some(name));
+        }
+        let mut names: Vec<_> = RejectReason::PREDEFINED
+            .iter()
+            .filter_map(|r| r.name())
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 21);
+        assert_eq!(RejectReason::Unknown.name(), None);
+        assert_eq!(RejectReason::BadSecret.name(), None);
+        assert_eq!(RejectReason::Other(2001).name(), None);
+    }
 
     #[test]
     fn validation_error_displays() {
