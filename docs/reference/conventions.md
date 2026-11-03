@@ -418,7 +418,7 @@ rejected by `srt`, `tcps`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `passphrase` | Encryption passphrase | 10 to 80 bytes | `srt` |
 | `payloadsize` (also `pkt_size`, `payload_size`) | Payload bytes per packet | bytes, at most 1456 | `srt` |
 | `pbkeylen` | Encryption key length | 16, 24 or 32 bytes | `srt` |
-| `peeridletimeo` | Peer idle timeout; values below about 5 s do not detect a silent peer sooner | milliseconds | `srt` |
+| `peeridletimeo` | Peer idle timeout, 1 to 2147483 ms (libsrt multiplies the value by 1000 into an int); values below about 5 s do not detect a silent peer sooner | milliseconds | `srt` |
 | `peerlatency` | Latency the peer should use when receiving | milliseconds | `srt` |
 | `rcvlatency` | Receiver buffering delay of this side | milliseconds | `srt` |
 | `streamid` (also `srt_streamid`) | Stream identifier sent in the handshake | text up to 512 bytes | `srt` |
