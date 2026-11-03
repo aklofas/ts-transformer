@@ -169,8 +169,8 @@ impl AuCellReassembler {
     /// once the cells that did arrive are walked, and reports the gap (see
     /// [`discard_pid`](Self::discard_pid)).
     /// A new
-    /// producer on a continuing channel (a fresh `Muxer`, which starts every
-    /// synchronous KLV stream at 0) is likewise not a gap.
+    /// producer on a continuing channel (a fresh `Muxer`, which numbers
+    /// every PES from 0) is likewise not a gap.
     ///
     /// Within a wrapper a sequence gap is a PID-level event: the number
     /// counts every cell of the PES, whatever its service, so a lost cell
