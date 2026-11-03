@@ -604,11 +604,12 @@ enum Rewrite {
     /// first copy of each round is outside the previous round's window.
     ThrottleSchedule,
     /// Once [`ProxyHandle::arm`] is called, flip the RTP version bits of every
-    /// keyed data-path datagram until `garbage` media datagrams have been
-    /// flipped. CTR mode flips the same plaintext bits, so each data packet
-    /// decrypts to an invalid header: one decryption-failure strike under the
-    /// sender's own nonce, with no valid packet between strikes to decay the
-    /// count. Then every datagram is forwarded unchanged; once
+    /// keyed data-path datagram, and drop every other datagram from the sender,
+    /// until `garbage` media datagrams have been flipped. CTR mode flips the
+    /// same plaintext bits, so each data packet decrypts to an invalid header:
+    /// one decryption-failure strike under the sender's own nonce. Nothing
+    /// reaches the receiver unflipped during the burst, so no valid packet
+    /// decays the count between strikes. Then every datagram is forwarded unchanged; once
     /// [`ProxyHandle::release`] is called, the proxy waits 50 ms, sends one
     /// header-only datagram under a nonce no sender uses (same key slot), so
     /// the sender's nonce is fresh again, and waits another 50 ms.
@@ -753,10 +754,10 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
                 continue;
             }
             if let Rewrite::GarbageThenPass { garbage } = rewrite {
+                let in_burst = armed_thread.load(Ordering::SeqCst) && garbled < garbage;
                 // The RTP (or RTCP) header's top two bits must read 0b10.
                 if let Some((nonce, payload, rtp)) = keyed_data_offsets(&dgram)
-                    && armed_thread.load(Ordering::SeqCst)
-                    && garbled < garbage
+                    && in_burst
                     && dgram.len() > rtp
                 {
                     dgram[rtp] ^= 0xc0;
@@ -776,6 +777,10 @@ fn spawn_key_bit_proxy(listen: u16, forward_to: u16, rewrite: Rewrite) -> ProxyH
                         r[nonce + 1..nonce + 4].copy_from_slice(&[0xa5, 0x5a, 0xa5]);
                         reset = Some(r);
                     }
+                    continue;
+                }
+                if in_burst {
+                    // Not a shape the burst can flip: never let it through.
                     continue;
                 }
             }
@@ -972,10 +977,14 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
     let held = synthetic_ts_packet(0xcc);
     let pkts: Vec<[u8; 188]> = (1..=20).map(synthetic_ts_packet).collect();
 
+    // A latched peer receives no valid packet, so librist's liveness clock
+    // stops for it; a long session timeout keeps the peer (and its latched
+    // key) alive for the whole test instead of letting a timeout reset it.
     let mut recv = RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{PORT_LOCKOUT_RECV}"))
         .unwrap()
         .profile(RistProfile::Main)
         .encryption(EncryptionKey::aes256(psk))
+        .session_timeout(Duration::from_secs(30))
         .listen()
         .expect("listen");
     let proxy = spawn_key_bit_proxy(
@@ -999,17 +1008,23 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
         let mut buf = vec![0u8; recv.max_payload() + 64];
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(14)
-            && until.lock().unwrap().is_none_or(|t| Instant::now() < t)
+            && until
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_none_or(|t| Instant::now() < t)
         {
             match recv.recv_bytes(&mut buf) {
-                Ok(n) => out.lock().unwrap().push(buf[..n].to_vec()),
+                Ok(n) => out
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(buf[..n].to_vec()),
                 Err(TransportError::Backpressure { .. }) => {}
                 Err(e) => {
                     eprintln!("recv error: {e:?}");
                     break;
                 }
             }
-            let out = out.lock().unwrap();
+            let out = out.lock().unwrap_or_else(|p| p.into_inner());
             if wanted
                 .iter()
                 .all(|w| out.iter().any(|o| o.as_slice() == w.as_slice()))
@@ -1052,25 +1067,30 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
     );
 
     // The latch holds: packets the proxy now forwards unchanged, under the
-    // sender's nonce, are refused. 1.5 s is past the receiver's ~1 s buffer,
-    // so a receiver that accepted them would have delivered them by then.
+    // sender's nonce, are refused. 800 ms is four times the receiver's 200 ms
+    // buffer, so a receiver that accepted them would have delivered them.
     thread::sleep(Duration::from_millis(100));
     for _ in 0..10 {
         send.send_bytes(&held).expect("send while locked out");
         thread::sleep(Duration::from_millis(20));
     }
-    thread::sleep(Duration::from_millis(1500));
-    {
+    thread::sleep(Duration::from_millis(800));
+    let (fillers, helds, others) = {
         let so_far = delivered_so_far.lock().unwrap();
-        let after_burst = so_far
-            .iter()
-            .filter(|got| got.as_slice() != before.as_slice())
-            .count();
-        assert_eq!(
-            after_burst, 0,
-            "the receiver delivered {after_burst} packet(s) after the burst, so no lockout engaged"
-        );
-    }
+        let count = |p: &[u8; 188]| {
+            so_far
+                .iter()
+                .filter(|g| g.as_slice() == p.as_slice())
+                .count()
+        };
+        let known = count(&before) + count(&filler) + count(&held);
+        (count(&filler), count(&held), so_far.len() - known)
+    };
+    assert_eq!(
+        (fillers, helds, others),
+        (0, 0, 0),
+        "after the burst the receiver delivered (filler, held, other) packets, so no lockout held"
+    );
 
     proxy.release();
     let reset_deadline = Instant::now() + Duration::from_secs(2);
