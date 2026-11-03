@@ -42,6 +42,8 @@ pub(crate) const REDACTED: &str = "<redacted>";
 /// - any later `@` ends the userinfo, so `srt://h:9000/a@b` loses `9000/a`;
 /// - a raw `?` before the last `@` is password text, so `srt://h:1?mail=a@b`
 ///   loses `1?mail=a`;
+/// - a secret value holding an `@` is redacted together with that userinfo,
+///   so `srt://u:p@h?passphrase=a@b` loses everything after `u:`;
 /// - text after a quoted URL, up to the last matching quote, is treated as
 ///   part of the URL, so `'srt://h?token=x' or 'y'` loses `x' or 'y`;
 /// - when that last quote is followed by other text, the URL runs on to the
@@ -158,43 +160,56 @@ fn redact_tokens(text: &str, out: &mut String) {
 }
 
 fn redact_token(token: &str, out: &mut String) {
-    let (head, rest) = match token.find("://") {
-        Some(i) => token.split_at(i + 3),
-        None => ("", token),
-    };
-    let mut scrubbed = String::with_capacity(token.len());
-    scrubbed.push_str(head);
-    redact_userinfo(rest, &mut scrubbed);
-    redact_query_values(&scrubbed, out);
+    let rest = token.find("://").map_or(0, |i| i + 3);
+    // Both masks come from the original text: a secret value holding an
+    // `@` (`?passphrase=a@b`) also reads as userinfo, and masking the
+    // userinfo first would hide the key and leave the value's tail visible.
+    let mut masks = secret_value_ranges(token, rest);
+    if let Some((from, to)) = userinfo_mask(&token[rest..]) {
+        masks.push((rest + from, rest + to));
+    }
+    masks.sort_unstable();
+    let mut copied = 0;
+    let mut masks = masks.into_iter().peekable();
+    while let Some((from, mut to)) = masks.next() {
+        while let Some(&(next_from, next_to)) = masks.peek() {
+            if next_from > to {
+                break;
+            }
+            to = to.max(next_to);
+            masks.next();
+        }
+        out.push_str(&token[copied..from]);
+        out.push_str(REDACTED);
+        copied = to;
+    }
+    out.push_str(&token[copied..]);
 }
 
-/// Redact the password in the userinfo that precedes the last `@`. The
-/// password may itself contain `/`, `@` or a raw `?` (`u:pa?ss=w@h`), so the
-/// split is taken from the right, as a client would not and a leak would. A
-/// `?` with no `@` after it starts the query.
-fn redact_userinfo(rest: &str, out: &mut String) {
+/// The password in the userinfo that precedes the last `@`, as a byte range
+/// of `rest`. The password may itself contain `/`, `@` or a raw `?`
+/// (`u:pa?ss=w@h`), so the split is taken from the right, as a client would
+/// not and a leak would. A `?` with no `@` after it starts the query.
+fn userinfo_mask(rest: &str) -> Option<(usize, usize)> {
     let query = rest.find('?');
     let limit = match (query, rest.rfind('@')) {
         (Some(q), Some(at)) if at > q => rest.len(),
         (Some(q), _) => q,
         (None, _) => rest.len(),
     };
-    if let Some(at) = rest[..limit].rfind('@')
-        && let Some(colon) = rest[..at].find(':')
-    {
-        out.push_str(&rest[..=colon]);
-        out.push_str(REDACTED);
-        out.push_str(&rest[at..]);
-    } else {
-        out.push_str(rest);
-    }
+    let at = rest[..limit].rfind('@')?;
+    let colon = rest[..at].find(':')?;
+    Some((colon + 1, at))
 }
 
-fn redact_query_values(token: &str, out: &mut String) {
-    let mut copied = 0;
-    let mut skip_to = 0;
+/// Byte ranges of the values of secret `key=value` pairs in `token` at or
+/// after `from`. A value runs to the next `&` or the end of the token.
+fn secret_value_ranges(token: &str, from: usize) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut skip_to = from;
     let mut prev_word = false;
-    for (i, c) in token.char_indices() {
+    for (n, c) in token[from..].char_indices() {
+        let i = from + n;
         if i < skip_to {
             continue;
         }
@@ -204,16 +219,14 @@ fn redact_query_values(token: &str, out: &mut String) {
             let value_end = token[value_start..]
                 .find('&')
                 .map_or(token.len(), |n| value_start + n);
-            out.push_str(&token[copied..value_start]);
-            out.push_str(REDACTED);
-            copied = value_end;
+            ranges.push((value_start, value_end));
             skip_to = value_end;
             prev_word = false;
         } else {
             prev_word = is_word_char(c);
         }
     }
-    out.push_str(&token[copied..]);
+    ranges
 }
 
 /// Length of the key at the start of `s` when it is `<key>=` and the key,
