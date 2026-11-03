@@ -18,7 +18,7 @@ use thiserror::Error;
 /// vector owns its key/value pairs because percent-decoding may produce
 /// new strings.
 #[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ParsedUrl<'a> {
     /// Scheme as written in the URL (e.g., `"srt"`, `"rtp"`, `"rtsp"`,
     /// `"rtsps"`). Returned verbatim — the parser does NOT case-fold;
@@ -43,7 +43,7 @@ pub struct ParsedUrl<'a> {
 }
 
 /// Errors that may arise from [`parse_url`] / [`parse_host_port`].
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum UrlError {
     /// `://` separator missing.
@@ -99,6 +99,74 @@ pub enum UrlError {
     /// A transport rule refused the URL; the message is the rule's text.
     #[error("{0}")]
     Rejected(String),
+}
+
+/// Prints every field, with the password and secret query values redacted.
+impl<'a> core::fmt::Debug for ParsedUrl<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let password = self.password.map(|_| super::redact::REDACTED);
+        let query: Vec<(&str, &str)> = self
+            .query
+            .iter()
+            .map(|(k, v)| (k.as_ref(), super::redact::shown_value(k, v)))
+            .collect();
+        f.debug_struct("ParsedUrl")
+            .field("scheme", &self.scheme)
+            .field("username", &self.username)
+            .field("password", &password)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("path", &self.path)
+            .field("query", &query)
+            .finish()
+    }
+}
+
+/// Same shape as a derived `Debug`, except a secret query value is redacted.
+impl core::fmt::Debug for UrlError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::MissingSchemeSeparator => f.write_str("MissingSchemeSeparator"),
+            Self::EmptyScheme => f.write_str("EmptyScheme"),
+            Self::InvalidPort { got, detail } => f
+                .debug_struct("InvalidPort")
+                .field("got", got)
+                .field("detail", detail)
+                .finish(),
+            Self::UnclosedIpv6Bracket => f.write_str("UnclosedIpv6Bracket"),
+            Self::MalformedIpv6Literal { got } => f
+                .debug_struct("MalformedIpv6Literal")
+                .field("got", got)
+                .finish(),
+            Self::BadPercentEncoding { detail } => f
+                .debug_struct("BadPercentEncoding")
+                .field("detail", detail)
+                .finish(),
+            Self::MissingHost => f.write_str("MissingHost"),
+            Self::MissingPort => f.write_str("MissingPort"),
+            Self::BadScheme { expected, got } => f
+                .debug_struct("BadScheme")
+                .field("expected", expected)
+                .field("got", got)
+                .finish(),
+            Self::BadHost(m) => f.debug_tuple("BadHost").field(m).finish(),
+            Self::HostResolve { host, detail } => f
+                .debug_struct("HostResolve")
+                .field("host", host)
+                .field("detail", detail)
+                .finish(),
+            Self::BadQueryValue { key, value, detail } => f
+                .debug_struct("BadQueryValue")
+                .field("key", key)
+                .field("value", &super::redact::shown_value(key, value))
+                .field("detail", detail)
+                .finish(),
+            Self::UnknownQueryKey { key } => {
+                f.debug_struct("UnknownQueryKey").field("key", key).finish()
+            }
+            Self::Rejected(m) => f.debug_tuple("Rejected").field(m).finish(),
+        }
+    }
 }
 
 /// Parse a URL of shape `scheme://[user[:password]@]host[:port][/path][?query]`.
@@ -752,5 +820,37 @@ mod tests {
     fn parse_url_ipv6_trailing_garbage_rejected() {
         let err = parse_url("rtp://[::1]garbage").unwrap_err();
         assert!(matches!(err, UrlError::MalformedIpv6Literal { .. }));
+    }
+}
+
+#[cfg(test)]
+mod debug_tests {
+    use super::*;
+
+    #[test]
+    fn debug_of_a_parsed_url_redacts_the_password_and_secret_values() {
+        let p = parse_url("srt://u:pw-sentinel@h:1?passphrase=pp-sentinel&latency=5").unwrap();
+        let d = alloc::format!("{p:?}");
+        assert!(
+            !d.contains("pw-sentinel") && !d.contains("pp-sentinel"),
+            "{d}"
+        );
+        for kept in ["\"u\"", "passphrase", "latency", "\"5\""] {
+            assert!(d.contains(kept), "{kept} missing from {d}");
+        }
+    }
+
+    #[test]
+    fn debug_of_a_bad_query_value_redacts_a_secret_value() {
+        let d = alloc::format!("{:?}", bad_value("passphrase", "hunter2", "x".into()));
+        assert!(!d.contains("hunter2") && d.contains("<redacted>"), "{d}");
+        let d = alloc::format!("{:?}", bad_value("latency", "hunter2", "x".into()));
+        assert!(d.contains("hunter2"), "{d}");
+    }
+
+    #[test]
+    fn parsed_url_equality_is_unchanged() {
+        let u = "srt://u:p@h:1?latency=5";
+        assert_eq!(parse_url(u).unwrap(), parse_url(u).unwrap());
     }
 }
