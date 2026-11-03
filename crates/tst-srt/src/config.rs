@@ -42,8 +42,14 @@ pub struct SrtSocketConfig {
     // Timeouts
     pub send_timeout: Option<Duration>,
     pub recv_timeout: Option<Duration>,
-    /// Maximum time `connect_with` waits for handshake completion before
-    /// giving up. `None` keeps libsrt's 3-second default. For radio links
+    /// The deadline for the whole connect, shared across the host's resolved
+    /// addresses: each address gets the remaining time divided by the
+    /// addresses left, and a single address gets the whole budget (see
+    /// [`SrtSocket::connect_with`](crate::SrtSocket::connect_with)).
+    /// libsrt polls the connect deadline about once a second, so each
+    /// attempt against a silent address costs at least one second, and a
+    /// budget below about a second per address may not reach a later address.
+    /// `None` keeps libsrt's 3-second default as the budget. For radio links
     /// (LOS interruptions, antenna repointing) [`Self::sender_defaults`],
     /// [`Self::receiver_defaults`] and [`SrtUrl::connect`](crate::SrtUrl::connect)
     /// set it to 15s where it is unset.

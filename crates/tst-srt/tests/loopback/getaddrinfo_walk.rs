@@ -1,8 +1,17 @@
-//! Verifies connect walks past an address that never answers.
+//! Verifies connect walks past an address that never answers, within one
+//! connect budget shared across the resolved addresses.
 
 use std::net::{SocketAddr, UdpSocket};
-use std::time::Duration;
-use tst_srt::SrtSocketBuilder;
+use std::time::{Duration, Instant};
+use tst_srt::{SrtConnectError, SrtSocketBuilder};
+
+/// A bound but silent UDP socket: a handshake sent to it gets no reply, so
+/// a connect to it waits out its whole timeout.
+fn silent_socket() -> (UdpSocket, SocketAddr) {
+    let silent = UdpSocket::bind("127.0.0.1:0").expect("bind silent socket");
+    let addr = silent.local_addr().expect("silent addr");
+    (silent, addr)
+}
 
 #[test]
 fn connect_walks_to_v4_when_v6_first_and_unbindable() {
@@ -18,8 +27,10 @@ fn connect_walks_to_v4_when_v6_first_and_unbindable() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
+    // libsrt checks the connect deadline once a second, so a 500 ms budget
+    // is spent on the silent address and never reaches the live one.
     let socket = SrtSocketBuilder::new()
-        .connect_timeout(Duration::from_millis(500))
+        .connect_timeout(Duration::from_secs(3))
         .send_timeout(Duration::from_secs(5))
         .connect(&[dead, live][..])
         .expect("connect should walk past the silent address to the live one");
@@ -27,5 +38,104 @@ fn connect_walks_to_v4_when_v6_first_and_unbindable() {
     assert_eq!(socket.peer_addr().unwrap(), live);
     let _ = accept.join();
     drop(socket);
+    drop(silent);
+}
+
+#[test]
+fn dead_address_gets_only_its_share_of_the_connect_budget() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let live: SocketAddr = ([127, 0, 0, 1], lb.port).into();
+    let (silent, dead) = silent_socket();
+
+    let accept = lb.spawn_accept(|sock| sock);
+    accept.wait_ready();
+
+    let budget = Duration::from_secs(2);
+    let started = Instant::now();
+    let socket = SrtSocketBuilder::new()
+        .connect_timeout(budget)
+        .send_timeout(Duration::from_secs(5))
+        .connect(&[dead, live][..])
+        .expect("connect should walk past the silent address to the live one");
+    let elapsed = started.elapsed();
+
+    assert_eq!(socket.peer_addr().unwrap(), live);
+    // The silent address gets half the budget (two addresses left), so the
+    // whole connect ends inside the budget. Unscaled on purpose: a connect
+    // that gave the silent address the whole budget takes at least the
+    // budget, and the live share is the margin for the loopback handshake.
+    assert!(
+        elapsed < budget,
+        "the whole connect must end within its 2 s budget; elapsed={elapsed:?}",
+    );
+    // The silent address was dialled and waited out its share (1 s).
+    assert!(
+        elapsed >= Duration::from_millis(800),
+        "the silent address should have been given about half the budget; \
+         elapsed={elapsed:?}",
+    );
+    let _ = accept.join();
+    drop(socket);
+    drop(silent);
+}
+
+#[test]
+fn walk_over_silent_addresses_fails_within_one_budget() {
+    require_loopback!();
+    let (silent_a, a) = silent_socket();
+    let (silent_b, b) = silent_socket();
+    let (silent_c, c) = silent_socket();
+
+    let budget = Duration::from_millis(1500);
+    let started = Instant::now();
+    let result = SrtSocketBuilder::new()
+        .connect_timeout(budget)
+        .connect(&[a, b, c][..]);
+    let elapsed = started.elapsed();
+
+    match result {
+        Err(SrtConnectError::TimedOut) => {}
+        other => panic!("expected TimedOut, got {other:?}"),
+    }
+    // Each address gets a third of the budget, but libsrt checks the
+    // connect deadline once a second, so the last attempt can run up to a
+    // second past the budget. Unscaled on purpose: the wrong behaviour (a
+    // full budget per address) takes at least 4.5 s, so the bound is the
+    // budget plus that second plus 1.5 s of scheduling slack.
+    assert!(
+        elapsed < budget + Duration::from_secs(1) + Duration::from_millis(1500),
+        "three silent addresses must share one 1.5 s budget (plus libsrt's \
+         one-second deadline check and scheduling slack); elapsed={elapsed:?}",
+    );
+    assert!(
+        elapsed >= Duration::from_millis(1200),
+        "every silent address should have been dialled; elapsed={elapsed:?}",
+    );
+    drop(silent_a);
+    drop(silent_b);
+    drop(silent_c);
+}
+
+#[test]
+fn single_silent_address_gets_the_whole_budget() {
+    require_loopback!();
+    let (silent, dead) = silent_socket();
+
+    let budget = Duration::from_secs(1);
+    let started = Instant::now();
+    let result = SrtSocketBuilder::new()
+        .connect_timeout(budget)
+        .connect(dead);
+    let elapsed = started.elapsed();
+
+    match result {
+        Err(SrtConnectError::TimedOut) => {}
+        other => panic!("expected TimedOut, got {other:?}"),
+    }
+    assert!(
+        elapsed >= Duration::from_millis(900),
+        "a single address should wait out the whole 1 s budget; elapsed={elapsed:?}",
+    );
     drop(silent);
 }

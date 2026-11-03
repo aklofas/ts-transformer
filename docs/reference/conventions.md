@@ -393,7 +393,7 @@ rejected by `srt`, `tcps`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `secret` | Encryption passphrase | non-empty text; alone it means AES-256 | `rist` |
 | `session_timeout` (also `session-timeout`) | Session timeout | milliseconds | `rist` |
 | `congestion` (also `smoother`) | Congestion-control algorithm | `live` or `file` | `srt` |
-| `conntimeo` (also `connect_timeout`) | Connect deadline | milliseconds | `srt` |
+| `conntimeo` (also `connect_timeout`) | Deadline for the whole connect, shared across the resolved addresses; polled about once a second | milliseconds | `srt` |
 | `fc` (also `ffs`) | Flow-control window | packets | `srt` |
 | `inputbw` | Input bandwidth estimate for the send budget | bytes per second | `srt` |
 | `latency` (also `tsbpddelay`) | Receiver buffering delay | milliseconds | `srt` |
