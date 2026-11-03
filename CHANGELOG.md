@@ -345,6 +345,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The qualification record names the tag on a tag push and lists the release documents that changed since the soaked tree, and the bundle carries `TREE-EQUIVALENCE.txt`, the proof that nothing under `crates/` or `bindings/` changed between the soaked and the qualified commit.
 - The Python URL-corpus test takes its scheme families from the corpus header.
 - The version rail refuses a tag that is not `vMAJOR.MINOR.PATCH` (`vnext`, `v1.2.3-rc1`), so the three publish workflows stop before any registry write; a branch name is never read as a tag.
+- The C ABI rail pins the eight functions whose enum parameters were retyped to `int32_t`: their header prototypes may differ from the previous tag's only by that retype, any other change fails, and the suppression that admits the retype expires once the comparison baseline is v0.9.1 or later.
 
 ### Changed — tst-interop
 

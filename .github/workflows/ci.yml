@@ -1796,7 +1796,7 @@ jobs:
         run: |
           old="$(bash scripts/dev/prev-c-library.sh resolve)"
           bash scripts/dev/prev-c-library.sh header "$RUNNER_TEMP/prev-tstrans.h"
-          bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" --header "$RUNNER_TEMP/pkg/include/tstrans.h" --old-header "$RUNNER_TEMP/prev-tstrans.h" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
+          bash scripts/check/c/abi-compat.sh "$old" "$RUNNER_TEMP/pkg/lib/libtstrans.so" "$PREV_MINOR" "$HEAD_MINOR" --header "$RUNNER_TEMP/pkg/include/tstrans.h" --old-header "$RUNNER_TEMP/prev-tstrans.h" --old-tag "$PREV" 2>&1 | tee "$RUNNER_TEMP/abi-report.txt"
           exit "${PIPESTATUS[0]}"
 
       - name: Upload the abidiff report

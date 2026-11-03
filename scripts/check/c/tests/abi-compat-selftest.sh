@@ -6,19 +6,38 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RAIL="$HERE/../abi-compat.sh"
 
-if ! command -v abidiff >/dev/null 2>&1; then
-    exec bash "$RAIL" x x 0 0   # SKIP (exit 0), or FAIL under CI
-fi
-
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-for v in v1 v2_removed v2_struct v2_enum v2_added v1_opaque v2_opaque; do
-    cc -g -shared -fPIC -o "$tmp/$v.so" "$HERE/abi-fixtures/$v.c" || { echo "FAIL: cannot compile $v"; exit 1; }
-done
+fail=0
+FX="$HERE/abi-fixtures"
+
+# Prototype-pin rows need no library and no abidiff, so they run everywhere.
+# The fixtures borrow the suppressed name tst_sender_config_set_framing_mode on
+# purpose; they go with the enum-retype block in bindings/c/abi.suppr.
+proto() { # <desc> <want_rc> <message-substring|""> <args...>
+    local desc="$1" want="$2" msg="$3"; shift 3
+    bash "$RAIL" --check-prototypes "$@" >"$tmp/out" 2>&1; local got=$?
+    if [ "$got" = "$want" ] && { [ -z "$msg" ] || grep -qF -- "$msg" "$tmp/out"; }; then echo "ok: $desc"
+    else echo "FAIL: $desc (got rc=$got want=$want${msg:+, message \"$msg\"})"; sed 's/^/    /' "$tmp/out"; fail=1; fi
+}
+proto "retype: the accepted enum-to-int32_t retype passes"   0 "" "$FX/retype_old.h" "$FX/retype_new.h"
+proto "retype: a return type change fails"                   1 "changed beyond" "$FX/retype_old.h" "$FX/retype_ret.h"
+proto "retype: a parameter width change fails"               1 "changed beyond" "$FX/retype_old.h" "$FX/retype_wide.h"
+proto "retype: an unlisted enum spelling fails"              1 "changed beyond" "$FX/retype_other_old.h" "$FX/retype_other.h"
+proto "retype: identical headers pass"                       0 "" "$FX/retype_new.h" "$FX/retype_new.h"
+proto "retype: expiry at the baseline fails"                 1 "expired" --old-tag v0.9.1 "$FX/retype_new.h" "$FX/retype_new.h"
+proto "retype: before the expiry passes"                     0 "" --old-tag v0.9.0 "$FX/retype_new.h" "$FX/retype_new.h"
+proto "retype: v0.10.0 is after the expiry"                  1 "expired" --old-tag v0.10.0 "$FX/retype_new.h" "$FX/retype_new.h"
+
+if ! command -v abidiff >/dev/null 2>&1; then
+    bash "$RAIL" x x 0 0   # SKIP (exit 0), or FAIL under CI
+    rc=$?
+    [ "$fail" = 0 ] && exit "$rc"
+    exit 1
+fi
 
 printf 'int helper_not_tst(void) { return 0; }\n' >"$tmp/plain.c"
 cc -g -shared -fPIC -o "$tmp/plain.so" "$tmp/plain.c" || { echo "FAIL: cannot compile plain"; exit 1; }
-fail=0
 # Rows that name no --old-header get the tree's header, so the rail's CI rule
 # (an old header is required) is not what they exercise.
 TREE_H="$HERE/../../../../bindings/c/include/tstrans.h"
@@ -65,6 +84,13 @@ expect_msg "a stripped old library is a tool error"                  2 "no debug
 expect_msg "a stripped new library is a tool error"                  2 "no debug info" "$tmp/v1.so" "$tmp/v1_stripped.so" 3 4
 expect_msg "a library built without -g is a tool error"              2 "no debug info" "$tmp/v1_nodbg.so" "$tmp/v2_struct.so" 3 4
 expect_msg "an unreadable header is a tool error"                    2 "cannot read header" --header "$tmp/absent.h" "$tmp/v1.so" "$tmp/v1.so" 3 3
+# The enum-retype pin: the library change alone is suppressed by abi.suppr, the
+# prototype pin admits exactly the accepted retype on the suppressed names.
+# The first row also proves libabigail suppresses the retype under function-subtype-change.
+expect "retype: the DWARF enum-to-int32_t change with the retyped header passes" 0 --old-header "$FX/retype_old.h" --header "$FX/retype_new.h" "$tmp/v1_retype.so" "$tmp/v2_retype.so" 3 3
+expect_msg "retype: a return type change on a suppressed name fails"      1 "changed beyond" --old-header "$FX/retype_old.h" --header "$FX/retype_ret.h" "$tmp/v1_retype.so" "$tmp/v2_retype_ret.so" 3 3
+expect_msg "retype: a parameter width change on a suppressed name fails"  1 "changed beyond" --old-header "$FX/retype_old.h" --header "$FX/retype_wide.h" "$tmp/v1_retype.so" "$tmp/v2_retype_wide.so" 3 3
+expect_msg "retype: an unlisted spelling on a suppressed name fails"      1 "changed beyond" --old-header "$FX/retype_other_old.h" --header "$FX/retype_other.h" "$tmp/v1_retype_other.so" "$tmp/v2_retype_other.so" 3 3
 # nm hidden from PATH (a PATH of symlinks to everything but nm). This tool
 # list must grow when abi-compat.sh starts using another tool, or this row
 # fails for the wrong reason.
