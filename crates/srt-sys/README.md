@@ -34,8 +34,9 @@ cargo build --release --target aarch64-unknown-linux-gnu
 - A C-only cross compiler fails late, once CMake reaches the libsrt sources.
 - bindgen runs libclang for the host, so it needs the `--sysroot` argument
   above to find the target's headers.
-- By default the pkg-config probe for a system libsrt is refused when cross-compiling,
-  so the bundled libsrt is built; `SRT_FORCE_VENDORED=1` makes that explicit.
+- By default the pkg-config probe for a system libsrt is refused when
+  cross-compiling, so the bundled libsrt is built; `SRT_FORCE_VENDORED=1`
+  makes that explicit.
 - libsrt links the C++ standard library dynamically. The runtime image needs
   `libstdc++`; a Debian slim image has it, a distroless static image does not.
 

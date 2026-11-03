@@ -288,8 +288,9 @@ impl SrtSocketConfig {
 /// `udp_send_buffer_bytes`, `loss_max_ttl`, `too_late_packet_drop`,
 /// `packet_filter`, `congestion`, `recv_timeout`, `peer_idle_timeout` and
 /// `linger`. The rest (`connect_timeout`, `stream_id`, `role`) are
-/// caller-side and are stored but not applied. `send_timeout` is not applied to the listener either,
-/// but accepted sockets get it, and `recv_timeout`, from this config.
+/// caller-side and are stored but not applied. `send_timeout` is not applied
+/// to the listener either, but accepted sockets get it, and `recv_timeout`,
+/// from this config.
 /// Accepted sockets inherit the PRE options through libsrt.
 #[must_use]
 #[non_exhaustive]

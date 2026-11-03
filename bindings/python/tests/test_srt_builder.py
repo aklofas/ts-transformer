@@ -313,7 +313,11 @@ def test_negative_peer_idle_timeout_is_rejected() -> None:
 
 
 def test_positive_peer_idle_timeout_is_applied_on_loopback() -> None:
-    """Both ends set the knob (kwarg and chained setter) and still connect."""
+    """Both ends set the knob (kwarg and chained setter) and still connect.
+
+    The value itself is pinned by the Rust readback tests (peer_idle_timeout.rs); this proves the
+    knob crosses the binding without a config error.
+    """
     with tstrans.srt.Builder("srt://127.0.0.1:0?mode=listener").peer_idle_timeout_ms(8000).listen() as lst:
         _, port = lst.local_addr()
         box: list[tstrans.srt.Socket] = []

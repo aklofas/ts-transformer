@@ -51,7 +51,7 @@ fn dead_address_gets_only_its_share_of_the_connect_budget() {
     let accept = lb.spawn_accept(|sock| sock);
     accept.wait_ready();
 
-    let budget = Duration::from_secs(2);
+    let budget = Duration::from_secs(4);
     let started = Instant::now();
     let socket = SrtSocketBuilder::new()
         .connect_timeout(budget)
@@ -61,19 +61,21 @@ fn dead_address_gets_only_its_share_of_the_connect_budget() {
     let elapsed = started.elapsed();
 
     assert_eq!(socket.peer_addr().unwrap(), live);
-    // The silent address gets half the budget (two addresses left), so the
-    // whole connect ends inside the budget. Unscaled on purpose: a connect
-    // that gave the silent address the whole budget takes at least the
-    // budget, and the live share is the margin for the loopback handshake.
+    // The silent address gets half the budget (two addresses left), 2 s,
+    // which libsrt spends as two one-second slices, so the whole connect
+    // ends inside the budget. Unscaled on purpose: a connect that gave the
+    // silent address the whole budget takes at least the budget, and the
+    // live share is the margin for the loopback handshake.
     assert!(
         elapsed < budget,
-        "the whole connect must end within its 2 s budget; elapsed={elapsed:?}",
+        "the whole connect must end within its 4 s budget; elapsed={elapsed:?}",
     );
-    // The silent address was dialled and waited out its share (1 s).
+    // The silent address was dialled and waited out its 2 s share (two 1 s
+    // slices), then the live address connected.
     assert!(
-        elapsed >= Duration::from_millis(800),
-        "the silent address should have been given about half the budget; \
-         elapsed={elapsed:?}",
+        elapsed >= Duration::from_millis(1800),
+        "the silent address should have been given half the 4 s budget (two \
+         1 s slices); elapsed={elapsed:?}",
     );
     let _ = accept.join();
     drop(socket);
@@ -101,9 +103,9 @@ fn walk_over_silent_addresses_fails_within_one_budget() {
     // The first address gets a third of the budget and each later one an
     // even split of what is left, but libsrt checks the connect deadline
     // once a second, so the last attempt can run up to a second past the
-    // budget. Unscaled on purpose: the wrong behaviour (a
-    // full budget per address) takes at least 4.5 s, so the bound is the
-    // budget plus that second plus 1.5 s of scheduling slack.
+    // budget. Unscaled on purpose: the wrong behaviour (a full budget per
+    // address) takes at least 4.5 s, so the bound is the budget plus that
+    // second plus 1.5 s of scheduling slack.
     assert!(
         elapsed < budget + Duration::from_secs(1) + Duration::from_millis(1500),
         "three silent addresses must share one 1.5 s budget (plus libsrt's \
@@ -139,4 +141,35 @@ fn single_silent_address_gets_the_whole_budget() {
         "a single address should wait out the whole 1 s budget; elapsed={elapsed:?}",
     );
     drop(silent);
+}
+
+#[test]
+fn walk_dials_the_first_address_even_with_no_budget_left() {
+    require_loopback!();
+    let (silent_a, a) = silent_socket();
+    let (silent_b, b) = silent_socket();
+
+    let started = Instant::now();
+    let result = SrtSocketBuilder::new()
+        .connect_timeout(Duration::ZERO)
+        .connect(&[a, b][..]);
+    let elapsed = started.elapsed();
+
+    match result {
+        Err(SrtConnectError::TimedOut) => {}
+        other => panic!("expected TimedOut, got {other:?}"),
+    }
+    // libsrt checks a blocking connect's deadline once a second, so a dial
+    // that happened costs about a second even with nothing left to spend.
+    assert!(
+        elapsed >= Duration::from_millis(800),
+        "the first address must be dialled even with a spent budget; elapsed={elapsed:?}",
+    );
+    // The second address sees a spent budget and is not dialled.
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "a spent budget must not dial the second address; elapsed={elapsed:?}",
+    );
+    drop(silent_a);
+    drop(silent_b);
 }

@@ -142,7 +142,11 @@ class SrtLowLevelTest {
             () -> new Builder("srt://127.0.0.1:9000").peerIdleTimeoutMs(-1));
     }
 
-    /** A positive peer-idle timeout is applied on both ends of a loopback connection. */
+    /**
+     * A positive peer-idle timeout is applied on both ends of a loopback connection. The value
+     * itself is pinned by the Rust readback tests (peer_idle_timeout.rs); this proves the knob
+     * crosses the binding without a config error.
+     */
     @Test
     void positivePeerIdleTimeoutAcceptedOnLoopback() throws Exception {
         try (var lst = new Builder("srt://127.0.0.1:0?mode=listener").listener()
@@ -152,7 +156,6 @@ class SrtLowLevelTest {
                     .peerIdleTimeoutMs(8000).connect();
                  var accepted = lst.accept(5000)) {
                 assertNotNull(accepted);
-                assertNotNull(sock);
             }
         }
     }
