@@ -26,6 +26,9 @@ open 'srt://h?passphrase=abc' failed: can't connect	open 'srt://h?passphrase=<re
 'srt://u:p' x' s@h'	'srt://u:<redacted>@h'
 "srt://u:p" x" s@h"	"srt://u:<redacted>@h"
 'srt://h?token=a' b' can't	'srt://h?token=<redacted>'t
+# Only a later URL opened by the same quote ends the span; a bare scheme-looking word does not.
+'srt://u:x' y://z@h'	'srt://u:<redacted>@h'
+'srt://h?token=a' b://c'	'srt://h?token=<redacted>'
 
 # A multi-byte character directly before a scheme.
 “srt://u:p@h”	“srt://u:<redacted>@h”

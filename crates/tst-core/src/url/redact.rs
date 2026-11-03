@@ -43,6 +43,10 @@ const REDACTED: &str = "<redacted>";
 /// - text after a quoted URL, up to the last matching quote, is treated as
 ///   part of the URL, so `'srt://h?token=x' can't` loses `x' can`.
 ///
+/// One residual is not covered: a password that itself holds a quote, a
+/// space and a quote before a scheme (`'srt://u:x' 'y://z@h'`) reads as two
+/// quoted URLs, so the first part of it stays visible.
+///
 /// ```
 /// use tst_core::url::redact_url;
 /// assert_eq!(
@@ -70,15 +74,20 @@ pub fn redact_url(url: &str) -> String {
 }
 
 /// Where a span opened by quote `q` ends: the last `q` at or after `from`
-/// and before the next URL, not counting the `q` that opens that URL; the
-/// end of the input when there is no such `q`. Stopping before the next URL
-/// keeps a second quoted URL its own span.
+/// and before the next URL that is itself opened by `q`, not counting that
+/// opening `q`; the end of the input when there is no such `q`. Stopping
+/// there keeps a second quoted URL its own span, while a bare scheme-looking
+/// word inside the quoted text (a password holding `y://`) does not end it.
 fn closing_quote(s: &str, from: usize, q: char) -> usize {
-    let limit = match next_url(s, from) {
-        Some((start, _)) if s[..start].ends_with(q) => start - q.len_utf8(),
-        Some((start, _)) => start,
-        None => s.len(),
-    };
+    let mut limit = s.len();
+    let mut search = from;
+    while let Some((start, after_scheme)) = next_url(s, search) {
+        if s[..start].ends_with(q) {
+            limit = start - q.len_utf8();
+            break;
+        }
+        search = after_scheme;
+    }
     s[from..limit].rfind(q).map_or(s.len(), |n| from + n)
 }
 
