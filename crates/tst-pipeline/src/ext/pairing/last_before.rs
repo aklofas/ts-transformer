@@ -36,8 +36,8 @@ use tst_core::mpegts::demux::{DemuxEvent, DiscontinuityKind};
 /// reorder depth of common GOP structures at typical KLV rates.
 const LAST_BEFORE_DEPTH: usize = 8;
 
-/// How near the newest pre-flag KLV PTS the first KLV PES after a signalled
-/// discontinuity must be to count as the old-clock PES in flight: two
+/// How near the newest pre-flag PTS the first KLV or video PES after a
+/// signalled discontinuity must be to count as the old-clock PES in flight: two
 /// seconds, past the sample interval of a 1 Hz KLV feed plus its jitter.
 const OLD_CLOCK_WINDOW: i64 = 2 * 90_000;
 
@@ -111,7 +111,7 @@ impl LastBeforeState {
                         };
                         self.video_in_flight = self.last_video_pts;
                     }
-                    let mut out = self.flush();
+                    let mut out = self.drain_history();
                     out.push(PairerOutput::PassThrough(other));
                     out
                 } else {
@@ -135,7 +135,20 @@ impl LastBeforeState {
         }
     }
 
+    /// End-of-stream drain that also forgets the epoch state, so the next
+    /// feed starts clean.
     pub(super) fn flush(&mut self) -> Vec<PairerOutput> {
+        let out = self.drain_history();
+        self.in_flight = InFlight::No;
+        self.last_klv_pts = None;
+        self.last_video_pts = None;
+        self.video_in_flight = None;
+        out
+    }
+
+    /// Empties the history without touching the epoch state, so a boundary
+    /// that has just captured a suspect epoch keeps it.
+    fn drain_history(&mut self) -> Vec<PairerOutput> {
         self.history
             .drain(..)
             .filter(|slot| !slot.used)
@@ -702,6 +715,51 @@ mod tests {
         let _ = s.feed(video_event(10));
         let out = s.flush();
         assert!(out.is_empty());
+    }
+
+    /// Drives the public `Pairer::flush`, the promise callers rely on.
+    fn public_pairer() -> super::super::Pairer {
+        super::super::Pairer::last_before_pts(VIDEO_PID, KLV_PID, None)
+    }
+
+    fn assert_paired(out: &[PairerOutput]) {
+        assert!(matches!(out, [PairerOutput::Paired { .. }]), "got {out:?}");
+    }
+
+    #[test]
+    fn flush_clears_a_suspect_epoch() {
+        let mut p = public_pairer();
+        p.feed(klv_event(90_000));
+        p.feed(af_discontinuity(VIDEO_PID));
+        p.flush();
+        assert!(p.feed(klv_event(93_000)).is_empty());
+        assert_paired(&p.feed(video_event(93_000)));
+    }
+
+    #[test]
+    fn flush_clears_an_old_epoch() {
+        let mut p = public_pairer();
+        p.feed(klv_event(90_000));
+        p.feed(af_discontinuity(VIDEO_PID));
+        let out = p.feed(klv_event(93_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(_)]),
+            "got {out:?}"
+        );
+        p.flush();
+        assert!(p.feed(klv_event(93_000)).is_empty());
+        assert_paired(&p.feed(video_event(93_000)));
+    }
+
+    #[test]
+    fn flush_clears_the_video_in_flight_marker() {
+        let mut p = public_pairer();
+        p.feed(klv_event(900_000));
+        p.feed(video_event(900_000));
+        p.feed(af_discontinuity(VIDEO_PID));
+        p.flush();
+        assert!(p.feed(klv_event(903_000)).is_empty());
+        assert_paired(&p.feed(video_event(903_000)));
     }
 
     #[test]
