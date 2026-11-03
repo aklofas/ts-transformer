@@ -2115,6 +2115,79 @@ bindings = ["java:org.tstrans.srt.ManagedDemuxReceiver", "c:unaudited", "python:
 scenario_ids = []
 tier = "A"
 
+# capability: Aligned TS bytes the demuxer was fed (ts_bytes_demuxed): Rust DemuxReceiver/ManagedDemuxReceiver::ts_bytes_demuxed and a clonable TsBytesDemuxedHandle; C tst_<family>_get_ts_bytes_demuxed on every demux receiver; Python and JVM read it through the receiver.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::TsBytesDemuxedHandle"
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+bindings = ["c:n/a(read handle; the C getter reads the counter through the receiver)", "python:n/a(read handle; the binding reads the counter through the receiver)", "java:n/a(read handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::TsBytesDemuxedHandle::get"
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+bindings = ["c:n/a(read handle; the C getter reads the counter through the receiver)", "python:n/a(read handle; the binding reads the counter through the receiver)", "java:n/a(read handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::DemuxReceiver::ts_bytes_demuxed"
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+bindings = ["c:tst_demux_receiver_get_ts_bytes_demuxed", "python:tstrans.shells.DemuxReceiver.ts_bytes_demuxed", "java:org.tstrans.shells.DemuxReceiver.tsBytesDemuxed", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::ManagedDemuxReceiver::ts_bytes_demuxed"
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_terminal_flush.rs"]
+bindings = ["c:tst_managed_demux_receiver_get_ts_bytes_demuxed", "python:tstrans.srt.ManagedDemuxReceiver.ts_bytes_demuxed", "java:org.tstrans.srt.ManagedDemuxReceiver.tsBytesDemuxed", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::DemuxReceiver::ts_bytes_demuxed_handle"
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+bindings = ["c:n/a(Rust-only handle; the C getter reads the counter through the receiver)", "python:n/a(Rust-only handle; the binding reads the counter through the receiver)", "java:n/a(Rust-only handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::ManagedDemuxReceiver::ts_bytes_demuxed_handle"
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+bindings = ["c:n/a(Rust-only handle; the C getter reads the counter through the receiver)", "python:n/a(Rust-only handle; the binding reads the counter through the receiver)", "java:n/a(Rust-only handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::demux_receiver::TsBytesDemuxedHandle"
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+bindings = ["c:n/a(Rust-only handle; the C getter reads the counter through the receiver)", "python:n/a(Rust-only handle; the binding reads the counter through the receiver)", "java:n/a(Rust-only handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::demux_receiver::TsBytesDemuxedHandle::get"
+owning_tests = ["crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+bindings = ["c:n/a(Rust-only handle; the C getter reads the counter through the receiver)", "python:n/a(Rust-only handle; the binding reads the counter through the receiver)", "java:n/a(Rust-only handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 # ManagedRecvTransport backs the basic managed recv shell; graduated once
 # the JVM mirror org.tstrans.srt.ManagedReceiver existed.
 [[surface]]

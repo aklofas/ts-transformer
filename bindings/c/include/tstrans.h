@@ -50,13 +50,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 27` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 28` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 27
+#define TST_ABI_VERSION_MINOR 28
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -2856,6 +2856,27 @@ int tst_demux_receiver_get_stream_stats(struct tst_demux_receiver_t *p,
 
 #if defined(TST_HAS_SRT)
 /**
+ * Read the count of aligned TS bytes this receiver's demuxer has been fed
+ * since open into `*out`.
+ *
+ * Lock-free: it never waits for a thread parked in `tst_demux_receiver_recv_event`, and it is
+ * not reset by `tst_demux_receiver_reset_stats`. It stays readable after `tst_demux_receiver_cancel`; after
+ * `tst_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+ * `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstDemuxReceiver` returned by one of
+ * the `tst_demux_receiver_open*` functions. `out` must be NULL or point to a writable
+ * `uint64_t`.
+ */
+
+int tst_demux_receiver_get_ts_bytes_demuxed(struct tst_demux_receiver_t *p,
+                                            uint64_t *out);
+#endif
+
+#if defined(TST_HAS_SRT)
+/**
  * Open a `tst_demux_receiver_t` with default demux options.
  * Accepts `srt://host:port?...` URLs; `?mode=listener` routes through
  * the listener path (equivalent to `_open_listener`).
@@ -3863,6 +3884,28 @@ int tst_managed_demux_receiver_get_stream_last_seen_micros(struct tst_managed_de
 int tst_managed_demux_receiver_get_stream_stats(struct tst_managed_demux_receiver_t *p,
                                                 const struct tst_stream_stats_t **out_array,
                                                 size_t *out_count);
+#endif
+
+#if defined(TST_HAS_SRT)
+/**
+ * Read the count of aligned TS bytes this receiver's demuxer has been fed
+ * since open into `*out`.
+ *
+ * Lock-free: it never waits for a thread parked in `tst_managed_demux_receiver_recv_event`, and it is
+ * not reset by `tst_managed_demux_receiver_reset_stats`. It stays readable after `tst_managed_demux_receiver_cancel`; after
+ * `tst_managed_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+ * `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+ * The count spans reconnects, so it keeps growing across a re-accept.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstManagedDemuxReceiver` returned by one of
+ * the `tst_managed_demux_receiver_open*` functions. `out` must be NULL or point to a writable
+ * `uint64_t`.
+ */
+
+int tst_managed_demux_receiver_get_ts_bytes_demuxed(struct tst_managed_demux_receiver_t *p,
+                                                    uint64_t *out);
 #endif
 
 #if defined(TST_HAS_SRT)
@@ -7177,6 +7220,27 @@ int tst_rist_demux_receiver_get_stream_stats(struct TstRistDemuxReceiver *p,
 
 #if defined(TST_HAS_RIST)
 /**
+ * Read the count of aligned TS bytes this receiver's demuxer has been fed
+ * since open into `*out`.
+ *
+ * Lock-free: it never waits for a thread parked in `tst_rist_demux_receiver_next_event`, and it is
+ * not reset by `tst_rist_demux_receiver_reset_stats`. It stays readable after `tst_rist_demux_receiver_cancel`; after
+ * `tst_rist_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+ * `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstRistDemuxReceiver` returned by this
+ * family's open function. `out` must be NULL or point to a writable
+ * `uint64_t`.
+ */
+
+int tst_rist_demux_receiver_get_ts_bytes_demuxed(struct TstRistDemuxReceiver *p,
+                                                 uint64_t *out);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
  * Block until one typed `TstEvent` is ready, then populate
  * `*out_event` with the converted event.
  *
@@ -8189,6 +8253,27 @@ int tst_rtp_demux_receiver_get_stream_last_seen_micros(struct TstRtpDemuxReceive
 int tst_rtp_demux_receiver_get_stream_stats(struct TstRtpDemuxReceiver *p,
                                             const struct tst_stream_stats_t **out_array,
                                             size_t *out_count);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Read the count of aligned TS bytes this receiver's demuxer has been fed
+ * since open into `*out`.
+ *
+ * Lock-free: it never waits for a thread parked in `tst_rtp_demux_receiver_next_event`, and it is
+ * not reset by `tst_rtp_demux_receiver_reset_stats`. It stays readable after `tst_rtp_demux_receiver_cancel`; after
+ * `tst_rtp_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+ * `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstRtpDemuxReceiver` returned by this
+ * family's open function. `out` must be NULL or point to a writable
+ * `uint64_t`.
+ */
+
+int tst_rtp_demux_receiver_get_ts_bytes_demuxed(struct TstRtpDemuxReceiver *p,
+                                                uint64_t *out);
 #endif
 
 #if defined(TST_HAS_RTP)
@@ -11077,6 +11162,27 @@ int tst_tcp_demux_receiver_get_stream_stats(struct TstTcpDemuxReceiver *p,
 
 #if defined(TST_HAS_TCP)
 /**
+ * Read the count of aligned TS bytes this receiver's demuxer has been fed
+ * since open into `*out`.
+ *
+ * Lock-free: it never waits for a thread parked in `tst_tcp_demux_receiver_next_event`, and it is
+ * not reset by `tst_tcp_demux_receiver_reset_stats`. It stays readable after `tst_tcp_demux_receiver_cancel`; after
+ * `tst_tcp_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+ * `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstTcpDemuxReceiver` returned by this
+ * family's open function. `out` must be NULL or point to a writable
+ * `uint64_t`.
+ */
+
+int tst_tcp_demux_receiver_get_ts_bytes_demuxed(struct TstTcpDemuxReceiver *p,
+                                                uint64_t *out);
+#endif
+
+#if defined(TST_HAS_TCP)
+/**
  * Block until one typed `TstEvent` is ready, then populate
  * `*out_event` with the converted event.
  *
@@ -12128,6 +12234,27 @@ int tst_udp_demux_receiver_get_stream_last_seen_micros(struct TstUdpDemuxReceive
 int tst_udp_demux_receiver_get_stream_stats(struct TstUdpDemuxReceiver *p,
                                             const struct tst_stream_stats_t **out_array,
                                             size_t *out_count);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
+ * Read the count of aligned TS bytes this receiver's demuxer has been fed
+ * since open into `*out`.
+ *
+ * Lock-free: it never waits for a thread parked in `tst_udp_demux_receiver_next_event`, and it is
+ * not reset by `tst_udp_demux_receiver_reset_stats`. It stays readable after `tst_udp_demux_receiver_cancel`; after
+ * `tst_udp_demux_receiver_close` the pointer is freed, as for every getter. Returns 0, or
+ * `TST_E_INVALID_CONFIG` when `p` or `out` is null.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstUdpDemuxReceiver` returned by this
+ * family's open function. `out` must be NULL or point to a writable
+ * `uint64_t`.
+ */
+
+int tst_udp_demux_receiver_get_ts_bytes_demuxed(struct TstUdpDemuxReceiver *p,
+                                                uint64_t *out);
 #endif
 
 #if defined(TST_HAS_UDP)
