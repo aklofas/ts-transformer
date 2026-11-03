@@ -67,7 +67,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed — tst-core, tst-jni
 
-- `redact_url` no longer panics on a multi-byte character directly before a `scheme://` (reachable from the Python and JVM shell opens with an unsupported scheme), and redacts conservatively where a password's end is ambiguous: a raw `?` before the last `@` is treated as part of the userinfo, and a quoted URL runs to the last matching quote before the next URL opened by the same quote character, so text after a quoted URL may be redacted with it. A password or secret value that itself contains a quote, a space and a quote before a scheme is still not protected. Java `Redact.url` follows the same rules.
+- `redact_url` no longer panics on a multi-byte character directly before a `scheme://` (reachable from the Python and JVM shell opens with an unsupported scheme), and redacts conservatively where a password's end is ambiguous: a raw `?` before the last `@` is treated as part of the userinfo, and a quoted URL runs to the last matching quote before the next URL opened by the same quote character, so text after a quoted URL may be redacted with it. A password or secret value that holds the quote character followed by a space or by `, ; . : ) ] }` is still not protected: that quote reads as the end of the quoted URL. Java `Redact.url` follows the same rules.
 
 ### Fixed — tst-core
 

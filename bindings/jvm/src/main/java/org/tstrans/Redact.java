@@ -24,9 +24,10 @@ package org.tstrans;
  * other text, the URL runs on to the next quoted URL or the end, so
  * {@code 'srt://h?token=x' can't} loses everything after {@code token=}.
  *
- * <p>One residual is not covered: a password or a secret value that itself holds a quote, a
- * space and a quote before a scheme ({@code 'srt://u:x' 'y://z@h'}) reads as two quoted URLs,
- * so the first part of it stays visible.
+ * <p>One residual is not covered: a password or secret value that holds the quote character
+ * followed by a space or by <code>, ; . : ) ] &#125;</code> is not protected. That quote reads as
+ * the end of the quoted URL, so the rest of the secret stays visible ({@code 'srt://u:p' w@h} is
+ * unchanged). It cannot be told apart from a well-formed quoted URL followed by text.
  */
 public final class Redact {
     private static final String[] SECRET_KEYS =
@@ -91,11 +92,12 @@ public final class Redact {
 
     /**
      * Characters that may follow the quote that closes a quoted URL: a token separator,
-     * {@code ,}, {@code ;}, {@code .}, {@code :} or a closing bracket; identical to the Rust helper.
+     * {@code ,}, {@code ;}, {@code .}, {@code :} or a closing bracket; identical to the Rust
+     * helper.
      */
     private static boolean followsClosingQuote(char c) {
-        return isSeparator(c) || c == ',' || c == ';' || c == '.' || c == ':' || c == ')' || c == ']'
-            || c == '}';
+        return isSeparator(c) || c == ',' || c == ';' || c == '.' || c == ':'
+            || c == ')' || c == ']' || c == '}';
     }
 
     /** Offsets of the next {@code scheme://} at or after {@code from}: scheme start, text after. */
