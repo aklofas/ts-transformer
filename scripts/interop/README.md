@@ -827,7 +827,7 @@ anything.
 The release VM runs these steps through `release-vm-setup.sh` (a fresh host
 to a built checkout), `release-vm-corpus.sh` (the corpus phase) and
 `release-vm-soak.sh` (`preflight`, `launch`, `status`, `stop`, and the
-`ci-green` handshake the launch waits on); each prints `<stage> rc=N` lines
+`ci-green` handshake the launch waits on; the marker carries the sha the launch checks); each prints `<stage> rc=N` lines
 and a final marker, and `release-vm-soak.sh launch` reports success only
 once every role is alive. The release checklist (`docs/project/releasing.md`,
 step 6) names them in order.

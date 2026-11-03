@@ -32,7 +32,8 @@
 #            when nothing is left running.
 # launch     Requires the checkout at the sha and clean, DIR absent, and
 #            (with --wait-marker) the marker file present before anything
-#            starts; runs preflight; launches soak.sh detached (nohup +
+#            starts and carrying SHA (ci-green writes it; a marker for
+#            another commit or an empty one is refused); runs preflight; launches soak.sh detached (nohup +
 #            setsid, log DIR.launch.log); then waits until the run prints
 #            its `running until` line and every recorded role is alive,
 #            printing `SOAK-UP roles=N running_until=T`. A supervisor that
@@ -43,9 +44,11 @@
 #            reconnect count, the kernel's OOM-kill count, disk and load.
 #            Exit 1 when a role is dead or the marker exists.
 # ci-green   On a machine with an authenticated `gh`: waits until the ci,
-#            jvm-jar and python-wheels workflows each have a successful run
-#            on the sha, then creates the marker on the VM over ssh (or
-#            locally with target `local`). --dispatch-wheels REF starts the
+#            jvm-jar and python-wheels workflows each have a successful
+#            newest push or workflow_dispatch run on the sha (a red newest
+#            run stops it; pull_request runs and older successes do not
+#            count), then writes the sha into the marker on the VM over ssh
+#            (or locally with target `local`). --dispatch-wheels REF starts the
 #            wheels dry run once, after checking REF's head is the sha:
 #            REF is a branch or tag (`gh workflow run --ref` takes no sha),
 #            so push one at the frozen commit when main has moved on.
@@ -251,6 +254,10 @@ cmd_launch() {
   if [[ -n "$marker" ]]; then
     echo "launch: waiting for $marker (CI green on $sha)..."
     until [[ -f "$marker" ]]; do sleep 60; done
+    local marker_sha
+    marker_sha=$(tr -d '[:space:]' < "$marker")
+    [[ -n "$marker_sha" ]] || die "launch: $marker carries no sha; run ci-green for $sha (it writes the sha into the marker)"
+    [[ "$marker_sha" == "$sha" ]] || die "launch: $marker was written for $marker_sha, not $sha — run ci-green for this sha"
     echo "CI-GREEN seen at $(now)"
   fi
 
@@ -370,26 +377,34 @@ cmd_ci_green() {
     gh workflow run python-wheels.yml -R "$repo" --ref "$dispatch_ref" && echo "ci-green: wheels dry run dispatched on $dispatch_ref"
   fi
 
-  # successes <workflow file> — successful runs of it on the sha.
-  successes() {
-    gh api "repos/$repo/actions/workflows/$1/runs?head_sha=$sha&per_page=30" \
-      --jq '[.workflow_runs[] | select(.conclusion=="success")] | length'
+  # newest_full <workflow file> — "<status> <conclusion> <run id>" of the newest
+  # full run (push or workflow_dispatch) on the sha; the rule the qualification
+  # run's ci lookup uses.
+  newest_full() {
+    gh api "repos/$repo/actions/workflows/$1/runs?head_sha=$sha&per_page=100" \
+      | jq -f "$HERE/../ci/ci-run-select.jq" --arg allow_pr false \
+      | jq -r '"\(.status) \(.conclusion) \(.run_id // "-")"'
   }
-  unfinished() {
-    gh api "repos/$repo/actions/workflows/$1/runs?head_sha=$sha&per_page=30" \
-      --jq '[.workflow_runs[] | select(.status!="completed")] | length'
-  }
-  local c j w
+  local wf st concl rid pending
   while :; do
-    c=$(successes ci.yml); j=$(successes jvm-jar.yml); w=$(successes python-wheels.yml)
-    echo "$(now) ci=$c jvm-jar=$j wheels=$w (unfinished: ci=$(unfinished ci.yml) jvm-jar=$(unfinished jvm-jar.yml) wheels=$(unfinished python-wheels.yml))"
-    if [[ "$c" -ge 1 && "$j" -ge 1 && "$w" -ge 1 ]]; then break; fi
+    pending=0
+    for wf in ci.yml jvm-jar.yml python-wheels.yml; do
+      read -r st concl rid <<<"$(newest_full "$wf")"
+      echo "$(now) $wf: $st $concl run=$rid"
+      if [[ "$st" == completed && "$concl" == success ]]; then
+        continue
+      elif [[ "$st" == completed && "$concl" != missing ]]; then
+        die "ci-green: the newest full run of $wf on $sha (run $rid) concluded $concl; fix or rerun it, then run ci-green again"
+      fi
+      pending=1
+    done
+    [[ $pending -eq 0 ]] && break
     sleep 120
   done
   if [[ "$target" == local ]]; then
-    touch "${marker/#\~/$HOME}"
+    printf '%s\n' "$sha" > "${marker/#\~/$HOME}"
   else
-    ssh "${ssh_opts[@]}" "$target" "touch $marker" || die "ci-green: could not create $marker on $target"
+    ssh "${ssh_opts[@]}" "$target" "printf '%s\n' $sha > $marker" || die "ci-green: could not create $marker on $target"
   fi
   echo "CI-GREEN marked for $sha on $target ($marker) at $(now)"
 }

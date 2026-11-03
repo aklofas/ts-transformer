@@ -315,6 +315,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — release tooling
 
 - The qualification run's ci lookup selects the newest `push` or `workflow_dispatch` run on the commit (ties by run id) and records its event, run id, attempt and head commit; the collector refuses a `pull_request` run, a run without an event or a run on another commit as the ci leg of a main or tag record. A rehearsal on a pull-request head still reads its own run.
+- The release VM handshake (`release-vm-soak.sh ci-green`) waits for the newest `push` or `workflow_dispatch` run of each workflow and refuses a red one instead of counting any older success; the marker it writes carries the commit, and `launch` refuses a marker written for another commit.
 - The qualification collector refuses an evidence-archive corpus row that reports `overall_pass = true` while carrying a non-zero `parse_failures`, `invariant_failures` or `replay_failed`: `collect` exits 1 at load naming the row and the field, so a self-reported pass that its own counts contradict can no longer reach GO. The release-mode check repeats the refusal as a second line of defence.
 - The JVM build syncs the native libraries into the jar staging directory and fails when the jar lacks one, and the jar jobs compile and run a small named module on the module path against the jar they build, on each platform.
 - The shared URL corpus is also parsed through the JVM binding and compared with the recorded result.
