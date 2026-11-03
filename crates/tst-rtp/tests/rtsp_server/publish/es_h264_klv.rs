@@ -12,6 +12,7 @@ use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::{
     ClockAlignment, PublishMountHandle, PublishMountStats, RtspServer, RtspServerBuilder,
+    RtspServerError,
 };
 
 use crate::fixtures::raw_rtsp::scaled;
@@ -451,6 +452,36 @@ fn held_klv_reaches_the_app_on_graceful_stop() {
     let server = b.build().unwrap();
     let mount = server.add_publish_mount("/pub").unwrap();
     server.start().unwrap();
+    held_klv_and_open_au_reach_the_app_on_stop(&server, &mount);
+}
+
+/// The same flush after a first `start()` failed to bind and a retry
+/// succeeded: the failed attempt must not leave the server reporting its
+/// sessions as already ended, or `stop()` skips the drain and closes the
+/// application transport before the publisher session flushes.
+#[test]
+fn held_klv_reaches_the_app_on_graceful_stop_after_a_failed_start() {
+    let blocker = std::net::TcpListener::bind("127.0.0.1:0").expect("blocker bind");
+    let port = blocker.local_addr().expect("blocker addr").port();
+    let mut b = RtspServerBuilder::new(&format!("rtsp://127.0.0.1:{port}")).unwrap();
+    b.graceful_shutdown_drain(scaled(Duration::from_secs(5)));
+    let server = b.build().unwrap();
+    let mount = server.add_publish_mount("/pub").unwrap();
+    let err = server.start().expect_err("the port is taken");
+    assert!(
+        matches!(err, RtspServerError::BindAddrInUse),
+        "expected BindAddrInUse, got {err:?}"
+    );
+    drop(blocker);
+    server.start().expect("the retry binds the freed port");
+    held_klv_and_open_au_reach_the_app_on_stop(&server, &mount);
+}
+
+/// Publish 100 complete AUs, one open AU (no marker) and three KLV units
+/// held for lack of sender reports to `mount` on the started `server`,
+/// `stop()` it, and assert the flushed AU and units reach the application
+/// transport before it reads `Closed`.
+fn held_klv_and_open_au_reach_the_app_on_stop(server: &RtspServer, mount: &PublishMountHandle) {
     let port = server.local_addr().unwrap().port();
     let mut app_t = mount.clone().into_recv_transport().unwrap();
     // Quiet detector, deliberately unscaled (same as above).
@@ -493,7 +524,7 @@ fn held_klv_reaches_the_app_on_graceful_stop() {
             ),
         );
     }
-    let s = stats_when(&mount, scaled(Duration::from_secs(5)), |s| {
+    let s = stats_when(mount, scaled(Duration::from_secs(5)), |s| {
         s.rtp_packets_received == video_packets.len() as u64 + 4
     });
     assert_eq!(s.rtp_packets_received, video_packets.len() as u64 + 4);
