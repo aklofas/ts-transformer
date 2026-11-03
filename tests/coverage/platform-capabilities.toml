@@ -109,6 +109,28 @@ and that source_rejected stays 0.
 """
 
 [[platform_skip]]
+file = "crates/tst-rtp/tests/net_rtsp_client.rs"
+platform = "windows-msvc"
+capability = "unix_signals"
+class = "portability"
+note = """
+Only the `rtsp_client/signal_interrupt.rs` module (and its shared handler) is
+`#[cfg(unix)]`: a handled signal interrupting a blocking read (EINTR) has no
+Winsock equivalent. Every other test in the binary runs on every platform.
+"""
+
+[[platform_skip]]
+file = "crates/tst-rtp/tests/rtsp_client/signal_interrupt.rs"
+platform = "macos"
+capability = "per_thread_lookup"
+class = "portability"
+note = """
+The pump-thread test finds the pump by its name under `/proc/self/task` and
+signals it with `tgkill`, both Linux-only; macOS has no per-thread lookup. The
+unit test on the pump's read classification covers macOS.
+"""
+
+[[platform_skip]]
 file = "crates/tst-rtp/tests/net_rtp.rs"
 platform = "windows-msvc"
 capability = "unix_signals"

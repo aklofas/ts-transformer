@@ -7,6 +7,9 @@
 // Port discovery shared with `tests/net_conformance.rs`.
 #[path = "fixtures/ports.rs"]
 mod ports;
+#[cfg(unix)]
+#[path = "fixtures/signal.rs"]
+mod signal;
 #[path = "rtp/loopback_multicast.rs"]
 mod loopback_multicast;
 #[path = "rtp/loopback_unicast.rs"]

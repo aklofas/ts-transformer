@@ -4,7 +4,7 @@
 
 use std::io::Write;
 use std::net::TcpListener;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -15,25 +15,10 @@ use crate::fixtures::raw_rtsp_server::{
     SDP_BODY, answer_describe_and_setup, cseq_of, method_of, read_request,
 };
 use crate::fixtures::rtp_packets::build_rtp_packet;
+use crate::signal::{DELIVERED, install_handler};
 
-static DELIVERED: AtomicUsize = AtomicUsize::new(0);
-
-extern "C" fn on_sigusr1(_: libc::c_int) {
-    DELIVERED.fetch_add(1, Ordering::SeqCst);
-}
-
-/// Install a SIGUSR1 handler WITHOUT `SA_RESTART`, so an interrupted
-/// `read` returns `EINTR` on every Unix.
-fn install_handler() {
-    // SAFETY: a zeroed sigaction is valid; the handler touches one atomic.
-    unsafe {
-        let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = on_sigusr1 as *const () as usize;
-        sa.sa_flags = 0;
-        libc::sigemptyset(&mut sa.sa_mask);
-        assert_eq!(libc::sigaction(libc::SIGUSR1, &sa, std::ptr::null_mut()), 0);
-    }
-}
+// The `pumps.len() == 1` assertion and the shared `DELIVERED` counter assume
+// nextest's one-process-per-test.
 
 #[test]
 fn describe_survives_a_handled_signal() {
