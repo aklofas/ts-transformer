@@ -37,6 +37,35 @@ outputs:
 runs:
   using: composite
   steps:
+    # Before any cache restore: the Ubuntu images start short of disk. Same steps
+    # as .github/actions/free-disk (publish-guards does not follow a local action
+    # nested in another, so they are repeated here).
+    - id: free-disk-before
+      if: runner.os == 'Linux'
+      shell: bash
+      name: Disk before
+      run: |
+        df -h /
+        echo "avail_before=$(df -B1 --output=avail / | tail -1 | tr -d ' ')" >> "$GITHUB_OUTPUT"
+    - if: runner.os == 'Linux'
+      shell: bash
+      name: Remove unused preinstalled toolsets
+      run: |
+        for p in /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost; do
+          if [ -e "$p" ]; then sudo rm -rf "$p" || true; fi
+        done
+        if command -v docker >/dev/null 2>&1; then sudo docker image prune -af >/dev/null 2>&1 || true; fi
+    - if: runner.os == 'Linux'
+      shell: bash
+      name: Disk after
+      env:
+        BEFORE: ${{ steps.free-disk-before.outputs.avail_before }}
+      run: |
+        df -h /
+        after="$(df -B1 --output=avail / | tail -1 | tr -d ' ')"
+        line="$(awk -v b="$BEFORE" -v a="$after" 'BEGIN{g=1073741824; printf "free-disk: %.1f GiB → %.1f GiB (+%.1f GiB)", b/g, a/g, (a-b)/g}')"
+        echo "$line"
+        echo "$line" >> "$GITHUB_STEP_SUMMARY"
     - id: channel
       shell: bash
       env:

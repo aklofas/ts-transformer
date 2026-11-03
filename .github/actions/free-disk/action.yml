@@ -1,0 +1,38 @@
+name: free-disk
+description: >-
+  Linux only. Removes preinstalled toolsets this repository never uses and
+  prints the free space on / before and after, so a disk-full failure can be
+  told apart as the runner image or our tree. Run it before any cache restore.
+outputs:
+  avail_before:
+    description: Bytes available on / before the cleanup
+    value: ${{ steps.before.outputs.avail_before }}
+runs:
+  using: composite
+  steps:
+    - id: before
+      if: runner.os == 'Linux'
+      shell: bash
+      name: Disk before
+      run: |
+        df -h /
+        echo "avail_before=$(df -B1 --output=avail / | tail -1 | tr -d ' ')" >> "$GITHUB_OUTPUT"
+    - if: runner.os == 'Linux'
+      shell: bash
+      name: Remove unused preinstalled toolsets
+      run: |
+        for p in /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost; do
+          if [ -e "$p" ]; then sudo rm -rf "$p" || true; fi
+        done
+        if command -v docker >/dev/null 2>&1; then sudo docker image prune -af >/dev/null 2>&1 || true; fi
+    - if: runner.os == 'Linux'
+      shell: bash
+      name: Disk after
+      env:
+        BEFORE: ${{ steps.before.outputs.avail_before }}
+      run: |
+        df -h /
+        after="$(df -B1 --output=avail / | tail -1 | tr -d ' ')"
+        line="$(awk -v b="$BEFORE" -v a="$after" 'BEGIN{g=1073741824; printf "free-disk: %.1f GiB → %.1f GiB (+%.1f GiB)", b/g, a/g, (a-b)/g}')"
+        echo "$line"
+        echo "$line" >> "$GITHUB_STEP_SUMMARY"

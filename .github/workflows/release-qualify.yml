@@ -47,7 +47,7 @@ env:
 jobs:
   resolve:
     name: resolve the commit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       ref: ${{ steps.r.outputs.ref }}
@@ -163,7 +163,7 @@ jobs:
   fuzz:
     name: fuzz 60 s per target (${{ matrix.crate }})
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -174,6 +174,7 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.ref }}
           submodules: recursive
+      - uses: ./.github/actions/free-disk
 
       - name: Install build prerequisites
         run: |
@@ -256,7 +257,7 @@ jobs:
   abi:
     name: C ABI, C package, semver report
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
@@ -400,7 +401,7 @@ jobs:
   ci-lookup:
     name: ci result on this commit
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
@@ -446,12 +447,13 @@ jobs:
   sbom:
     name: CycloneDX SBOMs (C library, Python extension)
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.ref }}
+      - uses: ./.github/actions/free-disk
 
       - name: Generate one SBOM per binding crate
         # cargo-cyclonedx walks the whole workspace and writes one file next to
@@ -479,7 +481,7 @@ jobs:
     # Runs after every leg whatever its result: a failed leg is a line in the
     # record and a NO-GO, not a missing record.
     if: always() && needs.resolve.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -721,7 +723,7 @@ jobs:
     # project's own GitHub Release, not a registry publish; the called
     # workflows above never reach their publish jobs.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.qualify.outputs.verdict == 'GO'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write

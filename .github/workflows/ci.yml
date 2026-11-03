@@ -35,7 +35,7 @@ jobs:
   dispatch-sha:
     name: the sha input is the full tip commit
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - env:
@@ -69,7 +69,9 @@ jobs:
         include:
           - name: linux-x86_64
             platform: linux-x86_64
-            runner: ubuntu-latest
+            # Pinned: the Ubuntu 26 `ubuntu-latest` image starts short of disk; revisit
+            # when the free-disk probe shows headroom.
+            runner: ubuntu-24.04
             continue: false
             phase: all
           - name: linux-aarch64
@@ -831,15 +833,15 @@ jobs:
         pass: [default, no-default, all-features]
         include:
           - name: linux-x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             pass: default
             flags: ''
           - name: linux-x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             pass: no-default
             flags: --no-default-features
           - name: linux-x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             pass: all-features
             flags: --all-features
     steps:
@@ -1115,7 +1117,7 @@ jobs:
 
   test-linux-musl:
     name: test (linux-musl-x86_64, no-libsrt crates)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1156,7 +1158,7 @@ jobs:
 
   tst-rtp-client-only:
     name: test (transport bare planes + dependency lattice, linux-x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Three bare planes: the tokio-free client-only tst-rtp plane
     # (`--no-default-features --features tls`, what the planned tst-uniffi
@@ -1211,7 +1213,7 @@ jobs:
 
   no-std-baremetal:
     name: no_std bare-metal (compile + QEMU runtime)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1424,7 +1426,7 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke (nightly, compile only)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1506,7 +1508,7 @@ jobs:
 
   python-core:
     name: tst-py default tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # The default (non-pandas) pytest suite exercises Demuxer, Muxer, KLV
     # typed decode/encode, codec parsers, and io helpers. Python kinds come
@@ -1607,7 +1609,7 @@ jobs:
 
   python-pandas-extra:
     name: tst-py with [pandas] extra
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Sibling to `python-core`: same venv recipe, plus numpy + pandas to
     # exercise the `tstrans.pandas` adapters. The missing-extra
@@ -1666,7 +1668,7 @@ jobs:
 
   tst-c-feature-matrix:
     name: tst-c feature matrix (linux-x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Builds tst-c in all four feature-flag combinations and runs the
     # `feature_matrix_compile` integration test in each mode. Catches:
@@ -1727,7 +1729,7 @@ jobs:
 
   c-abi:
     name: C ABI vs previous tag (linux-x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1809,7 +1811,7 @@ jobs:
 
   deny:
     name: cargo-deny (advisories + licenses)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Dependency-advisory + license gate. Reads
     # Cargo.lock and the RustSec advisory DB only — no build, no submodules

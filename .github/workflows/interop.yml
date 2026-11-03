@@ -65,7 +65,7 @@ env:
 jobs:
   interop-matrix:
     name: interop matrix (linux-x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Worst-case budget: 161 cells at the run-matrix.sh default of 10s
     # each, plus per-cell settle/timeout margin (lib.sh's cell_timeout)
     # and a --release build of tst-interop's native-linking dependency
