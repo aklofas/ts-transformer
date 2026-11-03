@@ -376,6 +376,53 @@ const SOURCE_FIXUPS: &[SourceFixup] = &[
         old: "\nvoid _librist_crypto_psk_decrypt(struct rist_key *key,",
         new: "\nint _librist_crypto_psk_decrypt(struct rist_key *key,",
     },
+    // `_librist_crypto_aes_key` returns nothing either; it reports 0 when it
+    // installed the key and -1 when it set `bad_decryption` instead, so the
+    // decrypt can clear the lockout only after a successful rekey. Its other
+    // three callers (the encrypt, the passphrase set and the Advanced-profile
+    // nonce preannounce) ignore the result: the encrypt and the passphrase set
+    // never relied on it, and the preannounce already reads `bad_decryption`.
+    SourceFixup {
+        name: "psk-aes-key-status: definition",
+        file: "src/crypto/psk.c",
+        old: "static void _librist_crypto_aes_key(struct rist_key *key)\n",
+        new: "static int _librist_crypto_aes_key(struct rist_key *key)\n",
+    },
+    SourceFixup {
+        // An invalid key size refuses the install.
+        name: "psk-aes-key-status: key size",
+        file: "src/crypto/psk.c",
+        old: "        key->bad_decryption = true;\n        return;\n    }\n#if HAVE_MBEDTLS\n    mbedtls_md_context_t sha_ctx;\n",
+        new: "        key->bad_decryption = true;\n        return -1;\n    }\n#if HAVE_MBEDTLS\n    mbedtls_md_context_t sha_ctx;\n",
+    },
+    SourceFixup {
+        // The installed key reports 0; a PBKDF2 or setup failure (mbedTLS
+        // only) keeps setting `bad_decryption` and reports -1.
+        name: "psk-aes-key-status: tails",
+        file: "src/crypto/psk.c",
+        old: "    _librist_crypto_secure_zero(aes_key, sizeof(aes_key));\n\
+              \x20   return;\n\
+              #if HAVE_MBEDTLS\n\
+              fail:\n\
+              \x20   mbedtls_md_free(&sha_ctx);\n\
+              \x20   _librist_crypto_secure_zero(aes_key, sizeof(aes_key));\n\
+              \x20   /* Leave any prior key install in place but force the lockout flag so we\n\
+              \x20    * don't run AES-CTR with whatever happened to be on the stack. */\n\
+              \x20   key->bad_decryption = true;\n\
+              \x20   return;\n\
+              #endif\n",
+        new: "    _librist_crypto_secure_zero(aes_key, sizeof(aes_key));\n\
+              \x20   return 0;\n\
+              #if HAVE_MBEDTLS\n\
+              fail:\n\
+              \x20   mbedtls_md_free(&sha_ctx);\n\
+              \x20   _librist_crypto_secure_zero(aes_key, sizeof(aes_key));\n\
+              \x20   /* Leave any prior key install in place but force the lockout flag so we\n\
+              \x20    * don't run AES-CTR with whatever happened to be on the stack. */\n\
+              \x20   key->bad_decryption = true;\n\
+              \x20   return -1;\n\
+              #endif\n",
+    },
     SourceFixup {
         // A zero nonce returned without decrypting or flagging the packet, so
         // the caller processed clear bytes; it now reports -1 and is dropped.
@@ -401,12 +448,25 @@ const SOURCE_FIXUPS: &[SourceFixup] = &[
         new: "            (now - key->last_rekey) < RIST_REKEY_MIN_INTERVAL)\n            return -1;\n",
     },
     SourceFixup {
-        // A failed rekey set `bad_decryption` and returned; it now also
-        // reports -1, so the status alone decides the drop.
-        name: "psk-decrypt-status: rekey failure",
+        // The rekey read `bad_decryption` to detect a failed install, so the
+        // lockout seven undecryptable packets latch (or key over-use) outlived
+        // every later rekey and the key slot refused all traffic until the
+        // passphrase was reset. A successful install now clears it; a failed
+        // one keeps it and reports -1.
+        name: "psk-decrypt-status: rekey result",
         file: "src/crypto/psk.c",
-        old: "        if (key->bad_decryption)\n            return;\n        key->bad_count = 0;\n",
-        new: "        if (key->bad_decryption)\n            return -1;\n        key->bad_count = 0;\n",
+        old: "        _librist_crypto_aes_key(key);\n\
+              \x20       /* Only clear the flag if _librist_crypto_aes_key succeeded;\n\
+              \x20        * it sets bad_decryption=true on PBKDF2/setup failure. */\n\
+              \x20       if (key->bad_decryption)\n\
+              \x20           return;\n\
+              \x20       key->bad_count = 0;\n",
+        new: "        /* A key installed from the fresh nonce clears the lockout; a failed\n\
+              \x20        * install sets bad_decryption and returns -1, which keeps it. */\n\
+              \x20       if (_librist_crypto_aes_key(key) != 0)\n\
+              \x20           return -1;\n\
+              \x20       key->bad_decryption = false;\n\
+              \x20       key->bad_count = 0;\n",
     },
     SourceFixup {
         // Key over-use set `bad_decryption` and returned; it now also
@@ -425,6 +485,14 @@ const SOURCE_FIXUPS: &[SourceFixup] = &[
               void _librist_crypto_psk_encrypt(struct rist_key *key,",
         new: "    _librist_crypto_psk_aes_ctr(key, inbuf, outbuf, payload_len);\n    return 0;\n}\n\n\
               void _librist_crypto_psk_encrypt(struct rist_key *key,",
+    },
+    SourceFixup {
+        // The lockout log promised recovery on a new nonce, which the rekey
+        // never delivered; it now names the condition that clears it.
+        name: "psk-lockout-log",
+        file: "src/rist-common.c",
+        old: "\"Disabling packet processing till new NONCE\\n\"",
+        new: "\"Disabling packet processing until a fresh nonce rekeys successfully\\n\"",
     },
     SourceFixup {
         // The Advanced-profile caller checked only `bad_decryption`; it now
@@ -601,6 +669,20 @@ fn check_psk_decrypt_status(file: &str, text: &str) {
             let len = text[start..]
                 .find("void _librist_crypto_psk_encrypt(")
                 .expect("psk.c: `_librist_crypto_psk_encrypt` no longer follows the decrypt");
+            let aes_start = text
+                .find("static int _librist_crypto_aes_key(")
+                .expect("psk.c lost `static int _librist_crypto_aes_key(` after the fixups");
+            let aes_len = text[aes_start..]
+                .find("\n}\n")
+                .expect("psk.c: `_librist_crypto_aes_key` has no closing brace");
+            if text[aes_start..aes_start + aes_len].contains("return;") {
+                panic!(
+                    "rist-sys: `_librist_crypto_aes_key` in src/crypto/psk.c has a `return;` \
+                     no psk-aes-key-status fixup covers: re-check every return in the bumped \
+                     source and add a fixup that returns -1 (or 0 only after the key was \
+                     installed)"
+                );
+            }
             if text[start..start + len].contains("return;") {
                 panic!(
                     "rist-sys: `_librist_crypto_psk_decrypt` in src/crypto/psk.c has a \
