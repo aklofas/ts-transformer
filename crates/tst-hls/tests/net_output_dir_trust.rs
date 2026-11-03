@@ -100,6 +100,59 @@ fn private_output_dir_works_end_to_end() {
     );
 }
 
+const UMASK_CHILD_ENV: &str = "HLS_TRUST_UMASK_CHILD_DIR";
+
+/// Child half of `segments_and_playlist_are_never_group_or_other_writable`:
+/// the umask is process-wide, so it runs in a re-executed test binary.
+#[test]
+#[ignore = "run by segments_and_playlist_are_never_group_or_other_writable"]
+fn umask_child_writes_hls_files() {
+    let Some(dir) = std::env::var_os(UMASK_CHILD_ENV) else {
+        return;
+    };
+    let d = PathBuf::from(dir);
+    // SAFETY: umask has no preconditions; this process is the throwaway child.
+    unsafe { libc::umask(0o002) };
+    std::fs::create_dir(&d).unwrap();
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o750)).unwrap();
+    let mut p = HlsPublisher::with_config(config(&d)).unwrap();
+    p.push_ts(&ts_packets(2)).unwrap();
+    p.cut_segment().unwrap();
+    p.push_ts(&ts_packets(2)).unwrap();
+    p.cut_segment().unwrap();
+}
+
+#[test]
+fn segments_and_playlist_are_never_group_or_other_writable() {
+    let root = scratch("umask");
+    let d = root.join("out");
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "umask_child_writes_hls_files",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(UMASK_CHILD_ENV, &d)
+        .status()
+        .unwrap();
+    assert!(status.success(), "child failed: {status}");
+    let mut seen = Vec::new();
+    for entry in std::fs::read_dir(&d).unwrap() {
+        let entry = entry.unwrap();
+        let mode = entry.metadata().unwrap().permissions().mode();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        assert_eq!(mode & 0o022, 0, "{name}: {mode:o} is group/other writable");
+        assert_eq!(mode & 0o044, 0o044, "{name}: {mode:o} lost read access");
+        seen.push(name);
+    }
+    assert!(seen.iter().any(|n| n == "playlist.m3u8"), "{seen:?}");
+    assert!(
+        seen.iter().filter(|n| n.ends_with(".ts")).count() >= 2,
+        "{seen:?}"
+    );
+}
+
 #[test]
 fn trailing_separator_or_dot_does_not_look_through_a_symlink() {
     let root = scratch("slash");

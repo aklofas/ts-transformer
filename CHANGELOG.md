@@ -121,6 +121,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Every TLS surface (`tcps://`, `rtsps://`, `hlss://`, `wheps://`) negotiated TLS 1.3 only, although the documentation promised TLS 1.2 and 1.3; rustls is now built with TLS 1.2 support, so 1.2-only peers such as many RTSPS cameras connect.
 
+### Fixed — tst-hls
+
+- HLS segments and playlists are created with mode 0644 at most; a permissive umask (0002) in a group-readable output directory used to leave them writable by the group.
+
 ### Fixed — tst-hls, tst-webrtc
 
 - An `hls://`, `hlss://`, `whep://` or `wheps://` bind URL with `user:pass@` is now refused with an error naming the `auth_user`/`auth_pass` or `token` query keys, instead of starting a server with no authentication; the error never echoes the credential.

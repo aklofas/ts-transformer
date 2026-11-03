@@ -128,7 +128,9 @@ impl OutputDir {
                 self.dir.as_raw_fd(),
                 c.as_ptr(),
                 flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                0o666 as libc::c_uint,
+                // The umask only narrows this, and under a default ACL its
+                // group bits set the ACL mask, so no file is group-writable.
+                0o644 as libc::c_uint,
             )
         };
         if fd < 0 {
