@@ -1076,6 +1076,16 @@
           "expect": {
             "error_kind": "CONFIG_INVALID"
           },
+          "key": "peeridletimeo",
+          "role": "caller",
+          "scheme": "srt",
+          "url": "srt://127.0.0.1:31181?peeridletimeo=2147484"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "CONFIG_INVALID"
+          },
           "key": "fc",
           "role": "caller",
           "scheme": "srt",

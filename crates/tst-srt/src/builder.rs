@@ -83,7 +83,7 @@ impl SrtSocketBuilder {
         self
     }
     /// Set `SRTO_PEERIDLETIMEO`, how long the connection may hear nothing
-    /// from the peer before it breaks. See [`SrtSocketConfig::peer_idle_timeout`].
+    /// from the peer before it breaks, 1 to 2147483 ms. See [`SrtSocketConfig::peer_idle_timeout`].
     pub fn peer_idle_timeout(&mut self, t: Duration) -> &mut Self {
         self.config.peer_idle_timeout = Some(t);
         self
@@ -390,7 +390,7 @@ impl SrtListenerBuilder {
         self
     }
     /// Set `SRTO_PEERIDLETIMEO`, how long the connection may hear nothing
-    /// from the peer before it breaks. See [`SrtSocketConfig::peer_idle_timeout`].
+    /// from the peer before it breaks, 1 to 2147483 ms. See [`SrtSocketConfig::peer_idle_timeout`].
     pub fn peer_idle_timeout(&mut self, t: Duration) -> &mut Self {
         self.config.socket.peer_idle_timeout = Some(t);
         self

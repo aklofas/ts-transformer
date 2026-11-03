@@ -627,6 +627,14 @@ expect = { error_kind = "CONFIG_INVALID" }
 scheme = "srt"
 role = "caller"
 case = "invalid"
+key = "peeridletimeo"
+url = "srt://127.0.0.1:31181?peeridletimeo=2147484"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
 key = "fc"
 url = "srt://127.0.0.1:31152?fc=abc"
 expect = { error_kind = "CONFIG_INVALID" }

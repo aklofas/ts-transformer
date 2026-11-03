@@ -685,7 +685,7 @@ when both name the same option.
 | `packetfilter` | `SRTO_PACKETFILTER` | STRING | filter spec |
 | `congestion` | `SRTO_CONGESTION` | ENUM | `live` or `file` (lowercase); ffmpeg-style alias `smoother` (libsrt's pre-1.4.1 name) |
 | `conntimeo` | `SRTO_CONNTIMEO` | INT (ms) | non-negative; the whole connect's deadline, shared across the resolved addresses and polled about once a second; ffmpeg-style alias `connect_timeout` |
-| `peeridletimeo` | `SRTO_PEERIDLETIMEO` | INT (ms) | positive; values below about 5 s do not detect a silent peer sooner (see below) |
+| `peeridletimeo` | `SRTO_PEERIDLETIMEO` | INT (ms) | 1 to 2147483 (libsrt multiplies the value by 1000 into an int); values below about 5 s do not detect a silent peer sooner (see below) |
 | `linger` | `SRTO_LINGER` | INT (seconds) | non-negative; matches ffmpeg URL units; `0` closes immediately |
 | `udprcvbuf` | `SRTO_UDP_RCVBUF` | INT (bytes) | kernel UDP recv buffer; ffmpeg-style alias `recv_buffer_size`; Linux clamps to `net.core.rmem_max` |
 | `udpsndbuf` | `SRTO_UDP_SNDBUF` | INT (bytes) | kernel UDP send buffer; ffmpeg-style alias `send_buffer_size`; Linux clamps to `net.core.wmem_max` |

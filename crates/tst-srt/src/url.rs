@@ -779,7 +779,7 @@ pub const URL_KEYS: &[QueryKey<SrtSocketConfig, SrtUrlError>] = &[
     QueryKey::new(
         "peeridletimeo",
         &[],
-        "Peer idle timeout; values below about 5 s do not detect a silent peer sooner",
+        "Peer idle timeout, 1 to 2147483 ms (libsrt multiplies the value by 1000 into an int); values below about 5 s do not detect a silent peer sooner",
         "milliseconds",
         set_peer_idle_timeout,
     ),
