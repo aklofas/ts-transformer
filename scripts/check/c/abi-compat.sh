@@ -59,12 +59,12 @@
 # so a runner that lost the tool cannot pass silently.
 set -uo pipefail
 
-HEADER="" OLD_HEADER="" OLD_TAG="" CHECK_PROTOS=0 HEADER_GIVEN=0
+HEADER="" OLD_HEADER="" OLD_TAG="" CHECK_PROTOS=0 HEADER_GIVEN=0 OLD_HEADER_GIVEN=0
 args=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --header) [ $# -ge 2 ] || { echo "abi-compat: --header needs a path" >&2; exit 2; }; HEADER="$2"; HEADER_GIVEN=1; shift 2 ;;
-        --old-header) [ $# -ge 2 ] || { echo "abi-compat: --old-header needs a path" >&2; exit 2; }; OLD_HEADER="$2"; HEADER_GIVEN=1; shift 2 ;;
+        --old-header) [ $# -ge 2 ] || { echo "abi-compat: --old-header needs a path" >&2; exit 2; }; OLD_HEADER="$2"; OLD_HEADER_GIVEN=1; shift 2 ;;
         --old-tag) [ $# -ge 2 ] || { echo "abi-compat: --old-tag needs a tag" >&2; exit 2; }; OLD_TAG="$2"; shift 2 ;;
         --check-prototypes) CHECK_PROTOS=1; shift ;;
         *) args+=("$1"); shift ;;
@@ -339,7 +339,7 @@ if [ -s "$tmp/added" ] && [ "$NEW_MAJOR" -le "$OLD_MAJOR" ] && [ "$NEW_MINOR" -l
     exit 1
 fi
 if [ -f "$tmp/retype.regexp" ] && [ "$NEW_MAJOR" -le "$OLD_MAJOR" ]; then
-    if [ "$HEADER_GIVEN" -eq 1 ] && [ -n "$OLD_HEADER" ]; then
+    if [ "$HEADER_GIVEN" -eq 1 ] && [ "$OLD_HEADER_GIVEN" -eq 1 ]; then
         grep -E "$(cat "$tmp/retype.regexp")" "$tmp/new.sym" >"$tmp/names" || true
         check_prototypes "$OLD_HEADER" "$HEADER" "$tmp/names" || exit 1
     else

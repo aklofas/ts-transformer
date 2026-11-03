@@ -36,6 +36,10 @@ if ! command -v abidiff >/dev/null 2>&1; then
     exit 1
 fi
 
+for v in v1 v2_removed v2_struct v2_enum v2_added v1_opaque v2_opaque v1_retype v2_retype v2_retype_ret v2_retype_wide v1_retype_other v2_retype_other; do
+    cc -g -shared -fPIC -o "$tmp/$v.so" "$HERE/abi-fixtures/$v.c" || { echo "FAIL: cannot compile $v"; exit 1; }
+done
+
 printf 'int helper_not_tst(void) { return 0; }\n' >"$tmp/plain.c"
 cc -g -shared -fPIC -o "$tmp/plain.so" "$tmp/plain.c" || { echo "FAIL: cannot compile plain"; exit 1; }
 # Rows that name no --old-header get the tree's header, so the rail's CI rule
