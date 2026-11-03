@@ -312,6 +312,22 @@ jobs:
           RIST_FORCE_VENDORED: "1"
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
+      # Import smoke: install the wheel just built into the setup-python
+      # interpreter and import the native transports and WebRTC, so a wheel
+      # that builds but cannot load (e.g. a missing librist / libsrt dylib) or
+      # that lost a module (`tstrans/__init__.py` skips an absent submodule)
+      # is caught here. The macOS leg is required: a failure fails this job,
+      # and with it the publish `needs:` and the qualification leg.
+      # Runs from the repo root, where no `tstrans` source dir shadows the
+      # installed package.
+      - name: Import smoke (installed wheel)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c "import sys; assert sys.version_info >= (3, 11)"
+          python -m pip install --no-index --find-links bindings/python/dist tstrans
+          python -c "import tstrans, tstrans.rist, tstrans.srt, tstrans.webrtc; print(tstrans.__version__)"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheel-macos-${{ matrix.target }}
