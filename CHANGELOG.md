@@ -179,13 +179,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-jni (BREAKING)
 
-- `ListenRules.set`/`remove` and `ListenRule.acceptWith` throw `IllegalArgumentException` for a string with an unpaired UTF-16 surrogate; such a string was decoded lossily at the JNI boundary, so two distinct Java strings could name one rule. Pass well-formed UTF-16.
 - A byte-sized `int` argument outside 0..=255 (`pushKlv`/`pushKlvTo` `metadataServiceId`, a `MispTimestamp` `timeStatus`, `CoreId.version`, the slice-header `nalUnitType`, `H264DepayConfig.payloadType`, a data stream type) throws `IllegalArgumentException` instead of wrapping modulo 256; a refused push queues nothing.
 - `MuxerConfig.Builder.programNumber` outside 0..=0xFFFF, `pmtPid` outside 0x0010..=0x1FFE, `pcrPid` other than -1 or that range, a `Pairer` PID outside 0x0010..=0x1FFE and a `lastSeenMicros(pid)` outside 0..=0x1FFF throw `IllegalArgumentException` instead of wrapping modulo 65536 (a wrapped value configured another PID silently; `lastSeenMicros(0x10101)` answered for PID 0x101). Keep the values inside the documented ranges.
-- `DemuxerConfig.Builder.strictMode(null)` and `av1Carriage(null)` throw `NullPointerException`. Pass a non-null value.
 
 ### Changed — tst-jni
 
+- `ListenRules.set`/`remove` and `ListenRule.acceptWith` throw `IllegalArgumentException` for a string with an unpaired UTF-16 surrogate; such a string was decoded lossily at the JNI boundary, so two distinct Java strings could name one rule.
+- `DemuxerConfig.Builder.strictMode(null)` and `av1Carriage(null)` throw `NullPointerException`.
 - `Builder.maxBandwidthBps` is documented as bytes per second; the value was always passed to `SRTO_MAXBW` unchanged.
 
 ### Security — tst-jni
@@ -226,12 +226,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ManagedStatsHandle::stats` no longer waits behind a Blocking-mode replay; `ManagedRecvTransport` returns `Ok(0)` for an empty buffer in every state; `Pairer::last_before_pts` pairs reordered frames; the nearest pairer releases frames buffered before a raw PTS wrap.
 - A mutator panic inside a binding call now cancels the shell's transport before dropping it, and drops it with the slot lock released, so a managed sender's final flush cannot park the binding; a cancel handle the caller already holds reads cancelled after such a panic. A panicking close whose value's `Drop` also panics is contained instead of aborting, and so is a panic payload whose destructor raises a second panicking payload (that second payload is leaked).
 
-### Changed — tst-srt (BREAKING)
-
-- `ListenRules::set` refuses a reject code above `i32::MAX - 1000` with `ListenRuleError::ReasonOutOfRange`; libsrt cannot send such a code. Use a reject code at or below `i32::MAX - 1000`.
-
 ### Fixed — tst-srt
 
+- `ListenRules::set` refuses a reject code above `i32::MAX - 1000` with `ListenRuleError::ReasonOutOfRange`; libsrt cannot send such a code.
 - `SrtSocket::stream_id()` drops libsrt's trailing NUL padding; a one-character stream ID used to read back as `"a\0\0\0"`.
 - A listener applies peer latency, send buffers and input bandwidth to the sockets it accepts.
 - `accept_timeout` no longer waits past its timeout when libsrt retires a queued connection between readiness and the accept, and its epoll wait no longer overflows libsrt's millisecond timeout multiply.

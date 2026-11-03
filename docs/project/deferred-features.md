@@ -2028,7 +2028,7 @@ and the two below.
   segment-cutting wrapper) is not supported under `ManagedTransport`.
 - **Why deferred:** The cut logic belongs inside the publisher, so a
   managed wrapper sees one transport rather than a cutter in front of it.
-  That move is scheduled before 1.0 (the 0.9.2 release plan, package P8);
+  That move is scheduled before 1.0;
   until then the combination is documented as unsupported.
 - **Trigger to revisit:** The publisher-side cut logic landing, or a
   consumer that needs reconnecting segmented output earlier.
@@ -2072,7 +2072,7 @@ and the two below.
   layout. Services that share one temporary directory (LocalSystem) are
   the exposed case, and a correct ACL check needs Windows-specific code
   and runners to prove it.
-- **Trigger to revisit:** The 0.9.2 HTTP-servers package (P7), where the
+- **Trigger to revisit:** A later release, where the
   HLS Windows check and the JVM cache-root hardening are paired.
 
 ### Bounded drain when a RIST sender closes
@@ -2083,7 +2083,7 @@ and the two below.
   `flush()` before closing.
 - **Why deferred:** The drain has to live inside the `tst-rist` close
   (Rust and C) with a documented bound, and the bound needs a ruling.
-- **Trigger to revisit:** The 0.9.2 transports package, or a consumer
+- **Trigger to revisit:** A later release, or a consumer
   that loses the tail of a RIST stream at close.
 
 ### Per-viewer WHEP panic containment
@@ -2093,7 +2093,7 @@ and the two below.
   viewer's handling is wrapped per viewer.
 - **Why deferred:** Containing each viewer is a design question for the
   WHEP server (what it reports and does with a viewer ended by a panic).
-- **Trigger to revisit:** The 0.9.2 WHEP server design, or a panic
+- **Trigger to revisit:** The WHEP server design, or a panic
   reaching a deployed server.
 
 ## Resolved (historical)
