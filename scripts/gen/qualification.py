@@ -1014,12 +1014,20 @@ def attestation_statements(gh_output_json):
     return out
 
 
-def _attests(stmt, digest, repo):
-    wf = stmt.get("predicate", {}).get("buildDefinition", {}).get("externalParameters", {}).get("workflow", {})
+def _workflow(stmt):
+    return stmt.get("predicate", {}).get("buildDefinition", {}).get("externalParameters", {}).get("workflow", {})
+
+
+def _covers(stmt, digest, repo):
+    wf = _workflow(stmt)
     return (stmt.get("predicateType") == SLSA_PROVENANCE
             and any(s.get("digest", {}).get("sha256") == digest for s in stmt.get("subject", []))
             and wf.get("path") == ATTESTATION_WORKFLOW
             and wf.get("repository") == "https://github.com/" + repo)
+
+
+def _release_ref(ref):
+    return ref == "refs/heads/main" or bool(re.fullmatch(r"refs/tags/v[0-9]+\.[0-9]+\.[0-9]+", str(ref)))
 
 
 def release_eligible(rec, root, sha, digest, attestations, repo=None):
@@ -1041,9 +1049,15 @@ def release_eligible(rec, root, sha, digest, attestations, repo=None):
         if changed:
             why.append("the record's commit %s differs from %s outside the release documents (%d path(s)): %s"
                        % (rec_sha[:12], sha[:12], len(changed), ", ".join(changed[:5])))
-    if attestations is not None and not any(_attests(s, digest, repo) for s in attestations):
-        why.append("no build-provenance attestation by release-qualify.yml covers sha256:%s; "
-                   "commit the bundle's qualification.json byte for byte" % digest)
+    if attestations is not None:
+        covering = [s for s in attestations if _covers(s, digest, repo)]
+        if not covering:
+            why.append("no build-provenance attestation by release-qualify.yml covers sha256:%s; "
+                       "commit the bundle's qualification.json byte for byte" % digest)
+        elif not any(_release_ref(_workflow(s).get("ref")) for s in covering):
+            why.append("no build-provenance attestation by release-qualify.yml from main or a release tag "
+                       "covers sha256:%s (found ref %s); commit the bundle's qualification.json byte for byte"
+                       % (digest, ", ".join(sorted({str(_workflow(s).get("ref")) for s in covering}))))
     return why
 
 
@@ -1054,6 +1068,8 @@ def cmd_release_eligible(args):
         with open(args.json, "rb") as f:
             raw = f.read()
         rec = json.loads(raw)
+        if not isinstance(rec, dict):
+            raise ValueError("not a JSON object")
     except (OSError, ValueError) as e:
         die("cannot read %s: %s" % (args.json, e))
     digest = hashlib.sha256(raw).hexdigest()
@@ -1065,12 +1081,14 @@ def cmd_release_eligible(args):
             try:
                 attestations = attestation_statements(
                     run_gh(["api", "repos/%s/attestations/sha256:%s" % (repo, digest)]))
+                if not all(isinstance(s, dict) for s in attestations):
+                    raise ValueError("an attestation statement is not a JSON object")
             except subprocess.CalledProcessError as e:
                 # No attestation at all is a 404: a reason, not a tooling failure.
                 if "404" not in (e.stderr or ""):
                     raise
                 attestations = []
-        except (OSError, subprocess.CalledProcessError, ValueError, KeyError) as e:
+        except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError, AttributeError) as e:
             die("gh could not list the attestations: %s" % (getattr(e, "stderr", None) or e))
     why = release_eligible(rec, args.root, args.sha, digest, attestations, repo=None if attestations is None else repo)
     for w in why:

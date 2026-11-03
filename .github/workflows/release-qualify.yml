@@ -137,6 +137,9 @@ jobs:
 
   jvm-jar:
     needs: resolve
+    permissions:
+      contents: read
+      attestations: read
     uses: ./.github/workflows/jvm-jar.yml
     with:
       ref: ${{ needs.resolve.outputs.ref }}
@@ -146,10 +149,12 @@ jobs:
     needs: resolve
     # GitHub refuses a called workflow whose (skipped) publish job asks for
     # id-token when this caller does not grant it. dry_run keeps that job from
-    # running; the grant only lets the workflow load.
+    # running; the grant only lets the workflow load. The same holds for the
+    # attestations: read grants on the jvm-jar and python-wheels callers.
     permissions:
       contents: read
       id-token: write
+      attestations: read
     uses: ./.github/workflows/python-wheels.yml
     with:
       ref: ${{ needs.resolve.outputs.ref }}
