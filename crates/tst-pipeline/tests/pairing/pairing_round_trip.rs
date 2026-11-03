@@ -14,7 +14,8 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DiscontinuityKind};
 use tst_core::mpegts::mux::{
-    KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
+    AudioCodec, KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder,
+    VideoCodec as MuxVideoCodec,
 };
 use tst_pipeline::ext::pairing::{Pairer, PairerConfig, PairerMode, PairerOutput};
 
@@ -448,6 +449,51 @@ fn last_before_pts_drops_the_old_clock_video_completing_after_new_clock_klv() {
             "video 903000",
             "paired 3000 0",
             "paired 6000 0",
+        ]
+    );
+}
+
+/// The program's PCR rides an audio PID, and only that PID signals the clock
+/// restart. The pairer learns the PCR PID from the program map, so the flag
+/// ends the old epoch even though it names neither paired PID.
+#[test]
+fn last_before_pts_clears_at_a_signalled_discontinuity_on_an_audio_pcr_pid() {
+    const AUDIO_PID: u16 = 0x101;
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(VIDEO_PID, MuxVideoCodec::H264);
+        prog.add_audio(AUDIO_PID, AudioCodec::Aac);
+        prog.add_klv(KLV_PID, KlvStreamType::PrivateData, true);
+        prog.pcr_pid(AUDIO_PID);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    mux.push_klv(&dummy_klv(), Pts90khz::new(90_000), 0x00)
+        .unwrap();
+    for pts in [90_000, 93_000] {
+        mux.push_video(&build_h264_au(0xAA), Pts90khz::new(pts), true)
+            .unwrap();
+    }
+    mux.push_audio(b"old", Pts90khz::new(90_000)).unwrap();
+    // New clock, later than every old-clock PTS so the old KLV would be
+    // eligible if it were kept. The audio PES carrying the flag leads it.
+    mux.push_audio(b"new", Pts90khz::new(900_000)).unwrap();
+    for pts in [900_000, 903_000] {
+        mux.push_video(&build_h264_au(0xBB), Pts90khz::new(pts), true)
+            .unwrap();
+    }
+    let mut pkts = to_ts_packets(&drain_mux(&mut mux));
+    let flagged = nth_pusi_index(&pkts, AUDIO_PID, 1);
+    set_discontinuity(&mut pkts[flagged]);
+    assert_eq!(
+        pair_shape(&pkts),
+        [
+            "paired 90000 90000",
+            "video 93000",
+            "video 900000",
+            "video 903000"
         ]
     );
 }

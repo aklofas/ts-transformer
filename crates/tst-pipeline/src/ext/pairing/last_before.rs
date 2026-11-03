@@ -8,8 +8,9 @@
 //! KLV's) still find the sample that preceded it.
 //!
 //! The history is cleared at an epoch boundary: `ReconnectDiscontinuity`, or
-//! `Discontinuity { kind: AdaptationFieldFlag }` on the video or KLV PID;
-//! never-used entries leave as `UnpairedKlv` ahead of the passed-through event.
+//! `Discontinuity { kind: AdaptationFieldFlag }` on the video PID, the KLV PID
+//! or the PCR PID of the program carrying the video (learned from its
+//! `ProgramMap`); never-used entries leave as `UnpairedKlv` ahead of the passed-through event.
 //!
 //! A signalled discontinuity does not end the KLV PES in flight on the KLV
 //! PID: it completes after the flag, on the old clock its header was coded
@@ -59,6 +60,9 @@ enum InFlight {
 pub(super) struct LastBeforeState {
     video_pid: u16,
     klv_pid: u16,
+    /// PCR PID of the program carrying `video_pid`, once its program map has
+    /// passed. A flag there resets the time base both paired PIDs run on.
+    pcr_pid: Option<u16>,
     freshness_ticks: Option<i64>,
     /// Oldest at the front. An entry stays after it pairs; one that
     /// leaves (eviction or flush) without ever pairing is `UnpairedKlv`.
@@ -83,6 +87,7 @@ impl LastBeforeState {
         Self {
             video_pid,
             klv_pid,
+            pcr_pid: None,
             freshness_ticks,
             history: VecDeque::with_capacity(LAST_BEFORE_DEPTH + 1),
             last_klv_pts: None,
@@ -97,6 +102,11 @@ impl LastBeforeState {
             super::EventClass::Video(v) => self.handle_video(v),
             super::EventClass::Klv(k) => self.handle_klv(k),
             super::EventClass::Other(other) => {
+                if let DemuxEvent::ProgramMap(pmt) = &other
+                    && pmt.streams.iter().any(|s| s.pid == self.video_pid)
+                {
+                    self.pcr_pid = Some(pmt.pcr_pid);
+                }
                 if self.is_epoch_boundary(&other) {
                     // A reconnect resets the demuxer, so no PES survives it.
                     if matches!(other, DemuxEvent::ReconnectDiscontinuity) {
@@ -122,15 +132,20 @@ impl LastBeforeState {
     }
 
     /// True for the events that start a new epoch: a transport reconnect, or
-    /// a signalled discontinuity on the video or KLV PID. A `ContinuityJump`
-    /// (packet loss) and any event on another PID are not epochs.
+    /// a signalled discontinuity on the video PID, the KLV PID or the PCR PID
+    /// of their program. A `ContinuityJump` (packet loss) and any event on
+    /// another PID are not epochs.
     fn is_epoch_boundary(&self, event: &DemuxEvent) -> bool {
         match event {
             DemuxEvent::ReconnectDiscontinuity => true,
             DemuxEvent::Discontinuity {
                 stream,
                 kind: DiscontinuityKind::AdaptationFieldFlag,
-            } => stream.pid == self.video_pid || stream.pid == self.klv_pid,
+            } => {
+                stream.pid == self.video_pid
+                    || stream.pid == self.klv_pid
+                    || self.pcr_pid == Some(stream.pid)
+            }
             _ => false,
         }
     }
@@ -225,8 +240,10 @@ impl LastBeforeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tst_core::mpegts::common::StreamTypeCode;
     use tst_core::mpegts::demux::{
-        DiscontinuityKind, MetadataKind, SamplePayload, StreamId, StreamKind, VideoCodec,
+        DiscontinuityKind, MetadataKind, ProgramMap, SamplePayload, StreamId, StreamInfo,
+        StreamKind, VideoCodec,
     };
     use tst_core::shared::SharedBytes;
 
@@ -322,6 +339,64 @@ mod tests {
         let out = s.feed(video_event(90_000));
         assert!(
             matches!(&out[..], [PairerOutput::UnpairedVideo(_)]),
+            "got {out:?}"
+        );
+    }
+
+    fn program_map(program_number: u16, pcr_pid: u16, pids: &[u16]) -> DemuxEvent {
+        DemuxEvent::ProgramMap(ProgramMap {
+            program_number,
+            pcr_pid,
+            pmt_pid: 0x20,
+            streams: pids
+                .iter()
+                .map(|&pid| StreamInfo {
+                    pid,
+                    stream_type: StreamTypeCode::from_byte(0x1B),
+                    kind: StreamKind::Video(VideoCodec::H264),
+                    program_number,
+                    raw_descriptors: Vec::new(),
+                })
+                .collect(),
+            klv_links: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn a_signalled_discontinuity_on_the_pcr_pid_clears_the_history() {
+        const AUDIO_PID: u16 = 0x101;
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(program_map(1, AUDIO_PID, &[VIDEO_PID, AUDIO_PID, KLV_PID]));
+        s.feed(klv_event(90_000));
+        let out = s.feed(af_discontinuity(AUDIO_PID));
+        assert!(
+            matches!(
+                &out[..],
+                [PairerOutput::UnpairedKlv(k), PairerOutput::PassThrough(_)] if k.pts.as_ticks() == 90_000
+            ),
+            "got {out:?}"
+        );
+        let out = s.feed(video_event(900_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedVideo(v)] if v.pts.as_ticks() == 900_000),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_flag_on_another_programs_pcr_pid_keeps_the_history() {
+        let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
+        s.feed(program_map(1, VIDEO_PID, &[VIDEO_PID, KLV_PID]));
+        s.feed(program_map(2, 0x201, &[0x201, 0x202]));
+        s.feed(klv_event(90_000));
+        let out = s.feed(af_discontinuity(0x201));
+        assert!(
+            matches!(&out[..], [PairerOutput::PassThrough(_)]),
+            "got {out:?}"
+        );
+        let out = s.feed(video_event(93_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 90_000),
             "got {out:?}"
         );
     }
