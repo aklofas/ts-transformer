@@ -192,9 +192,9 @@ int main(int argc, char **argv) {
     }
 
     /*
-     * Normal teardown. _close frees the handle's heap allocation
-     * regardless of internal state (closed, cancelled, or still-open).
-     * Double-close is a no-op.
+     * Normal teardown. _close frees the handle, whatever its internal
+     * state (closed, cancelled, or still-open). Calling it again on the
+     * same pointer is undefined behaviour; NULL is a no-op.
      */
     tst_receiver_close(rx);
     fclose(out);

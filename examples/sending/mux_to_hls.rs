@@ -1,11 +1,13 @@
 //! mux_to_hls — read an MPEG-TS file and re-mux to HLS segments + playlist.
 //!
 //! WHY this example exists:
-//!   Demonstrates the new `Publisher` trait family by piping a real `.ts` file
-//!   into the HLS publisher. Verifies the end-to-end stack: MuxPublisher →
+//!   Exercises the `Publisher` trait family end to end: MuxPublisher →
 //!   HlsPublisher → on-disk .ts segments + .m3u8 + internal HTTP server.
-//!   KLV passes through transparently; STANAG 4609-aware players still
-//!   decode the metadata from the HLS segments.
+//!   The example cuts the input file into 64 KiB chunks and pushes each as
+//!   an H.264 keyframe. It does not demux the input, so KLV and the
+//!   original timing are not carried into the HLS output. A real re-mux
+//!   demuxes the file and pushes the access units with their PTS; see the
+//!   receiving examples for the demux side.
 //!
 //! HOW to run:
 //!   cargo run -p tst-examples --example mux_to_hls -- input.ts /tmp/hls 127.0.0.1:8080

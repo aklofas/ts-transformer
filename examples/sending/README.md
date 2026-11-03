@@ -133,9 +133,12 @@ or `ffprobe rtsp://127.0.0.1:8554/live`.
 cargo run -p tst-examples --example mux_to_hls -- input.ts /tmp/hls 127.0.0.1:8080
 ```
 
-Pipes a real `.ts` file through the `Publisher` trait family:
-`MuxPublisher` → `HlsPublisher` → on-disk `.ts` segments + `.m3u8` +
-an internal HTTP server. KLV passes through transparently. Verify with
+Exercises the `Publisher` trait family: `MuxPublisher` → `HlsPublisher` →
+on-disk `.ts` segments + `.m3u8` + an internal HTTP server. The example cuts
+the input into 64 KiB chunks and pushes each as an H.264 keyframe. It does
+not demux the input, so KLV and the original timing are not carried. A real
+re-mux demuxes the file and pushes the access units with their PTS (see
+[`../receiving/`](../receiving/) for demuxing). Verify with
 `ffplay`/`vlc`/`mpv` against `http://localhost:8080/playlist.m3u8`.
 
 Cookbook: [Serve MPEG-TS as HLS](../../docs/cookbook/sending/hls.md), [HLS + KLV to a web player](../../docs/cookbook/sending/hls-klv-to-web.md).

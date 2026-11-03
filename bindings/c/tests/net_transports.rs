@@ -8,6 +8,9 @@
 #[allow(dead_code)]
 #[path = "common/mod.rs"]
 mod common;
+#[allow(dead_code)]
+#[path = "common/net.rs"]
+mod common_net;
 #[path = "transports/hls_publish_smoke.rs"]
 mod hls_publish_smoke;
 #[path = "transports/rist_cancel_from_other_thread.rs"]

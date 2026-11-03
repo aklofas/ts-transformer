@@ -8,6 +8,9 @@
 #[allow(dead_code)]
 #[path = "common/mod.rs"]
 mod common;
+#[allow(dead_code)]
+#[path = "common/net.rs"]
+mod common_net;
 #[path = "receiving/cancel_first.rs"]
 mod cancel_first;
 #[path = "receiving/demux_receiver_loopback.rs"]

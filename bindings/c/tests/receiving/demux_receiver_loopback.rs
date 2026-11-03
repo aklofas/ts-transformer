@@ -37,7 +37,8 @@ use tstrans::sender::raw_sender::{tst_raw_sender_close, tst_raw_sender_open};
 
 use tstrans::stats::TstDemuxReceiverStats;
 
-use crate::common::{last_error_msg, parked, scaled};
+use crate::common::{last_error_msg, scaled};
+use crate::common_net::parked;
 
 #[test]
 fn loopback_mux_sender_to_demux_receiver_delivers_pmt_and_sample_and_eos() {
@@ -352,7 +353,7 @@ fn loopback_last_seen_micros_reports_after_sample_and_zero_for_unknown_pid() {
 /// in `_recv_event` (which holds the handle's slot) and after `_cancel`.
 #[test]
 fn loopback_ts_bytes_demuxed_answers_while_recv_event_is_parked_and_after_cancel() {
-    let port = crate::common::free_udp_port();
+    let port = crate::common_net::free_udp_port();
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
 
     // A connected pair that never sends: the receive stays parked.
