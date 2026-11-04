@@ -20,14 +20,14 @@ CI. A cold build takes 3–5 minutes; warm builds seconds.
 ## Before you push
 
 CI (`.github/workflows/ci.yml`) runs fmt + clippy, three test modes on four
-platforms, doctests, nightly rustdoc, 45 bash rails and three ratchets.
+platforms, doctests, nightly rustdoc, the bash rails under `scripts/check/` and three ratchets.
 Run the same set locally from the workspace root:
 
 ```bash
 export SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-for feats in srt rtp udp tcp hls rist udp,tcp,hls,rist; do    # per-feature tst-c clippy
+for feats in srt rtp udp tcp hls rist udp,tcp,hls,rist srt,rtp tcp,hls,rtp,tls; do    # per-feature tst-c clippy
   cargo clippy -p tst-c -p tst-c-core --all-targets --no-default-features \
     --features "tst-c/${feats//,/,tst-c/}" -- -D warnings
 done
@@ -36,10 +36,15 @@ cargo nextest run --workspace --no-default-features --no-fail-fast
 cargo nextest run --workspace --all-features --no-fail-fast
 cargo test --doc --workspace --no-fail-fast
 RUSTDOCFLAGS="-D warnings" cargo +nightly doc --workspace --no-deps --all-features
-for s in $(find scripts/check embedded/scripts/check -name '*.sh' ! -name 'freertos-srt.sh'); do
+for s in $(find scripts/check embedded/scripts/check -name '*.sh' ! -name 'freertos-srt.sh' ! -name 'abi-compat.sh'); do
   bash "$s" </dev/null || echo "FAIL: $s"
 done
 ```
+
+`freertos-srt.sh` takes a gate target and `abi-compat.sh` takes two libraries
+and their ABI minors, so CI runs each explicitly (the `c-abi` job gives
+`abi-compat.sh` the previous tag's library and header); the sweep runs the
+`abi-compat` self-test under `scripts/check/c/tests/` instead.
 
 Read the rail output, not only the exit codes: a rail prints `SKIP:` or
 `WARNING:` when a prerequisite is missing (a built Python extension for
