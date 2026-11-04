@@ -712,11 +712,15 @@ loop {
         eprintln!("recording error: {e}");
         break; // falls through to the flush below
     }
-    demux.feed_aligned(&pkt)?;
+    if let Err(e) = demux.feed_aligned(&pkt) {
+        eprintln!("demux error: {e}");
+        break; // falls through to the flush below
+    }
     while let Some(ev) = demux.next_event() { /* handle ev */ }
 }
 demux.flush();
 while let Some(ev) = demux.next_event() { /* handle ev */ }
+// Then return the error that ended the loop, if any (see the example).
 ```
 
 The loop is yours, so two duties are too:

@@ -1296,8 +1296,8 @@ try (Receiver rx = Receiver.open("tcp://127.0.0.1:9000");
         }
     } finally {
         demux.flush();                              // the final unbounded PES
+        for (DemuxEvent ev; (ev = demux.nextEvent()) != null; ) { /* ... */ }
     }
-    for (DemuxEvent ev; (ev = demux.nextEvent()) != null; ) { /* ... */ }
 }
 ```
 

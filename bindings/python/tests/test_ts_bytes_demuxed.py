@@ -114,7 +114,12 @@ def test_ts_bytes_demuxed_after_close_returns_last_value(kind: str) -> None:
     n = rx.ts_bytes_demuxed()
     assert n > 0
     rx.close()
-    assert rx.ts_bytes_demuxed() == n
+    # Packets still in flight may be counted between the read above and the
+    # close, so the closing value may exceed `n`; after close it is fixed.
+    after = rx.ts_bytes_demuxed()
+    assert after >= n
+    assert after % 188 == 0
+    assert rx.ts_bytes_demuxed() == after
 
 
 def test_rtp_ts_bytes_demuxed_counts_the_stream() -> None:
