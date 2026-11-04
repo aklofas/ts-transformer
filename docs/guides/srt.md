@@ -675,8 +675,8 @@ when both name the same option.
 | `peerlatency` | `SRTO_PEERLATENCY` | INT (ms) | non-negative |
 | `mss` | `SRTO_MSS` | INT | u16 range |
 | `payloadsize` | `SRTO_PAYLOADSIZE` | INT | at most 1456 (libsrt's live-mode maximum); ffmpeg-style aliases `pkt_size`, `payload_size` |
-| `maxbw` | `SRTO_MAXBW` | INT64 | u64 range; non-negative only |
-| `inputbw` | `SRTO_INPUTBW` | INT64 | u64 range |
+| `maxbw` | `SRTO_MAXBW` | INT64 | 0 to u64::MAX; non-negative only |
+| `inputbw` | `SRTO_INPUTBW` | INT64 | 0 to i64::MAX |
 | `oheadbw` | `SRTO_OHEADBW` | INT | 5..=100 |
 | `streamid` | `SRTO_STREAMID` | STRING | UTF-8, ≤512 bytes; ffmpeg-style alias `srt_streamid` |
 | `lossmaxttl` | `SRTO_LOSSMAXTTL` | INT | u32 range |
@@ -736,7 +736,7 @@ is never mutated by URL parsing.
 
 ### Strictness
 
-Strict ASCII canonical forms — matches libsrt apps' own URL parser:
+Strict ASCII canonical forms, stricter than libsrt's own apps (no sign, no leading zeros, no base-0 prefixes such as `0x`):
 
 - Integers: decimal digits only, without a sign or leading zeros and with
   no `ms`/`s` suffixes; the signed options also refuse a negative value.

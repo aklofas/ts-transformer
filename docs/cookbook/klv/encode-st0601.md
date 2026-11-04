@@ -8,7 +8,7 @@
 
 Reach for this when synthesizing KLV for tests, generating fixtures, or translating from a different metadata format in a gateway. Every field on `UasDatalinkLs` is `Option<T>` — set `Some(...)` on the fields you want emitted, leave the rest as `None`.
 
-`encode_to_vec` auto-emits Tag 1 (16-bit running-sum checksum, mandated last) and Tag 65 (UAS LS Version Number, mandated present) when the caller didn't set them. So a default-constructed record with a few typed fields produces wire bytes that satisfy strict-compliance validation out of the box.
+`encode_to_vec` auto-emits Tag 1 (16-bit running-sum checksum, mandated last) and Tag 65 (UAS LS Version Number, mandated present) when the caller didn't set them. They do not make a record strict-compliant: `decode_strict_compliance` also requires Tag 2 (Precision Time Stamp) first, so set `timestamp_us` (or use `encode_strict_compliance`, which refuses a record without it).
 
 ```rust,no_run
 use tst_core::klv::st0601::{UasDatalinkLs, encode_to_vec};

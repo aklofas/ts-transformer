@@ -365,9 +365,9 @@ infers the link when there is exactly one video PID in the PMT
 (surfaces in `klv_links` as `LinkSource::Inferred`); if there are
 zero or multiple video PIDs it cannot infer. The issue
 `NonConformantIssue::MissingMetadataDescriptor` is raised only when the
-descriptor is absent and no link can be inferred. A link is read only
-from the descriptor's private data, never from bytes that merely look
-like a PID. A `0x15` stream whose `metadata_descriptor` names a
+descriptor is absent and no link can be inferred. For a well-formed
+`metadata_descriptor` the link is read only from its private data; a
+malformed descriptor falls back to its trailing two bytes. A `0x15` stream whose `metadata_descriptor` names a
 non-KLV `metadata_format` is `Unknown(0x15)`, and `StreamSpec::Data`
 accepts it.
 
