@@ -160,7 +160,7 @@ fn a_dead_path_is_restarted_for_the_next_pick() {
         &run,
         &[("TST_CORPUS_TEST_RECEIVE_DIE_AFTER", "tcp:1")],
     );
-    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let summary = json(&run.join("replay.json"));
     let verdicts = summary["verdicts"].as_array().unwrap();
     let of =
@@ -168,6 +168,19 @@ fn a_dead_path_is_restarted_for_the_next_pick() {
     let tcp = of("tcp");
     assert_eq!(tcp.len(), 2, "{summary}");
     assert!(tcp.iter().all(|v| v["pass"] == true), "{summary}");
+    assert_eq!(summary["pass"], false, "{summary}");
+    let exits = &summary["unexpected_exits_by_path"];
+    assert_eq!(exits["udp"], serde_json::json!([]), "{summary}");
+    let tcp_exits = exits["tcp"].as_array().unwrap();
+    // The hook is per child: the restarted child also leaves after its
+    // first verdict, which is the second pick's.
+    assert_eq!(tcp_exits.len(), 2, "{summary}");
+    assert_eq!(tcp_exits[0]["after_pick"], tcp[0]["sha256"], "{summary}");
+    assert_eq!(tcp_exits[1]["after_pick"], tcp[1]["sha256"], "{summary}");
+    assert!(
+        tcp_exits.iter().all(|e| e["status"] == "exit code 0"),
+        "{summary}"
+    );
     // The restart is named by the pick it preceded: the second.
     let second = tcp[1]["sha256"].as_str().unwrap();
     assert_eq!(
@@ -526,4 +539,61 @@ fn a_prefixed_replay_survives_into_a_passing_report() {
     assert!(row["replay_files"].as_u64().unwrap() > 0, "{row}");
     assert_eq!(row["overall_pass"], true, "{row}");
     assert!(!row.to_string().contains("earlier sweep"), "{row}");
+}
+
+#[test]
+fn a_child_that_dies_after_the_last_verdict_fails_the_replay() {
+    let (dir, _) = two_files("rp-die-last");
+    let run = dir.join("run");
+    sweep(&dir, &run);
+    let out = replay(
+        &dir,
+        &run,
+        &[("TST_CORPUS_TEST_RECEIVE_DIE_AFTER", "tcp:2")],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let summary = json(&run.join("replay.json"));
+    assert_eq!(summary["pass"], false, "{summary}");
+    assert_eq!(summary["failed"], 0, "{summary}");
+    let tcp_exits = summary["unexpected_exits_by_path"]["tcp"]
+        .as_array()
+        .unwrap();
+    assert_eq!(tcp_exits.len(), 1, "{summary}");
+    let last = summary["verdicts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|v| v["path"] == "tcp")
+        .unwrap()["sha256"]
+        .clone();
+    assert_eq!(tcp_exits[0]["after_pick"], last, "{summary}");
+    assert_eq!(
+        summary["restarted_before_by_path"]["tcp"],
+        serde_json::json!([]),
+        "{summary}"
+    );
+}
+
+#[test]
+fn a_clean_replay_records_no_unexpected_exit_and_an_old_summary_reads_as_none() {
+    let (dir, _) = two_files("rp-clean-exits");
+    let run = dir.join("run");
+    sweep(&dir, &run);
+    let out = replay(&dir, &run, &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let summary = json(&run.join("replay.json"));
+    for path in ["tcp", "udp"] {
+        assert_eq!(
+            summary["unexpected_exits_by_path"][path],
+            serde_json::json!([]),
+            "{summary}"
+        );
+    }
+    // An older replay.json without the field still parses.
+    let mut v = summary.clone();
+    v.as_object_mut()
+        .unwrap()
+        .remove("unexpected_exits_by_path");
+    let parsed: tst_interop::corpus::replay::ReplaySummary = serde_json::from_value(v).unwrap();
+    assert!(parsed.unexpected_exits_by_path.is_empty());
 }

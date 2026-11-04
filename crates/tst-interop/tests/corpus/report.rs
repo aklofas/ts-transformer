@@ -88,6 +88,7 @@ fn replay(pass: bool) -> ReplaySummary {
         rss_slope_kb_per_hour_by_path: slope,
         rss_judged_by_path: BTreeMap::new(),
         rss_note_by_path: BTreeMap::new(),
+        unexpected_exits_by_path: BTreeMap::new(),
         restarted_before_by_path: BTreeMap::new(),
         pass,
     }
