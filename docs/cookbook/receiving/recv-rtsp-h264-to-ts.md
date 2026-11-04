@@ -74,7 +74,10 @@ with RtspClient.connect_h264(cfg) as session:
             # needed.
             #
             # B-frame note: with B-frames the PTS values arrive out of
-            # order, and mux.push_video handles the DTS for you.
+            # order. mux.push_video writes PTS only (no DTS), so B-frame
+            # content needs mux.push_video_to_with_dts() with a DTS taken
+            # from the encoder. Low-latency live cameras rarely use
+            # B-frames.
             mux.push_video(
                 au.annexb,
                 pts=Pts90khz.from_raw(au.pts),
