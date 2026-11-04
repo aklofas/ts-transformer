@@ -61,11 +61,9 @@ runs:
           sudo timeout 300 rm -rf "$p" || echo "free-disk: rm $p exited $? (bounded at 300 s)"
           echo "free-disk: $p removed in $((SECONDS - t0)) s"
         done
-        if command -v docker >/dev/null 2>&1; then
-          t0=$SECONDS
-          sudo timeout 120 docker image prune -af >/dev/null 2>&1 || echo "free-disk: docker image prune exited $? (bounded at 120 s)"
-          echo "free-disk: docker images pruned in $((SECONDS - t0)) s"
-        fi
+        # No docker image prune: the runner builds a Docker action's container
+        # before the first step, and `prune -a` deleted it (cargo-deny then
+        # failed at `docker run` with "Unable to find image").
     - if: runner.os == 'Linux'
       shell: bash
       name: Disk after
