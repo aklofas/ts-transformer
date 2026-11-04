@@ -29,8 +29,9 @@ crate::binding_record! {
         /// Number of `ProgramMap` events emitted (one per PMT version seen).
         pub program_maps_seen: u64,
         /// Number of distinct PMT version_number values seen, including the
-        /// initial sighting. Resets to zero when the stats are reset, so the next PMT
-        /// always increments this counter.
+        /// initial sighting. `reset_stats` zeroes the counter but keeps the PMT
+        /// topology, so a repeat of the already-known version is not counted;
+        /// only a new `version_number` increments it.
         pub pmt_versions_seen: u64,
         /// Total discontinuity events emitted across all PIDs.
         pub discontinuities: u64,

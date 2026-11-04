@@ -628,7 +628,9 @@ impl RejectReason {
     }
 
     /// The raw reject code libsrt carries for this reason. Inverse of
-    /// `RejectReason::from_raw`: `from_raw(r.raw()) == r` for every variant.
+    /// `RejectReason::from_raw`: numeric identity only,
+    /// `from_raw(r.raw()).raw() == r.raw()`; `Other(1000)` round-trips to
+    /// `Fallback`.
     pub fn raw(&self) -> i32 {
         match *self {
             RejectReason::Unknown => 0,

@@ -70,7 +70,8 @@ pub struct ReconnectPolicy {
     /// `None` with a zero backoff (a zero `Constant`, or an `Exponential`
     /// with a zero base or a zero cap) is refused by
     /// [`ReconnectPolicy::validate`] and by every managed constructor: it
-    /// would retry in a tight loop with no pacing.
+    /// would retry in a tight loop with no pacing. A non-zero but tiny wait
+    /// is accepted and spins: one retry per wait.
     pub max_attempts: Option<u32>,
 
     /// Backoff strategy between attempts. Default: exponential 100ms..=10s.

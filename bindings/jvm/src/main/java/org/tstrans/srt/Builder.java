@@ -19,7 +19,7 @@ import org.tstrans.SrtException;
  * <p><strong>URL wins on conflict.</strong> Query parameters embedded in the URL
  * (e.g. {@code ?latency=120}) are applied AFTER the chainable setters, so the
  * URL has final say on any knob that appears in both places. This mirrors
- * tst-py's {@code Builder} semantics (Q4-A precedence rule: URL overlay
+ * tst-py's {@code Builder} semantics (the URL overlay
  * unconditionally overwrites).
  *
  * <p><strong>Rendezvous mode.</strong> {@link #rendezvous()} is provided for
