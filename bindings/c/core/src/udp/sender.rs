@@ -199,7 +199,7 @@ pub unsafe extern "C" fn tst_udp_sender_flush(p: *mut TstUdpSender) -> libc::c_i
 /// Snapshot stats for a `tst_udp_sender_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the sender has been cancelled.
+/// null, or `TST_E_CLOSED` if a caught panic retired the shell.
 ///
 /// # Safety
 ///
@@ -225,7 +225,7 @@ pub unsafe extern "C" fn tst_udp_sender_get_stats(
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
 /// `TST_E_NOT_AVAILABLE` if the transport has no live stats
 /// (e.g., socket not yet connected or already closed), or
-/// `TST_E_CLOSED` if the handle has been cancelled.
+/// `TST_E_CLOSED` if a caught panic retired the shell.
 ///
 /// # Safety
 ///
@@ -252,7 +252,7 @@ pub unsafe extern "C" fn tst_udp_sender_get_socket_stats(
 /// Reset stats counters for a `tst_udp_sender_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the sender has been cancelled.
+/// or `TST_E_CLOSED` if a caught panic retired the shell.
 ///
 /// # Safety
 ///
