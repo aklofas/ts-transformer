@@ -47,10 +47,18 @@ pub fn archive_row(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> Arch
     let (replay_files, replay_paths, replay_failed) = replay
         .map(|r| (r.files, r.paths.len() as u64, r.failed))
         .unwrap_or((0, 0, 0));
+    let exits: usize = replay
+        .map(|r| r.unexpected_exits_by_path.values().map(Vec::len).sum())
+        .unwrap_or(0);
+    let exits_note = if exits > 0 {
+        format!(", {exits} unexpected receiver exit(s)")
+    } else {
+        String::new()
+    };
     let note = format!(
         "Sweep {} files: {} identical, {} changed and explained, {} invariant failures, \
          {} parse failures; replay {replay_files} files over {replay_paths} paths, \
-         {replay_failed} failed. {}",
+         {replay_failed} failed{exits_note}. {}",
         sweep.files,
         sweep.identical,
         sweep.changed_explained,
