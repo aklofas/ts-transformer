@@ -142,7 +142,7 @@ pub unsafe extern "C" fn tst_udp_receiver_cancel(p: *mut TstUdpReceiver) -> libc
 ///
 /// Returns:
 /// - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
-/// - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later call
+/// - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later receive
 ///   returns it and the handle stays valid until `_close`
 /// - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
 ///   transport has no peer close to report, so this does not occur here)
