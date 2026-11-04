@@ -53,7 +53,9 @@ predates it, so a new field alone never marks a capture changed.
 
 The ST 0601 decoder keeps a record whose fields it could not all read and
 counts the field errors. The sweep reports their total and the captures that
-carry them; they are recorded, not gated.
+carry them. There is no threshold on the count; against a baseline a changed
+count marks the capture changed, and the maintainer accepts it with a reason like
+any other change.
 
 The inventory reads each file's PMT from the first program map the demuxer
 emits in its first 4 MiB, so a PMT that spans packets or damaged bytes before

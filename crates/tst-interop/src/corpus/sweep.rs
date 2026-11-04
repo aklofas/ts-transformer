@@ -90,7 +90,8 @@ pub struct SweepSummary {
     pub baseline_manifest_sha256: Option<Sha256Hex>,
     /// ST 0601 field errors over every capture's `default` configuration,
     /// one per field the lenient decoder could not read in a record it
-    /// kept. Recorded, never gated.
+    /// kept. No absolute threshold; against a baseline a changed count marks the
+    /// capture changed until accepted.
     #[serde(default)]
     pub klv_field_errors: u64,
     /// Captures with at least one such field error.
