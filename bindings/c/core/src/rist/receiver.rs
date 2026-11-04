@@ -167,8 +167,8 @@ pub unsafe extern "C" fn tst_rist_receiver_cancel(p: *mut TstRistReceiver) -> li
 ///
 /// Returns:
 /// - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
-/// - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
-///   locally; terminal, every later call returns it
+/// - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later call
+///   returns it and the handle stays valid until `_close`
 /// - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
 ///   transport has no peer close to report, so this does not occur here)
 /// - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
