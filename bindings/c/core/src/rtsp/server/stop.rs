@@ -18,8 +18,9 @@
 //! Mirrors the `tst_publisher_finish` / `tst_publisher_free` pattern:
 //! 1. `tst_rtsp_server_stop` — sends RFC 7826 §13.5.1 Notice 5402
 //!    "Server-Initiated TEARDOWN" to each session, cancels all sessions,
-//!    fires the global cancel, and sleeps for `graceful_shutdown_drain + 1 s`
-//!    to let in-flight RTP drain. Sets the inner `Option` to `None`.
+//!    fires the global cancel, waits for the sessions to end, and shuts
+//!    each session's write half. The phases and their bounds are listed on
+//!    `tst_rtsp_server_stop`. Sets the inner `Option` to `None`.
 //! 2. `tst_rtsp_server_free` — drops the `Box<TstRtspServer>`. Safe to call
 //!    either directly (hard-cancel via Drop) or after `_stop` (inner is already
 //!    None; Drop's hard-cancel is idempotent via the AtomicBool).
@@ -262,22 +263,26 @@ pub unsafe extern "C" fn tst_rtsp_cancel_handle_free(handle: *mut TstRtspCancelH
 ///
 /// 1. For each active session: sends RFC 7826 §13.5.1 Notice 5402
 ///    "Server-Initiated TEARDOWN" ANNOUNCE over the session's TCP
-///    control channel (best-effort, 1 s per-session timeout), then
-///    cancels the per-session token.
+///    control channel (best-effort, at most 1 s per session, sessions
+///    notified serially), then cancels the per-session token.
 /// 2. Fires the global cancel token so the listener stops accepting.
 /// 3. Waits for the session tasks to end, bounded by the builder's
-///    `graceful_shutdown_drain_ms` (default 100 ms) plus 500 ms, then shuts
-///    each session's write half (at most 500 ms each).
-/// 4. Sets the inner `Option` to `None` (subsequent calls on this handle
-///    return `TST_E_CLOSED`).
+///    `graceful_shutdown_drain_ms` (default 100 ms) plus a 500 ms
+///    scheduling margin.
+/// 4. Shuts each session's write half (at most 500 ms per session, serially).
+/// 5. Sets the inner `Option` to `None` (other calls on this handle
+///    then return `TST_E_CLOSED`; a second `stop` returns `TST_E_SUCCESS`).
+///
+/// `stop` retires the server; the runtime shuts down (at most 5 s) when
+/// the last reference drops, which may be inside `tst_rtsp_server_free` or
+/// inside a call that was still parked.
 ///
 /// `drain_ms` is ignored: the drain is the one set with
 /// `tst_rtsp_server_builder_graceful_shutdown_drain_ms`. The parameter is
 /// kept for ABI stability.
 ///
 /// Idempotent — a second call after shutdown completes returns
-/// `TST_E_SUCCESS` immediately. Returns `TST_E_INVALID_USAGE` if called
-/// before `tst_rtsp_server_builder_start`.
+/// `TST_E_SUCCESS` immediately.
 ///
 /// # Safety
 ///
@@ -321,9 +326,10 @@ pub unsafe extern "C" fn tst_rtsp_server_stop(
 
 /// Free the RTSP server handle.
 ///
-/// Drops the `Box<TstRtspServer>`. If `tst_rtsp_server_stop` was called
-/// first the inner `Option` is `None` and Drop is a no-op (the runtime
-/// was already shut down by `stop`). If `_free` is called WITHOUT a
+/// Drops the `Box<TstRtspServer>`. `tst_rtsp_server_stop` retires the
+/// server; the runtime shuts down when the last reference drops, which may
+/// be inside `_free` or inside a call that was still parked. If `_free` is
+/// called WITHOUT a
 /// prior `_stop`, Drop fires the hard-cancel path: all per-session tasks
 /// abort at their next poll and the tokio Runtime is shut down with a 5 s
 /// budget. No RTSP TEARDOWN is sent to connected clients in this case

@@ -9,13 +9,13 @@
 //! `crate::transport_impls`.
 //!
 //! **Cancel:** the UDP transport exposes a real cancel handle and
-//! this handle's `CHandle` slot holds it, so `_close` from ANY
-//! thread cancels first and a `_recv_ts` parked on the 100 ms poll loop
-//! returns `TST_E_CLOSED` within one tick (pinned by
-//! `tests/transports/udp_close_cancels_first.rs`). `tst_udp_receiver_cancel`
-//! (ABI 0.22) does the same WITHOUT freeing the handle — the interrupt to
-//! use when the reader's pointer must stay valid (pinned by
-//! `tests/transports/udp_open_smoke.rs`).
+//! this handle's `CHandle` slot holds it. `tst_udp_receiver_cancel`
+//! (ABI 0.22) may be called from any thread: a `_recv_ts` parked on the
+//! 100 ms poll loop returns `TST_E_CLOSED` within one tick, and the handle
+//! stays valid (pinned by `tests/transports/udp_close_cancels_first.rs`).
+//! `_close` frees the handle, so the owner calls it only after the parked
+//! call has returned. `_close` still cancels first as a defence, but a
+//! concurrent `_close` is not part of the contract.
 
 use std::os::raw::c_char;
 
@@ -48,7 +48,8 @@ pub struct TstUdpReceiver {
 /// URL grammar:
 /// - `udp://host:port` — unicast bind on host:port
 /// - `udp://@group:port` (`@` prefix is ffmpeg convention) — multicast recv
-/// - Query params: `?iface=eth0`, `?rcvbuf=8M`
+/// - Query params: `?iface=<IPv4 literal>`, `?rcvbuf=8M`. Interface names are
+///   not resolved; an IPv6 group takes an interface index.
 ///
 /// Port `0` causes the kernel to assign an ephemeral port.
 ///
@@ -141,9 +142,10 @@ pub unsafe extern "C" fn tst_udp_receiver_cancel(p: *mut TstUdpReceiver) -> libc
 ///
 /// Returns:
 /// - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
-/// - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally (a datagram
-///   transport has no peer close to report)
-/// - `TST_E_CLOSED` (-7) if the handle was `_close`'d
+/// - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+///   locally; terminal, every later call returns it
+/// - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
+///   transport has no peer close to report, so this does not occur here)
 /// - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
 ///

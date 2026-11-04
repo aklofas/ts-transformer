@@ -119,6 +119,10 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_open(
 /// full contract. It does NOT bound this call's own `accept()` wait
 /// (libsrt's `srt_accept` ignores `SRTO_RCVTIMEO`); once a peer connects,
 /// it governs `_recv_event`'s per-recv deadline on the accepted socket.
+///
+/// The URL may be host-less or host-bearing; either binds. An explicit
+/// `?mode=caller` or `?mode=rendezvous` is refused with
+/// `TST_E_INVALID_CONFIG`; use the plain open for those.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_demux_receiver_open_listener(
     srt_url: *const libc::c_char,
@@ -168,6 +172,10 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_open_with_config(
 /// [`tst_managed_demux_receiver_open`] — see that function's doc for the
 /// full contract, and [`tst_managed_demux_receiver_open_listener`]'s doc
 /// for why it doesn't bound this call's own `accept()` wait.
+///
+/// The URL may be host-less or host-bearing; either binds. An explicit
+/// `?mode=caller` or `?mode=rendezvous` is refused with
+/// `TST_E_INVALID_CONFIG`; use the plain open for those.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_demux_receiver_open_listener_with_config(
     srt_url: *const libc::c_char,
@@ -236,9 +244,9 @@ fn managed_open_inner(
 /// state a clean peer close leaves it in — SRT cannot tell "peer hung up"
 /// from "peer never came back" at this layer), and this function returns
 /// `TST_E_END_OF_STREAM`, exactly like a clean end of stream. Call
-/// [`tst_managed_demux_receiver_end_reason`] afterward to distinguish a
-/// clean teardown (`CLEAN_TEARDOWN`) from a give-up-after-retries
-/// (`TRANSPORT_FAILED`) or an explicit `_cancel` (`CANCELLED`).
+/// [`tst_managed_demux_receiver_end_reason`] afterward to tell a
+/// give-up-after-retries (`TRANSPORT_FAILED`) from an explicit `_cancel`
+/// (`CANCELLED`).
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
 /// bytes are still buffered; a call already past its receive when the
@@ -353,9 +361,8 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_cancel(
 ///
 /// Reuses the RTP-side `TstStreamEndReason` enum — its RTSP-shaped
 /// variant names (`SessionExpired`, `KeepaliveFailed`, `ProtocolError`)
-/// are never produced on this SRT recv path; only three of its six
-/// non-`None` variants apply here:
-/// - `tst_core::transport::EndReason::EndOfStream` → `CleanTeardown`
+/// are never produced on this SRT recv path, and neither is
+/// `CleanTeardown`: this path records only two reasons.
 /// - `tst_core::transport::EndReason::ReconnectExhausted` → `TransportFailed`
 ///   (the reconnect decorator exhausted its policy budget — the peer
 ///   never came back)
@@ -364,8 +371,8 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_cancel(
 /// **Last-error side effect on every ACTUALLY-recorded reason:** unlike
 /// the "hasn't ended" case above, once the session has ended this getter
 /// unconditionally resets the thread-local last-error channel to
-/// `TST_E_SUCCESS` with an EMPTY detail message — none of the three
-/// `EndReason` variants above carry a detail string (unlike the RTP
+/// `TST_E_SUCCESS` with an EMPTY detail message — neither of the two
+/// `EndReason` variants above carries a detail string (unlike the RTP
 /// side's `KeepaliveFailed`/`TransportFailed`/`ProtocolError`), so
 /// `tst_get_last_error_str()` always reads `""` once a reason has been
 /// recorded, never a stale message left over from some earlier,
@@ -518,10 +525,10 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_get_stats(
 /// Returns 0 on success, or `TST_E_INVALID_CONFIG` if either pointer is
 /// null. Unlike most getters on this handle, this one **never** returns
 /// `TST_E_CLOSED` — it doesn't consult the handle's data-path state at
-/// all, so it keeps returning the last-observed values after `_close`
-/// too (same caveat as `tst_managed_demux_receiver_end_reason`: calling
-/// anything on a freed handle, including this getter, is a
-/// use-after-free the caller must avoid).
+/// all, so while the handle is live it keeps returning the last-observed
+/// values after `_cancel` or after the session terminates. After `_close`
+/// the pointer is freed, and calling anything on it, including this
+/// getter, is a use-after-free the caller must avoid.
 ///
 /// # Safety
 ///

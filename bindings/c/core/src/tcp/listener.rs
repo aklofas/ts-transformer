@@ -228,8 +228,10 @@ pub unsafe extern "C" fn tst_tcp_listener_accept_receiver(
 /// Close the listening socket and free the `tst_tcp_listener_t`.
 ///
 /// Safe to call with `NULL` (no-op). After this call the pointer is
-/// invalid; any blocked `_accept_*` call on the same listener will
-/// unblock with an error.
+/// invalid.
+///
+/// `_free` does not interrupt an accept. Call `tst_tcp_listener_cancel`,
+/// wait for the parked `_accept_*` to return `TST_E_CLOSED`, then free.
 ///
 /// Previously accepted sender/receiver handles are NOT affected by freeing
 /// the listener — they remain valid until individually closed.
@@ -254,7 +256,8 @@ pub unsafe extern "C" fn tst_tcp_listener_free(p: *mut TstTcpListener) {
 /// Interrupt a `tst_tcp_listener_accept_sender` / `_accept_receiver` parked
 /// on another thread: it returns NULL with `TST_E_CLOSED` within one accept
 /// poll tick (~5 ms). Callable from any thread, idempotent; the listener
-/// must still be freed with `tst_tcp_listener_free`.
+/// must still be freed with `tst_tcp_listener_free`, and only after the
+/// parked accept has returned (`tst_tcp_listener_free` does not interrupt it).
 ///
 /// The OS socket stays bound until the listener is freed (std cannot shut a
 /// listening socket down explicitly), so bind the next listener on a fresh

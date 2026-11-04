@@ -410,9 +410,9 @@ pub unsafe extern "C" fn tst_managed_sender_close(p: *mut TstManagedSender) {
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
 ///
-/// After cancel a `_send_*` reports `TST_E_CLOSED` (-7): the managed
-/// decorator latches the close, so the send never reaches libsrt (unlike
-/// the plain sender, whose interrupted send surfaces as `TST_E_TRANSPORT`).
+/// After cancel a `_send_*` reports `TST_E_CLOSED` (-7), as on the plain
+/// sender: the managed decorator latches the close, so the send never
+/// reaches libsrt.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_sender_cancel(p: *mut TstManagedSender) -> libc::c_int {
     crate::panic::ffi_catch(TstError::Internal as i32, || {

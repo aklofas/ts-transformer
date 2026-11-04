@@ -813,10 +813,9 @@ pub unsafe extern "C" fn tst_rtsp_mount_flush(handle: *mut TstRtspMountHandle) -
 /// Cancel a mount handle. All subsequent `push_*` calls on this handle will
 /// return `TST_E_CLOSED` immediately without entering the muxer.
 ///
-/// Cancellation is handle-local — other `tst_rtsp_mount_handle_t` pointers
-/// to the same mount (e.g. obtained from separate `add_*_mount` calls on the
-/// same mount path) are unaffected. The underlying broadcast fanout and inner
-/// muxer continue operating for other holders.
+/// Cancellation is handle-local: it stops pushes through this handle only.
+/// Registering one path twice fails, so a path never has a second handle
+/// from `add_*_mount`.
 ///
 /// Safe to call from any thread. Idempotent — calling twice is harmless.
 /// The handle must still be freed via `tst_rtsp_mount_handle_free` to

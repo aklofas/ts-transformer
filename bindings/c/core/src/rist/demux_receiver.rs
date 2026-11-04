@@ -210,9 +210,10 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_cancel(
 ///
 /// Returns:
 /// - `0` on success (`*out_event` populated)
-/// - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally (a datagram
-///   transport has no peer close to report)
-/// - `TST_E_CLOSED` (-7) if the handle was `_close`'d
+/// - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+///   locally; terminal, every later call returns it
+/// - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
+///   transport has no peer close to report, so this does not occur here)
 /// - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
 /// - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
 ///   unrecoverable packet malformation, or a malformed PES)

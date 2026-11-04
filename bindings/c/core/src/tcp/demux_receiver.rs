@@ -137,8 +137,8 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_get_ts_bytes_demuxed(
 /// # Safety
 ///
 /// `p` must be NULL or a valid non-freed `*mut TstTcpDemuxReceiver`
-/// returned by `tst_tcp_demux_receiver_open` or
-/// `tst_tcp_listener_accept_receiver` (via the DemuxReceiver variant).
+/// returned by `tst_tcp_demux_receiver_open`, with no other call on the
+/// handle in flight (cancel and wait first).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_tcp_demux_receiver_close(p: *mut TstTcpDemuxReceiver) {
     crate::panic::ffi_catch((), || {

@@ -41,7 +41,7 @@ pub struct TstRtpSender {
 /// `url`. Returns `NULL` on error; check `tst_get_last_error()` for the
 /// negative error code and `tst_get_last_error_str()` for a detail message.
 ///
-/// URL form: `rtp://host:port[?ttl=N&iface=eth0&pkt_size=1316&ssrc=N]`.
+/// URL form: `rtp://host:port[?ttl=N&iface=<IPv4 literal>&pkt_size=1316&ssrc=N]`.
 /// The transport is a UDP socket that sends RTP packets wrapping 7
 /// MPEG-TS packets per datagram (RFC 2250 §2). Multicast destinations
 /// (`224.0.0.0/4` for IPv4, `ff00::/8` for IPv6) are detected

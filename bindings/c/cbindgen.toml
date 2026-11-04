@@ -7,6 +7,16 @@ header = """\
  * Source of truth: bindings/c/core/src/ (Rust).
  *
  * Copyright (c) 2026 Andrew Klofas. Licensed under MIT OR Apache-2.0.
+ *
+ * Threading and lifetime
+ *
+ * Keep each owner allocated until every call and every borrowed result
+ * using it has finished. `_cancel` may be called from any thread while a
+ * data-path call is parked. `_close` / `_free` and consuming conversions
+ * require that no other call on the handle is in flight: cancel, wait for
+ * the parked call to return, then free. Slot-backed handles serialise
+ * their data-path calls through an internal mutex; builders are
+ * single-thread objects.
  */
 """
 include_guard = "TSTRANS_H"

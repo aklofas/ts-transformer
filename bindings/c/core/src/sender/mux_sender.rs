@@ -534,13 +534,13 @@ pub unsafe extern "C" fn tst_mux_sender_get_socket_stats(
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
 /// * `TST_E_CLOSED` — handle was closed via `tst_mux_sender_close`
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
-/// * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+/// * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
 ///
 /// # Safety
 ///
 /// `p` must be a valid pointer obtained from `tst_mux_sender_open`; `out`
 /// must be a writable `tst_stream_codec_stats_t`. The pointee is fully
-/// written on `TST_OK` and untouched on error.
+/// written on success (`0`) and untouched on error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_get_stream_codec_stats(
     p: *mut TstMuxSender,
@@ -808,6 +808,11 @@ pub struct TstManagedMuxSender {
 /// last-error for any malformed URL, unsupported key, unknown key, or
 /// invalid value. The detail string from
 /// `tst_get_last_error_str()` describes the specific problem.
+///
+/// **Failed sends.** A failed `tst_managed_mux_sender_send_*` may already
+/// have consumed its input: the muxed bytes stay pending and drain on the
+/// next call. Resubmitting the same access unit blindly can therefore
+/// duplicate it, and the error code alone cannot tell the two cases apart.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_open(
     srt_url: *const libc::c_char,
@@ -1359,11 +1364,9 @@ pub unsafe extern "C" fn tst_managed_mux_sender_cancel(p: *mut TstManagedMuxSend
 /// call `tst_managed_mux_sender_cancel` first if that is not wanted. The
 /// handle must still be freed with `tst_managed_mux_sender_close`.
 ///
-/// Note which code a reported drain failure carries: a send that met a
-/// dead peer returns `TST_E_TRANSPORT` and LATCHES the transport dead, so
-/// the drain here is refused at the dead-transport guard and `_finish`
-/// reports `TST_E_CLOSED` — not the code the failing send reported. The
-/// last-error string names the drain either way.
+/// A sender whose reconnect gave up returns `TST_E_TRANSPORT` here,
+/// without latching the transport dead. The last-error string names the
+/// drain.
 ///
 /// Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
 /// point, a call after `tst_managed_mux_sender_close` has freed the

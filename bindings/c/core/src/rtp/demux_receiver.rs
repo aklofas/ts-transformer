@@ -83,7 +83,7 @@ impl TstRtpDemuxReceiver {
 /// Returns `NULL` on error.
 ///
 /// For unicast, pass `rtp://0.0.0.0:port`. For multicast, pass the group
-/// address (`rtp://239.0.0.1:port?iface=eth0`).
+/// address (`rtp://239.0.0.1:port?iface=<IPv4 literal>`).
 ///
 /// `?pkt_size=` is send-side only and is rejected on receive URLs.
 ///
@@ -209,10 +209,12 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_close(p: *mut TstRtpDemuxReceive
 ///
 /// Returns:
 /// - `0` on success (`*out_event` populated)
-/// - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally, or when an
-///   RTSP-over-TCP session ends with a clean server teardown (plain `rtp://`
+/// - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+///   locally; terminal, every later call returns it
+/// - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream: an
+///   RTSP-over-TCP session ends with a clean server teardown, or the mount
+///   was removed or the server stopped or hard-cancelled (plain `rtp://`
 ///   has no peer close to report)
-/// - `TST_E_CLOSED` (-7) if the handle was `_cancel`'d or `_close`'d
 /// - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
 /// - `TST_E_BUFFER_FULL` (-4) if the receiver was opened with
 ///   `?recv_timeout=<ms>` and no event arrived before the configured

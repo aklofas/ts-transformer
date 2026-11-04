@@ -34,8 +34,8 @@ use tst_core::mpegts::mux::{
 ///
 /// Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: a `codec`
 /// outside `TST_VIDEO_CODEC_*` (`TST_E_INVALID_CONFIG`), null `cfg`,
-/// invalid `program` handle, or per-program stream cap exceeded (>16 streams
-/// of any kind per program). Hard validation errors surface at `_open` time.
+/// invalid `program` handle, or per-program stream cap exceeded (more than 16 streams
+/// of one kind per program). Hard validation errors surface at `_open` time.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_config_add_video_stream(
     cfg: *mut TstMuxConfig,
@@ -91,8 +91,9 @@ pub unsafe extern "C" fn tst_mux_config_add_video_stream(
 
 /// Add a KLV elementary stream to the specified program and return its handle.
 ///
-/// `stream_type`: `TST_KLV_STREAM_TYPE_PRIVATE_DATA` (0x06, async — no AU
-/// cell wrapping) or `TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA` (0x15 —
+/// `stream_type`: `TST_KLV_STREAM_TYPE_PRIVATE_DATA` (0, async — no AU
+/// cell wrapping; PMT `stream_type` byte 0x06) or
+/// `TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA` (1; PMT byte 0x15 —
 /// the muxer auto-wraps each push in a 5-byte `Metadata_AU_cell` header
 /// per ITU-T H.222.0 V9 § 2.12.4.2 before TS-framing; pass raw KLV LS
 /// bytes to `push_klv_to`).
@@ -676,14 +677,11 @@ impl TstVideoCodec {
 
     /// Validate a raw C `int` against the four known discriminants.
     ///
-    /// Needed because [`Self`] is received directly (by value) as a
-    /// parameter on some entry points (e.g.
-    /// `tst_mux_config_add_video_stream`) but that shape cannot reject an
-    /// out-of-range caller value — by the time Rust code could inspect
-    /// it, materializing the invalid discriminant is already undefined
-    /// behavior. Entry points that need to report a bad codec value
-    /// (rather than accept that risk) take a raw `c_int` and parse it
-    /// through this method first — same pattern as
+    /// Entry points such as `tst_mux_config_add_video_stream` take the
+    /// codec as a raw `c_int` and parse it here, because an enum parameter
+    /// cannot reject an out-of-range caller value: by the time Rust code
+    /// could inspect it, materializing the invalid discriminant is already
+    /// undefined behavior. Same pattern as
     /// [`crate::demux_config::TstAv1CarriageMode::from_c_int`].
     pub(crate) fn from_c_int(v: crate::c_types::c_int) -> Option<Self> {
         match v {

@@ -82,6 +82,9 @@ use crate::panic::ffi_catch;
 /// pointer to `tst_rtsp_server_builder_start` (which consumes it) or
 /// `tst_rtsp_server_builder_free` (which discards it).
 ///
+/// A builder is a single-thread object; see "Threading and lifetime" in the
+/// header preamble.
+///
 /// # Safety
 ///
 /// `addr` must be a valid, NUL-terminated C string that lives for the
@@ -355,8 +358,9 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_accept_unregistered_publishers(
 /// pings at `N/2`; sessions that exceed `N` without any request may be
 /// dropped (server policy). Defaults to 60 s.
 ///
-/// `secs` is used as-is; a value of 0 means no advertised timeout
-/// (not recommended for production). Must be called before
+/// `secs` is used as-is. A value of 0 does not disable the timeout: SETUP
+/// advertises `timeout=0` and idle readers are reaped after 2 s (the
+/// floor). Use a positive value. Must be called before
 /// `tst_rtsp_server_builder_start`.
 ///
 /// # Safety
@@ -402,11 +406,14 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_fanout_capacity(
 
 /// Set the graceful-shutdown drain window in milliseconds.
 ///
-/// When `tst_rtsp_server_stop` is called, the server sends an RFC
-/// 7826 §13.5.1 Notice 5402 ("Server-Initiated TEARDOWN") ANNOUNCE to each
-/// active session, then waits up to `ms` milliseconds (plus 1 s fixed
-/// overhead) for in-flight RTP frames to drain before closing the listener
-/// and runtime. Default: 100 ms.
+/// When `tst_rtsp_server_stop` is called, the server runs these phases in
+/// order. Each session gets an RFC 7826 §13.5.1 Notice 5402
+/// ("Server-Initiated TEARDOWN") ANNOUNCE, with the write bounded at 1 s;
+/// sessions are notified serially. The server then waits for the sessions
+/// to end, for at most `ms` milliseconds plus a 500 ms scheduling margin.
+/// Each session's write half is then shut down, bounded at 500 ms and also
+/// serial. When the last reference to the server drops, the runtime shuts
+/// down in at most 5 s. Default: 100 ms.
 ///
 /// Must be called before `tst_rtsp_server_builder_start`.
 ///
@@ -443,7 +450,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_graceful_shutdown_drain_ms(
 ///
 /// Works in a build with the `tls` feature (`TST_HAS_TLS`): the PEM bytes are
 /// loaded when the server starts. Without it the bytes are stored, and
-/// `tst_rtsp_server_builder_start` FAILS (NULL + `TST_E_RTSP_SERVER`
+/// `tst_rtsp_server_builder_start` FAILS (NULL + `TST_E_RTSP_TLS`
 /// last-error) when they are set — the alternative would be a server that
 /// silently starts PLAINTEXT with the supplied certs ignored. A plaintext
 /// `rtsp://` bind with these bytes set is refused in either build.
