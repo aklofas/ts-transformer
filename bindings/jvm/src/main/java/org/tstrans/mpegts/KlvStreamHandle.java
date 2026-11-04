@@ -13,8 +13,10 @@ package org.tstrans.mpegts;
  * detected and addresses this muxer's stream at the same index: the handle is
  * range-checked, not identity-checked. A raw value with an invalid bit layout,
  * or an index past this muxer's streams, is rejected at push time. {@code Muxer}
- * raises {@code INVALID_USAGE}; the shells ({@code MuxSender},
- * {@code ManagedMuxSender}, publish mounts) raise {@code CONFIG_INVALID}.
+ * raises {@code INVALID_USAGE} for both. {@code MuxSender} and
+ * {@code ManagedMuxSender} raise {@code CONFIG_INVALID} for an invalid bit
+ * layout and {@code INVALID_USAGE} for an index past the configured streams.
+ * Publish mounts raise a {@code MOUNT} error for both.
  *
  * <p>Mirrors {@code tstrans.mpegts.KlvStreamHandle}. Being a record, equality
  * and hashing are by {@code raw}.
