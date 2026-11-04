@@ -88,8 +88,8 @@ class ClientCert:
 class TlsConfig:
     """TLS configuration for ``tcps://`` transports.
 
-    **Note:** forward-compat only — the builder accepts but does not
-    read this dataclass. The working knobs: callers verify against a
+    **Note:** no builder method accepts this dataclass today. The working
+    knobs: callers verify against a
     custom CA with the ``?ca=<pem path>`` URL param (native trust roots
     otherwise); listeners serve TLS via ``ListenerBuilder.tls(cert, key)``.
     """

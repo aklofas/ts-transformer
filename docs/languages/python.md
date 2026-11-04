@@ -53,7 +53,11 @@ on `tstrans` and its topic submodules — `tstrans.io`, `tstrans.mpegts`,
 into `tstrans._native` directly; it may reorganize between versions.
 
 Wheels ship the UDP, TCP, RTP/RTSP, SRT, RIST, and HLS surfaces
-on by default, on every platform (Linux, macOS, and Windows). The HLS publisher
+on by default. Wheels for Linux x86_64 (manylinux) and macOS arm64 are
+required release artefacts; Linux aarch64 and Windows wheels are built on a
+best-effort basis. On Intel macOS, `pip` installs the source distribution and
+builds it locally, which needs a Rust toolchain plus the build prerequisites
+in [Prerequisites](/docs/start/quickstart.md#prerequisites). The HLS publisher
 (`tstrans.hls`) imports out of the box from a published wheel (see
 [HLS publisher](#hls-publisher-tstranshls) below); it is unavailable only
 in a `--no-default-features` source build that omits `hls`.
@@ -563,6 +567,9 @@ retained are discarded and no closing cut is written;
 `finish_into_publisher()` then `HlsPublisher.finish()` is the graceful
 path.
 
+**Supported teardown is plain process exit.** The binding does not support
+`Py_FinalizeEx` followed by re-initialisation, nor sub-interpreters.
+
 **Exit with a shell still open.** You should still `close()` (or use
 `with`) every shell, but forgetting to is no longer fatal: at interpreter
 exit `tstrans` cancels every shell that is still open before libsrt's own
@@ -619,8 +626,9 @@ threads keep running): `stats()`, `socket_stats()`, `srt_stats()`,
 `depay_stats()`, `rtp_stats()` and `last_seen_micros()`. These read
 counters that live inside the object and have nothing to report without
 it. Poll them from the thread that drives the send or receive loop, or
-give the receiver a `?recv_timeout=` so its blocking call returns on a
-cadence. `finish()` and `accept_blocking()` are blocking operations in
+give the receiver a receive deadline (`?recv_timeout=<ms>` on `rtp://` /
+`rtsp(s)://`, `?x-recvtimeout=<ms>` on `srt://`) so its blocking call returns
+on a cadence. `finish()` and `accept_blocking()` are blocking operations in
 their own right.
 
 **The HLS classes** (`hls.HlsPublisher`, `hls.MuxPublisher`) follow the
@@ -678,7 +686,8 @@ accessors (`video_handle()`, `klv_handle()`, …, `data_handle()`), which
 answer from the program config the sender was built from and never wait
 behind a parked send. `stats()`
 returns a `(SocketStats, MuxerStats)` tuple. There is no `flush()` — bytes
-flush per-send and again on `close()`.
+flush per-send and again on `close()`. `close()` cancels first, then
+drains best-effort; `finish()` is the lossless path.
 
 **Lossless shutdown.** `close()` is cancel-first and abandons pending
 bytes; `finish()` drains them, raises the first drain error, then closes —
@@ -1007,9 +1016,9 @@ under the same lock the iterating thread holds for the whole of a
 blocking `next()`. The watchdog above therefore waits (with the GIL
 released — other threads keep running) until the next event, timeout, or
 cancel lets the iterator release that lock, and a receiver that has gone
-completely quiet with no `?recv_timeout=` makes the poll block for as
-long as the silence lasts. Give the receiver a `?recv_timeout=` deadline
-(the iterator then raises `RtpError(BACKPRESSURE)` /
+completely quiet with no receive deadline makes the poll block for as
+long as the silence lasts. Give the receiver a deadline (`?recv_timeout=<ms>`
+on `rtp://` / `rtsp(s)://`, `?x-recvtimeout=<ms>` on `srt://`; the iterator then raises `RtpError(BACKPRESSURE)` /
 `SrtError(BACKPRESSURE)` every `<ms>` and the lock cycles), or poll `last_seen_micros()` from the
 consuming thread between events. The `end_reason()` getters, by contrast,
 are lock-free and safe to poll from a watchdog at any time — see
@@ -1053,6 +1062,11 @@ URL accepts the same `?recv_timeout=` key; it carries through
 `into_demux_receiver()` / `into_h264_receiver()` automatically.
 `BACKPRESSURE` is retryable — the transport and session are both still
 alive, unlike `CLOSED` or `BROKEN`.
+
+On `srt://` the same deadline is `?x-recvtimeout=<ms>` (a `ts-transformer`
+extension key, see [SRT extension keys](/docs/guides/srt.md#ts-transformer-extension-keys-group-2)); the SRT parser rejects
+`?recv_timeout=` as an unknown key. A silent SRT receiver then raises
+`SrtError(BACKPRESSURE)` per deadline.
 
 An `rtp://` receive URL also takes `?rcvbuf=` (kernel receive buffer, e.g. `8M` for high-bitrate streams) and `?source=<ip>` (accept datagrams from one sending host only); see [Performance and reliability](/docs/troubleshooting.md#performance-and-reliability).
 
@@ -1503,6 +1517,10 @@ pub = mp.finish_into_publisher()   # recover the publisher to finish() it cleanl
 pub.finish()
 ```
 
+An unfinished `MuxPublisher` dropped without `finish_into_publisher()`
+aborts: nothing is drained and no closing cut is written. The Rust type's
+`Drop` drains best-effort; Python's does not.
+
 `push_ts` (on the publisher) requires a 188-multiple and raises
 `HlsError(UNALIGNED_PUSH_TS)` otherwise; once consumed (by `finish()` or
 `with_config_hls`) further calls raise `HlsError(FINISHED)`.
@@ -1591,7 +1609,7 @@ with WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.10") as server:
   `WhepServer` object, after which every method raises
   `WebrtcError(CLOSED)`; the native server is freed when the last reference
   goes. Dropping the last reference to an unclosed `WhepServer` also stops
-  it (bounded, with the GIL held), as with `tstrans.rtp.RtspServer`, so use
+  it (bounded, with the GIL released), as with `tstrans.rtp.RtspServer`, so use
   `with` or call `close()`. A `MountHandle` does not keep its server alive:
   hold the server while you push, since
   `WhepServer.bind(url).add_mount(path)` returns a mount whose pushes raise

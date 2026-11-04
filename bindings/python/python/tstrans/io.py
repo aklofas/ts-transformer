@@ -359,7 +359,9 @@ def transmux(
 
     With `atomic=False`, `dst` must not be the same file as `src`
     (including via a symlink or hard link): that raises `ValueError`
-    before anything is opened. `atomic=True` allows an in-place rewrite.
+    before anything is opened. `src` and `dst` must be distinct files under
+    stable pathnames; a path that changes meaning during the run (a link
+    swapped, a rename) is not detected. `atomic=True` allows an in-place rewrite.
 
     `atomic=True` routes the output through the `MuxerFileSink`
     temp-file machinery: `dst` appears only on clean exit (`os.replace`

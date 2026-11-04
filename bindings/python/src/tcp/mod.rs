@@ -729,8 +729,8 @@ impl PyTcpListenerBuilder {
 
 /// TLS configuration dataclass for `tcps://` transports.
 ///
-/// **Note:** these dataclasses are forward-compat surface only — the
-/// builder accepts them but does not read them. The working knobs are:
+/// **Note:** no builder method accepts these dataclasses today. The
+/// working knobs are:
 /// callers verify against a custom CA with the `?ca=<pem path>` URL
 /// param (native trust roots otherwise); listeners serve TLS via
 /// `ListenerBuilder.tls(cert, key)`. mTLS client certificates

@@ -10,9 +10,11 @@ package org.tstrans.mpegts;
  *
  * <p>A handle is meaningful only to the muxer that minted it; keeping it with
  * that muxer is the caller's obligation. A handle from another muxer is not
- * detected and addresses this muxer's stream at the same index. A raw value
- * with an invalid bit layout, or an index past this muxer's streams, is
- * rejected at push time with {@code INVALID_USAGE}.
+ * detected and addresses this muxer's stream at the same index: the handle is
+ * range-checked, not identity-checked. A raw value with an invalid bit layout,
+ * or an index past this muxer's streams, is rejected at push time. {@code Muxer}
+ * raises {@code INVALID_USAGE}; the shells ({@code MuxSender},
+ * {@code ManagedMuxSender}, publish mounts) raise {@code CONFIG_INVALID}.
  *
  * <p>Mirrors {@code tstrans.mpegts.KlvStreamHandle}. Being a record, equality
  * and hashing are by {@code raw}.
