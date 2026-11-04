@@ -832,7 +832,8 @@ class H264AccessUnit:
     """A fully reassembled H.264 Access Unit. Frozen.
 
     `annexb`        — Annex B–framed NALU bytes (start codes prepended).
-    `pts`           — 90 kHz decode-order timestamp as `int` (i64 ticks).
+    `pts`           — 90 kHz **presentation** timestamp, delivered in decode order,
+                    as `int` (i64 ticks).
     `key_frame`     — `True` if the AU contains an IDR slice (NALU type 5).
     `rtp_timestamp` — raw 32-bit RTP timestamp from the packet header.
     """

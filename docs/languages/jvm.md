@@ -997,10 +997,12 @@ try (Listener listener = new Builder("srt://127.0.0.1:9000?mode=listener")
     ListenRules rules = listener.rules();
     rules.set("publish:amber", ListenRule.acceptWith("amber-secret-1"));
     rules.setDefault(ListenRule.reject(RejectReason.NOT_FOUND));
-    Socket sock = listener.accept(null);
-    // The accepted peer is "publish:amber" (the only rule that admits one):
-    // refuse the next caller that uses the same name.
-    rules.set("publish:amber", ListenRule.reject(RejectReason.CONFLICT));
+    // The accepted Socket is AutoCloseable; the listener's close() does not close it.
+    try (Socket sock = listener.accept(null)) {
+        // The accepted peer is "publish:amber" (the only rule that admits one):
+        // refuse the next caller that uses the same name.
+        rules.set("publish:amber", ListenRule.reject(RejectReason.CONFLICT));
+    }
 }
 ```
 
@@ -1067,7 +1069,8 @@ thread`): the plain shells close the underlying libsrt socket and report the
 cancel they observed — the shell is dead afterwards — and the `Managed*`
 shells latch their close flag and wake whatever the reconnect loop is parked
 in (a live send/receive, the backoff wait, a re-dial or re-accept).
-Subsequent calls are no-ops. Obtaining the handle is
+A second `cancel()` is a no-op; every later send or receive on the shell
+raises `CLOSED`. Obtaining the handle is
 itself safe from another thread at any time — `cancelHandle()` returns
 promptly even while `sendBytes` / `send*` / `recvBytes` / `next()` / `accept()`
 is parked on the same object, so it need not be taken before iterating.
@@ -1101,8 +1104,9 @@ falls into two groups.
 `srtStats()`, `depayStats()`, `rtpStats()` and `lastSeenMicros()`. These
 read counters that live inside the object and have nothing to report
 without it. Poll them from the thread that drives the send or receive
-loop, or give the receiver a `?recv_timeout=` so its blocking call returns
-on a cadence (the [`lastSeenMicros` caveat](#per-stream-staleness-lastseenmicros)
+loop, or give the receiver a receive deadline (`?recv_timeout=<ms>` on
+`rtp://` / `rtsp(s)://`, `?x-recvtimeout=<ms>` on `srt://`) so its blocking
+call returns on a cadence (the [`lastSeenMicros` caveat](#per-stream-staleness-lastseenmicros)
 spells this out). `finish()` is a blocking operation in its own right.
 
 Through 0.6.x `isAlive()` on every class except the two `DemuxReceiver`s,
@@ -1135,6 +1139,11 @@ block in their first accept BEFORE returning an object, so there is nothing
 to `close()` or cancel while they wait for a peer. The unparked thread does
 not get to observe an exception: the JVM is already past the point where Java
 code runs. A program that closed everything pays nothing at exit.
+
+**Lifetimes are explicit.** The JVM binding releases native resources only on
+`close()` (try-with-resources): there is no `Cleaner` and no finalizer. A
+handle you never close keeps its native resources until the process exits, and
+the binding supports one class loader per VM.
 
 ### SRT-specific Gotchas
 
@@ -1226,6 +1235,7 @@ try (MuxSender s = MuxSender.open(
     }
 }
 // MuxSender has NO flush(): bytes flush per-send and again on close().
+// close() cancels first, then drains best-effort; finish() is the lossless path.
 ```
 
 `MuxSender.cancelHandle()` returns a cross-thread `CancelHandle` (see
@@ -1672,7 +1682,8 @@ consumer's own deadline, if any, expires). A separate watchdog thread is
 therefore not truly independent of the consumer's recv cadence. Two ways to
 keep it responsive: poll `lastSeenMicros` from the *consumer* thread itself,
 between `next()` calls, rather than from a separate thread; or pair it with
-`?recv_timeout=<ms>` on the receiver URL (see [Recv deadlines](#recv-deadlines-recv_timeout--per-call-overloads)
+a receive deadline on the receiver URL (`?recv_timeout=<ms>` on `rtp://` /
+`rtsp(s)://`, `?x-recvtimeout=<ms>` on `srt://`; see [Recv deadlines](#recv-deadlines-recv_timeout--per-call-overloads)
 below) so `next()` returns — and releases the lock — on its own cadence even
 when the stream is silent, letting a separate watchdog thread's poll go
 through between those returns.
@@ -1722,7 +1733,11 @@ fall back to the configured deadline, or block indefinitely if none is
 configured). `RtspClientConfig`'s URL accepts the same `?recv_timeout=` key;
 it carries through `intoDemuxReceiver()` / `intoH264Receiver()` automatically.
 `BACKPRESSURE` is retryable — the transport and session are both still
-alive, unlike `CLOSED` or `BROKEN`. Use `recvEvent()`, not the `Iterator`
+alive, unlike `CLOSED` or `BROKEN`. On `srt://` the same deadline is
+`?x-recvtimeout=<ms>` (a `ts-transformer` extension key, see
+[SRT extension keys](/docs/guides/srt.md#ts-transformer-extension-keys-group-2));
+the SRT parser rejects `?recv_timeout=` as an unknown key, and a silent SRT
+receiver throws `SrtException(BACKPRESSURE)` per deadline. Use `recvEvent()`, not the `Iterator`
 (`for (var event : rx)`), when you need to catch it as a checked exception —
 the iterator wraps it in an unchecked `RuntimeException`.
 
@@ -1750,6 +1765,7 @@ data plane. Mirrors tst-py's `tstrans.rtp` RTSP-client surface.
 
 ```java
 import org.tstrans.rtp.*;
+import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.RtspException;
 
 var cfg = RtspClientConfig.builder("rtsp://cam.local:554/stream1")
@@ -1817,12 +1833,14 @@ tst-py's `tstrans.rtp.RtspServer`.
 ```java
 import org.tstrans.rtp.*;
 import org.tstrans.RtspException;
+import org.tstrans.mpegts.KlvStreamType;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
 
 MuxerConfig program = MuxerConfig.builder()
     .programNumber(1).pmtPid(0x1000)
     .addVideo(0x1011, VideoCodec.H264)
+    .addKlv(0x1012, KlvStreamType.SYNCHRONOUS_METADATA, true)
     .build();
 
 var cfg = RtspServerConfig.of("0.0.0.0:8554");   // defaults: maxSessions=100, etc.
@@ -1895,6 +1913,7 @@ one publisher at a time, in one of two shapes (`PublishShape`):
 ```java
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.rtp.*;
+import org.tstrans.shells.DemuxReceiver;
 
 var cfg = RtspServerConfig.of("0.0.0.0:8554");
 try (RtspServer server = RtspServer.start(cfg);
