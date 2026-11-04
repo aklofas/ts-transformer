@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::process::Command;
 
 use tst_interop::corpus::inventory::{self, FileEntry, Inventory};
-use tst_interop::corpus::replay::{self, ReplayArgs, ReplaySummary};
+use tst_interop::corpus::replay::{self, ReplayArgs, ReplaySummary, UnexpectedExit};
 use tst_interop::corpus::report::{self, ArchiveRow};
 use tst_interop::corpus::subset::{Pick, ReplayPlan};
 use tst_interop::corpus::sweep::{Acceptance, Accepted, SweepSummary};
@@ -137,6 +137,38 @@ fn the_note_is_the_fixed_sentence() {
              baseline whose manifest has SHA-256 {}: 12 captures matched.",
             sha('m')
         )
+    );
+}
+
+/// A replay that fails only on a receiver exit says so in the row's note and
+/// in the block.
+#[test]
+fn an_unexpected_receiver_exit_is_named_in_the_row_and_the_block() {
+    let mut r = replay(false);
+    r.failed = 0;
+    r.unexpected_exits_by_path.insert(
+        PATHS[0].to_string(),
+        vec![UnexpectedExit {
+            after_pick: Some(sha('a')),
+            status: "exit code 134 after bye".into(),
+        }],
+    );
+    let row = report::archive_row(&sweep(true), Some(&r));
+    assert!(!row.overall_pass);
+    assert!(
+        row.note
+            .contains("0 failed, 1 unexpected receiver exit(s)."),
+        "{}",
+        row.note
+    );
+    let md = report::markdown(&sweep(true), Some(&r));
+    assert!(
+        md.contains(&format!(
+            "- {}: receiver exited unexpectedly after pick {} (exit code 134 after bye)\n",
+            PATHS[0],
+            sha('a').0
+        )),
+        "{md}"
     );
 }
 
