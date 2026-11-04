@@ -366,18 +366,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `serve-whep` logs how long the first viewer took to connect; it pushes once that viewer connects. The matrix starts Chrome once before its first browser cell, so the first `whep/*` cell no longer pays Chrome's cold start.
 - `corpus sweep` decodes every registered MISB item on a KLV PID: an ST 0605 Precision Time Stamp Pack, standalone or before an ST 0601 local set, now decodes. A capture that carries packs changes digest once against a baseline from an earlier release. The stricter item split can also mark as changed a capture the earlier decode accepted.
 - Corpus annotations carry the count a person reviewed: every key that excuses a rule needs its bound (`max_private_records`, `max_pts_backward_breaks` with `discontinuity_pids`, `max_cc_mismatch`, `max_feed_errors`), and excuses that much and no more, only on the PIDs it lists. An annotation without its bound is refused. The new `known_klv_truncation` key, with `max_klv_truncated` and `klv_truncation_pids`, excuses KLV records cut short by packet loss.
-- `corpus sweep` counts ST 0601 field errors per PID and reports their total and the captures that carry them; they are recorded, not gated.
+- `corpus sweep` counts ST 0601 field errors per PID and reports their total and the captures that carry them. The count has no threshold; against a baseline, a changed count marks the capture changed until the maintainer accepts it.
 - A new corpus invariant, `klv-missing`: a PID the PMT declares as KLV and whose packets open PES on the wire must show KLV in the digest.
 - `corpus sweep --baseline` needs the baseline's `manifest.txt` and verifies every digest it lists; a sweep writes one. `corpus manifest <digests-dir> --expect-files N` writes the manifest an older digests directory lacks. Every capture added or removed against the baseline needs `--accept <sha256> --because <text>`, and the reason is kept in the sweep summary and the report.
 - `corpus inventory` skips directories named `quarantine` at any depth.
 - `corpus replay` restarts a path whose receiver died, once per pick, and the summary lists per path the SHA of each pick a restart preceded.
-- `corpus replay` fails when a receiver child exits before the harness says `quit`, a clean exit included, and the summary lists per path each such exit with the pick whose verdict came last; the restart still happens so the later picks run.
+- `corpus replay` fails when a receiver child exits before it answers `bye`, a clean exit included, exits with a failure status after it, or outlives `quit` and is killed, and the summary lists per path each such exit with the pick whose verdict came last; the restart still happens so the later picks run.
 - `corpus replay` names each pick with PCR gaps it did not pace, and how many: a reset or a forward step over one second is sent as no time.
 - A corpus run's archive row and report name the baseline the sweep compared with, by the SHA-256 of its `manifest.txt`, or say that none was compared.
 - The corruption attribution explains a PCR anomaly or discontinuity by a body flip on a PCR-only packet only when the flip touched the adaptation field's length, flags or (with the PCR flag set) PCR bytes; a flip in its stuffing no longer does.
 - The soak launcher gates RSS slope (200 KiB/h) by default for every run of 24 hours or more, where it applied only from 72 hours; `--no-rss-slope-gate` keeps a long run provisional.
-- The placement oracle excuses at most two sender-report excursions per run, plus one per hundred expected generations; further excusable excursions fail the placement check.
-- The corpus report states the ST 0601 field-error policy as it is enforced: no threshold on the count, and against a baseline a changed count marks the capture changed until the maintainer accepts it.
+- The placement oracle excuses at most two sender-report excursions per run, plus one per hundred expected generations or part of a hundred; further excusable excursions fail the placement check.
 
 ### Fixed — tst-interop
 

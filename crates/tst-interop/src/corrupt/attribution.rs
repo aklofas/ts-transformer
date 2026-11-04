@@ -3506,7 +3506,7 @@ mod tests {
     fn a_stuffing_only_body_flip_on_a_pcr_only_packet_explains_no_pcr_anomaly() {
         for (flags, offsets, explained) in [
             (0x10u8, vec![100usize], false),
-            (0x10, vec![12], false), // OPCR byte: not a PCR
+            (0x10, vec![12], false), // stuffing under flags 0x10: not a PCR
             (0x10, vec![7], true),   // PCR base byte
             (0x10, vec![5], true),   // flags
             (0x10, vec![4], true),   // adaptation_field_length
@@ -3528,6 +3528,8 @@ mod tests {
                 "flags {flags:#04x} offsets {offsets:?}: {r:?}"
             );
         }
+        // A logged original too short to hold the flags byte hits nothing.
+        assert!(!hits_adaptation_control(&[0x47, 0x10, 0x11, 0x20], &[7]));
     }
 
     /// `explains_damage` answers for a content oracle, records nothing,

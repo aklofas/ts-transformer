@@ -482,7 +482,7 @@ record off by more than 10 ms fails the verdict. Each new publisher
 restarts the timeline, so the receiver excuses one backward timestamp step
 per PID at each declared generation boundary, and the timing anomalies that
 coincide with it; any other backward step fails. The verdict detail gives the excused
-counts. The 0.9.0 release soak carried it (`soak-0.9.0-2026-10-27` in the runs table above).
+counts. The excused excursions are capped per run at two, plus one per hundred expected generations or part of a hundred; a further excusable excursion fails the verdict. The 0.9.0 release soak carried it (`soak-0.9.0-2026-10-27` in the runs table above).
 
 ### The current soak shape (2026-09-14)
 
