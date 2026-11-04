@@ -246,8 +246,8 @@ shape but differ on whether the caller should retry:
 | `TST_E_NOT_FOUND` (-14) | **Persistent** — the next call with the same key will return the same error. | A per-PID accessor (e.g., `tst_*_get_stream_codec_stats`) was asked about a PID the demuxer has never seen on this handle. | Surface as a fail-fast lookup miss. Example: Java/Kotlin → throw `NoSuchElementException`; Swift → throw a typed error; Python → raise `KeyError`. |
 
 `TST_E_INVALID_USAGE` (-9) is the third sibling — used when the handle
-is in the wrong **state** for the call (e.g., `finish()` twice without a
-cancel, or a consumed source). A call on a **cancelled** handle, or one a caught panic retired, is
+is in the wrong **state** for the call (e.g., a KLV push when the muxer has no KLV stream configured, or a
+consumed source; `finish()` is idempotent and is not an error twice). A call on a **cancelled** handle, or one a caught panic retired, is
 `TST_E_CLOSED` (-7), not this code, and using a freed pointer is
 undefined behaviour, not an error code. Distinct from both above
 because it's a programmer bug, not a runtime data-availability question.

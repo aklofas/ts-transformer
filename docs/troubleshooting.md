@@ -46,7 +46,7 @@ Fix: if you're consuming `tstrans.h` from another build system, add `-lstdc++` (
 
 Three usual suspects: the listener side isn't actually bound yet, a firewall is dropping UDP (SRT runs over UDP, not TCP), or the peer rejected the handshake but is taking a while to surface that.
 
-Fix: confirm the listener is up with `ss -ulpn | grep <port>`; verify both sides agree on passphrase and key length; if you need a hard upper bound on `connect()`, set `connect_timeout(Duration::from_secs(N))` on the `SrtSocketBuilder`. It maps to `SRTO_CONNTIMEO`, libsrt's handshake deadline, and is shared across every address the host resolves to. `send_timeout` bounds a send only, not the connect.
+Fix: confirm the listener is up with `ss -ulpn | grep <port>`; verify both sides agree on passphrase and key length; if you need a hard upper bound on `connect()`, set `connect_timeout(Duration::from_secs(N))` on the `SrtSocketBuilder`. It maps to `SRTO_CONNTIMEO`, libsrt's handshake deadline, and is shared across every address the host resolves to. The budget starts after name resolution, which runs first and is not bounded by it, and libsrt polls the deadline about once a second, so a failed connect can return up to about a second late. `send_timeout` bounds a send only, not the connect.
 
 **`SrtListener::accept` blocks forever**
 
