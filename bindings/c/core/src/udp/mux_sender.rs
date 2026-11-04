@@ -60,7 +60,8 @@ pub struct TstUdpMuxSender {
 /// - `udp://host:port` — unicast send
 /// - `udp://group:port` (group ∈ 224.0.0.0/4 or ff00::/8) — multicast send
 /// - Query params: `?ttl=N`, `?iface=<IPv4 literal>`, `?tos=0xb8`, `?sndbuf=2M`,
-///   `?pkt_size=1316`, `?localaddr=...`
+///   `?pkt_size=1316`, `?localaddr=...`. `iface` takes an IPv4 literal; an
+///   IPv6 `iface` is refused on the sender.
 ///
 /// # Safety
 ///

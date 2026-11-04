@@ -73,7 +73,7 @@ pub unsafe extern "C" fn tst_demux_receiver_get_socket_stats(
 ///
 /// `p` must be a valid pointer obtained from `tst_demux_receiver_open`;
 /// `out` must be a writable `tst_stream_codec_stats_t`. The pointee is
-/// fully written on `TST_OK` and untouched on error.
+/// fully written on success (`0`) and untouched on error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_receiver_get_stream_codec_stats(
     p: *mut TstDemuxReceiver,
