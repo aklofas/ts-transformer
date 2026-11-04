@@ -788,3 +788,45 @@ fn a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps() {
         "the PCR jump and its return are both explained: {a:?}"
     );
 }
+
+/// First seed in `1..=400` whose body flips include one on a PCR-only packet
+/// that touches nothing below offset 12 (stuffing only). Found with:
+///
+/// ```text
+/// for seed in 1..=400 {
+///     let (_, _, inj) = tap(&bytes, "rate=300,min_gap=1000,classes=body_flip", seed);
+///     if inj.iter().any(|i| i.class == Class::BodyFlip
+///         && i.before[3] & 0x30 == 0x20
+///         && i.offsets.iter().all(|o| *o >= 12)) { /* first hit: 1 */ }
+/// }
+/// ```
+const BODY_FLIP_STUFFING_ONLY_SEED: u64 = 1;
+
+/// A flip confined to the stuffing of a PCR-only packet cannot have moved
+/// the PCR, so no PCR anomaly is offered as its consequence.
+#[test]
+fn a_stuffing_only_body_flip_on_a_pcr_only_packet_is_not_offered_as_a_pcr_explanation() {
+    let p = profiles::by_name("audio").expect("the audio profile exists");
+    let bytes = gen_bytes(p, "bf-stuffing-only");
+    let (wire, header, injections) = tap(
+        &bytes,
+        "rate=300,min_gap=1000,classes=body_flip",
+        BODY_FLIP_STUFFING_ONLY_SEED,
+    );
+    assert!(
+        injections.iter().any(|i| i.class == Class::BodyFlip
+            && i.before[3] & 0x30 == 0x20
+            && i.offsets.iter().all(|o| *o >= 12)),
+        "seed must flip only stuffing: {:?}",
+        shape(&injections)
+    );
+    let strict = judge_in(VerifyMode::Strict, &wire, p, Some(&(header, injections)));
+    let a = strict.metrics.corruption_attribution.expect("attribution");
+    // Nothing happened to the PCR, so nothing is attributed to the flip.
+    assert_eq!(a.attributed_events, 0, "{a:?}");
+    assert!(
+        a.unexplained_events.is_empty(),
+        "{:?}",
+        a.unexplained_events
+    );
+}

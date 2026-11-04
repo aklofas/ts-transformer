@@ -374,6 +374,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `corpus replay` fails when a receiver child exits before the harness says `quit`, a clean exit included, and the summary lists per path each such exit with the pick whose verdict came last; the restart still happens so the later picks run.
 - `corpus replay` names each pick with PCR gaps it did not pace, and how many: a reset or a forward step over one second is sent as no time.
 - A corpus run's archive row and report name the baseline the sweep compared with, by the SHA-256 of its `manifest.txt`, or say that none was compared.
+- The corruption attribution explains a PCR anomaly or discontinuity by a body flip on a PCR-only packet only when the flip touched the adaptation field's length, flags or (with the PCR flag set) PCR bytes; a flip in its stuffing no longer does.
 
 ### Fixed — tst-interop
 

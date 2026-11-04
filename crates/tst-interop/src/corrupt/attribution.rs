@@ -433,6 +433,23 @@ struct Tracked {
     /// its flags or the PCR — rather than in a payload. `false` when the
     /// log holds no original to read.
     adaptation_only: bool,
+    /// The flip changed a byte that can cause a PCR or discontinuity
+    /// signal: the adaptation field's length (4), its flags (5) or, when
+    /// the original flags carry the PCR flag, the PCR bytes (6..=11). A
+    /// flip in the stuffing, OPCR, splice or private bytes did not.
+    adaptation_control_hit: bool,
+}
+
+/// Whether `offsets` touch the adaptation-field bytes of the original
+/// packet `before` that can raise a PCR or discontinuity signal.
+fn hits_adaptation_control(before: &[u8], offsets: &[usize]) -> bool {
+    if before.get(3).is_none_or(|b| b & 0x30 != 0x20) {
+        return false;
+    }
+    let has_pcr = before.get(5).is_some_and(|f| f & 0x10 != 0);
+    offsets
+        .iter()
+        .any(|o| matches!(o, 4 | 5) || (has_pcr && (6..=11).contains(o)))
 }
 
 impl From<&Injection> for Tracked {
@@ -450,6 +467,7 @@ impl From<&Injection> for Tracked {
             noticed_by_continuity: i.class == Class::Drop
                 || (i.class == Class::Header && matches!(i.offsets.as_slice(), [1, 2] | [3])),
             adaptation_only: i.before.get(3).is_some_and(|b| b & 0x30 == 0x20),
+            adaptation_control_hit: hits_adaptation_control(&i.before, &i.offsets),
         }
     }
 }
@@ -790,10 +808,13 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         // is a PCR jump and its return (measured:
         // `a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps` in
         // `tests/corruption.rs`), and a flipped flag byte can raise a
-        // discontinuity indicator.
+        // discontinuity indicator. Only a flip of the length, flags or
+        // PCR bytes counts; one confined to the stuffing cannot have
+        // caused either signal.
         Class::BodyFlip => {
             matches!(sig, Signal::MalformedPes | Signal::OtherNonConformant)
                 || (inj.adaptation_only
+                    && inj.adaptation_control_hit
                     && matches!(sig, Signal::PcrAnomaly { .. } | Signal::OtherDiscontinuity))
         }
         // H.222.0 §2.4.3.3 allows one duplicate packet, and a receiver
@@ -3460,8 +3481,11 @@ mod tests {
     fn a_body_flip_explains_adaptation_field_signals_only_on_a_payload_less_packet() {
         for (afc, explained) in [(0x20u8, true), (0x30, false), (0x10, false)] {
             let mut flip = inj(1000, 10, Class::BodyFlip, 0x1011, false);
-            flip.before = vec![0x47, 0x10, 0x11, afc];
+            // Byte 5 carries the PCR flag and the flip hit PCR byte 7, so the
+            // payload-less case is a true positive control for the rule.
+            flip.before = vec![0x47, 0x10, 0x11, afc, 183, 0x10];
             flip.before.resize(188, 0xff);
+            flip.offsets = vec![7];
             let mut a = Attribution::strict(vec![flip], &hdr());
             a.on_pcr(1000, 5000);
             a.on_signal(5015, Some(0x1011), Signal::OtherDiscontinuity);
@@ -3471,6 +3495,37 @@ mod tests {
                 r.attributed_events,
                 u64::from(explained),
                 "afc {afc:#04x}: {r:?}"
+            );
+        }
+    }
+
+    /// A body flip on a payload-less packet explains a PCR anomaly only when
+    /// it changed the adaptation field's length, flags or PCR bytes; a flip
+    /// in the stuffing cannot have caused one.
+    #[test]
+    fn a_stuffing_only_body_flip_on_a_pcr_only_packet_explains_no_pcr_anomaly() {
+        for (flags, offsets, explained) in [
+            (0x10u8, vec![100usize], false),
+            (0x10, vec![12], false), // OPCR byte: not a PCR
+            (0x10, vec![7], true),   // PCR base byte
+            (0x10, vec![5], true),   // flags
+            (0x10, vec![4], true),   // adaptation_field_length
+            (0x10, vec![], false),
+            (0x00, vec![7], false), // no PCR flag: byte 7 is not a PCR
+        ] {
+            let mut flip = inj(1000, 10, Class::BodyFlip, 0x1011, false);
+            flip.before = vec![0x47, 0x10, 0x11, 0x20, 183, flags];
+            flip.before.resize(188, 0xff);
+            flip.offsets = offsets.clone();
+            let mut a = with_video_pcr(false, vec![flip]);
+            a.on_pcr(1000, 5000);
+            a.on_signal(5015, Some(0x1011), Signal::PcrAnomaly { delta: 54_000_000 });
+            a.on_media(5100, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(
+                r.attributed_events,
+                u64::from(explained),
+                "flags {flags:#04x} offsets {offsets:?}: {r:?}"
             );
         }
     }
