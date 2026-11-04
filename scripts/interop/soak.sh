@@ -37,8 +37,10 @@
 #                       one publisher generation, checked at launch)
 #   --no-whep           drop the whep leg (no Google Chrome / Chromium needed)
 #   --rss-slope-threshold-kb-per-hour N
-#                       RSS-slope gate (default 200 for runs of 72 h or
+#                       RSS-slope gate (default 200 for runs of 24 h or
 #                       more; shorter runs are provisional unless set)
+#   --no-rss-slope-gate leave the RSS-slope gate provisional whatever the
+#                       duration (an explicit threshold still wins)
 #   --preflight-only    build, validate the declaration, run the memory gate
 #                       and the rtsp-publish disk check, then exit 0 without
 #                       generating or launching anything (the release VM's
@@ -87,6 +89,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=lib/rss-slope.sh
+source "$SCRIPT_DIR/lib/rss-slope.sh"
 
 # Panics from any tst-interop process land in its log WITH a backtrace —
 # a panic message alone may omit the frames needed to diagnose a worker
@@ -104,6 +108,7 @@ HOURS=72
 OUTDIR=""
 SEED=1
 RSS_SLOPE_THRESHOLD=""
+NO_RSS_SLOPE_GATE=""
 # See README.md's "Realism knobs" (this directory) for what each of these does
 # and which one to reach for when bisecting a failure.
 PROFILE=auto
@@ -184,6 +189,10 @@ while [[ $# -gt 0 ]]; do
       need_value "$@"
       RSS_SLOPE_THRESHOLD=$2
       shift 2
+      ;;
+    --no-rss-slope-gate)
+      NO_RSS_SLOPE_GATE=1
+      shift
       ;;
     --preflight-only)
       PREFLIGHT_ONLY=1
@@ -293,12 +302,12 @@ fi
 }
 [[ -n "$OUTDIR" ]] || OUTDIR="$HOME/interop-soak-$(date -u +%Y%m%dT%H%M%SZ)"
 
-# Default the RSS-slope gate ON for full-length runs only — see the
-# README.md's "Outputs and the supervisor" for the 200 KiB/h derivation and
-# why short runs stay provisional (plateau convergence dominates their
-# post-warmup window).
-if [[ -z "$RSS_SLOPE_THRESHOLD" ]] && awk -v h="$HOURS" 'BEGIN{exit !(h>=72)}'; then
-  RSS_SLOPE_THRESHOLD=200
+# Default the RSS-slope gate ON for release-length runs (24 h or more) — see
+# the README.md's "Outputs and the supervisor" for the 200 KiB/h derivation
+# and why shorter runs stay provisional (plateau convergence dominates their
+# post-warmup window). --no-rss-slope-gate keeps a long run provisional.
+if [[ -z "$RSS_SLOPE_THRESHOLD" && -z "$NO_RSS_SLOPE_GATE" ]]; then
+  RSS_SLOPE_THRESHOLD=$(rss_slope_default_kb_per_hour "$HOURS")
 fi
 
 # Same hard-dependency rationale as run-matrix.sh's own check (this
