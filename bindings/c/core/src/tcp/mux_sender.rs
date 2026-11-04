@@ -489,7 +489,7 @@ pub unsafe extern "C" fn tst_tcp_mux_sender_push_subtitle_to(
 /// Snapshot mux-sender-level stats for a `tst_tcp_mux_sender_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the sender has been cancelled.
+/// null, or `TST_E_CLOSED` if a caught panic retired the shell.
 ///
 /// # Safety
 ///
@@ -515,7 +515,7 @@ pub unsafe extern "C" fn tst_tcp_mux_sender_get_mux_sender_stats(
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
 /// `TST_E_NOT_AVAILABLE` if no live stats are available, or
-/// `TST_E_CLOSED` if the handle has been cancelled.
+/// `TST_E_CLOSED` if a caught panic retired the shell.
 ///
 /// # Safety
 ///
@@ -548,7 +548,7 @@ pub unsafe extern "C" fn tst_tcp_mux_sender_get_socket_stats(
 /// # Errors
 ///
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
-/// * `TST_E_CLOSED` — handle has been cancelled
+/// * `TST_E_CLOSED` — a caught panic retired the shell
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
 /// * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
 ///
@@ -581,7 +581,7 @@ pub unsafe extern "C" fn tst_tcp_mux_sender_get_stream_codec_stats(
 /// Reset stats counters for a `tst_tcp_mux_sender_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the sender has been cancelled.
+/// or `TST_E_CLOSED` if a caught panic retired the shell.
 ///
 /// # Safety
 ///

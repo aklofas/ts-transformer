@@ -12,7 +12,7 @@ use crate::error::{TstError, set_last_error};
 /// Snapshot stats for a `tst_demux_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer
-/// is null, `TST_E_CLOSED` if the receiver has been cancelled.
+/// is null, `TST_E_CLOSED` if a caught panic retired the shell.
 ///
 /// NOTE: per-PID counters are NOT included on this struct — call
 /// `tst_demux_receiver_get_stream_stats` to retrieve them.
@@ -65,7 +65,7 @@ pub unsafe extern "C" fn tst_demux_receiver_get_socket_stats(
 /// # Errors
 ///
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
-/// * `TST_E_CLOSED` — handle was cancelled via `tst_demux_receiver_cancel`
+/// * `TST_E_CLOSED` — a caught panic retired the shell
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
 /// * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
 ///
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn tst_demux_receiver_get_stream_codec_stats(
 /// holding a `_get_stream_stats` snapshot open.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, `TST_E_CLOSED` if the receiver has been cancelled.
+/// null, `TST_E_CLOSED` if a caught panic retired the shell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_receiver_get_stream_last_seen_micros(
     p: *mut TstDemuxReceiver,
@@ -133,7 +133,7 @@ pub unsafe extern "C" fn tst_demux_receiver_get_stream_last_seen_micros(
 /// (design §4.5).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
-/// null, `TST_E_CLOSED` if the receiver has been cancelled.
+/// null, `TST_E_CLOSED` if a caught panic retired the shell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_receiver_reset_stats(p: *mut TstDemuxReceiver) -> libc::c_int {
     let Some(handle) = (unsafe { p.as_ref() }) else {
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn tst_demux_receiver_reset_stats(p: *mut TstDemuxReceiver
 /// and for a stream seen before its PMT arrived).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
-/// arg, or `TST_E_CLOSED` if the receiver has been cancelled.
+/// arg, or `TST_E_CLOSED` if a caught panic retired the shell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_receiver_get_stream_stats(
     p: *mut TstDemuxReceiver,

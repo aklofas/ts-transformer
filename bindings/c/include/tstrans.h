@@ -2782,7 +2782,7 @@ int tst_demux_receiver_get_socket_stats(struct tst_demux_receiver_t *p,
  * Snapshot stats for a `tst_demux_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer
- * is null, `TST_E_CLOSED` if the receiver has been cancelled.
+ * is null, `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * NOTE: per-PID counters are NOT included on this struct — call
  * `tst_demux_receiver_get_stream_stats` to retrieve them.
@@ -2804,7 +2804,7 @@ int tst_demux_receiver_get_stats(struct tst_demux_receiver_t *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle was cancelled via `tst_demux_receiver_cancel`
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -2834,7 +2834,7 @@ int tst_demux_receiver_get_stream_codec_stats(struct tst_demux_receiver_t *p,
  * holding a `_get_stream_stats` snapshot open.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, `TST_E_CLOSED` if a caught panic retired the shell.
  */
 
 int tst_demux_receiver_get_stream_last_seen_micros(struct tst_demux_receiver_t *p,
@@ -2859,7 +2859,7 @@ int tst_demux_receiver_get_stream_last_seen_micros(struct tst_demux_receiver_t *
  * and for a stream seen before its PMT arrived).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
- * arg, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * arg, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
 
 int tst_demux_receiver_get_stream_stats(struct tst_demux_receiver_t *p,
@@ -2963,7 +2963,7 @@ struct tst_demux_receiver_t *tst_demux_receiver_open_with_config(const char *srt
  * (design §4.5).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
- * null, `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_demux_receiver_reset_stats(struct tst_demux_receiver_t *p);
 #endif
@@ -3866,7 +3866,7 @@ int tst_managed_demux_receiver_get_stats(struct tst_managed_demux_receiver_t *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle was cancelled via `tst_managed_demux_receiver_cancel`
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -4139,7 +4139,7 @@ int tst_managed_demux_receiver_recv_event(struct tst_managed_demux_receiver_t *p
  * mode these stats primarily exist to observe).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
- * `TST_E_CLOSED` if the sender has been cancelled, or `TST_E_INTERNAL` if the
+ * `TST_E_CLOSED` if a caught panic retired the shell, or `TST_E_INTERNAL` if the
  * gap-buffer lock is poisoned (see `ManagedTransport`'s lock poisoning
  * policy — a prior panic mid-drain).
  *
@@ -4176,7 +4176,7 @@ int tst_managed_mux_sender_get_socket_stats(struct tst_managed_mux_sender_t *p,
  * Snapshot stats for a `tst_managed_mux_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
 
 int tst_managed_mux_sender_get_stats(struct tst_managed_mux_sender_t *p,
@@ -4192,7 +4192,7 @@ int tst_managed_mux_sender_get_stats(struct tst_managed_mux_sender_t *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle was cancelled via `tst_managed_mux_sender_cancel`
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -4238,7 +4238,7 @@ struct tst_managed_mux_sender_t *tst_managed_mux_sender_open(const char *srt_url
  * Reset stats counters for a `tst_managed_mux_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_managed_mux_sender_reset_stats(struct tst_managed_mux_sender_t *p);
 #endif
@@ -4509,7 +4509,7 @@ int tst_managed_raw_receiver_get_socket_stats(struct tst_managed_raw_receiver_t 
  * Snapshot stats for a `tst_managed_raw_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
 
 int tst_managed_raw_receiver_get_stats(struct tst_managed_raw_receiver_t *p,
@@ -4598,7 +4598,7 @@ int tst_managed_raw_receiver_recv(struct tst_managed_raw_receiver_t *p,
  * Reset stats counters for a `tst_managed_raw_receiver_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_managed_raw_receiver_reset_stats(struct tst_managed_raw_receiver_t *p);
 #endif
@@ -4644,7 +4644,7 @@ int tst_managed_raw_receiver_recv(struct tst_managed_raw_receiver_t *p,
  * mode these stats primarily exist to observe).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
- * `TST_E_CLOSED` if the sender has been cancelled, or `TST_E_INTERNAL` if the
+ * `TST_E_CLOSED` if a caught panic retired the shell, or `TST_E_INTERNAL` if the
  * gap-buffer lock is poisoned (see `ManagedTransport`'s lock poisoning
  * policy — a prior panic mid-drain).
  *
@@ -4681,7 +4681,7 @@ int tst_managed_raw_sender_get_socket_stats(struct tst_managed_raw_sender_t *p,
  * Snapshot stats for a `tst_managed_raw_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
 
 int tst_managed_raw_sender_get_stats(struct tst_managed_raw_sender_t *p,
@@ -4714,7 +4714,7 @@ struct tst_managed_raw_sender_t *tst_managed_raw_sender_open(const char *srt_url
  * Reset stats counters for a `tst_managed_raw_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_managed_raw_sender_reset_stats(struct tst_managed_raw_sender_t *p);
 #endif
@@ -4775,7 +4775,7 @@ int tst_managed_receiver_get_socket_stats(struct tst_managed_receiver_t *p,
  * Snapshot stats for a `tst_managed_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
 
 int tst_managed_receiver_get_stats(struct tst_managed_receiver_t *p,
@@ -4861,7 +4861,7 @@ struct tst_managed_receiver_t *tst_managed_receiver_open_listener(const char *sr
  * Reset stats counters for a `tst_managed_receiver_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_managed_receiver_reset_stats(struct tst_managed_receiver_t *p);
 #endif
@@ -4917,7 +4917,7 @@ struct tst_managed_receiver_t *tst_managed_receiver_open_listener(const char *sr
  * mode these stats primarily exist to observe).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
- * `TST_E_CLOSED` if the sender has been cancelled, or `TST_E_INTERNAL` if the
+ * `TST_E_CLOSED` if a caught panic retired the shell, or `TST_E_INTERNAL` if the
  * gap-buffer lock is poisoned (see `ManagedTransport`'s lock poisoning
  * policy — a prior panic mid-drain).
  *
@@ -5729,7 +5729,7 @@ struct TstMuxPublisher *tst_mux_publisher_with_config_hls(struct TstPublisher *h
  * * `TST_E_INVALID_CONFIG` if `p` or `out` is NULL.
  * * `TST_E_NOT_AVAILABLE` if the inner transport has no live socket
  *   (closed or — for the managed sibling — mid-reconnect).
- * * `TST_E_CLOSED` if the sender has been cancelled.
+ * * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -5744,7 +5744,7 @@ struct TstMuxPublisher *tst_mux_publisher_with_config_hls(struct TstPublisher *h
  * Snapshot stats for a `tst_mux_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_mux_sender_get_stats(struct tst_mux_sender_t *p, struct tst_mux_sender_stats_t *out);
 #endif
@@ -5760,7 +5760,7 @@ struct TstMuxPublisher *tst_mux_publisher_with_config_hls(struct TstPublisher *h
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle was cancelled via `tst_mux_sender_cancel`
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
@@ -5799,7 +5799,7 @@ int tst_mux_sender_get_stream_codec_stats(struct tst_mux_sender_t *p,
  * Reset stats counters for a `tst_mux_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_mux_sender_reset_stats(struct tst_mux_sender_t *p);
 #endif
@@ -6765,7 +6765,7 @@ int tst_raw_receiver_get_socket_stats(struct tst_raw_receiver_t *p,
  * Snapshot stats for a `tst_raw_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_raw_receiver_get_stats(struct tst_raw_receiver_t *p, struct tst_raw_recv_stats_t *out);
 #endif
@@ -6824,7 +6824,7 @@ int tst_raw_receiver_get_socket_stats(struct tst_raw_receiver_t *p,
  * Reset stats counters for a `tst_raw_receiver_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_raw_receiver_reset_stats(struct tst_raw_receiver_t *p);
 #endif
@@ -6891,7 +6891,7 @@ int tst_raw_sender_get_socket_stats(struct tst_raw_sender_t *p,
  * Snapshot stats for a `tst_raw_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_raw_sender_get_stats(struct tst_raw_sender_t *p, struct tst_raw_send_stats_t *out);
 #endif
@@ -6921,7 +6921,7 @@ struct tst_raw_sender_t *tst_raw_sender_open(const char *srt_url,
  * Reset stats counters for a `tst_raw_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_raw_sender_reset_stats(struct tst_raw_sender_t *p);
 #endif
@@ -6988,7 +6988,7 @@ int tst_receiver_get_socket_stats(struct tst_receiver_t *p,
  * Snapshot stats for a `tst_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_receiver_get_stats(struct tst_receiver_t *p, struct tst_receiver_stats_t *out);
 #endif
@@ -7053,7 +7053,7 @@ int tst_receiver_get_socket_stats(struct tst_receiver_t *p,
  * affect transport state or the syncer state machine.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  */
  int tst_receiver_reset_stats(struct tst_receiver_t *p);
 #endif
@@ -7148,7 +7148,7 @@ int tst_reconnect_policy_set_backoff_exponential_ms(struct tst_reconnect_policy_
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7166,7 +7166,7 @@ int tst_rist_demux_receiver_get_socket_stats(struct TstRistDemuxReceiver *p,
  * Snapshot aggregate stats for a `tst_rist_demux_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * NOTE: per-PID counters are NOT included here — call
  * `tst_rist_demux_receiver_get_stream_stats` to retrieve them.
@@ -7193,7 +7193,7 @@ int tst_rist_demux_receiver_get_stats(struct TstRistDemuxReceiver *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle has been cancelled
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -7217,7 +7217,7 @@ int tst_rist_demux_receiver_get_stream_codec_stats(struct TstRistDemuxReceiver *
  * for full semantics — same shape, different handle type).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7245,7 +7245,7 @@ int tst_rist_demux_receiver_get_stream_last_seen_micros(struct TstRistDemuxRecei
  * Capped at `TST_STATS_MAX_STREAMS = 64` entries (ascending PID order).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
- * arg, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * arg, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7358,7 +7358,7 @@ struct TstRistDemuxReceiver *tst_rist_demux_receiver_open(const char *url,
  * (design §4.5).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7447,7 +7447,7 @@ struct TstRistDemuxReceiver *tst_rist_demux_receiver_open(const char *url,
  * Snapshot mux-sender-level stats for a `tst_rist_mux_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7469,7 +7469,7 @@ int tst_rist_mux_sender_get_mux_sender_stats(struct TstRistMuxSender *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7492,7 +7492,7 @@ int tst_rist_mux_sender_get_socket_stats(struct TstRistMuxSender *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle has been cancelled
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -7745,7 +7745,7 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  * Reset stats counters for a `tst_rist_mux_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the sender has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7801,7 +7801,7 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live socket stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7816,7 +7816,7 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  * Snapshot stats for a `tst_rist_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7876,7 +7876,7 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * Reset stats counters for a `tst_rist_receiver_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -7994,7 +7994,7 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if the transport has no live stats
  * (e.g., transport not yet connected or already closed), or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8009,7 +8009,7 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * Snapshot stats for a `tst_rist_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8054,7 +8054,7 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * Reset stats counters for a `tst_rist_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the sender has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8187,7 +8187,7 @@ int tst_rtp_demux_receiver_end_reason(struct TstRtpDemuxReceiver *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8205,7 +8205,7 @@ int tst_rtp_demux_receiver_get_socket_stats(struct TstRtpDemuxReceiver *p,
  * Snapshot aggregate stats for a `tst_rtp_demux_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * NOTE: per-PID counters are NOT included here — call
  * `tst_rtp_demux_receiver_get_stream_stats` to retrieve them.
@@ -8232,7 +8232,7 @@ int tst_rtp_demux_receiver_get_stats(struct TstRtpDemuxReceiver *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle has been cancelled
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -8256,7 +8256,7 @@ int tst_rtp_demux_receiver_get_stream_codec_stats(struct TstRtpDemuxReceiver *p,
  * for full semantics — same shape, different handle type).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8284,7 +8284,7 @@ int tst_rtp_demux_receiver_get_stream_last_seen_micros(struct TstRtpDemuxReceive
  * Capped at `TST_STATS_MAX_STREAMS = 64` entries (ascending PID order).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
- * arg, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * arg, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8396,7 +8396,7 @@ struct TstRtpDemuxReceiver *tst_rtp_demux_receiver_open(const char *url,
  * (design §4.5).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8481,7 +8481,7 @@ struct TstRtpDemuxReceiver *tst_rtp_demux_receiver_open(const char *url,
  * Snapshot mux-sender-level stats for a `tst_rtp_mux_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8503,7 +8503,7 @@ int tst_rtp_mux_sender_get_mux_sender_stats(struct TstRtpMuxSender *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8524,7 +8524,7 @@ int tst_rtp_mux_sender_get_mux_sender_stats(struct TstRtpMuxSender *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle has been cancelled
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -8772,7 +8772,7 @@ int tst_rtp_mux_sender_push_video_to(struct TstRtpMuxSender *p,
  * Reset stats counters for a `tst_rtp_mux_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the sender has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8868,7 +8868,7 @@ int tst_rtp_mux_sender_push_video_to(struct TstRtpMuxSender *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live socket stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8883,7 +8883,7 @@ int tst_rtp_mux_sender_push_video_to(struct TstRtpMuxSender *p,
  * Snapshot stats for a `tst_rtp_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -8939,7 +8939,7 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * Reset stats counters for a `tst_rtp_receiver_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -9041,7 +9041,7 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if the transport has no live stats
  * (e.g., socket not yet connected or already closed), or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -9056,7 +9056,7 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * Snapshot stats for a `tst_rtp_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -9092,7 +9092,7 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * Reset stats counters for a `tst_rtp_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the sender has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11119,7 +11119,7 @@ int tst_sender_get_socket_stats(struct tst_sender_t *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11137,7 +11137,7 @@ int tst_tcp_demux_receiver_get_socket_stats(struct TstTcpDemuxReceiver *p,
  * Snapshot aggregate stats for a `tst_tcp_demux_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * NOTE: per-PID counters are NOT included here — call
  * `tst_tcp_demux_receiver_get_stream_stats` to retrieve them.
@@ -11164,7 +11164,7 @@ int tst_tcp_demux_receiver_get_stats(struct TstTcpDemuxReceiver *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle has been cancelled
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -11188,7 +11188,7 @@ int tst_tcp_demux_receiver_get_stream_codec_stats(struct TstTcpDemuxReceiver *p,
  * for full semantics — same shape, different handle type).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11216,7 +11216,7 @@ int tst_tcp_demux_receiver_get_stream_last_seen_micros(struct TstTcpDemuxReceive
  * Capped at `TST_STATS_MAX_STREAMS = 64` entries (ascending PID order).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
- * arg, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * arg, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11321,7 +11321,7 @@ struct TstTcpDemuxReceiver *tst_tcp_demux_receiver_open(const char *url,
  * (design §4.5).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11533,7 +11533,7 @@ struct TstTcpDemuxReceiver *tst_tcp_demux_receiver_open(const char *url,
  * Snapshot mux-sender-level stats for a `tst_tcp_mux_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11555,7 +11555,7 @@ int tst_tcp_mux_sender_get_mux_sender_stats(struct TstTcpMuxSender *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11576,7 +11576,7 @@ int tst_tcp_mux_sender_get_mux_sender_stats(struct TstTcpMuxSender *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle has been cancelled
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -11832,7 +11832,7 @@ int tst_tcp_mux_sender_push_video_to(struct TstTcpMuxSender *p,
  * Reset stats counters for a `tst_tcp_mux_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the sender has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11885,7 +11885,7 @@ int tst_tcp_mux_sender_push_video_to(struct TstTcpMuxSender *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live socket stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11901,7 +11901,7 @@ int tst_tcp_mux_sender_push_video_to(struct TstTcpMuxSender *p,
  * Snapshot stats for a `tst_tcp_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -11955,7 +11955,7 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * Reset stats counters for a `tst_tcp_receiver_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12058,7 +12058,7 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if the transport has no live stats
  * (e.g., socket not yet connected or already closed), or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12074,7 +12074,7 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * Snapshot stats for a `tst_tcp_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12114,7 +12114,7 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * Reset stats counters for a `tst_tcp_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the sender has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12199,7 +12199,7 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12217,7 +12217,7 @@ int tst_udp_demux_receiver_get_socket_stats(struct TstUdpDemuxReceiver *p,
  * Snapshot aggregate stats for a `tst_udp_demux_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * NOTE: per-PID counters are NOT included here — call
  * `tst_udp_demux_receiver_get_stream_stats` to retrieve them.
@@ -12244,7 +12244,7 @@ int tst_udp_demux_receiver_get_stats(struct TstUdpDemuxReceiver *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle has been cancelled
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -12268,7 +12268,7 @@ int tst_udp_demux_receiver_get_stream_codec_stats(struct TstUdpDemuxReceiver *p,
  * for full semantics — same shape, different handle type).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12296,7 +12296,7 @@ int tst_udp_demux_receiver_get_stream_last_seen_micros(struct TstUdpDemuxReceive
  * Capped at `TST_STATS_MAX_STREAMS = 64` entries (ascending PID order).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
- * arg, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * arg, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12395,7 +12395,7 @@ struct TstUdpDemuxReceiver *tst_udp_demux_receiver_open(const char *url,
  * (design §4.5).
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12484,7 +12484,7 @@ struct TstUdpDemuxReceiver *tst_udp_demux_receiver_open(const char *url,
  * Snapshot mux-sender-level stats for a `tst_udp_mux_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12506,7 +12506,7 @@ int tst_udp_mux_sender_get_mux_sender_stats(struct TstUdpMuxSender *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12527,7 +12527,7 @@ int tst_udp_mux_sender_get_mux_sender_stats(struct TstUdpMuxSender *p,
  * # Errors
  *
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
- * * `TST_E_CLOSED` — handle has been cancelled
+ * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
  * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
  *
@@ -12780,7 +12780,7 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  * Reset stats counters for a `tst_udp_mux_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the sender has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12836,7 +12836,7 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if no live socket stats are available, or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12851,7 +12851,7 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  * Snapshot stats for a `tst_udp_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the receiver has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -12901,7 +12901,7 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * Reset stats counters for a `tst_udp_receiver_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -13004,7 +13004,7 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
  * `TST_E_NOT_AVAILABLE` if the transport has no live stats
  * (e.g., socket not yet connected or already closed), or
- * `TST_E_CLOSED` if the handle has been cancelled.
+ * `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -13019,7 +13019,7 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * Snapshot stats for a `tst_udp_sender_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
- * null, or `TST_E_CLOSED` if the sender has been cancelled.
+ * null, or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *
@@ -13056,7 +13056,7 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * Reset stats counters for a `tst_udp_sender_t` to zero.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the sender has been cancelled.
+ * or `TST_E_CLOSED` if a caught panic retired the shell.
  *
  * # Safety
  *

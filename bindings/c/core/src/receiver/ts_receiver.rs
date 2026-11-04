@@ -197,7 +197,7 @@ pub unsafe extern "C" fn tst_receiver_cancel(p: *mut TstReceiver) -> libc::c_int
 /// Snapshot stats for a `tst_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
+/// null, or `TST_E_CLOSED` if a caught panic retired the shell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_receiver_get_stats(
     p: *mut TstReceiver,
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn tst_receiver_get_socket_stats(
 /// affect transport state or the syncer state machine.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been cancelled.
+/// or `TST_E_CLOSED` if a caught panic retired the shell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_receiver_reset_stats(p: *mut TstReceiver) -> libc::c_int {
     let Some(handle) = (unsafe { p.as_ref() }) else {
@@ -438,7 +438,7 @@ pub unsafe extern "C" fn tst_managed_receiver_close(p: *mut TstManagedReceiver) 
 /// Snapshot stats for a `tst_managed_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
+/// null, or `TST_E_CLOSED` if a caught panic retired the shell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_receiver_get_stats(
     p: *mut TstManagedReceiver,
@@ -481,7 +481,7 @@ pub unsafe extern "C" fn tst_managed_receiver_get_socket_stats(
 /// Reset stats counters for a `tst_managed_receiver_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been cancelled.
+/// or `TST_E_CLOSED` if a caught panic retired the shell.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_receiver_reset_stats(
     p: *mut TstManagedReceiver,
