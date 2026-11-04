@@ -7293,8 +7293,8 @@ int tst_rist_demux_receiver_get_ts_bytes_demuxed(struct TstRistDemuxReceiver *p,
  *
  * Returns:
  * - `0` on success (`*out_event` populated)
- * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
- *   locally; terminal, every later call returns it
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later call
+ *   returns it and the handle stays valid until `_close`
  * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
  *   transport has no peer close to report, so this does not occur here)
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
@@ -7845,8 +7845,8 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  *
  * Returns:
  * - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
- * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
- *   locally; terminal, every later call returns it
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later call
+ *   returns it and the handle stays valid until `_close`
  * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
  *   transport has no peer close to report, so this does not occur here)
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
@@ -8332,8 +8332,8 @@ int tst_rtp_demux_receiver_get_ts_bytes_demuxed(struct TstRtpDemuxReceiver *p,
  *
  * Returns:
  * - `0` on success (`*out_event` populated)
- * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
- *   locally; terminal, every later call returns it
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later call
+ *   returns it and the handle stays valid until `_close`
  * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream: an
  *   RTSP-over-TCP session ends with a clean server teardown, or the mount
  *   was removed or the server stopped or hard-cancelled (plain `rtp://`
@@ -8905,8 +8905,8 @@ int tst_rtp_mux_sender_push_video_to(struct TstRtpMuxSender *p,
  *
  * Returns:
  * - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
- * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
- *   locally; terminal, every later call returns it
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later call
+ *   returns it and the handle stays valid until `_close`
  * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream: an
  *   RTSP-over-TCP session ends with a clean server teardown, or the mount
  *   was removed or the server stopped or hard-cancelled (plain `rtp://`
@@ -12343,8 +12343,8 @@ int tst_udp_demux_receiver_get_ts_bytes_demuxed(struct TstUdpDemuxReceiver *p,
  *
  * Returns:
  * - `0` on success (`*out_event` populated)
- * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
- *   locally; terminal, every later call returns it
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later call
+ *   returns it and the handle stays valid until `_close`
  * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
  *   transport has no peer close to report, so this does not occur here)
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
@@ -12872,8 +12872,8 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  *
  * Returns:
  * - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
- * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
- *   locally; terminal, every later call returns it
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired; terminal, every later call
+ *   returns it and the handle stays valid until `_close`
  * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
  *   transport has no peer close to report, so this does not occur here)
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
