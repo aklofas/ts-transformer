@@ -280,7 +280,7 @@ pub unsafe extern "C" fn tst_rtp_receiver_end_reason(
 /// Snapshot stats for a `tst_rtp_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been closed.
+/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///
@@ -305,7 +305,7 @@ pub unsafe extern "C" fn tst_rtp_receiver_get_stats(
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
 /// `TST_E_NOT_AVAILABLE` if no live socket stats are available, or
-/// `TST_E_CLOSED` if the handle was closed.
+/// `TST_E_CLOSED` if the handle has been cancelled.
 ///
 /// # Safety
 ///
@@ -332,7 +332,7 @@ pub unsafe extern "C" fn tst_rtp_receiver_get_socket_stats(
 /// Reset stats counters for a `tst_rtp_receiver_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been closed.
+/// or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///

@@ -132,7 +132,7 @@ pub unsafe extern "C" fn tst_demuxer_open_with_config(
 ///   would push the pre-sync buffer past `sync_buf_cap`; the buffered
 ///   bytes and this call's bytes are dropped and the next feed starts
 ///   from an empty buffer).
-/// - `TST_E_CLOSED` (-7) — handle already closed.
+/// - `TST_E_CLOSED` (-7) — handle was retired by a caught panic.
 ///
 /// # Safety
 ///
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn tst_demuxer_feed(
 /// with no intervening `feed` is safe and a no-op the second time.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` (-1) if `p` is null,
-/// or `TST_E_CLOSED` (-7) if the handle was already closed.
+/// or `TST_E_CLOSED` (-7) if a caught panic retired the handle.
 ///
 /// # Safety
 ///
@@ -212,7 +212,7 @@ pub unsafe extern "C" fn tst_demuxer_flush(p: *mut TstDemuxer) -> crate::c_types
 /// - `TST_E_NOT_AVAILABLE` (-13) — no event in the queue; feed more
 ///   bytes or stop if at end-of-stream.
 /// - `TST_E_INVALID_CONFIG` (-1) — `p` or `out_event` is null.
-/// - `TST_E_CLOSED` (-7) — handle already closed.
+/// - `TST_E_CLOSED` (-7) — handle was retired by a caught panic.
 ///
 /// # Safety
 ///

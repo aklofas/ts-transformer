@@ -253,7 +253,7 @@ pub unsafe extern "C" fn tst_managed_raw_sender_cancel(p: *mut TstManagedRawSend
 /// Snapshot stats for a `tst_raw_sender_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the sender has been closed.
+/// null, or `TST_E_CLOSED` if the sender has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_raw_sender_get_stats(
     p: *mut TstRawSender,
@@ -295,7 +295,7 @@ pub unsafe extern "C" fn tst_raw_sender_get_socket_stats(
 /// Reset stats counters for a `tst_raw_sender_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
-/// null, or `TST_E_CLOSED` if the sender has been closed.
+/// null, or `TST_E_CLOSED` if the sender has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_raw_sender_reset_stats(p: *mut TstRawSender) -> libc::c_int {
     let Some(handle) = (unsafe { p.as_ref() }) else {
@@ -308,7 +308,7 @@ pub unsafe extern "C" fn tst_raw_sender_reset_stats(p: *mut TstRawSender) -> lib
 /// Snapshot stats for a `tst_managed_raw_sender_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the sender has been closed.
+/// null, or `TST_E_CLOSED` if the sender has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_raw_sender_get_stats(
     p: *mut TstManagedRawSender,
@@ -361,7 +361,7 @@ pub unsafe extern "C" fn tst_managed_raw_sender_get_socket_stats(
 /// mode these stats primarily exist to observe).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
-/// `TST_E_CLOSED` if the sender has been closed, or `TST_E_INTERNAL` if the
+/// `TST_E_CLOSED` if the sender has been cancelled, or `TST_E_INTERNAL` if the
 /// gap-buffer lock is poisoned (see `ManagedTransport`'s lock poisoning
 /// policy — a prior panic mid-drain).
 ///
@@ -385,7 +385,7 @@ pub unsafe extern "C" fn tst_managed_raw_sender_get_reconnect_stats(
 /// Reset stats counters for a `tst_managed_raw_sender_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
-/// null, or `TST_E_CLOSED` if the sender has been closed.
+/// null, or `TST_E_CLOSED` if the sender has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_raw_sender_reset_stats(
     p: *mut TstManagedRawSender,

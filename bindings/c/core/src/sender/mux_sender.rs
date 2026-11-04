@@ -475,7 +475,7 @@ pub unsafe extern "C" fn tst_mux_sender_send_subtitle_to(
 /// Snapshot stats for a `tst_mux_sender_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the sender has been closed.
+/// null, or `TST_E_CLOSED` if the sender has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_get_stats(
     p: *mut TstMuxSender,
@@ -499,7 +499,7 @@ pub unsafe extern "C" fn tst_mux_sender_get_stats(
 /// * `TST_E_INVALID_CONFIG` if `p` or `out` is NULL.
 /// * `TST_E_NOT_AVAILABLE` if the inner transport has no live socket
 ///   (closed or — for the managed sibling — mid-reconnect).
-/// * `TST_E_CLOSED` if the sender has been closed.
+/// * `TST_E_CLOSED` if the sender has been cancelled.
 ///
 /// # Safety
 ///
@@ -532,7 +532,7 @@ pub unsafe extern "C" fn tst_mux_sender_get_socket_stats(
 /// # Errors
 ///
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
-/// * `TST_E_CLOSED` — handle was closed via `tst_mux_sender_close`
+/// * `TST_E_CLOSED` — handle was cancelled via `tst_mux_sender_cancel`
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
 /// * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
 ///
@@ -566,7 +566,7 @@ pub unsafe extern "C" fn tst_mux_sender_get_stream_codec_stats(
 /// Reset stats counters for a `tst_mux_sender_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
-/// null, or `TST_E_CLOSED` if the sender has been closed.
+/// null, or `TST_E_CLOSED` if the sender has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_sender_reset_stats(p: *mut TstMuxSender) -> libc::c_int {
     let Some(handle) = (unsafe { p.as_ref() }) else {
@@ -1188,7 +1188,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data_to(
 /// Snapshot stats for a `tst_managed_mux_sender_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the sender has been closed.
+/// null, or `TST_E_CLOSED` if the sender has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_get_stats(
     p: *mut TstManagedMuxSender,
@@ -1241,7 +1241,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_get_socket_stats(
 /// mode these stats primarily exist to observe).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
-/// `TST_E_CLOSED` if the sender has been closed, or `TST_E_INTERNAL` if the
+/// `TST_E_CLOSED` if the sender has been cancelled, or `TST_E_INTERNAL` if the
 /// gap-buffer lock is poisoned (see `ManagedTransport`'s lock poisoning
 /// policy — a prior panic mid-drain).
 ///
@@ -1269,7 +1269,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_get_reconnect_stats(
 /// # Errors
 ///
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
-/// * `TST_E_CLOSED` — handle was closed via `tst_managed_mux_sender_close`
+/// * `TST_E_CLOSED` — handle was cancelled via `tst_managed_mux_sender_cancel`
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
 /// * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
 ///
@@ -1302,7 +1302,7 @@ pub unsafe extern "C" fn tst_managed_mux_sender_get_stream_codec_stats(
 /// Reset stats counters for a `tst_managed_mux_sender_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
-/// null, or `TST_E_CLOSED` if the sender has been closed.
+/// null, or `TST_E_CLOSED` if the sender has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_mux_sender_reset_stats(
     p: *mut TstManagedMuxSender,

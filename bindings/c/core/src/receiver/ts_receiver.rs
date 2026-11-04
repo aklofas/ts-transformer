@@ -119,8 +119,8 @@ pub unsafe extern "C" fn tst_receiver_close(p: *mut TstReceiver) {
 /// Returns:
 /// - `0` on success (188 bytes written to `out_packet`)
 /// - `TST_E_END_OF_STREAM` (-12) on graceful peer close
-/// - `TST_E_CLOSED` (-7) if the handle was `_close`'d, or on the call that
-///   observes a cross-thread `_cancel` and every one after it
+/// - `TST_E_CLOSED` (-7) on the call that observes a `_cancel` (e.g. from
+///   another thread) and every one after it
 /// - `TST_E_TRANSPORT` (-8) on a transport failure other than a clean
 ///   peer disconnect (peer FIN surfaces as `TST_E_END_OF_STREAM`)
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments
@@ -197,7 +197,7 @@ pub unsafe extern "C" fn tst_receiver_cancel(p: *mut TstReceiver) -> libc::c_int
 /// Snapshot stats for a `tst_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been closed.
+/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_receiver_get_stats(
     p: *mut TstReceiver,
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn tst_receiver_get_socket_stats(
 /// affect transport state or the syncer state machine.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been closed.
+/// or `TST_E_CLOSED` if the receiver has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_receiver_reset_stats(p: *mut TstReceiver) -> libc::c_int {
     let Some(handle) = (unsafe { p.as_ref() }) else {
@@ -438,7 +438,7 @@ pub unsafe extern "C" fn tst_managed_receiver_close(p: *mut TstManagedReceiver) 
 /// Snapshot stats for a `tst_managed_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been closed.
+/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_receiver_get_stats(
     p: *mut TstManagedReceiver,
@@ -481,7 +481,7 @@ pub unsafe extern "C" fn tst_managed_receiver_get_socket_stats(
 /// Reset stats counters for a `tst_managed_receiver_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been closed.
+/// or `TST_E_CLOSED` if the receiver has been cancelled.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_receiver_reset_stats(
     p: *mut TstManagedReceiver,
