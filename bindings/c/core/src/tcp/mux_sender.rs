@@ -17,8 +17,11 @@
 //! `TcpCancelHandle`; a `push_*` parked on another thread returns
 //! `TST_E_CLOSED`. That entry point is what unblocks a push against a peer
 //! that has stopped reading: such a push blocks until the peer resumes, the
-//! peer resets the connection, or the handle is cancelled or closed — there
-//! is no short send deadline that returns `TST_E_TRANSPORT`.
+//! peer resets the connection, or the handle is cancelled — there
+//! is no short send deadline that returns `TST_E_TRANSPORT`. `_cancel` may be
+//! called from any thread. The sequence is `_cancel`, wait for the parked
+//! call to return, then `_close`. `_close` is implemented cancel-first as a
+//! defence, not as a contract, and is called only once no call is in flight.
 
 use std::os::raw::c_char;
 
