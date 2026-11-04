@@ -21,10 +21,21 @@ runs:
       shell: bash
       name: Remove unused preinstalled toolsets
       run: |
+        # Every removal is bounded and timed: this step prints nothing on its
+        # own, so a wedged runner here looked like a slow rm (45 min to the job
+        # cap, once). A bounded removal that times out costs the space it would
+        # have freed, nothing else.
         for p in /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost; do
-          if [ -e "$p" ]; then sudo rm -rf "$p" || true; fi
+          [ -e "$p" ] || continue
+          t0=$SECONDS
+          sudo timeout 300 rm -rf "$p" || echo "free-disk: rm $p exited $? (bounded at 300 s)"
+          echo "free-disk: $p removed in $((SECONDS - t0)) s"
         done
-        if command -v docker >/dev/null 2>&1; then sudo docker image prune -af >/dev/null 2>&1 || true; fi
+        if command -v docker >/dev/null 2>&1; then
+          t0=$SECONDS
+          sudo timeout 120 docker image prune -af >/dev/null 2>&1 || echo "free-disk: docker image prune exited $? (bounded at 120 s)"
+          echo "free-disk: docker images pruned in $((SECONDS - t0)) s"
+        fi
     - if: runner.os == 'Linux'
       shell: bash
       name: Disk after
