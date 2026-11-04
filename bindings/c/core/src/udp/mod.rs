@@ -18,7 +18,7 @@
 //! - `udp://host:port` — unicast send (sender) / unicast bind (receiver)
 //! - `udp://@group:port` (`@` prefix is ffmpeg convention) — multicast recv
 //! - `udp://group:port` (group ∈ 224.0.0.0/4 or ff00::/8) — multicast send
-//! - Query params: `?ttl=N`, `?iface=eth0`, `?tos=0xb8`, `?rcvbuf=8M`,
+//! - Query params: `?ttl=N`, `?iface=<IPv4 literal>`, `?tos=0xb8`, `?rcvbuf=8M`,
 //!   `?sndbuf=2M`, `?pkt_size=1316`, `?localaddr=...`
 
 pub mod sender;

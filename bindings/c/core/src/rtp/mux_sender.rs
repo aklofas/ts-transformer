@@ -49,7 +49,7 @@ pub struct TstRtpMuxSender {
 /// The mux config is borrowed — the caller still owns it and must free
 /// it. The returned handle is independent of the config after this call.
 ///
-/// URL form: `rtp://host:port[?ttl=N&iface=eth0&pkt_size=1316&ssrc=N]`.
+/// URL form: `rtp://host:port[?ttl=N&iface=<IPv4 literal>&pkt_size=1316&ssrc=N]`.
 ///
 /// # Safety
 ///

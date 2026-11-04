@@ -531,9 +531,11 @@ int main(int argc, char **argv) {
      *
      * Two-phase:
      *   tst_rtsp_server_stop  — sends Notice 5402 to active sessions, fires
-     *                           the global cancel token, waits drain_ms=0
-     *                           (uses the 2000 ms drain we set at build time,
-     *                           plus 1 s fixed overhead from Rust's stop impl).
+     *                           the global cancel token, waits for the
+     *                           sessions to end (the drain_ms argument is
+     *                           ignored; the 2000 ms drain set at build time
+     *                           applies, plus a 500 ms margin), then shuts
+     *                           each session's write half.
      *   tst_rtsp_server_free  — drops the Box<TstRtspServer> and the tokio
      *                           Runtime; the Runtime waits for all spawned
      *                           tasks to complete before returning.

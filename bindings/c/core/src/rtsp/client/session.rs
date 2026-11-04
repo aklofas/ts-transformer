@@ -182,9 +182,10 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
             }
         };
 
-        // Obtain the cancel handle before any blocking I/O so that
-        // tst_rtsp_session_cancel can signal it from another thread while
-        // DESCRIBE or SETUP is in flight. RtspCancelHandle is Clone + Send + Sync.
+        // The cancel handle is taken here, but the session handle does not
+        // exist before `_connect` returns, so `tst_rtsp_session_cancel`
+        // cannot interrupt the connect, DESCRIBE or SETUP above and below.
+        // RtspCancelHandle is Clone + Send + Sync.
         let rtsp_cancel = client.cancel_handle();
 
         // Step 3: DESCRIBE.
@@ -317,8 +318,18 @@ const TEARDOWN_REPLY_BOUND: Duration = Duration::from_millis(500);
 /// and its `RtspClient` regardless of whether TEARDOWN succeeded (network
 /// errors at teardown time are recorded in last-error but do not prevent
 /// the handle from being freed). A healthy peer's 200 returns 0; a peer
-/// that does not answer within 500 ms, or a call parked on another thread,
-/// ends the TEARDOWN early and the handle is still freed.
+/// that does not answer within 500 ms ends the TEARDOWN early and the
+/// handle is still freed. A session cancelled with
+/// [`tst_rtsp_session_cancel`] before the call returns `TST_E_CLOSED`
+/// (the TEARDOWN cannot be sent) and is still freed. If a caught panic
+/// had already taken the control pair, there is nothing to tear down: the
+/// call returns 0 and frees.
+///
+/// The caller guarantees that no `_play`, `_pause` or receive call on this
+/// session is in flight: call [`tst_rtsp_session_cancel`], wait for the
+/// parked call to return, then free. A call still parked is not a
+/// supported case; the implementation cancels it as a defence, but that
+/// is not part of the contract.
 ///
 /// After this call the `session` pointer is invalid; any further use is
 /// undefined behavior. NULL is a no-op.
@@ -344,8 +355,9 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
             // Nobody holds the session: send TEARDOWN and read the reply,
             // with a timer that cancels the read if the peer stays silent.
             Ok(mut guard) => bounded_teardown(&mut guard, &boxed.rtsp_cancel),
-            // A call is parked on another thread: wake it first, then send
-            // TEARDOWN as best effort on the cancelled session.
+            // Defence only, not a contract (the caller must have waited for
+            // any parked call): wake it first, then send TEARDOWN as best
+            // effort on the cancelled session.
             Err(TryLockError::WouldBlock) => {
                 boxed.rtsp_cancel.cancel();
                 match boxed.pair.lock() {
@@ -500,10 +512,10 @@ pub unsafe extern "C" fn tst_rtsp_session_cancel(session: *mut TstRtspSession) -
 /// Ownership: a non-NULL return consumes `session` and frees it, so the
 /// caller must not use or free it again. A NULL return never frees
 /// `session`: the allocation is still the caller's to release with
-/// [`tst_rtsp_session_teardown_and_free`]. Its state may already be closed
-/// (after a cancel, or after a panic between taking the control pair and
-/// building the receiver), in which case teardown reports `TST_E_CLOSED`
-/// and only frees.
+/// [`tst_rtsp_session_teardown_and_free`]. Its state may already be closed:
+/// after a cancel, teardown reports `TST_E_CLOSED` and only frees; after a
+/// panic between taking the control pair and building the receiver, there
+/// is nothing left to tear down, so teardown returns 0 and only frees.
 ///
 /// The returned `tst_rtp_demux_receiver_t` must eventually be freed with
 /// `tst_rtp_demux_receiver_close`.  Returns NULL on failure.

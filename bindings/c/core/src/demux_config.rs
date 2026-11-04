@@ -265,13 +265,16 @@ pub unsafe extern "C" fn tst_demux_config_add_link_klv(
     })
 }
 
-/// Force a PID's stream-kind classification. `stream_kind` is one of
-/// `TST_STREAM_KIND_VIDEO_H264`, `TST_STREAM_KIND_VIDEO_H265`,
-/// `TST_STREAM_KIND_AUDIO_MP2`, ... — see the header for the full table.
+/// Force a PID's stream-kind classification. `stream_kind` is one of these
+/// integers; named constants for them do not exist yet:
 ///
-/// NOTE: The C-side mapping flattens (TstStreamKindTag × codec) pairs
-/// into single integers. The implementation table below covers the
-/// common cases — extend if a consumer asks for a kind not listed.
+/// - `100`..`103`: video H.264, H.265, H.266, AV1
+/// - `200`..`203`: audio MP2, AAC, AAC-LATM, AC-3
+/// - `300`..`303`: subtitle DVB subtitling, DVB teletext, CEA-708, WebVTT
+/// - `400`: synchronous KLV (no declared link); `401`: asynchronous KLV
+///
+/// The C-side mapping flattens (kind, codec) pairs into single integers and
+/// covers the common cases only.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`, a `pid` above
 /// `0x1FFF` (the 13-bit PID range) or unrecognized `stream_kind`.

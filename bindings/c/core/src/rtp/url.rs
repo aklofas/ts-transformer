@@ -1,7 +1,7 @@
 //! Helper: parse RTP URL string to [`tst_rtp::RtpUrl`] + report parse
 //! errors into the thread-local last-error slot.
 //!
-//! C callers pass a URL like `rtp://239.1.2.3:5000?ttl=4&iface=eth0&pkt_size=1316`.
+//! C callers pass a URL like `rtp://239.1.2.3:5000?ttl=4&iface=<IPv4 literal>&pkt_size=1316`.
 //! `tst_rtp::RtpUrl::parse` handles all of that — this module is the
 //! C-string-to-Rust-str bridge plus error mapping.
 

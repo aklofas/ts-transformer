@@ -57,6 +57,9 @@ fn map_inner(b: &mut TstHlsPublisherBuilder, f: impl FnOnce(&mut HlsPublisherBui
 /// (LIVE mode, 4 s segments, bind `127.0.0.1:8080`, output dir
 /// `<system-temp>/tstrans-hls`). Returns `NULL` only on allocation failure.
 ///
+/// A builder is a single-thread object; see "Threading and lifetime" in the
+/// header preamble.
+///
 /// # Safety
 ///
 /// Sound under any caller invocation. The returned builder must eventually

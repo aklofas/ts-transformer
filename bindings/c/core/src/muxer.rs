@@ -3,6 +3,11 @@
 //! Wraps `tst_core::mpegts::mux::Muxer`. No transport — push NALs and KLV,
 //! pull TS bytes. The handle is internally synchronized; push_video,
 //! push_klv, and pull may be called from different threads.
+//!
+//! A panic caught at the FFI boundary makes a function return its own
+//! failure value (NULL, a negative code, or the documented sentinel) with
+//! `TST_E_PANIC_CAUGHT` (-11) in the last error; the return value is not
+//! uniformly -11.
 
 use crate::config::TstMuxConfig;
 use crate::error::{TstError, record_mux_error, record_not_found, set_last_error};
@@ -541,7 +546,7 @@ pub unsafe extern "C" fn tst_muxer_push_klv_to(
 ///   (`NoDataStreamsConfigured`).
 /// - `TST_E_INVALID_USAGE` — more than one data stream configured
 ///   (`AmbiguousTarget` — caller must use the `_to` variant).
-/// - `TST_E_INVALID_USAGE` — payload exceeds the `PES_packet_length`
+/// - `TST_E_INVALID_TS` (-3) — payload exceeds the `PES_packet_length`
 ///   ceiling (`DataTooLarge`: 65532 bytes without PTS, 65527 with).
 /// - `TST_E_INVALID_CONFIG` — `data` is null with non-zero `len`.
 ///
@@ -774,14 +779,14 @@ pub unsafe extern "C" fn tst_muxer_get_stats(
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
 /// * `TST_E_CLOSED` — handle was closed via `tst_muxer_close`
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
-/// * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+/// * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
 ///
 /// # Safety
 ///
 /// `p` must be a valid pointer obtained from `tst_muxer_open`; `out`
 /// must be a writable `tst_stream_codec_stats_t` of size at least
 /// `sizeof(tst_stream_codec_stats_t)`. The pointee is fully written on
-/// `TST_OK` and untouched on error.
+/// success (`0`) and untouched on error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_muxer_get_stream_codec_stats(
     p: *mut TstMuxer,

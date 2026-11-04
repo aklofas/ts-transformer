@@ -18,7 +18,7 @@
 //! - `events` — `tst_demux_receiver_recv_event` + `tst_demux_receiver_cancel`
 //!   (cancel lives with events, not lifecycle, because its sole purpose
 //!   is to unblock a thread parked in `_recv_event`)
-//! - `stats` — 5 stats accessors on the plain receiver
+//! - `stats` — 6 stats accessors on the plain receiver
 //! - `managed` — `TstManagedDemuxReceiver` struct + every
 //!   `tst_managed_demux_receiver_*` C entry
 //!

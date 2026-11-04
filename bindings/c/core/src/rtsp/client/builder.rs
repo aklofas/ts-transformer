@@ -73,6 +73,9 @@ use crate::panic::ffi_catch;
 /// `tst_rtsp_client_builder_connect` (which consumes it) or
 /// `tst_rtsp_client_builder_free` (which discards it).
 ///
+/// A builder is a single-thread object; see "Threading and lifetime" in the
+/// header preamble.
+///
 /// # Safety
 ///
 /// `url` must be a valid, NUL-terminated C string that lives for the

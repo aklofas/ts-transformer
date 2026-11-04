@@ -120,7 +120,7 @@ pub enum TstError {
     /// Reserved; not currently produced (no `UdpError` variant maps here).
     UdpPayloadTooLarge = -28,
     /// (-29) UDP multicast interface not supported (e.g., requested
-    /// `?iface=eth0` on a platform where `tst-udp` can't apply it).
+    /// `?iface=<IPv4 literal>` on a platform where `tst-udp` can't apply it).
     /// Reserved; not currently produced (no `UdpError` variant maps here).
     UdpIfaceUnsupported = -29,
 

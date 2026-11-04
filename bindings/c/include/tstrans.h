@@ -5,6 +5,16 @@
  * Source of truth: bindings/c/core/src/ (Rust).
  *
  * Copyright (c) 2026 Andrew Klofas. Licensed under MIT OR Apache-2.0.
+ *
+ * Threading and lifetime
+ *
+ * Keep each owner allocated until every call and every borrowed result
+ * using it has finished. `_cancel` may be called from any thread while a
+ * data-path call is parked. `_close` / `_free` and consuming conversions
+ * require that no other call on the handle is in flight: cancel, wait for
+ * the parked call to return, then free. Slot-backed handles serialise
+ * their data-path calls through an internal mutex; builders are
+ * single-thread objects.
  */
 
 
@@ -542,7 +552,7 @@ enum tst_e
   TST_E_UDP_PAYLOAD_TOO_LARGE = -28,
   /**
    * (-29) UDP multicast interface not supported (e.g., requested
-   * `?iface=eth0` on a platform where `tst-udp` can't apply it).
+   * `?iface=<IPv4 literal>` on a platform where `tst-udp` can't apply it).
    * Reserved; not currently produced (no `UdpError` variant maps here).
    */
   TST_E_UDP_IFACE_UNSUPPORTED = -29,
@@ -2560,13 +2570,16 @@ int tst_demux_config_add_link_klv(struct tst_demux_config_t *cfg,
                                   uint16_t video_pid);
 
 /**
- * Force a PID's stream-kind classification. `stream_kind` is one of
- * `TST_STREAM_KIND_VIDEO_H264`, `TST_STREAM_KIND_VIDEO_H265`,
- * `TST_STREAM_KIND_AUDIO_MP2`, ... — see the header for the full table.
+ * Force a PID's stream-kind classification. `stream_kind` is one of these
+ * integers; named constants for them do not exist yet:
  *
- * NOTE: The C-side mapping flattens (TstStreamKindTag × codec) pairs
- * into single integers. The implementation table below covers the
- * common cases — extend if a consumer asks for a kind not listed.
+ * - `100`..`103`: video H.264, H.265, H.266, AV1
+ * - `200`..`203`: audio MP2, AAC, AAC-LATM, AC-3
+ * - `300`..`303`: subtitle DVB subtitling, DVB teletext, CEA-708, WebVTT
+ * - `400`: synchronous KLV (no declared link); `401`: asynchronous KLV
+ *
+ * The C-side mapping flattens (kind, codec) pairs into single integers and
+ * covers the common cases only.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` on null `cfg`, a `pid` above
  * `0x1FFF` (the 13-bit PID range) or unrecognized `stream_kind`.
@@ -3430,6 +3443,9 @@ int tst_hls_publisher_builder_max_segment_duration_ms(struct TstHlsPublisherBuil
  * (LIVE mode, 4 s segments, bind `127.0.0.1:8080`, output dir
  * `<system-temp>/tstrans-hls`). Returns `NULL` only on allocation failure.
  *
+ * A builder is a single-thread object; see "Threading and lifetime" in the
+ * header preamble.
+ *
  * # Safety
  *
  * Sound under any caller invocation. The returned builder must eventually
@@ -3719,9 +3735,8 @@ int tst_hls_publisher_render_playlist(struct TstPublisher *p,
  *
  * Reuses the RTP-side `TstStreamEndReason` enum — its RTSP-shaped
  * variant names (`SessionExpired`, `KeepaliveFailed`, `ProtocolError`)
- * are never produced on this SRT recv path; only three of its six
- * non-`None` variants apply here:
- * - `tst_core::transport::EndReason::EndOfStream` → `CleanTeardown`
+ * are never produced on this SRT recv path, and neither is
+ * `CleanTeardown`: this path records only two reasons.
  * - `tst_core::transport::EndReason::ReconnectExhausted` → `TransportFailed`
  *   (the reconnect decorator exhausted its policy budget — the peer
  *   never came back)
@@ -3730,8 +3745,8 @@ int tst_hls_publisher_render_playlist(struct TstPublisher *p,
  * **Last-error side effect on every ACTUALLY-recorded reason:** unlike
  * the "hasn't ended" case above, once the session has ended this getter
  * unconditionally resets the thread-local last-error channel to
- * `TST_E_SUCCESS` with an EMPTY detail message — none of the three
- * `EndReason` variants above carry a detail string (unlike the RTP
+ * `TST_E_SUCCESS` with an EMPTY detail message — neither of the two
+ * `EndReason` variants above carries a detail string (unlike the RTP
  * side's `KeepaliveFailed`/`TransportFailed`/`ProtocolError`), so
  * `tst_get_last_error_str()` always reads `""` once a reason has been
  * recorded, never a stale message left over from some earlier,
@@ -3803,10 +3818,10 @@ int tst_managed_demux_receiver_end_reason(struct tst_managed_demux_receiver_t *p
  * Returns 0 on success, or `TST_E_INVALID_CONFIG` if either pointer is
  * null. Unlike most getters on this handle, this one **never** returns
  * `TST_E_CLOSED` — it doesn't consult the handle's data-path state at
- * all, so it keeps returning the last-observed values after `_close`
- * too (same caveat as `tst_managed_demux_receiver_end_reason`: calling
- * anything on a freed handle, including this getter, is a
- * use-after-free the caller must avoid).
+ * all, so while the handle is live it keeps returning the last-observed
+ * values after `_cancel` or after the session terminates. After `_close`
+ * the pointer is freed, and calling anything on it, including this
+ * getter, is a use-after-free the caller must avoid.
  *
  * # Safety
  *
@@ -3944,6 +3959,10 @@ struct tst_managed_demux_receiver_t *tst_managed_demux_receiver_open(const char 
  * full contract. It does NOT bound this call's own `accept()` wait
  * (libsrt's `srt_accept` ignores `SRTO_RCVTIMEO`); once a peer connects,
  * it governs `_recv_event`'s per-recv deadline on the accepted socket.
+ *
+ * The URL may be host-less or host-bearing; either binds. An explicit
+ * `?mode=caller` or `?mode=rendezvous` is refused with
+ * `TST_E_INVALID_CONFIG`; use the plain open for those.
  */
 
 struct tst_managed_demux_receiver_t *tst_managed_demux_receiver_open_listener(const char *srt_url,
@@ -3958,6 +3977,10 @@ struct tst_managed_demux_receiver_t *tst_managed_demux_receiver_open_listener(co
  * [`tst_managed_demux_receiver_open`] — see that function's doc for the
  * full contract, and [`tst_managed_demux_receiver_open_listener`]'s doc
  * for why it doesn't bound this call's own `accept()` wait.
+ *
+ * The URL may be host-less or host-bearing; either binds. An explicit
+ * `?mode=caller` or `?mode=rendezvous` is refused with
+ * `TST_E_INVALID_CONFIG`; use the plain open for those.
  */
 
 struct tst_managed_demux_receiver_t *tst_managed_demux_receiver_open_listener_with_config(const char *srt_url,
@@ -3996,9 +4019,9 @@ struct tst_managed_demux_receiver_t *tst_managed_demux_receiver_open_with_config
  * state a clean peer close leaves it in — SRT cannot tell "peer hung up"
  * from "peer never came back" at this layer), and this function returns
  * `TST_E_END_OF_STREAM`, exactly like a clean end of stream. Call
- * [`tst_managed_demux_receiver_end_reason`] afterward to distinguish a
- * clean teardown (`CLEAN_TEARDOWN`) from a give-up-after-retries
- * (`TRANSPORT_FAILED`) or an explicit `_cancel` (`CANCELLED`).
+ * [`tst_managed_demux_receiver_end_reason`] afterward to tell a
+ * give-up-after-retries (`TRANSPORT_FAILED`) from an explicit `_cancel`
+ * (`CANCELLED`).
  *
  * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
  * bytes are still buffered; a call already past its receive when the
@@ -4080,11 +4103,9 @@ int tst_managed_demux_receiver_recv_event(struct tst_managed_demux_receiver_t *p
  * call `tst_managed_mux_sender_cancel` first if that is not wanted. The
  * handle must still be freed with `tst_managed_mux_sender_close`.
  *
- * Note which code a reported drain failure carries: a send that met a
- * dead peer returns `TST_E_TRANSPORT` and LATCHES the transport dead, so
- * the drain here is refused at the dead-transport guard and `_finish`
- * reports `TST_E_CLOSED` — not the code the failing send reported. The
- * last-error string names the drain either way.
+ * A sender whose reconnect gave up returns `TST_E_TRANSPORT` here,
+ * without latching the transport dead. The last-error string names the
+ * drain.
  *
  * Returns `TST_E_INVALID_CONFIG` on a null pointer. Like every entry
  * point, a call after `tst_managed_mux_sender_close` has freed the
@@ -4200,6 +4221,11 @@ int tst_managed_mux_sender_get_stream_codec_stats(struct tst_managed_mux_sender_
  * last-error for any malformed URL, unsupported key, unknown key, or
  * invalid value. The detail string from
  * `tst_get_last_error_str()` describes the specific problem.
+ *
+ * **Failed sends.** A failed `tst_managed_mux_sender_send_*` may already
+ * have consumed its input: the muxed bytes stay pending and drain on the
+ * next call. Resubmitting the same access unit blindly can therefore
+ * duplicate it, and the error code alone cannot tell the two cases apart.
  */
 
 struct tst_managed_mux_sender_t *tst_managed_mux_sender_open(const char *srt_url,
@@ -4463,10 +4489,6 @@ int tst_managed_mux_sender_send_video_to(struct tst_managed_mux_sender_t *p,
 
 #if defined(TST_HAS_SRT)
 /**
- * Reset stats counters for a `tst_managed_raw_receiver_t` to zero.
- *
- * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
- * or `TST_E_CLOSED` if the receiver has been closed.
  * Managed sibling of [`tst_raw_receiver_get_socket_stats`]. Returns
  * `TST_E_NOT_AVAILABLE` when the reconnect loop currently has no live
  * inner socket.
@@ -4572,6 +4594,12 @@ int tst_managed_raw_receiver_recv(struct tst_managed_raw_receiver_t *p,
 #endif
 
 #if defined(TST_HAS_SRT)
+/**
+ * Reset stats counters for a `tst_managed_raw_receiver_t` to zero.
+ *
+ * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
+ * or `TST_E_CLOSED` if the receiver has been closed.
+ */
  int tst_managed_raw_receiver_reset_stats(struct tst_managed_raw_receiver_t *p);
 #endif
 
@@ -4692,6 +4720,12 @@ struct tst_managed_raw_sender_t *tst_managed_raw_sender_open(const char *srt_url
 #endif
 
 #if defined(TST_HAS_SRT)
+/**
+ * Send one buffer as one outbound SRT message of exactly `len` bytes.
+ *
+ * A zero-length send is a no-op : nothing is sent and the
+ * call returns 0.
+ */
 
 int tst_managed_raw_sender_send(struct tst_managed_raw_sender_t *p,
                                 const uint8_t *bytes,
@@ -4841,9 +4875,9 @@ struct tst_managed_receiver_t *tst_managed_receiver_open_listener(const char *sr
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null.
  *
- * After cancel a `_send_*` reports `TST_E_CLOSED` (-7): the managed
- * decorator latches the close, so the send never reaches libsrt (unlike
- * the plain sender, whose interrupted send surfaces as `TST_E_TRANSPORT`).
+ * After cancel a `_send_*` reports `TST_E_CLOSED` (-7), as on the plain
+ * sender: the managed decorator latches the close, so the send never
+ * reaches libsrt.
  */
  int tst_managed_sender_cancel(struct tst_managed_sender_t *p);
 #endif
@@ -5107,8 +5141,9 @@ int tst_mux_config_add_klv_descriptor(struct tst_mux_config_t *cfg,
 /**
  * Add a KLV elementary stream to the specified program and return its handle.
  *
- * `stream_type`: `TST_KLV_STREAM_TYPE_PRIVATE_DATA` (0x06, async — no AU
- * cell wrapping) or `TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA` (0x15 —
+ * `stream_type`: `TST_KLV_STREAM_TYPE_PRIVATE_DATA` (0, async — no AU
+ * cell wrapping; PMT `stream_type` byte 0x06) or
+ * `TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA` (1; PMT byte 0x15 —
  * the muxer auto-wraps each push in a 5-byte `Metadata_AU_cell` header
  * per ITU-T H.222.0 V9 § 2.12.4.2 before TS-framing; pass raw KLV LS
  * bytes to `push_klv_to`).
@@ -5262,8 +5297,8 @@ int tst_mux_config_add_video_descriptor(struct tst_mux_config_t *cfg,
  *
  * Returns `TST_INVALID_STREAM_HANDLE` and sets last-error on: a `codec`
  * outside `TST_VIDEO_CODEC_*` (`TST_E_INVALID_CONFIG`), null `cfg`,
- * invalid `program` handle, or per-program stream cap exceeded (>16 streams
- * of any kind per program). Hard validation errors surface at `_open` time.
+ * invalid `program` handle, or per-program stream cap exceeded (more than 16 streams
+ * of one kind per program). Hard validation errors surface at `_open` time.
  */
 
 tst_video_stream_handle_t tst_mux_config_add_video_stream(struct tst_mux_config_t *cfg,
@@ -5727,13 +5762,13 @@ struct TstMuxPublisher *tst_mux_publisher_with_config_hls(struct TstPublisher *h
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — handle was closed via `tst_mux_sender_close`
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
  * `p` must be a valid pointer obtained from `tst_mux_sender_open`; `out`
  * must be a writable `tst_stream_codec_stats_t`. The pointee is fully
- * written on `TST_OK` and untouched on error.
+ * written on success (`0`) and untouched on error.
  */
 
 int tst_mux_sender_get_stream_codec_stats(struct tst_mux_sender_t *p,
@@ -6077,14 +6112,14 @@ int tst_mux_sender_send_video_to(struct tst_mux_sender_t *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — handle was closed via `tst_muxer_close`
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
  * `p` must be a valid pointer obtained from `tst_muxer_open`; `out`
  * must be a writable `tst_stream_codec_stats_t` of size at least
  * `sizeof(tst_stream_codec_stats_t)`. The pointee is fully written on
- * `TST_OK` and untouched on error.
+ * success (`0`) and untouched on error.
  */
 
 int tst_muxer_get_stream_codec_stats(struct tst_muxer_t *p,
@@ -6168,7 +6203,7 @@ int tst_muxer_push_audio_to(struct tst_muxer_t *p,
  *   (`NoDataStreamsConfigured`).
  * - `TST_E_INVALID_USAGE` — more than one data stream configured
  *   (`AmbiguousTarget` — caller must use the `_to` variant).
- * - `TST_E_INVALID_USAGE` — payload exceeds the `PES_packet_length`
+ * - `TST_E_INVALID_TS` (-3) — payload exceeds the `PES_packet_length`
  *   ceiling (`DataTooLarge`: 65532 bytes without PTS, 65527 with).
  * - `TST_E_INVALID_CONFIG` — `data` is null with non-zero `len`.
  *
@@ -6892,6 +6927,12 @@ struct tst_raw_sender_t *tst_raw_sender_open(const char *srt_url,
 #endif
 
 #if defined(TST_HAS_SRT)
+/**
+ * Send one buffer as one outbound SRT message of exactly `len` bytes.
+ *
+ * A zero-length send is a no-op on a live socket: nothing is sent and the
+ * call returns 0.
+ */
  int tst_raw_sender_send(struct tst_raw_sender_t *p, const uint8_t *bytes, size_t len);
 #endif
 
@@ -7252,9 +7293,10 @@ int tst_rist_demux_receiver_get_ts_bytes_demuxed(struct TstRistDemuxReceiver *p,
  *
  * Returns:
  * - `0` on success (`*out_event` populated)
- * - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally (a datagram
- *   transport has no peer close to report)
- * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+ *   locally; terminal, every later call returns it
+ * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
+ *   transport has no peer close to report, so this does not occur here)
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
  *   unrecoverable packet malformation, or a malformed PES)
@@ -7803,9 +7845,10 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  *
  * Returns:
  * - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
- * - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally (a datagram
- *   transport has no peer close to report)
- * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+ *   locally; terminal, every later call returns it
+ * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
+ *   transport has no peer close to report, so this does not occur here)
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
  * - `TST_E_BUFFER_FULL` (-4) when nothing arrived within one ~100 ms librist
@@ -8289,10 +8332,12 @@ int tst_rtp_demux_receiver_get_ts_bytes_demuxed(struct TstRtpDemuxReceiver *p,
  *
  * Returns:
  * - `0` on success (`*out_event` populated)
- * - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally, or when an
- *   RTSP-over-TCP session ends with a clean server teardown (plain `rtp://`
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+ *   locally; terminal, every later call returns it
+ * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream: an
+ *   RTSP-over-TCP session ends with a clean server teardown, or the mount
+ *   was removed or the server stopped or hard-cancelled (plain `rtp://`
  *   has no peer close to report)
- * - `TST_E_CLOSED` (-7) if the handle was `_cancel`'d or `_close`'d
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_BUFFER_FULL` (-4) if the receiver was opened with
  *   `?recv_timeout=<ms>` and no event arrived before the configured
@@ -8326,7 +8371,7 @@ int tst_rtp_demux_receiver_next_event(struct TstRtpDemuxReceiver *p,
  * Returns `NULL` on error.
  *
  * For unicast, pass `rtp://0.0.0.0:port`. For multicast, pass the group
- * address (`rtp://239.0.0.1:port?iface=eth0`).
+ * address (`rtp://239.0.0.1:port?iface=<IPv4 literal>`).
  *
  * `?pkt_size=` is send-side only and is rejected on receive URLs.
  *
@@ -8503,7 +8548,7 @@ int tst_rtp_mux_sender_get_stream_codec_stats(struct TstRtpMuxSender *p,
  * The mux config is borrowed — the caller still owns it and must free
  * it. The returned handle is independent of the config after this call.
  *
- * URL form: `rtp://host:port[?ttl=N&iface=eth0&pkt_size=1316&ssrc=N]`.
+ * URL form: `rtp://host:port[?ttl=N&iface=<IPv4 literal>&pkt_size=1316&ssrc=N]`.
  *
  * # Safety
  *
@@ -8860,10 +8905,12 @@ int tst_rtp_mux_sender_push_video_to(struct TstRtpMuxSender *p,
  *
  * Returns:
  * - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
- * - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally, or when an
- *   RTSP-over-TCP session ends with a clean server teardown (plain `rtp://`
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+ *   locally; terminal, every later call returns it
+ * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream: an
+ *   RTSP-over-TCP session ends with a clean server teardown, or the mount
+ *   was removed or the server stopped or hard-cancelled (plain `rtp://`
  *   has no peer close to report)
- * - `TST_E_CLOSED` (-7) if the handle was `_cancel`'d or `_close`'d
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_BUFFER_FULL` (-4) if the receiver was opened with
  *   `?recv_timeout=<ms>` and no packet arrived before the configured
@@ -8908,7 +8955,7 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  *
  * For unicast, pass `rtp://0.0.0.0:port` or `rtp://127.0.0.1:port`
  * (host is the bind address). For multicast, pass the group address
- * (`rtp://239.0.0.1:port?iface=eth0`); the socket joins the group on
+ * (`rtp://239.0.0.1:port?iface=<IPv4 literal>`); the socket joins the group on
  * `iface` (or the OS-default interface when absent).
  *
  * Port `0` causes the kernel to assign an ephemeral port.
@@ -9025,7 +9072,7 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * `url`. Returns `NULL` on error; check `tst_get_last_error()` for the
  * negative error code and `tst_get_last_error_str()` for a detail message.
  *
- * URL form: `rtp://host:port[?ttl=N&iface=eth0&pkt_size=1316&ssrc=N]`.
+ * URL form: `rtp://host:port[?ttl=N&iface=<IPv4 literal>&pkt_size=1316&ssrc=N]`.
  * The transport is a UDP socket that sends RTP packets wrapping 7
  * MPEG-TS packets per datagram (RFC 2250 §2). Multicast destinations
  * (`224.0.0.0/4` for IPv4, `ff00::/8` for IPv6) are detected
@@ -9290,6 +9337,9 @@ void tst_rtsp_client_builder_auth_digest_sha256(struct tst_rtsp_client_builder_t
  * `tst_rtsp_client_builder_connect` (which consumes it) or
  * `tst_rtsp_client_builder_free` (which discards it).
  *
+ * A builder is a single-thread object; see "Threading and lifetime" in the
+ * header preamble.
+ *
  * # Safety
  *
  * `url` must be a valid, NUL-terminated C string that lives for the
@@ -9376,10 +9426,9 @@ void tst_rtsp_client_builder_transport_pref(struct tst_rtsp_client_builder_t *bu
  * Cancel a mount handle. All subsequent `push_*` calls on this handle will
  * return `TST_E_CLOSED` immediately without entering the muxer.
  *
- * Cancellation is handle-local — other `tst_rtsp_mount_handle_t` pointers
- * to the same mount (e.g. obtained from separate `add_*_mount` calls on the
- * same mount path) are unaffected. The underlying broadcast fanout and inner
- * muxer continue operating for other holders.
+ * Cancellation is handle-local: it stops pushes through this handle only.
+ * Registering one path twice fails, so a path never has a second handle
+ * from `add_*_mount`.
  *
  * Safe to call from any thread. Idempotent — calling twice is harmless.
  * The handle must still be freed via `tst_rtsp_mount_handle_free` to
@@ -10216,11 +10265,14 @@ void tst_rtsp_server_builder_auth_digest_sha256(struct TstRtspServerBuilder *bui
 /**
  * Set the graceful-shutdown drain window in milliseconds.
  *
- * When `tst_rtsp_server_stop` is called, the server sends an RFC
- * 7826 §13.5.1 Notice 5402 ("Server-Initiated TEARDOWN") ANNOUNCE to each
- * active session, then waits up to `ms` milliseconds (plus 1 s fixed
- * overhead) for in-flight RTP frames to drain before closing the listener
- * and runtime. Default: 100 ms.
+ * When `tst_rtsp_server_stop` is called, the server runs these phases in
+ * order. Each session gets an RFC 7826 §13.5.1 Notice 5402
+ * ("Server-Initiated TEARDOWN") ANNOUNCE, with the write bounded at 1 s;
+ * sessions are notified serially. The server then waits for the sessions
+ * to end, for at most `ms` milliseconds plus a 500 ms scheduling margin.
+ * Each session's write half is then shut down, bounded at 500 ms and also
+ * serial. When the last reference to the server drops, the runtime shuts
+ * down in at most 5 s. Default: 100 ms.
  *
  * Must be called before `tst_rtsp_server_builder_start`.
  *
@@ -10275,6 +10327,9 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
  * pointer to `tst_rtsp_server_builder_start` (which consumes it) or
  * `tst_rtsp_server_builder_free` (which discards it).
  *
+ * A builder is a single-thread object; see "Threading and lifetime" in the
+ * header preamble.
+ *
  * # Safety
  *
  * `addr` must be a valid, NUL-terminated C string that lives for the
@@ -10293,8 +10348,9 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
  * pings at `N/2`; sessions that exceed `N` without any request may be
  * dropped (server policy). Defaults to 60 s.
  *
- * `secs` is used as-is; a value of 0 means no advertised timeout
- * (not recommended for production). Must be called before
+ * `secs` is used as-is. A value of 0 does not disable the timeout: SETUP
+ * advertises `timeout=0` and idle readers are reaped after 2 s (the
+ * floor). Use a positive value. Must be called before
  * `tst_rtsp_server_builder_start`.
  *
  * # Safety
@@ -10356,7 +10412,7 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
  *
  * Works in a build with the `tls` feature (`TST_HAS_TLS`): the PEM bytes are
  * loaded when the server starts. Without it the bytes are stored, and
- * `tst_rtsp_server_builder_start` FAILS (NULL + `TST_E_RTSP_SERVER`
+ * `tst_rtsp_server_builder_start` FAILS (NULL + `TST_E_RTSP_TLS`
  * last-error) when they are set — the alternative would be a server that
  * silently starts PLAINTEXT with the supplied certs ignored. A plaintext
  * `rtsp://` bind with these bytes set is refused in either build.
@@ -10407,9 +10463,10 @@ void tst_rtsp_server_builder_tls_cert_pem(struct TstRtspServerBuilder *builder,
 /**
  * Free the RTSP server handle.
  *
- * Drops the `Box<TstRtspServer>`. If `tst_rtsp_server_stop` was called
- * first the inner `Option` is `None` and Drop is a no-op (the runtime
- * was already shut down by `stop`). If `_free` is called WITHOUT a
+ * Drops the `Box<TstRtspServer>`. `tst_rtsp_server_stop` retires the
+ * server; the runtime shuts down when the last reference drops, which may
+ * be inside `_free` or inside a call that was still parked. If `_free` is
+ * called WITHOUT a
  * prior `_stop`, Drop fires the hard-cancel path: all per-session tasks
  * abort at their next poll and the tokio Runtime is shut down with a 5 s
  * budget. No RTSP TEARDOWN is sent to connected clients in this case
@@ -10555,22 +10612,26 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  *
  * 1. For each active session: sends RFC 7826 §13.5.1 Notice 5402
  *    "Server-Initiated TEARDOWN" ANNOUNCE over the session's TCP
- *    control channel (best-effort, 1 s per-session timeout), then
- *    cancels the per-session token.
+ *    control channel (best-effort, at most 1 s per session, sessions
+ *    notified serially), then cancels the per-session token.
  * 2. Fires the global cancel token so the listener stops accepting.
  * 3. Waits for the session tasks to end, bounded by the builder's
- *    `graceful_shutdown_drain_ms` (default 100 ms) plus 500 ms, then shuts
- *    each session's write half (at most 500 ms each).
- * 4. Sets the inner `Option` to `None` (subsequent calls on this handle
- *    return `TST_E_CLOSED`).
+ *    `graceful_shutdown_drain_ms` (default 100 ms) plus a 500 ms
+ *    scheduling margin.
+ * 4. Shuts each session's write half (at most 500 ms per session, serially).
+ * 5. Sets the inner `Option` to `None` (other calls on this handle
+ *    then return `TST_E_CLOSED`; a second `stop` returns `TST_E_SUCCESS`).
+ *
+ * `stop` retires the server; the runtime shuts down (at most 5 s) when
+ * the last reference drops, which may be inside `tst_rtsp_server_free` or
+ * inside a call that was still parked.
  *
  * `drain_ms` is ignored: the drain is the one set with
  * `tst_rtsp_server_builder_graceful_shutdown_drain_ms`. The parameter is
  * kept for ABI stability.
  *
  * Idempotent — a second call after shutdown completes returns
- * `TST_E_SUCCESS` immediately. Returns `TST_E_INVALID_USAGE` if called
- * before `tst_rtsp_server_builder_start`.
+ * `TST_E_SUCCESS` immediately.
  *
  * # Safety
  *
@@ -10677,10 +10738,10 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  * Ownership: a non-NULL return consumes `session` and frees it, so the
  * caller must not use or free it again. A NULL return never frees
  * `session`: the allocation is still the caller's to release with
- * [`tst_rtsp_session_teardown_and_free`]. Its state may already be closed
- * (after a cancel, or after a panic between taking the control pair and
- * building the receiver), in which case teardown reports `TST_E_CLOSED`
- * and only frees.
+ * [`tst_rtsp_session_teardown_and_free`]. Its state may already be closed:
+ * after a cancel, teardown reports `TST_E_CLOSED` and only frees; after a
+ * panic between taking the control pair and building the receiver, there
+ * is nothing left to tear down, so teardown returns 0 and only frees.
  *
  * The returned `tst_rtp_demux_receiver_t` must eventually be freed with
  * `tst_rtp_demux_receiver_close`.  Returns NULL on failure.
@@ -10740,8 +10801,18 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  * and its `RtspClient` regardless of whether TEARDOWN succeeded (network
  * errors at teardown time are recorded in last-error but do not prevent
  * the handle from being freed). A healthy peer's 200 returns 0; a peer
- * that does not answer within 500 ms, or a call parked on another thread,
- * ends the TEARDOWN early and the handle is still freed.
+ * that does not answer within 500 ms ends the TEARDOWN early and the
+ * handle is still freed. A session cancelled with
+ * [`tst_rtsp_session_cancel`] before the call returns `TST_E_CLOSED`
+ * (the TEARDOWN cannot be sent) and is still freed. If a caught panic
+ * had already taken the control pair, there is nothing to tear down: the
+ * call returns 0 and frees.
+ *
+ * The caller guarantees that no `_play`, `_pause` or receive call on this
+ * session is in flight: call [`tst_rtsp_session_cancel`], wait for the
+ * parked call to return, then free. A call still parked is not a
+ * supported case; the implementation cancels it as a defence, but that
+ * is not part of the contract.
  *
  * After this call the `session` pointer is invalid; any further use is
  * undefined behavior. NULL is a no-op.
@@ -11034,8 +11105,8 @@ int tst_sender_get_socket_stats(struct tst_sender_t *p,
  * # Safety
  *
  * `p` must be NULL or a valid non-freed `*mut TstTcpDemuxReceiver`
- * returned by `tst_tcp_demux_receiver_open` or
- * `tst_tcp_listener_accept_receiver` (via the DemuxReceiver variant).
+ * returned by `tst_tcp_demux_receiver_open`, with no other call on the
+ * handle in flight (cancel and wait first).
  */
  void tst_tcp_demux_receiver_close(struct TstTcpDemuxReceiver *p);
 #endif
@@ -11329,7 +11400,8 @@ struct TstTcpDemuxReceiver *tst_tcp_demux_receiver_open(const char *url,
  * Interrupt a `tst_tcp_listener_accept_sender` / `_accept_receiver` parked
  * on another thread: it returns NULL with `TST_E_CLOSED` within one accept
  * poll tick (~5 ms). Callable from any thread, idempotent; the listener
- * must still be freed with `tst_tcp_listener_free`.
+ * must still be freed with `tst_tcp_listener_free`, and only after the
+ * parked accept has returned (`tst_tcp_listener_free` does not interrupt it).
  *
  * The OS socket stays bound until the listener is freed (std cannot shut a
  * listening socket down explicitly), so bind the next listener on a fresh
@@ -11352,8 +11424,10 @@ struct TstTcpDemuxReceiver *tst_tcp_demux_receiver_open(const char *url,
  * Close the listening socket and free the `tst_tcp_listener_t`.
  *
  * Safe to call with `NULL` (no-op). After this call the pointer is
- * invalid; any blocked `_accept_*` call on the same listener will
- * unblock with an error.
+ * invalid.
+ *
+ * `_free` does not interrupt an accept. Call `tst_tcp_listener_cancel`,
+ * wait for the parked `_accept_*` to return `TST_E_CLOSED`, then free.
  *
  * Previously accepted sender/receiver handles are NOT affected by freeing
  * the listener — they remain valid until individually closed.
@@ -12270,9 +12344,10 @@ int tst_udp_demux_receiver_get_ts_bytes_demuxed(struct TstUdpDemuxReceiver *p,
  *
  * Returns:
  * - `0` on success (`*out_event` populated)
- * - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally (a datagram
- *   transport has no peer close to report)
- * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+ *   locally; terminal, every later call returns it
+ * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
+ *   transport has no peer close to report, so this does not occur here)
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
  *   unrecoverable packet malformation, or a malformed PES)
@@ -12300,7 +12375,7 @@ int tst_udp_demux_receiver_next_event(struct TstUdpDemuxReceiver *p,
  * Returns `NULL` on error.
  *
  * For unicast, pass `udp://0.0.0.0:port`. For multicast, pass the group
- * address with the ffmpeg `@` prefix (`udp://@239.0.0.1:port?iface=eth0`).
+ * address with the ffmpeg `@` prefix (`udp://@239.0.0.1:port?iface=<IPv4 literal>`).
  *
  * # Safety
  *
@@ -12479,7 +12554,7 @@ int tst_udp_mux_sender_get_stream_codec_stats(struct TstUdpMuxSender *p,
  * URL grammar:
  * - `udp://host:port` — unicast send
  * - `udp://group:port` (group ∈ 224.0.0.0/4 or ff00::/8) — multicast send
- * - Query params: `?ttl=N`, `?iface=eth0`, `?tos=0xb8`, `?sndbuf=2M`,
+ * - Query params: `?ttl=N`, `?iface=<IPv4 literal>`, `?tos=0xb8`, `?sndbuf=2M`,
  *   `?pkt_size=1316`, `?localaddr=...`
  *
  * # Safety
@@ -12797,9 +12872,10 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  *
  * Returns:
  * - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
- * - `TST_E_END_OF_STREAM` (-12) once the receiver is closed locally (a datagram
- *   transport has no peer close to report)
- * - `TST_E_CLOSED` (-7) if the handle was `_close`'d
+ * - `TST_E_CLOSED` (-7) once `_cancel` fired or the handle was closed
+ *   locally; terminal, every later call returns it
+ * - `TST_E_END_OF_STREAM` (-12) when the peer ended the stream (a datagram
+ *   transport has no peer close to report, so this does not occur here)
  * - `TST_E_TRANSPORT` (-8) on a socket error, with the transport's own message
  * - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
  *
@@ -12841,7 +12917,8 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * URL grammar:
  * - `udp://host:port` — unicast bind on host:port
  * - `udp://@group:port` (`@` prefix is ffmpeg convention) — multicast recv
- * - Query params: `?iface=eth0`, `?rcvbuf=8M`
+ * - Query params: `?iface=<IPv4 literal>`, `?rcvbuf=8M`. Interface names are
+ *   not resolved; an IPv6 group takes an interface index.
  *
  * Port `0` causes the kernel to assign an ephemeral port.
  *
@@ -12960,7 +13037,7 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * URL grammar:
  * - `udp://host:port` — unicast send
  * - `udp://group:port` (group ∈ 224.0.0.0/4 or ff00::/8) — multicast send
- * - Query params: `?ttl=N`, `?iface=eth0`, `?tos=0xb8`, `?sndbuf=2M`,
+ * - Query params: `?ttl=N`, `?iface=<IPv4 literal>`, `?tos=0xb8`, `?sndbuf=2M`,
  *   `?pkt_size=1316`, `?localaddr=...`
  *
  * # Safety

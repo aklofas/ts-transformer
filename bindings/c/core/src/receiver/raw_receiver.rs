@@ -449,10 +449,6 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_get_stats(
     unsafe { crate::transport_impls::raw_receiver_get_stats(&handle.inner, out) }
 }
 
-/// Reset stats counters for a `tst_managed_raw_receiver_t` to zero.
-///
-/// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been closed.
 /// Managed sibling of [`tst_raw_receiver_get_socket_stats`]. Returns
 /// `TST_E_NOT_AVAILABLE` when the reconnect loop currently has no live
 /// inner socket.
@@ -480,6 +476,10 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_get_socket_stats(
     }
 }
 
+/// Reset stats counters for a `tst_managed_raw_receiver_t` to zero.
+///
+/// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
+/// or `TST_E_CLOSED` if the receiver has been closed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_raw_receiver_reset_stats(
     p: *mut TstManagedRawReceiver,

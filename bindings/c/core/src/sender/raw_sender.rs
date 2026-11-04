@@ -1,6 +1,7 @@
 //! `tst_raw_sender_t` (plain) and `tst_managed_raw_sender_t` (managed).
 //!
-//! One _send call = one outbound SRT message of the exact length passed in.
+//! One _send call = one outbound SRT message of the exact length passed in
+//! (a zero-length send is a no-op).
 
 use crate::config::{TstRawSenderConfig, TstReconnectPolicy};
 use crate::error::{TstError, record_binding_error, record_shell_error, set_last_error};
@@ -65,6 +66,10 @@ pub unsafe extern "C" fn tst_raw_sender_open(
     })
 }
 
+/// Send one buffer as one outbound SRT message of exactly `len` bytes.
+///
+/// A zero-length send is a no-op on a live socket: nothing is sent and the
+/// call returns 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_raw_sender_send(
     p: *mut TstRawSender,
@@ -183,6 +188,10 @@ pub unsafe extern "C" fn tst_managed_raw_sender_open(
     })
 }
 
+/// Send one buffer as one outbound SRT message of exactly `len` bytes.
+///
+/// A zero-length send is a no-op : nothing is sent and the
+/// call returns 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_managed_raw_sender_send(
     p: *mut TstManagedRawSender,
