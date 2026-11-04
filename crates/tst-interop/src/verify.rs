@@ -171,6 +171,13 @@ pub struct KlvPlacementExpect {
 }
 
 impl KlvPlacementExpect {
+    /// How many excursions one run may excuse as sender-report jitter: two,
+    /// plus one per hundred expected generations. A shift at every
+    /// publisher restart exhausts it instead of being excused each time.
+    pub fn excused_excursion_cap(&self) -> u32 {
+        2 + self.expected_generations.div_ceil(100) as u32
+    }
+
     /// The expectation for profile `p`'s cadence. Placement is defined only
     /// for synchronous KLV, whose records share the video's time base, so
     /// an asynchronous profile is refused.
@@ -270,6 +277,7 @@ impl PlacementState {
             last_excursion_generation: None,
             metrics: KlvPlacementMetrics {
                 tolerance_ticks: KLV_PLACEMENT_TOLERANCE_TICKS,
+                excused_excursion_cap: expect.excused_excursion_cap(),
                 ..KlvPlacementMetrics::default()
             },
         }
@@ -530,13 +538,20 @@ impl PlacementState {
             && e.max_abs_error <= KLV_EXCURSION_MAX_TICKS
             && span <= KLV_EXCURSION_MAX_SPAN_TICKS
         {
-            m.excused_excursions += 1;
-            m.excused_excursion_details.push(format!(
-                "sr-jitter: {} records over {} ms, max |error| {max_ms:.2} ms, generation {}",
-                e.records,
-                span / 90,
-                e.generation
-            ));
+            if m.excused_excursions < m.excused_excursion_cap {
+                m.excused_excursions += 1;
+                m.excused_excursion_details.push(format!(
+                    "sr-jitter: {} records over {} ms, max |error| {max_ms:.2} ms, generation {}",
+                    e.records,
+                    span / 90,
+                    e.generation
+                ));
+            } else {
+                m.excused_excursion_details.push(format!(
+                    "sr-jitter not excused: per-run cap {} reached (generation {})",
+                    m.excused_excursion_cap, e.generation
+                ));
+            }
         }
     }
 
@@ -4558,6 +4573,43 @@ mod tests {
             ["sr-jitter: 56 records over 5500 ms, max |error| 2.28 ms, generation 1"]
         );
         assert!(!m.has_unexcused_error());
+    }
+
+    #[test]
+    fn the_excused_excursion_cap_is_two_plus_one_per_hundred_generations() {
+        let e = |g| KlvPlacementExpect {
+            klv_step_ticks: 9000,
+            expected_generations: g,
+        };
+        assert_eq!(e(1).excused_excursion_cap(), 3);
+        assert_eq!(e(100).excused_excursion_cap(), 3);
+        assert_eq!(e(101).excused_excursion_cap(), 4);
+        assert_eq!(e(576).excused_excursion_cap(), 8);
+    }
+
+    #[test]
+    fn excusable_excursions_past_the_per_run_cap_fail_placement() {
+        // Four generations, each with one excusable first excursion: the
+        // cap for four expected generations is 3, so the fourth is not excused.
+        let mut t = Tally::new();
+        t.set_klv_placement(placement_expect(4));
+        for _ in 0..4 {
+            feed_placement_generation(&mut t, 0, 300, &late_run(100, 10, 5, 205));
+        }
+        let r = finish_baseline(t, VerifyMode::Lossy, &WireSummary::default());
+        let m = r.metrics.klv_placement.clone().expect("placement block");
+        assert_eq!(
+            (m.excursions, m.excused_excursions, m.excused_excursion_cap),
+            (4, 3, 3)
+        );
+        assert!(m.has_unexcused_error());
+        assert!(
+            m.excused_excursion_details
+                .iter()
+                .any(|d| d.starts_with("sr-jitter not excused: per-run cap 3 reached")),
+            "{:?}",
+            m.excused_excursion_details
+        );
     }
 
     #[test]
