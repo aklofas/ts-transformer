@@ -492,6 +492,8 @@ tracks, separate publisher credentials, `rcvbuf` on publisher sockets, DTS
 for B-frames) is listed in
 [`/docs/project/deferred-features.md`](/docs/project/deferred-features.md).
 
+The library never runs your code on its threads, with two Rust-only exceptions: your own `RecvTransport` / `Transport` / `Publisher` implementation or reconnect factory runs where the shell calls it (the managed reconnect worker included), and your `tracing` subscriber is reached by the libsrt and librist log bridges on their native threads. See [Architecture](/docs/reference/architecture.md) for the rule.
+
 ## Where to go next
 
 - [`/docs/start/concepts.md`](/docs/start/concepts.md) — the conceptual

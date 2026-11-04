@@ -505,6 +505,8 @@ print(ac.user, ac.resource, ac.mode)
 
 ### Cancellation and cross-thread close
 
+The library never runs your code on its threads: no callback of yours is ever invoked from a thread the library owns. See [Architecture](/docs/reference/architecture.md) for the rule.
+
 Every transport shell — the four `tstrans.shells` classes over any
 transport, the SRT `Listener`, the four `Managed*` shells, and the raw
 `udp` / `tcp` / `rist` / `rtp` transports — exposes `close()` that is safe

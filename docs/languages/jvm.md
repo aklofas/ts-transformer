@@ -1044,6 +1044,8 @@ try (Socket sock = new Builder("srt://host:9000")
 
 ### Cancellation
 
+The library never runs your code on its threads: no callback of yours is ever invoked from a thread the library owns. See [Architecture](/docs/reference/architecture.md) for the rule.
+
 Obtain a `org.tstrans.shells.CancelHandle` from an open `Sender`, `Receiver`,
 `MuxSender` or `DemuxReceiver` (and their `Managed*` twins) and call `cancel()` from another
 thread to unblock a parked `sendBytes` / `send*` / `recvBytes` / `next()` call.
