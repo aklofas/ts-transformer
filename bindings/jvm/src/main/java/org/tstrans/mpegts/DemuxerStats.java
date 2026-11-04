@@ -11,8 +11,8 @@ package org.tstrans.mpegts;
  *
  * @param programMapsSeen Number of {@code ProgramMap} events emitted (one per PMT version seen).
  * @param pmtVersionsSeen Number of distinct PMT version_number values seen, including the initial
- *     sighting. Resets to zero when the stats are reset, so the next PMT always increments this
- *     counter.
+ *     sighting. {@code reset_stats} zeroes the counter but keeps the PMT topology, so a repeat of
+ *     the already-known version is not counted; only a new {@code version_number} increments it.
  * @param discontinuities Total discontinuity events emitted across all PIDs.
  * @param nonconformant Total non-conformant events emitted across all PIDs.
  * @param programsSeen Number of programs currently tracked (entries in the PAT that have been
