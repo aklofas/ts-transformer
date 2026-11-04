@@ -151,7 +151,7 @@ is a separate measurement; see
 Pre-1.0, released on PyPI (`tstrans`) and Maven Central (`org.tstrans:tstrans-jvm`);
 C ABI **0.28**. Sender + receiver pipelines are complete, and **all four Tier-1
 targets gate CI** — Linux x86_64, Linux aarch64, macOS arm64, and Windows MSVC.
-Hundreds of tests run across both feature modes, with bash ratchets and
+Hundreds of tests run across three feature modes (default, no-default and all-features), with bash ratchets and
 `cargo public-api` baselines guarding the surface on every commit.
 
 Public API may change between pre-1.0 releases; everything is recorded in [`CHANGELOG.md`](CHANGELOG.md).

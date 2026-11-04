@@ -16,7 +16,7 @@ ts-transformer has three embedded consumption paths:
 |---|---|---|
 | **no_std Rust** | `tst-core` + `tst-pipeline` sender and receiver shells, `#![no_std]` + `alloc`, runtime-gated under QEMU for two bare-metal targets | [`embedded/baremetal-qemu/`](/embedded/baremetal-qemu/) |
 | **C firmware staticlib** | Offline mux/demux C ABI (the `tst-c-core` crate) bundled as `libtstrans_firmware.a` | [`embedded/baremetal-qemu-c/`](/embedded/baremetal-qemu-c/) |
-| **FreeRTOS reference port** | Full libsrt + the MPEG-TS muxer/demuxer on FreeRTOS + FreeRTOS-Plus-POSIX + lwIP — SRT video egress AND ingress from/to a microcontroller, plain and AES-128 on egress | [`embedded/freertos-srt/`](/embedded/freertos-srt/) |
+| **FreeRTOS reference port** | libsrt on FreeRTOS + FreeRTOS-Plus-POSIX + lwIP — egress sends a prebuilt golden TS over SRT (no on-device mux), plain and AES-128; ingress (`srt-recv`) receives SRT and demuxes on-device through the C ABI | [`embedded/freertos-srt/`](/embedded/freertos-srt/) |
 
 All three run under QEMU — no vendor hardware or BSPs are required or provided. Path 1 runs on both Cortex-M4 (`mps2-an386`) and RISC-V (`virt`); Paths 2 and 3 are Cortex-M4-only. See [`/docs/reference/compatibility.md`](/docs/reference/compatibility.md) for the platform-support tiers.
 
@@ -46,9 +46,8 @@ tst-pipeline = { version = "0.9.0", default-features = false }
 
 ```bash
 # Run locally (needs qemu-system-arm + qemu-system-misc + thumbv7em-none-eabihf + riscv32imac-unknown-none-elf targets):
-cd embedded/baremetal-qemu
-cargo run --release --locked                                       # ARM
-cargo run --release --locked --target riscv32imac-unknown-none-elf # RISC-V
+(cd embedded/baremetal-qemu && cargo run --release --locked)                                       # ARM
+(cd embedded/baremetal-qemu && cargo run --release --locked --target riscv32imac-unknown-none-elf) # RISC-V
 
 # Or via the CI gate script (skips cleanly, per-target, if the matching QEMU binary is absent):
 bash embedded/scripts/check/qemu-runtime.sh
@@ -80,7 +79,7 @@ bash embedded/scripts/check/firmware-qemu.sh
 
 ## Path 3 — FreeRTOS reference port
 
-[`embedded/freertos-srt/`](/embedded/freertos-srt/) is the flagship: a complete reference port of **libsrt** + the MPEG-TS muxer/demuxer onto FreeRTOS + FreeRTOS-Plus-POSIX + lwIP. It demonstrates SRT video egress AND ingress from/to a microcontroller (`example` streams out; `srt-recv` receives in and demuxes on-device), including byte-exact ARQ recovery under ~20% packet loss and AES-128 encryption on egress.
+[`embedded/freertos-srt/`](/embedded/freertos-srt/) is the flagship: a reference port of **libsrt** onto FreeRTOS + FreeRTOS-Plus-POSIX + lwIP. It demonstrates SRT egress AND ingress on a microcontroller. The egress program (`example`) sends a prebuilt golden TS over libsrt and does no on-device muxing. The ingress program (`srt-recv`) receives over SRT and demuxes on-device through the C ABI, including byte-exact ARQ recovery under ~20% packet loss and AES-128 encryption on egress.
 
 It is **not built by default** — it is not a Cargo workspace member, and its gates skip locally when the cross-toolchain or QEMU is absent. In CI, every `freertos-srt` target runs as a fail-closed hard gate under QEMU.
 

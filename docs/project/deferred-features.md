@@ -1687,8 +1687,10 @@ and the two below.
   `input_consumed`, shipped in v0.4.0. The C ABI, Python, and JVM send
   errors expose only the error kind. The Rust binding envelope carries it since 0.9.0 (`BindingError::diagnostics`); exposing it is a host change only.
 - **Why deferred:** the C surface needs an ABI minor bump for a new error
-  field; Python/JVM callers are steered to the `Managed*` wrappers, where
-  the question does not arise. No binding consumer has asked.
+  field. The question also arises on the `Managed*` wrappers: a managed send
+  can fail after consuming the input, and the muxed bytes stay pending, so
+  the missing diagnostic field is the deferral, not an exemption. No binding
+  consumer has asked.
 - **Trigger to revisit:** a binding consumer hand-rolling retry on the
   bare `Sender`/`MuxSender` shell asks for it.
 
@@ -1899,8 +1901,11 @@ and the two below.
 - **Status:** Deferred. `TransportError::Broken` carries a structured
   `cause: BrokenCause` (`CleanEof` for a peer FIN / TLS `close_notify`
   observed as a zero-length read on `tst-tcp`, `Unspecified` otherwise)
-  in Rust only. The C ABI folds `Broken` into `TST_E_TRANSPORT` with the
-  message in the last-error string. The exception is plain SRT receivers, which report `TST_E_END_OF_STREAM`. The Python / JVM `BROKEN` kinds
+  in Rust only. Every C receive path projects a clean peer end
+  (TCP FIN, TLS `close_notify`, SRT peer close) to `TST_E_END_OF_STREAM`.
+  What C cannot tell apart is a clean close from a read error inside
+  `TST_E_TRANSPORT`, and only where the cause is `Unspecified`; the message
+  is in the last-error string. The Python / JVM `BROKEN` kinds
   carry only the message, so a binding caller still cannot tell a clean
   peer close from a read error without parsing that string. The Rust binding envelope carries it since 0.9.0 (`BindingError::diagnostics`); exposing it is a host change only.
 - **Why deferred:** the field was added additively so the Rust surface

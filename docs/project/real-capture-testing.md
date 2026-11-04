@@ -216,9 +216,10 @@ replay refuses to start when `net.core.rmem_max` would clamp the buffer the
 access units need, and a pick whose interval needs more fails its UDP
 verdict. When the sender lost and recovered the packet framing, a failed
 verdict says how often, so a short delivery from a damaged capture is not
-read as transport loss. A damaged capture can still arrive short with no
-resync counted, because the sender's flush forwards a partial bundle
-without checking its framing.
+read as transport loss. A damaged capture can still arrive short, because
+the sender's flush checks sync before forwarding: it sends the packets ahead
+of the first bad sync byte and keeps the rest for a resync, which is counted
+when it happens. The replay has no separate flush.
 
 Picks replay largest first, by the bytes each one sends, so the receiver's
 largest allocation comes early in the run.

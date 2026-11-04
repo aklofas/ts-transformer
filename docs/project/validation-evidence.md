@@ -482,7 +482,7 @@ record off by more than 10 ms fails the verdict. Each new publisher
 restarts the timeline, so the receiver excuses one backward timestamp step
 per PID at each declared generation boundary, and the timing anomalies that
 coincide with it; any other backward step fails. The verdict detail gives the excused
-counts. No archived run has carried this leg yet.
+counts. The 0.9.0 release soak carried it (`soak-0.9.0-2026-10-27` in the runs table above).
 
 ### The current soak shape (2026-09-14)
 
@@ -631,7 +631,7 @@ injections with zero unexplained, undetected or unrecovered events. The
 RIST leg failed corruption attribution: all three gating FAILs
 (`worker_exits`, `recv_invariants_rist`, `corruption_attributed_rist`)
 are that one finding, explained below. No process grew past the RSS gate.
-This is the latest 72-hour SRT / RIST endurance run; the two harness
+This is the 0.7.0 run, superseded by the 0.9.0 release soak above; the two harness
 defects behind the RIST failure were fixed in 0.8.0. Its tree, dates and
 declared duration are in the runs table above.
 
