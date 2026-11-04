@@ -187,10 +187,9 @@ int main(int argc, char **argv) {
 
         if (rc == TST_E_END_OF_STREAM) {
             /*
-             * The sender closed the stream or the multicast group lost all
-             * active senders. On UDP this is the normal terminal condition
-             * (there is no caller-cancel path that would surface TST_E_CLOSED
-             * here unless another thread closed the handle).
+             * A datagram transport has no peer end, so this arm does not fire
+             * for UDP. It is kept so the loop has the same shape as the TCP
+             * and SRT receivers, where END_OF_STREAM is the peer's close.
              */
             fprintf(stderr,
                     "Stream ended (no more packets). %" PRIu64 " packets received.\n",
