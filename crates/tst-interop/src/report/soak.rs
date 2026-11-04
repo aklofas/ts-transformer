@@ -8129,26 +8129,32 @@ pub(crate) mod tests {
 mod soak_script_literals {
     use crate::report::rss::{RSS_SLOPE_THRESHOLD_KB_PER_HOUR, WARMUP_FRACTION};
 
-    /// The gate's constants are copies of literals in `soak.sh`; a change on
-    /// either side fails here.
+    /// The gate's constants are copies of literals in `soak.sh` and
+    /// `lib/rss-slope.sh`; a change on either side fails here.
     #[test]
     fn the_rss_constants_match_soak_sh() {
-        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let interop = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
             .join("scripts")
-            .join("interop")
-            .join("soak.sh");
-        let text = std::fs::read_to_string(script).unwrap();
+            .join("interop");
+        let text = std::fs::read_to_string(interop.join("soak.sh")).unwrap();
+        let lib = std::fs::read_to_string(interop.join("lib").join("rss-slope.sh")).unwrap();
         let threshold = format!(
-            "RSS_SLOPE_THRESHOLD={}",
+            "RSS_SLOPE_THRESHOLD_DEFAULT={}",
             RSS_SLOPE_THRESHOLD_KB_PER_HOUR as u64
         );
         assert_eq!(
             f64::from(RSS_SLOPE_THRESHOLD_KB_PER_HOUR as u32),
             RSS_SLOPE_THRESHOLD_KB_PER_HOUR
         );
-        assert!(text.contains(&threshold), "soak.sh has no {threshold:?}");
+        assert!(
+            lib.contains(&threshold),
+            "rss-slope.sh has no {threshold:?}"
+        );
+        // The 24-h floor is the planning ruling (48-h release soak; the
+        // senders take about 7 h to reach their plateau).
+        assert!(lib.contains("h>=24"), "rss-slope.sh has no 24-h floor");
         let warmup = format!("warmup_fraction: {WARMUP_FRACTION}");
         assert!(text.contains(&warmup), "soak.sh has no {warmup:?}");
     }
