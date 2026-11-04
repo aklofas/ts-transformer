@@ -28,12 +28,14 @@
  *   3. A blocking receive loop driven by tst_udp_receiver_recv_ts.
  *   4. Decoding and logging each TS packet's header fields (sync byte, PID,
  *      payload_unit_start_indicator, continuity counter).
- *   5. Clean shutdown on END_OF_STREAM / CLOSED, and on reaching a packet cap.
+ *   5. Clean shutdown on reaching a packet cap, and on a transport error.
  *
  * Note on shutdown: tst_udp_receiver_cancel exists and may be called from
  * another thread to end a parked recv, which then returns TST_E_CLOSED. This
  * single-threaded example needs none: it stops after a fixed packet count (or
- * when recv returns END_OF_STREAM / CLOSED) and closes the handle with no call in flight, so no cancel is needed.
+ * on a transport error) and closes the handle with no call in flight, so no
+ * cancel is needed. A datagram transport has no peer end, so recv does not
+ * return END_OF_STREAM here.
  *
  * Build (from the ts-transformer workspace root):
  *   cargo build -p tst-c --no-default-features --features udp

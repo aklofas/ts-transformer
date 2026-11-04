@@ -511,7 +511,7 @@ static void print_reconnect_discontinuity(const tst_event_t *ev) {
  *     Recipe 2's 30fps stream, an event every ~33ms) it may never
  *     expire at all, so relying on it alone would leave Ctrl-C
  *     unresponsive for the ENTIRE duration of a busy stream — observed
- *     empirically before this second call site was added.
+ *     empirically.
  *   - on every `?x-recvtimeout` expiry (TST_E_BUFFER_FULL) — this is
  *     what makes Ctrl-C responsive on an IDLE stream, where there is no
  *     event to hang the check off of.
