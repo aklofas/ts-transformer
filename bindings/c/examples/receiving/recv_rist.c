@@ -206,7 +206,7 @@ int main(int argc, char **argv) {
      * Return codes:
      *   0                    → success; buf[0..188) contains one TS packet.
      *   TST_E_END_OF_STREAM  → peer closed gracefully; stop pulling.
-     *   TST_E_CLOSED         → handle was closed from another thread.
+     *   TST_E_CLOSED         → tst_rist_receiver_cancel fired (e.g. from another thread).
      *   TST_E_TRANSPORT      → transport-layer failure (librist I/O error).
      *   TST_E_INVALID_CONFIG → null buf or buf_len < 188 (programming error).
      *
@@ -255,7 +255,7 @@ int main(int argc, char **argv) {
             /*
              * Unexpected error: log the code + message, then exit. Common cases:
              *   TST_E_TRANSPORT (-8) — librist I/O error (network reset, etc.)
-             *   TST_E_CLOSED    (-7) — handle closed while recv was blocking
+             *   TST_E_CLOSED    (-7) — cancelled while recv was blocking
              */
             fprintf(stderr,
                     "[recv_rist] recv_ts error (rc=%d): %s\n",

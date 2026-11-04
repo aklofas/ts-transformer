@@ -215,7 +215,7 @@ int main(int argc, char **argv) {
      * Common return codes:
      *   0                     — success, *out_n = 188
      *   TST_E_END_OF_STREAM   — peer sent a FIN (connection closed cleanly)
-     *   TST_E_CLOSED          — this handle was closed from another thread
+     *   TST_E_CLOSED          — tst_tcp_receiver_cancel fired (e.g. from another thread)
      *   TST_E_TRANSPORT       — TCP I/O error (RST, network failure)
      *   TST_E_INVALID_CONFIG  — null pointer or too-small buffer
      */
@@ -248,7 +248,7 @@ int main(int argc, char **argv) {
         }
 
         if (rc == TST_E_CLOSED) {
-            /* Another thread closed this handle. Clean exit. */
+            /* Cancelled. Clean exit. */
             fprintf(stderr,
                     "[tcp_recv] receiver closed. %" PRIu64 " packets received.\n",
                     received);
