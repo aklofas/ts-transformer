@@ -6,7 +6,7 @@
 > - [guides/mpegts-demux.md](/docs/guides/mpegts-demux.md) — async-KLV carriage and PES timestamps
 > - [Sample-and-hold async KLV via `Pairer::last_before_pts`](/docs/cookbook/pairing/pairer-last-before-pts.md) — the typed-projection version using `Pairer`
 
-Reach for this when KLV is emitted independently of video — typically 1–10 Hz async metadata against 25–60 fps video. The canonical pairing is "the most recent KLV record where `klv.pts <= frame.pts`." There is no ambiguity about which KLV pairs with which frame; a small ordered buffer keeps that true when records arrive out of order (a B-frame's PTS can be below the newest record's). The only knob is whether to drop a frame when the most recent KLV is too stale.
+Reach for this when KLV is emitted independently of video — typically 1–10 Hz async metadata against 25–60 fps video. The canonical pairing is "the most recent KLV record where `klv.pts <= frame.pts`." There is no ambiguity about which KLV pairs with which frame. The only knob is whether to drop a frame when the most recent KLV is too stale.
 
 ```rust,no_run
 use std::collections::BTreeMap;

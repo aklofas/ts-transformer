@@ -506,8 +506,8 @@ fn tcp_mux_sender_finish_then_close() {
 // `_cancel` — ABI 0.22
 // ---------------------------------------------------------------------------
 
-/// `_close` is documented callable from any thread; the raw pointer just
-/// needs to cross the thread boundary to get there. `_cancel` is the same.
+/// `_cancel` is documented callable from any thread; the raw pointer just
+/// needs to cross the thread boundary to get there.
 struct SendRx(*mut tstrans::tcp::TstTcpReceiver);
 unsafe impl Send for SendRx {}
 
