@@ -9,16 +9,16 @@
  * e.g. two aircraft each with their own program), see
  * `examples/muxing/mux_two_programs.c`.
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wall -Werror \
+ * Build (from the ts-transformer workspace root). This example writes a file
+ * and needs no transport feature, so the packaged copy uses the default set:
+ *   bash scripts/dev/c-package.sh --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Werror \
  *      -o /tmp/mux_dual_camera \
  *      bindings/c/examples/muxing/mux_dual_camera.c -ltstrans
  *
  * Run:
- *   LD_LIBRARY_PATH=target/debug /tmp/mux_dual_camera
+ *   /tmp/mux_dual_camera
  *
  * Output:
  *   /tmp/dual_camera.ts

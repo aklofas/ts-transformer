@@ -30,11 +30,10 @@
  *   6. Flushing the buffered tail with tst_udp_sender_flush, then closing via
  *      tst_udp_sender_close.
  *
- * Note: there is NO cancel API on UDP handles (the UDP transport does not
- * expose a cancel handle). A single-threaded sender like this one simply
- * runs its loop to completion and calls tst_udp_sender_close. To unblock a
- * thread parked in a blocking send from another thread, close the handle
- * from the same thread that owns it, or rely on the socket's send behavior.
+ * Note on shutdown: tst_udp_sender_cancel exists and may be called from
+ * another thread to end a parked send. This single-threaded example needs
+ * none: it runs its loop to completion and calls tst_udp_sender_close
+ * directly, which is cancel-first and abortive.
  *
  * Build (from the ts-transformer workspace root):
  *   cargo build -p tst-c --no-default-features --features udp

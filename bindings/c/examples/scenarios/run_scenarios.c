@@ -1980,10 +1980,16 @@ static int contract_cancelled_recv_kind(const char *scenarios_dir_path,
         fprintf(stderr, "FAIL [%s]: tst_receiver_cancel: %s\n", entry->id,
                 tst_get_last_error_str());
         tst_raw_sender_close(peer);
-        /* Close the receiver so the parked worker returns instead of sitting
-         * in libsrt at process exit (where atexit(srt_cleanup) would join it). */
-        tst_receiver_close(rx);
-        return -1; /* worker may still be mid-write - leak */
+        /* The cancel did not take, so the worker may still be parked on rx.
+         * _close needs no other call in flight: give the worker the same
+         * bounded wait, and close only once it has finished. */
+        for (int i = 0; i < 200 && !atomic_load(&st->done); i++) { /* <= 10 s */
+            usleep(50 * 1000);
+        }
+        if (atomic_load(&st->done)) {
+            tst_receiver_close(rx);
+        }
+        return -1; /* worker may still be parked - leak the state */
     }
     for (int i = 0; i < 200 && !atomic_load(&st->done); i++) { /* <= 10 s */
         usleep(50 * 1000);
@@ -1992,8 +1998,8 @@ static int contract_cancelled_recv_kind(const char *scenarios_dir_path,
     if (!atomic_load(&st->done)) {
         fprintf(stderr, "FAIL [%s]: cancel did not end the parked recv within 10 s\n",
                 entry->id);
-        tst_receiver_close(rx); /* same reason as above */
-        return -1;              /* worker still parked - leak */
+        /* Closing now would free the receiver under the parked worker. */
+        return -1; /* worker still parked - leak */
     }
     tst_receiver_close(rx);
 

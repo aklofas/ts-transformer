@@ -23,12 +23,12 @@
  *   (Then send any stream with KLV PIDs; KLV is typical for
  *    gimbaled-platform streams via the mux_with_klv example.)
  *
- * Build:
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wl,-rpath,target/debug \
- *      -Wall -Wextra -Werror \
+ * Build (from the ts-transformer workspace root). The committed header's
+ * config declares no transport, so including bindings/c/include directly
+ * leaves the SRT declarations out; build against a packaged copy instead:
+ *   bash scripts/dev/c-package.sh --features srt --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Wextra -Werror \
  *      -o /tmp/recv_klv_to_stdout \
  *      bindings/c/examples/receiving/recv_klv_to_stdout.c -ltstrans
  */

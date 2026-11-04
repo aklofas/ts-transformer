@@ -41,17 +41,17 @@
  *      blocks in _next_event waiting for packets; Ctrl-C still exits
  *      gracefully via the cancel path.
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wl,-rpath,target/debug \
- *      -Wall -Wextra -Werror \
+ * Build (from the ts-transformer workspace root). The committed header's
+ * config declares no transport, so including bindings/c/include directly
+ * leaves the RTP declarations out; build against a packaged copy instead:
+ *   bash scripts/dev/c-package.sh --features rtp --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Wextra -Werror \
  *      -o /tmp/recv_rtp \
  *      bindings/c/examples/receiving/recv_rtp.c \
- *      -ltstrans -lpthread -ldl
+ *      -ltstrans -lpthread
  *
- *   LD_LIBRARY_PATH=target/debug /tmp/recv_rtp \
+ *   /tmp/recv_rtp \
  *       rtp://239.1.2.3:5000?iface=eth0
  *
  * Requires: TST_HAS_RTP == 1 (default when the `rtp` cargo feature is

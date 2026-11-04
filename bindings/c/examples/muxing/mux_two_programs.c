@@ -34,16 +34,19 @@
  *
  *   From the ts-transformer workspace root:
  *
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c --release
+ *   This example writes a file and needs no transport feature, so the
+ *   packaged copy is built with the default feature set:
+ *
+ *   bash scripts/dev/c-package.sh --out /tmp/tstrans-pkg
  *   gcc bindings/c/examples/muxing/mux_two_programs.c \
- *       -I bindings/c/include \
- *       -L target/release \
+ *       -I /tmp/tstrans-pkg/include \
+ *       -L /tmp/tstrans-pkg/lib -Wl,-rpath,/tmp/tstrans-pkg/lib \
  *       -ltstrans \
  *       -o /tmp/mux_two_programs
  *
  * ── RUN + VERIFY ─────────────────────────────────────────────────────────────
  *
- *   LD_LIBRARY_PATH=target/release /tmp/mux_two_programs /tmp/two-program.ts
+ *   /tmp/mux_two_programs /tmp/two-program.ts
  *
  *   ffprobe -show_programs /tmp/two-program.ts 2>/dev/null | grep program_num
  *   # Expected output:

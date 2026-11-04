@@ -60,17 +60,19 @@
  *   ~0.4s total sender lifetime, DO NOT try to Ctrl-C mid-run (see the
  *   GOTCHA below — the window is too short to reliably land inside it):
  *     Terminal A:
- *       SRT_FORCE_VENDORED=1 cargo build -p tst-c --features srt
- *       cc -I bindings/c/include -L target/debug -Wall -Werror \
+ *       bash scripts/dev/c-package.sh --features srt --out /tmp/tstrans-pkg
+ *       cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *          -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Werror \
  *          -o /tmp/recv_srt_events \
- *          bindings/c/examples/receiving/recv_srt_events.c -ltstrans
- *       LD_LIBRARY_PATH=target/debug /tmp/recv_srt_events \
+ *          bindings/c/examples/receiving/recv_srt_events.c -ltstrans -lpthread
+ *       /tmp/recv_srt_events \
  *           'srt://:9000?mode=listener'
  *     Terminal B:
- *       cc -I bindings/c/include -L target/debug -Wall -Werror \
+ *       cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *          -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Werror \
  *          -o /tmp/mux_synthetic_srt \
- *          bindings/c/examples/muxing/mux_synthetic_srt.c -ltstrans
- *       LD_LIBRARY_PATH=target/debug /tmp/mux_synthetic_srt 127.0.0.1:9000
+ *          bindings/c/examples/muxing/mux_synthetic_srt.c -ltstrans -lpthread
+ *       /tmp/mux_synthetic_srt 127.0.0.1:9000
  *     Verified output (5 AUs sent, 4 events land before the sender's
  *     linger/close races the demuxer's last read — this is normal, not
  *     a drop; the remaining AUs are still in flight when the process
@@ -90,10 +92,11 @@
  *   this example's SIGINT handling is built around):
  *     Terminal A: same `recv_srt_events 'srt://:9000?mode=listener'` as above.
  *     Terminal B:
- *       cc -I bindings/c/include -L target/debug -Wall -Werror \
+ *       cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *          -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Werror \
  *          -o /tmp/poll_socket_stats \
- *          bindings/c/examples/operations/poll_socket_stats.c -ltstrans
- *       LD_LIBRARY_PATH=target/debug /tmp/poll_socket_stats srt://127.0.0.1:9000
+ *          bindings/c/examples/operations/poll_socket_stats.c -ltstrans -lpthread
+ *       /tmp/poll_socket_stats srt://127.0.0.1:9000
  *     Press Ctrl-C on Terminal A any time in the first ~4.5s. Verified
  *     this session (log-timestamped, not wall-clock-guessed): shutdown
  *     lands roughly 30-45ms after the signal — bounded by one inter-event
@@ -106,7 +109,7 @@
  *   Caller-mode variant of either recipe (swap who binds vs dials — point
  *   this example at a real listener instead, e.g. a camera or
  *   `srt-live-transmit srt://:9000?mode=listener ...`):
- *     LD_LIBRARY_PATH=target/debug /tmp/recv_srt_events srt://127.0.0.1:9000
+ *     /tmp/recv_srt_events srt://127.0.0.1:9000
  *
  *   NOTE — the reconnect-search window: if a peer disconnects and this
  *   listener-mode receiver goes looking for a NEW one (managed
@@ -137,14 +140,14 @@
  *   `tests/tools/gen_synthetic_fixtures`-produced fixtures muxed via a
  *   Rust sender) to see populated lat/lon/alt/hdg.
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c --features srt
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wl,-rpath,target/debug \
- *      -Wall -Wextra -Werror \
+ * Build (from the ts-transformer workspace root). The committed header's
+ * config declares no transport, so including bindings/c/include directly
+ * trips the #error below; build against a packaged copy instead:
+ *   bash scripts/dev/c-package.sh --features srt --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Wextra -Werror \
  *      -o /tmp/recv_srt_events \
- *      bindings/c/examples/receiving/recv_srt_events.c -ltstrans
+ *      bindings/c/examples/receiving/recv_srt_events.c -ltstrans -lpthread
  *
  * Closest Rust analog: examples/receiving/srt_recv_typed.rs (plain,
  *   non-managed event walk — its comment at the ReconnectDiscontinuity

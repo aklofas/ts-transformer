@@ -61,15 +61,14 @@
  *   --pass      <password>      required when --user is present
  *   --transport udp|tcp|auto    default: auto  (PreferUdp with 461 fallback)
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wl,-rpath,target/debug \
- *      -Wall -Wextra -Werror \
- *      -lpthread \
+ * Build (from the ts-transformer workspace root). The committed header's
+ * config declares no transport, so including bindings/c/include directly
+ * leaves the RTSP declarations out; build against a packaged copy instead:
+ *   bash scripts/dev/c-package.sh --features rtp --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Wextra -Werror \
  *      -o /tmp/recv_rtsp_camera \
- *      bindings/c/examples/receiving/recv_rtsp_camera.c -ltstrans
+ *      bindings/c/examples/receiving/recv_rtsp_camera.c -ltstrans -lpthread
  *
  * Closest Rust analog: examples/receiving/rtsp_receive.rs (if it exists) or
  *   tst-rtp's integration tests under crates/tst-rtp/tests/.

@@ -31,12 +31,10 @@
  *   6. Clean shutdown on END_OF_STREAM (sender closed) or packet cap.
  *   7. Freeing the listener and receiver handles.
  *
- * Note on shutdown: there is NO cancel API on TCP handles (the TCP transport
- * does not expose a cancel handle). A blocking recv on an idle connection will
- * park until bytes arrive or the peer closes. This single-threaded example
- * stops after a fixed packet count (or when END_OF_STREAM fires) then closes.
- * A multi-threaded consumer that needs to interrupt a blocked recv should close
- * the handle from the owning thread.
+ * Note on shutdown: tst_tcp_receiver_cancel exists and may be called from
+ * another thread to end a parked recv, which then returns TST_E_CLOSED. This
+ * single-threaded example needs none: it stops after a fixed packet count (or
+ * when END_OF_STREAM fires) and closes directly, which is cancel-first.
  *
  * Build (from the ts-transformer workspace root):
  *   cargo build -p tst-c --no-default-features --features tcp
