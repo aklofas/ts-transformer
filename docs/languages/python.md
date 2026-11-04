@@ -729,8 +729,8 @@ with shells.Receiver.open("tcp://127.0.0.1:9000") as rx:
                 ...
     finally:
         demux.flush()                          # the final unbounded PES
-    while (ev := demux.next_event()) is not None:
-        ...
+        while (ev := demux.next_event()) is not None:
+            ...
 ```
 
 Flush at the end, also after an error, or the last access unit is lost. A

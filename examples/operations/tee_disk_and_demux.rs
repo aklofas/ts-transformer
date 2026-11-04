@@ -113,6 +113,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // The first fatal error. It ends the loop, but the flush and the
+    // recording's `finish` still run before it is returned: a terminal error
+    // must not cost the last access unit, and a truncated capture must not
+    // be reported as success.
+    let mut failure: Option<Box<dyn std::error::Error>> = None;
     loop {
         // `next_packet` returns whole, sync-locked 188-byte packets and
         // nothing else: the syncer's alignment work is already done.
@@ -126,6 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // end does, or the last partial access unit is lost.
             Err(e) => {
                 eprintln!("receiver error: {e}");
+                failure = Some(e.into());
                 break;
             }
         };
@@ -134,10 +140,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // error can never cost you bytes of the capture.
         if let Err(e) = recording.send_bytes(&pkt) {
             eprintln!("recording error: {e}");
+            failure = Some(e.into());
             break;
         }
         if let Err(e) = demux.feed_aligned(&pkt) {
             eprintln!("demux error: {e}");
+            failure = Some(e.into());
             break;
         }
         tally(&mut demux);
@@ -157,8 +165,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // `finish` flushes the buffered tail and surfaces an I/O error that the
     // implicit `Drop` would swallow (disk full). A recording whose tail
-    // matters must end with it.
+    // matters must end with it. After a failed write `FileTransport` has
+    // already dropped its writer and `finish` returns `Ok(None)`, so the
+    // error recorded above is the one that must be returned.
     recording.finish()?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
     eprintln!("wrote {output} from {input}; samples={samples} metadata={metadata}");
     Ok(())
 }
