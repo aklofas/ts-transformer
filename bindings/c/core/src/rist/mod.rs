@@ -10,11 +10,12 @@
 //! The surface mirrors `bindings/c/core/src/udp/` module-for-module,
 //! `_cancel` entry points included since ABI 0.22. The RIST transport
 //! exposes a real `cancel_handle()` and every handle holds
-//! it, so `_close` from any thread cancels first and
-//! `tst_rist_<shell>_cancel` does the same WITHOUT freeing — which on RIST
-//! is the only safe cross-thread interrupt, because a `_recv_ts` never
-//! parks and its caller loop would race a freeing `_close`. See each handle
-//! module's **Cancel** note.
+//! it. `tst_rist_<shell>_cancel` is the only safe cross-thread interrupt
+//! and does not free the handle, because a `_recv_ts` never parks and its
+//! caller loop would race a freeing `_close`. The sequence is `_cancel`
+//! (any thread), wait for the parked call to return, then `_close` from the
+//! owning thread; `_close` is implemented cancel-first as a defence, not as
+//! a contract. See each handle module's **Cancel** note.
 //!
 //! **Construction pattern (differs from UDP):**
 //! RIST uses a move-style builder:
