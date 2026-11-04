@@ -1572,17 +1572,20 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A publisher that can push only H.265 or audio
   as elementary tracks and cannot be switched to MPEG-TS over RTP.
 
-## Separate publisher credentials on `RtspServer`
+## Mount rules and listen rules in the C ABI
 
-- **Status:** Deferred. Readers and publishers authenticate against the
-  server's single credential set (`auth_basic` / `auth_digest_*`). There
-  is no way to let a client PLAY without also letting it ANNOUNCE.
-- **Why deferred:** A second credential set means a role-aware auth
-  check on every method and a builder surface for it in all three
-  bindings. A deployment that needs the split today can run publish
-  mounts and reader mounts on two servers with different credentials.
-- **Trigger to revisit:** A deployment that must expose reading publicly
-  while restricting who can publish on the same port.
+- **Status:** Deferred. Rust, Python and JVM give each mount path its own
+  publish and read policy through mount rules (`RtspServer::mount_rules()`),
+  and each SRT stream ID its own decision through listen rules
+  (`SrtListener::rules()`). The **C ABI has neither**: a C server has only
+  the server-wide `auth_basic` / `auth_digest_*` credential, so it cannot let
+  a client PLAY without also letting it ANNOUNCE, and a C listener cannot
+  filter by stream ID.
+- **Why deferred:** The C surface froze at 0.9.0's shape, and the rules
+  tables are still `Experimental` (mount rules) and `Provisional` (listen
+  rules); a C ABI entry would pin them before their signatures settle.
+- **Trigger to revisit:** A C consumer that needs either table, or the first
+  stable minor of the tables.
 
 ## `rcvbuf` on publisher UDP sockets
 
@@ -2126,7 +2129,7 @@ is a deferral.
 
 ### Stream-ID filtering on `SrtListener`
 
-Shipped in 0.9.1 as listen rules — `SrtListener::rules()`; see the [SRT guide](/docs/guides/srt.md#listen-rules).
+Shipped in 0.9.1 as listen rules — `SrtListener::rules()`; see the [SRT guide](/docs/guides/srt.md#listen-rules). Not in the C ABI; see [Mount rules and listen rules in the C ABI](#mount-rules-and-listen-rules-in-the-c-abi).
 
 ### HLS publisher — SUPPORTED
 

@@ -1220,9 +1220,11 @@ The surface:
   `MountRule(publish=..., read=...)` takes a `MountPolicy`
   (`inherit()`, `open()`, `require(*MountCredential)` or
   `refuse(RefuseStatus.NOT_FOUND)`); `RtspServerConfig(default_mount_rule=...)`
-  guards the first ANNOUNCE. A bad path or empty credentials raise
-  `RtspError(MOUNT)`, and an edit after the server stopped raises
-  `RtspError(SERVER)`. A server nobody edits behaves as before; see the
+  guards the first ANNOUNCE. A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`). A bad path raises
+  `RtspError(MOUNT)`; `MountPolicy.require()` with no credentials raises
+  `ValueError` before the server is consulted; a credential with an empty
+  username is refused by the server with `RtspError(MOUNT)`. An edit after
+  the server stopped raises `RtspError(SERVER)`. A server nobody edits behaves as before; see the
   [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)
   for when a change takes effect.
 - `RtspServer.remove_mount(path)` removes a mount of any kind. A live

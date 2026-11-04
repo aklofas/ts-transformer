@@ -103,6 +103,18 @@ Caller and listener disagree on whether encryption is in use at all. Most common
 
 Fix: build both sides with the same feature configuration. If you need encryption on the link, neither side may be built `--no-default-features`.
 
+**A caller is rejected at once (SRT `NotFound` / `Conflict`) or a publisher gets 403 / 404 / 453 / 503 from the RTSP server**
+
+A rules table decided it, not the network or the encryption. For SRT, read
+the live rule for the caller's raw stream ID and the default rule on
+`ListenRules` (`set` / `remove`); `NotFound` and `Conflict` are the reject
+reasons an application's own rule sets. For RTSP, read the mount's `publish`
+or `read` policy on `MountRules`: a `Refuse(RefuseStatus)` answers `403`,
+`404`, `453` or `503` with no challenge. Retrying or changing the encryption
+does not help; edit the rule. See the
+[SRT listen-rules recipe](/docs/cookbook/receiving/srt-listen-rules.md) and the
+[RTSP publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md).
+
 **Sender hangs when dropping a `SrtSocket`**
 
 `SrtSocket::Drop` blocks the calling thread for as long as `SrtSocketConfig::linger` is set to. This is not libsrt's out-of-the-box behavior: its own default is `l_onoff=0` (linger off) — `srt_close` returns immediately and the queued backlog drains in the background. (The commonly-cited 180-second linger default belongs to libsrt's *file*-mode `DEF_LINGER_S`, which this library never reaches — every transport here is message/live mode.) A hang happens only if you (or a builder default) set a non-zero linger and the peer never ACKs the pending sends.

@@ -66,6 +66,7 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | `rtsp_client_setup_play.rs` | `rtsp_client/setup_play.rs` |
 | `rtsp_client_teardown.rs` | `rtsp_client/teardown.rs` |
 | `rtsp_client_tls_keepalive.rs` | `rtsp_client/tls_keepalive.rs` |
+| (new) | `rtsp_client/tls_handshake.rs` |
 
 ### `h264/` — RFC 6184 H.264-over-RTP: UDP loopback round-trips + RTSP session
 
@@ -88,11 +89,13 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | `rtsp_server_loopback_udp.rs` | `rtsp_server/loopback_udp.rs` |
 | `rtsp_server_mixed_transports.rs` | DELETED — was an empty no-op placeholder for a mixed UDP+multicast assertion; both legs are covered in isolation (`loopback_udp.rs`, `multicast.rs`) and the scenario adds no new server behavior |
 | `rtsp_server_mount.rs` | `rtsp_server/mount.rs` |
+| (new) | `rtsp_server/mount_rules.rs` |
 | `rtsp_server_multicast.rs` | `rtsp_server/multicast.rs` |
 | `rtsp_server_notice_5402.rs` | `rtsp_server/notice_5402.rs` |
 | `rtsp_server_session_keepalive.rs` | `rtsp_server/session_keepalive.rs` |
 | `rtsp_server_shutdown.rs` | `rtsp_server/shutdown.rs` |
 | `rtsp_server_tls.rs` | `rtsp_server/tls.rs` |
+| (new) | `rtsp_server/tls_handshake_timeout.rs` |
 
 ### `rtsp_server/publish/` — RTSP publisher role (ANNOUNCE / SETUP `mode=record` / RECORD), MP2T
 
