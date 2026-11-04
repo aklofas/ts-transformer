@@ -138,8 +138,8 @@ pub struct ReplaySummary {
     /// for a path never restarted, absent from older files.
     #[serde(default)]
     pub restarted_before_by_path: BTreeMap<String, Vec<Sha256Hex>>,
-    /// Per path: each time its child exited before the harness said `quit`
-    /// (the harness's own kills are not among them), with the pick whose
+    /// Per path: each time its child exited before it answered `bye`, or
+    /// left a failure status after it (the harness's own kills are not among them), with the pick whose
     /// verdict came last. Absent from older files.
     #[serde(default)]
     pub unexpected_exits_by_path: BTreeMap<String, Vec<UnexpectedExit>>,
@@ -148,7 +148,7 @@ pub struct ReplaySummary {
     pub pass: bool,
 }
 
-/// A receiver child that left before the harness said `quit`.
+/// A receiver child that left before it answered `bye`, or failed after.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnexpectedExit {
     /// The pick whose verdict the path produced last; `None` when the
@@ -159,22 +159,24 @@ pub struct UnexpectedExit {
 }
 
 /// What an exit is worth: `Some(status text)` for a child found gone that
-/// the harness did not kill. An exit after `quit` is expected only once the
-/// child answered `bye`: a child gone before that, with `quit` sent or not,
+/// the harness did not kill. A child that answered `bye` is expected to
+/// leave with a success status; any other status after `bye` is a crash in
+/// its exit handlers. A child gone before `bye`, with `quit` sent or not,
 /// left on its own.
 fn classify_exit(status: Option<ExitStatus>, bye_said: bool, killed: bool) -> Option<String> {
     let status = status?;
-    if bye_said || killed {
+    if killed || (bye_said && status.success()) {
         return None;
     }
+    let after = if bye_said { " after bye" } else { "" };
     if let Some(code) = status.code() {
-        return Some(format!("exit code {code}"));
+        return Some(format!("exit code {code}{after}"));
     }
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
         if let Some(sig) = status.signal() {
-            return Some(format!("signal {sig}"));
+            return Some(format!("signal {sig}{after}"));
         }
     }
     Some("unknown".to_string())
@@ -311,7 +313,7 @@ struct PathRun {
     alive: bool,
     /// The last verdict line this path's children produced.
     last_verdict: Option<Sha256Hex>,
-    /// Exits found before `quit`, see [`UnexpectedExit`].
+    /// Exits found before `bye` or failing after it, see [`UnexpectedExit`].
     exits: Vec<UnexpectedExit>,
     /// The harness killed the current child.
     killed: bool,
@@ -507,6 +509,12 @@ impl PathRun {
                 return std::mem::take(&mut self.exits);
             }
             std::thread::sleep(TICK);
+        }
+        if !self.exit_noted {
+            self.exits.push(UnexpectedExit {
+                after_pick: self.last_verdict.clone(),
+                status: "no exit within 15 s of quit; killed".to_string(),
+            });
         }
         self.killed = true;
         let _ = self.child.kill();
@@ -1342,8 +1350,8 @@ mod exit_tests {
             .unwrap()
     }
 
-    /// Only a child found gone that nobody killed or told to quit is an
-    /// unexpected exit.
+    /// Only a child found gone that the harness did not kill, and that did
+    /// not answer `bye` with a success status, is an unexpected exit.
     #[test]
     fn only_an_unrequested_exit_is_unexpected() {
         assert_eq!(
@@ -1351,10 +1359,10 @@ mod exit_tests {
             Some("exit code 0")
         );
         assert_eq!(classify_exit(Some(status(0)), true, false), None);
-        // `quit` sent but never answered with `bye`: still unexpected.
+        // Answered `bye`, then crashed in exit handlers: still unexpected.
         assert_eq!(
-            classify_exit(Some(status(0)), false, false).as_deref(),
-            Some("exit code 0")
+            classify_exit(Some(status(134)), true, false).as_deref(),
+            Some("exit code 134 after bye")
         );
         assert_eq!(classify_exit(Some(status(1)), false, true), None);
         assert_eq!(classify_exit(None, false, false), None);
