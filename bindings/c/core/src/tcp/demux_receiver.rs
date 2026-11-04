@@ -60,8 +60,9 @@ pub struct TstTcpDemuxReceiver {
 /// which case default demux options apply (lenient / CFI-tolerant mode).
 /// Returns `NULL` on error.
 ///
-/// The TCP connection is established synchronously (caller-side). For a
-/// listener-accepted connection, use `tst_tcp_listener_accept_receiver`.
+/// The TCP connection is established synchronously (caller-side). There is no
+/// listener-accepted demux form: `tst_tcp_listener_accept_receiver` yields a raw
+/// receiver (TS bytes, no demuxer), not a demux receiver.
 ///
 /// URL grammar:
 /// - `tcp://host:port` — connect to a plain TCP listener
@@ -199,7 +200,7 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_cancel(p: *mut TstTcpDemuxReceiv
 /// Returns:
 /// - `0` on success (`*out_event` populated)
 /// - `TST_E_END_OF_STREAM` (-12) on a graceful peer close (FIN) / EOF
-/// - `TST_E_CLOSED` (-7) if the handle was `_close`'d
+/// - `TST_E_CLOSED` (-7) if the handle was `_cancel`'d
 /// - `TST_E_TRANSPORT` (-8) on transport failure, including a peer reset or read error
 /// - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
 ///   unrecoverable packet malformation, or a malformed PES)
@@ -235,7 +236,7 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_next_event(
 /// Snapshot aggregate stats for a `tst_tcp_demux_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been closed.
+/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// NOTE: per-PID counters are NOT included here — call
 /// `tst_tcp_demux_receiver_get_stream_stats` to retrieve them.
@@ -264,7 +265,7 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_get_stats(
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
 /// `TST_E_NOT_AVAILABLE` if no live stats are available, or
-/// `TST_E_CLOSED` if the handle was closed.
+/// `TST_E_CLOSED` if the handle has been cancelled.
 ///
 /// # Safety
 ///
@@ -298,7 +299,7 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_get_socket_stats(
 /// # Errors
 ///
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
-/// * `TST_E_CLOSED` — handle was closed
+/// * `TST_E_CLOSED` — handle has been cancelled
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
 /// * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
 ///
@@ -335,7 +336,7 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_get_stream_codec_stats(
 /// for full semantics — same shape, different handle type).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been closed.
+/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///
@@ -366,7 +367,7 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_get_stream_last_seen_micros(
 /// (design §4.5).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been closed.
+/// or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///
@@ -395,7 +396,7 @@ pub unsafe extern "C" fn tst_tcp_demux_receiver_reset_stats(
 /// Capped at `TST_STATS_MAX_STREAMS = 64` entries (ascending PID order).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
-/// arg, or `TST_E_CLOSED` if the receiver has been closed.
+/// arg, or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///

@@ -25,8 +25,8 @@ use crate::event::TstEvent;
 /// Returns:
 /// - `0` on success (`*out_event` populated; pointer fields borrow)
 /// - `TST_E_END_OF_STREAM` (-12) on graceful peer close
-/// - `TST_E_CLOSED` (-7) if the handle was `_close`'d, or on the call that
-///   observes a cross-thread `_cancel` and every one after it
+/// - `TST_E_CLOSED` (-7) on the call that observes a `_cancel` (e.g. from
+///   another thread) and every one after it
 /// - `TST_E_TRANSPORT` (-8) on transport failure
 /// - `TST_E_INVALID_TS` (-3) on a demuxer error (strict-mode rejection,
 ///   unrecoverable packet malformation, or a malformed PES)

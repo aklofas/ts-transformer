@@ -151,7 +151,7 @@ pub unsafe extern "C" fn tst_tcp_receiver_cancel(p: *mut TstTcpReceiver) -> libc
 /// Returns:
 /// - `0` on success (188 bytes written to `buf`, `*out_n` = 188)
 /// - `TST_E_END_OF_STREAM` (-12) on a graceful peer close (FIN) / EOF
-/// - `TST_E_CLOSED` (-7) if the handle was `_close`'d
+/// - `TST_E_CLOSED` (-7) if the handle was `_cancel`'d
 /// - `TST_E_TRANSPORT` (-8) on transport failure, including a peer reset or read error
 /// - `TST_E_INVALID_CONFIG` (-1) on null pointer arguments or too-small buffer
 ///
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn tst_tcp_receiver_recv_ts(
 /// Snapshot stats for a `tst_tcp_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been closed.
+/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///
@@ -206,7 +206,7 @@ pub unsafe extern "C" fn tst_tcp_receiver_get_stats(
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
 /// `TST_E_NOT_AVAILABLE` if no live socket stats are available, or
-/// `TST_E_CLOSED` if the handle was closed.
+/// `TST_E_CLOSED` if the handle has been cancelled.
 ///
 /// # Safety
 ///
@@ -234,7 +234,7 @@ pub unsafe extern "C" fn tst_tcp_receiver_get_socket_stats(
 /// Reset stats counters for a `tst_tcp_receiver_t` to zero.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been closed.
+/// or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///

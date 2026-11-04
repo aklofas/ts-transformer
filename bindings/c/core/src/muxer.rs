@@ -735,7 +735,7 @@ pub unsafe extern "C" fn tst_muxer_pull(
 /// Snapshot stats for a `tst_muxer_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the muxer has been closed.
+/// null, or `TST_E_CLOSED` if the muxer was retired by a caught panic.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_muxer_get_stats(
     p: *mut TstMuxer,
@@ -777,7 +777,7 @@ pub unsafe extern "C" fn tst_muxer_get_stats(
 /// # Errors
 ///
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
-/// * `TST_E_CLOSED` — handle was closed via `tst_muxer_close`
+/// * `TST_E_CLOSED` — handle was retired by a caught panic
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
 /// * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
 ///
@@ -820,7 +820,7 @@ pub unsafe extern "C" fn tst_muxer_get_stream_codec_stats(
 /// counters (`items`, `bytes`, `discontinuities`) are zeroed.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is
-/// null, or `TST_E_CLOSED` if the muxer has been closed.
+/// null, or `TST_E_CLOSED` if the muxer was retired by a caught panic.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_muxer_reset_stats(p: *mut TstMuxer) -> crate::c_types::c_int {
     let Some(handle) = (unsafe { p.as_ref() }) else {

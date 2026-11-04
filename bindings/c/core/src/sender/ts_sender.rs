@@ -356,7 +356,7 @@ pub unsafe extern "C" fn tst_managed_sender_get_socket_stats(
 /// mode these stats primarily exist to observe).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
-/// `TST_E_CLOSED` if the sender has been closed, or `TST_E_INTERNAL` if the
+/// `TST_E_CLOSED` if the sender has been cancelled, or `TST_E_INTERNAL` if the
 /// gap-buffer lock is poisoned (see `ManagedTransport`'s lock poisoning
 /// policy — a prior panic mid-drain).
 ///

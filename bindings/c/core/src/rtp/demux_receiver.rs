@@ -349,7 +349,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_end_reason(
 /// Snapshot aggregate stats for a `tst_rtp_demux_receiver_t` into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been closed.
+/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// NOTE: per-PID counters are NOT included here — call
 /// `tst_rtp_demux_receiver_get_stream_stats` to retrieve them.
@@ -378,7 +378,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_get_stats(
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
 /// `TST_E_NOT_AVAILABLE` if no live stats are available, or
-/// `TST_E_CLOSED` if the handle was closed.
+/// `TST_E_CLOSED` if the handle has been cancelled.
 ///
 /// # Safety
 ///
@@ -412,7 +412,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_get_socket_stats(
 /// # Errors
 ///
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
-/// * `TST_E_CLOSED` — handle was closed
+/// * `TST_E_CLOSED` — handle has been cancelled
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
 /// * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
 ///
@@ -449,7 +449,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_get_stream_codec_stats(
 /// for full semantics — same shape, different handle type).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
-/// null, or `TST_E_CLOSED` if the receiver has been closed.
+/// null, or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///
@@ -480,7 +480,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_get_stream_last_seen_micros(
 /// (design §4.5).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if the pointer is null,
-/// or `TST_E_CLOSED` if the receiver has been closed.
+/// or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///
@@ -509,7 +509,7 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_reset_stats(
 /// Capped at `TST_STATS_MAX_STREAMS = 64` entries (ascending PID order).
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` on any null pointer
-/// arg, or `TST_E_CLOSED` if the receiver has been closed.
+/// arg, or `TST_E_CLOSED` if the receiver has been cancelled.
 ///
 /// # Safety
 ///
