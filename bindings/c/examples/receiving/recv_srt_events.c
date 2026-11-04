@@ -97,8 +97,8 @@
  *          -o /tmp/poll_socket_stats \
  *          bindings/c/examples/operations/poll_socket_stats.c -ltstrans -lpthread
  *       /tmp/poll_socket_stats srt://127.0.0.1:9000
- *     Press Ctrl-C on Terminal A any time in the first ~4.5s. Verified
- *     this session (log-timestamped, not wall-clock-guessed): shutdown
+ *     Press Ctrl-C on Terminal A any time in the first ~4.5s. Measured
+ *     from log timestamps, not wall-clock guesses: shutdown
  *     lands roughly 30-45ms after the signal — bounded by one inter-event
  *     gap at 30fps (see `cancel_if_shutdown_requested`'s doc below), NOT
  *     by the `?x-recvtimeout` interval (500ms), which only matters on an
@@ -510,8 +510,8 @@ static void print_reconnect_discontinuity(const tst_event_t *ev) {
  *     otherwise have nothing to return; under continuous traffic (e.g.
  *     Recipe 2's 30fps stream, an event every ~33ms) it may never
  *     expire at all, so relying on it alone would leave Ctrl-C
- *     unresponsive for the ENTIRE duration of a busy stream — verified
- *     empirically this session before this second call site was added.
+ *     unresponsive for the ENTIRE duration of a busy stream — observed
+ *     empirically before this second call site was added.
  *   - on every `?x-recvtimeout` expiry (TST_E_BUFFER_FULL) — this is
  *     what makes Ctrl-C responsive on an IDLE stream, where there is no
  *     event to hang the check off of.
