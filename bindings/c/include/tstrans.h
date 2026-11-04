@@ -4723,7 +4723,7 @@ struct tst_managed_raw_sender_t *tst_managed_raw_sender_open(const char *srt_url
 /**
  * Send one buffer as one outbound SRT message of exactly `len` bytes.
  *
- * A zero-length send is a no-op : nothing is sent and the
+ * A zero-length send is a no-op on a live socket: nothing is sent and the
  * call returns 0.
  */
 
@@ -10466,8 +10466,7 @@ void tst_rtsp_server_builder_tls_cert_pem(struct TstRtspServerBuilder *builder,
  * Drops the `Box<TstRtspServer>`. `tst_rtsp_server_stop` retires the
  * server; the runtime shuts down when the last reference drops, which may
  * be inside `_free` or inside a call that was still parked. If `_free` is
- * called WITHOUT a
- * prior `_stop`, Drop fires the hard-cancel path: all per-session tasks
+ * called WITHOUT a prior `_stop`, Drop fires the hard-cancel path: all per-session tasks
  * abort at their next poll and the tokio Runtime is shut down with a 5 s
  * budget. No RTSP TEARDOWN is sent to connected clients in this case
  * (they observe TCP RST or half-close).
