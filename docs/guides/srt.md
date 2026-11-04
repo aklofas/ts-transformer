@@ -675,8 +675,8 @@ when both name the same option.
 | `peerlatency` | `SRTO_PEERLATENCY` | INT (ms) | non-negative |
 | `mss` | `SRTO_MSS` | INT | u16 range |
 | `payloadsize` | `SRTO_PAYLOADSIZE` | INT | at most 1456 (libsrt's live-mode maximum); ffmpeg-style aliases `pkt_size`, `payload_size` |
-| `maxbw` | `SRTO_MAXBW` | INT64 | 0 to u64::MAX; non-negative only |
-| `inputbw` | `SRTO_INPUTBW` | INT64 | 0 to i64::MAX |
+| `maxbw` | `SRTO_MAXBW` | INT64 | non-negative; the parser accepts up to u64::MAX and a value above i64::MAX is clamped to i64::MAX |
+| `inputbw` | `SRTO_INPUTBW` | INT64 | non-negative; a value above i64::MAX is rejected |
 | `oheadbw` | `SRTO_OHEADBW` | INT | 5..=100 |
 | `streamid` | `SRTO_STREAMID` | STRING | UTF-8, ≤512 bytes; ffmpeg-style alias `srt_streamid` |
 | `lossmaxttl` | `SRTO_LOSSMAXTTL` | INT | u32 range |
