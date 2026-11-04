@@ -387,16 +387,19 @@ fn a_replay_without_the_sweep_fields_is_no_replay() {
     assert!(row.note.contains("earlier sweep"), "{}", row.note);
 }
 
-/// ST 0601 field errors are reported beside the sweep table, never gated:
-/// the verdict and the archive row stay those of the sweep.
+/// ST 0601 field errors are reported beside the sweep table with no
+/// threshold: the verdict and the archive row stay those of the sweep.
 #[test]
-fn the_markdown_reports_st0601_field_errors_as_recorded_not_gated() {
+fn the_markdown_reports_st0601_field_errors_without_a_threshold() {
     let mut s = sweep(true);
     s.klv_field_errors = 7;
     s.files_with_klv_field_errors = 2;
     let md = report::markdown(&s, None);
     assert!(
-        md.contains("ST 0601 field errors: 7 across 2 capture(s) (recorded, not gated)"),
+        md.contains(
+            "ST 0601 field errors: 7 across 2 capture(s) (no threshold; a changed count \
+             against a baseline is a change that needs acceptance)"
+        ),
         "{md}"
     );
     assert!(md.contains("Sweep verdict: pass."), "{md}");

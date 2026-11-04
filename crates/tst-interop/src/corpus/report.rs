@@ -111,7 +111,7 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
     }
     let _ = writeln!(
         s,
-        "\nST 0601 field errors: {} across {} capture(s) (recorded, not gated).",
+        "\nST 0601 field errors: {} across {} capture(s) (no threshold; a changed count against a baseline is a change that needs acceptance).",
         sweep.klv_field_errors, sweep.files_with_klv_field_errors
     );
     let _ = writeln!(s, "\n{}", baseline_sentence(sweep));

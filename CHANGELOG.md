@@ -377,6 +377,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The corruption attribution explains a PCR anomaly or discontinuity by a body flip on a PCR-only packet only when the flip touched the adaptation field's length, flags or (with the PCR flag set) PCR bytes; a flip in its stuffing no longer does.
 - The soak launcher gates RSS slope (200 KiB/h) by default for every run of 24 hours or more, where it applied only from 72 hours; `--no-rss-slope-gate` keeps a long run provisional.
 - The placement oracle excuses at most two sender-report excursions per run, plus one per hundred expected generations; further excusable excursions fail the placement check.
+- The corpus report states the ST 0601 field-error policy as it is enforced: no threshold on the count, and against a baseline a changed count marks the capture changed until the maintainer accepts it.
 
 ### Fixed — tst-interop
 

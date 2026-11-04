@@ -593,6 +593,65 @@ fn field_errors_are_summed_into_the_sweep_and_do_not_fail_it() {
     assert_eq!(s["files_with_klv_field_errors"], 1, "{s}");
 }
 
+/// No threshold on the count (a nonzero count passes a baseline-free sweep,
+/// see the test above); against a baseline a changed count is a change
+/// that needs acceptance, and only the count changed here.
+#[test]
+fn a_changed_field_error_count_needs_baseline_acceptance() {
+    let dir = temp_dir_named("sw-fielderr-base");
+    let payload = crate::digest::st0601_with_short_item2();
+    std::fs::write(
+        dir.join("a.ts"),
+        crate::invariants::muxed_klv_file(&payload, 5),
+    )
+    .unwrap();
+    let first = temp_dir_named("sw-fielderr-base-first");
+    assert_eq!(sweep(&dir, &first, &[]).status.code(), Some(0));
+    let base = first.join("digests");
+    let sha = std::fs::read_dir(&base)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .trim_end_matches(".json")
+                .to_string()
+        })
+        .find(|n| n.len() == 64)
+        .unwrap();
+    let stored = base.join(format!("{sha}.json"));
+    let mut d = json(&stored);
+    for pid in d["configs"]["default"]["pids"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        if pid["klv_field_errors"].as_u64().unwrap_or(0) > 0 {
+            pid["klv_field_errors"] = Value::from(1u64);
+        }
+    }
+    std::fs::write(&stored, serde_json::to_string(&d).unwrap()).unwrap();
+    let second = temp_dir_named("sw-fielderr-base-second");
+    let out = sweep(&dir, &second, &["--baseline", base.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(json(&second.join("sweep.json"))["changed_unexplained"], 1);
+    let md_file = second.join("block.md");
+    Command::new(env!("CARGO_BIN_EXE_tst-interop"))
+        .args(["corpus", "report"])
+        .arg(&second)
+        .arg("--markdown")
+        .arg(&md_file)
+        .output()
+        .unwrap();
+    let report = std::fs::read_to_string(&md_file).unwrap_or_default();
+    assert!(
+        report.contains(
+            "no threshold; a changed count against a baseline is a change that needs acceptance"
+        ),
+        "{report}"
+    );
+}
+
 /// A sweep summary written before the field-error counts and the baseline
 /// acceptance fields existed still reads, as zero and empty.
 #[test]
