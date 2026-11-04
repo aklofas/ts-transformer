@@ -46,6 +46,10 @@ the entry. Every JNI entry point is a `jni_native!` block
 (`bindings/jvm/src/panic.rs`), which runs the body under `jni_catch` so a
 Rust panic becomes a `RuntimeException` instead of unwinding into the JVM;
 the rail `jni-catch-coverage.sh` refuses a bare `extern "system"` function.
+Lifetime is explicit close only: use try-with-resources or Kotlin
+`.use`, and register no `Cleaner`. A VM loads the native library through
+one class loader. A handle that is never closed keeps its native
+resources until the process exits.
 The sketch below is illustrative; the shipped classes live under
 `org.tstrans.*`.
 
@@ -77,7 +81,12 @@ is recorded here when the crate lands.
 
 ### Python (PyO3)
 
-Binding shape: `pyclass` with `__enter__` / `__exit__`.
+Binding shape: `pyclass` with `__enter__` / `__exit__`. The extension
+supports plain process exit only: no `Py_FinalizeEx` re-initialisation and
+no sub-interpreters. Dropping an unfinished HLS `MuxPublisher` without
+`finish()` is abortive in Python and the JVM, while the Rust
+`MuxPublisher`'s `Drop` keeps its best-effort drain like `MuxSender`'s, so a
+binding must not promise the Rust drain.
 
 ```python
 class MuxSender:
@@ -113,7 +122,7 @@ tst_mux_sender_close(sender);
 ### C ABI error-mapping contract
 
 Every C-ABI error code surfaced through `tst_get_last_error()` and the
-direct negative-return-value contract derives from one of two
+direct negative-return-value contract derives from one of three
 explicit-coverage paths in `bindings/c/core/src/error.rs`:
 
 **Shell-entry path (the common case).** Every C entry point that owns
@@ -151,6 +160,18 @@ entry points (`record_mux_error`, `record_demux_error`,
 that one table. `kind_of_mux`'s fallback arm forwards to
 `MuxError::kind()` for every `MuxError` variant with no precise code of
 its own; that fallback is total.
+
+**Receive path.** Every receive entry point routes its error through
+`record_recv_error(e, cancelled, broken_is_eos)`:
+
+- `Closed` → `TST_E_CLOSED`.
+- `EndOfStream` → `record_recv_closed(cancelled)`: `TST_E_CLOSED` when the
+  cancel fired, else `TST_E_END_OF_STREAM`.
+- `Broken` with a clean end-of-file cause and no cancel →
+  `TST_E_END_OF_STREAM` (a TCP FIN or a TLS `close_notify`).
+- Everything else → the kind's code.
+
+Plain SRT receivers report a peer close as `TST_E_END_OF_STREAM`.
 
 ### Adding an error kind
 
@@ -225,8 +246,10 @@ shape but differ on whether the caller should retry:
 | `TST_E_NOT_FOUND` (-14) | **Persistent** — the next call with the same key will return the same error. | A per-PID accessor (e.g., `tst_*_get_stream_codec_stats`) was asked about a PID the demuxer has never seen on this handle. | Surface as a fail-fast lookup miss. Example: Java/Kotlin → throw `NoSuchElementException`; Swift → throw a typed error; Python → raise `KeyError`. |
 
 `TST_E_INVALID_USAGE` (-9) is the third sibling — used when the handle
-is in a fundamentally wrong state for the call (e.g., `tst_*_send_video`
-on a handle that's already been closed). Distinct from both above
+is in the wrong **state** for the call (e.g., `finish()` twice without a
+cancel, or a consumed source). A call on a **closed** handle is
+`TST_E_CLOSED` (-7), not this code, and using a freed pointer is
+undefined behaviour, not an error code. Distinct from both above
 because it's a programmer bug, not a runtime data-availability question.
 
 When designing your binding's retry policy, key the decision off the
@@ -286,6 +309,14 @@ as a language-native shutdown primitive (e.g. Kotlin `Job.cancel()`
 analog, Swift `Task.cancel()` analog, Python `threading.Event`-shaped).
 See `docs/reference/srt-cancel-handle.md` for the full pattern.
 
+What may precede or override the CLOSED outcome:
+
+- A `TooLarge` validation runs before the cancel check.
+- A result that was already in flight when the cancel landed may win.
+- The H.264 receiver drains to end of stream on cancel.
+- The SRT `Listener` iterator maps CLOSED to `StopIteration`.
+- A flushed access unit is delivered before CLOSED.
+
 ## Host naming grammar
 
 | Concept | Python | JVM | Rule |
@@ -317,6 +348,11 @@ The threading guarantees split into two tiers — runtime handles vs.
 opaque config builders. Read both before exposing tst-c objects as
 thread-safe in your binding.
 
+No user code runs on a library thread: a binding never hands the library a
+host-language callback, and installs its own stderr `tracing` subscriber.
+The two Rust-only exceptions are listed in
+[Architecture](/docs/reference/architecture.md).
+
 **Runtime handles** (the shells produced by `tst_*_open` /
 `tst_*_open_listener`) are guarded by `CHandle<T>` inside `tst-c`, a
 newtype over `tst_pipeline::binding::Owned` whose slot is a mutex (a spin
@@ -336,7 +372,12 @@ lifetime. `_close` / `_free` consumes the pointer (it is a `Box` handed
 back to Rust and dropped), so bindings MUST serialize it against every
 other call on that pointer, `_cancel` included, and call it exactly once:
 a call that races or follows the close uses freed memory. `_cancel` does
-not free anything. A byte slice passed as `(ptr, len)` is borrowed for
+not free anything. The rule is: cancel, wait for the parked call to
+return, then free. No `_free`, `_close` or consuming conversion interrupts
+a parked call on any family, and a concurrent close is never the supported
+interrupter. `_close` being implemented cancel-first is a defence, not a
+contract. The header's "Threading and lifetime" preamble and the notes on
+each entry point carry the per-family details of this one rule. A byte slice passed as `(ptr, len)` is borrowed for
 the duration of the call only, and a call can park inside I/O for a long
 time. For a non-empty slice, `ptr` must point to `len` initialized bytes
 that stay valid for the whole call; input bytes must not be written by
