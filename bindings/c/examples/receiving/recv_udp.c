@@ -33,7 +33,7 @@
  * Note on shutdown: tst_udp_receiver_cancel exists and may be called from
  * another thread to end a parked recv, which then returns TST_E_CLOSED. This
  * single-threaded example needs none: it stops after a fixed packet count (or
- * when END_OF_STREAM fires) and closes the handle with no call in flight, so no cancel is needed.
+ * when recv returns END_OF_STREAM / CLOSED) and closes the handle with no call in flight, so no cancel is needed.
  *
  * Build (from the ts-transformer workspace root):
  *   cargo build -p tst-c --no-default-features --features udp
