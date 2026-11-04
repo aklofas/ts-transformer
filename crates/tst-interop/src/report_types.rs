@@ -268,10 +268,15 @@ pub struct KlvPlacementMetrics {
     /// with every error at most 10 ms.
     #[serde(default)]
     pub excused_excursions: u32,
+    /// The most excursions the run may excuse; see
+    /// `KlvPlacementExpect::excused_excursion_cap`.
+    #[serde(default)]
+    pub excused_excursion_cap: u32,
     /// The largest |error| inside any excursion, in milliseconds.
     #[serde(default)]
     pub max_excursion_ms: f64,
-    /// One `sr-jitter: …` line per excused excursion.
+    /// One `sr-jitter: …` line per excused excursion, and one `not excused`
+    /// line per excursion the per-run cap stopped.
     #[serde(default)]
     pub excused_excursion_details: Vec<String>,
 }

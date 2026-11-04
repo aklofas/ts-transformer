@@ -376,6 +376,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A corpus run's archive row and report name the baseline the sweep compared with, by the SHA-256 of its `manifest.txt`, or say that none was compared.
 - The corruption attribution explains a PCR anomaly or discontinuity by a body flip on a PCR-only packet only when the flip touched the adaptation field's length, flags or (with the PCR flag set) PCR bytes; a flip in its stuffing no longer does.
 - The soak launcher gates RSS slope (200 KiB/h) by default for every run of 24 hours or more, where it applied only from 72 hours; `--no-rss-slope-gate` keeps a long run provisional.
+- The placement oracle excuses at most two sender-report excursions per run, plus one per hundred expected generations; further excusable excursions fail the placement check.
 
 ### Fixed — tst-interop
 
