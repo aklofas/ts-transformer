@@ -207,6 +207,10 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/interop-subset.sh
 
+      - name: Soak RSS-slope gate default (on from 24 hours)
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/soak-rss-default.sh
+
       - name: No stale relocated-away package paths
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-stale-relocated-paths.sh

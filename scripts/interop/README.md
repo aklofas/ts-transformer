@@ -898,12 +898,13 @@ deaths are ordinary end-of-run staggering. The first 72-hour attempt lost
 both senders 14.5 h in and idled unnoticed for 12 h, which is why this
 exists.
 
-The RSS-slope gate defaults to 200 KiB/hour for runs of 72 h or more,
-pinned from the 2026-08-05 run: its worst post-warm-up slope was 68.8
+The RSS-slope gate defaults to 200 KiB/hour for runs of 24 h or more (the
+release soak is 48 h from 0.9.1; the 0.9.0 run was 72 h), pinned from the 2026-08-05 run: its worst post-warm-up slope was 68.8
 KiB/h, warm-up convergence to a ~176 MiB plateau, and every slope over its
-final 24 h was at most 18 KiB/h. Shorter runs stay provisional unless a
+final 24 h was at most 18 KiB/h. Runs under 24 h stay provisional unless a
 threshold is passed, because under realistic AU sizes the senders take
-about 7 h to reach that plateau.
+about 7 h to reach that plateau; `--no-rss-slope-gate` keeps a longer run
+provisional on purpose.
 
 ### Realism knobs
 
