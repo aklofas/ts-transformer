@@ -110,8 +110,9 @@ rules.set(streamId, originalRule);
   libsrt with `BadSecret`.
 - **Edit from any thread.** Clone the handle before `accept()` parks and move
   it where you need it. An edit applies to the next handshake. After the
-  listener closes, `set` and `set_default` return a `Closed` error and
-  `remove` returns `false`.
+  listener closes, in Rust `set` and `set_default` return `Err(Closed)` and
+  `remove` returns `false`; in Python every method raises `SrtError(CLOSED)`;
+  in Java every method throws `SrtException(CLOSED)`.
 - **Race window.** A rule installed after `accept()` returned does not cover a
   caller whose handshake had already completed. Two same-name publishers that
   connect inside that window (typically well under a millisecond, longer

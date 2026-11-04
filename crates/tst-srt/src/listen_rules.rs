@@ -8,6 +8,8 @@
 //! Wherever a passphrase applies (a listener-wide one or an `AcceptWith`
 //! rule) a handshake-v4 caller is refused with
 //! [`RejectReason::VersionUnsupported`]; see [`ListenRule::AcceptWith`].
+//!
+//! Stability: Provisional.
 
 use crate::error::{OptionError, RejectReason, last_error};
 use crate::options::Passphrase;

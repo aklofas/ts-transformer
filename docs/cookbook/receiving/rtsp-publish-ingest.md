@@ -129,9 +129,9 @@ default for every other path. A rule's path must be canonical (`/amber`, never
 (ANNOUNCE and RECORD) and a read policy (DESCRIBE, SETUP and PLAY).
 
 ```rust,no_run
-use secrecy::SecretString;
 use tst_rtp::{
     MountCredential, MountPolicy, MountRule, RefuseStatus, RtspServerBuilder,
+    SecretString,
 };
 
 let mut builder = RtspServerBuilder::new("rtsp://0.0.0.0:8554")?;
@@ -160,9 +160,8 @@ rules.set(
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-A path rule's `Inherit` takes the table's default rule for that direction;
-the default rule's `Inherit` is the server-wide behavior (the builder's
-credential, else open). `Open` waives a builder credential, `Require` replaces
+A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`). The server-wide setting
+is the builder's credential, else open. `Open` waives a builder credential, `Require` replaces
 it for that path and direction (the builder's own credential does not open a
 `Require` path), and `Refuse` answers `403`, `404`, `453` or `503`. A
 `Require` challenge uses the builder's scheme and realm when it configured a
@@ -186,7 +185,9 @@ it); quotes and backslashes are escaped in the header.
   or reader), SETUP, PLAY, PAUSE, RECORD and TEARDOWN are judged on that
   role's mount and direction; ANNOUNCE and DESCRIBE are judged on the request
   URI. A reader's SETUP is judged on the mount it names, since it can move the
-  reader there. A `Refuse` answered to one of those requests ends the role.
+  reader there. A `Refuse` ends an
+  established role at the next gated request (SETUP, RECORD, PLAY, PAUSE,
+  TEARDOWN); ANNOUNCE and DESCRIBE are answered but do not revoke a role.
 - **The builder's `default_mount_rule` guards the first ANNOUNCE.** A rule set
   after `start()` cannot cover a request that arrived before it; the builder's
   default rule does. A server nobody edits behaves exactly as before.
@@ -220,8 +221,10 @@ server bounds that:
   with `Closed`, and frees the name.
 - Mounts registered with `add_publish_mount` never count toward either bound.
 
-Readers and publishers share the server's one credential set
-(`auth_basic` / `auth_digest_*` on the builder).
+The builder's `auth_basic` / `auth_digest_*` credential is the server-wide
+setting that `Inherit` falls back to. Readers and publishers need not share
+it: mount rules give each name and direction its own policy (see
+[per-name credentials](#per-name-credentials-and-refusing-a-publisher)).
 
 ### Ending the application side
 
