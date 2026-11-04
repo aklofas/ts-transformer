@@ -278,8 +278,10 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 /// 2. **Graceful — `stop()`** — sends an RTSP Notice (5402) to each
 ///    active session, allows up to
 ///    `RtspServerBuilder::graceful_shutdown_drain` for in-flight RTP to
-///    drain, then closes the listener and runtime. Returns once drain
-///    is done.
+///    drain, then closes the listener and ends the sessions; the runtime
+///    shuts down on `Drop`. Returns once drain is done. A publisher
+///    session that outlives the drain window loses what it flushes later,
+///    and that loss is not counted in any drop counter.
 /// 3. **Hard cross-thread — `cancel_handle()`** — returns an
 ///    [`RtspServerCancelHandle`] that can be cancelled from any thread.
 ///    Cancelling it is terminal for the publish side as `stop()` and Drop
@@ -808,12 +810,16 @@ impl RtspServer {
     /// [`RtspServerBuilder::accept_unregistered_publishers`]). Mounts come
     /// out in the order their ANNOUNCEs created them; the announcing
     /// publisher holds each one's publisher slot before the handle is
-    /// queued, so a handle you take is never unclaimed. Returns `Ok(None)`
+    /// queued. The publisher that announced it may already be gone by the
+    /// time you take the handle: the session end releases the claim, and
+    /// the queued handle stays and reads end-of-stream. Returns `Ok(None)`
     /// when none arrived in time, and always does when the flag is off.
     ///
     /// Concurrent callers are served one at a time, each mount to exactly
     /// one of them. A call made while another caller is waiting can
-    /// therefore wait longer than its own `timeout`.
+    /// therefore wait longer than its own `timeout`. The 100 ms hard-cancel
+    /// wake below holds for the caller parked in this method; concurrent
+    /// callers wait for the first to return.
     ///
     /// The returned handle can name a mount that [`Self::remove_mount`]
     /// already removed while its handle waited in the queue. Its transport

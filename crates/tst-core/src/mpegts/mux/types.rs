@@ -308,20 +308,22 @@ macro_rules! impl_stream_handle {
 ///
 /// Obtained from [`Muxer::video_handles`](crate::mpegts::mux::Muxer::video_handles) / [`Muxer::video_stream_handle`](crate::mpegts::mux::Muxer::video_stream_handle) /
 /// [`Muxer::video_handles_for_program`](crate::mpegts::mux::Muxer::video_handles_for_program).
-/// Handles are valid only on the muxer that produced them; passing a handle
-/// to a different muxer is rejected with [`MuxError::InvalidStreamHandle`](crate::error::MuxError::InvalidStreamHandle).
+/// Handles are positional (program index, stream index) and range-checked at push;
+/// a handle from another muxer with the same layout is accepted and addresses that
+/// position, so keep handles with the muxer that issued them.
 ///
 /// The internal representation encodes `(program_index, within_program_index)`
 /// in a packed `u32`. Callers treat this as an opaque token.
 ///
 /// # Lifecycle
 ///
-/// - **Bound to producer.** Each handle is bound to the `Muxer` (or
-///   `MuxSender` wrapping that `Muxer`) that produced it. Using a handle
-///   with a different `Muxer` / `MuxSender` instance is rejected with
+/// - **Positional.** A handle is a (program index, stream index) pair,
+///   range-checked at push with
 ///   [`MuxError::InvalidStreamHandle`](crate::error::MuxError::InvalidStreamHandle)
 ///   (accessible as `err.source == MuxSenderErrorSource::Mux(MuxError::InvalidStreamHandle { .. })`
-///   when the call goes through `MuxSender`).
+///   when the call goes through `MuxSender`). A handle from another `Muxer`
+///   with the same layout is accepted and addresses that position, so keep
+///   handles with the muxer that issued them.
 /// - **Parent close invalidates.** A handle remains valid for the lifetime
 ///   of its parent muxer. After the parent is dropped or closed (e.g.,
 ///   `MuxSender::close()`), the handle becomes inert — any further use
@@ -341,8 +343,9 @@ impl_stream_handle!(VideoStreamHandle, MuxStreamKind::Video, "VideoStreamHandle"
 ///
 /// Obtained from [`Muxer::klv_handles`](crate::mpegts::mux::Muxer::klv_handles) /
 /// [`Muxer::klv_handles_for_program`](crate::mpegts::mux::Muxer::klv_handles_for_program).
-/// Handles are valid only on the muxer that produced them; passing a handle
-/// to a different muxer is rejected with [`MuxError::InvalidStreamHandle`](crate::error::MuxError::InvalidStreamHandle).
+/// Handles are positional (program index, stream index) and range-checked at push;
+/// a handle from another muxer with the same layout is accepted and addresses that
+/// position, so keep handles with the muxer that issued them.
 ///
 /// The internal representation encodes `(program_index, within_program_index)`
 /// in a packed `u32`. Callers treat this as an opaque token.
@@ -362,8 +365,9 @@ impl_stream_handle!(KlvStreamHandle, MuxStreamKind::Klv, "KlvStreamHandle");
 /// Opaque handle to a configured audio stream on a `Muxer`.
 ///
 /// Obtained from [`Muxer::audio_handles`](crate::mpegts::mux::Muxer::audio_handles) / [`Muxer::audio_handles_for_program`](crate::mpegts::mux::Muxer::audio_handles_for_program).
-/// Handles are valid only on the muxer that produced them; passing a handle
-/// to a different muxer is rejected with [`MuxError::InvalidStreamHandle`](crate::error::MuxError::InvalidStreamHandle).
+/// Handles are positional (program index, stream index) and range-checked at push;
+/// a handle from another muxer with the same layout is accepted and addresses that
+/// position, so keep handles with the muxer that issued them.
 ///
 /// The internal representation encodes `(program_index, within_program_index)`
 /// in a packed `u32`. Callers treat this as an opaque token.
@@ -389,9 +393,9 @@ pub const MAX_SUBTITLE_STREAMS_PER_PROGRAM: usize = 16;
 /// Opaque handle to a configured subtitle stream on a `Muxer`.
 ///
 /// Obtained from [`Muxer::subtitle_handles`](crate::mpegts::mux::Muxer::subtitle_handles) /
-/// [`Muxer::subtitle_handles_for_program`](crate::mpegts::mux::Muxer::subtitle_handles_for_program). Handles are valid only on
-/// the muxer that produced them; passing a handle to a different
-/// muxer is rejected with [`MuxError::InvalidStreamHandle`](crate::error::MuxError::InvalidStreamHandle).
+/// [`Muxer::subtitle_handles_for_program`](crate::mpegts::mux::Muxer::subtitle_handles_for_program). Handles are positional (program index, stream index) and range-checked at push;
+/// a handle from another muxer with the same layout is accepted and addresses that
+/// position, so keep handles with the muxer that issued them.
 ///
 /// The internal representation encodes `(program_index,
 /// within_program_index)` in a packed `u32`. Callers treat this as an
@@ -417,8 +421,9 @@ impl_stream_handle!(
 ///
 /// Obtained from [`Muxer::data_handles`](crate::mpegts::mux::Muxer::data_handles) /
 /// [`Muxer::data_handles_for_program`](crate::mpegts::mux::Muxer::data_handles_for_program).
-/// Handles are valid only on the muxer that produced them; passing a handle
-/// to a different muxer is rejected with [`MuxError::InvalidStreamHandle`](crate::error::MuxError::InvalidStreamHandle).
+/// Handles are positional (program index, stream index) and range-checked at push;
+/// a handle from another muxer with the same layout is accepted and addresses that
+/// position, so keep handles with the muxer that issued them.
 ///
 /// The internal representation encodes `(program_index, within_program_index)`
 /// in a packed `u32`. Callers treat this as an opaque token.

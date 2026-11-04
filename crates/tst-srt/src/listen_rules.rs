@@ -33,8 +33,10 @@ pub enum ListenRule {
     /// rejects a caller whose key material does not match with
     /// [`RejectReason::BadSecret`]. The key length is negotiated from the
     /// caller's key material (libsrt HSv5), so a rule cannot set it; the
-    /// listener-wide `SrtListenerBuilder::key_length` only advertises a
-    /// preference to callers that leave theirs unset.
+    /// listener-wide `SrtListenerBuilder::key_length` is a preference: a
+    /// caller that leaves its length unset adopts it, and libsrt's
+    /// negotiation also makes an explicit receiver-role caller adopt it.
+    /// Only a caller with the sender role keeps its own length.
     ///
     /// Every handshake-v4 caller (libsrt before 1.3.0) is refused wherever a
     /// passphrase applies, including a legacy encoder that holds the right

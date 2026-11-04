@@ -617,9 +617,8 @@ impl RtspResponse {
     /// header name title-cased dash-segment-wise for cosmetic
     /// compatibility — RFC 7826 §5.1.1 declares headers case-insensitive
     /// but some IP cameras do not honor that), then a blank line, then
-    /// the body (if any). Content-Length is *not* auto-injected — Task
-    /// 10's DESCRIBE handler sets it explicitly when emitting an SDP
-    /// body.
+    /// the body (if any). Content-Length is *not* auto-injected: callers
+    /// that emit a body (the DESCRIBE handler's SDP) set it themselves.
     pub fn encode(&self) -> Bytes {
         let mut buf = Vec::with_capacity(256 + self.body.len());
         // Status line.

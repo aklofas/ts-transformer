@@ -4,7 +4,8 @@
 //!
 //! See [`HlsPublisher`] for the entry point. Modes: LIVE (rolling window,
 //! never an ENDLIST), EVENT and VOD (every segment kept; `#EXT-X-ENDLIST`
-//! on finish; they differ only in `#EXT-X-PLAYLIST-TYPE`). KLV stays
+//! on finish; they differ in `#EXT-X-PLAYLIST-TYPE`, and VOD also
+//! answers the playlist 404 until `finish()`). KLV stays
 //! inside the .ts segments.
 //!
 //! Segment files are written to `output_dir` as bytes arrive. `playlist.m3u8`

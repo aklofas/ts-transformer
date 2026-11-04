@@ -1181,7 +1181,7 @@ mod tests {
     }
 
     /// The preset only fills what the URL left unset, so a URL that names
-    /// `conntimeo` / `linger` wins on BOTH paths (Q4-A precedence).
+    /// `conntimeo` / `linger` wins on BOTH paths (the URL value overrides the preset).
     #[test]
     fn the_url_wins_over_the_sender_preset() {
         let url = SrtUrl::parse("srt://camera.local:9000?conntimeo=2000&linger=1").expect("parse");
