@@ -218,7 +218,7 @@ pub unsafe extern "C" fn tst_demuxer_flush(p: *mut TstDemuxer) -> crate::c_types
 ///
 /// `p` must be a valid non-null pointer obtained from `tst_demuxer_open`
 /// / `tst_demuxer_open_with_config`. `out_event` must be a writable
-/// `tst_event_t`; its contents are fully overwritten on `TST_OK (0)` and
+/// `tst_event_t`; its contents are fully overwritten on success (`0`) and
 /// left unspecified on any non-zero return.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demuxer_next_event(

@@ -2812,7 +2812,7 @@ int tst_demux_receiver_get_stats(struct tst_demux_receiver_t *p,
  *
  * `p` must be a valid pointer obtained from `tst_demux_receiver_open`;
  * `out` must be a writable `tst_stream_codec_stats_t`. The pointee is
- * fully written on `TST_OK` and untouched on error.
+ * fully written on success (`0`) and untouched on error.
  */
 
 int tst_demux_receiver_get_stream_codec_stats(struct tst_demux_receiver_t *p,
@@ -3058,7 +3058,7 @@ struct tst_demux_receiver_t *tst_demux_receiver_open_with_config(const char *srt
  *
  * `p` must be a valid non-null pointer obtained from `tst_demuxer_open`
  * / `tst_demuxer_open_with_config`. `out_event` must be a writable
- * `tst_event_t`; its contents are fully overwritten on `TST_OK (0)` and
+ * `tst_event_t`; its contents are fully overwritten on success (`0`) and
  * left unspecified on any non-zero return.
  */
  int tst_demuxer_next_event(struct TstDemuxer *p, struct tst_event_t *out_event);
@@ -12554,7 +12554,8 @@ int tst_udp_mux_sender_get_stream_codec_stats(struct TstUdpMuxSender *p,
  * - `udp://host:port` — unicast send
  * - `udp://group:port` (group ∈ 224.0.0.0/4 or ff00::/8) — multicast send
  * - Query params: `?ttl=N`, `?iface=<IPv4 literal>`, `?tos=0xb8`, `?sndbuf=2M`,
- *   `?pkt_size=1316`, `?localaddr=...`
+ *   `?pkt_size=1316`, `?localaddr=...`. `iface` takes an IPv4 literal; an
+ *   IPv6 `iface` is refused on the sender.
  *
  * # Safety
  *
@@ -13037,7 +13038,8 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * - `udp://host:port` — unicast send
  * - `udp://group:port` (group ∈ 224.0.0.0/4 or ff00::/8) — multicast send
  * - Query params: `?ttl=N`, `?iface=<IPv4 literal>`, `?tos=0xb8`, `?sndbuf=2M`,
- *   `?pkt_size=1316`, `?localaddr=...`
+ *   `?pkt_size=1316`, `?localaddr=...`. `iface` takes an IPv4 literal; an
+ *   IPv6 `iface` is refused on the sender.
  *
  * # Safety
  *
