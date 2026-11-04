@@ -2879,13 +2879,14 @@ fn klv_placement_verdict(
         excused: false,
         detail: format!(
             "{leg_name}: {} record(s) placed, {} out of tolerance in {} excursion(s), {} \
-             excused (max error {} ticks, tolerance {} ticks), {} unexpected reset(s), {} \
+             excused, cap {} (max error {} ticks, tolerance {} ticks), {} unexpected reset(s), {} \
              generation(s) seen against {} declared; the generation budget excused {} backward \
              PTS step(s) and {} timing anomaly event(s){}",
             m.records,
             m.out_of_tolerance,
             m.excursions,
             m.excused_excursions,
+            m.excused_excursion_cap,
             m.max_abs_error_ticks,
             m.tolerance_ticks,
             m.unexpected_resets,

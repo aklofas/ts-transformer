@@ -172,10 +172,12 @@ pub struct KlvPlacementExpect {
 
 impl KlvPlacementExpect {
     /// How many excursions one run may excuse as sender-report jitter: two,
-    /// plus one per hundred expected generations. A shift at every
+    /// plus one per hundred expected generations or part of a hundred. A shift at every
     /// publisher restart exhausts it instead of being excused each time.
     pub fn excused_excursion_cap(&self) -> u32 {
-        2 + self.expected_generations.div_ceil(100) as u32
+        u32::try_from(self.expected_generations.div_ceil(100))
+            .unwrap_or(u32::MAX)
+            .saturating_add(2)
     }
 
     /// The expectation for profile `p`'s cadence. Placement is defined only
@@ -1773,11 +1775,12 @@ impl Tally {
             if m.has_unexcused_error() {
                 failures.push(format!(
                     "klv_placement: {} of {} records out of tolerance in {} excursion(s), {} \
-                     excused (max |error| {} ticks, tolerance {})",
+                     excused, cap {} (max |error| {} ticks, tolerance {})",
                     m.out_of_tolerance,
                     m.records,
                     m.excursions,
                     m.excused_excursions,
+                    m.excused_excursion_cap,
                     m.max_abs_error_ticks,
                     m.tolerance_ticks
                 ));
@@ -4530,8 +4533,11 @@ mod tests {
         assert!(!report.pass);
         assert!(
             report.failures.iter().any(|f| f
-                == "klv_placement: 2 of 10 records out of tolerance in 2 excursion(s), 1 \
-                    excused (max |error| 93 ticks, tolerance 91)"),
+                == &format!(
+                    "klv_placement: 2 of 10 records out of tolerance in 2 excursion(s), 1 \
+                     excused, cap {} (max |error| 93 ticks, tolerance 91)",
+                    m.excused_excursion_cap
+                )),
             "{:?}",
             report.failures
         );
