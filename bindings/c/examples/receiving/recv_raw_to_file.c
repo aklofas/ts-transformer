@@ -28,14 +28,14 @@
  *        ffprobe out.ts
  *        tsp -I file out.ts -P analyze   # TSDuck PSI/SI walk
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wl,-rpath,target/debug \
- *      -Wall -Wextra -Werror \
+ * Build (from the ts-transformer workspace root). The committed header's
+ * config declares no transport, so including bindings/c/include directly
+ * leaves the SRT declarations out; build against a packaged copy instead:
+ *   bash scripts/dev/c-package.sh --features srt --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Wextra -Werror \
  *      -o /tmp/recv_raw_to_file \
- *      bindings/c/examples/receiving/recv_raw_to_file.c -ltstrans
+ *      bindings/c/examples/receiving/recv_raw_to_file.c -ltstrans -lpthread
  *
  * Run:
  *   /tmp/recv_raw_to_file out.ts

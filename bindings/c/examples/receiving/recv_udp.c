@@ -30,13 +30,10 @@
  *      payload_unit_start_indicator, continuity counter).
  *   5. Clean shutdown on END_OF_STREAM / CLOSED, and on reaching a packet cap.
  *
- * Note on shutdown: there is NO cancel API on UDP handles (the UDP transport
- * does not expose a cancel handle). A blocking recv on a quiet socket will
- * park until a datagram arrives. This single-threaded example stops after a
- * fixed packet count (or when the transport reports end-of-stream) and then
- * closes the handle. A multi-threaded consumer that needs to interrupt a
- * blocked recv should close the handle from the owning thread or set a
- * socket receive timeout via the URL knobs.
+ * Note on shutdown: tst_udp_receiver_cancel exists and may be called from
+ * another thread to end a parked recv, which then returns TST_E_CLOSED. This
+ * single-threaded example needs none: it stops after a fixed packet count (or
+ * when END_OF_STREAM fires) and closes directly, which is cancel-first.
  *
  * Build (from the ts-transformer workspace root):
  *   cargo build -p tst-c --no-default-features --features udp

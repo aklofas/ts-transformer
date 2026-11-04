@@ -43,17 +43,18 @@
  *   Passing drain_ms=0 to tst_rtsp_server_stop uses the drain window that
  *   was set at build time via tst_rtsp_server_builder_graceful_shutdown_drain_ms.
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wall -Werror \
+ * Build (from the ts-transformer workspace root). The committed header's
+ * config declares no transport, so including bindings/c/include directly
+ * leaves the RTSP declarations out; build against a packaged copy instead:
+ *   bash scripts/dev/c-package.sh --features rtp --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Werror \
  *      -o /tmp/send_rtsp_server \
  *      bindings/c/examples/sending/send_rtsp_server.c \
  *      -ltstrans -lpthread
  *
  * Run (server):
- *   LD_LIBRARY_PATH=target/debug /tmp/send_rtsp_server \
+ *   /tmp/send_rtsp_server \
  *       --bind rtsp://0.0.0.0:8554 --mount /live
  *
  * Connect a client (second terminal):

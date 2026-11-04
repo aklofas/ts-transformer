@@ -277,9 +277,14 @@ int main(int argc, char **argv) {
      * so 100 packets leave as 14 bundles and the last two stay buffered.
      * tst_rist_sender_close is cancel-first and abortive: it discards that
      * buffered tail, so tst_rist_sender_flush must run before it for a
-     * lossless end of stream. close then closes the socket and frees all
-     * associated memory; it is safe on a valid non-NULL pointer at any time,
-     * including after a send failure.
+     * lossless end of stream as far as the sender's own buffer goes.
+     * Flush hands the tail to librist; it does not wait for librist's
+     * output queue or retransmission window to drain, so a close issued
+     * at once can still drop packets librist has not transmitted. Give
+     * the link time to send them before closing when the tail matters.
+     * close then closes the socket and frees all associated memory; it is
+     * safe on a valid non-NULL pointer at any time, including after a
+     * send failure.
      */
     if (exit_code == 0) {
         int flush_rc = tst_rist_sender_flush(sender);

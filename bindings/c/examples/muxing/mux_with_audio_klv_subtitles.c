@@ -15,17 +15,17 @@
  * combined into one program so a C integrator can see the full surface in
  * a single file.
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wall -Werror \
+ * Build (from the ts-transformer workspace root). This example writes a file
+ * and needs no transport feature, so the packaged copy uses the default set:
+ *   bash scripts/dev/c-package.sh --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Werror \
  *      -o /tmp/mux_with_audio_klv_subtitles \
  *      bindings/c/examples/muxing/mux_with_audio_klv_subtitles.c \
  *      -ltstrans
  *
  * Run:
- *   LD_LIBRARY_PATH=target/debug /tmp/mux_with_audio_klv_subtitles
+ *   /tmp/mux_with_audio_klv_subtitles
  *
  * Output:
  *   /tmp/mux_4streams.ts

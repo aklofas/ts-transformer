@@ -31,11 +31,10 @@
  *   6. Flushing the buffered tail with tst_tcp_sender_flush, then closing via
  *      tst_tcp_sender_close.
  *
- * No cancel API on TCP handles (the TCP transport does not expose a cancel
- * handle). A single-threaded sender like this one simply runs its loop to
- * completion and calls tst_tcp_sender_close. To interrupt a blocked send from
- * another thread, close the handle from the sending thread or rely on the
- * socket's send-side behavior (e.g., a TCP RST from the peer).
+ * Note on shutdown: tst_tcp_sender_cancel exists and may be called from
+ * another thread to end a parked send. This single-threaded example needs
+ * none: it runs its loop to completion and calls tst_tcp_sender_close
+ * directly, which is cancel-first and abortive.
  *
  * Build (from the ts-transformer workspace root):
  *   cargo build -p tst-c --no-default-features --features tcp

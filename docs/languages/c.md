@@ -93,6 +93,8 @@ if (tst_get_abi_version_minor() < TST_ABI_VERSION_MINOR) {
 
 See [`examples/getting-started/version_check.c`](../../bindings/c/examples/getting-started/version_check.c) for the canonical startup pattern.
 
+In 0.9.1 the enum parameters `klv_stream_type`, `ts_framing_mode`, `reconnect_mode` and `overflow_policy` were respelled as `int32_t`. That is source- and ABI-compatible for direct calls. A caller that stored one of those functions in a **function pointer typed with the old enum** must retype the pointer.
+
 A program that loads `libtstrans` at run time (`dlopen` / `LoadLibrary`) cannot read the `TST_HAS_*` defines of the build it loaded, so it asks the library: `tst_has_feature("udp")` returns 1 when the library was built with that cargo feature (`srt`, `rtp`, `udp`, `tcp`, `hls`, `rist` or `tls`, lower case) and 0 otherwise, including for NULL or an unknown name. Call it before resolving that feature's symbols. A program compiled against `tstrans.h` keeps using the defines.
 
 ## Hello world
@@ -183,7 +185,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "send_klv: %s\n", tst_get_last_error_str());
     }
 
-    /* 4. Close. Auto-flushes any buffered TS packets and the SRT socket. */
+    /* 4. Close. tst_mux_sender_finish flushes the buffered TS packets;
+     * _close cancels first and drains best-effort, so call finish first
+     * when the tail matters. */
     tst_mux_sender_close(snd);
     return 0;
 }
@@ -253,7 +257,7 @@ The config entry points and the offline `tst_muxer_push_data` / `tst_muxer_push_
 
 ## First receive
 
-Bind an SRT listener, walk typed demux events:
+Bind an SRT listener, walk typed demux events. C has no listen rules yet (see [deferred features](/docs/project/deferred-features.md)).
 
 ```c
 #include "tstrans.h"
@@ -337,6 +341,8 @@ See the [HLS guide](/docs/guides/hls.md) for serving guidance, the KLV ride-alon
 
 The RTSP server's publisher role (ABI 23) lets an encoder push into the server with ANNOUNCE / SETUP `mode=record` / RECORD, and hands each pushed stream to the application as MPEG-TS through an ordinary `TstRtpDemuxReceiver`. The same mount keeps serving PLAY readers from the published bytes. A publish mount accepts one publisher at a time, in either of two shapes: one MPEG-TS-over-RTP track (`TST_RTSP_PUBLISH_SHAPE_MP2T`, bytes pass through), or elementary H.264 with an optional KLV track (`TST_RTSP_PUBLISH_SHAPE_ELEMENTARY`, re-muxed by the server into one program, video PID 0x100, KLV PID 0x101).
 
+C has no mount rules yet (see [deferred features](/docs/project/deferred-features.md)).
+
 Server entry points:
 
 ```c
@@ -402,7 +408,7 @@ Treat handles as moved-into the close call: set your local variable to `NULL` im
 
 **C++.** `tstrans.h` compiles as C++ (C++11 and later) and carries its own `extern "C"` guards, so `#include "tstrans.h"` is all a C++ translation unit needs.
 
-**End of stream versus failure.** `TST_E_END_OF_STREAM` (-12) is a clean close on TCP (the peer's FIN) and the local close or end of stream on the other transports. On plain SRT receivers (`tst_receiver_*`, `tst_raw_receiver_*`, `tst_demux_receiver_*`) a lost connection is also -12, because libsrt cannot tell a peer close from an abort. On TCP, UDP, RIST and RTP a reset or read failure is `TST_E_TRANSPORT` (-8), with the transport's message in `tst_get_last_error_str()`.
+**End of stream versus failure.** `TST_E_END_OF_STREAM` (-12) is the **peer's** end of the stream: the TCP FIN, an SRT peer close, a removed mount or a stopped server. A local close or `_cancel` gives `TST_E_CLOSED` (-7) on every transport; it is terminal, so every later call on that handle returns it. On plain SRT receivers (`tst_receiver_*`, `tst_raw_receiver_*`, `tst_demux_receiver_*`) a lost connection is also -12, because libsrt cannot tell a peer close from an abort. On TCP, UDP, RIST and RTP a reset or read failure is `TST_E_TRANSPORT` (-8), with the transport's message in `tst_get_last_error_str()`.
 
 **Configs are copied, not consumed, by `_open`.** `tst_mux_sender_open(url, cfg)`, `tst_muxer_open(cfg)`, and their managed variants copy what they need from the config; the caller still owns it and frees it with `tst_mux_config_free(cfg)`, right after the open or after reusing it for further opens.
 
@@ -426,7 +432,7 @@ The full code table is in `tstrans.h` (search `TST_E_`). Key transient-vs-persis
 
 See [Binding-authors guide](/docs/reference/binding-authors.md#transient-vs-persistent-error-codes) for the full mapping recipe.
 
-**Panics are mapped, not propagated.** Every `extern "C"` entry point wraps the Rust call in a `ffi_catch` shim. A Rust panic surfaces as `TST_E_PANIC_CAUGHT` (-11) with the panic message in `tst_get_last_error_str()` — never as a `std::abort` or a stack-unwind into your C runtime. A panic inside a MUTATING call also drops the handle's shell, so every later call returns `TST_E_CLOSED`; a panic inside a read-only accessor (`_get_stats`, `_is_alive`) reports the code and leaves the handle usable.
+**Panics are mapped, not propagated.** Every `extern "C"` entry point wraps the Rust call in a `ffi_catch` shim. A Rust panic returns the function's own failure shape — NULL for constructors, `TST_E_PANIC_CAUGHT` (-11) for int-returning calls, the documented sentinel for the rest — and sets the last error to `TST_E_PANIC_CAUGHT` (-11) with the panic message in `tst_get_last_error_str()` — never as a `std::abort` or a stack-unwind into your C runtime. A panic inside a MUTATING call also drops the handle's shell, so every later call returns `TST_E_CLOSED`; a panic inside a read-only accessor (`_get_stats`, `_is_alive`) reports the code and leaves the handle usable.
 
 **Stream handles are `uint32_t` with packed metadata.** `tst_mux_config_add_video_stream` returns a `tst_video_stream_handle_t` whose high bits encode program/stream indices. The library validates these at every push-time call; **don't fabricate them by hand** — bit-twiddled values are rejected with `TST_E_INVALID_USAGE`. `TST_INVALID_STREAM_HANDLE` (`UINT32_MAX`) is the failure sentinel returned from the add-stream calls.
 

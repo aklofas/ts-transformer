@@ -27,23 +27,23 @@
  *   fan-out at the sender — critical when the platform link budget is tight.
  *   The receiver side mirrors this with `tst_rtp_recv_open`.
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wall -Werror \
+ * Build (from the ts-transformer workspace root). The committed header's
+ * config declares no transport, so including bindings/c/include directly
+ * leaves the RTP declarations out; build against a packaged copy instead:
+ *   bash scripts/dev/c-package.sh --features rtp --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Werror \
  *      -o /tmp/send_rtp \
- *      bindings/c/examples/sending/send_rtp.c -ltstrans -lpthread -ldl
- *   LD_LIBRARY_PATH=target/debug /tmp/send_rtp
+ *      bindings/c/examples/sending/send_rtp.c -ltstrans -lpthread
  *
  * Run (unicast, default):
- *   LD_LIBRARY_PATH=target/debug /tmp/send_rtp
+ *   /tmp/send_rtp
  *
  * Run with explicit destination (unicast):
- *   LD_LIBRARY_PATH=target/debug /tmp/send_rtp --dest 192.168.1.100:5000
+ *   /tmp/send_rtp --dest 192.168.1.100:5000
  *
  * Run (multicast):
- *   LD_LIBRARY_PATH=target/debug /tmp/send_rtp --dest 239.1.2.3:5000
+ *   /tmp/send_rtp --dest 239.1.2.3:5000
  *
  * Receive with ffplay (in a separate terminal):
  *   ffplay rtp://239.1.2.3:5000

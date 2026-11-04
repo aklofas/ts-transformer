@@ -11,16 +11,17 @@
  *   - Push-side error handling via tst_get_last_error_str().
  *   - The minimum 5-frame loop that produces a structurally valid TS.
  *
- * Build (from the ts-transformer workspace root):
- *   SRT_FORCE_VENDORED=1 cargo build -p tst-c
- *   cc -I bindings/c/include \
- *      -L target/debug \
- *      -Wall -Werror \
+ * Build (from the ts-transformer workspace root). The committed header's
+ * config declares no transport, so including bindings/c/include directly
+ * leaves the SRT declarations out; build against a packaged copy instead:
+ *   bash scripts/dev/c-package.sh --features srt --out /tmp/tstrans-pkg
+ *   cc -I /tmp/tstrans-pkg/include -L /tmp/tstrans-pkg/lib \
+ *      -Wl,-rpath,/tmp/tstrans-pkg/lib -Wall -Werror \
  *      -o /tmp/mux_synthetic_srt \
- *      bindings/c/examples/muxing/mux_synthetic_srt.c -ltstrans
+ *      bindings/c/examples/muxing/mux_synthetic_srt.c -ltstrans -lpthread
  *
  * Run (sender):
- *   LD_LIBRARY_PATH=target/debug /tmp/mux_synthetic_srt 127.0.0.1:9000
+ *   /tmp/mux_synthetic_srt 127.0.0.1:9000
  *
  * Run (receiver, separate terminal — receives and writes to a .ts file):
  *   srt-live-transmit srt://:9000 file://con > /tmp/out.ts
