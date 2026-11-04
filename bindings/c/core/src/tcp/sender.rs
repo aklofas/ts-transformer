@@ -13,12 +13,15 @@
 //! shell consumes it. Here `Sender<TcpTransport>` uses it as a sender.
 //!
 //! **Cancel:** `tst_tcp_sender_cancel` (ABI 0.22) fires the transport's
-//! `TcpCancelHandle`; a `tst_tcp_sender_send_ts` parked on another thread
-//! returns `TST_E_CLOSED`. `_close` is cancel-first for the same reason.
-//! That entry point is what unblocks a send against a peer that has
+//! `TcpCancelHandle` and may be called from any thread; a
+//! `tst_tcp_sender_send_ts` parked on another thread then returns
+//! `TST_E_CLOSED`. Cancel is what unblocks a send against a peer that has
 //! stopped reading: such a send blocks until the peer resumes, the peer
-//! resets the connection, or the handle is cancelled or closed — there is
-//! no short send deadline that returns `TST_E_TRANSPORT`.
+//! resets the connection, or the handle is cancelled — there is no short
+//! send deadline that returns `TST_E_TRANSPORT`. The sequence is `_cancel`,
+//! wait for the parked call to return, then `_close`. `_close` is
+//! implemented cancel-first as a defence, not as a contract, and is called
+//! only once no call is in flight.
 
 use std::os::raw::c_char;
 
