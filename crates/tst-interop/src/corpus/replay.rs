@@ -62,7 +62,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -138,9 +138,44 @@ pub struct ReplaySummary {
     /// for a path never restarted, absent from older files.
     #[serde(default)]
     pub restarted_before_by_path: BTreeMap<String, Vec<Sha256Hex>>,
-    /// No verdict failed and every path produced a verdict. RSS takes no
-    /// part: the soak gates memory.
+    /// Per path: each time its child exited before the harness said `quit`
+    /// (the harness's own kills are not among them), with the pick whose
+    /// verdict came last. Absent from older files.
+    #[serde(default)]
+    pub unexpected_exits_by_path: BTreeMap<String, Vec<UnexpectedExit>>,
+    /// No verdict failed, every path produced a verdict and no child
+    /// exited unexpectedly. RSS takes no part: the soak gates memory.
     pub pass: bool,
+}
+
+/// A receiver child that left before the harness said `quit`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnexpectedExit {
+    /// The pick whose verdict the path produced last; `None` when the
+    /// child left before any.
+    pub after_pick: Option<Sha256Hex>,
+    /// `exit code N`, `signal N` or `unknown`.
+    pub status: String,
+}
+
+/// What an exit is worth: `Some(status text)` for a child found gone that
+/// the harness neither killed nor told to `quit`.
+fn classify_exit(status: Option<ExitStatus>, quit_said: bool, killed: bool) -> Option<String> {
+    let status = status?;
+    if quit_said || killed {
+        return None;
+    }
+    if let Some(code) = status.code() {
+        return Some(format!("exit code {code}"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            return Some(format!("signal {sig}"));
+        }
+    }
+    Some("unknown".to_string())
 }
 
 fn no_fingerprint() -> Sha256Hex {
@@ -272,6 +307,14 @@ struct PathRun {
     stdin: Option<ChildStdin>,
     lines: Receiver<String>,
     alive: bool,
+    /// The last verdict line this path's children produced.
+    last_verdict: Option<Sha256Hex>,
+    /// Exits found before `quit`, see [`UnexpectedExit`].
+    exits: Vec<UnexpectedExit>,
+    /// The harness killed the current child.
+    killed: bool,
+    /// The current child's exit is already in `exits`.
+    exit_noted: bool,
 }
 
 /// A pick the child was gone for before it answered `ready`: nothing of the
@@ -290,6 +333,10 @@ impl PathRun {
             child,
             lines,
             alive: true,
+            last_verdict: None,
+            exits: Vec::new(),
+            killed: false,
+            exit_noted: false,
         })
     }
 
@@ -305,6 +352,8 @@ impl PathRun {
         self.stdin = stdin;
         self.lines = lines;
         self.alive = true;
+        self.killed = false;
+        self.exit_noted = false;
         Ok(())
     }
 
@@ -357,8 +406,36 @@ impl PathRun {
     fn is_running(&mut self) -> bool {
         if self.alive && !matches!(self.child.try_wait(), Ok(None)) {
             self.alive = false;
+            self.note_exit_if_unexpected(false);
         }
         self.alive
+    }
+
+    /// Records the child's exit when it is gone and the harness neither
+    /// killed it nor said `quit`; once per child.
+    fn note_exit_if_unexpected(&mut self, quit_said: bool) {
+        if self.exit_noted {
+            return;
+        }
+        let status = self.child.try_wait().ok().flatten();
+        if let Some(status) = classify_exit(status, quit_said, self.killed) {
+            self.exit_noted = true;
+            self.exits.push(UnexpectedExit {
+                after_pick: self.last_verdict.clone(),
+                status,
+            });
+        }
+    }
+
+    /// The child closed its stdout, so it is exiting: waits for the exit
+    /// to be visible, then records it.
+    fn mark_exited(&mut self) {
+        self.alive = false;
+        let until = Instant::now() + QUIT_WAIT;
+        while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < until {
+            std::thread::sleep(TICK);
+        }
+        self.note_exit_if_unexpected(false);
     }
 
     /// Writes one protocol line; `false` when the child can no longer read.
@@ -381,12 +458,19 @@ impl PathRun {
 
     fn kill(&mut self) {
         self.alive = false;
+        self.killed = true;
         self.stdin = None;
         let _ = self.child.kill();
     }
 
     /// `quit`, then waits for the child to leave; kills it if it does not.
-    fn finish(&mut self) {
+    fn finish(&mut self) -> Vec<UnexpectedExit> {
+        // A child that left right after its last verdict has closed its
+        // stdout; a live one has nothing to read.
+        if self.alive && matches!(self.lines.try_recv(), Err(mpsc::TryRecvError::Disconnected)) {
+            self.mark_exited();
+        }
+        self.note_exit_if_unexpected(false);
         if self.alive && self.say("quit") {
             let until = Instant::now() + QUIT_WAIT;
             while let Some(left) = until.checked_duration_since(Instant::now()) {
@@ -401,12 +485,14 @@ impl PathRun {
         let until = Instant::now() + QUIT_WAIT;
         while Instant::now() < until {
             if !matches!(self.child.try_wait(), Ok(None)) {
-                return;
+                return std::mem::take(&mut self.exits);
             }
             std::thread::sleep(TICK);
         }
+        self.killed = true;
         let _ = self.child.kill();
         let _ = self.child.wait();
+        std::mem::take(&mut self.exits)
     }
 
     /// The verdict a `verdict <sha> PASS|FAIL <json>` line carries.
@@ -462,7 +548,7 @@ impl PathRun {
         let ready = match self.next_line(READY_WAIT) {
             Ok(l) => l,
             Err(Gone::Exited) => {
-                self.alive = false;
+                self.mark_exited();
                 return Err(NotStarted);
             }
             Err(Gone::Silent) => {
@@ -472,6 +558,7 @@ impl PathRun {
         };
         // A file the child could not prepare is judged in place of `ready`.
         if let Some(v) = Self::parse_verdict(&ready, sha) {
+            self.last_verdict = Some(sha.clone());
             return Ok(v);
         }
         let Some(url) = ready.strip_prefix(&format!("ready {sha} ")) else {
@@ -523,6 +610,7 @@ impl PathRun {
             self.kill();
             return Ok(failed(sha, &path, "receiver protocol error".into()));
         };
+        self.last_verdict = Some(sha.clone());
         if let Err(e) = sent {
             v.pass = false;
             v.failures.insert(0, format!("sender error: {e}"));
@@ -544,7 +632,7 @@ impl PathRun {
         match self.next_line(wait) {
             Ok(l) => Ok(l),
             Err(Gone::Exited) => {
-                self.alive = false;
+                self.mark_exited();
                 Err(not_received(sha, &self.path, ReceiverOutcome::Exited))
             }
             Err(Gone::Silent) => {
@@ -1041,7 +1129,9 @@ pub fn run_with(
         match PathRun::spawn(path, &args.run) {
             Ok(r) => runs.push(r),
             Err(e) => {
-                runs.iter_mut().for_each(PathRun::finish);
+                runs.iter_mut().for_each(|r| {
+                    r.finish();
+                });
                 return Err(e);
             }
         }
@@ -1075,7 +1165,10 @@ pub fn run_with(
             verdicts.push(v);
         }
     }
-    runs.iter_mut().for_each(PathRun::finish);
+    let unexpected_exits_by_path: BTreeMap<String, Vec<UnexpectedExit>> = runs
+        .iter_mut()
+        .map(|r| (r.path.clone(), r.finish()))
+        .collect();
     stop.store(true, Ordering::Relaxed);
     let samples = sampler.join().unwrap_or_default();
 
@@ -1122,7 +1215,9 @@ pub fn run_with(
         files: plan.picks.len() as u64,
         paths: args.paths.clone(),
         failed,
-        pass: failed == 0 && every_path_judged,
+        pass: failed == 0
+            && every_path_judged
+            && unexpected_exits_by_path.values().all(Vec::is_empty),
         plan,
         verdicts,
         rss_max_kb_by_path,
@@ -1130,6 +1225,7 @@ pub fn run_with(
         rss_judged_by_path: rss.judged_by_path,
         rss_note_by_path: rss.note_by_path,
         restarted_before_by_path,
+        unexpected_exits_by_path,
     };
     let text = serde_json::to_string_pretty(&summary).map_err(|e| format!("replay json: {e}"))?;
     std::fs::write(args.run.root.join("replay.json"), text).map_err(|e| {
@@ -1213,5 +1309,30 @@ mod spawn_tests {
         );
         assert!(lines[1].starts_with("--- restart failed: "), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod exit_tests {
+    use super::*;
+
+    fn status(code: i32) -> ExitStatus {
+        Command::new("sh")
+            .args(["-c", &format!("exit {code}")])
+            .status()
+            .unwrap()
+    }
+
+    /// Only a child found gone that nobody killed or told to quit is an
+    /// unexpected exit.
+    #[test]
+    fn only_an_unrequested_exit_is_unexpected() {
+        assert_eq!(
+            classify_exit(Some(status(0)), false, false).as_deref(),
+            Some("exit code 0")
+        );
+        assert_eq!(classify_exit(Some(status(0)), true, false), None);
+        assert_eq!(classify_exit(Some(status(1)), false, true), None);
+        assert_eq!(classify_exit(None, false, false), None);
     }
 }

@@ -371,6 +371,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `corpus sweep --baseline` needs the baseline's `manifest.txt` and verifies every digest it lists; a sweep writes one. `corpus manifest <digests-dir> --expect-files N` writes the manifest an older digests directory lacks. Every capture added or removed against the baseline needs `--accept <sha256> --because <text>`, and the reason is kept in the sweep summary and the report.
 - `corpus inventory` skips directories named `quarantine` at any depth.
 - `corpus replay` restarts a path whose receiver died, once per pick, and the summary lists per path the SHA of each pick a restart preceded.
+- `corpus replay` fails when a receiver child exits before the harness says `quit`, a clean exit included, and the summary lists per path each such exit with the pick whose verdict came last; the restart still happens so the later picks run.
 - `corpus replay` names each pick with PCR gaps it did not pace, and how many: a reset or a forward step over one second is sent as no time.
 - A corpus run's archive row and report name the baseline the sweep compared with, by the SHA-256 of its `manifest.txt`, or say that none was compared.
 

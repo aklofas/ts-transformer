@@ -157,6 +157,16 @@ pub fn markdown(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> String 
     for (path, note) in &r.rss_note_by_path {
         let _ = writeln!(s, "- {path}: {note}");
     }
+    for (path, exits) in &r.unexpected_exits_by_path {
+        for e in exits {
+            let pick = e.after_pick.as_ref().map_or("none", |p| p.0.as_str());
+            let _ = writeln!(
+                s,
+                "- {path}: receiver exited unexpectedly after pick {pick} ({})",
+                e.status
+            );
+        }
+    }
     let _ = writeln!(
         s,
         "\nReplayed {} files over {} paths, {} failed. Predicted peak {} bytes.",
