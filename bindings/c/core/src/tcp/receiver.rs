@@ -17,9 +17,11 @@
 //! `TcpCancelHandle` without taking the handle's slot, so a
 //! `tst_tcp_receiver_recv_ts` parked on another thread returns
 //! `TST_E_CLOSED` — not `TST_E_END_OF_STREAM`, because the handle carries
-//! the binding-shared cancel state. `_close` is cancel-first for the same
-//! reason (it fires that cancel before taking the slot), but unlike
-//! `_cancel` it also frees the handle.
+//! the binding-shared cancel state.
+//! `_cancel` may be called from any thread. The sequence is `_cancel`, wait
+//! for the parked call to return, then `_close`. `_close` is implemented
+//! cancel-first as a defence, not as a contract, and is called only once no
+//! call is in flight.
 
 use std::os::raw::c_char;
 
