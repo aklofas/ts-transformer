@@ -159,10 +159,12 @@ pub struct UnexpectedExit {
 }
 
 /// What an exit is worth: `Some(status text)` for a child found gone that
-/// the harness neither killed nor told to `quit`.
-fn classify_exit(status: Option<ExitStatus>, quit_said: bool, killed: bool) -> Option<String> {
+/// the harness did not kill. An exit after `quit` is expected only once the
+/// child answered `bye`: a child gone before that, with `quit` sent or not,
+/// left on its own.
+fn classify_exit(status: Option<ExitStatus>, bye_said: bool, killed: bool) -> Option<String> {
     let status = status?;
-    if quit_said || killed {
+    if bye_said || killed {
         return None;
     }
     if let Some(code) = status.code() {
@@ -412,13 +414,13 @@ impl PathRun {
     }
 
     /// Records the child's exit when it is gone and the harness neither
-    /// killed it nor said `quit`; once per child.
-    fn note_exit_if_unexpected(&mut self, quit_said: bool) {
+    /// killed it nor was answered `bye`; once per child.
+    fn note_exit_if_unexpected(&mut self, bye_said: bool) {
         if self.exit_noted {
             return;
         }
         let status = self.child.try_wait().ok().flatten();
-        if let Some(status) = classify_exit(status, quit_said, self.killed) {
+        if let Some(status) = classify_exit(status, bye_said, self.killed) {
             self.exit_noted = true;
             self.exits.push(UnexpectedExit {
                 after_pick: self.last_verdict.clone(),
@@ -457,6 +459,8 @@ impl PathRun {
     }
 
     fn kill(&mut self) {
+        // A child already gone is classified before the kill hides it.
+        self.note_exit_if_unexpected(false);
         self.alive = false;
         self.killed = true;
         self.stdin = None;
@@ -471,20 +475,35 @@ impl PathRun {
             self.mark_exited();
         }
         self.note_exit_if_unexpected(false);
-        if self.alive && self.say("quit") {
-            let until = Instant::now() + QUIT_WAIT;
-            while let Some(left) = until.checked_duration_since(Instant::now()) {
-                match self.next_line(left) {
-                    Ok(l) if l == "bye" => break,
-                    Ok(_) => {}
-                    Err(_) => break,
+        let mut bye = false;
+        if self.alive {
+            if self.say("quit") {
+                let until = Instant::now() + QUIT_WAIT;
+                while let Some(left) = until.checked_duration_since(Instant::now()) {
+                    match self.next_line(left) {
+                        Ok(l) if l == "bye" => {
+                            bye = true;
+                            break;
+                        }
+                        Ok(_) => {}
+                        // EOF before `bye`: the child left on its own.
+                        Err(Gone::Exited) => {
+                            self.mark_exited();
+                            break;
+                        }
+                        Err(Gone::Silent) => break,
+                    }
                 }
+            } else {
+                // The pipe is closed: the child was gone before `quit`.
+                self.mark_exited();
             }
         }
         self.stdin = None;
         let until = Instant::now() + QUIT_WAIT;
         while Instant::now() < until {
             if !matches!(self.child.try_wait(), Ok(None)) {
+                self.note_exit_if_unexpected(bye);
                 return std::mem::take(&mut self.exits);
             }
             std::thread::sleep(TICK);
@@ -542,7 +561,7 @@ impl PathRun {
         if !self.say(&format!(
             "file {sha} {prefix} {largest_au_bytes} {largest_chunk}"
         )) {
-            self.alive = false;
+            self.mark_exited();
             return Err(NotStarted);
         }
         let ready = match self.next_line(READY_WAIT) {
@@ -1332,6 +1351,11 @@ mod exit_tests {
             Some("exit code 0")
         );
         assert_eq!(classify_exit(Some(status(0)), true, false), None);
+        // `quit` sent but never answered with `bye`: still unexpected.
+        assert_eq!(
+            classify_exit(Some(status(0)), false, false).as_deref(),
+            Some("exit code 0")
+        );
         assert_eq!(classify_exit(Some(status(1)), false, true), None);
         assert_eq!(classify_exit(None, false, false), None);
     }
