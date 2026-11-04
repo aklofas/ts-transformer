@@ -372,12 +372,16 @@ lifetime. `_close` / `_free` consumes the pointer (it is a `Box` handed
 back to Rust and dropped), so bindings MUST serialize it against every
 other call on that pointer, `_cancel` included, and call it exactly once:
 a call that races or follows the close uses freed memory. `_cancel` does
-not free anything. The rule is: cancel, wait for the parked call to
+not free anything.
+
+The rule is: cancel, wait for the parked call to
 return, then free. No `_free`, `_close` or consuming conversion interrupts
 a parked call on any family, and a concurrent close is never the supported
 interrupter. `_close` being implemented cancel-first is a defence, not a
 contract. The header's "Threading and lifetime" preamble and the notes on
-each entry point carry the per-family details of this one rule. A byte slice passed as `(ptr, len)` is borrowed for
+each entry point carry the per-family details of this one rule.
+
+A byte slice passed as `(ptr, len)` is borrowed for
 the duration of the call only, and a call can park inside I/O for a long
 time. For a non-empty slice, `ptr` must point to `len` initialized bytes
 that stay valid for the whole call; input bytes must not be written by
