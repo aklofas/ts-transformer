@@ -280,9 +280,10 @@ path. It allocates a buffer the right size, encodes, and returns the
 bytes. The encoder auto-emits Tag 1 (the 16-bit running-sum checksum,
 mandated last by ST 0601 §6.3) and Tag 65 (UAS LS Version Number,
 mandated present by ST 0601.8 §10.3) when the caller didn't set them
-explicitly — so a default-constructed record with a few typed fields
-produces wire bytes that satisfy `decode_strict_compliance` out of the
-box.
+explicitly — but they do not make a record strict-compliant:
+`decode_strict_compliance` also requires Tag 2 (Precision Time Stamp)
+first, so set `timestamp_us` (or use `encode_strict_compliance`, which
+refuses a record without it).
 
 `encode_with(&record, &EncodeConfig, &mut [u8]) -> Result<usize, KlvEncodeError>`
 is the in-place form for callers who want to control the output buffer

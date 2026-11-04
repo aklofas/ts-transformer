@@ -151,6 +151,8 @@ stream, shared by every viewer of its path. `MountConfig` has:
 | `sei_budget_bytes` | 64 KiB | The most KLV bytes carried in SEI per access unit (1 to 1 MiB). |
 | `viewer_queue_packets` | 2048 | One viewer's queue, see "Viewers, queues and timeouts" (at least 16). |
 
+Mount paths are validated by `add_mount`: a path starts with `/`, has no empty segment and holds printable ASCII other than `?` and `#`. A path with a session resource's shape (`/<mount>/sessions/<id>`) is reserved for `DELETE` and refused.
+
 What the video path does with a frame:
 
 - **Keyframes.** The NAL units decide: an H.264 IDR picture, or an H.265

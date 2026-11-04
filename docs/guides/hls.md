@@ -224,8 +224,7 @@ handshake, and no back-off when `accept` fails. Each open connection holds a
 task until the client finishes or the server shuts down, so a client that
 opens many connections and stays silent consumes resources without limit.
 Keep the default loopback bind, or put a reverse proxy that enforces
-connection limits and timeouts in front of it. Release 0.9.1 adds these
-bounds to the server.
+connection limits and timeouts in front of it.
 
 On Unix the `output_dir` must be trusted: owned by the user running the
 publisher, not a symbolic link, and not writable by group or others. A

@@ -69,14 +69,12 @@ with RtspClient.connect_h264(cfg) as session:
         buf = bytearray(1316)          # 7 TS packets per pull chunk
 
         for au in rx:                  # recv_au(), GIL released while blocking
-            # au.pts is a 90 kHz decode-order timestamp — same clock as
-            # MPEG-TS PTS/PCR, no rescaling needed.
+            # au.pts is a 90 kHz presentation timestamp, delivered in
+            # decode order — same clock as MPEG-TS PTS/PCR, no rescaling
+            # needed.
             #
-            # B-frame caveat: if the encoder uses B-frames (PTS ≠ DTS),
-            # au.pts reflects decode order. Low-latency live cameras almost
-            # never use B-frames — PTS == DTS is the safe assumption.
-            # For B-frame content use mux.push_video_to_with_dts() and
-            # supply DTS from external encoder metadata.
+            # B-frame note: with B-frames the PTS values arrive out of
+            # order, and mux.push_video handles the DTS for you.
             mux.push_video(
                 au.annexb,
                 pts=Pts90khz.from_raw(au.pts),

@@ -304,6 +304,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An unset `key_length` no longer writes `SRTO_PBKEYLEN`, so libsrt negotiates the length: a passphrase-only sender now adopts a peer's AES-256 instead of forcing AES-128. `KeyLength::default()` is still `Aes128`.
 - A malformed percent escape in a URL query now fails with an error that names the offset and the key, never the value. The same holds for `rist://` URLs.
 - A repeated URL key has every occurrence validated, so an invalid one anywhere is an error; the last valid one still wins.
+- The URL integer grammar refuses a leading `+` and leading zeros (`+5`, `007`), which libsrt's own apps accept. Write the plain decimal (`5`, `7`).
 
 ### Changed — tst-rist
 

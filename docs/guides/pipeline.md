@@ -883,10 +883,10 @@ The receive surface distinguishes three end-of-stream signals:
   decorator distinguish a self-initiated close (`Closed`) from a peer-
   initiated break (`Broken`). On `Broken` the demuxer is still flushed
   first: any events the flush recovers are returned before the error.
-- **`Err` whose `source` is `DemuxReceiverErrorSource::Demux(_)`.** Strict-mode rejection or
-  malformed PES. Re-entry into `recv_event` after a `MalformedPes` is
-  discouraged — the demuxer's reassembly state is undefined past a bad
-  PES header. Treat as stream-fatal until lenient PES recovery lands.
+- **`Err` whose `source` is `DemuxReceiverErrorSource::Demux(_)`.** Strict mode refused a
+  non-conformant stream (`StrictRejection`). In the default lenient mode a
+  malformed PES surfaces as a `NonConformant` event and the stream
+  continues.
 
 ## KLV ↔ video pairing (`tst_pipeline::ext::pairing`)
 
