@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
              *
              * WHY distinguish TST_E_END_OF_STREAM from TST_E_CLOSED?
              *   TST_E_END_OF_STREAM means the remote side closed.
-             *   TST_E_CLOSED means our side called _cancel or _close.
+             *   TST_E_CLOSED means our side called _cancel.
              *   A real application may want to log a "peer disconnected"
              *   event for telemetry, or reconnect via a managed receiver,
              *   while a "cancelled" event might be a SIGINT handler unwinding

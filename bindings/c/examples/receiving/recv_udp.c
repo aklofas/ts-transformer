@@ -198,7 +198,7 @@ int main(int argc, char **argv) {
         }
 
         if (rc == TST_E_CLOSED) {
-            /* Another thread closed the handle. Clean exit. */
+            /* Cancelled. Clean exit. */
             fprintf(stderr,
                     "Receiver closed. %" PRIu64 " packets received.\n",
                     received);

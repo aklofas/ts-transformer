@@ -283,7 +283,7 @@ int main(int argc, char **argv) {
      * at once can still drop packets librist has not transmitted. Give
      * the link time to send them before closing when the tail matters.
      * close then closes the socket and frees all associated memory; it is
-     * safe on a valid non-NULL pointer at any time, including after a
+     * safe once no other call on it is in flight, including after a
      * send failure.
      */
     if (exit_code == 0) {

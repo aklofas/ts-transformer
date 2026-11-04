@@ -247,7 +247,7 @@ shape but differ on whether the caller should retry:
 
 `TST_E_INVALID_USAGE` (-9) is the third sibling — used when the handle
 is in the wrong **state** for the call (e.g., `finish()` twice without a
-cancel, or a consumed source). A call on a **closed** handle is
+cancel, or a consumed source). A call on a **cancelled** handle, or one a caught panic retired, is
 `TST_E_CLOSED` (-7), not this code, and using a freed pointer is
 undefined behaviour, not an error code. Distinct from both above
 because it's a programmer bug, not a runtime data-availability question.
@@ -315,7 +315,7 @@ What may precede or override the CLOSED outcome:
 - A result that was already in flight when the cancel landed may win.
 - The H.264 receiver drains to end of stream on cancel.
 - The SRT `Listener` iterator maps CLOSED to `StopIteration`.
-- A flushed access unit is delivered before CLOSED.
+- A flushed access unit is delivered before CLOSED (Rust shells).
 
 ## Host naming grammar
 
