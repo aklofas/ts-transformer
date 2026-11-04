@@ -79,7 +79,9 @@ bash embedded/scripts/check/firmware-qemu.sh
 
 ## Path 3 — FreeRTOS reference port
 
-[`embedded/freertos-srt/`](/embedded/freertos-srt/) is the flagship: a reference port of **libsrt** onto FreeRTOS + FreeRTOS-Plus-POSIX + lwIP. It demonstrates SRT egress AND ingress on a microcontroller. The egress program (`example`) sends a prebuilt golden TS over libsrt and does no on-device muxing. The ingress program (`srt-recv`) receives over SRT and demuxes on-device through the C ABI, including byte-exact ARQ recovery under ~20% packet loss and AES-128 encryption on egress.
+[`embedded/freertos-srt/`](/embedded/freertos-srt/) is the flagship: a reference port of **libsrt** onto FreeRTOS + FreeRTOS-Plus-POSIX + lwIP. It demonstrates SRT egress AND ingress on a microcontroller. The egress program (`example`) sends a prebuilt golden TS over libsrt and does no on-device muxing. The ingress program (`srt-recv`) receives over SRT and demuxes on-device through the C ABI.
+
+The egress gates are `example` (a real-NIC golden stream, plain and AES-128), `loopback-arq` (byte-exact ARQ recovery under ~20% packet loss, plain and AES-128) and `arq-connfail`. The ingress gate is `srt-recv`.
 
 It is **not built by default** — it is not a Cargo workspace member, and its gates skip locally when the cross-toolchain or QEMU is absent. In CI, every `freertos-srt` target runs as a fail-closed hard gate under QEMU.
 

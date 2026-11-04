@@ -352,9 +352,9 @@ impl_stream_handle!(VideoStreamHandle, MuxStreamKind::Video, "VideoStreamHandle"
 ///
 /// # Lifecycle
 ///
-/// Same rules as [`VideoStreamHandle`]: handles are bound to the producing
-/// `Muxer` / `MuxSender`; parent close invalidates the handle's usefulness
-/// (the handle remains `Copy + 'static` but cannot be rebound); cloning
+/// Same rules as [`VideoStreamHandle`]: handles belong to the producing
+/// `Muxer` / `MuxSender` and are positional; parent close invalidates the
+/// handle's usefulness (the handle remains `Copy + 'static`); cloning
 /// produces an identical handle referring to the same stream within the
 /// same parent.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -374,9 +374,9 @@ impl_stream_handle!(KlvStreamHandle, MuxStreamKind::Klv, "KlvStreamHandle");
 ///
 /// # Lifecycle
 ///
-/// Same rules as [`VideoStreamHandle`]: handles are bound to the producing
-/// `Muxer` / `MuxSender`; parent close invalidates the handle's usefulness
-/// (the handle remains `Copy + 'static` but cannot be rebound); cloning
+/// Same rules as [`VideoStreamHandle`]: handles belong to the producing
+/// `Muxer` / `MuxSender` and are positional; parent close invalidates the
+/// handle's usefulness (the handle remains `Copy + 'static`); cloning
 /// produces an identical handle referring to the same stream within the
 /// same parent.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -403,9 +403,9 @@ pub const MAX_SUBTITLE_STREAMS_PER_PROGRAM: usize = 16;
 ///
 /// # Lifecycle
 ///
-/// Same rules as [`VideoStreamHandle`]: handles are bound to the producing
-/// `Muxer` / `MuxSender`; parent close invalidates the handle's usefulness
-/// (the handle remains `Copy + 'static` but cannot be rebound); cloning
+/// Same rules as [`VideoStreamHandle`]: handles belong to the producing
+/// `Muxer` / `MuxSender` and are positional; parent close invalidates the
+/// handle's usefulness (the handle remains `Copy + 'static`); cloning
 /// produces an identical handle referring to the same stream within the
 /// same parent.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -430,9 +430,9 @@ impl_stream_handle!(
 ///
 /// # Lifecycle
 ///
-/// Same rules as [`VideoStreamHandle`]: handles are bound to the producing
-/// `Muxer` / `MuxSender`; parent close invalidates the handle's usefulness
-/// (the handle remains `Copy + 'static` but cannot be rebound); cloning
+/// Same rules as [`VideoStreamHandle`]: handles belong to the producing
+/// `Muxer` / `MuxSender` and are positional; parent close invalidates the
+/// handle's usefulness (the handle remains `Copy + 'static`); cloning
 /// produces an identical handle referring to the same stream within the
 /// same parent.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
