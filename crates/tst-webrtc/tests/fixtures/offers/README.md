@@ -1,7 +1,7 @@
 # Browser SDP offers
 
 The offers a WHEP player's `createOffer()` produces for receive-only
-transceivers plus a data channel (`klv`, id 0). The negotiation
+transceivers plus a data channel. The negotiation
 tests and the `whep_sdp_select` fuzz seeds read them.
 
 | File | Source |
