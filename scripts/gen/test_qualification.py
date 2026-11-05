@@ -637,6 +637,18 @@ class ReleaseModeTests(unittest.TestCase):
         self.assertIs(rec["release_vm"]["arm_soak"]["overall_pass"], False)
         self.assertFalse(any("arm" in r for r in rec["verdict_reasons"]))
 
+    def test_gate_line_and_archive_list_carry_the_arm_verdict_and_arch(self):
+        for passed, word in ((True, "PASS"), (False, "FAIL")):
+            with self.subTest(passed=passed):
+                text = q.render_block(collect(release=True, archives=self.arm_rows(arm_pass=passed)))
+                self.assertIn(", aarch64), %s (recorded, not gating)." % word, text)
+                self.assertIn("- `soak-arm` (soak, aarch64, 2026-11-02, tree", text)
+                self.assertIn("`overall_pass=%s`" % str(passed).lower(), text)
+
+    def test_gate_line_has_no_arm_part_without_an_arm_row(self):
+        text = q.render_block(collect(release=True, archives=RELEASE_OK))
+        self.assertNotIn("arm64 soak", text)
+
     def test_the_newer_of_two_arm_rows_is_recorded_even_when_it_failed(self):
         rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"),
                              archive_row("soak-arm-1", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-02"),

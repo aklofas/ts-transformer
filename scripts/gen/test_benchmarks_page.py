@@ -234,6 +234,57 @@ class ArchTable(unittest.TestCase):
             self.assertEqual(res.returncode, 2, res.stderr)
             self.assertIn("--arm-results and --arm-provenance", res.stderr)
 
+    def test_arch_columns_are_not_swapped(self):
+        r, p = load()
+        arm_r = copy.deepcopy(r)
+        arm_r["sweep"][0]["ceiling"] = 987654
+        t, axis = arm_r["sweep"][0]["transport"], arm_r["sweep"][0]["axis"]
+        md = bp.render(r, p, arm=(arm_r, copy.deepcopy(p)))
+        sec = re.search(r"^### Ceilings by architecture\n(.*?)(?=^### )", md, re.M | re.S).group(1)
+        row = next(ln for ln in sec.splitlines() if ln.startswith(f"| {t} | {axis} |"))
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        self.assertTrue(cells[3].startswith("987654"), cells)
+        self.assertNotIn("987654", cells[2])
+
+    def test_arm_only_row_shows_a_dash_in_the_x86_column(self):
+        r, p = load()
+        x86_r = copy.deepcopy(r)
+        gone = x86_r["sweep"].pop(0)
+        md = bp.render(x86_r, p, arm=(copy.deepcopy(r), copy.deepcopy(p)))
+        sec = re.search(r"^### Ceilings by architecture\n(.*?)(?=^### )", md, re.M | re.S).group(1)
+        row = next(ln for ln in sec.splitlines()
+                   if ln.startswith(f"| {gone['transport']} | {gone['axis']} |"))
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        self.assertEqual(cells[2], "\u2014")
+        self.assertNotEqual(cells[3], "\u2014")
+
+    def test_cli_refuses_an_arm_provenance_that_is_not_aarch64(self):
+        import tempfile
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmarks_page.py")
+        res_path = os.path.join(FIX, "stress-results.smoke.json")
+        prov_path = os.path.join(FIX, "provenance.smoke.json")
+        _, p = load()
+        with tempfile.TemporaryDirectory() as d:
+            cases = {}
+            good = copy.deepcopy(p)
+            good["host"]["arch"] = "aarch64"
+            wrong = copy.deepcopy(p)
+            wrong["host"]["arch"] = "x86_64"
+            missing = copy.deepcopy(p)
+            missing["host"].pop("arch", None)
+            for name, prov in (("good", good), ("wrong", wrong), ("missing", missing)):
+                path = os.path.join(d, name + ".json")
+                with open(path, "w") as fh:
+                    json.dump(prov, fh)
+                cases[name] = subprocess.run(
+                    [sys.executable, script, "--results", res_path, "--provenance", prov_path,
+                     "--arm-results", res_path, "--arm-provenance", path],
+                    capture_output=True, text=True)
+        self.assertEqual(cases["good"].returncode, 0, cases["good"].stderr)
+        for name in ("wrong", "missing"):
+            self.assertEqual(cases[name].returncode, 2, cases[name].stderr)
+            self.assertIn("host.arch = aarch64", cases[name].stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

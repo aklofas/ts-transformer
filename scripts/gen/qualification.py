@@ -754,7 +754,7 @@ def _release_line(gate):
     c = gate.get("corpus")
     corpus = "none" if c is None else "%s (%s)" % (c["id"], _verdict_word(c))
     arm = gate.get("arm_soak")
-    arm_text = "" if arm is None else "; arm64 soak %s (recorded, not gating)" % _soak_desc(arm)
+    arm_text = "" if arm is None else "; arm64 soak %s, %s (recorded, not gating)" % (_soak_desc(arm), _verdict_word(arm))
     return "Release gate: soak %s, corpus %s%s." % ("none" if s is None else soak, corpus, arm_text)
 
 
