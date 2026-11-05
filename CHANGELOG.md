@@ -456,6 +456,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `crates/srt-sys/README.md` (`tstrans-srt-sys`) gains a recipe for cross-compiling to aarch64 from an x86_64 Linux host.
 - `docs/project/release-findings.md` is a new ledger of defects that escaped the release qualification, each with the class of test that now covers it, seeded with the 0.9.0 escapes.
 - `docs/project/real-capture-testing.md` describes the annotation bounds, `klv-missing`, the baseline manifest and the replay's restart and pacing counts; `docs/project/releasing.md` the one-time manifest repair of an older baseline, the corpus baseline's promotion under the tag's name, and the crates.io rehearsal.
+- The `mux_to_hls` example demuxes its `.ts` input and pushes each video access unit with its timestamps and keyframe flag; its documented command failed on the first push of a real capture. The re-mux is served as an ended EVENT playlist until Ctrl-C.
 
 ### Added — tst-core
 
