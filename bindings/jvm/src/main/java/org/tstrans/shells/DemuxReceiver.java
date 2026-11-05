@@ -316,7 +316,11 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     /**
-     * Close the receiver. Idempotent — subsequent calls are no-ops.
+     * Close the receiver. Idempotent: a later call returns at once.
+     * Concurrent calls are serialised: a call that arrives while another
+     * thread's close is in progress waits for it to finish, so once any
+     * {@code close()} has returned, {@link #tsBytesDemuxed()} and
+     * {@link #endReason()} read the final values.
      *
      * <p>If a thread is parked in iteration ({@code next()}), {@code close()}
      * cancels first: it fires the receiver's cancel target before taking the
@@ -324,7 +328,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * transport's {@code CLOSED} and {@code close()} returns without waiting for
      * data. Same contract as the Python and C twins.
      */
-    @Override public void close() {
+    @Override public synchronized void close() {
         super.close();
     }
 

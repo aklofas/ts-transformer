@@ -228,6 +228,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Values documented as immutable no longer hand out mutable state: `MuxerConfig`'s array accessors copy, and the KLV records take a shallow copy of the lists they are given (the elements stay caller-owned). The `NalUnit` factories copy their input array.
 - `MuxerFileSink.push*` and `commit()` after `close()` throw `IllegalStateException("MuxerFileSink is closed")` before the muxer is touched.
 - The KLV forced-error test natives are no longer in the shipped native library.
+- Two threads closing one `DemuxReceiver` or `ManagedDemuxReceiver`: the `close()` that loses the race now returns only after the first one finishes, so `tsBytesDemuxed()` and `endReason()` read the final values. It used to return at once and could read 0.
 
 ### Fixed — tst-py
 

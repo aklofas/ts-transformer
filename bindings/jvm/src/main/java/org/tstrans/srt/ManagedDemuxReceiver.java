@@ -44,8 +44,9 @@ import org.tstrans.shells.SocketStats;
  * }</pre>
  *
  * <p><b>Thread safety:</b> a single {@code ManagedDemuxReceiver} is NOT
- * thread-safe and is deliberately NOT {@code synchronized}. Iterate from one
- * thread; the sanctioned cross-thread operations are {@link #cancelHandle()}'s
+ * thread-safe and its iteration is deliberately NOT {@code synchronized}
+ * (only {@link #close()} is, so concurrent closes finish together). Iterate
+ * from one thread; the sanctioned cross-thread operations are {@link #cancelHandle()}'s
  * {@code cancel()} and {@link #close()}, both of which wake a thread parked in
  * iteration.
  *
@@ -317,8 +318,11 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     /**
      * Close the receiver. Cancels first — fires the same cancel target
      * {@link #cancelHandle()} hands out — then closes the underlying libsrt
-     * socket and stops further reconnects. Idempotent — subsequent calls are
-     * no-ops.
+     * socket and stops further reconnects. Idempotent: a later call returns at
+     * once. Concurrent calls are serialised: a call that arrives while another
+     * thread's close is in progress waits for it to finish, so once any
+     * {@code close()} has returned, {@link #tsBytesDemuxed()} and
+     * {@link #endReason()} read the final values.
      *
      * <p>If another thread is parked in iteration ({@code next()}), the cancel
      * wakes it: that iteration ends with {@code SrtException(CLOSED)} and records
@@ -326,7 +330,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * the parked call has released the receiver. Same contract as the C ABI's
      * {@code tst_managed_demux_receiver_close} and tst-py's {@code close()}.
      */
-    @Override public void close() { super.close(); }
+    @Override public synchronized void close() { super.close(); }
 
     /**
      * Why this receiver's stream ended, or {@code null} while it is still live
