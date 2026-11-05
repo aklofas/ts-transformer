@@ -376,7 +376,8 @@ def release_vm(root, sha, archives, release, expected_files, required_s):
     reasons = []
     memo = {}
     soak, corpus = None, None
-    soaks = [a for a in archives if a["kind"] == "soak"]
+    soaks = [a for a in archives if a["kind"] == "soak" and a.get("arch") in (None, "x86_64")]
+    arm_soaks = [a for a in archives if a["kind"] == "soak" and a.get("arch") == "aarch64"]
     _check_sha(sha)
     if not soaks:
         reasons.append("soak: no release soak archive for this tree (%s)" % str(sha)[:12])
@@ -471,6 +472,14 @@ def release_vm(root, sha, archives, release, expected_files, required_s):
             "reasons": reasons if release else []}
     if release:
         gate["required_duration_s"] = required_s
+        # An arm64 soak is recorded beside the release soak and never gates: whatever
+        # its verdict, it adds no reason.
+        arm = None
+        for a in _by_date(arm_soaks):
+            if _stands_for(root, sha, a["tree"], memo):
+                arm = _soak_entry(root, sha, a, memo)
+                break
+        gate["arm_soak"] = arm
     return gate
 
 
@@ -744,7 +753,9 @@ def _release_line(gate):
         return "Release gate: not applied (not a release qualification); newest soak archive for this tree: %s." % soak
     c = gate.get("corpus")
     corpus = "none" if c is None else "%s (%s)" % (c["id"], _verdict_word(c))
-    return "Release gate: soak %s, corpus %s." % ("none" if s is None else soak, corpus)
+    arm = gate.get("arm_soak")
+    arm_text = "" if arm is None else "; arm64 soak %s (recorded, not gating)" % _soak_desc(arm)
+    return "Release gate: soak %s, corpus %s%s." % ("none" if s is None else soak, corpus, arm_text)
 
 
 def _release_only(gate):
@@ -939,6 +950,9 @@ def render_exit_criteria(rec, archives, census, required_s):
                 body = cited % (rec["label"], kind, desc(dict(entry, **row)), _raw_text(row),
                                    needs + " " if kind == "soak" and needs else "", status)
             out.append(_today(anchor, label, body))
+    arm_soak = gate.get("arm_soak")
+    arm_note = ("An arm64 soak is recorded: %s, %s. " % (_soak_desc(arm_soak), _raw_text(arm_soak))
+                if arm_soak else "No arm64 soak is recorded for this tree. ")
     arm = next((c for c in census if c.get("arch") == "linux-aarch64"), None)
     if arm is None:
         body = "Status: open: the committed qualification record carries no linux-aarch64 census."
@@ -949,7 +963,7 @@ def render_exit_criteria(rec, archives, census, required_s):
                       if arm["skipped"] else ""))
             if arm["fail"] == 0 and arm["total"] > 0
             else "open: the linux-aarch64 census has %d failure(s)" % arm["fail"])
-    out.append(_today("the-arm64-subset-today", "The ARM64 subset today.", body))
+    out.append(_today("the-arm64-subset-today", "The ARM64 subset today.", arm_note + body))
     return "\n\n".join(out) + "\n"
 
 
