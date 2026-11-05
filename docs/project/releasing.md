@@ -224,7 +224,8 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
 7. **The archive-entry PR.** A docs-only PR adds two rows to
    `tests/coverage/evidence-archives.toml`, each with the frozen commit as
    its `tree`:
-   - the soak, with `expected_duration_s = 172800` and `legs = [...]`
+   - the soak, with the `expected_duration_s` the run's `soak-config.json` declares
+     (at least `[soak] required_duration_s`) and `legs = [...]`
      copied from the `legs=…` list on the last line `report soak` printed;
    - the corpus run, with the counts its archive row carries. Its `files`
      must equal `expected_files` in the file's `[corpus]` table. When the
