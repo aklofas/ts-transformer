@@ -637,6 +637,28 @@ class ReleaseModeTests(unittest.TestCase):
         self.assertIs(rec["release_vm"]["arm_soak"]["overall_pass"], False)
         self.assertFalse(any("arm" in r for r in rec["verdict_reasons"]))
 
+    def test_the_newer_of_two_arm_rows_is_recorded_even_when_it_failed(self):
+        rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"),
+                             archive_row("soak-arm-1", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-02"),
+                             archive_row("soak-arm-2", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-03",
+                                         overall_pass=False),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["arm_soak"]["id"], "soak-arm-2")
+        self.assertIs(rec["release_vm"]["arm_soak"]["overall_pass"], False)
+
+    def test_an_arm_row_on_a_non_equivalent_tree_is_not_recorded(self):
+        rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"),
+                             archive_row("soak-arm", "soak", OLD_TREE, legs=FIVE, arch="aarch64", date="2026-11-02"),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        with mock.patch.object(q, "changed_paths", return_value=["crates/tst-core/src/lib.rs"]):
+            rec = collect(release=True, archives=rows)
+        self.assertIsNone(rec["release_vm"]["arm_soak"])
+
+    def test_outside_release_mode_there_is_no_arm_soak_key(self):
+        self.assertNotIn("arm_soak", collect(archives=self.arm_rows())["release_vm"])
+
     def test_only_an_arm_row_means_no_release_soak(self):
         rec = collect(release=True, archives=self.arm_rows(with_x86=False))
         self.assertEqual(rec["verdict"], "NO-GO")
@@ -1212,6 +1234,14 @@ class WaiverTests(unittest.TestCase):
 
 
 class ExitCriteriaTests(unittest.TestCase):
+    def test_a_newer_arm_row_is_not_the_newest_release_soak(self):
+        rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"),
+                             archive_row("soak-arm", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-02"))
+        rec = collect(archives=rows)
+        text = q.render_exit_criteria(rec, rec["archives"], [], 172800)
+        self.assertIn("`soak-x86`", text.split("**The corpus today.**")[0])
+        self.assertNotIn("the newest soak archive is `soak-arm`", text)
+
     def test_exit_criteria_arm_paragraph_names_the_arm_soak(self):
         rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"),
                              archive_row("soak-arm", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-02"),
