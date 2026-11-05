@@ -549,7 +549,7 @@ impl PlacementState {
                     e.generation
                 ));
             } else {
-                m.excused_excursion_details.push(format!(
+                m.rejected_excursion_details.push(format!(
                     "sr-jitter not excused: per-run cap {} reached (generation {})",
                     m.excused_excursion_cap, e.generation
                 ));
@@ -4611,10 +4611,16 @@ mod tests {
             (4, 3, 3)
         );
         assert!(m.has_unexcused_error());
+        assert_eq!(
+            m.rejected_excursion_details,
+            vec!["sr-jitter not excused: per-run cap 3 reached (generation 4)".to_string()],
+            "{m:?}"
+        );
+        assert_eq!(m.excused_excursion_details.len(), 3, "{m:?}");
         assert!(
             m.excused_excursion_details
                 .iter()
-                .any(|d| d.starts_with("sr-jitter not excused: per-run cap 3 reached")),
+                .all(|d| !d.contains("not excused")),
             "{:?}",
             m.excused_excursion_details
         );

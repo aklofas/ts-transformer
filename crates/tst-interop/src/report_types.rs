@@ -275,10 +275,14 @@ pub struct KlvPlacementMetrics {
     /// The largest |error| inside any excursion, in milliseconds.
     #[serde(default)]
     pub max_excursion_ms: f64,
-    /// One `sr-jitter: …` line per excused excursion, and one `not excused`
-    /// line per excursion the per-run cap stopped.
+    /// One `sr-jitter: …` line per excused excursion.
     #[serde(default)]
     pub excused_excursion_details: Vec<String>,
+    /// One `sr-jitter not excused: …` line per excusable excursion the
+    /// per-run cap stopped. Each is a failure; `report soak` renders it as
+    /// a failing row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rejected_excursion_details: Vec<String>,
 }
 
 impl KlvPlacementMetrics {
