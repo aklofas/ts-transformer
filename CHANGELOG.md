@@ -43,6 +43,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - An `hls.MuxPublisher` collected without `finish_into_publisher()` no longer re-offers bytes a failed push retained and writes no closing cut: the implicit drop is abortive; `finish_into_publisher()` then `finish()` is the graceful path. A collector-driven retry against the file system, with the interpreter stalled, was never a dependable way to deliver a segment.
 - `EncryptionKey.aes128`, `aes192` and `aes256` raise `ValueError` for a `bytes` secret that is not valid UTF-8. The secret was converted lossily, so distinct byte secrets collided on the same key and the derived key differed from a peer that used the raw bytes. A `str` secret and a UTF-8 `bytes` secret behave as before.
+- `ManagedReceiver.reconnect_attempts()` counts reconnect attempts, failed and still-pending ones included, as `ManagedDemuxReceiver` and the JVM binding do. It used to count only successful rebuilds, so it read 0 while the receiver was still searching for a new peer.
 
 ### Security — tst-srt, tstrans-srt-sys
 

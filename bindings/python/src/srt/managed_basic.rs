@@ -315,8 +315,8 @@ impl PyManagedSender {
 /// reconnect policy and resumes delivering bytes from the new
 /// connection.
 ///
-/// `reconnect_attempts()` exposes the total successful reconnect count
-/// (does NOT include the initial bind+accept).
+/// `reconnect_attempts()` counts reconnect attempts, failed and pending
+/// ones included (not the initial bind+accept).
 ///
 /// `policy.mode` is send-side only: `ReconnectMode.BACKGROUND` on a
 /// policy handed to `ManagedReceiver` logs a warning on the Rust side
@@ -326,10 +326,11 @@ impl PyManagedSender {
 pub(crate) struct PyManagedReceiver {
     /// Shared slot — see the module doc; `close()` cancels before taking it.
     owned: Owned<PlReceiver<ManagedRecvTransport<SrtTransport>>>,
-    /// Shared handle to the `ManagedRecvTransport`'s reconnect counter.
-    /// Held independently of the wrapper's lifetime so callers can
-    /// read it even mid-reconnect.
-    reconnects: Arc<std::sync::atomic::AtomicU64>,
+    /// Shared handle to the managed transport's reconnect-attempt counter
+    /// (every factory call, failed or pending ones included). Held
+    /// independently of the wrapper's lifetime so callers can read it even
+    /// mid-reconnect.
+    attempts: Arc<std::sync::atomic::AtomicU64>,
     /// Shared cancel state: the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
@@ -390,11 +391,11 @@ impl PyManagedReceiver {
             )
         })
         .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
-        let reconnects = handles.reconnects.clone();
+        let attempts = handles.attempts.clone();
         let cancel = CancelSource::new(handles.cancel);
         Ok(Self {
             owned: Owned::new(inner, cancel.as_dyn(), ()),
-            reconnects,
+            attempts,
             cancel,
         })
     }
@@ -420,12 +421,11 @@ impl PyManagedReceiver {
         Ok(PyBytes::new(py, &bytes).unbind())
     }
 
-    /// Total number of successful reconnect rebuilds. Does NOT include
-    /// the initial bind+accept (which happened in `from_url`).
-    /// Increments each time the inner transport breaks and the
-    /// factory successfully rebuilds.
+    /// Number of reconnect attempts since construction: every factory call,
+    /// failed and still-pending ones included. Does NOT include the initial
+    /// bind+accept (which happened in `from_url`).
     fn reconnect_attempts(&self) -> u64 {
-        self.reconnects.load(Ordering::Acquire)
+        self.attempts.load(Ordering::Relaxed)
     }
 
     /// Shareable cancel handle. Calling `.cancel()` latches the
@@ -504,7 +504,7 @@ impl PyManagedReceiver {
     }
 
     fn __repr__(&self) -> String {
-        let attempts = self.reconnects.load(Ordering::Acquire);
+        let attempts = self.attempts.load(Ordering::Relaxed);
         if self.owned.is_closed() {
             format!("ManagedReceiver(closed, reconnect_attempts={attempts})")
         } else {
