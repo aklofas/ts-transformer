@@ -1840,44 +1840,6 @@ mod session_tests {
             .unwrap()
     }
 
-    /// A loopback listener that runs `handle_tcp_connection` against `state`
-    /// on the first connection it accepts (the same shape as
-    /// `state_with_publish_mount_and_listener`, for a caller-built state).
-    async fn serve_one(state: Arc<ServerState>) -> PublisherTestServer {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let (tcp, peer) = listener.accept().await.unwrap();
-            state
-                .active_sessions
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let slot = SessionSlot::new(state.clone());
-            let _ = handle_tcp_connection(state, tcp, peer, slot).await;
-        });
-        PublisherTestServer { port }
-    }
-
-    /// Under paused time, read `c` in 1 ms virtual steps (see
-    /// [`read_response_in_paused_steps`] for why) for at most `limit`,
-    /// discarding any bytes. Returns how long after the call the server
-    /// closed the connection, or `None` if it was still open at `limit`.
-    async fn closed_within(
-        c: &mut TcpStream,
-        limit: std::time::Duration,
-    ) -> Option<std::time::Duration> {
-        let start = tokio::time::Instant::now();
-        let mut chunk = [0u8; 4096];
-        while start.elapsed() < limit {
-            match tokio::time::timeout(std::time::Duration::from_millis(1), c.read(&mut chunk))
-                .await
-            {
-                Ok(Ok(0)) | Ok(Err(_)) => return Some(start.elapsed()),
-                Ok(Ok(_)) | Err(_) => {}
-            }
-        }
-        None
-    }
-
     fn announce_request(path: &str, sdp: &str) -> String {
         format!(
             "ANNOUNCE rtsp://h{path} RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
@@ -2004,20 +1966,36 @@ mod session_tests {
         );
     }
 
+    /// Wait at most `limit` of virtual time for the server to close the duplex
+    /// `c`, discarding whatever it sends meanwhile. Returns how long that
+    /// took, or `None` if it was still open at `limit`. A duplex never leaves
+    /// the runtime, so the paused clock jumps only to the server's own timers.
+    async fn duplex_closed_within(
+        c: &mut tokio::io::DuplexStream,
+        limit: std::time::Duration,
+    ) -> Option<std::time::Duration> {
+        let start = tokio::time::Instant::now();
+        let mut chunk = [0u8; 1024];
+        tokio::time::timeout(limit, async {
+            while matches!(c.read(&mut chunk).await, Ok(n) if n > 0) {}
+        })
+        .await
+        .ok()
+        .map(|()| start.elapsed())
+    }
+
     /// Interleaved frames on a connection with no session are dropped and are
     /// not activity: one every 5 s does not keep the connection past 30 s.
     #[tokio::test(start_paused = true)]
     async fn interleaved_frames_do_not_hold_a_connection_before_setup() {
         use std::time::Duration;
         use tokio::io::AsyncWriteExt;
-        let state = crate::rtsp::server::test_state();
-        let server = serve_one(state).await;
-        let mut c = connect(&server).await;
+        let (mut c, _task) = duplex_session(crate::rtsp::server::test_state());
         let t0 = tokio::time::Instant::now();
         let mut closed_at = None;
         for _ in 0..8 {
             if c.write_all(b"$\x00\x00\x04abcd").await.is_err()
-                || closed_within(&mut c, Duration::from_secs(5))
+                || duplex_closed_within(&mut c, Duration::from_secs(5))
                     .await
                     .is_some()
             {
@@ -2040,22 +2018,20 @@ mod session_tests {
     async fn interleaved_frames_do_not_rearm_the_idle_bound_of_an_authenticated_idle_connection() {
         use std::time::Duration;
         use tokio::io::AsyncWriteExt;
-        let server = serve_one(make_state_with_basic_auth()).await;
-        let mut c = connect(&server).await;
+        let (mut c, _task) = duplex_session(make_state_with_basic_auth());
         // "user:secret" base64 = "dXNlcjpzZWNyZXQ="; no such mount, so 404
         // after the credential check passed.
-        c.write_all(
-            b"DESCRIBE rtsp://127.0.0.1/none RTSP/1.0\r\nCSeq: 1\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n",
+        let r = duplex_exchange(
+            &mut c,
+            "DESCRIBE rtsp://127.0.0.1/none RTSP/1.0\r\nCSeq: 1\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n",
         )
-        .await
-        .unwrap();
-        let r = read_response_in_paused_steps(&mut c, Duration::from_secs(5)).await;
+        .await;
         assert!(r.starts_with("RTSP/1.0 404"), "authenticated DESCRIBE: {r}");
         let t_req = tokio::time::Instant::now();
         let mut closed_at = None;
         for _ in 0..8 {
             if c.write_all(b"$\x00\x00\x04abcd").await.is_err()
-                || closed_within(&mut c, Duration::from_secs(5))
+                || duplex_closed_within(&mut c, Duration::from_secs(5))
                     .await
                     .is_some()
             {
@@ -2076,16 +2052,11 @@ mod session_tests {
     /// keepalives (the post-SETUP bound is 90 s at the default timeout).
     #[tokio::test(start_paused = true)]
     async fn an_authenticated_or_set_up_connection_outlives_the_admission_deadline() {
+        use crate::rtsp::server::mount::MountEntry;
         use std::time::Duration;
-        use tokio::io::AsyncWriteExt;
-        async fn exchange(c: &mut TcpStream, req: &str) -> String {
-            c.write_all(req.as_bytes()).await.unwrap();
-            read_response_in_paused_steps(c, Duration::from_secs(5)).await
-        }
 
-        let server = serve_one(make_state_with_basic_auth()).await;
-        let mut c = connect(&server).await;
-        let r = exchange(
+        let (mut c, _task) = duplex_session(make_state_with_basic_auth());
+        let r = duplex_exchange(
             &mut c,
             "DESCRIBE rtsp://127.0.0.1/none RTSP/1.0\r\nCSeq: 1\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n",
         )
@@ -2093,12 +2064,12 @@ mod session_tests {
         assert!(r.starts_with("RTSP/1.0 404"), "authenticated DESCRIBE: {r}");
         for cseq in 2..=5u32 {
             assert!(
-                closed_within(&mut c, Duration::from_secs(10))
+                duplex_closed_within(&mut c, Duration::from_secs(10))
                     .await
                     .is_none(),
                 "an authenticated connection was closed before OPTIONS {cseq}"
             );
-            let r = exchange(
+            let r = duplex_exchange(
                 &mut c,
                 &format!("OPTIONS rtsp://h/ RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n"),
             )
@@ -2106,29 +2077,31 @@ mod session_tests {
             assert!(r.starts_with("RTSP/1.0 200"), "OPTIONS {cseq}: {r}");
         }
 
-        let (server, _mount) = state_with_publish_mount_and_listener().await;
-        let mut c = connect(&server).await;
-        let r = exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        let state = crate::rtsp::server::test_state();
+        let mount = publish::mount::PublishMountState::new("/pub", 8, Default::default());
+        state
+            .mounts
+            .lock()
+            .unwrap()
+            .insert("/pub".into(), MountEntry::Publish(mount));
+        let (mut c, _task) = duplex_session(state);
+        let r = duplex_exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
         assert!(r.starts_with("RTSP/1.0 200"), "ANNOUNCE: {r}");
-        let r = exchange(
+        let r = duplex_exchange(
             &mut c,
             "SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n",
         )
         .await;
         assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
-        let sid = r
-            .lines()
-            .find_map(|l| l.strip_prefix("Session: "))
-            .map(|v| v.split(';').next().unwrap().trim().to_owned())
-            .unwrap_or_else(|| panic!("Session header in the SETUP answer: {r}"));
+        let sid = session_header(&r);
         for cseq in 3..=4u32 {
             assert!(
-                closed_within(&mut c, Duration::from_secs(25))
+                duplex_closed_within(&mut c, Duration::from_secs(25))
                     .await
                     .is_none(),
                 "a set-up connection was closed before keepalive {cseq}"
             );
-            let r = exchange(
+            let r = duplex_exchange(
                 &mut c,
                 &format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"),
             )
