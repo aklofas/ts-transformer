@@ -21,7 +21,7 @@ on:
         type: string
         required: true
       release:
-        description: "qualify as a release: require the 72-hour soak and corpus archives for this tree"
+        description: "qualify as a release: require the release soak (`[soak] required_duration_s`) and corpus archives for this tree"
         type: boolean
         default: false
   push:
@@ -596,7 +596,7 @@ jobs:
         # No continue-on-error: an empty or malformed artefact makes the
         # collector exit 2 with no record, and that must fail this job.
         # A v* tag push, or a dispatch with `release: true`, qualifies a
-        # release: the record is GO only with a passing 72-hour soak archive
+        # release: the record is GO only with a passing release-length soak archive
         # and a passing corpus archive for this tree (fetch-depth 0 above lets
         # the collector diff an earlier soaked tree against this one).
         env:

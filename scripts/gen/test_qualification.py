@@ -838,7 +838,7 @@ class ReleaseModeTests(unittest.TestCase):
                                  archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
             rec = collect(release=True, archives=rows)
             self.assertEqual(rec["verdict"], "NO-GO", dur)
-            # A newer failed 72-hour row is itself the chosen archive.
+            # A newer failed release-length row is itself the chosen archive.
             want = ("soak: archive soak-bad, a newer run on an equivalent tree, recorded overall_pass=false"
                     if dur == 3600 else "soak: archive soak-bad recorded overall_pass=false")
             self.assertIn(want, rec["verdict_reasons"])

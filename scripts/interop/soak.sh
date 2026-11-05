@@ -581,7 +581,7 @@ PROXY_ADDR_POLL_TIMEOUT_S=10
 # sampler tick so the fix holds even under scheduling jitter well
 # beyond what was actually measured. Applied on BOTH sides of the gap:
 # the sampler stops this much EARLIER than its nominal deadline (losing
-# well under 0.02% of a 72h run's own RSS coverage — negligible), and
+# well under 0.02% of a release-length run's own RSS coverage — negligible), and
 # both proxies' `--run-seconds` gain this much extra margin, so neither
 # fix alone has to carry the full burden.
 SAMPLER_END_SLACK_S=35

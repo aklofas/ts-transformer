@@ -887,7 +887,9 @@ launched with `--no-whep`, `--no-rtsp-publish` or `--no-rtsp-publish-es`
 still passes. The last stderr line of `report soak` prints
 `legs=srt, rist, ...`; copy those names into the run's row in
 `tests/coverage/evidence-archives.toml` as `legs = ["srt", "rist", ...]`.
-The release gate accepts a soak of at least the required duration (`[soak] required_duration_s` in `tests/coverage/evidence-archives.toml`, 172 800 s = 48 hours) only when its row lists all five:
+The release gate accepts a soak of at least the required duration (`[soak]
+required_duration_s` in `tests/coverage/evidence-archives.toml`, 172 800 s =
+48 hours) only when its row lists all five:
 srt, rist, rtsp-publish, rtsp-publish-es and whep.
 
 The supervisor polls every worker every 30 s. A death more than
@@ -898,7 +900,11 @@ deaths are ordinary end-of-run staggering. The first 72-hour attempt lost
 both senders 14.5 h in and idled unnoticed for 12 h, which is why this
 exists.
 
-The RSS-slope gate defaults to 200 KiB/hour for runs of 24 h or more (the release soak is 48 h from 0.9.1, ruling R38, with 300-s publisher generations and a 4-h outage period — 576 generations and 12 windows, more events than the 0.9.0 run's 72 h gave; warm-up is `min(1800 s, 0.1667 × duration)` = 30 min, so the post-warm-up slope window is ≈47.5 h), pinned from the 2026-08-05 run: its
+The RSS-slope gate defaults to 200 KiB/hour for runs of 24 h or more (the
+release soak is 48 h from 0.9.1, with 300-s publisher generations and a 4-h
+outage period — 576 generations and 12 windows, more events than the 0.9.0
+run's 72 h gave; warm-up is `min(1800 s, 0.1667 × duration)` = 30 min, so the
+post-warm-up slope window is ≈47.5 h), pinned from the 2026-08-05 run: its
 worst post-warm-up slope was 68.8 KiB/h, warm-up convergence to a ~176 MiB plateau, and every slope over its
 final 24 h was at most 18 KiB/h. Runs under 24 h stay provisional unless a
 threshold is passed, because under realistic AU sizes the senders take
