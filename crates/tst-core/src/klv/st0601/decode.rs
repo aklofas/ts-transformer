@@ -299,11 +299,35 @@ fn decode_inner(
     // occurrence could refine).
     let mut tags_seen: Vec<u32> = Vec::new();
 
-    for r in Iter::local_set(body) {
+    // Last-duplicate-wins: record the ordinal (1-based) of each single-use
+    // tag's last occurrence so earlier ones can be skipped in the main loop.
+    // A framing error ends the pre-pass; the main loop reports it with the
+    // same offsets as before.
+    let mut last_ordinal = [0u32; 256];
+    for (i, r) in Iter::local_set(body).enumerate() {
+        let Ok(f) = r else { break };
+        if let Ok(t) = u8::try_from(f.tag)
+            && !matches!(t, 1 | 102 | 115)
+            && lookup(t).is_some()
+        {
+            last_ordinal[usize::from(t)] = i as u32 + 1;
+        }
+    }
+
+    for (i, r) in Iter::local_set(body).enumerate() {
         let f = r.map_err(|mut e| {
             crate::klv::length::rebase_offset(&mut e, body_offset);
             e
         })?;
+        if let Ok(t) = u8::try_from(f.tag) {
+            let last = last_ordinal[usize::from(t)];
+            if last != 0 && last != i as u32 + 1 {
+                // Superseded by a later occurrence of the same tag; it
+                // still counts as encountered for Tag 102's capture.
+                tags_seen.push(f.tag);
+                continue;
+            }
+        }
         if f.tag == 1 {
             // Checksum: capture for later verification.
             // Byte offset of f.value within buf — used both to report a
@@ -389,6 +413,12 @@ fn apply_tag(
         record.unknown.push(OwnedRawField::from(f.clone()));
         return Ok(());
     };
+    // ST 0107.5 §6.3.4: a zero-length optional item means "unknown" — the
+    // field stays unset and no error is raised. Items 2 and 65 are
+    // mandatory; 102 and 115 are multi-instance and keep their handlers.
+    if f.value.is_empty() && !matches!(tag, 2 | 65 | 102 | 115) {
+        return Ok(());
+    }
     match (spec.encoding, tag) {
         (Encoding::Pack, 102 | 115) => return apply_multi_instance(record, f, tags_seen),
         (Encoding::Pack, _) => return apply_pack(record, f),
