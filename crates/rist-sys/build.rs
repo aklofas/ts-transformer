@@ -530,6 +530,80 @@ const SOURCE_FIXUPS: &[SourceFixup] = &[
               \n\
               \t\t\tif (dec != 0 || k->bad_decryption)\n",
     },
+    // A sender that picks a fresh nonce for every datagram made the receiver
+    // derive a key (PBKDF2) per packet: the rekey limit engages only after
+    // decryption failures, and each successful install resets their count.
+    // The fixups below give each key a rekey budget that every derivation a
+    // received packet triggers must spend, whatever the failure count says.
+    SourceFixup {
+        name: "psk-rekey-budget: state",
+        file: "src/crypto/psk.h",
+        old: "    uint64_t last_rekey; /* timestampNTP_u64() of the last nonce-adoption rekey; rate-limits PBKDF2 */\n",
+        new: "    uint64_t last_rekey; /* timestampNTP_u64() of the last nonce-adoption rekey; rate-limits PBKDF2 */\n\
+              \x20   uint64_t rekey_tat; /* rekey budget: when the next rekey is due at the refill rate (see psk.c) */\n",
+    },
+    SourceFixup {
+        // The budget: a token bucket in GCRA form, one timestamp per key.
+        name: "psk-rekey-budget: admit",
+        file: "src/crypto/psk.c",
+        old: "#define RIST_REKEY_ABUSE_STRIKES 2\n",
+        new: "#define RIST_REKEY_ABUSE_STRIKES 2\n\
+              \n\
+              /* Rekey budget, per key and independent of bad_count. A sender that puts a\n\
+              \x20* fresh nonce on every datagram would otherwise buy one PBKDF2 per packet:\n\
+              \x20* each successful install resets bad_count, so the strike-gated limit above\n\
+              \x20* never engages. The budget refills one rekey per RIST_REKEY_MIN_INTERVAL\n\
+              \x20* (100 per second, five times the ~20 per second a reflector subscriber's\n\
+              \x20* RTCP/media interleave needs) and holds RIST_REKEY_BURST, so a rotation\n\
+              \x20* next to an interleave switch still passes. It is kept as one timestamp\n\
+              \x20* (the generic cell rate algorithm): rekey_tat is when the next rekey is due\n\
+              \x20* at the refill rate, and a rekey is refused while that lies more than\n\
+              \x20* RIST_REKEY_BURST - 1 intervals ahead. A clock that reads 0 (see\n\
+              \x20* timestampNTP_u64) admits every rekey, as the limit above does. */\n\
+              #define RIST_REKEY_BURST 16\n\
+              \n\
+              static bool _librist_crypto_rekey_admit(struct rist_key *key, uint64_t now)\n\
+              {\n\
+              \tif (!now)\n\
+              \t\treturn true;\n\
+              \tif (key->rekey_tat < now)\n\
+              \t\tkey->rekey_tat = now;\n\
+              \tif (key->rekey_tat - now > (uint64_t)(RIST_REKEY_BURST - 1) * RIST_REKEY_MIN_INTERVAL)\n\
+              \t\treturn false;\n\
+              \tkey->rekey_tat += RIST_REKEY_MIN_INTERVAL;\n\
+              \treturn true;\n\
+              }\n",
+    },
+    SourceFixup {
+        // The decrypt spends the budget before it adopts the nonce, so a
+        // refused rekey keeps the current key and the packet is dropped.
+        name: "psk-rekey-budget: decrypt",
+        file: "src/crypto/psk.c",
+        old: "        memcpy(key->gre_nonce, nonce, sizeof(key->gre_nonce));\n",
+        new: "        /* The rekey budget bounds every derivation, whatever bad_count says. */\n\
+              \x20       if (!_librist_crypto_rekey_admit(key, now))\n\
+              \x20           return -1;\n\
+              \x20       memcpy(key->gre_nonce, nonce, sizeof(key->gre_nonce));\n",
+    },
+    SourceFixup {
+        // The Advanced-profile nonce preannounce derives on the same key.
+        name: "psk-rekey-budget: preannounce",
+        file: "src/crypto/psk.c",
+        old: "\tmemcpy(key->gre_nonce, nonce, sizeof(key->gre_nonce));\n",
+        new: "\tif (!_librist_crypto_rekey_admit(key, now))\n\
+              \t\treturn;\n\
+              \tmemcpy(key->gre_nonce, nonce, sizeof(key->gre_nonce));\n",
+    },
+    SourceFixup {
+        // A fresh passphrase starts with a full budget, as it clears the
+        // lockout and the last-rekey time.
+        name: "psk-rekey-budget: passphrase set",
+        file: "src/crypto/psk.c",
+        old: "\tkey->last_rekey = 0;\n\t_librist_crypto_psk_generate_nonce(key);\n",
+        new: "\tkey->last_rekey = 0;\n\
+              \tkey->rekey_tat = 0;\n\
+              \t_librist_crypto_psk_generate_nonce(key);\n",
+    },
 ];
 
 /// Paths under `vendor/librist` that are not staged. KEEP IN SYNC with the
@@ -689,6 +763,21 @@ fn check_psk_decrypt_status(file: &str, text: &str) {
                      `return;` no psk-decrypt-status fixup covers: re-check every early \
                      return in the bumped source and add a fixup that returns -1 (or 0 only \
                      after the payload was decrypted)"
+                );
+            }
+            // Every key derivation a received packet can trigger spends the
+            // rekey budget: the decrypt and the nonce preannounce do; the
+            // encrypt and the passphrase set are driven by the application.
+            let derivations = text.matches("_librist_crypto_aes_key(key)").count();
+            let budgeted = text
+                .matches("_librist_crypto_rekey_admit(key, now)")
+                .count();
+            if derivations != 4 || budgeted != 2 {
+                panic!(
+                    "rist-sys: src/crypto/psk.c has {derivations} `_librist_crypto_aes_key(key)` \
+                     calls and {budgeted} rekey-budget checks (expected 4 and 2): re-check which \
+                     derivations a received packet can trigger in the bumped source and route \
+                     each through `_librist_crypto_rekey_admit`"
                 );
             }
         }

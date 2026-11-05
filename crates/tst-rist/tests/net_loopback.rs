@@ -74,6 +74,9 @@ const PORT_THROTTLE_PROXY: u16 = 33041;
 const PORT_LOCKOUT_RECV: u16 = 33111;
 #[cfg(feature = "mbedtls")]
 const PORT_LOCKOUT_PROXY: u16 = 33113;
+/// Main profile: the encrypted receiver for the key-rotation test.
+#[cfg(feature = "mbedtls")]
+const PORT_ROTATION: u16 = 33115;
 #[cfg(not(windows))]
 const RTCP_CHILD_ENV: &str = "TST_RIST_RTCP_COLLISION_CHILD";
 #[cfg(not(windows))]
@@ -1137,5 +1140,61 @@ fn main_profile_encrypted_receiver_recovers_after_a_garbage_lockout() {
     assert!(
         delivered >= 15,
         "expected at least 15 of 20 packets after the lockout; got {delivered}"
+    );
+}
+
+/// A sender that rotates its key every few packets makes the receiver rekey
+/// on each new nonce; the receiver's rekey budget must leave that stream
+/// whole.
+#[cfg(feature = "mbedtls")]
+#[test]
+fn main_profile_key_rotation_survives_the_rekey_budget() {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    let psk = "loopback-test-secret-keep-private";
+    let recv = RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{PORT_ROTATION}"))
+        .unwrap()
+        .profile(RistProfile::Main)
+        .encryption(EncryptionKey::aes256(psk))
+        .listen()
+        .expect("listen");
+
+    let (tx_payloads, rx_payloads) = mpsc::channel::<Vec<Vec<u8>>>();
+    let _recv_thread = thread::spawn(move || {
+        // Inside the nextest network kill (20 s) with the connect waits.
+        let collected = drain_n(recv, 100, Duration::from_secs(8));
+        let _ = tx_payloads.send(collected);
+    });
+
+    thread::sleep(Duration::from_millis(300));
+    let mut send = RistTransportBuilder::new(&format!("rist://127.0.0.1:{PORT_ROTATION}"))
+        .unwrap()
+        .profile(RistProfile::Main)
+        .encryption(EncryptionKey::aes256(psk).rotation(10))
+        .connect()
+        .expect("connect");
+    thread::sleep(Duration::from_millis(1200));
+
+    let pkts: Vec<[u8; 188]> = (1..=100).map(synthetic_ts_packet).collect();
+    for p in &pkts {
+        send.send_bytes(p).expect("send");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let collected = rx_payloads
+        .recv_timeout(Duration::from_secs(12))
+        .expect("recv thread didn't return in time");
+    for got in &collected {
+        assert!(
+            pkts.iter().any(|p| got.as_slice() == p.as_slice()),
+            "decrypted payload mismatch"
+        );
+    }
+    let delivered = pkts
+        .iter()
+        .filter(|p| collected.iter().any(|got| got.as_slice() == p.as_slice()))
+        .count();
+    assert!(
+        delivered >= 90,
+        "expected at least 90 of 100 packets across about ten key rotations; got {delivered}"
     );
 }
