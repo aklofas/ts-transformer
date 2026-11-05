@@ -25,6 +25,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::RtspServerError;
+use crate::packet::RtpHeader;
 use crate::rtsp::message::{RtspFraming, RtspMethod, RtspRequest};
 use crate::rtsp::server::ServerState;
 use crate::rtsp::server::auth::generate_nonce;
@@ -551,21 +552,21 @@ where
         // publisher really was idle.
         // The wait is what is left of the window, so control-channel traffic
         // that is not media (keepalives) cannot postpone it.
-        let publish_idle = state
-            .builder
-            .publish_idle_timeout
-            .filter(|_| msg_started.is_none());
+        let publish_idle = state.builder.publish_idle_timeout;
         let publish_left = publish_idle.and_then(|t| {
             session
                 .publisher()
                 .and_then(|p| p.idle_for())
                 .map(|d| t.saturating_sub(d))
         });
-        let wait_bound = publish_left.map_or(idle_bound, |left| idle_bound.min(left));
-        let read_bound = match msg_started {
-            Some(t0) => wait_bound.saturating_sub(t0.elapsed()),
-            None => wait_bound,
+        // The two deadlines are independent: a partial request must not
+        // suspend the publish idle timeout, and media must not extend a
+        // request's framing deadline.
+        let framing_left = match msg_started {
+            Some(t0) => idle_bound.saturating_sub(t0.elapsed()),
+            None => idle_bound,
         };
+        let read_bound = publish_left.map_or(framing_left, |left| framing_left.min(left));
         let mut chunk = [0u8; 4096];
         let n = tokio::select! {
             r = read_half.read(&mut chunk) => match r {
@@ -580,16 +581,6 @@ where
                 }
             },
             _ = tokio::time::sleep(read_bound) => {
-                if msg_started.is_some() {
-                    tracing::warn!(
-                        target: "tst_rtp::server",
-                        peer = %peer,
-                        buffered = buf.len(),
-                        timeout_secs = idle_bound.as_secs(),
-                        "request not completed within the idle bound; closing session"
-                    );
-                    break;
-                }
                 // A publisher's media is liveness too: a TCP-interleaved
                 // publisher already re-arms this sleep by landing bytes on
                 // the read above (next iteration starts a fresh timer), but
@@ -610,6 +601,21 @@ where
                         "publish idle timeout; closing session"
                     );
                     break;
+                }
+                if let Some(t0) = msg_started {
+                    if t0.elapsed() >= idle_bound {
+                        tracing::warn!(
+                            target: "tst_rtp::server",
+                            peer = %peer,
+                            buffered = buf.len(),
+                            timeout_secs = idle_bound.as_secs(),
+                            "request not completed within the idle bound; closing session"
+                        );
+                        break;
+                    }
+                    // Woken by the publish deadline with media still
+                    // flowing: the request has time left.
+                    continue 'serve;
                 }
                 let media_recent = session
                     .publisher()
@@ -693,9 +699,16 @@ where
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .on_rtp(track, payload);
-                            publish
-                                .last_media_ms
-                                .store(PublishSession::now_ms(), Ordering::Relaxed);
+                            // Liveness only for a packet the track would
+                            // accept, as on the UDP path.
+                            let expected_pt = publish.tracks[track].announced.payload_type;
+                            if RtpHeader::decode(payload)
+                                .is_ok_and(|p| p.header.payload_type == expected_pt)
+                            {
+                                publish
+                                    .last_media_ms
+                                    .store(PublishSession::now_ms(), Ordering::Relaxed);
+                            }
                         }
                         Some((track, true)) => publish
                             .adapter

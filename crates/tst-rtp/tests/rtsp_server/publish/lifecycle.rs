@@ -273,6 +273,53 @@ fn keepalives_without_media_do_not_outlast_the_publish_idle_timeout() {
     server.stop().ok();
 }
 
+/// Interleaved frames that fail RTP validation (wrong payload type, or too
+/// short to be RTP) are not liveness: a publisher sending only those is ended
+/// by the publish idle timeout, as a UDP publisher sending them would be.
+#[test]
+fn malformed_interleaved_frames_do_not_keep_a_publisher_alive() {
+    let (server, mount, port) = publish_idle_server();
+    let mut p = RawPublisher::connect(port);
+    let ch = record_interleaved(&mut p, "/pub");
+    let bundle = &ts_fixture_packets(1)[0];
+
+    let deadline = Instant::now() + scaled(Duration::from_secs(3));
+    let mut seq = 0u16;
+    while Instant::now() < deadline && mount.publisher().is_some() {
+        p.send_frame(ch, &[1, 2, 3]);
+        p.send_frame(ch, &rtp_wrap(seq, 0, 0xA, 96, bundle));
+        seq = seq.wrapping_add(1);
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        mount.publisher().is_none(),
+        "malformed interleaved frames kept a media-less publisher alive"
+    );
+    drop(p);
+    server.stop().ok();
+}
+
+/// A single byte of a request that never completes does not suspend the
+/// publish idle timeout while the framing bound is still far away.
+#[test]
+fn a_partial_request_does_not_suspend_the_publish_idle_timeout() {
+    let (server, mount, port) = publish_idle_server();
+    let mut p = RawPublisher::connect(port);
+    record_interleaved(&mut p, "/pub");
+    p.write_raw(b"G");
+
+    let (_bytes, eof) = p.read_until(
+        b"\0never\0",
+        Instant::now() + scaled(Duration::from_secs(3)),
+    );
+    assert!(
+        eof,
+        "a partial request kept a media-less publisher past the publish idle timeout"
+    );
+    assert!(mount.publisher().is_none());
+    server.stop().ok();
+}
+
 /// Media inside the window keeps the publisher past the timeout.
 #[test]
 fn a_publishing_publisher_outlives_the_publish_idle_timeout() {
