@@ -338,7 +338,7 @@ class RenderTests(unittest.TestCase):
         body += "## Evidence for the 0.8.0 tree\n\nold text\n"
         put(page, body)
         exit_page = os.path.join(tmp, q.EXIT_PAGE)
-        put(exit_page, "# Exit\n\n" + q.exit_wrapped(None, [], []) + "\n\nrest\n")
+        put(exit_page, "# Exit\n\n" + q.exit_wrapped(None, [], [], 0) + "\n\nrest\n")
         return page
 
     def test_check_fails_when_the_exit_criteria_block_is_stale_and_write_fixes_it(self):
@@ -349,7 +349,7 @@ class RenderTests(unittest.TestCase):
         rc, _, err = self.run_cli(["render", "--json", jf, "--root", tmp, "--write"])
         self.assertEqual(rc, 0, err)
         exit_page = os.path.join(tmp, q.EXIT_PAGE)
-        self.assertIn("**The 72-hour soak today.**", slurp(exit_page))
+        self.assertIn("**The release soak today.**", slurp(exit_page))
         self.assertEqual(self.run_cli(["render", "--json", jf, "--root", tmp, "--check"])[0], 0)
         spit(exit_page, slurp(exit_page).replace("Status:", "State:", 1))
         rc, _, err = self.run_cli(["render", "--json", jf, "--root", tmp, "--check"])
@@ -1162,21 +1162,35 @@ class ExitCriteriaTests(unittest.TestCase):
         rows = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False, legs=FIVE),
                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = self.release_record(rows)
-        text = q.render_exit_criteria(rec, rec["archives"], [])
-        self.assertIn("**The 72-hour soak today.**", text)
+        text = q.render_exit_criteria(rec, rec["archives"], [], 172800)
+        self.assertIn("**The release soak today.**", text)
         self.assertIn("Status: not met: soak: archive soak-rel recorded overall_pass=false.", text)
         self.assertIn("**The corpus today.**", text)
         self.assertIn("`corpus-rel`", text)
 
     def test_exit_criteria_block_says_met_for_a_raw_pass(self):
         rec = self.release_record(RELEASE_OK)
-        text = q.render_exit_criteria(rec, rec["archives"], [])
-        soak = [l for l in text.splitlines() if l.startswith("**The 72-hour soak today.**")][0]
+        text = q.render_exit_criteria(rec, rec["archives"], [], 172800)
+        soak = [l for l in text.splitlines() if l.startswith("**The release soak today.**")][0]
         self.assertIn("`soak-rel`", soak)
         self.assertIn("harness verdict PASS", soak)
         self.assertTrue(soak.endswith(" Status: met."), soak)
         corpus = [l for l in text.splitlines() if l.startswith("**The corpus today.**")][0]
         self.assertTrue(corpus.endswith(" Status: met."), corpus)
+
+    def test_the_soak_paragraph_prints_the_required_duration_from_the_table(self):
+        rec = self.release_record(RELEASE_OK)
+        text = q.render_exit_criteria(rec, rec["archives"], [], 172800)
+        soak = [l for l in text.splitlines() if l.startswith("**The release soak today.**")][0]
+        self.assertIn("The gate requires at least 172800 s (48 hours).", soak)
+        self.assertIn('<a id="the-release-soak-today"></a>', text)
+        self.assertNotIn("72-hour", text)
+
+    def test_a_record_without_required_duration_s_still_renders(self):
+        rec = self.release_record(RELEASE_OK)
+        rec["release_vm"].pop("required_duration_s", None)
+        text = q.render_exit_criteria(rec, rec["archives"], [], 172800)
+        self.assertIn("**The release soak today.**", text)
 
     def waived_record(self, soak_id="soak-9.9.0-2026-10-27", tag=None):
         """A release record collected on a raw pass whose soak the maintainer waived
@@ -1195,24 +1209,24 @@ class ExitCriteriaTests(unittest.TestCase):
 
     def test_a_waiver_names_the_release_its_soak_archive_stood_for(self):
         rec = self.waived_record()
-        text = q.render_exit_criteria(rec, rec["archives"], [])
+        text = q.render_exit_criteria(rec, rec["archives"], [], 172800)
         self.assertIn("harness verdict FAIL, waived: 2 verdict(s) by maintainer on 2026-10-28, "
                       "fixed in 9.9.1", text)
         self.assertIn("Status: met by waiver (9.9.0); a raw pass is required from 9.9.1.", text)
         # A tag on the record names the release instead.
         rec = self.waived_record(tag="v9.9.5")
-        self.assertIn("met by waiver (9.9.5);", q.render_exit_criteria(rec, rec["archives"], []))
+        self.assertIn("met by waiver (9.9.5);", q.render_exit_criteria(rec, rec["archives"], [], 172800))
         # An archive id that names no release, and no tag: no version is claimed.
         rec = self.waived_record(soak_id="soak-rel")
         self.assertIn("Status: met by waiver; a raw pass is required from 9.9.1.",
-                      q.render_exit_criteria(rec, rec["archives"], []))
+                      q.render_exit_criteria(rec, rec["archives"], [], 172800))
 
     def test_a_waiver_recorded_after_collection_reads_as_met_by_waiver(self):
         rec = self.release_record(RELEASE_OK)
         archives = [dict(a, overall_pass=False, waiver=dict(WAIVER, fixed_in="9.9.1"))
                     if a["id"] == "soak-rel" else a for a in rec["archives"]]
         self.assertIn("Status: met by waiver; a raw pass is required from 9.9.1.",
-                      q.render_exit_criteria(rec, archives, []))
+                      q.render_exit_criteria(rec, archives, [], 172800))
 
     def test_a_dated_changelog_section_leaves_the_block_unchanged(self):
         tmp = tempfile.mkdtemp()
@@ -1230,26 +1244,26 @@ class ExitCriteriaTests(unittest.TestCase):
 
     def test_a_mid_cycle_record_names_the_newest_archives(self):
         rec = collect(archives=RELEASE_OK)
-        text = q.render_exit_criteria(rec, rec["archives"], [])
+        text = q.render_exit_criteria(rec, rec["archives"], [], 172800)
         self.assertIn("no release qualification is recorded on this tree; the newest soak archive is "
                       "`soak-rel`", text)
         self.assertIn("the newest corpus archive is `corpus-rel`", text)
-        none = q.render_exit_criteria(None, rec["archives"], [])
+        none = q.render_exit_criteria(None, rec["archives"], [], 172800)
         self.assertIn("no release qualification is recorded on this tree", none)
 
     def test_the_arm64_subset_is_met_only_by_a_clean_aarch64_census(self):
         rec = self.release_record(RELEASE_OK)
         self.assertIn("**The ARM64 subset today.** Status: open: the committed qualification record carries no "
                       "linux-aarch64 census.",
-                      q.render_exit_criteria(rec, rec["archives"], []))
+                      q.render_exit_criteria(rec, rec["archives"], [], 172800))
         arm = {"arch": "linux-aarch64", "shape": "subset-arm64", "total": 80, "pass": 70, "fail": 0,
                "skipped": 10, "stale": 0}
-        text = q.render_exit_criteria(rec, rec["archives"], [arm])
+        text = q.render_exit_criteria(rec, rec["archives"], [arm], 172800)
         self.assertIn("**The ARM64 subset today.** The linux-aarch64 census (subset-arm64) reads "
                       "80 / 70 / 0 / 10: total, pass, fail, skipped. Status: met, with 10 cell(s) skipped for "
                       "a missing peer tool.", text)
-        self.assertIn("Status: met.", q.render_exit_criteria(rec, rec["archives"], [dict(arm, skipped=0)]))
-        text = q.render_exit_criteria(rec, rec["archives"], [dict(arm, fail=1)])
+        self.assertIn("Status: met.", q.render_exit_criteria(rec, rec["archives"], [dict(arm, skipped=0)], 172800))
+        text = q.render_exit_criteria(rec, rec["archives"], [dict(arm, fail=1)], 172800)
         self.assertIn("Status: open: the linux-aarch64 census has 1 failure(s).", text)
 
 
