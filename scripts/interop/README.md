@@ -1352,13 +1352,16 @@ cannot tell such a gap from one the tap made, so in Lossy mode — and ONLY
 there; offline `verify` is Strict and byte-for-byte unchanged — it excuses
 four narrow things:
 
-- An unexplained **discontinuity-family** signal (`ContinuityJump`,
-  `OtherDiscontinuity`) moves out of `unexplained_events` into
-  `unexplained_transport_loss`. It stays counted in the verifier's own
-  `discontinuities`, which is what the Lossy contract already said to do
-  with it. An unexplained `Resync`, `PsiChecksum`, `MalformedPes` or
-  `OtherNonConformant` still FAILS: a lost packet does not forge a bad CRC
-  or a malformed PES header.
+- An unexplained `ContinuityJump` moves out of `unexplained_events` into
+  `unexplained_transport_loss`. An unexplained `OtherDiscontinuity` (a PES
+  or aggregate PES cap overrun, or a set `discontinuity_indicator`) moves
+  there only beside evidence of loss: a continuity jump on its own PID
+  within the attribution window before it, or a position inside the current
+  reconnect gap. Without either it FAILS: no lost packet overruns a cap on
+  its own, and loss never sets the indicator. Either way it stays counted
+  in the verifier's own `discontinuities`. An unexplained `Resync`,
+  `PsiChecksum`, `MalformedPes` or `OtherNonConformant` still FAILS: a lost
+  packet does not forge a bad CRC or a malformed PES header.
 - An undetected or unrecovered injection with a **foreign** continuity jump
   in its window moves to `undetected_lost` / `unrecovered_lost`. Foreign is
   load-bearing: an injection's OWN jump never excuses it, or a `drop` —
