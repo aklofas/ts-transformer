@@ -324,6 +324,17 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
+      - name: Install symbolizer
+        # llvm for the unversioned llvm-symbolizer the TSan runtime looks for
+        # on PATH (the native jobs install it too). Without it the runtime
+        # falls back to addr2line, and every suppressed report is symbolised
+        # through a fresh addr2line process per test process before the
+        # suppression can match: multi-second stalls inside the loopback
+        # tests' read windows (ci-flakes "TSan rtsp_server test margins").
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y llvm
+
       - name: Install nightly + rust-src
         run: |
           rustup toolchain install nightly --profile minimal --no-self-update
