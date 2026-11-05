@@ -897,26 +897,28 @@ def _criterion(kind, entry, archives, gate, rec):
     return row, status
 
 
-def render_exit_criteria(rec, archives, census):
+def render_exit_criteria(rec, archives, census, required_s):
     """The status paragraphs of the 1.0 exit-criteria page: the soak and corpus
     criteria from the committed record's release gate and the archive table, the
     ARM64 subset from the interop censuses."""
     gate = (rec or {}).get("release_vm") or {}
     soaks = [a for a in archives if a["kind"] == "soak"]
-    long = [a for a in _by_date(soaks) if a.get("expected_duration_s") == 259200]
+    long = [a for a in _by_date(soaks) if (a.get("expected_duration_s") or 0) >= required_s]
     newest_soak = (long or _by_date(soaks) or [None])[0]
     newest_corpus = _newest([a for a in archives if a["kind"] == "corpus"])
     out = []
+    needs = "The gate requires at least %d s (%d hours)." % (required_s, required_s // 3600) if required_s else ""
     if not gate.get("release_mode"):
         none = "Status: no release qualification is recorded on this tree; the newest %s archive is %s."
-        out.append(_today("the-72-hour-soak-today", "The 72-hour soak today.", none % (
-            "soak", "none" if newest_soak is None else "%s, %s" % (_soak_desc(newest_soak), _raw_text(newest_soak)))))
+        out.append(_today("the-release-soak-today", "The release soak today.", none % (
+            "soak", "none" if newest_soak is None else "%s, %s" % (_soak_desc(newest_soak), _raw_text(newest_soak)))
+            + (" " + needs if needs else "")))
         out.append(_today("the-corpus-today", "The corpus today.", none % (
             "corpus", "none" if newest_corpus is None
             else "%s, %s" % (_corpus_desc(newest_corpus), _raw_text(newest_corpus)))))
     else:
-        cited = "The committed release qualification (%s) cites %s %s: %s. Status: %s."
-        for kind, anchor, label, desc in (("soak", "the-72-hour-soak-today", "The 72-hour soak today.", _soak_desc),
+        cited = "The committed release qualification (%s) cites %s %s: %s. %sStatus: %s."
+        for kind, anchor, label, desc in (("soak", "the-release-soak-today", "The release soak today.", _soak_desc),
                                           ("corpus", "the-corpus-today", "The corpus today.", _corpus_desc)):
             entry = gate.get(kind)
             if entry is None:
@@ -925,7 +927,8 @@ def render_exit_criteria(rec, archives, census):
                     rec["label"], kind, reasons[0] if reasons else "%s: none recorded" % kind)
             else:
                 row, status = _criterion(kind, entry, archives, gate, rec)
-                body = cited % (rec["label"], kind, desc(dict(entry, **row)), _raw_text(row), status)
+                body = cited % (rec["label"], kind, desc(dict(entry, **row)), _raw_text(row),
+                                   needs + " " if kind == "soak" and needs else "", status)
             out.append(_today(anchor, label, body))
     arm = next((c for c in census if c.get("arch") == "linux-aarch64"), None)
     if arm is None:
@@ -941,14 +944,15 @@ def render_exit_criteria(rec, archives, census):
     return "\n\n".join(out) + "\n"
 
 
-def exit_wrapped(rec, archives, census):
-    return EXIT_BEGIN + "\n" + render_exit_criteria(rec, archives, census) + EXIT_END
+def exit_wrapped(rec, archives, census, required_s):
+    return EXIT_BEGIN + "\n" + render_exit_criteria(rec, archives, census, required_s) + EXIT_END
 
 
 def _current_archives(root, rec):
     if os.path.isfile(os.path.join(root, "tests/coverage/evidence-archives.toml")):
-        return load_archives(root)[0]
-    return (rec or {}).get("archives", [])
+        rows, _, required_s = load_archives(root)
+        return rows, required_s
+    return (rec or {}).get("archives", []), ((rec or {}).get("release_vm") or {}).get("required_duration_s") or 0
 
 
 def wrapped(rec):
@@ -985,9 +989,10 @@ def cmd_render(args):
     with open(exit_page) as f:
         exit_text = f.read()
     census = ((rec or {}).get("interop") or {}).get("censuses", [])
+    archives, required_s = _current_archives(args.root, rec)
     pages = [(page, PAGE, text, replace_block(text, wrapped(rec))),
              (exit_page, EXIT_PAGE, exit_text,
-              replace_block(exit_text, exit_wrapped(rec, _current_archives(args.root, rec), census),
+              replace_block(exit_text, exit_wrapped(rec, archives, census, required_s),
                             EXIT_BEGIN, EXIT_END, EXIT_PAGE, None))]
     if args.write:
         for path, _, old, new in pages:
