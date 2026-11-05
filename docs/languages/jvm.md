@@ -963,7 +963,7 @@ import org.tstrans.shells.Receiver;
 import org.tstrans.SrtException;
 
 // Bind to a kernel-assigned ephemeral port.
-try (Listener listener = new Builder("srt://127.0.0.1:0?mode=listener")
+try (Listener listener = new Builder("srt://127.0.0.1:0")
         .listener()
         .listen()) {
 
@@ -991,7 +991,7 @@ any thread, including while another thread is parked in `accept`.
 ```java
 import org.tstrans.srt.*;
 
-try (Listener listener = new Builder("srt://127.0.0.1:9000?mode=listener")
+try (Listener listener = new Builder("srt://127.0.0.1:9000")
         .listener()
         .listen()) {
     ListenRules rules = listener.rules();
@@ -1183,10 +1183,10 @@ the binding supports one class loader per VM.
 - **`recvBytes()` returns one packet quantum.** Each `recvBytes()` call
   returns exactly one 188-byte TS packet. Accumulate packets to reconstruct
   a larger frame.
-- **`Builder.listen()` requires `?mode=listener` in the URL.** The `Builder`
-  URL must carry `?mode=listener`; calling `.listener()` sets the Java-side
-  mode but does NOT inject the URL parameter. Canonical form:
-  `new Builder("srt://:9000?mode=listener").listener().listen()`.
+- **`.listener()` supplies the URL's `mode=listener`.** When the URL has no
+  `mode=`, `new Builder("srt://:9000").listener().listen()` binds a listener.
+  A URL that says `mode=caller` is refused with `CONFIG_INVALID`. Without
+  `.listener()`, `listen()` needs `?mode=listener` in the URL.
 - **Negative knob values throw `IllegalArgumentException`.** All non-negative
   knob setters (`latencyMs`, `connectTimeoutMs`, etc.) reject negative values
   at construction time, mirroring tst-py's `u32`-typed API.
