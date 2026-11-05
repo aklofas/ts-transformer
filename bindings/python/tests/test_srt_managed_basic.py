@@ -412,3 +412,43 @@ def test_dropping_a_managed_demux_receiver_without_close_is_abortive() -> None:
     )
     assert "DROPPED" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
     assert r.returncode == 0
+
+
+def test_reconnect_attempts_counts_an_attempt_that_has_not_succeeded() -> None:
+    """`reconnect_attempts()` counts reconnect attempts, failed and pending
+    ones included. After the peer leaves, the parked re-accept is attempt
+    1 while no rebuild has succeeded, so a counter of successes reads 0."""
+    port = _free_tcp_port()
+    sender, receiver = _make_managed_pair(port)
+    rescue = receiver.cancel_handle()
+    first = threading.Event()
+    ended: list[BaseException] = []
+
+    def reader() -> None:
+        try:
+            receiver.recv_bytes()
+            first.set()
+            while True:
+                receiver.recv_bytes()  # peer gone -> factory -> parked re-accept
+        except BaseException as exc:  # noqa: BLE001
+            ended.append(exc)
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    try:
+        payload = b"\x47" + b"\x00" * 187
+        for _ in range(7):
+            sender.send_bytes(payload)
+        assert first.wait(5.0), "the first packet never arrived"
+        sender.close()
+        deadline = time.monotonic() + 10.0
+        while receiver.reconnect_attempts() == 0 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert receiver.reconnect_attempts() >= 1
+        assert "reconnect_attempts=0" not in repr(receiver)
+    finally:
+        rescue.cancel()  # ends the parked re-accept
+        t.join(5.0)
+        receiver.close()
+    assert ended and isinstance(ended[0], SrtError), ended
+    assert ended[0].kind == SrtErrorKind.CLOSED, ended[0].kind

@@ -548,8 +548,8 @@ class ManagedReceiver:
     from the inner socket, re-runs bind + accept under the configured
     policy and resumes delivering bytes from the new connection.
 
-    `reconnect_attempts()` exposes the total successful reconnect count
-    (does NOT include the initial bind+accept).
+    `reconnect_attempts()` counts reconnect attempts, failed and pending
+    ones included (not the initial bind+accept).
 
     `srt_stats()` raises `SrtError(IO)`, as on `ManagedSender`. Use
     `socket_stats()` for the 16-field view.
