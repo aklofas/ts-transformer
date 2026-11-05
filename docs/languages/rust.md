@@ -434,8 +434,14 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
 
 - **One publisher per mount.** A second ANNOUNCE on a mount with a live
   publisher answers `403`; the first keeps streaming. When a publisher ends,
-  the mount idles and `generation()` goes up by one. The application
-  transport stays open and silent, and the next publisher feeds it.
+  the mount idles and `generation()` goes up by one. By default the
+  application transport stays open and silent, and the next publisher feeds
+  it. A mount
+  added with `add_publish_mount_with(path,
+  PublishMountConfig::new().end_on_publisher_exit(true))`, or any mount on a
+  server built with `end_publish_mount_on_publisher_exit(true)`, closes
+  instead when a publisher that reached RECORD leaves: its transport reads
+  `TransportError::Closed`.
 - **`into_recv_transport` is take-once per mount.** A second call, from any
   clone of the handle, returns `RtspServerError::TransportTaken` (the
   bindings report it as the `Closed` kind). Clone the handle before

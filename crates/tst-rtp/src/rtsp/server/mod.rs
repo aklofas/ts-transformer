@@ -828,8 +828,14 @@ impl RtspServer {
     /// out in the order their ANNOUNCEs created them; the announcing
     /// publisher holds each one's publisher slot before the handle is
     /// queued. The publisher that announced it may already be gone by the
-    /// time you take the handle: the session end releases the claim, and
-    /// the queued handle stays and reads end-of-stream. Returns `Ok(None)`
+    /// time you take the handle: the session end releases the claim. By
+    /// default the mount then waits for its next publisher, and the
+    /// handle's transport reads nothing until one arrives. When the server
+    /// is built with
+    /// [`RtspServerBuilder::end_publish_mount_on_publisher_exit`] (on-demand
+    /// mounts follow that default), a publisher that reached RECORD closes
+    /// the mount as it leaves, and a handle taken afterwards reads
+    /// `TransportError::Closed` at once. Returns `Ok(None)`
     /// when none arrived in time, and always does when the flag is off.
     ///
     /// Concurrent callers are served one at a time, each mount to exactly
