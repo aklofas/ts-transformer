@@ -2956,7 +2956,8 @@ fn klv_placement_verdict(
 }
 
 /// `klv_placement_excursion_<leg>`: one passing, excused row per
-/// placement excursion the receiver excused as sender-report jitter, so
+/// placement excursion the receiver excused as sender-report jitter, and
+/// one failing row per excusable excursion the per-run cap refused, so
 /// each stays visible in the results.
 fn klv_placement_excursion_rows(
     leg_name: &str,
@@ -2969,15 +2970,17 @@ fn klv_placement_excursion_rows(
     let Some(m) = recv.metrics.klv_placement.as_ref() else {
         return Vec::new();
     };
+    let row = |d: &String, pass: bool| SoakVerdict {
+        name: format!("klv_placement_excursion_{leg_name}"),
+        pass,
+        provisional: false,
+        excused: pass,
+        detail: format!("{leg_name}: {d}"),
+    };
     m.excused_excursion_details
         .iter()
-        .map(|d| SoakVerdict {
-            name: format!("klv_placement_excursion_{leg_name}"),
-            pass: true,
-            provisional: false,
-            excused: true,
-            detail: format!("{leg_name}: {d}"),
-        })
+        .map(|d| row(d, true))
+        .chain(m.rejected_excursion_details.iter().map(|d| row(d, false)))
         .collect()
 }
 
@@ -6964,6 +6967,42 @@ pub(crate) mod tests {
         m.excused_excursions = 1;
         let r = build_soak_results(inputs).unwrap();
         assert!(!verdict(&r, "klv_placement_rtsp-publish-es").pass);
+        assert!(!r.overall_pass);
+    }
+
+    #[test]
+    fn es_leg_placement_renders_a_cap_rejected_excursion_as_a_failing_row() {
+        let mut inputs = es_inputs(6);
+        let m = es_mut(&mut inputs).metrics.klv_placement.as_mut().unwrap();
+        m.out_of_tolerance = 60;
+        m.excursions = 4;
+        m.excused_excursions = 3;
+        m.excused_excursion_cap = 3;
+        m.excused_excursion_details = (1..=3)
+            .map(|g| {
+                format!("sr-jitter: 5 records over 100 ms, max |error| 2.00 ms, generation {g}")
+            })
+            .collect();
+        m.rejected_excursion_details =
+            vec!["sr-jitter not excused: per-run cap 3 reached (generation 4)".to_string()];
+        let r = build_soak_results(inputs).unwrap();
+        let rows: Vec<_> = r
+            .verdicts
+            .iter()
+            .filter(|v| v.name == "klv_placement_excursion_rtsp-publish-es")
+            .collect();
+        assert_eq!(rows.len(), 4, "{rows:?}");
+        assert_eq!(
+            rows.iter().filter(|v| v.pass && v.excused).count(),
+            3,
+            "{rows:?}"
+        );
+        let rejected = rows.iter().find(|v| !v.pass).expect("a failing row");
+        assert!(!rejected.excused && !rejected.provisional, "{rejected:?}");
+        assert_eq!(
+            rejected.detail,
+            "rtsp-publish-es: sr-jitter not excused: per-run cap 3 reached (generation 4)"
+        );
         assert!(!r.overall_pass);
     }
 

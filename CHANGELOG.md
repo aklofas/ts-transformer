@@ -419,6 +419,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The soak, stress and replay judges share one `rss.csv` decoder, and the stress parser rejects a negative or non-finite elapsed time. The soak's errors name the line and the legs or processes it allows, and the first bad line is the one reported.
 - A replay restart whose receiver cannot start is marked failed in that receiver's log.
 - `tst-interop recv`'s deadline covers a TCP accept and an idle TCP peer, and its message prints a fractional window.
+- An excusable placement excursion that the per-run cap refused is recorded apart from the excused ones (`rejected_excursion_details`) and rendered as a failing `klv_placement_excursion_<leg>` row; it was rendered as a passing, excused row.
 
 ### Changed — CI
 
