@@ -475,7 +475,12 @@ COUNTS = dict(files=260, identical=258, changed_explained=2, invariant_failures=
               parse_failures=0, replay_files=12, replay_paths=5, replay_failed=0)
 
 
-def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=259200, counts=None, legs=None, arch=None):
+BASELINE = "b" * 64
+_DEFAULT = object()
+
+
+def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=259200, counts=None, legs=None, arch=None,
+                baseline=_DEFAULT):
     row = ('\n[[archive]]\nid = "%s"\nkind = "%s"\ntree = "%s"\noverall_pass = %s\n'
            'note = "n"\ndate = "%s"\n' % (id, kind, tree, "true" if overall_pass else "false", date))
     if kind == "soak":
@@ -484,6 +489,10 @@ def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=2
             row += "legs = [%s]\n" % ", ".join('"%s"' % l for l in legs)
     if arch is not None:
         row += 'arch = "%s"\n' % arch
+    if baseline is _DEFAULT:
+        baseline = BASELINE if kind == "corpus" else None
+    if baseline is not None:
+        row += 'baseline_manifest_sha256 = "%s"\n' % baseline
     for k, v in (counts or {}).items():
         row += "%s = %s\n" % (k, str(v).lower() if isinstance(v, bool) else v)
     return row
@@ -560,6 +569,36 @@ class CorpusCountTests(unittest.TestCase):
         rows = q.parse_archives(archives_toml(archive_row(
             "c", "corpus", SHA, overall_pass=False, counts=dict(COUNTS, parse_failures=3, replay_failed=1))))
         self.assertEqual(q.validate_archives(rows), [])
+
+
+class CorpusBaselineTests(unittest.TestCase):
+    def test_the_baseline_digest_is_hex_and_corpus_only(self):
+        ok = q.parse_archives(archives_toml(archive_row("c", "corpus", SHA, counts=COUNTS)))
+        self.assertEqual(q.validate_archives(ok), [])
+        for row, msg in ((archive_row("c", "corpus", SHA, counts=COUNTS, baseline="ABC"),
+                          "c: baseline_manifest_sha256 must be 64 lowercase hex characters"),
+                         (archive_row("s", "stress", SHA, baseline=BASELINE),
+                          "s: baseline_manifest_sha256 belongs to corpus rows only")):
+            with self.subTest(msg=msg):
+                probs = q.validate_archives(q.parse_archives(archives_toml(row)))
+                self.assertIn(msg, probs)
+
+    def test_release_mode_refuses_a_corpus_row_that_compared_no_baseline(self):
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, baseline=None))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("corpus: archive corpus-rel names no baseline (baseline_manifest_sha256): "
+                      "a release corpus run compares with the previous release's baseline",
+                      rec["verdict_reasons"])
+        self.assertIsNone(rec["release_vm"]["corpus"]["baseline_manifest_sha256"])
+        mid = collect(archives=rows)
+        self.assertEqual(mid["verdict"], "GO", mid["verdict_reasons"])
+
+    def test_release_mode_records_the_baseline_digest(self):
+        rec = collect(release=True, archives=RELEASE_OK)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["corpus"]["baseline_manifest_sha256"], BASELINE)
 
 
 class SoakRequirementTests(unittest.TestCase):
@@ -1174,7 +1213,7 @@ ROW = {"id": "soak-x", "kind": "soak", "tree": SHA, "overall_pass": True, "note"
        "date": "2026-10-27", "expected_duration_s": 3600}
 SOAK72 = dict(ROW, id="soak-rel", expected_duration_s=259200, legs=list(FIVE))
 CORPUS = dict(ROW, id="corpus-rel", kind="corpus", expected_duration_s=None,
-              **dict(COUNTS, files=251))
+              baseline_manifest_sha256=BASELINE, **dict(COUNTS, files=251))
 
 
 class WaiverTests(unittest.TestCase):

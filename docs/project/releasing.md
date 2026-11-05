@@ -185,8 +185,11 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      row, and the digests go to the bucket as the commit's unreleased
      baseline (`CORPUS-DONE rc=0`). The script refuses to run without
      either `--baseline DIR` or `--no-baseline` (a first run, with no
-     previous release to compare with), and the archive row's note names
-     the baseline's manifest digest or says none was compared. A failure
+     previous release to compare with), and the archive row carries
+     the baseline's manifest digest as `baseline_manifest_sha256` (its note
+     names it too), or says none was compared. The release gate refuses a
+     corpus row without the digest, so the release run is the `--baseline`
+     one. A failure
      stops the checklist here; it is a finding to fix, and the fix restarts
      at step 2. A reviewed change is accepted with
      `--accept <sha256> --because <text>`.
@@ -253,7 +256,7 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
    - the soak, with the `expected_duration_s` the run's `soak-config.json` declares
      (at least `[soak] required_duration_s`) and `legs = [...]`
      copied from the `legs=…` list on the last line `report soak` printed, with `arch = "x86_64"`;
-   - the corpus run, with the counts its archive row carries. Its `files`
+   - the corpus run, with the counts and the `baseline_manifest_sha256` its archive row carries. Its `files`
      must equal `expected_files` in the file's `[corpus]` table. When the
      corpus has changed, the same PR updates `expected_files`;
    - the arm64 soak, with `arch = "aarch64"` and `legs` as printed, and the

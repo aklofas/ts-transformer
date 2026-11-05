@@ -121,6 +121,9 @@ CORPUS_COUNTS = ("files", "identical", "changed_explained", "invariant_failures"
                  "parse_failures", "replay_files", "replay_paths", "replay_failed")
 # A passing corpus row cannot also record any of these.
 FAILURE_COUNTS = ("parse_failures", "invariant_failures", "replay_failed")
+# The SHA-256 of the baseline manifest a corpus sweep compared with, as the
+# corpus tool's archive row carries it; a release corpus row needs one.
+BASELINE_KEY = "baseline_manifest_sha256"
 
 
 def parse_archives(text):
@@ -205,6 +208,11 @@ def validate_archives(rows):
               and str(r["date"]) >= ARCH_REQUIRED_FROM):
             problems.append("%s: a soak or stress row dated %s or later must name its arch (%s)"
                             % (i, ARCH_REQUIRED_FROM, ", ".join(ARCHES)))
+        if BASELINE_KEY in r:
+            if r.get("kind") != "corpus":
+                problems.append("%s: %s belongs to corpus rows only" % (i, BASELINE_KEY))
+            elif not re.fullmatch(r"[0-9a-f]{64}", str(r[BASELINE_KEY])):
+                problems.append("%s: %s must be 64 lowercase hex characters" % (i, BASELINE_KEY))
         present = [k for k in CORPUS_COUNTS if k in r]
         if present and r.get("kind") != "corpus":
             problems.append("%s: %s: belongs to corpus rows only" % (i, ", ".join(present)))
@@ -246,6 +254,8 @@ def load_archives(root):
             row["waiver"] = r["waiver"]
         if "arch" in r:
             row["arch"] = r["arch"]
+        if BASELINE_KEY in r:
+            row[BASELINE_KEY] = r[BASELINE_KEY]
         row.update({k: r[k] for k in CORPUS_COUNTS if k in r})
         out.append(row)
     return out, expected, required
@@ -453,6 +463,12 @@ def release_vm(root, sha, archives, release, expected_files, required_s):
                 corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"],
                           "note": c["note"], "waiver": c.get("waiver"), "disposition": disposition(c)}
                 corpus.update({k: c[k] for k in CORPUS_COUNTS if k in c})
+                corpus[BASELINE_KEY] = c.get(BASELINE_KEY)
+                # A sweep with no baseline compares nothing: a release corpus
+                # run is judged against the previous release's digests.
+                if not c.get(BASELINE_KEY):
+                    reasons.append("corpus: archive %s names no baseline (%s): a release corpus run "
+                                   "compares with the previous release's baseline" % (c["id"], BASELINE_KEY))
                 # The release cites the counts; a row without them is hand-typed.
                 if any(k not in c for k in CORPUS_COUNTS):
                     reasons.append("corpus: archive %s records no counts; the release gate needs the "

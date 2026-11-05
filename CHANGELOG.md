@@ -376,6 +376,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Soak and stress archive rows may carry `arch`; the release gate records the newest arm64 soak that stands for the tree beside the x86 release soak (recorded, not gating in 0.9.1) and the benchmarks page can show arm64 ceilings beside x86.
 - `qualification.py release-eligible` refuses a tag commit whose `tests/coverage/evidence-archives.toml` differs from the record's commit: the record judged the archive table at its own commit, so evidence added after it needs a new qualification run.
 - A soak or stress archive row dated 2026-11-04 or later must name its `arch`; the validator refuses one without it. An older row without `arch` is still read as x86_64.
+- In release mode the qualification collector refuses a corpus archive row without `baseline_manifest_sha256`: a sweep run with `--no-baseline` compared with nothing, so it cannot stand as the release corpus run.
 
 ### Changed — tst-interop
 
@@ -402,6 +403,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `soak.sh` defaults to the 48-hour release soak with 300-s publisher generations (576 per run) and a 4-h SRT outage period (12 windows per run), raising the event counts the 0.9.0 run's 72 hours gave; `release-vm-soak.sh` follows, and a rail ties the defaults to the archive table.
 - `soak.sh` and `stress.sh` stamp the host architecture (`soak-config.json`, `provenance.json`); `release-vm-setup.sh` installs Chromium on aarch64 for the whep leg.
 - The interop matrix adds `whep/chromium-audio-first`: headless Chrome plays an audio-dropping MP2T mount with an offer whose audio section comes first, and fails unless that offer really is audio-first. The full census is 162 cells.
+- A corpus run's archive row carries the baseline's manifest digest as `baseline_manifest_sha256`, absent when the sweep compared with no baseline.
 
 ### Fixed — tst-interop
 

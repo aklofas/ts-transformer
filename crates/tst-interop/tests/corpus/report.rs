@@ -108,6 +108,7 @@ fn passing_sweep_and_replay_give_a_passing_row_with_the_counts() {
         (row.replay_files, row.replay_paths, row.replay_failed),
         (3, 5, 0)
     );
+    assert_eq!(row.baseline_manifest_sha256, Some(sha('m')));
 }
 
 #[test]
@@ -186,6 +187,9 @@ fn a_sweep_without_a_baseline_says_so_in_the_row_and_the_block() {
         row.note
     );
     assert!(row.overall_pass);
+    assert_eq!(row.baseline_manifest_sha256, None);
+    let json = serde_json::to_string(&row).unwrap();
+    assert!(!json.contains("baseline_manifest_sha256"), "{json}");
     let md = report::markdown(&s, None);
     assert!(md.contains("\nNo baseline was compared.\n"), "{md}");
     // The "Restarted before" column lists SHAs, so it is not right-aligned.

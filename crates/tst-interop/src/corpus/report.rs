@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::PATHS;
 use super::RunDir;
+use super::Sha256Hex;
 use super::replay::ReplaySummary;
 use super::sweep::{Acceptance, SweepSummary, digests_fingerprint};
 
@@ -27,6 +28,11 @@ pub struct ArchiveRow {
     pub replay_files: u64,
     pub replay_paths: u64,
     pub replay_failed: u64,
+    /// SHA-256 of the `manifest.txt` of the baseline the sweep compared
+    /// with; absent when it compared with none (`--no-baseline`). The
+    /// release gate refuses a corpus row without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_manifest_sha256: Option<Sha256Hex>,
     pub note: String,
 }
 
@@ -42,7 +48,8 @@ fn baseline_sentence(sweep: &SweepSummary) -> String {
 
 /// The archive row of a run. A run without a replay is not a pass. The note
 /// says which baseline the sweep compared with, or that it compared with
-/// none.
+/// none. The row carries the baseline's manifest digest as a field too, so
+/// the release gate can require it.
 pub fn archive_row(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> ArchiveRow {
     let (replay_files, replay_paths, replay_failed) = replay
         .map(|r| (r.files, r.paths.len() as u64, r.failed))
@@ -78,6 +85,7 @@ pub fn archive_row(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> Arch
         replay_files,
         replay_paths,
         replay_failed,
+        baseline_manifest_sha256: sweep.baseline_manifest_sha256.clone(),
         note,
     }
 }
