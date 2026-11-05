@@ -338,7 +338,7 @@ class RenderTests(unittest.TestCase):
         body += "## Evidence for the 0.8.0 tree\n\nold text\n"
         put(page, body)
         exit_page = os.path.join(tmp, q.EXIT_PAGE)
-        put(exit_page, "# Exit\n\n" + q.exit_wrapped(None, [], [], 0) + "\n\nrest\n")
+        put(exit_page, "# Exit\n\n" + q.exit_wrapped(None, [], [], None) + "\n\nrest\n")
         return page
 
     def test_check_fails_when_the_exit_criteria_block_is_stale_and_write_fixes_it(self):

@@ -903,7 +903,7 @@ def render_exit_criteria(rec, archives, census, required_s):
     ARM64 subset from the interop censuses."""
     gate = (rec or {}).get("release_vm") or {}
     soaks = [a for a in archives if a["kind"] == "soak"]
-    long = [a for a in _by_date(soaks) if (a.get("expected_duration_s") or 0) >= required_s]
+    long = [a for a in _by_date(soaks) if (a.get("expected_duration_s") or 0) >= (required_s or 0)]
     newest_soak = (long or _by_date(soaks) or [None])[0]
     newest_corpus = _newest([a for a in archives if a["kind"] == "corpus"])
     out = []
@@ -952,7 +952,7 @@ def _current_archives(root, rec):
     if os.path.isfile(os.path.join(root, "tests/coverage/evidence-archives.toml")):
         rows, _, required_s = load_archives(root)
         return rows, required_s
-    return (rec or {}).get("archives", []), ((rec or {}).get("release_vm") or {}).get("required_duration_s") or 0
+    return (rec or {}).get("archives", []), None
 
 
 def wrapped(rec):
