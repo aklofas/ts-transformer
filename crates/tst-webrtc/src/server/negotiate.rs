@@ -371,9 +371,10 @@ pub fn select_audio(rtc: &Rtc, offer: &str) -> Option<(Mid, Pt)> {
 /// rejected or not, while a rejected section is left out of the BUNDLE
 /// group. When the offer lists the section the server rejects first (audio
 /// ahead of video on a mount that drops audio), the candidates land outside
-/// the group and the browser has nothing to check. They move to the
-/// section the BUNDLE group names first, where an answer's transport
-/// attributes belong (RFC 8843), unless that section already has its own.
+/// the group and the browser has nothing to check. They are removed from
+/// rejected sections and placed on the section the BUNDLE group names
+/// first, where an answer's transport attributes belong (RFC 8843),
+/// unless that section already has its own.
 /// Every other line is returned as it was.
 pub fn repair_rejected_media(answer: &str) -> String {
     let raws: Vec<&str> = answer.split_inclusive('\n').collect();
