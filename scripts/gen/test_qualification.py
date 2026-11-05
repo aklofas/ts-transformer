@@ -616,6 +616,32 @@ class ArchTests(unittest.TestCase):
 
 
 class ReleaseModeTests(unittest.TestCase):
+    def arm_rows(self, arm_pass=True, with_x86=True):
+        rows = []
+        if with_x86:
+            rows.append(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"))
+        rows.append(archive_row("soak-arm", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-02",
+                                overall_pass=arm_pass))
+        rows.append(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        return archives_toml(*rows)
+
+    def test_an_arm_row_is_never_the_release_soak_but_is_recorded(self):
+        rec = collect(release=True, archives=self.arm_rows())
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-x86")
+        self.assertEqual(rec["release_vm"]["arm_soak"]["id"], "soak-arm")
+
+    def test_a_failed_arm_row_is_recorded_and_is_no_reason(self):
+        rec = collect(release=True, archives=self.arm_rows(arm_pass=False))
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertIs(rec["release_vm"]["arm_soak"]["overall_pass"], False)
+        self.assertFalse(any("arm" in r for r in rec["verdict_reasons"]))
+
+    def test_only_an_arm_row_means_no_release_soak(self):
+        rec = collect(release=True, archives=self.arm_rows(with_x86=False))
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: no release soak archive for this tree (%s)" % SHA[:12], rec["verdict_reasons"])
+
     def test_mid_cycle_record_is_go_without_a_soak(self):
         rec = collect()
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
@@ -1186,6 +1212,17 @@ class WaiverTests(unittest.TestCase):
 
 
 class ExitCriteriaTests(unittest.TestCase):
+    def test_exit_criteria_arm_paragraph_names_the_arm_soak(self):
+        rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"),
+                             archive_row("soak-arm", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-02"),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        rec = collect(release=True, archives=rows)
+        self.assertIn("An arm64 soak is recorded: `soak-arm`",
+                      q.render_exit_criteria(rec, rec["archives"], [], 172800))
+        del rec["release_vm"]["arm_soak"]
+        self.assertIn("No arm64 soak is recorded for this tree.",
+                      q.render_exit_criteria(rec, rec["archives"], [], 172800))
+
     def release_record(self, archives):
         return collect(release=True, archives=archives)
 
@@ -1284,13 +1321,13 @@ class ExitCriteriaTests(unittest.TestCase):
 
     def test_the_arm64_subset_is_met_only_by_a_clean_aarch64_census(self):
         rec = self.release_record(RELEASE_OK)
-        self.assertIn("**The ARM64 subset today.** Status: open: the committed qualification record carries no "
+        self.assertIn("**The ARM64 subset today.** No arm64 soak is recorded for this tree. Status: open: the committed qualification record carries no "
                       "linux-aarch64 census.",
                       q.render_exit_criteria(rec, rec["archives"], [], 172800))
         arm = {"arch": "linux-aarch64", "shape": "subset-arm64", "total": 80, "pass": 70, "fail": 0,
                "skipped": 10, "stale": 0}
         text = q.render_exit_criteria(rec, rec["archives"], [arm], 172800)
-        self.assertIn("**The ARM64 subset today.** The linux-aarch64 census (subset-arm64) reads "
+        self.assertIn("**The ARM64 subset today.** No arm64 soak is recorded for this tree. The linux-aarch64 census (subset-arm64) reads "
                       "80 / 70 / 0 / 10: total, pass, fail, skipped. Status: met, with 10 cell(s) skipped for "
                       "a missing peer tool.", text)
         self.assertIn("Status: met.", q.render_exit_criteria(rec, rec["archives"], [dict(arm, skipped=0)], 172800))
