@@ -88,10 +88,10 @@ impl SrtSocketBuilder {
         self.config.peer_idle_timeout = Some(t);
         self
     }
-    /// Set `SRTO_LINGER` — drop/close grace period for unsent data.
+    /// Set `SRTO_LINGER` — how long close waits for unsent data to be sent.
     /// `None` preserves libsrt's default — which is `l_onoff=0, l_linger=0`
-    /// (linger off; close returns immediately and libsrt's internal queue
-    /// drains in the background). Note: this differs from the kernel
+    /// (linger off; close returns immediately and data still queued in the
+    /// send buffer is dropped). Note: this differs from the kernel
     /// SO_LINGER default; libsrt initializes its own `struct linger`. See
     /// `srtcore/socketconfig.h:333-336`.
     pub fn linger(&mut self, d: Duration) -> &mut Self {

@@ -5,7 +5,7 @@
 //!
 //! ## Build modes
 //!
-//! - **system mode** (default attempt): `pkg-config librist >= 0.2.10` → link
+//! - **system mode** (default attempt): `pkg-config librist >= 0.2.20` → link
 //!   against distro-installed librist. Currently rare on common Linux distros
 //!   (Debian ships `librist4` runtime-only without a `.pc` file), so this path
 //!   typically falls through to vendored.
