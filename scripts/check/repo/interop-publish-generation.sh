@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # interop-publish-generation: publish_generation (scripts/interop/lib.sh) runs
 # one publisher generation of the soak's rtsp-publish legs and decides whether
-# it ended cleanly. A fake gst-launch-1.0 stands in for the real one: a
-# nonzero exit after `Got EOS` is a send failure while closing a stream whose
-# media was delivered, a clean end; a nonzero exit before it, or a timeout
-# kill after it, is still a failed generation.
+# it ended cleanly. A fake gst-launch-1.0 stands in for the real one:
+# gst-launch's own error exit (status 1) after `Got EOS` is a send failure
+# while closing a stream whose media was delivered, a clean end; a nonzero
+# exit before it, and any other status after it (a timeout kill, a signal, a
+# crash), is still a failed generation.
 #
 # Run it:   bash scripts/check/repo/interop-publish-generation.sh
 set -euo pipefail
@@ -33,6 +34,8 @@ fake clean 0 "Setting pipeline to PLAYING ..." "$EOS" "Freeing pipeline ..."
 fake post_eos 1 "Setting pipeline to PLAYING ..." "$EOS" "$SEND"
 fake pre_eos 1 "Setting pipeline to PLAYING ..." "$SEND"
 fake timed_out 124 "Setting pipeline to PLAYING ..." "$EOS"
+fake terminated 143 "Setting pipeline to PLAYING ..." "$EOS"
+fake crashed 139 "Setting pipeline to PLAYING ..." "$EOS"
 
 fails=0
 check() { # <name> <want rc> <want substring of the output, or ""> <fake>
@@ -58,6 +61,8 @@ check "a send failure after EOS is a clean end" 0 \
   "generation 7: post-EOS send failure ($SEND), counted as a clean end" post_eos
 check "a failure before EOS fails the generation" 1 "publisher: generation 7 ended rc=1" pre_eos
 check "a timeout kill after EOS fails the generation" 124 "publisher: generation 7 ended rc=124" timed_out
+check "a signal death after EOS fails the generation" 143 "publisher: generation 7 ended rc=143" terminated
+check "a crash after EOS fails the generation" 139 "publisher: generation 7 ended rc=139" crashed
 
 if [[ $fails -ne 0 ]]; then
   echo "interop-publish-generation: $fails case(s) failed"

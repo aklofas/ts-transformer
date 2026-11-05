@@ -398,12 +398,14 @@ _tsanalyze_wrapped() {
 # (a gst-launch-1.0 pipeline under `timeout`) in the background with its
 # output in <log>, then copies <log> to stdout. PUBLISH_GEN_PID holds the
 # child's pid while it runs, so the caller's TERM trap can kill it at once.
-# Returns the generation's exit status, except that a nonzero exit after
-# the pipeline logged `Got EOS` is a send failure while closing a stream
-# whose media was already delivered (rtspclientsink's final message hitting
-# a closed connection): it is logged and counted as a clean end. A timeout
-# kill (124 or 137) still fails, EOS or not: the generation overran. The
-# delivery itself is judged by the receiver's generation count.
+# Returns the generation's exit status, except that status 1 (gst-launch-1.0's
+# own error exit) after the pipeline logged `Got EOS` is a send failure while
+# closing a stream whose media was already delivered (rtspclientsink's final
+# message hitting a closed connection): it is logged and counted as a clean
+# end. Any other nonzero status still fails, EOS or not: a timeout kill (124
+# or 137) means the generation overran, and a signal death or a crash is not a
+# send failure. The delivery itself is judged by the receiver's generation
+# count.
 publish_generation() {
   local k=$1 log=$2 rc=0 last
   shift 2
@@ -414,7 +416,7 @@ publish_generation() {
   PUBLISH_GEN_PID=""
   cat "$log"
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ended rc=$rc"
-  if [[ "$rc" -ne 0 && "$rc" -ne 124 && "$rc" -ne 137 ]] && grep -q 'Got EOS' "$log"; then
+  if [[ "$rc" -eq 1 ]] && grep -q 'Got EOS' "$log"; then
     last=$(grep -v '^[[:space:]]*$' "$log" | tail -1)
     echo "generation $k: post-EOS send failure ($last), counted as a clean end"
     rc=0
