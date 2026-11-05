@@ -373,8 +373,8 @@ event() { event_to "$EVENTS_LOG" "$@"; }
 
 TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600 + 0.5}')
 # Outage schedule (srt leg only — see README.md's "Topology"). Kept as
-# separate numeric/unit-suffixed forms rather than duplicating "6h"
-# and "21600" independently: OUTAGE_PERIOD_S is the single source of
+# separate numeric/unit-suffixed forms rather than duplicating "4h"
+# and "14400" independently: OUTAGE_PERIOD_S is the single source of
 # truth, both the proxy's own `--outage` flag string and `report
 # soak`'s `--outage-period-s` are built from it.
 OUTAGE_PERIOD_S="${OUTAGE_PERIOD_S:-14400}" # 4h; env-overridable for a short outage-focused drill
@@ -924,7 +924,7 @@ that could never pass its own completeness verdicts" >&2
 # exits 2 here, naming --no-rtsp-publish.
 # publish_es_disk_check — the rtsp-publish-es leg's rate sample and disk
 # rule (its source alone, about 0.85 GB per hour of generation length,
-# ~140 MB for the default 600 s; less than 1.2 x that free exits 2). Sets
+# ~71 MB for the default 300 s; less than 1.2 x that free exits 2). Sets
 # PUBLISH_ES_GEN_ARGS for the generation that follows it. A function so
 # --preflight-only can run it before exiting, ahead of the MPEG-TS leg's
 # generation below.
@@ -1029,7 +1029,7 @@ fi
 # many per declared generation.
 #
 # Disk: the source alone, about 0.85 GB per hour of generation length
-# (~140 MB for the default 600 s), checked like the MPEG-TS leg's: a 10 s
+# (~71 MB for the default 300 s), checked like the MPEG-TS leg's: a 10 s
 # sample gives the byte rate, and less than 1.2 x the source free exits 2
 # naming --no-rtsp-publish-es.
 if [[ "$RTSP_PUBLISH_ES" -eq 1 ]]; then
@@ -1548,7 +1548,7 @@ if [[ "$WHEP" -eq 1 ]]; then
       sed -n 's/.*:CONSOLE[^]]*\] "\(.*\)", source: .*/\1/p' "$err" >"$console"
       # Nothing reads the raw stderr again once the console is extracted
       # (whep_connection_json greps it for ERROR:CONSOLE, so the gzip
-      # comes after): about 3.5 MB per 10-minute connection, 1.3 GB over a
+      # comes after): about 3.5 MB per 10-minute connection, 1.0 GB over a
       # 48-hour run uncompressed, ~0.3 MB each gzipped.
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) viewer: connection $k ended rc=$rc: $(grep -c '' "$console") console line(s), $(awk '$1 == "FRAMES" { v = $2 } END { print v + 0 }' "$console") frames, KLV via sei $(awk '$1 == "KLV" && $4 == "sei"' "$console" | wc -l) / dc $(awk '$1 == "KLV" && $4 == "dc"' "$console" | wc -l)"
       [[ "$rc" -eq 124 ]] || failed=$((failed + 1))
