@@ -82,6 +82,8 @@
 #
 # Validated on linux-x86_64; see lib.sh for this directory's portability
 # stance (not macOS-portable).
+# arm64: the orchestration has no architecture-specific code; the first
+# arm64 pass is recorded on the evidence page when it runs.
 
 set -euo pipefail
 
@@ -864,6 +866,7 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson slack "$SAMPLER_END_SLACK_S" \
   --argjson corruption "$CORRUPTION_DECL" \
   --argjson corruption_spec "$CORRUPTION_SPEC_DECL" \
+  --arg arch "$(uname -m)" \
   --arg srt_profile "$SRT_PROFILE" --arg rist_profile "$RIST_PROFILE" \
   --argjson schedule "$SCHEDULE_DECL" \
   --arg klv_set "$KLV_SET" --argjson klv_seed "$SEED" \
@@ -872,7 +875,7 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson publish_es_leg "$PUBLISH_ES_LEG_DECL" \
   --argjson whep_leg "$WHEP_LEG_DECL" \
   --argjson memory_gate "$MEMORY_GATE_DECL" \
-  '{expected_duration_s: $dur, memory_gate: $memory_gate, rss_cadence_s: $cad, warmup_fraction: 0.1667,
+  '{expected_duration_s: $dur, arch: $arch, memory_gate: $memory_gate, rss_cadence_s: $cad, warmup_fraction: 0.1667,
     sampler_end_slack_s: $slack, expected_worker_exits: {},
     corruption: $corruption, corruption_spec: $corruption_spec,
     legs: ({srt: {profile: $srt_profile, schedule: $schedule,

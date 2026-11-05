@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Prepare a fresh Ubuntu host as the release VM: the packages the corpus
 # phase and the soak need, a Rust toolchain, the AWS CLI for the corpus
-# bucket, the UDP receive-buffer ceiling the soak's legs expect, Google
-# Chrome for the whep leg, and a clean checkout of the frozen commit with
-# tst-interop built in release mode. Idempotent: a second run on the same
+# bucket, the UDP receive-buffer ceiling the soak's legs expect, a
+# browser (Google Chrome, or Chromium on aarch64) for the whep leg, and a
+# clean checkout of the frozen commit with tst-interop built in release mode. Idempotent: a second run on the same
 # host re-fetches and re-checks out, and apt skips what is installed.
 #
 # Usage:
@@ -20,6 +20,8 @@
 #
 # Validated on Ubuntu 24.04 x86_64 (the release VM); see lib.sh for this
 # directory's portability stance.
+# arm64: the orchestration has no architecture-specific code; the first
+# arm64 pass is recorded on the evidence page when it runs.
 set -uo pipefail
 
 SHA=${1:?usage: release-vm-setup.sh <full 40-hex sha>}
@@ -79,17 +81,34 @@ echo "net.core.rmem_max = 16777216" | sudo tee /etc/sysctl.d/90-tstrans-udp-rcvb
 stage sysctl "$rc"
 [[ $rc -eq 0 ]] || { stage SETUP-DONE "$rc"; exit "$rc"; }
 
-# Google Chrome for the whep leg (headless). The .deb is removed after the
-# install: it is 140 MB the disk check below would otherwise count.
+# A browser for the whep leg (headless). Google Chrome on x86_64, where the
+# .deb is removed after the install (140 MB the disk check below would
+# otherwise count); Chrome ships no arm64 Linux build, so aarch64 gets
+# Chromium from snap (Ubuntu's apt chromium-browser is a shim for it).
 rc=0
-if ! command -v google-chrome >/dev/null 2>&1; then
-  deb=$(mktemp -d)/google-chrome-stable_current_amd64.deb
-  curl -sSL -o "$deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb &&
-    sudo -E apt-get install -y "$deb" || rc=$?
-  rm -f "$deb"
+case "$(uname -m)" in
+  x86_64)
+    if ! command -v google-chrome >/dev/null 2>&1; then
+      deb=$(mktemp -d)/google-chrome-stable_current_amd64.deb
+      curl -sSL -o "$deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb &&
+        sudo -E apt-get install -y "$deb" || rc=$?
+      rm -f "$deb"
+    fi
+    ;;
+  aarch64)
+    command -v chromium >/dev/null 2>&1 || sudo snap install chromium || rc=$?
+    ;;
+  *)
+    echo "release-vm-setup.sh: no browser recipe for $(uname -m)" >&2
+    rc=4
+    ;;
+esac
+if command -v google-chrome >/dev/null 2>&1; then
+  google-chrome --version
+elif command -v chromium >/dev/null 2>&1; then
+  chromium --version
 fi
-command -v google-chrome >/dev/null 2>&1 && google-chrome --version
-stage chrome "$rc"
+stage browser "$rc"
 [[ $rc -eq 0 ]] || { stage SETUP-DONE "$rc"; exit "$rc"; }
 
 # The tree: clone once, fetch after; the frozen commit, clean, with every

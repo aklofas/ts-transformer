@@ -59,6 +59,8 @@
 #
 # Validated on Ubuntu 24.04 x86_64 (the release VM); see lib.sh for this
 # directory's portability stance.
+# arm64: the orchestration has no architecture-specific code; the first
+# arm64 pass is recorded on the evidence page when it runs.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
