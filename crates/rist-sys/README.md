@@ -7,7 +7,7 @@ no safe wrapper — see `tst-rist` for the safe API tstrans applications use.
 builds it when no suitable system librist >= 0.2.20 is found via
 pkg-config. Set `RIST_FORCE_VENDORED=1` to force the vendored build even
 when a system librist is present. The build compiles a copy of that tree
-in `OUT_DIR` carrying two corrections:
+in `OUT_DIR` carrying four corrections:
 
 - The Simple-profile receiver checks its RTCP peer (port + 1) for null
   before using it, so a failed RTCP bind returns an error instead of
@@ -15,10 +15,16 @@ in `OUT_DIR` carrying two corrections:
 - `_librist_crypto_psk_decrypt` returns a status, so a packet that could not
   be decrypted is dropped, and a packet under a zero nonce or a throttled
   rekey never passes as clear data.
+- The receive lockout that undecryptable packets latch clears once a fresh
+  nonce rekeys successfully; upstream keeps it until the passphrase is
+  reset.
+- Every key derivation a received nonce triggers spends a per-key budget
+  (100 per second, a burst of 16), so a sender that changes the nonce on
+  every datagram cannot make the receiver run one PBKDF2 per packet.
 
-A **host** librist 0.2.20 lacks both corrections, so a build that links a
-system librist through pkg-config is exposed to both until upstream ships
-them.
+A **host** librist 0.2.20 lacks all four corrections, so a build that links
+a system librist through pkg-config is exposed to all four defects until
+upstream fixes them.
 
 **Build prerequisites:** a C toolchain, meson, and ninja (for librist —
 Debian/Ubuntu: `apt install meson ninja-build`), plus libclang (for
