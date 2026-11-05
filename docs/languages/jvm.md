@@ -165,6 +165,8 @@ DTS-aware push variants for B-frame-reordered video streams:
 - `pushVideoToWithDts(VideoStreamHandle handle, byte[] nal, long pts, long dts, boolean keyFrame)` — Annex-B NAL with explicit DTS; writes `PTS_DTS_flags = '11'` (ISO/IEC 13818-1 §2.4.3.6) in the PES header.
 - `pushVideoWireToWithDts(VideoStreamHandle handle, byte[] wire, long pts, long dts, boolean keyFrame)` — on-wire AU with explicit DTS.
 
+`hls.MuxPublisher` and `rtp.MountHandle` take no stream handle for a DTS push: each has a single-stream `pushVideoWithDts(byte[] nal, long pts, long dts, boolean keyFrame)` for a config with exactly one video stream (several streams fail with `MuxException` / `RtspException(MOUNT)`). `dts <= pts` is not enforced.
+
 Per-stream handle accessors — obtain handles at mux time and use them with the
 `*To` variants above:
 
@@ -2137,6 +2139,7 @@ MuxerConfig program = MuxerConfig.builder()
 
 MuxPublisher shell = MuxPublisher.withConfigHls(publisher, program); // consumes `publisher`
 shell.pushVideo(annexBNal, pts, /*keyFrame=*/ true);   // past segmentDuration, a key frame begins a segment
+// shell.pushVideoWithDts(annexBNal, pts, dts, true);  // same, with a decode timestamp (one video stream)
 shell.pushKlv(klvBytes, pts, 0);                        // raw LS bytes; AU-cell added by the muxer
 
 HlsPublisher back = shell.finishIntoPublisher();        // consumes the shell

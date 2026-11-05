@@ -66,6 +66,30 @@ class MuxPublisherTest {
     }
 
     @Test
+    void pushVideoWithDtsWritesBothTimestamps(@TempDir Path dir) throws Exception {
+        MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), video());
+        mp.pushVideoWithDts(syntheticH264Idr(), 18_000L, 0L, true);
+        mp.cutSegment();
+        mp.finishIntoPublisher().finish();
+        byte[] seg = Files.readAllBytes(firstSegment(dir));
+        int pes = indexOf(seg, new byte[] {0, 0, 1, (byte) 0xE0});
+        assertTrue(pes >= 0, "video PES start");
+        assertEquals((byte) 0xC0, seg[pes + 7], "PES flags: PTS and DTS present");
+        assertEquals(10, seg[pes + 8], "PES header data length");
+    }
+
+    @Test
+    void pushVideoWithDtsNeedsExactlyOneVideoStream(@TempDir Path dir) throws Exception {
+        MuxerConfig two = MuxerConfig.builder().programNumber(1).pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.H264).addVideo(0x102, VideoCodec.H264).build();
+        try (MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), two)) {
+            MuxException ex = assertThrows(MuxException.class,
+                () -> mp.pushVideoWithDts(syntheticH264Idr(), 3_000L, 0L, true));
+            assertEquals(MuxException.Kind.INVALID_USAGE, ex.kind());
+        }
+    }
+
+    @Test
     void klvPreservedInSegment(@TempDir Path dir) throws Exception {
         MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), videoKlv());
         mp.pushKlv(KLV, 0L, 0);

@@ -412,6 +412,13 @@ class MuxPublisher:
         maximum)."""
         ...
 
+    def push_video_with_dts(
+        self, nal: _BytesLike, *, pts: Any, dts: Any, key_frame: bool = ...
+    ) -> None:
+        """``push_video`` with an explicit decode timestamp; requires exactly
+        one configured video stream. ``dts <= pts`` is not enforced."""
+        ...
+
     def push_klv(self, klv: _BytesLike, *, pts: Any, stream_index: int = ...) -> None:
         """Push one KLV blob. ``stream_index`` is the metadata service id written
         into the Metadata AU cell for synchronous carriage; it is ignored for

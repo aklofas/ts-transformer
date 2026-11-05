@@ -143,8 +143,9 @@ example `Muxer::push_video_wire_to_with_dts` and
 can carry several streams of one media (it takes a stream handle):
 `Muxer`, `MuxSender` and an RTSP `MountHandle`. `MuxPublisher` takes
 exactly one video stream, so it has no `_to` form and its MISP variant is
-`push_video_misp`. `_with_dts` follows `_to` where both apply; a DTS push
-always names a stream handle.
+`push_video_misp`. `_with_dts` follows `_to` where both apply. A DTS push names a stream
+handle, or uses the single-stream `push_video_with_dts` on `MuxPublisher`
+and an RTSP `MountHandle` when the config has exactly one video stream.
 
 **Examples:**
 

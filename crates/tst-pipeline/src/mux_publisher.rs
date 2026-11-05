@@ -421,6 +421,33 @@ impl<P: Publisher + Send> MuxPublisher<P> {
         self.done(self.0.send_video(nal, pts, key_frame))
     }
 
+    /// [`Self::push_video`] with an explicit decode timestamp, for a stream
+    /// whose DTS differs from its PTS. Requires exactly one configured video
+    /// stream (like [`Self::push_video_misp`]); with several, address the
+    /// stream through the muxer.
+    ///
+    /// **Caller invariant:** `dts <= pts` per H.222.0 §2.4.3.6. The muxer
+    /// does not enforce it, and segment cuts and pacing follow the PTS.
+    pub fn push_video_with_dts(
+        &self,
+        nal: &[u8],
+        pts: Pts90khz,
+        dts: Pts90khz,
+        key_frame: bool,
+    ) -> Result<(), MuxPublisherError<P::Error>> {
+        let handles = self.0.video_handles();
+        let [handle] = handles.as_slice() else {
+            return Err(MuxPublisherError::Mux(MuxError::AmbiguousTarget {
+                kind: MuxStreamKind::Video,
+                count: handles.len(),
+            }));
+        };
+        self.done(
+            self.0
+                .send_video_to_with_dts(*handle, nal, pts, dts, key_frame),
+        )
+    }
+
     /// [`Self::push_video`] plus an ST 0604 MISP timestamp SEI spliced
     /// before the first VCL NAL (see `Muxer::push_video_misp_to`).
     /// Requires exactly one configured video stream (like `push_video`).
@@ -1195,6 +1222,74 @@ mod tests {
                 Op::Cut(Duration::from_secs(3)),
                 Op::Push(564)
             ]
+        );
+    }
+
+    /// `push_video_with_dts` writes a PES whose header carries both
+    /// timestamps, and the demuxer reads the distinct DTS back.
+    #[test]
+    fn push_video_with_dts_serves_distinct_dts() {
+        use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload};
+        let mp =
+            MuxPublisher::with_config(MemoryPublisher { buffers: vec![] }, test_muxer_config())
+                .unwrap();
+        mp.push_video_with_dts(&h264_au(), Pts90khz::new(18000), Pts90khz::new(0), true)
+            .unwrap();
+        let ts: Vec<u8> = mp.finish().unwrap().buffers.concat();
+
+        // PES flags byte 0xC0 (PTS and DTS present) follows the 6-byte
+        // start-code prefix and the two marker bytes.
+        let pes = ts
+            .windows(4)
+            .position(|w| w == [0x00, 0x00, 0x01, 0xE0])
+            .expect("a video PES start");
+        assert_eq!(ts[pes + 7], 0xC0, "PTS+DTS flags");
+        assert_eq!(ts[pes + 8], 10, "PES header data length");
+
+        let mut demux = Demuxer::new();
+        demux.feed(&ts).unwrap();
+        demux.flush();
+        let mut saw_video = false;
+        while let Some(event) = demux.next_event() {
+            if let DemuxEvent::Sample {
+                pts,
+                dts,
+                payload: SamplePayload::Video { .. },
+                ..
+            } = event
+            {
+                assert_eq!(pts, Pts90khz::new(18000));
+                assert_eq!(dts, Some(Pts90khz::new(0)));
+                saw_video = true;
+            }
+        }
+        assert!(saw_video, "expected a video sample");
+    }
+
+    /// Two configured video streams leave `push_video_with_dts` without a
+    /// target.
+    #[test]
+    fn push_video_with_dts_with_two_video_streams_is_ambiguous() {
+        use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        prog.add_video(0x101, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        let mp = MuxPublisher::with_config(MemoryPublisher { buffers: vec![] }, b.build().unwrap())
+            .unwrap();
+        let err = mp
+            .push_video_with_dts(&h264_au(), Pts90khz::new(3000), Pts90khz::new(0), true)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                MuxPublisherError::Mux(MuxError::AmbiguousTarget {
+                    kind: MuxStreamKind::Video,
+                    count: 2
+                })
+            ),
+            "got {err:?}"
         );
     }
 

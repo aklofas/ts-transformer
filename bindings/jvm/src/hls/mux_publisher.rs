@@ -131,6 +131,25 @@ jni_native! {
     }
 }
 
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nSendVideoWithDts<'local>(
+        env,
+        _class,
+        handle: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        dts: jlong,
+        key_frame: jboolean,
+    ) = () => {
+        let Some(buf) = read_bytes(env, &nal) else {
+            return;
+        };
+        with_shell(env, handle, |s| {
+            s.push_video_with_dts(&buf, Pts90khz::new(pts), Pts90khz::new(dts), key_frame)
+        });
+    }
+}
+
 // `stream_index` is the metadata service id written into the Metadata AU cell
 // for synchronous carriage; it is ignored for PrivateData and does not select
 // a stream.

@@ -403,6 +403,43 @@ def test_mux_publisher_klv_preserved_in_ts_segment() -> None:
         assert KLV_ST0601 in seg_bytes, "KLV bytes not found in segment"
 
 
+def test_mux_publisher_push_video_with_dts_writes_both_timestamps() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir(d).build()
+        mp = MuxPublisher.with_config_hls(pub, _video_program())
+        mp.push_video_with_dts(
+            NAL_IDR, pts=Pts90khz.from_raw(18_000), dts=Pts90khz.from_raw(0), key_frame=True
+        )
+        mp.cut_segment()
+        mp.finish_into_publisher().finish()
+
+        segs = sorted(glob.glob(os.path.join(d, "*.ts")))
+        assert segs, "no segments produced"
+        with open(segs[0], "rb") as f:
+            seg_bytes = f.read()
+        pes = seg_bytes.find(b"\x00\x00\x01\xe0")
+        assert pes >= 0, "video PES start"
+        assert seg_bytes[pes + 7] == 0xC0, "PES flags: PTS and DTS present"
+        assert seg_bytes[pes + 8] == 10, "PES header data length"
+
+
+def test_mux_publisher_push_video_with_dts_needs_one_video_stream() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir(d).build()
+        two = (
+            MuxerProgramConfigBuilder(1, 0x100)
+            .add_video(0x101, VideoCodec.H264)
+            .add_video(0x102, VideoCodec.H264)
+            .build()
+        )
+        mp = MuxPublisher.with_config_hls(pub, two)
+        with pytest.raises(Exception) as ei:
+            mp.push_video_with_dts(
+                NAL_IDR, pts=Pts90khz.from_raw(3_000), dts=Pts90khz.from_raw(0)
+            )
+        assert type(ei.value).__name__ == "MuxError", type(ei.value)
+
+
 # --------------------------------------------------------------------------- #
 # Error-mapping wiring                                                        #
 # --------------------------------------------------------------------------- #

@@ -916,6 +916,31 @@ jni_native! {
 }
 
 jni_native! {
+    /// `MountHandle.nPushVideoWithDts(handle, nal, pts, dts, keyFrame)`.
+    fn Java_org_tstrans_rtp_MountHandle_nPushVideoWithDts<'local>(
+        env,
+        _class,
+        handle: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        dts: jlong,
+        key_frame: jboolean,
+    ) = () => {
+        let Some(buf) = read_bytes(env, &nal) else {
+            return;
+        };
+        let Some(res) = with_mount_poisoning(env, handle, |inner| {
+            inner.push_video_with_dts(&buf, Pts90khz::new(pts), Pts90khz::new(dts), key_frame)
+        }) else {
+            return;
+        };
+        if let Err(e) = res {
+            mount_error_to_jvm(env, e);
+        }
+    }
+}
+
+jni_native! {
     /// `MountHandle.nPushKlv(handle, klv, pts, metadataServiceId)`.
     fn Java_org_tstrans_rtp_MountHandle_nPushKlv<'local>(
         env,

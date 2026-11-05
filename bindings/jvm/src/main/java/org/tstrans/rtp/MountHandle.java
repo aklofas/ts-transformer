@@ -59,6 +59,18 @@ public final class MountHandle extends NativeHandle {
     public void pushVideo(byte[] nal, long pts, boolean keyFrame) throws RtspException {
         ensureOpen("MountHandle is closed"); nPushVideo(peekHandle(), nal, pts, keyFrame);
     }
+    /**
+     * {@link #pushVideo} with an explicit decode timestamp, for a mount whose config has
+     * exactly one video stream; with several, use {@link #pushVideoToWithDts} where present or
+     * name the stream through {@link #pushVideoTo}.
+     *
+     * @param pts 90&nbsp;kHz presentation timestamp
+     * @param dts 90&nbsp;kHz decode timestamp (must be &le; {@code pts}; not enforced)
+     */
+    public void pushVideoWithDts(byte[] nal, long pts, long dts, boolean keyFrame)
+            throws RtspException {
+        ensureOpen("MountHandle is closed"); nPushVideoWithDts(peekHandle(), nal, pts, dts, keyFrame);
+    }
     public void pushKlv(byte[] klv, long pts, int metadataServiceId) throws RtspException {
         ensureOpen("MountHandle is closed"); nPushKlv(peekHandle(), klv, pts, metadataServiceId);
     }
@@ -182,6 +194,8 @@ public final class MountHandle extends NativeHandle {
     private static native MountStats nStats(long handle);
     private static native void nPushVideo(long handle, byte[] nal, long pts, boolean keyFrame)
         throws RtspException;
+    private static native void nPushVideoWithDts(long handle, byte[] nal, long pts, long dts,
+        boolean keyFrame) throws RtspException;
     private static native void nPushKlv(long handle, byte[] klv, long pts, int metadataServiceId)
         throws RtspException;
     private static native void nPushAudio(long handle, byte[] frames, long pts) throws RtspException;

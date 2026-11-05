@@ -2402,7 +2402,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_publisher::MuxPublisher"
 owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/MuxPublisherTest.java"]
-bindings = ["java:org.tstrans.hls.MuxPublisher", "java:org.tstrans.hls.MuxPublisher.withConfigHls", "java:org.tstrans.hls.MuxPublisher.pushVideo", "java:org.tstrans.hls.MuxPublisher.pushKlv", "java:org.tstrans.hls.MuxPublisher.pushAudio", "java:org.tstrans.hls.MuxPublisher.pushSubtitle", "java:org.tstrans.hls.MuxPublisher.cutSegment", "java:org.tstrans.hls.MuxPublisher.finishIntoPublisher", "java:org.tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.publisherStats", "python:tstrans.hls.MuxPublisher", "python:tstrans.hls.MuxPublisher.with_config_hls", "python:tstrans.hls.MuxPublisher.push_video", "python:tstrans.hls.MuxPublisher.push_klv", "python:tstrans.hls.MuxPublisher.push_audio", "python:tstrans.hls.MuxPublisher.push_subtitle", "python:tstrans.hls.MuxPublisher.cut_segment", "python:tstrans.hls.MuxPublisher.finish_into_publisher", "python:tstrans.hls.MuxPublisher.stats", "python:tstrans.hls.MuxPublisher.publisher_stats", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.hls.MuxPublisher", "java:org.tstrans.hls.MuxPublisher.withConfigHls", "java:org.tstrans.hls.MuxPublisher.pushVideo", "java:org.tstrans.hls.MuxPublisher.pushVideoWithDts", "java:org.tstrans.hls.MuxPublisher.pushKlv", "java:org.tstrans.hls.MuxPublisher.pushAudio", "java:org.tstrans.hls.MuxPublisher.pushSubtitle", "java:org.tstrans.hls.MuxPublisher.cutSegment", "java:org.tstrans.hls.MuxPublisher.finishIntoPublisher", "java:org.tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.publisherStats", "python:tstrans.hls.MuxPublisher", "python:tstrans.hls.MuxPublisher.with_config_hls", "python:tstrans.hls.MuxPublisher.push_video", "python:tstrans.hls.MuxPublisher.push_video_with_dts", "python:tstrans.hls.MuxPublisher.push_klv", "python:tstrans.hls.MuxPublisher.push_audio", "python:tstrans.hls.MuxPublisher.push_subtitle", "python:tstrans.hls.MuxPublisher.cut_segment", "python:tstrans.hls.MuxPublisher.finish_into_publisher", "python:tstrans.hls.MuxPublisher.stats", "python:tstrans.hls.MuxPublisher.publisher_stats", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2668,6 +2668,15 @@ crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::from_url"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/builder.rs", "bindings/c/tests/transports/rtsp_client_connect.rs"]
 bindings = ["c:tst_rtsp_client_builder_connect", "python:deferred(bindings take URL strings)", "java:deferred(bindings take URL strings)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::mount::MountHandle::push_video_with_dts"
+owning_tests = ["crates/tst-rtp/src/rtsp/server/mount.rs", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspServerTest.java", "bindings/python/tests/test_rtsp_server.py"]
+bindings = ["java:org.tstrans.rtp.MountHandle.pushVideoWithDts", "python:tstrans.rtp.MountHandle.push_video_with_dts", "c:deferred(mount push surfaces stay PTS-only at the C ABI; see deferred-features)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

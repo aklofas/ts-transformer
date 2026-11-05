@@ -497,6 +497,31 @@ def test_klv_handle_returns_none_for_video_only_program():
         assert mount.subtitle_handle() is None
 
 
+def test_push_video_with_dts_on_one_video_stream():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        mount = server.add_unicast_mount("/live", _single_video_program())
+        mount.push_video_with_dts(
+            _IDR_NAL, pts=Pts90khz(18000), dts=Pts90khz(0), key_frame=True
+        )
+        assert mount.stats().bytes_pushed > 0
+
+
+def test_push_video_with_dts_with_two_video_streams_raises_mount():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    two = (
+        MuxerProgramConfigBuilder(1, 0x1000)
+        .add_video(0x1011, VideoCodec.H264)
+        .add_video(0x1012, VideoCodec.H264)
+        .build()
+    )
+    with RtspServer.start(cfg) as server:
+        mount = server.add_unicast_mount("/live", two)
+        with pytest.raises(RtspError) as ei:
+            mount.push_video_with_dts(_IDR_NAL, pts=Pts90khz(3000), dts=Pts90khz(0))
+        assert ei.value.kind == RtspErrorKind.MOUNT
+
+
 def test_push_video_to_with_explicit_handle():
     cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
     with RtspServer.start(cfg) as server:

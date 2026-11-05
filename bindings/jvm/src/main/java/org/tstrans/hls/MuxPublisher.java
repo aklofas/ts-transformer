@@ -72,6 +72,22 @@ public final class MuxPublisher extends NativeHandle {
     }
 
     /**
+     * {@link #pushVideo} with an explicit decode timestamp, for a stream whose
+     * DTS differs from its PTS. Requires exactly one configured video stream.
+     * Segment cuts and pacing follow {@code pts}.
+     *
+     * @param pts 90&nbsp;kHz presentation timestamp
+     * @param dts 90&nbsp;kHz decode timestamp (must be &le; {@code pts}; not enforced)
+     * @throws MuxException {@code INVALID_USAGE} when the config does not hold exactly one
+     *     video stream, {@code INPUT_MALFORMED} for a non-Annex-B access unit
+     */
+    public void pushVideoWithDts(byte[] nal, long pts, long dts, boolean keyFrame)
+            throws MuxException, HlsException {
+        ensureOpen("MuxPublisher is closed");
+        nSendVideoWithDts(peekHandle(), nal, pts, dts, keyFrame);
+    }
+
+    /**
      * Push raw KLV LS bytes (the muxer adds the AU-cell header on sync streams).
      * {@code streamIndex} is the metadata service id written into the Metadata AU
      * cell for synchronous carriage; it is ignored for PrivateData and does not
@@ -136,6 +152,8 @@ public final class MuxPublisher extends NativeHandle {
         throws MuxException, HlsException;
     private static native void nSendVideo(long handle, byte[] nal, long pts, boolean keyFrame)
         throws MuxException, HlsException;
+    private static native void nSendVideoWithDts(long handle, byte[] nal, long pts, long dts,
+        boolean keyFrame) throws MuxException, HlsException;
     private static native void nSendKlv(long handle, byte[] klv, long pts, int streamIndex)
         throws MuxException, HlsException;
     private static native void nSendAudio(long handle, byte[] frames, long pts)
