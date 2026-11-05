@@ -186,8 +186,9 @@ impl RtspServerBuilder {
     /// A connection that has neither completed a SETUP nor passed a
     /// credential check is closed 30 s after its request loop starts (after
     /// the TLS handshake on `rtsps://`), however many OPTIONS,
-    /// GET_PARAMETERs or interleaved frames it sends, so peers that never
-    /// authenticate cannot keep the slots.
+    /// GET_PARAMETERs or interleaved frames it sends and however slowly it
+    /// reads the replies, so peers that never authenticate cannot keep the
+    /// slots.
     pub fn max_sessions(&mut self, n: usize) -> &mut Self {
         self.max_sessions = n.max(1);
         self

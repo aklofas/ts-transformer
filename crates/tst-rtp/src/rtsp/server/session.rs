@@ -69,6 +69,62 @@ fn publish_window<'a>(
     Some((session.publisher()?, state.builder.publish_idle_timeout?))
 }
 
+/// A session deadline that has run out.
+enum Expired {
+    /// No SETUP and no request that passed a credential check within
+    /// `READ_IDLE_TIMEOUT` of the request loop starting.
+    Admission,
+    /// A recording publisher received no media for its publish idle timeout.
+    PublishIdle(std::time::Duration),
+}
+
+/// Which of the admission deadline and the publish idle window has run out,
+/// read from the clocks themselves. The session loop checks this before
+/// every read and every request, so a deadline holds even when a peer keeps
+/// the read ready and a timer racing it in a `select!` never gets to fire.
+fn expired_deadline(
+    admission_deadline: Option<tokio::time::Instant>,
+    state: &ServerState,
+    session: &ServerSessionState,
+) -> Option<Expired> {
+    if admission_deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+        return Some(Expired::Admission);
+    }
+    let t = state.builder.publish_idle_timeout?;
+    let idle = session.publisher()?.idle_for()?;
+    (idle >= t).then_some(Expired::PublishIdle(t))
+}
+
+/// Log why an expired deadline closes the session.
+fn warn_expired(peer: SocketAddr, expired: &Expired) {
+    match expired {
+        Expired::Admission => tracing::warn!(
+            target: "tst_rtp::server",
+            peer = %peer,
+            timeout_secs = READ_IDLE_TIMEOUT.as_secs(),
+            "no SETUP or authenticated request within the admission deadline; closing session"
+        ),
+        Expired::PublishIdle(t) => tracing::warn!(
+            target: "tst_rtp::server",
+            peer = %peer,
+            timeout_ms = t.as_millis() as u64,
+            "publish idle timeout; closing session"
+        ),
+    }
+}
+
+/// The bound for a reply write: the idle bound, cut to what is left of the
+/// admission deadline while that deadline stands, so a reply parked on a
+/// peer that stopped reading cannot carry the connection past it.
+fn reply_bound(
+    idle_bound: std::time::Duration,
+    admission_deadline: Option<tokio::time::Instant>,
+) -> std::time::Duration {
+    admission_deadline.map_or(idle_bound, |d| {
+        idle_bound.min(d.saturating_duration_since(tokio::time::Instant::now()))
+    })
+}
+
 /// The one bounded writer for every reply a session sends: take the
 /// writer lock, write and flush `bytes` and, when `shutdown_after`, shut
 /// the write half, all raced against `bound`, the publish idle window and
@@ -565,8 +621,10 @@ where
     // Until SETUP gives the connection a session, or one of its requests
     // passes a credential check, it holds a session slot on nothing but its
     // own say-so. This absolute deadline bounds that however many OPTIONS,
-    // GET_PARAMETERs or interleaved frames it sends; once cleared it stays
-    // cleared for the connection.
+    // GET_PARAMETERs or interleaved frames it sends, however slowly it reads
+    // the replies: `expired_deadline` is checked before every read and every
+    // request, and reply writes are cut to what is left of it. Once cleared
+    // it stays cleared for the connection.
     let mut admission_deadline = Some(tokio::time::Instant::now() + READ_IDLE_TIMEOUT);
     // Base of the per-read idle wait while no message is in progress. Every
     // read moves it, except a read that an `Idle` connection spent only on
@@ -578,6 +636,10 @@ where
         // Cancellation guard — hard cancel exits the loop immediately,
         // graceful cancel observed via the tokio::select! below.
         if state.hard_cancel.is_cancelled() {
+            break;
+        }
+        if let Some(expired) = expired_deadline(admission_deadline, &state, &session) {
+            warn_expired(peer, &expired);
             break;
         }
 
@@ -601,7 +663,8 @@ where
             READ_IDLE_TIMEOUT
         };
         // A message in progress shortens the wait to what is left of its own
-        // deadline; a peer with nothing in progress gets the full bound.
+        // deadline; a peer with nothing in progress gets what is left of the
+        // bound since its last activity.
         // An opt-in publish idle timeout shortens the wait while a
         // recording publisher exists; the timeout arm decides whether the
         // publisher really was idle.
@@ -639,15 +702,6 @@ where
                 }
             },
             _ = tokio::time::sleep(read_bound) => {
-                if admission_deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
-                    tracing::warn!(
-                        target: "tst_rtp::server",
-                        peer = %peer,
-                        timeout_secs = READ_IDLE_TIMEOUT.as_secs(),
-                        "no SETUP or authenticated request within the admission deadline; closing session"
-                    );
-                    break;
-                }
                 // A publisher's media is liveness too: a TCP-interleaved
                 // publisher already re-arms this sleep by landing bytes on
                 // the read above (next iteration starts a fresh timer), but
@@ -655,18 +709,8 @@ where
                 // different socket this read loop never touches — without
                 // this check such a publisher would be reaped on schedule
                 // despite media flowing.
-                if let Some(t) = publish_idle
-                    && session
-                        .publisher()
-                        .and_then(|p| p.idle_for())
-                        .is_some_and(|d| d >= t)
-                {
-                    tracing::warn!(
-                        target: "tst_rtp::server",
-                        peer = %peer,
-                        timeout_ms = t.as_millis() as u64,
-                        "publish idle timeout; closing session"
-                    );
+                if let Some(expired) = expired_deadline(admission_deadline, &state, &session) {
+                    warn_expired(peer, &expired);
                     break;
                 }
                 if let Some(t0) = msg_started {
@@ -801,12 +845,19 @@ where
             if !drained {
                 break; // partial frame: read more
             }
+            // Before each request, after any interleaved media at the head
+            // was routed: a pipelined batch must not carry the connection
+            // past a deadline that ran out while it was being answered.
+            if let Some(expired) = expired_deadline(admission_deadline, &state, &session) {
+                warn_expired(peer, &expired);
+                break 'serve;
+            }
 
             match reject_if_over_cap(
                 &buf,
                 peer,
                 &write_half,
-                idle_bound,
+                reply_bound(idle_bound, admission_deadline),
                 publish_window(&state, &session),
                 &state.cancel_token,
                 &session_entry.cancel,
@@ -840,7 +891,7 @@ where
                     match write_bounded(
                         &write_half,
                         &bytes,
-                        idle_bound,
+                        reply_bound(idle_bound, admission_deadline),
                         publish_window(&state, &session),
                         &state.cancel_token,
                         &session_entry.cancel,
@@ -854,12 +905,16 @@ where
                             return Ok(());
                         }
                         None => {
-                            tracing::warn!(
-                                target: "tst_rtp::server",
-                                peer = %peer,
-                                timeout_secs = idle_bound.as_secs(),
-                                "reply write parked past the idle bound or the publish idle timeout, or cancelled; closing session"
-                            );
+                            match expired_deadline(admission_deadline, &state, &session) {
+                                Some(expired) => warn_expired(peer, &expired),
+                                None => tracing::warn!(
+                                    target: "tst_rtp::server",
+                                    peer = %peer,
+                                    timeout_secs = idle_bound.as_secs(),
+                                    publish_idle_timeout_ms = state.builder.publish_idle_timeout.map(|d| d.as_millis() as u64),
+                                    "reply write parked past the idle bound or the publish idle timeout, or cancelled; closing session"
+                                ),
+                            }
                             break 'serve;
                         }
                     }
@@ -909,7 +964,7 @@ where
             let written = write_bounded(
                 &write_half,
                 &bytes,
-                idle_bound,
+                reply_bound(idle_bound, admission_deadline),
                 publish_window(&state, &session),
                 &state.cancel_token,
                 &session_entry.cancel,
@@ -923,12 +978,16 @@ where
                     return Ok(());
                 }
                 None => {
-                    tracing::warn!(
-                        target: "tst_rtp::server",
-                        peer = %peer,
-                        timeout_secs = idle_bound.as_secs(),
-                        "response write parked past the idle bound or the publish idle timeout, or cancelled; closing session"
-                    );
+                    match expired_deadline(admission_deadline, &state, &session) {
+                        Some(expired) => warn_expired(peer, &expired),
+                        None => tracing::warn!(
+                            target: "tst_rtp::server",
+                            peer = %peer,
+                            timeout_secs = idle_bound.as_secs(),
+                            publish_idle_timeout_ms = state.builder.publish_idle_timeout.map(|d| d.as_millis() as u64),
+                            "response write parked past the idle bound or the publish idle timeout, or cancelled; closing session"
+                        ),
+                    }
                     break 'serve;
                 }
             }
@@ -977,7 +1036,7 @@ where
                 match write_bounded(
                     &write_half,
                     &[],
-                    idle_bound,
+                    reply_bound(idle_bound, admission_deadline),
                     publish_window(&state, &session),
                     &state.cancel_token,
                     &session_entry.cancel,
@@ -2258,6 +2317,18 @@ mod session_tests {
             .lock()
             .unwrap()
             .insert("/pub".into(), MountEntry::Publish(mount.clone()));
+        let (client, task) = duplex_session(state.clone());
+        (state, mount, client, task)
+    }
+
+    /// A session task serving one in-memory duplex connection against
+    /// `state`, its 1 KiB buffers filling as soon as the test stops reading.
+    fn duplex_session(
+        state: Arc<ServerState>,
+    ) -> (
+        tokio::io::DuplexStream,
+        tokio::task::JoinHandle<Result<(), RtspServerError>>,
+    ) {
         let (client, server_end) = tokio::io::duplex(1024);
         let (read_half, write_half) = tokio::io::split(server_end);
         state
@@ -2265,14 +2336,14 @@ mod session_tests {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let slot = SessionSlot::new(state.clone());
         let task = tokio::spawn(serve_connection(
-            state.clone(),
+            state,
             read_half,
             session_writer(write_half),
             "127.0.0.1:40000".parse().unwrap(),
             slot,
             "test session opened",
         ));
-        (state, mount, client, task)
+        (client, task)
     }
 
     /// Write one request on the duplex and read its response head.
@@ -2434,6 +2505,154 @@ mod session_tests {
         sender.abort();
         feeder.abort();
         assert!(ended.is_ok(), "the session ignored the server cancel");
+    }
+
+    /// Before SETUP, pipeline OPTIONS without pause on a duplex session and
+    /// read the replies back 16 bytes every 100 ms until `stop_reading_at`
+    /// (never stop when `None`). Returns how long after it opened the
+    /// session ended, or panics if it was still open at 60 s. The next
+    /// requests are always buffered when a reply write finishes, so the read
+    /// is ready at every turn of the loop.
+    async fn pipelined_options_closed_after(
+        stop_reading_at: Option<std::time::Duration>,
+    ) -> std::time::Duration {
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
+        let state = crate::rtsp::server::test_state();
+        let (client, task) = duplex_session(state.clone());
+        let t0 = tokio::time::Instant::now();
+        let (mut r, mut w) = tokio::io::split(client);
+        let feeder = tokio::spawn(async move {
+            for cseq in 1u32.. {
+                let req = format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n");
+                if w.write_all(req.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let mut replied = 0usize;
+        while !task.is_finished() && t0.elapsed() < Duration::from_secs(60) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if stop_reading_at.is_some_and(|t| t0.elapsed() >= t) {
+                continue;
+            }
+            let mut few = [0u8; 16];
+            if let Ok(Ok(n)) =
+                tokio::time::timeout(Duration::from_millis(1), r.read(&mut few)).await
+            {
+                replied += n;
+            }
+        }
+        let closed_at = t0.elapsed();
+        feeder.abort();
+        assert!(replied > 0, "the server never answered");
+        assert!(
+            task.is_finished(),
+            "connection still open {closed_at:?} after it opened, with no SETUP"
+        );
+        assert_eq!(
+            state
+                .active_sessions
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "the session slot was not released"
+        );
+        closed_at
+    }
+
+    /// A pre-SETUP peer that pipelines OPTIONS and keeps reading the replies
+    /// slowly is closed at the admission deadline: the deadline holds
+    /// without a timer having to win against a ready read.
+    #[tokio::test(start_paused = true)]
+    async fn pipelined_options_read_back_slowly_do_not_outlast_the_admission_deadline() {
+        use std::time::Duration;
+        let closed_at = pipelined_options_closed_after(None).await;
+        assert!(
+            closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
+            "closed {closed_at:?} after it opened; the admission deadline is 30 s"
+        );
+    }
+
+    /// A pre-SETUP reply write parked when the peer stops reading ends at
+    /// the admission deadline, not a full idle bound after it started.
+    #[tokio::test(start_paused = true)]
+    async fn a_reply_write_parked_before_setup_does_not_outlast_the_admission_deadline() {
+        use std::time::Duration;
+        let closed_at = pipelined_options_closed_after(Some(Duration::from_secs(25))).await;
+        assert!(
+            closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
+            "closed {closed_at:?} after it opened; the admission deadline is 30 s"
+        );
+    }
+
+    /// A recording publisher that sends no media but pipelines GET_PARAMETER
+    /// keepalives and reads every reply loses its session at the publish
+    /// idle timeout: requests never re-arm the window, and the window holds
+    /// even when no timer gets to fire. The test keeps the runtime busy, so
+    /// the paused clock never auto-advances, and it first moves the clock
+    /// half a millisecond off a timer tick, so even a zero-length sleep
+    /// (rounded up to the next tick) stays pending.
+    #[tokio::test(start_paused = true)]
+    async fn pipelined_keepalives_do_not_outlast_the_publish_idle_timeout() {
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
+        let timeout = Duration::from_millis(300);
+        let (state, mount, mut c, task) = publish_idle_session(timeout).await;
+        let r = duplex_exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "ANNOUNCE: {r}");
+        let r = duplex_exchange(
+            &mut c,
+            "SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n",
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let sid = session_header(&r);
+        let r = duplex_exchange(
+            &mut c,
+            &format!("RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 3\r\nSession: {sid}\r\n\r\n"),
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "RECORD: {r}");
+        tokio::time::advance(Duration::from_micros(500)).await;
+
+        let (mut r, mut w) = tokio::io::split(c);
+        let feeder = tokio::spawn(async move {
+            for cseq in 10u32.. {
+                let req = format!(
+                    "GET_PARAMETER rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"
+                );
+                if w.write_all(req.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let reader = tokio::spawn(async move {
+            let mut chunk = [0u8; 1024];
+            while matches!(r.read(&mut chunk).await, Ok(n) if n > 0) {}
+        });
+        // `idle_for` reads a real-time clock: wait in real time, yielding so
+        // the paused tokio clock stays where it is.
+        let start = std::time::Instant::now();
+        let limit = tst_test_helpers::timing::scaled(Duration::from_secs(5));
+        while !task.is_finished() && start.elapsed() < limit {
+            tokio::task::yield_now().await;
+        }
+        feeder.abort();
+        reader.abort();
+        assert!(
+            task.is_finished(),
+            "pipelined keepalives kept a media-less publisher past the publish idle timeout ({timeout:?})"
+        );
+        assert!(
+            mount.publisher.lock().unwrap().info.is_none(),
+            "the publisher slot was not released"
+        );
+        assert_eq!(
+            state
+                .active_sessions
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
     }
 
     /// A reference model of the session lifecycle, written from what the
