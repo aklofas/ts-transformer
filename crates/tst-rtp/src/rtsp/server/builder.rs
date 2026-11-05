@@ -182,6 +182,12 @@ impl RtspServerBuilder {
     /// idle bound (30 s before SETUP, the session timeout plus grace after)
     /// is closed, so a trickling peer cannot hold a session slot or a
     /// publisher slot past that bound.
+    ///
+    /// A connection that has neither completed a SETUP nor passed a
+    /// credential check is closed 30 s after its request loop starts (after
+    /// the TLS handshake on `rtsps://`), however many OPTIONS,
+    /// GET_PARAMETERs or interleaved frames it sends, so peers that never
+    /// authenticate cannot keep the slots.
     pub fn max_sessions(&mut self, n: usize) -> &mut Self {
         self.max_sessions = n.max(1);
         self
