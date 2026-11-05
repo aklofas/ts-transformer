@@ -714,6 +714,20 @@ pub fn parse_soak_config(text: &str) -> Result<SoakConfig, String> {
             ));
         }
     }
+    // One placement oracle per run: the excused-excursion cap is per
+    // receiver, so a second placement leg would get a second full budget.
+    let placement: Vec<&str> = cfg
+        .legs
+        .iter()
+        .filter(|(_, d)| d.klv_placement == Some(true))
+        .map(|(l, _)| l.as_str())
+        .collect();
+    if placement.len() > 1 {
+        return Err(format!(
+            "soak-config.json: legs {placement:?} each declare klv_placement: true; a run \
+             judges placement on one leg only, because the excused-excursion cap is per receiver"
+        ));
+    }
     Ok(cfg)
 }
 
@@ -7110,6 +7124,39 @@ pub(crate) mod tests {
         let mut decl = publish_declaration(Some(6));
         decl.klv_placement = Some(true);
         assert!(parse_soak_config(&config_with_publish_leg("rtsp-publish", decl)).is_ok());
+    }
+
+    /// The excused-excursion cap is per receiver, so a second placement leg
+    /// would get a second full budget; a run judges placement on one leg.
+    #[test]
+    fn a_second_placement_leg_is_refused() {
+        let config = |mp2t_placement: Option<bool>| {
+            let mut mp2t = publish_declaration(Some(6));
+            mp2t.klv_placement = mp2t_placement;
+            let mut legs = serde_json::Map::new();
+            legs.insert(
+                "rtsp-publish-es".to_string(),
+                serde_json::to_value(publish_declaration_as(Some(6), true)).unwrap(),
+            );
+            legs.insert(
+                "rtsp-publish".to_string(),
+                serde_json::to_value(mp2t).unwrap(),
+            );
+            serde_json::json!({
+                "expected_duration_s": 3600, "rss_cadence_s": 30, "warmup_fraction": 0.1667,
+                "sampler_end_slack_s": 35, "expected_worker_exits": {}, "legs": legs
+            })
+            .to_string()
+        };
+        parse_soak_config(&config(None)).expect("one placement leg validates");
+        let err =
+            parse_soak_config(&config(Some(true))).expect_err("two placement legs must be refused");
+        assert!(err.contains("klv_placement"), "{err}");
+        assert!(err.contains("on one leg only"), "{err}");
+        assert!(
+            err.contains("rtsp-publish") && err.contains("rtsp-publish-es"),
+            "{err}"
+        );
     }
 
     #[test]
