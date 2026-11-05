@@ -15,7 +15,7 @@
             one reason per failed rule, 2 when the record, SHA or `gh` is unusable. Rules:
             the record is a release-mode qualification; its verdict is GO; it is not a
             pull-request rehearsal; SHA differs from the record's commit only in release
-            documents; and a build-provenance attestation by release-qualify.yml covers
+            documents, the archive table not among them; and a build-provenance attestation by release-qualify.yml covers
             the committed file's sha256 (so the file is the bundle's, byte for byte)
 
 Artefact directory read by `collect` (a missing file is a missing leg, never a pass):
@@ -81,7 +81,8 @@ RELEASE_SOAK_LEGS = ("srt", "rist", "rtsp-publish", "rtsp-publish-es", "whep")
 # A soak archive still stands for a later tree when nothing outside these
 # release documents changed between the two commits: CHANGELOG.md, anything
 # under docs/, and the archive table itself.
-RELEASE_DOCUMENT_PATHS = ("CHANGELOG.md", "docs/", "tests/coverage/evidence-archives.toml")
+ARCHIVE_TABLE = "tests/coverage/evidence-archives.toml"
+RELEASE_DOCUMENT_PATHS = ("CHANGELOG.md", "docs/", ARCHIVE_TABLE)
 # The soak's browser leg executes the WebRTC reference player and its imports,
 # so under these prefixes only Markdown is a release document.
 RELEASE_CODE_UNDER_DOCS = ("docs/webrtc/",)
@@ -1087,13 +1088,20 @@ def release_eligible(rec, root, sha, digest, attestations, repo=None):
         why.append("the record is a pull-request rehearsal")
     rec_sha = rec.get("source", {}).get("sha", "")
     try:
-        changed = changed_paths(root, rec_sha, sha)
+        names = _diff_names(root, rec_sha, sha)
     except QualificationError as e:
         why.append("git could not resolve %s or %s: %s" % (rec_sha[:12], sha[:12], e))
     else:
+        changed = [l for l in names if not _is_release_document(l)]
         if changed:
             why.append("the record's commit %s differs from %s outside the release documents (%d path(s)): %s"
                        % (rec_sha[:12], sha[:12], len(changed), ", ".join(changed[:5])))
+        # The archive table is a release document for the soak and corpus
+        # equivalence, but the record judged it at its own commit: a row added
+        # since (a newer failed run, a raised required duration) was never read.
+        if ARCHIVE_TABLE in names:
+            why.append("%s changed between the record's commit %s and %s; the record judged the archive "
+                       "table at its own commit, so qualify the commit again" % (ARCHIVE_TABLE, rec_sha[:12], sha[:12]))
     if attestations is not None:
         covering = [s for s in attestations if _covers(s, digest, repo)]
         if not covering:
