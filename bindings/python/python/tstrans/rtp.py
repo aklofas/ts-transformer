@@ -231,6 +231,12 @@ class RtspServerConfig:
     this config's default `max_sessions` of 100, so configure `auth` and
     size `max_sessions` before turning this on for a reachable port."""
 
+    default_mount_rule: Optional[MountRule] = None
+    """The rule every mount path without its own entry follows, in force
+    from the first request (so the window between `start()` and the first
+    `RtspServer.mount_rules().set_default(...)` is closed). `None` keeps the
+    default of inheriting `auth` for both directions."""
+
     end_publish_mount_on_publisher_exit: bool = False
     """Server-wide default for publish mounts: when True, a mount's
     receiver ends (end of stream) as soon as a publisher that reached
@@ -244,18 +250,12 @@ class RtspServerConfig:
 
     publish_idle_timeout_ms: Optional[int] = None
     """End a recording publisher's session after this many milliseconds
-    without media, timed from RECORD or its last RTP packet. None (the
+    without media, timed from RECORD or its last RTP packet. None or 0 (the
     default) leaves it to `session_timeout_secs`. A publisher that has not
     reached RECORD is never ended by it. A value longer than the session
     timeout still matters: a publisher that keeps its session alive with
     RTSP requests while sending no media is ended by this timeout, not the
     session timeout."""
-
-    default_mount_rule: Optional[MountRule] = None
-    """The rule every mount path without its own entry follows, in force
-    from the first request (so the window between `start()` and the first
-    `RtspServer.mount_rules().set_default(...)` is closed). `None` keeps the
-    default of inheriting `auth` for both directions."""
 
     def __post_init__(self) -> None:
         if self.max_sessions <= 0:
@@ -295,9 +295,9 @@ class RtspServerConfig:
                     f"RtspServerConfig.publish_idle_timeout_ms must be an int or None; "
                     f"got {type(self.publish_idle_timeout_ms).__name__}"
                 )
-            if self.publish_idle_timeout_ms <= 0:
+            if self.publish_idle_timeout_ms < 0:
                 raise ValueError(
-                    f"RtspServerConfig.publish_idle_timeout_ms must be None or a positive int; "
+                    f"RtspServerConfig.publish_idle_timeout_ms must be None or a non-negative int; "
                     f"got {self.publish_idle_timeout_ms!r}"
                 )
         if self.default_mount_rule is not None and not isinstance(
