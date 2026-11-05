@@ -31,8 +31,9 @@ pub struct SdpMedia {
     pub protocol: String,
     /// Payload types from the `m=` line. For MP2T, this contains 33.
     pub payload_types: Vec<u8>,
-    /// Media-level connection address (`c=` line under this m=), falls
-    /// back to session-level `c=` if absent.
+    /// Media-level connection address: the first `c=` line under this
+    /// `m=`, or `None` when the media section has none. The session-level
+    /// `c=` is not copied here; read [`Sdp::session_connection`] for it.
     pub connection: Option<String>,
     /// Per-media attributes (`a=` lines under this m=).
     pub attributes: Vec<(String, Option<String>)>,
