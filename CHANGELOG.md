@@ -354,6 +354,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The soak, corpus and ARM64 status cells of the 1.0 exit criteria are rendered from the qualification record; a waiver names the release it stood in for from the record's tag or the waived archive, never from the CHANGELOG.
 - The qualification record names the tag on a tag push and lists the release documents that changed since the soaked tree, and the bundle carries `TREE-EQUIVALENCE.txt`, which lists the collector's equivalence decision: every path that differs between the soaked and the qualified commit, the release documents among them, and the paths outside them.
 - The Python URL-corpus test takes its scheme families from the corpus header.
+- The release gate reads the required soak duration from `[soak] required_duration_s` in `tests/coverage/evidence-archives.toml` (172 800 s, 48 hours, from 0.9.1; it was a 72-hour constant) and accepts any soak row declaring at least that; the record names the required duration and the exit-criteria status reads 'The release soak today'.
 
 ### Changed — tst-interop
 
@@ -377,6 +378,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The corruption attribution explains a PCR anomaly or discontinuity by a body flip on a PCR-only packet only when the flip touched the adaptation field's length, flags or (with the PCR flag set) PCR bytes; a flip in its stuffing no longer does.
 - The soak launcher gates RSS slope (200 KiB/h) by default for every run of 24 hours or more, where it applied only from 72 hours; `--no-rss-slope-gate` keeps a long run provisional.
 - The placement oracle excuses at most two sender-report excursions per run, plus one per hundred expected generations or part of a hundred; further excusable excursions fail the placement check.
+- `soak.sh` defaults to the 48-hour release soak with 300-s publisher generations (576 per run) and a 4-h SRT outage period (12 windows per run), raising the event counts the 0.9.0 run's 72 hours gave; `release-vm-soak.sh` follows, and a rail ties the defaults to the archive table.
 
 ### Fixed — tst-interop
 

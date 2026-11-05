@@ -182,7 +182,7 @@ Replays run over SRT, RIST, UDP, TCP and the RTSP publisher path on loopback,
 one long-lived receiver process per path. Each receiver's memory is sampled
 and recorded per path, not gated: the report notes whether the slope after
 the soak's warm-up is within or above the soak's 200 KiB per hour threshold,
-or that the run was too short for the rule. The 72-hour soak is the memory
+or that the run was too short for the rule. The release soak is the memory
 instrument. A replay of a few unlike captures spends its first picks filling
 each receiver's working set, and a slope rule over a run that short reads
 that as growth.
