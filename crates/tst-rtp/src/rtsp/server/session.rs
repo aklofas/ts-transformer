@@ -140,7 +140,8 @@ fn reply_bound(
 /// With `publish` set, a recording publisher that receives no media for its
 /// timeout ends the wait too, so a publisher that stops reading replies
 /// cannot outlast the publish idle timeout. When that window runs out but
-/// media arrived meanwhile, the write keeps waiting, up to `bound`. The
+/// UDP media arrived meanwhile, the write keeps waiting, up to `bound`
+/// (interleaved frames are not read while a write is parked). The
 /// write future is created once and never restarted, so a partial reply is
 /// never sent twice.
 async fn write_bounded(
@@ -2445,7 +2446,7 @@ mod session_tests {
     #[tokio::test]
     async fn a_parked_reply_write_does_not_end_a_publisher_whose_media_flows() {
         use std::time::Duration;
-        let timeout = Duration::from_millis(500);
+        let timeout = tst_test_helpers::timing::scaled(Duration::from_millis(500));
         let (state, _mount, mut c, task) = publish_idle_session(timeout).await;
         let r = duplex_exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
         assert!(r.starts_with("RTSP/1.0 200"), "ANNOUNCE: {r}");
@@ -2485,7 +2486,7 @@ mod session_tests {
                     let mut pkt = rtp_mp2t_packet(1);
                     pkt[2..4].copy_from_slice(&seq.to_be_bytes());
                     let _ = media.send_to(&pkt, ("127.0.0.1", server_rtp)).await;
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(timeout / 10).await;
                 }
             })
         };
