@@ -178,8 +178,8 @@ public final class RtspServerConfig {
 
         /**
          * Server-wide default: end a publish mount's receiver when a publisher that
-         * reached RECORD leaves, and refuse later publishers on that mount. Default {@code false}. See {@link
-         * RtspServerConfig#endPublishMountOnPublisherExit()}.
+         * reached RECORD leaves, and refuse later publishers on that mount. Default
+         * {@code false}. See {@link RtspServerConfig#endPublishMountOnPublisherExit()}.
          */
         public Builder endPublishMountOnPublisherExit(boolean v) {
             this.endPublishMountOnPublisherExit = v;

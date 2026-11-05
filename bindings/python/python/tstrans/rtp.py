@@ -238,8 +238,9 @@ class RtspServerConfig:
     never recorded does not end it. Off by default: the mount idles for the
     next publisher. To accept a publisher after the mount ended, remove the
     mount and add it again; an ended on-demand mount stays in the table, and
-    counts toward the on-demand cap, until it is removed. `RtspServer.add_publish_mount(end_on_publisher_exit=...)`
-    overrides it per mount; on-demand mounts always follow it."""
+    counts toward the on-demand cap, until it is removed.
+    `RtspServer.add_publish_mount(end_on_publisher_exit=...)` overrides it
+    per mount; on-demand mounts always follow it."""
 
     publish_idle_timeout_ms: Optional[int] = None
     """End a recording publisher's session after this many milliseconds
