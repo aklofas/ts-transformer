@@ -1014,8 +1014,9 @@ likewise load-bearing and likewise frozen.
 (since extended with `klv_set`, `klv_seed` and `reconnect_mode`),
 written before any worker launches. `parse_soak_config` rejects an unknown
 profile name AND an unknown leg key, and `soak.sh` runs `report soak
---validate-only` before launch so a typo surfaces then rather than 72 hours
-later. Two new non-provisional verdicts check the run against them:
+--validate-only` before launch so a typo surfaces then rather than at the end
+of a release-length run. Two new non-provisional verdicts check the run against
+them:
 
 - **`profile_declared_<leg>`** — the recv report's own `profile` stamp must
   equal the declaration. No declaration passes ("pre-realism config");
