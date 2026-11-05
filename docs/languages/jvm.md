@@ -1283,7 +1283,8 @@ try (DemuxReceiver rx = DemuxReceiver.open("srt://:9000?mode=listener")) {
 
 `rx.tsBytesDemuxed()` returns the aligned TS bytes the receiver fed its
 demuxer. It answers while `next()` is parked and never waits on the receive
-slot, and returns the last value after `close()`.
+slot. Once `close()` has returned, on any thread, it returns the count at
+close.
 
 To record or forward the raw packets, pull them from a `Receiver` and feed a
 `Demuxer` yourself. Each chunk is a whole number of 188-byte packets:
