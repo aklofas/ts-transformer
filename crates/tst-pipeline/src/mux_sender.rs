@@ -468,9 +468,11 @@ impl<T: Transport> MuxSender<T> {
     }
 
     /// Send one video access unit to a specific configured video stream.
-    /// `handle` is obtained from [`Self::video_handles`]; passing a handle
-    /// from a different sender / muxer surfaces as
-    /// [`MuxError::InvalidStreamHandle`] inside [`MuxSenderErrorSource::Mux`].
+    /// `handle` is obtained from [`Self::video_handles`]. Handles are
+    /// positional: one from another sender or muxer with the same layout
+    /// addresses the same position here, and one whose position this
+    /// sender lacks surfaces as [`MuxError::InvalidStreamHandle`] inside
+    /// [`MuxSenderErrorSource::Mux`].
     ///
     /// # C ABI
     ///
@@ -657,9 +659,11 @@ impl<T: Transport> MuxSender<T> {
     }
 
     /// Send one audio frame buffer to a specific configured audio stream.
-    /// `handle` is obtained from [`Self::audio_handles`]; passing a handle
-    /// from a different sender / muxer surfaces as
-    /// [`MuxError::InvalidStreamHandle`] inside [`MuxSenderErrorSource::Mux`].
+    /// `handle` is obtained from [`Self::audio_handles`]. Handles are
+    /// positional: one from another sender or muxer with the same layout
+    /// addresses the same position here, and one whose position this
+    /// sender lacks surfaces as [`MuxError::InvalidStreamHandle`] inside
+    /// [`MuxSenderErrorSource::Mux`].
     ///
     /// # C ABI
     ///
@@ -714,9 +718,11 @@ impl<T: Transport> MuxSender<T> {
     }
 
     /// Send one subtitle PES unit to a specific configured subtitle stream.
-    /// `handle` is obtained from [`Self::subtitle_handles`]; passing a
-    /// handle from a different sender / muxer surfaces as
-    /// [`MuxError::InvalidStreamHandle`] inside [`MuxSenderErrorSource::Mux`].
+    /// `handle` is obtained from [`Self::subtitle_handles`]. Handles are
+    /// positional: one from another sender or muxer with the same layout
+    /// addresses the same position here, and one whose position this
+    /// sender lacks surfaces as [`MuxError::InvalidStreamHandle`] inside
+    /// [`MuxSenderErrorSource::Mux`].
     ///
     /// # C ABI
     ///
@@ -772,9 +778,11 @@ impl<T: Transport> MuxSender<T> {
     }
 
     /// Send one data payload to a specific configured data stream.
-    /// `handle` is obtained from [`Self::data_handles`]; passing a handle
-    /// from a different sender / muxer surfaces as
-    /// [`MuxError::InvalidStreamHandle`] inside [`MuxSenderErrorSource::Mux`].
+    /// `handle` is obtained from [`Self::data_handles`]. Handles are
+    /// positional: one from another sender or muxer with the same layout
+    /// addresses the same position here, and one whose position this
+    /// sender lacks surfaces as [`MuxError::InvalidStreamHandle`] inside
+    /// [`MuxSenderErrorSource::Mux`].
     ///
     /// Data streams are a PES **pass-through** — no AU-cell wrap, no
     /// framing, no payload inspection.

@@ -328,8 +328,8 @@ macro_rules! impl_stream_handle {
 ///   of its parent muxer. After the parent is dropped or closed (e.g.,
 ///   `MuxSender::close()`), the handle becomes inert — any further use
 ///   through the now-dropped parent path is moot. Storing a handle past
-///   parent drop is safe (the handle is `Copy + 'static`), but cannot be
-///   "rebound" to a new parent muxer.
+///   parent drop is safe (the handle is `Copy + 'static`); passed to
+///   another muxer, it addresses the same position there (see above).
 /// - **Clone semantics.** `VideoStreamHandle: Copy`. Cloning produces an
 ///   identical handle that refers to the same configured stream within
 ///   the same parent muxer. There is no per-handle identity beyond
