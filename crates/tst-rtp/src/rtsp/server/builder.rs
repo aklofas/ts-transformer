@@ -62,6 +62,8 @@ impl std::fmt::Debug for ServerAuthConfig {
 /// - `graceful_shutdown_drain`: 100 ms
 /// - `tls_handshake_timeout`: 30 s (`rtsps://` only)
 /// - `accept_unregistered_publishers`: off
+/// - `end_publish_mount_on_publisher_exit`: off
+/// - `publish_idle_timeout`: off
 /// - No auth, no TLS — caller adds via `auth_*()` / `tls_cert()`.
 pub struct RtspServerBuilder {
     pub(crate) bind_url: RtspUrl,
@@ -249,11 +251,19 @@ impl RtspServerBuilder {
     }
 
     /// Server-wide default for publish mounts: when `yes`, a mount's
-    /// application transport ends (reads `Closed`) as soon as its
-    /// publisher leaves, and the mount refuses later publishers. Default
-    /// `false`: the mount idles for the next publisher. A mount added with
+    /// application transport ends (reads `Closed`) as soon as a publisher
+    /// that reached RECORD leaves, and the mount refuses later publishers.
+    /// A publisher that was admitted but never reached RECORD does not
+    /// end it. Default `false`: the mount idles for the next publisher. A
+    /// mount added with
     /// [`RtspServer::add_publish_mount_with`](crate::RtspServer::add_publish_mount_with)
     /// can override this; on-demand mounts always inherit it.
+    ///
+    /// To accept a new publisher after the mount ended, call
+    /// [`RtspServer::remove_mount`](crate::rtsp::server::RtspServer::remove_mount)
+    /// and add the mount again; a plain add finds the path taken. An ended
+    /// on-demand mount stays in the table, and counts toward the on-demand
+    /// cap, until it is removed.
     pub fn end_publish_mount_on_publisher_exit(&mut self, yes: bool) -> &mut Self {
         self.end_publish_mount_on_publisher_exit = yes;
         self
@@ -262,10 +272,13 @@ impl RtspServerBuilder {
     /// End the session of a recording publisher that sends no media for
     /// `t`, timed from RECORD or from its last RTP packet. Default off: a
     /// publisher is then governed by [`Self::session_timeout`] alone. A
-    /// publisher that has not reached RECORD is never ended by this knob,
-    /// and a value longer than the session timeout has no effect.
+    /// publisher that has not reached RECORD is never ended by this knob.
+    /// A value longer than the session timeout still matters: a publisher
+    /// that keeps its session alive with RTSP requests while sending no
+    /// media is ended by this timeout, not the session timeout. Zero
+    /// leaves it unset.
     pub fn publish_idle_timeout(&mut self, t: Duration) -> &mut Self {
-        self.publish_idle_timeout = Some(t);
+        self.publish_idle_timeout = (!t.is_zero()).then_some(t);
         self
     }
 
@@ -349,6 +362,15 @@ impl RtspServerBuilder {
 mod tests {
     use super::*;
     use secrecy::SecretString;
+
+    #[test]
+    fn a_zero_publish_idle_timeout_leaves_it_unset() {
+        let mut b = RtspServerBuilder::new("rtsp://0.0.0.0:8554").unwrap();
+        b.publish_idle_timeout(Duration::from_secs(5));
+        assert_eq!(b.publish_idle_timeout, Some(Duration::from_secs(5)));
+        b.publish_idle_timeout(Duration::ZERO);
+        assert_eq!(b.publish_idle_timeout, None);
+    }
 
     #[test]
     fn rtsp_server_builder_new_parses_url() {

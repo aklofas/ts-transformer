@@ -185,3 +185,35 @@ fn publisher_exit_reaches_the_demux_shell_as_end_of_stream() {
     }
     server.stop().ok();
 }
+
+/// A publisher that was admitted by ANNOUNCE but never reached RECORD is not
+/// a publisher leaving: the mount stays open for the next one.
+#[test]
+fn a_publisher_that_never_recorded_does_not_end_the_mount() {
+    let server = server_with_default(true);
+    let mount = server.add_publish_mount("/pub").unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut app = mount.clone().into_recv_transport().unwrap();
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+
+    let mut early = RawPublisher::connect(port);
+    assert_eq!(early.announce("/pub", SDP_MP2T), 200);
+    drop(early);
+    wait_for(scaled(Duration::from_secs(3)), || {
+        mount.publisher().is_none().then_some(())
+    });
+
+    let bundles = ts_fixture_packets(2);
+    let mut next = publish(port, &bundles, 0xE);
+    let mut buf = vec![0u8; 65536];
+    for (i, bundle) in bundles.iter().enumerate() {
+        let n = app
+            .recv_bytes(&mut buf)
+            .unwrap_or_else(|e| panic!("bundle {i}: {e:?}"));
+        assert_eq!(&buf[..n], &bundle[..], "bundle {i}");
+    }
+    assert_eq!(next.teardown("/pub"), 200);
+    drain_then_closed(&mut app, &[]);
+    server.stop().ok();
+}

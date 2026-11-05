@@ -423,8 +423,8 @@ impl<P: Publisher + Send> MuxPublisher<P> {
 
     /// [`Self::push_video`] with an explicit decode timestamp, for a stream
     /// whose DTS differs from its PTS. Requires exactly one configured video
-    /// stream (like [`Self::push_video_misp`]); with several, address the
-    /// stream through the muxer.
+    /// stream (like [`Self::push_video_misp`]); with several there is no
+    /// targeted DTS push on a `MuxPublisher`.
     ///
     /// **Caller invariant:** `dts <= pts` per H.222.0 §2.4.3.6. The muxer
     /// does not enforce it, and segment cuts and pacing follow the PTS.
