@@ -754,7 +754,7 @@ Those two files feed three new verdicts in `soak-results.json`:
 ### Topology
 
 - **`srt` leg:** `tst-interop send --managed` → impairment proxy (the
-  seeded phase schedule plus a 90 s full-drop outage every 6 h) →
+  seeded phase schedule plus a 90 s full-drop outage every 4 h) →
   `tst-interop recv --managed`. The receiver is managed because a
   listener-mode SRT receive accepts exactly one connection per process:
   without it the first outage would end the capture while the sender kept
@@ -835,7 +835,7 @@ step 6) names them in order.
 too short for an outage, so it proves the managed receiver's steady state
 only. `--hours 0.05` runs launch, supervisor and report end to end in
 about three minutes. A run shorter than two `PUBLISHER_DROP_PERIOD_S`
-periods (600 s by default) exits 2 while either publish leg is on, so the
+periods (300 s by default) exits 2 while either publish leg is on, so the
 three-minute drill sets a shorter period, which gives three publisher
 generations of 49 s:
 
@@ -846,7 +846,7 @@ PUBLISHER_DROP_PERIOD_S=60 SRT_RECONNECT_MODE=background bash scripts/interop/so
 
 The rtsp-publish-es leg keeps one source of a single generation's length on
 disk for the whole run: about 0.85 GB per hour of `PUBLISHER_DROP_PERIOD_S`,
-so about 140 MB at the default (exit 2 below 1.2 × that).
+so about 71 MB at the default (exit 2 below 1.2 × that).
 
 A running publisher generation writes its gst-launch output to
 `logs/rtsp-publish-generation.log` (or `logs/rtsp-publish-es-generation.log`),
