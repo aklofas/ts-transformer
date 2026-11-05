@@ -367,20 +367,23 @@ fn viewer_cap_is_503_with_retry_after() {
 
 #[test]
 fn bearer_token_is_enforced() {
+    const CHALLENGE: &str = r#"Bearer realm="whep""#;
     let srv = WhepServer::bind("whep://127.0.0.1:0?token=abc").unwrap();
     srv.add_mount("/cam", MountConfig::default()).unwrap();
     let offer = TestViewer::new().offer(true);
     let (none, headers, _) = whep_post(srv.local_addr(), "/cam", &offer, None);
     assert_eq!(none, 401);
-    assert_eq!(headers["www-authenticate"], "Bearer");
-    let (wrong, _, _) = whep_post(srv.local_addr(), "/cam", &offer, Some("abd"));
+    assert_eq!(headers["www-authenticate"], CHALLENGE);
+    let (wrong, headers, _) = whep_post(srv.local_addr(), "/cam", &offer, Some("abd"));
     assert_eq!(wrong, 401);
+    assert_eq!(headers["www-authenticate"], CHALLENGE);
     let (right, headers, _) = whep_post(srv.local_addr(), "/cam", &offer, Some("abc"));
     assert_eq!(right, 201);
     // Ending the session needs the token too.
     let location = &headers["location"];
-    let (delete, _, _) = http(srv.local_addr(), "DELETE", location, &[], b"");
+    let (delete, headers, _) = http(srv.local_addr(), "DELETE", location, &[], b"");
     assert_eq!(delete, 401);
+    assert_eq!(headers["www-authenticate"], CHALLENGE);
     let auth = [("Authorization", "Bearer abc")];
     let (delete, _, _) = http(srv.local_addr(), "DELETE", location, &auth, b"");
     assert_eq!(delete, 200);

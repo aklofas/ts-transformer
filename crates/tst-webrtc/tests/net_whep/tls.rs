@@ -113,6 +113,7 @@ fn a_key_file_that_is_not_a_key_is_refused_at_bind() {
 
 #[test]
 fn the_bearer_token_is_enforced_over_tls() {
+    const CHALLENGE: &str = r#"Bearer realm="whep""#;
     let certs = SelfSignedCert::generate();
     let srv = WhepServer::bind(&certs.url("&token=abc")).unwrap();
     srv.add_mount("/cam", MountConfig::default()).unwrap();
@@ -120,14 +121,16 @@ fn the_bearer_token_is_enforced_over_tls() {
     let offer = TestViewer::new().offer(true);
     let (none, headers, _) = whep_post_tls(addr, &certs.root_pem, "/cam", &offer, None);
     assert_eq!(none, 401);
-    assert_eq!(headers["www-authenticate"], "Bearer");
-    let (wrong, _, _) = whep_post_tls(addr, &certs.root_pem, "/cam", &offer, Some("abd"));
+    assert_eq!(headers["www-authenticate"], CHALLENGE);
+    let (wrong, headers, _) = whep_post_tls(addr, &certs.root_pem, "/cam", &offer, Some("abd"));
     assert_eq!(wrong, 401);
+    assert_eq!(headers["www-authenticate"], CHALLENGE);
     let (right, headers, _) = whep_post_tls(addr, &certs.root_pem, "/cam", &offer, Some("abc"));
     assert_eq!(right, 201);
     let location = &headers["location"];
-    let (delete, _, _) = https(addr, &certs.root_pem, "DELETE", location, &[], b"");
+    let (delete, headers, _) = https(addr, &certs.root_pem, "DELETE", location, &[], b"");
     assert_eq!(delete, 401);
+    assert_eq!(headers["www-authenticate"], CHALLENGE);
     let auth = [("Authorization", "Bearer abc")];
     let (delete, _, _) = https(addr, &certs.root_pem, "DELETE", location, &auth, b"");
     assert_eq!(delete, 200);
