@@ -134,12 +134,14 @@ cargo run -p tst-examples --example mux_to_hls -- input.ts /tmp/hls 127.0.0.1:80
 ```
 
 Exercises the `Publisher` trait family: `MuxPublisher` → `HlsPublisher` →
-on-disk `.ts` segments + `.m3u8` + an internal HTTP server. The example cuts
-the input into 64 KiB chunks and pushes each as an H.264 keyframe. It does
-not demux the input, so KLV and the original timing are not carried. A real
-re-mux demuxes the file and pushes the access units with their PTS (see
-[`../receiving/`](../receiving/) for demuxing). Verify with
-`ffplay`/`vlc`/`mpv` against `http://localhost:8080/playlist.m3u8`.
+on-disk `.ts` segments + `.m3u8` + an internal HTTP server. The example
+demuxes the input and pushes each access unit of its first video stream
+(H.264, H.265 or H.266) with its PTS, its DTS and its keyframe flag, so the
+segments cut on the source's keyframes and keep its timing; KLV and audio
+are not carried. The playlist is in EVENT mode: once the whole file is
+re-muxed it ends with `#EXT-X-ENDLIST` and the server keeps serving it until
+Ctrl-C. Verify with `ffplay`/`vlc`/`mpv` against
+`http://localhost:8080/playlist.m3u8`.
 
 Cookbook: [Serve MPEG-TS as HLS](../../docs/cookbook/sending/hls.md), [HLS + KLV to a web player](../../docs/cookbook/sending/hls-klv-to-web.md).
 
