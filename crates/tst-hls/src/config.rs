@@ -47,9 +47,10 @@ pub struct HlsConfig {
     /// `false` writes segments and the playlist only: nothing binds, so
     /// several publishers can share one process without contending for
     /// [`Self::bind`]. [`Self::bind`], [`Self::basic_auth`] and the TLS
-    /// fields are then accepted and ignored,
+    /// fields are then accepted and ignored (no TLS setting is checked or
+    /// loaded), and, where the `serve` feature provides them,
     /// [`HlsPublisher::local_addr`](crate::HlsPublisher::local_addr) is
-    /// `None`, and `finish_serving()` is refused.
+    /// `None` and `finish_serving()` is refused.
     ///
     /// Ignored when the `serve` feature is disabled (there is no server).
     pub serve: bool,
@@ -113,28 +114,31 @@ pub struct HlsConfig {
     /// Playlist mode.
     pub mode: HlsMode,
     /// Optional HTTP Basic auth (user, password).  None disables auth.
-    /// Ignored when the `serve` feature is disabled.
+    /// Ignored when [`Self::serve`] is `false` or the `serve` feature is disabled.
     pub basic_auth: Option<(String, String)>,
-    /// Optional TLS server cert path (PEM).  Required if [`Self::tls_key`] set.
-    /// Without the `tls` feature, setting it is refused with
-    /// [`HlsError::TlsDisabled`](crate::HlsError::TlsDisabled).
+    /// Optional TLS server cert path (PEM). When [`Self::serve`] is `true`,
+    /// it is required if [`Self::tls_key`] is set, and without the `tls`
+    /// feature setting it is refused with
+    /// [`HlsError::TlsDisabled`](crate::HlsError::TlsDisabled). When
+    /// [`Self::serve`] is `false` it is ignored: never checked or loaded.
     pub tls_cert: Option<PathBuf>,
-    /// Optional TLS server key path (PEM).  Required if [`Self::tls_cert`] set.
-    /// Without the `tls` feature, setting it is refused with
-    /// [`HlsError::TlsDisabled`](crate::HlsError::TlsDisabled).
+    /// Optional TLS server key path (PEM). When [`Self::serve`] is `true`,
+    /// it is required if [`Self::tls_cert`] is set, and without the `tls`
+    /// feature setting it is refused with
+    /// [`HlsError::TlsDisabled`](crate::HlsError::TlsDisabled). When
+    /// [`Self::serve`] is `false` it is ignored: never checked or loaded.
     pub tls_key: Option<PathBuf>,
     /// Whether the bind is required to be HTTPS. Set by
-    /// `HlsUrl::parse` from an `hlss://` URL's scheme;
-    /// [`Self::validate`] rejects `tls: true` without both
-    /// [`Self::tls_cert`] and [`Self::tls_key`] set, instead of silently
-    /// falling back to a plaintext bind.
+    /// `HlsUrl::parse` from an `hlss://` URL's scheme. When
+    /// [`Self::serve`] is `true`, [`Self::validate`] rejects `tls: true`
+    /// without both [`Self::tls_cert`] and [`Self::tls_key`] set, instead of
+    /// silently falling back to a plaintext bind.
     ///
-    /// Unlike [`Self::tls_cert`] / [`Self::tls_key`] / [`Self::basic_auth`]
-    /// / [`Self::bind`], this field is read **unconditionally** —
-    /// `validate()` is not gated behind the `serve` feature, so setting
-    /// `tls: true` by hand (with `serve` off, where URL parsing isn't
-    /// even compiled) still requires `tls_cert`/`tls_key` to pass
-    /// validation.
+    /// That check does not depend on the `serve` cargo feature: `validate()`
+    /// is compiled without it, so `tls: true` set by hand (where URL
+    /// parsing is not compiled) still needs `tls_cert`/`tls_key` while
+    /// [`Self::serve`] is `true`. With [`Self::serve`] `false` no server
+    /// starts and this field is ignored.
     pub tls: bool,
 }
 

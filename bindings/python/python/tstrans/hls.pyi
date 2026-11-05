@@ -218,6 +218,10 @@ class HlsPublisher:
         playlist + every segment after the stream ends — the way a VOD /
         EVENT stream becomes observable. **Consumes** the publisher;
         subsequent operations raise ``HlsError(kind=FINISHED)``.
+
+        Built with :meth:`HlsPublisherBuilder.no_server`, it still writes
+        the terminal playlist and consumes the publisher, then raises
+        ``HlsError(kind=INVALID_CONFIG)``.
         """
         ...
 
@@ -333,7 +337,8 @@ class HlsPublisherBuilder:
 
         Compiled in by default (tst-py ``tls`` feature; wheels ship it).
         A source build without ``tls`` raises
-        ``HlsError(kind=TLS_DISABLED)`` at ``build()``.
+        ``HlsError(kind=TLS_DISABLED)`` at ``build()``, unless
+        ``no_server()`` was called: a files-only publisher ignores the paths.
         """
         ...
 

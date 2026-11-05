@@ -23,7 +23,8 @@ pub(crate) struct State {
     pub(crate) segmenter: Segmenter,
     pub(crate) bytes_pushed_total: u64,
     /// Set to `true` once the publisher is finished so the HTTP server renders
-    /// a terminal playlist (with `#EXT-X-ENDLIST`).
+    /// a terminal playlist (with `#EXT-X-ENDLIST` in EVENT and VOD mode; a
+    /// LIVE playlist never carries one).
     pub(crate) finished: bool,
 }
 
@@ -191,7 +192,7 @@ impl HlsPublisher {
     /// [`Self::finish_serving`]: cuts any open segment (which, like every
     /// cut, rewrites the non-terminal playlist, except in VOD mode, where
     /// no playlist is written before this final one), marks the segmenter
-    /// finished, and writes the terminal playlist (with `#EXT-X-ENDLIST`)
+    /// finished, and writes the terminal playlist (with `#EXT-X-ENDLIST` in EVENT and VOD mode)
     /// to disk. Callers still own taking/shutting down the HTTP server.
     fn finalize_and_write(&mut self) -> Result<(), HlsError> {
         self.finished = true;
