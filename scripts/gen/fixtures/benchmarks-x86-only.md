@@ -1,5 +1,6 @@
 ### Reference machine
 
+- Architecture: x86_64
 - Kernel: Linux 7.0.0-34-generic x86_64
 - vCPUs: 32
 - Memory: 62.6 GiB
