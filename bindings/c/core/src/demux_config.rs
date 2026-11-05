@@ -163,7 +163,9 @@ impl TstDemuxConfig {
 /// Allocate a new `tst_demux_config_t` with default values
 /// (strict mode = Off, no overrides, default PES caps).
 ///
-/// Returns `NULL` on allocation failure or internal panic.
+/// Returns `NULL` only when a panic is caught inside the call (last-error
+/// `TST_E_PANIC_CAUGHT`; a build without `std` aborts instead); an
+/// allocation failure aborts the process.
 /// Free with `tst_demux_config_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_demux_config_new() -> *mut TstDemuxConfig {

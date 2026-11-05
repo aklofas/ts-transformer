@@ -87,9 +87,10 @@ pub unsafe extern "C" fn tst_tcp_sender_open(url: *const c_char) -> *mut TstTcpS
 /// invalid; passing the same non-null pointer twice is undefined
 /// behavior (use-after-free on the consumed `Box`).
 ///
-/// Close is cancel-first and abortive: up to six buffered packets that
-/// no `tst_tcp_sender_flush` has sent are discarded. Call `_flush` first to
-/// send what is buffered.
+/// Close is cancel-first and abortive: it discards what no
+/// `tst_tcp_sender_flush` has sent, which is up to six packets that have
+/// not yet formed a bundle, plus any bundles a failed send left queued
+/// for the next call. Call `_flush` first to send what is buffered.
 ///
 /// # Safety
 ///
@@ -187,7 +188,8 @@ pub unsafe extern "C" fn tst_tcp_sender_send_ts(
 /// in the sender: `_flush` does not send them and `_close` discards them.
 ///
 /// Call before `tst_tcp_sender_close`: `_close` is cancel-first and
-/// discards up to six buffered packets.
+/// discards what is buffered: up to six packets not yet bundled, plus any
+/// bundles a failed send left queued.
 ///
 /// Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
 /// NULL pointer, or the transport's negative `TST_E_*` code.
