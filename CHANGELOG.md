@@ -420,6 +420,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A replay restart whose receiver cannot start is marked failed in that receiver's log.
 - `tst-interop recv`'s deadline covers a TCP accept and an idle TCP peer, and its message prints a fractional window.
 - An excusable placement excursion that the per-run cap refused is recorded apart from the excused ones (`rejected_excursion_details`) and rendered as a failing `klv_placement_excursion_<leg>` row; it was rendered as a passing, excused row.
+- A body flip whose logged original is shorter than six bytes explains no adaptation-field signal: offsets 4 and 5 counted as a hit without the bytes they name.
 
 ### Changed — CI
 
