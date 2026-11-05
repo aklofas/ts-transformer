@@ -215,6 +215,59 @@ static void print_event(const tst_event_t *ev) {
     }
 }
 
+/* Value of one hex digit, or -1 when `c` is not one. */
+static int hex_digit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* True when the query key `key[0..len)`, percent-decoded, is exactly
+ * `recv_timeout`. An invalid %XX sequence simply fails the comparison. */
+static int key_is_recv_timeout(const char *key, size_t len) {
+    const char *want = "recv_timeout";
+    size_t w = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = key[i];
+        if (c == '%') {
+            int hi, lo;
+            if (i + 2 >= len) return 0;
+            hi = hex_digit(key[i + 1]);
+            lo = hex_digit(key[i + 2]);
+            if (hi < 0 || lo < 0) return 0;
+            c = (char)(hi * 16 + lo);
+            i += 2;
+        }
+        if (want[w] == '\0' || c != want[w]) return 0;
+        w++;
+    }
+    return want[w] == '\0';
+}
+
+/* True when the URL's query already sets `recv_timeout`. Only the query
+ * counts (after the first '?', ended by a '#'), and only keys: a path such
+ * as "/recv_timeout=x" or a value such as "?x=recv_timeout" does not. Keys
+ * are compared percent-decoded because the library's URL parser decodes
+ * them, so "recv%5ftimeout" is the same key. */
+static int url_sets_recv_timeout(const char *url) {
+    const char *p = strchr(url, '?');
+    const char *frag = strchr(url, '#');
+    if (!p || (frag && frag < p)) return 0;
+    p++;
+    while (*p != '\0' && *p != '#') {
+        const char *end = p;
+        const char *eq = NULL;
+        while (*end != '\0' && *end != '#' && *end != '&') {
+            if (*end == '=' && !eq) eq = end;
+            end++;
+        }
+        if (key_is_recv_timeout(p, (size_t)((eq ? eq : end) - p))) return 1;
+        p = (*end == '&') ? end + 1 : end;
+    }
+    return 0;
+}
+
 /* -------------------------------------------------------------------------
  * URL helper: a finite receive timeout, so Ctrl-C is noticed on an idle
  * session.
@@ -229,13 +282,14 @@ static void print_event(const tst_event_t *ev) {
  *
  * Returns a malloc'd copy of `url` with `recv_timeout=<timeout_ms>` added
  * to its query (`?` when it has none, `&` otherwise), or a plain copy
- * when `url` already sets `recv_timeout`, so the caller's value wins.
+ * when the query already has a `recv_timeout` key, so the caller's value
+ * wins.
  * Caller must free() the result.
  * ---------------------------------------------------------------------- */
 static char *url_with_recv_timeout(const char *url, int timeout_ms) {
     size_t needed;
     char *out;
-    if (strstr(url, "recv_timeout=") != NULL) {
+    if (url_sets_recv_timeout(url)) {
         needed = strlen(url) + 1;
         out = malloc(needed);
         if (!out) {
