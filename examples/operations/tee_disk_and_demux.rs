@@ -165,13 +165,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // `finish` flushes the buffered tail and surfaces an I/O error that the
     // implicit `Drop` would swallow (disk full). A recording whose tail
-    // matters must end with it. After a failed write `FileTransport` has
-    // already dropped its writer and `finish` returns `Ok(None)`, so the
-    // error recorded above is the one that must be returned.
-    recording.finish()?;
+    // matters must end with it, even after a failure: it still flushes what
+    // was written. The first fatal error is the one returned; `finish`'s
+    // own error is returned only when nothing failed before it. (After a
+    // failed write `FileTransport` has already dropped its writer, and
+    // `finish` returns `Ok(None)`.)
+    let finished = recording.finish();
     if let Some(e) = failure {
         return Err(e);
     }
+    finished?;
     eprintln!("wrote {output} from {input}; samples={samples} metadata={metadata}");
     Ok(())
 }
