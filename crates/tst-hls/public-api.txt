@@ -10,6 +10,7 @@ pub fn tst_hls::builder::HlsPublisherBuilder::from_url(&str) -> core::result::Re
 pub fn tst_hls::builder::HlsPublisherBuilder::max_segment_duration(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::mode(&mut self, tst_hls::config::HlsMode) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::new() -> Self
+pub fn tst_hls::builder::HlsPublisherBuilder::no_server(&mut self) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::output_dir<P: core::convert::AsRef<std::path::Path>>(&mut self, P) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::playlist_window(&mut self, usize) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::segment_duration(&mut self, core::time::Duration) -> &mut Self
@@ -57,6 +58,7 @@ pub tst_hls::config::HlsConfig::mode: tst_hls::config::HlsMode
 pub tst_hls::config::HlsConfig::output_dir: std::path::PathBuf
 pub tst_hls::config::HlsConfig::playlist_window: usize
 pub tst_hls::config::HlsConfig::segment_duration: core::time::Duration
+pub tst_hls::config::HlsConfig::serve: bool
 pub tst_hls::config::HlsConfig::tls: bool
 pub tst_hls::config::HlsConfig::tls_cert: core::option::Option<std::path::PathBuf>
 pub tst_hls::config::HlsConfig::tls_key: core::option::Option<std::path::PathBuf>
@@ -238,6 +240,7 @@ pub tst_hls::HlsConfig::mode: tst_hls::config::HlsMode
 pub tst_hls::HlsConfig::output_dir: std::path::PathBuf
 pub tst_hls::HlsConfig::playlist_window: usize
 pub tst_hls::HlsConfig::segment_duration: core::time::Duration
+pub tst_hls::HlsConfig::serve: bool
 pub tst_hls::HlsConfig::tls: bool
 pub tst_hls::HlsConfig::tls_cert: core::option::Option<std::path::PathBuf>
 pub tst_hls::HlsConfig::tls_key: core::option::Option<std::path::PathBuf>
@@ -290,6 +293,7 @@ pub fn tst_hls::builder::HlsPublisherBuilder::from_url(&str) -> core::result::Re
 pub fn tst_hls::builder::HlsPublisherBuilder::max_segment_duration(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::mode(&mut self, tst_hls::config::HlsMode) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::new() -> Self
+pub fn tst_hls::builder::HlsPublisherBuilder::no_server(&mut self) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::output_dir<P: core::convert::AsRef<std::path::Path>>(&mut self, P) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::playlist_window(&mut self, usize) -> &mut Self
 pub fn tst_hls::builder::HlsPublisherBuilder::segment_duration(&mut self, core::time::Duration) -> &mut Self

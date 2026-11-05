@@ -140,6 +140,42 @@ class HlsPublisherTest {
     }
 
     @Test
+    void noServerBuildsTwiceOnTheSameBindAndFinishesToFiles(@TempDir Path dir) throws Exception {
+        Path dirA = Files.createDirectory(dir.resolve("a"));
+        Path dirB = Files.createDirectory(dir.resolve("b"));
+        HlsPublisher a = HlsPublisher.builder().bind("127.0.0.1:8080").noServer()
+            .outputDir(dirA.toString()).mode(HlsMode.EVENT).build();
+        HlsPublisher b = HlsPublisher.builder().bind("127.0.0.1:8080").noServer()
+            .outputDir(dirB.toString()).mode(HlsMode.EVENT).build();
+        try {
+            assertTrue(a.localAddr().isEmpty());
+            assertTrue(b.localAddr().isEmpty());
+            assertEquals(0, a.localPort());
+            byte[] ts = new byte[376];
+            for (int i = 0; i < ts.length; i += 188) ts[i] = 0x47;
+            a.pushTs(ts);
+            a.cutSegment();
+            a.finish();
+        } finally {
+            b.close();
+        }
+        assertTrue(Files.readString(dirA.resolve("playlist.m3u8")).contains("#EXT-X-ENDLIST"));
+    }
+
+    @Test
+    void finishServingIsRefusedWithoutAServer(@TempDir Path dir) throws Exception {
+        HlsPublisher p = HlsPublisher.builder().noServer().outputDir(dir.toString())
+            .mode(HlsMode.EVENT).build();
+        byte[] ts = new byte[376];
+        for (int i = 0; i < ts.length; i += 188) ts[i] = 0x47;
+        p.pushTs(ts);
+        p.cutSegment();
+        HlsException e = assertThrows(HlsException.class, p::finishServing);
+        assertEquals(HlsException.Kind.INVALID_CONFIG, e.kind());
+        assertTrue(Files.readString(dir.resolve("playlist.m3u8")).contains("#EXT-X-ENDLIST"));
+    }
+
+    @Test
     void invalidConfigRejectedAtBuild(@TempDir Path dir) {
         // LIVE needs playlist_window × segment_duration ≥ 3 × ceil(segment_duration).
         HlsException e = expectBuildFailure(HlsPublisher.builder()

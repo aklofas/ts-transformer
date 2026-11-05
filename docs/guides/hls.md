@@ -22,7 +22,8 @@ the `MuxPublisher` shell), cuts them into `.ts` segments on decodable
 boundaries, and maintains an RFC 8216 media playlist. Segments are written
 to the output directory as they close, and `playlist.m3u8` is rewritten
 there on every cut (atomically, so a reader never sees a torn playlist);
-the built-in HTTP server renders the playlist from memory during the run.
+the built-in HTTP server renders the playlist from memory during the run
+(`no_server()` / `HlsConfig::serve = false` skips the server and writes the files only).
 Production deployments usually put a reverse proxy or CDN in front of the
 built-in server, or point a static web server at the output directory.
 
@@ -176,7 +177,7 @@ back.finish();                                          // or back.finishServing
 | `HlsMode::Event` | Monotone-growing (no eviction), `#EXT-X-PLAYLIST-TYPE:EVENT` | On `finish` | No |
 | `HlsMode::Vod` | Same as Event, tagged `#EXT-X-PLAYLIST-TYPE:VOD`, but no playlist is served (404) or written until `finish`; use EVENT to watch a recording while it is made | On `finish` | No |
 
-`Publisher::finish` writes the terminal playlist and tears the server down.
+`Publisher::finish` writes the terminal playlist and tears the server down (if there is one; a `no_server()` publisher has none and `finish_serving()` is refused).
 For EVENT and VOD that is usually **not** what you want — the point of a VOD
 is that it stays watchable after the stream ends. Use `finish_serving`
 instead: it finalizes the playlist but keeps the built-in HTTP server up,
@@ -200,7 +201,7 @@ A live stream can be served two ways. The built-in HTTP server renders the
 live playlist from memory, and `playlist.m3u8` is also rewritten atomically
 in `output_dir` at every cut, so a static origin serves it too. The built-in
 server is not meant to face clients directly. It binds loopback
-(`127.0.0.1:8080`) by default; binding all interfaces (`0.0.0.0`) is an
+(`127.0.0.1:8080`) by default (call `no_server()` to start none); binding all interfaces (`0.0.0.0`) is an
 explicit choice you have to make, and even then the recommended production
 shapes are:
 
@@ -241,7 +242,7 @@ most (the umask can only narrow it), so another account can read but never
 modify segments or the playlist. Other platforms make no such check.
 
 Concurrent publishers must each use a **distinct `output_dir`** (and a
-distinct bind port if each runs its own server) — two publishers writing the
+distinct bind port if each runs its own server, or `no_server()`) — two publishers writing the
 same directory will clobber each other's segment numbering and playlist.
 
 One publisher instance is one presentation. A new instance at the same

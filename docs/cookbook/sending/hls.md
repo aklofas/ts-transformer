@@ -16,7 +16,7 @@
 > `HlsPublisherBuilder::build()` rejects configs that cannot meet this floor.
 
 The `tst-hls` publisher segments your stream to `.ts` files on disk and
-serves them (plus a rolling `.m3u8`) over a built-in HTTP server. Each
+serves them (plus a rolling `.m3u8`) over a built-in HTTP server (or, with `no_server()`, writes the files only). Each
 segment opens on a decodable boundary (PAT → PMT → IDR), so a joining player
 can decode the first segment it fetches. KLV metadata stays inside the
 segments — STANAG 4609-aware players continue to decode telemetry.

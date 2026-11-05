@@ -524,6 +524,54 @@ def test_finish_serving_serves_vod(tmp_path: object) -> None:
         assert "#EXT-X-ENDLIST" in body, body
 
 
+def test_no_server_builds_twice_on_one_bind_and_finishes_to_files(tmp_path: object) -> None:
+    """no_server skips the HTTP bind: two publishers share 127.0.0.1:8080,
+    local_addr is None, finish() still writes the terminal playlist."""
+    dir_a = os.path.join(str(tmp_path), "a")
+    dir_b = os.path.join(str(tmp_path), "b")
+    os.makedirs(dir_a)
+    os.makedirs(dir_b)
+
+    def build(d: str) -> HlsPublisher:
+        return (
+            HlsPublisher.builder()
+            .bind("127.0.0.1:8080")
+            .no_server()
+            .output_dir(d)
+            .mode(HlsMode.EVENT)
+            .build()
+        )
+
+    a = build(dir_a)
+    b = build(dir_b)
+    assert a.local_addr() is None
+    assert b.local_addr() is None
+    assert a.local_port() == 0
+    a.push_ts(TS_TWO_PACKETS)
+    a.cut_segment()
+    a.finish()
+    b.finish()
+    with open(os.path.join(dir_a, "playlist.m3u8")) as f:
+        assert "#EXT-X-ENDLIST" in f.read()
+
+
+def test_finish_serving_is_refused_without_a_server(tmp_path: object) -> None:
+    pub = (
+        HlsPublisher.builder()
+        .no_server()
+        .output_dir(str(tmp_path))
+        .mode(HlsMode.EVENT)
+        .build()
+    )
+    pub.push_ts(TS_TWO_PACKETS)
+    pub.cut_segment()
+    with pytest.raises(HlsError) as ei:
+        pub.finish_serving()
+    assert ei.value.kind == HlsErrorKind.INVALID_CONFIG
+    with open(os.path.join(str(tmp_path), "playlist.m3u8")) as f:
+        assert "#EXT-X-ENDLIST" in f.read()
+
+
 def test_hls_https_serving_with_tls(tmp_path: object) -> None:
     """HTTPS (hlss) end-to-end: enable_tls(cert, key) serves the playlist
     over TLS; a stdlib ssl context trusting the fixture cert fetches and

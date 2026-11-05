@@ -41,6 +41,15 @@ impl HlsPublisherBuilder {
         self
     }
 
+    /// Files-only mode: write segments and the playlist, start no HTTP
+    /// server. `bind`, `basic_auth` and TLS are then ignored,
+    /// [`HlsPublisher::local_addr`] is `None` and
+    /// [`HlsPublisher::finish_serving`] is refused.
+    pub fn no_server(&mut self) -> &mut Self {
+        self.config.serve = false;
+        self
+    }
+
     /// Filesystem directory for `.ts` segments + `playlist.m3u8`.
     pub fn output_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
         self.config.output_dir = dir.as_ref().to_path_buf();
@@ -92,7 +101,8 @@ impl HlsPublisherBuilder {
         self
     }
 
-    /// Construct the publisher (binds the HTTP server immediately).
+    /// Construct the publisher (binds the HTTP server immediately, unless
+    /// [`no_server`](Self::no_server) was called).
     pub fn build(&self) -> Result<HlsPublisher, HlsError> {
         #[cfg(not(feature = "tls"))]
         if self.config.tls_cert.is_some() || self.config.tls_key.is_some() {

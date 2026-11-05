@@ -66,7 +66,7 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
         nCutSegmentWithDuration(peekHandle(), mediaDurationUs);
     }
 
-    /** Flush, write the terminal playlist, tear down the server. Consumes the publisher. */
+    /** Flush, write the terminal playlist, tear down the server (if any). Consumes the publisher. */
     @Override
     public void finish() throws HlsException {
         long h = consumeHandle();
@@ -77,7 +77,8 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
     /**
      * Like {@link #finish()}, but keep the HTTP server serving the terminal
      * playlist + segments until the returned handle is shut down. Consumes the
-     * publisher.
+     * publisher. Throws {@code INVALID_CONFIG}, after writing the terminal
+     * playlist, when built with {@link HlsPublisherBuilder#noServer()}.
      */
     public HlsServerHandle finishServing() throws HlsException {
         long h = consumeHandle();
@@ -101,7 +102,8 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
 
     /**
      * Bound server address as {@code "ip:port"}; the library default is
-     * {@code 127.0.0.1:8080} when {@link HlsPublisherBuilder#bind} was not called.
+     * {@code 127.0.0.1:8080} when {@link HlsPublisherBuilder#bind} was not called;
+     * empty after {@link HlsPublisherBuilder#noServer()}.
      */
     public Optional<String> localAddr() {
         ensureOpen("HlsPublisher is closed");
@@ -135,7 +137,7 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
     // --- Natives ---
     static native long nBuild(String url, String bind, String outputDir, long segmentDurationMs,
         long maxSegmentDurationMs, int playlistWindow, int mode, String authUser, String authPass,
-        String tlsCert, String tlsKey) throws HlsException;
+        String tlsCert, String tlsKey, boolean noServer) throws HlsException;
     private static native String nLocalAddr(long handle);
     private static native void nPushTs(long handle, byte[] tsBytes) throws HlsException;
     private static native void nCutSegment(long handle) throws HlsException;

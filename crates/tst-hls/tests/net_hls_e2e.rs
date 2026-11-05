@@ -334,3 +334,53 @@ fn http_server_runs_on_one_thread_named_tst_hls() {
         "after: {after:?}"
     );
 }
+
+#[test]
+fn no_server_builds_without_binding_and_finishes_to_files() {
+    // Neither publisher binds, so the shared (default-port) address is never contended.
+    let bind: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
+    let dir_a = tmpdir("no-server-a");
+    let dir_b = tmpdir("no-server-b");
+    let build = |dir: &PathBuf| {
+        HlsPublisherBuilder::new()
+            .bind(bind)
+            .no_server()
+            .output_dir(dir)
+            .mode(HlsMode::Event)
+            .build()
+            .unwrap()
+    };
+    let mut a = build(&dir_a);
+    let b = build(&dir_b);
+    assert!(a.local_addr().is_none());
+    assert!(b.local_addr().is_none());
+
+    a.push_ts(&[0x47u8; 376]).unwrap();
+    a.cut_segment().unwrap();
+    a.finish().unwrap();
+    b.finish().unwrap();
+
+    let playlist = std::fs::read_to_string(dir_a.join("playlist.m3u8")).unwrap();
+    assert!(playlist.contains("#EXT-X-ENDLIST"), "playlist:\n{playlist}");
+}
+
+#[test]
+fn finish_serving_is_refused_without_a_server() {
+    let dir = tmpdir("no-server-refused");
+    let mut publisher = HlsPublisherBuilder::new()
+        .no_server()
+        .output_dir(&dir)
+        .mode(HlsMode::Event)
+        .build()
+        .unwrap();
+    publisher.push_ts(&[0x47u8; 376]).unwrap();
+    publisher.cut_segment().unwrap();
+    let err = publisher.finish_serving().err().expect("refused");
+    assert!(
+        matches!(err, tst_hls::HlsError::InvalidConfig(_)),
+        "got {err:?}"
+    );
+    // The terminal playlist is written before the refusal.
+    let playlist = std::fs::read_to_string(dir.join("playlist.m3u8")).unwrap();
+    assert!(playlist.contains("#EXT-X-ENDLIST"), "playlist:\n{playlist}");
+}

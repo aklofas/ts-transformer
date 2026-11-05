@@ -1622,6 +1622,15 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-hls"
+item = "tst_hls::builder::HlsPublisherBuilder::no_server"
+owning_tests = ["crates/tst-hls/tests/net_hls_e2e.rs", "bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
+bindings = ["java:org.tstrans.hls.HlsPublisherBuilder.noServer", "c:deferred(C parity backlog: the C HLS publisher always serves)", "python:tstrans.hls.HlsPublisherBuilder.no_server", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-hls"
 item = "tst_hls::publisher::HlsPublisher::cut_segment"
 owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/HlsPublisherTest.java"]
 bindings = ["java:org.tstrans.hls.HlsPublisher.cutSegment", "c:unaudited", "python:tstrans.hls.HlsPublisher.cut_segment", "swift:deferred", "kotlin:deferred"]

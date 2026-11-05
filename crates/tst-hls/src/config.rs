@@ -41,6 +41,18 @@ pub struct HlsConfig {
     ///
     /// Ignored when the `serve` feature is disabled.
     pub bind: SocketAddr,
+    /// Whether the publisher starts the built-in HTTP server (default
+    /// `true`).
+    ///
+    /// `false` writes segments and the playlist only: nothing binds, so
+    /// several publishers can share one process without contending for
+    /// [`Self::bind`]. [`Self::bind`], [`Self::basic_auth`] and the TLS
+    /// fields are then accepted and ignored,
+    /// [`HlsPublisher::local_addr`](crate::HlsPublisher::local_addr) is
+    /// `None`, and `finish_serving()` is refused.
+    ///
+    /// Ignored when the `serve` feature is disabled (there is no server).
+    pub serve: bool,
     /// Filesystem directory where segments + playlist are written.
     /// Created if it doesn't exist; emptied of stale `segment_*.ts` /
     /// `playlist.m3u8` on construction.
@@ -154,6 +166,7 @@ impl Default for HlsConfig {
     fn default() -> Self {
         Self {
             bind: "127.0.0.1:8080".parse().expect("hard-coded default"),
+            serve: true,
             output_dir: std::env::temp_dir().join("tstrans-hls"),
             segment_duration: Duration::from_secs(4),
             max_segment_duration: None,

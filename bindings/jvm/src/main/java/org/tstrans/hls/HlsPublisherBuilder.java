@@ -22,15 +22,25 @@ public final class HlsPublisherBuilder {
     private String authPass;
     private String tlsCert;
     private String tlsKey;
+    private boolean noServer;
 
     HlsPublisherBuilder() {}
 
     /**
      * HTTP server bind address, e.g. {@code "127.0.0.1:0"} for a kernel-picked port.
      * If not called, the library binds {@code 127.0.0.1:8080}; a second publisher
-     * in the same process then fails with {@code BIND_FAILED}.
+     * in the same process then fails with {@code BIND_FAILED}. Ignored after
+     * {@link #noServer()}.
      */
     public HlsPublisherBuilder bind(String addr) { this.bind = Objects.requireNonNull(addr, "addr"); return this; }
+
+    /**
+     * Files-only mode: write segments and the playlist, start no HTTP server.
+     * {@link #bind}, {@link #basicAuth} and {@link #enableTls} are then
+     * accepted and ignored, {@link HlsPublisher#localAddr()} is empty and
+     * {@link HlsPublisher#finishServing()} throws {@code INVALID_CONFIG}.
+     */
+    public HlsPublisherBuilder noServer() { this.noServer = true; return this; }
 
     /** Directory for {@code .ts} segments and {@code playlist.m3u8}. */
     public HlsPublisherBuilder outputDir(String path) { this.outputDir = Objects.requireNonNull(path, "path"); return this; }
@@ -93,7 +103,8 @@ public final class HlsPublisherBuilder {
     public HlsPublisherBuilder fromUrl(String url) { this.url = Objects.requireNonNull(url, "url"); return this; }
 
     /**
-     * Build the publisher (binds the HTTP server immediately).
+     * Build the publisher (binds the HTTP server immediately, unless
+     * {@link #noServer()} was called).
      *
      * @throws HlsException {@code URL}, {@code BIND_FAILED}, {@code INVALID_CONFIG},
      *     {@code TLS}, {@code TLS_DISABLED} per the failure
@@ -101,7 +112,7 @@ public final class HlsPublisherBuilder {
      */
     public HlsPublisher build() throws HlsException {
         long h = HlsPublisher.nBuild(url, bind, outputDir, segmentDurationMs, maxSegmentDurationMs,
-            playlistWindow, mode == null ? -1 : mode.ordinal(), authUser, authPass, tlsCert, tlsKey);
+            playlistWindow, mode == null ? -1 : mode.ordinal(), authUser, authPass, tlsCert, tlsKey, noServer);
         if (h == 0) {
             throw new HlsException(HlsException.Kind.INTERNAL, "nBuild returned 0 without throwing");
         }
