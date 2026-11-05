@@ -10,6 +10,15 @@ Files in this directory tune the nightly `sanitizers` GHA workflow
 - `tsan.txt` — ThreadSanitizer suppression rules. Loaded via
   `TSAN_OPTIONS=suppressions=...` env var.
 
+## Symbolizer
+
+Suppressions match on symbolised function names, so every job that loads
+a suppressions file must have `llvm-symbolizer` on PATH (the jobs install
+the `llvm` package). Without it the runtime falls back to `addr2line`,
+which symbolises each suppressed report through a fresh process per test
+process and stalls the test for seconds (the "TSan `rtsp_server` test margins"
+class in `docs/project/ci-flakes.md`).
+
 ## When to add a suppression
 
 When a nightly run surfaces a finding that's:
