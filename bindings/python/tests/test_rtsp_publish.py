@@ -49,6 +49,7 @@ from tstrans.mpegts import (
 from tstrans.rtp import (
     ClockAlignment,
     PublisherInfo,
+    MountRule,
     PublishMount,
     PublishMountStats,
     PublishShape,
@@ -342,6 +343,16 @@ def test_cancel_beats_events_already_queued():
             rx.close()
 
 
+def test_config_positional_order_keeps_default_mount_rule_in_place():
+    rule = MountRule()
+    cfg = RtspServerConfig(
+        "rtsp://0.0.0.0:0", None, 100, 60, 256, 2000, None, None, False, rule
+    )
+    assert cfg.default_mount_rule is rule
+    assert cfg.end_publish_mount_on_publisher_exit is False
+    assert cfg.publish_idle_timeout_ms is None
+
+
 def test_config_end_publish_mount_on_publisher_exit_default_and_type():
     assert RtspServerConfig().end_publish_mount_on_publisher_exit is False
     assert RtspServerConfig(
@@ -351,10 +362,11 @@ def test_config_end_publish_mount_on_publisher_exit_default_and_type():
         RtspServerConfig(end_publish_mount_on_publisher_exit=1)  # type: ignore[arg-type]
 
 
-def test_config_publish_idle_timeout_ms_accepts_none_or_positive_int():
+def test_config_publish_idle_timeout_ms_accepts_none_zero_or_positive_int():
     assert RtspServerConfig().publish_idle_timeout_ms is None
+    assert RtspServerConfig(publish_idle_timeout_ms=0).publish_idle_timeout_ms == 0
     assert RtspServerConfig(publish_idle_timeout_ms=1500).publish_idle_timeout_ms == 1500
-    for bad in (0, -1):
+    for bad in (-1,):
         with pytest.raises(ValueError, match="publish_idle_timeout_ms"):
             RtspServerConfig(publish_idle_timeout_ms=bad)
     for bad in (1.5, "1", True):

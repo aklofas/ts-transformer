@@ -1215,7 +1215,7 @@ The surface:
   mount stays in the table, and counts toward the on-demand cap, until
   removed.
 - `RtspServerConfig(publish_idle_timeout_ms=N)` ends a recording publisher's
-  session after N ms without media. It is off by default.
+  session after N ms without media. None or 0 leaves it off (the default).
 - `RtspServerConfig(accept_unregistered_publishers=True)` lets an ANNOUNCE to
   an unregistered path create a publish mount on demand, and
   `RtspServer.next_publisher(timeout=None) -> PublishMount | None` hands each
