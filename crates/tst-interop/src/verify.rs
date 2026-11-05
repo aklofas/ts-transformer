@@ -1972,6 +1972,8 @@ impl Tally {
             },
             // `recv` stamps this for an `rtsp-publish://` capture.
             publish_mount: None,
+            // `recv --managed` stamps this from its own clock.
+            media_tail_s: None,
         }
     }
 }

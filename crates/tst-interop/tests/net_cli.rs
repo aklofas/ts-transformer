@@ -617,6 +617,7 @@ fn healthy_recv_report(video_aus: u64) -> VerifyReport {
         profile: None,
         skipped_oracles: Vec::new(),
         publish_mount: None,
+        media_tail_s: None,
     }
 }
 

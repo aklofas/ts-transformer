@@ -1624,4 +1624,9 @@ fn srt_background_reconnect_keeps_producing_through_an_outage() {
         send_metrics.video_aus,
         report.metrics.video_aus
     );
+    assert!(
+        report.media_tail_s.is_some(),
+        "a managed receive that saw media records when it last did: {:?}",
+        report.media_tail_s
+    );
 }

@@ -366,6 +366,15 @@ pub struct VerifyReport {
     /// `#[serde(default)]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publish_mount: Option<PublishMountReport>,
+    /// Seconds between the last media event (a `Sample` or `Metadata`) the
+    /// capture received and its own deadline (first event + `--seconds` +
+    /// the post-start grace); zero when media arrived up to the deadline.
+    /// Written by `recv --managed`; `None` when no media arrived, for every
+    /// other producer, and for a report written before the field existed.
+    /// `report soak` judges it on a leg with an outage schedule
+    /// (`media_until_end_<leg>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_tail_s: Option<f64>,
 }
 
 /// The publish mount's cumulative counters (`tst_rtp::PublishMountStats`)

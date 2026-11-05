@@ -139,6 +139,11 @@ const EXCUSAL_BUDGET_BASE: u64 = 8;
 /// that healthy run; one sized for 72 h would be meaningless at 1 h.
 const EXCUSAL_PER_HOUR: u64 = 16;
 
+/// `media_until_end_<leg>` holds a receiver's last media to this many
+/// outage durations of its deadline: a run's last outage window can open
+/// `outage_dur_s + 30` s before the sender stops.
+const MEDIA_TAIL_OUTAGES: u64 = 2;
+
 /// The lossy excusal budget:
 /// `K x expected_outage_windows + EXCUSAL_BUDGET_BASE + ceil(EXCUSAL_PER_HOUR x hours)`.
 ///
@@ -722,6 +727,43 @@ fn is_sha256_hex(s: &str) -> bool {
 /// `profile_declared_<leg>`: the recv report was judged against the
 /// profile `soak-config.json` declared for the leg. Shared by
 /// transport and publish legs.
+/// `media_until_end_<leg>`: the receiver's last media arrived within
+/// [`MEDIA_TAIL_OUTAGES`] outage durations of its deadline.
+fn media_until_end_verdict(leg_name: &str, outage_dur_s: u64, tail: Option<f64>) -> SoakVerdict {
+    let bound = MEDIA_TAIL_OUTAGES * outage_dur_s;
+    let (pass, detail) = match tail {
+        Some(t) if t <= bound as f64 => (
+            true,
+            format!(
+                "{leg_name}: last media {t:.1} s before the receiver's deadline, within \
+                 {bound} s (2 x the {outage_dur_s} s outage)"
+            ),
+        ),
+        Some(t) => (
+            false,
+            format!(
+                "{leg_name}: last media {t:.1} s before the receiver's deadline, more than \
+                 {bound} s (2 x the {outage_dur_s} s outage): the receiver stopped receiving \
+                 before the run ended"
+            ),
+        ),
+        None => (
+            false,
+            format!(
+                "{leg_name}: the recv report records no last-media time (no media arrived, or \
+                 recv was not run with --managed)"
+            ),
+        ),
+    };
+    SoakVerdict {
+        name: format!("media_until_end_{leg_name}"),
+        pass,
+        provisional: false,
+        excused: false,
+        detail,
+    }
+}
+
 fn profile_declared_verdict(
     leg_name: &str,
     declared: Option<&LegDeclaration>,
@@ -1884,6 +1926,18 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                 artifacts.recv_report.failures.join("; ")
             },
         });
+
+        // The count floors are aggregates over the run, so a receiver that
+        // stopped recovering in the last hours still clears them; its last
+        // media time does not. Only a leg with an outage schedule has a
+        // bound to judge it against.
+        if artifacts.outage_period_s.is_some() && outage_dur_s > 0 {
+            verdicts.push(media_until_end_verdict(
+                leg_name,
+                outage_dur_s,
+                artifacts.recv_report.media_tail_s,
+            ));
+        }
 
         // `profile_declared`/`schedule_declared` check the run against
         // what `soak-config.json` said it would be, the same
@@ -3605,6 +3659,7 @@ pub(crate) mod tests {
             profile: None,
             skipped_oracles: Vec::new(),
             publish_mount: None,
+            media_tail_s: Some(0.0),
         }
     }
 
@@ -4154,6 +4209,51 @@ pub(crate) mod tests {
             results.legs[0].expected_outage_windows, 12,
             "72h at a 6h period must count windows 1..=12 (never window 0, the \
              proxy-only warmup window)"
+        );
+    }
+
+    /// A receiver that stops receiving near the end of a run passes every
+    /// aggregate floor; `media_until_end_<leg>` holds its last media to
+    /// two outage durations of its own deadline.
+    #[test]
+    fn media_until_end_fails_a_receiver_silent_near_the_end() {
+        let judge = |tail: Option<f64>| {
+            let mut i = healthy_inputs();
+            let leg = &mut i.legs[0].1;
+            leg.outage_period_s = Some(3600);
+            leg.proxy_stats.config.outage_period_s = Some(3600);
+            leg.proxy_stats.config.outage_dur_s = 90;
+            leg.recv_report.media_tail_s = tail;
+            build_soak_results(i).unwrap()
+        };
+        for tail in [3.0, 180.0] {
+            let r = judge(Some(tail));
+            let v = verdict(&r, "media_until_end_srt");
+            assert!(v.pass && !v.provisional, "{tail}: {}", v.detail);
+        }
+        for tail in [Some(180.5), None] {
+            let r = judge(tail);
+            let v = verdict(&r, "media_until_end_srt");
+            assert!(!v.pass && !v.provisional, "{tail:?}: {}", v.detail);
+            assert!(!r.overall_pass);
+        }
+        assert!(
+            verdict(&judge(Some(181.0)), "media_until_end_srt")
+                .detail
+                .contains("more than 180 s (2 x the 90 s outage)"),
+        );
+    }
+
+    /// Only a leg with an outage schedule has a bound to judge against.
+    #[test]
+    fn media_until_end_is_judged_only_on_a_leg_with_an_outage() {
+        let r = build_soak_results(healthy_inputs()).unwrap();
+        assert!(
+            r.verdicts
+                .iter()
+                .all(|v| !v.name.starts_with("media_until_end_")),
+            "{:?}",
+            r.verdicts
         );
     }
 
