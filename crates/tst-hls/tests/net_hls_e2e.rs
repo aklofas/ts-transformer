@@ -384,3 +384,19 @@ fn finish_serving_is_refused_without_a_server() {
     let playlist = std::fs::read_to_string(dir.join("playlist.m3u8")).unwrap();
     assert!(playlist.contains("#EXT-X-ENDLIST"), "playlist:\n{playlist}");
 }
+
+#[test]
+fn an_empty_push_ts_adds_no_segment_to_the_playlist() {
+    let dir = tmpdir("empty-push");
+    let mut publisher = HlsPublisherBuilder::new()
+        .no_server()
+        .output_dir(&dir)
+        .mode(HlsMode::Event)
+        .build()
+        .unwrap();
+    publisher.push_ts(&[]).unwrap();
+    publisher.finish().unwrap();
+    let playlist = std::fs::read_to_string(dir.join("playlist.m3u8")).unwrap();
+    assert!(!playlist.contains("#EXTINF"), "playlist:\n{playlist}");
+    assert!(!dir.join("segment_00000.ts").exists());
+}
