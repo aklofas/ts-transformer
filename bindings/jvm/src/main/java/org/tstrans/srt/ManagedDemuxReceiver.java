@@ -16,10 +16,11 @@ import org.tstrans.shells.SocketStats;
 /**
  * Single-call convenience wrapper that owns a managed-reconnect demuxer over an
  * SRT transport. Construct with an SRT URL — {@code mode=caller} (the default
- * when the URL names no mode) OR {@code mode=listener} — and iterate over the emitted {@link DemuxEvent} instances
- * (the same sealed hierarchy {@code org.tstrans.mpegts.Demuxer} produces). On any
- * Broken/Closed event the wrapper re-binds (listener) or re-dials (caller) under
- * the configured {@link ReconnectPolicy} and resumes delivering events.
+ * when the URL names no mode) OR {@code mode=listener} — and iterate over the
+ * emitted {@link DemuxEvent} instances (the same sealed hierarchy
+ * {@code org.tstrans.mpegts.Demuxer} produces). On any Broken/Closed event
+ * the wrapper re-binds (listener) or re-dials (caller) under the configured
+ * {@link ReconnectPolicy} and resumes delivering events.
  *
  * <p>Mirrors {@code tstrans.srt.ManagedDemuxReceiver}. Wraps
  * {@code tst_pipeline::ManagedDemuxReceiver<SrtTransport>}.

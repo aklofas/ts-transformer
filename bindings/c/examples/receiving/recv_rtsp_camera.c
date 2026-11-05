@@ -318,10 +318,10 @@ int main(int argc, char **argv) {
      *
      * We use struct sigaction (POSIX) rather than signal() because
      * signal()'s behaviour on re-raise is implementation-defined on
-     * Linux.  SA_RESTART stays unset, but that alone
-     * does not wake the loop: tst-rtp retries a receive that a signal
-     * interrupts, so the flag is read only when _next_event returns, with
-     * an event or at the 500 ms recv_timeout added to the URL below.
+     * Linux.  SA_RESTART stays unset, but that alone does not wake the
+     * loop: tst-rtp retries a receive that a signal interrupts, so the
+     * flag is read only when _next_event returns, with an event or at
+     * the 500 ms recv_timeout added to the URL below.
      * ---------------------------------------------------------------- */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));

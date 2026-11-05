@@ -8,8 +8,9 @@
 //!
 //! Threading: single-threaded per the `Receiver` model: iteration on the Java
 //! `DemuxReceiver` is not synchronized; only `close()` is (so concurrent
-//! closes finish together). The sanctioned cross-thread stop is `cancelHandle().cancel()` (or `close()`, which cancels
-//! first), which wakes a parked `recv_event`.
+//! closes finish together). The sanctioned cross-thread stop is
+//! `cancelHandle().cancel()` (or `close()`, which cancels first), which
+//! wakes a parked `recv_event`.
 //!
 //! Slot discipline: `nNext` holds the receiver's slot for the whole
 //! `recv_event` call (`REGISTRY.with_mut`). `cancelHandle()` / `isAlive()` /

@@ -367,14 +367,6 @@ deadlocking. Each runtime handle is `Send` (ownership can transfer
 between threads) and effectively `Sync` for data-path use through the
 inner mutex.
 
-**One runtime handle has no internal lock: the HLS serving handle.**
-`TstHlsServerHandle` (returned by `tst_hls_publisher_finish_serving`) is
-not slot-backed. Its three calls, `tst_hls_server_handle_local_addr`,
-`tst_hls_server_handle_shutdown` and `tst_hls_server_handle_free`, must be
-serialised by the binding: confine the handle to one thread, or take a
-language-side lock around every call on it. A shutdown that races a
-local-address read is a data race and undefined behaviour.
-
 That mutex lives inside the handle, so it cannot protect the handle's own
 lifetime. `_close` / `_free` consumes the pointer (it is a `Box` handed
 back to Rust and dropped), so bindings MUST serialize it against every
@@ -388,6 +380,14 @@ a parked call on any family, and a concurrent close is never the supported
 interrupter. `_close` being implemented cancel-first is a defence, not a
 contract. The header's "Threading and lifetime" preamble and the notes on
 each entry point carry the per-family details of this one rule.
+
+**One runtime handle has no internal lock: the HLS serving handle.**
+`TstHlsServerHandle` (returned by `tst_hls_publisher_finish_serving`) is
+not slot-backed. Its three calls, `tst_hls_server_handle_local_addr`,
+`tst_hls_server_handle_shutdown` and `tst_hls_server_handle_free`, must be
+serialised by the binding: confine the handle to one thread, or take a
+language-side lock around every call on it. A shutdown that races a
+local-address read is a data race and undefined behaviour.
 
 A byte slice passed as `(ptr, len)` is borrowed for
 the duration of the call only, and a call can park inside I/O for a long

@@ -19,11 +19,10 @@
 //!
 //! ## API drift
 //!
-//! - `tst_pipeline::ManagedTransport` (send side) has **no**
-//!   `reconnects_count` accessor — only `ManagedRecvTransport` (recv
-//!   side) ships one (it's used by `ManagedDemuxReceiver` to detect a
-//!   fresh transport between events). So `ManagedSender` does NOT
-//!   expose `reconnect_attempts()`; only `ManagedReceiver` does.
+//! - `ManagedSender` does NOT expose `reconnect_attempts()`; only
+//!   `ManagedReceiver` does. Its count reads the `ManagedHandles` attempts
+//!   counter, which counts every factory call, failures
+//!   included.
 //!
 //! - The two `new(...)` signatures differ: `ManagedTransport::new` takes
 //!   a `Fn() -> Result<T, TransportError> + Send + Sync + 'static`;

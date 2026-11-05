@@ -1003,7 +1003,7 @@ impl std::fmt::Debug for ServerConfigExtract {
             )
             .field("auth", &self.auth)
             .field("tls_cert", &self.tls_cert)
-            .field("tls_key", &self.tls_key.as_ref().map(|_| "<redacted>"))
+            .field("tls_key", &self.tls_key)
             .field(
                 "accept_unregistered_publishers",
                 &self.accept_unregistered_publishers,
