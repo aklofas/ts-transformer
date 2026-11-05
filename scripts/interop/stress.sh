@@ -81,6 +81,8 @@
 #
 # Validated on linux-x86_64 only; see lib.sh's header for this
 # directory's shell-portability stance (not macOS-portable).
+# arm64: the orchestration has no architecture-specific code; the first
+# arm64 pass is recorded on the evidence page when it runs.
 
 set -euo pipefail
 

@@ -853,6 +853,19 @@ A running publisher generation writes its gst-launch output to
 which each generation overwrites. The leg's own log gets a copy only when the
 generation ends, so follow a live generation in that file.
 
+### Architectures
+
+Two stamps record the host: `soak-config.json` carries `arch` and
+`provenance.json` carries `host.arch`, both the output of `uname -m`
+(`x86_64`, `aarch64`). An archive row copies `arch` from the stamp. An
+aarch64 soak or stress row is recorded beside the x86_64 one and never
+gates the 0.9.1 release.
+
+`release-vm-setup.sh` installs Google Chrome on x86_64 and Chromium (snap)
+on aarch64. Before an aarch64 run, drill the browser first: a
+`--hours 0.05` soak with the whep leg on; if the browser fails, rerun with
+`--no-whep`.
+
 ### Outputs and the supervisor
 
 Under `--outdir`: `rss.csv` (`elapsed_s,leg,process,pid,rss_kb` for every

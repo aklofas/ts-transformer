@@ -824,6 +824,7 @@ write_provenance() {
     --arg cargo "$(cd "$repo_root" && cargo -V 2>/dev/null || echo unknown)" \
     --arg hostname "$(hostname 2>/dev/null || echo unknown)" \
     --arg kernel "$(uname -srm)" \
+    --arg arch "$(uname -m)" \
     --argjson cpus "$(nproc)" \
     --argjson mem_total_kb "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" \
     --argjson clk_tck "$(getconf CLK_TCK)" \
@@ -833,7 +834,7 @@ write_provenance() {
       source: {head: $head, describe: $describe, branch: $branch, dirty: $dirty,
                submodules: $submodules},
       toolchain: {rustc: $rustc, cargo: $cargo},
-      host: {hostname: $hostname, kernel: $kernel, cpus: $cpus,
+      host: {hostname: $hostname, kernel: $kernel, arch: $arch, cpus: $cpus,
              mem_total_kb: $mem_total_kb, clk_tck: $clk_tck},
       argv: $argv,
       env: $env}' >"$out_json"
