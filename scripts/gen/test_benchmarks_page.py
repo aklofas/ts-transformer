@@ -2,9 +2,11 @@
 
 Run:  python3 -m unittest scripts/gen/test_benchmarks_page.py
 """
+import copy
 import json
 import os
 import re
+import subprocess
 import sys
 import unittest
 
@@ -182,6 +184,55 @@ class LimitationCollapse(unittest.TestCase):
         short = self._long_line(2)
         r = dict(r, limitations=[short])
         self.assertIn(short, bp.render(r, p))
+
+
+class ArchTable(unittest.TestCase):
+    """With an arm64 archive the block opens with a ceilings-by-architecture
+    table; without one the page is exactly the x86-only rendering."""
+
+    def test_render_without_arm_is_unchanged(self):
+        r, p = load()
+        with open(os.path.join(FIX, "benchmarks-x86-only.md")) as f:
+            self.assertEqual(bp.render(r, p), f.read())
+
+    def test_arch_table_has_one_row_per_transport_axis_and_both_columns(self):
+        r, p = load()
+        md = bp.render(r, p, arm=(copy.deepcopy(r), copy.deepcopy(p)))
+        self.assertTrue(md.startswith("### Ceilings by architecture\n"))
+        sec = re.search(r"^### Ceilings by architecture\n(.*?)(?=^### )", md, re.M | re.S).group(1)
+        lines = [ln for ln in sec.splitlines() if ln.startswith("|")]
+        self.assertEqual(lines[0], "| Transport | Axis | x86_64 ceiling | aarch64 ceiling |")
+        want = {(a["transport"], a["axis"]) for a in r["sweep"]}
+        rows = [[c.strip() for c in ln.strip("|").split("|")] for ln in lines[2:]]
+        self.assertEqual({(row[0], row[1]) for row in rows}, want)
+        self.assertEqual(len(rows), len(want))
+        for row in rows:
+            self.assertEqual(row[2], row[3])
+            self.assertNotEqual(row[2], "\u2014")
+        self.assertLess(md.index("### Reference machine\n"), md.index("### Reference machine (aarch64)\n"))
+        self.assertLess(md.index("### Reference machine (aarch64)\n"), md.index("### Stream scaling"))
+
+    def test_missing_arm_entry_renders_a_dash(self):
+        r, p = load()
+        arm_r = copy.deepcopy(r)
+        gone = arm_r["sweep"].pop(0)
+        md = bp.render(r, p, arm=(arm_r, copy.deepcopy(p)))
+        sec = re.search(r"^### Ceilings by architecture\n(.*?)(?=^### )", md, re.M | re.S).group(1)
+        row = next(ln for ln in sec.splitlines()
+                   if ln.startswith(f"| {gone['transport']} | {gone['axis']} |"))
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        self.assertEqual(cells[3], "\u2014")
+        self.assertNotEqual(cells[2], "\u2014")
+
+    def test_cli_requires_both_arm_arguments(self):
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmarks_page.py")
+        base = [sys.executable, script, "--results", os.path.join(FIX, "stress-results.smoke.json"),
+                "--provenance", os.path.join(FIX, "provenance.smoke.json")]
+        for extra in (["--arm-results", os.path.join(FIX, "stress-results.smoke.json")],
+                      ["--arm-provenance", os.path.join(FIX, "provenance.smoke.json")]):
+            res = subprocess.run(base + extra, capture_output=True, text=True)
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("--arm-results and --arm-provenance", res.stderr)
 
 
 if __name__ == "__main__":
