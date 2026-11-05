@@ -439,7 +439,7 @@ worker's status recorded in `exits.json`.
 ### Runs
 
 Every soak run this page cites, oldest first. The tree is the commit the
-run was built from. A release soak declares 259 200 seconds (72 hours);
+run was built from. A release soak declares at least `[soak] required_duration_s` (172 800 s, 48 hours, from 0.9.1; the 0.9.0 rows declare 259 200 s);
 the release qualification accepts no shorter run.
 
 | Id | Dates (UTC) | Tree | Declared duration | Verdict | Note |
@@ -1336,7 +1336,7 @@ these earlier results do not by themselves qualify `9b8acb3b`. Evidence on
 The release qualification of the 0.9.0 tree is the generated block above,
 produced in release mode on the date commit plus the archive row below it:
 the frozen tree with only the CHANGELOG and the evidence archive list
-changed. The gate reads the newest 72-hour soak archive for the tree,
+changed. The gate reads the newest release soak archive for the tree,
 `soak-0.9.0-2026-10-27`. The harness judged that run `overall_pass=false`
 on four verdicts; the runs table above names them and the archive's own
 report analyses them: a harness oracle gap (the AV1 carriage check does not

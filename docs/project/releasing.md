@@ -198,7 +198,7 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      --wait-marker ~/ci-green` waits for that marker and refuses one written for another commit, so a
      reused VM cannot launch on a stale marker, then runs the pre-flight
      (soak.sh's own memory gate and the rtsp-publish disk rule, which needs
-     1.2 × the pre-generated stream's peak free — about 141 GiB for 72 hours),
+     1.2 × the pre-generated stream's peak free — about 94 GiB for 48 hours),
      launches `soak.sh` detached so no session limit can end it, and reports
      `SOAK-UP roles=N running_until=…` only once every role is alive. A
      refused pre-flight names the largest directories beside the outdir: a
@@ -206,10 +206,11 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      `release-vm-soak.sh stop --outdir <old>` keeps its logs and frees its
      media. Run `launch` detached too (it waits for the marker and then for
      the roles, which can be an hour).
-   - Check the run at 24 and 48 hours without touching it:
+   - Check the run at 24 hours (the midpoint) and again before the end,
+     without touching it:
      `release-vm-soak.sh status --outdir ~/soak-X.Y.Z` lists every role
      alive, the absence of the fail-fast marker, and the SRT receiver's
-     `reconnects`, which reads 4 and then 8.
+     `reconnects`, which reads 6 at 24 hours and 12 at the end.
    - When the run ends, harvest the corpus run directory and the soak
      directory. Write a checksum list for each on the VM and check the
      copies against it.
@@ -223,7 +224,7 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
 7. **The archive-entry PR.** A docs-only PR adds two rows to
    `tests/coverage/evidence-archives.toml`, each with the frozen commit as
    its `tree`:
-   - the soak, with `expected_duration_s = 259200` and `legs = [...]`
+   - the soak, with `expected_duration_s = 172800` and `legs = [...]`
      copied from the `legs=…` list on the last line `report soak` printed;
    - the corpus run, with the counts its archive row carries. Its `files`
      must equal `expected_files` in the file's `[corpus]` table. When the
@@ -265,7 +266,8 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
     push or dispatch run rather than a pull-request run, no workflow
     definition under `.github/` or `scripts/gen/` differs from the qualified
     commit, and the interop census matches `expectations.toml`. `release=true` adds the release gate: GO
-    also needs a passing soak archive that declares 259 200 seconds and all
+    also needs a passing soak archive that declares at least the required
+    duration (`[soak] required_duration_s`, 172 800 s) and all
     five legs (srt, rist, rtsp-publish, rtsp-publish-es, whep), and a
     newest corpus archive on a tree equivalent to the qualified commit, which passed, swept the declared
     `expected_files` count and replayed all five paths (at least one file,
@@ -274,10 +276,10 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
     tree and this commit. The JavaScript under `docs/webrtc/` is not a
     document, because the soak's browser leg runs it. A `v*` tag push
     applies the same gate. The gate
-    judges the newest 72-hour soak that stands for the commit. A newer failed
+    judges the newest release soak that stands for the commit. A newer failed
     soak of any declared duration on the same or an equivalent tree is a
     reason for NO-GO, while a newer passing short run never replaces the
-    72-hour pass. The newest corpus row on an equivalent tree is the one
+    release-length pass. The newest corpus row on an equivalent tree is the one
     judged, so a newer failed corpus run blocks and a newer passing one
     replaces an earlier failure. Without
     the input the record is a mid-cycle one and states that the gate was not
