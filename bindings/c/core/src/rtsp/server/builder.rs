@@ -374,6 +374,30 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_end_publish_mount_on_publisher_
     });
 }
 
+/// End the session of a recording publisher that sends no media for `secs`
+/// seconds, timed from RECORD or its last RTP packet. `0` (the default)
+/// leaves it unset, so only the session timeout governs. A publisher that
+/// has not reached RECORD is never ended by it, and a value longer than the
+/// session timeout has no effect.
+///
+/// Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+/// sets last-error `TST_E_INVALID_CONFIG`.
+///
+/// # Safety
+///
+/// `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+/// yet freed or consumed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtsp_server_builder_publish_idle_timeout(
+    builder: *mut TstRtspServerBuilder,
+    secs: u32,
+) {
+    ffi_catch((), || match unsafe { builder.as_mut() } {
+        Some(b) => b.publish_idle_timeout_secs = secs,
+        None => set_last_error(TstError::InvalidConfig, "builder is null"),
+    });
+}
+
 /// Set the session timeout in seconds.
 ///
 /// The server advertises this value to clients in the `Session:

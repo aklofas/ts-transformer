@@ -10361,6 +10361,27 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
 
 #if defined(TST_HAS_RTP)
 /**
+ * End the session of a recording publisher that sends no media for `secs`
+ * seconds, timed from RECORD or its last RTP packet. `0` (the default)
+ * leaves it unset, so only the session timeout governs. A publisher that
+ * has not reached RECORD is never ended by it, and a value longer than the
+ * session timeout has no effect.
+ *
+ * Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+ * sets last-error `TST_E_INVALID_CONFIG`.
+ *
+ * # Safety
+ *
+ * `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+ * yet freed or consumed.
+ */
+
+void tst_rtsp_server_builder_publish_idle_timeout(struct TstRtspServerBuilder *builder,
+                                                  uint32_t secs);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
  * Set the session timeout in seconds.
  *
  * The server advertises this value to clients in the `Session:

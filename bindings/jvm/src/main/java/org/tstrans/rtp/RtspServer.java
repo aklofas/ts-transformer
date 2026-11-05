@@ -76,6 +76,7 @@ public final class RtspServer extends NativeHandle {
             authScheme, realm, user, password,
             config.tlsCert().orElse(null), config.tlsKey().orElse(null),
             config.acceptUnregisteredPublishers(), config.endPublishMountOnPublisherExit(),
+            config.publishIdleTimeoutMs(),
             dflt == null ? -1 : dp.kind(), dflt == null ? 0 : dp.statusCode(),
             dflt == null ? null : dp.usernames(), dflt == null ? null : dp.passwords(),
             dflt == null ? 0 : dr.kind(), dflt == null ? 0 : dr.statusCode(),
@@ -302,6 +303,7 @@ public final class RtspServer extends NativeHandle {
         long fanoutCapacity, long gracefulShutdownDrainMs, int authScheme, String authRealm,
         String authUser, String authPassword, String tlsCert, String tlsKey,
         boolean acceptUnregisteredPublishers, boolean endPublishMountOnPublisherExit,
+        long publishIdleTimeoutMs,
         int defPubKind, int defPubStatus, String[] defPubUsers, String[] defPubPasswords,
         int defReadKind, int defReadStatus, String[] defReadUsers, String[] defReadPasswords)
         throws RtspException;

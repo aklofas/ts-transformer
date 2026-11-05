@@ -73,6 +73,7 @@ pub struct RtspServerBuilder {
     pub(crate) graceful_shutdown_drain: Duration,
     pub(crate) accept_unregistered_publishers: bool,
     pub(crate) end_publish_mount_on_publisher_exit: bool,
+    pub(crate) publish_idle_timeout: Option<Duration>,
     #[cfg(feature = "rtsp-server-tls")]
     pub(crate) tls_cert_path: Option<PathBuf>,
     #[cfg(feature = "rtsp-server-tls")]
@@ -113,6 +114,7 @@ impl RtspServerBuilder {
             graceful_shutdown_drain: Duration::from_millis(100),
             accept_unregistered_publishers: false,
             end_publish_mount_on_publisher_exit: false,
+            publish_idle_timeout: None,
             #[cfg(feature = "rtsp-server-tls")]
             tls_cert_path: None,
             #[cfg(feature = "rtsp-server-tls")]
@@ -254,6 +256,16 @@ impl RtspServerBuilder {
     /// can override this; on-demand mounts always inherit it.
     pub fn end_publish_mount_on_publisher_exit(&mut self, yes: bool) -> &mut Self {
         self.end_publish_mount_on_publisher_exit = yes;
+        self
+    }
+
+    /// End the session of a recording publisher that sends no media for
+    /// `t`, timed from RECORD or from its last RTP packet. Default off: a
+    /// publisher is then governed by [`Self::session_timeout`] alone. A
+    /// publisher that has not reached RECORD is never ended by this knob,
+    /// and a value longer than the session timeout has no effect.
+    pub fn publish_idle_timeout(&mut self, t: Duration) -> &mut Self {
+        self.publish_idle_timeout = Some(t);
         self
     }
 

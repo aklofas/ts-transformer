@@ -736,7 +736,8 @@ baseline (by design)" for the full rationale.
       error code changed.
     - `29` — new symbols `tst_rtsp_server_builder_end_publish_mount_on_publisher_exit`
       (server-wide default: a publish mount's receiver ends when its publisher
-      leaves). Further RTSP-server builder setters added under this same minor
+      leaves) and `tst_rtsp_server_builder_publish_idle_timeout` (seconds
+      without media that end a recording publisher; 0 = unset). Further RTSP-server builder setters added under this same minor
       are listed in this row.
       No existing symbol, layout, enum value or error code changed.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that

@@ -163,6 +163,7 @@ jni_native! {
         tls_key: JString<'local>,
         accept_unregistered_publishers: jboolean,
         end_publish_mount_on_publisher_exit: jboolean,
+        publish_idle_timeout_ms: jlong,
         def_pub_kind: jint,
         def_pub_status: jint,
         def_pub_users: JObjectArray<'local>,
@@ -258,6 +259,9 @@ jni_native! {
                 ))
                 .accept_unregistered_publishers(accept_unregistered_publishers)
                 .end_publish_mount_on_publisher_exit(end_publish_mount_on_publisher_exit);
+            if publish_idle_timeout_ms > 0 {
+                builder.publish_idle_timeout(Duration::from_millis(publish_idle_timeout_ms as u64));
+            }
             if let Some((scheme, realm, user, pass)) = auth.as_ref() {
                 let secret = SecretString::from(pass.clone());
                 match scheme {

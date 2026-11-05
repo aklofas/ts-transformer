@@ -19,6 +19,14 @@ class RtspServerConfigTest {
         assertTrue(c.tlsKey().isEmpty());
         assertFalse(c.acceptUnregisteredPublishers());
         assertFalse(c.endPublishMountOnPublisherExit());
+        assertEquals(0L, c.publishIdleTimeoutMs());
+    }
+
+    @Test
+    void publishIdleTimeoutMsRoundTrips() {
+        RtspServerConfig c = RtspServerConfig.builder().publishIdleTimeoutMs(1500).build();
+        assertEquals(1500L, c.publishIdleTimeoutMs());
+        assertTrue(c.toString().contains("publishIdleTimeoutMs=1500"));
     }
 
     @Test

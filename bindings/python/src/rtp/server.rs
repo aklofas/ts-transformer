@@ -605,6 +605,9 @@ impl PyRtspServer {
                     .graceful_shutdown_drain(Duration::from_millis(cfg.graceful_shutdown_drain_ms))
                     .accept_unregistered_publishers(cfg.accept_unregistered_publishers)
                     .end_publish_mount_on_publisher_exit(cfg.end_publish_mount_on_publisher_exit);
+                if let Some(ms) = cfg.publish_idle_timeout_ms {
+                    builder.publish_idle_timeout(Duration::from_millis(ms));
+                }
                 if let Some(rule) = cfg.default_mount_rule.as_ref() {
                     builder.default_mount_rule(rule.clone());
                 }
@@ -945,6 +948,7 @@ struct ServerConfigExtract {
     tls_key: Option<String>,
     accept_unregistered_publishers: bool,
     end_publish_mount_on_publisher_exit: bool,
+    publish_idle_timeout_ms: Option<u64>,
     default_mount_rule: Option<tst_rtp::MountRule>,
 }
 
@@ -984,6 +988,9 @@ impl ServerConfigExtract {
         let end_publish_mount_on_publisher_exit: bool = obj
             .getattr(intern!(py, "end_publish_mount_on_publisher_exit"))?
             .extract()?;
+        let publish_idle_timeout_ms: Option<u64> = obj
+            .getattr(intern!(py, "publish_idle_timeout_ms"))?
+            .extract()?;
         let rule_obj = obj.getattr(intern!(py, "default_mount_rule"))?;
         let default_mount_rule = if rule_obj.is_none() {
             None
@@ -1002,6 +1009,7 @@ impl ServerConfigExtract {
             tls_key,
             accept_unregistered_publishers,
             end_publish_mount_on_publisher_exit,
+            publish_idle_timeout_ms,
             default_mount_rule,
         })
     }
