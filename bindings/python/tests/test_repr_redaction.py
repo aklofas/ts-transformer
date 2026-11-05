@@ -117,3 +117,17 @@ def test_hls_from_url_error_never_echoes_the_malformed_host():
 def test_tcp_listener_builder_repr():
     url = f"tcps://u:{SECRET}@127.0.0.1:7000"
     _clean(repr(tcp.Listener.builder().bind(url)), "127.0.0.1:7000")
+
+
+def test_rtsp_server_config_repr_hides_a_bind_url_secret():
+    cfg = rtp.RtspServerConfig(
+        bind_addr=f"rtsp://admin:{SECRET}@127.0.0.1:8554?token={SECRET}"
+    )
+    text = repr(cfg)
+    _clean(text, "127.0.0.1:8554")
+    assert text.startswith("RtspServerConfig(bind_addr="), text
+    assert "max_sessions=100" in text, text
+
+
+def test_rtsp_server_config_repr_keeps_a_plain_bind_address():
+    assert "bind_addr='0.0.0.0:8554'" in repr(rtp.RtspServerConfig())

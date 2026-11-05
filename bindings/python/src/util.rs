@@ -467,3 +467,11 @@ impl<'py> IntoPyObject<'py> for HostBytes {
         (&self).into_pyobject(py)
     }
 }
+
+/// `tst_core::url::redact_url` for the pure-Python classes whose repr
+/// formats a URL (`tstrans.rtp.RtspServerConfig`). Private to the package.
+#[pyfunction]
+#[pyo3(name = "_redact_url")]
+pub(crate) fn redact_url_py(url: &str) -> String {
+    tst_core::url::redact_url(url)
+}
