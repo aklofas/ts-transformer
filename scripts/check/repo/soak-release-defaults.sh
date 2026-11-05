@@ -4,6 +4,9 @@
 # `[soak] required_duration_s` in tests/coverage/evidence-archives.toml, and
 # the publisher-generation and outage periods must tile that duration so the
 # run sees whole cycles (and at least two publisher generations).
+# The documented `soak.sh --hours` recipes in the interop README and the
+# release runbook must give at least two publisher generations and two browser
+# connections, the launcher's own launch checks.
 #
 # Run it:   bash scripts/check/repo/soak-release-defaults.sh
 set -euo pipefail
@@ -55,6 +58,43 @@ done <<<"$vm_hours"
 ((required / drop >= 2)) || fail "PUBLISHER_DROP_PERIOD_S $drop gives fewer than two generations in $required"
 ((required % outage == 0)) || fail "required $required not a multiple of OUTAGE_PERIOD_S $outage"
 ((outage_dur < outage)) || fail "OUTAGE_DUR_S $outage_dur not below OUTAGE_PERIOD_S $outage"
+
+# The documented soak.sh recipes must clear the launcher's own checks: at
+# least two publisher generations while a publish leg is on and at least two
+# browser connections while the whep leg is on. A recipe that does not exits
+# 2 before any browser starts.
+whep=$(sed -n 's/^WHEP_RECONNECT_S="\${WHEP_RECONNECT_S:-\([0-9]*\)}".*/\1/p' "$SOAK" | head -n1)
+[[ -n "$whep" ]] || fail "could not read WHEP_RECONNECT_S default"
+recipes=$(python3 - "$drop" "$whep" scripts/interop/README.md docs/project/releasing.md <<'PY'
+import re, sys
+drop_default, whep_default = int(sys.argv[1]), int(sys.argv[2])
+found = 0
+for path in sys.argv[3:]:
+    text = open(path).read().replace("\\\n", " ")
+    for line in text.splitlines():
+        m = re.search(r"--hours\s+([0-9.]+)", line)
+        if "soak.sh" not in line or not m:
+            continue
+        found += 1
+        total = int(float(m.group(1)) * 3600 + 0.5)
+        env = dict(re.findall(r"\b(PUBLISHER_DROP_PERIOD_S|WHEP_RECONNECT_S)=(\d+)", line))
+        drop = int(env.get("PUBLISHER_DROP_PERIOD_S", drop_default))
+        whep = int(env.get("WHEP_RECONNECT_S", whep_default))
+        both_off = re.search(r"--no-rtsp-publish(\s|$)", line) and "--no-rtsp-publish-es" in line
+        if not both_off and total // drop < 2:
+            print("FAIL: %s: --hours %s with PUBLISHER_DROP_PERIOD_S=%d gives %d publisher "
+                  "generation(s), below two" % (path, m.group(1), drop, total // drop))
+        if "--no-whep" not in line and total // whep < 2:
+            print("FAIL: %s: --hours %s with WHEP_RECONNECT_S=%d gives %d browser connection(s), "
+                  "below two" % (path, m.group(1), whep, total // whep))
+if found == 0:
+    print("FAIL: no soak.sh --hours recipe in " + ", ".join(sys.argv[3:]))
+PY
+)
+if [[ -n "$recipes" ]]; then
+  echo "$recipes"
+  fails=$((fails + 1))
+fi
 
 ((fails == 0)) || exit 1
 echo "soak-release-defaults: ok"

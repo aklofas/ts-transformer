@@ -844,14 +844,16 @@ step 6) names them in order.
 `--hours 1` is the smoke: long enough for a real post-warm-up RSS window,
 too short for an outage, so it proves the managed receiver's steady state
 only. `--hours 0.05` runs launch, supervisor and report end to end in
-about three minutes. A run shorter than two `PUBLISHER_DROP_PERIOD_S`
-periods (300 s by default) exits 2 while either publish leg is on, so the
-three-minute drill sets a shorter period, which gives three publisher
-generations of 49 s:
+about three minutes. A run shorter than two `PUBLISHER_DROP_PERIOD_S` periods (300 s by
+default) exits 2 while either publish leg is on, and one shorter than two
+`WHEP_RECONNECT_S` periods (600 s by default) exits 2 while the whep leg is
+on, so the three-minute drill sets both to 60 s: three publisher generations
+of 49 s and three browser connections of 57 s. The outdir sits under
+`$HOME` because snap Chromium (aarch64) has a private `/tmp`:
 
 ```bash
-PUBLISHER_DROP_PERIOD_S=60 SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh \
-  --outdir "$(mktemp -d)/soak-drill" --hours 0.05 --seed 1
+PUBLISHER_DROP_PERIOD_S=60 WHEP_RECONNECT_S=60 SRT_RECONNECT_MODE=background \
+  bash scripts/interop/soak.sh --outdir "$HOME/soak-drill" --hours 0.05 --seed 1
 ```
 
 The rtsp-publish-es leg keeps one source of a single generation's length on
@@ -872,9 +874,9 @@ aarch64 soak or stress row is recorded beside the x86_64 one and never
 gates the 0.9.1 release.
 
 `release-vm-setup.sh` installs Google Chrome on x86_64 and Chromium (snap)
-on aarch64. Before an aarch64 run, drill the browser first: a
-`--hours 0.05` soak with the whep leg on; if the browser fails, rerun with
-`--no-whep`.
+on aarch64. Before an aarch64 run, drill the browser first with the
+three-minute drill above, which keeps the whep leg on; if the browser fails,
+the arm64 run launches with `--no-whep`.
 
 ### Outputs and the supervisor
 
