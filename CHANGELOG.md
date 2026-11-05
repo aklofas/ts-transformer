@@ -404,6 +404,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `soak.sh` and `stress.sh` stamp the host architecture (`soak-config.json`, `provenance.json`); `release-vm-setup.sh` installs Chromium on aarch64 for the whep leg.
 - The interop matrix adds `whep/chromium-audio-first`: headless Chrome plays an audio-dropping MP2T mount with an offer whose audio section comes first, and fails unless that offer really is audio-first. The full census is 162 cells.
 - A corpus run's archive row carries the baseline's manifest digest as `baseline_manifest_sha256`, absent when the sweep compared with no baseline.
+- `recv --managed` records how long before its deadline its last media arrived (`media_tail_s`), and `report soak` fails `media_until_end_<leg>` on a leg with an outage schedule when that exceeds two outage durations, so a receiver that stops recovering near the end of a soak no longer passes on the run's aggregate counts.
 
 ### Fixed — tst-interop
 

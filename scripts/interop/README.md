@@ -765,6 +765,10 @@ Those two files feed three new verdicts in `soak-results.json`:
   listener-mode SRT receive accepts exactly one connection per process:
   without it the first outage would end the capture while the sender kept
   retrying. Both ends must survive each outage and reconnect.
+  `media_until_end_srt` fails when the receiver's last media (a `Sample`
+  or `Metadata`) arrived more than 2 × `OUTAGE_DUR_S` before its own
+  deadline: a receiver that stopped recovering near the end clears every
+  count floor, which are aggregates over the run.
 - **`rist` leg:** the same shape over RIST through a second proxy on the
   same schedule, with no outage window. RIST has no `Managed*` wrapper
   here, so an outage would only be sustained loss; this leg's job is

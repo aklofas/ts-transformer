@@ -741,6 +741,7 @@ pub fn run_managed(
     }
     let start = Instant::now();
     let mut events_seen: u64 = 0;
+    let mut last_media: Option<Instant> = None;
     let mut last_heartbeat = Instant::now();
 
     loop {
@@ -772,6 +773,11 @@ pub fn run_managed(
                     *d = Instant::now() + Duration::from_secs_f64(seconds) + POST_START_GRACE;
                 }
                 events_seen += 1;
+                // Media, not any event: a reconnect marker or a table
+                // after a reconnect is no sign the stream came back.
+                if matches!(ev, DemuxEvent::Sample { .. } | DemuxEvent::Metadata { .. }) {
+                    last_media = Some(Instant::now());
+                }
                 // See `recv_over_transport`'s loop for why the tail is
                 // polled before the event is stamped.
                 poll_corruption_log(&mut tally, tail.as_mut())?;
@@ -792,6 +798,9 @@ pub fn run_managed(
     drain_final_wire_evidence(&mut tally, &tap);
 
     let reconnects = rx.reconnects_count();
+    // The deadline, not the moment the loop returned: the watcher's cancel
+    // can land a backoff sleep and an accept timeout after it.
+    let deadline_at = *deadline.lock().expect("deadline mutex poisoned");
     // Explicit drop before reading the tee tally back — `tee_tally`
     // requires sole ownership of `tap`, which `rx` (via the managed
     // transport's inner Teeing AND the factory closure's own clone,
@@ -814,6 +823,7 @@ pub fn run_managed(
     report.metrics.bytes = bytes;
     report.metrics.stream_sha256 = stream_sha256;
     report.reconnects = Some(reconnects);
+    report.media_tail_s = media_tail_s(deadline_at, last_media);
     // See `recv_over_transport`'s own stamp above.
     report.profile = Some(expect.name.to_string());
     if let Some(e) = reader_error {
@@ -829,4 +839,28 @@ pub fn run_managed(
         write_json(target, &report)?;
     }
     Ok(report)
+}
+
+/// Seconds between the last media event and the receiver's deadline; zero
+/// when media arrived at or after it, `None` when none arrived.
+fn media_tail_s(deadline: Instant, last_media: Option<Instant>) -> Option<f64> {
+    last_media.map(|t| deadline.saturating_duration_since(t).as_secs_f64())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn media_tail_is_the_quiet_time_before_the_deadline() {
+        let t0 = Instant::now();
+        let deadline = t0 + Duration::from_secs(100);
+        assert_eq!(media_tail_s(deadline, None), None);
+        assert_eq!(media_tail_s(deadline, Some(t0)), Some(100.0));
+        assert_eq!(media_tail_s(deadline, Some(deadline)), Some(0.0));
+        assert_eq!(
+            media_tail_s(deadline, Some(deadline + Duration::from_secs(1))),
+            Some(0.0)
+        );
+    }
 }
