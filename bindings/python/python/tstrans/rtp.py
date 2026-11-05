@@ -263,7 +263,7 @@ class RtspServerConfig:
         parts = []
         for f in _dataclass_fields(self):
             value = getattr(self, f.name)
-            if f.name == "bind_addr":
+            if f.name == "bind_addr" and isinstance(value, str):
                 value = _native._redact_url(value)
             parts.append(f"{f.name}={value!r}")
         return f"{type(self).__name__}({', '.join(parts)})"
