@@ -269,6 +269,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A POST on a session resource answers `405` with `Allow: DELETE, OPTIONS`, and a DELETE on a mount path `405` with `Allow: POST, OPTIONS`, both before the bearer check (they were `401`, or `404` past it).
 - A panic inside str0m while the WHEP server applies an offer now refuses that offer with `500` instead of ending the shared media thread and every viewer on it. This is defence in depth: the offer shapes reported against 0.9.0 are already refused at parse by the bundled str0m.
 - A WHEP offer that lists its audio section before its video one, on a mount that drops audio (the default `AudioPolicy::Drop`), now connects. The answer used to carry every ICE candidate on the rejected audio section, which is outside the BUNDLE group, so the browser had no candidate to check; the candidates now sit on the first section of the BUNDLE group. Video-first offers, which the reference player sends, were not affected.
+- A WHEP `401` (a missing or wrong `token=` bearer token) now answers `WWW-Authenticate: Bearer realm="whep"`; the bare `Bearer` challenge carried no auth-param, which RFC 6750 §3 requires.
 
 ### Changed — tst-webrtc (BREAKING)
 

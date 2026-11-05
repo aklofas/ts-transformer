@@ -418,7 +418,8 @@ fn answer(request: &Request, body: &[u8], peer: SocketAddr, shared: &Shared) -> 
 }
 
 /// `Some(401)` when the server takes a bearer token and the request does
-/// not carry it.
+/// not carry it. The challenge carries a `realm`, the auth-param RFC 6750 §3
+/// requires.
 fn check_bearer(request: &Request, shared: &Shared) -> Option<Response> {
     let want = shared.url.token.as_deref()?;
     // Constant-time, so the response time does not tell how much of a
@@ -431,7 +432,11 @@ fn check_bearer(request: &Request, shared: &Shared) -> Option<Response> {
         return None;
     }
     bump(&shared.rejected_auth);
-    Some(with_header(resp(401, ""), "WWW-Authenticate", "Bearer"))
+    Some(with_header(
+        resp(401, ""),
+        "WWW-Authenticate",
+        r#"Bearer realm="whep""#,
+    ))
 }
 
 fn create_session(mount: &str, body: &[u8], peer: SocketAddr, shared: &Shared) -> Response {
