@@ -22,7 +22,7 @@ use tstrans::config::{
 use tstrans::error::{TstError, tst_get_last_error};
 use tstrans::hls::{
     TstPublisher, TstPublisherKind, tst_hls_publisher_builder_bind,
-    tst_hls_publisher_builder_build, tst_hls_publisher_builder_new,
+    tst_hls_publisher_builder_build, tst_hls_publisher_builder_free, tst_hls_publisher_builder_new,
     tst_hls_publisher_builder_output_dir, tst_hls_publisher_builder_segment_duration_ms,
     tst_hls_publisher_local_addr, tst_mux_publisher_cut_segment,
     tst_mux_publisher_finish_into_publisher, tst_mux_publisher_send_video,
@@ -337,4 +337,28 @@ fn empty_push_opens_no_segment() {
         TstError::HlsFinished as i32
     );
     unsafe { tst_publisher_free(publisher) };
+}
+
+/// A bind string that is not a socket address is echoed into last-error;
+/// a password or secret query value in it must not be.
+#[test]
+fn bind_error_message_redacts_a_secret_in_the_address() {
+    let builder = unsafe { tst_hls_publisher_builder_new() };
+    assert!(!builder.is_null(), "builder_new returned null");
+
+    let bad = CString::new("rtsp://admin:hunter2@127.0.0.1:8080").unwrap();
+    let rc = unsafe { tst_hls_publisher_builder_bind(builder, bad.as_ptr()) };
+    assert_eq!(rc, TstError::HlsConfig as i32);
+
+    let msg = crate::common::last_error_msg();
+    assert!(
+        !msg.contains("hunter2"),
+        "secret leaked into last-error: {msg}"
+    );
+    assert!(
+        msg.contains("rtsp://admin:<redacted>@127.0.0.1:8080"),
+        "the redacted address should stay readable: {msg}"
+    );
+
+    unsafe { tst_hls_publisher_builder_free(builder) };
 }

@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 use std::os::raw::c_char;
 use std::time::Duration;
 
+use tst_core::url::redact_url;
 use tst_hls::{HlsMode, HlsPublisherBuilder};
 
 use crate::error::{TstError, set_last_error};
@@ -126,7 +127,7 @@ pub unsafe extern "C" fn tst_hls_publisher_builder_bind(
             Err(e) => {
                 set_last_error(
                     TstError::HlsConfig,
-                    &format!("bind_addr '{s}' is not a socket address: {e}"),
+                    &format!("bind_addr '{}' is not a socket address: {e}", redact_url(s)),
                 );
                 return TstError::HlsConfig as i32;
             }

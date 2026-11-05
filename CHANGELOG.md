@@ -110,6 +110,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Python reprs and error text no longer print URL passwords or the values of the `passphrase`, `secret`, `token`, `auth_pass`, `password`, `streamid` and `srt_streamid` query keys; each shows `<redacted>` instead. This covers the RIST, SRT, TCP and UDP builders, `RtspClientConfig` and the transport open errors, including the unsupported-scheme errors. Java `toString()` and exception text does the same for `RtspClientConfig`, `RtspServerConfig` and `WhepServerConfig`.
 - Stream-ID values in an SRT `AccessControl` (Rust `Debug`, Python repr) are redacted; the keys stay visible.
+- C: `tst_hls_publisher_builder_bind` redacts the address it echoes into last-error when the string is not a socket address, as the Python and JVM builders already did.
 - Rust `Debug` for `HlsConfig`, the WHEP bearer-token request holder and the SRT `AccessControl`, `StreamId` and socket types never prints a password, token or stream-ID value. The `InvalidPort` URL error redacts a port that is not digits, since a mistyped URL can put a password there. The shared helper is `tst_core::url::redact_url`.
 - Rust `Debug` of `ParsedUrl` and `UrlError` no longer prints the URL password or secret query values. Every release through 0.9.0 is affected: both types derived `Debug` since 0.1.0.
 - The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
