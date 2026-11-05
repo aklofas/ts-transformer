@@ -15,6 +15,21 @@ const SECRET_KEYS: [&str; 7] = [
     "srt_streamid",
 ];
 
+/// The longest a secret key can be on the wire: every byte percent-encoded.
+/// A run of key characters longer than this decodes to more bytes than any
+/// secret key holds.
+const MAX_ENCODED_KEY_LEN: usize = {
+    let mut longest = 0;
+    let mut i = 0;
+    while i < SECRET_KEYS.len() {
+        if SECRET_KEYS[i].len() > longest {
+            longest = SECRET_KEYS[i].len();
+        }
+        i += 1;
+    }
+    3 * longest
+};
+
 pub(crate) const REDACTED: &str = "<redacted>";
 
 /// Return `url` with its secrets replaced by `<redacted>`.
@@ -234,11 +249,15 @@ fn secret_value_ranges(token: &str, from: usize) -> Vec<(usize, usize)> {
 /// `pass%70hrase=x` sets the passphrase).
 fn secret_key_len(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
+    // A longer run cannot be a secret key, so the scan stops one byte past
+    // the longest encoded one; scanning the whole run at every position
+    // costs time quadratic in its length.
     let len = bytes
         .iter()
+        .take(MAX_ENCODED_KEY_LEN + 1)
         .take_while(|&&b| is_word_char(char::from(b)) || b == b'%')
         .count();
-    if bytes.get(len) != Some(&b'=') {
+    if len > MAX_ENCODED_KEY_LEN || bytes.get(len) != Some(&b'=') {
         return None;
     }
     let mut decoded = Vec::with_capacity(len);
@@ -468,6 +487,37 @@ mod tests {
             rows += 1;
         }
         assert!(rows > 0, "vectors.tsv holds no rows");
+    }
+
+    /// A long run of `%`, or of `a%` pairs, made the key scan reread the rest
+    /// of the run at every position: quadratic in the run's length.
+    #[test]
+    fn long_percent_runs_redact_in_linear_time() {
+        use alloc::string::String;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let mut percents = String::from("srt://127.0.0.1:9000/");
+        percents.push_str(&"%".repeat(200_000));
+        let mut pairs = String::from("srt://127.0.0.1:9000?");
+        pairs.push_str(&"a%".repeat(100_000));
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for input in [percents, pairs] {
+                let unchanged = redact_url(&input) == input;
+                let _ = tx.send(unchanged);
+            }
+        });
+        for shape in ["a 200 000-byte `%` run", "a 200 000-byte `a%` run"] {
+            // Linear: well under a second unoptimised. Quadratic: minutes.
+            let unchanged = rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap_or_else(|_| panic!("redact_url spent over 5 s on {shape}"));
+            assert!(
+                unchanged,
+                "{shape} holds no secret and must pass through unchanged"
+            );
+        }
     }
 
     #[test]

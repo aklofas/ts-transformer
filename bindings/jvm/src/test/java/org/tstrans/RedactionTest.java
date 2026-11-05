@@ -3,6 +3,7 @@ package org.tstrans;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -11,6 +12,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.tstrans.rtp.RtspClientConfig;
@@ -165,6 +167,19 @@ class RedactionTest {
             rows++;
         }
         assertTrue(rows > 0, "vectors.tsv holds no rows");
+    }
+
+    /** A long run of {@code %}, or of {@code a%} pairs, made the key scan reread the rest of the
+     *  run at every position: quadratic in the run's length. */
+    @Test
+    void longPercentRunsRedactInLinearTime() {
+        String percents = "srt://127.0.0.1:9000/" + "%".repeat(200_000);
+        String pairs = "srt://127.0.0.1:9000?" + "a%".repeat(100_000);
+        // Linear: milliseconds. Quadratic: tens of seconds.
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            assertEquals(percents, Redact.url(percents));
+            assertEquals(pairs, Redact.url(pairs));
+        });
     }
 
     @Test
