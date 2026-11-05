@@ -195,6 +195,31 @@ impl RawPublisher {
         status_of(&self.exchange("GET_PARAMETER", path, "", b""))
     }
 
+    /// [`Self::get_parameter`] that reports a closed or failed connection as
+    /// `None` instead of panicking.
+    pub fn try_get_parameter(&mut self, path: &str) -> Option<u16> {
+        self.cseq += 1;
+        let session = match &self.session {
+            Some(s) => format!("Session: {s}\r\n"),
+            None => String::new(),
+        };
+        let req = format!(
+            "GET_PARAMETER {} RTSP/1.0\r\nCSeq: {}\r\n{session}\r\n",
+            self.uri(path),
+            self.cseq
+        );
+        self.stream.write_all(req.as_bytes()).ok()?;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            match self.stream.read(&mut chunk) {
+                Ok(n) if n > 0 => buf.extend_from_slice(&chunk[..n]),
+                _ => return None,
+            }
+        }
+        Some(status_of(&String::from_utf8_lossy(&buf)))
+    }
+
     /// SETUP `mode=record` over TCP-interleaved. Returns the status and,
     /// on 200, the RTP channel the SERVER allocated (its `interleaved=`).
     pub fn setup_interleaved(&mut self, mount: &str, control: &str) -> (u16, Option<u8>) {
