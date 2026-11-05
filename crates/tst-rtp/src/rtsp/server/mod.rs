@@ -692,7 +692,7 @@ impl RtspServer {
     ) -> Result<crate::rtsp::server::publish::PublishMountHandle, RtspServerError> {
         self.add_publish_mount_with(
             path,
-            crate::rtsp::server::publish::PublishMountOptions::default(),
+            crate::rtsp::server::publish::PublishMountConfig::default(),
         )
     }
 
@@ -704,7 +704,7 @@ impl RtspServer {
     pub fn add_publish_mount_with(
         &self,
         path: &str,
-        options: crate::rtsp::server::publish::PublishMountOptions,
+        options: crate::rtsp::server::publish::PublishMountConfig,
     ) -> Result<crate::rtsp::server::publish::PublishMountHandle, RtspServerError> {
         self.register_mount(path, || {
             let st = crate::rtsp::server::publish::mount::PublishMountState::new_with_exit(

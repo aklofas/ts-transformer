@@ -4090,27 +4090,27 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::PublishMountOptions"
+item = "tst_rtp::PublishMountConfig"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
-bindings = ["c:deferred", "python:deferred", "java:org.tstrans.rtp.PublishMountOptions", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred", "python:deferred", "java:org.tstrans.rtp.PublishMountConfig", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::PublishMountOptions::new"
+item = "tst_rtp::PublishMountConfig::new"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
-bindings = ["c:deferred", "python:deferred", "java:org.tstrans.rtp.PublishMountOptions.builder", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred", "python:deferred", "java:org.tstrans.rtp.PublishMountConfig.builder", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::PublishMountOptions::end_on_publisher_exit"
+item = "tst_rtp::PublishMountConfig::end_on_publisher_exit"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
-bindings = ["c:deferred", "python:RtspServer.add_publish_mount", "java:org.tstrans.rtp.PublishMountOptions.Builder.endOnPublisherExit", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred", "python:RtspServer.add_publish_mount", "java:org.tstrans.rtp.PublishMountConfig.Builder.endOnPublisherExit", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

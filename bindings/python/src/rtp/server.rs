@@ -770,7 +770,7 @@ impl PyRtspServer {
     ) -> PyResult<PyPublishMount> {
         let server = self.server();
         let path_owned = path.to_string();
-        let mut options = tst_rtp::PublishMountOptions::new();
+        let mut options = tst_rtp::PublishMountConfig::new();
         if let Some(yes) = end_on_publisher_exit {
             options = options.end_on_publisher_exit(yes);
         }

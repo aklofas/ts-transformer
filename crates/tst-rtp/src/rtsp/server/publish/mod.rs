@@ -19,7 +19,7 @@ pub(crate) mod udp_ingest;
 #[doc(hidden)]
 pub use klv_depacketizer::{KlvDepacketizer, KlvUnit};
 pub use mount::{
-    ClockAlignment, PublishMountHandle, PublishMountOptions, PublishMountStats, PublisherInfo,
+    ClockAlignment, PublishMountConfig, PublishMountHandle, PublishMountStats, PublisherInfo,
 };
 // Hidden: `pub` only so the fuzz workspace's `sdp_announce_classify`
 // target reaches the ANNOUNCE classifier; not part of the supported surface.

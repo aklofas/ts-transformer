@@ -723,7 +723,7 @@ jni_native! {
         let Some(path_str) = read_path(env, &path) else {
             return 0;
         };
-        let mut options = tst_rtp::PublishMountOptions::new();
+        let mut options = tst_rtp::PublishMountConfig::new();
         if end_on_publisher_exit >= 0 {
             options = options.end_on_publisher_exit(end_on_publisher_exit != 0);
         }

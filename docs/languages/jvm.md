@@ -1939,7 +1939,7 @@ The surface:
 
 - `RtspServer.addPublishMount(path) -> PublishMount` registers a path up
   front. An ANNOUNCE to any other path answers `404`.
-  `addPublishMount(path, PublishMountOptions)` ends that mount's transport
+  `addPublishMount(path, PublishMountConfig)` ends that mount's transport
   when a publisher that reached RECORD leaves (the builder's
   `endPublishMountOnPublisherExit` sets the server default); remove the mount,
   then add it again, to accept a new publisher. A closed on-demand mount

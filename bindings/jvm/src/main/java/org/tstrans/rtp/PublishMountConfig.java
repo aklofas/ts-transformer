@@ -3,19 +3,19 @@ package org.tstrans.rtp;
 import java.util.Optional;
 
 /**
- * Per-mount options for {@link RtspServer#addPublishMount(String, PublishMountOptions)}.
+ * Per-mount options for {@link RtspServer#addPublishMount(String, PublishMountConfig)}.
  * An option left unset follows the server-wide default in {@link RtspServerConfig}.
  * Immutable; build with {@link #builder()}.
  */
-public final class PublishMountOptions {
+public final class PublishMountConfig {
     private final Boolean endOnPublisherExit;  // null = inherit
 
-    private PublishMountOptions(Builder b) {
+    private PublishMountConfig(Builder b) {
         this.endOnPublisherExit = b.endOnPublisherExit;
     }
 
     /** Options that inherit every server-wide default. */
-    public static PublishMountOptions defaults() { return builder().build(); }
+    public static PublishMountConfig defaults() { return builder().build(); }
 
     public static Builder builder() { return new Builder(); }
 
@@ -27,11 +27,11 @@ public final class PublishMountOptions {
     public Optional<Boolean> endOnPublisherExit() { return Optional.ofNullable(endOnPublisherExit); }
 
     @Override public String toString() {
-        return "PublishMountOptions(endOnPublisherExit="
+        return "PublishMountConfig(endOnPublisherExit="
             + (endOnPublisherExit != null ? endOnPublisherExit : "inherit") + ")";
     }
 
-    /** Builder for {@link PublishMountOptions}. */
+    /** Builder for {@link PublishMountConfig}. */
     public static final class Builder {
         private Boolean endOnPublisherExit;
 
@@ -46,6 +46,6 @@ public final class PublishMountOptions {
             return this;
         }
 
-        public PublishMountOptions build() { return new PublishMountOptions(this); }
+        public PublishMountConfig build() { return new PublishMountConfig(this); }
     }
 }

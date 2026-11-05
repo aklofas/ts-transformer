@@ -1582,7 +1582,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   the server-wide `auth_basic` / `auth_digest_*` credential, so it cannot let
   a client PLAY without also letting it ANNOUNCE, and a C listener cannot
   filter by stream ID. Per-mount publish-mount options
-  (`PublishMountOptions`, `add_publish_mount_with`) are likewise Rust, Python
+  (`PublishMountConfig`, `add_publish_mount_with`) are likewise Rust, Python
   and JVM only: C has the server-wide builder setter
   `tst_rtsp_server_builder_end_publish_mount_on_publisher_exit` alone.
 - **Why deferred:** The C surface froze at 0.9.0's shape, and the rules
