@@ -667,7 +667,7 @@ enum tst_e
    * MISB ST 0601 UAS Datalink Local Set. Maps from
    * `tst_core::error::KlvDecodeError`; see the message for the
    * specific structural failure (truncated buffer, malformed BER
-   * length/tag, checksum mismatch, unexpected universal label, ...).
+   * length/tag, checksum mismatch, ...).
    */
   TST_E_KLV_DECODE = -48,
 };
@@ -11005,10 +11005,13 @@ int tst_sender_get_socket_stats(struct tst_sender_t *p,
  * Local Set bytes (as pulled from a `tst_demuxer_*` metadata event or
  * equivalent) — not TS-framed, not PES-wrapped.
  *
+ * The 16-byte universal label is not checked: any key is accepted and
+ * the Local Set that follows is decoded as ST 0601.
+ *
  * Returns NULL on a hard structural decode failure (truncated buffer,
- * malformed BER length/tag, checksum mismatch, unexpected universal
- * label) with `TST_E_KLV_DECODE` (-48) recorded on the last-error
- * channel; the message carries the specific failure.
+ * malformed BER length/tag, checksum mismatch) with `TST_E_KLV_DECODE`
+ * (-48) recorded on the last-error channel; the message carries the
+ * specific failure.
  *
  * # Safety
  *

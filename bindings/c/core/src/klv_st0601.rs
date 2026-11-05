@@ -418,10 +418,13 @@ pub struct TstSt0601 {
 /// Local Set bytes (as pulled from a `tst_demuxer_*` metadata event or
 /// equivalent) — not TS-framed, not PES-wrapped.
 ///
+/// The 16-byte universal label is not checked: any key is accepted and
+/// the Local Set that follows is decoded as ST 0601.
+///
 /// Returns NULL on a hard structural decode failure (truncated buffer,
-/// malformed BER length/tag, checksum mismatch, unexpected universal
-/// label) with `TST_E_KLV_DECODE` (-48) recorded on the last-error
-/// channel; the message carries the specific failure.
+/// malformed BER length/tag, checksum mismatch) with `TST_E_KLV_DECODE`
+/// (-48) recorded on the last-error channel; the message carries the
+/// specific failure.
 ///
 /// # Safety
 ///

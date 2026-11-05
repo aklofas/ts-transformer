@@ -203,7 +203,7 @@ pub enum TstError {
     /// MISB ST 0601 UAS Datalink Local Set. Maps from
     /// `tst_core::error::KlvDecodeError`; see the message for the
     /// specific structural failure (truncated buffer, malformed BER
-    /// length/tag, checksum mismatch, unexpected universal label, ...).
+    /// length/tag, checksum mismatch, ...).
     KlvDecode = -48,
 }
 
