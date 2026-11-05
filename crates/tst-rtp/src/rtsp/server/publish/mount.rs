@@ -21,6 +21,11 @@
 //! publisher empties the slot and bumps the generation, so a stale
 //! publisher reference is observably out of date; `close` does the same
 //! and then keeps the slot shut for good.
+//!
+//! A mount whose resolved `end_on_publisher_exit` option is set (see
+//! [`PublishMountOptions`]) treats its publisher's exit as the end of the
+//! stream: `end_publisher` performs `close`, so the application transport
+//! reads `Closed` and later ANNOUNCEs are refused.
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -105,6 +110,8 @@ pub(crate) struct PublishMountState {
     /// mounts lock, so removing the entry from the table is what frees a
     /// slot.
     pub(crate) on_demand: bool,
+    /// The resolved per-mount option: a publisher's exit closes the mount.
+    pub(crate) end_on_publisher_exit: bool,
     /// Broadcast sender — TS payload bytes, re-serving PLAY readers.
     /// Fed by [`Self::emit`]'s `ts` argument, same as a muxer-backed
     /// mount's `MountState::fanout`.
@@ -161,6 +168,38 @@ fn record_mount_end(h: &EndReasonHandle, r: EndReason) {
     h.record(r);
 }
 
+/// Per-mount options for [`RtspServer::add_publish_mount_with`](crate::RtspServer::add_publish_mount_with).
+///
+/// Every field left unset inherits the server-wide default.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct PublishMountOptions {
+    end_on_publisher_exit: Option<bool>,
+}
+
+impl PublishMountOptions {
+    /// Options that inherit every server-wide default.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// End the mount's application transport when its publisher leaves
+    /// (`true`), or keep it open for the next publisher (`false`). Unset,
+    /// the mount follows
+    /// [`RtspServerBuilder::end_publish_mount_on_publisher_exit`](crate::RtspServerBuilder::end_publish_mount_on_publisher_exit).
+    #[must_use]
+    pub fn end_on_publisher_exit(mut self, yes: bool) -> Self {
+        self.end_on_publisher_exit = Some(yes);
+        self
+    }
+
+    /// The effective value against the server-wide default.
+    pub(crate) fn resolve(&self, server_default: bool) -> bool {
+        self.end_on_publisher_exit.unwrap_or(server_default)
+    }
+}
+
 impl PublishMountState {
     /// Construct a fresh `PublishMountState`. `fanout_capacity` sizes
     /// the PLAY-reader broadcast (mirrors `MountState::new`); the
@@ -168,34 +207,65 @@ impl PublishMountState {
     /// sized at [`app_queue_bound`] frames (drop-newest past the bound,
     /// never block the publisher).
     /// `counters` is the server's [`ServerCounters`].
+    #[cfg(test)]
     pub(crate) fn new(
         path: &str,
         fanout_capacity: usize,
         counters: Arc<ServerCounters>,
     ) -> Arc<Self> {
-        Self::build(path, fanout_capacity, false, counters)
+        Self::build(path, fanout_capacity, false, false, counters)
+    }
+
+    /// [`Self::new`] with the resolved `end_on_publisher_exit` option.
+    pub(crate) fn new_with_exit(
+        path: &str,
+        fanout_capacity: usize,
+        end_on_publisher_exit: bool,
+        counters: Arc<ServerCounters>,
+    ) -> Arc<Self> {
+        Self::build(
+            path,
+            fanout_capacity,
+            false,
+            end_on_publisher_exit,
+            counters,
+        )
     }
 
     /// [`Self::new`] for a mount an ANNOUNCE creates on demand
     /// (`on_demand` set).
+    #[cfg(test)]
     pub(crate) fn new_on_demand(
         path: &str,
         fanout_capacity: usize,
         counters: Arc<ServerCounters>,
     ) -> Arc<Self> {
-        Self::build(path, fanout_capacity, true, counters)
+        Self::build(path, fanout_capacity, true, false, counters)
+    }
+
+    /// [`Self::new_on_demand`] with the resolved `end_on_publisher_exit`
+    /// option.
+    pub(crate) fn new_on_demand_with_exit(
+        path: &str,
+        fanout_capacity: usize,
+        end_on_publisher_exit: bool,
+        counters: Arc<ServerCounters>,
+    ) -> Arc<Self> {
+        Self::build(path, fanout_capacity, true, end_on_publisher_exit, counters)
     }
 
     fn build(
         path: &str,
         fanout_capacity: usize,
         on_demand: bool,
+        end_on_publisher_exit: bool,
         counters: Arc<ServerCounters>,
     ) -> Arc<Self> {
         let (fanout, _rx) = tokio::sync::broadcast::channel(fanout_capacity.max(1));
         Arc::new(Self {
             path: path.to_string(),
             on_demand,
+            end_on_publisher_exit,
             fanout,
             app: Mutex::new(AppSide::default()),
             app_cancel: RtpCancelHandle::new(),
@@ -273,10 +343,15 @@ impl PublishMountState {
 
     /// Release the publisher slot (RECORD session ended). Bumps
     /// `generation` so a stale publisher reference is observably out of
-    /// date; does NOT close the application transport — a reader
+    /// date. By default the application transport stays open — a reader
     /// waiting on `into_recv_transport`'s output just sees the stream
-    /// idle until the next publisher begins.
+    /// idle until the next publisher begins; a mount with
+    /// `end_on_publisher_exit` set closes instead ([`Self::close`]).
     pub(crate) fn end_publisher(&self) {
+        if self.end_on_publisher_exit {
+            self.close();
+            return;
+        }
         let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
         self.release_slot(&mut g);
     }

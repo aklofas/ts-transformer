@@ -162,6 +162,7 @@ jni_native! {
         tls_cert: JString<'local>,
         tls_key: JString<'local>,
         accept_unregistered_publishers: jboolean,
+        end_publish_mount_on_publisher_exit: jboolean,
         def_pub_kind: jint,
         def_pub_status: jint,
         def_pub_users: JObjectArray<'local>,
@@ -255,7 +256,8 @@ jni_native! {
                 .graceful_shutdown_drain(Duration::from_millis(
                     graceful_shutdown_drain_ms.max(0) as u64
                 ))
-                .accept_unregistered_publishers(accept_unregistered_publishers);
+                .accept_unregistered_publishers(accept_unregistered_publishers)
+                .end_publish_mount_on_publisher_exit(end_publish_mount_on_publisher_exit);
             if let Some((scheme, realm, user, pass)) = auth.as_ref() {
                 let secret = SecretString::from(pass.clone());
                 match scheme {
@@ -689,6 +691,39 @@ jni_native! {
         };
         let Some(res) = with_server_poisoning(env, server_handle, |server| {
             server.add_publish_mount(&path_str)
+        }) else {
+            return 0;
+        };
+        match res {
+            Ok(h) => super::publish::publish_mount_handle(h),
+            Err(e) => {
+                server_error_to_jvm(env, e);
+                0
+            }
+        }
+    }
+}
+
+jni_native! {
+    /// `RtspServer.nAddPublishMountWith(serverHandle, path, endOnPublisherExit)`:
+    /// as `nAddPublishMount`, with the per-mount option as `-1` inherit / `0` off /
+    /// `1` on.
+    fn Java_org_tstrans_rtp_RtspServer_nAddPublishMountWith<'local>(
+        env,
+        _class,
+        server_handle: jlong,
+        path: JString<'local>,
+        end_on_publisher_exit: jint,
+    ) -> jlong = 0 => {
+        let Some(path_str) = read_path(env, &path) else {
+            return 0;
+        };
+        let mut options = tst_rtp::PublishMountOptions::new();
+        if end_on_publisher_exit >= 0 {
+            options = options.end_on_publisher_exit(end_on_publisher_exit != 0);
+        }
+        let Some(res) = with_server_poisoning(env, server_handle, |server| {
+            server.add_publish_mount_with(&path_str, options)
         }) else {
             return 0;
         };

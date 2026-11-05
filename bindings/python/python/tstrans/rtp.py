@@ -231,6 +231,13 @@ class RtspServerConfig:
     this config's default `max_sessions` of 100, so configure `auth` and
     size `max_sessions` before turning this on for a reachable port."""
 
+    end_publish_mount_on_publisher_exit: bool = False
+    """Server-wide default for publish mounts: when True, a mount's
+    receiver ends (end of stream) as soon as its publisher leaves, and the
+    mount refuses later publishers. Off by default: the mount idles for the
+    next publisher. `RtspServer.add_publish_mount(end_on_publisher_exit=...)`
+    overrides it per mount; on-demand mounts always follow it."""
+
     default_mount_rule: Optional[MountRule] = None
     """The rule every mount path without its own entry follows, in force
     from the first request (so the window between `start()` and the first
@@ -261,6 +268,11 @@ class RtspServerConfig:
             raise TypeError(
                 f"RtspServerConfig.accept_unregistered_publishers must be a bool; "
                 f"got {type(self.accept_unregistered_publishers).__name__}"
+            )
+        if not isinstance(self.end_publish_mount_on_publisher_exit, bool):
+            raise TypeError(
+                f"RtspServerConfig.end_publish_mount_on_publisher_exit must be a bool; "
+                f"got {type(self.end_publish_mount_on_publisher_exit).__name__}"
             )
         if self.default_mount_rule is not None and not isinstance(
             self.default_mount_rule, MountRule

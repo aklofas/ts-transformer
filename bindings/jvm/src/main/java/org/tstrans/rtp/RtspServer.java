@@ -75,7 +75,7 @@ public final class RtspServer extends NativeHandle {
             config.fanoutCapacity(), config.gracefulShutdownDrainMs(),
             authScheme, realm, user, password,
             config.tlsCert().orElse(null), config.tlsKey().orElse(null),
-            config.acceptUnregisteredPublishers(),
+            config.acceptUnregisteredPublishers(), config.endPublishMountOnPublisherExit(),
             dflt == null ? -1 : dp.kind(), dflt == null ? 0 : dp.statusCode(),
             dflt == null ? null : dp.usernames(), dflt == null ? null : dp.passwords(),
             dflt == null ? 0 : dr.kind(), dflt == null ? 0 : dr.statusCode(),
@@ -186,6 +186,26 @@ public final class RtspServer extends NativeHandle {
     }
 
     /**
+     * {@link #addPublishMount(String)} with per-mount {@link PublishMountOptions}; an
+     * option left unset follows the server-wide default in {@link RtspServerConfig}.
+     *
+     * @throws RtspException as {@link #addPublishMount(String)}
+     */
+    public PublishMount addPublishMount(String path, PublishMountOptions options)
+            throws RtspException {
+        java.util.Objects.requireNonNull(options, "options");
+        ensureOpen();
+        int end = options.endOnPublisherExit().map(b -> b ? 1 : 0).orElse(-1);
+        long h = nAddPublishMountWith(peekHandle(),
+            java.util.Objects.requireNonNull(path, "path"), end);
+        if (h == 0) {
+            throw new RtspException(RtspException.Kind.MOUNT,
+                "nAddPublishMountWith returned 0 without throwing");
+        }
+        return new PublishMount(h);
+    }
+
+    /**
      * Wait up to {@code timeoutMs} for the next publish mount an ANNOUNCE created on
      * demand ({@link RtspServerConfig#acceptUnregisteredPublishers()}). The
      * announcing publisher already holds the returned mount. Mounts come out in
@@ -281,7 +301,7 @@ public final class RtspServer extends NativeHandle {
     private static native long nStart(String bindAddr, long maxSessions, long sessionTimeoutSecs,
         long fanoutCapacity, long gracefulShutdownDrainMs, int authScheme, String authRealm,
         String authUser, String authPassword, String tlsCert, String tlsKey,
-        boolean acceptUnregisteredPublishers,
+        boolean acceptUnregisteredPublishers, boolean endPublishMountOnPublisherExit,
         int defPubKind, int defPubStatus, String[] defPubUsers, String[] defPubPasswords,
         int defReadKind, int defReadStatus, String[] defReadUsers, String[] defReadPasswords)
         throws RtspException;
@@ -292,6 +312,8 @@ public final class RtspServer extends NativeHandle {
     private static native long nCancelHandle(long handle);
     private static native long nAddPublishMount(long serverHandle, String path)
         throws RtspException;
+    private static native long nAddPublishMountWith(long serverHandle, String path,
+        int endOnPublisherExit) throws RtspException;
     private static native long nNextPublisher(long serverHandle, long timeoutMs)
         throws RtspException;
     private static native void nRemoveMount(long serverHandle, String path)

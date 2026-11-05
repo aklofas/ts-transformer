@@ -103,7 +103,8 @@ pub use rtsp::server::mount_rules::{
 };
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::publish::{
-    ClockAlignment, PublishMountHandle, PublishMountStats, PublishShape, PublisherInfo,
+    ClockAlignment, PublishMountHandle, PublishMountOptions, PublishMountStats, PublishShape,
+    PublisherInfo,
 };
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::{RtspServer, ServerStats};

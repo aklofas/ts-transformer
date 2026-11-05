@@ -313,6 +313,9 @@ pub struct TstRtspServerBuilder {
     /// Whether an ANNOUNCE to an unregistered path creates a publish mount
     /// on demand. Default: false.
     pub(crate) accept_unregistered_publishers: bool,
+    /// Server-wide default: a publish mount's receiver ends when its
+    /// publisher leaves. Default: false.
+    pub(crate) end_publish_mount_on_publisher_exit: bool,
 }
 
 #[cfg(feature = "rtp")]
@@ -343,6 +346,7 @@ impl TstRtspServerBuilder {
             tls_cert_pem: None,
             tls_key_pem: None,
             accept_unregistered_publishers: false,
+            end_publish_mount_on_publisher_exit: false,
         })
     }
 
@@ -406,6 +410,7 @@ impl TstRtspServerBuilder {
             self.graceful_shutdown_drain_ms as u64,
         ));
         b.accept_unregistered_publishers(self.accept_unregistered_publishers);
+        b.end_publish_mount_on_publisher_exit(self.end_publish_mount_on_publisher_exit);
 
         // TLS bytes from tst_rtsp_server_builder_tls_cert_pem. With the `tls`
         // feature they are handed to the server, which loads them at start()

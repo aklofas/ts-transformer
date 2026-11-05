@@ -603,7 +603,8 @@ impl PyRtspServer {
                     .session_timeout(Duration::from_secs(cfg.session_timeout_secs))
                     .fanout_capacity(cfg.fanout_capacity)
                     .graceful_shutdown_drain(Duration::from_millis(cfg.graceful_shutdown_drain_ms))
-                    .accept_unregistered_publishers(cfg.accept_unregistered_publishers);
+                    .accept_unregistered_publishers(cfg.accept_unregistered_publishers)
+                    .end_publish_mount_on_publisher_exit(cfg.end_publish_mount_on_publisher_exit);
                 if let Some(rule) = cfg.default_mount_rule.as_ref() {
                     builder.default_mount_rule(rule.clone());
                 }
@@ -727,12 +728,28 @@ impl PyRtspServer {
     /// Errors:
     /// - `RtspError(MOUNT)` for an invalid or duplicate path.
     /// - `RtspError(SERVER)` if the server has been stopped.
-    pub fn add_publish_mount(&self, py: Python<'_>, path: &str) -> PyResult<PyPublishMount> {
+    ///
+    /// `end_on_publisher_exit` overrides the config's
+    /// `end_publish_mount_on_publisher_exit` for this mount (`None`
+    /// inherits): when true, the mount's receiver ends as soon as its
+    /// publisher leaves.
+    #[pyo3(signature = (path, *, end_on_publisher_exit = None))]
+    pub fn add_publish_mount(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        end_on_publisher_exit: Option<bool>,
+    ) -> PyResult<PyPublishMount> {
         let server = self.server();
         let path_owned = path.to_string();
-        let handle =
-            crate::util::allow_threads_parking(py, move || server.add_publish_mount(&path_owned))
-                .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+        let mut options = tst_rtp::PublishMountOptions::new();
+        if let Some(yes) = end_on_publisher_exit {
+            options = options.end_on_publisher_exit(yes);
+        }
+        let handle = crate::util::allow_threads_parking(py, move || {
+            server.add_publish_mount_with(&path_owned, options)
+        })
+        .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
         Ok(PyPublishMount::new(handle))
     }
 
@@ -927,6 +944,7 @@ struct ServerConfigExtract {
     tls_cert: Option<String>,
     tls_key: Option<String>,
     accept_unregistered_publishers: bool,
+    end_publish_mount_on_publisher_exit: bool,
     default_mount_rule: Option<tst_rtp::MountRule>,
 }
 
@@ -963,6 +981,9 @@ impl ServerConfigExtract {
         let accept_unregistered_publishers: bool = obj
             .getattr(intern!(py, "accept_unregistered_publishers"))?
             .extract()?;
+        let end_publish_mount_on_publisher_exit: bool = obj
+            .getattr(intern!(py, "end_publish_mount_on_publisher_exit"))?
+            .extract()?;
         let rule_obj = obj.getattr(intern!(py, "default_mount_rule"))?;
         let default_mount_rule = if rule_obj.is_none() {
             None
@@ -980,6 +1001,7 @@ impl ServerConfigExtract {
             tls_cert,
             tls_key,
             accept_unregistered_publishers,
+            end_publish_mount_on_publisher_exit,
             default_mount_rule,
         })
     }
