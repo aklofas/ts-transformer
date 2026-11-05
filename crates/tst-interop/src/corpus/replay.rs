@@ -47,7 +47,7 @@
 //! slope rule to the samples and notes whether the post-warm-up slope is
 //! within or above the soak's threshold, or that the run had too few
 //! samples for the rule; the verdict comes from the per-file judgements
-//! alone. The 72-hour soak is the memory instrument: a replay of a few
+//! alone. The 48-hour release soak is the memory instrument: a replay of a few
 //! unlike captures spends its first picks filling each receiver's working
 //! set, which a slope rule reads as growth.
 //!

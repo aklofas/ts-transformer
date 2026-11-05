@@ -304,10 +304,11 @@ fi
 }
 [[ -n "$OUTDIR" ]] || OUTDIR="$HOME/interop-soak-$(date -u +%Y%m%dT%H%M%SZ)"
 
-# Default the RSS-slope gate ON for release-length runs (24 h or more) — see
-# the README.md's "Outputs and the supervisor" for the 200 KiB/h derivation
-# and why shorter runs stay provisional (plateau convergence dominates their
-# post-warmup window). --no-rss-slope-gate keeps a long run provisional.
+# Default the RSS-slope gate ON for runs of 24 h or more (the release soak
+# runs 48 h) — see the README.md's "Outputs and the supervisor" for the
+# 200 KiB/h derivation and why shorter runs stay provisional (plateau
+# convergence dominates their post-warmup window). --no-rss-slope-gate keeps
+# a long run provisional.
 if [[ -z "$RSS_SLOPE_THRESHOLD" && -z "$NO_RSS_SLOPE_GATE" ]]; then
   RSS_SLOPE_THRESHOLD=$(rss_slope_default_kb_per_hour "$HOURS")
 fi
