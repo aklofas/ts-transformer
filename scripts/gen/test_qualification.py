@@ -57,6 +57,9 @@ schema_version = 0
 [corpus]
 expected_files = 260
 
+[soak]
+required_duration_s = 172800
+
 [[archive]]
 id = "soak-x"
 kind = "soak"
@@ -433,7 +436,7 @@ class ArchiveTests(unittest.TestCase):
     def test_validate_archives(self):
         good = q.parse_archives(ARCHIVES)
         self.assertEqual(q.validate_archives(good), [])
-        bad = q.parse_archives(ARCHIVES + ARCHIVES.split("\n", 5)[5].replace("soak-x", "soak-x"))
+        bad = q.parse_archives(ARCHIVES + ARCHIVES.split("\n", 8)[8].replace("soak-x", "soak-x"))
         self.assertTrue(any("duplicate" in p for p in q.validate_archives(bad)))
         bad_kind = q.parse_archives(ARCHIVES.replace('"soak"', '"drill"'))
         self.assertTrue(any("kind" in p for p in q.validate_archives(bad_kind)))
@@ -488,7 +491,8 @@ FIVE = q.RELEASE_SOAK_LEGS
 
 
 def archives_toml(*rows):
-    return "schema_version = 0\n\n[corpus]\nexpected_files = %d\n" % COUNTS["files"] + "".join(rows)
+    return ("schema_version = 0\n\n[corpus]\nexpected_files = %d\n\n[soak]\nrequired_duration_s = 172800\n"
+            % COUNTS["files"] + "".join(rows))
 
 
 NO_SOAK = archives_toml(archive_row("corpus-rel", "corpus", SHA))
@@ -554,6 +558,30 @@ class CorpusCountTests(unittest.TestCase):
         rows = q.parse_archives(archives_toml(archive_row(
             "c", "corpus", SHA, overall_pass=False, counts=dict(COUNTS, parse_failures=3, replay_failed=1))))
         self.assertEqual(q.validate_archives(rows), [])
+
+
+class SoakRequirementTests(unittest.TestCase):
+    def load(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            put(os.path.join(d, "tests/coverage/evidence-archives.toml"), text)
+            return q.load_archives(d)
+
+    def test_load_archives_returns_the_required_duration(self):
+        rows, expected_files, required = self.load(RELEASE_OK)
+        self.assertEqual(required, 172800)
+
+    def test_parse_soak_requirement_is_none_without_the_table(self):
+        self.assertIsNone(q.parse_soak_requirement("schema_version = 0\n[corpus]\nexpected_files = 1\n"))
+
+    def test_load_archives_dies_on_a_missing_or_malformed_requirement(self):
+        for bad in ("", "0", "true", '"172800"', "-1"):
+            with self.subTest(bad=bad):
+                text = (RELEASE_OK.replace("[soak]\nrequired_duration_s = 172800\n", "") if bad == ""
+                        else RELEASE_OK.replace("required_duration_s = 172800", "required_duration_s = " + bad))
+                with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.load(text)
+                self.assertEqual(e.exception.code, 1)
+                self.assertIn("[soak] required_duration_s is required, an integer above 0", err.getvalue())
 
 
 class ReleaseModeTests(unittest.TestCase):

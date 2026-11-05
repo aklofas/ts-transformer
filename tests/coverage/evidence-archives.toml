@@ -10,8 +10,8 @@
 # all-or-none and belong to corpus rows only.
 # A soak row may also carry `legs`, the legs the run declared (`report soak` prints them on
 # its last line): a list of distinct names from srt, rist, rtsp-publish, rtsp-publish-es,
-# whep. The judge validates only the declared legs, so the release gate requires the chosen
-# 72-hour soak to name all five. Soak rows only.
+# whep. The judge validates only the declared legs, so the release gate requires the
+# chosen release soak to name all five. Soak rows only.
 # Rendered into the qualification block by scripts/gen/qualification.sh.
 schema_version = 0
 
@@ -20,6 +20,13 @@ schema_version = 0
 # swept exactly this many files.
 [corpus]
 expected_files = 251
+
+# The release soak's required length in seconds. A soak row qualifies as a release soak
+# when its expected_duration_s is at least this; the gate judges the newest such row that
+# stands for the tree. 48 hours from 0.9.1 (ruling R38): hours are a proxy for event counts,
+# which the launcher's cadence knobs raise instead. The 0.9.0 rows keep 259200.
+[soak]
+required_duration_s = 172800
 
 [[archive]]
 id = "soak-rc070-2026-10-04"
