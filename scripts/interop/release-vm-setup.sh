@@ -19,9 +19,9 @@
 # the apt and build stages take ten to twenty minutes together.
 #
 # Validated on Ubuntu 24.04 x86_64 (the release VM); see lib.sh for this
-# directory's portability stance.
-# arm64: the orchestration has no architecture-specific code; the first
-# arm64 pass is recorded on the evidence page when it runs.
+# directory's portability stance. arm64: the one architecture-specific
+# stage is the browser; the first arm64 pass is recorded on the evidence
+# page when it runs.
 set -uo pipefail
 
 SHA=${1:?usage: release-vm-setup.sh <full 40-hex sha>}
