@@ -254,14 +254,19 @@ fn keepalives_without_media_do_not_outlast_the_publish_idle_timeout() {
     let mut p = RawPublisher::connect(port);
     record_interleaved(&mut p, "/pub");
 
-    let t0 = Instant::now();
-    while t0.elapsed() < scaled(Duration::from_millis(700)) {
+    // Keep the session alive with requests until the server ends it; if
+    // keepalives postponed the idle timeout, no close would ever come.
+    let deadline = Instant::now() + scaled(Duration::from_secs(3));
+    let mut closed = false;
+    while Instant::now() < deadline {
         std::thread::sleep(scaled(Duration::from_millis(300)));
-        assert_eq!(p.get_parameter("/pub"), 200);
+        if p.try_get_parameter("/pub") != Some(200) {
+            closed = true;
+            break;
+        }
     }
-    let (_bytes, eof) = p.read_until(b"\0never\0", t0 + scaled(Duration::from_secs(3)));
     assert!(
-        eof,
+        closed,
         "keepalives kept a media-less publisher past the publish idle timeout"
     );
     assert!(mount.publisher().is_none());
