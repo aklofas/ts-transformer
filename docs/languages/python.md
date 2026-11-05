@@ -1167,7 +1167,8 @@ with RtspServer.start(cfg) as server:
 `RtspServerConfig` is a frozen dataclass (`bind_addr`, `auth`,
 `max_sessions`, `session_timeout_secs`, `fanout_capacity`,
 `graceful_shutdown_drain_ms`, `tls_cert`, `tls_key`,
-`accept_unregistered_publishers`). For an `rtsps://`
+`accept_unregistered_publishers`, `end_publish_mount_on_publisher_exit`,
+`publish_idle_timeout_ms`). For an `rtsps://`
 server, bind `bind_addr="rtsps://host:port"` and set `tls_cert` /
 `tls_key` to PEM certificate-chain / private-key file paths (set
 together, or `__post_init__` raises `ValueError`; unreadable paths raise
@@ -1207,6 +1208,12 @@ The surface:
 
 - `RtspServer.add_publish_mount(path) -> PublishMount` registers a path up
   front. An ANNOUNCE to any other path answers `404`.
+  `add_publish_mount(path, end_on_publisher_exit=True)` ends that mount's
+  transport when its publisher leaves (the config field
+  `end_publish_mount_on_publisher_exit` sets the server default); re-add the
+  mount to accept a new publisher.
+- `RtspServerConfig(publish_idle_timeout_ms=N)` ends a recording publisher's
+  session after N ms without media. It is off by default.
 - `RtspServerConfig(accept_unregistered_publishers=True)` lets an ANNOUNCE to
   an unregistered path create a publish mount on demand, and
   `RtspServer.next_publisher(timeout=None) -> PublishMount | None` hands each
@@ -1505,6 +1512,7 @@ publisher = (
     .segment_duration_ms(2000)
     .build()
 )
+# .no_server() in place of .bind(...) writes the files and starts no HTTP server.
 
 program = (
     MuxerProgramConfigBuilder(program_number=1, pmt_pid=0x1000)

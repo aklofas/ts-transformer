@@ -1868,7 +1868,8 @@ try (RtspServer server = RtspServer.start(cfg);
   `acceptUnregisteredPublishers=false`). Use `RtspServerConfig.builder()` to
   tune individual fields: `bindAddr`, `auth`, `maxSessions`,
   `sessionTimeoutSecs`, `fanoutCapacity`, `gracefulShutdownDrainMs`,
-  `tlsCert`, `tlsKey`, `acceptUnregisteredPublishers`.
+  `tlsCert`, `tlsKey`, `acceptUnregisteredPublishers`,
+  `endPublishMountOnPublisherExit`, `publishIdleTimeoutMs`.
 - **Mount errors are `RtspException(MOUNT)`.** All `pushVideo`/`pushKlv`/
   `pushAudio`/`pushSubtitle`/`pushData` calls on `MountHandle` throw `RtspException` of kind
   `MOUNT` on failure (e.g. invalid config, server already stopped). This differs
@@ -1937,6 +1938,11 @@ The surface:
 
 - `RtspServer.addPublishMount(path) -> PublishMount` registers a path up
   front. An ANNOUNCE to any other path answers `404`.
+  `addPublishMount(path, PublishMountOptions)` ends that mount's transport
+  when its publisher leaves (the builder's `endPublishMountOnPublisherExit`
+  sets the server default); re-add the mount to accept a new publisher.
+- `RtspServerConfig.builder().publishIdleTimeoutMs(n)` ends a recording
+  publisher's session after n ms without media. It is off by default.
 - `RtspServerConfig.builder().acceptUnregisteredPublishers(true)` lets an
   ANNOUNCE to an unregistered path create a publish mount on demand, and
   `RtspServer.nextPublisher(timeoutMs) -> Optional<PublishMount>` hands each
@@ -2123,6 +2129,7 @@ import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
 
 HlsPublisher publisher = HlsPublisher.builder()
+    // .noServer() instead of .bind(...) writes the files and starts no HTTP server.
     .bind("127.0.0.1:8080")            // loopback by default; front with a proxy to expose
     .outputDir("/var/cache/hls")
     .segmentDurationMs(4000)
