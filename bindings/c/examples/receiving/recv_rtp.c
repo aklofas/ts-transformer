@@ -14,7 +14,7 @@
  *   routinely use RTP+MPEG-TS over multicast inside the ground segment.
  *
  * What this example shows:
- *   - Parsing a CLI URL argument (rtp://239.1.2.3:5000?iface=eth0)
+ *   - Parsing a CLI URL argument (rtp://239.1.2.3:5000?iface=192.0.2.10)
  *   - Opening a `TstRtpDemuxReceiver` — the RTP twin of
  *     `tst_demux_receiver_t`, sharing the same `tst_event_t` event model
  *   - A blocking event loop driven by `tst_rtp_demux_receiver_next_event`
@@ -31,11 +31,13 @@
  * How to run:
  *   1. Sender side (push multicast RTP to group 239.1.2.3:5000):
  *        cargo run -p tst-examples --example send_rtp -- \
- *          rtp://239.1.2.3:5000?iface=eth0
+ *          rtp://239.1.2.3:5000?iface=192.0.2.10
  *      (or any MPEG-TS-over-RTP multicast source in the same LAN segment)
  *
  *   2. Receiver (this example) — run AFTER configuring your NIC to join:
- *        ./recv_rtp rtp://239.1.2.3:5000?iface=eth0
+ *        ./recv_rtp rtp://239.1.2.3:5000?iface=192.0.2.10
+ *      (`iface` is the IPv4 address of the NIC that joins the group; an
+ *      interface name such as eth0 is refused at open.)
  *
  *   3. Press Ctrl-C to stop cleanly.  Without a sender, the receiver
  *      blocks in _next_event waiting for packets; Ctrl-C still exits
@@ -52,7 +54,7 @@
  *      -ltstrans -lpthread
  *
  *   /tmp/recv_rtp \
- *       rtp://239.1.2.3:5000?iface=eth0
+ *       rtp://239.1.2.3:5000?iface=192.0.2.10
  *
  * Requires: TST_HAS_RTP == 1 (default when the `rtp` cargo feature is
  * enabled).  The guard below produces a clear build-time error if the
@@ -134,8 +136,8 @@ static void print_usage(const char *prog) {
             "Usage: %s <url>\n"
             "\n"
             "  url  RTP source URL, e.g.:\n"
-            "         rtp://239.1.2.3:5000?iface=eth0   (multicast)\n"
-            "         rtp://0.0.0.0:5000                (unicast, any NIC)\n"
+            "         rtp://239.1.2.3:5000?iface=192.0.2.10   (multicast)\n"
+            "         rtp://0.0.0.0:5000                      (unicast, any NIC)\n"
             "\n"
             "Press Ctrl-C to stop cleanly.\n",
             prog);
@@ -430,10 +432,11 @@ int main(int argc, char **argv) {
 
         if (rc == TST_E_END_OF_STREAM) {
             /*
-             * TST_E_END_OF_STREAM: the sender closed the stream or the
-             * multicast group was left without any active senders.  Unlike
-             * TST_E_CLOSED, this is a remote-side event.  A production
-             * application might log a "stream ended" alert and reconnect.
+             * TST_E_END_OF_STREAM: a plain rtp:// receiver never returns
+             * this. UDP has no peer close, and losing every multicast
+             * sender just leaves the receiver waiting. It comes from an
+             * RTSP-backed receiver whose session or mount ended; the
+             * branch is here so the same loop works over both.
              */
             fprintf(stderr,
                     "Stream ended (no more packets). "

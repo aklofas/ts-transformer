@@ -23,7 +23,9 @@
  *
  * What this example shows:
  *   1. Parsing a CLI URL argument (udp://0.0.0.0:5000 or
- *      udp://@239.1.2.3:5000?iface=eth0 for multicast).
+ *      udp://@239.1.2.3:5000?iface=192.0.2.10 for multicast; `iface` is
+ *      the IPv4 address of the NIC that joins the group, and an interface
+ *      name such as eth0 is refused at open).
  *   2. Opening a tst_udp_receiver_t and checking for NULL + last-error.
  *   3. A blocking receive loop driven by tst_udp_receiver_recv_ts.
  *   4. Decoding and logging each TS packet's header fields (sync byte, PID,
@@ -131,8 +133,8 @@ int main(int argc, char **argv) {
                 "Usage: %s <url>\n"
                 "\n"
                 "  url  UDP source URL, e.g.:\n"
-                "         udp://0.0.0.0:5000                 (unicast bind, any NIC)\n"
-                "         udp://@239.1.2.3:5000?iface=eth0   (multicast join)\n"
+                "         udp://0.0.0.0:5000                       (unicast bind, any NIC)\n"
+                "         udp://@239.1.2.3:5000?iface=192.0.2.10   (multicast join)\n"
                 "\n"
                 "Receives up to %d TS packets, then exits.\n",
                 argv[0], MAX_PACKETS);

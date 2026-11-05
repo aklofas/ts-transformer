@@ -53,7 +53,8 @@
  *        ./recv_rtsp_camera \
  *          --url rtsp://10.0.0.5:554/video \
  *          --user admin --pass s3cr3t --transport tcp
- *   4. Ctrl-C sends SIGINT → graceful TEARDOWN + cleanup.
+ *   4. Ctrl-C sends SIGINT → within about 500 ms (the receive timeout this
+ *      example adds to the URL) the loop cancels, then TEARDOWN + cleanup.
  *
  * CLI args (all optional, parsed positionally):
  *   --url       <rtsp://...>    default: rtsp://127.0.0.1:554/live
@@ -91,8 +92,9 @@ static volatile sig_atomic_t g_cancel_requested = 0;
 
 /*
  * SIGINT / SIGTERM handler.  Sets the flag and returns immediately.
- * The event loop checks the flag before each blocking call and calls
- * `tst_rtp_demux_receiver_cancel` once to wake the blocking thread.
+ * The event loop checks the flag each time `_next_event` returns (an
+ * event, or the URL's 500 ms receive timeout) and then calls
+ * `tst_rtp_demux_receiver_cancel`, so the next call returns TST_E_CLOSED.
  * We do NOT call tst_* functions directly from the signal handler —
  * those functions are not async-signal-safe.
  */
@@ -214,6 +216,48 @@ static void print_event(const tst_event_t *ev) {
 }
 
 /* -------------------------------------------------------------------------
+ * URL helper: a finite receive timeout, so Ctrl-C is noticed on an idle
+ * session.
+ *
+ * The signal handler only sets a flag; the loop reads it each time
+ * `_next_event` returns. tst-rtp retries a receive that a signal
+ * interrupts (EINTR), so on a session that keeps its control channel
+ * alive but sends no media, nothing would ever return. With
+ * `?recv_timeout=<ms>` on the URL, `_next_event` returns the retryable
+ * TST_E_BUFFER_FULL after `timeout_ms` without an event; the loop checks
+ * the flag and calls again.
+ *
+ * Returns a malloc'd copy of `url` with `recv_timeout=<timeout_ms>` added
+ * to its query (`?` when it has none, `&` otherwise), or a plain copy
+ * when `url` already sets `recv_timeout`, so the caller's value wins.
+ * Caller must free() the result.
+ * ---------------------------------------------------------------------- */
+static char *url_with_recv_timeout(const char *url, int timeout_ms) {
+    size_t needed;
+    char *out;
+    if (strstr(url, "recv_timeout=") != NULL) {
+        needed = strlen(url) + 1;
+        out = malloc(needed);
+        if (!out) {
+            fprintf(stderr, "out of memory building URL\n");
+            exit(1);
+        }
+        memcpy(out, url, needed);
+        return out;
+    }
+    const char *sep = (strchr(url, '?') != NULL) ? "&" : "?";
+    /* "recv_timeout=" + up to 11 characters for an int + NUL. */
+    needed = strlen(url) + strlen(sep) + strlen("recv_timeout=") + 11 + 1;
+    out = malloc(needed);
+    if (!out) {
+        fprintf(stderr, "out of memory building URL\n");
+        exit(1);
+    }
+    snprintf(out, needed, "%s%srecv_timeout=%d", url, sep, timeout_ms);
+    return out;
+}
+
+/* -------------------------------------------------------------------------
  * main
  * ---------------------------------------------------------------------- */
 int main(int argc, char **argv) {
@@ -274,15 +318,16 @@ int main(int argc, char **argv) {
      *
      * We use struct sigaction (POSIX) rather than signal() because
      * signal()'s behaviour on re-raise is implementation-defined on
-     * Linux.  SA_RESTART restarts slow syscalls after the signal — we
-     * don't want that here because we want the blocking _next_event
-     * call to return promptly.
+     * Linux.  SA_RESTART stays unset, but that alone
+     * does not wake the loop: tst-rtp retries a receive that a signal
+     * interrupts, so the flag is read only when _next_event returns, with
+     * an event or at the 500 ms recv_timeout added to the URL below.
      * ---------------------------------------------------------------- */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handle_signal;
-    /* Deliberately leave SA_RESTART unset — EINTR wakes the event loop
-     * promptly so the flag check takes effect. */
+    /* SA_RESTART left unset; the URL's recv_timeout, not EINTR, bounds
+     * how long the loop waits before it sees the flag. */
     sigaction(SIGINT,  &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
@@ -297,7 +342,12 @@ int main(int argc, char **argv) {
      * If you decide not to connect, call `tst_rtsp_client_builder_free`
      * to release it instead.
      * ---------------------------------------------------------------- */
-    tst_rtsp_client_builder_t *builder = tst_rtsp_client_builder_new(url);
+    /* 500 ms: a Ctrl-C on an idle session is noticed within half a second
+     * (see url_with_recv_timeout above). */
+    char *rx_url = url_with_recv_timeout(url, 500);
+    tst_rtsp_client_builder_t *builder = tst_rtsp_client_builder_new(rx_url);
+    /* The builder parsed the URL into its own copy. */
+    free(rx_url);
     if (!builder) {
         fprintf(stderr, "builder_new failed: %s\n", tst_get_last_error_str());
         return 1;
@@ -438,6 +488,8 @@ int main(int argc, char **argv) {
      *
      * Return codes:
      *   0                  — success; ev populated
+     *   TST_E_BUFFER_FULL (-4) — the URL's recv_timeout expired with no
+     *                        event; retryable, the session stays up
      *   TST_E_END_OF_STREAM (-12) — graceful peer close / stream ended
      *   TST_E_CLOSED (-7)  — cancelled (SIGINT / _cancel called)
      *   TST_E_TRANSPORT (-8) — network I/O failure
@@ -462,6 +514,12 @@ int main(int argc, char **argv) {
         if (rc == 0) {
             n_events++;
             print_event(&ev);
+            continue;
+        }
+
+        if (rc == TST_E_BUFFER_FULL) {
+            /* recv_timeout expired: no event for 500 ms. Loop back so the
+             * flag check at the top runs, then wait again. */
             continue;
         }
 
