@@ -445,12 +445,14 @@ struct Tracked {
 }
 
 /// Whether `offsets` touch the adaptation-field bytes of the original
-/// packet `before` that can raise a PCR or discontinuity signal.
+/// packet `before` that can raise a PCR or discontinuity signal. An original
+/// shorter than six bytes holds no adaptation-field length and flags, so it
+/// hits nothing.
 fn hits_adaptation_control(before: &[u8], offsets: &[usize]) -> bool {
-    if before.get(3).is_none_or(|b| b & 0x30 != 0x20) {
+    if before.len() < 6 || before[3] & 0x30 != 0x20 {
         return false;
     }
-    let has_pcr = before.get(5).is_some_and(|f| f & 0x10 != 0);
+    let has_pcr = before[5] & 0x10 != 0;
     offsets
         .iter()
         .any(|o| matches!(o, 4 | 5) || (has_pcr && (6..=11).contains(o)))
@@ -3630,8 +3632,23 @@ mod tests {
                 "flags {flags:#04x} offsets {offsets:?}: {r:?}"
             );
         }
-        // A logged original too short to hold the flags byte hits nothing.
-        assert!(!hits_adaptation_control(&[0x47, 0x10, 0x11, 0x20], &[7]));
+        // A logged original too short to hold the length and flags bytes
+        // hits nothing, whatever the offset.
+        for o in [4usize, 5, 7] {
+            assert!(
+                !hits_adaptation_control(&[0x47, 0x10, 0x11, 0x20], &[o]),
+                "offset {o}"
+            );
+            assert!(
+                !hits_adaptation_control(&[0x47, 0x10, 0x11, 0x20, 183], &[o]),
+                "offset {o}"
+            );
+        }
+        // Six bytes hold both.
+        assert!(hits_adaptation_control(
+            &[0x47, 0x10, 0x11, 0x20, 183, 0x00],
+            &[4]
+        ));
     }
 
     /// `explains_damage` answers for a content oracle, records nothing,
