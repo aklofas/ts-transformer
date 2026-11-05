@@ -876,8 +876,9 @@ fn build_demux_from_url(
     };
     // Cancel-on-close: `OwnedRegistry::close` fires the cancel before taking the
     // slot, so a `next()` parked on another thread ends with CLOSED (recording
-    // CANCELLED) instead of holding `close()` hostage — the contract tst-py and
-    // the C ABI's `tst_managed_demux_receiver_close` already have.
+    // CANCELLED) instead of holding `close()` hostage, as tst-py's `close()`
+    // does. (The C ABI's `_close` is not an interrupter: a C caller cancels,
+    // waits, then closes.)
     let cancel = Arc::clone(&handles.cancel);
     let end_reason = handles.end_reason.clone();
     let ts_bytes_demuxed = inner.ts_bytes_demuxed_handle();

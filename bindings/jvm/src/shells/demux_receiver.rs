@@ -6,9 +6,9 @@
 //! The transport's error domain rides in the snapshot (readable after
 //! `close()`), and its end-reason cell is attached to the `Owned`.
 //!
-//! Threading: single-threaded per the `Receiver` model: the Java
-//! `DemuxReceiver` is not thread-safe and not `synchronized`. The sanctioned
-//! cross-thread stop is `cancelHandle().cancel()` (or `close()`, which cancels
+//! Threading: single-threaded per the `Receiver` model: iteration on the Java
+//! `DemuxReceiver` is not synchronized; only `close()` is (so concurrent
+//! closes finish together). The sanctioned cross-thread stop is `cancelHandle().cancel()` (or `close()`, which cancels
 //! first), which wakes a parked `recv_event`.
 //!
 //! Slot discipline: `nNext` holds the receiver's slot for the whole

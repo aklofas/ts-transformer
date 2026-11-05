@@ -198,8 +198,9 @@ public final class ManagedReceiver extends NativeHandle {
      * {@link #cancelHandle()} hands out, so any in-flight reconnect exits and a
      * {@link #recvBytes} parked on another thread ends promptly with
      * {@code SrtException(CLOSED)} — then tears down the inner shell.
-     * Idempotent. Same contract as the C ABI's {@code tst_managed_receiver_close}
-     * and tst-py's {@code close()}.
+     * Idempotent. tst-py's {@code close()} has the same contract. The C ABI's
+     * {@code tst_managed_receiver_close} does not: there the caller cancels,
+     * waits for the parked call to return, then closes.
      */
     @Override public void close() { super.close(); }
 
