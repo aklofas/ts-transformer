@@ -41,11 +41,13 @@ impl HlsPublisher {
 
         #[cfg(feature = "tls")]
         let tls_config = match (&config.tls_cert, &config.tls_key) {
-            (Some(cert), Some(key)) => Some(crate::tls::load_server_config(cert, key)?),
+            (Some(cert), Some(key)) if config.serve => {
+                Some(crate::tls::load_server_config(cert, key)?)
+            }
             _ => None,
         };
         #[cfg(not(feature = "tls"))]
-        if config.tls_cert.is_some() || config.tls_key.is_some() {
+        if config.serve && (config.tls_cert.is_some() || config.tls_key.is_some()) {
             return Err(HlsError::TlsDisabled);
         }
 
@@ -273,6 +275,23 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn no_server_ignores_tls_paths() {
+        let dir = tmpdir("no-server-tls");
+        let cfg = HlsConfig {
+            output_dir: dir,
+            serve: false,
+            tls_cert: Some("/nonexistent.crt".into()),
+            tls_key: Some("/nonexistent.key".into()),
+            ..HlsConfig::default()
+        };
+        let mut p = HlsPublisher::with_config(cfg).unwrap();
+        #[cfg(feature = "serve")]
+        assert!(p.local_addr().is_none());
+        p.push_ts(&[0x47u8; 376]).unwrap();
+        p.finish().unwrap();
     }
 
     #[test]
