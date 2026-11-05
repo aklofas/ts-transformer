@@ -67,7 +67,7 @@ pub unsafe extern "C" fn tst_demux_receiver_get_socket_stats(
 /// * `TST_E_INVALID_CONFIG` — `p` or `out` is null
 /// * `TST_E_CLOSED` — a caught panic retired the shell
 /// * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
-/// * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+/// * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
 ///
 /// # Safety
 ///

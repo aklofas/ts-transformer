@@ -78,7 +78,8 @@ use crate::panic::ffi_catch;
 ///
 /// Returns a non-NULL builder pointer on success, or NULL with the
 /// thread-local last-error populated on failure (bad URL, non-IP-literal
-/// host, allocation failure, etc.).  The caller must eventually pass the
+/// host, or a panic caught inside the call; an allocation failure aborts
+/// the process).  The caller must eventually pass the
 /// pointer to `tst_rtsp_server_builder_start` (which consumes it) or
 /// `tst_rtsp_server_builder_free` (which discards it).
 ///
@@ -352,9 +353,11 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_accept_unregistered_publishers(
 }
 
 /// Set the server-wide default for publish mounts: when `end` is true, a
-/// mount's receiver ends (`TST_E_CLOSED` / end of stream) as soon as a
-/// publisher that reached RECORD leaves, and the mount refuses later
-/// publishers. A publisher that never recorded does not end it. Default
+/// publisher that reached RECORD ends its mount when it leaves. The mount
+/// is closed as `tst_rtsp_server_remove_mount` closes it: a demux receiver
+/// taken from it reads `TST_E_END_OF_STREAM` once it has drained what was
+/// already queued, and the mount refuses later publishers. A publisher
+/// that never recorded does not end it. Default
 /// false: the mount idles for the next publisher. On-demand mounts follow
 /// it. To accept a publisher after the mount ended, call
 /// `tst_rtsp_server_remove_mount` and add the mount again; an ended

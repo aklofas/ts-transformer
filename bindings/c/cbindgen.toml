@@ -17,7 +17,10 @@ header = """\
  * the parked call to return, then free. Slot-backed handles serialise
  * their data-path calls through an internal mutex; builders are
  * single-thread objects. A TstHlsServerHandle has no internal lock:
- * serialise every call on one serving handle yourself.
+ * serialise every call on one serving handle yourself. In a build
+ * without std (the offline handles on firmware), the internal lock is a
+ * spin lock with no priority inheritance and a panic aborts: drive each
+ * handle from one task, never from several preemptive tasks.
  */
 """
 include_guard = "TSTRANS_H"

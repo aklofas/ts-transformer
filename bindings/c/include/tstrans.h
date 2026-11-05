@@ -15,7 +15,10 @@
  * the parked call to return, then free. Slot-backed handles serialise
  * their data-path calls through an internal mutex; builders are
  * single-thread objects. A TstHlsServerHandle has no internal lock:
- * serialise every call on one serving handle yourself.
+ * serialise every call on one serving handle yourself. In a build
+ * without std (the offline handles on firmware), the internal lock is a
+ * spin lock with no priority inheritance and a panic aborts: drive each
+ * handle from one task, never from several preemptive tasks.
  */
 
 
@@ -2606,7 +2609,9 @@ int tst_demux_config_add_link_klv(struct tst_demux_config_t *cfg,
  * Allocate a new `tst_demux_config_t` with default values
  * (strict mode = Off, no overrides, default PES caps).
  *
- * Returns `NULL` on allocation failure or internal panic.
+ * Returns `NULL` only when a panic is caught inside the call (last-error
+ * `TST_E_PANIC_CAUGHT`; a build without `std` aborts instead); an
+ * allocation failure aborts the process.
  * Free with `tst_demux_config_free`.
  */
  struct tst_demux_config_t *tst_demux_config_new(void);
@@ -2813,7 +2818,7 @@ int tst_demux_receiver_get_stats(struct tst_demux_receiver_t *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -3448,7 +3453,9 @@ int tst_hls_publisher_builder_max_segment_duration_ms(struct TstHlsPublisherBuil
 /**
  * Create a new HLS publisher builder seeded with library defaults
  * (LIVE mode, 4 s segments, bind `127.0.0.1:8080`, output dir
- * `<system-temp>/tstrans-hls`). Returns `NULL` only on allocation failure.
+ * `<system-temp>/tstrans-hls`). Returns `NULL` only when a panic is caught
+ * inside the call (last-error `TST_E_PANIC_CAUGHT`); an allocation failure
+ * aborts the process.
  *
  * A builder is a single-thread object; see "Threading and lifetime" in the
  * header preamble.
@@ -3881,7 +3888,7 @@ int tst_managed_demux_receiver_get_stats(struct tst_managed_demux_receiver_t *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -4207,7 +4214,7 @@ int tst_managed_mux_sender_get_stats(struct tst_managed_mux_sender_t *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -5331,7 +5338,9 @@ tst_video_stream_handle_t tst_mux_config_add_video_stream(struct tst_mux_config_
 /**
  * Create a new, empty mux config. No programs are added — call
  * `tst_mux_config_add_program` before using this config to open a muxer
- * or sender. Returns NULL only on allocation failure (OOM).
+ * or sender. Returns NULL only when a panic is caught inside the call
+ * (last-error `TST_E_PANIC_CAUGHT`; a build without `std` aborts
+ * instead); an allocation failure aborts the process.
  */
  struct tst_mux_config_t *tst_mux_config_new(void);
 
@@ -7208,7 +7217,7 @@ int tst_rist_demux_receiver_get_stats(struct TstRistDemuxReceiver *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -7507,7 +7516,7 @@ int tst_rist_mux_sender_get_socket_stats(struct TstRistMuxSender *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -7959,9 +7968,10 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * invalid; passing the same non-null pointer twice is undefined
  * behavior (use-after-free on the consumed `Box`).
  *
- * Close is cancel-first and abortive: up to six buffered packets that
- * no `tst_rist_sender_flush` has sent are discarded. Call `_flush` first to
- * send what is buffered.
+ * Close is cancel-first and abortive: it discards what no
+ * `tst_rist_sender_flush` has sent, which is up to six packets that have
+ * not yet formed a bundle, plus any bundles a failed send left queued
+ * for the next call. Call `_flush` first to send what is buffered.
  *
  * # Safety
  *
@@ -7980,7 +7990,8 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * in the sender: `_flush` does not send them and `_close` discards them.
  *
  * Call before `tst_rist_sender_close`: `_close` is cancel-first and
- * discards up to six buffered packets.
+ * discards what is buffered: up to six packets not yet bundled, plus any
+ * bundles a failed send left queued.
  *
  * The flush hands the tail to librist, whose context teardown does not drain
  * its own output queue: a `_close` issued at once can still drop packets
@@ -8247,7 +8258,7 @@ int tst_rtp_demux_receiver_get_stats(struct TstRtpDemuxReceiver *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -8539,7 +8550,7 @@ int tst_rtp_mux_sender_get_mux_sender_stats(struct TstRtpMuxSender *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -9011,9 +9022,10 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * invalid; passing the same non-null pointer twice is undefined
  * behavior (use-after-free on the consumed `Box`).
  *
- * Close is cancel-first and abortive: up to six buffered packets that
- * no `tst_rtp_sender_flush` has sent are discarded. Call `_flush` first to
- * send what is buffered.
+ * Close is cancel-first and abortive: it discards what no
+ * `tst_rtp_sender_flush` has sent, which is up to six packets that have
+ * not yet formed a bundle, plus any bundles a failed send left queued
+ * for the next call. Call `_flush` first to send what is buffered.
  *
  * # Safety
  *
@@ -9032,7 +9044,8 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * in the sender: `_flush` does not send them and `_close` discards them.
  *
  * Call before `tst_rtp_sender_close`: `_close` is cancel-first and
- * discards up to six buffered packets.
+ * discards what is buffered: up to six packets not yet bundled, plus any
+ * bundles a failed send left queued.
  *
  * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
  * NULL pointer, or the transport's negative `TST_E_*` code.
@@ -9345,8 +9358,9 @@ void tst_rtsp_client_builder_auth_digest_sha256(struct tst_rtsp_client_builder_t
  * onto the RTSP request line.
  *
  * Returns a non-NULL builder pointer on success, or NULL with the
- * thread-local last-error populated on failure (bad URL, allocation
- * failure, etc.).  The caller must eventually pass the pointer to
+ * thread-local last-error populated on failure (a bad URL, or a panic
+ * caught inside the call; an allocation failure aborts the process).
+ * The caller must eventually pass the pointer to
  * `tst_rtsp_client_builder_connect` (which consumes it) or
  * `tst_rtsp_client_builder_free` (which discards it).
  *
@@ -9440,8 +9454,11 @@ void tst_rtsp_client_builder_transport_pref(struct tst_rtsp_client_builder_t *bu
  * return `TST_E_CLOSED` immediately without entering the muxer.
  *
  * Cancellation is handle-local: it stops pushes through this handle only.
- * Registering one path twice fails, so a path never has a second handle
- * from `add_*_mount`.
+ * A handle names one registration, not a path. While a path is
+ * registered, a second `add_*_mount` on it fails; after
+ * `tst_rtsp_server_remove_mount` the path can be registered again, and a
+ * handle kept from the removed registration stays valid but reaches
+ * nobody. Cancelling it does not touch the new mount.
  *
  * Safe to call from any thread. Idempotent — calling twice is harmless.
  * The handle must still be freed via `tst_rtsp_mount_handle_free` to
@@ -9895,13 +9912,17 @@ int tst_rtsp_publish_mount_get_stats(const struct tst_rtsp_publish_mount_t *moun
  * call returns NULL with `TST_E_CLOSED`. The mount handle stays valid for
  * the getters and [`tst_rtsp_publish_mount_free`].
  *
- * The receiver outlives publisher churn: between publishers it is open and
- * silent. It ends in one of two ways:
+ * Between publishers the receiver is open and silent, unless the server
+ * was built to end a publish mount when its publisher leaves
+ * (`tst_rtsp_server_builder_end_publish_mount_on_publisher_exit`). It ends
+ * in one of two ways:
  * - `TST_E_CLOSED` after [`tst_rtsp_publish_mount_cancel`] or
  *   `tst_rtp_demux_receiver_cancel` (an explicit cancel);
  * - `TST_E_END_OF_STREAM`, once what was already queued has drained, after
  *   [`tst_rtsp_server_remove_mount`], `tst_rtsp_server_stop`, or
- *   `tst_rtsp_server_free` (with no call in flight): the mount was closed.
+ *   `tst_rtsp_server_free` (with no call in flight), or after a publisher
+ *   that reached RECORD left a mount set to end on publisher exit: the
+ *   mount was closed.
  *
  * A take on a mount already closed by `remove_mount` or `stop` (but never
  * taken) still succeeds, and the receiver reads `TST_E_END_OF_STREAM` at
@@ -10236,9 +10257,11 @@ void tst_rtsp_server_builder_auth_digest_sha256(struct TstRtspServerBuilder *bui
 #if defined(TST_HAS_RTP)
 /**
  * Set the server-wide default for publish mounts: when `end` is true, a
- * mount's receiver ends (`TST_E_CLOSED` / end of stream) as soon as a
- * publisher that reached RECORD leaves, and the mount refuses later
- * publishers. A publisher that never recorded does not end it. Default
+ * publisher that reached RECORD ends its mount when it leaves. The mount
+ * is closed as `tst_rtsp_server_remove_mount` closes it: a demux receiver
+ * taken from it reads `TST_E_END_OF_STREAM` once it has drained what was
+ * already queued, and the mount refuses later publishers. A publisher
+ * that never recorded does not end it. Default
  * false: the mount idles for the next publisher. On-demand mounts follow
  * it. To accept a publisher after the mount ended, call
  * `tst_rtsp_server_remove_mount` and add the mount again; an ended
@@ -10361,7 +10384,8 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
  *
  * Returns a non-NULL builder pointer on success, or NULL with the
  * thread-local last-error populated on failure (bad URL, non-IP-literal
- * host, allocation failure, etc.).  The caller must eventually pass the
+ * host, or a panic caught inside the call; an allocation failure aborts
+ * the process).  The caller must eventually pass the
  * pointer to `tst_rtsp_server_builder_start` (which consumes it) or
  * `tst_rtsp_server_builder_free` (which discards it).
  *
@@ -11230,7 +11254,7 @@ int tst_tcp_demux_receiver_get_stats(struct TstTcpDemuxReceiver *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -11642,7 +11666,7 @@ int tst_tcp_mux_sender_get_mux_sender_stats(struct TstTcpMuxSender *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -12079,9 +12103,10 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * invalid; passing the same non-null pointer twice is undefined
  * behavior (use-after-free on the consumed `Box`).
  *
- * Close is cancel-first and abortive: up to six buffered packets that
- * no `tst_tcp_sender_flush` has sent are discarded. Call `_flush` first to
- * send what is buffered.
+ * Close is cancel-first and abortive: it discards what no
+ * `tst_tcp_sender_flush` has sent, which is up to six packets that have
+ * not yet formed a bundle, plus any bundles a failed send left queued
+ * for the next call. Call `_flush` first to send what is buffered.
  *
  * # Safety
  *
@@ -12100,7 +12125,8 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * in the sender: `_flush` does not send them and `_close` discards them.
  *
  * Call before `tst_tcp_sender_close`: `_close` is cancel-first and
- * discards up to six buffered packets.
+ * discards what is buffered: up to six packets not yet bundled, plus any
+ * bundles a failed send left queued.
  *
  * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
  * NULL pointer, or the transport's negative `TST_E_*` code.
@@ -12310,7 +12336,7 @@ int tst_udp_demux_receiver_get_stats(struct TstUdpDemuxReceiver *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -12593,7 +12619,7 @@ int tst_udp_mux_sender_get_mux_sender_stats(struct TstUdpMuxSender *p,
  * * `TST_E_INVALID_CONFIG` — `p` or `out` is null
  * * `TST_E_CLOSED` — a caught panic retired the shell
  * * `TST_E_NOT_FOUND` — `pid` has never been observed on this handle
- * * `TST_E_INTERNAL` — internal panic caught at the FFI boundary
+ * * `TST_E_PANIC_CAUGHT` — a panic was caught at the FFI boundary
  *
  * # Safety
  *
@@ -13025,9 +13051,10 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * invalid; passing the same non-null pointer twice is undefined
  * behavior (use-after-free on the consumed `Box`).
  *
- * Close is cancel-first and abortive: up to six buffered packets that
- * no `tst_udp_sender_flush` has sent are discarded. Call `_flush` first to
- * send what is buffered.
+ * Close is cancel-first and abortive: it discards what no
+ * `tst_udp_sender_flush` has sent, which is up to six packets that have
+ * not yet formed a bundle, plus any bundles a failed send left queued
+ * for the next call. Call `_flush` first to send what is buffered.
  *
  * # Safety
  *
@@ -13046,7 +13073,8 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * in the sender: `_flush` does not send them and `_close` discards them.
  *
  * Call before `tst_udp_sender_close`: `_close` is cancel-first and
- * discards up to six buffered packets.
+ * discards what is buffered: up to six packets not yet bundled, plus any
+ * bundles a failed send left queued.
  *
  * Returns 0, `TST_E_CLOSED` after `_cancel`, `TST_E_INVALID_CONFIG` on a
  * NULL pointer, or the transport's negative `TST_E_*` code.

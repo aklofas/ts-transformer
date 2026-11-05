@@ -593,13 +593,17 @@ pub unsafe extern "C" fn tst_rtsp_publish_mount_cancel(
 /// call returns NULL with `TST_E_CLOSED`. The mount handle stays valid for
 /// the getters and [`tst_rtsp_publish_mount_free`].
 ///
-/// The receiver outlives publisher churn: between publishers it is open and
-/// silent. It ends in one of two ways:
+/// Between publishers the receiver is open and silent, unless the server
+/// was built to end a publish mount when its publisher leaves
+/// (`tst_rtsp_server_builder_end_publish_mount_on_publisher_exit`). It ends
+/// in one of two ways:
 /// - `TST_E_CLOSED` after [`tst_rtsp_publish_mount_cancel`] or
 ///   `tst_rtp_demux_receiver_cancel` (an explicit cancel);
 /// - `TST_E_END_OF_STREAM`, once what was already queued has drained, after
 ///   [`tst_rtsp_server_remove_mount`], `tst_rtsp_server_stop`, or
-///   `tst_rtsp_server_free` (with no call in flight): the mount was closed.
+///   `tst_rtsp_server_free` (with no call in flight), or after a publisher
+///   that reached RECORD left a mount set to end on publisher exit: the
+///   mount was closed.
 ///
 /// A take on a mount already closed by `remove_mount` or `stop` (but never
 /// taken) still succeeds, and the receiver reads `TST_E_END_OF_STREAM` at

@@ -128,7 +128,9 @@ impl TstMuxConfig {
 
 /// Create a new, empty mux config. No programs are added — call
 /// `tst_mux_config_add_program` before using this config to open a muxer
-/// or sender. Returns NULL only on allocation failure (OOM).
+/// or sender. Returns NULL only when a panic is caught inside the call
+/// (last-error `TST_E_PANIC_CAUGHT`; a build without `std` aborts
+/// instead); an allocation failure aborts the process.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_config_new() -> *mut TstMuxConfig {
     ffi_catch(core::ptr::null_mut(), || {

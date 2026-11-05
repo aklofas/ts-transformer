@@ -56,7 +56,9 @@ fn map_inner(b: &mut TstHlsPublisherBuilder, f: impl FnOnce(&mut HlsPublisherBui
 
 /// Create a new HLS publisher builder seeded with library defaults
 /// (LIVE mode, 4 s segments, bind `127.0.0.1:8080`, output dir
-/// `<system-temp>/tstrans-hls`). Returns `NULL` only on allocation failure.
+/// `<system-temp>/tstrans-hls`). Returns `NULL` only when a panic is caught
+/// inside the call (last-error `TST_E_PANIC_CAUGHT`); an allocation failure
+/// aborts the process.
 ///
 /// A builder is a single-thread object; see "Threading and lifetime" in the
 /// header preamble.

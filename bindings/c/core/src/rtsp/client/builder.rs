@@ -68,8 +68,9 @@ use crate::panic::ffi_catch;
 /// onto the RTSP request line.
 ///
 /// Returns a non-NULL builder pointer on success, or NULL with the
-/// thread-local last-error populated on failure (bad URL, allocation
-/// failure, etc.).  The caller must eventually pass the pointer to
+/// thread-local last-error populated on failure (a bad URL, or a panic
+/// caught inside the call; an allocation failure aborts the process).
+/// The caller must eventually pass the pointer to
 /// `tst_rtsp_client_builder_connect` (which consumes it) or
 /// `tst_rtsp_client_builder_free` (which discards it).
 ///
