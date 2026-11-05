@@ -136,16 +136,22 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
    head is the frozen commit (the same rule as step 6's `--dispatch-wheels`);
    a bare dispatch builds the default branch's tip, not the candidate. Confirm all legs are green, and watch for a
    leg sitting *queued* — that is the v0.1.0 failure mode.
-6. **The release VM.** One dedicated cloud VM runs the corpus phase and then
-   the soak, both on the frozen commit. Four scripts under `scripts/interop/`
+6. **The release VMs.** One dedicated x86 cloud VM runs the corpus phase and
+   then the soak, both on the frozen commit. An arm64 soak VM and an arm64
+   stress VM run beside it, on the same commit. Four scripts under `scripts/interop/`
    carry the steps; each prints `<stage> rc=N` lines and one final marker a
    watcher can anchor on:
-   - Provision the VM. Its instance role reads the corpus bucket, which holds
+   - Provision the VM pair per architecture: the x86 soak VM (`t3.xlarge`)
+     and, in parallel, the arm64 soak VM (`t4g.xlarge`) and the arm64 stress
+     VM (`c7g.2xlarge`, never the soak VM). The x86 stress VM
+     (`c7i.2xlarge`) is provisioned when stress numbers are wanted beside
+     the arm64 ones. The instance role reads the corpus bucket, which holds
      the real captures and the previous release's corpus baseline. Then, on
-     the VM, `release-vm-setup.sh <full sha>`: packages, a Rust toolchain,
-     the AWS CLI, the UDP receive-buffer ceiling, Google Chrome, and a clean
-     checkout of the frozen commit with `tst-interop` built in release mode
-     (`SETUP-DONE rc=0`).
+     each VM, `release-vm-setup.sh <full sha>`: packages, a Rust toolchain,
+     the AWS CLI, the UDP receive-buffer ceiling, a browser (Google Chrome
+     on x86_64, Chromium on aarch64), and a clean checkout of the frozen
+     commit with `tst-interop` built in release mode (`SETUP-DONE rc=0`).
+     The corpus phase below runs on the x86 VM only.
    - The 0.9.0 digests were never promoted under their tag's name, so before
      the first comparison against them copy them there once:
      ```bash
@@ -205,14 +211,22 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      previous run's outdir is the usual cause, and
      `release-vm-soak.sh stop --outdir <old>` keeps its logs and frees its
      media. Run `launch` detached too (it waits for the marker and then for
-     the roles, which can be an hour).
+     the roles, which can be an hour). The same `ci-green` and `launch`
+     steps run on the arm64 soak VM, which stamps its archive row with
+     `arch = "aarch64"`.
+   - The arm64 soak starts with a drill: `soak.sh --hours 0.05` with the
+     browser leg on. If the browser fails on aarch64, the 48-hour arm64
+     run launches with `--no-whep` and its row's `legs` say so. The
+     five-leg rule below applies to the x86 release soak only. The arm64
+     stress VM runs `stress.sh` as its own run; the soak VM never doubles
+     as the stress VM.
    - Check the run at 24 hours (the midpoint) and again before the end,
      without touching it:
      `release-vm-soak.sh status --outdir ~/soak-X.Y.Z` lists every role
      alive, the absence of the fail-fast marker, and the SRT receiver's
      `reconnects`, which reads 6 at 24 hours and 12 at the end.
-   - When the run ends, harvest the corpus run directory and the soak
-     directory. Write a checksum list for each on the VM and check the
+   - When the runs end, harvest the corpus run directory and the soak
+     directory, plus the arm64 soak and arm64 stress directories. Write a checksum list for each on the VM and check the
      copies against it.
    - The `tst-interop report soak` that closes the run must print
      `overall_pass=true`, and the script exits 0. Any other verdict is a
@@ -221,7 +235,7 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      same VM: `release-vm-soak.sh stop` on the running soak, then setup's
      checkout stage (or `release-vm-corpus.sh` on the new sha, which checks
      it out), then the chain above.
-7. **The archive-entry PR.** A docs-only PR adds two rows to
+7. **The archive-entry PR.** A docs-only PR adds the rows below to
    `tests/coverage/evidence-archives.toml`, each with the frozen commit as
    its `tree`:
    - the soak, with the `expected_duration_s` the run's `soak-config.json` declares
@@ -229,7 +243,12 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      copied from the `legs=…` list on the last line `report soak` printed;
    - the corpus run, with the counts its archive row carries. Its `files`
      must equal `expected_files` in the file's `[corpus]` table. When the
-     corpus has changed, the same PR updates `expected_files`.
+     corpus has changed, the same PR updates `expected_files`;
+   - the arm64 soak, with `arch = "aarch64"` and `legs` as printed, and the
+     arm64 stress run, with `arch = "aarch64"`. A row without `arch` is an
+     x86_64 row. Then render the benchmarks page with the arm64 ceilings
+     beside the x86 ones:
+     `benchmarks-page.sh <x86 archive> --arm <arm archive>`;
    - `overall_pass` exactly as the harness printed it. A failed harness
      verdict stays `false`; the maintainer's review goes in
      `[archive.waiver]` (the verdicts it covers, the reason, the reviewer,
@@ -241,9 +260,17 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
    gate reads a soak or corpus row for any commit whose tree matches the
    qualified one outside the release documents.
 
-   The same PR adds the soak to the runs table on the
+   The same PR adds the soaks to the runs table on the
    [validation evidence page](/docs/project/validation-evidence.md).
-8. **Destroy the VM** once both archives are harvested and checked.
+8. **Destroy the VMs** once every archive is harvested and checked. A
+   targeted destroy names the instances and their security groups:
+   ```bash
+   terraform destroy \
+     -target=aws_instance.soak_vm -target=aws_instance.soak_vm_arm \
+     -target=aws_security_group.soak_access \
+     -target=aws_instance.stress_vm -target=aws_instance.stress_vm_arm \
+     -target=aws_security_group.stress_access
+   ```
 9. **The date commit.** Replace the CHANGELOG date placeholder with the
    release date. The commit touches the CHANGELOG only, so the frozen tree
    still stands for it.
@@ -276,7 +303,10 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
     `docs/` and `tests/coverage/evidence-archives.toml` between the soaked
     tree and this commit. The JavaScript under `docs/webrtc/` is not a
     document, because the soak's browser leg runs it. A `v*` tag push
-    applies the same gate. The gate
+    applies the same gate. The record also names the newest arm64 soak
+    that stands for the tree as `release_vm.arm_soak`. In 0.9.1 it is
+    recorded, not gating; it gates from 0.10, after one clean arm64 run.
+    The gate
     judges the newest release soak that stands for the commit. A newer failed
     soak of any declared duration on the same or an equivalent tree is a
     reason for NO-GO, while a newer passing short run never replaces the

@@ -442,7 +442,8 @@ Every soak run this page cites, oldest first. The tree is the commit the
 run was built from. A release soak declares at least `[soak]
 required_duration_s` (172 800 s, 48 hours, from 0.9.1; the 0.9.0 rows declare
 259 200 s);
-the release qualification accepts no shorter run.
+the release qualification accepts no shorter run. A run on aarch64 is marked
+in its Note; the column set is the same.
 
 | Id | Dates (UTC) | Tree | Declared duration | Verdict | Note |
 | --- | --- | --- | --- | --- | --- |
