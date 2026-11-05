@@ -255,8 +255,9 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     }
 
     /// Total aligned TS bytes this shell has handed to its demuxer, in
-    /// multiples of 188. Lock-free; never takes the shell, so it can be read
-    /// from another thread while a `recv_event` is parked.
+    /// multiples of 188. An atomic load that never waits. `recv_event`
+    /// borrows the shell mutably, so to read the count from another thread
+    /// while one is parked, take a [`Self::ts_bytes_demuxed_handle`] first.
     ///
     /// - Counted: every aligned packet fed to the demuxer, including ones a
     ///   strict-mode demuxer then rejects.
