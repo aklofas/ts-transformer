@@ -252,7 +252,7 @@ class RtspPublishMountTest {
                     .endPublishMountOnPublisherExit(serverDefault).build());
                  PublishMount mount = opt == null
                     ? server.addPublishMount("/cam")
-                    : server.addPublishMount("/cam", PublishMountOptions.builder()
+                    : server.addPublishMount("/cam", PublishMountConfig.builder()
                         .endOnPublisherExit(opt).build());
                  DemuxReceiver rx = mount.intoDemuxReceiver()) {
                 Parked<DemuxEvent> parked = park(rx::recvEvent);

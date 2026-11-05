@@ -44,11 +44,13 @@ class RtspServerConfigTest {
 
     @Test
     void publishMountOptionsInheritByDefault() {
-        assertTrue(PublishMountOptions.defaults().endOnPublisherExit().isEmpty());
+        assertTrue(PublishMountConfig.defaults().endOnPublisherExit().isEmpty());
         assertEquals(java.util.Optional.of(true),
-            PublishMountOptions.builder().endOnPublisherExit(true).build().endOnPublisherExit());
+            PublishMountConfig.builder().endOnPublisherExit(true).build().endOnPublisherExit());
         assertEquals(java.util.Optional.of(false),
-            PublishMountOptions.builder().endOnPublisherExit(false).build().endOnPublisherExit());
+            PublishMountConfig.builder().endOnPublisherExit(false).build().endOnPublisherExit());
+        assertEquals("PublishMountConfig(endOnPublisherExit=inherit)",
+            PublishMountConfig.defaults().toString());
     }
 
     @Test

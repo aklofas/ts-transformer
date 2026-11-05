@@ -187,12 +187,12 @@ public final class RtspServer extends NativeHandle {
     }
 
     /**
-     * {@link #addPublishMount(String)} with per-mount {@link PublishMountOptions}; an
+     * {@link #addPublishMount(String)} with per-mount {@link PublishMountConfig}; an
      * option left unset follows the server-wide default in {@link RtspServerConfig}.
      *
      * @throws RtspException as {@link #addPublishMount(String)}
      */
-    public PublishMount addPublishMount(String path, PublishMountOptions options)
+    public PublishMount addPublishMount(String path, PublishMountConfig options)
             throws RtspException {
         java.util.Objects.requireNonNull(options, "options");
         ensureOpen();

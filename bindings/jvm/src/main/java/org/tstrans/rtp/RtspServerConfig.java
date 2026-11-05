@@ -83,7 +83,7 @@ public final class RtspServerConfig {
      * never recorded does not end it. Default {@code false} (the mount idles for the next
      * publisher). To accept a publisher after the mount ended, remove the mount and add it
      * again; an ended on-demand mount stays in the table, and counts toward the on-demand cap,
-     * until it is removed. {@link PublishMountOptions} overrides it per mount;
+     * until it is removed. {@link PublishMountConfig} overrides it per mount;
      * on-demand mounts always follow it.
      */
     public boolean endPublishMountOnPublisherExit() { return endPublishMountOnPublisherExit; }

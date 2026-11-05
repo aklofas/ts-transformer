@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use tst_core::transport::{RecvTransport, TransportError};
-use tst_rtp::{PublishMountOptions, RtspServer, RtspServerBuilder};
+use tst_rtp::{PublishMountConfig, RtspServer, RtspServerBuilder};
 
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
@@ -102,7 +102,7 @@ fn publisher_exit_ends_the_app_transport_when_the_mount_opts_in() {
     let mount = server
         .add_publish_mount_with(
             "/pub",
-            PublishMountOptions::new().end_on_publisher_exit(true),
+            PublishMountConfig::new().end_on_publisher_exit(true),
         )
         .unwrap();
     server.start().unwrap();
@@ -128,7 +128,7 @@ fn a_mount_option_overrides_the_server_default_both_ways() {
     let mount = server
         .add_publish_mount_with(
             "/pub",
-            PublishMountOptions::new().end_on_publisher_exit(false),
+            PublishMountConfig::new().end_on_publisher_exit(false),
         )
         .unwrap();
     server.start().unwrap();

@@ -23,7 +23,7 @@
 //! and then keeps the slot shut for good.
 //!
 //! A mount whose resolved `end_on_publisher_exit` option is set (see
-//! [`PublishMountOptions`]) treats the exit of a publisher that reached
+//! [`PublishMountConfig`]) treats the exit of a publisher that reached
 //! RECORD as the end of the stream: `end_publisher` performs `close`, so the application transport
 //! reads `Closed` and later ANNOUNCEs are refused.
 
@@ -173,11 +173,11 @@ fn record_mount_end(h: &EndReasonHandle, r: EndReason) {
 /// Every field left unset inherits the server-wide default.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
-pub struct PublishMountOptions {
+pub struct PublishMountConfig {
     end_on_publisher_exit: Option<bool>,
 }
 
-impl PublishMountOptions {
+impl PublishMountConfig {
     /// Options that inherit every server-wide default.
     #[must_use]
     pub fn new() -> Self {
