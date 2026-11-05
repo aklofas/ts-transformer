@@ -275,7 +275,9 @@ impl PublishSession {
 
     /// End the publisher: flush whatever the adapter has pending, cancel
     /// any UDP ingest tasks, and free the mount's publisher slot so a
-    /// fresh ANNOUNCE can claim it. Idempotent — safe to call from both
+    /// fresh ANNOUNCE can claim it. A session that never reached RECORD
+    /// only rolls its claim back; a mount that ends with its publisher
+    /// closes only for one that did. Idempotent — safe to call from both
     /// `handle_teardown` and (unconditionally) `Drop`.
     pub(crate) fn end(&mut self) {
         if self.ended {
@@ -294,7 +296,13 @@ impl PublishSession {
         for h in self.udp_tasks.drain(..) {
             h.abort();
         }
-        self.mount.end_publisher();
+        if self.recording {
+            self.mount.end_publisher();
+        } else {
+            // Admitted by ANNOUNCE but never recorded: not a publisher
+            // leaving, so the mount stays open for the next one.
+            self.mount.rollback_claim();
+        }
     }
 }
 

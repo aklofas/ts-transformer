@@ -23,8 +23,8 @@
 //! and then keeps the slot shut for good.
 //!
 //! A mount whose resolved `end_on_publisher_exit` option is set (see
-//! [`PublishMountOptions`]) treats its publisher's exit as the end of the
-//! stream: `end_publisher` performs `close`, so the application transport
+//! [`PublishMountOptions`]) treats the exit of a publisher that reached
+//! RECORD as the end of the stream: `end_publisher` performs `close`, so the application transport
 //! reads `Closed` and later ANNOUNCEs are refused.
 
 use std::net::SocketAddr;
@@ -184,8 +184,9 @@ impl PublishMountOptions {
         Self::default()
     }
 
-    /// End the mount's application transport when its publisher leaves
-    /// (`true`), or keep it open for the next publisher (`false`). Unset,
+    /// End the mount's application transport when a publisher that reached
+    /// RECORD leaves (`true`), or keep it open for the next publisher
+    /// (`false`). Unset,
     /// the mount follows
     /// [`RtspServerBuilder::end_publish_mount_on_publisher_exit`](crate::RtspServerBuilder::end_publish_mount_on_publisher_exit).
     #[must_use]
@@ -420,8 +421,9 @@ impl PublishMountState {
     /// later claim (see [`PublisherSlot::closed`]). Called by
     /// [`crate::rtsp::server::RtspServer::stop`],
     /// [`crate::rtsp::server::RtspServer::remove_mount`] and the server's
-    /// `Drop` — not by `end_publisher`, which must NOT close the transport
-    /// (a reader stays attached across publisher churn).
+    /// `Drop`, and by `end_publisher` when the mount ends on publisher
+    /// exit; otherwise a publisher leaving does not close the transport (a
+    /// reader stays attached across publisher churn).
     ///
     /// Takes the `app` mutex, releases it, then takes the `publisher`
     /// mutex: the two are never held together.

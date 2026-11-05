@@ -245,6 +245,29 @@ fn a_silent_publisher_is_ended_at_the_publish_idle_timeout() {
     server.stop().ok();
 }
 
+/// A publisher that keeps its session alive with RTSP requests but sends no
+/// media is ended by the publish idle timeout, though the session timeout is
+/// far longer.
+#[test]
+fn keepalives_without_media_do_not_outlast_the_publish_idle_timeout() {
+    let (server, mount, port) = publish_idle_server();
+    let mut p = RawPublisher::connect(port);
+    record_interleaved(&mut p, "/pub");
+
+    let t0 = Instant::now();
+    while t0.elapsed() < scaled(Duration::from_millis(700)) {
+        std::thread::sleep(scaled(Duration::from_millis(300)));
+        assert_eq!(p.get_parameter("/pub"), 200);
+    }
+    let (_bytes, eof) = p.read_until(b"\0never\0", t0 + scaled(Duration::from_secs(3)));
+    assert!(
+        eof,
+        "keepalives kept a media-less publisher past the publish idle timeout"
+    );
+    assert!(mount.publisher().is_none());
+    server.stop().ok();
+}
+
 /// Media inside the window keeps the publisher past the timeout.
 #[test]
 fn a_publishing_publisher_outlives_the_publish_idle_timeout() {
