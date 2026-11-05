@@ -203,10 +203,11 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      `git push origin <sha>:refs/heads/release/X.Y.Z`): a workflow dispatch
      takes no commit, and the script refuses a ref that has moved on.
    - The arm64 soak starts with a drill, with the browser leg on:
-     `PUBLISHER_DROP_PERIOD_S=60 SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --outdir ~/soak-drill --hours 0.05 --seed 1`
+     `PUBLISHER_DROP_PERIOD_S=60 WHEP_RECONNECT_S=60 SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --outdir ~/soak-drill --hours 0.05 --seed 1`
      (the outdir sits under `$HOME` because snap Chromium has a private
-     `/tmp`; the shorter drop period is needed because a run under two
-     publisher generations exits 2). A browser failure shows as a failed
+     `/tmp`; the two shorter periods are needed because a run under two
+     publisher generations or two browser connections exits 2 before any
+     browser starts, and the drill gets three of each). A browser failure shows as a failed
      `whep_counters_present_whep` or `whep_frames_continuous_whep` verdict in the
      drill's `report soak` output, and the `whep-viewer` log under
      `~/soak-drill/logs/` says why. If the browser fails on aarch64, the
