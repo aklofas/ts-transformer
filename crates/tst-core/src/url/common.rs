@@ -102,21 +102,53 @@ pub enum UrlError {
 }
 
 /// Prints every field, with the password and secret query values redacted.
+///
+/// A password holding a raw `/` or `?` after a numeric prefix
+/// (`rtsp://u:12345/tail@h`) parses as a port followed by a path or a query,
+/// so an `@` after the authority marks those fields as possible credential
+/// text, the way [`redact_url`](super::redact_url) reads any later `@` as
+/// the end of the userinfo: the port, the path and every query pair up to
+/// the last one holding an `@` print as `<redacted>`.
 impl<'a> core::fmt::Debug for ParsedUrl<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let password = self.password.map(|_| super::redact::REDACTED);
+        use super::redact::REDACTED;
+        let password = self.password.map(|_| REDACTED);
+        let hidden_pairs = self
+            .query
+            .iter()
+            .rposition(|(k, v)| k.contains('@') || v.contains('@'))
+            .map_or(0, |i| i + 1);
+        let tail = hidden_pairs > 0 || self.path.contains('@');
+        let redacted_port = Some(REDACTED);
+        let port: &dyn core::fmt::Debug = if tail && self.port.is_some() {
+            &redacted_port
+        } else {
+            &self.port
+        };
+        let path = if tail && !self.path.is_empty() {
+            REDACTED
+        } else {
+            self.path
+        };
         let query: Vec<(&str, &str)> = self
             .query
             .iter()
-            .map(|(k, v)| (k.as_ref(), super::redact::shown_value(k, v)))
+            .enumerate()
+            .map(|(i, (k, v))| {
+                if i < hidden_pairs {
+                    (REDACTED, REDACTED)
+                } else {
+                    (k.as_ref(), super::redact::shown_value(k, v))
+                }
+            })
             .collect();
         f.debug_struct("ParsedUrl")
             .field("scheme", &self.scheme)
             .field("username", &self.username)
             .field("password", &password)
             .field("host", &self.host)
-            .field("port", &self.port)
-            .field("path", &self.path)
+            .field("port", port)
+            .field("path", &path)
             .field("query", &query)
             .finish()
     }
@@ -841,6 +873,43 @@ mod debug_tests {
     }
 
     #[test]
+    fn debug_hides_a_password_tail_split_into_the_path_or_query() {
+        for url in [
+            "rtsp://u:12345/tail-sentinel@h",
+            "rtsp://u:12345?tail-sentinel@h",
+            "rtsp://u:12345?head-sentinel&tail@h",
+            "rtsp://u:12345/tail-sentinel@h?latency=5",
+        ] {
+            let p = parse_url(url).unwrap();
+            let d = alloc::format!("{p:?}");
+            assert!(
+                !d.contains("12345") && !d.contains("sentinel"),
+                "{url}: {d}"
+            );
+        }
+        let d = alloc::format!(
+            "{:?}",
+            parse_url("rtsp://u:12345/tail@h?latency=5").unwrap()
+        );
+        for kept in ["\"u\"", "latency", "\"5\""] {
+            assert!(d.contains(kept), "{kept} missing from {d}");
+        }
+    }
+
+    #[test]
+    fn debug_of_an_ordinary_url_is_unchanged() {
+        let d = alloc::format!(
+            "{:?}",
+            parse_url("rtsp://cam@h:554/live?latency=5").unwrap()
+        );
+        assert_eq!(
+            d,
+            "ParsedUrl { scheme: \"rtsp\", username: Some(\"cam\"), password: None, host: \"h\", \
+             port: Some(554), path: \"/live\", query: [(\"latency\", \"5\")] }"
+        );
+    }
+
+    #[test]
     fn debug_of_a_bad_query_value_redacts_a_secret_value() {
         let d = alloc::format!("{:?}", bad_value("passphrase", "hunter2", "x".into()));
         assert!(!d.contains("hunter2") && d.contains("<redacted>"), "{d}");
@@ -849,8 +918,18 @@ mod debug_tests {
     }
 
     #[test]
-    fn parsed_url_equality_is_unchanged() {
-        let u = "srt://u:p@h:1?latency=5";
-        assert_eq!(parse_url(u).unwrap(), parse_url(u).unwrap());
+    fn parsed_url_fields_are_unchanged() {
+        assert_eq!(
+            parse_url("srt://u:p@h:1/x?latency=5").unwrap(),
+            ParsedUrl {
+                scheme: "srt",
+                username: Some("u"),
+                password: Some("p"),
+                host: "h",
+                port: Some(1),
+                path: "/x",
+                query: alloc::vec![(Cow::Borrowed("latency"), Cow::Borrowed("5"))],
+            }
+        );
     }
 }
