@@ -113,11 +113,12 @@ pub(crate) fn content_length_from_header_text(header_text: &str) -> Result<usize
 ///   ≤ 65539 B. Such a frame can never overrun; return `false` (the
 ///   `buf.len() < 4 + length` check in the pump awaits the rest).
 /// - **RTSP text** (any other leading byte): apply the same Phase-1 header cap
-///   as [`rtsp_frame_decision`] / the client `send_and_read` loop — once the
-///   un-terminated headers exceed [`MAX_RTSP_MESSAGE_BYTES`] (64 KiB), or a
+///   as [`rtsp_frame_decision`] / the client `send_and_read` loop — once an
+///   over-long header run (terminated or not) exceeds [`MAX_RTSP_MESSAGE_BYTES`]
+///   (64 KiB), or a
 ///   terminated message declares a bad/over-cap `Content-Length`, the peer is
 ///   hostile. A legitimate body up to [`MAX_RTSP_BODY_BYTES`] (1 MiB) is *not*
-///   rejected (the pump awaits it). This keeps the unterminated-header DoS bound
+///   rejected (the pump awaits it). This keeps the header DoS bound
 ///   at a tight 64 KiB — coherent with the client response cap — rather than the loose
 ///   header+body sum.
 pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {

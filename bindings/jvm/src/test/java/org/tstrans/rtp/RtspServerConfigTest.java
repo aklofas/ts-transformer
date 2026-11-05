@@ -43,7 +43,7 @@ class RtspServerConfigTest {
     }
 
     @Test
-    void publishMountOptionsInheritByDefault() {
+    void publishMountConfigInheritsByDefault() {
         assertTrue(PublishMountConfig.defaults().endOnPublisherExit().isEmpty());
         assertEquals(java.util.Optional.of(true),
             PublishMountConfig.builder().endOnPublisherExit(true).build().endOnPublisherExit());

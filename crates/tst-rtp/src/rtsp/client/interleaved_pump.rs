@@ -277,8 +277,8 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                 // channel interleaves RTSP text frames with binary `$`-frames. A
                 // full u16 binary frame (65535-byte payload + 4-byte framing =
                 // 65539 B) and an RTSP response with a body up to 1 MiB are BOTH
-                // legitimate and never falsely rejected; only an
-                // unterminated header run > 64 KiB or a bad/over-cap
+                // legitimate and never falsely rejected; only a header run
+                // (terminated or not) > 64 KiB or a bad/over-cap
                 // Content-Length closes the pump. An uncapped header buffer
                 // would let a peer grow `buf` without bound.
                 if pump_accumulation_exceeded(&buf) {
@@ -398,8 +398,9 @@ pub(crate) fn spawn_client_pump<R: Read + Send + 'static>(
                         // let a peer drive unbounded buffering — close the
                         // pump instead.
                         let msg_end = match rtsp_frame_decision(&buf) {
-                            // Need more bytes (an over-long unterminated run
-                            // was already refused by the accumulation cap).
+                            // Need more bytes (an over-long header run,
+                            // terminated or not, was already refused by the
+                            // accumulation cap).
                             RtspFraming::NeedMore | RtspFraming::HeadersTooLong => break,
                             RtspFraming::NonUtf8Headers { skip } => {
                                 stats.malformed_frames.fetch_add(1, Ordering::Relaxed);
