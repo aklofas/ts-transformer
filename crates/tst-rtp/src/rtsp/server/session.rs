@@ -125,6 +125,9 @@ impl Drop for SessionSlot {
 
 /// Per-read idle bound BEFORE a session exists (pre-SETUP): closes the
 /// slow-loris window on a connection that has nothing to keep alive yet.
+/// It is also the admission deadline: a connection that has neither
+/// completed a SETUP nor passed a credential check this long after its
+/// request loop started is closed, whatever it sends meanwhile.
 /// Once SETUP has advertised a timeout the window is deliberately the
 /// longer `timeout + grace` of [`post_setup_idle_bound`] (90 s at the
 /// default) per RFC 7826 §18.49 — do not shorten it back to this constant;
@@ -520,6 +523,17 @@ where
     // connections refuse every new peer before any of them authenticates.
     // A message must frame within the same bound a silent peer gets.
     let mut msg_started: Option<tokio::time::Instant> = None;
+    // Until SETUP gives the connection a session, or one of its requests
+    // passes a credential check, it holds a session slot on nothing but its
+    // own say-so. This absolute deadline bounds that however many OPTIONS,
+    // GET_PARAMETERs or interleaved frames it sends; once cleared it stays
+    // cleared for the connection.
+    let mut admission_deadline = Some(tokio::time::Instant::now() + READ_IDLE_TIMEOUT);
+    // Base of the per-read idle wait while no message is in progress. Every
+    // read moves it, except a read that an `Idle` connection spent only on
+    // interleaved frames: those belong to no session and are dropped, so
+    // they are not activity.
+    let mut quiet_since = tokio::time::Instant::now();
 
     'serve: loop {
         // Cancellation guard — hard cancel exits the loop immediately,
@@ -539,7 +553,9 @@ where
         // The per-read bound closes that window: `READ_IDLE_TIMEOUT` before
         // SETUP, `post_setup_idle_bound` (the advertised session timeout
         // plus grace) once a session exists — so a conformant client's
-        // keepalives at `timeout / 2` are never raced.
+        // keepalives at `timeout / 2` are never raced. Before SETUP or a
+        // credential check, the admission deadline caps the whole
+        // connection at `READ_IDLE_TIMEOUT` from the start of this loop.
         let idle_bound = if session.session_id().is_some() {
             post_setup_idle_bound(state.builder.session_timeout)
         } else {
@@ -564,9 +580,12 @@ where
         // request's framing deadline.
         let framing_left = match msg_started {
             Some(t0) => idle_bound.saturating_sub(t0.elapsed()),
-            None => idle_bound,
+            None => idle_bound.saturating_sub(quiet_since.elapsed()),
         };
-        let read_bound = publish_left.map_or(framing_left, |left| framing_left.min(left));
+        let mut read_bound = publish_left.map_or(framing_left, |left| framing_left.min(left));
+        if let Some(d) = admission_deadline {
+            read_bound = read_bound.min(d.saturating_duration_since(tokio::time::Instant::now()));
+        }
         let mut chunk = [0u8; 4096];
         let n = tokio::select! {
             r = read_half.read(&mut chunk) => match r {
@@ -581,6 +600,15 @@ where
                 }
             },
             _ = tokio::time::sleep(read_bound) => {
+                if admission_deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+                    tracing::warn!(
+                        target: "tst_rtp::server",
+                        peer = %peer,
+                        timeout_secs = READ_IDLE_TIMEOUT.as_secs(),
+                        "no SETUP or authenticated request within the admission deadline; closing session"
+                    );
+                    break;
+                }
                 // A publisher's media is liveness too: a TCP-interleaved
                 // publisher already re-arms this sleep by landing bytes on
                 // the read above (next iteration starts a fresh timer), but
@@ -621,6 +649,7 @@ where
                     .publisher()
                     .is_some_and(|p| p.media_within(idle_bound));
                 if media_recent {
+                    quiet_since = tokio::time::Instant::now();
                     continue 'serve;
                 }
                 tracing::warn!(
@@ -688,6 +717,7 @@ where
         //   never wedges every request queued behind it until the idle
         //   timeout. `NeedMore` loops back to read more (bounded: header
         //   ≤ 64 KiB, body ≤ 1 MiB).
+        let mut rtsp_consumed = false;
         loop {
             let drained = match session.publisher() {
                 Some(publish) => {
@@ -765,6 +795,7 @@ where
                         "unparseable RTSP request; answering and draining it"
                     );
                     buf.drain(..total_len);
+                    rtsp_consumed = true;
                     let bytes = unparseable_reply_bytes(&reply);
                     match write_bounded(
                         &write_half,
@@ -799,8 +830,12 @@ where
                 "parser and framer disagree on the frame length"
             );
             buf.drain(..consumed);
+            rtsp_consumed = true;
             session.request_authenticated = false;
             let response = dispatch(&req, &state, &mut session);
+            if session.request_authenticated || session.session_id().is_some() {
+                admission_deadline = None;
+            }
             // Mirror the session's `session_id` + `mount_path` onto the
             // public `ActiveSession` registry entry when a transition
             // changed them (SETUP on its 200 path, TEARDOWN). The registry
@@ -923,6 +958,9 @@ where
         } else {
             msg_started
         };
+        if rtsp_consumed || !matches!(session.role, Role::Idle) {
+            quiet_since = tokio::time::Instant::now();
+        }
     }
     // Stop the fanout BEFORE shutting the write half so no RTP frame STARTS
     // after FIN (the Drop above is what cancels it; `abort` drops the task
@@ -1696,6 +1734,44 @@ mod session_tests {
             .unwrap()
     }
 
+    /// A loopback listener that runs `handle_tcp_connection` against `state`
+    /// on the first connection it accepts (the same shape as
+    /// `state_with_publish_mount_and_listener`, for a caller-built state).
+    async fn serve_one(state: Arc<ServerState>) -> PublisherTestServer {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (tcp, peer) = listener.accept().await.unwrap();
+            state
+                .active_sessions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let slot = SessionSlot::new(state.clone());
+            let _ = handle_tcp_connection(state, tcp, peer, slot).await;
+        });
+        PublisherTestServer { port }
+    }
+
+    /// Under paused time, read `c` in 1 ms virtual steps (see
+    /// [`read_response_in_paused_steps`] for why) for at most `limit`,
+    /// discarding any bytes. Returns how long after the call the server
+    /// closed the connection, or `None` if it was still open at `limit`.
+    async fn closed_within(
+        c: &mut TcpStream,
+        limit: std::time::Duration,
+    ) -> Option<std::time::Duration> {
+        let start = tokio::time::Instant::now();
+        let mut chunk = [0u8; 4096];
+        while start.elapsed() < limit {
+            match tokio::time::timeout(std::time::Duration::from_millis(1), c.read(&mut chunk))
+                .await
+            {
+                Ok(Ok(0)) | Ok(Err(_)) => return Some(start.elapsed()),
+                Ok(Ok(_)) | Err(_) => {}
+            }
+        }
+        None
+    }
+
     fn announce_request(path: &str, sdp: &str) -> String {
         format!(
             "ANNOUNCE rtsp://h{path} RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
@@ -1763,20 +1839,182 @@ mod session_tests {
         );
     }
 
-    /// A complete request every 20 s is a healthy keepalive cadence: the
-    /// message deadline must not fire for a request that framed.
+    /// Before SETUP, requests alone do not keep a connection: OPTIONS every
+    /// 10 s are each answered, the connection is closed 30 s after it
+    /// opened, and its slot is released. A server whose only bound is the
+    /// per-read idle timer keeps it open while the OPTIONS keep coming.
     #[tokio::test(start_paused = true)]
-    async fn complete_requests_spaced_inside_the_idle_bound_are_all_answered() {
+    async fn options_alone_do_not_hold_a_connection_past_the_admission_deadline() {
         use std::time::Duration;
         use tokio::io::AsyncWriteExt;
-        let (state, _mount) = state_with_publish_mount_and_listener().await;
-        let mut c = connect(&state).await;
+        let state = crate::rtsp::server::test_state();
+        let server = serve_one(state.clone()).await;
+        let mut c = connect(&server).await;
+        let t0 = tokio::time::Instant::now();
         for cseq in 1..=3u32 {
+            if cseq > 1 {
+                tokio::time::advance(Duration::from_secs(10)).await;
+            }
             let req = format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n");
             c.write_all(req.as_bytes()).await.unwrap();
             let r = read_response_in_paused_steps(&mut c, Duration::from_secs(5)).await;
             assert!(r.starts_with("RTSP/1.0 200"), "request {cseq}: {r}");
-            tokio::time::advance(Duration::from_secs(20)).await;
+        }
+        assert!(
+            closed_within(&mut c, Duration::from_secs(15))
+                .await
+                .is_some(),
+            "connection still open {:?} after it opened, with no SETUP",
+            t0.elapsed()
+        );
+        let closed_at = t0.elapsed();
+        assert!(
+            closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
+            "closed {closed_at:?} after it opened; the admission deadline is 30 s"
+        );
+        let mut steps = 0;
+        while state
+            .active_sessions
+            .load(std::sync::atomic::Ordering::Relaxed)
+            != 0
+        {
+            steps += 1;
+            assert!(steps <= 1_000, "the session slot was not released");
+            let _ =
+                tokio::time::timeout(Duration::from_millis(1), std::future::pending::<()>()).await;
+        }
+    }
+
+    /// Interleaved frames on a connection with no session are dropped and are
+    /// not activity: one every 5 s does not keep the connection past 30 s.
+    #[tokio::test(start_paused = true)]
+    async fn interleaved_frames_do_not_hold_a_connection_before_setup() {
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
+        let state = crate::rtsp::server::test_state();
+        let server = serve_one(state).await;
+        let mut c = connect(&server).await;
+        let t0 = tokio::time::Instant::now();
+        let mut closed_at = None;
+        for _ in 0..8 {
+            if c.write_all(b"$\x00\x00\x04abcd").await.is_err()
+                || closed_within(&mut c, Duration::from_secs(5))
+                    .await
+                    .is_some()
+            {
+                closed_at = Some(t0.elapsed());
+                break;
+            }
+        }
+        let closed_at = closed_at.expect("connection still open 40 s after it opened");
+        assert!(
+            closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
+            "closed {closed_at:?} after it opened; the admission deadline is 30 s"
+        );
+    }
+
+    /// After a request that passed a credential check the deadline no longer
+    /// applies, but interleaved frames on the still-`Idle` connection are not
+    /// activity: the per-read idle bound (30 s with no session) runs from the
+    /// last request and closes it.
+    #[tokio::test(start_paused = true)]
+    async fn interleaved_frames_do_not_rearm_the_idle_bound_of_an_authenticated_idle_connection() {
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
+        let server = serve_one(make_state_with_basic_auth()).await;
+        let mut c = connect(&server).await;
+        // "user:secret" base64 = "dXNlcjpzZWNyZXQ="; no such mount, so 404
+        // after the credential check passed.
+        c.write_all(
+            b"DESCRIBE rtsp://127.0.0.1/none RTSP/1.0\r\nCSeq: 1\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let r = read_response_in_paused_steps(&mut c, Duration::from_secs(5)).await;
+        assert!(r.starts_with("RTSP/1.0 404"), "authenticated DESCRIBE: {r}");
+        let t_req = tokio::time::Instant::now();
+        let mut closed_at = None;
+        for _ in 0..8 {
+            if c.write_all(b"$\x00\x00\x04abcd").await.is_err()
+                || closed_within(&mut c, Duration::from_secs(5))
+                    .await
+                    .is_some()
+            {
+                closed_at = Some(t_req.elapsed());
+                break;
+            }
+        }
+        let closed_at = closed_at.expect("connection still open 40 s after its last request");
+        assert!(
+            closed_at >= Duration::from_secs(28) && closed_at <= Duration::from_secs(32),
+            "closed {closed_at:?} after its last request; the idle bound is 30 s"
+        );
+    }
+
+    /// Controls: a request that passed a credential check lifts the
+    /// deadline, so OPTIONS every 10 s keep that connection past 30 s; and a
+    /// connection that reaches SETUP well inside the deadline outlives it on
+    /// keepalives (the post-SETUP bound is 90 s at the default timeout).
+    #[tokio::test(start_paused = true)]
+    async fn an_authenticated_or_set_up_connection_outlives_the_admission_deadline() {
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
+        async fn exchange(c: &mut TcpStream, req: &str) -> String {
+            c.write_all(req.as_bytes()).await.unwrap();
+            read_response_in_paused_steps(c, Duration::from_secs(5)).await
+        }
+
+        let server = serve_one(make_state_with_basic_auth()).await;
+        let mut c = connect(&server).await;
+        let r = exchange(
+            &mut c,
+            "DESCRIBE rtsp://127.0.0.1/none RTSP/1.0\r\nCSeq: 1\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n",
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 404"), "authenticated DESCRIBE: {r}");
+        for cseq in 2..=5u32 {
+            assert!(
+                closed_within(&mut c, Duration::from_secs(10))
+                    .await
+                    .is_none(),
+                "an authenticated connection was closed before OPTIONS {cseq}"
+            );
+            let r = exchange(
+                &mut c,
+                &format!("OPTIONS rtsp://h/ RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n"),
+            )
+            .await;
+            assert!(r.starts_with("RTSP/1.0 200"), "OPTIONS {cseq}: {r}");
+        }
+
+        let (server, _mount) = state_with_publish_mount_and_listener().await;
+        let mut c = connect(&server).await;
+        let r = exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "ANNOUNCE: {r}");
+        let r = exchange(
+            &mut c,
+            "SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n",
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let sid = r
+            .lines()
+            .find_map(|l| l.strip_prefix("Session: "))
+            .map(|v| v.split(';').next().unwrap().trim().to_owned())
+            .unwrap_or_else(|| panic!("Session header in the SETUP answer: {r}"));
+        for cseq in 3..=4u32 {
+            assert!(
+                closed_within(&mut c, Duration::from_secs(25))
+                    .await
+                    .is_none(),
+                "a set-up connection was closed before keepalive {cseq}"
+            );
+            let r = exchange(
+                &mut c,
+                &format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"),
+            )
+            .await;
+            assert!(r.starts_with("RTSP/1.0 200"), "keepalive {cseq}: {r}");
         }
     }
 

@@ -37,6 +37,14 @@ test-group = "network"
 slow-timeout = { period = "30s", terminate-after = 2 }
 
 [[profile.default.overrides]]
+# The RTSP server's admission deadline is a fixed 30 s, unscaled: this test
+# holds a pre-SETUP connection until it fires, so it needs more than the
+# network group's 20 s kill. Still single-threaded in the network group.
+filter = "binary(=net_rtsp_server) & test(=idle_timeout::a_connection_that_never_sets_up_frees_its_slot_at_the_admission_deadline)"
+test-group = "network"
+slow-timeout = { period = "30s", terminate-after = 3 }
+
+[[profile.default.overrides]]
 # Windows CI runners are the slowest and most load-variable platform for the
 # loopback/network tests (known flake class: loopback connects overrunning
 # the per-test kill under runner load — see the git history of
@@ -80,6 +88,14 @@ slow-timeout = { period = "10s", terminate-after = 2 }
 # budgets change. Global safety net scaled to the TSan worst case:
 # 120s x 2 = 240s hard kill.
 slow-timeout = { period = "120s", terminate-after = 2 }
+
+[[profile.sanitizer.overrides]]
+# The RTSP admission-deadline test above: its 30 s wait is fixed, but its
+# slack is scaled, so a failing run under TST_TEST_TIMEOUT_SCALE=5 reports
+# past the network group's 120 s. 60s x 3 keeps the assertion visible.
+filter = "binary(=net_rtsp_server) & test(=idle_timeout::a_connection_that_never_sets_up_frees_its_slot_at_the_admission_deadline)"
+test-group = "network"
+slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.sanitizer.overrides]]
 # Network/loopback budget under sanitizers: the slowest legitimate loopback
