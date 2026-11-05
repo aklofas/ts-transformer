@@ -145,32 +145,25 @@ fn unbox_nullable_long(env: &mut Env, obj: &JObject) -> jni::errors::Result<Opti
     Ok(Some(v))
 }
 
-/// Split a URL into (before any `#fragment`, the fragment with its `#`).
-fn split_fragment(url: &str) -> (&str, &str) {
-    url.find('#').map_or((url, ""), |i| url.split_at(i))
-}
-
-/// True when the URL's query carries a `mode` key. The key is matched exactly,
-/// as the URL parser does.
+/// True when the URL's query carries a `mode` key, decided by the shared URL
+/// parser (keys are percent-decoded, `#` is an ordinary query character). A
+/// URL the parser refuses counts as present, so the existing parse error path
+/// reports it unchanged.
 fn url_mode_key_present(url: &str) -> bool {
-    let (url, _) = split_fragment(url);
-    let Some((_, query)) = url.split_once('?') else {
-        return false;
-    };
-    query
-        .split('&')
-        .any(|kv| kv.split('=').next() == Some("mode"))
+    match tst_core::url::parse_url(url) {
+        Ok(parsed) => parsed.query.iter().any(|(k, _)| k == "mode"),
+        Err(_) => true,
+    }
 }
 
-/// The URL with `mode=listener` appended to its query (before any fragment).
+/// The URL with `mode=listener` appended to the end of its query.
 fn with_listener_mode(url: &str) -> String {
-    let (base, fragment) = split_fragment(url);
-    let sep = match base.split_once('?') {
+    let sep = match url.split_once('?') {
         None => "?",
         Some((_, q)) if q.is_empty() || q.ends_with('&') => "",
         Some(_) => "&",
     };
-    format!("{base}{sep}mode=listener{fragment}")
+    format!("{url}{sep}mode=listener")
 }
 
 #[cfg(test)]
@@ -183,19 +176,21 @@ mod url_mode_tests {
             "srt://:0?mode=listener",
             "srt://:0?streamid=x&mode=listener",
             "srt://:0?mode=listener&latency=120",
+            "srt://:9000?passphrase=0123456789#xyz&mode=listener",
+            "srt://:9000?m%6Fde=caller",
         ] {
             assert!(url_mode_key_present(u), "{u}");
         }
     }
 
     #[test]
-    fn ignores_values_case_variants_and_fragments() {
+    fn ignores_values_and_case_variants() {
         for u in [
             "srt://:0",
             "srt://:0?",
             "srt://:0?streamid=mode%3Dcaller",
             "srt://:0?MODE=listener",
-            "srt://:0#mode=listener",
+            "srt://:9000?passphrase=abc#def",
         ] {
             assert!(!url_mode_key_present(u), "{u}");
         }
@@ -220,14 +215,10 @@ mod url_mode_tests {
     }
 
     #[test]
-    fn inserts_the_mode_before_a_fragment() {
+    fn a_hash_in_a_value_stays_part_of_the_query() {
         assert_eq!(
-            with_listener_mode("srt://h:0#f"),
-            "srt://h:0?mode=listener#f"
-        );
-        assert_eq!(
-            with_listener_mode("srt://h:0?a=1#f"),
-            "srt://h:0?a=1&mode=listener#f"
+            with_listener_mode("srt://:9000?passphrase=abc#def"),
+            "srt://:9000?passphrase=abc#def&mode=listener"
         );
     }
 }
