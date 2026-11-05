@@ -20,8 +20,8 @@ public final class PublishMountOptions {
     public static Builder builder() { return new Builder(); }
 
     /**
-     * Whether the mount's receiver ends ({@code END_OF_STREAM}) when its publisher
-     * leaves; empty when the mount follows {@link
+     * Whether the mount's receiver ends ({@code END_OF_STREAM}) when a publisher
+     * that reached RECORD leaves; empty when the mount follows {@link
      * RtspServerConfig#endPublishMountOnPublisherExit()}.
      */
     public Optional<Boolean> endOnPublisherExit() { return Optional.ofNullable(endOnPublisherExit); }
@@ -38,8 +38,8 @@ public final class PublishMountOptions {
         private Builder() {}
 
         /**
-         * End the mount's receiver when its publisher leaves ({@code true}), or keep it
-         * open for the next publisher ({@code false}).
+         * End the mount's receiver when a publisher that reached RECORD leaves
+         * ({@code true}), or keep it open for the next publisher ({@code false}).
          */
         public Builder endOnPublisherExit(boolean v) {
             this.endOnPublisherExit = v;

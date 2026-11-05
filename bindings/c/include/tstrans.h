@@ -10223,9 +10223,14 @@ void tst_rtsp_server_builder_auth_digest_sha256(struct TstRtspServerBuilder *bui
 #if defined(TST_HAS_RTP)
 /**
  * Set the server-wide default for publish mounts: when `end` is true, a
- * mount's receiver ends (`TST_E_CLOSED` / end of stream) as soon as its
- * publisher leaves, and the mount refuses later publishers. Default false:
- * the mount idles for the next publisher. On-demand mounts follow it.
+ * mount's receiver ends (`TST_E_CLOSED` / end of stream) as soon as a
+ * publisher that reached RECORD leaves, and the mount refuses later
+ * publishers. A publisher that never recorded does not end it. Default
+ * false: the mount idles for the next publisher. On-demand mounts follow
+ * it. To accept a publisher after the mount ended, call
+ * `tst_rtsp_server_remove_mount` and add the mount again; an ended
+ * on-demand mount stays in the table, and counts toward the on-demand cap,
+ * until it is removed.
  *
  * Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
  * sets last-error `TST_E_INVALID_CONFIG`.
@@ -10364,8 +10369,10 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
  * End the session of a recording publisher that sends no media for `secs`
  * seconds, timed from RECORD or its last RTP packet. `0` (the default)
  * leaves it unset, so only the session timeout governs. A publisher that
- * has not reached RECORD is never ended by it, and a value longer than the
- * session timeout has no effect.
+ * has not reached RECORD is never ended by it. A value longer than the
+ * session timeout still matters: a publisher that keeps its session alive
+ * with RTSP requests while sending no media is ended by this timeout, not
+ * the session timeout.
  *
  * Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
  * sets last-error `TST_E_INVALID_CONFIG`.

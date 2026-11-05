@@ -1209,9 +1209,11 @@ The surface:
 - `RtspServer.add_publish_mount(path) -> PublishMount` registers a path up
   front. An ANNOUNCE to any other path answers `404`.
   `add_publish_mount(path, end_on_publisher_exit=True)` ends that mount's
-  transport when its publisher leaves (the config field
-  `end_publish_mount_on_publisher_exit` sets the server default); re-add the
-  mount to accept a new publisher.
+  transport when a publisher that reached RECORD leaves (the config field
+  `end_publish_mount_on_publisher_exit` sets the server default); remove the
+  mount, then add it again, to accept a new publisher. A closed on-demand
+  mount stays in the table, and counts toward the on-demand cap, until
+  removed.
 - `RtspServerConfig(publish_idle_timeout_ms=N)` ends a recording publisher's
   session after N ms without media. It is off by default.
 - `RtspServerConfig(accept_unregistered_publishers=True)` lets an ANNOUNCE to

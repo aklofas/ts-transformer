@@ -79,8 +79,11 @@ public final class RtspServerConfig {
 
     /**
      * Server-wide default for publish mounts: whether a mount's receiver ends
-     * ({@code END_OF_STREAM}) when its publisher leaves. Default {@code false} (the mount
-     * idles for the next publisher). {@link PublishMountOptions} overrides it per mount;
+     * ({@code END_OF_STREAM}) when a publisher that reached RECORD leaves; a publisher that
+     * never recorded does not end it. Default {@code false} (the mount idles for the next
+     * publisher). To accept a publisher after the mount ended, remove the mount and add it
+     * again; an ended on-demand mount stays in the table, and counts toward the on-demand cap,
+     * until it is removed. {@link PublishMountOptions} overrides it per mount;
      * on-demand mounts always follow it.
      */
     public boolean endPublishMountOnPublisherExit() { return endPublishMountOnPublisherExit; }
@@ -89,7 +92,9 @@ public final class RtspServerConfig {
      * Milliseconds without media after which a recording publisher's session is ended,
      * timed from RECORD or its last RTP packet; {@code 0} (the default) means unset, so
      * only {@link #sessionTimeoutSecs()} governs. A publisher that has not reached RECORD
-     * is never ended by it, and a value longer than the session timeout has no effect.
+     * is never ended by it. A value longer than the session timeout still matters: a
+     * publisher that keeps its session alive with RTSP requests while sending no media is
+     * ended by this timeout, not the session timeout.
      */
     public long publishIdleTimeoutMs() { return publishIdleTimeoutMs; }
 
@@ -172,8 +177,8 @@ public final class RtspServerConfig {
         }
 
         /**
-         * Server-wide default: end a publish mount's receiver when its publisher leaves,
-         * and refuse later publishers on that mount. Default {@code false}. See {@link
+         * Server-wide default: end a publish mount's receiver when a publisher that
+         * reached RECORD leaves, and refuse later publishers on that mount. Default {@code false}. See {@link
          * RtspServerConfig#endPublishMountOnPublisherExit()}.
          */
         public Builder endPublishMountOnPublisherExit(boolean v) {
@@ -209,6 +214,9 @@ public final class RtspServerConfig {
             if (fanoutCapacity <= 0)
                 throw new IllegalArgumentException(
                     "fanoutCapacity must be > 0; got " + fanoutCapacity);
+            if (publishIdleTimeoutMs < 0)
+                throw new IllegalArgumentException(
+                    "publishIdleTimeoutMs must be >= 0; got " + publishIdleTimeoutMs);
             if (gracefulShutdownDrainMs < 0)
                 throw new IllegalArgumentException(
                     "gracefulShutdownDrainMs must be >= 0; got " + gracefulShutdownDrainMs);
