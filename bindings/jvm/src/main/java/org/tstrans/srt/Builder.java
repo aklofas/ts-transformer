@@ -200,7 +200,7 @@ public final class Builder {
      * Binds and starts listening immediately.
      *
      * @throws SrtException if rendezvous mode is set ({@code CONFIG_INVALID}),
-     *                      if the URL specifies a non-listener mode ({@code CONFIG_INVALID}),
+     *                      if the URL says {@code mode=caller} while {@link #listener()} is set, or specifies another non-listener mode ({@code CONFIG_INVALID}),
      *                      if the URL fails to parse ({@code CONFIG_INVALID}),
      *                      if any knob value is invalid ({@code CONFIG_INVALID}),
      *                      or if the bind fails (address in use, permission denied — {@code CONNECT_FAILED}).
