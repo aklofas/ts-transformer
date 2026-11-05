@@ -162,3 +162,26 @@ fn a_mount_option_overrides_the_server_default_both_ways() {
     drain_then_closed(&mut app, &bundles);
     server.stop().ok();
 }
+
+#[test]
+fn publisher_exit_reaches_the_demux_shell_as_end_of_stream() {
+    let server = server_with_default(true);
+    let mount = server.add_publish_mount("/pub").unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut t = mount.into_recv_transport().unwrap();
+    t.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+    let mut rx = tst_pipeline::DemuxReceiver::new(t);
+    let mut a = publish(port, &ts_fixture_packets(3), 0xA);
+    assert_eq!(a.teardown("/pub"), 200);
+    let deadline = std::time::Instant::now() + scaled(Duration::from_secs(10));
+    loop {
+        assert!(std::time::Instant::now() < deadline, "never ended");
+        match rx.recv_event() {
+            Ok(None) => break, // end of stream
+            Ok(Some(_)) => {}
+            Err(e) => panic!("ended with an error, not EndOfStream: {e:?}"),
+        }
+    }
+    server.stop().ok();
+}
