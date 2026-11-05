@@ -1949,46 +1949,59 @@ mod session_tests {
     /// 10 s are each answered, the connection is closed 30 s after it
     /// opened, and its slot is released. A server whose only bound is the
     /// per-read idle timer keeps it open while the OPTIONS keep coming.
+    ///
+    /// Over an in-memory duplex, not loopback TCP: the paused clock jumps to
+    /// the next timer whenever the runtime has nothing to run, and a
+    /// loopback wakeup still in the kernel does not count, so a few
+    /// milliseconds of scheduling delay on a loaded machine are seconds of
+    /// virtual time. Duplex wakeups never leave the runtime.
     #[tokio::test(start_paused = true)]
     async fn options_alone_do_not_hold_a_connection_past_the_admission_deadline() {
         use std::time::Duration;
-        use tokio::io::AsyncWriteExt;
         let state = crate::rtsp::server::test_state();
-        let server = serve_one(state.clone()).await;
-        let mut c = connect(&server).await;
+        let (mut c, task) = duplex_session(state.clone());
         let t0 = tokio::time::Instant::now();
         for cseq in 1..=3u32 {
             if cseq > 1 {
                 tokio::time::advance(Duration::from_secs(10)).await;
             }
             let req = format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n");
-            c.write_all(req.as_bytes()).await.unwrap();
-            let r = read_response_in_paused_steps(&mut c, Duration::from_secs(5)).await;
+            let r = duplex_exchange(&mut c, &req).await;
             assert!(r.starts_with("RTSP/1.0 200"), "request {cseq}: {r}");
         }
-        assert!(
-            closed_within(&mut c, Duration::from_secs(15))
-                .await
-                .is_some(),
-            "connection still open {:?} after it opened, with no SETUP",
-            t0.elapsed()
+        assert_eq!(
+            t0.elapsed(),
+            Duration::from_secs(20),
+            "an exchange moved the paused clock"
         );
+        // Nothing more is sent: the next read returns once the server closes,
+        // the paused clock jumping straight to the server's next timer.
+        let mut rest = [0u8; 64];
+        let n = tokio::time::timeout(Duration::from_secs(15), c.read(&mut rest))
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "connection still open {:?} after it opened, with no SETUP",
+                    t0.elapsed()
+                )
+            })
+            .unwrap_or(0);
+        assert_eq!(n, 0, "the server sent more after the last reply");
         let closed_at = t0.elapsed();
         assert!(
             closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
             "closed {closed_at:?} after it opened; the admission deadline is 30 s"
         );
-        let mut steps = 0;
-        while state
-            .active_sessions
-            .load(std::sync::atomic::Ordering::Relaxed)
-            != 0
-        {
-            steps += 1;
-            assert!(steps <= 1_000, "the session slot was not released");
-            let _ =
-                tokio::time::timeout(Duration::from_millis(1), std::future::pending::<()>()).await;
-        }
+        task.await
+            .expect("the session task panicked")
+            .expect("the session ended with an error");
+        assert_eq!(
+            state
+                .active_sessions
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "the session slot was not released"
+        );
     }
 
     /// Interleaved frames on a connection with no session are dropped and are
