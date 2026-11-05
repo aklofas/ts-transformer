@@ -724,9 +724,6 @@ fn is_sha256_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// `profile_declared_<leg>`: the recv report was judged against the
-/// profile `soak-config.json` declared for the leg. Shared by
-/// transport and publish legs.
 /// `media_until_end_<leg>`: the receiver's last media arrived within
 /// [`MEDIA_TAIL_OUTAGES`] outage durations of its deadline.
 fn media_until_end_verdict(leg_name: &str, outage_dur_s: u64, tail: Option<f64>) -> SoakVerdict {
@@ -764,6 +761,9 @@ fn media_until_end_verdict(leg_name: &str, outage_dur_s: u64, tail: Option<f64>)
     }
 }
 
+/// `profile_declared_<leg>`: the recv report was judged against the
+/// profile `soak-config.json` declared for the leg. Shared by
+/// transport and publish legs.
 fn profile_declared_verdict(
     leg_name: &str,
     declared: Option<&LegDeclaration>,
