@@ -109,25 +109,42 @@ fn keepalive_pings_inside_the_timeout_keep_the_session_alive() {
     server.stop().ok();
 }
 
-/// Read `tcp` (1 s read timeout) until the server closes it or `until`
-/// passes; bytes are discarded. True when the server closed it.
+/// Whether a socket error means the server already closed the connection.
+/// macOS answers `setsockopt` on a connection the peer has torn down with
+/// `EINVAL` (`InvalidInput`), and some calls on it with `ENOTCONN`.
+fn closed_by_peer(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::InvalidInput
+            | ErrorKind::NotConnected
+    )
+}
+
+/// Connect to `port` and set the read timeout before any I/O. `None` when
+/// the server closed the connection before the timeout could be set (a
+/// peer refused at the session cap can be closed that fast).
+fn connect_with_read_timeout(port: u16, timeout: Duration) -> Option<TcpStream> {
+    let tcp = TcpStream::connect(("127.0.0.1", port)).expect("connect to the server");
+    match tcp.set_read_timeout(Some(timeout)) {
+        Ok(()) => Some(tcp),
+        Err(e) if closed_by_peer(e.kind()) => None,
+        Err(e) => panic!("setting the read timeout on a fresh connection failed: {e}"),
+    }
+}
+
+/// Read `tcp` (its read timeout already set, short) until the server
+/// closes it or `until` passes; bytes are discarded. True when the server
+/// closed it.
 fn closed_before(tcp: &mut TcpStream, until: Instant) -> bool {
-    tcp.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
     let mut buf = [0u8; 4096];
     while Instant::now() < until {
         match tcp.read(&mut buf) {
             Ok(0) => return true,
             Ok(_) => {}
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    ErrorKind::ConnectionReset
-                        | ErrorKind::ConnectionAborted
-                        | ErrorKind::BrokenPipe
-                ) =>
-            {
-                return true;
-            }
+            Err(e) if closed_by_peer(e.kind()) => return true,
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
             Err(e) => panic!("unexpected read error: {e}"),
         }
@@ -135,16 +152,15 @@ fn closed_before(tcp: &mut TcpStream, until: Instant) -> bool {
     false
 }
 
-/// Write `req` and read until a response head arrives, the server closes
-/// the connection, or `until` passes. Returns what was read (empty or
-/// partial when the server closed or nothing came back in time).
+/// Write `req` and read (the read timeout already set, short) until a
+/// response head arrives, the server closes the connection, or `until`
+/// passes. Returns what was read (empty or partial when the server closed
+/// or nothing came back in time).
 fn try_request(tcp: &mut TcpStream, req: &str, until: Instant) -> String {
     let mut buf = Vec::new();
     if tcp.write_all(req.as_bytes()).is_err() {
         return String::new();
     }
-    tcp.set_read_timeout(Some(Duration::from_millis(250)))
-        .unwrap();
     let mut chunk = [0u8; 1024];
     while Instant::now() < until && !buf.windows(4).any(|w| w == b"\r\n\r\n") {
         match tcp.read(&mut chunk) {
@@ -173,23 +189,31 @@ fn a_connection_that_never_sets_up_frees_its_slot_at_the_admission_deadline() {
     let url = format!("rtsp://127.0.0.1:{port}/live");
 
     let opened = Instant::now();
-    let mut holder = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    holder
-        .set_read_timeout(Some(scaled(Duration::from_secs(5))))
-        .unwrap();
+    let mut holder = connect_with_read_timeout(port, scaled(Duration::from_secs(5)))
+        .expect("the first peer was closed before any request");
     let r = request(
         &mut holder,
         &format!("OPTIONS {url} RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
     );
     assert!(r.starts_with("RTSP/1.0 200"), "{r}");
+    // Admitted, so open until the deadline: safe to shorten the timeout for
+    // the close probes below.
+    holder
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set the holder's probe read timeout");
 
-    let mut refused = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    let _ = refused.write_all(format!("OPTIONS {url} RTSP/1.0\r\nCSeq: 1\r\n\r\n").as_bytes());
+    // `None`: the server closed the refused peer before its timeout was set.
+    let refused_closed =
+        connect_with_read_timeout(port, Duration::from_secs(1)).is_none_or(|mut refused| {
+            let _ =
+                refused.write_all(format!("OPTIONS {url} RTSP/1.0\r\nCSeq: 1\r\n\r\n").as_bytes());
+            closed_before(
+                &mut refused,
+                Instant::now() + scaled(Duration::from_secs(5)),
+            )
+        });
     assert!(
-        closed_before(
-            &mut refused,
-            Instant::now() + scaled(Duration::from_secs(5))
-        ),
+        refused_closed,
         "a second peer was served while max_sessions(1) was held"
     );
 
@@ -221,12 +245,16 @@ fn a_connection_that_never_sets_up_frees_its_slot_at_the_admission_deadline() {
 
     let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
-        let mut next = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let r = try_request(
-            &mut next,
-            &format!("OPTIONS {url} RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
-            deadline,
-        );
+        // `None`: refused and closed at once (the slot not free yet); retry.
+        let r = connect_with_read_timeout(port, Duration::from_millis(250))
+            .map(|mut next| {
+                try_request(
+                    &mut next,
+                    &format!("OPTIONS {url} RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+                    deadline,
+                )
+            })
+            .unwrap_or_default();
         if r.starts_with("RTSP/1.0 200") {
             break;
         }
