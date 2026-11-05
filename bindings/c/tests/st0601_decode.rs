@@ -154,3 +154,36 @@ fn decode_garbage_bytes_returns_null_with_klv_decode_error() {
         assert_eq!(tst_get_last_error(), TstError::KlvDecode as i32);
     }
 }
+
+#[test]
+fn decode_accepts_a_universal_label_outside_the_st0601_family() {
+    let mut bytes = load_fixture("synthetic_full.klv");
+    let n = bytes.len();
+    // The set ends with Tag 1 (checksum, length 2); its value covers every
+    // byte before it, the 16-byte key included.
+    assert_eq!(
+        &bytes[n - 4..n - 2],
+        &[0x01, 0x02],
+        "fixture must end with the checksum item"
+    );
+    // Byte 13 of the ST 0601 key is 0x01; any other value leaves the family.
+    bytes[12] = 0x02;
+    let sum = tst_core::klv::checksum::checksum_running_sum_16(&bytes[..n - 2]);
+    bytes[n - 2..].copy_from_slice(&sum.to_be_bytes());
+
+    unsafe {
+        let p = tst_st0601_decode(bytes.as_ptr(), bytes.len());
+        assert!(
+            !p.is_null(),
+            "lenient decode refused a foreign key: {}",
+            last_error_msg()
+        );
+        let mut heading = 0.0f64;
+        assert_eq!(
+            tst_st0601_get_f64(p, TST_ST0601_TAG_PLATFORM_HEADING, &mut heading),
+            0
+        );
+        assert!((heading - 123.45).abs() < 0.01);
+        tst_st0601_free(p);
+    }
+}
