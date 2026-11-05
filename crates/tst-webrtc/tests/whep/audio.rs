@@ -317,3 +317,35 @@ fn only_rejected_media_lines_get_a_format() {
          a=mid:1\r\nm=audio 9 UDP/TLS/RTP/SAVPF \r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n"
     );
 }
+
+#[test]
+fn candidates_on_a_rejected_first_section_move_to_the_bundle_tag() {
+    use tst_webrtc::server::negotiate::repair_rejected_media;
+    let answer = "v=0\r\na=group:BUNDLE 1 2\r\n\
+                  m=audio 0 UDP/TLS/RTP/SAVPF \r\nc=IN IP4 0.0.0.0\r\n\
+                  a=candidate:1 1 udp 2130706431 192.0.2.1 40000 typ host\r\n\
+                  a=ice-ufrag:u\r\na=mid:0\r\n\
+                  m=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:u\r\na=mid:1\r\n\
+                  m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=mid:2\r\n";
+    assert_eq!(
+        repair_rejected_media(answer),
+        "v=0\r\na=group:BUNDLE 1 2\r\n\
+         m=audio 0 UDP/TLS/RTP/SAVPF 0\r\nc=IN IP4 0.0.0.0\r\n\
+         a=ice-ufrag:u\r\na=mid:0\r\n\
+         m=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\n\
+         a=candidate:1 1 udp 2130706431 192.0.2.1 40000 typ host\r\n\
+         a=ice-ufrag:u\r\na=mid:1\r\n\
+         m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=mid:2\r\n"
+    );
+}
+
+#[test]
+fn candidates_already_on_the_bundle_tag_stay_put() {
+    use tst_webrtc::server::negotiate::repair_rejected_media;
+    let answer = "v=0\r\na=group:BUNDLE 0 2\r\n\
+                  m=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\n\
+                  a=candidate:1 1 udp 2130706431 192.0.2.1 40000 typ host\r\na=mid:0\r\n\
+                  m=audio 0 UDP/TLS/RTP/SAVPF 0\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\n\
+                  m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=mid:2\r\n";
+    assert_eq!(repair_rejected_media(answer), answer);
+}

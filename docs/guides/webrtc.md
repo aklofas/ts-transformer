@@ -381,9 +381,10 @@ connection, `Connection: close`.
 
 The answer: video `sendonly` from the server on the payload chosen as
 above, the audio section rejected or Opus, `a=ice-lite`, host candidates
-(below), RTX for the video payload, NACK and PLI accepted, and the offer's
-data-channel section accepted; the `klv` channel itself is opened over that
-association once it is up.
+(below) on the first section the BUNDLE group names, also when a rejected
+audio section comes first, RTX for the video payload, NACK and PLI
+accepted, and the offer's data-channel section accepted; the `klv` channel
+itself is opened over that association once it is up.
 
 ## Network: ICE, ports, TLS
 

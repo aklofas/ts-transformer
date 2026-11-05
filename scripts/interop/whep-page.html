@@ -16,6 +16,7 @@
     STATE <peer connection state>                         on each change
     CAPS scriptTransform=.. encodedStreams=.. rvfc=..     once, which player paths the browser has
     PLAYER <url>                                          once, the player module loaded
+    MLINES <kind> <kind> ...                              once per local description: the offer's m= section kinds in order
     STATS video packets=.. framesDecoded=.. ...           once a second, diagnostics only
     ERROR <text>                                          on any failure
 
@@ -26,6 +27,10 @@
   shipped one (its siblings resolve relative to it): how a player change
   is run through the cells before it lands. run-matrix.sh passes
   $WHEP_PLAYER_URL through as this parameter.
+
+  `&order=audio-first` adds the audio transceiver before the video one
+  (the player adds video first): the page wraps addTransceiver, so the
+  shipped player still loads unmodified.
 -->
 <html lang="en">
 <head>
@@ -41,6 +46,34 @@
     if (!url) log("ERROR no ?url= query parameter");
     const playerUrl = params.get("player") || "../../docs/webrtc/whep-player.js";
     log(`PLAYER ${new URL(playerUrl, location.href).href}`);
+    // Every cell reports the offer's m= order, so an order-dependent cell
+    // can tell it tested the order it names.
+    const setLocal = RTCPeerConnection.prototype.setLocalDescription;
+    RTCPeerConnection.prototype.setLocalDescription = async function (...args) {
+      const result = await setLocal.apply(this, args);
+      const kinds = (this.localDescription?.sdp ?? "")
+        .split(/\r?\n/)
+        .filter((l) => l.startsWith("m="))
+        .map((l) => l.slice(2).split(" ")[0]);
+      log(`MLINES ${kinds.join(" ")}`);
+      return result;
+    };
+    if (params.get("order") === "audio-first") {
+      // The player adds video, then audio: create the audio transceiver
+      // first and hand it back when the player asks for one.
+      const add = RTCPeerConnection.prototype.addTransceiver;
+      const early = new WeakMap();
+      RTCPeerConnection.prototype.addTransceiver = function (kind, init) {
+        if (kind === "video" && !early.has(this)) {
+          early.set(this, add.call(this, "audio", { direction: "recvonly" }));
+        } else if (kind === "audio" && early.get(this)) {
+          const audio = early.get(this);
+          early.set(this, null);
+          return audio;
+        }
+        return add.call(this, kind, init);
+      };
+    }
     const { playWhep } = await import(playerUrl);
 
     const hex = (buf) =>

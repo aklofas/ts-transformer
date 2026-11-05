@@ -4,7 +4,7 @@
 # `tsp`, GStreamer, VLC, mpv) over live SRT/RIST/UDP/TCP/HLS/RTSP
 # sessions AND local per-profile analyzer/decode probes on this box,
 # and write one evidence JSON file per cell, across two axes:
-#   - transport axis: 29 cells, pinned to the "baseline" profile
+#   - transport axis: 30 cells, pinned to the "baseline" profile
 #     (srt/udp/rist/tcp/hls/rtsp/rtsp-publish/whep — the transport-axis
 #     inventory).
 #   - format axis: analyze/{ffprobe,tsanalyze,tsp-analyze}/<profile>,
@@ -35,7 +35,7 @@
 #                      scales off this (see lib.sh's cell_timeout).
 #   --cells GLOB       bash-glob filter over cell ids (default "*", i.e.
 #                      every cell). Cell ids look like
-#                      "<transport>/<direction>-<peer>[-encrypted]" (29
+#                      "<transport>/<direction>-<peer>[-encrypted]" (30
 #                      transport-axis cells, e.g. "srt/us-to-ffmpeg") or
 #                      "<axis>/<peer>/<profile>" (format-axis cells, e.g.
 #                      "decode/mpv/h266-klv") — pass 'srt/*' to run just
@@ -52,7 +52,7 @@
 #                      Only the format axis scales with this list — the
 #                      transport axis always runs against "baseline"
 #                      regardless of what's listed (see the per-profile
-#                      loop below for why: the 29-cell transport-axis
+#                      loop below for why: the 30-cell transport-axis
 #                      inventory was designed and evidenced against "baseline"
 #                      only; scaling it by profile too would multiply
 #                      that count for no new signal the format axis
@@ -1258,7 +1258,7 @@ whep_stderr_span() {
     }' "$1"
 }
 
-# run_whep_browser <id> <mp2t|opus>
+# run_whep_browser <id> <mp2t|opus> [video-first|audio-first]
 #
 # We BIND a WHEP server (`tst-interop serve-whep`) and serve $SECONDS_ARG
 # of $PROFILE's KLV schedule on one mount; headless Chrome plays it with
@@ -1279,8 +1279,10 @@ whep_stderr_span() {
 # H.264 GOP, not the generator's synthetic slices, which no decoder
 # accepts (README.md gap item 10; Chrome logs "Failed to parse SPS NAL
 # unit" and decodes nothing) — see whep_serve.rs's module doc.
+# `audio-first` makes the page add its audio transceiver before the video
+# one; the offer's m= order (`MLINES`) must then start with audio.
 run_whep_browser() {
-  local id=$1 feed=$2
+  local id=$1 feed=$2 order=${3:-video-first}
 
   cell_selected "$id" || return 0
   if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
@@ -1331,7 +1333,7 @@ run_whep_browser() {
   # WHEP_PLAYER_URL (a local escape hatch, like --allowed-skips; never
   # set by interop.yml): run the cells against another copy of the
   # reference player, e.g. a fix under review, instead of docs/webrtc/.
-  local page="file://$SCRIPT_DIR/whep-page.html?url=$serving${WHEP_PLAYER_URL:+&player=$WHEP_PLAYER_URL}"
+  local page="file://$SCRIPT_DIR/whep-page.html?url=$serving&order=$order${WHEP_PLAYER_URL:+&player=$WHEP_PLAYER_URL}"
   # The raw stderr is kept beside the console (gzipped below, uploaded
   # with the evidence as work/*-chrome.stderr.gz): a page that goes
   # silent mid-cell while the server's counters stay healthy is a renderer
@@ -1366,6 +1368,12 @@ run_whep_browser() {
   } >>"$log"
 
   local -a reasons=()
+  local mlines
+  mlines=$(sed -n 's/^MLINES //p' "$console" | head -1)
+  echo "--- offer m= order: ${mlines:-<not printed>} ---" >>"$log"
+  if [[ "$order" == audio-first && "${mlines%% *}" != audio ]]; then
+    reasons+=("the offer is not audio-first (m= order: ${mlines:-<not printed>})")
+  fi
   if [[ $serve_rc -ne 0 ]]; then
     reasons+=("our serve-whep failed (exit $serve_rc) — see log")
   fi
@@ -1485,9 +1493,15 @@ run_whep_browser() {
 # synthesized Opus silence stream through, and adds the AUDIO oracle.
 # Both prove the in-band `klv` data channel (opened by the server, read by
 # the page through ondatachannel) and the SEI carriage on a real browser.
+# `chromium-audio-first` plays the same audio-dropping MP2T mount with an
+# offer whose audio section comes first, the order a player that adds
+# audio before video sends: the answer's candidates must sit on the first
+# section of its BUNDLE group, not on the rejected audio one, or the
+# browser has nothing to check and `FRAMES` stays 0.
 whep_cells() {
   run_whep_browser "whep/chromium-sei-dc-klv" mp2t
   run_whep_browser "whep/chromium-opus-audio" opus
+  run_whep_browser "whep/chromium-audio-first" mp2t audio-first
 }
 
 # ---------------------------------------------------------------------
@@ -1590,9 +1604,9 @@ srt_live_cells_for_profile() {
 # different one.
 run_axes_for_profile() {
   # Transport axis stays pinned to "baseline" regardless of how many
-  # profiles --profiles lists — matches the 29-cell transport-axis
+  # profiles --profiles lists — matches the 30-cell transport-axis
   # inventory (the original 25 built and verified at 8 PASS/17 FAIL/0
-  # SKIPPED, plus the two rtsp-publish cells and the two whep cells);
+  # SKIPPED, plus the two rtsp-publish cells and the three whep cells);
   # scaling it by profile too would multiply that count by up to 12x
   # for no new signal the format axis below doesn't already cover more
   # precisely (analyze/decode/srt-live are the per-profile probes).

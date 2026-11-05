@@ -357,26 +357,80 @@ pub fn select_audio(rtc: &Rtc, offer: &str) -> Option<(Mid, Pt)> {
     None
 }
 
-/// Gives a rejected `m=` line of `answer` the format list RFC 8866 §5.14
-/// requires.
+/// Repairs two things str0m gets wrong in an answer that rejects a media
+/// section.
 ///
 /// str0m rejects an offered section it has no codec for with port 0 and an
 /// empty format list (`m=audio 0 UDP/TLS/RTP/SAVPF `), which a browser's
-/// SDP parser refuses. Only port-0 lines are touched. The line gets the static payload type `0`, the
+/// SDP parser refuses. Such a line gets the static payload type `0`, the
 /// placeholder RFC 3264 §6 allows on a rejected stream (the format is
 /// never used, and a static number needs no `a=rtpmap`, so no stray codec
-/// description is added). Every other line is returned as it was.
+/// description is added); RFC 8866 §5.14 requires a format.
+///
+/// str0m also writes the ICE candidates on the first `m=` section,
+/// rejected or not, while a rejected section is left out of the BUNDLE
+/// group. When the offer lists the section the server rejects first (audio
+/// ahead of video on a mount that drops audio), the candidates land outside
+/// the group and the browser has nothing to check. They move to the
+/// section the BUNDLE group names first, where an answer's transport
+/// attributes belong (RFC 8843), unless that section already has its own.
+/// Every other line is returned as it was.
 pub fn repair_rejected_media(answer: &str) -> String {
+    let raws: Vec<&str> = answer.split_inclusive('\n').collect();
+    let text = |i: usize| raws[i].trim_end_matches(['\r', '\n']);
+    let rejected = |i: usize| text(i).split(' ').filter(|f| !f.is_empty()).nth(1) == Some("0");
+    let is_candidate = |i: usize| text(i).starts_with("a=candidate:");
+    let starts: Vec<usize> = (0..raws.len())
+        .filter(|&i| text(i).starts_with("m="))
+        .collect();
+    let span = |k: usize| starts[k]..starts.get(k + 1).copied().unwrap_or(raws.len());
+
+    let session_end = starts.first().copied().unwrap_or(raws.len());
+    let tag = (0..session_end)
+        .find_map(|i| text(i).strip_prefix("a=group:BUNDLE "))
+        .and_then(|mids| mids.split(' ').find(|m| !m.is_empty()));
+    let target = tag.and_then(|tag| {
+        (0..starts.len()).find(|&k| {
+            !rejected(starts[k]) && span(k).any(|i| text(i).strip_prefix("a=mid:") == Some(tag))
+        })
+    });
+    let moved: Vec<usize> = match target {
+        Some(_) => (0..starts.len())
+            .filter(|&k| rejected(starts[k]))
+            .flat_map(|k| span(k).filter(move |&i| is_candidate(i)))
+            .collect(),
+        None => Vec::new(),
+    };
+    let insert_at = target.filter(|&t| !span(t).any(is_candidate)).map(|t| {
+        span(t)
+            .find(|&i| text(i).starts_with("a="))
+            .unwrap_or(span(t).end)
+    });
+
     let mut out = String::with_capacity(answer.len() + 8);
-    for raw in answer.split_inclusive('\n') {
-        let line = raw.trim_end_matches(['\r', '\n']);
-        let ending = &raw[line.len()..];
+    let place_moved = |out: &mut String| {
+        for &c in &moved {
+            out.push_str(raws[c]);
+        }
+    };
+    for (i, raw) in raws.iter().enumerate() {
+        if insert_at == Some(i) {
+            place_moved(&mut out);
+        }
+        if moved.contains(&i) {
+            continue;
+        }
+        let line = text(i);
         let fields: Vec<&str> = line.split(' ').filter(|f| !f.is_empty()).collect();
         if line.starts_with("m=") && fields.len() == 3 && fields[1] == "0" {
+            let ending = &raw[line.len()..];
             out.push_str(&format!("{} 0{ending}", fields.join(" ")));
         } else {
             out.push_str(raw);
         }
+    }
+    if insert_at == Some(raws.len()) {
+        place_moved(&mut out);
     }
     out
 }

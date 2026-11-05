@@ -1,12 +1,13 @@
 # Browser SDP offers
 
-The offers a WHEP player's `createOffer()` produces for a receive-only video
-transceiver plus a negotiated data channel (`klv`, id 0). The negotiation
+The offers a WHEP player's `createOffer()` produces for receive-only
+transceivers plus a data channel (`klv`, id 0). The negotiation
 tests and the `whep_sdp_select` fuzz seeds read them.
 
 | File | Source |
 |---|---|
 | `chrome-155.sdp` | Captured from Google Chrome 155.0.8059.39 (headless, Linux x86_64) |
+| `chrome-157-audio-first.sdp` | Captured from Google Chrome 157.0.8103.38 (headless, Linux x86_64): a data channel, then an audio and a video receive-only transceiver, in the reference player's order with audio added first |
 | `firefox-144.sdp` | Reconstructed, not captured |
 | `safari-26.sdp` | Reconstructed, not captured |
 
@@ -36,6 +37,11 @@ A re-capture creates a plain data channel with a label other than `klv`
 (`pc.createDataChannel('viewer')`): the server opens the `klv` channel
 itself, and the offer only needs the `m=application` section.
 Headless Chrome on Linux offers no H.265 payload.
+
+`chrome-157-audio-first.sdp` was captured the same way from a page that
+calls `pc.createDataChannel('viewer')`, then
+`pc.addTransceiver('audio', { direction: 'recvonly' })` before the video
+transceiver, and logs `btoa(o.sdp)` so the stderr line decodes byte for byte.
 
 ## Reconstructed offers
 
