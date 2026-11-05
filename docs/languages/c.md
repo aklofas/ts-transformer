@@ -347,6 +347,8 @@ Server entry points:
 
 ```c
 void tst_rtsp_server_builder_accept_unregistered_publishers(struct TstRtspServerBuilder *builder, bool accept);
+void tst_rtsp_server_builder_end_publish_mount_on_publisher_exit(struct TstRtspServerBuilder *builder, bool end);
+void tst_rtsp_server_builder_publish_idle_timeout(struct TstRtspServerBuilder *builder, uint32_t secs);
 struct tst_rtsp_publish_mount_t *tst_rtsp_server_add_publish_mount(struct TstRtspServer *server, const char *path);
 int tst_rtsp_server_next_publisher(struct TstRtspServer *server, uint64_t timeout_ms, struct tst_rtsp_publish_mount_t **out);
 int tst_rtsp_server_remove_mount(struct TstRtspServer *server, const char *path);
