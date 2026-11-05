@@ -241,6 +241,15 @@ subdirectory the publisher creates. Files are created with mode 0644 at
 most (the umask can only narrow it), so another account can read but never
 modify segments or the playlist. Other platforms make no such check.
 
+The check covers `output_dir` itself, not the directories above it: the
+path is resolved by name, symbolic links in parent components included,
+when the publisher is built. Keep every parent directory out of other
+accounts' reach: owned by the publishing user or root and writable by no
+one else, or a sticky-bit directory such as `/tmp`, where only an entry's
+owner can rename it. An account that can replace a parent directory can
+point the publisher at another directory you own, and the startup cleanup
+then deletes that directory's `segment_*.ts` and `playlist.m3u8` files.
+
 Concurrent publishers must each use a **distinct `output_dir`** (and a
 distinct bind port if each runs its own server, or `no_server()`) — two publishers writing the
 same directory will clobber each other's segment numbering and playlist.
