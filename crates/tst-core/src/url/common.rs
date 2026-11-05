@@ -107,9 +107,8 @@ pub enum UrlError {
 /// (`rtsp://u:12345/tail@h`) parses as a port followed by a path or a query,
 /// so an `@` after the authority marks those fields as possible credential
 /// text, the way [`redact_url`](super::redact_url) reads any later `@` as
-/// the end of the userinfo: the port, the path, every query pair up to the
-/// last one holding an `@` and, when a password was parsed, the host print as
-/// `<redacted>`.
+/// the end of the userinfo: the host, the port, the path and every query pair
+/// up to the last one holding an `@` print as `<redacted>`.
 impl<'a> core::fmt::Debug for ParsedUrl<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use super::redact::REDACTED;
@@ -120,11 +119,7 @@ impl<'a> core::fmt::Debug for ParsedUrl<'a> {
             .rposition(|(k, v)| k.contains('@') || v.contains('@'))
             .map_or(0, |i| i + 1);
         let tail = hidden_pairs > 0 || self.path.contains('@');
-        let host = if tail && self.password.is_some() {
-            REDACTED
-        } else {
-            self.host
-        };
+        let host = if tail { REDACTED } else { self.host };
         let redacted_port = Some(REDACTED);
         let port: &dyn core::fmt::Debug = if tail && self.port.is_some() {
             &redacted_port
@@ -887,6 +882,8 @@ mod debug_tests {
             "rtsp://u:12345/tail-sentinel@h?latency=5",
             "srt://u:p@ss-sentinel/word@h",
             "srt://u:p@ss-sentinel:12/w@h",
+            "rtsp://u:secret-sentinel:12345/tail@h",
+            "rtsp://u:secret-sentinel:12345?x=tail@h",
         ] {
             let p = parse_url(url).unwrap();
             let d = alloc::format!("{p:?}");
@@ -899,7 +896,7 @@ mod debug_tests {
             "{:?}",
             parse_url("rtsp://u:12345/tail@h?latency=5").unwrap()
         );
-        for kept in ["\"u\"", "latency", "\"5\""] {
+        for kept in ["latency", "\"5\""] {
             assert!(d.contains(kept), "{kept} missing from {d}");
         }
     }
