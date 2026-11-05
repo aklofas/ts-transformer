@@ -475,13 +475,15 @@ COUNTS = dict(files=260, identical=258, changed_explained=2, invariant_failures=
               parse_failures=0, replay_files=12, replay_paths=5, replay_failed=0)
 
 
-def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=259200, counts=None, legs=None):
+def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=259200, counts=None, legs=None, arch=None):
     row = ('\n[[archive]]\nid = "%s"\nkind = "%s"\ntree = "%s"\noverall_pass = %s\n'
            'note = "n"\ndate = "%s"\n' % (id, kind, tree, "true" if overall_pass else "false", date))
     if kind == "soak":
         row += "expected_duration_s = %d\n" % duration
         if legs is not None:
             row += "legs = [%s]\n" % ", ".join('"%s"' % l for l in legs)
+    if arch is not None:
+        row += 'arch = "%s"\n' % arch
     for k, v in (counts or {}).items():
         row += "%s = %s\n" % (k, str(v).lower() if isinstance(v, bool) else v)
     return row
@@ -582,6 +584,35 @@ class SoakRequirementTests(unittest.TestCase):
                     self.load(text)
                 self.assertEqual(e.exception.code, 1)
                 self.assertIn("[soak] required_duration_s is required, an integer above 0", err.getvalue())
+
+
+class ArchTests(unittest.TestCase):
+    def load(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            put(os.path.join(d, "tests/coverage/evidence-archives.toml"), text)
+            return q.load_archives(d)
+
+    def test_arch_is_kept_on_soak_and_stress_rows(self):
+        rows = archives_toml(archive_row("soak-arm", "soak", SHA, legs=FIVE, arch="aarch64"),
+                             archive_row("stress-arm", "stress", SHA, arch="aarch64"),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        loaded, *_ = self.load(rows)
+        self.assertEqual([r.get("arch") for r in loaded], ["aarch64", "aarch64", None])
+
+    def test_arch_is_validated(self):
+        for row, msg in ((archive_row("soak-bad", "soak", SHA, legs=FIVE, arch="arm64"),
+                          "soak-bad: arch must be one of x86_64, aarch64"),
+                         (archive_row("corpus-bad", "corpus", SHA, counts=COUNTS, arch="x86_64"),
+                          "corpus-bad: arch belongs to soak and stress rows only")):
+            with self.subTest(msg=msg):
+                with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.load(archives_toml(row))
+                self.assertEqual(e.exception.code, 1)
+                self.assertIn(msg, err.getvalue())
+
+    def test_soak_desc_and_block_name_the_arch_only_when_present(self):
+        self.assertTrue(q._soak_desc(dict(ROW, arch="aarch64", legs=["srt"])).endswith(", legs srt, aarch64)"))
+        self.assertTrue(q._soak_desc(dict(ROW, legs=["srt"])).endswith(", legs srt)"))
 
 
 class ReleaseModeTests(unittest.TestCase):
