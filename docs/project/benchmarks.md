@@ -95,6 +95,15 @@ archive:
 scripts/gen/benchmarks-page.sh <archive-dir>
 ```
 
+The arm64 reference machine is an AWS `c7g.2xlarge` (8 vCPU Graviton, 16 GiB)
+running the same recipe; the first arm run is recorded when it happens. Given
+its archive, the same command adds a ceilings-by-architecture table at the top
+of the block:
+
+```bash
+scripts/gen/benchmarks-page.sh <archive-dir> --arm <arm-archive-dir>
+```
+
 The archive directory holds `stress-results.json` (the sweep steps and
 their verdicts), `provenance.json` (host, toolchain, and source commit),
 and one subdirectory per sweep step with that step's raw logs and samples.

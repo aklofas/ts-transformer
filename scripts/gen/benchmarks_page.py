@@ -19,6 +19,9 @@ Usage:
   scripts/gen/benchmarks_page.py --results R.json --provenance P.json --stdout
                                             # same, explicitly
   scripts/gen/benchmarks_page.py --results R.json --provenance P.json \
+      --arm-results AR.json --arm-provenance AP.json
+                                            # adds a ceilings-by-architecture table
+  scripts/gen/benchmarks_page.py --results R.json --provenance P.json \
       --update docs/project/benchmarks.md  # rewrite the <!-- bench:begin/end --> block
 Run from anywhere; stdlib only.
 """
@@ -110,6 +113,7 @@ def _reference_machine(provenance: dict) -> str:
     source = provenance["source"]
     mem_gib = host["mem_total_kb"] / (1024 * 1024)
     lines = [
+        f"- Architecture: {host.get('arch', 'x86_64')}",
         f"- Kernel: {host['kernel']}",
         f"- vCPUs: {host['cpus']}",
         f"- Memory: {_mib(mem_gib)} GiB",
@@ -303,8 +307,39 @@ def _limitations(results: dict) -> str:
     return "\n".join(f"- {_collapse(line)}" for line in lines) + "\n"
 
 
-def render(results: dict, provenance: dict) -> str:
-    parts = ["### Reference machine\n", _reference_machine(provenance)]
+_ARCH_AXES = ("streams", "bitrate")
+
+
+def _arch_cell(entry: dict | None) -> str:
+    if entry is None:
+        return "\u2014"
+    if entry["first_fail"] is None:
+        return f"{entry['ceiling']} (top of ladder)"
+    return f"{entry['ceiling']} ({', '.join(entry['first_fail_verdicts'])})"
+
+
+def _arch_ceilings_table(x86: dict, arm: dict) -> str:
+    """One row per (transport, axis) present in either sweep; an architecture
+    that lacks the entry shows a dash."""
+    def index(results):
+        return {(a["transport"], a["axis"]): a for a in results["sweep"]}
+
+    x, a = index(x86), index(arm)
+    rows = []
+    for t in TRANSPORT_ORDER:
+        for axis in _ARCH_AXES:
+            if (t, axis) in x or (t, axis) in a:
+                rows.append([t, axis, _arch_cell(x.get((t, axis))), _arch_cell(a.get((t, axis)))])
+    return _table(["Transport", "Axis", "x86_64 ceiling", "aarch64 ceiling"], rows)
+
+
+def render(results: dict, provenance: dict, arm: tuple[dict, dict] | None = None) -> str:
+    parts = []
+    if arm is not None:
+        parts += ["### Ceilings by architecture\n", _arch_ceilings_table(results, arm[0])]
+    parts += ["### Reference machine\n", _reference_machine(provenance)]
+    if arm is not None:
+        parts += ["### Reference machine (aarch64)\n", _reference_machine(arm[1])]
 
     parts.append("### Stream scaling\n")
     for transport, entry in _axes_by_transport(results["sweep"], "streams"):
@@ -354,14 +389,25 @@ def main(argv=None) -> int:
         help="print Markdown to stdout; this is already the default when --update is omitted — "
              "the flag is accepted (and otherwise ignored) for symmetry with benchmarks-page.sh's own --stdout argument",
     )
+    ap.add_argument("--arm-results", metavar="R.json", help="stress-results.json from an aarch64 archive")
+    ap.add_argument("--arm-provenance", metavar="P.json", help="provenance.json from an aarch64 archive")
     args = ap.parse_args(argv)
+    if bool(args.arm_results) != bool(args.arm_provenance):
+        ap.error("--arm-results and --arm-provenance must be given together")
 
     with open(args.results, encoding="utf-8") as fh:
         results = json.load(fh)
     with open(args.provenance, encoding="utf-8") as fh:
         provenance = json.load(fh)
 
-    md = render(results, provenance)
+    arm = None
+    if args.arm_results:
+        with open(args.arm_results, encoding="utf-8") as fh:
+            arm_results = json.load(fh)
+        with open(args.arm_provenance, encoding="utf-8") as fh:
+            arm = (arm_results, json.load(fh))
+
+    md = render(results, provenance, arm)
     if args.update:
         with open(args.update, encoding="utf-8") as fh:
             doc = fh.read()
