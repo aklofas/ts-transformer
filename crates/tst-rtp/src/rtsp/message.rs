@@ -143,7 +143,9 @@ pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {
 ///   accumulating. If they have already exceeded [`MAX_RTSP_MESSAGE_BYTES`]
 ///   (64 KiB) without terminating, the peer is malformed/adversarial →
 ///   [`RtspFraming::HeadersTooLong`]. Otherwise [`RtspFraming::NeedMore`].
-/// - **After the terminator** — `CRLFCRLF` seen: parse the (already-bounded) `Content-Length`
+/// - **After the terminator** — `CRLFCRLF` seen: a header block longer than
+///   [`MAX_RTSP_MESSAGE_BYTES`] is [`RtspFraming::HeadersTooLong`] here too.
+///   Otherwise parse the (already-bounded) `Content-Length`
 ///   via the strict shared scanner. A malformed/duplicate/over-cap
 ///   (> [`MAX_RTSP_BODY_BYTES`]) value is fatal →
 ///   [`RtspFraming::BadContentLength`]. Otherwise the exact end is
@@ -154,7 +156,7 @@ pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {
 pub enum RtspFraming {
     /// Within bounds but incomplete — keep reading.
     NeedMore,
-    /// Pre-terminator headers exceeded [`MAX_RTSP_MESSAGE_BYTES`] — reject.
+    /// The header block exceeded [`MAX_RTSP_MESSAGE_BYTES`], terminated or not — reject.
     HeadersTooLong,
     /// The header block (through `CRLFCRLF`) is not UTF-8; it ends `skip`
     /// bytes in. The client pump resyncs past it; every other caller rejects.
@@ -185,6 +187,11 @@ pub fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
         }
         return RtspFraming::NeedMore;
     };
+    // The same ceiling once the terminator is in: a header block that ended
+    // in the read that carried it past 64 KiB is still too long.
+    if header_end > MAX_RTSP_MESSAGE_BYTES {
+        return RtspFraming::HeadersTooLong;
+    }
     // After the terminator: parse the declared body length via the strict shared scanner.
     let Ok(header_text) = core::str::from_utf8(&buf[..header_end]) else {
         return RtspFraming::NonUtf8Headers {
@@ -812,6 +819,29 @@ mod tests {
             RtspFraming::BadContentLength(_)
         ));
         assert_eq!(rtsp_frame_decision(&long), RtspFraming::HeadersTooLong);
+    }
+
+    /// The header ceiling holds whether or not the terminator has arrived:
+    /// a header block that ends in CRLFCRLF past 64 KiB is refused like an
+    /// unterminated one, and the client pump's accumulation check closes on
+    /// it; a block of exactly 64 KiB plus its terminator frames.
+    #[test]
+    fn the_header_ceiling_applies_to_a_terminated_header_block() {
+        let mut over = b"OPTIONS rtsp://h/ RTSP/1.0\r\nX: ".to_vec();
+        over.resize(MAX_RTSP_MESSAGE_BYTES + 1, b'a');
+        over.extend_from_slice(b"\r\n\r\n");
+        assert_eq!(rtsp_frame_decision(&over), RtspFraming::HeadersTooLong);
+        assert!(pump_accumulation_exceeded(&over));
+
+        let mut at = b"OPTIONS rtsp://h/ RTSP/1.0\r\nX: ".to_vec();
+        at.resize(MAX_RTSP_MESSAGE_BYTES, b'a');
+        at.extend_from_slice(b"\r\n\r\n");
+        assert_eq!(
+            rtsp_frame_decision(&at),
+            RtspFraming::Complete {
+                total_len: at.len()
+            }
+        );
     }
 
     #[test]

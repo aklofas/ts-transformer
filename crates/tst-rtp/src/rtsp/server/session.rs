@@ -670,9 +670,8 @@ where
         //   → 413" cap would wrongly reject a valid request whose body
         //   legitimately runs up to MAX_RTSP_BODY_BYTES (1 MiB). Instead:
         //
-        //   Before the terminator (no CRLFCRLF yet): 413 only once the
-        //     *headers* exceed MAX_RTSP_MESSAGE_BYTES (64 KiB) — preserves
-        //     the unterminated-header DoS bound.
+        //   Headers: 413 once they exceed MAX_RTSP_MESSAGE_BYTES (64 KiB),
+        //     before or after the terminator arrives — the header DoS bound.
         //   After the terminator (CRLFCRLF seen): parse the declared
         //     Content-Length up front. An over-cap (> 1 MiB) / malformed /
         //     duplicate value is a 413 NOW (don't read toward EOF). A
