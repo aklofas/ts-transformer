@@ -145,7 +145,7 @@ pub enum PyDigestAlgorithm {
 /// before they reach `RtspClientBuilder::auth`; they are never
 /// re-exposed to Python (only `user` is readable via the getter).
 #[pyclass(name = "BasicAuth", module = "tstrans.rtp", frozen)]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PyBasicAuth {
     pub(crate) user: String,
     /// Held as a plain Rust `String` because the Python-side surface
@@ -204,7 +204,7 @@ impl PyBasicAuth {
 /// offers no Digest challenge fails the request instead of receiving the
 /// password in the clear. Use `BasicAuth` to accept either scheme.
 #[pyclass(name = "DigestAuth", module = "tstrans.rtp", frozen)]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PyDigestAuth {
     pub(crate) user: String,
     pub(crate) password: String,
@@ -270,7 +270,6 @@ impl PyDigestAuth {
 /// pass `tls_root_certs_pem` (a PEM bundle) to verify against a private
 /// CA / self-signed camera cert instead.
 #[pyclass(name = "RtspClientConfig", module = "tstrans.rtp", frozen)]
-#[derive(Debug)]
 pub struct PyRtspClientConfig {
     url: String,
     /// Stored as `Py<PyAny>` so we can hand it back through the getter
@@ -1070,4 +1069,44 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRtspClient>()?;
     m.add_class::<PyRtspSession>()?;
     Ok(())
+}
+
+// Hand-written so a `{:?}` never prints the password.
+impl std::fmt::Debug for PyBasicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PyBasicAuth")
+            .field("user", &self.user)
+            .field("password", &"<redacted>")
+            .field("realm", &self.realm)
+            .finish()
+    }
+}
+
+// Hand-written so a `{:?}` never prints the password.
+impl std::fmt::Debug for PyDigestAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PyDigestAuth")
+            .field("user", &self.user)
+            .field("password", &"<redacted>")
+            .field("algorithm", &self.algorithm)
+            .field("realm", &self.realm)
+            .finish()
+    }
+}
+
+// Hand-written so a `{:?}` never prints a URL password or secret value.
+impl std::fmt::Debug for PyRtspClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PyRtspClientConfig")
+            .field("url", &redact_url(&self.url))
+            .field("auth", &self.auth)
+            .field("transport_pref", &self.transport_pref)
+            .field(
+                "tls_root_certs_pem_len",
+                &self.tls_root_certs_pem.as_ref().map(Vec::len),
+            )
+            .field("keepalive", &self.keepalive)
+            .field("rtsp_version", &self.rtsp_version)
+            .finish()
+    }
 }

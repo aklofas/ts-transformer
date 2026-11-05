@@ -36,6 +36,7 @@ use crate::mux::{
 use crate::raise::{RTSP, raise};
 use crate::rtp::mount_rules::{PyMountRule, PyMountRules};
 use crate::rtp::publish::PyPublishMount;
+use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
 // ---------------------------------------------------------------------------
@@ -952,7 +953,7 @@ enum AuthScheme {
     DigestSha256,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct AuthExtract {
     scheme: AuthScheme,
     realm: String,
@@ -960,7 +961,7 @@ struct AuthExtract {
     password: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct ServerConfigExtract {
     bind_url: String,
     max_sessions: usize,
@@ -974,6 +975,47 @@ struct ServerConfigExtract {
     end_publish_mount_on_publisher_exit: bool,
     publish_idle_timeout_ms: Option<u64>,
     default_mount_rule: Option<tst_rtp::MountRule>,
+}
+
+// Hand-written so a `{:?}` never prints the password.
+impl std::fmt::Debug for AuthExtract {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthExtract")
+            .field("scheme", &self.scheme)
+            .field("realm", &self.realm)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+// Hand-written so a `{:?}` never prints a URL secret or the TLS private key.
+impl std::fmt::Debug for ServerConfigExtract {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerConfigExtract")
+            .field("bind_url", &redact_url(&self.bind_url))
+            .field("max_sessions", &self.max_sessions)
+            .field("session_timeout_secs", &self.session_timeout_secs)
+            .field("fanout_capacity", &self.fanout_capacity)
+            .field(
+                "graceful_shutdown_drain_ms",
+                &self.graceful_shutdown_drain_ms,
+            )
+            .field("auth", &self.auth)
+            .field("tls_cert", &self.tls_cert)
+            .field("tls_key", &self.tls_key.as_ref().map(|_| "<redacted>"))
+            .field(
+                "accept_unregistered_publishers",
+                &self.accept_unregistered_publishers,
+            )
+            .field(
+                "end_publish_mount_on_publisher_exit",
+                &self.end_publish_mount_on_publisher_exit,
+            )
+            .field("publish_idle_timeout_ms", &self.publish_idle_timeout_ms)
+            .field("default_mount_rule", &self.default_mount_rule)
+            .finish()
+    }
 }
 
 impl ServerConfigExtract {
