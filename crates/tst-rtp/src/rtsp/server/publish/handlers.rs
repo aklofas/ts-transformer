@@ -142,7 +142,7 @@ pub(crate) fn handle_announce(
                 // `stop()` may have begun since the check above: release the
                 // claim so the mount is left as this ANNOUNCE found it.
                 if state.is_shut_down() {
-                    m.end_publisher();
+                    m.rollback_claim();
                     return error_response(req, 503, "Service Unavailable");
                 }
                 (m, generation)
@@ -180,7 +180,7 @@ pub(crate) fn handle_announce(
                         error = %e,
                         "publish muxer construction failed"
                     );
-                    mount.end_publisher();
+                    mount.rollback_claim();
                     return error_response(req, 500, "Internal Server Error");
                 }
             }
@@ -248,7 +248,7 @@ fn create_on_demand_mount(
             path,
             "on-demand mount refused: queue full or server stopping"
         );
-        m.end_publisher();
+        m.rollback_claim();
         return None;
     }
     mounts.insert(path.to_string(), MountEntry::Publish(m.clone()));

@@ -356,6 +356,15 @@ impl PublishMountState {
         self.release_slot(&mut g);
     }
 
+    /// Undo a claim that never became a live publisher (a refused or failed
+    /// ANNOUNCE). Releases the slot like [`Self::end_publisher`] without
+    /// closing the mount, whatever `end_on_publisher_exit` says: rolling back
+    /// a claim is not a publisher leaving.
+    pub(crate) fn rollback_claim(&self) {
+        let mut g = self.publisher.lock().unwrap_or_else(|e| e.into_inner());
+        self.release_slot(&mut g);
+    }
+
     /// Empty the slot under its held mutex: bump `generation` and the
     /// server's publisher count if a publisher held it, else nothing.
     fn release_slot(&self, slot: &mut PublisherSlot) {
@@ -956,6 +965,19 @@ mod tests {
                 Err(TransportError::Backpressure { .. })
             ),
             "idle, still open"
+        );
+    }
+
+    #[test]
+    fn rollback_claim_frees_the_slot_without_closing_even_when_the_mount_ends_on_exit() {
+        let m = PublishMountState::new_with_exit("/p", 16, true, Default::default());
+        assert!(m.try_begin_publisher(info(0)).is_some());
+        m.rollback_claim();
+        assert!(m.try_begin_publisher(info(0)).is_some(), "slot reopened");
+        m.end_publisher();
+        assert!(
+            m.try_begin_publisher(info(0)).is_none(),
+            "a real exit closes"
         );
     }
 }
