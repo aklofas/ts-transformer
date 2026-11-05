@@ -105,12 +105,18 @@ impl Segmenter {
         })
     }
 
-    /// Append TS bytes to the current segment (opens one if none).
+    /// Append TS bytes to the current segment (opens one if none). An empty
+    /// slice is a no-op.
     pub(crate) fn push_ts(&mut self, ts_bytes: &[u8]) -> Result<(), HlsError> {
         if !ts_bytes.len().is_multiple_of(188) {
             return Err(HlsError::UnalignedPushTs {
                 len: ts_bytes.len(),
             });
+        }
+        // Nothing to write: opening a segment here would leave an empty
+        // file that the next cut lists with a zero duration.
+        if ts_bytes.is_empty() {
+            return Ok(());
         }
         if self.current.is_none() {
             self.open_new()?;
@@ -439,6 +445,22 @@ mod tests {
         s.cut().unwrap();
         assert!(dir.join("segment_00000.ts").exists());
         assert_eq!(s.segments_written(), 1);
+    }
+
+    #[test]
+    fn an_empty_push_opens_no_segment() {
+        let dir = tmpdir();
+        let cfg = HlsConfig {
+            output_dir: dir.clone(),
+            ..HlsConfig::default()
+        };
+        let mut s = Segmenter::new(cfg).unwrap();
+        s.push_ts(&[]).unwrap();
+        assert_eq!(s.open_segment_bytes(), 0);
+        s.finalize().unwrap();
+        assert!(s.visible_segments().is_empty());
+        assert_eq!(s.segments_written(), 0);
+        assert!(!dir.join("segment_00000.ts").exists());
     }
 
     #[test]
