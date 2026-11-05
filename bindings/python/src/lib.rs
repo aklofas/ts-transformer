@@ -92,6 +92,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     raise::check_error_kinds(_py)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(raise::check_error_kinds_py, m)?)?;
+    m.add_function(wrap_pyfunction!(util::redact_url_py, m)?)?;
     // A thread parked inside libsrt at process exit
     // deadlocks `atexit(srt_cleanup)` (it joins `SRT:GC`, which cannot
     // finish while a socket is parked). Python's atexit callbacks run

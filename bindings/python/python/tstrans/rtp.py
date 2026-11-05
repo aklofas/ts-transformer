@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import enum
 import warnings as _warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as _dataclass_fields
 from typing import Optional, Union
 
 try:
@@ -256,6 +256,17 @@ class RtspServerConfig:
     timeout still matters: a publisher that keeps its session alive with
     RTSP requests while sending no media is ended by this timeout, not the
     session timeout."""
+
+    def __repr__(self) -> str:
+        # A bind URL can carry a password or a token; the generated
+        # dataclass repr would print it verbatim.
+        parts = []
+        for f in _dataclass_fields(self):
+            value = getattr(self, f.name)
+            if f.name == "bind_addr":
+                value = _native._redact_url(value)
+            parts.append(f"{f.name}={value!r}")
+        return f"{type(self).__name__}({', '.join(parts)})"
 
     def __post_init__(self) -> None:
         if self.max_sessions <= 0:
