@@ -96,7 +96,7 @@
 # (cell, profile) FAIL first.
 
 [census]
-full_cells = 161
+full_cells = 162
 
 # The cells `run-matrix.sh --only-subset arm64` runs: the interop workflow's
 # linux-aarch64 job, whose census the qualification record keeps beside the

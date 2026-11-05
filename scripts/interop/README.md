@@ -625,7 +625,7 @@ these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
 
 ### Transport axis: the WHEP browser cells
 
-The two `whep/*` cells are the matrix's real-browser check of the WebRTC
+The three `whep/*` cells are the matrix's real-browser check of the WebRTC
 playback server (`crates/tst-webrtc`): `tst-interop serve-whep` binds a
 `WhepServer` with one mount and serves `baseline`'s KLV schedule on it,
 and headless Google Chrome plays the mount with the reference player
@@ -639,6 +639,7 @@ judges to the browser console, which Chrome's `--enable-logging=stderr
 |---|---|---|---|
 | `whep/chromium-sei-dc-klv` | MP2T (`push_ts` of an in-process mux), audio dropped | remux | KLV set via SEI = generator's; KLV set via data channel = generator's; each record's SEI and data-channel copies carry the same (PTS, RTP timestamp); every PTS is 0 (the pinned MP2T behaviour below); `FRAMES` rises and no `AUDIO` line is printed (video plays although the audio section is answered with port 0); no page error |
 | `whep/chromium-opus-audio` | elementary, `PassthroughOpus` with a synthesized 20 ms Opus silence stream | remux | the same digest, copy-agreement and `FRAMES` oracles; the PTS multiset equals the schedule's (`k × 9000` from 0); `AUDIO` (inbound audio `packetsReceived`) rises |
+| `whep/chromium-audio-first` | MP2T, audio dropped; the page adds the audio transceiver before the video one (`order=audio-first`) | remux | the `chromium-sei-dc-klv` oracles, plus the offer's first `m=` section is audio (`MLINES`) |
 
 The KLV records are the profile's own schedule, the exact set `gen`
 writes for the same window, so the source digest is `verify --file` of
@@ -662,7 +663,7 @@ the cell then fails on its oracles rather than hanging.
 
 Tool presence: `lib.sh`'s `whep_browser` takes `google-chrome` (the
 `ubuntu-latest` runner image and the dev box) or `chromium`; a box with
-neither skips both cells locally, never on the runner. The cell log
+neither skips every `whep/*` cell locally, never on the runner. The cell log
 records the browser's version line. Per-cell files uploaded with the
 evidence: `work/<cell>-whep.json` (the server, mount and session
 counters) and `work/<cell>-console.txt` (every console line). The cell
@@ -690,6 +691,11 @@ the PTS multiset to `k × 9000`.
 First local runs: Google Chrome 155.0.8059.39, `--seconds 8` and `10`, both
 cells PASS; `docs/project/validation-evidence.md`'s current-census paragraph
 records the declared count rising to 161 with them.
+
+`whep/chromium-audio-first` exists because every other offer the project
+tests lists video first: with audio first on a mount that drops audio, the
+answer's ICE candidates must move off the rejected audio section onto the
+first section of the BUNDLE group, or Chrome never connects.
 
 ## Multi-day soak (`soak.sh`)
 
@@ -1632,7 +1638,7 @@ offline from an archived capture plus its log
 (`verify::verify_bytes_with_corruption`).
 
 **Corruption is a soak and offline-test feature: no matrix cell injects.**
-`run-matrix.sh` never passes `--corrupt`, so all 161 cells run a pristine
+`run-matrix.sh` never passes `--corrupt`, so all 162 cells run a pristine
 stream and the census is unaffected by anything in this section.
 
 ### Grammar
@@ -1921,7 +1927,7 @@ configuration nuisance: it means the records on the wire are not the ones the
 sender was supposed to emit.
 
 **The matrix stays compact: no cell sends rich records.** `--klv-set` defaults
-to `compact` everywhere and `run-matrix.sh` never passes it, so all 161 cells
+to `compact` everywhere and `run-matrix.sh` never passes it, so all 162 cells
 carry the byte-identical 4-tag, 50-byte record their expectations were
 validated against. That matters most for the `KLV records: got 0` expectation
 rows above: they document third-party peers dropping or mangling KLV carriage

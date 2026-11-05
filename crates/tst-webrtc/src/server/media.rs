@@ -383,7 +383,8 @@ impl MediaThread {
 /// [`AudioPolicy::Drop`]. str0m rejects (port 0) an audio section of an
 /// offer with no codec in common, so a dropping mount answers a viewer's
 /// audio section as rejected rather than as a stream that never carries
-/// anything (see [`repair_rejected_media`] for its format list).
+/// anything (see [`repair_rejected_media`] for its format list and where
+/// the candidates go).
 pub(crate) fn server_rtc(now: Instant, audio: AudioPolicy) -> Rtc {
     let mut builder = Rtc::builder()
         .set_ice_lite(true)
@@ -1648,6 +1649,84 @@ mod tests {
         for gone in ["PCMU", "PCMA", "G722", "CN/"] {
             assert!(!answer.contains(gone), "{gone} is not offered back");
         }
+    }
+
+    /// The offer of a str0m client that adds audio before video, then a
+    /// data channel.
+    fn audio_first_offer() -> String {
+        use str0m::media::{Direction, MediaKind};
+        let mut client = Rtc::builder().build(Instant::now());
+        let mut api = client.sdp_api();
+        api.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+        api.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+        api.add_channel("viewer".into());
+        let (offer, _pending) = api.apply().expect("an offer");
+        offer.to_sdp_string()
+    }
+
+    /// (mid, candidate count, rejected) of each media section of `sdp`,
+    /// and the mid the BUNDLE group names first.
+    fn candidate_layout(sdp: &str) -> (Vec<(String, usize, bool)>, String) {
+        let tag = sdp
+            .lines()
+            .find_map(|l| l.strip_prefix("a=group:BUNDLE "))
+            .and_then(|mids| mids.split_whitespace().next())
+            .expect("a BUNDLE group")
+            .to_string();
+        let sections = sdp
+            .split("\r\nm=")
+            .skip(1)
+            .map(|s| {
+                let mid = s
+                    .lines()
+                    .find_map(|l| l.strip_prefix("a=mid:"))
+                    .expect("a mid")
+                    .trim_end()
+                    .to_string();
+                let candidates = s.lines().filter(|l| l.starts_with("a=candidate:")).count();
+                let rejected = s.split(' ').nth(1) == Some("0");
+                (mid, candidates, rejected)
+            })
+            .collect();
+        (sections, tag)
+    }
+
+    #[test]
+    fn an_audio_first_offer_on_a_dropping_server_puts_its_candidates_on_the_bundle_tag() {
+        let (_rtc, answer) = answer_to(&audio_first_offer(), AudioPolicy::Drop);
+        assert!(
+            answer.find("m=audio").unwrap() < answer.find("m=video").unwrap(),
+            "{answer}"
+        );
+        let (sections, tag) = candidate_layout(&answer);
+        assert!(sections[0].2, "the audio section is rejected: {answer}");
+        for (mid, candidates, _) in &sections {
+            let want = usize::from(*mid == tag);
+            assert_eq!(
+                *candidates, want,
+                "section {mid} (BUNDLE tag {tag}):\n{answer}"
+            );
+        }
+        str0m::change::SdpAnswer::from_sdp_string(&answer).expect("the answer parses");
+    }
+
+    #[test]
+    fn an_accepted_audio_first_section_keeps_its_candidates() {
+        let mut rtc = server_rtc(Instant::now(), AudioPolicy::PassthroughOpus);
+        let candidate = Candidate::host("192.0.2.1:40000".parse().unwrap(), "udp").unwrap();
+        rtc.add_local_candidate(candidate);
+        let parsed = SdpOffer::from_sdp_string(&audio_first_offer()).expect("the offer parses");
+        let raw = rtc
+            .sdp_api()
+            .accept_offer(parsed)
+            .expect("accepted")
+            .to_sdp_string();
+        let (sections, tag) = candidate_layout(&raw);
+        assert!(!sections[0].2, "audio is accepted: {raw}");
+        assert_eq!(sections[0].0, tag, "{raw}");
+        assert_eq!(sections[0].1, 1, "{raw}");
+        // Nothing to move or fill: the repair returns str0m's answer as it was.
+        assert_eq!(repair_rejected_media(&raw), raw);
     }
 
     #[test]

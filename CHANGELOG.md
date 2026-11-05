@@ -268,6 +268,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - WHEP responses advertise `Access-Control-Allow-Methods: POST, DELETE, OPTIONS` (no PATCH, since trickle ICE and ICE restart are unsupported); a PATCH on a session answers `405` with `Allow: DELETE, OPTIONS` instead of `204`, before the bearer check. WHEP clients that enable trickle from the method list now send a complete offer.
 - A POST on a session resource answers `405` with `Allow: DELETE, OPTIONS`, and a DELETE on a mount path `405` with `Allow: POST, OPTIONS`, both before the bearer check (they were `401`, or `404` past it).
 - A panic inside str0m while the WHEP server applies an offer now refuses that offer with `500` instead of ending the shared media thread and every viewer on it. This is defence in depth: the offer shapes reported against 0.9.0 are already refused at parse by the bundled str0m.
+- A WHEP offer that lists its audio section before its video one, on a mount that drops audio (the default `AudioPolicy::Drop`), now connects. The answer used to carry every ICE candidate on the rejected audio section, which is outside the BUNDLE group, so the browser had no candidate to check; the candidates now sit on the first section of the BUNDLE group. Video-first offers, which the reference player sends, were not affected.
 
 ### Changed — tst-webrtc (BREAKING)
 
@@ -387,6 +388,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The placement oracle excuses at most two sender-report excursions per run, plus one per hundred expected generations or part of a hundred; further excusable excursions fail the placement check.
 - `soak.sh` defaults to the 48-hour release soak with 300-s publisher generations (576 per run) and a 4-h SRT outage period (12 windows per run), raising the event counts the 0.9.0 run's 72 hours gave; `release-vm-soak.sh` follows, and a rail ties the defaults to the archive table.
 - `soak.sh` and `stress.sh` stamp the host architecture (`soak-config.json`, `provenance.json`); `release-vm-setup.sh` installs Chromium on aarch64 for the whep leg.
+- The interop matrix adds `whep/chromium-audio-first`: headless Chrome plays an audio-dropping MP2T mount with an offer whose audio section comes first, and fails unless that offer really is audio-first. The full census is 162 cells.
 
 ### Fixed — tst-interop
 

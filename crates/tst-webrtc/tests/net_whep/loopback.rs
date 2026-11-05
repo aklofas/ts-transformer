@@ -623,6 +623,47 @@ fn an_offer_with_a_mid_less_media_line_is_400_and_the_server_keeps_serving() {
     assert_eq!(srv.stats().sessions_total, 1);
 }
 
+/// Chrome's offer with its audio section first, the order a player that
+/// adds audio before video sends.
+const AUDIO_FIRST_OFFER: &str = include_str!("../fixtures/offers/chrome-157-audio-first.sdp");
+
+/// On a mount that drops audio the audio section is rejected, so the
+/// answer's candidates must sit on the first section of its BUNDLE group:
+/// a browser checks no candidate of a rejected section.
+#[test]
+fn an_audio_first_offer_on_a_dropping_mount_gets_its_candidates_on_the_bundle_tag() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let (status, _, answer) = whep_post(srv.local_addr(), "/cam", AUDIO_FIRST_OFFER, None);
+    assert_eq!(status, 201, "{answer}");
+    let tag = answer
+        .lines()
+        .find_map(|l| l.strip_prefix("a=group:BUNDLE "))
+        .and_then(|mids| mids.split_whitespace().next())
+        .expect("a BUNDLE group")
+        .to_string();
+    let mut tagged = 0;
+    for section in answer.split("\r\nm=").skip(1) {
+        let mid = section
+            .lines()
+            .find_map(|l| l.strip_prefix("a=mid:"))
+            .expect("a mid")
+            .trim_end();
+        let candidates = section
+            .lines()
+            .filter(|l| l.starts_with("a=candidate:"))
+            .count();
+        if section.starts_with("audio 0 ") {
+            assert_eq!(candidates, 0, "the rejected audio section:\nm={section}");
+        }
+        if mid == tag {
+            assert!(candidates > 0, "the BUNDLE tag {tag}:\nm={section}");
+            tagged += 1;
+        }
+    }
+    assert_eq!(tagged, 1, "{answer}");
+}
+
 /// A panic while a session is being initialised, after str0m accepted the
 /// offer, refuses that offer with 500 and leaves the media thread, its
 /// connected viewers and the session count alone.
