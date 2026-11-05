@@ -15,7 +15,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --stdout) STDOUT=1; shift ;;
     --arm)
-      ARM=${2:?--arm needs an arm64 archive dir}
+      [ $# -ge 2 ] || { echo "usage: --arm <arm64 archive dir>" >&2; exit 2; }
+      ARM=$2
       ARGS+=(--arm-results "$ARM/stress-results.json" --arm-provenance "$ARM/provenance.json")
       shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;

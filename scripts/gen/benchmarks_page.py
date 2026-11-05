@@ -405,7 +405,10 @@ def main(argv=None) -> int:
         with open(args.arm_results, encoding="utf-8") as fh:
             arm_results = json.load(fh)
         with open(args.arm_provenance, encoding="utf-8") as fh:
-            arm = (arm_results, json.load(fh))
+            arm_provenance = json.load(fh)
+        if arm_provenance.get("host", {}).get("arch") != "aarch64":
+            ap.error("--arm-provenance must record host.arch = aarch64; %s does not" % args.arm_provenance)
+        arm = (arm_results, arm_provenance)
 
     md = render(results, provenance, arm)
     if args.update:
