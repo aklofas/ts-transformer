@@ -922,7 +922,7 @@ def render_exit_criteria(rec, archives, census, required_s):
     criteria from the committed record's release gate and the archive table, the
     ARM64 subset from the interop censuses."""
     gate = (rec or {}).get("release_vm") or {}
-    soaks = [a for a in archives if a["kind"] == "soak"]
+    soaks = [a for a in archives if a["kind"] == "soak" and a.get("arch") in (None, "x86_64")]
     long = [a for a in _by_date(soaks) if (a.get("expected_duration_s") or 0) >= (required_s or 0)]
     newest_soak = (long or _by_date(soaks) or [None])[0]
     newest_corpus = _newest([a for a in archives if a["kind"] == "corpus"])
