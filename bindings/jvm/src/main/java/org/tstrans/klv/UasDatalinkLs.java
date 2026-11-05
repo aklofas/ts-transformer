@@ -300,7 +300,10 @@ import java.util.Optional;
  *     §6 future-proof skip rule. An entry whose tag a typed field owns is dropped on encode: the
  *     typed field wins.
  * @param fieldErrors Per-field decode failures collected by a lenient decode; a strict decode
- *     returns an error instead. A parser diagnostic: it is not re-encoded.
+ *     returns an error instead. A parser diagnostic: it is not re-encoded. A zero-length optional
+ *     item is "unknown" (ST 0107.5 §6.3.4): the field stays unset and no error is recorded. When a
+ *     single-use tag repeats, the last occurrence wins and earlier ones leave no trace in the typed
+ *     field, {@code sentinelTags} or {@code imapbSpecials}.
  * @param sentinelTags Tags whose wire value was the INT_MIN sentinel for their signed linear
  *     mapping. INT_MIN is a spec-defined signal (not an error), so the corresponding typed field is
  *     left as {@code None} and the tag is recorded here instead of in {@code fieldErrors}.

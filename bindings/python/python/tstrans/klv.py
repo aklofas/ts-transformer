@@ -1502,7 +1502,11 @@ class UasDatalinkLs:
       a typed field owns is dropped on encode: the typed field wins.
     - ``field_errors`` — Per-field decode failures collected by a lenient
       decode; a strict decode returns an error instead. A parser diagnostic:
-      it is not re-encoded.
+      it is not re-encoded. A zero-length optional item is "unknown" (ST
+      0107.5 §6.3.4): the field stays unset and no error is recorded. When a
+      single-use tag repeats, the last occurrence wins and earlier ones
+      leave no trace in the typed field, ``sentinel_tags`` or
+      ``imapb_specials``.
     - ``sentinel_tags`` — Tags whose wire value was the INT_MIN sentinel for
       their signed linear mapping. INT_MIN is a spec-defined signal (not an
       error), so the corresponding typed field is left as ``None`` and the
