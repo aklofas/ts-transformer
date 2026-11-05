@@ -4,8 +4,8 @@
 
 use std::time::Duration;
 
-use tst_core::transport::RecvTransport;
-use tst_rtp::RtspServer;
+use tst_core::transport::{RecvTransport, TransportError};
+use tst_rtp::{PublishMountOptions, RtspServer, RtspServerBuilder};
 
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
@@ -74,5 +74,91 @@ fn publisher_dropping_its_connection_frees_the_mount() {
     // and the mount takes a new publisher
     let mut p2 = publish(port, &[], 0xD);
     assert_eq!(p2.teardown("/pub"), 200);
+    server.stop().ok();
+}
+
+fn server_with_default(end_on_exit: bool) -> RtspServer {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.end_publish_mount_on_publisher_exit(end_on_exit);
+    b.build().unwrap()
+}
+
+/// Read the `n` bundles, then expect the transport to end with `Closed`.
+fn drain_then_closed(app: &mut tst_rtp::RtpRecvTransport, bundles: &[Vec<u8>]) {
+    let mut buf = vec![0u8; 65536];
+    for (i, bundle) in bundles.iter().enumerate() {
+        let n = app
+            .recv_bytes(&mut buf)
+            .unwrap_or_else(|e| panic!("bundle {i}: {e:?}"));
+        assert_eq!(&buf[..n], &bundle[..], "bundle {i}");
+    }
+    let r = app.recv_bytes(&mut buf);
+    assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
+}
+
+#[test]
+fn publisher_exit_ends_the_app_transport_when_the_mount_opts_in() {
+    let server = server_with_default(false);
+    let mount = server
+        .add_publish_mount_with(
+            "/pub",
+            PublishMountOptions::new().end_on_publisher_exit(true),
+        )
+        .unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut app = mount.clone().into_recv_transport().unwrap();
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+
+    let bundles = ts_fixture_packets(3);
+    let mut a = publish(port, &bundles, 0xA);
+    assert_eq!(a.teardown("/pub"), 200);
+    drain_then_closed(&mut app, &bundles);
+
+    let mut p = RawPublisher::connect(port);
+    assert_ne!(p.announce("/pub", SDP_MP2T), 200, "a closed mount refuses");
+    server.remove_mount("/pub").unwrap();
+    server.stop().ok();
+}
+
+#[test]
+fn a_mount_option_overrides_the_server_default_both_ways() {
+    // Default ON, mount opts out: the app idles and a second publisher feeds it.
+    let server = server_with_default(true);
+    let mount = server
+        .add_publish_mount_with(
+            "/pub",
+            PublishMountOptions::new().end_on_publisher_exit(false),
+        )
+        .unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut app = mount.clone().into_recv_transport().unwrap();
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+    let bundles = ts_fixture_packets(4);
+    let mut a = publish(port, &bundles[..2], 0xA);
+    assert_eq!(a.teardown("/pub"), 200);
+    let mut b = publish(port, &bundles[2..], 0xB);
+    let mut buf = vec![0u8; 65536];
+    for (i, bundle) in bundles.iter().enumerate() {
+        let n = app
+            .recv_bytes(&mut buf)
+            .unwrap_or_else(|e| panic!("{i}: {e:?}"));
+        assert_eq!(&buf[..n], &bundle[..], "bundle {i}");
+    }
+    assert_eq!(b.teardown("/pub"), 200);
+    server.stop().ok();
+
+    // Default ON, plain add_publish_mount: inherits and ends.
+    let server = server_with_default(true);
+    let mount = server.add_publish_mount("/pub").unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut app = mount.into_recv_transport().unwrap();
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+    let bundles = ts_fixture_packets(2);
+    let mut a = publish(port, &bundles, 0xC);
+    assert_eq!(a.teardown("/pub"), 200);
+    drain_then_closed(&mut app, &bundles);
     server.stop().ok();
 }

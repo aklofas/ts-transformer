@@ -236,6 +236,47 @@ class RtspPublishMountTest {
 
     @Test
     @Timeout(30)
+    void publisherExitEndsTheReceiverWhenTheMountOrServerDefaultSaysSo() throws Exception {
+        assumeLinux();
+        // {server default, per-mount option (null = inherit), expect end}
+        Object[][] cases = {
+            {false, true, true}, {false, null, false}, {false, false, false},
+            {true, null, true}, {true, true, true}, {true, false, false},
+        };
+        for (Object[] c : cases) {
+            boolean serverDefault = (Boolean) c[0];
+            Boolean opt = (Boolean) c[1];
+            boolean expectEnd = (Boolean) c[2];
+            try (RtspServer server = RtspServer.start(RtspServerConfig.builder()
+                    .bindAddr("127.0.0.1:0").gracefulShutdownDrainMs(50)
+                    .endPublishMountOnPublisherExit(serverDefault).build());
+                 PublishMount mount = opt == null
+                    ? server.addPublishMount("/cam")
+                    : server.addPublishMount("/cam", PublishMountOptions.builder()
+                        .endOnPublisherExit(opt).build());
+                 DemuxReceiver rx = mount.intoDemuxReceiver()) {
+                Parked<DemuxEvent> parked = park(rx::recvEvent);
+                try (RawPublisher pub = new RawPublisher(port(server), "/cam")) {
+                    assertEquals(200, pub.teardown());
+                    assertTrue(waitFor(() -> mount.generation() == 1));
+                    String label = "default=" + serverDefault + " option=" + opt;
+                    if (expectEnd) {
+                        assertTrue(parked.join(), label + ": receiver did not end");
+                        assertNull(parked.error.get(), label);
+                        assertNull(parked.value.get(), label);
+                        assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason(), label);
+                    } else {
+                        assertFalse(parked.join(300), label + ": receiver ended");
+                        mount.cancel();
+                        parked.join();
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void methodsAfterStopThrowServer() throws Exception {
         assumeLinux();
         try (RtspServer server = start(false);

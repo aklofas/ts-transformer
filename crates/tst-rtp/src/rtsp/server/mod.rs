@@ -690,10 +690,27 @@ impl RtspServer {
         &self,
         path: &str,
     ) -> Result<crate::rtsp::server::publish::PublishMountHandle, RtspServerError> {
+        self.add_publish_mount_with(
+            path,
+            crate::rtsp::server::publish::PublishMountOptions::default(),
+        )
+    }
+
+    /// [`Self::add_publish_mount`] with per-mount options; unset options
+    /// inherit the builder's server-wide defaults.
+    ///
+    /// # Errors
+    /// As [`Self::add_publish_mount`].
+    pub fn add_publish_mount_with(
+        &self,
+        path: &str,
+        options: crate::rtsp::server::publish::PublishMountOptions,
+    ) -> Result<crate::rtsp::server::publish::PublishMountHandle, RtspServerError> {
         self.register_mount(path, || {
-            let st = crate::rtsp::server::publish::mount::PublishMountState::new(
+            let st = crate::rtsp::server::publish::mount::PublishMountState::new_with_exit(
                 path,
                 self.state.builder.fanout_capacity,
+                options.resolve(self.state.builder.end_publish_mount_on_publisher_exit),
                 self.state.publish_counters.clone(),
             );
             Ok((

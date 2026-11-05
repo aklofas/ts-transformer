@@ -60,13 +60,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 28` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 29` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 28
+#define TST_ABI_VERSION_MINOR 29
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -10218,6 +10218,26 @@ void tst_rtsp_server_builder_auth_digest_sha256(struct TstRtspServerBuilder *bui
  * - `addr` must be a valid, NUL-terminated C string valid for this call.
  */
  void tst_rtsp_server_builder_bind(struct TstRtspServerBuilder *builder, const char *addr);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Set the server-wide default for publish mounts: when `end` is true, a
+ * mount's receiver ends (`TST_E_CLOSED` / end of stream) as soon as its
+ * publisher leaves, and the mount refuses later publishers. Default false:
+ * the mount idles for the next publisher. On-demand mounts follow it.
+ *
+ * Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+ * sets last-error `TST_E_INVALID_CONFIG`.
+ *
+ * # Safety
+ *
+ * `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+ * yet freed or consumed.
+ */
+
+void tst_rtsp_server_builder_end_publish_mount_on_publisher_exit(struct TstRtspServerBuilder *builder,
+                                                                 bool end);
 #endif
 
 #if defined(TST_HAS_RTP)

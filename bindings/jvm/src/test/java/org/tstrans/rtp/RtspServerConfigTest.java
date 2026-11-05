@@ -18,6 +18,23 @@ class RtspServerConfigTest {
         assertTrue(c.tlsCert().isEmpty());
         assertTrue(c.tlsKey().isEmpty());
         assertFalse(c.acceptUnregisteredPublishers());
+        assertFalse(c.endPublishMountOnPublisherExit());
+    }
+
+    @Test
+    void endPublishMountOnPublisherExitRoundTrips() {
+        RtspServerConfig on = RtspServerConfig.builder().endPublishMountOnPublisherExit(true).build();
+        assertTrue(on.endPublishMountOnPublisherExit());
+        assertTrue(on.toString().contains("endPublishMountOnPublisherExit=true"));
+    }
+
+    @Test
+    void publishMountOptionsInheritByDefault() {
+        assertTrue(PublishMountOptions.defaults().endOnPublisherExit().isEmpty());
+        assertEquals(java.util.Optional.of(true),
+            PublishMountOptions.builder().endOnPublisherExit(true).build().endOnPublisherExit());
+        assertEquals(java.util.Optional.of(false),
+            PublishMountOptions.builder().endOnPublisherExit(false).build().endOnPublisherExit());
     }
 
     @Test

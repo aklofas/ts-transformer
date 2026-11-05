@@ -759,6 +759,7 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_md5(&mut s
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_sha256(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::build(self) -> core::result::Result<tst_rtp::rtsp::server::RtspServer, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::default_mount_rule(&mut self, tst_rtp::rtsp::server::mount_rules::MountRule) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::end_publish_mount_on_publisher_exit(&mut self, bool) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::fanout_capacity(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drain(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self
@@ -1035,6 +1036,23 @@ impl core::marker::Unpin for tst_rtp::PublishMountHandle
 impl core::marker::UnsafeUnpin for tst_rtp::PublishMountHandle
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublishMountHandle
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublishMountHandle
+#[non_exhaustive] pub struct tst_rtp::rtsp::server::publish::PublishMountOptions
+impl tst_rtp::PublishMountOptions
+pub fn tst_rtp::PublishMountOptions::end_on_publisher_exit(self, bool) -> Self
+pub fn tst_rtp::PublishMountOptions::new() -> Self
+impl core::clone::Clone for tst_rtp::PublishMountOptions
+pub fn tst_rtp::PublishMountOptions::clone(&self) -> tst_rtp::PublishMountOptions
+impl core::default::Default for tst_rtp::PublishMountOptions
+pub fn tst_rtp::PublishMountOptions::default() -> tst_rtp::PublishMountOptions
+impl core::fmt::Debug for tst_rtp::PublishMountOptions
+pub fn tst_rtp::PublishMountOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::PublishMountOptions
+impl core::marker::Send for tst_rtp::PublishMountOptions
+impl core::marker::Sync for tst_rtp::PublishMountOptions
+impl core::marker::Unpin for tst_rtp::PublishMountOptions
+impl core::marker::UnsafeUnpin for tst_rtp::PublishMountOptions
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublishMountOptions
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublishMountOptions
 #[non_exhaustive] pub struct tst_rtp::rtsp::server::publish::PublishMountStats
 pub tst_rtp::rtsp::server::publish::PublishMountStats::alignment: tst_rtp::ClockAlignment
 pub tst_rtp::rtsp::server::publish::PublishMountStats::alignment_steps: u64
@@ -1087,6 +1105,7 @@ impl tst_rtp::rtsp::server::RtspServer
 pub fn tst_rtp::rtsp::server::RtspServer::add_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::add_multicast_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig, &str) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::add_publish_mount(&self, &str) -> core::result::Result<tst_rtp::PublishMountHandle, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::RtspServer::add_publish_mount_with(&self, &str, tst_rtp::PublishMountOptions) -> core::result::Result<tst_rtp::PublishMountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::bind(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::rtsp::server::cancel::RtspServerCancelHandle
@@ -2163,6 +2182,23 @@ impl core::marker::Unpin for tst_rtp::PublishMountHandle
 impl core::marker::UnsafeUnpin for tst_rtp::PublishMountHandle
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublishMountHandle
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublishMountHandle
+#[non_exhaustive] pub struct tst_rtp::PublishMountOptions
+impl tst_rtp::PublishMountOptions
+pub fn tst_rtp::PublishMountOptions::end_on_publisher_exit(self, bool) -> Self
+pub fn tst_rtp::PublishMountOptions::new() -> Self
+impl core::clone::Clone for tst_rtp::PublishMountOptions
+pub fn tst_rtp::PublishMountOptions::clone(&self) -> tst_rtp::PublishMountOptions
+impl core::default::Default for tst_rtp::PublishMountOptions
+pub fn tst_rtp::PublishMountOptions::default() -> tst_rtp::PublishMountOptions
+impl core::fmt::Debug for tst_rtp::PublishMountOptions
+pub fn tst_rtp::PublishMountOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::PublishMountOptions
+impl core::marker::Send for tst_rtp::PublishMountOptions
+impl core::marker::Sync for tst_rtp::PublishMountOptions
+impl core::marker::Unpin for tst_rtp::PublishMountOptions
+impl core::marker::UnsafeUnpin for tst_rtp::PublishMountOptions
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublishMountOptions
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublishMountOptions
 #[non_exhaustive] pub struct tst_rtp::PublishMountStats
 pub tst_rtp::PublishMountStats::alignment: tst_rtp::ClockAlignment
 pub tst_rtp::PublishMountStats::alignment_steps: u64
@@ -2505,6 +2541,7 @@ impl tst_rtp::rtsp::server::RtspServer
 pub fn tst_rtp::rtsp::server::RtspServer::add_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::add_multicast_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig, &str) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::add_publish_mount(&self, &str) -> core::result::Result<tst_rtp::PublishMountHandle, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::RtspServer::add_publish_mount_with(&self, &str, tst_rtp::PublishMountOptions) -> core::result::Result<tst_rtp::PublishMountHandle, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::bind(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::bind_with(tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::RtspServer::cancel_handle(&self) -> tst_rtp::rtsp::server::cancel::RtspServerCancelHandle
@@ -2534,6 +2571,7 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_md5(&mut s
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_sha256(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::build(self) -> core::result::Result<tst_rtp::rtsp::server::RtspServer, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::default_mount_rule(&mut self, tst_rtp::rtsp::server::mount_rules::MountRule) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::end_publish_mount_on_publisher_exit(&mut self, bool) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::fanout_capacity(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drain(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self

@@ -432,7 +432,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **28** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **29** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -734,6 +734,11 @@ baseline (by design)" for the full rationale.
       receiver's demuxer has been fed since open, read without waiting for a
       thread parked in the receive. No existing symbol, layout, enum value or
       error code changed.
+    - `29` — new symbols `tst_rtsp_server_builder_end_publish_mount_on_publisher_exit`
+      (server-wide default: a publish mount's receiver ends when its publisher
+      leaves). Further RTSP-server builder setters added under this same minor
+      are listed in this row.
+      No existing symbol, layout, enum value or error code changed.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 

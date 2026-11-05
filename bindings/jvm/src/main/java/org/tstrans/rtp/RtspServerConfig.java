@@ -28,6 +28,7 @@ public final class RtspServerConfig {
     private final String tlsCert;   // nullable; PEM cert-chain FILE PATH
     private final String tlsKey;    // nullable; PEM private-key FILE PATH
     private final boolean acceptUnregisteredPublishers;
+    private final boolean endPublishMountOnPublisherExit;
     private final MountRule defaultMountRule;  // nullable
 
     private RtspServerConfig(Builder b) {
@@ -40,6 +41,7 @@ public final class RtspServerConfig {
         this.tlsCert = b.tlsCert;
         this.tlsKey = b.tlsKey;
         this.acceptUnregisteredPublishers = b.acceptUnregisteredPublishers;
+        this.endPublishMountOnPublisherExit = b.endPublishMountOnPublisherExit;
         this.defaultMountRule = b.defaultMountRule;
     }
 
@@ -74,6 +76,14 @@ public final class RtspServerConfig {
     public boolean acceptUnregisteredPublishers() { return acceptUnregisteredPublishers; }
 
     /**
+     * Server-wide default for publish mounts: whether a mount's receiver ends
+     * ({@code END_OF_STREAM}) when its publisher leaves. Default {@code false} (the mount
+     * idles for the next publisher). {@link PublishMountOptions} overrides it per mount;
+     * on-demand mounts always follow it.
+     */
+    public boolean endPublishMountOnPublisherExit() { return endPublishMountOnPublisherExit; }
+
+    /**
      * The rule for mount paths no {@link MountRules} entry names, if set. Without one the
      * default is {@link MountPolicy#inherit()} for both directions.
      */
@@ -89,6 +99,7 @@ public final class RtspServerConfig {
             + ", tlsCert=" + (tlsCert != null ? tlsCert : "None")
             + ", tlsKey=" + (tlsKey != null ? tlsKey : "None")
             + ", acceptUnregisteredPublishers=" + acceptUnregisteredPublishers
+            + ", endPublishMountOnPublisherExit=" + endPublishMountOnPublisherExit
             + ", defaultMountRule=" + (defaultMountRule != null ? defaultMountRule : "None") + ")";
     }
 
@@ -103,6 +114,7 @@ public final class RtspServerConfig {
         private String tlsCert;
         private String tlsKey;
         private boolean acceptUnregisteredPublishers;
+        private boolean endPublishMountOnPublisherExit;
         private MountRule defaultMountRule;
 
         private Builder() {}
@@ -144,6 +156,16 @@ public final class RtspServerConfig {
          */
         public Builder acceptUnregisteredPublishers(boolean v) {
             this.acceptUnregisteredPublishers = v;
+            return this;
+        }
+
+        /**
+         * Server-wide default: end a publish mount's receiver when its publisher leaves,
+         * and refuse later publishers on that mount. Default {@code false}. See {@link
+         * RtspServerConfig#endPublishMountOnPublisherExit()}.
+         */
+        public Builder endPublishMountOnPublisherExit(boolean v) {
+            this.endPublishMountOnPublisherExit = v;
             return this;
         }
 

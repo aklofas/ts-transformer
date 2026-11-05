@@ -228,9 +228,10 @@ fn create_on_demand_mount(
         );
         return None;
     }
-    let m = PublishMountState::new_on_demand(
+    let m = PublishMountState::new_on_demand_with_exit(
         path,
         state.builder.fanout_capacity,
+        state.builder.end_publish_mount_on_publisher_exit,
         state.publish_counters.clone(),
     );
     // A fresh mount's slot is open; `?` only guards the impossible case.

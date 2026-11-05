@@ -351,6 +351,29 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_accept_unregistered_publishers(
     });
 }
 
+/// Set the server-wide default for publish mounts: when `end` is true, a
+/// mount's receiver ends (`TST_E_CLOSED` / end of stream) as soon as its
+/// publisher leaves, and the mount refuses later publishers. Default false:
+/// the mount idles for the next publisher. On-demand mounts follow it.
+///
+/// Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+/// sets last-error `TST_E_INVALID_CONFIG`.
+///
+/// # Safety
+///
+/// `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+/// yet freed or consumed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtsp_server_builder_end_publish_mount_on_publisher_exit(
+    builder: *mut TstRtspServerBuilder,
+    end: bool,
+) {
+    ffi_catch((), || match unsafe { builder.as_mut() } {
+        Some(b) => b.end_publish_mount_on_publisher_exit = end,
+        None => set_last_error(TstError::InvalidConfig, "builder is null"),
+    });
+}
+
 /// Set the session timeout in seconds.
 ///
 /// The server advertises this value to clients in the `Session:

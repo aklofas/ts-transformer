@@ -792,7 +792,7 @@ jobs:
           # 203->207 (2026-10-19): +tst-webrtc stats::{MountStats, ServerStats, SessionStats, IceState}.
           # 219->238 (2026-11-03): +11 growable event, policy and stats types, +MountRule, RtcpStats, HlsMode, WhepUrl and the hidden WHEP HTTP seam types.
           # 238->241 (2026-11-03): +MuxerStats, DemuxerStats, PairerStats.
-          BASELINE=241
+          BASELINE=242
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2

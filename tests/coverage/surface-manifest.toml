@@ -4063,6 +4063,51 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::RtspServer::add_publish_mount_with"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
+bindings = ["c:deferred", "python:RtspServer.add_publish_mount", "java:org.tstrans.rtp.RtspServer.addPublishMount", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PublishMountOptions"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
+bindings = ["c:deferred", "python:deferred", "java:org.tstrans.rtp.PublishMountOptions", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PublishMountOptions::new"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
+bindings = ["c:deferred", "python:deferred", "java:org.tstrans.rtp.PublishMountOptions.builder", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PublishMountOptions::end_on_publisher_exit"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
+bindings = ["c:deferred", "python:RtspServer.add_publish_mount", "java:org.tstrans.rtp.PublishMountOptions.Builder.endOnPublisherExit", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::end_publish_mount_on_publisher_exit"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/republish.rs"]
+bindings = ["c:tst_rtsp_server_builder_end_publish_mount_on_publisher_exit", "python:RtspServerConfig.end_publish_mount_on_publisher_exit", "java:org.tstrans.rtp.RtspServerConfig.Builder.endPublishMountOnPublisherExit", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::accept_unregistered_publishers"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/on_demand.rs"]
 bindings = ["c:tst_rtsp_server_builder_accept_unregistered_publishers", "python:RtspServerConfig.accept_unregistered_publishers", "java:org.tstrans.rtp.RtspServerConfig.Builder.acceptUnregisteredPublishers", "swift:deferred", "kotlin:deferred"]

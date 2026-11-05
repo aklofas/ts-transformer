@@ -342,6 +342,65 @@ def test_cancel_beats_events_already_queued():
             rx.close()
 
 
+def test_config_end_publish_mount_on_publisher_exit_default_and_type():
+    assert RtspServerConfig().end_publish_mount_on_publisher_exit is False
+    assert RtspServerConfig(
+        end_publish_mount_on_publisher_exit=True
+    ).end_publish_mount_on_publisher_exit
+    with pytest.raises(TypeError, match="end_publish_mount_on_publisher_exit"):
+        RtspServerConfig(end_publish_mount_on_publisher_exit=1)  # type: ignore[arg-type]
+
+
+def test_add_publish_mount_end_on_publisher_exit_rejects_non_bool():
+    with _start() as server:
+        with pytest.raises(TypeError):
+            server.add_publish_mount("/cam", end_on_publisher_exit="yes")  # type: ignore[arg-type]
+        server.add_publish_mount("/ok", end_on_publisher_exit=None)
+
+
+@pytest.mark.parametrize(
+    "server_default,option,expect_end",
+    [
+        (False, True, True),
+        (False, None, False),
+        (False, False, False),
+        (True, None, True),
+        (True, True, True),
+        (True, False, False),
+    ],
+)
+def test_publisher_exit_ends_the_receiver_per_mount_or_server_default(
+    server_default, option, expect_end
+):
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0",
+        graceful_shutdown_drain_ms=50,
+        end_publish_mount_on_publisher_exit=server_default,
+    )
+    with RtspServer.start(cfg) as server:
+        if option is None:
+            mount = server.add_publish_mount("/cam")
+        else:
+            mount = server.add_publish_mount("/cam", end_on_publisher_exit=option)
+        rx = mount.into_demux_receiver()
+        try:
+            t, out = _next_in_thread(rx)
+            pub = RawPublisher(_port(server), "/cam")
+            pub.close()  # dropping the connection ends the publisher
+            assert _wait_for(lambda: mount.generation() == 1)
+            t.join(JOIN_S if expect_end else 0.5)
+            if expect_end:
+                assert not t.is_alive(), "receiver did not end"
+                assert isinstance(out.get("exc"), StopIteration), out
+                assert rx.end_reason() == EndReason.CLEAN_TEARDOWN
+            else:
+                assert t.is_alive(), f"receiver ended: {out}"
+                mount.cancel()
+                t.join(JOIN_S)
+        finally:
+            rx.close()
+
+
 def test_remove_mount_ends_a_parked_receiver_with_end_of_stream():
     with _start() as server:
         mount = server.add_publish_mount("/cam")

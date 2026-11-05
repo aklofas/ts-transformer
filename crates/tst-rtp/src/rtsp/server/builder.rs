@@ -72,6 +72,7 @@ pub struct RtspServerBuilder {
     pub(crate) fanout_capacity: usize,
     pub(crate) graceful_shutdown_drain: Duration,
     pub(crate) accept_unregistered_publishers: bool,
+    pub(crate) end_publish_mount_on_publisher_exit: bool,
     #[cfg(feature = "rtsp-server-tls")]
     pub(crate) tls_cert_path: Option<PathBuf>,
     #[cfg(feature = "rtsp-server-tls")]
@@ -111,6 +112,7 @@ impl RtspServerBuilder {
             fanout_capacity: 256,
             graceful_shutdown_drain: Duration::from_millis(100),
             accept_unregistered_publishers: false,
+            end_publish_mount_on_publisher_exit: false,
             #[cfg(feature = "rtsp-server-tls")]
             tls_cert_path: None,
             #[cfg(feature = "rtsp-server-tls")]
@@ -241,6 +243,17 @@ impl RtspServerBuilder {
     /// publishers, before turning this on for a reachable port.
     pub fn accept_unregistered_publishers(&mut self, yes: bool) -> &mut Self {
         self.accept_unregistered_publishers = yes;
+        self
+    }
+
+    /// Server-wide default for publish mounts: when `yes`, a mount's
+    /// application transport ends (reads `Closed`) as soon as its
+    /// publisher leaves, and the mount refuses later publishers. Default
+    /// `false`: the mount idles for the next publisher. A mount added with
+    /// [`RtspServer::add_publish_mount_with`](crate::RtspServer::add_publish_mount_with)
+    /// can override this; on-demand mounts always inherit it.
+    pub fn end_publish_mount_on_publisher_exit(&mut self, yes: bool) -> &mut Self {
+        self.end_publish_mount_on_publisher_exit = yes;
         self
     }
 
