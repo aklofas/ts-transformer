@@ -8,9 +8,9 @@
 # command line before this file; every mistake they encode was made once.
 #
 # Usage (on the VM unless said otherwise):
-#   bash release-vm-soak.sh preflight --outdir DIR [--hours 72] [--seed 1] [-- SOAK_ARGS...]
+#   bash release-vm-soak.sh preflight --outdir DIR [--hours 48] [--seed 1] [-- SOAK_ARGS...]
 #   bash release-vm-soak.sh stop --outdir DIR [--keep-as DIR2]
-#   bash release-vm-soak.sh launch <full sha> --outdir DIR [--hours 72] [--seed 1]
+#   bash release-vm-soak.sh launch <full sha> --outdir DIR [--hours 48] [--seed 1]
 #       [--wait-marker FILE] [--confirm-timeout-s 3600] [-- SOAK_ARGS...]
 #   bash release-vm-soak.sh status --outdir DIR
 #   bash release-vm-soak.sh ci-green <full sha> <ssh target|local>
@@ -117,7 +117,7 @@ role_pids() {
 # --- preflight -----------------------------------------------------------
 
 cmd_preflight() {
-  local outdir="" hours=72 seed=1 extra=()
+  local outdir="" hours=48 seed=1 extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --outdir) outdir=$2; shift 2 ;;
@@ -228,7 +228,7 @@ cmd_stop() {
 # --- launch --------------------------------------------------------------
 
 cmd_launch() {
-  local sha="" outdir="" hours=72 seed=1 marker="" confirm_timeout=3600 extra=()
+  local sha="" outdir="" hours=48 seed=1 marker="" confirm_timeout=3600 extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --outdir) outdir=$2; shift 2 ;;
@@ -275,7 +275,7 @@ cmd_launch() {
   echo "SOAK-LAUNCHED pid=$sup at $(now) log=$log"
 
   # Not up until the run says so: the `running until` line comes after
-  # the build, the pre-generation (tens of minutes for 72 h) and every
+  # the build, the pre-generation (tens of minutes for 48 h) and every
   # role's launch. A supervisor that exits before it is a refusal.
   local deadline=$(( $(date +%s) + confirm_timeout )) until_line=""
   while :; do

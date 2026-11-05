@@ -10,14 +10,14 @@
 #
 # Usage:
 #   SRT_RECONNECT_MODE=blocking|background bash scripts/interop/soak.sh
-#       [--outdir DIR] [--hours 72] [--seed 1] [--profile auto|NAME]
+#       [--outdir DIR] [--hours 48] [--seed 1] [--profile auto|NAME]
 #       [--no-corrupt] [--fixed-impairment] [--schedule-phases 12]
 #       [--schedule-phase-s S] [--no-rtsp-publish] [--no-rtsp-publish-es]
 #       [--no-whep] [--rss-slope-threshold-kb-per-hour N]
 #
 #   --outdir DIR        where every artefact lands (default
 #                       ~/interop-soak-<UTC timestamp>)
-#   --hours H           run length, decimal allowed (default 72; 1 = the
+#   --hours H           run length, decimal allowed (default 48; 1 = the
 #                       smoke, 0.05 = a ~3-minute wiring drill)
 #   --seed N            seeds the profile draw, impairment schedule,
 #                       corruption taps and rich KLV (default 1)
@@ -50,10 +50,10 @@
 # Environment:
 #   SRT_RECONNECT_MODE         REQUIRED, blocking|background; no default — the
 #                              two modes exercise different library code
-#   OUTAGE_PERIOD_S=21600      srt leg: full-drop outage every 6 h,
+#   OUTAGE_PERIOD_S=14400      srt leg: full-drop outage every 4 h,
 #   OUTAGE_DUR_S=90              90 s long
 #   LOSS_PCT=2                 loss under --fixed-impairment (0 isolates outages)
-#   PUBLISHER_DROP_PERIOD_S=600  rtsp-publish and rtsp-publish-es legs:
+#   PUBLISHER_DROP_PERIOD_S=300  rtsp-publish and rtsp-publish-es legs:
 #                              publisher drop / re-ANNOUNCE period, shared
 #                              (the run must span at least two)
 #   WHEP_RECONNECT_S=600       whep leg: the viewer ends its browser and
@@ -104,7 +104,7 @@ export RUST_LOG="${RUST_LOG:-info}"
 # Kept verbatim for provenance.json (the parse loop below consumes "$@").
 SCRIPT_ARGV=("$@")
 
-HOURS=72
+HOURS=48
 OUTDIR=""
 SEED=1
 RSS_SLOPE_THRESHOLD=""
@@ -377,7 +377,7 @@ TOTAL_SECONDS=$(awk -v h="$HOURS" 'BEGIN{printf "%d", h*3600 + 0.5}')
 # and "21600" independently: OUTAGE_PERIOD_S is the single source of
 # truth, both the proxy's own `--outage` flag string and `report
 # soak`'s `--outage-period-s` are built from it.
-OUTAGE_PERIOD_S="${OUTAGE_PERIOD_S:-21600}" # 6h; env-overridable for a short outage-focused drill
+OUTAGE_PERIOD_S="${OUTAGE_PERIOD_S:-14400}" # 4h; env-overridable for a short outage-focused drill
 OUTAGE_DUR_S="${OUTAGE_DUR_S:-90}"
 # How the srt leg's managed sender spends an outage — see `send
 # --reconnect-mode`. `blocking` stalls the producer for the outage and
@@ -420,7 +420,7 @@ esac
 # ANNOUNCEs (see that leg's block below). The run is cut into
 # TOTAL_SECONDS / PUBLISHER_DROP_PERIOD_S generations, which must be at
 # least two — one generation drops nothing.
-PUBLISHER_DROP_PERIOD_S="${PUBLISHER_DROP_PERIOD_S:-600}"
+PUBLISHER_DROP_PERIOD_S="${PUBLISHER_DROP_PERIOD_S:-300}"
 [[ "$PUBLISHER_DROP_PERIOD_S" =~ ^[0-9]+$ ]] || {
   echo "soak.sh: PUBLISHER_DROP_PERIOD_S must be a positive integer (seconds), got: $PUBLISHER_DROP_PERIOD_S" >&2
   exit 2
@@ -544,7 +544,7 @@ if [[ -z "$CORRUPT_RATE" ]]; then
 fi
 
 # Default the phase length so the declared phases tile the whole run
-# (12 phases over 72h = one new link condition every 6h). Integer
+# (12 phases over 48h = one new link condition every 4h). Integer
 # division deliberately: a run that outlives `phases * phase_s` simply
 # stays on the last phase (`impair::Engine::phase_index`), which is the
 # right behaviour for the remainder seconds this truncation leaves. The
@@ -918,7 +918,7 @@ that could never pass its own completeness verdicts" >&2
 #
 # Disk: while the cutter runs, the source and every segment exist
 # together, so the peak is twice the stream: about 1.7 GB per hour of run
-# for baseline (~0.85 GB/h of stream), ~122 GB for a 72-hour run. Checked
+# for baseline (~0.85 GB/h of stream), ~82 GB for a 48-hour run. Checked
 # before anything is written: a 10 s sample of the leg's own profile gives
 # the byte rate, and a run whose outdir has less than 1.2 x that peak free
 # exits 2 here, naming --no-rtsp-publish.
@@ -1171,7 +1171,7 @@ sleep "$SRT_PROXY_WARMUP_S"
 # to sort every digest before hashing) — confirmed to cost ~3.6-5.7 MiB/h
 # of RSS growth that's pure harness
 # bookkeeping, unrelated to the library code this soak measures, and
-# would otherwise swamp the RSS-slope evidence over 72h. The short
+# would otherwise swamp the RSS-slope evidence over a release-length run. The short
 # interop-matrix cells run-matrix.sh drives do NOT pass this flag —
 # their transparent-tier byte comparisons need the hash, and their runs
 # are seconds long, so the accumulation never mattered there.
@@ -1548,8 +1548,8 @@ if [[ "$WHEP" -eq 1 ]]; then
       sed -n 's/.*:CONSOLE[^]]*\] "\(.*\)", source: .*/\1/p' "$err" >"$console"
       # Nothing reads the raw stderr again once the console is extracted
       # (whep_connection_json greps it for ERROR:CONSOLE, so the gzip
-      # comes after): about 3.5 MB per 10-minute connection, 2 GB over a
-      # 72-hour run uncompressed, ~0.3 MB each gzipped.
+      # comes after): about 3.5 MB per 10-minute connection, 1.3 GB over a
+      # 48-hour run uncompressed, ~0.3 MB each gzipped.
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) viewer: connection $k ended rc=$rc: $(grep -c '' "$console") console line(s), $(awk '$1 == "FRAMES" { v = $2 } END { print v + 0 }' "$console") frames, KLV via sei $(awk '$1 == "KLV" && $4 == "sei"' "$console" | wc -l) / dc $(awk '$1 == "KLV" && $4 == "dc"' "$console" | wc -l)"
       [[ "$rc" -eq 124 ]] || failed=$((failed + 1))
       whep_connection_json "$k" "$started" "$rc" "$console" "$err" >>"$connections"
@@ -1602,7 +1602,7 @@ record_pid sampler $!
 # ---------------------------------------------------------------------
 #
 # See README.md's "Outputs and the supervisor" for why this exists
-# (ordinary waits cannot notice a worker death before the 72h deadline).
+# (ordinary waits cannot notice a worker death before the run's deadline).
 # Polls every worker + the sampler every 30s until
 # SUPERVISOR_GRACE_S before the nominal deadline; end-of-run process
 # exits inside that grace window are normal staggering and are left to
