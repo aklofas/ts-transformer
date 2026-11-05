@@ -211,6 +211,10 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/soak-rss-default.sh
 
+      - name: Soak launcher defaults match the release soak's required duration
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/soak-release-defaults.sh
+
       - name: No stale relocated-away package paths
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/no-stale-relocated-paths.sh

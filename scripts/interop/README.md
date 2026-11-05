@@ -818,7 +818,7 @@ minutes); then poll for `soak-results.json`, or `pids/*.pid` plus `ps`:
 SRT_RECONNECT_MODE=background nohup bash scripts/interop/soak.sh --outdir ~/interop-soak-$(date +%F) --seed 1 &
 ```
 
-With the rtsp-publish leg on, a 72-hour run needs about 122 GB free in the
+With the rtsp-publish leg on, a 48-hour run needs about 82 GB free in the
 outdir at launch (about 1.7 GB per hour; exit 2 below 1.2 × that peak).
 `soak.sh --preflight-only` runs the build, the declaration's validation, the
 memory gate and that disk check and exits without generating or launching
@@ -887,7 +887,7 @@ launched with `--no-whep`, `--no-rtsp-publish` or `--no-rtsp-publish-es`
 still passes. The last stderr line of `report soak` prints
 `legs=srt, rist, ...`; copy those names into the run's row in
 `tests/coverage/evidence-archives.toml` as `legs = ["srt", "rist", ...]`.
-The release gate accepts a 72-hour soak only when its row lists all five:
+The release gate accepts a soak of at least the required duration (`[soak] required_duration_s` in `tests/coverage/evidence-archives.toml`, 172 800 s = 48 hours) only when its row lists all five:
 srt, rist, rtsp-publish, rtsp-publish-es and whep.
 
 The supervisor polls every worker every 30 s. A death more than
@@ -898,9 +898,7 @@ deaths are ordinary end-of-run staggering. The first 72-hour attempt lost
 both senders 14.5 h in and idled unnoticed for 12 h, which is why this
 exists.
 
-The RSS-slope gate defaults to 200 KiB/hour for runs of 24 h or more (the
-R38 release soak is planned at 48 h; the gate requires
-72 h today, as the 0.9.0 run was), pinned from the 2026-08-05 run: its
+The RSS-slope gate defaults to 200 KiB/hour for runs of 24 h or more (the release soak is 48 h from 0.9.1, ruling R38, with 300-s publisher generations and a 4-h outage period — 576 generations and 12 windows, more events than the 0.9.0 run's 72 h gave; warm-up is `min(1800 s, 0.1667 × duration)` = 30 min, so the post-warm-up slope window is ≈47.5 h), pinned from the 2026-08-05 run: its
 worst post-warm-up slope was 68.8 KiB/h, warm-up convergence to a ~176 MiB plateau, and every slope over its
 final 24 h was at most 18 KiB/h. Runs under 24 h stay provisional unless a
 threshold is passed, because under realistic AU sizes the senders take
@@ -925,7 +923,7 @@ it said it would.
 | `--no-rtsp-publish` | leg on | Runs without the `rtsp-publish` leg (no pre-generated segments on disk). |
 | `--no-rtsp-publish-es` | leg on | Runs without the `rtsp-publish-es` leg. With both publish flags, no GStreamer is needed. |
 | `--no-whep` | leg on | Runs without the `whep` leg (no browser needed). |
-| `PUBLISHER_DROP_PERIOD_S` | `600` | How often each publish leg's publisher session ends and a new one ANNOUNCEs. Both legs share it, so their publisher schedules coincide. The run must span at least two periods. |
+| `PUBLISHER_DROP_PERIOD_S` | `300` | How often each publish leg's publisher session ends and a new one ANNOUNCEs (576 generations in the release soak). Both legs share it, so their publisher schedules coincide. The run must span at least two periods. |
 | `WHEP_RECONNECT_S` | `600` | How often the whep leg's viewer ends its browser and starts a new one. The run must span at least two slots. |
 
 Corruption and rich ST 0601 KLV are **on by default** on both transport
@@ -1037,7 +1035,7 @@ them to cover several outage windows, or to take loss out of the picture.
 
 | variable | default | what it does |
 |---|---|---|
-| `OUTAGE_PERIOD_S` | `21600` | Seconds between the srt leg's outage windows. |
+| `OUTAGE_PERIOD_S` | `14400` | Seconds between the srt leg's outage windows (12 windows in the release soak). |
 | `OUTAGE_DUR_S` | `90` | Length of each window; must be shorter than the period. |
 | `LOSS_PCT` | `2` | The fixed loss level; used only with `--fixed-impairment`. |
 | `SRT_RECONNECT_MODE` | *(none — required)* | `blocking` or `background`: passed to the srt leg's sender as `send --managed --reconnect-mode`. The script refuses to launch without it (exit 2): the two modes exercise different library code, and the declared-vs-observed verdict below cannot catch a run that silently inherited a default, because its declaration would be wrong in the same way. |
@@ -1106,8 +1104,8 @@ restart cannot end the capture: `recv`'s 15 s no-data deadline only applies
 before its first event.
 
 The stream is generated before launch, and while it is cut the source and the
-segments exist together: about 1.7 GB of disk per hour of run, about 122 GB
-for 72 h. `soak.sh` measures a 10 s sample of the leg's profile and exits 2,
+segments exist together: about 1.7 GB of disk per hour of run, about 82 GB
+for 48 h. `soak.sh` measures a 10 s sample of the leg's profile and exits 2,
 naming `--no-rtsp-publish`, when the outdir has less than 1.2 times that peak
 free.
 
