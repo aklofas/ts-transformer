@@ -145,6 +145,93 @@ fn unbox_nullable_long(env: &mut Env, obj: &JObject) -> jni::errors::Result<Opti
     Ok(Some(v))
 }
 
+/// Split a URL into (before any `#fragment`, the fragment with its `#`).
+fn split_fragment(url: &str) -> (&str, &str) {
+    url.find('#').map_or((url, ""), |i| url.split_at(i))
+}
+
+/// True when the URL's query carries a `mode` key. The key is matched exactly,
+/// as the URL parser does.
+fn url_mode_key_present(url: &str) -> bool {
+    let (url, _) = split_fragment(url);
+    let Some((_, query)) = url.split_once('?') else {
+        return false;
+    };
+    query
+        .split('&')
+        .any(|kv| kv.split('=').next() == Some("mode"))
+}
+
+/// The URL with `mode=listener` appended to its query (before any fragment).
+fn with_listener_mode(url: &str) -> String {
+    let (base, fragment) = split_fragment(url);
+    let sep = match base.split_once('?') {
+        None => "?",
+        Some((_, q)) if q.is_empty() || q.ends_with('&') => "",
+        Some(_) => "&",
+    };
+    format!("{base}{sep}mode=listener{fragment}")
+}
+
+#[cfg(test)]
+mod url_mode_tests {
+    use super::{url_mode_key_present, with_listener_mode};
+
+    #[test]
+    fn detects_an_exact_mode_key() {
+        for u in [
+            "srt://:0?mode=listener",
+            "srt://:0?streamid=x&mode=listener",
+            "srt://:0?mode=listener&latency=120",
+        ] {
+            assert!(url_mode_key_present(u), "{u}");
+        }
+    }
+
+    #[test]
+    fn ignores_values_case_variants_and_fragments() {
+        for u in [
+            "srt://:0",
+            "srt://:0?",
+            "srt://:0?streamid=mode%3Dcaller",
+            "srt://:0?MODE=listener",
+            "srt://:0#mode=listener",
+        ] {
+            assert!(!url_mode_key_present(u), "{u}");
+        }
+    }
+
+    #[test]
+    fn appends_the_mode_without_an_empty_pair() {
+        assert_eq!(with_listener_mode("srt://h:0"), "srt://h:0?mode=listener");
+        assert_eq!(with_listener_mode("srt://h:0?"), "srt://h:0?mode=listener");
+        assert_eq!(
+            with_listener_mode("srt://h:0?a=1"),
+            "srt://h:0?a=1&mode=listener"
+        );
+        assert_eq!(
+            with_listener_mode("srt://h:0?a=1&"),
+            "srt://h:0?a=1&mode=listener"
+        );
+        assert_eq!(
+            with_listener_mode("srt://:0?MODE=listener"),
+            "srt://:0?MODE=listener&mode=listener"
+        );
+    }
+
+    #[test]
+    fn inserts_the_mode_before_a_fragment() {
+        assert_eq!(
+            with_listener_mode("srt://h:0#f"),
+            "srt://h:0?mode=listener#f"
+        );
+        assert_eq!(
+            with_listener_mode("srt://h:0?a=1#f"),
+            "srt://h:0?a=1&mode=listener#f"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helper: build SrtSocketConfig from knob args
 // ---------------------------------------------------------------------------
@@ -608,28 +695,6 @@ jni_native! {
 /// socket moves into the transport (obtain-before-move); `Owned` keeps it
 /// outside the slot, so `nCancelHandle` answers while a send is parked and
 /// `close()` cancels first.
-/// True when the URL's query carries a `mode` key (key compared case-insensitively).
-fn url_mode_key_present(url: &str) -> bool {
-    let Some((_, query)) = url.split_once('?') else {
-        return false;
-    };
-    query.split('&').any(|kv| {
-        kv.split('=')
-            .next()
-            .is_some_and(|k| k.eq_ignore_ascii_case("mode"))
-    })
-}
-
-/// The URL with `mode=listener` appended to its query.
-fn with_listener_mode(url: &str) -> String {
-    let sep = match url.split_once('?') {
-        None => "?",
-        Some((_, q)) if q.is_empty() || q.ends_with('&') => "",
-        Some(_) => "&",
-    };
-    format!("{url}{sep}mode=listener")
-}
-
 fn opened_send(socket: SrtSocket) -> Opened<Box<dyn Transport>> {
     let cancel: Arc<dyn TransportCancel> = Arc::new(socket.cancel_handle());
     Opened::new(Box::new(SrtTransport::new(socket)), cancel, Domain::Srt)
