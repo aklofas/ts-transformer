@@ -52,7 +52,8 @@ pub struct HlsConfig {
     /// [`HlsPublisher::local_addr`](crate::HlsPublisher::local_addr) is
     /// `None` and `finish_serving()` is refused.
     ///
-    /// Ignored when the `serve` feature is disabled (there is no server).
+    /// Without the `serve` feature no server starts either way; the field
+    /// still decides whether the TLS fields are validated.
     pub serve: bool,
     /// Filesystem directory where segments + playlist are written.
     /// Created if it doesn't exist; emptied of stale `segment_*.ts` /

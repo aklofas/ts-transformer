@@ -140,7 +140,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tst-hls
 
 - HLS segments and playlists are created with mode 0644 at most; a permissive umask (0002) in a group-readable output directory used to leave them writable by the group.
-- An empty `push_ts` on an HLS publisher (Rust, Python, JVM) is a no-op, as it already was in C. It used to open a segment file that stayed empty, and the next cut or `finish` listed it in the playlist as `#EXTINF:0.000`.
+- An empty `push_ts` on an HLS publisher (Rust, Python, JVM) opens no segment and writes nothing for the empty push. It used to open a segment file that stayed empty, and the next cut or `finish` listed it in the playlist as `#EXTINF:0.000`.
 
 ### Changed — tst-hls, tst-webrtc (BREAKING)
 
