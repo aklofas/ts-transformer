@@ -1939,8 +1939,10 @@ The surface:
 - `RtspServer.addPublishMount(path) -> PublishMount` registers a path up
   front. An ANNOUNCE to any other path answers `404`.
   `addPublishMount(path, PublishMountOptions)` ends that mount's transport
-  when its publisher leaves (the builder's `endPublishMountOnPublisherExit`
-  sets the server default); re-add the mount to accept a new publisher.
+  when a publisher that reached RECORD leaves (the builder's
+  `endPublishMountOnPublisherExit` sets the server default); remove the mount,
+  then add it again, to accept a new publisher. A closed on-demand mount
+  stays in the table, and counts toward the on-demand cap, until removed.
 - `RtspServerConfig.builder().publishIdleTimeoutMs(n)` ends a recording
   publisher's session after n ms without media. It is off by default.
 - `RtspServerConfig.builder().acceptUnregisteredPublishers(true)` lets an

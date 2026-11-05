@@ -354,8 +354,11 @@ def test_config_end_publish_mount_on_publisher_exit_default_and_type():
 def test_config_publish_idle_timeout_ms_accepts_none_or_positive_int():
     assert RtspServerConfig().publish_idle_timeout_ms is None
     assert RtspServerConfig(publish_idle_timeout_ms=1500).publish_idle_timeout_ms == 1500
-    for bad in (0, -1, 1.5, "1", True):
+    for bad in (0, -1):
         with pytest.raises(ValueError, match="publish_idle_timeout_ms"):
+            RtspServerConfig(publish_idle_timeout_ms=bad)
+    for bad in (1.5, "1", True):
+        with pytest.raises(TypeError, match="publish_idle_timeout_ms"):
             RtspServerConfig(publish_idle_timeout_ms=bad)  # type: ignore[arg-type]
 
 

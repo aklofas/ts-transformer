@@ -758,8 +758,8 @@ impl PyRtspServer {
     ///
     /// `end_on_publisher_exit` overrides the config's
     /// `end_publish_mount_on_publisher_exit` for this mount (`None`
-    /// inherits): when true, the mount's receiver ends as soon as its
-    /// publisher leaves.
+    /// inherits): when true, the mount's receiver ends as soon as a
+    /// publisher that reached RECORD leaves.
     #[pyo3(signature = (path, *, end_on_publisher_exit = None))]
     pub fn add_publish_mount(
         &self,

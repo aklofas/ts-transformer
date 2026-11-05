@@ -313,8 +313,8 @@ pub struct TstRtspServerBuilder {
     /// Whether an ANNOUNCE to an unregistered path creates a publish mount
     /// on demand. Default: false.
     pub(crate) accept_unregistered_publishers: bool,
-    /// Server-wide default: a publish mount's receiver ends when its
-    /// publisher leaves. Default: false.
+    /// Server-wide default: a publish mount's receiver ends when a
+    /// publisher that reached RECORD leaves. Default: false.
     pub(crate) end_publish_mount_on_publisher_exit: bool,
     /// Seconds without media that end a recording publisher; 0 = unset.
     pub(crate) publish_idle_timeout_secs: u32,

@@ -233,17 +233,22 @@ class RtspServerConfig:
 
     end_publish_mount_on_publisher_exit: bool = False
     """Server-wide default for publish mounts: when True, a mount's
-    receiver ends (end of stream) as soon as its publisher leaves, and the
-    mount refuses later publishers. Off by default: the mount idles for the
-    next publisher. `RtspServer.add_publish_mount(end_on_publisher_exit=...)`
+    receiver ends (end of stream) as soon as a publisher that reached
+    RECORD leaves, and the mount refuses later publishers. A publisher that
+    never recorded does not end it. Off by default: the mount idles for the
+    next publisher. To accept a publisher after the mount ended, remove the
+    mount and add it again; an ended on-demand mount stays in the table, and
+    counts toward the on-demand cap, until it is removed. `RtspServer.add_publish_mount(end_on_publisher_exit=...)`
     overrides it per mount; on-demand mounts always follow it."""
 
     publish_idle_timeout_ms: Optional[int] = None
     """End a recording publisher's session after this many milliseconds
     without media, timed from RECORD or its last RTP packet. None (the
     default) leaves it to `session_timeout_secs`. A publisher that has not
-    reached RECORD is never ended by it, and a value longer than the
-    session timeout has no effect."""
+    reached RECORD is never ended by it. A value longer than the session
+    timeout still matters: a publisher that keeps its session alive with
+    RTSP requests while sending no media is ended by this timeout, not the
+    session timeout."""
 
     default_mount_rule: Optional[MountRule] = None
     """The rule every mount path without its own entry follows, in force
@@ -281,15 +286,19 @@ class RtspServerConfig:
                 f"RtspServerConfig.end_publish_mount_on_publisher_exit must be a bool; "
                 f"got {type(self.end_publish_mount_on_publisher_exit).__name__}"
             )
-        if self.publish_idle_timeout_ms is not None and (
-            isinstance(self.publish_idle_timeout_ms, bool)
-            or not isinstance(self.publish_idle_timeout_ms, int)
-            or self.publish_idle_timeout_ms <= 0
-        ):
-            raise ValueError(
-                f"RtspServerConfig.publish_idle_timeout_ms must be None or a positive int; "
-                f"got {self.publish_idle_timeout_ms!r}"
-            )
+        if self.publish_idle_timeout_ms is not None:
+            if isinstance(self.publish_idle_timeout_ms, bool) or not isinstance(
+                self.publish_idle_timeout_ms, int
+            ):
+                raise TypeError(
+                    f"RtspServerConfig.publish_idle_timeout_ms must be an int or None; "
+                    f"got {type(self.publish_idle_timeout_ms).__name__}"
+                )
+            if self.publish_idle_timeout_ms <= 0:
+                raise ValueError(
+                    f"RtspServerConfig.publish_idle_timeout_ms must be None or a positive int; "
+                    f"got {self.publish_idle_timeout_ms!r}"
+                )
         if self.default_mount_rule is not None and not isinstance(
             self.default_mount_rule, MountRule
         ):

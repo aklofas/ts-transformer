@@ -30,6 +30,12 @@ class RtspServerConfigTest {
     }
 
     @Test
+    void negativePublishIdleTimeoutMsIsRefused() {
+        assertThrows(IllegalArgumentException.class,
+            () -> RtspServerConfig.builder().publishIdleTimeoutMs(-1).build());
+    }
+
+    @Test
     void endPublishMountOnPublisherExitRoundTrips() {
         RtspServerConfig on = RtspServerConfig.builder().endPublishMountOnPublisherExit(true).build();
         assertTrue(on.endPublishMountOnPublisherExit());

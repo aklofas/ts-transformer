@@ -738,10 +738,10 @@ baseline (by design)" for the full rationale.
       thread parked in the receive. No existing symbol, layout, enum value or
       error code changed.
     - `29` — new symbols `tst_rtsp_server_builder_end_publish_mount_on_publisher_exit`
-      (server-wide default: a publish mount's receiver ends when its publisher
-      leaves) and `tst_rtsp_server_builder_publish_idle_timeout` (seconds
-      without media that end a recording publisher; 0 = unset). Further RTSP-server builder setters added under this same minor
-      are listed in this row.
+      (server-wide default: a publish mount's receiver ends when a publisher
+      that reached RECORD leaves) and
+      `tst_rtsp_server_builder_publish_idle_timeout` (seconds without media
+      that end a recording publisher; 0 = unset).
       No existing symbol, layout, enum value or error code changed.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.

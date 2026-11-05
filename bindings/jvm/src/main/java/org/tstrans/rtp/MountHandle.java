@@ -61,8 +61,8 @@ public final class MountHandle extends NativeHandle {
     }
     /**
      * {@link #pushVideo} with an explicit decode timestamp, for a mount whose config has
-     * exactly one video stream; with several, use {@link #pushVideoToWithDts} where present or
-     * name the stream through {@link #pushVideoTo}.
+     * exactly one video stream; with several there is no JVM DTS push for a mount, so use
+     * {@link #pushVideoTo} (no explicit DTS).
      *
      * @param pts 90&nbsp;kHz presentation timestamp
      * @param dts 90&nbsp;kHz decode timestamp (must be &le; {@code pts}; not enforced)
