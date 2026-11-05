@@ -34,7 +34,9 @@ import org.tstrans.mpegts.DemuxerConfig;
  * <p><b>Thread safety:</b> a single {@code DemuxReceiver} is intended to be
  * iterated from one thread; the sanctioned cross-thread wake is
  * {@link #cancelHandle()}'s {@code cancel()}, which wakes a thread parked in
- * iteration.
+ * iteration. {@code close()} is synchronized; do not hold the receiver's
+ * monitor while iterating (a {@code synchronized (rx)} loop would block a
+ * cross-thread {@code close()} behind the parked {@code next()}).
  *
  * <p><b>Closing:</b> use try-with-resources or call {@link #close()} explicitly.
  * {@code close()} is memory-safe against ANY concurrent native call: it claims the
@@ -326,7 +328,10 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * cancels first: it fires the receiver's cancel target before taking the
      * slot the parked recv holds, so that iteration ends promptly with the
      * transport's {@code CLOSED} and {@code close()} returns without waiting for
-     * data. Same contract as the Python and C twins.
+     * data. tst-py's {@code close()} has the same contract. The C ABI's does
+     * not: there {@code _close} must not run while another call on the
+     * handle is in flight, so a C caller cancels, waits for the parked call
+     * to return, then closes.
      */
     @Override public synchronized void close() {
         super.close();

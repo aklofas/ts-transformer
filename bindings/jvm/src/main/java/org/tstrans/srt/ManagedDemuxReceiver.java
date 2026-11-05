@@ -15,8 +15,8 @@ import org.tstrans.shells.SocketStats;
 
 /**
  * Single-call convenience wrapper that owns a managed-reconnect demuxer over an
- * SRT transport. Construct with an SRT URL — {@code mode=listener} (default) OR
- * {@code mode=caller} — and iterate over the emitted {@link DemuxEvent} instances
+ * SRT transport. Construct with an SRT URL — {@code mode=caller} (the default
+ * when the URL names no mode) OR {@code mode=listener} — and iterate over the emitted {@link DemuxEvent} instances
  * (the same sealed hierarchy {@code org.tstrans.mpegts.Demuxer} produces). On any
  * Broken/Closed event the wrapper re-binds (listener) or re-dials (caller) under
  * the configured {@link ReconnectPolicy} and resumes delivering events.
@@ -327,8 +327,10 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * <p>If another thread is parked in iteration ({@code next()}), the cancel
      * wakes it: that iteration ends with {@code SrtException(CLOSED)} and records
      * {@link EndReason#CANCELLED}, and {@code close()} completes as soon as
-     * the parked call has released the receiver. Same contract as the C ABI's
-     * {@code tst_managed_demux_receiver_close} and tst-py's {@code close()}.
+     * the parked call has released the receiver. tst-py's {@code close()} has
+     * the same contract. The C ABI's {@code tst_managed_demux_receiver_close}
+     * does not: there the caller cancels, waits for the parked call to
+     * return, then closes.
      */
     @Override public synchronized void close() { super.close(); }
 

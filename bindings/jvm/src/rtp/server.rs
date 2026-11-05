@@ -108,9 +108,10 @@ type ServerInner = Arc<RustRtspServer>;
 /// Per-type leased-handle registry for `org.tstrans.rtp.RtspServer`. Registered
 /// with a cancel hook (a HARD cancel via the server's own independent
 /// `RtspServerCancelHandle`) so a `close` racing any server op wakes it before
-/// the resource is taken for teardown. The hard cancel neither ends publish
-/// mounts' application transports nor wakes a parked `next_publisher`; `nClose`
-/// runs `stop()` after it, and that does both.
+/// the resource is taken for teardown. On a running server the listener runs
+/// the publish-side shutdown when it observes the hard cancel (publish mounts'
+/// application transports end and a parked `next_publisher` wakes); `nClose`
+/// runs `stop()` after it for the explicit teardown.
 static REGISTRY_SERVER: LazyLock<HandleRegistry<ServerInner>> = LazyLock::new(HandleRegistry::new);
 
 /// Read a JString, returning "" for null/error (auth fields).
