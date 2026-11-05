@@ -127,6 +127,33 @@ class SrtLowLevelTest {
         assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
     }
 
+    /** listener() supplies mode=listener when the URL has none, including an empty host. */
+    @Test
+    void listenerModeAddsTheUrlMode() throws Exception {
+        try (Listener l = new Builder("srt://127.0.0.1:0").listener().listen()) {
+            assertTrue(l.localAddr().port() > 0);
+        }
+        try (Listener l = new Builder("srt://:0").listener().listen()) {
+            assertTrue(l.localAddr().port() > 0);
+        }
+    }
+
+    /** listener() against a URL that says mode=caller is a contradiction. */
+    @Test
+    void listenerModeAgainstACallerUrlIsRefused() {
+        var e = assertThrows(SrtException.class,
+            () -> new Builder("srt://127.0.0.1:0?mode=caller").listener().listen());
+        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
+    }
+
+    /** Without listener(), the URL must still carry mode=listener. */
+    @Test
+    void urlChoiceStillRequiresTheUrlMode() {
+        var e = assertThrows(SrtException.class,
+            () -> new Builder("srt://127.0.0.1:0").listen());
+        assertEquals(SrtException.Kind.CONFIG_INVALID, e.kind());
+    }
+
     /** A zero peer-idle timeout is refused when the socket is configured. */
     @Test
     void zeroPeerIdleTimeoutRefusedOnConnectAndListen() {

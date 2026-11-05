@@ -465,7 +465,7 @@ jni_native! {
     /// Mode ordinal mapping (same as nConnect):
     /// - 0 = URL_CHOICE: defer to URL (must have ?mode=listener)
     /// - 1 = CALLER: reject from nListen (wrong finalizer)
-    /// - 2 = LISTENER: assert URL mode must be listener
+    /// - 2 = LISTENER: add `mode=listener` when the URL has no `mode=`; a contradicting mode is refused
     /// - 3 = RENDEZVOUS: reject (not supported)
     fn Java_org_tstrans_srt_Builder_nListen<'local>(
         env,
@@ -536,6 +536,18 @@ jni_native! {
         // goes to socket_cfg only; connect_timeout goes to socket_cfg only.
         let _ = (&stream_id, &connect_timeout_ms, &peer_latency_ms); // suppress unused warnings
 
+        // Builder.listener() supplies the URL's mode when the URL has none, so
+        // a listener URL needs no `?mode=listener` (and an empty host parses).
+        let url_str = if mode == 2 {
+            if url_mode_key_present(&url_str) {
+                url_str
+            } else {
+                with_listener_mode(&url_str)
+            }
+        } else {
+            url_str
+        };
+
         let parsed = match SrtUrl::parse(&url_str) {
             Ok(p) => p,
             Err(e) => {
@@ -543,6 +555,15 @@ jni_native! {
                 return 0;
             }
         };
+
+        if mode == 2 && parsed.mode != Mode::Listener {
+            let msg = format!(
+                "Builder.listener() conflicts with the URL's mode={:?}",
+                parsed.mode
+            );
+            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
+            return 0;
+        }
 
         if parsed.mode != Mode::Listener {
             let msg = format!(
@@ -587,6 +608,28 @@ jni_native! {
 /// socket moves into the transport (obtain-before-move); `Owned` keeps it
 /// outside the slot, so `nCancelHandle` answers while a send is parked and
 /// `close()` cancels first.
+/// True when the URL's query carries a `mode` key (key compared case-insensitively).
+fn url_mode_key_present(url: &str) -> bool {
+    let Some((_, query)) = url.split_once('?') else {
+        return false;
+    };
+    query.split('&').any(|kv| {
+        kv.split('=')
+            .next()
+            .is_some_and(|k| k.eq_ignore_ascii_case("mode"))
+    })
+}
+
+/// The URL with `mode=listener` appended to its query.
+fn with_listener_mode(url: &str) -> String {
+    let sep = match url.split_once('?') {
+        None => "?",
+        Some((_, q)) if q.is_empty() || q.ends_with('&') => "",
+        Some(_) => "&",
+    };
+    format!("{url}{sep}mode=listener")
+}
+
 fn opened_send(socket: SrtSocket) -> Opened<Box<dyn Transport>> {
     let cancel: Arc<dyn TransportCancel> = Arc::new(socket.cancel_handle());
     Opened::new(Box::new(SrtTransport::new(socket)), cancel, Domain::Srt)

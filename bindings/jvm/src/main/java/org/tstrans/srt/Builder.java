@@ -192,11 +192,11 @@ public final class Builder {
     /**
      * Resolve this builder to a bound {@link Listener}.
      *
-     * <p>The SRT URL <strong>must</strong> include {@code ?mode=listener}
-     * (e.g. {@code srt://:9000?mode=listener}). {@link #listener()} guards against
-     * calling the wrong finalizer but does NOT inject the URL parameter — the URL
-     * itself must carry it. Canonical form:
-     * {@code new Builder("srt://:9000?mode=listener").listener().listen()}.
+     * <p>{@link #listener()} adds {@code mode=listener} when the URL has no
+     * {@code mode=}, so {@code new Builder("srt://:9000").listener().listen()}
+     * works. A URL that says {@code mode=caller} is refused with
+     * {@code CONFIG_INVALID}. Without {@link #listener()} the URL itself must
+     * carry {@code mode=listener}.
      * Binds and starts listening immediately.
      *
      * @throws SrtException if rendezvous mode is set ({@code CONFIG_INVALID}),
