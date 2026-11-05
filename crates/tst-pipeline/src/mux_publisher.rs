@@ -65,6 +65,12 @@ tst_core::binding_record! {
 ///    marks each discontinuous: the target is shorter than the frame
 ///    interval. The new segment starts on this AU.
 ///
+///    The 1 s is also the presentation-reorder limit. When a cut opens a
+///    segment on an AU whose decode-order successors present more than 1 s
+///    earlier (B-frames at about one frame per second), the first of them
+///    reads as an encoder reset: the segment closes and the next one is
+///    marked discontinuous.
+///
 /// A keyframe or forced cut closes the segment with EXTINF = the exact PTS
 /// span `segment_start..this AU`. Every cut asks the caller to re-emit
 /// PAT/PMT, so the new segment opens with PSI and, on a keyframe cut,
@@ -428,6 +434,8 @@ impl<P: Publisher + Send> MuxPublisher<P> {
     ///
     /// **Caller invariant:** `dts <= pts` per H.222.0 §2.4.3.6. The muxer
     /// does not enforce it, and segment cuts and pacing follow the PTS.
+    /// A reorder of more than 1 s after a cut reads as an encoder reset;
+    /// see rule 4 on [`Segmented`].
     pub fn push_video_with_dts(
         &self,
         nal: &[u8],
