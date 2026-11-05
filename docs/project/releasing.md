@@ -396,6 +396,10 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
     - its verdict is GO;
     - it is not a pull-request rehearsal;
     - the commit differs from the record's `source.sha` in release documents only;
+    - `tests/coverage/evidence-archives.toml` is the same at both commits:
+      the record judged the archive table at its own commit, so a row added
+      or changed after it (a newer failed run, a raised
+      `required_duration_s`) needs a new qualification run;
     - a build-provenance attestation by `release-qualify.yml` covers the
       committed file's sha256, so the file is the bundle's, byte for byte;
       the signature's identity must be `release-qualify.yml` on `main` or a

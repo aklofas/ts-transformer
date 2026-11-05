@@ -1717,6 +1717,47 @@ class ReleaseEligibleTests(unittest.TestCase):
         self.assertEqual(e.exception.code, 2)
 
 
+class ReleaseEligibleArchiveTableTests(unittest.TestCase):
+    """A row added to the archive table after the record (a newer failed soak,
+    a raised required duration) is evidence the record never judged."""
+
+    @classmethod
+    def setUpClass(cls):
+        tmp = tempfile.mkdtemp()
+        root = cls.root = os.path.join(tmp, "root")
+        os.makedirs(os.path.join(root, "tests/coverage"))
+        git(root, "init", "-q", "-b", "main")
+        spit(os.path.join(root, "tests/coverage/evidence-archives.toml"), "schema_version = 0\n")
+        spit(os.path.join(root, "CHANGELOG.md"), "1\n")
+        git(root, "add", ".")
+        git(root, "commit", "-q", "-m", "A")
+        cls.record_sha = git(root, "rev-parse", "HEAD")
+        spit(os.path.join(root, "CHANGELOG.md"), "2\n")
+        git(root, "commit", "-q", "-am", "B")
+        cls.docs_sha = git(root, "rev-parse", "HEAD")
+        spit(os.path.join(root, "tests/coverage/evidence-archives.toml"), "schema_version = 0\n# a row\n")
+        git(root, "commit", "-q", "-am", "C")
+        cls.table_sha = git(root, "rev-parse", "HEAD")
+        rec = collect(release=True, archives=RELEASE_OK)
+        rec["source"]["sha"] = cls.record_sha
+        cls.rec = rec
+
+    def check(self, sha):
+        return q.release_eligible(self.rec, self.root, sha, "0" * 64, None)
+
+    def test_a_docs_only_tag_commit_stays_eligible(self):
+        self.assertEqual(self.check(self.docs_sha), [])
+
+    def test_an_archive_table_change_since_the_record_is_refused(self):
+        why = self.check(self.table_sha)
+        self.assertEqual(len(why), 1, why)
+        self.assertEqual(
+            why[0],
+            "tests/coverage/evidence-archives.toml changed between the record's commit %s and %s; "
+            "the record judged the archive table at its own commit, so qualify the commit again"
+            % (self.record_sha[:12], self.table_sha[:12]))
+
+
 class ChecksumTests(unittest.TestCase):
     def test_checksums_cover_the_files_not_the_sums_file(self):
         tmp = tempfile.mkdtemp()
