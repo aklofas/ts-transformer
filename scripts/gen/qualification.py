@@ -3,7 +3,7 @@
 
   collect   --artifacts DIR --out FILE [--root DIR] [--release] [--tag NAME]
             read a release-qualify run's artefacts; --release also requires the
-            72-hour soak and the corpus archives for the qualified tree, each with
+            release soak and the corpus archives for the qualified tree, each with
             a raw pass (a waived archive is recorded, never admitted); --tag names
             the tag a tag push qualified
   render    --json FILE (--write | --check) [--root DIR]   the generated blocks in
@@ -323,11 +323,12 @@ def _soak_entry(root, sha, s, memo):
     return e
 
 
-def _pick_soak(root, sha, soaks, memo):
-    """The newest 72-hour soak that stands for `sha` (same tree, or no change under
-    release documents since); else the newest 72-hour soak; else the newest of any
-    duration. Git runs at most once per 72-hour archive."""
-    long = [s for s in _by_date(soaks) if s.get("expected_duration_s") == 259200]
+def _pick_soak(root, sha, soaks, memo, required_s):
+    """The newest release-length soak (expected_duration_s at least `required_s`) that
+    stands for `sha` (same tree, or no change under release documents since); else the
+    newest release-length soak; else the newest of any duration. Git runs at most once
+    per release-length archive."""
+    long = [s for s in _by_date(soaks) if (s.get("expected_duration_s") or 0) >= required_s]
     first = None
     for s in long:
         e = _soak_entry(root, sha, s, memo)
@@ -354,9 +355,9 @@ def _raw_verdict_reason(kind, entry):
     return None
 
 
-def release_vm(root, sha, archives, release, expected_files):
+def release_vm(root, sha, archives, release, expected_files, required_s):
     """The release gate: the chosen soak archive (see _pick_soak) must stand for
-    `sha`, have passed and declared 72 hours, and a passing corpus archive must
+    `sha`, have passed and declared at least the required duration, and a passing corpus archive must
     exist for the qualified tree. "Stands for" means the archive's tree is `sha` or
     differs from it only in release documents; negative evidence follows the same
     rule for both kinds: a newer failed soak, or a newer failed corpus row, on an
@@ -370,9 +371,9 @@ def release_vm(root, sha, archives, release, expected_files):
     soaks = [a for a in archives if a["kind"] == "soak"]
     _check_sha(sha)
     if not soaks:
-        reasons.append("soak: no 72-hour soak archive for this tree (%s)" % str(sha)[:12])
+        reasons.append("soak: no release soak archive for this tree (%s)" % str(sha)[:12])
     else:
-        soak = _pick_soak(root, sha, soaks, memo)
+        soak = _pick_soak(root, sha, soaks, memo, required_s)
         if soak["git_error"] is not None:
             reasons.append("soak: git could not resolve %s: %s" % (soak["tree"], soak["git_error"]))
         else:
@@ -404,9 +405,9 @@ def release_vm(root, sha, archives, release, expected_files):
                 elif eq:
                     reasons.append("soak: archive %s, a newer run on an equivalent tree, recorded overall_pass=false"
                                    % a["id"])
-            if soak["expected_duration_s"] != 259200:
-                reasons.append("soak: archive %s declares %s s, not %d"
-                               % (soak["id"], soak["expected_duration_s"], 259200))
+            if soak["expected_duration_s"] < required_s:
+                reasons.append("soak: archive %s declares %s s, below the required %d"
+                               % (soak["id"], soak["expected_duration_s"], required_s))
             elif set(soak.get("legs") or ()) != set(RELEASE_SOAK_LEGS):
                 reasons.append("soak: archive %s ran legs %s; the release soak needs %s"
                                % (soak["id"], ", ".join(soak.get("legs") or ()) or "none (undeclared)",
@@ -458,8 +459,11 @@ def release_vm(root, sha, archives, release, expected_files):
                                        % (c["id"], c["replay_failed"]))
     # The worse of the two; an entry the gate could not choose counts as a failure.
     worst = max(((e or {}).get("disposition", "fail") for e in (soak, corpus)), key=DISPOSITION_ORDER.index)
-    return {"release_mode": bool(release), "soak": soak, "corpus": corpus, "disposition": worst,
+    gate = {"release_mode": bool(release), "soak": soak, "corpus": corpus, "disposition": worst,
             "reasons": reasons if release else []}
+    if release:
+        gate["required_duration_s"] = required_s
+    return gate
 
 
 # ---- collect ---------------------------------------------------------------
@@ -648,9 +652,10 @@ def collect(art, root, release=False, tag=None):
     for r in read_json(os.path.join(art, "semver-checks.json")) or []:
         sc.append({"crate": r["crate"], "breaking": r.get("failed_checks", 0),
                    "exit": r["exit"], "analysed": r.get("analysed", False)})
-    archives, expected_files, _required_soak_s = load_archives(root)
+    archives, expected_files, required_soak_s = load_archives(root)
     try:
-        gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release, expected_files)
+        gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release, expected_files,
+                          required_soak_s)
     except QualificationError as e:
         die(str(e))
     sha, workflow_sha = ctx["source"]["sha"], ctx["source"]["workflow_sha"]
@@ -1134,7 +1139,7 @@ def main(argv=None):
     c.add_argument("--out", required=True)
     c.add_argument("--root", default=".")
     c.add_argument("--release", action="store_true",
-                   help="qualify as a release: require the 72-hour soak and corpus archives for this tree")
+                   help="qualify as a release: require the release soak and corpus archives for this tree")
     c.add_argument("--tag", help="the v* tag a tag push qualified; recorded as source.tag")
     r = sub.add_parser("render")
     r.add_argument("--json", required=True)

@@ -598,7 +598,7 @@ class ReleaseModeTests(unittest.TestCase):
     def test_release_mode_requires_a_soak_archive_for_the_tree(self):
         rec = collect(release=True, archives=NO_SOAK)
         self.assertEqual(rec["verdict"], "NO-GO")
-        self.assertIn("soak: no 72-hour soak archive for this tree (%s)" % SHA[:12], rec["verdict_reasons"])
+        self.assertIn("soak: no release soak archive for this tree (%s)" % SHA[:12], rec["verdict_reasons"])
 
     def test_release_mode_requires_the_five_soak_legs(self):
         corpus = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)
@@ -651,7 +651,7 @@ class ReleaseModeTests(unittest.TestCase):
                               archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = collect(release=True, archives=short)
         self.assertEqual(rec["verdict"], "NO-GO")
-        self.assertIn("soak: archive soak-rel declares 3600 s, not 259200", rec["verdict_reasons"])
+        self.assertIn("soak: archive soak-rel declares 3600 s, below the required 172800", rec["verdict_reasons"])
 
     def test_release_mode_is_no_go_for_a_pass_contradicting_its_counts(self):
         for field in ("parse_failures", "invariant_failures", "replay_failed"):
@@ -662,7 +662,7 @@ class ReleaseModeTests(unittest.TestCase):
                     collect(release=True, archives=toml)
                 self.assertIn(field, err.getvalue())
                 rows = q.parse_archives(toml)
-                gate = q.release_vm("/nonexistent", SHA, rows, True, COUNTS["files"])
+                gate = q.release_vm("/nonexistent", SHA, rows, True, COUNTS["files"], 172800)
                 self.assertTrue(any(("failed replay" if field == "replay_failed" else field) in r
                                     for r in gate["reasons"]),
                                 gate["reasons"])
@@ -808,8 +808,30 @@ class ReleaseModeTests(unittest.TestCase):
             self.assertEqual(rec["verdict"], "NO-GO", bad)
             self.assertTrue(any(r.startswith("corpus: archive corpus-rel") for r in rec["verdict_reasons"]), bad)
 
+    def test_a_longer_than_required_row_qualifies_as_the_release_soak(self):
+        rows = archives_toml(archive_row("soak-72", "soak", SHA, duration=259200, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-72")
+        self.assertEqual(rec["release_vm"]["required_duration_s"], 172800)
+
+    def test_a_shorter_row_is_no_go_naming_both_durations(self):
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, duration=86400, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("soak: archive soak-rel declares 86400 s, below the required 172800", rec["verdict_reasons"])
+
+    def test_the_picker_prefers_a_release_length_row_over_a_newer_short_pass(self):
+        rows = archives_toml(archive_row("soak-48", "soak", SHA, date="2026-10-10", duration=172800, legs=FIVE),
+                             archive_row("soak-1h", "soak", SHA, date="2026-10-18", duration=3600, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+        rec = collect(release=True, archives=rows)
+        self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-48")
+
     def test_a_newer_failed_soak_on_the_same_tree_is_a_reason(self):
-        for dur in (3600, 259200):
+        for dur in (3600, 172800, 259200):
             rows = archives_toml(archive_row("soak-72", "soak", SHA, date="2026-10-17", legs=FIVE),
                                  archive_row("soak-bad", "soak", SHA, date="2026-10-18",
                                              duration=dur, overall_pass=False),
@@ -970,7 +992,7 @@ class ReleaseModeTests(unittest.TestCase):
                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = collect(release=True, archives=rows)
         self.assertEqual(rec["verdict"], "NO-GO")
-        self.assertIn("soak: archive soak-1h declares 3600 s, not 259200", rec["verdict_reasons"])
+        self.assertIn("soak: archive soak-1h declares 3600 s, below the required 172800", rec["verdict_reasons"])
 
     def test_release_mode_rejects_a_corpus_row_with_fewer_files_than_declared(self):
         small = dict(COUNTS, files=3)
@@ -1006,7 +1028,7 @@ class ReleaseModeTests(unittest.TestCase):
         with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
             for bad in ("HEAD", "--output=/tmp/x", SHA.upper()):
                 with self.assertRaises(q.QualificationError) as e:
-                    q.release_vm("/nonexistent", bad, rows, True, COUNTS["files"])
+                    q.release_vm("/nonexistent", bad, rows, True, COUNTS["files"], 172800)
                 self.assertIn("source.sha", str(e.exception))
             with self.assertRaises(SystemExit) as e:
                 collect(mutate=lambda f: f["context.json"].update(
@@ -1072,7 +1094,7 @@ class WaiverTests(unittest.TestCase):
 
     def test_release_mode_refuses_a_waived_soak(self):
         rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), CORPUS]
-        gate = q.release_vm(self.root, self.sha, rows, True, 251)
+        gate = q.release_vm(self.root, self.sha, rows, True, 251, 172800)
         self.assertEqual(gate["soak"]["disposition"], "waived")
         self.assertTrue(any("needs a raw pass" in r for r in gate["reasons"]))
         self.assertIn("soak: archive soak-rel is waived (2 verdicts), and a release needs a raw pass",
@@ -1080,7 +1102,7 @@ class WaiverTests(unittest.TestCase):
 
     def test_a_non_release_collect_reports_a_waived_soak_with_no_reasons(self):
         rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), CORPUS]
-        gate = q.release_vm(self.root, self.sha, rows, False, 251)
+        gate = q.release_vm(self.root, self.sha, rows, False, 251, 172800)
         self.assertEqual(gate["reasons"], [])
         self.assertEqual(gate["soak"]["disposition"], "waived")
         self.assertEqual(gate["disposition"], "waived")
@@ -1095,18 +1117,18 @@ class WaiverTests(unittest.TestCase):
 
     def test_a_waived_corpus_row_needs_a_raw_pass_too(self):
         rows = [SOAK72, dict(CORPUS, overall_pass=False, waiver=WAIVER)]
-        gate = q.release_vm(self.root, self.sha, rows, True, 251)
+        gate = q.release_vm(self.root, self.sha, rows, True, 251, 172800)
         self.assertEqual(gate["corpus"]["disposition"], "waived")
         self.assertEqual(gate["reasons"],
                          ["corpus: archive corpus-rel is waived (2 verdicts), and a release needs a raw pass"])
-        self.assertEqual(q.release_vm(self.root, self.sha, rows, False, 251)["reasons"], [])
+        self.assertEqual(q.release_vm(self.root, self.sha, rows, False, 251, 172800)["reasons"], [])
 
     def test_an_unwaived_failure_is_the_worse_disposition(self):
         rows = [dict(SOAK72, overall_pass=False, waiver=WAIVER), dict(CORPUS, overall_pass=False)]
-        gate = q.release_vm(self.root, self.sha, rows, True, 251)
+        gate = q.release_vm(self.root, self.sha, rows, True, 251, 172800)
         self.assertEqual(gate["corpus"]["disposition"], "fail")
         self.assertEqual(gate["disposition"], "fail")
-        self.assertEqual(q.release_vm(self.root, self.sha, [SOAK72, CORPUS], True, 251)["disposition"], "pass")
+        self.assertEqual(q.release_vm(self.root, self.sha, [SOAK72, CORPUS], True, 251, 172800)["disposition"], "pass")
 
     def test_collect_records_the_waiver_in_both_modes(self):
         rows = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False, legs=FIVE)
