@@ -199,9 +199,17 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      while it still points there; otherwise push one, for example
      `git push origin <sha>:refs/heads/release/X.Y.Z`): a workflow dispatch
      takes no commit, and the script refuses a ref that has moved on.
-   - The arm64 soak starts with a drill: `soak.sh --hours 0.05` with the
-     browser leg on. If the browser fails on aarch64, the 48-hour arm64
-     run launches with `--no-whep` and its row's `legs` say so. The
+   - The arm64 soak starts with a drill, with the browser leg on:
+     `PUBLISHER_DROP_PERIOD_S=60 SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --outdir ~/soak-drill --hours 0.05 --seed 1`
+     (the outdir sits under `$HOME` because snap Chromium has a private
+     `/tmp`; the shorter drop period is needed because a run under two
+     publisher generations exits 2). A browser failure shows as a failed
+     `whep_counters_present_whep` or `whep_frames_continuous_whep` verdict in the
+     drill's `report soak` output, and the `whep-viewer` log under
+     `~/soak-drill/logs/` says why. If the browser fails on aarch64, the
+     48-hour arm64 run launches with
+     `release-vm-soak.sh launch <full sha> --outdir ~/soak-X.Y.Z --wait-marker ~/ci-green -- --no-whep`
+     and its row's `legs` say so. The
      five-leg rule below applies to the x86 release soak only. The arm64
      stress VM runs `stress.sh` as its own run; the soak VM never doubles
      as the stress VM.
@@ -217,23 +225,26 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      `release-vm-soak.sh stop --outdir <old>` keeps its logs and frees its
      media. Run `launch` detached too (it waits for the marker and then for
      the roles, which can be an hour). The same `ci-green` and `launch`
-     steps run on the arm64 soak VM after its drill, which stamps its
-     archive row with `arch = "aarch64"`. On that VM `ci-green` is run
-     without `--dispatch-wheels`: the dispatch already happened for the x86
-     VM, and the marker is bound to the sha either way.
+     steps run on the arm64 soak VM after its drill. Its archive row is
+     written by hand and copies `arch` (`"aarch64"`) from the run's
+     `soak-config.json`. For that VM `ci-green` is run without
+     `--dispatch-wheels`: the dispatch already happened for the x86 VM, and
+     the marker is bound to the sha either way.
    - Check the run at 24 hours (the midpoint) and again before the end,
-     without touching it:
+     without touching it, on both soak VMs (each with its own outdir):
      `release-vm-soak.sh status --outdir ~/soak-X.Y.Z` lists every role
      alive, the absence of the fail-fast marker, and the SRT receiver's
      `reconnects`, which reads 6 at 24 hours and 12 at the end.
    - When the runs end, harvest the corpus run directory and the soak
-     directory, plus the arm64 soak and arm64 stress directories. Write a checksum list for each on the VM and check the
+     directory, plus the arm64 soak and arm64 stress directories and the x86 stress
+     directory when one ran. Write a checksum list for each on the VM and check the
      copies against it.
-   - The `tst-interop report soak` that closes the run must print
+   - The `tst-interop report soak` that closes the x86 run must print
      `overall_pass=true`, and the script exits 0. Any other verdict is a
-     finding, not a rerun.
+     finding, not a rerun. An arm64 failure is recorded in its row as a
+     finding and does not block the release.
    - A commit that replaces the frozen one restarts the whole step on the
-     same VM: `release-vm-soak.sh stop` on the running soak, then setup's
+     same VM (and on the arm64 VMs): `release-vm-soak.sh stop` on the running soak, then setup's
      checkout stage (or `release-vm-corpus.sh` on the new sha, which checks
      it out), then the chain above.
 7. **The archive-entry PR.** A docs-only PR adds the rows below to
@@ -247,14 +258,16 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      corpus has changed, the same PR updates `expected_files`;
    - the arm64 soak, with `arch = "aarch64"` and `legs` as printed, and the
      arm64 stress run, with `arch = "aarch64"`. A row without `arch` is an
-     x86_64 row. Then render the benchmarks page with the arm64 ceilings
-     beside the x86 ones:
-     `benchmarks-page.sh <x86 archive> --arm <arm archive>`;
+     x86_64 row. The arm64 soak row needs `expected_duration_s` like the x86
+     one (the validator refuses a soak row without it);
    - `overall_pass` exactly as the harness printed it. A failed harness
      verdict stays `false`; the maintainer's review goes in
      `[archive.waiver]` (the verdicts it covers, the reason, the reviewer,
      the date and the release that fixes the cause). A release needs a raw
      pass, so a harness defect is fixed and the soak rerun.
+
+   Then render the benchmarks page with the arm64 ceilings beside the x86
+   ones: `benchmarks-page.sh <x86 archive> --arm <arm archive>`.
 
    Rows are judged by `date`, newest first; two rows with the same date are
    ordered by their position in the file, the later row being the newer. The
