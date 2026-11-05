@@ -309,6 +309,12 @@ impl RecvTransport for UdpRecvTransport {
     /// `pkt_size` is a send-side knob (see [`crate::transport::UdpTransport`]);
     /// it has no receive-side surface — the receiver always accepts any
     /// datagram up to this bound.
+    ///
+    /// A direct caller of `recv_bytes` must pass a buffer at least this
+    /// large: a datagram longer than the buffer is truncated to it on Unix,
+    /// and on Windows the receive fails with `WSAEMSGSIZE`, which returns
+    /// [`TransportError::Broken`] and ends the receiver. The pipeline shells
+    /// size their buffers from this value.
     fn max_payload(&self) -> usize {
         65535
     }
