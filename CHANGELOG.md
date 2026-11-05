@@ -375,6 +375,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The release gate reads the required soak duration from `[soak] required_duration_s` in `tests/coverage/evidence-archives.toml` (172 800 s, 48 hours, from 0.9.1; it was a 72-hour constant) and accepts any soak row declaring at least that; the record names the required duration and the exit-criteria status reads 'The release soak today'.
 - Soak and stress archive rows may carry `arch`; the release gate records the newest arm64 soak that stands for the tree beside the x86 release soak (recorded, not gating in 0.9.1) and the benchmarks page can show arm64 ceilings beside x86.
 - `qualification.py release-eligible` refuses a tag commit whose `tests/coverage/evidence-archives.toml` differs from the record's commit: the record judged the archive table at its own commit, so evidence added after it needs a new qualification run.
+- A soak or stress archive row dated 2026-11-04 or later must name its `arch`; the validator refuses one without it. An older row without `arch` is still read as x86_64.
 
 ### Changed — tst-interop
 

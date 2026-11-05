@@ -610,6 +610,23 @@ class ArchTests(unittest.TestCase):
                 self.assertEqual(e.exception.code, 1)
                 self.assertIn(msg, err.getvalue())
 
+    def test_a_soak_or_stress_row_from_2026_11_04_must_name_its_arch(self):
+        for kind, extra in (("soak", {"legs": FIVE}), ("stress", {})):
+            with self.subTest(kind=kind):
+                row = archive_row("new-" + kind, kind, SHA, date="2026-11-04", **extra)
+                with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.load(archives_toml(row))
+                self.assertEqual(e.exception.code, 1)
+                self.assertIn("new-%s: a soak or stress row dated 2026-11-04 or later must name its arch "
+                              "(x86_64, aarch64)" % kind, err.getvalue())
+                loaded, *_ = self.load(archives_toml(
+                    archive_row("new-" + kind, kind, SHA, date="2026-11-04", arch="x86_64", **extra)))
+                self.assertEqual(loaded[0]["arch"], "x86_64")
+        # An older row keeps the x86_64 default, and a corpus row never carries arch.
+        loaded, *_ = self.load(archives_toml(archive_row("old", "soak", SHA, legs=FIVE, date="2026-11-03"),
+                                             archive_row("c", "corpus", SHA, date="2026-11-05", counts=COUNTS)))
+        self.assertEqual([r.get("arch") for r in loaded], [None, None])
+
     def test_soak_desc_and_block_name_the_arch_only_when_present(self):
         self.assertTrue(q._soak_desc(dict(ROW, arch="aarch64", legs=["srt"])).endswith(", legs srt, aarch64)"))
         self.assertTrue(q._soak_desc(dict(ROW, legs=["srt"])).endswith(", legs srt)"))

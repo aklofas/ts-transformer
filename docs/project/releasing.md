@@ -252,13 +252,14 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
    its `tree`:
    - the soak, with the `expected_duration_s` the run's `soak-config.json` declares
      (at least `[soak] required_duration_s`) and `legs = [...]`
-     copied from the `legs=…` list on the last line `report soak` printed;
+     copied from the `legs=…` list on the last line `report soak` printed, with `arch = "x86_64"`;
    - the corpus run, with the counts its archive row carries. Its `files`
      must equal `expected_files` in the file's `[corpus]` table. When the
      corpus has changed, the same PR updates `expected_files`;
    - the arm64 soak, with `arch = "aarch64"` and `legs` as printed, and the
-     arm64 stress run, with `arch = "aarch64"`. A row without `arch` is an
-     x86_64 row. The arm64 soak row needs `expected_duration_s` like the x86
+     arm64 stress run, with `arch = "aarch64"`. A soak or stress row dated
+     2026-11-04 or later must carry `arch`; the validator refuses one without it, and an older row
+     without it is an x86_64 row. The arm64 soak row needs `expected_duration_s` like the x86
      one (the validator refuses a soak row without it);
    - `overall_pass` exactly as the harness printed it. A failed harness
      verdict stays `false`; the maintainer's review goes in
