@@ -14,7 +14,8 @@
  * require that no other call on the handle is in flight: cancel, wait for
  * the parked call to return, then free. Slot-backed handles serialise
  * their data-path calls through an internal mutex; builders are
- * single-thread objects.
+ * single-thread objects. A TstHlsServerHandle has no internal lock:
+ * serialise every call on one serving handle yourself.
  */
 
 
@@ -1165,6 +1166,12 @@ typedef struct TstHlsPublisherBuilder TstHlsPublisherBuilder;
  * address with [`tst_hls_server_handle_local_addr`], stop serving with
  * [`tst_hls_server_handle_shutdown`], and release with
  * [`tst_hls_server_handle_free`] (which also stops serving if still live).
+ *
+ * Unlike the slot-backed handles, a serving handle has no internal lock.
+ * [`tst_hls_server_handle_local_addr`], [`tst_hls_server_handle_shutdown`]
+ * and [`tst_hls_server_handle_free`] must not run concurrently on one
+ * handle: call them from one thread, or hold a lock of your own around
+ * every call. A `_shutdown` racing `_local_addr` is undefined behaviour.
  *
  * `inner` is `None` only after [`tst_hls_server_handle_shutdown`] has
  * taken it (idempotent terminal state).
@@ -3628,6 +3635,8 @@ int tst_hls_publisher_render_playlist(struct TstPublisher *p,
  * pointer twice is undefined behavior (use-after-free on the consumed
  * `Box`).
  *
+ * Not synchronised with the other calls on `h`: see [`TstHlsServerHandle`].
+ *
  * # Safety
  *
  * `h` must be NULL or a valid non-freed `*mut TstHlsServerHandle` returned
@@ -3648,6 +3657,8 @@ int tst_hls_publisher_render_playlist(struct TstPublisher *p,
  * down, or `TST_E_HLS_CONFIG` with a "buffer too small" message if
  * `buf_len` cannot hold the address plus its NUL terminator.
  *
+ * Not synchronised with the other calls on `h`: see [`TstHlsServerHandle`].
+ *
  * # Safety
  *
  * `h` must be a valid non-freed `*mut TstHlsServerHandle`. `buf` must be
@@ -3666,6 +3677,8 @@ int tst_hls_publisher_render_playlist(struct TstPublisher *p,
  * [`tst_hls_server_handle_free`].
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if `h` is null.
+ *
+ * Not synchronised with the other calls on `h`: see [`TstHlsServerHandle`].
  *
  * # Safety
  *

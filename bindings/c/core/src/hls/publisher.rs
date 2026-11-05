@@ -467,6 +467,12 @@ pub unsafe extern "C" fn tst_hls_publisher_get_forced_cuts(
 /// [`tst_hls_server_handle_shutdown`], and release with
 /// [`tst_hls_server_handle_free`] (which also stops serving if still live).
 ///
+/// Unlike the slot-backed handles, a serving handle has no internal lock.
+/// [`tst_hls_server_handle_local_addr`], [`tst_hls_server_handle_shutdown`]
+/// and [`tst_hls_server_handle_free`] must not run concurrently on one
+/// handle: call them from one thread, or hold a lock of your own around
+/// every call. A `_shutdown` racing `_local_addr` is undefined behaviour.
+///
 /// `inner` is `None` only after [`tst_hls_server_handle_shutdown`] has
 /// taken it (idempotent terminal state).
 pub struct TstHlsServerHandle {
@@ -556,6 +562,8 @@ pub unsafe extern "C" fn tst_hls_publisher_finish_serving(
 /// down, or `TST_E_HLS_CONFIG` with a "buffer too small" message if
 /// `buf_len` cannot hold the address plus its NUL terminator.
 ///
+/// Not synchronised with the other calls on `h`: see [`TstHlsServerHandle`].
+///
 /// # Safety
 ///
 /// `h` must be a valid non-freed `*mut TstHlsServerHandle`. `buf` must be
@@ -596,6 +604,8 @@ pub unsafe extern "C" fn tst_hls_server_handle_local_addr(
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if `h` is null.
 ///
+/// Not synchronised with the other calls on `h`: see [`TstHlsServerHandle`].
+///
 /// # Safety
 ///
 /// `h` must be a valid non-freed `*mut TstHlsServerHandle`.
@@ -620,6 +630,8 @@ pub unsafe extern "C" fn tst_hls_server_handle_shutdown(h: *mut TstHlsServerHand
 /// After this call the pointer is invalid; passing the same non-null
 /// pointer twice is undefined behavior (use-after-free on the consumed
 /// `Box`).
+///
+/// Not synchronised with the other calls on `h`: see [`TstHlsServerHandle`].
 ///
 /// # Safety
 ///

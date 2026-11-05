@@ -16,7 +16,8 @@ header = """\
  * require that no other call on the handle is in flight: cancel, wait for
  * the parked call to return, then free. Slot-backed handles serialise
  * their data-path calls through an internal mutex; builders are
- * single-thread objects.
+ * single-thread objects. A TstHlsServerHandle has no internal lock:
+ * serialise every call on one serving handle yourself.
  */
 """
 include_guard = "TSTRANS_H"
