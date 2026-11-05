@@ -53,6 +53,11 @@ import java.util.Set;
  * {@code System.load}. Use a private {@code java.io.tmpdir} there; an ACL on the
  * cache root is a follow-up. A squatted root makes every launch copy the library into a new
  * private directory, and nothing removes those copies.
+ * {@code java.io.tmpdir} itself is not checked: it must be private to the
+ * user or, when shared, carry the sticky bit (as {@code /tmp} does, mode
+ * {@code 1777}). A {@code java.io.tmpdir} that other users can write to
+ * without the sticky bit is unsupported: another account could rename the
+ * cache root or the random fallback directory and put its own in place.
  *
  * <p>Each JVM writes its own uniquely named owner-only staging file and
  * publishes it with an atomic move, so JVMs starting together never share a
