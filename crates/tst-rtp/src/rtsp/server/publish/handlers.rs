@@ -447,7 +447,7 @@ pub(crate) fn handle_record(
     if !publish.recording && state.is_shut_down() {
         return error_response(req, 503, "Service Unavailable");
     }
-    publish.recording = true;
+    publish.mark_recording();
     for idx in 0..publish.tracks.len() {
         let track = &publish.tracks[idx];
         if track.udp_spawned {

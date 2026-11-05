@@ -316,6 +316,8 @@ pub struct TstRtspServerBuilder {
     /// Server-wide default: a publish mount's receiver ends when its
     /// publisher leaves. Default: false.
     pub(crate) end_publish_mount_on_publisher_exit: bool,
+    /// Seconds without media that end a recording publisher; 0 = unset.
+    pub(crate) publish_idle_timeout_secs: u32,
 }
 
 #[cfg(feature = "rtp")]
@@ -347,6 +349,7 @@ impl TstRtspServerBuilder {
             tls_key_pem: None,
             accept_unregistered_publishers: false,
             end_publish_mount_on_publisher_exit: false,
+            publish_idle_timeout_secs: 0,
         })
     }
 
@@ -411,6 +414,9 @@ impl TstRtspServerBuilder {
         ));
         b.accept_unregistered_publishers(self.accept_unregistered_publishers);
         b.end_publish_mount_on_publisher_exit(self.end_publish_mount_on_publisher_exit);
+        if self.publish_idle_timeout_secs > 0 {
+            b.publish_idle_timeout(Duration::from_secs(self.publish_idle_timeout_secs as u64));
+        }
 
         // TLS bytes from tst_rtsp_server_builder_tls_cert_pem. With the `tls`
         // feature they are handed to the server, which loads them at start()

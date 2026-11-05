@@ -211,6 +211,86 @@ fn idle_publisher_is_reaped_but_media_only_publisher_is_not() {
     server.stop().ok();
 }
 
+/// A server whose publish idle timeout is `scaled(1 s)` and whose session
+/// timeout is far longer, with one publish mount on `/pub`.
+fn publish_idle_server() -> (RtspServer, tst_rtp::PublishMountHandle, u16) {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.session_timeout(Duration::from_secs(60));
+    b.publish_idle_timeout(scaled(Duration::from_secs(1)));
+    let server = b.build().unwrap();
+    let mount = server.add_publish_mount("/pub").unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    (server, mount, port)
+}
+
+/// With `publish_idle_timeout` set, a recording publisher that sends no
+/// media loses its session at the timeout, not at the session timeout.
+#[test]
+fn a_silent_publisher_is_ended_at_the_publish_idle_timeout() {
+    let (server, mount, port) = publish_idle_server();
+    let mut p = RawPublisher::connect(port);
+    record_interleaved(&mut p, "/pub");
+    assert!(mount.publisher().is_some());
+
+    let (_bytes, eof) = p.read_until(
+        b"\0never\0",
+        Instant::now() + scaled(Duration::from_secs(2)),
+    );
+    assert!(
+        eof,
+        "the control connection stayed open past the publish idle timeout"
+    );
+    assert!(mount.publisher().is_none());
+    server.stop().ok();
+}
+
+/// Media inside the window keeps the publisher past the timeout.
+#[test]
+fn a_publishing_publisher_outlives_the_publish_idle_timeout() {
+    let (server, mount, port) = publish_idle_server();
+    let mut p = RawPublisher::connect(port);
+    let ch = record_interleaved(&mut p, "/pub");
+    let bundle = &ts_fixture_packets(1)[0];
+
+    let t0 = Instant::now();
+    let mut seq = 0u16;
+    while t0.elapsed() < scaled(Duration::from_secs(3)) {
+        p.send_frame(ch, &rtp_wrap(seq, 0, 0xA, 33, bundle));
+        seq = seq.wrapping_add(1);
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        mount.publisher().is_some(),
+        "a publisher sending media was ended by the publish idle timeout"
+    );
+    drop(p);
+    server.stop().ok();
+}
+
+/// A publisher that has not reached RECORD is governed by the session
+/// timeout alone.
+#[test]
+fn the_publish_idle_timeout_ignores_a_publisher_that_never_records() {
+    let (server, mount, port) = publish_idle_server();
+    let mut p = RawPublisher::connect(port);
+    assert_eq!(p.announce("/pub", SDP_MP2T), 200);
+    let (status, _) = p.setup_interleaved("/pub", "streamid=0");
+    assert_eq!(status, 200);
+
+    let (_bytes, eof) = p.read_until(
+        b"\0never\0",
+        Instant::now() + scaled(Duration::from_secs(2)),
+    );
+    assert!(
+        !eof,
+        "a publisher that never recorded was closed by the publish idle timeout"
+    );
+    assert!(mount.publisher().is_some());
+    drop(p);
+    server.stop().ok();
+}
+
 /// `remove_mount` on a publish mount with a recording publisher, an
 /// application `recv_bytes` on another thread and a PLAY reader: the publisher reads the
 /// Notice 5402 ANNOUNCE then EOF, the application transport reads

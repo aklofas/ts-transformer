@@ -764,6 +764,7 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::fanout_capacity(&mut s
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drain(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::publish_idle_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert(&mut self, std::path::PathBuf, std::path::PathBuf) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert_pem(&mut self, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>) -> &mut Self
@@ -2576,6 +2577,7 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::fanout_capacity(&mut s
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drain(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::publish_idle_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert(&mut self, std::path::PathBuf, std::path::PathBuf) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::tls_cert_pem(&mut self, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>) -> &mut Self

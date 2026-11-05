@@ -4108,6 +4108,15 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
+item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::publish_idle_timeout"
+owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/lifecycle.rs"]
+bindings = ["c:tst_rtsp_server_builder_publish_idle_timeout", "python:RtspServerConfig.publish_idle_timeout_ms", "java:org.tstrans.rtp.RtspServerConfig.Builder.publishIdleTimeoutMs", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
 item = "tst_rtp::rtsp::server::builder::RtspServerBuilder::accept_unregistered_publishers"
 owning_tests = ["crates/tst-rtp/tests/rtsp_server/publish/on_demand.rs"]
 bindings = ["c:tst_rtsp_server_builder_accept_unregistered_publishers", "python:RtspServerConfig.accept_unregistered_publishers", "java:org.tstrans.rtp.RtspServerConfig.Builder.acceptUnregisteredPublishers", "swift:deferred", "kotlin:deferred"]

@@ -546,9 +546,25 @@ where
         };
         // A message in progress shortens the wait to what is left of its own
         // deadline; a peer with nothing in progress gets the full bound.
+        // An opt-in publish idle timeout shortens the wait while a
+        // recording publisher exists; the timeout arm decides whether the
+        // publisher really was idle.
+        // The wait is what is left of the window, so control-channel traffic
+        // that is not media (keepalives) cannot postpone it.
+        let publish_idle = state
+            .builder
+            .publish_idle_timeout
+            .filter(|_| msg_started.is_none());
+        let publish_left = publish_idle.and_then(|t| {
+            session
+                .publisher()
+                .and_then(|p| p.idle_for())
+                .map(|d| t.saturating_sub(d))
+        });
+        let wait_bound = publish_left.map_or(idle_bound, |left| idle_bound.min(left));
         let read_bound = match msg_started {
-            Some(t0) => idle_bound.saturating_sub(t0.elapsed()),
-            None => idle_bound,
+            Some(t0) => wait_bound.saturating_sub(t0.elapsed()),
+            None => wait_bound,
         };
         let mut chunk = [0u8; 4096];
         let n = tokio::select! {
@@ -581,6 +597,20 @@ where
                 // different socket this read loop never touches — without
                 // this check such a publisher would be reaped on schedule
                 // despite media flowing.
+                if let Some(t) = publish_idle
+                    && session
+                        .publisher()
+                        .and_then(|p| p.idle_for())
+                        .is_some_and(|d| d >= t)
+                {
+                    tracing::warn!(
+                        target: "tst_rtp::server",
+                        peer = %peer,
+                        timeout_ms = t.as_millis() as u64,
+                        "publish idle timeout; closing session"
+                    );
+                    break;
+                }
                 let media_recent = session
                     .publisher()
                     .is_some_and(|p| p.media_within(idle_bound));

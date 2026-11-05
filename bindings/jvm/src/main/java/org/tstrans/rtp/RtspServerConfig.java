@@ -29,6 +29,7 @@ public final class RtspServerConfig {
     private final String tlsKey;    // nullable; PEM private-key FILE PATH
     private final boolean acceptUnregisteredPublishers;
     private final boolean endPublishMountOnPublisherExit;
+    private final long publishIdleTimeoutMs;
     private final MountRule defaultMountRule;  // nullable
 
     private RtspServerConfig(Builder b) {
@@ -42,6 +43,7 @@ public final class RtspServerConfig {
         this.tlsKey = b.tlsKey;
         this.acceptUnregisteredPublishers = b.acceptUnregisteredPublishers;
         this.endPublishMountOnPublisherExit = b.endPublishMountOnPublisherExit;
+        this.publishIdleTimeoutMs = b.publishIdleTimeoutMs;
         this.defaultMountRule = b.defaultMountRule;
     }
 
@@ -84,6 +86,14 @@ public final class RtspServerConfig {
     public boolean endPublishMountOnPublisherExit() { return endPublishMountOnPublisherExit; }
 
     /**
+     * Milliseconds without media after which a recording publisher's session is ended,
+     * timed from RECORD or its last RTP packet; {@code 0} (the default) means unset, so
+     * only {@link #sessionTimeoutSecs()} governs. A publisher that has not reached RECORD
+     * is never ended by it, and a value longer than the session timeout has no effect.
+     */
+    public long publishIdleTimeoutMs() { return publishIdleTimeoutMs; }
+
+    /**
      * The rule for mount paths no {@link MountRules} entry names, if set. Without one the
      * default is {@link MountPolicy#inherit()} for both directions.
      */
@@ -100,6 +110,7 @@ public final class RtspServerConfig {
             + ", tlsKey=" + (tlsKey != null ? tlsKey : "None")
             + ", acceptUnregisteredPublishers=" + acceptUnregisteredPublishers
             + ", endPublishMountOnPublisherExit=" + endPublishMountOnPublisherExit
+            + ", publishIdleTimeoutMs=" + publishIdleTimeoutMs
             + ", defaultMountRule=" + (defaultMountRule != null ? defaultMountRule : "None") + ")";
     }
 
@@ -115,6 +126,7 @@ public final class RtspServerConfig {
         private String tlsKey;
         private boolean acceptUnregisteredPublishers;
         private boolean endPublishMountOnPublisherExit;
+        private long publishIdleTimeoutMs;
         private MountRule defaultMountRule;
 
         private Builder() {}
@@ -166,6 +178,16 @@ public final class RtspServerConfig {
          */
         public Builder endPublishMountOnPublisherExit(boolean v) {
             this.endPublishMountOnPublisherExit = v;
+            return this;
+        }
+
+        /**
+         * End a recording publisher's session after this many milliseconds without media.
+         * {@code 0} (the default) leaves it unset. See {@link
+         * RtspServerConfig#publishIdleTimeoutMs()}.
+         */
+        public Builder publishIdleTimeoutMs(long v) {
+            this.publishIdleTimeoutMs = v;
             return this;
         }
 

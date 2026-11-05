@@ -54,6 +54,9 @@ pub(crate) struct PublishSession {
     pub(crate) slot_generation: u64,
     pub(crate) tracks: Vec<PublishTrack>,
     pub(crate) recording: bool,
+    /// [`Self::now_ms`] at the RECORD that set `recording` (0 before it);
+    /// the start of the idle window until the first media arrives.
+    pub(crate) recording_since_ms: AtomicU64,
     /// RTSP session id, allocated by the first track SETUP; `None` after
     /// ANNOUNCE until then.
     pub(crate) session_id: Option<String>,
@@ -117,6 +120,7 @@ impl PublishSession {
             slot_generation,
             tracks,
             recording: false,
+            recording_since_ms: AtomicU64::new(0),
             session_id: None,
             mount_path: None,
             adapter: Arc::new(Mutex::new(adapter)),
@@ -245,6 +249,28 @@ impl PublishSession {
             return false;
         }
         Self::now_ms().saturating_sub(last) <= d.as_millis() as u64
+    }
+
+    /// Stamp the moment RECORD starts the publisher (first RECORD only).
+    pub(crate) fn mark_recording(&mut self) {
+        if !self.recording {
+            self.recording_since_ms
+                .store(Self::now_ms().max(1), Ordering::Relaxed);
+        }
+        self.recording = true;
+    }
+
+    /// Time since the later of RECORD and the last media packet; `None`
+    /// before RECORD.
+    pub(crate) fn idle_for(&self) -> Option<Duration> {
+        if !self.recording {
+            return None;
+        }
+        let since = self
+            .recording_since_ms
+            .load(Ordering::Relaxed)
+            .max(self.last_media_ms.load(Ordering::Relaxed));
+        Some(Duration::from_millis(Self::now_ms().saturating_sub(since)))
     }
 
     /// End the publisher: flush whatever the adapter has pending, cancel

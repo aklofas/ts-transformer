@@ -238,6 +238,13 @@ class RtspServerConfig:
     next publisher. `RtspServer.add_publish_mount(end_on_publisher_exit=...)`
     overrides it per mount; on-demand mounts always follow it."""
 
+    publish_idle_timeout_ms: Optional[int] = None
+    """End a recording publisher's session after this many milliseconds
+    without media, timed from RECORD or its last RTP packet. None (the
+    default) leaves it to `session_timeout_secs`. A publisher that has not
+    reached RECORD is never ended by it, and a value longer than the
+    session timeout has no effect."""
+
     default_mount_rule: Optional[MountRule] = None
     """The rule every mount path without its own entry follows, in force
     from the first request (so the window between `start()` and the first
@@ -273,6 +280,15 @@ class RtspServerConfig:
             raise TypeError(
                 f"RtspServerConfig.end_publish_mount_on_publisher_exit must be a bool; "
                 f"got {type(self.end_publish_mount_on_publisher_exit).__name__}"
+            )
+        if self.publish_idle_timeout_ms is not None and (
+            isinstance(self.publish_idle_timeout_ms, bool)
+            or not isinstance(self.publish_idle_timeout_ms, int)
+            or self.publish_idle_timeout_ms <= 0
+        ):
+            raise ValueError(
+                f"RtspServerConfig.publish_idle_timeout_ms must be None or a positive int; "
+                f"got {self.publish_idle_timeout_ms!r}"
             )
         if self.default_mount_rule is not None and not isinstance(
             self.default_mount_rule, MountRule
