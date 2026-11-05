@@ -346,7 +346,8 @@ Existing exceptions, kept until the next naming change:
 - `RtspClientBuilder` takes `self` in its setters and returns `Self`.
 - `UdpTransportBuilder::build`, `UdpRecvTransportBuilder::build`,
   `TcpTransportBuilder::build`, `TcpListenerBuilder::build` and
-  `HlsPublisherBuilder::build` open their socket or bind their listener.
+  `HlsPublisherBuilder::build` open their socket or bind their listener
+  (`HlsPublisherBuilder::no_server()` starts no listener).
 
 ## URL query keys
 

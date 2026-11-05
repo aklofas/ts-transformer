@@ -154,7 +154,8 @@ class Publisher(abc.ABC):
 
 @final
 class HlsPublisher:
-    """HLS publisher: segments MPEG-TS to disk + serves an HTTP playlist.
+    """HLS publisher: segments MPEG-TS to disk + serves an HTTP playlist
+    (or, built with ``no_server()``, writes the files only).
 
     A registered virtual subclass of :class:`Publisher`. Construct via
     ``HlsPublisher.builder()``. ``finish()`` (or handing it to
@@ -194,7 +195,7 @@ class HlsPublisher:
         ...
 
     def local_addr(self) -> str | None:
-        """Bound HTTP server address as ``"ip:port"``, or ``None``."""
+        """Bound HTTP server address as ``"ip:port"``, or ``None`` (built with ``no_server()``)."""
         ...
 
     def local_port(self) -> int:
@@ -285,6 +286,15 @@ class HlsPublisherBuilder:
         """HTTP server bind address (e.g. ``"127.0.0.1:0"``)."""
         ...
 
+    def no_server(self) -> HlsPublisherBuilder:
+        """Files-only mode: write segments and the playlist, start no HTTP server.
+
+        ``bind``, ``basic_auth`` and TLS are then ignored, ``local_addr()``
+        is ``None`` and ``finish_serving()`` raises
+        ``HlsError(kind=INVALID_CONFIG)``.
+        """
+        ...
+
     def output_dir(self, path: str) -> HlsPublisherBuilder:
         """Filesystem directory for ``.ts`` segments + ``playlist.m3u8``."""
         ...
@@ -335,7 +345,7 @@ class HlsPublisherBuilder:
         ...
 
     def build(self) -> HlsPublisher:
-        """Build the publisher (binds the HTTP server immediately).
+        """Build the publisher (binds the HTTP server immediately, unless ``no_server()`` was called).
 
         Raises ``HlsError`` (``BIND_FAILED`` / ``INVALID_CONFIG`` /
         ``TLS_DISABLED``) per the failure.

@@ -33,6 +33,8 @@ impl HlsPublisher {
             return Err(HlsError::InvalidConfig(msg));
         }
         #[cfg(feature = "serve")]
+        let serve = config.serve;
+        #[cfg(feature = "serve")]
         let bind = config.bind;
         #[cfg(feature = "serve")]
         let basic_auth = config.basic_auth.clone();
@@ -55,24 +57,29 @@ impl HlsPublisher {
         }));
 
         #[cfg(feature = "serve")]
-        let server = crate::http_server::ServerHandle::start(
-            state.clone(),
-            bind,
-            basic_auth,
-            #[cfg(feature = "tls")]
-            tls_config,
-        )?;
+        let server = if serve {
+            Some(crate::http_server::ServerHandle::start(
+                state.clone(),
+                bind,
+                basic_auth,
+                #[cfg(feature = "tls")]
+                tls_config,
+            )?)
+        } else {
+            None
+        };
 
         Ok(Self {
             state,
             finished: false,
             #[cfg(feature = "serve")]
-            server: Some(server),
+            server,
         })
     }
 
     /// Local socket address the HTTP server bound to.
-    /// Returns `None` when the `serve` feature is disabled.
+    /// Returns `None` when the publisher was built without a server
+    /// ([`HlsConfig::serve`] false).
     #[cfg(feature = "serve")]
     pub fn local_addr(&self) -> Option<std::net::SocketAddr> {
         self.server.as_ref().map(|s| s.local_addr())
@@ -202,17 +209,17 @@ impl HlsPublisher {
     /// all segment files.
     ///
     /// Returns [`HlsError::Finished`] if the publisher has already been
-    /// finished.
+    /// finished, and [`HlsError::InvalidConfig`] (after writing the terminal
+    /// playlist) if it was built without a server.
     #[cfg(feature = "serve")]
     pub fn finish_serving(mut self) -> Result<HlsServerHandle, HlsError> {
         if self.finished {
             return Err(HlsError::Finished);
         }
         self.finalize_and_write()?;
-        let server = self
-            .server
-            .take()
-            .ok_or_else(|| HlsError::Internal("HTTP server not running".into()))?;
+        let server = self.server.take().ok_or_else(|| {
+            HlsError::InvalidConfig("no server: built with no_server(); use finish()".into())
+        })?;
         Ok(HlsServerHandle {
             server,
             _state: self.state,

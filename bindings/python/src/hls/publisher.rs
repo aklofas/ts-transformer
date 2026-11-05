@@ -306,6 +306,16 @@ impl PyHlsPublisherBuilder {
         Ok(slf)
     }
 
+    /// Files-only mode: write segments and the playlist, start no HTTP
+    /// server. `bind`, `basic_auth` and TLS are then ignored, `local_addr()`
+    /// is `None` and `finish_serving()` raises `HlsError(INVALID_CONFIG)`.
+    fn no_server<'py>(mut slf: PyRefMut<'py, Self>) -> PyResult<PyRefMut<'py, Self>> {
+        slf.apply(|b| {
+            b.no_server();
+        })?;
+        Ok(slf)
+    }
+
     /// Filesystem directory for `.ts` segments + `playlist.m3u8`.
     fn output_dir<'py>(mut slf: PyRefMut<'py, Self>, path: &str) -> PyResult<PyRefMut<'py, Self>> {
         let p = path.to_string();
@@ -410,7 +420,8 @@ impl PyHlsPublisherBuilder {
         Ok(slf)
     }
 
-    /// Build the `HlsPublisher` (binds the HTTP server immediately).
+    /// Build the `HlsPublisher` (binds the HTTP server immediately, unless
+    /// `no_server()` was called).
     /// Raises `HlsError(BIND_FAILED)` / `HlsError(INVALID_CONFIG)` /
     /// `HlsError(TLS_DISABLED)` per the failure.
     fn build(&mut self, py: Python<'_>) -> PyResult<PyHlsPublisher> {

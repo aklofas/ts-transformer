@@ -105,7 +105,7 @@ pub(crate) fn build_publisher_stats<'local>(
 
 jni_native! {
     /// `nBuild(url, bind, outputDir, segmentDurationMs, maxSegmentDurationMs,
-    /// playlistWindow, mode, authUser, authPass, tlsCert, tlsKey)`.
+    /// playlistWindow, mode, authUser, authPass, tlsCert, tlsKey, noServer)`.
     /// Sentinels: `null` string = unset; `0` ms = unset; `-1` window/mode = unset.
     /// Order = tst-py: `from_url` seeds, every set field overlays.
     #[allow(clippy::too_many_arguments)]
@@ -123,6 +123,7 @@ jni_native! {
         auth_pass: JString<'local>,
         tls_cert: JString<'local>,
         tls_key: JString<'local>,
+        no_server: jboolean,
     ) -> jlong = 0 => {
         let Some(url) = opt_string(env, &url) else {
             return 0;
@@ -208,6 +209,9 @@ jni_native! {
         }
         if let (Some(c), Some(k)) = (tls_cert, tls_key) {
             b.enable_tls(c, k);
+        }
+        if no_server {
+            b.no_server();
         }
         match b.build() {
             Ok(p) => register(p),
