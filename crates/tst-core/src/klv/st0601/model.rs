@@ -530,7 +530,11 @@ crate::binding_record! {
         @[custom] pub unknown: Vec<OwnedRawField>,
         /// Per-field decode failures collected by a lenient decode; a strict
         /// decode returns an error instead. A parser diagnostic: it is not
-        /// re-encoded.
+        /// re-encoded. A zero-length optional item is "unknown" (ST 0107.5
+        /// §6.3.4): the field stays unset and no error is recorded. When a
+        /// single-use tag repeats, the last occurrence wins and earlier ones
+        /// leave no trace in the typed field, `sentinel_tags` or
+        /// `imapb_specials`.
         @[custom] pub field_errors: Vec<KlvFieldError>,
 
         /// Tags whose wire value was the INT_MIN sentinel for their signed linear

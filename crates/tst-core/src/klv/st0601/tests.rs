@@ -3585,3 +3585,67 @@ fn pack_sdcc_tag_rejected_from_unknown() {
         "expected ReservedTagInUnknown, got {err:?}"
     );
 }
+
+/// ST 0107.5 §6.3.4, ST 0107.4-17: a zero-length optional item means
+/// "unknown" — no field error, field unset.
+#[test]
+fn zero_length_optional_items_are_unknown() {
+    // Items 6 (I16 ranged), 104 (IMAPB), 48 (opaque), 116 (id list), 133 (varint).
+    let body = [
+        &[0x02, 0x08][..],
+        &[0u8; 8],
+        &hex("06 00 68 00 30 00 74 00 81 05 00"),
+    ]
+    .concat();
+    let rec = decode(&wrap_st0601(&body)).unwrap();
+    assert!(rec.field_errors.is_empty(), "{:?}", rec.field_errors);
+    assert_eq!(rec.platform_pitch_deg, None);
+    assert_eq!(rec.sensor_ellipsoid_height_extended_m, None);
+    assert_eq!(rec.security_local_set, None);
+    assert_eq!(rec.control_command_verification, None);
+    assert_eq!(rec.mi_storage_capacity_gb, None);
+}
+
+/// Mandatory items are not eligible for the zero-length "unknown" rule.
+#[test]
+fn mandatory_zero_length_item_still_reports() {
+    let rec = decode(&wrap_st0601(&hex("02 00"))).unwrap();
+    assert!(
+        rec.field_errors
+            .iter()
+            .any(|e| matches!(e, crate::KlvFieldError::InvalidLength { tag: 2, .. })),
+        "{:?}",
+        rec.field_errors
+    );
+}
+
+/// A sentinel after a value (and the reverse) for the same single-use tag:
+/// the later occurrence replaces the earlier state entirely.
+#[test]
+fn later_duplicate_replaces_whole_scalar_state() {
+    let ts = [&[0x02, 0x08][..], &[0u8; 8]].concat();
+    let a = decode(&wrap_st0601(
+        &[&ts[..], &hex("17 04 00000000 17 04 80000000")].concat(),
+    ))
+    .unwrap();
+    assert_eq!(a.frame_center_lat_deg, None);
+    assert_eq!(a.sentinel_tags, vec![23]);
+    let b = decode(&wrap_st0601(
+        &[&ts[..], &hex("17 04 80000000 17 04 00000000")].concat(),
+    ))
+    .unwrap();
+    assert_eq!(b.frame_center_lat_deg, Some(0.0));
+    assert!(b.sentinel_tags.is_empty());
+}
+
+/// Fuzz-found: the sentinel first, then a value, keeps only the value.
+#[test]
+fn duplicate_tag_sentinel_then_value_keeps_only_the_value() {
+    let ts = [&[0x02, 0x08][..], &[0u8; 8]].concat();
+    let rec = decode(&wrap_st0601(
+        &[&ts[..], &hex("17 04 80000000 17 04 12345678")].concat(),
+    ))
+    .unwrap();
+    assert!(rec.frame_center_lat_deg.is_some());
+    assert!(!rec.sentinel_tags.contains(&23));
+}

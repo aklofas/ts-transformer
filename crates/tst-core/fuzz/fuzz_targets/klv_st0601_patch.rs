@@ -49,6 +49,7 @@ fuzz_target!(|data: &[u8]| {
         // edited one must match between the original and patched
         // decodes. Two exclusions are required for soundness:
         //  - `frame_center_lat_deg` is the edit itself;
+        //  - tag 23's `sentinel_tags` / `imapb_specials` entries (masked below);
         //  - `field_errors` may legitimately differ: patch re-encoding
         //    a MALFORMED original tag 23 heals its field error, so
         //    comparing the sets would fire on CORRECT behavior.
@@ -63,6 +64,12 @@ fuzz_target!(|data: &[u8]| {
             masked.frame_center_lat_deg = orig.frame_center_lat_deg;
             masked.field_errors.clear();
             orig.field_errors.clear();
+            // The edited tag's sentinel / IMAPB-special entries belong to
+            // the edit too: the patch replaces the whole tag-23 state.
+            masked.sentinel_tags.retain(|&t| t != 23);
+            orig.sentinel_tags.retain(|&t| t != 23);
+            masked.imapb_specials.retain(|&(t, _)| t != 23);
+            orig.imapb_specials.retain(|&(t, _)| t != 23);
             assert_eq!(masked, orig, "non-edited fields must survive patch");
         }
     }
