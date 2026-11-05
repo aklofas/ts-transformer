@@ -580,13 +580,14 @@ fn cross_st0601_tag_48_carries_st0102_security_ls() {
     assert_eq!(decoded_security, security);
 }
 
-/// Cross-set: empty SecurityLs bytes inside ST 0601 Tag 48. The outer
-/// walker should NOT misinterpret an empty Tag 48 as "absent." This is
-/// pathological input (an empty Security LS is non-conformant per
-/// ST 0102.12 §6.7 minimum requirements), but the outer walker must
-/// preserve the empty bytes verbatim.
+/// Cross-set: empty SecurityLs bytes inside ST 0601 Tag 48. An empty
+/// Security LS is non-conformant per ST 0102.12 §6.7 minimum requirements,
+/// and the encoder writes the zero-length item verbatim; the decoder then
+/// applies ST 0107.5 §6.3.4 — a zero-length optional item means "unknown" —
+/// so the field comes back unset with no field error, and the empty item is
+/// not mistaken for a malformed one.
 #[test]
-fn cross_st0601_tag_48_empty_security_bytes_preserved() {
+fn cross_st0601_tag_48_empty_security_bytes_decode_as_unknown() {
     let parent = UasDatalinkLs {
         timestamp_us: Some(0),
         security_local_set: Some(Vec::new()),
@@ -594,11 +595,19 @@ fn cross_st0601_tag_48_empty_security_bytes_preserved() {
         ..Default::default()
     };
     let bytes = st0601::encode_to_vec(&parent).unwrap();
+    assert!(
+        bytes.windows(2).any(|w| w == [48, 0]),
+        "the encoder writes the empty Tag 48 as a zero-length item"
+    );
     let decoded = st0601::decode(&bytes).unwrap();
     assert_eq!(
-        decoded.security_local_set.as_deref(),
-        Some(&[][..]),
-        "empty Tag 48 round-trips as Some(empty), not None"
+        decoded.security_local_set, None,
+        "a zero-length Tag 48 decodes as unknown (unset), not Some(empty)"
+    );
+    assert!(
+        decoded.field_errors.is_empty(),
+        "a zero-length optional item is not a field error: {:?}",
+        decoded.field_errors
     );
 }
 
