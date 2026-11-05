@@ -1519,6 +1519,11 @@ pub = mp.finish_into_publisher()   # recover the publisher to finish() it cleanl
 pub.finish()
 ```
 
+For B-frame video, `mp.push_video_with_dts(nal, pts=..., dts=..., key_frame=True)` writes
+both timestamps into the PES header. It needs exactly one configured video stream, and
+`dts <= pts` is the caller's invariant. `rtp.MountHandle.push_video_with_dts` is the same
+call on an RTSP mount.
+
 An unfinished `MuxPublisher` dropped without `finish_into_publisher()`
 aborts: nothing is drained and no closing cut is written. The Rust type's
 `Drop` drains best-effort; Python's does not.

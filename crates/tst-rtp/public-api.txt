@@ -817,6 +817,7 @@ pub fn tst_rtp::rtsp::server::mount::MountHandle::push_subtitle_to(&self, tst_co
 pub fn tst_rtp::rtsp::server::mount::MountHandle::push_video(&self, &[u8], tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_rtp::error::MountError>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::push_video_to(&self, tst_core::mpegts::mux::types::VideoStreamHandle, &[u8], tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_rtp::error::MountError>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::push_video_to_with_dts(&self, tst_core::mpegts::mux::types::VideoStreamHandle, &[u8], tst_core::mpegts::common::Pts90khz, tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_rtp::error::MountError>
+pub fn tst_rtp::rtsp::server::mount::MountHandle::push_video_with_dts(&self, &[u8], tst_core::mpegts::common::Pts90khz, tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_rtp::error::MountError>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::reset_stats(&self)
 pub fn tst_rtp::rtsp::server::mount::MountHandle::stats(&self) -> tst_rtp::rtsp::server::mount::MountStats
 pub fn tst_rtp::rtsp::server::mount::MountHandle::subtitle_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::SubtitleStreamHandle>
@@ -2053,6 +2054,7 @@ pub fn tst_rtp::rtsp::server::mount::MountHandle::push_subtitle_to(&self, tst_co
 pub fn tst_rtp::rtsp::server::mount::MountHandle::push_video(&self, &[u8], tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_rtp::error::MountError>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::push_video_to(&self, tst_core::mpegts::mux::types::VideoStreamHandle, &[u8], tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_rtp::error::MountError>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::push_video_to_with_dts(&self, tst_core::mpegts::mux::types::VideoStreamHandle, &[u8], tst_core::mpegts::common::Pts90khz, tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_rtp::error::MountError>
+pub fn tst_rtp::rtsp::server::mount::MountHandle::push_video_with_dts(&self, &[u8], tst_core::mpegts::common::Pts90khz, tst_core::mpegts::common::Pts90khz, bool) -> core::result::Result<(), tst_rtp::error::MountError>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::reset_stats(&self)
 pub fn tst_rtp::rtsp::server::mount::MountHandle::stats(&self) -> tst_rtp::rtsp::server::mount::MountStats
 pub fn tst_rtp::rtsp::server::mount::MountHandle::subtitle_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::SubtitleStreamHandle>

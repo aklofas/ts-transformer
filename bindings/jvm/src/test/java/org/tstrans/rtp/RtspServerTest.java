@@ -198,6 +198,33 @@ class RtspServerTest {
         }
     }
 
+    @Test @Timeout(15)
+    void pushVideoWithDtsOnOneVideoStreamCountsBytes() throws Exception {
+        try (RtspServer s = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
+            MuxerConfig cfg = MuxerConfig.builder()
+                .programNumber(1).pmtPid(0x1000).addVideo(0x1011, VideoCodec.H264).build();
+            try (MountHandle m = s.addUnicastMount("/dts", cfg)) {
+                m.pushVideoWithDts(syntheticH264Idr(), 18_000L, 0L, true);
+                m.flush();
+                assertTrue(m.stats().bytesPushed() > 0);
+            }
+        }
+    }
+
+    @Test @Timeout(15)
+    void pushVideoWithDtsWithTwoVideoStreamsThrows() throws Exception {
+        try (RtspServer s = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
+            MuxerConfig cfg = MuxerConfig.builder()
+                .programNumber(1).pmtPid(0x1000)
+                .addVideo(0x1011, VideoCodec.H264).addVideo(0x1012, VideoCodec.H264).build();
+            try (MountHandle m = s.addUnicastMount("/dts2", cfg)) {
+                RtspException ex = assertThrows(RtspException.class,
+                    () -> m.pushVideoWithDts(syntheticH264Idr(), 3_000L, 0L, true));
+                assertEquals(RtspException.Kind.MOUNT, ex.kind());
+            }
+        }
+    }
+
     /**
      * Strict handle decode in {@code pushVideoTo}: a negative jlong or a value
      * exceeding {@code u32::MAX} must be rejected with

@@ -538,6 +538,9 @@ baseline (by design)" for the full rationale.
       to the targeted video push, emitting PES with `PTS_DTS_flags = '11'`
       (ISO/IEC 13818-1 §2.4.3.6). Additive — no symbol removed, no
       signature or struct layout changed.
+      The live shells have no C DTS push; Rust, Java and Python carry
+      the single-stream `push_video_with_dts` on `MuxPublisher` and the
+      RTSP mount handle.
     - `18` — HLS promotion (tst-hls restructure): `tst_hls_publisher_finish_serving`
       returning the new opaque `TstHlsServerHandle` (`_local_addr` / `_shutdown` /
       `_free`) so VOD/EVENT playlists stay served after `finish`;

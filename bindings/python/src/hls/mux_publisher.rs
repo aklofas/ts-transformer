@@ -206,6 +206,27 @@ impl PyMuxPublisher {
         self.with_inner(py, |mp| mp.push_video(slice, rust_pts, key_frame))
     }
 
+    /// [`Self::push_video`] with an explicit decode timestamp. Requires
+    /// exactly one configured video stream. Segment cuts and pacing follow
+    /// `pts`; `dts <= pts` is the caller's invariant and is not enforced.
+    #[pyo3(signature = (nal, *, pts, dts, key_frame = false))]
+    fn push_video_with_dts(
+        &self,
+        py: Python<'_>,
+        nal: &Bound<'_, PyAny>,
+        pts: &Bound<'_, PyAny>,
+        dts: &Bound<'_, PyAny>,
+        key_frame: bool,
+    ) -> PyResult<()> {
+        let rust_pts = py_pts90khz(pts)?;
+        let rust_dts = py_pts90khz(dts)?;
+        let coerced = crate::util::coerce_bytes_like(py, nal)?;
+        let slice = coerced.as_bytes();
+        self.with_inner(py, |mp| {
+            mp.push_video_with_dts(slice, rust_pts, rust_dts, key_frame)
+        })
+    }
+
     /// Push one KLV blob. `stream_index` is the metadata service id written
     /// into the Metadata AU cell for synchronous carriage; it is ignored for
     /// PrivateData and does not select a stream.

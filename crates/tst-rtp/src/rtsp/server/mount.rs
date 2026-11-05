@@ -315,6 +315,36 @@ impl MountHandle {
         self.with_muxer(|m| m.push_video(nal, pts, key_frame))
     }
 
+    /// [`Self::push_video`] with an explicit decode timestamp, for a mount
+    /// whose config has exactly one video stream. With several, name the
+    /// stream through [`Self::push_video_to_with_dts`]; the single-stream
+    /// form returns [`tst_core::error::MuxError::AmbiguousTarget`] wrapped
+    /// in [`crate::error::MountError::Mux`].
+    ///
+    /// **Caller invariant:** `dts <= pts` per H.222.0 §2.4.3.6. The muxer
+    /// does not enforce this; receivers will reject inverted timestamps.
+    ///
+    /// See [`Self::push_video`] for the drain + broadcast contract and
+    /// error mapping.
+    pub fn push_video_with_dts(
+        &self,
+        nal: &[u8],
+        pts: tst_core::mpegts::common::Pts90khz,
+        dts: tst_core::mpegts::common::Pts90khz,
+        key_frame: bool,
+    ) -> Result<(), crate::error::MountError> {
+        self.with_muxer(|m| {
+            let handles = m.video_handles();
+            let [handle] = handles.as_slice() else {
+                return Err(tst_core::error::MuxError::AmbiguousTarget {
+                    kind: tst_core::mpegts::mux::MuxStreamKind::Video,
+                    count: handles.len(),
+                });
+            };
+            m.push_video_to_with_dts(*handle, nal, pts, dts, key_frame)
+        })
+    }
+
     /// Push one KLV blob. Mirror of
     /// `tst_pipeline::MuxSender::send_klv`.
     ///
@@ -392,10 +422,9 @@ impl MountHandle {
     }
 
     /// Push one video access unit with an explicit decode timestamp.
-    /// Mirror of `MuxSender::send_video_to_with_dts` — targeted-only,
-    /// like every DTS push in the workspace (there is no single-stream
-    /// `push_video_with_dts`; obtain the handle from
-    /// [`Self::video_handles`]).
+    /// Mirror of `MuxSender::send_video_to_with_dts`. Names its stream;
+    /// obtain the handle from [`Self::video_handles`], or use
+    /// [`Self::push_video_with_dts`] when the mount has one video stream.
     ///
     /// Without this variant a mount always serves DTS == PTS; a capture
     /// replayer or restreamer needs it to reproduce real encoder timing
@@ -740,6 +769,75 @@ mod tests {
             }
         }
         assert!(saw_video, "expected a video sample from the served TS");
+    }
+
+    #[test]
+    fn push_video_with_dts_serves_distinct_dts_on_a_single_stream() {
+        use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload};
+
+        let state = mock_unicast_mount_state();
+        let mut rx = state.fanout.subscribe();
+        let handle = MountHandle { state };
+        let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+        handle
+            .push_video_with_dts(&nal, Pts90khz::new(18000), Pts90khz::new(0), true)
+            .expect("dts push succeeds");
+
+        let mut ts = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            ts.extend_from_slice(&chunk);
+        }
+        // PES flags byte 0xC0: PTS and DTS present, header length 10.
+        let pes = ts
+            .windows(4)
+            .position(|w| w == [0x00, 0x00, 0x01, 0xE0])
+            .expect("a video PES start");
+        assert_eq!(ts[pes + 7], 0xC0, "PTS+DTS flags");
+        assert_eq!(ts[pes + 8], 10, "PES header data length");
+
+        let mut demux = Demuxer::new();
+        demux.feed(&ts).expect("demux feed");
+        demux.flush();
+        let mut saw_video = false;
+        while let Some(event) = demux.next_event() {
+            if let DemuxEvent::Sample {
+                pts,
+                dts,
+                payload: SamplePayload::Video { .. },
+                ..
+            } = event
+            {
+                assert_eq!(pts, Pts90khz::new(18000));
+                assert_eq!(dts, Some(Pts90khz::new(0)));
+                saw_video = true;
+            }
+        }
+        assert!(saw_video, "expected a video sample from the served TS");
+    }
+
+    #[test]
+    fn push_video_with_dts_with_two_video_streams_is_ambiguous() {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x1011, VideoCodec::H264);
+        prog.add_video(0x1012, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        let state = MountState::new("/test", MountKind::Unicast, b.build().unwrap(), 256).unwrap();
+        let handle = MountHandle { state };
+        let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+        let err = handle
+            .push_video_with_dts(&nal, Pts90khz::new(3000), Pts90khz::new(0), true)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::error::MountError::Mux(tst_core::error::MuxError::AmbiguousTarget {
+                    kind: tst_core::mpegts::mux::MuxStreamKind::Video,
+                    count: 2
+                })
+            ),
+            "got {err:?}"
+        );
     }
 
     #[test]

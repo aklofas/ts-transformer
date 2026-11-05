@@ -465,6 +465,14 @@ class MountHandle:
         pts: Pts90khz,
         key_frame: bool = ...,
     ) -> None: ...
+    def push_video_with_dts(
+        self,
+        nal: _BytesLike,
+        *,
+        pts: Pts90khz,
+        dts: Pts90khz,
+        key_frame: bool = ...,
+    ) -> None: ...
     def push_klv(
         self,
         klv: _BytesLike,

@@ -164,6 +164,30 @@ impl PyMountHandle {
         res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
+    /// [`Self::push_video`] with an explicit decode timestamp, for a mount
+    /// whose config has exactly one video stream. `dts <= pts` is the
+    /// caller's invariant and is not enforced. Raises `RtspError(MOUNT)` on
+    /// muxer rejection, including a config with several video streams.
+    #[pyo3(signature = (nal, *, pts, dts, key_frame = false))]
+    pub fn push_video_with_dts(
+        &self,
+        py: Python<'_>,
+        nal: &Bound<'_, PyAny>,
+        pts: &Bound<'_, PyAny>,
+        dts: &Bound<'_, PyAny>,
+        key_frame: bool,
+    ) -> PyResult<()> {
+        let rust_pts = py_pts90khz(pts)?;
+        let rust_dts = py_pts90khz(dts)?;
+        let coerced = crate::util::coerce_bytes_like(py, nal)?;
+        let slice = coerced.as_bytes();
+        let res = crate::util::allow_threads_parking(py, || {
+            self.inner
+                .push_video_with_dts(slice, rust_pts, rust_dts, key_frame)
+        });
+        res.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
+    }
+
     /// Push one KLV blob onto the lone configured KLV stream.
     /// `metadata_service_id` defaults to 0 (single-service case).
     /// Accepts any bytes-like input.

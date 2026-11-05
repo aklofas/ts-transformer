@@ -1369,8 +1369,9 @@ mean **Deferred**. An entry whose feature has shipped must never read
     `org.tstrans.shells.MuxSender`, …) expose no `send_video_misp_to` /
     `sendVideoMispTo`; `Muxer` is the only binding path to an ST 0604
     MISP splice.
-  - **RTSP mounts:** the Python, JVM and C mount push surfaces are
-    PTS-only, so a binding-managed mount always serves DTS == PTS, and no
+  - **RTSP mounts:** the Python and JVM mounts push DTS only through the
+    single-stream `push_video_with_dts` (one video stream per mount; no
+    `_to_with_dts` form), the C mount push surface stays PTS-only, and no
     language has a MISP mount variant.
 - **Why deferred:** Each mirror follows the binding DTS precedent: the
   Rust surface ships first and a binding follows a binding consumer's
