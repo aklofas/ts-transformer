@@ -105,7 +105,7 @@ impl HlsPublisherBuilder {
     /// [`no_server`](Self::no_server) was called).
     pub fn build(&self) -> Result<HlsPublisher, HlsError> {
         #[cfg(not(feature = "tls"))]
-        if self.config.tls_cert.is_some() || self.config.tls_key.is_some() {
+        if self.config.serve && (self.config.tls_cert.is_some() || self.config.tls_key.is_some()) {
             return Err(HlsError::TlsDisabled);
         }
         HlsPublisher::with_config(self.config.clone())

@@ -143,6 +143,7 @@ impl std::fmt::Debug for HlsConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HlsConfig")
             .field("bind", &self.bind)
+            .field("serve", &self.serve)
             .field("output_dir", &self.output_dir)
             .field("segment_duration", &self.segment_duration)
             .field("max_segment_duration", &self.max_segment_duration)
@@ -222,6 +223,10 @@ impl HlsConfig {
                     3 * target_secs,
                 ));
             }
+        }
+        if !self.serve {
+            // No server: the TLS fields are ignored, so none of them can be inconsistent.
+            return None;
         }
         match (&self.tls_cert, &self.tls_key) {
             (Some(_), None) => Some("tls_cert set but tls_key missing".into()),
@@ -381,6 +386,14 @@ mod tests {
     fn plain_hls_without_cert_and_key_still_passes_validation() {
         let cfg = HlsUrl::parse("hls://0.0.0.0:8080").unwrap().config;
         assert!(!cfg.tls);
+        assert_eq!(cfg.validate(), None);
+    }
+
+    #[cfg(feature = "serve")]
+    #[test]
+    fn hlss_without_cert_and_key_passes_validation_when_not_serving() {
+        let mut cfg = HlsUrl::parse("hlss://127.0.0.1:8443").unwrap().config;
+        cfg.serve = false;
         assert_eq!(cfg.validate(), None);
     }
 }
