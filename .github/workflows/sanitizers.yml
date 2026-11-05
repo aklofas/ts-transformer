@@ -78,6 +78,14 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
+      - name: Install symbolizer
+        # llvm for the unversioned llvm-symbolizer the sanitizer runtime looks
+        # for on PATH; the suppressions are matched on symbolised function
+        # names (see .sanitizer-suppressions/README.md).
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y llvm
+
       - name: Install nightly + rust-src
         # rust-src is required by -Z build-std so the sanitizer can
         # instrument std/core/alloc — without it, panics and allocator
