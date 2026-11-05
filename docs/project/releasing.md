@@ -245,7 +245,12 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      copies against it.
    - The `tst-interop report soak` that closes the x86 run must print
      `overall_pass=true`, and the script exits 0. Any other verdict is a
-     finding, not a rerun. An arm64 failure is recorded in its row as a
+     finding, not a rerun. The gate does not enforce this: it judges the
+     newest release-length soak that stands for the qualified tree and holds
+     only a newer failure against it, so a passing rerun on the same tree
+     would supersede an older failure. A rerun without a fix is a runbook
+     breach the gate cannot see; the failed run keeps its archive row either
+     way. An arm64 failure is recorded in its row as a
      finding and does not block the release.
    - A commit that replaces the frozen one restarts the whole step on the
      same VM (and on the arm64 VMs): `release-vm-soak.sh stop` on the running soak, then setup's
