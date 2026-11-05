@@ -161,9 +161,11 @@ pub struct AttributionReport {
     #[serde(default)]
     pub unexplained_resyncs: u64,
     /// Uncapped count of unexplained discontinuity-family events that
-    /// were NOT excused as transport loss (always the whole family under
-    /// strict judgement; always zero under lossy, where the excusal takes
-    /// them all — see [`unexplained_transport_loss`](Self::unexplained_transport_loss)).
+    /// were NOT excused as transport loss: the whole family under strict
+    /// judgement; under lossy, the `OtherDiscontinuity` signals with no
+    /// continuity jump on their PID within the window before them and
+    /// outside every reconnect gap — see
+    /// [`unexplained_transport_loss`](Self::unexplained_transport_loss).
     #[serde(default)]
     pub unexplained_discontinuities: u64,
     /// Uncapped count of unexplained non-conformance-family events
@@ -225,8 +227,10 @@ pub struct AttributionReport {
     pub detected_by_reader_only_per_class: BTreeMap<String, u64>,
     /// Unexplained events kept out of
     /// [`unexplained_events`](Self::unexplained_events) as transport loss
-    /// rather than corruption — discontinuity-family signals under
-    /// transport-loss excusal. Recorded so `events - attributed_events`
+    /// rather than corruption — continuity jumps, and oversize or
+    /// adaptation-field discontinuities beside one or inside a reconnect
+    /// gap, under transport-loss excusal; plus the PCR anomalies below.
+    /// Recorded so `events - attributed_events`
     /// still reconciles with the list a reader is shown.
     #[serde(default)]
     pub unexplained_transport_loss: u64,
@@ -883,8 +887,9 @@ impl Attribution {
     /// leaves after an outage — and the engine has no way to tell such a
     /// gap from one the tap caused. With this:
     ///
-    /// - Unexplained `ContinuityJump`/`OtherDiscontinuity` signals are
-    ///   not corruption evidence at all. They are already counted in the
+    /// - Unexplained `ContinuityJump` signals, and `OtherDiscontinuity`
+    ///   signals beside a continuity jump on their PID within the window
+    ///   or inside a reconnect gap, are not corruption evidence at all. They are already counted in the
     ///   verifier's own `discontinuities`, which is exactly what the
     ///   lossy contract says to do with them, and they land in
     ///   [`AttributionReport::unexplained_transport_loss`] instead.
@@ -1542,6 +1547,21 @@ impl Attribution {
         }
     }
 
+    /// A continuity jump on `pid` within the attribution window at or
+    /// before `at` (since the last reconnect: a marker clears them), or a
+    /// position inside the newest reconnect gap. Unlike the PCR rule it
+    /// claims nothing: one lost span can both jump a PCR and overrun a PES.
+    fn beside_loss(&self, pid: Option<u16>, at: u64) -> bool {
+        let jump = pid
+            .and_then(|p| self.last_cc_jump_by_pid.get(&p))
+            .is_some_and(|g| g.at <= at && at - g.at <= self.window);
+        let reconnect = self
+            .reconnect_gaps
+            .last()
+            .is_some_and(|g| g.marker <= at && at < g.end);
+        jump || reconnect
+    }
+
     fn excuse_pcr_anomaly(&mut self) {
         self.unexplained_transport_loss += 1;
         self.pcr_anomalies_excused += 1;
@@ -1760,8 +1780,17 @@ impl Attribution {
                             return;
                         }
                     }
-                    Signal::ContinuityJump | Signal::OtherDiscontinuity
-                        if self.excuse_transport_loss =>
+                    Signal::ContinuityJump if self.excuse_transport_loss => {
+                        self.first_unexplained_disc.get_or_insert(text);
+                        self.unexplained_transport_loss += 1;
+                        return;
+                    }
+                    // An oversize or adaptation-field discontinuity follows a
+                    // loss only beside one: lost packets merge two PES into one
+                    // that can overrun its cap, but no loss sets the indicator
+                    // or overruns a cap on its own.
+                    Signal::OtherDiscontinuity
+                        if self.excuse_transport_loss && self.beside_loss(pid, at) =>
                     {
                         self.first_unexplained_disc.get_or_insert(text);
                         self.unexplained_transport_loss += 1;
@@ -2995,6 +3024,79 @@ mod tests {
             );
             assert_eq!(r.unexplained_transport_loss, 0, "{sig:?}");
         }
+    }
+
+    /// An oversize or adaptation-field discontinuity is transport loss only
+    /// beside evidence of a loss: a continuity jump on its own PID within
+    /// the window before it, or a position inside the current reconnect
+    /// gap. Without either it is charged (the negative control): an
+    /// overrun no lost packet caused is a cap regression, and loss never
+    /// sets the discontinuity indicator.
+    #[test]
+    fn lossy_excuses_an_other_discontinuity_only_beside_a_loss() {
+        let run = |signals: &[(u64, u16, Signal)], reconnect_at: Option<u64>| {
+            let mut a =
+                Attribution::lossy(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+            a.on_pcr(1000, 5000);
+            if let Some(at) = reconnect_at {
+                a.on_reconnect(at);
+            }
+            for &(at, pid, sig) in signals {
+                a.on_signal(at, Some(pid), sig);
+            }
+            a.finish(20_000)
+        };
+        let jump = Signal::ContinuityJump;
+        let other = Signal::OtherDiscontinuity;
+
+        let r = run(
+            &[
+                (9000, 0x1011, jump),
+                (9000 + ATTRIBUTION_WINDOW, 0x1011, other),
+            ],
+            None,
+        );
+        assert_eq!(
+            (r.unexplained_transport_loss, r.unexplained_discontinuities),
+            (2, 0),
+            "{r:?}"
+        );
+        let r = run(&[(9010, 0x1011, other)], Some(9000));
+        assert_eq!(
+            (r.unexplained_transport_loss, r.unexplained_discontinuities),
+            (1, 0),
+            "{r:?}"
+        );
+
+        for (case, signals) in [
+            ("no loss", vec![(9000, 0x1011, other)]),
+            (
+                "a jump on another PID",
+                vec![(9000, 0x1031, jump), (9010, 0x1011, other)],
+            ),
+            (
+                "a jump past the window",
+                vec![
+                    (9000, 0x1011, jump),
+                    (9001 + ATTRIBUTION_WINDOW, 0x1011, other),
+                ],
+            ),
+        ] {
+            let r = run(&signals, None);
+            assert_eq!(r.unexplained_discontinuities, 1, "{case}: {r:?}");
+            assert!(
+                r.unexplained_events
+                    .iter()
+                    .any(|e| e.starts_with("OtherDiscontinuity")),
+                "{case}: {r:?}"
+            );
+        }
+        // Strict charges it even beside a jump, as before.
+        let mut a = Attribution::strict(vec![inj(1000, 10, Class::Header, 0x1011, true)], &hdr());
+        a.on_pcr(1000, 5000);
+        a.on_signal(9000, Some(0x1011), jump);
+        a.on_signal(9010, Some(0x1011), other);
+        assert_eq!(a.finish(20_000).unexplained_discontinuities, 2);
     }
 
     /// A forward PCR jump of two seconds, the shape a span of lost packets

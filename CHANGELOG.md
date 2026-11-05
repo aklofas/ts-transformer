@@ -405,6 +405,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The interop matrix adds `whep/chromium-audio-first`: headless Chrome plays an audio-dropping MP2T mount with an offer whose audio section comes first, and fails unless that offer really is audio-first. The full census is 162 cells.
 - A corpus run's archive row carries the baseline's manifest digest as `baseline_manifest_sha256`, absent when the sweep compared with no baseline.
 - `recv --managed` records how long before its deadline its last media arrived (`media_tail_s`), and `report soak` fails `media_until_end_<leg>` on a leg with an outage schedule when that exceeds two outage durations, so a receiver that stops recovering near the end of a soak no longer passes on the run's aggregate counts.
+- Under transport-loss excusal an oversize or adaptation-field discontinuity is excused only beside a continuity jump on its PID within the attribution window, or inside a reconnect gap; without either it fails `corruption_attributed`, so a PES cap regression can no longer spend the soak's loss budget.
 
 ### Fixed — tst-interop
 
