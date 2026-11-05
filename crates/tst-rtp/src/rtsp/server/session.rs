@@ -58,36 +58,75 @@ pub(crate) async fn write_flushed<W: AsyncWrite + Unpin + ?Sized>(
     w.flush().await
 }
 
+/// The session's publish idle window: its publisher and the configured
+/// timeout, when `publish_idle_timeout` is set and the connection holds a
+/// publisher. Only a recording publisher has an idle time
+/// ([`PublishSession::idle_for`]); before RECORD the window never fires.
+fn publish_window<'a>(
+    state: &ServerState,
+    session: &'a ServerSessionState,
+) -> Option<(&'a PublishSession, std::time::Duration)> {
+    Some((session.publisher()?, state.builder.publish_idle_timeout?))
+}
+
 /// The one bounded writer for every reply a session sends: take the
 /// writer lock, write and flush `bytes` and, when `shutdown_after`, shut
-/// the write half, all raced against `bound` and both cancel tokens.
-/// `None` means the bound or a cancel won; the caller then leaves the serve
-/// loop so the session drops (its Drop aborts a fanout parked on the lock).
+/// the write half, all raced against `bound`, the publish idle window and
+/// both cancel tokens. `None` means a bound or a cancel won; the caller then
+/// leaves the serve loop so the session drops (its Drop aborts a fanout
+/// parked on the lock).
 ///
 /// The lock is shared with the fanout task, which holds it for RFC 7826
 /// §14 interleaved frames and may be parked mid-frame on a peer that never
 /// reads. Unbounded, a reply would wait on it out of reach of the idle
 /// reaper and the server's cancel.
+///
+/// With `publish` set, a recording publisher that receives no media for its
+/// timeout ends the wait too, so a publisher that stops reading replies
+/// cannot outlast the publish idle timeout. When that window runs out but
+/// media arrived meanwhile, the write keeps waiting, up to `bound`. The
+/// write future is created once and never restarted, so a partial reply is
+/// never sent twice.
 async fn write_bounded(
     write_half: &SessionWriter,
     bytes: &[u8],
     bound: std::time::Duration,
+    publish: Option<(&PublishSession, std::time::Duration)>,
     server_cancel: &CancellationToken,
     session_cancel: &CancellationToken,
     shutdown_after: bool,
 ) -> Option<std::io::Result<()>> {
-    tokio::select! {
-        r = async {
-            let mut guard = write_half.lock().await;
-            write_flushed(&mut **guard, bytes).await?;
-            if shutdown_after {
-                guard.shutdown().await?;
+    let write = async {
+        let mut guard = write_half.lock().await;
+        write_flushed(&mut **guard, bytes).await?;
+        if shutdown_after {
+            guard.shutdown().await?;
+        }
+        Ok(())
+    };
+    tokio::pin!(write);
+    let bound_at = tokio::time::Instant::now() + bound;
+    loop {
+        let mut wait = bound_at.saturating_duration_since(tokio::time::Instant::now());
+        if let Some((p, t)) = publish
+            && let Some(idle) = p.idle_for()
+        {
+            wait = wait.min(t.saturating_sub(idle));
+        }
+        tokio::select! {
+            r = &mut write => return Some(r),
+            _ = tokio::time::sleep(wait) => {
+                if tokio::time::Instant::now() >= bound_at {
+                    return None;
+                }
+                if publish.is_some_and(|(p, t)| p.idle_for().is_some_and(|d| d >= t)) {
+                    return None;
+                }
+                // Media arrived during the wait: the window moved.
             }
-            Ok(())
-        } => Some(r),
-        _ = tokio::time::sleep(bound) => None,
-        _ = server_cancel.cancelled() => None,
-        _ = session_cancel.cancelled() => None,
+            _ = server_cancel.cancelled() => return None,
+            _ = session_cancel.cancelled() => return None,
+        }
     }
 }
 
@@ -768,6 +807,7 @@ where
                 peer,
                 &write_half,
                 idle_bound,
+                publish_window(&state, &session),
                 &state.cancel_token,
                 &session_entry.cancel,
             )
@@ -801,6 +841,7 @@ where
                         &write_half,
                         &bytes,
                         idle_bound,
+                        publish_window(&state, &session),
                         &state.cancel_token,
                         &session_entry.cancel,
                         false,
@@ -817,7 +858,7 @@ where
                                 target: "tst_rtp::server",
                                 peer = %peer,
                                 timeout_secs = idle_bound.as_secs(),
-                                "reply write parked past the idle bound or cancelled; closing session"
+                                "reply write parked past the idle bound or the publish idle timeout, or cancelled; closing session"
                             );
                             break 'serve;
                         }
@@ -869,6 +910,7 @@ where
                 &write_half,
                 &bytes,
                 idle_bound,
+                publish_window(&state, &session),
                 &state.cancel_token,
                 &session_entry.cancel,
                 false,
@@ -885,7 +927,7 @@ where
                         target: "tst_rtp::server",
                         peer = %peer,
                         timeout_secs = idle_bound.as_secs(),
-                        "response write parked past the idle bound or cancelled; closing session"
+                        "response write parked past the idle bound or the publish idle timeout, or cancelled; closing session"
                     );
                     break 'serve;
                 }
@@ -936,6 +978,7 @@ where
                     &write_half,
                     &[],
                     idle_bound,
+                    publish_window(&state, &session),
                     &state.cancel_token,
                     &session_entry.cancel,
                     true,
@@ -1001,12 +1044,14 @@ enum CapCheck {
 /// Check the buffer head against the RTSP framing caps (64 KiB headers /
 /// 1 MiB body — see [`crate::rtsp::message::rtsp_frame_decision`]) and, on
 /// a violation, answer `413 Request Entity Too Large` and shut the write
-/// half through [`write_bounded`] under `bound` and the two cancel tokens.
+/// half through [`write_bounded`] under `bound`, the publish idle
+/// window and the two cancel tokens.
 async fn reject_if_over_cap(
     buf: &[u8],
     peer: SocketAddr,
     write_half: &SessionWriter,
     bound: std::time::Duration,
+    publish: Option<(&PublishSession, std::time::Duration)>,
     server_cancel: &CancellationToken,
     session_cancel: &CancellationToken,
 ) -> CapCheck {
@@ -1033,6 +1078,7 @@ async fn reject_if_over_cap(
         write_half,
         response_413,
         bound,
+        publish,
         server_cancel,
         session_cancel,
         true,
@@ -2177,6 +2223,217 @@ mod session_tests {
                 && closed_at <= bound + Duration::from_secs(10),
             "closure observed at {closed_at:?} after the first byte; the bound is {bound:?}"
         );
+    }
+
+    // --- Reply writes against the publish idle timeout (real time) ----
+    //
+    // `last_media_ms` is a real-time clock, so these run unpaused with a
+    // short publish idle timeout. The session runs over an in-memory duplex
+    // whose 1 KiB buffer fills once the test stops reading replies, which
+    // parks the server's reply write.
+
+    /// `test_state()` with `publish_idle_timeout(timeout)`, one `/pub`
+    /// publish mount, and a session task serving one duplex connection.
+    async fn publish_idle_session(
+        timeout: std::time::Duration,
+    ) -> (
+        Arc<ServerState>,
+        Arc<publish::mount::PublishMountState>,
+        tokio::io::DuplexStream,
+        tokio::task::JoinHandle<Result<(), RtspServerError>>,
+    ) {
+        use crate::rtsp::server::mount::MountEntry;
+        let mut builder =
+            crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        builder.publish_idle_timeout(timeout);
+        let state = Arc::new(ServerState {
+            builder,
+            ..Arc::try_unwrap(crate::rtsp::server::test_state())
+                .ok()
+                .expect("fresh test state")
+        });
+        let mount = publish::mount::PublishMountState::new("/pub", 8, Default::default());
+        state
+            .mounts
+            .lock()
+            .unwrap()
+            .insert("/pub".into(), MountEntry::Publish(mount.clone()));
+        let (client, server_end) = tokio::io::duplex(1024);
+        let (read_half, write_half) = tokio::io::split(server_end);
+        state
+            .active_sessions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let slot = SessionSlot::new(state.clone());
+        let task = tokio::spawn(serve_connection(
+            state.clone(),
+            read_half,
+            session_writer(write_half),
+            "127.0.0.1:40000".parse().unwrap(),
+            slot,
+            "test session opened",
+        ));
+        (state, mount, client, task)
+    }
+
+    /// Write one request on the duplex and read its response head.
+    async fn duplex_exchange(c: &mut tokio::io::DuplexStream, req: &str) -> String {
+        use tokio::io::AsyncWriteExt;
+        c.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = c.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "the session closed before a response");
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn session_header(r: &str) -> String {
+        r.lines()
+            .find_map(|l| l.strip_prefix("Session: "))
+            .map(|v| v.split(';').next().unwrap().trim().to_owned())
+            .unwrap_or_else(|| panic!("Session header in: {r}"))
+    }
+
+    /// Stop reading replies and pipeline GET_PARAMETERs until the server's
+    /// reply write parks on the full duplex. Returns the feeder task (abort
+    /// it at the end) and the read half the test keeps but never reads.
+    fn park_reply_writes(
+        client: tokio::io::DuplexStream,
+        sid: String,
+    ) -> (
+        tokio::task::JoinHandle<()>,
+        tokio::io::ReadHalf<tokio::io::DuplexStream>,
+    ) {
+        use tokio::io::AsyncWriteExt;
+        let (unread, mut w) = tokio::io::split(client);
+        let feeder = tokio::spawn(async move {
+            for cseq in 10..2_000u32 {
+                let req = format!(
+                    "GET_PARAMETER rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"
+                );
+                if w.write_all(req.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        (feeder, unread)
+    }
+
+    /// A recording publisher that sends no media and stops reading replies
+    /// loses its session at the publish idle timeout, not when the parked
+    /// reply write reaches the post-SETUP bound (90 s at the default).
+    #[tokio::test]
+    async fn a_parked_reply_write_does_not_outlast_the_publish_idle_timeout() {
+        use std::time::Duration;
+        let timeout = Duration::from_millis(500);
+        let (state, mount, mut c, task) = publish_idle_session(timeout).await;
+        let r = duplex_exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "ANNOUNCE: {r}");
+        let r = duplex_exchange(
+            &mut c,
+            "SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n",
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let sid = session_header(&r);
+        let r = duplex_exchange(
+            &mut c,
+            &format!("RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 3\r\nSession: {sid}\r\n\r\n"),
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "RECORD: {r}");
+
+        let (feeder, _unread) = park_reply_writes(c, sid);
+        let ended = tokio::time::timeout(
+            tst_test_helpers::timing::scaled(Duration::from_secs(10)),
+            task,
+        )
+        .await;
+        feeder.abort();
+        assert!(
+            ended.is_ok(),
+            "a parked reply write kept a media-less publisher past the publish idle timeout ({timeout:?})"
+        );
+        assert!(
+            mount.publisher.lock().unwrap().info.is_none(),
+            "the publisher slot was not released"
+        );
+        assert_eq!(
+            state
+                .active_sessions
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+    }
+
+    /// Control: with UDP media arriving on its own sockets, a parked reply
+    /// write does not end the publisher at the publish idle timeout; it keeps
+    /// waiting, and the server cancel still ends it.
+    #[tokio::test]
+    async fn a_parked_reply_write_does_not_end_a_publisher_whose_media_flows() {
+        use std::time::Duration;
+        let timeout = Duration::from_millis(500);
+        let (state, _mount, mut c, task) = publish_idle_session(timeout).await;
+        let r = duplex_exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "ANNOUNCE: {r}");
+        let media = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let p = media.local_addr().unwrap().port();
+        let r = duplex_exchange(
+            &mut c,
+            &format!(
+                "SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP;unicast;client_port={p}-{};mode=record\r\n\r\n",
+                p + 1
+            ),
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let server_rtp: u16 = r
+            .split("server_port=")
+            .nth(1)
+            .and_then(|t| t.split('-').next())
+            .and_then(|t| t.parse().ok())
+            .unwrap_or_else(|| panic!("server_port in the SETUP answer: {r}"));
+        let sid = session_header(&r);
+        let r = duplex_exchange(
+            &mut c,
+            &format!("RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 3\r\nSession: {sid}\r\n\r\n"),
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "RECORD: {r}");
+
+        // Start the real-time media epoch (see the paused UDP test above).
+        while PublishSession::now_ms() == 0 {
+            std::hint::spin_loop();
+        }
+        let sender = {
+            let media = media.clone();
+            tokio::spawn(async move {
+                for seq in 1..=u16::MAX {
+                    let mut pkt = rtp_mp2t_packet(1);
+                    pkt[2..4].copy_from_slice(&seq.to_be_bytes());
+                    let _ = media.send_to(&pkt, ("127.0.0.1", server_rtp)).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+        };
+
+        let (feeder, _unread) = park_reply_writes(c, sid);
+        tokio::time::sleep(timeout * 4).await;
+        assert!(
+            !task.is_finished(),
+            "a parked reply write ended a publisher whose media kept flowing"
+        );
+        state.cancel_token.cancel();
+        let ended = tokio::time::timeout(
+            tst_test_helpers::timing::scaled(Duration::from_secs(5)),
+            task,
+        )
+        .await;
+        sender.abort();
+        feeder.abort();
+        assert!(ended.is_ok(), "the session ignored the server cancel");
     }
 
     /// A reference model of the session lifecycle, written from what the
