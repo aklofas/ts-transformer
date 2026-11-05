@@ -141,11 +141,10 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
    stress VM run beside it, on the same commit. Four scripts under `scripts/interop/`
    carry the steps; each prints `<stage> rc=N` lines and one final marker a
    watcher can anchor on:
-   - Provision the VM pair per architecture: the x86 soak VM (`t3.xlarge`)
-     and, in parallel, the arm64 soak VM (`t4g.xlarge`) and the arm64 stress
-     VM (`c7g.2xlarge`, never the soak VM). The x86 stress VM
-     (`c7i.2xlarge`) is provisioned when stress numbers are wanted beside
-     the arm64 ones. The instance role reads the corpus bucket, which holds
+   - Provision the VMs: the x86 soak VM (`t3.xlarge`); the arm64 soak VM
+     (`t4g.xlarge`); the arm64 stress VM (`c7g.2xlarge`, never the soak
+     VM); and, optionally, the x86 stress VM (`c7i.2xlarge`), when stress
+     numbers are wanted beside the arm64 ones. The instance role reads the corpus bucket, which holds
      the real captures and the previous release's corpus baseline. Then, on
      each VM, `release-vm-setup.sh <full sha>`: packages, a Rust toolchain,
      the AWS CLI, the UDP receive-buffer ceiling, a browser (Google Chrome
@@ -200,6 +199,12 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      while it still points there; otherwise push one, for example
      `git push origin <sha>:refs/heads/release/X.Y.Z`): a workflow dispatch
      takes no commit, and the script refuses a ref that has moved on.
+   - The arm64 soak starts with a drill: `soak.sh --hours 0.05` with the
+     browser leg on. If the browser fails on aarch64, the 48-hour arm64
+     run launches with `--no-whep` and its row's `legs` say so. The
+     five-leg rule below applies to the x86 release soak only. The arm64
+     stress VM runs `stress.sh` as its own run; the soak VM never doubles
+     as the stress VM.
    - On the VM, `release-vm-soak.sh launch <full sha> --outdir ~/soak-X.Y.Z
      --wait-marker ~/ci-green` waits for that marker and refuses one written for another commit, so a
      reused VM cannot launch on a stale marker, then runs the pre-flight
@@ -212,14 +217,10 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      `release-vm-soak.sh stop --outdir <old>` keeps its logs and frees its
      media. Run `launch` detached too (it waits for the marker and then for
      the roles, which can be an hour). The same `ci-green` and `launch`
-     steps run on the arm64 soak VM, which stamps its archive row with
-     `arch = "aarch64"`.
-   - The arm64 soak starts with a drill: `soak.sh --hours 0.05` with the
-     browser leg on. If the browser fails on aarch64, the 48-hour arm64
-     run launches with `--no-whep` and its row's `legs` say so. The
-     five-leg rule below applies to the x86 release soak only. The arm64
-     stress VM runs `stress.sh` as its own run; the soak VM never doubles
-     as the stress VM.
+     steps run on the arm64 soak VM after its drill, which stamps its
+     archive row with `arch = "aarch64"`. On that VM `ci-green` is run
+     without `--dispatch-wheels`: the dispatch already happened for the x86
+     VM, and the marker is bound to the sha either way.
    - Check the run at 24 hours (the midpoint) and again before the end,
      without touching it:
      `release-vm-soak.sh status --outdir ~/soak-X.Y.Z` lists every role
@@ -303,16 +304,16 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
     `docs/` and `tests/coverage/evidence-archives.toml` between the soaked
     tree and this commit. The JavaScript under `docs/webrtc/` is not a
     document, because the soak's browser leg runs it. A `v*` tag push
-    applies the same gate. The record also names the newest arm64 soak
-    that stands for the tree as `release_vm.arm_soak`. In 0.9.1 it is
-    recorded, not gating; it gates from 0.10, after one clean arm64 run.
-    The gate
-    judges the newest release soak that stands for the commit. A newer failed
+    applies the same gate. The gate
+    judges the newest x86_64 release soak that stands for the commit. A newer failed
     soak of any declared duration on the same or an equivalent tree is a
     reason for NO-GO, while a newer passing short run never replaces the
     release-length pass. The newest corpus row on an equivalent tree is the one
     judged, so a newer failed corpus run blocks and a newer passing one
-    replaces an earlier failure. Without
+    replaces an earlier failure. The record also names the newest
+    arm64 soak that stands for the tree as `release_vm.arm_soak`. In 0.9.1
+    it is recorded, not gating; it gates from 0.10, after one clean arm64
+    run. Without
     the input the record is a mid-cycle one and states that the gate was not
     applied.
 
