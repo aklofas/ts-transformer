@@ -286,8 +286,11 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
 
    The same PR adds the soaks to the runs table on the
    [validation evidence page](/docs/project/validation-evidence.md).
-8. **Destroy the VMs** once every archive is harvested and checked. A
-   targeted destroy names the instances and their security groups:
+8. **Destroy the VMs** once every archive is harvested and checked. They
+   were provisioned from the maintainer's own infrastructure configuration,
+   which lives outside this repository; run the targeted destroy from that
+   configuration's directory. It names the instances and their security
+   groups:
    ```bash
    terraform destroy \
      -target=aws_instance.soak_vm -target=aws_instance.soak_vm_arm \
@@ -531,8 +534,17 @@ resolves internal dependencies from the tree (a `[patch.crates-io]` table
 written by `scripts/release/dry-run-patch-config.sh`, dry-run only), so it
 also passes after a release version sweep, when the index cannot yet
 satisfy the bumped `version =` keys. To rehearse locally at such a
-version: `bash scripts/release/dry-run-patch-config.sh >> .cargo/config.toml`,
-run the layer script with `PUBLISH=0`, then delete `.cargo/config.toml`.
+version, set any local `.cargo/config.toml` aside, write the patch table,
+run each layer in the workflow's order, then put the local config back:
+
+```bash
+mkdir -p .cargo
+[ ! -f .cargo/config.toml ] || mv .cargo/config.toml .cargo/config.toml.keep
+bash scripts/release/dry-run-patch-config.sh > .cargo/config.toml
+PUBLISH=0 bash scripts/release/publish-crates-layer.sh tstrans-mbedtls-src   # then each later layer
+rm .cargo/config.toml
+[ ! -f .cargo/config.toml.keep ] || mv .cargo/config.toml.keep .cargo/config.toml
+```
 
 ### Manual fallback (token-based)
 

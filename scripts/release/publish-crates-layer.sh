@@ -22,8 +22,8 @@
 # the tag): the packaged crate's `version =` requirements cannot be met by
 # the index, so the caller must point them at the tree first — crates-io.yml
 # does that with a `[patch.crates-io]` table from dry-run-patch-config.sh;
-# locally, `bash scripts/release/dry-run-patch-config.sh >> .cargo/config.toml`
-# (delete it afterwards). The real tag publish never needs this: layers land
+# locally, see docs/project/releasing.md's rehearsal recipe (it creates
+# .cargo/ and sets an existing local config aside). The real tag publish never needs this: layers land
 # in order and cargo (>=1.85) waits for index propagation of just-published
 # deps.
 set -euo pipefail
