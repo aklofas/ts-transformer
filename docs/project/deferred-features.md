@@ -1286,8 +1286,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
   Receive-side statistics are not computed: RFC 3550 §A.1 sequence and
   cycle tracking, §A.8 interarrival jitter, loss accounting, sender packet
   and octet counts, and the LSR/DLSR round-trip time. On the interleaved
-  RTSP client a peer's receiver reports fill
-  `RtpRecvTransport::rtcp_stats()` and `socket_stats().packets_lost_send`;
+  RTSP client a peer's RTCP is counted in `RtpRecvTransport::rtcp_stats()`;
+  `socket_stats().packets_lost_send` takes its value only from a receiver
+  report block about the client's own SSRC, and the receive-only client
+  sends no RTP, so no peer reports on it and the counter stays 0;
   a publisher's sender reports place KLV on the video timeline of a
   publish mount. `rtt_us` reports 0 everywhere.
 - **Why deferred:** The statistics are a new subsystem on the receive side

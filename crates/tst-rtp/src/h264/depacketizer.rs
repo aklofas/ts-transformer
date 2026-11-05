@@ -51,9 +51,10 @@
 //! # B-frames
 //!
 //! This depacketizer targets low-latency, no-B-frame camera streams (the primary
-//! use case for gimbaled-platform video). RTP timestamps reflect decode order, not
-//! display order, so [`H264Au::pts`] is a **decode-order** timestamp — B-frame
-//! content can produce non-monotonic PTS values, which are passed through unaltered.
+//! use case for gimbaled-platform video). RTP timestamps are presentation times
+//! sent in decode order, so [`H264Au::pts`] is each access unit's presentation
+//! timestamp, delivered in decode order — B-frame content produces
+//! non-monotonic PTS values, which are passed through unaltered.
 //! DTS is not derivable from RTP; callers with B-frame sources must derive DTS
 //! themselves and supply it to `push_video_to_with_dts`.
 //!
