@@ -37,6 +37,12 @@ import java.util.List;
 public final class Redact {
     private static final String[] SECRET_KEYS =
         {"passphrase", "secret", "token", "auth_pass", "password", "streamid", "srt_streamid"};
+    /**
+     * The longest a secret key can be on the wire: every character percent-encoded. A longer run
+     * of key characters decodes to more characters than any secret key holds.
+     */
+    private static final int MAX_ENCODED_KEY_LEN =
+        3 * java.util.Arrays.stream(SECRET_KEYS).mapToInt(String::length).max().getAsInt();
     private static final String REDACTED = "<redacted>";
 
     private Redact() {}
@@ -212,11 +218,14 @@ public final class Redact {
      * -1 otherwise.
      */
     private static int secretKeyLen(String token, int i) {
+        // A longer run cannot be a secret key, so the scan stops one character past the longest
+        // encoded one; scanning the whole run at every position costs time quadratic in its length.
+        int cap = Math.min(token.length(), i + MAX_ENCODED_KEY_LEN + 1);
         int end = i;
-        while (end < token.length() && (isWord(token.charAt(end)) || token.charAt(end) == '%')) {
+        while (end < cap && (isWord(token.charAt(end)) || token.charAt(end) == '%')) {
             end++;
         }
-        if (end >= token.length() || token.charAt(end) != '=') {
+        if (end - i > MAX_ENCODED_KEY_LEN || end >= token.length() || token.charAt(end) != '=') {
             return -1;
         }
         StringBuilder decoded = new StringBuilder(end - i);

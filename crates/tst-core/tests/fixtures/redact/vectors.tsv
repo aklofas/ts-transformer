@@ -55,3 +55,8 @@ open 'srt://u:p'w@h: timeout	open 'srt://u:<redacted>@h: timeout
 é://h	é://h
 😀srt://u:p@h	😀srt://u:<redacted>@h
 'srt://u:pw' rtsp://v:q@c	'srt://u:pw' rtsp://v:<redacted>@c
+# The longest secret key fully percent-encoded (36 bytes) is still a key; one more byte is not.
+srt://h?%73%72%74%5f%73%74%72%65%61%6d%69%64=x	srt://h?%73%72%74%5f%73%74%72%65%61%6d%69%64=<redacted>
+srt://h?a%73%72%74%5f%73%74%72%65%61%6d%69%64=x	srt://h?a%73%72%74%5f%73%74%72%65%61%6d%69%64=x
+# A key that starts inside a run of % is still found.
+srt://h?%%%token=abc	srt://h?%%%token=<redacted>
