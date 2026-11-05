@@ -697,6 +697,14 @@ covers.
 
 For full build-target / CI gating coverage see "Build targets" at the top of this document.
 
+**JVM temp directory.** The JVM binding extracts its native library under
+`java.io.tmpdir`, into a per-user, owner-only cache (see the `NativeLoader`
+Javadoc). It checks the directories it creates, not `java.io.tmpdir`
+itself, so that directory must be private to the user or carry the sticky
+bit (`/tmp` with mode `1777` qualifies). A `java.io.tmpdir` that other users
+can write to without the sticky bit is unsupported; on such a host, point
+`java.io.tmpdir` at a private directory.
+
 ### H.264-over-RTP ingest (RFC 6184) — per-binding status
 
 | Binding | Status | Notes |
