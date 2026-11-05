@@ -217,6 +217,15 @@ of the record. The whole-record decode only fails on structural problems
 verifying decoders, missing mandatory tags under
 `decode_strict_compliance`).
 
+A zero-length known optional ST 0601 item means "unknown": its typed field
+stays unset, with no `field_errors` entry and no copy in `unknown`. Tags 2
+and 65 keep mandatory-field validation; repeatable Tags 102 and 115 keep
+their own handlers. For a repeated single-use typed tag, only the last wire
+occurrence is decoded, even if it is empty or malformed.
+`decode_strict_compliance` rejects duplicate typed tags except 102 and 115,
+which allow multiple instances. An encoded empty optional value can
+therefore decode back as unset.
+
 For the complete typed-item list — which tags are typed, which are still
 pass-through — see [reference/compatibility.md](/docs/reference/compatibility.md).
 
