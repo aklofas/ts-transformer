@@ -304,8 +304,9 @@ int main(int argc, char **argv) {
      * tst_rtp_sender_close is cancel-first and abortive: it discards that
      * buffered tail, so tst_rtp_sender_flush must run before it for a
      * lossless end of stream. close then closes the UDP socket and frees
-     * all associated memory; it is safe on a valid non-NULL pointer at any
-     * time, including after a send failure.
+     * all associated memory; it is safe on a valid non-NULL pointer once no
+     * other call on the sender is in flight (here the send loop has
+     * finished), including after a send failure.
      *
      * WHY not tst_rtp_sender_cancel first?
      *   cancel() signals a blocked send to unblock without flushing —

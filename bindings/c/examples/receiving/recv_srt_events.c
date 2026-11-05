@@ -117,15 +117,18 @@
  *   policy's backoff or parked in a fresh `accept()` with no peer in
  *   sight. Neither is bounded by `?x-recvtimeout` (SRTO_RCVTIMEO governs a
  *   connected socket's recv, not `srt_accept`), so the periodic wakeup
- *   this example relies on never fires there. What makes Ctrl-C land
- *   promptly in that window anyway is `_cancel` itself: the managed
- *   receiver's cancel interrupts the backoff wait AND closes the listener
- *   its factory is parked on, so `_recv_event` returns `TST_E_CLOSED`
- *   within milliseconds (pinned by the tst-c test
- *   `loopback_cancel_wakes_managed_listener_parked_in_reaccept`). Earlier
- *   builds ignored the cancel in this window and needed a `kill -9`.
- *   The one accept that still cannot be cancelled is the very FIRST one,
- *   inside `_open_listener` before any handle exists to cancel.
+ *   this example relies on never fires there, and Ctrl-C waits: this
+ *   example calls `_cancel` only from its reader thread, after
+ *   `_recv_event` returns, so a Ctrl-C in that window takes effect once a
+ *   new peer connects and the next event or timeout returns, or once the
+ *   reconnect policy gives up. A program that must stop promptly there
+ *   calls `_cancel` from a separate control thread (see `on_sigint`'s doc
+ *   below): the managed receiver's cancel interrupts the backoff wait AND
+ *   closes the listener its factory is parked on, so `_recv_event`
+ *   returns `TST_E_CLOSED` within milliseconds (pinned by the tst-c test
+ *   `loopback_cancel_wakes_managed_listener_parked_in_reaccept`). The one
+ *   accept no cancel reaches is the very FIRST one, inside
+ *   `_open_listener`, before any handle exists to cancel.
  *
  *   NOTE on `mux_synthetic_srt.c`'s KLV (Recipe 1 only): its `make_klv()`
  *   writes the 16-byte ST 0601 Universal Label + a BER length byte, but
@@ -717,15 +720,13 @@ int main(int argc, char **argv) {
         }
 
         /*
-         * Loop-exit paths. Unlike the plain `tst_demux_receiver_*`
-         * family, the MANAGED receiver folds two different real-world
-         * outcomes into the same `TST_E_END_OF_STREAM` code: a graceful
-         * peer close, AND the reconnect policy exhausting its attempt
-         * budget after repeated failures (libsrt cannot distinguish
-         * "peer hung up" from "peer never came back" at this layer, so
-         * `ManagedRecvTransport` deliberately leaves both in the same
-         * terminal state). That's exactly why the end-reason query
-         * after this loop exists — see the cleanup section below.
+         * Loop-exit paths. On the MANAGED receiver `TST_E_END_OF_STREAM`
+         * means one thing: the reconnect policy exhausted its attempt
+         * budget. A peer close is not an end here: the receiver treats it
+         * as a lost connection and reconnects (a ReconnectDiscontinuity
+         * event marks the new connection). The end-reason query after
+         * this loop names which terminal outcome happened — see the
+         * cleanup section below.
          */
         if (rc == TST_E_END_OF_STREAM) {
             fprintf(stderr,
@@ -794,16 +795,16 @@ int main(int argc, char **argv) {
     int er_rc = tst_managed_demux_receiver_end_reason(rx, &reason);
     if (er_rc == 0) {
         /*
-         * On this SRT recv path you will only ever see three of the six
-         * non-NONE variants: CLEAN_TEARDOWN (peer closed gracefully, or
-         * we cancelled after already draining a clean close),
-         * TRANSPORT_FAILED (the reconnect policy gave up — the peer
-         * never came back), or CANCELLED (this process's `_cancel` won
-         * the race, i.e. the SIGINT path above). SESSION_EXPIRED /
-         * KEEPALIVE_FAILED / PROTOCOL_ERROR are RTSP-shaped variants
-         * from the sibling `tst_rtp_demux_receiver_end_reason` API that
-         * this SRT path never produces — the enum is shared, not the
-         * behavior.
+         * On this managed SRT recv path you will only ever see two of the
+         * six non-NONE variants: TRANSPORT_FAILED (the reconnect policy
+         * gave up — the peer never came back) or CANCELLED (this
+         * process's `_cancel` won the race, i.e. the SIGINT path above).
+         * A peer that closes, gracefully or not, is a lost connection
+         * here and the receiver reconnects, so CLEAN_TEARDOWN is never
+         * recorded. SESSION_EXPIRED / KEEPALIVE_FAILED / PROTOCOL_ERROR
+         * are RTSP-shaped variants from the sibling
+         * `tst_rtp_demux_receiver_end_reason` API that this SRT path
+         * never produces — the enum is shared, not the behavior.
          */
         fprintf(stderr, "end reason: %s\n", end_reason_name(reason));
     } else {

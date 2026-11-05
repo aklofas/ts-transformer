@@ -267,7 +267,8 @@ int main(int argc, char **argv) {
      * tst_udp_sender_close is cancel-first and abortive: it discards that
      * buffered tail, so tst_udp_sender_flush must run before it for a
      * lossless end of stream. close then closes the socket and frees all
-     * associated memory; it is safe on a valid non-NULL pointer at any time,
+     * associated memory; it is safe on a valid non-NULL pointer once no other
+     * call on the sender is in flight (here the send loop has finished),
      * including after a send failure.
      */
     if (exit_code == 0) {

@@ -537,9 +537,13 @@ int main(int argc, char **argv) {
      *                           ignored; the 2000 ms drain set at build time
      *                           applies, plus a 500 ms margin), then shuts
      *                           each session's write half.
-     *   tst_rtsp_server_free  — drops the Box<TstRtspServer> and the tokio
-     *                           Runtime; the Runtime waits for all spawned
-     *                           tasks to complete before returning.
+     *   tst_rtsp_server_free  — frees the handle. The server's tokio
+     *                           runtime shuts down when the last reference
+     *                           to the server drops: after _stop that is
+     *                           inside _stop itself (or a call still
+     *                           parked), otherwise inside _free. Either
+     *                           way the shutdown is bounded at 5 s; it does
+     *                           not wait for every task without limit.
      *
      * WHY call both _stop and _free?
      *   _stop sends the graceful TEARDOWN notices and drains; _free then

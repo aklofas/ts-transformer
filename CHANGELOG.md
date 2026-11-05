@@ -197,6 +197,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - C: `tst_annexb_to_length_prefixed` refuses overlapping `annexb`/`out` with `TST_E_INVALID_CONFIG`.
 - C: an out-of-range value for a codec, KLV stream type, framing mode, overflow policy or reconnect mode argument returns `TST_E_INVALID_CONFIG`. It used to be undefined behaviour.
 - C: a host thread-local destructor that calls into the library after the library's own last-error slot is destroyed no longer aborts the process; such a call reads `TST_E_INTERNAL` from `tst_get_last_error` and `""` from `tst_get_last_error_str`, and its error record is dropped.
+- `recv_rtsp_camera.c` adds a 500 ms `recv_timeout` to the camera URL unless the URL sets one, so Ctrl-C ends an idle session; the library retries a receive that a signal interrupts, so the signal alone never woke the loop. `recv_srt_events.c` documents that a Ctrl-C while the listener searches for a new peer waits for the next return.
 
 ### Changed — tst-jni (BREAKING)
 
