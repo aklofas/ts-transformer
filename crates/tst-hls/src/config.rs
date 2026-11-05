@@ -83,6 +83,17 @@ pub struct HlsConfig {
     /// container volume, point `output_dir` at a fresh subdirectory the
     /// publisher creates.
     ///
+    /// Only `output_dir` itself is checked, not the directories above it:
+    /// the path is resolved by name, symbolic links in its parent
+    /// components included, when the publisher is constructed. Every
+    /// ancestor must therefore be one no other account can replace or
+    /// rename: owned by the process user or root and writable by no one
+    /// else, or a sticky-bit directory such as `/tmp`, where only an
+    /// entry's owner can rename it. An account that can replace an ancestor
+    /// can point construction at another directory the process user owns,
+    /// and the stale-file cleanup then removes that directory's
+    /// `segment_*.ts` and playlist files.
+    ///
     /// Operations are pinned to the validated directory: a later rename of
     /// its pathname does not redirect them.
     pub output_dir: PathBuf,
