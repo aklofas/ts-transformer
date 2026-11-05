@@ -558,8 +558,9 @@ const SOURCE_FIXUPS: &[SourceFixup] = &[
               \x20* next to an interleave switch still passes. It is kept as one timestamp\n\
               \x20* (the generic cell rate algorithm): rekey_tat is when the next rekey is due\n\
               \x20* at the refill rate, and a rekey is refused while that lies more than\n\
-              \x20* RIST_REKEY_BURST - 1 intervals ahead. A clock that reads 0 (see\n\
-              \x20* timestampNTP_u64) admits every rekey, as the limit above does. */\n\
+              \x20* RIST_REKEY_BURST - 1 intervals ahead. timestampNTP_u64 never reads 0\n\
+              \x20* (it adds the NTP epoch offset even when the clock read fails); the\n\
+              \x20* check below keeps the limit above's fail-open intent if it ever does. */\n\
               #define RIST_REKEY_BURST 16\n\
               \n\
               static bool _librist_crypto_rekey_admit(struct rist_key *key, uint64_t now)\n\

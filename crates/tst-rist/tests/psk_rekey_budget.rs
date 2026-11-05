@@ -40,6 +40,8 @@ unsafe extern "C" {
 /// `RIST_REKEY_BURST` in `src/crypto/psk.c`).
 const INTERVAL: Duration = Duration::from_millis(10);
 const BURST: u64 = 16;
+/// `INTERVAL` rounded down past librist's NTP-unit rounding of it.
+const NTP_INTERVAL_FLOOR: Duration = Duration::from_nanos(9_999_999);
 
 /// Room for a `struct rist_key`, which Rust cannot name: zeroed, aligned,
 /// and several times the struct's size (under 1 KiB with mbedTLS 3.6).
@@ -130,9 +132,10 @@ fn a_fresh_nonce_flood_is_held_to_the_rekey_budget() {
     let start = Instant::now();
     let derived = (0..FLOOD).filter(|&n| key.decrypt(nonce(n))).count() as u64;
     let elapsed = start.elapsed();
-    // The burst, one refill per interval that passed, and one for the
-    // interval in progress. A slower machine only widens the bound.
-    let bound = BURST + (elapsed.as_nanos() / INTERVAL.as_nanos()) as u64 + 1;
+    // The burst and one refill per interval that passed. librist's interval
+    // is 42 949 670 NTP units, just under 10 ms, so the division uses a
+    // divisor just under it too. A slower machine only widens the bound.
+    let bound = BURST + (elapsed.as_nanos() / NTP_INTERVAL_FLOOR.as_nanos()) as u64;
     assert!(
         derived >= BURST,
         "only {derived} derivations: the burst was refused"
@@ -141,6 +144,28 @@ fn a_fresh_nonce_flood_is_held_to_the_rekey_budget() {
         derived <= bound,
         "{derived} of {FLOOD} fresh nonces derived a key in {elapsed:?}; the budget allows {bound}"
     );
+}
+
+/// From a full budget, a run of fresh nonces quicker than one refill admits
+/// exactly the burst and refuses the next.
+#[test]
+fn a_cold_key_admits_exactly_the_burst() {
+    let mut key = Key::new();
+    let start = Instant::now();
+    let admitted = (0..BURST as u32 + 1)
+        .filter(|&n| key.decrypt(nonce(n)))
+        .count() as u64;
+    let elapsed = start.elapsed();
+    if elapsed < Duration::from_millis(9) {
+        assert_eq!(admitted, BURST, "a cold key admitted {admitted} rekeys");
+    } else {
+        // A refill may have landed inside the run; the flood test still
+        // holds the upper bound.
+        eprintln!(
+            "{} rekeys took {elapsed:?}, over one refill: not checked",
+            BURST + 1
+        );
+    }
 }
 
 /// A reflector subscriber's key sees the reflector's own RTCP nonce and the
