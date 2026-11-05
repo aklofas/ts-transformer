@@ -2586,6 +2586,90 @@ mod session_tests {
         );
     }
 
+    /// A pre-SETUP peer that pipelines OPTIONS and reads every reply at once
+    /// is closed once the admission deadline has passed, by the check before
+    /// each request: its reads and its reply writes are ready at every turn,
+    /// so no timer may be needed to end it. The clock jumps half a
+    /// millisecond past the deadline, off a timer tick, so even a
+    /// zero-length sleep (rounded up to the next tick) stays pending, and
+    /// the test keeps the runtime busy so the paused clock never moves
+    /// again. A sleep already armed when the clock jumps can still win its
+    /// race and close a session, so several sessions run at once: each must
+    /// end without any timer firing after the jump.
+    #[tokio::test(start_paused = true)]
+    async fn eagerly_read_pipelined_options_do_not_outlast_the_admission_deadline() {
+        use std::time::Duration;
+        use tokio::io::AsyncWriteExt;
+        const SESSIONS: usize = 16;
+        let t0 = tokio::time::Instant::now();
+        let mut peers = Vec::new();
+        for _ in 0..SESSIONS {
+            let state = crate::rtsp::server::test_state();
+            let (client, task) = duplex_session(state.clone());
+            let (mut r, mut w) = tokio::io::split(client);
+            let feeder = tokio::spawn(async move {
+                for cseq in 1u32.. {
+                    let req = format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n");
+                    if w.write_all(req.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            let replied = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let reader = {
+                let replied = replied.clone();
+                tokio::spawn(async move {
+                    let mut chunk = [0u8; 1024];
+                    while let Ok(n @ 1..) = r.read(&mut chunk).await {
+                        replied.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+                    }
+                })
+            };
+            peers.push((state, task, feeder, reader, replied));
+        }
+        // Let every session get going, then jump past the deadline.
+        for _ in 0..1_000 {
+            tokio::task::yield_now().await;
+        }
+        for (_, task, _, _, replied) in &peers {
+            assert!(!task.is_finished(), "a session ended before the deadline");
+            assert!(
+                replied.load(std::sync::atomic::Ordering::Relaxed) > 0,
+                "a session never answered"
+            );
+        }
+        tokio::time::advance(READ_IDLE_TIMEOUT + Duration::from_micros(500)).await;
+        let jumped_to = t0.elapsed();
+        let start = std::time::Instant::now();
+        let limit = tst_test_helpers::timing::scaled(Duration::from_secs(5));
+        while !peers.iter().all(|p| p.1.is_finished()) && start.elapsed() < limit {
+            tokio::task::yield_now().await;
+        }
+        let open = peers.iter().filter(|p| !p.1.is_finished()).count();
+        assert_eq!(
+            t0.elapsed(),
+            jumped_to,
+            "the paused clock moved after the jump"
+        );
+        for (_, _, feeder, reader, _) in &peers {
+            feeder.abort();
+            reader.abort();
+        }
+        assert_eq!(
+            open, 0,
+            "{open} of {SESSIONS} eagerly read pipelining sessions still open past the admission deadline"
+        );
+        for (state, ..) in &peers {
+            assert_eq!(
+                state
+                    .active_sessions
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                0,
+                "a session slot was not released"
+            );
+        }
+    }
+
     /// A recording publisher that sends no media but pipelines GET_PARAMETER
     /// keepalives and reads every reply loses its session at the publish
     /// idle timeout: requests never re-arm the window, and the window holds
