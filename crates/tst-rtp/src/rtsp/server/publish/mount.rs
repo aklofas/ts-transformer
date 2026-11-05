@@ -710,9 +710,12 @@ impl PublishMountHandle {
     /// any thread, at any time — including after this handle (and the
     /// transport itself) have been dropped.
     ///
-    /// The transport outlives publisher churn: when a publisher ends it
-    /// stays open and silent until the next one. [`Self::cancel`] ends it
-    /// with `TransportError::ExplicitClose`;
+    /// By default the transport outlives publisher churn: when a publisher
+    /// ends it stays open and silent until the next one. On a mount whose
+    /// resolved end-on-exit option is set (see [`PublishMountConfig`]), a
+    /// publisher that reached RECORD ends it as it leaves: the transport
+    /// returns what was already queued, then `TransportError::Closed`.
+    /// [`Self::cancel`] ends it with `TransportError::ExplicitClose`;
     /// [`crate::rtsp::server::RtspServer::stop`] and
     /// [`crate::rtsp::server::RtspServer::remove_mount`] end it with
     /// `TransportError::Closed`.
