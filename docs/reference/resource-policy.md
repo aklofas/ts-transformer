@@ -55,9 +55,10 @@ reached is closed and logged. On success the reservation moves into a
 the slot on every exit, including a TLS handshake that fails or times out
 before any session runs. A connection that has neither completed a SETUP
 nor passed a credential check is closed 30 s after its request loop starts
-(after the TLS handshake on `rtsps://`), whatever it sends meanwhile, and its
-slot is released; interleaved frames on a connection without a session are
-dropped and do not count as activity for the idle bound.
+(after the TLS handshake on `rtsps://`), whatever it sends meanwhile and
+however slowly it reads the replies, and its slot is released; interleaved
+frames on a connection that has not announced or set up (no publisher or
+reader role) are dropped and do not count as activity for the idle bound.
 
 **Publisher slot.** A publish mount allows one publisher at a time. ANNOUNCE
 claims the slot (`PublisherSlot`, a generation number under one mutex) and
