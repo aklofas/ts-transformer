@@ -20,8 +20,9 @@
 //! The `serve` feature (default-on) provides the built-in HTTP server and
 //! `hls://` / `hlss://` URL parsing. Serving HTTPS additionally needs the
 //! `tls` feature (default-on, implies `serve`); without it a configured
-//! certificate or key is refused with [`HlsError::TlsDisabled`]. Without
-//! `serve`, the crate only writes segments plus the playlist: an external
+//! certificate or key is refused with [`HlsError::TlsDisabled`] when the
+//! publisher serves (a files-only publisher, [`HlsConfig::serve`] `false`,
+//! ignores both). Without `serve`, the crate only writes segments plus the playlist: an external
 //! web server (nginx, a media server, a CDN origin) pointed at `output_dir`
 //! serves the stream, live or finished.
 

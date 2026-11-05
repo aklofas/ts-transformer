@@ -184,7 +184,9 @@ impl PyHlsPublisher {
     /// completed (terminal) playlist + segments until the returned
     /// `HlsServerHandle` is shut down / dropped. This is how a VOD or EVENT
     /// stream stays observable after the stream ends. **Consumes** the inner
-    /// publisher; subsequent ops raise `HlsError(FINISHED)`.
+    /// publisher; subsequent ops raise `HlsError(FINISHED)`. Built with
+    /// `no_server()`, it still writes the terminal playlist and consumes the
+    /// publisher, then raises `HlsError(INVALID_CONFIG)`.
     fn finish_serving(&self, py: Python<'_>) -> PyResult<PyHlsServerHandle> {
         // Take the inner BEFORE the fallible consume (mirrors `finish()`):
         // `finish_serving` moves `self` by value on the Rust side, so we must
@@ -391,7 +393,8 @@ impl PyHlsPublisherBuilder {
 
     /// Enable HTTPS by supplying PEM cert + key file paths. Compiled in
     /// by default (tst-py `tls` feature; wheels ship it); a source build
-    /// without `tls` raises `HlsError(TLS_DISABLED)` at `build()`.
+    /// without `tls` raises `HlsError(TLS_DISABLED)` at `build()`, unless
+    /// `no_server()` was called: a files-only publisher ignores the paths.
     fn enable_tls<'py>(
         mut slf: PyRefMut<'py, Self>,
         cert: &str,

@@ -42,9 +42,11 @@ impl HlsPublisherBuilder {
     }
 
     /// Files-only mode: write segments and the playlist, start no HTTP
-    /// server. `bind`, `basic_auth` and TLS are then ignored,
+    /// server. `bind`, `basic_auth` and TLS are then ignored (no TLS path
+    /// is checked or loaded); with the `serve` feature,
     /// [`HlsPublisher::local_addr`] is `None` and
-    /// [`HlsPublisher::finish_serving`] is refused.
+    /// [`HlsPublisher::finish_serving`] is refused after it writes the
+    /// terminal playlist. Without the `serve` feature no server ever starts.
     pub fn no_server(&mut self) -> &mut Self {
         self.config.serve = false;
         self
@@ -94,7 +96,8 @@ impl HlsPublisherBuilder {
 
     /// Enable HTTPS by supplying cert + key paths (PEM).  Requires the `tls`
     /// cargo feature; without it [`HlsPublisherBuilder::build`] returns
-    /// [`HlsError::TlsDisabled`].
+    /// [`HlsError::TlsDisabled`], unless [`no_server`](Self::no_server) was
+    /// called: a files-only publisher ignores the paths.
     pub fn enable_tls<P: AsRef<Path>>(&mut self, cert: P, key: P) -> &mut Self {
         self.config.tls_cert = Some(cert.as_ref().to_path_buf());
         self.config.tls_key = Some(key.as_ref().to_path_buf());
@@ -102,7 +105,8 @@ impl HlsPublisherBuilder {
     }
 
     /// Construct the publisher (binds the HTTP server immediately, unless
-    /// [`no_server`](Self::no_server) was called).
+    /// [`no_server`](Self::no_server) was called or the `serve` feature is
+    /// disabled).
     pub fn build(&self) -> Result<HlsPublisher, HlsError> {
         #[cfg(not(feature = "tls"))]
         if self.config.serve && (self.config.tls_cert.is_some() || self.config.tls_key.is_some()) {
