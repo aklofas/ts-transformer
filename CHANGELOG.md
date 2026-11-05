@@ -104,7 +104,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - DVB subtitle PES envelopes, and teletext PES envelopes on PIDs signalled by `teletext_descriptor` (0x56), are checked and reported; a PID signalled only by `VBI_teletext_descriptor` (0x46) stays `DvbTeletext` and is delivered without the EN 300 472 data-unit check.
 - `StrictMode::Full` checks all four reserved bits before a PMT's `program_info_length` (Table 2-33).
 - A `discontinuity_indicator` on an adaptation-field-only packet resets the PID's continuity baseline (H.222.0 §2.4.3.5), so the payload packet that follows the signalled reset is no longer reported as a `ContinuityJump` and the PES before it is no longer marked damaged.
-- ST 0601 decode treats a zero-length optional item as unknown (the field stays unset and no field error is raised), and when a single-use tag repeats the last occurrence wins, replacing its sentinel and IMAPB state too; the `klv_st0601_patch` fuzz oracle masks the edited tag's sentinel and IMAPB entries.
+- ST 0601 decode treats a zero-length optional item as unknown (the field stays unset and no field error is raised), and when a single-use tag repeats the last occurrence wins, replacing its sentinel and IMAPB state too; the `klv_st0601_patch` fuzz oracle masks the edited tag's sentinel and IMAPB entries; an optional field encoded with an empty value therefore decodes back as unset.
 
 ### Fixed — tst-py, tst-jni, tst-core, tst-hls, tst-webrtc, tst-srt, tst-c
 
