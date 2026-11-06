@@ -4,7 +4,7 @@ Python bindings (via PyO3) for the [ts-transformer](https://github.com/aklofas/t
 
 > **Status:** `tstrans` covers file inspection + construction (`Demuxer` / `Muxer` / `MuxerFileSink`), typed KLV decode + encode for ST 0601 / ST 0102 / ST 0605 / ST 0903 (with `VTargetPack`), codec parsers for H.264 / H.265 / H.266 / AV1 / AAC / MPEG-2 audio, optional pandas DataFrame adapters + NumPy snapshot views via `pip install tstrans[pandas]`, and live transports: **the pipeline shells** (`tstrans.shells` — Sender / Receiver / MuxSender / DemuxReceiver, opened from an `srt://`, `rtp://`, `udp://`, `tcp://` or `rist://` URL), **SRT** (`tstrans.srt` — Builder / Socket / Listener + Managed* auto-reconnect + ReconnectPolicy), **RTP + RTSP** (`tstrans.rtp` — Transport / RecvTransport / RtspClient / RtspServer / MountHandle), raw **UDP / TCP / RIST** (`tstrans.udp` / `tstrans.tcp` / `tstrans.rist`), and **HLS** publishing (`tstrans.hls`). Minimum Python 3.11.
 
-The wheels also include **WebRTC (WHEP)** browser publishing
+The wheels also include **WebRTC (WHEP)** playback to browsers
 (`tstrans.webrtc`), and the typed metadata support covers ST 1204 Core ID
 (`CoreId`), ST 0806 RVT (`RvtLs`), ST 1010 SDCC-FLP (`SdccFlp`) and the
 ST 0805 KLV-to-CoT conversion helpers (`CotConfig`,
