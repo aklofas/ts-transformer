@@ -238,8 +238,12 @@ created it first, so create your own directory with mode 0700 or set
 with mode 0700. The check refuses a directory owned by another user even when
 running as root, so for a container volume point `output_dir` at a fresh
 subdirectory the publisher creates. Files are created with mode 0644 at
-most (the umask can only narrow it), so another account can read but never
-modify segments or the playlist. Other platforms make no such check.
+most (the umask can only narrow it). Another account also needs search
+permission on the output directory and every parent: a directory the
+publisher creates is 0700, so for a separate static server pre-create a
+publisher-owned output directory with mode 0750 or 0755 and give that
+reader access, keeping group and other write bits off. Other platforms make
+no such check.
 
 The check covers `output_dir` itself, not the directories above it: the
 path is resolved by name, symbolic links in parent components included,
