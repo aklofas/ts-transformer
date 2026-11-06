@@ -138,8 +138,9 @@ example `/live`, not `/live/`, `/live//` or `/live/trackID=0`.
 
 **A passphrase listener closes a legacy encoder during connect**
 
-A listener with a passphrase refuses every handshake-v4 caller (libsrt
-before 1.3.0), including one that holds the right passphrase. No reject
+A listener with a passphrase, or a listen rule that sets one, refuses every
+handshake-v4 caller (libsrt before 1.3.0), including one that holds the
+right passphrase. No reject
 code reaches a v4 caller; it sees the connection close.
 
 Fix: upgrade the caller's libsrt to 1.3 or later.
