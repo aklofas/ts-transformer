@@ -1109,7 +1109,10 @@ with RtspClient.connect(cfg) as session:
   `algorithm` are readable. `repr()` redacts the secret.
   URL secrets (userinfo passwords and `passphrase`, `secret`, `token`,
   `auth_pass`, `password` query values) and stream-ID values are redacted in
-  every `repr()`, `str()` and error message.
+  every `repr()`, `str()` and error message. The redaction is a heuristic
+  with one documented gap: a secret holding a quote followed by whitespace or
+  `, ; . : ) ] }` can be read as the end of a quoted URL, leaving the rest of
+  it visible (see [Secrets in string forms](/docs/reference/binding-authors.md#secrets-in-string-forms)).
 - **`DigestAuth` never falls back to Basic.** A server that offers no Digest
   challenge fails the connect with an auth-unsupported error rather than
   receiving the password in Basic form. `BasicAuth` answers Digest when it is
