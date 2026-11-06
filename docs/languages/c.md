@@ -316,6 +316,17 @@ The receiver is the higher-level of three concentric shapes. Pick by what you ac
 
 Add the `tst_managed_*` prefix for any of the three to get automatic reconnect — see [Pipeline guide](/docs/guides/pipeline.md). Full receiver examples in [`examples/receiving/`](../../bindings/c/examples/receiving/).
 
+For a progress watchdog, read a demux receiver's lifetime count of aligned
+TS bytes fed to its demuxer with
+`tst_demux_receiver_get_ts_bytes_demuxed(rx, &bytes)` (plain SRT),
+`tst_managed_demux_receiver_get_ts_bytes_demuxed` (managed SRT), or the
+`tst_{rist,rtp,tcp,udp}_demux_receiver_get_ts_bytes_demuxed` family. The RTP
+getter also covers receivers taken from RTSP sessions and publish mounts.
+These getters never wait on the receive slot and keep counting across stats
+resets and a cancel, but they need a live handle: `_close` frees it. To
+record and demux the same stream, compose a packet receiver with a demuxer
+as described in the [Pipeline guide](/docs/guides/pipeline.md).
+
 ## HLS publisher (`TST_HAS_HLS`)
 
 The HLS publisher segments MPEG-TS to `.ts` files and serves them (plus a rolling `.m3u8`) over an optional built-in HTTP server. It is a supported feature, opt-in at build time: `tstrans.h` exposes the surface only when built with `--features hls`, guarded by `#ifdef TST_HAS_HLS`. The surface (`tst_hls_publisher_builder_*`, `tst_mux_publisher_*`) mirrors the Rust `tst-hls` crate.
