@@ -733,6 +733,11 @@ The loop is yours, so two duties are too:
   rise and call `reset_sync()` on the `Receiver` and on the `Demuxer`, so
   neither stitches a packet of the dead link onto the new one.
   `ManagedDemuxReceiver` does this for you; the composition does not.
+- **A reconnect does not reach a downstream `Pairer`.** `reset_sync()`
+  resets only the `Receiver` and the `Demuxer`, and the composition emits no
+  `ReconnectDiscontinuity`, so a `Pairer` fed from it keeps KLV from the dead
+  link. Call the `Pairer`'s `flush()` at the same reconnect and handle the
+  outputs it returns.
 
 The bindings compose the same way: loop `recv_bytes()` (`recvBytes()` on the
 JVM) on a `Receiver`, write each chunk, call `Demuxer.feed(chunk)`, then
