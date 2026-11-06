@@ -936,6 +936,50 @@ fn srt_managed_recv_returns_after_peer_never_reconnects() {
     );
 }
 
+/// The deadline watcher's cancel flushes the demuxer's last buffered PES as
+/// a final sample. That flush happens at the deadline, so it must not count
+/// as media arriving then: a stream that went silent right after its first
+/// second still reports its quiet tail.
+#[test]
+fn srt_managed_recv_cancel_flush_does_not_hide_a_silent_tail() {
+    let profile = profiles::by_name("baseline").expect("baseline profile must exist");
+    let port = free_port();
+    let recv_url = format!("srt://127.0.0.1:{port}?mode=listener&conntimeo=2000");
+    let send_url = format!("srt://127.0.0.1:{port}");
+
+    // seconds=4.0: the deadline sits 4 s + POST_START_GRACE after the first
+    // event, so well over 3 s of silence separates the sender's close from it.
+    let recv_handle = {
+        let recv_url = recv_url.clone();
+        thread::spawn(move || {
+            recv::run_managed(
+                &recv_url,
+                profile,
+                4.0,
+                None,
+                false,
+                false,
+                KlvExpect::compact(),
+                None,
+                None,
+            )
+        })
+    };
+
+    let send_metrics = send_with_retry(profile, &send_url, 0.3, Duration::from_secs(5));
+    assert!(send_metrics.video_aus > 0, "the sender must push an AU");
+
+    let report = join_with_timeout(recv_handle, Duration::from_secs(15))
+        .expect("run_managed must return Ok after the deadline cancel");
+    let tail = report
+        .media_tail_s
+        .expect("media arrived, so the tail is recorded");
+    assert!(
+        tail >= 2.0,
+        "the quiet time before the deadline must survive the cancel flush, got {tail} s"
+    );
+}
+
 /// A minimal RTSP *publisher* (ANNOUNCE / SETUP `mode=record` / RECORD
 /// over TCP-interleaved, RFC 2326 §10.3 / §10.11 / §10.12) shaped as a
 /// send-side [`Transport`], so `send::send_over_transport` can push a
