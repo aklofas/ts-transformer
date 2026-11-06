@@ -348,7 +348,7 @@ under "Publisher role" below, with the rest of that role's evidence. A
 fourth leg, `rtsp-publish-es`, publishes elementary streams into a second
 mount; it is described after the runs table below. Since 2026-10-21 a fifth
 leg, `whep`, serves a WebRTC mount to a headless browser that reconnects on
-a schedule; it is described under "WebRTC playback" below. A run of 24 hours or more gates on the per-process RSS slope by default (200 KiB/h after warm-up; `--no-rss-slope-gate` keeps it provisional), and shorter runs are always provisional.
+a schedule; it is described under "WebRTC playback" below. A run of 24 hours or more gates on the per-process RSS slope by default (200 KiB/h after warm-up; `--no-rss-slope-gate` keeps it provisional), and shorter runs are provisional unless a threshold is passed.
 
 The impairment itself changed shape on 2026-09-14 (see "The current soak
 shape" below), and the 0.7.0 release soak below runs it. The earlier
