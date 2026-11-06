@@ -53,10 +53,14 @@ Class 1 Motion Imagery in an MPEG-2 Transport Stream (MISP-2015.1-50).
   across records is yours to keep.
 - **Synchronous KLV declarations that match the payload.** Put all
   synchronous metadata in one synchronous metadata stream per program
-  (ST 1402-13; the muxer accepts a second one), and keep each AU cell's
-  `metadata_service_id` equal to a service the PMT declares (ST 1402-15).
-  The default service 0 matches the `metadata_descriptor` the muxer emits;
-  the muxer does not cross-check a service id you choose.
+  (ST 1402-13; the muxer permits further synchronous streams only when their
+  declared service ids are distinct across the transport stream), and keep
+  each AU cell's `metadata_service_id` equal to a service the PMT declares
+  (ST 1402-15). The automatic descriptor declares service 0. For a further
+  synchronous stream, supply a distinct `metadata_klva(id)` with
+  `stream_descriptors_for_klv`; duplicate declared ids fail with
+  `ConfigInvalid`, across programs too. The muxer does not cross-check each
+  pushed payload's service id against its descriptor, so keep those equal.
 - **A regular push cadence.** PAT/PMT and PCR are written only as part of a
   push, so a source that pushes less often than every 100 ms cannot meet the
   H.222.0 PCR interval.

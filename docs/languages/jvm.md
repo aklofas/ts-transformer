@@ -194,6 +194,12 @@ as a typed kind, …) runs in the native `Muxer` constructor and surfaces as
 > `WEBVTT_IN_TS`). Per-stream descriptors for the typed kinds (video / KLV /
 > audio / subtitle) are deferred.
 
+> Because the JVM builder cannot set KLV descriptors, configure at most one
+> `SYNCHRONOUS_METADATA` KLV stream per transport stream. Several such
+> streams would all declare service id 0 and fail with `CONFIG_INVALID`.
+> The per-push `metadataServiceId` argument does not change the PMT
+> descriptors.
+
 ## First receive
 
 Demux a `.ts` file and dispatch on typed events. The JVM binding's
