@@ -105,15 +105,53 @@ Fix: build both sides with the same feature configuration. If you need encryptio
 
 **A caller is rejected at once (SRT `NotFound` / `Conflict`) or a publisher gets 403 / 404 / 453 / 503 from the RTSP server**
 
-A rules table decided it, not the network or the encryption. For SRT, read
+A rules table can refuse these requests without a challenge. RTSP 403 also
+occurs when a publish mount already has a publisher or has ended, and a
+non-canonical on-demand ANNOUNCE can get 404; check the mount's lifecycle and
+the request path before changing its rule. For SRT, read
 the live rule for the caller's raw stream ID and the default rule on
-`ListenRules` (`set` / `remove`); `NotFound` and `Conflict` are the reject
-reasons an application's own rule sets. For RTSP, read the mount's `publish`
+`ListenRules` (`set` / `remove`); `NotFound` and `Conflict`, for example, are
+reject reasons an application's own rule sets. For RTSP, read the mount's `publish`
 or `read` policy on `MountRules`: a `Refuse(RefuseStatus)` answers `403`,
 `404`, `453` or `503` with no challenge. Retrying or changing the encryption
 does not help; edit the rule. See the
 [SRT listen-rules recipe](/docs/cookbook/receiving/srt-listen-rules.md) and the
 [RTSP publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md).
+
+**A new publisher gets 403 after the previous publisher left**
+
+With `end_publish_mount_on_publisher_exit` on (server-wide or per mount), a
+publisher that reached RECORD ends its mount as it leaves, and the ended
+mount refuses every later ANNOUNCE with `403`.
+
+Fix: remove the mount and add it again before accepting another publisher.
+An ended on-demand mount keeps counting toward the 256-mount cap until it is
+removed.
+
+**`InvalidMountPath`, or an on-demand ANNOUNCE gets 404**
+
+Mount paths are canonical: no trailing slash, no empty segment, no trailing
+track-control segment.
+
+Fix: use the same canonical path for registration, rules and ANNOUNCE, for
+example `/live`, not `/live/`, `/live//` or `/live/trackID=0`.
+
+**A passphrase listener closes a legacy encoder during connect**
+
+A listener with a passphrase refuses every handshake-v4 caller (libsrt
+before 1.3.0), including one that holds the right passphrase. No reject
+code reaches a v4 caller; it sees the connection close.
+
+Fix: upgrade the caller's libsrt to 1.3 or later.
+
+**`DigestAuth` fails against an RTSP server that offers only Basic**
+
+Python and JVM `DigestAuth` never fall back to Basic, and Rust's
+`AuthSchemes::DigestOnly` behaves the same; the connect fails with an
+auth-unsupported error. The C digest setters keep the automatic fallback.
+
+Fix: enable Digest on the server, or use `BasicAuth` (Rust:
+`AuthSchemes::Automatic`) where Basic is intended.
 
 **Sender hangs when dropping a `SrtSocket`**
 
@@ -152,6 +190,17 @@ Reference this certificate with `?cert=server.crt&key=server.key` on the
 listener URL, and add the CA to the caller's trust store (`?ca=ca.crt`) or to
 the OS native trust store. Listener bind addresses still require IP literals
 (`0.0.0.0` / `::`); the listener-vs-caller asymmetry is intentional.
+
+## HLS publishing
+
+**`HlsError::UntrustedOutputDir` (an invalid-config error in the bindings)**
+
+On Unix the output directory must be owned by the process user, must not be
+writable by group or others, and must not be a symbolic link. A missing
+directory is created with mode 0700.
+
+Fix: point `output_dir` at a private directory (for example mode 0700 or
+0750) that the publisher's user owns.
 
 ## KLV decode rejection
 
