@@ -897,6 +897,23 @@ pub(super) fn initialize_stats(
     }
 }
 
+/// The PMT `stream_type` byte the muxer writes for `spec`.
+pub(super) fn pmt_stream_type_byte(spec: &StreamSpec) -> u8 {
+    match spec {
+        StreamSpec::Video { codec, .. } => video_stream_type_byte(*codec),
+        StreamSpec::Klv { stream_type, .. } => klv_stream_type_byte(*stream_type),
+        StreamSpec::Audio { codec, .. } => audio_stream_type_byte(*codec),
+        // Caller-chosen byte; validate() guarantees the demux
+        // classifier maps it (with its descriptors) to Unknown.
+        StreamSpec::Data { stream_type, .. } => *stream_type,
+        // All four subtitle codecs share PMT stream_type 0x06
+        // (PrivateData); the per-stream descriptor cache carries
+        // the codec-specific disambiguator (subtitling_descriptor /
+        // teletext_descriptor / Registration "GA94" / "VTTC").
+        StreamSpec::Subtitle { .. } => super::StreamType::KlvPrivate.as_u8(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

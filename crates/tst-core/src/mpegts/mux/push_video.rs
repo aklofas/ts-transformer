@@ -85,7 +85,7 @@ impl Muxer {
         super::all_handles(&self.slots, |s| &s.video, VideoStreamHandle::pack)
     }
 
-    /// Handle for the i-th video stream in `programs[0]`, or `None` if out of
+    /// Handle for the i-th video stream in the first live program, or `None` if out of
     /// range. Convenience for single-program callers.
     pub fn video_stream_handle(&self, index: usize) -> Option<VideoStreamHandle> {
         super::first_program_handle(&self.slots, |s| &s.video, index, VideoStreamHandle::pack)

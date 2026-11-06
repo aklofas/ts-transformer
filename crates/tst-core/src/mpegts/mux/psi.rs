@@ -12,6 +12,12 @@
 use super::ts::{AdaptationField, ContinuityCounters, write_packet};
 use crate::mpegts::common::{crc32::crc32_mpeg2, descriptor, pid};
 
+/// The version/current_next byte of a PSI section: reserved bits 11, the
+/// 5-bit `version` (wrapping at 32), current_next_indicator 1.
+pub(crate) fn psi_version_byte(version: u8) -> u8 {
+    0xC0 | ((version & 0x1F) << 1) | 0x01
+}
+
 /// Build the full 188-byte PAT packet for a single- or multi-program TS.
 ///
 /// Encodes one program-loop entry per `(program_number, pmt_pid)` in
@@ -22,6 +28,7 @@ use crate::mpegts::common::{crc32::crc32_mpeg2, descriptor, pid};
 pub(crate) fn write_pat_packet(
     out: &mut [u8; 188],
     entries: &[(u16, u16)],
+    version: u8,
     counters: &mut ContinuityCounters,
 ) {
     let n_programs = entries.len();
@@ -51,8 +58,8 @@ pub(crate) fn write_pat_packet(
     payload[idx] = 0x00;
     payload[idx + 1] = 0x01;
     idx += 2;
-    // version_number(5)=0 | current_next_indicator=1 → 0xC1 (reserved bits 11)
-    payload[idx] = 0xC1;
+    // reserved(2)=11 | version_number(5) | current_next_indicator=1
+    payload[idx] = psi_version_byte(version);
     idx += 1;
     payload[idx] = 0x00; // section_number
     payload[idx + 1] = 0x00; // last_section_number
@@ -150,6 +157,7 @@ pub(crate) fn write_pmt_packet(
     prog: &crate::mpegts::mux::MuxerProgramConfig,
     pcr_pid: u16,
     streams: &[PmtStreamEntry<'_>],
+    version: u8,
     counters: &mut ContinuityCounters,
 ) -> Result<(), crate::error::MuxError> {
     // Compute the section body size first so we can fill in section_length.
@@ -204,7 +212,7 @@ pub(crate) fn write_pmt_packet(
     payload[idx + 1] = (prog.program_number & 0xFF) as u8;
     idx += 2;
     // version+current
-    payload[idx] = 0xC1;
+    payload[idx] = psi_version_byte(version);
     idx += 1;
     payload[idx] = 0x00; // section_number
     payload[idx + 1] = 0x00; // last_section_number
@@ -305,7 +313,7 @@ mod tests {
             .iter()
             .map(|p| (p.program_number, p.pmt_pid))
             .collect();
-        write_pat_packet(&mut buf, &entries, &mut cc);
+        write_pat_packet(&mut buf, &entries, 0, &mut cc);
 
         // TS header sanity
         assert_eq!(buf[0], 0x47);
@@ -419,7 +427,7 @@ mod tests {
                 descriptors: KLVA_REGISTRATION_DESCRIPTOR,
             },
         ];
-        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, &mut cc).expect("PMT fits");
+        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, 0, &mut cc).expect("PMT fits");
 
         // Section starts at TS header(4) + pointer(1) = byte 5. Layout:
         //   [5] table_id=0x02
@@ -475,7 +483,7 @@ mod tests {
                 descriptors: KLVA_REGISTRATION_DESCRIPTOR,
             },
         ];
-        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, &mut cc).expect("PMT fits");
+        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, 0, &mut cc).expect("PMT fits");
 
         assert_eq!(buf[0], 0x47);
         // PMT PID — must match prog.pmt_pid (0x1000)
@@ -544,7 +552,7 @@ mod tests {
                 descriptors: KLVA_REGISTRATION_DESCRIPTOR,
             },
         ];
-        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, &mut cc).expect("PMT fits");
+        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, 0, &mut cc).expect("PMT fits");
         // H.265 stream_type
         assert_eq!(buf[17], 0x24);
         // Sync KLV stream_type
@@ -571,7 +579,7 @@ mod tests {
             elementary_pid: 0x1011,
             descriptors: &[],
         }];
-        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, &mut cc).expect("PMT fits");
+        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, 0, &mut cc).expect("PMT fits");
         // ES loop entry 1 stream_type byte at buf[17] — same offset as
         // pmt_round_trips_with_klva (single-program, no program-info loop).
         assert_eq!(
@@ -623,7 +631,7 @@ mod tests {
         };
         let mut buf = [0u8; 188];
         let mut cc = ContinuityCounters::new();
-        let err = write_pmt_packet(&mut buf, &prog, 0x100, &entries, &mut cc).unwrap_err();
+        let err = write_pmt_packet(&mut buf, &prog, 0x100, &entries, 0, &mut cc).unwrap_err();
         assert!(matches!(err, MuxError::PmtTooLarge { .. }));
     }
 
@@ -637,7 +645,7 @@ mod tests {
             elementary_pid: 0x1011,
             descriptors: &[],
         }];
-        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, &mut cc).expect("PMT fits");
+        write_pmt_packet(&mut buf, &prog, 0x1011, &streams, 0, &mut cc).expect("PMT fits");
 
         // section_length is at bytes 6-7
         let section_length = (((buf[6] as u16) & 0x0F) << 8) | (buf[7] as u16);
