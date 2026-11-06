@@ -2057,8 +2057,8 @@ try (RtspSession session = RtspClient.connectH264(cfg)) {
             byte[] drain = new byte[1316];
             H264AccessUnit au;
             while ((au = rx.recvAu()) != null) {
-                // au.pts() is a 90 kHz decode-order timestamp — same clock
-                // as MPEG-TS PTS, no rescaling needed.
+                // au.pts() is a 90 kHz presentation timestamp; AUs arrive in decode order.
+                // MPEG-TS PTS uses the same clock, so no rescaling is needed.
                 mux.pushVideo(au.annexb(), au.pts(), au.keyFrame());
                 int n;
                 while ((n = mux.pull(drain)) > 0) {
@@ -2114,7 +2114,7 @@ no "no socket" code path once constructed.
   default), the depacketizer prepends them before every IDR frame.
 
 - **B-frame / DTS limitation.** `au.pts()` is derived from the RTP timestamp
-  (decode order). For live cameras without B-frames, PTS = DTS. For
+  (presentation time; AUs arrive in decode order). For live cameras without B-frames, PTS = DTS. For
   B-frame content, supply DTS separately to `mux.pushVideoToWithDts`.
 
 - **Loss behavior.** A sequence-number gap drops the open AU and increments
