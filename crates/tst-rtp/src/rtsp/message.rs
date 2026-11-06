@@ -430,8 +430,8 @@ impl RtspRequest {
     ///
     /// The request URI is validated too — not just headers — because the
     /// SETUP/PLAY request-line URI can derive from a server-provided SDP
-    /// control URL (`a=control:` in the DESCRIBE response). Under Theme B's
-    /// hostile-server model a CRLF there would split the request line exactly
+    /// control URL (`a=control:` in the DESCRIBE response). From a hostile
+    /// server, a CRLF there would split the request line exactly
     /// like a header CRLF. This serializer is THE injection-safe path and is
     /// complete on its own — it does not rely on an upstream URL parser for
     /// the security property.
@@ -1175,10 +1175,10 @@ mod tests {
     }
 
     /// The request-line URI is validated too: a CR/LF in the URI splits the
-    /// request line exactly like a header CRLF. Under Theme B's hostile-server
-    /// model the SETUP/PLAY URI can derive from a server-provided SDP control
-    /// URL (`a=control:`), so a malicious server could inject here. The checked
-    /// encoder must reject it before producing any bytes.
+    /// request line exactly like a header CRLF. The SETUP/PLAY URI can derive
+    /// from a server-provided SDP control URL (`a=control:`), so a malicious
+    /// server could inject here. The checked encoder must reject it before
+    /// producing any bytes.
     #[test]
     fn encode_checked_rejects_crlf_in_request_uri() {
         let req = RtspRequest::new(

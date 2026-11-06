@@ -10,12 +10,12 @@
 //! `ManagedSender` etc. can lift them into
 //! `ManagedTransport::new(.., factory, policy)` without re-translation.
 //!
-//! ## Drift from plan sketch
+//! ## Overflow policies
 //!
-//! The plan sketched `OverflowPolicy::DROP_NEWEST` + `BLOCK`, but the
-//! real Rust enum at `tst_pipeline::reconnect::gap_buffer` only has
-//! `DropOldest` (default) and `Reject`. This module mirrors what Rust
-//! actually ships: `DROP_OLDEST = 0`, `REJECT = 1`.
+//! `OverflowPolicy` mirrors the Rust enum at
+//! `tst_pipeline::reconnect::gap_buffer`, which has only `DropOldest`
+//! (default) and `Reject`: `DROP_OLDEST = 0`, `REJECT = 1`. There is no
+//! drop-newest or blocking policy.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 

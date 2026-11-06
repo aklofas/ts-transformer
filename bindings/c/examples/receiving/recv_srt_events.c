@@ -35,7 +35,7 @@
  *       kind 6 correctly is the whole point, not an afterthought.
  *     - `recv_demux_to_console.c` prints raw struct fields for METADATA
  *       events (kind/pid/len/seq) but does not decode the KLV payload.
- *       This example decodes MISB ST 0601 inline via the Task-7 typed
+ *       This example decodes MISB ST 0601 inline via the typed
  *       surface (`tst_st0601_decode` / `tst_st0601_geometry`) so callers
  *       can see the (value, state) contract that surface exposes.
  *

@@ -62,7 +62,8 @@
 //!    `units_dropped` once) — exactly the same "poisoned but still open"
 //!    handling as rule 4, so rule 3's timestamp-boundary detection and rule
 //!    2's marker detection keep resolving it normally. A KLVunit this large
-//!    cannot be a conformant encoding, so there is no point accumulating
+//!    exceeds what this adapter can mux (RFC 6597 sets no size limit; the
+//!    ceiling is the publish muxer's), so there is no point accumulating
 //!    further bytes for it, but boundary detection must never stop.
 //! 7. **Empty payload**: ignored — ticks no counter and touches no other
 //!    state, since the packet is not malformed, merely vacuous.
@@ -413,7 +414,6 @@ mod tests {
 
     #[test]
     fn timestamp_change_without_marker_closes_the_unit() {
-        // Review Focus #5
         let mut d = KlvDepacketizer::new();
         d.feed(&h(1, 1000, false), b"ab");
         d.feed(&h(2, 1000, false), b"cd");

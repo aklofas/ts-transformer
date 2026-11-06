@@ -394,7 +394,7 @@ fn parse_int_nonneg<T>(key: &str, value: &str) -> Result<T, SrtUrlError>
 where
     T: std::str::FromStr<Err = std::num::ParseIntError>,
 {
-    // Strict-A: bare decimal, no suffix, non-negative. We rely on T's
+    // Strict grammar: bare decimal, no suffix, non-negative. We rely on T's
     // from_str to enforce range. Use this for unsigned T (u8/u16/u32/u64);
     // signed callers go through parse_i32_nonneg, which adds the sign check.
     check_decimal(key, value)?;

@@ -47,7 +47,7 @@ fuzz_target!(|data: &[u8]| {
 
         // Other-fields-survive property: every typed field except the
         // edited one must match between the original and patched
-        // decodes. Two exclusions are required for soundness:
+        // decodes. These exclusions are required for soundness:
         //  - `frame_center_lat_deg` is the edit itself;
         //  - tag 23's `sentinel_tags` / `imapb_specials` entries (masked below);
         //  - `field_errors` may legitimately differ: patch re-encoding

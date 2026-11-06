@@ -164,10 +164,11 @@ impl AuCellReassembler {
     /// is the continuity counter's to report, not this check's: a PES lost
     /// or damaged on the way (a continuity_counter jump, a reassembly cap, an
     /// unparseable or zero-length PES, a truncated cell, a PES not shaped as
-    /// AU cells) or a signalled
-    /// discontinuity (H.222.0 §2.4.3.5) discards the AU still in progress
-    /// once the cells that did arrive are walked, and reports the gap (see
-    /// [`discard_pid`](Self::discard_pid)).
+    /// AU cells) discards the AU still in progress once the cells that did
+    /// arrive are walked, and reports the gap (see
+    /// [`discard_pid`](Self::discard_pid)); a signalled discontinuity
+    /// (H.222.0 §2.4.3.5) inside a PES discards it before that PES's cells
+    /// are walked.
     /// A new
     /// producer on a continuing channel (a fresh `Muxer`, which numbers
     /// every PES from 0) is likewise not a gap.

@@ -66,8 +66,7 @@ pub const MAX_AU_SCALE: u32 = (4 * 1024 * 1024 / REALISTIC_KEY_PAYLOAD.1) as u32
 /// outbound buffer is sized from this — a push larger than that buffer
 /// fails atomically (`MuxError::BufferFull`), so a scale whose keyframe
 /// outgrows the default `buffer_packets` (10 000 ≈ 1.8 MB; scale ≥ 35)
-/// could never send a single frame. Run 2 (2026-10-02) ended every
-/// bitrate axis at scale 64 exactly this way.
+/// could never send a single frame.
 pub fn max_video_au_bytes(mode: AuSizeMode) -> usize {
     const HEADROOM: usize = 1024;
     match mode {
@@ -578,8 +577,8 @@ pub fn observed_tags(rec: &UasDatalinkLs) -> std::collections::BTreeSet<u32> {
 /// Map the `0..=1` walk parameter into `[min, max]`, stopping 5 % of the
 /// span short of both ends.
 ///
-/// This is the run-1 rule generalised: soak run 1 died 14.5 h in because
-/// an unbounded latitude walk crossed Tag 13's +90 encode max. Every
+/// An unbounded latitude walk once crossed Tag 13's +90 encode max and
+/// panicked a soak sender 14.5 h in. Every
 /// numeric tag the rich generator sets whose range is its ENCODE range
 /// goes through here, so it can never reach its own limit however long
 /// the run goes — and the 5 % margin means a later rounding or unit
@@ -607,7 +606,7 @@ fn walk(w: f64, min: f64, max: f64) -> f64 {
 /// range, and by a 1°-wide window around a fixed origin for the sensor
 /// latitude and longitude — so none should be capable of going out of
 /// range; surfacing a failure as `Err` instead of an `expect` is what keeps a
-/// generator bug from killing a 72 h soak the way run 1's did.
+/// generator bug from killing a 72 h soak.
 pub fn klv_record_rich(seed: u64, seq: u32) -> Result<Vec<u8>, String> {
     let tags = rich_presence(seed, seq);
     let has = |t: u8| tags.contains(&u32::from(t));
@@ -778,7 +777,7 @@ mod tests {
         }
     }
 
-    /// Soak run 1 (2026-08-04) died 14.5h in: the old unbounded
+    /// An earlier soak died 14.5 h in: the old unbounded
     /// `38.0 + seq * 0.0001` latitude walk crossed Tag 13's +90 encode
     /// max at seq 520_001 (10 Hz KLV cadence → 14h27m) and the
     /// `encode_to_vec(...).expect(...)` panicked both soak senders. A
@@ -917,7 +916,7 @@ mod tests {
         }
     }
 
-    /// The run-1 rule applied to every rich tag: a 72h soak at 10 Hz needs
+    /// Every rich tag must stay in range for a whole soak: a 72h soak at 10 Hz needs
     /// 2_592_000 records; sweep every triangle extreme plus a prime stride
     /// plus 10_000 seeded random seqs, for two seeds. Any encode error is
     /// a generator bug (out-of-range walk), caught here, never in a soak.
@@ -938,7 +937,7 @@ mod tests {
         }
     }
 
-    /// The run-1 rule has to bite at the walk's *turnaround* points —
+    /// Range checks must cover the walk's *turnaround* points —
     /// `w == 0` (seq 0) and `w == 1` (seq 10_000) — where a range bug
     /// hides. Group presence is seeded, so sweeping a single seed at
     /// those seqs silently leaves every absent group unchecked: the
