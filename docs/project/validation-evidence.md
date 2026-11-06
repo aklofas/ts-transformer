@@ -27,7 +27,7 @@ bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run --seconds 8
 
 # One-hour soak smoke: the 0.7.0 release soak's shape and seed (seeded
 # phase schedule, corruption tap, rich KLV) at 1/72nd the duration — the
-# 6-hourly outage never fires in one hour. SRT_RECONNECT_MODE is required —
+# outage (every 4 h by default) never fires in one hour. SRT_RECONNECT_MODE is required —
 # the script refuses to launch without it; `background` is the mode the
 # 0.7.0 release soak ran, `blocking` the mode of the 2026-08-05 run:
 SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --outdir /tmp/interop-soak-smoke --hours 1 --seed 11
@@ -331,7 +331,7 @@ property and asserts the named failure (`crates/tst-interop/tests/mutations.rs`)
 `soak.sh` runs two concurrent, hours-long transport legs of `tst-interop` pushing
 synthetic MPEG-TS/KLV traffic through an impaired proxy: an SRT leg
 wrapped in `tst_pipeline::ManagedTransport` (so it must reconnect across a
-90-second full-drop outage window injected every 6 hours) and a RIST leg
+90-second full-drop outage window, injected every 6 hours in the runs below; the launcher's default is now every 4 hours) and a RIST leg
 under the same impairment with no outage (RIST has no managed
 reconnect wrapper in this codebase, so its job is purely "does sustained
 loss/jitter/reorder behave the same over hours as it does over a
@@ -348,7 +348,7 @@ under "Publisher role" below, with the rest of that role's evidence. A
 fourth leg, `rtsp-publish-es`, publishes elementary streams into a second
 mount; it is described after the runs table below. Since 2026-10-21 a fifth
 leg, `whep`, serves a WebRTC mount to a headless browser that reconnects on
-a schedule; it is described under "WebRTC playback" below.
+a schedule; it is described under "WebRTC playback" below. A run of 24 hours or more gates on the per-process RSS slope by default (200 KiB/h after warm-up; `--no-rss-slope-gate` keeps it provisional), and shorter runs are always provisional.
 
 The impairment itself changed shape on 2026-09-14 (see "The current soak
 shape" below), and the 0.7.0 release soak below runs it. The earlier

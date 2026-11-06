@@ -27,10 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Stability: Stable** for the RTP transports; the `rtsp` module
-(client + server) is formally **Provisional** — the client API
-(`RtspClient`) is stable in practice, but the module's tier is set by
-the still-evolving server surface (`RtspServer`). See the [API
+**Stability:** RTP transports and H.264 packetization are **Stable**;
+`h265`, `opener` and `rtsp` are **Provisional**, and
+`rtsp::server::mount_rules` is **Experimental**. See the [API
 stability
 reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 

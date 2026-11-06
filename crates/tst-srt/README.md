@@ -29,9 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 libsrt build), plus libclang (for bindgen) — see `tstrans-srt-sys`'s
 README for detail.
 
-**Stability: Stable** — the primary transport of this project's
-scope; only the `shells` module (URL → managed-shell open path used by
-the bindings) is Provisional. See the [API stability
+**Stability: Stable** for the core transport; `listen_rules`, `opener` and
+`shells` are **Provisional**. See the [API stability
 reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 
 **License:** MIT OR Apache-2.0. This crate depends on
