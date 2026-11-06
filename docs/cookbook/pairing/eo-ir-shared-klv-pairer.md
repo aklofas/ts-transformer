@@ -22,21 +22,10 @@ let mut eo_pairer = Pairer::last_before_pts(EO_PID, KLV_PID, None);
 let mut ir_pairer = Pairer::last_before_pts(IR_PID, KLV_PID, None);
 
 for e in demux_events() {
-    // KLV events go to BOTH pairers (each maintains its own slot
-    // mark-used state); video events only to the matching pairer.
-    let outputs = match &e {
-        tst_core::mpegts::demux::DemuxEvent::Metadata { stream, .. }
-            if stream.pid == KLV_PID => {
-            let mut o = eo_pairer.feed(e.clone());
-            o.extend(ir_pairer.feed(e));
-            o
-        }
-        tst_core::mpegts::demux::DemuxEvent::Sample { stream, .. }
-            if stream.pid == EO_PID => eo_pairer.feed(e),
-        tst_core::mpegts::demux::DemuxEvent::Sample { stream, .. }
-            if stream.pid == IR_PID => ir_pairer.feed(e),
-        _ => Vec::new(),
-    };
+    // Both pairers need program maps and epoch boundaries as well as
+    // samples; a sample for the other video PID passes through unpaired.
+    let mut outputs = eo_pairer.feed(e.clone());
+    outputs.extend(ir_pairer.feed(e));
     for o in outputs {
         match o {
             PairerOutput::Paired { video, klv } => {
@@ -54,5 +43,5 @@ for e in demux_events() {
 
 Compared to the inline EO + IR pattern, the Pairer-based composition
 adds telemetry counters per branch and the typed output projections,
-at the cost of one extra clone per KLV event (acceptable for typical
-1–10 KB ST 0601 records).
+at the cost of cloning each event once. For large video payloads, route
+samples to their matching branch and forward every other event to both.
