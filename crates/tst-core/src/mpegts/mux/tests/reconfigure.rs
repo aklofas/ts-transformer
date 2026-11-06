@@ -366,3 +366,87 @@ fn refuses_duplicate_metadata_service_id() {
     let got = m.plan_reconfigure(&new).err().expect("refused");
     assert_eq!(format!("{got:?}"), format!("{expected:?}"));
 }
+
+/// Program 1 (PMT 0x1000) = H.264 0x1011 + the given private-data KLV PIDs.
+fn video_and_klvs(klv_pids: &[u16]) -> MuxerProgramConfig {
+    let mut p = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p.add_video(0x1011, VideoCodec::H264);
+    for &pid in klv_pids {
+        p.add_klv(pid, KlvStreamType::PrivateData, false);
+    }
+    p.build()
+}
+
+/// Tombstone one stream of a live slot the way a reconfigure that dropped
+/// that PID does: its stream entry becomes `None` and it leaves the program.
+fn tombstone_stream(m: &mut Muxer, idx: usize, pid: u16) {
+    let slot = &mut m.slots[idx];
+    let (kind, within) = slot.placed_pids[&pid];
+    match kind {
+        MuxStreamKind::Video => slot.video[within] = None,
+        MuxStreamKind::Klv => slot.klv[within] = None,
+        MuxStreamKind::Audio => slot.audio[within] = None,
+        MuxStreamKind::Subtitle => slot.subtitle[within] = None,
+        MuxStreamKind::Data => slot.data[within] = None,
+    }
+    let live = slot.live.as_mut().unwrap();
+    let pos = live.streams.iter().position(|s| s.pid() == pid).unwrap();
+    live.streams.remove(pos);
+    live.stream_descriptors.remove(pos);
+}
+
+#[test]
+fn plan_returning_stream_reuses_its_own_tombstone() {
+    // A@0 and B@1 tombstoned; B alone returns and takes 1, not the lower 0.
+    let mut m = Muxer::new(config_of(vec![video_and_klvs(&[0x1031, 0x1032])])).unwrap();
+    tombstone_stream(&mut m, 0, 0x1031);
+    tombstone_stream(&mut m, 0, 0x1032);
+    let plan = m
+        .plan_reconfigure(&config_of(vec![video_and_klvs(&[0x1032])]))
+        .unwrap();
+    assert_eq!(
+        kinds_withins(&plan.programs[0]),
+        vec![
+            (MuxStreamKind::Video, 0, 0, true),
+            (MuxStreamKind::Klv, 1, 1, false)
+        ]
+    );
+}
+
+#[test]
+fn plan_new_stream_reuses_any_tombstone_of_its_kind() {
+    // A@0 tombstoned, B@1 survives; new C takes A's index instead of appending.
+    let mut m = Muxer::new(config_of(vec![video_and_klvs(&[0x1031, 0x1032])])).unwrap();
+    tombstone_stream(&mut m, 0, 0x1031);
+    let plan = m
+        .plan_reconfigure(&config_of(vec![video_and_klvs(&[0x1032, 0x1033])]))
+        .unwrap();
+    assert_eq!(
+        kinds_withins(&plan.programs[0]),
+        vec![
+            (MuxStreamKind::Video, 0, 0, true),
+            (MuxStreamKind::Klv, 1, 1, true),
+            (MuxStreamKind::Klv, 0, 2, false)
+        ]
+    );
+}
+
+#[test]
+fn plan_new_stream_declared_first_leaves_a_returning_stream_its_tombstone() {
+    // A@0 and B@1 tombstoned; new C is declared before returning A, yet A
+    // gets 0 back and C takes the remaining tombstone 1.
+    let mut m = Muxer::new(config_of(vec![video_and_klvs(&[0x1031, 0x1032])])).unwrap();
+    tombstone_stream(&mut m, 0, 0x1031);
+    tombstone_stream(&mut m, 0, 0x1032);
+    let plan = m
+        .plan_reconfigure(&config_of(vec![video_and_klvs(&[0x1033, 0x1031])]))
+        .unwrap();
+    assert_eq!(
+        kinds_withins(&plan.programs[0]),
+        vec![
+            (MuxStreamKind::Video, 0, 0, true),
+            (MuxStreamKind::Klv, 1, 1, false),
+            (MuxStreamKind::Klv, 0, 2, false)
+        ]
+    );
+}
