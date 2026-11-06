@@ -15,7 +15,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added — tst-c
 
-- `tst_demux_receiver_get_ts_bytes_demuxed`, `tst_managed_demux_receiver_get_ts_bytes_demuxed` and the `rtp`/`udp`/`tcp`/`rist` twins report the aligned TS bytes a demux receiver fed its demuxer (ABI 0.28, additive).
+- C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 invalid emulation prevention. No struct layout changes.
+- C ABI minor 26 → 27 (`TST_ABI_VERSION_MINOR`): additive; see the flush entry below and this release's tst-c entries for the tightened contracts.
+- New `tst_udp_sender_flush`, `tst_tcp_sender_flush`, `tst_rtp_sender_flush` and `tst_rist_sender_flush` (ABI 0.27) send the buffered partial bundle. `tst_*_sender_close` and `tst_*_mux_sender_close` stay cancel-first and abortive; call `_flush` / `_finish` first for a lossless end of stream. The C examples do. On RIST the flushed tail is handed to librist, whose teardown does not drain its output queue, so an immediate `tst_rist_sender_close` may still drop it (seen on Windows); allow the link time to send before closing.
+- C ABI minor 27 → 28 (additive): `tst_demux_receiver_get_ts_bytes_demuxed`, `tst_managed_demux_receiver_get_ts_bytes_demuxed` and the `rtp`/`udp`/`tcp`/`rist` twins report the aligned TS bytes a demux receiver fed its demuxer.
+- C ABI minor 28 → 29 (additive): `tst_rtsp_server_builder_end_publish_mount_on_publisher_exit(builder, end)` and `tst_rtsp_server_builder_publish_idle_timeout(builder, secs)`.
 
 ### Changed — tst-core, tst-py, tst-jni, tst-c (BREAKING)
 
@@ -23,7 +27,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-core (BREAKING)
 
-- Synchronous-metadata (`stream_type 0x15`) KLV cells carry `sequence_number` numbered within each PES from 0, as H.222.0 Table 2-156 scopes the count to one `metadata_AU_wrapper`; every release from 0.1.0 to 0.9.0 counted across PES for the life of the stream, which a per-PES reader such as mediamtx rejected (one unit in 256 survived). Demuxing is unchanged: tst-core's demuxer accepted both numberings already.
+- Synchronous-metadata (`stream_type 0x15`) KLV cells carry `sequence_number` numbered within each PES from 0, as H.222.0 Table 2-156 scopes the count to one `metadata_AU_wrapper`; every release from 0.1.0 to 0.9.0 counted across PES for the life of the stream, which a per-PES reader such as mediamtx rejected (one unit in 256 survived). Demuxing is unchanged: tst-core's demuxer accepted both numberings already. Migration: a reader that needs `sequence_number` to continue across PES must accept numbering that restarts at 0 in each PES; no option emits the former numbering.
+- Under `StrictMode::Full`, a PES the demuxer finds damaged (a continuity gap, or a short or gapped PES cut off by the next PUSI) now fails `feed` with `DemuxError::MalformedPes`. A receiver on a lossy link that runs `Full` sees an error where it used to get a damaged sample. Migration: run `StrictMode::Off` to keep receiving damaged PES (each announced by a `MalformedPes` marker), or handle `DemuxError::MalformedPes` under `Full`; `TimingOnly` and `DescriptorsOnly` drop the damaged sample and keep going.
 
 ### Added — tst-srt, tst-py, tst-jni
 
@@ -42,8 +47,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-py (BREAKING)
 
 - An `hls.MuxPublisher` collected without `finish_into_publisher()` no longer re-offers bytes a failed push retained and writes no closing cut: the implicit drop is abortive; `finish_into_publisher()` then `finish()` is the graceful path. A collector-driven retry against the file system, with the interpreter stalled, was never a dependable way to deliver a segment.
-- `EncryptionKey.aes128`, `aes192` and `aes256` raise `ValueError` for a `bytes` secret that is not valid UTF-8. The secret was converted lossily, so distinct byte secrets collided on the same key and the derived key differed from a peer that used the raw bytes. A `str` secret and a UTF-8 `bytes` secret behave as before.
-- `ManagedReceiver.reconnect_attempts()` counts reconnect attempts, failed and still-pending ones included, as `ManagedDemuxReceiver` and the JVM binding do. It used to count only successful rebuilds, so it read 0 while the receiver was still searching for a new peer.
+- `EncryptionKey.aes128`, `aes192` and `aes256` raise `ValueError` for a `bytes` secret that is not valid UTF-8. The secret was converted lossily, so distinct byte secrets collided on the same key and the derived key differed from a peer that used the raw bytes. A `str` secret and a UTF-8 `bytes` secret behave as before. Migration: pass the passphrase as a `str`, or as `bytes` holding valid UTF-8, with the same text on the peer.
+- The RIST sender and receiver builders apply `profile()` and `encryption()` in call order, so `.encryption(k).profile(RistProfile.SIMPLE)` now raises `RistError(INVALID_CONFIG)` at build where it used to build an encrypted Main-profile peer; `.profile(RistProfile.SIMPLE).encryption(k)` still builds Main. Migration: with a key, leave the profile unset or set `RistProfile.MAIN`; use `RistProfile.SIMPLE` only without encryption.
 
 ### Security — tst-srt, tstrans-srt-sys
 
@@ -53,8 +58,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-srt, tst-py, tst-jni, tst-c (BREAKING)
 
 - A listener with a passphrase refuses every handshake-v4 caller (see Security above); a v4 caller that relied on a passphrase listener must move to libsrt 1.3 or later.
-- `StreamId::new`, `ListenRules::set` and the `?streamid=` URL key refuse a stream ID or rule key holding a NUL byte (`StreamIdError::InteriorNul`, `ListenRuleError::InteriorNul`; `ListenRules::remove` of such a key returns `false`; Python and JVM report `CONFIG_INVALID`). libsrt's listen hook sees the stream ID as a C string, so a NUL-bearing ID could never match its own rule.
+- `StreamId::new`, `ListenRules::set` and the `?streamid=` URL key refuse a stream ID or rule key holding a NUL byte (`StreamIdError::InteriorNul`, `ListenRuleError::InteriorNul`; `ListenRules::remove` of such a key returns `false`; Python and JVM report `CONFIG_INVALID`). libsrt's listen hook sees the stream ID as a C string, so a NUL-bearing ID could never match its own rule. Migration: remove NUL bytes from stream IDs and use the same complete ID in peers and rule keys.
 - `connect_timeout` (`conntimeo`, `connect_timeout_ms`, `connectTimeoutMs`) is now the budget for the whole connect, shared across the addresses the host resolves to: each address gets the remaining time divided by the addresses left. A host with several addresses gives each less than the full timeout; a single-address host is unchanged. Since 0.1.0 each address received the full timeout, so a silent first address could cost the timeout once per address. libsrt checks a blocking connect's deadline about once a second, so each attempt against a silent address costs at least one second, and a budget below about a second per address may not reach a later address. The C package takes the change through the `conntimeo` URL key. Workaround: a multi-address host whose first address is live but slow may now time out where it connected before; raise `connect_timeout` to cover every address, or connect to a literal address.
+- A malformed percent escape in a URL query now fails with an error that names the offset and the key, never the value. The same holds for `rist://` URLs. Migration: write a literal `%` as `%25`.
+- A repeated URL key has every occurrence validated, so an invalid one anywhere is an error; the last valid one still wins. Migration: correct or remove every invalid occurrence; a valid later one no longer covers an invalid earlier one.
+- The URL integer grammar refuses a leading `+` and leading zeros (`+5`, `007`), which libsrt's own apps accept. Migration: write the plain decimal (`5`, `7`).
 
 ### Changed — tst-core, tst-py (BREAKING)
 
@@ -66,7 +74,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-rtp (BREAKING)
 
-- `RtspServer::cancel_handle().cancel()` is now terminal for the publish side, as `stop()` and dropping the server are: a parked or later `next_publisher` returns `Shutdown`, publish mounts' application transports read `Closed`, and mount registration, rule edits and `start()` are refused. On a server that was never started the same holds, except that publish mounts' application transports stay open until the server is dropped (the cancel is one atomic store, safe from a signal handler, and no listener runs to close them). Before, a hard cancel left the queue, the transports and the rules table live, so a `next_publisher` call waited to its timeout and a `DemuxReceiver` on a publish mount kept waiting. The C, Python and JVM server cancel handles carry the same change. Why: one terminal outcome for every shutdown path.
+- `RtspServer::cancel_handle().cancel()` is now terminal for the publish side, as `stop()` and dropping the server are: a parked or later `next_publisher` returns `Shutdown`, publish mounts' application transports read `Closed`, and mount registration, rule edits and `start()` are refused. On a server that was never started the same holds, except that publish mounts' application transports stay open until the server is dropped (the cancel is one atomic store, safe from a signal handler, and no listener runs to close them). Before, a hard cancel left the queue, the transports and the rules table live, so a `next_publisher` call waited to its timeout and a `DemuxReceiver` on a publish mount kept waiting. The C, Python and JVM server cancel handles carry the same change. Why: one terminal outcome for every shutdown path. Migration: after a hard cancel, build a new server; do not restart it or register mounts on it.
 - `add_mount`, `add_multicast_mount` and `add_publish_mount` refuse a non-canonical path (`/live/`, `/live//`, `/live/trackID=0`) with `InvalidMountPath`; `MountRules::set` and `remove` refuse the same paths instead of normalizing them. Why: a mount registered under one spelling and a rule under another were two keys, so a restrictive rule did not govern the mount; one canonical key closes that. Mount rules are unreleased. The mount registration change reaches every release since 0.1.0: a path with a trailing slash or a trailing control segment could never be reached by a request anyway, and a path with an empty segment (`/a//b`) must now be registered without it. An on-demand `ANNOUNCE` on such a path now answers `404` instead of creating the mount under the canonical name (on-demand mounts shipped in 0.8.0); a publisher announces the canonical path.
 - The RTSP server refuses a realm holding a control byte (CR, LF or any other) with `MountRuleError::InvalidRealm` from `set_challenge` and `InvalidConfig` from the server builder, and escapes a quote or backslash in a realm in the `WWW-Authenticate` header. A realm with CR/LF could previously inject header lines, and a quote ended the realm early. The server builder also refuses an empty username, which no client could ever present. Strip control bytes from realms and configure a non-empty username.
 - A publisher's SETUP for a path other than its announced mount now answers `404`, like a missing mount. Before, it answered `455`, `461` or a role refusal, which showed that the mount exists and what type it is, even behind a `Refuse(NotFound)` rule. A publisher must SETUP the path it announced.
@@ -75,8 +83,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-rtp, tst-py, tst-jni (BREAKING)
 
-- A path rule's `Inherit` now falls back to the table's default rule, and only the default rule's `Inherit` means the server-wide setting; before, a default of `Refuse` left a path rule's `Inherit` side as open as the server itself. Why: a default rule is the default for every direction a path rule leaves unset. Mount rules are unreleased, so no shipped table changes meaning.
-- `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch.
+- A path rule's `Inherit` now falls back to the table's default rule, and only the default rule's `Inherit` means the server-wide setting; before, a default of `Refuse` left a path rule's `Inherit` side as open as the server itself. Why: a default rule is the default for every direction a path rule leaves unset. Mount rules are unreleased, so no shipped table changes meaning. Migration: set an explicit `Open` or `Require` policy on a path rule that must differ from a refusing default.
+- `DigestAuth` (Python and JVM) never falls back to Basic: a server that offers no Digest challenge now fails the connect with an auth-unsupported error instead of receiving the password in Basic form. A plaintext `rtsp://` endpoint or an on-path party could previously downgrade a Digest client to Basic and read the password. `BasicAuth` keeps answering Digest when offered and Basic otherwise. Rust callers choose with the new `RtspClientBuilder::auth_schemes(AuthSchemes)`; `AuthSchemes::Automatic` is the default and `AuthSchemes::DigestOnly` refuses Basic. The C `tst_rtsp_client_builder_auth_digest_md5` and `_sha256` setters keep `Automatic` (Basic fallback) until the next C-parity batch. Migration: enable Digest on the server, or use `BasicAuth` where Basic is intended.
 
 ### Fixed — tst-core, tst-jni
 
@@ -107,7 +115,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - DVB subtitle PES envelopes, and teletext PES envelopes on PIDs signalled by `teletext_descriptor` (0x56), are checked and reported; a PID signalled only by `VBI_teletext_descriptor` (0x46) stays `DvbTeletext` and is delivered without the EN 300 472 data-unit check.
 - `StrictMode::Full` checks all four reserved bits before a PMT's `program_info_length` (Table 2-33).
 - A `discontinuity_indicator` on an adaptation-field-only packet resets the PID's continuity baseline (H.222.0 §2.4.3.5), so the payload packet that follows the signalled reset is no longer reported as a `ContinuityJump` and the PES before it is no longer marked damaged.
-- ST 0601 decode treats a zero-length optional item as unknown (the field stays unset and no field error is raised), and when a single-use tag repeats the last occurrence wins, replacing its sentinel and IMAPB state too; the `klv_st0601_patch` fuzz oracle masks the edited tag's sentinel and IMAPB entries; an optional field encoded with an empty value therefore decodes back as unset.
+- ST 0601 decode leaves the typed field of a zero-length optional item unset (ST 0107 reads it as "unknown"; no field error is raised and nothing is added to `unknown`), and when a single-use tag repeats the last occurrence wins, replacing its sentinel and IMAPB state too; the `klv_st0601_patch` fuzz oracle masks the edited tag's sentinel and IMAPB entries; an optional field encoded with an empty value therefore decodes back as unset.
 
 ### Fixed — tst-py, tst-jni, tst-core, tst-hls, tst-webrtc, tst-srt, tst-c
 
@@ -120,9 +128,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The C RTSP server builder holds its PEM private key in zeroizing memory and wipes it when the builder is released.
 - `tst_core::url::redact_url`, and with it every Python repr, Java `toString()` and error text that redacts a URL, took time quadratic in the length of a run of `%` (32 000 of them took about half a second). Each position now looks at most 36 bytes ahead, the longest secret key fully percent-encoded; the output is unchanged. Java's `Redact.url` does the same.
 - `ParsedUrl`'s `Debug` output printed the tail of a password that holds a raw `/` or `?` after a numeric prefix: `rtsp://u:12345/tail@h` parses as port `12345` and path `/tail@h`. A password holding a raw `@` and then a `/` or `?` put its text in the host the same way (`srt://u:p@ss/word@h` parses as host `ss`). A second `:` in the password does the same with no password parsed at all (`rtsp://u:secret:12345/tail@h` parses as host `u:secret`). When an `@` follows the authority, the host, the port, the path and every query pair up to the last one holding an `@` now print as `<redacted>`, as `redact_url` already treats that text as userinfo.
+
 ### Changed — tst-hls (BREAKING)
 
-`HlsPublisher` now refuses (new `HlsError::UntrustedOutputDir`) an `output_dir` that is a symlink, is not owned by the process user, or is writable by group or others (Unix). A missing directory is created with mode 0700, and segments, the playlist and served segment reads are opened without following symlinks. Previously another account could pre-create the default `temp_dir()/tstrans-hls` on a shared `/tmp`, or plant symlinks in it, to redirect or read the publisher's files. Create it not writable by group or others (for example 0700 or 0750) or use a private path. Bindings report the new error as the existing invalid-config kind.
+- `HlsPublisher` now refuses (new `HlsError::UntrustedOutputDir`) an `output_dir` that is a symlink, is not owned by the process user, or is writable by group or others (Unix). A missing directory is created with mode 0700, and segments, the playlist and served segment reads are opened without following symlinks. Previously another account could pre-create the default `temp_dir()/tstrans-hls` on a shared `/tmp`, or plant symlinks in it, to redirect or read the publisher's files. Create it not writable by group or others (for example 0700 or 0750) or use a private path. Bindings report the new error as the existing invalid-config kind.
 
 ### Changed — tst-pipeline, tst-srt, tst-c, tst-py, tst-jni (BREAKING)
 
@@ -130,13 +139,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-c (BREAKING)
 
-- After `_cancel`, every receive (`_recv_ts`, `_recv_packet`, `_recv_event`, `_next_event`), send (`_send_ts`, `_send_*`), `_flush` and `_finish` on a shell returns `TST_E_CLOSED`, including when TS packets or a partial bundle were still buffered; a `Broken` seen with the cancel latch set is `TST_E_CLOSED` too. Previously buffered packets were delivered and sub-bundle sends, empty flushes and empty finishes returned 0 after a cancel, which contradicted the documented terminal-cancel contract. Only the caller's `_cancel` counts: a `_finish` that closes the transport itself is not a cancel, so a second `_finish` stays 0. A receive refused this way records `CANCELLED` for `_end_reason`, including on a demux receiver bridged from an RTSP session or a publish mount. The same holds after `tst_rtsp_publish_mount_cancel` on the mount a demux receiver was taken from; queued events were returned before.
+- After `_cancel`, every receive (`_recv_ts`, `_recv_packet`, `_recv_event`, `_next_event`), send (`_send_ts`, `_send_*`), `_flush` and `_finish` on a shell returns `TST_E_CLOSED`, including when TS packets or a partial bundle were still buffered; a `Broken` seen with the cancel latch set is `TST_E_CLOSED` too. Previously buffered packets were delivered and sub-bundle sends, empty flushes and empty finishes returned 0 after a cancel, which contradicted the documented terminal-cancel contract. Only the caller's `_cancel` counts: a `_finish` that closes the transport itself is not a cancel, so a second `_finish` stays 0. A receive refused this way records `CANCELLED` for `_end_reason`, including on a demux receiver bridged from an RTSP session or a publish mount. The same holds after `tst_rtsp_publish_mount_cancel` on the mount a demux receiver was taken from; queued events were returned before. Migration: stop data-plane calls after `_cancel`; call `_flush` or `_finish` before cancelling when buffered output must be delivered, and open a new shell for a new session.
 - `tst_demux_config_add_treat_as` / `_add_link_klv` return `TST_E_INVALID_CONFIG` for a PID above `0x1FFF` (the override could never match a packet); `tst_mux_config_set_*_descriptors` refuse a TLV list that does not consume `tlv_total_len` exactly (trailing bytes were silently ignored, hiding caller length bugs). A call with exactly one of `tlv_count` / `tlv_total_len` zero now returns `TST_E_INVALID_CONFIG` and leaves the list unchanged; it used to clear the list. Migration: pass both as zero to clear.
 - `tst_*_open_listener` (all eight receiver entry points) binds and listens on any URL, host-bearing or not; `srt://0.0.0.0:7000` used to dial out. An explicit `?mode=caller` / `?mode=rendezvous` on these entry points is refused with `TST_E_INVALID_CONFIG`. A URL with invalid UTF-8 is refused once; it was previously reparsed with U+FFFD in place of the caller's bytes (a passphrase could change silently). Drop `?mode=caller` / `?mode=rendezvous` from `_open_listener` URLs and use the caller entry points to dial out.
+- C: the enum-valued parameter of `tst_mux_config_add_video_stream`, `tst_mux_config_add_klv_stream`, `tst_mux_config_add_audio_stream`, `tst_mux_config_add_audio_stream_with_language`, `tst_sender_config_set_framing_mode`, `tst_reconnect_policy_set_overflow_policy`, `tst_reconnect_policy_set_mode` and `tst_misp_time_extract` is now spelled `int32_t`. The value and calling convention are unchanged, and existing C and C++ calls compile as before. The one exception is code that stores one of these functions in a function pointer declared with the old enum parameter type. Migration: declare a stored function pointer with the header's `int32_t` parameter type.
 
 ### Changed — tst-py, tst-jni (BREAKING)
 
-- The same outcome in `Sender`, `Receiver`, `MuxSender` and `DemuxReceiver` and their `Managed*` twins: after `cancel_handle().cancel()` every receive, send, `flush()` and `finish()` raises `<Domain>Error(CLOSED)` / throws `<Domain>Exception(CLOSED)`, buffered data included. `MuxSender.finish()` after `cancel_handle().cancel()` raises `CLOSED`; after `close()` or a previous `finish()` it stays a quiet no-op, because only the caller's cancel counts, not the shell closing its own transport. On the JVM this includes an event an iterator's `hasNext()` already returned `true` for: a `next()` after the cancel throws instead of serving it. The same holds after `PublishMount.cancel()` on the mount a `DemuxReceiver` was taken from; queued events were returned before. The H.264 receiver keeps draining to EOS on cancel.
+- The same outcome in `Sender`, `Receiver`, `MuxSender` and `DemuxReceiver` and their `Managed*` twins: after `cancel_handle().cancel()` every receive, send, `flush()` and `finish()` raises `<Domain>Error(CLOSED)` / throws `<Domain>Exception(CLOSED)`, buffered data included. `MuxSender.finish()` after `cancel_handle().cancel()` raises `CLOSED`; after `close()` or a previous `finish()` it stays a quiet no-op, because only the caller's cancel counts, not the shell closing its own transport. On the JVM this includes an event an iterator's `hasNext()` already returned `true` for: a `next()` after the cancel throws instead of serving it. The same holds after `PublishMount.cancel()` on the mount a `DemuxReceiver` was taken from; queued events were returned before. The H.264 receiver keeps draining to EOS on cancel. Migration: stop data-plane calls after `cancel()`; call `flush()` or `finish()` before cancelling when buffered output must be delivered, and open a new shell for a new session.
 
 ### Changed — tst-tcp (BREAKING)
 
@@ -214,7 +224,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `DemuxerConfig.Builder.strictMode(null)` and `av1Carriage(null)` throw `NullPointerException`.
 - `Builder.maxBandwidthBps` is documented as bytes per second; the value was always passed to `SRTO_MAXBW` unchanged.
 - `Builder.listener()` supplies `mode=listener` when the SRT URL carries no mode; a URL that says `mode=caller` is refused with `CONFIG_INVALID`.
-- `RtspServer.addPublishMount(path, PublishMountConfig)`, `RtspServerConfig.Builder.endPublishMountOnPublisherExit` and `publishIdleTimeoutMs`, `HlsPublisherBuilder.noServer()`, and `MuxPublisher`/`MountHandle` `pushVideoWithDts` mirror the Rust additions.
 
 ### Security — tst-jni
 
@@ -285,7 +294,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-webrtc (BREAKING)
 
-- `WhepServer::add_mount` refuses a path whose next-to-last segment is `sessions` (`/cam/sessions/x`) with `InvalidMountPath`: that is the URL of a session on the parent mount, so a 405 can be chosen by the target's shape alone.
+- `WhepServer::add_mount` refuses a path whose next-to-last segment is `sessions` (`/cam/sessions/x`) with `InvalidMountPath`: that is the URL of a session on the parent mount, so a 405 can be chosen by the target's shape alone. Migration: register the mount at a path whose next-to-last segment is not `sessions`, and point viewers at it.
 
 ### Changed — tstrans-rist-sys
 
@@ -293,8 +302,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-core
 
-- A PES the demuxer finds damaged (a continuity gap, a short or gapped PES cut off by the next PUSI) is now announced by `NonConformantIssue::MalformedPes` in wire order; it was delivered silently before. Lenient mode (`Off`) still delivers it, with the marker immediately before that PES's own first sample. `TimingOnly` and `DescriptorsOnly` queue the marker and drop the sample; the PES still updates the PTS baseline and spacing run, so damage costs delivery, not timing. `Full` makes `feed` return `DemuxError::MalformedPes`.
-- Under `StrictMode::Full`, a continuity gap inside a PES now fails `feed` with `DemuxError::MalformedPes`. A receiver on a lossy link that runs `Full` sees an error where it used to get a damaged sample.
+- A PES the demuxer finds damaged (a continuity gap, a short or gapped PES cut off by the next PUSI) is now announced by `NonConformantIssue::MalformedPes` in wire order; it was delivered silently before. Lenient mode (`Off`) still delivers it, with the marker immediately before that PES's own first sample. `TimingOnly` and `DescriptorsOnly` queue the marker and drop the sample; the PES still updates the PTS baseline and spacing run, so damage costs delivery, not timing.
 - `reset_stats` clears counters only; the PAT and PMT version caches survive, so a PMT repeat after it stays a repeat.
 - A `0x15` stream whose `metadata_descriptor` is not KLV is `Unknown(0x15)`, and `StreamSpec::Data` accepts it.
 - `DemuxerStats::per_stream` entries survive PID retirement until `reset_stats` and report the PMT `stream_type` byte. A PID re-declared under another codec family restarts its codec counters.
@@ -305,38 +313,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-pipeline
 
-- `MuxPublisher::abort(self) -> P` returns the publisher without draining bytes a failed push retained and without a closing cut (additive; `Drop` keeps its best-effort drain). The Python HLS binding uses it for an implicit drop.
 - `Sender` and `MuxSender` split messages to the transport's `max_payload()` in whole TS packets and refuse a ceiling below 188 bytes with `TooLarge` (input not consumed); retained bytes are re-split after a ceiling shrink.
 - `Sender` RECOVER mode keeps the packets before a lost sync and the data after it; STRICT mode rejects a call atomically (no state change, `input_consumed = Some(false)` is now accurate); `flush` checks every packet's sync byte.
-- `MuxPublisher::push_video_with_dts` writes both timestamps into the PES header for B-frame video; it needs exactly one configured video stream and refuses several with `AmbiguousTarget`. A presentation reorder of more than 1 s after a cut (B-frames at about one frame per second) still reads as an encoder reset and starts a discontinuous segment.
-
-### Changed — tst-c
-
-- C ABI minor 25 → 26 (additive): new `TstEventNonConformant` discriminator values for the PES header length, PSI section range and malformed sections, truncated NAL units and AV1 OBUs, and AV1 invalid emulation prevention. No struct layout changes.
-- C ABI minor 26 → 27 (`TST_ABI_VERSION_MINOR`): additive; see the flush entry below and this release's tst-c entries for the tightened contracts.
-- New `tst_udp_sender_flush`, `tst_tcp_sender_flush`, `tst_rtp_sender_flush` and `tst_rist_sender_flush` (ABI 0.27) send the buffered partial bundle. `tst_*_sender_close` and `tst_*_mux_sender_close` stay cancel-first and abortive; call `_flush` / `_finish` first for a lossless end of stream. The C examples do. On RIST the flushed tail is handed to librist, whose teardown does not drain its output queue, so an immediate `tst_rist_sender_close` may still drop it (seen on Windows); allow the link time to send before closing.
-- C: the enum-valued parameter of `tst_mux_config_add_video_stream`, `tst_mux_config_add_klv_stream`, `tst_mux_config_add_audio_stream`, `tst_mux_config_add_audio_stream_with_language`, `tst_sender_config_set_framing_mode`, `tst_reconnect_policy_set_overflow_policy`, `tst_reconnect_policy_set_mode` and `tst_misp_time_extract` is now spelled `int32_t`. The value and calling convention are unchanged, and existing C and C++ calls compile as before. The one exception is code that stores one of these functions in a function pointer declared with the old enum parameter type.
-- C ABI minor 28 → 29 (additive): `tst_rtsp_server_builder_end_publish_mount_on_publisher_exit(builder, end)` and `tst_rtsp_server_builder_publish_idle_timeout(builder, secs)`.
 
 ### Changed — tst-srt
 
 - An unset `key_length` no longer writes `SRTO_PBKEYLEN`, so libsrt negotiates the length: a passphrase-only sender now adopts a peer's AES-256 instead of forcing AES-128. `KeyLength::default()` is still `Aes128`.
-- A malformed percent escape in a URL query now fails with an error that names the offset and the key, never the value. The same holds for `rist://` URLs.
-- A repeated URL key has every occurrence validated, so an invalid one anywhere is an error; the last valid one still wins.
-- The URL integer grammar refuses a leading `+` and leading zeros (`+5`, `007`), which libsrt's own apps accept. Write the plain decimal (`5`, `7`).
 
-### Changed — tst-rist
+### Changed — tst-rist (BREAKING)
 
-- `buffer=N` is a fixed N ms recovery window; before, only the minimum was set and the 200 ms default started at 600 ms.
+- `buffer=N` is a fixed N ms recovery window; before, only the minimum was set and the 200 ms default started at 600 ms. Migration: set `buffer` to the recovery window you want; it is now both the minimum and the maximum.
 
 ### Changed — tst-py
 
-- The RIST sender and receiver builders apply `profile()` and `encryption()` in call order, so `.encryption(k).profile(RistProfile.SIMPLE)` now raises `RistError(INVALID_CONFIG)` at build where it used to build an encrypted Main-profile peer; `.profile(RistProfile.SIMPLE).encryption(k)` still builds Main.
-- `RtspServer.add_publish_mount(path, *, end_on_publisher_exit=None)`, the `RtspServerConfig` fields `end_publish_mount_on_publisher_exit` and `publish_idle_timeout_ms`, `HlsPublisherBuilder.no_server()`, and `push_video_with_dts` on `MuxPublisher` and `MountHandle` mirror the Rust additions.
+- `ManagedReceiver.reconnect_attempts()` counts reconnect attempts, failed and still-pending ones included, as `ManagedDemuxReceiver` and the JVM binding do. It used to count only successful rebuilds, so it read 0 while the receiver was still searching for a new peer.
 
-### Changed — tst-udp
+### Changed — tst-udp (BREAKING)
 
-- A multicast receiver binds its group (IPv4, non-Windows) and, on Linux, clears `IP_MULTICAST_ALL`, so it delivers only its own group. IPv6 receivers bind the wildcard, and Linux kernels before 4.20 leave them unfiltered; Windows receivers still see other groups and unicast to the port.
+- A multicast receiver binds its group (IPv4, non-Windows) and, on Linux, clears `IP_MULTICAST_ALL`, so it delivers only its own group. IPv6 receivers bind the wildcard, and Linux kernels before 4.20 leave them unfiltered; Windows receivers still see other groups and unicast to the port. Migration: use one receiver per multicast group, and a separate unicast receiver where you need one; do not rely on one multicast socket receiving other groups or unicast.
 
 ### Changed — release tooling
 
@@ -468,6 +462,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Publisher::cut_segment_discontinuous` (default: `cut_segment_with_duration`); `MuxPublisher` calls it after an encoder reset or a forward gap.
 - `url::common::decode_ipv6_zone` and `net::udp_socket::bind_udp_socket_multicast_group`.
 
+### Added — tst-pipeline
+
+- `MuxPublisher::abort(self) -> P` returns the publisher without draining bytes a failed push retained and without a closing cut (`Drop` keeps its best-effort drain). The Python HLS binding uses it for an implicit drop.
+- `MuxPublisher::push_video_with_dts` writes both timestamps into the PES header for B-frame video; it needs exactly one configured video stream and refuses several with `AmbiguousTarget`. A presentation reorder of more than 1 s after a cut (B-frames at about one frame per second) still reads as an encoder reset and starts a discontinuous segment.
+
 ### Added — tst-rtp
 
 - `RtspClientBuilder::from_url(RtspUrl)`.
@@ -497,11 +496,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tstrans.srt.Listener.rules()` returns `ListenRules` (`set`, `remove`, `set_default`, `clear`, `len`) with `ListenRule.accept()`, `accept_with(passphrase)` and `reject(reason)`, plus the `RejectReason` enum and `user_defined(code)`. A listener that never touches its rules behaves as before; the methods raise `SrtError(CLOSED)` once the listener is closed, and a rule carries a passphrase only.
 - `tstrans.srt.AccessControl.parse` reads the `#!::` stream-ID form (`user`, `resource`, `host`, `session`, `kind`, `mode`, `get`, `items`).
 - `tstrans.rtp.RtspServer.mount_rules()` returns `MountRules` (`set`, `remove`, `set_default`, `clear`, `set_challenge`, `len`, `is_closed`) with `MountRule(publish=, read=)`, `MountPolicy.inherit()`, `open()`, `require(*creds)` and `refuse(status)`, `MountCredential`, and the `RefuseStatus` and `AuthScheme` enums; `RtspServerConfig(default_mount_rule=...)` guards the first ANNOUNCE. A server nobody edits behaves as before; a bad path or a credential with an empty username raises `RtspError(MOUNT)`, `MountPolicy.require()` with no credentials raises `ValueError`, and an edit after the server stopped raises `RtspError(SERVER)`.
+- `RtspServer.add_publish_mount(path, *, end_on_publisher_exit=None)`, the `RtspServerConfig` fields `end_publish_mount_on_publisher_exit` and `publish_idle_timeout_ms`, `HlsPublisherBuilder.no_server()`, and `push_video_with_dts` on `MuxPublisher` and `MountHandle` mirror the Rust additions.
 
 ### Added — tst-jni
 
 - `org.tstrans.srt.Listener.rules()` returns `ListenRules` (`set`, `remove`, `setDefault`, `clear`, `size`) with `ListenRule.accept()`, `acceptWith(passphrase)` and `reject(RejectReason)`, plus `RejectReason` and `AccessControl.parse` for the `#!::` stream-ID form. A listener that never touches its rules behaves as before; the methods throw `SrtException(CLOSED)` once the listener is closed, and a rule carries a passphrase only.
 - `org.tstrans.rtp.RtspServer.mountRules()` returns `MountRules` (`set`, `remove`, `setDefault`, `clear`, `setChallenge`, `size`, `isClosed`, `close`) with `MountRule.of(publish, read)` and `MountRule.both(policy)`, `MountPolicy.inherit()`, `open()`, `require(MountCredential...)` and `refuse(RefuseStatus)`, `MountCredential.of(user, password)`, and the `RefuseStatus` and `AuthScheme` enums; `RtspServerConfig.Builder.defaultMountRule(...)` guards the first ANNOUNCE. A server nobody edits behaves as before; a bad path or a credential with an empty username throws `RtspException` of kind `MOUNT`, `MountPolicy.require()` with no credentials throws `IllegalArgumentException`, and an edit after the server stopped throws kind `SERVER`.
+- `RtspServer.addPublishMount(path, PublishMountConfig)`, `RtspServerConfig.Builder.endPublishMountOnPublisherExit` and `publishIdleTimeoutMs`, `HlsPublisherBuilder.noServer()`, and `MuxPublisher`/`MountHandle` `pushVideoWithDts` mirror the Rust additions.
 
 ### Deprecated — tst-srt
 
