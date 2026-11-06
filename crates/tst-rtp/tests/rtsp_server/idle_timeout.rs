@@ -266,3 +266,33 @@ fn a_connection_that_never_sets_up_frees_its_slot_at_the_admission_deadline() {
     }
     server.stop().ok();
 }
+
+/// A session timeout near `u64::MAX` seconds makes the post-SETUP reply
+/// bound near `Duration::MAX`; every later reply must still be written.
+#[test]
+fn setup_with_max_session_timeout_still_replies() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.session_timeout(Duration::from_secs(u64::MAX));
+    let server = b.build().unwrap();
+    let _mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    let url = format!("rtsp://127.0.0.1:{port}/live");
+    let setup = request(
+        &mut tcp,
+        &format!(
+            "SETUP {url} RTSP/1.0\r\nCSeq: 1\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        ),
+    );
+    assert!(setup.starts_with("RTSP/1.0 200"), "{setup}");
+    let sid = session_id(&setup);
+    let options = request(
+        &mut tcp,
+        &format!("OPTIONS {url} RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert!(options.starts_with("RTSP/1.0 200"), "{options}");
+    server.stop().ok();
+}
