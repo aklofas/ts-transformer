@@ -808,12 +808,15 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
         inner: R,
         factory: Box<dyn FnMut() -> Result<R, TransportError> + Send>,
         policy: ReconnectPolicy,
-    ) -> Self;
+    ) -> Result<Self, ReconnectPolicyError>;
 }
 ```
 
 Sibling to `ManagedTransport<T>` for the receive direction — same
 factory-closure + `ReconnectPolicy` cadence pattern.
+
+Construction refuses zero backoff with unlimited attempts as
+`ReconnectPolicyError::UnpacedUnlimitedRetry`; propagate the result with `?`.
 
 **No gap buffer.** Receive-side bytes that never arrived can't be
 replayed, so the decorator simply restarts the recv loop on a fresh
