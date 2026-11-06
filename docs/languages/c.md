@@ -322,8 +322,9 @@ TS bytes fed to its demuxer with
 `tst_managed_demux_receiver_get_ts_bytes_demuxed` (managed SRT), or the
 `tst_{rist,rtp,tcp,udp}_demux_receiver_get_ts_bytes_demuxed` family. The RTP
 getter also covers receivers taken from RTSP sessions and publish mounts.
-These getters never wait on the receive slot and keep counting across stats
-resets and a cancel, but they need a live handle: `_close` frees it. To
+These getters never wait on the receive slot, are not reset by a stats
+reset, and stay readable after `_cancel`, but they need a live handle:
+`_close` frees it. To
 record and demux the same stream, compose a packet receiver with a demuxer
 as described in the [Pipeline guide](/docs/guides/pipeline.md).
 

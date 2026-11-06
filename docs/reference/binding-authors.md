@@ -247,13 +247,14 @@ shape but differ on whether the caller should retry:
 
 `TST_E_INVALID_USAGE` (-9) is the third sibling — used when the handle
 is in the wrong **state** for the call (e.g., a KLV push when the muxer has no KLV stream configured, or a
-consumed source; `finish()` is idempotent and is not an error twice). A data-plane call (receive, send, flush, finish) after `_cancel`, or a call
+consumed source; `finish()` is idempotent and is not an error twice). A
+data-plane call (receive, send, flush, finish) after `_cancel`, or a call
 that needs a shell a caught mutator panic retired, is `TST_E_CLOSED` (-7),
 not this code. Getters, statistics and reset entries use ungated accessors
 and stay callable after `_cancel`; their documented transport-availability
 errors can still apply. Using a freed pointer is undefined behaviour, not
-an error code. Distinct from both above
-because it's a programmer bug, not a runtime data-availability question.
+an error code. Distinct from both above because it's a programmer bug, not
+a runtime data-availability question.
 
 A caught panic records `TST_E_PANIC_CAUGHT` (-11) in last-error. The direct
 return depends on the function: an `int`-returning entry returns
@@ -309,8 +310,7 @@ flag so a caller's `_cancel` and a peer EOS can be told apart; a typed
 process exit) is −7 regardless of the flag. `_close` frees the handle and
 never interrupts a parked call, so it is never the source. Either way a −7
 there carries the message `receiver was cancelled or closed by caller`.
-Key on the CODE, not
-the message (see "C ABI error-mapping contract" above). The
+Key on the CODE, not the message (see "C ABI error-mapping contract" above). The
 transport's OWN `close()` keeps producing `Closed` (`ExplicitClose` on
 `ManagedRecvTransport`, whose close is a caller-initiated end); the
 binding layer tells "cancelled" from "closed" with `Owned::is_cancelled()`,
