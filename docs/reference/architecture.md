@@ -376,12 +376,14 @@ that touch a runtime must not be called from inside one. `tst-webrtc`'s
 
 No user code runs on a library thread: the library never calls back into
 Python, JVM or C code; the bindings install their own stderr `tracing`
-subscriber and hand the library only objects the library built. Two
+subscriber and hand the library only objects the library built. Three
 Rust-only seams are the exceptions and are documented as such: a Rust
 `RecvTransport` / `Transport` / `Publisher` implementation or a reconnect
 factory runs where the shell calls it (the managed reconnect worker
-included), and a Rust host's own `tracing` subscriber is reached by the
-libsrt and librist log bridges on their native threads.
+included); a Rust host's own `tracing` subscriber is reached by the
+libsrt and librist log bridges on their native threads; and the `Clock`
+passed to the test-only `WhepServer::bind_with_clock` runs on the WHEP
+media thread (see [API stability](/docs/reference/api-stability.md)).
 
 Sync was chosen for three reasons. First, the target deployment shape
 is small — a process talks to ≤10 SRT peers, so the thread-per-

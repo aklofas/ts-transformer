@@ -350,7 +350,7 @@ thread-safe in your binding.
 
 No user code runs on a library thread: a binding never hands the library a
 host-language callback, and installs its own stderr `tracing` subscriber.
-The two Rust-only exceptions are listed in
+The Rust-only exceptions are listed in
 [Architecture](/docs/reference/architecture.md).
 
 **Runtime handles** (the shells produced by `tst_*_open` /
