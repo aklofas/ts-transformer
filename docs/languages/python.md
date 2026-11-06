@@ -1358,7 +1358,8 @@ with RtspClient.connect_h264(cfg) as session:
   created and while it is live.
 
 - **B-frame / DTS limitation.** `au.pts` is derived from the RTP timestamp
-  (presentation time; AUs arrive in decode order). Most live cameras do not use B-frames — PTS = DTS. If the
+  (presentation time; AUs arrive in decode order). Most live cameras do not
+  use B-frames — PTS = DTS. If the
   source uses B-frames, pass `au.pts` as the PTS and supply a separately-
   derived DTS via the relevant muxer overload.
 

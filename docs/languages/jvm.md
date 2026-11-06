@@ -1804,8 +1804,7 @@ try (RtspSession session = RtspClient.connect(cfg);
   heuristic with one documented gap: a secret holding a quote followed by
   whitespace or `, ; . : ) ] }` can be read as the end of a quoted URL, leaving
   the rest of it visible (see [Secrets in string forms](/docs/reference/binding-authors.md#secrets-in-string-forms)).
-  The credential is handed to the
-  native connect and wrapped in Rust `secrecy::SecretString`.
+  The credential is handed to the native connect and wrapped in Rust `secrecy::SecretString`.
 - **`auth` is `Object`.** Java has no union type; `RtspClientConfig.auth()` returns
   `Optional<Object>` that is a `BasicAuth` or `DigestAuth` — match with `instanceof`.
 - **`DigestAuth` never falls back to Basic.** A server that offers no Digest
@@ -2122,7 +2121,8 @@ no "no socket" code path once constructed.
   default), the depacketizer prepends them before every IDR frame.
 
 - **B-frame / DTS limitation.** `au.pts()` is derived from the RTP timestamp
-  (presentation time; AUs arrive in decode order). For live cameras without B-frames, PTS = DTS. For
+  (presentation time; AUs arrive in decode order). For live cameras without
+  B-frames, PTS = DTS. For
   B-frame content, supply DTS separately to `mux.pushVideoToWithDts`.
 
 - **Loss behavior.** A sequence-number gap drops the open AU and increments

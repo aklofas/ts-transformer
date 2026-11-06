@@ -132,8 +132,9 @@ but `SrtTransport` reads its own cancel latch afterwards and surfaces
 `TransportError::ExplicitClose` to the caller — the caller asked for the
 close, so it is reported as the close, not as the wire error it provoked.
 Every binding projects that to its `CLOSED` kind. Rust, Python, the JVM and
-the C send calls use the detail `cancelled from another thread`; C receives
-use `receiver was cancelled or closed by caller`. (Through 0.6.x this was
+the C send calls use the detail `cancelled from another thread`, as does a C
+receive refused at entry after the cancel; a C receive that was parked when
+the cancel landed reports `receiver was cancelled or closed by caller`. (Through 0.6.x this was
 `TransportError::Broken`.) A direct `SrtSocket::send` / `SrtSocket::recv`, which
 is below the transport layer, still reports the libsrt error.
 

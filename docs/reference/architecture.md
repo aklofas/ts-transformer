@@ -367,7 +367,8 @@ Two crates own private tokio runtimes today — one per `RtspServer`
 runtime on its named server thread). Each is created in the
 constructor. The explicit calls wait with the documented bounds:
 `RtspServer::stop()`, and on the HLS publisher either `finish()`, or
-`finish_serving()` then `HlsServerHandle::shutdown()`. `RtspServer`'s `Drop` waits up to 5 s for its runtime. The HLS
+`finish_serving()` then `HlsServerHandle::shutdown()`. `RtspServer`'s `Drop`
+waits up to 5 s for its runtime. The HLS
 serving handle's `Drop` only cancels the server thread and does not join
 it; the thread exits on its own after the cancel. Public methods
 that touch a runtime must not be called from inside one. `tst-webrtc`'s
