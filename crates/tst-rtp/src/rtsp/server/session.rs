@@ -125,6 +125,16 @@ fn reply_bound(
     })
 }
 
+/// Thirty years: tokio's own far-future horizon for a sleep with no end.
+const FAR_FUTURE: std::time::Duration = std::time::Duration::from_secs(86_400 * 365 * 30);
+
+/// `now + bound`, or `now` plus [`FAR_FUTURE`] when that overflows: a
+/// session timeout near `u64::MAX` seconds makes the post-SETUP bound reach
+/// `Duration::MAX`, and `Instant + Duration` panics on overflow.
+fn deadline_after(now: tokio::time::Instant, bound: std::time::Duration) -> tokio::time::Instant {
+    now.checked_add(bound).unwrap_or(now + FAR_FUTURE)
+}
+
 /// The one bounded writer for every reply a session sends: take the
 /// writer lock, write and flush `bytes` and, when `shutdown_after`, shut
 /// the write half, all raced against `bound`, the publish idle window and
@@ -162,7 +172,7 @@ async fn write_bounded(
         Ok(())
     };
     tokio::pin!(write);
-    let bound_at = tokio::time::Instant::now() + bound;
+    let bound_at = deadline_after(tokio::time::Instant::now(), bound);
     loop {
         let mut wait = bound_at.saturating_duration_since(tokio::time::Instant::now());
         if let Some((p, t)) = publish
@@ -1193,6 +1203,17 @@ fn dispatch(
 mod session_tests {
     use super::*;
     use tokio::net::TcpListener;
+
+    #[test]
+    fn deadline_after_saturates_near_duration_max() {
+        use std::time::Duration;
+        let now = tokio::time::Instant::now();
+        assert!(deadline_after(now, Duration::MAX) >= now + Duration::from_secs(86_400));
+        assert_eq!(
+            deadline_after(now, Duration::from_secs(60)),
+            now + Duration::from_secs(60)
+        );
+    }
 
     #[test]
     fn post_setup_idle_bound_is_never_below_the_advertised_timeout() {
