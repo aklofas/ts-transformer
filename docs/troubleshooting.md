@@ -68,7 +68,7 @@ loop {
 }
 ```
 
-Alternatively, run `accept()` on a dedicated thread and call `SrtListener::close` from your shutdown path — that wakes the blocked call with `AcceptError::ListenerClosed`.
+Alternatively, take `let cancel = listener.cancel_handle();` before moving the listener into a dedicated accept thread, and call `cancel.cancel()` from your shutdown path: the blocked `accept()` returns `AcceptError::ListenerClosed`, and the owning thread then drops the listener.
 
 **Connection establishes but no data arrives**
 

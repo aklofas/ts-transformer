@@ -180,12 +180,13 @@ The Rust API is the source of truth — every binding crate forwards
 
 ## Why this and not `close()`?
 
-`close()` on a shell takes `&mut self`, so it's not callable from
-another thread while a `&mut`-borrowing `send_*` is in flight. The
-cancel handle gives you a `Send + Sync + Clone` capability that
-*doesn't* hold a mutable reference to the shell — the perfect shape
-for "another thread / signal-dispatch thread / FFI consumer needs to
-wake the sender".
+A listener's `close(self)` consumes it, and some shell close methods need a
+mutable borrow; neither shape gives another thread a way to wake a parked
+operation. `MuxSender::close(&self)` is synchronized and cancels before it
+takes its slot lock. The cancel handle is a separate `Send + Sync + Clone`
+capability that wakes the I/O without borrowing or consuming the owner —
+the shape for "another thread / signal-dispatch thread / FFI consumer needs
+to wake the sender".
 
 `MuxSender::close()` internally invokes the cancel handle first
 ("cancel-then-close") so that a peer thread parked
