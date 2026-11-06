@@ -1786,7 +1786,11 @@ try (RtspSession session = RtspClient.connect(cfg);
 
 - **Auth secrecy.** `BasicAuth`/`DigestAuth` hold the password but expose no public
   `password` accessor; `toString()` redacts it. URL secrets and stream-ID query values
-  are redacted in every `toString()` and exception message. The credential is handed to the
+  are redacted in every `toString()` and exception message. The redaction is a
+  heuristic with one documented gap: a secret holding a quote followed by
+  whitespace or `, ; . : ) ] }` can be read as the end of a quoted URL, leaving
+  the rest of it visible (see [Secrets in string forms](/docs/reference/binding-authors.md#secrets-in-string-forms)).
+  The credential is handed to the
   native connect and wrapped in Rust `secrecy::SecretString`.
 - **`auth` is `Object`.** Java has no union type; `RtspClientConfig.auth()` returns
   `Optional<Object>` that is a `BasicAuth` or `DigestAuth` — match with `instanceof`.
