@@ -377,7 +377,7 @@ to accept another publisher. The setting is server-wide in C; there are no
 per-mount options. `tst_rtsp_server_builder_publish_idle_timeout(builder, secs)`
 takes seconds, and zero (the default) leaves it unset. It applies after
 RECORD and is re-armed only by a valid RTP packet of an announced payload
-type, never by RTSP keepalives.
+type, never by RTSP keepalives or RTCP.
 
 Publish-mount handle:
 
