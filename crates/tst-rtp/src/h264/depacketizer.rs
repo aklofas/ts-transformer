@@ -246,8 +246,6 @@ mod tests {
     fn timestamp_wrap_unwraps_monotonically() {
         let mut d = depay();
         // (u32::MAX - 1000) + 3003 wraps to 2002, so +3003 ticks across the u32 boundary.
-        // Note: the brief used 2003 here, but (u32::MAX-1000) → 2003 is a delta of 3004,
-        // not 3003. Using 2002 matches the expected output of Pts90khz::new(3003).
         d.feed(&hdr(1, u32::MAX - 1000, true), &[0x41, 0x01]);
         d.feed(&hdr(2, 2002, true), &[0x41, 0x02]); // wrapped: +3003 across the u32 boundary
         let a = d.next_au().unwrap();

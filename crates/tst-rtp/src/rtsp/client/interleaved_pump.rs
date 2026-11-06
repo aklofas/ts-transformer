@@ -20,10 +20,10 @@
 //!   between main-thread requests, so queuing them would overflow the
 //!   bounded queue on any long receive-only session and fail it.
 //!
-//! There is no server-side counterpart: the RTSP server never expects
-//! client→server `$`-frames (no ANNOUNCE/RECORD support), so it reads
-//! plain RTSP request bytes off the TCP stream directly
-//! (`rtsp::server::session`).
+//! The server side has its own path: a publisher's client→server `$`-frames
+//! are routed by `rtsp::server::session` through
+//! `rtsp::server::publish::drain_interleaved_head`, with the framing
+//! decision shared with this pump through `rtsp::message`.
 //!
 //! # Wire-up status
 //!

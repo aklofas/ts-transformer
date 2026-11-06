@@ -1229,7 +1229,9 @@ pub fn run_with(
             );
         }
     }
-    // The per-file verdicts alone decide; RSS is recorded beside them.
+    // The replay passes only when every file verdict passed, every path was
+    // judged, and no receiver exited unexpectedly; RSS is recorded beside
+    // them and never gated.
     let failed = verdicts.iter().filter(|v| !v.pass).count() as u64;
     let every_path_judged = args
         .paths

@@ -208,8 +208,9 @@ fn managed_open_inner(
     policy: tst_pipeline::ReconnectPolicy,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> *mut TstManagedDemuxReceiver {
-    // A3's signature takes the demuxer options by value; `DemuxerConfig`'s
-    // `Default` is exactly what `ManagedDemuxReceiver::new` applied here.
+    // `managed_demux_receiver_from_url` takes the demuxer options by value;
+    // `DemuxerConfig`'s `Default` is exactly what `ManagedDemuxReceiver::new`
+    // applied here.
     let opts = opts.unwrap_or_default();
     let (rx, handles) = match tst_srt::shells::managed_demux_receiver_from_url(&url, policy, opts) {
         Ok(t) => t,

@@ -1,4 +1,6 @@
-//! End-to-end: MuxPublisher<HlsPublisher> → ffmpeg pulls /playlist.m3u8 → TS byte-identity.
+//! End-to-end: MuxPublisher<HlsPublisher> writes segments and a playlist and serves them;
+//! when ffmpeg is on $PATH it pulls /playlist.m3u8 and must report an input stream
+//! (the bytes are not compared).
 //!
 //! Skips gracefully if `ffmpeg` is not on $PATH.
 

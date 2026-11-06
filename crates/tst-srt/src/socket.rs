@@ -1415,7 +1415,7 @@ mod tests {
         );
     }
 
-    // T2-SRT-LEAK regression (happy path / drift guard). Calls the REAL
+    // Leak regression, happy path and drift guard. Calls the REAL
     // `from_accepted` on a genuinely-live accepted handle and asserts it
     // returns a usable `SrtSocket`. This keeps `from_accepted` referenced by a
     // test (signature/field drift breaks compilation) and exercises its happy

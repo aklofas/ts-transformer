@@ -1424,7 +1424,7 @@ mod tests {
         }
     }
 
-    // T3-SRT-REFUSED: the "refused" substring heuristic must NOT follow the Setup
+    // The "refused" substring heuristic must NOT follow the Setup
     // category. A Setup-category error with an Unknown reason and a message that
     // happens to contain "refused" must map to Other, not Refused — the heuristic
     // is scoped to Connection (major-2 plain refusals) only.

@@ -608,7 +608,7 @@ fn reader_counts_pes_starts_per_pid_and_ignores_a_duplicate_packet() {
     assert_eq!(s.packets_per_pid[&0x1011], bytes_of_pid(&bytes, 0x1011) + 1);
 }
 
-/// PR review finding: duplicate detection compared only the
+/// Duplicate detection once compared only the
 /// continuity counter, so a non-conformant encoder that repeats a CC
 /// WITHOUT repeating the packet's other bytes had its second PES
 /// start silently swallowed — undercounting `pes_starts_per_pid` and
@@ -769,7 +769,7 @@ fn resync_mode_records_a_malformed_packet_as_a_resync_and_continues() {
     assert!(e.contains("adaptation field length"), "{e}");
 }
 
-/// X-CORR-06A (E06): garbage with no sync candidate used to be kept
+/// Garbage with no sync candidate used to be kept
 /// in the carry and rescanned on every feed — 10 000 x 1316 bytes of
 /// 0x55 retained 13 160 000 bytes. Only the <= 187-byte suffix that
 /// could still complete a packet may survive a feed, and the bytes
@@ -829,7 +829,7 @@ fn garbage_dropped_before_a_suffix_that_turns_out_to_be_a_packet_is_still_record
     assert_eq!(r.packets() as usize, clean.len() / PKT);
 }
 
-/// SIMP-11(a) / X-CORR-06B: recoveries are DRAINED per batch, like
+/// Recoveries are DRAINED per batch, like
 /// PCR events, so a multi-day capture never holds (or re-copies) its
 /// whole recovery history. Total events still equals the number of
 /// recoveries; the lifetime count survives the drains.
