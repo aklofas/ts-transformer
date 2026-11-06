@@ -76,7 +76,7 @@ the 256-mount cap until it is removed.
 
 **Publish idle bound.** `publish_idle_timeout` is off by default; zero leaves
 it unset. After RECORD it ends a session that receives no valid RTP packet
-for the configured duration, even if RTSP keepalives continue. Only an RTP
+for the configured duration, even if RTSP keepalives continue. RTCP does not re-arm it; only an RTP
 packet with a decodable header and the announced payload type re-arms it.
 Rust takes a `Duration`, C seconds, Python and the JVM milliseconds.
 

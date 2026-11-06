@@ -1220,7 +1220,9 @@ The surface:
   front. An ANNOUNCE to any other path answers `404`.
   `add_publish_mount(path, end_on_publisher_exit=True)` ends that mount's
   transport when a publisher that reached RECORD leaves (the config field
-  `end_publish_mount_on_publisher_exit` sets the server default); remove the
+  `end_publish_mount_on_publisher_exit`, False by default, sets the server
+  default; `end_on_publisher_exit=None` inherits it and an explicit `False`
+  keeps the mount open even when the default is True); remove the
   mount, then add it again, to accept a new publisher. A closed on-demand
   mount stays in the table, and counts toward the on-demand cap, until
   removed.
