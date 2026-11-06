@@ -22,6 +22,7 @@ use std::time::Duration;
 use tst_core::cancel::CancelSlot;
 use tst_core::url::common::{UrlError as CoreUrlError, decode_ipv6_zone, parse_url};
 use tst_core::url::query::{KeyDoc, QueryKey, lookup};
+use tst_core::url::query_may_hold_userinfo;
 
 /// `?latency=N` is parsed as N milliseconds (libsrt-URL canonical), but
 /// ffmpeg's URL parses it as microseconds. A user copying an ffmpeg URL
@@ -162,6 +163,47 @@ pub enum SrtUrlError {
     },
 }
 
+const WITHHELD: &str = "<redacted>";
+
+impl SrtUrlError {
+    /// This error with the key, value and detail text taken from the URL
+    /// replaced by `<redacted>`, for a URL whose query may hold the tail of
+    /// a password ([`query_may_hold_userinfo`]). The variant is unchanged.
+    fn withhold_text(self) -> Self {
+        let key = || WITHHELD.to_string();
+        match self {
+            Self::Syntax(e) => Self::Syntax(e.withhold_text()),
+            Self::UnsupportedMode { .. } => Self::UnsupportedMode { mode: key() },
+            Self::UnsupportedKey { .. } => Self::UnsupportedKey {
+                key: key(),
+                srto: WITHHELD,
+            },
+            Self::FfmpegAliasNotExposed { suggestion, .. } => Self::FfmpegAliasNotExposed {
+                key: key(),
+                canonical: WITHHELD,
+                suggestion,
+            },
+            Self::UnknownKey { .. } => Self::UnknownKey { key: key() },
+            Self::InvalidValue { .. } => Self::InvalidValue {
+                key: key(),
+                detail: key(),
+            },
+            Self::OptionValidation { source, .. } => Self::OptionValidation {
+                key: key(),
+                source: match source {
+                    OptionError::OutOfRange(_) => OptionError::OutOfRange(key()),
+                    OptionError::Other { kind, .. } => OptionError::Other {
+                        kind,
+                        message: key(),
+                    },
+                    other => other,
+                },
+            },
+            other => other,
+        }
+    }
+}
+
 impl SrtUrl {
     /// Parse `srt://host:port?key=value&...` into validated parts.
     ///
@@ -184,7 +226,20 @@ impl SrtUrl {
     /// assert_eq!(u.port, 9000);
     /// assert_eq!(u.config.latency, Some(Duration::from_millis(200)));
     /// ```
+    ///
+    /// When an `@` follows the `?` (a password holding a raw `?` puts its
+    /// tail in the query), the error's key and value text is `<redacted>`.
     pub fn parse(s: &str) -> Result<Self, SrtUrlError> {
+        Self::parse_unredacted(s).map_err(|e| {
+            if query_may_hold_userinfo(s) {
+                e.withhold_text()
+            } else {
+                e
+            }
+        })
+    }
+
+    fn parse_unredacted(s: &str) -> Result<Self, SrtUrlError> {
         // The common parser accepts empty-host URLs (e.g. srt://:7000?mode=listener)
         // directly — it returns Ok with host="" rather than an error. We check
         // mode after parsing query parameters to decide whether an empty host
@@ -895,6 +950,41 @@ pub type UrlError = SrtUrlError;
 mod tests {
     use super::*;
     use tracing_test::traced_test;
+
+    /// A raw `?` in a numeric-prefix password puts its tail in the query;
+    /// no parse error may echo it.
+    #[test]
+    fn errors_withhold_a_query_that_may_hold_a_password_tail() {
+        for url in [
+            "srt://u:12345?secret-tail@host:9000",
+            "srt://u:12345?latency=secret-tail@host:9000",
+            "srt://u:12345?mode=secret-tail@host:9000",
+            "srt://u:12345?secret-tail=x%zz@host:9000",
+            "srt://u:12345?pa%zzss@h:1",
+        ] {
+            let e = SrtUrl::parse(url).unwrap_err();
+            for text in [e.to_string(), format!("{e:?}")] {
+                assert!(!text.contains("secret-tail"), "{url}: {text}");
+                assert!(!text.contains("pa%"), "{url}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn streamid_with_at_still_parses() {
+        let u = SrtUrl::parse("srt://h:9000?streamid=user@site").unwrap();
+        assert_eq!(
+            u.config.stream_id.as_ref().map(|s| s.as_str()),
+            Some("user@site")
+        );
+    }
+
+    #[test]
+    fn typo_key_without_userinfo_is_named() {
+        let e = SrtUrl::parse("srt://h:9000?latncy=1").unwrap_err();
+        assert!(matches!(e, SrtUrlError::UnknownKey { ref key } if key == "latncy"));
+        assert!(e.to_string().contains("latncy"), "{e}");
+    }
 
     #[test]
     #[traced_test]

@@ -224,6 +224,20 @@ def test_rtsp_client_connect_malformed_url_raises_rtsp_error():
     assert exc_info.value.kind == RtspErrorKind.PROTOCOL
 
 
+@pytest.mark.parametrize("url", [
+    "rtsp://u:12345?secret-tail@cam/live",
+    "rtsp://u:12345?transport=hunter2@host",
+])
+def test_rtsp_client_url_error_withholds_a_password_tail(url):
+    # A raw `?` in a numeric-prefix password puts its tail in the query.
+    with pytest.raises(RtspError) as exc_info:
+        RtspClient.connect(RtspClientConfig(url=url))
+    assert exc_info.value.kind == RtspErrorKind.PROTOCOL
+    for text in (str(exc_info.value), repr(exc_info.value)):
+        assert "secret-tail" not in text
+        assert "hunter2" not in text
+
+
 def test_rtsp_session_class_exposed():
     assert RtspSession is not None
     # Methods exist on the class (whether bound or unbound).

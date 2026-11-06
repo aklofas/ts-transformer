@@ -149,6 +149,11 @@ impl HlsUrl {
     /// Parse an `hls://` or `hlss://` URL. The host must be a literal IP
     /// address; unknown query keys are ignored.
     pub fn parse(s: &str) -> Result<Self, UrlError> {
+        // A password holding a raw `?` puts its tail in the query.
+        Self::parse_unredacted(s).map_err(|e| e.withheld_for(s))
+    }
+
+    fn parse_unredacted(s: &str) -> Result<Self, UrlError> {
         let parsed =
             parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
         let tls = match parsed.scheme {
@@ -193,6 +198,16 @@ impl HlsUrl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A raw `?` in a numeric-prefix password puts its tail in the query;
+    /// no parse error may echo it.
+    #[test]
+    fn errors_withhold_a_query_that_may_hold_a_password_tail() {
+        let e = HlsUrl::parse("hls://u:12345?segment_duration=secret-tail@host:9000").unwrap_err();
+        for text in [e.to_string(), format!("{e:?}")] {
+            assert!(!text.contains("secret-tail"), "{text}");
+        }
+    }
 
     #[test]
     fn a_malformed_host_is_never_echoed() {

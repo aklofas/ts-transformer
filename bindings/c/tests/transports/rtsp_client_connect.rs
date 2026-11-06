@@ -752,3 +752,22 @@ fn bridge_after_session_cancel_returns_null_and_closed_and_keeps_the_session() {
         tst_rtsp_server_free(server);
     }
 }
+
+/// A raw `?` in a numeric-prefix password puts its tail in the query; the
+/// builder's last-error must not echo it.
+#[test]
+fn builder_url_error_withholds_a_password_tail() {
+    for url in [
+        "rtsp://u:12345?transport=hunter2@host",
+        "rtsp://u:12345?secret-tail@cam/live",
+    ] {
+        let url = CString::new(url).unwrap();
+        let b = unsafe { tst_rtsp_client_builder_new(url.as_ptr()) };
+        assert!(b.is_null(), "a bad query must be refused");
+        let code = unsafe { tst_get_last_error() };
+        assert_eq!(code, TstError::RtspProtocol as i32, "got {code}");
+        let msg = last_error_msg();
+        assert!(!msg.contains("hunter2"), "{msg}");
+        assert!(!msg.contains("secret-tail"), "{msg}");
+    }
+}

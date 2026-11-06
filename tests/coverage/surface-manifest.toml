@@ -2071,6 +2071,35 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# URL parse errors withhold query text that may be a password tail; every
+# binding's error text comes from these parsers.
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::query_may_hold_userinfo"
+owning_tests = ["crates/tst-core/src/url/common.rs", "crates/tst-srt/src/url.rs"]
+bindings = ["c:n/a(bindings report the Rust parsers' error text)", "python:n/a(bindings report the Rust parsers' error text)", "java:n/a(bindings report the Rust parsers' error text)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::common::UrlError::withhold_text"
+owning_tests = ["crates/tst-core/src/url/common.rs"]
+bindings = ["c:n/a(bindings report the Rust parsers' error text)", "python:n/a(bindings report the Rust parsers' error text)", "java:n/a(bindings report the Rust parsers' error text)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::url::common::UrlError::withheld_for"
+owning_tests = ["crates/tst-tcp/src/url.rs", "crates/tst-udp/src/url.rs", "crates/tst-rist/src/url.rs"]
+bindings = ["c:n/a(bindings report the Rust parsers' error text)", "python:n/a(bindings report the Rust parsers' error text)", "java:n/a(bindings report the Rust parsers' error text)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_core::url::common::MAX_BYTE_SIZE"
 reason = "WP13 seam: shared max byte-size constant for URL query param validation"

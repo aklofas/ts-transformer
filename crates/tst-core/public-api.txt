@@ -7441,6 +7441,9 @@ pub tst_core::url::common::UrlError::Rejected(alloc::string::String)
 pub tst_core::url::common::UrlError::UnclosedIpv6Bracket
 pub tst_core::url::common::UrlError::UnknownQueryKey
 pub tst_core::url::common::UrlError::UnknownQueryKey::key: alloc::string::String
+impl tst_core::url::common::UrlError
+pub fn tst_core::url::common::UrlError::withheld_for(self, &str) -> Self
+pub fn tst_core::url::common::UrlError::withhold_text(self) -> Self
 impl core::clone::Clone for tst_core::url::common::UrlError
 pub fn tst_core::url::common::UrlError::clone(&self) -> tst_core::url::common::UrlError
 impl core::cmp::Eq for tst_core::url::common::UrlError
@@ -7522,6 +7525,9 @@ pub tst_core::url::UrlError::Rejected(alloc::string::String)
 pub tst_core::url::UrlError::UnclosedIpv6Bracket
 pub tst_core::url::UrlError::UnknownQueryKey
 pub tst_core::url::UrlError::UnknownQueryKey::key: alloc::string::String
+impl tst_core::url::common::UrlError
+pub fn tst_core::url::common::UrlError::withheld_for(self, &str) -> Self
+pub fn tst_core::url::common::UrlError::withhold_text(self) -> Self
 impl core::clone::Clone for tst_core::url::common::UrlError
 pub fn tst_core::url::common::UrlError::clone(&self) -> tst_core::url::common::UrlError
 impl core::cmp::Eq for tst_core::url::common::UrlError
@@ -7570,6 +7576,7 @@ pub fn tst_core::url::parse_host_port(&str) -> core::result::Result<(core::net::
 pub fn tst_core::url::parse_int<T>(&str, &str) -> core::result::Result<T, tst_core::url::common::UrlError> where T: core::str::traits::FromStr, <T as core::str::traits::FromStr>::Err: core::fmt::Display
 pub fn tst_core::url::parse_size(&str, &str) -> core::result::Result<usize, tst_core::url::common::UrlError>
 pub fn tst_core::url::parse_url(&str) -> core::result::Result<tst_core::url::common::ParsedUrl<'_>, tst_core::url::common::UrlError>
+pub fn tst_core::url::query_may_hold_userinfo(&str) -> bool
 pub fn tst_core::url::redact_url(&str) -> alloc::string::String
 pub macro tst_core::binding_record!
 #[non_exhaustive] pub enum tst_core::BrokenCause
@@ -7997,6 +8004,9 @@ pub tst_core::UrlError::Rejected(alloc::string::String)
 pub tst_core::UrlError::UnclosedIpv6Bracket
 pub tst_core::UrlError::UnknownQueryKey
 pub tst_core::UrlError::UnknownQueryKey::key: alloc::string::String
+impl tst_core::url::common::UrlError
+pub fn tst_core::url::common::UrlError::withheld_for(self, &str) -> Self
+pub fn tst_core::url::common::UrlError::withhold_text(self) -> Self
 impl core::clone::Clone for tst_core::url::common::UrlError
 pub fn tst_core::url::common::UrlError::clone(&self) -> tst_core::url::common::UrlError
 impl core::cmp::Eq for tst_core::url::common::UrlError

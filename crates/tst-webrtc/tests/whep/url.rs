@@ -162,3 +162,13 @@ fn validate_accepts_a_parsed_url_and_refuses_edited_ones() {
     edited.key = Some("k.pem".into());
     assert_eq!(edited.validate(), Ok(()));
 }
+
+/// A raw `?` in a numeric-prefix password puts its tail in the query; no
+/// parse error may echo it.
+#[test]
+fn errors_withhold_a_query_that_may_hold_a_password_tail() {
+    let e = WhepUrl::parse("whep://0.0.0.0:12345?max_viewers=secret-tail@host:9000").unwrap_err();
+    for text in [e.to_string(), format!("{e:?}")] {
+        assert!(!text.contains("secret-tail"), "{text}");
+    }
+}

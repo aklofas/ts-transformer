@@ -181,6 +181,21 @@ class RtspClientTest {
     }
 
     @org.junit.jupiter.api.Timeout(15)
+    @Test void connectUrlErrorWithholdsAPasswordTail() {
+        // A raw `?` in a numeric-prefix password puts its tail in the query.
+        for (String url : new String[] {
+                "rtsp://u:12345?secret-tail@cam/live", "rtsp://u:12345?transport=hunter2@host"}) {
+            var ex = assertThrows(org.tstrans.RtspException.class,
+                () -> RtspClient.connect(RtspClientConfig.of(url)));
+            assertEquals(org.tstrans.RtspException.Kind.PROTOCOL, ex.kind());
+            for (String text : new String[] {ex.getMessage(), ex.toString()}) {
+                assertFalse(text.contains("secret-tail"), text);
+                assertFalse(text.contains("hunter2"), text);
+            }
+        }
+    }
+
+    @org.junit.jupiter.api.Timeout(15)
     @Test void connectRtspsUrlWithClosedPortThrowsIo() {
         // Pre-TLS-wiring (before the tls feature was linked into tst-jni's
         // tst-rtp dependency), rtsps:// short-circuited to RtspError::Tls
