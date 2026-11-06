@@ -72,7 +72,7 @@ sha256 = "8dde39aef6fa477d4b069b1122e57fa401692f2ad5d3ade3f2a8ac774678fb7c"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/codec/h265/README.md"
-sha256 = "0e2e93426164749bdc436bbdab9a49cbf5d97f3b910b9773aaede679de9892fc"
+sha256 = "cfeb8aee0795e3520f1a918c4d11175633580700f7a57eb42e1c8010dce4023a"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/codec/h265/h265_1080p_main10_50_pq_pps.bin"
