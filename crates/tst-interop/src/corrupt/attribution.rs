@@ -2662,7 +2662,7 @@ mod tests {
         assert_eq!(r.unexplained_discontinuities, 1, "{r:?}");
     }
 
-    /// PR review finding: `reaches` treated `Signal::PsiChecksum` as
+    /// `reaches` once treated `Signal::PsiChecksum` as
     /// PID-unconstrained for ANY injection (its own doc claimed "a PSI
     /// checksum failure is the PSI PID's own", but the code never
     /// checked that `inj` was itself PSI-related), so a same-window

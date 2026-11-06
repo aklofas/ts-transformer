@@ -8339,8 +8339,8 @@ mod soak_script_literals {
             lib.contains(&threshold),
             "rss-slope.sh has no {threshold:?}"
         );
-        // The 24-h floor: a 24-hour run leaves about 17 hours of window
-        // after the senders' roughly 7-hour plateau convergence.
+        // The 24-h floor: a 24-hour run gives the slope about 17 hours of
+        // plateau after the senders' roughly 7-hour convergence.
         assert!(lib.contains("h>=24"), "rss-slope.sh has no 24-h floor");
         let warmup = format!("warmup_fraction: {WARMUP_FRACTION}");
         assert!(text.contains(&warmup), "soak.sh has no {warmup:?}");

@@ -578,11 +578,11 @@ pub fn observed_tags(rec: &UasDatalinkLs) -> std::collections::BTreeSet<u32> {
 /// span short of both ends.
 ///
 /// An unbounded latitude walk once crossed Tag 13's +90 encode max and
-/// panicked a soak sender 14.5 h in. Every
-/// numeric tag the rich generator sets whose range is its ENCODE range
-/// goes through here, so it can never reach its own limit however long
-/// the run goes — and the 5 % margin means a later rounding or unit
-/// tweak has room to be wrong without becoming a mid-soak panic.
+/// panicked the soak senders 14.5 h in. Every numeric tag the rich
+/// generator sets whose range is its ENCODE range goes through here, so
+/// it can never reach its own limit however long the run goes — and the
+/// 5 % margin means a later rounding or unit tweak has room to be wrong
+/// without becoming a mid-soak panic.
 ///
 /// The sensor latitude and longitude are the deliberate exceptions.
 /// Sweeping them across their full ±90 / ±180 encode ranges would put
@@ -916,9 +916,9 @@ mod tests {
         }
     }
 
-    /// Every rich tag must stay in range for a whole soak: a 72h soak at 10 Hz needs
-    /// 2_592_000 records; sweep every triangle extreme plus a prime stride
-    /// plus 10_000 seeded random seqs, for two seeds. Any encode error is
+    /// Every rich tag must stay in range for a whole soak: a 72h soak at
+    /// 10 Hz needs 2_592_000 records; sweep every triangle extreme plus a
+    /// prime stride plus 10_000 seeded random seqs, for two seeds. Any encode error is
     /// a generator bug (out-of-range walk), caught here, never in a soak.
     #[test]
     fn rich_record_encodes_across_a_full_72h_soak_seq_range() {
