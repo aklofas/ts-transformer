@@ -102,9 +102,10 @@ class Transport:
     """Raw RTP sender (the TS shells over `rtp://` are in `tstrans.shells`),
     wrapping `tst_rtp::RtpTransport`.
 
-    `pkt_size` overrides the UDP datagram size (RTP header + TS payload).
-    `ssrc` pins the RTP synchronization source identifier; when omitted
-    the transport picks a random one.
+    `pkt_size` overrides the UDP datagram size (RTP header + TS payload);
+    a value above 65424 raises `RtpError`. `ssrc` pins the RTP
+    synchronization source identifier; when omitted the transport picks a
+    random one.
     """
 
     def __new__(cls,

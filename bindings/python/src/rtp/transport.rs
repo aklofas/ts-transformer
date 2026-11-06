@@ -117,8 +117,9 @@ impl PyRtpTransport {
     /// `"rtp://127.0.0.1:5004"`).
     ///
     /// `pkt_size` overrides the UDP datagram size (RTP header + TS
-    /// payload). `ssrc` pins the RTP synchronization source identifier;
-    /// when omitted the transport picks a random one.
+    /// payload); a value above 65424 raises `RtpError`. `ssrc` pins the
+    /// RTP synchronization source identifier; when omitted the transport
+    /// picks a random one.
     #[new]
     #[pyo3(signature = (url, *, pkt_size = 1316, ssrc = None))]
     fn new(py: Python<'_>, url: &str, pkt_size: usize, ssrc: Option<u32>) -> PyResult<Self> {

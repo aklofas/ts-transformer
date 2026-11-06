@@ -15,7 +15,7 @@
 //! |---|---|---|
 //! | `ttl` | 1..=255 | 1 (unicast); 8 (multicast send) |
 //! | `iface` | interface name (`eth0`) or IPv4 literal | OS default |
-//! | `pkt_size` | positive multiple of 188 (send URLs only; rejected on receive URLs) | 1316 |
+//! | `pkt_size` | positive multiple of 188 up to [`MAX_PKT_SIZE`] (65 424) (send URLs only; rejected on receive URLs) | 1316 |
 //! | `ssrc` | u32 decimal or `0x`-prefixed hex | random |
 //! | `pt` | 1..=127, 33 rejected (MPEG-TS) | absent — required by `H264Receiver::listen` |
 //! | `recv_timeout` | positive integer milliseconds | absent — no deadline |
@@ -53,6 +53,10 @@ use tst_core::url::query::{QueryKey, lookup};
 /// shape we cascade through `Transport`).
 pub const DEFAULT_PKT_SIZE: usize = 1316;
 
+/// Largest accepted `pkt_size`: 348 TS packets (65 424 B), the largest
+/// 188-multiple whose datagram fits one UDP payload on IPv4 and IPv6.
+pub const MAX_PKT_SIZE: usize = 65_424;
+
 /// Maximum value we accept for `ttl` / `pkt_size` etc; just `u8::MAX`
 /// for now.
 const MAX_TTL: u32 = 255;
@@ -82,8 +86,9 @@ pub struct RtpUrl {
     /// `?iface=eth0` or `?iface=192.168.1.50` — empty when absent.
     pub iface: Option<String>,
     /// `?pkt_size=N` — bytes per UDP datagram (188-multiple, at least 376:
-    /// the RTP header comes out of it). `None` when the query key is
-    /// absent; the send path resolves
+    /// the RTP header comes out of it; at most [`MAX_PKT_SIZE`], which
+    /// `RtpTransport::connect_with` also enforces on a value set here).
+    /// `None` when the query key is absent; the send path resolves
     /// [`DEFAULT_PKT_SIZE`] at build time. Receive-side entry points
     /// reject `Some` with [`RtpUrlError::RecvPktSize`] — the knob is
     /// send-side only since the recv-ceiling change.
@@ -175,7 +180,7 @@ type Applied = Result<(), RtpUrlError>;
 
 /// `BadQuery` for `key` given as `value`; a non-empty `detail` is appended
 /// in parentheses.
-fn bad_query(key: &str, value: &str, detail: &str) -> RtpUrlError {
+pub(crate) fn bad_query(key: &str, value: &str, detail: &str) -> RtpUrlError {
     let value = if detail.is_empty() {
         value.to_string()
     } else {
@@ -261,8 +266,10 @@ fn parse_pkt_size(v: &str) -> Result<usize, String> {
     let n: usize = v
         .parse()
         .map_err(|e: std::num::ParseIntError| e.to_string())?;
-    if n == 0 || !n.is_multiple_of(TS_PACKET_SIZE) {
-        return Err(format!("must be a positive multiple of {TS_PACKET_SIZE}"));
+    if n == 0 || !n.is_multiple_of(TS_PACKET_SIZE) || n > MAX_PKT_SIZE {
+        return Err(format!(
+            "must be a positive multiple of {TS_PACKET_SIZE} no larger than {MAX_PKT_SIZE}"
+        ));
     }
     Ok(n)
 }
@@ -380,7 +387,7 @@ pub const URL_KEYS_RTP: &[QueryKey<RtpUrl, RtpUrlError>] = &[
         "pkt_size",
         &[],
         "Bytes per datagram (send URLs only)",
-        "positive multiple of 188; default 1316; the 12-byte RTP header comes out of it, so the smallest usable value is 376 (188 parses, but its first send fails with `TooLarge`)",
+        "positive multiple of 188, at most 65 424 (348 TS packets); default 1316; the 12-byte RTP header comes out of it, so the smallest usable value is 376 (188 parses, but its first send fails with `TooLarge`)",
         set_pkt_size,
     ),
     QueryKey::new(
@@ -826,6 +833,22 @@ mod tests {
     #[test]
     fn rejects_pkt_size_not_188_multiple() {
         let err = RtpUrl::parse("rtp://h:5004?pkt_size=1500").unwrap_err();
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pkt_size"));
+    }
+
+    #[test]
+    fn pkt_size_ceiling_is_65424() {
+        let u = RtpUrl::parse("rtp://h:5004?pkt_size=65424").unwrap();
+        assert_eq!(u.pkt_size, Some(65_424));
+        assert_eq!(crate::MAX_PKT_SIZE, 65_424);
+        let err = RtpUrl::parse("rtp://h:5004?pkt_size=65612").unwrap_err();
+        assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pkt_size"));
+        assert!(
+            err.to_string().contains("no larger than 65424"),
+            "the refusal names the ceiling: {err}"
+        );
+        // A 188-multiple near 2^62 is refused at parse, never sized.
+        let err = RtpUrl::parse("rtp://h:5004?pkt_size=4611686018427387940").unwrap_err();
         assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pkt_size"));
     }
 

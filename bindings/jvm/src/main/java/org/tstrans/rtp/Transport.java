@@ -35,7 +35,8 @@ public class Transport extends NativeHandle {
      * Construct a transport bound to {@code url}.
      *
      * @param url     {@code rtp://host:port[?key=value&...]}
-     * @param pktSize UDP datagram size (RTP header + TS payload); must be &ge; 0
+     * @param pktSize UDP datagram size (RTP header + TS payload); must be &ge; 0;
+     *                a value above 65424 fails with {@code RtpException} kind {@code URL}
      * @param ssrc    RTP synchronization source identifier (unsigned 32-bit), or
      *                {@code null} to let the transport pick a random one
      * @throws RtpException one member per open-path cause: {@code URL} on a

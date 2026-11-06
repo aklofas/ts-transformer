@@ -54,6 +54,24 @@ class RtpTransportTest {
     }
 
     @Test
+    void senderPktSizeAboveCeilingThrowsRtpUrl() throws Exception {
+        int port = freeUdpPort();
+        try (Transport s = Transport.fromUrl("rtp://127.0.0.1:" + port, 65424, null)) {
+            assertNotNull(s.socketStats());
+        }
+        RtpException viaArg = assertThrows(RtpException.class,
+            () -> Transport.fromUrl("rtp://127.0.0.1:" + port, 65612, null));
+        assertEquals(RtpException.Kind.URL, viaArg.kind());
+        assertTrue(viaArg.getMessage().contains("pkt_size"), viaArg.getMessage());
+        assertTrue(viaArg.getMessage().contains("no larger than 65424"), viaArg.getMessage());
+        RtpException viaUrl = assertThrows(RtpException.class,
+            () -> Transport.fromUrl("rtp://127.0.0.1:" + port + "?pkt_size=65612"));
+        assertEquals(RtpException.Kind.URL, viaUrl.kind());
+        assertTrue(viaUrl.getMessage().contains("pkt_size"), viaUrl.getMessage());
+        assertTrue(viaUrl.getMessage().contains("no larger than 65424"), viaUrl.getMessage());
+    }
+
+    @Test
     void senderSsrcOutOfRangeThrowsIllegalArgument() throws Exception {
         int port = freeUdpPort();
         assertThrows(IllegalArgumentException.class,

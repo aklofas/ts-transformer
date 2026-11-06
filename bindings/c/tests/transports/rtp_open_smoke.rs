@@ -123,6 +123,32 @@ fn rtp_recv_open_malformed_url_returns_null() {
     );
 }
 
+/// `?pkt_size=` above 65424 (348 TS packets, one datagram) is a URL error
+/// naming the key; the ceiling itself opens.
+#[test]
+fn rtp_sender_open_refuses_pkt_size_above_ceiling() {
+    let ok = CString::new("rtp://127.0.0.1:54321?pkt_size=65424").unwrap();
+    let handle = unsafe { tst_rtp_sender_open(ok.as_ptr()) };
+    assert!(
+        !handle.is_null(),
+        "pkt_size=65424 must open: {}",
+        crate::common::last_error_msg()
+    );
+    unsafe { tst_rtp_sender_close(handle) };
+
+    let url = CString::new("rtp://127.0.0.1:54321?pkt_size=65612").unwrap();
+    let handle = unsafe { tst_rtp_sender_open(url.as_ptr()) };
+    assert!(handle.is_null(), "pkt_size=65612 must be refused");
+    let code = unsafe { tst_get_last_error() };
+    assert_eq!(code, TstError::RtpTransport as i32, "got {code}");
+    let msg = crate::common::last_error_msg();
+    assert!(msg.contains("pkt_size"), "last-error names the key: {msg}");
+    assert!(
+        msg.contains("no larger than 65424"),
+        "last-error names the ceiling: {msg}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // TstRtpSender data-path
 // ---------------------------------------------------------------------------
