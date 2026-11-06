@@ -41,7 +41,7 @@ on:
       - 'rust-toolchain.toml'
       # A demux/mux change used to reach main before ffmpeg/tsduck/GStreamer
       # saw it (Monday cron). ~25 min warm; the
-      # census assert (161 declared cells, 0 skips) now gates those PRs too.
+      # census assert (162 declared cells, 0 skips) now gates those PRs too.
       - 'crates/tst-core/src/mpegts/**'
       # The rtsp-publish/* cells are the only real-tool check of the RTSP
       # server's publish path (ANNOUNCE/RECORD, the re-muxer, SDP parsing,
@@ -66,7 +66,7 @@ jobs:
   interop-matrix:
     name: interop matrix (linux-x86_64)
     runs-on: ubuntu-24.04
-    # Worst-case budget: 161 cells at the run-matrix.sh default of 10s
+    # Worst-case budget: 162 cells at the run-matrix.sh default of 10s
     # each, plus per-cell settle/timeout margin (lib.sh's cell_timeout)
     # and a --release build of tst-interop's native-linking dependency
     # chain (tst-srt + tst-rist, i.e. vendored libsrt/librist/mbedTLS).
@@ -190,7 +190,7 @@ jobs:
 
       - name: cargo build --release -p tst-interop
         # --release: run-matrix.sh's $BIN points at target/release/tst-interop
-        # (a live 161-cell matrix needs the muxer/demuxer at real speed, not
+        # (a live 162-cell matrix needs the muxer/demuxer at real speed, not
         # a debug build). SRT/RIST_FORCE_VENDORED: this runner has no
         # system libsrt/librist, so pkg-config would already fall through
         # to vendored — set explicitly anyway, matching every other
