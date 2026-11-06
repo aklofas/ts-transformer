@@ -18,7 +18,7 @@ and the inferred event positions below). Re-run either script yourself to reprod
 # Build the interop driver (native deps: vendored libsrt + librist + mbedTLS).
 SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
 
-# Full transport + format matrix (161 cells; ~8s/cell locally is what
+# Full transport + format matrix (162 cells; ~8s/cell locally is what
 # produced the census below — see scripts/interop/README.md for the
 # full cell/tier/profile vocabulary and per-axis `--cells` filtering).
 # Every cell runs realistic access-unit sizes by default; pass
@@ -120,7 +120,7 @@ oracle proves" below for the individual checks.
 SKIPPED — measured at realistic access-unit sizes**
 ([run 39687057760](https://github.com/aklofas/ts-transformer/actions/runs/39687057760),
 `workflow_dispatch`, 2026-10-21 at `907adb30`, shape
-`full-161`, empty allowed-skip list, no stale expectation). The count is `[census] full_cells` in `scripts/interop/expectations.toml`; it moved from 159 to 161 when the two `whep/*` browser cells (headless Chrome playing a WHEP mount with the reference player, see `scripts/interop/README.md`) were declared; the 159-cell figures below are the earlier runs. The two cells
+`full-161`, empty allowed-skip list, no stale expectation). The count is `[census] full_cells` in `scripts/interop/expectations.toml`; it moved from 159 to 161 when the two `whep/*` browser cells (headless Chrome playing a WHEP mount with the reference player, see `scripts/interop/README.md`) were declared; it moved to 162 when `whep/chromium-audio-first` was declared, after the measured run above; the 159-cell figures below are the earlier runs. The two cells
 added on 2026-10-08 both pass, as they did on their first CI run
 ([run 37858440566](https://github.com/aklofas/ts-transformer/actions/runs/37858440566), 2026-10-08 at `945911d4`, the 159-cell census of that date). Each has a GStreamer `rtspclientsink`
 publishing into `tst-interop recv`'s RTSP publish mount:
@@ -376,7 +376,7 @@ and did the stream produce media again afterwards
 (`corruption_recovered`). The tap is **on by default on both soak legs**,
 and the 0.7.0 release soak below carried these verdicts end to end over
 72 hours. None of the
-161 interop-matrix cells inject corruption — the census above is a pristine
+162 interop-matrix cells inject corruption — the census above is a pristine
 stream throughout.
 
 **One-hour smoke run (2026-08-03, seed 1, `recv --managed` now on the SRT
@@ -509,7 +509,7 @@ can check the run did what it said it would.
   conditions CHANGE rather than one synthetic average.
 - **Distinct per-leg stream profiles.** The two legs draw two different
   profiles from the seed instead of both running `baseline` forever, so a
-  long run also covers a codec/carriage/cadence shape the 161-cell matrix
+  long run also covers a codec/carriage/cadence shape the 162-cell matrix
   only sees for five seconds at a time. Profiles drawn and soak-exercised
   so far: `klv-sync` and `audio` at seed 3, and `baseline` and `pcr-sparse`
   at seed 7, all in smokes; then `pts-rollover` (SRT) and `klv-sync` (RIST)
@@ -1067,7 +1067,7 @@ generator's exact record set, and a real 320x240 Constrained Baseline
 H.264 GOP as the video, because the generator's synthetic slices decode in
 no browser (Chrome logs "Failed to parse SPS NAL unit" and renders
 nothing, so a "video plays" oracle could never pass on them). The cells
-are declared in the census, which is 161 cells since they were added; the
+are declared in the census, which was 161 cells when they were added; the
 first runner census with them read 161 declared, 0 FAIL, 0 skipped
 ([run 39547857032](https://github.com/aklofas/ts-transformer/actions/runs/39547857032)).
 
