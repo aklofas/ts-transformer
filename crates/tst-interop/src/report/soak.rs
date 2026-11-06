@@ -2343,25 +2343,25 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
                     };
                     verdicts.push(mk("corruption_declared", spec_pass, spec_detail));
 
-                    // Under lossy judgement the three finding
-                    // verdicts EXCUSE — undetected/unrecovered
-                    // injections with a foreign jump in their window,
-                    // and the unexplained events packet loss can have
-                    // caused (every continuity jump, a forward PCR
+                    // Under lossy judgement the three finding verdicts
+                    // EXCUSE — undetected/unrecovered injections with a
+                    // foreign jump in their window or inside a
+                    // reconnect gap before the demuxer could notice
+                    // them, and the unexplained events packet loss can
+                    // have caused (every continuity jump, a forward PCR
                     // jump beside one on its PID, and an oversize or
                     // adaptation-field discontinuity beside a
-                    // continuity jump or inside a reconnect gap) — so
-                    // a leg whose evidence was all excused passes them
+                    // continuity jump or inside a reconnect gap) — so a
+                    // leg whose evidence was all excused passes them
                     // vacuously. An oversize or adaptation-field
                     // discontinuity with neither beside it is not
-                    // excused: `corruption_attributed` charges it.
-                    // Both soak legs are ARQ (`?latency=` /
-                    // `?buffer=`): the transport recovers continuous
-                    // loss, so outage windows and the per-hour residue
-                    // an ARQ transport does not fully repair are what
-                    // legitimately leave gaps. Budget the excusals by
-                    // the schedule AND by how long the run lasted —
-                    // see `excusal_budget`.
+                    // excused: `corruption_attributed` charges it. Both
+                    // soak legs are ARQ (`?latency=` / `?buffer=`): the
+                    // transport recovers continuous loss, so outage
+                    // windows and the per-hour residue an ARQ transport
+                    // does not fully repair are what legitimately leave
+                    // gaps. Budget the excusals by the schedule AND by
+                    // how long the run lasted — see `excusal_budget`.
                     let profile = artifacts.recv_report.profile.as_deref().or(config
                         .legs
                         .get(leg_name.as_str())
