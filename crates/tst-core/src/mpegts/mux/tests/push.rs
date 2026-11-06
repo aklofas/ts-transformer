@@ -1267,7 +1267,7 @@ fn pmt_av1_with_caller_supplied_av01_after_other_descriptor_reorders_to_first() 
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    let entry = &muxer.pmt_descriptor_caches[0][0];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[0];
 
     // AV01 must come first (positions 0..6), followed by other_desc (3 bytes).
     assert_eq!(
@@ -1299,7 +1299,7 @@ fn pmt_av1_without_av01_passes_caller_descriptors_through() {
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    let entry = &muxer.pmt_descriptor_caches[0][0];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[0];
 
     // First 6 bytes auto-emitted AV01; then caller's other_desc bytes.
     assert_eq!(&entry[..6], &[0x05, 0x04, b'A', b'V', b'0', b'1']);

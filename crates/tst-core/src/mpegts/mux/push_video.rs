@@ -58,7 +58,7 @@ impl Muxer {
     ) -> Result<(), MuxError> {
         // The single-target API only resolves when exactly one video stream
         // is configured across all programs. N=0 and N>1 are both ambiguous.
-        let total_video: usize = self.video_streams.iter().map(|v| v.len()).sum();
+        let total_video = super::live_stream_count(&self.slots, |s| &s.video);
         if total_video != 1 {
             return Err(MuxError::AmbiguousTarget {
                 kind: MuxStreamKind::Video,
@@ -69,26 +69,26 @@ impl Muxer {
         self.push_video_to(handle, nal, pts, key_frame)
     }
 
-    /// Locate the program containing the lone video stream.
+    /// Locate the lone live video stream.
     ///
     /// Precondition: caller has verified `total_video == 1` (typically via
     /// `push_video`'s `AmbiguousTarget` check). The `expect()` is safe because
-    /// `total_video == 1` guarantees exactly one program has a non-empty
-    /// video stream list.
+    /// `total_video == 1` guarantees exactly one live video stream exists.
     fn single_video_handle(&self) -> VideoStreamHandle {
-        VideoStreamHandle::pack(super::locate_lone_program(&self.video_streams), 0)
+        let (p, w) = super::locate_lone_stream(&self.slots, |s| &s.video);
+        VideoStreamHandle::pack(p, w)
     }
 
     /// All `VideoStreamHandle`s for this muxer, in `(program, within-program)`
     /// declaration order. One handle per `StreamSpec::Video` across all programs.
     pub fn video_handles(&self) -> Vec<VideoStreamHandle> {
-        super::all_handles(&self.video_streams, VideoStreamHandle::pack)
+        super::all_handles(&self.slots, |s| &s.video, VideoStreamHandle::pack)
     }
 
     /// Handle for the i-th video stream in `programs[0]`, or `None` if out of
     /// range. Convenience for single-program callers.
     pub fn video_stream_handle(&self, index: usize) -> Option<VideoStreamHandle> {
-        super::first_program_handle(&self.video_streams, index, VideoStreamHandle::pack)
+        super::first_program_handle(&self.slots, |s| &s.video, index, VideoStreamHandle::pack)
     }
 
     /// Video stream handles for the named program, in declaration order.
@@ -100,8 +100,8 @@ impl Muxer {
         program_number: u16,
     ) -> Result<Vec<VideoStreamHandle>, MuxError> {
         super::handles_for_program(
-            &self.config.programs,
-            &self.video_streams,
+            &self.slots,
+            |s| &s.video,
             program_number,
             VideoStreamHandle::pack,
         )
@@ -288,14 +288,18 @@ impl Muxer {
         misp: &crate::codec::misp_time::MispTimestamp,
     ) -> Result<Vec<u8>, MuxError> {
         let (prog_idx, within_idx) = handle.unpack();
-        if prog_idx >= self.video_streams.len() || within_idx >= self.video_streams[prog_idx].len()
-        {
+        let Some(v) = self
+            .slots
+            .get(prog_idx)
+            .and_then(|s| s.video.get(within_idx))
+            .and_then(Option::as_ref)
+        else {
             return Err(MuxError::InvalidStreamHandle {
                 kind: MuxStreamKind::Video,
                 index: handle.0 as usize,
             });
-        }
-        let codec = self.video_streams[prog_idx][within_idx].codec;
+        };
+        let codec = v.codec;
         validate_annex_b(nal)?;
         let sei = crate::codec::misp_time::build_sei_nal(codec, misp)?;
         crate::codec::misp_time::insert_sei_before_first_vcl(nal, &sei, codec)
@@ -398,17 +402,21 @@ impl Muxer {
         form: VideoInputForm,
     ) -> Result<(), MuxError> {
         let (prog_idx, within_idx) = handle.unpack();
-        if prog_idx >= self.video_streams.len() || within_idx >= self.video_streams[prog_idx].len()
-        {
+        let Some(v) = self
+            .slots
+            .get(prog_idx)
+            .and_then(|s| s.video.get(within_idx))
+            .and_then(Option::as_ref)
+        else {
             // Report the raw packed value as an opaque index so the error message
             // carries the full handle encoding without confusing prog vs within.
             return Err(MuxError::InvalidStreamHandle {
                 kind: MuxStreamKind::Video,
                 index: handle.0 as usize,
             });
-        }
-        let video_pid = self.video_streams[prog_idx][within_idx].pid;
-        let codec = self.video_streams[prog_idx][within_idx].codec;
+        };
+        let video_pid = v.pid;
+        let codec = v.codec;
         // AV1 carries OBUs (AV1 spec §5), not Annex-B NAL units — its push
         // payload is the OBU bitstream and must skip the Annex-B start-code
         // check that H.264 / H.265 / H.266 require. Wire-form pushes also
@@ -488,7 +496,7 @@ impl Muxer {
             if key_frame {
                 af.random_access = true;
             }
-            if self.pcr_pids[prog_idx] == video_pid {
+            if self.slots[prog_idx].pcr_pid == video_pid {
                 // Per H.222.0 V9 §2.4.3.5: random_access_indicator may
                 // only be set on PCR_PID packets that also carry the PCR
                 // fields. Force PCR emission when key-frame coincides
@@ -498,7 +506,7 @@ impl Muxer {
                 if self.pcr_due(prog_idx, pts.as_ticks()) || key_frame {
                     let pcr = Pcr27mhz::from_pts(pts);
                     af.pcr = Some(pcr);
-                    self.pcr_last[prog_idx] = Some(pcr.as_ticks());
+                    self.slots[prog_idx].pcr_last = Some(pcr.as_ticks());
                 }
             }
             af

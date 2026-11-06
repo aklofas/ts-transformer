@@ -47,7 +47,8 @@ impl Muxer {
     ///   `MuxerConfig::buffer_packets`.
     pub fn push_subtitle(&mut self, pts: Pts90khz, payload: &[u8]) -> Result<(), MuxError> {
         let handle = super::resolve_lone(
-            &self.subtitle_streams,
+            &self.slots,
+            |s| &s.subtitle,
             MuxError::NoSubtitleStreamsConfigured,
             MuxStreamKind::Subtitle,
             SubtitleStreamHandle::pack,
@@ -85,20 +86,24 @@ impl Muxer {
         payload: &[u8],
     ) -> Result<(), MuxError> {
         let (prog_idx, within_idx) = handle.unpack();
-        if prog_idx >= self.subtitle_streams.len()
-            || within_idx >= self.subtitle_streams[prog_idx].len()
-        {
+        let Some(sub) = self
+            .slots
+            .get(prog_idx)
+            .and_then(|s| s.subtitle.get(within_idx))
+            .and_then(Option::as_ref)
+        else {
             return Err(MuxError::InvalidStreamHandle {
                 kind: MuxStreamKind::Subtitle,
                 index: handle.0 as usize,
             });
-        }
+        };
+        let subtitle_pid = sub.pid;
 
         // Resolve codec-specific PES envelope shape. DVB-sub auto-wraps the
         // caller's segments in EN 300 743 §6.2's PES_data_field envelope
         // (data_identifier=0x20 + subtitle_stream_id=0x00 + segments + 0xFF
         // marker), adding 3 bytes of overhead. Other codecs pass through.
-        let pes_shape = match &self.subtitle_streams[prog_idx][within_idx].codec {
+        let pes_shape = match &sub.codec {
             SubtitleCodec::DvbSubtitling { .. } => SubtitlePesShape::DvbSub,
             SubtitleCodec::DvbTeletext { .. } => SubtitlePesShape::DvbTeletext,
             SubtitleCodec::Cea708Standalone | SubtitleCodec::WebVttInTs => {
@@ -151,8 +156,6 @@ impl Muxer {
             }
         }
 
-        let subtitle_pid = self.subtitle_streams[prog_idx][within_idx].pid;
-
         // The pes_scratch capacity hint is a comment only — the scratch buf
         // reuses whatever allocation it already holds and grows if needed.
         // DVB-teletext tail-stuffing can add up to one TS payload (184 B)
@@ -162,7 +165,7 @@ impl Muxer {
 
         let subtitle_packets = ts_packets_for(self.pes_scratch.len());
         // validate() bans subtitle PIDs as PCR PIDs, so
-        // current_pid here will never equal self.pcr_pids[prog_idx] and
+        // current_pid here will never equal self.slots[prog_idx].pcr_pid and
         // pcr_only_due reduces to the pure pcr_due predicate.
         // Subtitle pushes are sparse; this is the prototypical case where
         // PCR injection is needed.
@@ -188,7 +191,7 @@ impl Muxer {
     /// `(program, within-program)` declaration order. One handle per
     /// `StreamSpec::Subtitle` across all programs.
     pub fn subtitle_handles(&self) -> Vec<SubtitleStreamHandle> {
-        super::all_handles(&self.subtitle_streams, SubtitleStreamHandle::pack)
+        super::all_handles(&self.slots, |s| &s.subtitle, SubtitleStreamHandle::pack)
     }
 
     /// Subtitle stream handles for the named program, in declaration order.
@@ -200,8 +203,8 @@ impl Muxer {
         program_number: u16,
     ) -> Result<Vec<SubtitleStreamHandle>, MuxError> {
         super::handles_for_program(
-            &self.config.programs,
-            &self.subtitle_streams,
+            &self.slots,
+            |s| &s.subtitle,
             program_number,
             SubtitleStreamHandle::pack,
         )

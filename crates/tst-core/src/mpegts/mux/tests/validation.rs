@@ -131,11 +131,11 @@ fn cache_composes_auto_emit_then_caller_bytes_on_klv_private() {
     let muxer = Muxer::new(cfg).unwrap();
 
     // Stream 0 (video) — no auto-emit, no caller — empty cache entry.
-    assert!(muxer.pmt_descriptor_caches[0][0].is_empty());
+    assert!(muxer.slots[0].pmt_descriptor_cache[0].is_empty());
 
     // Stream 1 (KLV PrivateData) — KLVA Registration (6 bytes) +
     // user_private("KLV_LBL") (9 bytes) = 15 bytes.
-    let entry = &muxer.pmt_descriptor_caches[0][1];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[1];
     assert_eq!(entry.len(), 15);
     assert_eq!(&entry[..6], &[0x05, 0x04, b'K', b'L', b'V', b'A']);
     assert_eq!(entry[6], 0xFF); // user_private tag
@@ -162,7 +162,7 @@ fn cache_suppresses_klva_auto_emit_when_caller_supplies_registration() {
 
     // Cache index 0 = video (empty), index 1 = KLV.
     // Caller's Registration only — auto-emit suppressed. Total = 6 bytes.
-    assert_eq!(muxer.pmt_descriptor_caches[0][1].len(), 6);
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1].len(), 6);
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn cache_sync_klv_metadata_std_declares_buffer_for_largest_pes() {
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    let std_tlv = &muxer.pmt_descriptor_caches[0][1][17..28];
+    let std_tlv = &muxer.slots[0].pmt_descriptor_cache[1][17..28];
     assert_eq!(
         std_tlv,
         &crate::mpegts::descriptors::metadata_std(
@@ -199,7 +199,7 @@ fn cache_sync_klv_metadata_std_declares_buffer_for_largest_pes() {
         crate::mpegts::mux::state::SYNC_KLV_STD_BUFFER_UNITS as usize * 1024
             >= 6 + u16::MAX as usize
     );
-    assert_eq!(muxer.pmt_descriptor_caches[0][1].len(), 28);
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1].len(), 28);
 }
 
 #[test]
@@ -224,14 +224,14 @@ fn cache_auto_emits_klva_on_sync_klv() {
     // Cache index 0 = video (empty), index 1 = KLV.
     // KLVA auto-emit (6 bytes) prepended on SynchronousMetadata too.
     // 6 (KLVA) + 11 (0x26) + 11 (0x27) = 28 bytes.
-    assert_eq!(muxer.pmt_descriptor_caches[0][1].len(), 28);
-    assert_eq!(muxer.pmt_descriptor_caches[0][1][0], 0x05); // KLVA Registration
-    assert_eq!(&muxer.pmt_descriptor_caches[0][1][2..6], b"KLVA");
-    assert_eq!(muxer.pmt_descriptor_caches[0][1][6], 0x26);
-    assert_eq!(muxer.pmt_descriptor_caches[0][1][17], 0x27);
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1].len(), 28);
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1][0], 0x05); // KLVA Registration
+    assert_eq!(&muxer.slots[0].pmt_descriptor_cache[1][2..6], b"KLVA");
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1][6], 0x26);
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1][17], 0x27);
     // The caller's zero-valued 0x27 survives verbatim.
     assert_eq!(
-        &muxer.pmt_descriptor_caches[0][1][17..28],
+        &muxer.slots[0].pmt_descriptor_cache[1][17..28],
         &crate::mpegts::descriptors::metadata_std(0, 0, 0)[..]
     );
 }
@@ -256,13 +256,13 @@ fn cache_auto_emits_metadata_descriptors_on_sync_klv() {
     let muxer = Muxer::new(cfg).unwrap();
     // Cache index 0 = video (empty), index 1 = KLV.
     // 6 (KLVA) + 11 (0x26 metadata_descriptor) + 11 (0x27 metadata_std) = 28.
-    assert_eq!(muxer.pmt_descriptor_caches[0][1].len(), 28);
-    assert_eq!(muxer.pmt_descriptor_caches[0][1][0], 0x05); // KLVA Registration
-    assert_eq!(&muxer.pmt_descriptor_caches[0][1][2..6], b"KLVA");
-    assert_eq!(muxer.pmt_descriptor_caches[0][1][6], 0x26); // metadata_descriptor
-    assert_eq!(muxer.pmt_descriptor_caches[0][1][10], 0xFF); // metadata_format (defined by id)
-    assert_eq!(&muxer.pmt_descriptor_caches[0][1][11..15], b"KLVA"); // metadata_format_identifier
-    assert_eq!(muxer.pmt_descriptor_caches[0][1][17], 0x27); // metadata_std_descriptor
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1].len(), 28);
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1][0], 0x05); // KLVA Registration
+    assert_eq!(&muxer.slots[0].pmt_descriptor_cache[1][2..6], b"KLVA");
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1][6], 0x26); // metadata_descriptor
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1][10], 0xFF); // metadata_format (defined by id)
+    assert_eq!(&muxer.slots[0].pmt_descriptor_cache[1][11..15], b"KLVA"); // metadata_format_identifier
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1][17], 0x27); // metadata_std_descriptor
 }
 
 #[test]
@@ -278,8 +278,8 @@ fn cache_async_klv_does_not_emit_metadata_descriptors() {
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    assert_eq!(muxer.pmt_descriptor_caches[0][1].len(), 6); // KLVA only
-    assert_eq!(muxer.pmt_descriptor_caches[0][1][0], 0x05);
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1].len(), 6); // KLVA only
+    assert_eq!(muxer.slots[0].pmt_descriptor_cache[1][0], 0x05);
 }
 
 /// The PMT size estimator must count the auto-emitted 5-byte AC-3
@@ -422,7 +422,7 @@ fn validate_accepts_distinct_caller_service_ids_across_programs() {
     let muxer = Muxer::new(cfg).unwrap();
     // Cache = KLVA registration (6) + auto 0x27 (11) + the caller's 0x26 (11);
     // the caller's service byte is the 10th byte of that last TLV.
-    assert_eq!(muxer.pmt_descriptor_caches[1][1][26], 1);
+    assert_eq!(muxer.slots[1].pmt_descriptor_cache[1][26], 1);
 }
 
 #[test]

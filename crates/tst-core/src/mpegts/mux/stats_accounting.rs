@@ -60,8 +60,11 @@ impl Muxer {
         MuxerStats {
             ts_packets_emitted: self.ts_packets_emitted,
             ts_bytes_emitted: self.ts_bytes_emitted,
-            programs_configured: self.config.programs.len() as u32,
-            subtitle_streams_configured: self.subtitle_streams.iter().map(|s| s.len() as u32).sum(),
+            programs_configured: self.live_slots().count() as u32,
+            subtitle_streams_configured: self
+                .live_slots()
+                .map(|(_, s)| s.subtitle.iter().filter(|st| st.is_some()).count() as u32)
+                .sum(),
             per_stream: self.per_stream.clone(),
         }
     }
