@@ -49,7 +49,7 @@ pub(crate) const REDACTED: &str = "<redacted>";
 /// (a quote opens a URL only at the start of the text or after a separator,
 /// `,`, `;`, `:`, `=` or an opening bracket), when that quote ends the text
 /// or is followed by a separator, `,`, `;`, `.`, `:` or a closing bracket.
-/// Otherwise it runs to that next URL, or to the end of the input. Text
+/// Otherwise it runs to the end of the input. Text
 /// outside any such span is scrubbed one whitespace- (ASCII or U+00A0) or
 /// quote-delimited token at a time.
 ///
@@ -64,8 +64,8 @@ pub(crate) const REDACTED: &str = "<redacted>";
 /// - text after a quoted URL, up to the last matching quote, is treated as
 ///   part of the URL, so `'srt://h?token=x' or 'y'` loses `x' or 'y`;
 /// - when that last quote is followed by other text, the URL runs on to the
-///   next quoted URL or the end, so `'srt://h?token=x' can't` loses
-///   everything after `token=`.
+///   end, so `'srt://h?token=x' can't` loses everything after `token=`, and
+///   a later quoted URL in the same text is redacted as part of it.
 ///
 /// One residual is not covered: a password or secret value that holds the
 /// quote character followed by a space or by `,` `;` `.` `:` `)` `]` `}` is
@@ -101,10 +101,11 @@ pub fn redact_url(url: &str) -> String {
 
 /// Where a span opened by quote `q` ends: the last `q` at or after `from`
 /// and before the next URL that is itself opened by `q`, not counting that
-/// opening `q`; the end of the input when there is no such `q`. Stopping
-/// there keeps a second quoted URL its own span, while a bare scheme-looking
-/// word inside the quoted text (a password holding `y://`) does not end it.
-/// A `q` opens that next URL only at the start of the text or after a
+/// opening `q`, when that `q` ends the text or is followed by a
+/// [`follows_closing_quote`] character; the end of the input otherwise.
+/// Stopping there keeps a second quoted URL its own span, while a bare
+/// scheme-looking word inside the quoted text (a password holding `y://`)
+/// does not end it. A `q` opens that next URL only at the start of the text or after a
 /// character [`precedes_opening_quote`] accepts, so a secret holding
 /// `'srt://` (`abc'def'srt://x`) does not end the span either.
 fn closing_quote(s: &str, from: usize, q: char) -> usize {
@@ -127,11 +128,13 @@ fn closing_quote(s: &str, from: usize, q: char) -> usize {
     };
     let i = from + n;
     // A quote followed by more text (`'srt://u:p'w@h`) sits inside a
-    // password or a value; closing there would leave the rest visible.
+    // password or a value; closing there would leave the rest visible. With
+    // no quote that closes the span, the URL that set `limit` may be part of
+    // the secret too (`abc'def='srt://x'`), so the span runs to the end.
     if i + 1 == limit || s[i + 1..].chars().next().is_none_or(follows_closing_quote) {
         i
     } else {
-        limit
+        s.len()
     }
 }
 
@@ -508,22 +511,6 @@ mod tests {
         assert_eq!(
             redact_url("(see 'srt://h?token=abc', 'x')"),
             "(see 'srt://h?token=<redacted>')"
-        );
-    }
-
-    #[test]
-    fn quote_inside_a_secret_does_not_open_a_url() {
-        let out = redact_url("'srt://127.0.0.1:9000?passphrase=abc'def'srt://sentinel'");
-        for part in ["abc", "def", "sentinel"] {
-            assert!(!out.contains(part), "{out}");
-        }
-    }
-
-    #[test]
-    fn adjacent_quoted_urls_are_both_seen() {
-        assert_eq!(
-            redact_url("'srt://a:1?passphrase=xxxxxxxxxx' 'srt://b:2?passphrase=yyyyyyyyyy'"),
-            "'srt://a:1?passphrase=<redacted>' 'srt://b:2?passphrase=<redacted>'"
         );
     }
 

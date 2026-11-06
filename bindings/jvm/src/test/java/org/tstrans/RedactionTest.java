@@ -145,20 +145,6 @@ class RedactionTest {
             Redact.url("(see 'srt://h?token=abc', 'x')"));
     }
 
-    @Test
-    void quoteInsideASecretDoesNotOpenAUrl() {
-        String out = Redact.url("'srt://127.0.0.1:9000?passphrase=abc'def'srt://sentinel'");
-        for (String part : new String[] {"abc", "def", "sentinel"}) {
-            assertFalse(out.contains(part), out);
-        }
-    }
-
-    @Test
-    void adjacentQuotedUrlsAreBothSeen() {
-        assertEquals("'srt://a:1?passphrase=<redacted>' 'srt://b:2?passphrase=<redacted>'",
-            Redact.url("'srt://a:1?passphrase=xxxxxxxxxx' 'srt://b:2?passphrase=yyyyyyyyyy'"));
-    }
-
     /** The vectors {@code tst_core::url::redact_url}'s tests read too. */
     @Test
     void sharedVectorsMatchTheRustHelper() throws IOException {

@@ -14,9 +14,9 @@ import java.util.List;
  * percent-decoding the key name. A {@code scheme://} span is scrubbed whole. It runs to the end
  * of the input, or, when it opens right after a quote, to the last matching quote before the next
  * URL opened by the same quote, when that quote ends the text or is followed by a separator,
- * {@code ,}, {@code ;}, {@code .}, {@code :} or a closing bracket. Otherwise it runs to that next
- * URL, or to the end of the input. Text outside any such span is scrubbed one whitespace- (ASCII
- * or U+00A0) or quote-delimited token at a time.
+ * {@code ,}, {@code ;}, {@code .}, {@code :} or a closing bracket. Otherwise it runs to the end
+ * of the input. Text outside any such span is scrubbed one whitespace- (ASCII or U+00A0) or
+ * quote-delimited token at a time.
  *
  * <p>The scrub is a heuristic that errs toward redacting, so malformed text around a credential
  * may be redacted with it. The accepted over-redactions: any later {@code @} ends the userinfo,
@@ -25,9 +25,9 @@ import java.util.List;
  * {@code @} is redacted together with that userinfo, so {@code srt://u:p@h?passphrase=a@b} loses
  * everything after {@code u:}; text after a quoted URL, up to the last matching quote, is
  * treated as part of the URL, so {@code 'srt://h?token=x' or 'y'} loses {@code x' or 'y}; when
- * that last quote is followed by
- * other text, the URL runs on to the next quoted URL or the end, so
- * {@code 'srt://h?token=x' can't} loses everything after {@code token=}.
+ * that last quote is followed by other text, the URL runs on to the end, so
+ * {@code 'srt://h?token=x' can't} loses everything after {@code token=}, and a later quoted URL
+ * in the same text is redacted as part of it.
  *
  * <p>One residual is not covered: a password or secret value that holds the quote character
  * followed by a space or by <code>, ; . : ) ] &#125;</code> is not protected. That quote reads as
@@ -77,11 +77,12 @@ public final class Redact {
     /**
      * Where a span opened by quote {@code q} ends: the last {@code q} at or after {@code from}
      * and before the next URL that is itself opened by {@code q}, not counting that opening
-     * {@code q}; the end of the input when there is no such {@code q}. Stopping there keeps a
-     * second quoted URL its own span, while a bare scheme-looking word inside the quoted text (a
-     * password holding {@code y://}) does not end it. A {@code q} opens that next URL only at
-     * the start of the text or after a character {@link #precedesOpeningQuote} accepts, so a
-     * secret holding {@code 'srt://} does not end the span either.
+     * {@code q}, when that {@code q} ends the text or is followed by a
+     * {@link #followsClosingQuote} character; the end of the input otherwise. Stopping there
+     * keeps a second quoted URL its own span, while a bare scheme-looking word inside the quoted
+     * text (a password holding {@code y://}) does not end it. A {@code q} opens that next URL
+     * only at the start of the text or after a character {@link #precedesOpeningQuote} accepts,
+     * so a secret holding {@code 'srt://} does not end the span either.
      */
     private static int closingQuote(String s, int from, char q) {
         int limit = s.length();
@@ -98,11 +99,13 @@ public final class Redact {
             return s.length();
         }
         // A quote followed by more text ('srt://u:p'w@h) sits inside a password or a value;
-        // closing there would leave the rest visible.
+        // closing there would leave the rest visible. With no quote that closes the span, the URL
+        // that set the limit may be part of the secret too (abc'def='srt://x'), so the span runs
+        // to the end.
         if (i + 1 == limit || i + 1 == s.length() || followsClosingQuote(s.charAt(i + 1))) {
             return i;
         }
-        return limit;
+        return s.length();
     }
 
     /**
