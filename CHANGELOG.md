@@ -675,7 +675,7 @@ The integrator-facing changes at a glance (full detail in the sections below):
   analyzers may flag it. Planned for 0.9.2.
 - The HLS server has no connection limit and no request-header or TLS
   handshake deadline. Keep its default loopback bind, or put it behind a
-  reverse proxy that enforces limits and timeouts. Fixed in 0.9.1.
+  reverse proxy that enforces limits and timeouts. Planned for 0.9.2.
 
 ### Removed — tst-pipeline (BREAKING)
 
