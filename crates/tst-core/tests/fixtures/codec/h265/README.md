@@ -11,20 +11,22 @@ these fixtures.
 
 ## To regenerate
 
+Run these commands from the workspace root.
+
 ```bash
 ffmpeg -y -f lavfi -i "color=c=black:s=1920x1080:r=25:d=2.0" \
     -c:v libx265 -profile:v main -preset ultrafast \
     -x265-params "aud=0:level-idc=120:no-info=1:repeat-headers=1:keyint=25" \
     -frames:v 3 -f hevc /tmp/hevc_main40.h265
-cargo run --quiet --example extract_h265_sps_to_rbsp -p tst-core -- /tmp/hevc_main40.h265 \
-    > tests/fixtures/codec/h265/h265_1080p_main40_sps.bin
+cargo run --quiet -p tst-examples --example extract_h265_sps_to_rbsp -- /tmp/hevc_main40.h265 \
+    > crates/tst-core/tests/fixtures/codec/h265/h265_1080p_main40_sps.bin
 
 ffmpeg -y -f lavfi -i "color=c=black:s=1920x1080:r=50:d=2.0,format=yuv420p10le" \
     -c:v libx265 -profile:v main10 -pix_fmt yuv420p10le -preset ultrafast \
     -x265-params "aud=0:level-idc=50:no-info=1:repeat-headers=1:keyint=50:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc" \
     -frames:v 3 -f hevc /tmp/hevc_main10_50_pq.h265
-cargo run --quiet --example extract_h265_sps_to_rbsp -p tst-core -- /tmp/hevc_main10_50_pq.h265 \
-    > tests/fixtures/codec/h265/h265_1080p_main10_50_pq_sps.bin
+cargo run --quiet -p tst-examples --example extract_h265_sps_to_rbsp -- /tmp/hevc_main10_50_pq.h265 \
+    > crates/tst-core/tests/fixtures/codec/h265/h265_1080p_main10_50_pq_sps.bin
 ```
 
 After regenerating, update assertions in `mod.rs::sps_tests` that reference

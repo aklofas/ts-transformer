@@ -39,15 +39,15 @@ unit to its own file. Useful when feeding a downstream decoder /
 analyzer that wants Annex B or OBU bytes. Multi-codec: H.264 / H.265 /
 H.266 / AV1 all handled.
 
-## 4. `extract_h265_sps_to_rbsp.rs` — emulation-prevention removal (HEVC)
+## 4. `extract_h265_sps_to_rbsp.rs` — extract an HEVC SPS payload
 
 ```sh
-cargo run -p tst-examples --example extract_h265_sps_to_rbsp -- input.265 output.bin
+cargo run -p tst-examples --example extract_h265_sps_to_rbsp -- input.265 > output.bin
 ```
 
-Strip `0x000003` emulation prevention bytes from a NAL unit, write the
-raw RBSP. The minimal recipe for "I have an Annex B byte stream and
-want the RBSP for parameter-set parsing." H.265-specific.
+Extract the first SPS, strip its Annex-B start code and two-byte NAL
+header, and write its EBSP payload to stdout. Emulation-prevention bytes
+are preserved; the H.265 `BitReader` skips them during parsing.
 
 Cookbook: [Reconstitute Annex B parameter sets for decoder replay](../../docs/cookbook/codecs/reconstitute-annex-b.md).
 
@@ -57,8 +57,9 @@ Cookbook: [Reconstitute Annex B parameter sets for decoder replay](../../docs/co
 cargo run -p tst-examples --example extract_h266_sps_to_rbsp -- input.266 output.bin
 ```
 
-Diff from §4: VVC-specific NAL header layout (2 bytes instead of 1)
-but same emulation-prevention strip.
+Diff from §4: VVC-specific NAL header layout (two bytes, as in HEVC, with
+the type in the second byte), an output-file argument instead of stdout,
+and the same EP bytes preserved.
 
 ## 6. `demux_subtitle_file.rs` — subtitle codec discrimination
 
