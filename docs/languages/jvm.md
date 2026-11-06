@@ -1052,6 +1052,13 @@ try (Socket sock = new Builder("srt://host:9000")
 }
 ```
 
+`Builder.connectTimeoutMs(ms)` (URL key `conntimeo`) is the budget for the
+whole connect, shared across the addresses the host resolves to.
+`Builder.peerIdleTimeoutMs(ms)` (URL key `peeridletimeo`) is how long a
+connected peer may stay silent; libsrt does not detect a silent peer sooner
+than about 5 s, whatever the value. The [SRT guide](/docs/guides/srt.md)
+has the detail.
+
 ### Cancellation
 
 The library never runs your code on its threads: no callback of yours is ever invoked from a thread the library owns. See [Architecture](/docs/reference/architecture.md) for the rule.

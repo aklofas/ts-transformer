@@ -707,7 +707,7 @@ FFmpeg, GStreamer, etc.) — use builder-style config if portability matters.
 | URL key | libsrt option | Type | Notes |
 |---|---|---|---|
 | `x-recvtimeout` | `SRTO_RCVTIMEO` | INT (ms) | bounds blocking recv on a connected/accepted socket; on a Listener this sets the timeout inherited by accepted sockets, but does **not** bound the `accept` call itself — libsrt ignores `SRTO_RCVTIMEO` on `srt_accept` |
-| `x-sendtimeout` | `SRTO_SNDTIMEO` | INT (ms) | bounds blocking send and synchronous handshake |
+| `x-sendtimeout` | `SRTO_SNDTIMEO` | INT (ms) | bounds blocking send; use `conntimeo` / `connect_timeout` for the whole-connect budget |
 
 ### Mode and authority
 

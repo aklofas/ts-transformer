@@ -461,6 +461,13 @@ URL-provided values win over kwargs / setters. A `Listener` is iterable —
 iterating yields accepted `Socket`s until `cancel_handle().cancel()` stops
 it.
 
+`Builder.connect_timeout_ms(ms)` (URL key `conntimeo`) is the budget for the
+whole connect, shared across the addresses the host resolves to.
+`Builder.peer_idle_timeout_ms(ms)` (URL key `peeridletimeo`) is how long a
+connected peer may stay silent; libsrt does not detect a silent peer sooner
+than about 5 s, whatever the value. The [SRT guide](/docs/guides/srt.md)
+has the detail.
+
 ### Listen rules
 
 `listener.rules()` returns a `ListenRules` handle that decides each caller
