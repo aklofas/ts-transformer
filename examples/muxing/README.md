@@ -85,7 +85,7 @@ cargo run -p tst-examples --example mux_dual_camera
 ```
 
 EO + IR camera pair sharing one PCR + KLV stream within a single
-program. Demonstrates `add_video_to(handle, ...)` and the
+program. Demonstrates `push_video_to(handle, ...)` and the
 `video_handles_for_program()` accessor.
 
 Cookbook: [Label EO + IR + KLV streams in a multi-stream program](../../docs/cookbook/muxing/mux-eo-ir-klv.md).

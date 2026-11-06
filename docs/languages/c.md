@@ -232,7 +232,7 @@ there is no single-stream DTS shorthand; use the targeted
 > require a decode ordering different from presentation ordering — typically
 > H.264/H.265 Baseline/Main with B frames, or AV1 with film-grain synthesis.
 > When PTS and DTS are equal, prefer the non-DTS variants for a smaller PES
-> header (4 bytes shorter — no DTS field written).
+> header (5 bytes shorter — no DTS field written).
 
 Both functions are added in **ABI 17** (additive; no existing symbol or struct
 changed).
