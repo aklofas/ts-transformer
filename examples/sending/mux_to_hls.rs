@@ -10,8 +10,10 @@
 //!   unit goes in with the PTS it carried, its DTS when that differs, and
 //!   its keyframe flag, so segments cut on the source's own keyframes and
 //!   keep its timing. The first video stream (H.264, H.265 or H.266) is
-//!   re-muxed; KLV, audio and any other stream are left out (configure a
-//!   KLV stream and call `MuxPublisher::push_klv` to carry KLV).
+//!   re-muxed from its first keyframe on; AV1 is skipped, and fatal only
+//!   when it is the only video; KLV, audio and any other stream are left
+//!   out (configure a KLV stream and call `MuxPublisher::push_klv` to carry
+//!   KLV).
 //!
 //! HOW to run:
 //!   cargo run -p tst-examples --example mux_to_hls -- input.ts /tmp/hls 127.0.0.1:8080

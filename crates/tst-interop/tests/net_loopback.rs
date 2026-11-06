@@ -947,15 +947,15 @@ fn srt_managed_recv_cancel_flush_does_not_hide_a_silent_tail() {
     let recv_url = format!("srt://127.0.0.1:{port}?mode=listener&conntimeo=2000");
     let send_url = format!("srt://127.0.0.1:{port}");
 
-    // seconds=4.0: the deadline sits 4 s + POST_START_GRACE after the first
-    // event, so well over 3 s of silence separates the sender's close from it.
+    // seconds=3.0: the deadline sits 3 s + POST_START_GRACE after the first
+    // event, so well over 2 s of silence separates the sender's close from it.
     let recv_handle = {
         let recv_url = recv_url.clone();
         thread::spawn(move || {
             recv::run_managed(
                 &recv_url,
                 profile,
-                4.0,
+                3.0,
                 None,
                 false,
                 false,
