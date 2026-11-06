@@ -1858,7 +1858,8 @@ class CoreId:
     the record.
 
     Carriage sites: ST 0601 Tag 94 is the primary path for UAS datalink, and
-    ST 0903 VTarget Tag 13 carries the identifier per target.
+    the top-level ST 0903 VMTI LS Tag 13 (``miis_id``) carries it for the
+    VMTI Local Set.
 
     - ``version`` — Wire version byte. Always ``1`` for decoded values; set
       to ``1`` when constructing a value to encode.

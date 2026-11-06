@@ -13,8 +13,9 @@
 //!
 //! - **ST 0601 Tag 94** (`UasDatalinkLs::miis_core_id`) — the primary
 //!   carriage path for UAS datalink (MISB ST 0601.19 §8.94).
-//! - **ST 0903 VTarget Tag 13** (`VTargetPack::miis_id`) — per-target
-//!   MIIS Core Identifier in a VMTI Local Set (MISB ST 0903.6 §10.2.2.14).
+//! - **ST 0903 VMTI LS Tag 13** ([`VmtiLs::miis_id`](crate::klv::st0903::VmtiLs::miis_id))
+//!   — the MIIS Core Identifier of the VMTI Local Set (MISB ST 0903.6
+//!   §10.1.13); a VTarget Pack carries none.
 //!
 //! Both fields carry raw bytes; use [`decode`] to parse them into a typed
 //! [`CoreId`] and [`encode_to_vec`] to round-trip back to bytes.
@@ -77,7 +78,8 @@ crate::binding_record! {
     /// encode the record.
     ///
     /// Carriage sites: ST 0601 Tag 94 is the primary path for UAS datalink,
-    /// and ST 0903 VTarget Tag 13 carries the identifier per target.
+    /// and the top-level ST 0903 VMTI LS Tag 13 (`VmtiLs::miis_id`) carries
+    /// it for the VMTI Local Set.
     #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct CoreId {

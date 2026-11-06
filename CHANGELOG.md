@@ -515,7 +515,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `PassphraseError::InvalidCharset` and `StreamIdError::NonAscii` are no longer returned; they will be removed in 0.10.0.
 
-### Security — tst-c
+### Changed — tst-c
 
 - C: RTSP builder passwords are zeroed when the builder is freed, replaced or consumed.
 

@@ -183,12 +183,12 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
             Encoding::ImapbF64 { min, max } => {
                 // Top-level Tags 11 + 12 (Horizontal/Vertical FOV) are
                 // IMAPB(0, 180, 2) per ST 0903.6 §10.1.11 + §10.1.12 —
-                // both fixed length 2. Hardcode length=2 to (a) prevent
-                // the imapb substrate's length-0 panic on malformed
-                // wire input (`read_signed_be(&[])` underflows
-                // `n*8-1` when `n==0`) and (b) match the spec's wire
-                // shape. Mirrors the per-tag hardcoded-length pattern
-                // in `vtarget_pack::decode_field`.
+                // both fixed length 2. Hardcode length=2 to match the
+                // spec's wire shape: a value of any other length is an
+                // `InvalidLength` field error here (`decode_imapb` itself
+                // refuses a length outside 1..=8 and a byte count that
+                // differs from it). Mirrors the per-tag hardcoded-length
+                // pattern in `vtarget_pack::decode_field`.
                 let expected_len = 2;
                 if value.len() != expected_len {
                     ls.field_errors.push(KlvFieldError::InvalidLength {
