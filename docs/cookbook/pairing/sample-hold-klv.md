@@ -41,9 +41,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 This sketch keeps its KLV map across a reconnect or a signalled time-base
-discontinuity. On a `DemuxEvent::ReconnectDiscontinuity`, or a set
-`discontinuity_indicator` on the video or KLV PID, clear `klv` so a frame on
-the new clock never pairs with metadata from the old one; `Pairer::last_before_pts`
-does this for you.
+discontinuity. On a `DemuxEvent::ReconnectDiscontinuity`, or a
+`DemuxEvent::Discontinuity { kind: AdaptationFieldFlag, .. }` (a set
+`discontinuity_indicator`) on the video PID, the KLV PID or the program's PCR
+PID, clear `klv` so a frame on the new clock never pairs with metadata from
+the old one; `Pairer::last_before_pts` does this for you.
 
 Runnable: see [examples/receiving/demux_to_events.rs](/examples/receiving/demux_to_events.rs) for the file-feed shape; [examples/pairing/pair_sync_klv.rs](/examples/pairing/pair_sync_klv.rs) is the related nearest-PTS sibling for sync KLV.

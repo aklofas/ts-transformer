@@ -58,8 +58,9 @@ and the receiver sees no data (the librist log channel reports
 
 librist returns a timeout after a quiet 100 ms poll. `tst-rist` surfaces it
 as `TransportError::Backpressure`, and `DemuxReceiver` propagates it as a
-`ShellErrorKind::Backpressure` error. Retry it in either receive loop; a bare
-`recv_bytes` loop looks like this:
+`ShellErrorKind::Backpressure` error. Retry it in either receive loop and
+propagate every other error; a bare `recv_bytes` loop, which also ends on
+`Closed`, looks like this:
 
 ```rust
 use tst_core::transport::{RecvTransport, TransportError};
