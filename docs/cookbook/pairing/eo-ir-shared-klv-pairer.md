@@ -23,7 +23,7 @@ let mut ir_pairer = Pairer::last_before_pts(IR_PID, KLV_PID, None);
 
 for e in demux_events() {
     // Both pairers need program maps and epoch boundaries as well as
-    // samples; a sample for the other video PID passes through unpaired.
+    // samples; a sample for the other video PID comes back as `PassThrough`.
     let mut outputs = eo_pairer.feed(e.clone());
     outputs.extend(ir_pairer.feed(e));
     for o in outputs {
