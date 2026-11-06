@@ -1462,14 +1462,14 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Status:** Deferred. No C-ABI `H264Receiver` / `H264DepayConfig` /
   `H264Au` family exists; the H.264 ingest path is only available from
   Rust, Python, and JVM.
-- **Why deferred:** The C ABI grows additively (currently minor 28);
+- **Why deferred:** The C ABI grows additively (currently minor 29);
   adding an H.264-specific receive family would bump it further and
   requires cbindgen-friendly struct definitions (no opaque Rust types
   passed by value). The existing Python + JVM mirrors cover all current
   consumers.
 - **Trigger to revisit:** A C or embedded consumer asks for first-party
   H.264 ingest (e.g. a bare-metal pipeline receiving from a STANAG 4609
-  RTSP camera). Would be the next additive ABI minor bump (0.28 → 0.29).
+  RTSP camera). Adding this family needs an additive ABI minor bump.
 
 ## Elementary H.264/H.265 RTP sender
 
@@ -1587,9 +1587,9 @@ mean **Deferred**. An entry whose feature has shipped must never read
   (`PublishMountConfig`, `add_publish_mount_with`) are likewise Rust, Python
   and JVM only: C has the server-wide builder setter
   `tst_rtsp_server_builder_end_publish_mount_on_publisher_exit` alone.
-- **Why deferred:** The C surface froze at 0.9.0's shape, and the rules
-  tables are still `Experimental` (mount rules) and `Provisional` (listen
-  rules); a C ABI entry would pin them before their signatures settle.
+- **Why deferred:** The rules tables are still `Experimental` (mount
+  rules) and `Provisional` (listen rules); a C ABI entry would pin them
+  before their signatures settle.
 - **Trigger to revisit:** A C consumer that needs either table, or the first
   stable minor of the tables.
 
