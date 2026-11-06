@@ -234,8 +234,8 @@ Fix: this is almost always a producer bug; fix the producer.
 A multi-cell AU reassembly attempt failed on the named PID. `reason` discriminates the failure mode:
 
 - `Orphan` — a `Middle` or `Last` cell arrived without a prior `First`. Either the stream started mid-AU (e.g. seek into a recording) or a `First` cell was lost upstream. (Note: the producer-side CFI malformation pattern — encoders shipping `0b00` (Middle) on single-cell AUs — is rescued by the default-on `cfi_tolerance` knob and does NOT produce an Orphan event under default config. You will only see Orphan here for legitimate fragmentation losses or if you explicitly set `cfi_tolerance: false`.)
-- `SequenceGap` — a buffered AU's continuation cell had the wrong `sequence_number`. A cell was lost between the buffered `First`/`Middle` and the arriving cell.
-- `ConcurrentFirst` — a new `First` arrived while the previous AU was still buffering (its `Last` never appeared). The partial buffer is dropped before the new `First` is processed.
+- `SequenceGap` — continuity within a PES broke while an AU was in progress, or packet or PES loss, or a signalled discontinuity, invalidated that AU. A `First` or `Complete` cell whose number jumps reports this too. Numbering restarts at each PES; its first cell alone is never a gap.
+- `ConcurrentFirst` — a new `First` or `Complete` cell replaced an AU still buffering for that PID and service, with no sequence gap before it. The partial AU is dropped and the new cell is processed again.
 - `Overflow` — the accumulated inner-byte total would exceed `DemuxerConfig::au_cell_cap_per_pid` (default 1 MiB). Tune the cap via `DemuxerConfigBuilder::au_cell_cap_per_pid(bytes)`.
 - `OverflowTotal` — the AU-cell bytes buffered across all PIDs would exceed the demuxer's aggregate cap.
 - `TooManyPids` — too many PIDs have an AU in flight at once.
