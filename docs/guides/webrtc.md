@@ -379,12 +379,12 @@ default `*`), `Access-Control-Allow-Methods: POST, DELETE, OPTIONS`,
 `Access-Control-Expose-Headers: Location`. HTTP/1.1, one request per
 connection, `Connection: close`.
 
-The answer: video `sendonly` from the server on the payload chosen as
-above, the audio section rejected or Opus, `a=ice-lite`, host candidates
-(below) on the first section the BUNDLE group names, also when a rejected
-audio section comes first, RTX for the video payload, NACK and PLI
-accepted, and the offer's data-channel section accepted; the `klv` channel
-itself is opened over that association once it is up.
+The answer sends video `sendonly` on the payload chosen as above and
+rejects the audio section or answers Opus. It carries `a=ice-lite` and host
+candidates (below) on the first section the BUNDLE group names, also when a
+rejected audio section comes first. It offers RTX for the video payload,
+accepts NACK and PLI, and accepts the offer's data-channel section; the
+`klv` channel is opened over that association once it is up.
 
 ## Network: ICE, ports, TLS
 
