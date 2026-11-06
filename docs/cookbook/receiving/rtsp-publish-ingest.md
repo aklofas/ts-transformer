@@ -108,13 +108,31 @@ access units are dropped and counted in `aus_dropped`.
 
 A mount holds at most one publisher. A second ANNOUNCE on a mount that has a
 live publisher answers `403 Forbidden` and leaves the first publisher
-streaming. When the publisher ends (TEARDOWN, a dropped connection, or the
-idle reaper), the mount goes idle and its `generation` counter goes up by one.
-The application transport stays open and silent; the next publisher on that
+streaming. When the publisher ends (TEARDOWN, a dropped connection, the session
+timeout, or the optional publish idle timeout below), the mount goes idle and its `generation` counter goes up by one.
+By default the application transport stays open and silent; the next publisher on that
 name feeds the same transport, and the demuxer sees ordinary continuity
 discontinuities at the change. `PublishMountHandle::publisher()` names the
 current publisher (control-connection address, shape, start time, generation)
 or returns `None` while the mount is idle.
+
+To end the mount instead, set the server builder's
+`end_publish_mount_on_publisher_exit(true)` for every mount, or register one
+with `server.add_publish_mount_with(path, PublishMountConfig::new().end_on_publisher_exit(true))`
+(an unset per-mount option inherits the server's; an explicit `false`
+overrides it). A publisher that reached RECORD then ends the mount as it
+leaves: the application transport reads `Closed`, later ANNOUNCEs on the
+name answer `403`, and the application calls `remove_mount` and adds the
+mount again to accept a new publisher. A publisher that never reached RECORD
+does not end it. An ended on-demand mount stays in the table, and counts
+toward the 256-mount bound, until it is removed.
+
+`RtspServerBuilder::publish_idle_timeout(Duration)` is off by default; zero
+leaves it unset. After RECORD it ends a publisher's session when no valid
+RTP packet (a decodable header with the announced payload type) arrives for
+that long, timed from RECORD or the last such packet. RTSP keepalives and
+RTCP do not re-arm it, so it ends a publisher that keeps its session alive
+while sending no media.
 
 One connection holds one role: a reader SETUP or PLAY on a publisher's
 connection, or an ANNOUNCE on a reader's, answers `455`.
@@ -177,10 +195,10 @@ it); quotes and backslashes are escaped in the header.
 - **Refusal happens before any mount exists.** The check runs first in every
   gated handler, so a refused or unauthenticated ANNOUNCE is answered before
   an on-demand mount is created or queued.
-- **A rule change reaches a streaming publisher at its TEARDOWN.** OPTIONS
-  and GET_PARAMETER are never gated, so a publisher that is already streaming
-  keeps going until it sends TEARDOWN, which then answers the refuse status
-  and frees the slot. `server.remove_mount(path)` ends it now.
+- **A rule change reaches a streaming publisher at its next gated request.**
+  OPTIONS and GET_PARAMETER are never gated, so a publisher that is already
+  streaming keeps going until it sends SETUP, RECORD, PLAY, PAUSE or (usually)
+  TEARDOWN, which then answers the refuse status and frees the slot. `server.remove_mount(path)` ends it now.
 - **A session is judged on its role.** Once a session holds a role (publisher
   or reader), SETUP, PLAY, PAUSE, RECORD and TEARDOWN are judged on that
   role's mount and direction; ANNOUNCE and DESCRIBE are judged on the request
@@ -234,6 +252,9 @@ handle first if you want `stats()` and `publisher()` after taking the
 transport. `PublishMountHandle::cancel()` ends the transport with
 `ExplicitClose` and leaves readers and the publisher alone; `remove_mount` and
 `stop()` end it with `Closed`, which `DemuxReceiver` reports as end of stream.
+
+With end-on-exit on, a publisher that reached RECORD ends the transport the
+same way when it leaves.
 
 ---
 
