@@ -151,10 +151,10 @@ and an RTSP `MountHandle` when the config has exactly one video stream.
 
 ```rust
 // Good — verb matches operation kind:
-mux_sender.send_video(handle, nal_bytes, pts)?;  // wire op (transport blocks)
-muxer.push_video(handle, nal_bytes, pts)?;        // in-process queue op
-demuxer.feed_aligned(&packet)?;                   // in-process consumer
-demux_receiver.recv_event()?;                     // wire read
+mux_sender.send_video_to(handle, nal_bytes, pts, true)?;  // wire op (transport blocks)
+muxer.push_video_to(handle, nal_bytes, pts, true)?;        // in-process queue op
+demuxer.feed_aligned(&packet)?;                            // in-process consumer
+demux_receiver.recv_event()?;                              // wire read
 
 // Bad — wrong verb:
 // pub fn send_to_muxer(&mut self, ...) { ... }  // should be push_*; no wire

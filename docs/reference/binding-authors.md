@@ -115,7 +115,7 @@ tst_mux_config_add_video_stream(cfg, prog, 0x1011, TST_VIDEO_CODEC_H264);
 struct tst_mux_sender_t *sender = tst_mux_sender_open(url, cfg);
 tst_mux_config_free(cfg); /* tst_mux_sender_open copies what it needs */
 if (sender == NULL) { /* tst_get_last_error_str() describes the failure */ }
-tst_mux_sender_send_video(sender, payload, payload_len, pts_ticks);
+tst_mux_sender_send_video(sender, payload, payload_len, pts_ticks, true); /* key frame */
 tst_mux_sender_close(sender);
 ```
 
