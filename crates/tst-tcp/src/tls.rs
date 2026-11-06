@@ -245,6 +245,7 @@ where
 ///
 /// Resolution to a socket address happens at connect time.
 pub fn connect_tls(url: &TcpUrl, cfg: &TcpConfig) -> Result<TcpTransport, TcpError> {
+    cfg.check_pkt_size()?;
     let roots = if let Some(ca_path) = &cfg.ca {
         let pem = std::fs::read(ca_path).map_err(TcpError::Io)?;
         tst_core::net::tls::load_root_store(&pem).map_err(tls_load_error)?
@@ -457,6 +458,27 @@ mod tests {
             ..TcpConfig::default()
         };
         match accept_tls(socket, peer, &cfg, Arc::new(server_config)) {
+            Err(TcpError::InvalidConfig(m)) => assert!(m.contains("pkt_size"), "{m}"),
+            Err(e) => panic!("expected InvalidConfig, got {e:?}"),
+            Ok(_) => panic!("pkt_size 0 must be refused"),
+        }
+    }
+
+    #[test]
+    fn connect_tls_refuses_pkt_size_zero() {
+        // A port with nothing listening: a connect attempt would fail with
+        // an I/O error, so `InvalidConfig` proves the check runs first.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let url = TcpUrl::parse(&format!("tcps://127.0.0.1:{port}")).unwrap();
+        let cfg = TcpConfig {
+            pkt_size: Some(0),
+            ..TcpConfig::default()
+        };
+        match connect_tls(&url, &cfg) {
             Err(TcpError::InvalidConfig(m)) => assert!(m.contains("pkt_size"), "{m}"),
             Err(e) => panic!("expected InvalidConfig, got {e:?}"),
             Ok(_) => panic!("pkt_size 0 must be refused"),

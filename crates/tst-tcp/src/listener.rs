@@ -147,6 +147,10 @@ impl TcpListener {
     /// to one [`ACCEPT_POLL_INTERVAL`] tick (~5 ms worst case) before this
     /// call returns it, even though the peer's SYN completed instantly.
     pub fn accept_blocking(&self) -> Result<TcpTransport, TcpError> {
+        // A closed listener reports `Closed` before anything about its config.
+        if !self.alive.load(Ordering::Acquire) {
+            return Err(TcpError::Closed);
+        }
         // `config_mut` may have set it after the bind.
         self.config.check_pkt_size()?;
         let (sock, peer) = loop {
@@ -220,6 +224,25 @@ impl TcpListener {
         // reached from another thread).
         self.cancel.cancel();
         self.alive.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TcpListener;
+    use crate::error::TcpError;
+
+    /// A closed listener answers `Closed`, whatever its config says since.
+    #[test]
+    fn closed_listener_reports_closed_before_config() {
+        let mut listener = TcpListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        listener.close();
+        listener.config_mut().pkt_size = Some(0);
+        match listener.accept_blocking() {
+            Err(TcpError::Closed) => {}
+            Err(e) => panic!("expected Closed, got {e:?}"),
+            Ok(_) => panic!("a closed listener must not accept"),
+        }
     }
 }
 
