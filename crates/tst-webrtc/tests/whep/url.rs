@@ -102,6 +102,34 @@ fn a_mount_path_in_the_bind_url_is_refused() {
     assert!(WhepUrl::parse("whep://192.0.2.10:1/").is_ok());
 }
 
+/// A password holding a raw `/` after a numeric prefix splits at that `/`:
+/// the prefix reads as the port and the tail as the path, so the path error
+/// must not print it.
+#[test]
+fn a_path_error_withholds_a_possible_password_tail() {
+    let err = WhepUrl::parse("whep://192.0.2.10:12345/secret-tail@host").unwrap_err();
+    // Only the value is withheld: the error still names the path.
+    assert!(
+        matches!(&err, UrlError::BadQueryValue { key, value, .. }
+            if key == "path" && value == "<redacted>"),
+        "{err:?}"
+    );
+    for shown in [err.to_string(), format!("{err:?}")] {
+        assert!(!shown.contains("secret-tail"), "{shown}");
+    }
+    // Real userinfo before the path is still split off as userinfo, so the
+    // bind URL is refused for carrying it, not for its path.
+    let parsed = tst_core::url::parse_url("whep://u:p@host/a@b").unwrap();
+    assert_eq!(
+        (parsed.username, parsed.password, parsed.host, parsed.path),
+        (Some("u"), Some("p"), "host", "/a@b")
+    );
+    assert!(matches!(
+        WhepUrl::parse("whep://u:p@192.0.2.10:1/a@b"),
+        Err(UrlError::Rejected(_))
+    ));
+}
+
 #[test]
 fn debug_output_redacts_the_token() {
     let u = WhepUrl::parse("whep://0.0.0.0:8889?token=s3cret").unwrap();
