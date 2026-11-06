@@ -84,6 +84,10 @@ pub struct Demuxer {
     /// Programs found in the current PAT, keyed by `program_number`.
     /// Several programs may share one PMT PID (H.222.0 §2.4.4.8).
     pub(super) programs: HashMap<u16, ProgramTracker>,
+    /// Owning `program_number` of every elementary PID some tracker's
+    /// `streams` lists, kept in step with them, so the cross-program PID
+    /// check of a PMT entry is one lookup.
+    pub(super) pid_owner: HashMap<u16, u16>,
     /// Every PMT PID the current PAT declares. O(1) lookup when routing
     /// PMT-bound packets.
     pub(super) pmt_pids: HashSet<u16>,
@@ -193,6 +197,7 @@ impl Demuxer {
             sync_consumed: 0,
             psi_assemblers,
             programs: HashMap::new(),
+            pid_owner: HashMap::new(),
             pmt_pids: HashSet::new(),
             pat_identity: None,
             pid_state: HashMap::new(),
@@ -917,6 +922,7 @@ impl Demuxer {
         self.psi_assemblers
             .insert(0x0000, PsiSectionAssembler::new());
         self.programs.clear();
+        self.pid_owner.clear();
         self.pmt_pids.clear();
         self.pat_identity = None;
         // Per-PID state resets entry by entry: counters and the

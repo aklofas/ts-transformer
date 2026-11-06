@@ -374,6 +374,9 @@ impl super::demuxer::Demuxer {
         let mut diff = TopologyDiff::default();
         for program_number in removed {
             if let Some(tracker) = self.programs.remove(&program_number) {
+                for s in &tracker.streams {
+                    self.pid_owner.remove(&s.pid);
+                }
                 diff.retired.extend(tracker.streams.iter().map(|s| s.pid));
                 diff.pcr_pid_changes.push((tracker.pcr_pid, None));
                 // The per-program unwrap reference is keyed by
@@ -588,20 +591,37 @@ impl super::demuxer::Demuxer {
         let mut subtitle_missing: Vec<(u16, StreamKind)> = Vec::new();
         let mut av1_malformed: Vec<(u16, StreamKind)> = Vec::new();
         let mut subtitle_ambiguous: Vec<(u16, StreamKind, Vec<u8>)> = Vec::new();
+        let mut seen: HashSet<u16> = HashSet::with_capacity(pmt.streams.len());
+        let mut repeated: HashSet<u16> = HashSet::new();
 
         for s in &pmt.streams {
+            // A PID listed twice in one PMT keeps its first entry, the same
+            // first-wins rule as a PID claimed by two programs: a later copy
+            // would only multiply the stream list. One diagnostic per
+            // repeated PID, however many copies follow.
+            if !seen.insert(s.elementary_pid) {
+                if !repeated.insert(s.elementary_pid) {
+                    continue;
+                }
+                collision_issues.push((
+                    StreamId::anonymous(s.elementary_pid, program_number),
+                    NonConformantIssue::PidReusedAcrossPrograms {
+                        pid: s.elementary_pid,
+                        programs: [program_number, program_number],
+                    },
+                ));
+                continue;
+            }
+
             let kind = self.get_stream_kind(s.elementary_pid, s);
 
-            // Cross-program PID collision check: scan all other programs'
-            // stream lists. First-program-wins — skip this PID if already owned.
+            // Cross-program PID collision check. First-program-wins — skip
+            // this PID if another program already owns it.
             let other_prog = self
-                .programs
-                .values()
-                .find(|t| {
-                    t.program_number != program_number
-                        && t.streams.iter().any(|st| st.pid == s.elementary_pid)
-                })
-                .map(|t| t.program_number);
+                .pid_owner
+                .get(&s.elementary_pid)
+                .copied()
+                .filter(|&p| p != program_number);
 
             if let Some(other_program_number) = other_prog {
                 collision_issues.push((
@@ -739,6 +759,12 @@ impl super::demuxer::Demuxer {
             .expect("checked above");
         tracker.pmt_version = Some(pmt.version);
         tracker.pcr_pid = Some(pmt.pcr_pid);
+        for old in &tracker.streams {
+            self.pid_owner.remove(&old.pid);
+        }
+        for new in &stream_infos {
+            self.pid_owner.insert(new.pid, program_number);
+        }
         tracker.streams = stream_infos;
         tracker.klv_mismatch_coalesce.clear();
 
@@ -887,6 +913,7 @@ mod tests {
     use super::super::strict::StrictMode;
     use super::super::types::DemuxerConfig;
     use crate::mpegts::common::Pts90khz;
+    use crate::mpegts::common::StreamTypeCode;
     use crate::mpegts::common::crc32::crc32_mpeg2;
     use crate::mpegts::demux::test_support::{
         drain_all_events, pat_packet_with_multi_section, pat_packet_with_multi_section_cc,
@@ -2087,6 +2114,99 @@ mod tests {
             !progs[&2].streams.iter().any(|s| s.pid == 0x1011),
             "program 2 must not own PID 0x1011 after collision"
         );
+    }
+
+    #[test]
+    fn pmt_repeated_es_pid_keeps_first_entry() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x100,
+                &[(0x1B, 0x100), (0x24, 0x100), (0x0F, 0x101), (0x1B, 0x100)],
+                0,
+            ))
+            .unwrap();
+
+        let repeats: Vec<NonConformantIssue> = drain_events(&mut demuxer)
+            .into_iter()
+            .filter_map(|ev| match ev {
+                DemuxEvent::NonConformant {
+                    issue: issue @ NonConformantIssue::PidReusedAcrossPrograms { .. },
+                    ..
+                } => Some(issue),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            repeats,
+            vec![NonConformantIssue::PidReusedAcrossPrograms {
+                pid: 0x100,
+                programs: [1, 1],
+            }]
+        );
+
+        let progs = demuxer.programs_for_test();
+        let pids: Vec<u16> = progs[&1].streams.iter().map(|s| s.pid).collect();
+        assert_eq!(pids, vec![0x100, 0x101]);
+        assert_eq!(
+            progs[&1].streams[0].stream_type,
+            StreamTypeCode::from_byte(0x1B),
+            "the first entry for a repeated PID wins"
+        );
+    }
+
+    #[test]
+    fn released_pid_can_be_claimed_after_pmt_update() {
+        let mut demuxer = Demuxer::new();
+        demuxer
+            .feed(&pat_packet_with_programs(&[(1, 0x1000), (2, 0x1100)], 0))
+            .unwrap();
+        demuxer
+            .feed(&pmt_packet_for_test(
+                0x1000,
+                1,
+                0x101,
+                &[(0x1B, 0x100), (0x0F, 0x101)],
+                0,
+            ))
+            .unwrap();
+        // A new PMT version of program 1 drops 0x100.
+        demuxer
+            .feed(&pmt_packet_for_test_cc(
+                0x1000,
+                1,
+                0x101,
+                &[(0x0F, 0x101)],
+                1,
+                1,
+            ))
+            .unwrap();
+        drain_events(&mut demuxer);
+        demuxer
+            .feed(&pmt_packet_for_test(0x1100, 2, 0x100, &[(0x1B, 0x100)], 0))
+            .unwrap();
+
+        let collisions = drain_events(&mut demuxer)
+            .into_iter()
+            .filter(|ev| {
+                matches!(
+                    ev,
+                    DemuxEvent::NonConformant {
+                        issue: NonConformantIssue::PidReusedAcrossPrograms { .. },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(collisions, 0, "a released PID must not collide");
+        let progs = demuxer.programs_for_test();
+        assert!(progs[&2].streams.iter().any(|s| s.pid == 0x100));
+        assert!(!progs[&1].streams.iter().any(|s| s.pid == 0x100));
     }
 
     #[test]
