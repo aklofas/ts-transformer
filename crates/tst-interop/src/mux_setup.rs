@@ -112,7 +112,7 @@ pub fn buffer_packets_for(au_sizes: AuSizeMode, programs: u8) -> usize {
 mod tests {
     use super::*;
 
-    /// Scale 1 keeps the library default (every soak and every run-1/2
+    /// Scale 1 keeps the library default (every soak and every earlier
     /// step used 10 000); a scale whose keyframe outgrows it gets a buffer
     /// that holds the whole AU twice over.
     #[test]

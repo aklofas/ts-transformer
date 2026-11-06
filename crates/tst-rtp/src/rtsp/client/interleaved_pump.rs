@@ -22,8 +22,9 @@
 //!
 //! The server side has its own path: a publisher's client→server `$`-frames
 //! are routed by `rtsp::server::session` through
-//! `rtsp::server::publish::drain_interleaved_head`, with the framing
-//! decision shared with this pump through `rtsp::message`.
+//! `rtsp::server::publish::drain_interleaved_head`. The `$`-frame rule is
+//! shared with this pump through `rtsp::framing`, and the RTSP-message
+//! boundary rule through `rtsp::message`.
 //!
 //! # Wire-up status
 //!

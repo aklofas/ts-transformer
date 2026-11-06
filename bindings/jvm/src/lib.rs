@@ -167,9 +167,9 @@ mod tests {
     /// deliberate no-op on every call after the first, per the bridge's
     /// own doc comment above). A forked-JVM integration test (the honest
     /// end-to-end check) is impractical in this harness, so the real
-    /// stderr-output path is checked by hand through Gradle. This is ONE
-    /// test covering both the unset and
-    /// the set branch in a single serialized run, rather than two
+    /// stderr-output path was checked by hand through Gradle. This is ONE
+    /// test covering both the unset and the set branch in a single
+    /// serialized run, rather than two
     /// `#[test]` fns that could interleave under cargo's parallel-by-default
     /// test runner and race the same env var / dispatcher.
     #[test]
