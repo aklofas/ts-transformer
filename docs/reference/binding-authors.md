@@ -247,10 +247,20 @@ shape but differ on whether the caller should retry:
 
 `TST_E_INVALID_USAGE` (-9) is the third sibling — used when the handle
 is in the wrong **state** for the call (e.g., a KLV push when the muxer has no KLV stream configured, or a
-consumed source; `finish()` is idempotent and is not an error twice). A call on a **cancelled** handle, or one a caught panic retired, is
-`TST_E_CLOSED` (-7), not this code, and using a freed pointer is
-undefined behaviour, not an error code. Distinct from both above
+consumed source; `finish()` is idempotent and is not an error twice). A data-plane call (receive, send, flush, finish) after `_cancel`, or a call
+that needs a shell a caught mutator panic retired, is `TST_E_CLOSED` (-7),
+not this code. Getters, statistics and reset entries use ungated accessors
+and stay callable after `_cancel`; their documented transport-availability
+errors can still apply. Using a freed pointer is undefined behaviour, not
+an error code. Distinct from both above
 because it's a programmer bug, not a runtime data-availability question.
+
+A caught panic records `TST_E_PANIC_CAUGHT` (-11) in last-error. The direct
+return depends on the function: an `int`-returning entry returns
+`TST_E_INTERNAL` (-10) from its outer panic guard, an entry that projects a
+handle-state panic returns -11, and a pointer-returning entry returns NULL.
+Read the function's return contract and last-error separately. A caught
+panic in a mutator retires the shell; a panic in a reader keeps it.
 
 When designing your binding's retry policy, key the decision off the
 TST_E code, not the message string (the message is a debug aid and is
@@ -294,10 +304,12 @@ lands while the call is parked. That detail reaches the caller unchanged in the
 Rust binding layer, Python, the JVM, and the C **send** path. The C **receive**
 path is the one exception: a receive that ends `EndOfStream` goes through
 `record_recv_closed`, which picks its code and message from the shared cancel
-flag so a caller close and a peer EOS can be told apart; a typed `Closed` (a
-cancel or close, whichever handle issued it) is −7 regardless of the flag.
-Either way a −7 there carries `receiver was cancelled or closed by caller`
-instead. Key on the CODE, not
+flag so a caller's `_cancel` and a peer EOS can be told apart; a typed
+`Closed` (from the handle's `_cancel`, or the library's own cancel at
+process exit) is −7 regardless of the flag. `_close` frees the handle and
+never interrupts a parked call, so it is never the source. Either way a −7
+there carries the message `receiver was cancelled or closed by caller`.
+Key on the CODE, not
 the message (see "C ABI error-mapping contract" above). The
 transport's OWN `close()` keeps producing `Closed` (`ExplicitClose` on
 `ManagedRecvTransport`, whose close is a caller-initiated end); the
