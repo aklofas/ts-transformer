@@ -213,12 +213,12 @@ fn loopback_mux_sender_to_demux_receiver_delivers_pmt_and_sample_and_eos() {
 ///
 /// Structurally the same rendezvous as
 /// `loopback_mux_sender_to_demux_receiver_delivers_pmt_and_sample_and_eos`
-/// above — see that test's comments for the threading rationale. Uses a
-/// disjoint port band (40_000+) so the two tests never collide on the
-/// same PID within this consolidated test binary.
+/// above — see that test's comments for the threading rationale. The port
+/// comes from the kernel's ephemeral range, not a pid-derived band, which
+/// another process on a shared runner could already hold.
 #[test]
 fn loopback_last_seen_micros_reports_after_sample_and_zero_for_unknown_pid() {
-    let port: u16 = 40_000 + (std::process::id() as u16 % 500);
+    let port = crate::common_net::free_udp_port();
 
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
 
