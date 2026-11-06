@@ -34,6 +34,10 @@ open 'srt://h?passphrase=abc' failed: can't connect	open 'srt://h?passphrase=<re
 "srt://u:p" x" s@h"	"srt://u:<redacted>@h"
 'srt://h?token=a' b' can't	'srt://h?token=<redacted>
 # Only a later URL opened by the same quote ends the span; a bare scheme-looking word does not.
+# That quote opens a URL only at the start of the text or after a separator, , ; : = ( [ {, so a
+# secret holding a quote and a scheme stays inside the span.
+'srt://127.0.0.1:9000?passphrase=abc'def'srt://sentinel'	'srt://127.0.0.1:9000?passphrase=<redacted>'
+'srt://a:1?passphrase=xxxxxxxxxx' 'srt://b:2?passphrase=yyyyyyyyyy'	'srt://a:1?passphrase=<redacted>' 'srt://b:2?passphrase=<redacted>'
 'srt://u:x' y://z@h'	'srt://u:<redacted>@h'
 'srt://h?token=a' b://c'	'srt://h?token=<redacted>'
 # A quote inside a secret with no closing quote after it does not end the span.

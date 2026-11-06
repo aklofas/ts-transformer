@@ -79,13 +79,17 @@ public final class Redact {
      * and before the next URL that is itself opened by {@code q}, not counting that opening
      * {@code q}; the end of the input when there is no such {@code q}. Stopping there keeps a
      * second quoted URL its own span, while a bare scheme-looking word inside the quoted text (a
-     * password holding {@code y://}) does not end it.
+     * password holding {@code y://}) does not end it. A {@code q} opens that next URL only at
+     * the start of the text or after a character {@link #precedesOpeningQuote} accepts, so a
+     * secret holding {@code 'srt://} does not end the span either.
      */
     private static int closingQuote(String s, int from, char q) {
         int limit = s.length();
         for (int[] next = nextUrl(s, from); next != null; next = nextUrl(s, next[1])) {
-            if (next[0] > 0 && s.charAt(next[0] - 1) == q) {
-                limit = next[0] - 1;
+            int quote = next[0] - 1;
+            if (quote >= 0 && s.charAt(quote) == q
+                    && (quote == 0 || precedesOpeningQuote(s.charAt(quote - 1)))) {
+                limit = quote;
                 break;
             }
         }
@@ -109,6 +113,15 @@ public final class Redact {
     private static boolean followsClosingQuote(char c) {
         return isSeparator(c) || c == ',' || c == ';' || c == '.' || c == ':'
             || c == ')' || c == ']' || c == '}';
+    }
+
+    /**
+     * Characters after which a quote may open a quoted URL: a token separator, {@code ,},
+     * {@code ;}, {@code :}, {@code =} or an opening bracket; identical to the Rust helper.
+     */
+    private static boolean precedesOpeningQuote(char c) {
+        return isSeparator(c) || c == ',' || c == ';' || c == ':' || c == '='
+            || c == '(' || c == '[' || c == '{';
     }
 
     /** Offsets of the next {@code scheme://} at or after {@code from}: scheme start, text after. */
