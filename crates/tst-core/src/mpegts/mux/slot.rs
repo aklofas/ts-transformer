@@ -5,10 +5,11 @@
 //! removed program or stream stays in place as a `None` tombstone so the
 //! handles of every other program and stream keep resolving.
 
-use super::MuxerProgramConfig;
 use super::state::{
     self, AudioStreamState, DataStreamState, KlvStreamState, SubtitleStreamState, VideoStreamState,
 };
+use super::{MuxStreamKind, MuxerProgramConfig};
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 pub(super) struct ProgramSlot {
@@ -35,6 +36,17 @@ pub(super) struct ProgramSlot {
     pub(super) psi_last: Option<u64>,
     /// Last PCR emission value at 27 MHz. None until first.
     pub(super) pcr_last: Option<u64>,
+    /// Program number this slot last carried; kept when the slot is
+    /// tombstoned so a reconfigure re-adding that program prefers this slot.
+    /// The in-place reconfigure overwrites it when it reuses the slot.
+    #[allow(dead_code)] // read once the muxer reconfigures in place
+    pub(super) last_program_number: u16,
+    /// Every PID this slot has placed -> the kind and within-index of the
+    /// stream slot it occupied. Entries are never removed, so a tombstoned
+    /// stream slot still names the PID it carried; the in-place reconfigure
+    /// adds an entry for each stream it places.
+    #[allow(dead_code)] // read once the muxer reconfigures in place
+    pub(super) placed_pids: BTreeMap<u16, (MuxStreamKind, usize)>,
 }
 
 impl ProgramSlot {
@@ -43,6 +55,25 @@ impl ProgramSlot {
         let (video, klv, audio, subtitle, data) = state::collect_stream_states(prog);
         let pcr_pid = state::resolve_pcr_pid(prog);
         let pmt_descriptor_cache = state::build_pmt_descriptor_cache(prog);
+        let mut placed_pids = BTreeMap::new();
+        let kinds = [
+            (
+                MuxStreamKind::Video,
+                video.iter().map(|s| s.pid).collect::<Vec<_>>(),
+            ),
+            (MuxStreamKind::Klv, klv.iter().map(|s| s.pid).collect()),
+            (MuxStreamKind::Audio, audio.iter().map(|s| s.pid).collect()),
+            (
+                MuxStreamKind::Subtitle,
+                subtitle.iter().map(|s| s.pid).collect(),
+            ),
+            (MuxStreamKind::Data, data.iter().map(|s| s.pid).collect()),
+        ];
+        for (kind, pids) in kinds {
+            for (within, pid) in pids.into_iter().enumerate() {
+                placed_pids.insert(pid, (kind, within));
+            }
+        }
         Self {
             pmt_version: 0,
             pmt_identity: pmt_identity_key(prog, pcr_pid, &pmt_descriptor_cache),
@@ -56,6 +87,8 @@ impl ProgramSlot {
             pmt_descriptor_cache,
             psi_last: None,
             pcr_last: None,
+            last_program_number: prog.program_number,
+            placed_pids,
         }
     }
 

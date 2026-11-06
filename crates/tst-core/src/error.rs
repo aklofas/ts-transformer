@@ -805,13 +805,14 @@ pub enum MuxErrorKind {
     /// do not retry with the same input.
     InputMalformed,
 
-    /// `MuxerConfig::validate()` rejected the construction-time config
+    /// `MuxerConfig::validate()` rejected the offered config
     /// (duplicate PIDs, too many streams, malformed descriptor TLV,
     /// PCR-PID conflicts, ISO 639 / DVB teletext field violations,
-    /// PMT over-budget, etc.). The muxer was not constructed; no
-    /// pushes have happened.
+    /// PMT over-budget, etc.).
     ///
-    /// **Action:** fix the config and retry construction. The 21
+    /// **Action:** the offered config was refused and the muxer is
+    /// unchanged: `new` built nothing, `reconfigure` left the running
+    /// config in place. Fix the config and retry the call. The 21
     /// `MuxError` variants in this category collectively cover every
     /// `MuxerConfig::validate()` rejection path.
     ConfigInvalid,
@@ -829,8 +830,7 @@ pub enum MuxErrorKind {
     ///
     /// **Action:** the muxer state is unchanged. Fix the API call site
     /// and retry; the muxer remains usable. Distinct from
-    /// `ConfigInvalid` (which requires reconstructing the muxer from a
-    /// new config).
+    /// `ConfigInvalid` (which refuses an offered config).
     InvalidUsage,
 
     /// Muxer outbound queue is at capacity ([`MuxError::BufferFull`]).
