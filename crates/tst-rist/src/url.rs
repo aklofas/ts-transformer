@@ -275,10 +275,11 @@ mod tests {
     use super::*;
 
     /// A raw `?` in a numeric-prefix password puts its tail in the query;
-    /// no parse error may echo it.
+    /// no parse error may echo it. The host is an IP literal so the parse
+    /// gets as far as the query.
     #[test]
     fn errors_withhold_a_query_that_may_hold_a_password_tail() {
-        let e = RistUrl::parse("rist://u:12345?buffer=secret-tail@host:9000").unwrap_err();
+        let e = RistUrl::parse("rist://127.0.0.1:12345?buffer=secret-tail@host:9000").unwrap_err();
         for text in [e.to_string(), format!("{e:?}")] {
             assert!(!text.contains("secret-tail"), "{text}");
         }
