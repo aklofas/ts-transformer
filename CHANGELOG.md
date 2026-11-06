@@ -64,6 +64,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A malformed percent escape in a URL query now fails with an error that names the offset and the key, never the value. The same holds for `rist://` URLs. Migration: write a literal `%` as `%25`.
 - A repeated URL key has every occurrence validated, so an invalid one anywhere is an error; the last valid one still wins. Migration: correct or remove every invalid occurrence; a valid later one no longer covers an invalid earlier one.
 - The URL integer grammar refuses a leading `+` and leading zeros (`+5`, `007`), which libsrt's own apps accept. Migration: write the plain decimal (`5`, `7`).
+- A UDP buffer or input-rate value that wraps negative in libsrt's signed field is refused. Migration: keep each value at or below `i32::MAX`.
 
 ### Changed — tst-core, tst-py (BREAKING)
 
@@ -144,6 +145,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tst_demux_config_add_treat_as` / `_add_link_klv` return `TST_E_INVALID_CONFIG` for a PID above `0x1FFF` (the override could never match a packet); `tst_mux_config_set_*_descriptors` refuse a TLV list that does not consume `tlv_total_len` exactly (trailing bytes were silently ignored, hiding caller length bugs). A call with exactly one of `tlv_count` / `tlv_total_len` zero now returns `TST_E_INVALID_CONFIG` and leaves the list unchanged; it used to clear the list. Migration: pass both as zero to clear.
 - `tst_*_open_listener` (all eight receiver entry points) binds and listens on any URL, host-bearing or not; `srt://0.0.0.0:7000` used to dial out. An explicit `?mode=caller` / `?mode=rendezvous` on these entry points is refused with `TST_E_INVALID_CONFIG`. A URL with invalid UTF-8 is refused once; it was previously reparsed with U+FFFD in place of the caller's bytes (a passphrase could change silently). Drop `?mode=caller` / `?mode=rendezvous` from `_open_listener` URLs and use the caller entry points to dial out.
 - C: the enum-valued parameter of `tst_mux_config_add_video_stream`, `tst_mux_config_add_klv_stream`, `tst_mux_config_add_audio_stream`, `tst_mux_config_add_audio_stream_with_language`, `tst_sender_config_set_framing_mode`, `tst_reconnect_policy_set_overflow_policy`, `tst_reconnect_policy_set_mode` and `tst_misp_time_extract` is now spelled `int32_t`. The value and calling convention are unchanged, and existing C and C++ calls compile as before. The one exception is code that stores one of these functions in a function pointer declared with the old enum parameter type. Migration: declare a stored function pointer with the header's `int32_t` parameter type.
+- C: TCP, UDP, RIST and RTP plain receivers report a reset or read failure as `TST_E_TRANSPORT` (-8) with the transport's message. They used to report `TST_E_END_OF_STREAM`. A clean TCP FIN is still -12. Plain SRT receivers keep -12 for a lost connection, because libsrt cannot tell a peer close from an abort. Migration: on these receivers treat -8 as a lost connection, which used to read as -12.
+- C: a malformed `rtp://` URL fails with `TST_E_RTP_TRANSPORT` (-15), the code the same opens already returned for a receive-only key on a send URL, and `tst_rtsp_client_builder_new` refuses a malformed `rtsp://` or `rtsps://` URL with `TST_E_RTSP_PROTOCOL` (-16). Both used to return `TST_E_INVALID_CONFIG`. Python already raised the matching kinds. Migration: check for -15 or -16, not `TST_E_INVALID_CONFIG`, to detect a malformed URL on these calls.
 
 ### Changed — tst-py, tst-jni (BREAKING)
 
@@ -152,6 +155,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-tcp (BREAKING)
 
 - A `tcp://` URL that carries `cert`, `key` or `ca` is now an error naming the key and asking for `tcps://`, and a `tcps://` URL with an unknown query key is an error. Before, TLS keys on a plaintext URL were stored and the connection ran unencrypted, and a misspelt `cafile=` on `tcps://` was ignored so the server was verified against the native roots. `tcp://` still ignores other unknown keys.
+- `from_url` refuses `?listen=1` on the caller builder, as documented. Migration: build a listener with `TcpListenerBuilder::from_url`, or drop `?listen=1` to dial out.
 
 ### Fixed — tst-tcp, tst-rtp, tst-hls, tst-webrtc
 
@@ -189,9 +193,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed — tstrans-rist-sys, tst-rist
 
 - A Simple-profile receiver whose RTCP port (data port + 1) is already bound now returns `RistError::PeerCreateFailed` instead of crashing the process; the vendored librist 0.2.20 build carries a one-statement fix (the RTCP peer is null-checked before use). A system librist found through pkg-config still has the upstream defect.
-- `tst-rist` refuses the Simple profile together with an encryption key (`RistError::InvalidConfig`) for both roles, instead of sending in the clear.
 - `tst-rist` `pkt_size` is accepted from 1 to 9968 bytes (`RistConfig::MAX_PKT_SIZE`); a larger value used to open and then latch the sender dead on its first oversized write.
-- `tst-rist` refuses a `buffer` under 1 ms.
 - A panicking log subscriber no longer aborts the process from inside librist's log callback.
 
 ### Fixed — tst-c
@@ -205,10 +207,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tst_rtsp_client_builder_connect` keeps URL credentials, `?transport=`, `?rtsp_version=`, `?tcp_keepalive=`, `?recv_timeout=` and the explicit `_transport_pref`.
 - `tst_rtsp_session_into_demux_receiver` keeps the RTSP client alive until `tst_rtp_demux_receiver_close`, which now sends TEARDOWN, and frees the session on success; on a NULL return the session stays the caller's. After a non-NULL return the session pointer is freed; a program that still called `tst_rtsp_session_cancel` or `tst_rtsp_session_teardown_and_free` on it must stop. After `tst_rtsp_session_cancel` it returns NULL with `TST_E_CLOSED` (it used to hand back a receiver whose keepalive thread had already exited, so the server reaped the session after its timeout); the NULL-return contract says the allocation is retained while its state may be closed.
 - C: `tst_mux_publisher_with_config_hls` now consumes `hls` on every return, as documented. A rejected or null mux config used to leak the publisher.
-- C: TCP, UDP, RIST and RTP plain receivers report a reset or read failure as `TST_E_TRANSPORT` (-8) with the transport's message. They used to report `TST_E_END_OF_STREAM`. A clean TCP FIN is still -12. Plain SRT receivers keep -12 for a lost connection, because libsrt cannot tell a peer close from an abort.
 - C: `tstrans.h` compiles as C++ with g++ (the ABI asserts use `static_assert` under `__cplusplus`).
 - C: `tst_rtsp_session_teardown_and_free` returns 0 when the server answers TEARDOWN. It used to report `TST_E_CLOSED`.
-- C: a malformed `rtp://` URL fails with `TST_E_RTP_TRANSPORT` (-15), the code the same opens already returned for a receive-only key on a send URL, and `tst_rtsp_client_builder_new` refuses a malformed `rtsp://` or `rtsps://` URL with `TST_E_RTSP_PROTOCOL` (-16). Both used to return `TST_E_INVALID_CONFIG`. Python already raised the matching kinds.
 - C: `tst_annexb_to_length_prefixed` refuses overlapping `annexb`/`out` with `TST_E_INVALID_CONFIG`.
 - C: an out-of-range value for a codec, KLV stream type, framing mode, overflow policy or reconnect mode argument returns `TST_E_INVALID_CONFIG`. It used to be undefined behaviour.
 - C: a host thread-local destructor that calls into the library after the library's own last-error slot is destroyed no longer aborts the process; such a call reads `TST_E_INTERNAL` from `tst_get_last_error` and `""` from `tst_get_last_error_str`, and its error record is dropped.
@@ -268,14 +268,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `SrtSocket::stream_id()` drops libsrt's trailing NUL padding; a one-character stream ID used to read back as `"a\0\0\0"`.
 - A listener applies peer latency, send buffers and input bandwidth to the sockets it accepts.
 - `accept_timeout` no longer waits past its timeout when libsrt retires a queued connection between readiness and the accept, and its epoll wait no longer overflows libsrt's millisecond timeout multiply.
-- A UDP buffer or input-rate value that wraps negative in libsrt's signed field is refused.
 - `Passphrase::new` accepts 10 to 80 bytes of UTF-8 (libsrt's limit) and `StreamId::new` accepts UTF-8 up to 512 bytes; both rejected valid values before.
 - IPv6 hosts written with an RFC 6874 `%25` zone delimiter decode to the `%` form and resolve, a named zone included.
 - libsrt's empty accept-probe log line is logged at debug, and a panicking log subscriber no longer aborts the process from inside libsrt's log callback.
 
 ### Fixed — tst-tcp
 
-- `from_url` refuses `?listen=1` on the caller builder, as documented.
 - A TLS receive sees a cancel between socket reads, even when a peer drips a record.
 - A send that fails after a cancel reports `ExplicitClose`.
 - A `cancel()` that wakes a parked `send_bytes` always reports `ExplicitClose`; it could report `Closed`.
@@ -324,6 +322,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed — tst-rist (BREAKING)
 
 - `buffer=N` is a fixed N ms recovery window; before, only the minimum was set and the 200 ms default started at 600 ms. Migration: set `buffer` to the recovery window you want; it is now both the minimum and the maximum.
+- `tst-rist` refuses the Simple profile together with an encryption key (`RistError::InvalidConfig`) for both roles, instead of sending in the clear. Migration: with an encryption key, use the Main profile.
+- `tst-rist` refuses a `buffer` under 1 ms. Migration: set `buffer` to 1 ms or more.
 
 ### Changed — tst-udp (BREAKING)
 
