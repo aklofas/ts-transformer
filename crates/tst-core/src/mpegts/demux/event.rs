@@ -447,6 +447,10 @@ pub enum NonConformantIssue {
     /// A PMT introduced a stream PID that's already bound to a different
     /// program. PID uniqueness across programs is required by ISO 13818-1;
     /// the demuxer keeps the first-program-wins binding and drops the second.
+    ///
+    /// Also reported, with both `programs` entries equal, when one PMT lists
+    /// the same ES PID twice: the first entry is kept and later copies are
+    /// dropped, one issue per repeated PID however many copies follow.
     #[error(fmt = fmt_pid_reused)]
     PidReusedAcrossPrograms { pid: u16, programs: [u16; 2] },
 
