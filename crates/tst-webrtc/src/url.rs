@@ -216,14 +216,16 @@ impl WhepUrl {
     /// - [`UrlError::BadHost`] when the host is not a literal IP address.
     /// - [`UrlError::BadQueryValue`] for a value its key cannot use (an empty
     ///   `token` among them), with key
-    ///   `path` for a path other than empty or `/`, and with key `cert` for a
+    ///   `path` for a path other than empty or `/` (its value shown as
+    ///   `<redacted>` when the path holds an `@`), and with key `cert` for a
     ///   `wheps://` URL that lacks `cert` or `key` and for a plaintext
     ///   `whep://` URL that has either.
     /// - [`UrlError::UnknownQueryKey`] for a key [`URL_KEYS`] does not list.
     /// - [`UrlError::Rejected`] when the URL's structure does not parse or it
     ///   carries userinfo (`user:pass@`).
     pub fn parse(s: &str) -> Result<Self, UrlError> {
-        // A password holding a raw `?` puts its tail in the query.
+        // A password holding a raw `?` puts its tail in the query; one
+        // holding a raw `/` puts it in the path (withheld where it is read).
         Self::parse_unredacted(s).map_err(|e| e.withheld_for(s))
     }
 
@@ -252,9 +254,18 @@ impl WhepUrl {
             UrlError::BadHost("host is not a literal IPv4/IPv6 address".to_string())
         })?;
         if !matches!(parsed.path, "" | "/") {
+            // A password holding a raw `/` after a numeric prefix splits at
+            // that `/`: `whep://192.0.2.10:12345/tail@h` parses as port 12345
+            // and path `/tail@h`, with no userinfo, so such a path may be the
+            // tail of a password.
+            let value = if parsed.path.contains('@') {
+                "<redacted>"
+            } else {
+                parsed.path
+            };
             return Err(UrlError::BadQueryValue {
                 key: "path".into(),
-                value: parsed.path.to_string(),
+                value: value.to_string(),
                 detail: "a WHEP bind URL takes no path; mounts are added on the server".into(),
             });
         }
