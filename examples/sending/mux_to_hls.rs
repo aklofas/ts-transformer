@@ -66,6 +66,36 @@ fn starts_decoding(raw: &tst_core::shared::SharedBytes, codec: VideoCodec, rai: 
     })
 }
 
+/// Which access units of the input are re-muxed. The first non-AV1 video PID
+/// seen is the one re-muxed; its units are admitted from the first keyframe
+/// on, so segment 0 opens on a unit a decoder can start from.
+#[derive(Default)]
+struct VideoPick {
+    pid: Option<u16>,
+    started: bool,
+    saw_av1: bool,
+}
+
+impl VideoPick {
+    /// Whether this access unit is pushed.
+    fn admit(&mut self, pid: u16, codec: VideoCodec, key: bool) -> bool {
+        if codec == VideoCodec::Av1 {
+            // AV1 is OBU-framed; `push_video` takes Annex-B NAL units, so it
+            // is skipped rather than fatal: another video stream of the same
+            // input may still be re-muxable.
+            self.saw_av1 = true;
+            return false;
+        }
+        if *self.pid.get_or_insert(pid) != pid {
+            return false;
+        }
+        // A capture cut mid-GOP starts on delta frames; a playlist whose
+        // first segment opens on one is undecodable until the next keyframe.
+        self.started |= key;
+        self.started
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let usage = "usage: mux_to_hls <input.ts> <out_dir> <bind>";
@@ -89,10 +119,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // The muxer needs the codec before the first push, and only the input
-    // knows it: the shell is built on the first video access unit, and
-    // remembers that unit's PID so a second video stream is skipped.
+    // knows it: the shell is built on the first admitted access unit (the
+    // first keyframe of the first re-muxable video stream).
     let mut publisher = Some(publisher);
-    let mut shell: Option<(u16, MuxPublisher<HlsPublisher>)> = None;
+    let mut shell: Option<MuxPublisher<HlsPublisher>> = None;
+    let mut pick = VideoPick::default();
     let mut pushed = 0u64;
 
     let mut demux = Demuxer::new();
@@ -123,9 +154,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             else {
                 continue;
             };
-            if codec == VideoCodec::Av1 {
-                // AV1 is OBU-framed; `push_video` takes Annex-B NAL units.
-                return Err("mux_to_hls re-muxes H.264, H.265 or H.266 video, not AV1".into());
+            let key = starts_decoding(&raw, codec, random_access_indicator);
+            if !pick.admit(stream.pid, codec, key) {
+                continue;
             }
             if shell.is_none() {
                 let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
@@ -134,16 +165,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cfg.add_program(prog.build());
                 cfg.psi_interval_ms(10);
                 let p = publisher.take().expect("the publisher is taken once");
-                shell = Some((stream.pid, MuxPublisher::with_config(p, cfg.build()?)?));
+                shell = Some(MuxPublisher::with_config(p, cfg.build()?)?);
             }
-            let Some((pid, shell)) = shell.as_ref() else {
+            let Some(shell) = shell.as_ref() else {
                 unreachable!("built above");
             };
-            if stream.pid != *pid {
-                continue;
-            }
             // The demuxed unit is already Annex-B: push it as it came.
-            let key = starts_decoding(&raw, codec, random_access_indicator);
             match dts {
                 Some(dts) if dts != pts => shell.push_video_with_dts(&raw, pts, dts, key)?,
                 _ => shell.push_video(&raw, pts, key)?,
@@ -155,8 +182,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let Some((_, shell)) = shell else {
-        return Err(format!("{input} carries no video stream").into());
+    let Some(shell) = shell else {
+        return Err(match (pick.pid, pick.saw_av1) {
+            (Some(pid), _) => format!("{input} carries no keyframe on PID {pid:#x}"),
+            (None, true) => "mux_to_hls re-muxes H.264, H.265 or H.266 video, not AV1".to_string(),
+            (None, false) => format!("{input} carries no video stream"),
+        }
+        .into());
     };
     let stats = shell.stats();
     eprintln!(
@@ -174,5 +206,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     loop {
         std::thread::park();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admit_skips_aus_before_the_first_keyframe() {
+        let mut p = VideoPick::default();
+        let got: Vec<bool> = [false, false, true, false]
+            .into_iter()
+            .map(|k| p.admit(0x100, VideoCodec::H264, k))
+            .collect();
+        assert_eq!(got, [false, false, true, true]);
+    }
+
+    #[test]
+    fn admit_pushes_a_leading_keyframe() {
+        let mut p = VideoPick::default();
+        assert!(p.admit(0x100, VideoCodec::H264, true));
+    }
+
+    #[test]
+    fn admit_ignores_av1_on_another_pid() {
+        let mut p = VideoPick::default();
+        assert!(!p.admit(0x200, VideoCodec::Av1, true));
+        assert!(p.admit(0x100, VideoCodec::H264, true));
+        assert!(p.saw_av1);
+    }
+
+    #[test]
+    fn admit_skips_other_pids_after_selection() {
+        let mut p = VideoPick::default();
+        assert!(p.admit(0x100, VideoCodec::H264, true));
+        assert!(!p.admit(0x101, VideoCodec::H265, true));
+    }
+
+    #[test]
+    fn an_av1_only_input_selects_no_pid() {
+        let mut p = VideoPick::default();
+        assert!(!p.admit(0x200, VideoCodec::Av1, true));
+        assert_eq!(p.pid, None);
+        assert!(p.saw_av1);
     }
 }
