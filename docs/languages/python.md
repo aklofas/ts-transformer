@@ -1319,8 +1319,8 @@ with RtspClient.connect_h264(cfg) as session:
         mux = Muxer(MuxerConfigBuilder().add_program(prog).build())
         buf = bytearray(1316)
         for au in rx:                              # recv_au(), GIL released
-            # au.pts is a 90 kHz decode-order timestamp — same clock as
-            # MPEG-TS PTS, no rescaling needed.
+            # au.pts is a 90 kHz presentation timestamp; AUs arrive in decode order.
+            # MPEG-TS PTS uses the same clock, so no rescaling is needed.
             mux.push_video(au.annexb, pts=Pts90khz.from_raw(au.pts), key_frame=au.key_frame)
             while (n := mux.pull(buf)) > 0:
                 pass   # write buf[:n] to file / SRT / etc.
@@ -1351,7 +1351,7 @@ with RtspClient.connect_h264(cfg) as session:
   created and while it is live.
 
 - **B-frame / DTS limitation.** `au.pts` is derived from the RTP timestamp
-  (decode order). Most live cameras do not use B-frames — PTS = DTS. If the
+  (presentation time; AUs arrive in decode order). Most live cameras do not use B-frames — PTS = DTS. If the
   source uses B-frames, pass `au.pts` as the PTS and supply a separately-
   derived DTS via the relevant muxer overload.
 

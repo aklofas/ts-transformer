@@ -329,7 +329,7 @@ It covers every step with rich `// why + how` commentary.
 |---|---|
 | `H264Depacketizer` | Low-level state machine: `feed(header, payload)` / `next_au()` / `flush()`. Use when you are not going through `H264Receiver`. |
 | `H264Receiver` | High-level shell: `listen("rtp://…?pt=96")` or `session.into_h264_receiver(config)`. `recv_au()` → `Option<H264Au>`. |
-| `H264Au` | Output: `annexb` (Annex-B bytes), `pts: Pts90khz` (90 kHz decode-order), `key_frame`, `rtp_timestamp`. |
+| `H264Au` | Output: `annexb` (Annex-B bytes), `pts: Pts90khz` (90 kHz presentation time, delivered in decode order), `key_frame`, `rtp_timestamp`. |
 | `H264DepayConfig` | `payload_type`, `parameter_set_injection: ParameterSetInjection`, `initial_parameter_sets`, `max_au_bytes` (8 MiB default cap). |
 | `ParameterSetInjection` | `None` — pass through as received; `BeforeIdr` (default) — prepend cached SPS/PPS before every IDR frame. |
 | `H264DepayStats` | `aus_emitted`, `aus_dropped`, `seq_gaps`, `parameter_set_updates`, … |
@@ -362,9 +362,9 @@ while let Some(au) = rx.recv_au()? {
   the stored SPS/PPS before every IDR frame — giving decoders a clean
   self-contained start point even when the camera omits in-band parameter sets.
 
-- **B-frame / DTS limitation.** `H264Au::pts` is derived from the RTP
-  timestamp, which reflects decode order. If the source encoder uses B-frames
-  (PTS ≠ DTS), the `pts` values may be non-monotonic. Feed them directly to
+- **B-frame / DTS limitation.** `H264Au::pts` is a presentation timestamp
+  derived from RTP. Access units arrive in decode order, so B-frame sources
+  can produce non-monotonic `pts` values. Feed them directly to
   `muxer.push_video` for low-latency live cameras (no B-frames, PTS = DTS); use
   `push_video_to_with_dts` and derive DTS separately for B-frame content.
 
