@@ -205,7 +205,7 @@ The replay's time rules:
 
 A path whose receiver died, or was stopped for a stall, gets a fresh receiver
 before the next pick, so a dead path costs one verdict, not the rest of the
-run, and the replay fails: each unexpected exit is recorded. A path is restarted at most once per pick. The restarted receiver
+run, and the replay fails: each unexpected exit is recorded. A clean exit before `bye`, a failure status after `bye`, and a receiver still running after `quit` all count as unexpected. A path is restarted at most once per pick. The restarted receiver
 appends to its path's log, and the replay summary and the report list, per
 path, the SHA of each pick a restart preceded. A path's memory slope after a
 restart mixes two processes; it is recorded with the rest and, like them, not

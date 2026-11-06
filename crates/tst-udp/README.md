@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Stability: Stable** — small, settled surface. See the [API
+**Stability: Stable** for the transport; `opener` is **Provisional**. See the [API
 stability
 reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 

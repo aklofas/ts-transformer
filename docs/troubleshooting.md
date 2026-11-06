@@ -224,7 +224,7 @@ Fix: use plain `decode` (no UL family check) if you're handling non-ST-0601 reco
 
 **`KlvDecodeError::DuplicateTag`**
 
-The record contains the same tag twice in its top-level list. ST 0601 disallows duplicates within a single LS.
+The record repeats a tag in its top-level list. For ST 0601, only `decode_strict_compliance` refuses a repeated single-use tag (Tags 102 and 115 allow several); `decode_strict`, `decode` and `decode_unchecked` keep the last occurrence. ST 0102 strict decode and ST 0903 decode refuse duplicates too.
 
 Fix: this is almost always a producer bug; fix the producer.
 
