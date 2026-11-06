@@ -1517,7 +1517,9 @@ jobs:
   python-core:
     name: tst-py default tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The apt installs below (build prerequisites, gdb) have taken 5-7 min
+    # each on a slow runner mirror; 30 min keeps that from cutting pytest.
+    timeout-minutes: 30
     # The default (non-pandas) pytest suite exercises Demuxer, Muxer, KLV
     # typed decode/encode, codec parsers, and io helpers. Python kinds come
     # from one Rust table, resolved at `import tstrans`, so a gap fails the
@@ -1542,8 +1544,8 @@ jobs:
 
       - name: Install build prerequisites
         run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 install -y build-essential cmake pkg-config meson ninja-build
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -1588,7 +1590,7 @@ jobs:
         run: |
           ulimit -c unlimited
           echo "${{ github.workspace }}/core.%p" | sudo tee /proc/sys/kernel/core_pattern
-          sudo apt-get -o Acquire::Retries=5 install -y gdb
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 install -y gdb
 
       - name: pytest default (non-pandas)
         # pyproject.toml sets `addopts = "-m 'not pandas'"` so this runs
