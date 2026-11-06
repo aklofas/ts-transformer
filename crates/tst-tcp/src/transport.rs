@@ -251,6 +251,7 @@ impl TcpTransport {
 
     /// Build a caller-side `TcpTransport` from an already-parsed URL + config.
     pub fn connect_with_config(url: &TcpUrl, cfg: &TcpConfig) -> Result<Self, TcpError> {
+        cfg.check_pkt_size()?;
         if url.tls {
             #[cfg(feature = "tls")]
             {

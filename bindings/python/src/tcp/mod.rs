@@ -359,7 +359,8 @@ impl PyTcpTransportBuilder {
         slf
     }
 
-    /// Maximum payload chunk size per `send()` call (default 64 KiB).
+    /// Maximum payload chunk size per `send()` call (default 64 KiB);
+    /// zero raises `TcpError(kind=INVALID_CONFIG)` at `build()`.
     fn pkt_size(mut slf: PyRefMut<'_, Self>, v: usize) -> PyRefMut<'_, Self> {
         slf.pkt_size = Some(v);
         slf
@@ -619,7 +620,8 @@ impl PyTcpListenerBuilder {
         slf
     }
 
-    /// Maximum payload chunk size for accepted connections (default 64 KiB).
+    /// Maximum payload chunk size for accepted connections (default 64 KiB);
+    /// zero raises `TcpError(kind=INVALID_CONFIG)` at `build()`.
     fn pkt_size(mut slf: PyRefMut<'_, Self>, v: usize) -> PyRefMut<'_, Self> {
         slf.pkt_size = Some(v);
         slf

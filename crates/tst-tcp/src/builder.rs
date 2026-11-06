@@ -96,7 +96,7 @@ impl TcpTransportBuilder {
     ///
     /// TCP is a bytestream; this is an upper bound on how much the crate
     /// accepts per single call. Larger values may reduce syscall overhead.
-    /// Default: 64 KiB.
+    /// Default: 64 KiB. Zero is refused by [`build`](Self::build).
     pub fn pkt_size(&mut self, n: usize) -> &mut Self {
         self.config.pkt_size = Some(n);
         self
@@ -210,6 +210,7 @@ impl TcpListenerBuilder {
     /// - TLS handshake setup fails (for `tcps://`).
     /// - The TLS feature is disabled but the URL used `tcps://`.
     pub fn build(&self) -> Result<TcpListener, TcpError> {
+        self.config.check_pkt_size()?;
         let mut listener = TcpListener::from_parsed(&self.url)?;
         // Apply any builder-set config overrides.
         *listener.config_mut() = self.config.clone();
@@ -238,6 +239,29 @@ mod tests {
             .nodelay(true)
             .rcvbuf(4 * 1024 * 1024)
             .sndbuf(4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn pkt_size_zero_is_refused_at_build() {
+        // Refused before any connect or bind, so no peer is needed.
+        let mut b = TcpTransportBuilder::from_url("tcp://127.0.0.1:1").unwrap();
+        let refused = |r: Result<(), TcpError>| match r {
+            Err(TcpError::InvalidConfig(m)) => m.contains("pkt_size"),
+            _ => false,
+        };
+        assert!(refused(b.pkt_size(0).build().map(drop)));
+
+        let mut l = TcpListenerBuilder::from_url("tcp://127.0.0.1:0?listen=1").unwrap();
+        assert!(refused(l.pkt_size(0).build().map(drop)));
+
+        let url = crate::url::TcpUrl::parse("tcp://127.0.0.1:1").unwrap();
+        let cfg = TcpConfig {
+            pkt_size: Some(0),
+            ..TcpConfig::default()
+        };
+        assert!(refused(
+            TcpTransport::connect_with_config(&url, &cfg).map(drop)
+        ));
     }
 
     #[test]

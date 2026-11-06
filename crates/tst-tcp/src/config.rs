@@ -31,7 +31,8 @@ pub struct TcpConfig {
     /// Default: 10 s (see [`TcpConfig::connect_timeout_or_default`]).
     pub connect_timeout: Option<Duration>,
     /// Send-side payload chunk size; per-call max for `send_bytes`.
-    /// Default 64 KiB (matches reasonable TCP send-buffer sizing).
+    /// Default 64 KiB (matches reasonable TCP send-buffer sizing). Zero is
+    /// refused at connect, listener build and accept (plain and TLS).
     pub pkt_size: Option<usize>,
     /// Server certificate, PEM (`tcps://` listener only).
     pub cert: Option<PathBuf>,
@@ -67,6 +68,17 @@ impl TcpConfig {
 
     pub fn pkt_size_or_default(&self) -> usize {
         self.pkt_size.unwrap_or(Self::DEFAULT_PKT_SIZE)
+    }
+
+    /// Refuse `pkt_size` 0: a receiver would read into an empty buffer and
+    /// report the stream closed at once, and every send would fail.
+    pub(crate) fn check_pkt_size(&self) -> Result<(), crate::error::TcpError> {
+        if self.pkt_size == Some(0) {
+            return Err(crate::error::TcpError::InvalidConfig(
+                "pkt_size must be positive".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn connect_timeout_or_default(&self) -> Duration {

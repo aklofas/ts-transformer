@@ -163,6 +163,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-tcp (BREAKING)
 
+- `pkt_size=0` is refused: the URL key fails with `UrlError::BadQueryValue`, and a zero set through `TcpTransportBuilder::pkt_size`, `TcpListenerBuilder::pkt_size` or the `TcpConfig` field fails `build`, `TcpTransport::connect_with_config`, `TcpListener::accept_blocking` and `tls::accept_tls` with `TcpError::InvalidConfig` (Python `TcpError(kind=INVALID_CONFIG)`), instead of producing a receiver that reports closed at once and a sender whose every send fails. Migration: omit `pkt_size` for the default or pass a positive size.
 - A `tcp://` URL that carries `cert`, `key` or `ca` is now an error naming the key and asking for `tcps://`, and a `tcps://` URL with an unknown query key is an error. Before, TLS keys on a plaintext URL were stored and the connection ran unencrypted, and a misspelt `cafile=` on `tcps://` was ignored so the server was verified against the native roots. `tcp://` still ignores other unknown keys.
 - `from_url` refuses `?listen=1` on the caller builder, as documented. Migration: build a listener with `TcpListenerBuilder::from_url`, or drop `?listen=1` to dial out.
 

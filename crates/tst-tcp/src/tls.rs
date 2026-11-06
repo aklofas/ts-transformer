@@ -418,6 +418,7 @@ pub fn accept_tls(
     cfg: &TcpConfig,
     server_config: Arc<ServerConfig>,
 ) -> Result<TcpTransport, TcpError> {
+    cfg.check_pkt_size()?;
     apply_knobs(&socket, cfg).map_err(TcpError::Io)?;
     let conn = ServerConnection::new(server_config)
         .map_err(|e| TcpError::Tls(format!("ServerConnection::new: {e}")))?;
@@ -437,6 +438,28 @@ mod tests {
                 inner: io::Error::other("unreadable"),
                 path: "/nonexistent/cert.pem".into(),
             },
+        }
+    }
+
+    #[test]
+    fn accept_tls_refuses_pkt_size_zero() {
+        let c = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let server_config = tst_core::net::tls::server_config_from_pem(
+            c.cert.pem().as_bytes(),
+            c.signing_key.serialize_pem().as_bytes(),
+        )
+        .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (socket, peer) = listener.accept().unwrap();
+        let cfg = TcpConfig {
+            pkt_size: Some(0),
+            ..TcpConfig::default()
+        };
+        match accept_tls(socket, peer, &cfg, Arc::new(server_config)) {
+            Err(TcpError::InvalidConfig(m)) => assert!(m.contains("pkt_size"), "{m}"),
+            Err(e) => panic!("expected InvalidConfig, got {e:?}"),
+            Ok(_) => panic!("pkt_size 0 must be refused"),
         }
     }
 
