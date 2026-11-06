@@ -87,17 +87,22 @@ struct StreamPlacer<'a> {
 }
 
 impl StreamPlacer<'_> {
-    /// Same PID's tombstone, else the lowest free index, else append.
-    fn place(&mut self, kind: MuxStreamKind, pid: u16) -> usize {
-        let k = kind_index(kind);
-        let free = &mut self.free[k];
-        let preferred = self
+    /// The free index that last carried `pid` as a `kind` stream, if any.
+    fn claim_same_pid(&mut self, kind: MuxStreamKind, pid: u16) -> Option<usize> {
+        let free = &mut self.free[kind_index(kind)];
+        let i = self
             .slot
             .and_then(|s| s.placed_pids.get(&pid))
             .filter(|(placed, _)| *placed == kind)
-            .and_then(|(_, w)| free.iter().position(|f| f == w));
-        if let Some(i) = preferred.or((!free.is_empty()).then_some(0)) {
-            return free.remove(i);
+            .and_then(|(_, w)| free.iter().position(|f| f == w))?;
+        Some(free.remove(i))
+    }
+
+    /// The lowest free index, else a new index after the vector.
+    fn claim_any(&mut self, kind: MuxStreamKind) -> usize {
+        let k = kind_index(kind);
+        if !self.free[k].is_empty() {
+            return self.free[k].remove(0);
         }
         let base = self.slot.map_or(0, |s| kind_len(s, kind));
         self.appended[k] += 1;
@@ -222,16 +227,27 @@ impl Muxer {
                         Some(within)
                     }
                 };
-                let (within, survivor) = match survivor_within {
-                    Some(w) => (w, true),
-                    None => (placer.place(kind, pid), false),
-                };
                 streams.push(PlannedStream {
                     kind,
-                    within,
+                    within: survivor_within.unwrap_or(usize::MAX),
                     spec_index,
-                    survivor,
+                    survivor: survivor_within.is_some(),
                 });
+            }
+            // Place new streams: every same-PID tombstone first, so an earlier
+            // new stream cannot take a later one's own slot; then the rest.
+            let mut unplaced: Vec<usize> = Vec::new();
+            for (i, s) in streams.iter_mut().enumerate() {
+                if !s.survivor {
+                    let pid = prog.streams[s.spec_index].pid();
+                    match placer.claim_same_pid(s.kind, pid) {
+                        Some(w) => s.within = w,
+                        None => unplaced.push(i),
+                    }
+                }
+            }
+            for i in unplaced {
+                streams[i].within = placer.claim_any(streams[i].kind);
             }
 
             let pcr_pid = resolve_pcr_pid(prog);
