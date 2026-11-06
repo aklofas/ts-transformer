@@ -26,6 +26,11 @@ pub(super) struct ProgramSlot {
     /// Pre-composed PMT descriptor bytes per stream (KLVA auto-emit +
     /// caller-supplied), parallel to `live.streams`.
     pub(super) pmt_descriptor_cache: Vec<Vec<u8>>,
+    /// Version of the PMT last rendered for this program.
+    pub(super) pmt_version: u8,
+    /// `pmt_identity_key` as of that version, to detect a changed PMT.
+    #[allow(dead_code)] // read once the muxer reconfigures in place
+    pub(super) pmt_identity: Vec<u8>,
     /// Last PSI emission PTS, masked to 33 bits. None until first.
     pub(super) psi_last: Option<u64>,
     /// Last PCR emission value at 27 MHz. None until first.
@@ -36,15 +41,19 @@ impl ProgramSlot {
     pub(super) fn from_program(prog: &MuxerProgramConfig) -> Self {
         state::warn_on_descriptor_conflicts(prog);
         let (video, klv, audio, subtitle, data) = state::collect_stream_states(prog);
+        let pcr_pid = state::resolve_pcr_pid(prog);
+        let pmt_descriptor_cache = state::build_pmt_descriptor_cache(prog);
         Self {
+            pmt_version: 0,
+            pmt_identity: pmt_identity_key(prog, pcr_pid, &pmt_descriptor_cache),
             live: Some(prog.clone()),
             video: video.into_iter().map(Some).collect(),
             klv: klv.into_iter().map(Some).collect(),
             audio: audio.into_iter().map(Some).collect(),
             subtitle: subtitle.into_iter().map(Some).collect(),
             data: data.into_iter().map(Some).collect(),
-            pcr_pid: state::resolve_pcr_pid(prog),
-            pmt_descriptor_cache: state::build_pmt_descriptor_cache(prog),
+            pcr_pid,
+            pmt_descriptor_cache,
             psi_last: None,
             pcr_last: None,
         }
@@ -57,4 +66,27 @@ impl ProgramSlot {
     pub(super) fn program_number(&self) -> Option<u16> {
         self.live.as_ref().map(|p| p.program_number)
     }
+}
+
+/// Deterministic serialisation of exactly what the PMT writer renders for
+/// `prog`: the PCR PID, the program descriptors, then each stream's
+/// `(stream_type, pid, descriptor bytes)` in order. Two programs with equal
+/// keys produce byte-identical PMT sections.
+pub(super) fn pmt_identity_key(
+    prog: &MuxerProgramConfig,
+    pcr_pid: u16,
+    cache: &[Vec<u8>],
+) -> Vec<u8> {
+    let mut key = Vec::new();
+    key.extend_from_slice(&pcr_pid.to_be_bytes());
+    let program_descriptors: Vec<u8> = prog.program_descriptors.iter().flatten().copied().collect();
+    key.extend_from_slice(&(program_descriptors.len() as u32).to_be_bytes());
+    key.extend_from_slice(&program_descriptors);
+    for (spec, descriptors) in prog.streams.iter().zip(cache) {
+        key.push(state::pmt_stream_type_byte(spec));
+        key.extend_from_slice(&spec.pid().to_be_bytes());
+        key.extend_from_slice(&(descriptors.len() as u32).to_be_bytes());
+        key.extend_from_slice(descriptors);
+    }
+    key
 }

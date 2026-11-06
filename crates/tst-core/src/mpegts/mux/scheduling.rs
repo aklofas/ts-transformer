@@ -9,10 +9,10 @@
 //! PTS, and updates every slot's `psi_last` so the next call's `psi_due`
 //! returns false until the next interval boundary.
 
+use super::Muxer;
 use super::psi::{PmtStreamEntry, write_pat_packet, write_pmt_packet};
-use super::state::{audio_stream_type_byte, klv_stream_type_byte, video_stream_type_byte};
+use super::state::pmt_stream_type_byte;
 use super::ts::write_pcr_only_packet;
-use super::{Muxer, StreamSpec};
 use crate::mpegts::common::{Pcr27mhz, Pts90khz};
 use alloc::vec::Vec;
 
@@ -93,7 +93,7 @@ impl Muxer {
         // receivers after a single PSI interval.
         let mut pat = [0u8; 188];
         let pat_entries = self.pat_entries();
-        write_pat_packet(&mut pat, &pat_entries, &mut self.counters);
+        write_pat_packet(&mut pat, &pat_entries, self.pat_version, &mut self.counters);
         self.queue.push_back(pat);
 
         // One PMT per live program — iterate the full slot set so every live
@@ -104,19 +104,7 @@ impl Muxer {
             };
             let mut entries: Vec<PmtStreamEntry> = Vec::with_capacity(prog.streams.len());
             for (i, spec) in prog.streams.iter().enumerate() {
-                let stream_type = match spec {
-                    StreamSpec::Video { codec, .. } => video_stream_type_byte(*codec),
-                    StreamSpec::Klv { stream_type, .. } => klv_stream_type_byte(*stream_type),
-                    StreamSpec::Audio { codec, .. } => audio_stream_type_byte(*codec),
-                    // Caller-chosen byte; validate() guarantees the demux
-                    // classifier maps it (with its descriptors) to Unknown.
-                    StreamSpec::Data { stream_type, .. } => *stream_type,
-                    // All four subtitle codecs share PMT stream_type 0x06
-                    // (PrivateData); the per-stream descriptor cache carries
-                    // the codec-specific disambiguator (subtitling_descriptor /
-                    // teletext_descriptor / Registration "GA94" / "VTTC").
-                    StreamSpec::Subtitle { .. } => super::StreamType::KlvPrivate.as_u8(),
-                };
+                let stream_type = pmt_stream_type_byte(spec);
                 entries.push(PmtStreamEntry {
                     stream_type,
                     elementary_pid: spec.pid(),
@@ -125,8 +113,15 @@ impl Muxer {
             }
 
             let mut pmt = [0u8; 188];
-            write_pmt_packet(&mut pmt, prog, slot.pcr_pid, &entries, &mut self.counters)
-                .expect("validated MuxerConfig must produce single-section PMT");
+            write_pmt_packet(
+                &mut pmt,
+                prog,
+                slot.pcr_pid,
+                &entries,
+                slot.pmt_version,
+                &mut self.counters,
+            )
+            .expect("validated MuxerConfig must produce single-section PMT");
             self.queue.push_back(pmt);
         }
 

@@ -85,6 +85,16 @@ pub struct Muxer {
     queue: VecDeque<[u8; 188]>,
     counters: ContinuityCounters,
 
+    /// Version of the PAT last rendered.
+    pat_version: u8,
+    /// `pat_entries()` as of the last PAT version, to detect a changed loop.
+    #[allow(dead_code)] // read once the muxer reconfigures in place
+    pat_identity: Vec<(u16, u16)>,
+    /// PMT PID -> last version used on it; survives a program's removal so
+    /// a PID reused later continues the sequence.
+    #[allow(dead_code)] // read once the muxer reconfigures in place
+    pmt_versions_by_pid: BTreeMap<u16, u8>,
+
     // ── Stats counters ────────────────────────────────────────────────────
     ts_packets_emitted: u64,
     ts_bytes_emitted: u64,
@@ -135,9 +145,24 @@ impl Muxer {
             slots.push(slot);
         }
 
+        let mut pmt_versions_by_pid = BTreeMap::new();
+        for slot in &slots {
+            if let Some(p) = &slot.live {
+                pmt_versions_by_pid.insert(p.pmt_pid, 0);
+            }
+        }
+        let pat_identity = slots
+            .iter()
+            .filter_map(|s| s.live.as_ref())
+            .map(|p| (p.program_number, p.pmt_pid))
+            .collect();
+
         Ok(Self {
             config,
             slots,
+            pat_version: 0,
+            pat_identity,
+            pmt_versions_by_pid,
             pcr_interval_27mhz,
             psi_interval_90khz,
             queue: VecDeque::with_capacity(64),
@@ -222,8 +247,9 @@ impl Muxer {
     /// `(program_number, pmt_pid)` of every live program, in slot order —
     /// the PAT's program loop.
     fn pat_entries(&self) -> Vec<(u16, u16)> {
-        self.live_slots()
-            .filter_map(|(_, s)| s.live.as_ref())
+        self.slots
+            .iter()
+            .filter_map(|s| s.live.as_ref())
             .map(|p| (p.program_number, p.pmt_pid))
             .collect()
     }
@@ -271,7 +297,7 @@ impl Muxer {
     }
 
     /// Compute the `AdaptationField` for the first TS packet of a push:
-    /// carries PCR (and updates `pcr_last[prog_idx]`) when `pid` is the
+    /// carries PCR (and updates the slot's `pcr_last`) when `pid` is the
     /// program's PCR PID and a PCR tick is due; a default (no-PCR) field
     /// otherwise. Shared by `push_audio_to` / `push_klv_to`.
     ///
@@ -501,3 +527,7 @@ mod tests_validation;
 #[cfg(test)]
 #[path = "tests/stats.rs"]
 mod tests_stats;
+
+#[cfg(test)]
+#[path = "tests/reconfigure.rs"]
+mod tests_reconfigure;
