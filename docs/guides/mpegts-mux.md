@@ -1172,7 +1172,7 @@ descriptor set the demuxer would classify as anything other than
 as `Unknown`, and typed payloads cannot ride a Data spec to lie to
 downstream demuxers. Concretely:
 
-- Typed stream_types (`0x1B` H.264, `0x0F` AAC, `0x15` async KLV, …)
+- Typed stream_types (`0x1B` H.264, `0x0F` AAC, `0x15` synchronous KLV, …)
   are rejected — use the corresponding `add_video` / `add_audio` /
   `add_klv` / `add_subtitle` form instead.
 - `stream_type 0x06` (PES private data) is allowed, but only without a

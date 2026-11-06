@@ -31,8 +31,8 @@ cargo run -p tst-examples --example klv_decode_file -- path/to/record.klv
 ```
 
 Read one `.klv` blob produced by §2 (or any other source), decode it
-through the strictness ladder (`decode_lenient` /
-`decode_strict_compliance` / `decode_strict`), print the typed fields.
+through the strictness ladder (`decode_strict_compliance` / `decode_strict` /
+`decode` / `decode_unchecked`), print the typed fields.
 
 Cookbook: [Decode ST 0601 from a captured `.klv` blob](../../docs/cookbook/klv/decode-st0601-blob.md).
 
