@@ -18,7 +18,7 @@ srt://h?x=a@b	srt://h?x=a@b
 
 # A URL opened right after a quote runs to the last matching quote before the next URL opened by
 # the same quote, when that quote is followed by a separator, , ; . : ) ] } or the end; otherwise
-# it runs to that next URL or the end of the input.
+# it runs to the end of the input.
 'rtsp://u:hunter' two@h/x'	'rtsp://u:<redacted>@h/x'
 'rtsp://cam:hun',ter2@h/live'	'rtsp://cam:<redacted>@h/live'
 'srt://h?token=pre' fix'	'srt://h?token=<redacted>'
@@ -40,6 +40,9 @@ open 'srt://h?passphrase=abc' failed: can't connect	open 'srt://h?passphrase=<re
 'srt://a:1?passphrase=xxxxxxxxxx' 'srt://b:2?passphrase=yyyyyyyyyy'	'srt://a:1?passphrase=<redacted>' 'srt://b:2?passphrase=<redacted>'
 'srt://u:x' y://z@h'	'srt://u:<redacted>@h'
 'srt://h?token=a' b://c'	'srt://h?token=<redacted>'
+# A secret holding a quote, text, then a quote-opened URL: no quote closes the span before that
+# URL, so the span runs to the end of the text.
+'srt://127.0.0.1:9000?passphrase=abc'def='srt://sentinel'	'srt://127.0.0.1:9000?passphrase=<redacted>
 # A quote inside a secret with no closing quote after it does not end the span.
 'srt://u:p'w@h	'srt://u:<redacted>@h
 open 'srt://u:p'w@h: timeout	open 'srt://u:<redacted>@h: timeout
