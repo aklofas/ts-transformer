@@ -72,3 +72,297 @@ fn fresh_muxer_emits_pat_and_pmt_version_0() {
     }
     assert_eq!(seen, vec![0, 0x1000, 0x1100]);
 }
+
+// ── plan_reconfigure ──────────────────────────────────────────────────────
+
+/// Program 1 (PMT 0x1000) = H.264 0x1011 + sync KLV 0x1031 (service id 0).
+fn visible() -> MuxerProgramConfigBuilder {
+    let mut p = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p.add_video(0x1011, VideoCodec::H264);
+    p.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+    p
+}
+
+/// Program 2 (PMT 0x1100) = H.264 0x1111 + sync KLV 0x1131 (service id 1).
+fn thermal() -> MuxerProgramConfigBuilder {
+    let mut p = MuxerProgramConfigBuilder::new(2, 0x1100);
+    p.add_video(0x1111, VideoCodec::H264);
+    p.add_klv(0x1131, KlvStreamType::SynchronousMetadata, true);
+    p.stream_descriptors_for_klv(0, vec![crate::mpegts::descriptors::metadata_klva(1)])
+        .unwrap();
+    p
+}
+
+/// Assembled without `build()` so a test can hand the planner a config
+/// that `validate()` refuses.
+fn config_of(programs: Vec<MuxerProgramConfig>) -> MuxerConfig {
+    MuxerConfig {
+        programs,
+        ..MuxerConfig::default()
+    }
+}
+
+fn visible_thermal(with_thermal: bool) -> MuxerConfig {
+    let mut programs = vec![visible().build()];
+    if with_thermal {
+        programs.push(thermal().build());
+    }
+    config_of(programs)
+}
+
+/// Tombstone slot `idx` the way a reconfigure that removed its program does.
+fn tombstone(m: &mut Muxer, idx: usize) {
+    let slot = &mut m.slots[idx];
+    slot.live = None;
+    slot.video.iter_mut().for_each(|s| *s = None);
+    slot.klv.iter_mut().for_each(|s| *s = None);
+    slot.audio.iter_mut().for_each(|s| *s = None);
+    slot.subtitle.iter_mut().for_each(|s| *s = None);
+    slot.data.iter_mut().for_each(|s| *s = None);
+}
+
+fn kinds_withins(p: &reconfigure::PlannedProgram) -> Vec<(MuxStreamKind, usize, usize, bool)> {
+    p.streams
+        .iter()
+        .map(|s| (s.kind, s.within, s.spec_index, s.survivor))
+        .collect()
+}
+
+fn refusal(m: &Muxer, new: &MuxerConfig) -> alloc::string::String {
+    match m.plan_reconfigure(new) {
+        Err(MuxError::ConfigInvalid { reason }) => {
+            assert!(reason.starts_with("reconfigure:"), "{reason}");
+            reason
+        }
+        Err(other) => panic!("expected ConfigInvalid, got {other:?}"),
+        Ok(_) => panic!("expected ConfigInvalid, got a plan"),
+    }
+}
+
+#[test]
+fn plan_drop_program_tombstones_its_slot() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let plan = m.plan_reconfigure(&visible_thermal(false)).unwrap();
+    assert_eq!(plan.removed_slots, vec![1]);
+    assert_eq!(plan.programs.len(), 1);
+    let p = &plan.programs[0];
+    assert_eq!((p.slot, p.config_index, p.pcr_pid), (0, 0, 0x1011));
+    assert!(p.removed_pids.is_empty());
+    assert_eq!(
+        kinds_withins(p),
+        vec![
+            (MuxStreamKind::Video, 0, 0, true),
+            (MuxStreamKind::Klv, 0, 1, true)
+        ]
+    );
+}
+
+#[test]
+fn plan_add_program_takes_a_fresh_slot() {
+    let m = Muxer::new(visible_thermal(false)).unwrap();
+    let plan = m.plan_reconfigure(&visible_thermal(true)).unwrap();
+    assert!(plan.removed_slots.is_empty());
+    let p = &plan.programs[1];
+    assert_eq!((p.slot, p.config_index, p.pcr_pid), (1, 1, 0x1111));
+    assert!(p.streams.iter().all(|s| !s.survivor));
+    assert_eq!(
+        kinds_withins(p),
+        vec![
+            (MuxStreamKind::Video, 0, 0, false),
+            (MuxStreamKind::Klv, 0, 1, false)
+        ]
+    );
+}
+
+#[test]
+fn plan_readd_same_number_reuses_its_tombstone() {
+    let mut m = Muxer::new(visible_thermal(true)).unwrap();
+    tombstone(&mut m, 1);
+    let plan = m.plan_reconfigure(&visible_thermal(true)).unwrap();
+    assert!(plan.removed_slots.is_empty());
+    let p = &plan.programs[1];
+    assert_eq!(p.slot, 1);
+    assert_eq!(
+        kinds_withins(p),
+        vec![
+            (MuxStreamKind::Video, 0, 0, false),
+            (MuxStreamKind::Klv, 0, 1, false)
+        ]
+    );
+}
+
+#[test]
+fn plan_readd_prefers_its_own_tombstone_over_a_lower_one() {
+    let numbered = |n: u16| {
+        let mut p = MuxerProgramConfigBuilder::new(n, 0x0100 + n * 0x10);
+        p.add_video(0x0101 + n * 0x10, VideoCodec::H264);
+        p.build()
+    };
+    let mut m = Muxer::new(config_of(vec![numbered(1), numbered(2), numbered(3)])).unwrap();
+    tombstone(&mut m, 1);
+    tombstone(&mut m, 2);
+    let plan = m
+        .plan_reconfigure(&config_of(vec![numbered(1), numbered(3)]))
+        .unwrap();
+    assert_eq!(plan.programs[1].slot, 2);
+}
+
+#[test]
+fn plan_new_number_reuses_any_tombstone_when_full() {
+    let numbered = |n: u16| {
+        let mut p = MuxerProgramConfigBuilder::new(n, 0x0100 + n * 0x10);
+        p.add_video(0x0101 + n * 0x10, VideoCodec::H264);
+        p.build()
+    };
+    let m = Muxer::new(config_of((1..=16).map(numbered).collect())).unwrap();
+    let mut programs: Vec<_> = (1..=15).map(numbered).collect();
+    programs.push(numbered(17));
+    let plan = m.plan_reconfigure(&config_of(programs)).unwrap();
+    assert_eq!(plan.removed_slots, vec![15]);
+    let p = &plan.programs[15];
+    assert_eq!((p.slot, p.config_index), (15, 15));
+    assert_eq!(kinds_withins(p), vec![(MuxStreamKind::Video, 0, 0, false)]);
+}
+
+#[test]
+fn plan_stream_added_to_surviving_program() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p1 = visible();
+    p1.add_audio(0x1041, crate::codec::AudioCodec::Aac);
+    let plan = m
+        .plan_reconfigure(&config_of(vec![p1.build(), thermal().build()]))
+        .unwrap();
+    assert_eq!(
+        kinds_withins(&plan.programs[0]),
+        vec![
+            (MuxStreamKind::Video, 0, 0, true),
+            (MuxStreamKind::Klv, 0, 1, true),
+            (MuxStreamKind::Audio, 0, 2, false)
+        ]
+    );
+    assert!(plan.programs[1].streams.iter().all(|s| s.survivor));
+}
+
+#[test]
+fn plan_stream_removed_from_surviving_program() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p1.add_video(0x1011, VideoCodec::H264);
+    let plan = m
+        .plan_reconfigure(&config_of(vec![p1.build(), thermal().build()]))
+        .unwrap();
+    assert_eq!(plan.programs[0].removed_pids, vec![0x1031]);
+}
+
+#[test]
+fn refuses_pid_moved_to_another_program() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p1.add_video(0x1011, VideoCodec::H264);
+    let mut p2 = thermal();
+    p2.add_klv(0x1031, KlvStreamType::PrivateData, false);
+    let reason = refusal(&m, &config_of(vec![p1.build(), p2.build()]));
+    assert!(reason.contains("0x1031"), "{reason}");
+    assert!(
+        reason.contains("program 1") && reason.contains("program 2"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn refuses_pid_redeclared_under_a_new_program_number() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p3 = MuxerProgramConfigBuilder::new(3, 0x1100);
+    p3.add_video(0x1111, VideoCodec::H264);
+    let reason = refusal(&m, &config_of(vec![visible().build(), p3.build()]));
+    assert!(reason.contains("0x1111"), "{reason}");
+    assert!(
+        reason.contains("program 2") && reason.contains("program 3"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn refuses_stream_type_change_on_surviving_pid() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p1.add_video(0x1011, VideoCodec::H264);
+    p1.add_klv(0x1031, KlvStreamType::PrivateData, false);
+    let reason = refusal(&m, &config_of(vec![p1.build(), thermal().build()]));
+    assert!(
+        reason.contains("0x1031") && reason.contains("program 1"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn refuses_codec_change_on_surviving_pid() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p1.add_video(0x1011, VideoCodec::H265);
+    p1.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+    let reason = refusal(&m, &config_of(vec![p1.build(), thermal().build()]));
+    assert!(
+        reason.contains("0x1011") && reason.contains("program 1"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn refuses_pmt_pid_change() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1001);
+    p1.add_video(0x1011, VideoCodec::H264);
+    p1.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+    let reason = refusal(&m, &config_of(vec![p1.build(), thermal().build()]));
+    assert!(
+        reason.contains("0x1001") && reason.contains("program 1"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn refuses_pcr_pid_change_unless_old_pcr_removed() {
+    // KLV cannot carry PCR (validate() refuses it), so the new PCR stream is
+    // an added audio PID.
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p1 = visible();
+    p1.add_audio(0x1041, crate::codec::AudioCodec::Aac);
+    p1.pcr_pid(0x1041);
+    let reason = refusal(&m, &config_of(vec![p1.build(), thermal().build()]));
+    assert!(
+        reason.contains("0x1011") && reason.contains("0x1041") && reason.contains("program 1"),
+        "{reason}"
+    );
+
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p1.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+    p1.add_audio(0x1041, crate::codec::AudioCodec::Aac);
+    p1.pcr_pid(0x1041);
+    let plan = m
+        .plan_reconfigure(&config_of(vec![p1.build(), thermal().build()]))
+        .unwrap();
+    assert_eq!(plan.programs[0].pcr_pid, 0x1041);
+    assert_eq!(plan.programs[0].removed_pids, vec![0x1011]);
+}
+
+#[test]
+fn refuses_non_program_field_change() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut new = visible_thermal(true);
+    new.psi_interval_ms += 1;
+    let reason = refusal(&m, &new);
+    assert!(reason.contains("psi_interval_ms"), "{reason}");
+}
+
+#[test]
+fn refuses_duplicate_metadata_service_id() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut p1 = visible();
+    p1.stream_descriptors_for_klv(0, vec![crate::mpegts::descriptors::metadata_klva(1)])
+        .unwrap();
+    let new = config_of(vec![p1.build(), thermal().build()]);
+    let expected = new.validate().unwrap_err();
+    let got = m.plan_reconfigure(&new).err().expect("refused");
+    assert_eq!(format!("{got:?}"), format!("{expected:?}"));
+}

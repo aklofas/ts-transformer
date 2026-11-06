@@ -22,6 +22,8 @@ mod push_data;
 mod push_klv;
 mod push_subtitle;
 mod push_video;
+#[allow(dead_code)] // called once the muxer reconfigures in place
+mod reconfigure;
 
 use crate::error::MuxError;
 use alloc::vec::Vec;
