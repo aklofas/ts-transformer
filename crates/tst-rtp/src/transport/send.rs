@@ -12,7 +12,7 @@ use super::{RtpConnectError, random_u32, udp_err_to_connect};
 use crate::cancel::RtpCancelHandle;
 use crate::clock::RtpClock;
 use crate::packet::{RTP_HEADER_LEN, RtpHeader};
-use crate::url::{DEFAULT_PKT_SIZE, RtpUrl, RtpUrlError};
+use crate::url::{DEFAULT_PKT_SIZE, MAX_PKT_SIZE, RtpUrl, RtpUrlError};
 
 /// RTP send-side transport: writes 12-byte RTP header + TS payload to a
 /// connected [`UdpSocket`].
@@ -77,6 +77,17 @@ impl RtpTransport {
         }
         if url.source.is_some() {
             return Err(RtpConnectError::Url(RtpUrlError::SendSource));
+        }
+        // The struct path skips the URL parser, and the send scratch is
+        // sized from this value.
+        if let Some(n) = url.pkt_size
+            && n > MAX_PKT_SIZE
+        {
+            return Err(RtpConnectError::Url(crate::url::bad_query(
+                "pkt_size",
+                &n.to_string(),
+                &format!("no larger than {MAX_PKT_SIZE}"),
+            )));
         }
         let ip: IpAddr = url.host.parse().map_err(|e: std::net::AddrParseError| {
             RtpConnectError::HostNotLiteral {

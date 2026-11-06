@@ -125,6 +125,20 @@ def test_sender_oversized_payload_raises_malformed_packet() -> None:
         assert exc_info.value.kind == RtpErrorKind.TOO_LARGE
 
 
+def test_sender_pkt_size_above_ceiling_raises_url() -> None:
+    """`pkt_size` above 65424 (348 TS packets) → `RtpError(URL)` before
+    anything is sized from it; 2**40 used to abort the process."""
+    port = _free_udp_port()
+    with tstrans.rtp.Transport(f"rtp://127.0.0.1:{port}", pkt_size=65424):
+        pass
+    for n in (65612, 2**40):
+        with pytest.raises(RtpError) as exc_info:
+            tstrans.rtp.Transport(f"rtp://127.0.0.1:{port}", pkt_size=n)
+        assert exc_info.value.kind == RtpErrorKind.URL
+        assert "pkt_size" in str(exc_info.value)
+        assert "no larger than 65424" in str(exc_info.value)
+
+
 def test_sender_close_idempotent() -> None:
     """`.close()` can be called multiple times safely."""
     port = _free_udp_port()

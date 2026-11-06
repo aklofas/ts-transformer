@@ -5515,3 +5515,22 @@ reason = "caller builder setter for the peer idle timeout; Python reaches it as 
 [[exempt]]
 item = "tst_srt::builder::SrtListenerBuilder::peer_idle_timeout"
 reason = "listener-side twin of the caller builder setter, applied to accepted sockets; bindings reach it through the same Builder knob and a listener URL's peeridletimeo key"
+
+# RTP pkt_size ceiling (one UDP datagram).
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::MAX_PKT_SIZE"
+owning_tests = ["crates/tst-rtp/src/url.rs", "crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
+bindings = ["c:n/a(the URL and field refusals carry the ceiling)", "python:n/a(the URL and keyword refusals carry the ceiling)", "java:n/a(the URL and argument refusals carry the ceiling)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::url::MAX_PKT_SIZE"
+owning_tests = ["crates/tst-rtp/src/url.rs", "crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
+bindings = ["c:n/a(the URL and field refusals carry the ceiling)", "python:n/a(the URL and keyword refusals carry the ceiling)", "java:n/a(the URL and argument refusals carry the ceiling)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"

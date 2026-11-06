@@ -54,7 +54,7 @@ mod binding_kind;
 pub use cancel::RtpCancelHandle;
 pub use packet::{Parsed, RTP_HEADER_LEN, RtpHeader, RtpParseError};
 pub use transport::{RtpConnectError, RtpRecvTransport, RtpStats, RtpTransport};
-pub use url::{DEFAULT_PKT_SIZE, RtpUrl, RtpUrlError};
+pub use url::{DEFAULT_PKT_SIZE, MAX_PKT_SIZE, RtpUrl, RtpUrlError};
 
 // The name this type had before the `Rtp` prefix; removed in 0.10.0.
 #[allow(deprecated)]

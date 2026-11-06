@@ -351,6 +351,35 @@ fn send_url_pkt_size_still_drives_send_budget() {
     );
 }
 
+/// A `pkt_size` set on the struct (as the Python and JVM bindings do) is
+/// held to the same ceiling as the URL key, before anything is sized from
+/// it. Before the bound, `1 << 40` reached `Vec::with_capacity` and the
+/// failed allocation aborted the process; run it only with the fix in.
+#[test]
+fn connect_with_refuses_pkt_size_above_ceiling() {
+    let mut url = tst_rtp::RtpUrl::parse("rtp://127.0.0.1:5004").expect("bare send URL");
+    url.pkt_size = Some(tst_rtp::MAX_PKT_SIZE);
+    tst_rtp::RtpTransport::connect_with(&url).expect("the ceiling itself connects");
+
+    for n in [tst_rtp::MAX_PKT_SIZE + 188, 1usize << 40] {
+        url.pkt_size = Some(n);
+        let err = match tst_rtp::RtpTransport::connect_with(&url) {
+            Ok(_) => panic!("pkt_size {n} must be refused"),
+            Err(e) => e,
+        };
+        assert!(
+            matches!(
+                err,
+                tst_rtp::RtpConnectError::Url(tst_rtp::RtpUrlError::BadQuery { ref key, ref value })
+                    if key == "pkt_size"
+                        && value.starts_with(&n.to_string())
+                        && value.contains("no larger than 65424")
+            ),
+            "got {err:?}"
+        );
+    }
+}
+
 // --- rcvbuf / sndbuf / source side rules (bind-time) ---
 
 /// `?sndbuf=` is a send-side knob: a receive URL carrying it is refused at

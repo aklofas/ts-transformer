@@ -1603,11 +1603,25 @@ const RTP_PARSE: &[Row] = &[
     ),
     (
         "rtp://192.0.2.10:5004?pkt_size=0",
-        R("bad value for query parameter pkt_size: 0 (must be a positive multiple of 188)"),
+        R(
+            "bad value for query parameter pkt_size: 0 (must be a positive multiple of 188 no larger than 65424)",
+        ),
     ),
     (
         "rtp://192.0.2.10:5004?pkt_size=1000",
-        R("bad value for query parameter pkt_size: 1000 (must be a positive multiple of 188)"),
+        R(
+            "bad value for query parameter pkt_size: 1000 (must be a positive multiple of 188 no larger than 65424)",
+        ),
+    ),
+    (
+        "rtp://192.0.2.10:5004?pkt_size=65424",
+        A(&[("pkt_size", "65424")]),
+    ),
+    (
+        "rtp://192.0.2.10:5004?pkt_size=65612",
+        R(
+            "bad value for query parameter pkt_size: 65612 (must be a positive multiple of 188 no larger than 65424)",
+        ),
     ),
     (
         "rtp://192.0.2.10:5004?pkt_size=1K",
