@@ -775,8 +775,15 @@ pub fn run_managed(
                 events_seen += 1;
                 // Media, not any event: a reconnect marker or a table
                 // after a reconnect is no sign the stream came back.
+                // The deadline watcher's cancel flushes the demuxer's last
+                // buffered PES as a final sample; that flush is still
+                // tallied but is not media arriving, so it must not refresh
+                // liveness.
                 if matches!(ev, DemuxEvent::Sample { .. } | DemuxEvent::Metadata { .. }) {
-                    last_media = Some(Instant::now());
+                    let d = *deadline.lock().expect("deadline mutex poisoned");
+                    if let Some(t) = media_stamp(Instant::now(), d) {
+                        last_media = Some(t);
+                    }
                 }
                 // See `recv_over_transport`'s loop for why the tail is
                 // polled before the event is stamped.
@@ -841,6 +848,12 @@ pub fn run_managed(
     Ok(report)
 }
 
+/// The liveness stamp for a media event seen at `now`: only an event before
+/// the receiver's deadline counts as the stream still being alive.
+fn media_stamp(now: Instant, deadline: Instant) -> Option<Instant> {
+    (now < deadline).then_some(now)
+}
+
 /// Seconds between the last media event and the receiver's deadline; zero
 /// when media arrived at or after it, `None` when none arrived.
 fn media_tail_s(deadline: Instant, last_media: Option<Instant>) -> Option<f64> {
@@ -850,6 +863,15 @@ fn media_tail_s(deadline: Instant, last_media: Option<Instant>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_stamp_refuses_at_or_after_the_deadline() {
+        let d = Instant::now() + Duration::from_secs(100);
+        let before = d - Duration::from_millis(1);
+        assert_eq!(media_stamp(before, d), Some(before));
+        assert_eq!(media_stamp(d, d), None);
+        assert_eq!(media_stamp(d + Duration::from_secs(1), d), None);
+    }
 
     #[test]
     fn media_tail_is_the_quiet_time_before_the_deadline() {
