@@ -408,6 +408,9 @@ the cookbook recipe is
 |---|---|
 | `RtspServerBuilder::accept_unregistered_publishers(bool)` | Off by default (an ANNOUNCE on an unknown path answers `404`). On: the ANNOUNCE creates a publish mount and queues its handle. |
 | `RtspServer::add_publish_mount(path)` | Registers a name up front and returns its `PublishMountHandle`. |
+| `RtspServer::add_publish_mount_with(path, PublishMountConfig)` | Registers a mount with its own options; an unset option inherits the server default, an explicit one overrides it. |
+| `RtspServerBuilder::end_publish_mount_on_publisher_exit(bool)` | Off by default. On: a mount closes when a publisher that reached RECORD leaves; on-demand mounts inherit it. |
+| `RtspServerBuilder::publish_idle_timeout(Duration)` | Off by default; zero leaves it unset. Ends a recording publisher's session after this long without a valid RTP packet of an announced payload type. |
 | `RtspServer::next_publisher(timeout)` | Takes the next on-demand mount; `Ok(None)` when the timeout passes; `Err(Shutdown)` after `stop()`. |
 | `RtspServer::remove_mount(path)` | Removes a mount of any kind: every session on it gets the server-initiated TEARDOWN notice and is closed, and the path is freed. `MountNotFound` for an unknown path. |
 | `RtspServer::stats()` | `ServerStats` with `active_publishers`, `total_rtp_packets_received`, `total_rtp_bytes_received`. |
@@ -450,7 +453,8 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
   `TransportError::ExplicitClose` and leaves readers and the publisher
   alone. `remove_mount` and `stop()` end it with `TransportError::Closed`,
   which `DemuxReceiver` reports as end of stream. A publisher leaving does
-  neither.
+  neither unless end-on-exit is on; then a publisher that reached RECORD ends
+  it with `TransportError::Closed` as it leaves.
 - **Idle names expire only through `remove_mount`.** An on-demand mount
   stays in the table after its publisher leaves and after its handle is
   dropped. At most 64 on-demand handles wait for `next_publisher` and at

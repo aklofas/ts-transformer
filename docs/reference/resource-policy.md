@@ -66,8 +66,19 @@ refuses a second claimant with `403`. RECORD re-checks that the
 session still holds the claimed generation and answers `455` if not. The slot is released by
 `end_publisher` when the publisher's session ends for any reason, and by the
 mount's `close` when `remove_mount`, `stop()` or `Drop` closes the mount;
-`close` also marks the slot closed so no later claim can succeed. Releasing
-the slot does not close the application transport; closing the mount does.
+`close` also marks the slot closed so no later claim can succeed. By default, releasing the slot leaves the application transport open for
+another publisher. If the mount's resolved `end_on_publisher_exit` option is
+on, a publisher that reached RECORD closes the mount when its session ends:
+the application transport reads `Closed` and later ANNOUNCEs receive `403`.
+Remove and re-add the mount to admit a new publisher. A claim that never
+reached RECORD only rolls back. A closed on-demand mount still counts toward
+the 256-mount cap until it is removed.
+
+**Publish idle bound.** `publish_idle_timeout` is off by default; zero leaves
+it unset. After RECORD it ends a session that receives no valid RTP packet
+for the configured duration, even if RTSP keepalives continue. Only an RTP
+packet with a decodable header and the announced payload type re-arms it.
+Rust takes a `Duration`, C seconds, Python and the JVM milliseconds.
 
 ## Queues
 

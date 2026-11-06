@@ -370,6 +370,15 @@ int tst_rtsp_server_total_rtp_packets_received(struct TstRtspServer *server, uin
 int tst_rtsp_server_total_rtp_bytes_received(struct TstRtspServer *server, uint64_t *out);
 ```
 
+`tst_rtsp_server_builder_end_publish_mount_on_publisher_exit(builder, true)`
+ends a mount when a publisher that reached RECORD leaves (default false).
+Its receiver then reaches `TST_E_END_OF_STREAM`; remove and re-add the mount
+to accept another publisher. The setting is server-wide in C; there are no
+per-mount options. `tst_rtsp_server_builder_publish_idle_timeout(builder, secs)`
+takes seconds, and zero (the default) leaves it unset. It applies after
+RECORD and is re-armed only by a valid RTP packet of an announced payload
+type, never by RTSP keepalives.
+
 Publish-mount handle:
 
 ```c
@@ -395,12 +404,12 @@ Return codes worth branching on:
 | `TST_E_BUFFER_FULL` (−4) | `tst_rtsp_server_next_publisher` | No mount arrived before the timeout; `*out` is NULL. Retry. Always the result when on-demand publishers are off. |
 | `TST_E_CLOSED` (−7) | every publisher-role server entry point (`add_publish_mount`, `next_publisher`, `remove_mount`) | The server is stopped or hard-cancelled. A `next_publisher` call parked on another thread wakes with it when `tst_rtsp_server_stop` runs or the hard cancel fires. |
 | `TST_E_CLOSED` (−7) | `_into_demux_receiver`, then `tst_rtp_demux_receiver_next_event` | A second take of the mount's transport; or, on the receiver, an explicit cancel (`tst_rtsp_publish_mount_cancel` or `tst_rtp_demux_receiver_cancel`). |
-| `TST_E_END_OF_STREAM` (−12) | `tst_rtp_demux_receiver_next_event` | The mount was closed by `tst_rtsp_server_remove_mount`, `tst_rtsp_server_stop` or the hard cancel; what was already queued is delivered first. |
+| `TST_E_END_OF_STREAM` (−12) | `tst_rtp_demux_receiver_next_event` | The mount ended after its recording publisher left with end-on-exit on, or was closed by `tst_rtsp_server_remove_mount`, `tst_rtsp_server_stop` or the hard cancel; what was already queued is delivered first. |
 | `TST_E_RTSP_MOUNT` (−25) | `_add_publish_mount`, `_remove_mount` | Duplicate or invalid path, or no mount registered at the path. |
 
 Rules the types do not enforce:
 
-- **Take-once transport.** `tst_rtsp_publish_mount_into_demux_receiver` takes the mount's transport once across every handle to that mount; later calls return NULL with `TST_E_CLOSED`. The receiver outlives publisher churn: between publishers it stays open and silent, and the next publisher's bytes arrive as ordinary continuity discontinuities.
+- **Take-once transport.** `tst_rtsp_publish_mount_into_demux_receiver` takes the mount's transport once across every handle to that mount; later calls return NULL with `TST_E_CLOSED`. By default the receiver outlives publisher churn: between publishers it stays open and silent, and the next publisher's bytes arrive as ordinary continuity discontinuities.
 - **Freeing a handle never closes the mount.** `tst_rtsp_publish_mount_free` releases the handle only. An on-demand mount stays registered after its publisher leaves until `tst_rtsp_server_remove_mount` removes it, which also sends a live publisher RTSP Notice 5402 and disconnects it.
 - **Every shutdown ends the mounts.** `tst_rtsp_server_stop` and the hard cancel (`tst_rtsp_cancel_handle_cancel`) close every publish mount, so each bound receiver reads `TST_E_END_OF_STREAM`, and both wake a parked `next_publisher`; only the hard cancel skips the Notice 5402 teardown. Shut down with stop, join the threads reading the receivers, then close the receivers, free the mount handles, and free the server last. Never call `tst_rtsp_server_free` while another thread is inside one of the server's calls.
 - **Expired handles.** `next_publisher` can return a handle whose mount was removed while it waited in the queue. Its receiver reads `TST_E_END_OF_STREAM` at once.

@@ -1956,13 +1956,18 @@ The surface:
 
 - `RtspServer.addPublishMount(path) -> PublishMount` registers a path up
   front. An ANNOUNCE to any other path answers `404`.
-  `addPublishMount(path, PublishMountConfig)` ends that mount's transport
-  when a publisher that reached RECORD leaves (the builder's
-  `endPublishMountOnPublisherExit` sets the server default); remove the mount,
-  then add it again, to accept a new publisher. A closed on-demand mount
-  stays in the table, and counts toward the on-demand cap, until removed.
+  `addPublishMount(path, PublishMountConfig.builder().endOnPublisherExit(true).build())`
+  ends that mount's transport when a publisher that reached RECORD leaves;
+  remove the mount, then add it again, to accept a new publisher. An option
+  left unset inherits the builder's `endPublishMountOnPublisherExit` (false
+  by default), and an explicit `false` keeps the mount open even when the
+  server default is true. A closed on-demand mount stays in the table, and
+  counts toward the on-demand cap, until removed.
 - `RtspServerConfig.builder().publishIdleTimeoutMs(n)` ends a recording
-  publisher's session after n ms without media. It is off by default.
+  publisher's session after n ms without a valid RTP packet (a decodable
+  header with the announced payload type), timed from RECORD; RTSP keepalives
+  and RTCP do not reset it. Zero leaves it off (the default); a negative
+  value makes `build()` throw `IllegalArgumentException`.
 - `RtspServerConfig.builder().acceptUnregisteredPublishers(true)` lets an
   ANNOUNCE to an unregistered path create a publish mount on demand, and
   `RtspServer.nextPublisher(timeoutMs) -> Optional<PublishMount>` hands each
@@ -2009,14 +2014,15 @@ How each call ends:
 | `nextPublisher`, `addPublishMount`, `removeMount` | `RtspException(SERVER)` | The server is stopped. A `nextPublisher` parked on another thread wakes with it when `stop()` or `close()` runs. After `close()` the object itself refuses calls with `IllegalStateException`. |
 | `addPublishMount`, `removeMount` | `RtspException(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
 | `intoDemuxReceiver` | `RtspException(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
-| `DemuxReceiver.recvEvent()` | `null` | End of stream: the mount was removed or the server stopped. What was already queued is delivered first. `endReason()` reads `CLEAN_TEARDOWN`. |
+| `DemuxReceiver.recvEvent()` | `null` | End of stream: the mount was removed, the server stopped, or its recording publisher left with end-on-exit on. What was already queued is delivered first. `endReason()` reads `CLEAN_TEARDOWN`. |
 | `DemuxReceiver.recvEvent()` | `RtpException(CLOSED)` | The application cancelled it: `PublishMount.cancel()` or `DemuxReceiver.close()`. `endReason()` reads `CANCELLED`. |
 
 Rules the types do not enforce:
 
-- **Receiver across publishers.** The receiver outlives publisher churn:
-  between publishers it stays open and silent, and the next publisher's bytes
-  arrive as ordinary continuity discontinuities.
+- **Receiver across publishers.** With end-on-exit off (the default), the
+  receiver outlives publisher churn: between publishers it stays open and
+  silent, and the next publisher's bytes arrive as ordinary continuity
+  discontinuities.
 - **Every shutdown ends the mounts.** `stop()`, `close()` and
   `cancelHandle().cancel()` end every publish mount's receiver and wake a
   parked `nextPublisher`; only the hard cancel skips the Notice 5402

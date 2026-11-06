@@ -1226,6 +1226,9 @@ The surface:
   removed.
 - `RtspServerConfig(publish_idle_timeout_ms=N)` ends a recording publisher's
   session after N ms without media. None or 0 leaves it off (the default).
+  A negative value raises `ValueError`. Timing starts at RECORD or the last
+  valid RTP packet (a decodable header with the announced payload type);
+  RTSP keepalives and RTCP do not reset it.
 - `RtspServerConfig(accept_unregistered_publishers=True)` lets an ANNOUNCE to
   an unregistered path create a publish mount on demand, and
   `RtspServer.next_publisher(timeout=None) -> PublishMount | None` hands each
@@ -1271,14 +1274,15 @@ How each call ends:
 | `next_publisher`, `add_publish_mount`, `remove_mount` | `RtspError(SERVER)` | The server is stopped. A `next_publisher` parked on another thread wakes with it when `stop()` or the `with` exit runs. |
 | `add_publish_mount`, `remove_mount` | `RtspError(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
 | `into_demux_receiver` | `RtspError(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
-| iterating the receiver | `StopIteration` | End of stream: the mount was removed or the server stopped. What was already queued is delivered first. |
+| iterating the receiver | `StopIteration` | End of stream: the mount was removed, the server stopped, or its recording publisher left with end-on-exit on. What was already queued is delivered first. |
 | iterating the receiver | `RtpError(CLOSED)` | The application cancelled it: `PublishMount.cancel()` or `DemuxReceiver.close()`. |
 
 Rules the types do not enforce:
 
-- **Receiver across publishers.** The receiver outlives publisher churn: between
-  publishers it stays open and silent, and the next publisher's bytes arrive
-  as ordinary continuity discontinuities.
+- **Receiver across publishers.** With end-on-exit off (the default), the
+  receiver outlives publisher churn: between publishers it stays open and
+  silent, and the next publisher's bytes arrive as ordinary continuity
+  discontinuities.
 - **Every shutdown ends the mounts.** `stop()`, the `with` exit and
   `cancel_handle().cancel()` end every publish mount's receiver and wake a
   parked `next_publisher` with `RtspError(SERVER)`; only the hard cancel
