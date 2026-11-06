@@ -674,7 +674,7 @@ The integrator-facing changes at a glance (full detail in the sections below):
 - The muxer writes a PCR equal to the PTS of the access unit it precedes, so
   decoders get no decode lead, and the PCR can step back after a PCR sent
   with KLV, audio or data. Every tested player plays the output; strict
-  analyzers may flag it. Fixed in 0.9.1.
+  analyzers may flag it. Planned for 0.9.2.
 - The HLS server has no connection limit and no request-header or TLS
   handshake deadline. Keep its default loopback bind, or put it behind a
   reverse proxy that enforces limits and timeouts. Fixed in 0.9.1.

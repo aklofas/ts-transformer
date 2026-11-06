@@ -459,7 +459,7 @@ KLV, audio or data push can also trigger a PCR-only packet at its own
 PTS, a later PCR on the PCR PID (always emitted on a key frame) can
 step backwards from it. Every decoder in the interop matrix plays
 these streams, but strict analyzers (TSDuck, stream validators) may
-flag the PCR/DTS relationship or the backward step. Fixed in 0.9.1.
+flag the PCR/DTS relationship or the backward step. A fix is planned for 0.9.2.
 
 ## PSI cadence
 
