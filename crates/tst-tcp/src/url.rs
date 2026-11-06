@@ -171,7 +171,7 @@ pub const URL_KEYS: &[QueryKey<TcpUrl>] = &[
     QueryKey::new(
         "connect_timeout",
         &[],
-        "Connect deadline",
+        "TCP connect timeout per resolved address; name resolution is not bounded",
         "seconds",
         set_connect_timeout,
     ),

@@ -381,7 +381,7 @@ rejected by `srt`, `tcps`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `transport` | SETUP transport preference | `tcp` or `udp`; default prefer UDP with TCP fallback | `rtsp(s)` |
 | `ca` | Custom trust anchors for a caller (the system roots otherwise) | PEM file path; `tcps` only | `tcp(s)` |
 | `cert` | Server certificate | PEM file path; `tcps` only, a listener | `tcp(s)` |
-| `connect_timeout` | Connect deadline | seconds | `tcp(s)` |
+| `connect_timeout` | TCP connect timeout per resolved address; name resolution is not bounded | seconds | `tcp(s)` |
 | `keepalive` | `SO_KEEPALIVE` idle time | seconds | `tcp(s)` |
 | `key` | Server private key | PEM file path; `tcps` only, a listener | `tcp(s)` |
 | `listen` | Bind and accept instead of connecting | boolean | `tcp(s)` |
