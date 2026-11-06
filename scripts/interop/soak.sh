@@ -1290,9 +1290,10 @@ record_pid rist-send $!
 # and is killed) is logged and makes the loop exit 1 at the end of the run,
 # which fails `worker_exits`. Only exit status 1 after the pipeline's
 # `Got EOS` is a send failure while closing a delivered stream, counted as a
-# clean end (lib.sh's publish_generation); any other status still fails. After the last generation the loop idles
-# until TOTAL_SECONDS after its own start, so the sampler and supervisor
-# see it alive for the whole run like every other worker.
+# clean end (lib.sh's publish_generation); any other status still fails. After the last
+# generation the loop idles until TOTAL_SECONDS after its own start, so the
+# sampler and supervisor see it alive for the whole run like every other
+# worker.
 if [[ "$RTSP_PUBLISH" -eq 1 ]]; then
   RTSP_PUBLISH_PORT=$(free_port tcp)
   RTSP_PUBLISH_URL="rtsp://127.0.0.1:$RTSP_PUBLISH_PORT/soak"

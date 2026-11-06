@@ -70,6 +70,7 @@ path = "muxing/mux_h266_with_klv.rs"
 [[example]]
 name = "mux_to_hls"
 path = "sending/mux_to_hls.rs"
+test = true
 
 [[example]]
 name = "mux_av1_with_klv"

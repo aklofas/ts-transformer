@@ -775,10 +775,10 @@ pub fn run_managed(
                 events_seen += 1;
                 // Media, not any event: a reconnect marker or a table
                 // after a reconnect is no sign the stream came back.
-                // The deadline watcher's cancel flushes the demuxer's last
-                // buffered PES as a final sample; that flush is still
-                // tallied but is not media arriving, so it must not refresh
-                // liveness.
+                // Nothing delivered at or after the deadline refreshes
+                // liveness, the watcher's cancel flush included (it hands
+                // over the demuxer's last buffered PES as a final sample,
+                // which is still tallied).
                 if matches!(ev, DemuxEvent::Sample { .. } | DemuxEvent::Metadata { .. }) {
                     let d = *deadline.lock().expect("deadline mutex poisoned");
                     if let Some(t) = media_stamp(Instant::now(), d) {
@@ -854,8 +854,9 @@ fn media_stamp(now: Instant, deadline: Instant) -> Option<Instant> {
     (now < deadline).then_some(now)
 }
 
-/// Seconds between the last media event and the receiver's deadline; zero
-/// when media arrived at or after it, `None` when none arrived.
+/// Seconds between the last media event and the receiver's deadline; `None`
+/// when none arrived. The zero case (media at or after the deadline) is
+/// defensive: `run_managed` no longer stamps such events.
 fn media_tail_s(deadline: Instant, last_media: Option<Instant>) -> Option<f64> {
     last_media.map(|t| deadline.saturating_duration_since(t).as_secs_f64())
 }
