@@ -83,7 +83,15 @@ fn set_sndbuf(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
 }
 
 fn set_pkt_size(u: &mut TcpUrl, key: &str, value: &str) -> Applied {
-    u.config.pkt_size = Some(parse_size(key, value)?);
+    let n = parse_size(key, value)?;
+    if n == 0 {
+        return Err(UrlError::BadQueryValue {
+            key: key.into(),
+            value: value.into(),
+            detail: "must be positive".into(),
+        });
+    }
+    u.config.pkt_size = Some(n);
     Ok(())
 }
 
@@ -395,6 +403,16 @@ mod tests {
     fn ipv6_literal_host_is_bracket_stripped() {
         let u = TcpUrl::parse("tcps://[::1]:7001").unwrap();
         assert_eq!(u.host, "::1");
+    }
+
+    #[test]
+    fn pkt_size_zero_is_refused() {
+        let err = TcpUrl::parse("tcp://1.2.3.4:7001?pkt_size=0").unwrap_err();
+        assert!(
+            matches!(err, UrlError::BadQueryValue { ref key, ref detail, .. }
+                if key == "pkt_size" && detail.contains("must be positive")),
+            "{err:?}"
+        );
     }
 
     #[test]

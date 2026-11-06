@@ -147,6 +147,8 @@ impl TcpListener {
     /// to one [`ACCEPT_POLL_INTERVAL`] tick (~5 ms worst case) before this
     /// call returns it, even though the peer's SYN completed instantly.
     pub fn accept_blocking(&self) -> Result<TcpTransport, TcpError> {
+        // `config_mut` may have set it after the bind.
+        self.config.check_pkt_size()?;
         let (sock, peer) = loop {
             if !self.alive.load(Ordering::Acquire) {
                 return Err(TcpError::Closed);

@@ -487,6 +487,20 @@ def test_tcp_error_payload_too_large() -> None:
     listener.close()
 
 
+def test_tcp_pkt_size_zero_is_refused() -> None:
+    """``pkt_size(0)`` is refused at ``build()`` (caller and listener) and
+    in a URL, before any connect or bind."""
+    with pytest.raises(TcpError) as excinfo:
+        tcp.Transport.builder().url("tcp://127.0.0.1:1").pkt_size(0).build()
+    assert excinfo.value.kind == TcpErrorKind.INVALID_CONFIG
+    with pytest.raises(TcpError) as excinfo:
+        tcp.Listener.builder().bind("127.0.0.1:0").pkt_size(0).build()
+    assert excinfo.value.kind == TcpErrorKind.INVALID_CONFIG
+    with pytest.raises(TcpError) as excinfo:
+        tcp.Transport.builder().url("tcp://127.0.0.1:1?pkt_size=0").build()
+    assert excinfo.value.kind == TcpErrorKind.URL
+
+
 def test_tcp_error_wiring_via_test_helper() -> None:
     """Verify make_tcp_error wiring for all 8 kind variants via test helper."""
     from tstrans._native import _raise_tcp_error_for_test

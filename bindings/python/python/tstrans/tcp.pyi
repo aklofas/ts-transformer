@@ -248,7 +248,8 @@ class TransportBuilder:
         ...
 
     def pkt_size(self, v: int) -> TransportBuilder:
-        """Maximum payload chunk size per ``send()`` call (default 64 KiB)."""
+        """Maximum payload chunk size per ``send()`` call (default 64 KiB);
+        zero raises ``TcpError(kind=INVALID_CONFIG)`` at ``build()``."""
         ...
 
     def connect_timeout_ms(self, v: int) -> TransportBuilder:
@@ -375,7 +376,8 @@ class ListenerBuilder:
         ...
 
     def pkt_size(self, v: int) -> ListenerBuilder:
-        """Maximum payload chunk size for accepted connections (default 64 KiB)."""
+        """Maximum payload chunk size for accepted connections (default 64 KiB);
+        zero raises ``TcpError(kind=INVALID_CONFIG)`` at ``build()``."""
         ...
 
     def tls(self, cert: str, key: str) -> ListenerBuilder:
