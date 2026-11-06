@@ -54,7 +54,8 @@ impl Muxer {
         metadata_service_id: u8,
     ) -> Result<(), MuxError> {
         let handle = super::resolve_lone(
-            &self.klv_streams,
+            &self.slots,
+            |s| &s.klv,
             MuxError::NoKlvStreamsConfigured,
             MuxStreamKind::Klv,
             KlvStreamHandle::pack,
@@ -65,13 +66,13 @@ impl Muxer {
     /// All `KlvStreamHandle`s for this muxer, in `(program, within-program)`
     /// declaration order. One handle per `StreamSpec::Klv` across all programs.
     pub fn klv_handles(&self) -> Vec<KlvStreamHandle> {
-        super::all_handles(&self.klv_streams, KlvStreamHandle::pack)
+        super::all_handles(&self.slots, |s| &s.klv, KlvStreamHandle::pack)
     }
 
     /// Handle for the i-th KLV stream in `programs[0]`, or `None` if out of
     /// range. Convenience for single-program callers.
     pub fn klv_stream_handle(&self, index: usize) -> Option<KlvStreamHandle> {
-        super::first_program_handle(&self.klv_streams, index, KlvStreamHandle::pack)
+        super::first_program_handle(&self.slots, |s| &s.klv, index, KlvStreamHandle::pack)
     }
 
     /// KLV stream handles for the named program, in declaration order.
@@ -83,8 +84,8 @@ impl Muxer {
         program_number: u16,
     ) -> Result<Vec<KlvStreamHandle>, MuxError> {
         super::handles_for_program(
-            &self.config.programs,
-            &self.klv_streams,
+            &self.slots,
+            |s| &s.klv,
             program_number,
             KlvStreamHandle::pack,
         )
@@ -132,13 +133,17 @@ impl Muxer {
         metadata_service_id: u8,
     ) -> Result<(), MuxError> {
         let (prog_idx, within_idx) = handle.unpack();
-        if prog_idx >= self.klv_streams.len() || within_idx >= self.klv_streams[prog_idx].len() {
+        let Some(k) = self
+            .slots
+            .get(prog_idx)
+            .and_then(|s| s.klv.get(within_idx))
+            .and_then(Option::as_ref)
+        else {
             return Err(MuxError::InvalidStreamHandle {
                 kind: MuxStreamKind::Klv,
                 index: handle.0 as usize,
             });
-        }
-        let k = &self.klv_streams[prog_idx][within_idx];
+        };
         let klv_pid = k.pid;
         let klv_carries_pts = k.carries_pts;
         let is_sync = k.stream_type == KlvStreamType::SynchronousMetadata;

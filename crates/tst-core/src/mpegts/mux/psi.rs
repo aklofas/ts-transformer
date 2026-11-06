@@ -14,18 +14,17 @@ use crate::mpegts::common::{crc32::crc32_mpeg2, descriptor, pid};
 
 /// Build the full 188-byte PAT packet for a single- or multi-program TS.
 ///
-/// Iterates over all programs in `config` and encodes one `(program_number,
-/// pmt_pid)` entry per program. Single-program configs produce byte-identical
-/// output to the prior hardcoded single-entry implementation.
+/// Encodes one program-loop entry per `(program_number, pmt_pid)` in
+/// `entries`, in the given order.
 ///
 /// Caller passes the shared `ContinuityCounters` so the PAT CC field
 /// increments correctly across successive PSI ticks.
 pub(crate) fn write_pat_packet(
     out: &mut [u8; 188],
-    config: &crate::mpegts::mux::MuxerConfig,
+    entries: &[(u16, u16)],
     counters: &mut ContinuityCounters,
 ) {
-    let n_programs = config.programs.len();
+    let n_programs = entries.len();
     // section_length = bytes after the section_length field itself through the
     // final CRC byte:
     //   tsid(2) + ver/cni(1) + sect_no(1) + last_sect(1) = 5 fixed bytes
@@ -61,13 +60,13 @@ pub(crate) fn write_pat_packet(
 
     // Program loop: one 4-byte entry per program.
     let body_start = 1; // pointer byte excluded from CRC body; table_id is at payload[1]
-    for prog in &config.programs {
-        payload[idx] = (prog.program_number >> 8) as u8;
-        payload[idx + 1] = (prog.program_number & 0xFF) as u8;
+    for &(program_number, pmt_pid) in entries {
+        payload[idx] = (program_number >> 8) as u8;
+        payload[idx + 1] = (program_number & 0xFF) as u8;
         idx += 2;
         // reserved(3 bits) = 0b111 | pmt_pid(13 bits)
-        payload[idx] = 0xE0 | ((prog.pmt_pid >> 8) as u8 & 0x1F);
-        payload[idx + 1] = (prog.pmt_pid & 0xFF) as u8;
+        payload[idx] = 0xE0 | ((pmt_pid >> 8) as u8 & 0x1F);
+        payload[idx + 1] = (pmt_pid & 0xFF) as u8;
         idx += 2;
     }
 
@@ -301,7 +300,12 @@ mod tests {
         let mut buf = [0u8; 188];
         let mut cc = ContinuityCounters::new();
         let cfg = single_prog_config();
-        write_pat_packet(&mut buf, &cfg, &mut cc);
+        let entries: Vec<(u16, u16)> = cfg
+            .programs
+            .iter()
+            .map(|p| (p.program_number, p.pmt_pid))
+            .collect();
+        write_pat_packet(&mut buf, &entries, &mut cc);
 
         // TS header sanity
         assert_eq!(buf[0], 0x47);

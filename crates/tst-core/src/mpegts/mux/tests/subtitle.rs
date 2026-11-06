@@ -536,12 +536,12 @@ fn pmt_emits_subtitle_entry_with_subtitling_descriptor() {
     let muxer = Muxer::new(cfg).unwrap();
 
     // Stream 0 (video) — no auto-emit, no caller — empty cache entry.
-    assert!(muxer.pmt_descriptor_caches[0][0].is_empty());
+    assert!(muxer.slots[0].pmt_descriptor_cache[0].is_empty());
 
     // Stream 1 (subtitle) — subtitling_descriptor: tag 0x59, len 0x08,
     // 3 bytes language + 1 type + 2 composition_page_id + 2 ancillary_page_id
     // = 10 bytes total.
-    let entry = &muxer.pmt_descriptor_caches[0][1];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[1];
     assert_eq!(entry.len(), 10);
     assert_eq!(entry[0], 0x59); // subtitling_descriptor tag
     assert_eq!(entry[1], 0x08); // length
@@ -565,7 +565,7 @@ fn pmt_emits_subtitle_entry_with_vttc_registration_for_webvtt() {
 
     // WebVttInTs auto-emit: registration_descriptor tag 0x05, len 0x04,
     // format_identifier == "VTTC" — 6 bytes total.
-    let entry = &muxer.pmt_descriptor_caches[0][1];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[1];
     assert_eq!(entry.len(), 6);
     assert_eq!(entry[0], 0x05); // registration_descriptor tag
     assert_eq!(entry[1], 0x04); // length
@@ -585,7 +585,7 @@ fn pmt_emits_subtitle_entry_with_ga94_registration_for_cea708_standalone() {
     let muxer = Muxer::new(cfg).unwrap();
 
     // Cea708Standalone auto-emit: registration_descriptor "GA94".
-    let entry = &muxer.pmt_descriptor_caches[0][1];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[1];
     assert_eq!(entry.len(), 6);
     assert_eq!(entry[0], 0x05);
     assert_eq!(entry[1], 0x04);
@@ -613,7 +613,7 @@ fn pmt_emits_subtitle_entry_with_teletext_descriptor() {
     let muxer = Muxer::new(cfg).unwrap();
 
     // teletext_descriptor: tag 0x56, len 0x05 — 7 bytes total.
-    let entry = &muxer.pmt_descriptor_caches[0][1];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[1];
     assert_eq!(entry.len(), 7);
     assert_eq!(entry[0], 0x56);
     assert_eq!(entry[1], 0x05);
@@ -645,7 +645,7 @@ fn pmt_appends_caller_supplied_descriptors_after_auto_emit() {
     let muxer = Muxer::new(cfg).unwrap();
 
     // VTTC auto-emit (6 bytes) + stream_identifier (3 bytes) = 9 bytes.
-    let entry = &muxer.pmt_descriptor_caches[0][1];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[1];
     assert_eq!(entry.len(), 9);
     // Auto-emit first.
     assert_eq!(&entry[..6], &[0x05, 0x04, b'V', b'T', b'T', b'C']);
@@ -667,7 +667,7 @@ fn pmt_emits_av1_with_av01_registration_first() {
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    let entry = &muxer.pmt_descriptor_caches[0][0];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[0];
     // AV01 Registration: 0x05 0x04 'A' 'V' '0' '1' = 6 bytes.
     assert!(
         entry.len() >= 6,
@@ -693,7 +693,7 @@ fn pmt_av1_with_caller_supplied_av01_suppresses_auto_emit() {
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    let entry = &muxer.pmt_descriptor_caches[0][0];
+    let entry = &muxer.slots[0].pmt_descriptor_cache[0];
     assert_eq!(
         entry.len(),
         6,
@@ -739,7 +739,7 @@ fn subtitle_auto_emit_suppressed_on_caller_supplied_subtitling() {
     // PMT entry. Stream index 1 = subtitle (after video at index 0).
     // There must be exactly one 0x59 descriptor — the caller's
     // multi-entry one — and no auto-emitted single-entry one.
-    let cache = &muxer.pmt_descriptor_caches[0][1];
+    let cache = &muxer.slots[0].pmt_descriptor_cache[1];
     let mut count_0x59 = 0;
     let mut idx = 0;
     while idx + 1 < cache.len() {
@@ -781,7 +781,7 @@ fn subtitle_auto_emit_suppressed_on_caller_supplied_teletext() {
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    let cache = &muxer.pmt_descriptor_caches[0][1];
+    let cache = &muxer.slots[0].pmt_descriptor_cache[1];
     // Exactly the caller's bytes — no auto-emit prepended.
     assert_eq!(cache, &caller_desc);
 }
@@ -801,7 +801,7 @@ fn subtitle_auto_emit_suppressed_on_caller_supplied_vttc_registration() {
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    let cache = &muxer.pmt_descriptor_caches[0][1];
+    let cache = &muxer.slots[0].pmt_descriptor_cache[1];
     // Exactly the caller's bytes — no double VTTC.
     assert_eq!(cache, &caller_desc);
 }
@@ -830,7 +830,7 @@ fn subtitle_auto_emit_fires_when_caller_supplies_unrelated_descriptors() {
         b.build().unwrap()
     };
     let muxer = Muxer::new(cfg).unwrap();
-    let cache = &muxer.pmt_descriptor_caches[0][1];
+    let cache = &muxer.slots[0].pmt_descriptor_cache[1];
     // Walk descriptors; expect exactly one 0x59 (the auto-emit).
     let mut count_0x59 = 0;
     let mut idx = 0;

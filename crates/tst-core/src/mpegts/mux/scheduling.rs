@@ -1,12 +1,12 @@
 //! PSI + PCR cadence scheduling for `Muxer`.
 //!
-//! Owns the `psi_last` / `pcr_last` per-program ring-buffer state and
-//! the `psi_due` / `pcr_due` predicates that gate PSI/PCR emission per
+//! Reads and updates each program slot's `psi_last` / `pcr_last` state
+//! through the `psi_due` / `pcr_due` predicates that gate PSI/PCR emission per
 //! the configured intervals.
 //!
 //! `maybe_emit_psi` is the centerpiece — it emits one PAT + one PMT per
-//! program when the per-program PSI tick is due, tracks the last-emission
-//! PTS, and updates `psi_last[prog_idx]` so the next call's `psi_due`
+//! live program when the per-program PSI tick is due, tracks the last-emission
+//! PTS, and updates every slot's `psi_last` so the next call's `psi_due`
 //! returns false until the next interval boundary.
 
 use super::psi::{PmtStreamEntry, write_pat_packet, write_pmt_packet};
@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 
 impl Muxer {
     pub(super) fn psi_due(&self, prog_idx: usize, pts_90khz: i64) -> bool {
-        match self.psi_last[prog_idx] {
+        match self.slots[prog_idx].psi_last {
             None => true,
             Some(last_masked) => {
                 let now_masked = Pts90khz::new(pts_90khz).masked_33bit();
@@ -29,7 +29,7 @@ impl Muxer {
     }
 
     pub(super) fn pcr_due(&self, prog_idx: usize, pts_90khz: i64) -> bool {
-        match self.pcr_last[prog_idx] {
+        match self.slots[prog_idx].pcr_last {
             None => true,
             Some(last) => {
                 // PCR is at 27 MHz; the 33-bit base wraps at 2^33 base ticks.
@@ -56,7 +56,7 @@ impl Muxer {
     /// PCR-on-push path already handles emission and this predicate
     /// returns false to avoid duplicate PCR samples.
     pub(super) fn pcr_only_due(&self, prog_idx: usize, pts_90khz: i64, current_pid: u16) -> bool {
-        self.pcr_pids[prog_idx] != current_pid && self.pcr_due(prog_idx, pts_90khz)
+        self.slots[prog_idx].pcr_pid != current_pid && self.pcr_due(prog_idx, pts_90khz)
     }
 
     /// Emit one adaptation-field-only PCR packet on the program's PCR PID
@@ -74,30 +74,34 @@ impl Muxer {
         if !self.pcr_only_due(prog_idx, pts_90khz, current_pid) {
             return;
         }
-        let pcr_pid = self.pcr_pids[prog_idx];
+        let pcr_pid = self.slots[prog_idx].pcr_pid;
         let pcr = Pcr27mhz::from_pts(Pts90khz::new(pts_90khz));
         let mut pkt = [0u8; 188];
         write_pcr_only_packet(&mut pkt, pcr_pid, pcr, &self.counters);
         self.queue.push_back(pkt);
-        self.pcr_last[prog_idx] = Some(pcr.as_ticks());
+        self.slots[prog_idx].pcr_last = Some(pcr.as_ticks());
     }
 
     pub(super) fn maybe_emit_psi(&mut self, prog_idx: usize, pts_90khz: i64) {
         if !self.psi_due(prog_idx, pts_90khz) {
             return;
         }
-        // Emit one PAT that lists all programs, then one PMT per program.
+        // Emit one PAT that lists all live programs, then one PMT per live
+        // program.
         // The PAT is emitted on every PSI tick regardless of which program
         // triggered the tick, so all programs' state is always visible to
         // receivers after a single PSI interval.
         let mut pat = [0u8; 188];
-        write_pat_packet(&mut pat, &self.config, &mut self.counters);
+        let pat_entries = self.pat_entries();
+        write_pat_packet(&mut pat, &pat_entries, &mut self.counters);
         self.queue.push_back(pat);
 
-        // One PMT per program — iterate the full program set so every program
-        // gets a fresh PMT on the tick (not just the triggering program).
-        for pidx in 0..self.config.programs.len() {
-            let prog = &self.config.programs[pidx];
+        // One PMT per live program — iterate the full slot set so every live
+        // program gets a fresh PMT on the tick (not just the triggering one).
+        for slot in &self.slots {
+            let Some(prog) = &slot.live else {
+                continue;
+            };
             let mut entries: Vec<PmtStreamEntry> = Vec::with_capacity(prog.streams.len());
             for (i, spec) in prog.streams.iter().enumerate() {
                 let stream_type = match spec {
@@ -116,31 +120,25 @@ impl Muxer {
                 entries.push(PmtStreamEntry {
                     stream_type,
                     elementary_pid: spec.pid(),
-                    descriptors: &self.pmt_descriptor_caches[pidx][i],
+                    descriptors: &slot.pmt_descriptor_cache[i],
                 });
             }
 
             let mut pmt = [0u8; 188];
-            write_pmt_packet(
-                &mut pmt,
-                prog,
-                self.pcr_pids[pidx],
-                &entries,
-                &mut self.counters,
-            )
-            .expect("validated MuxerConfig must produce single-section PMT");
+            write_pmt_packet(&mut pmt, prog, slot.pcr_pid, &entries, &mut self.counters)
+                .expect("validated MuxerConfig must produce single-section PMT");
             self.queue.push_back(pmt);
         }
 
-        // Update psi_last for ALL programs to the same masked timestamp.
+        // Update psi_last for ALL slots to the same masked timestamp.
         // maybe_emit_psi emits one PAT + one PMT per program on a single
         // tick, so every program's state is now fresh; updating only the
         // triggering index left other programs' psi_last == None, which
         // psi_due reads as "always due" and would re-fire the entire
         // PAT+PMTs set on the next push for a different program.
         let masked = Pts90khz::new(pts_90khz).masked_33bit();
-        for slot in self.psi_last.iter_mut() {
-            *slot = Some(masked);
+        for slot in self.slots.iter_mut() {
+            slot.psi_last = Some(masked);
         }
     }
 }

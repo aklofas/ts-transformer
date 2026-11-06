@@ -45,7 +45,8 @@ impl Muxer {
     ///   `MuxerConfig::buffer_packets`.
     pub fn push_data(&mut self, data: &[u8], pts: Pts90khz) -> Result<(), MuxError> {
         let handle = super::resolve_lone(
-            &self.data_streams,
+            &self.slots,
+            |s| &s.data,
             MuxError::NoDataStreamsConfigured,
             MuxStreamKind::Data,
             DataStreamHandle::pack,
@@ -56,13 +57,13 @@ impl Muxer {
     /// All `DataStreamHandle`s for this muxer, in `(program, within-program)`
     /// declaration order. One handle per `StreamSpec::Data` across all programs.
     pub fn data_handles(&self) -> Vec<DataStreamHandle> {
-        super::all_handles(&self.data_streams, DataStreamHandle::pack)
+        super::all_handles(&self.slots, |s| &s.data, DataStreamHandle::pack)
     }
 
     /// Handle for the i-th data stream in `programs[0]`, or `None` if out of
     /// range. Convenience for single-program callers.
     pub fn data_stream_handle(&self, index: usize) -> Option<DataStreamHandle> {
-        super::first_program_handle(&self.data_streams, index, DataStreamHandle::pack)
+        super::first_program_handle(&self.slots, |s| &s.data, index, DataStreamHandle::pack)
     }
 
     /// Data stream handles for the named program, in declaration order.
@@ -74,8 +75,8 @@ impl Muxer {
         program_number: u16,
     ) -> Result<Vec<DataStreamHandle>, MuxError> {
         super::handles_for_program(
-            &self.config.programs,
-            &self.data_streams,
+            &self.slots,
+            |s| &s.data,
             program_number,
             DataStreamHandle::pack,
         )
@@ -123,13 +124,17 @@ impl Muxer {
         pts: Pts90khz,
     ) -> Result<(), MuxError> {
         let (prog_idx, within_idx) = handle.unpack();
-        if prog_idx >= self.data_streams.len() || within_idx >= self.data_streams[prog_idx].len() {
+        let Some(d) = self
+            .slots
+            .get(prog_idx)
+            .and_then(|s| s.data.get(within_idx))
+            .and_then(Option::as_ref)
+        else {
             return Err(MuxError::InvalidStreamHandle {
                 kind: MuxStreamKind::Data,
                 index: handle.0 as usize,
             });
-        }
-        let d = &self.data_streams[prog_idx][within_idx];
+        };
         let data_pid = d.pid;
         let data_carries_pts = d.carries_pts;
 
@@ -178,7 +183,7 @@ impl Muxer {
         // No PCR-on-first-packet branch here (unlike push_klv):
         // validate() rejects PCR pinned on a data PID and the
         // effective-PCR fallback chain never lands on one, so
-        // `self.pcr_pids[prog_idx] == data_pid` is unreachable.
+        // `self.slots[prog_idx].pcr_pid == data_pid` is unreachable.
         self.drain_pes_scratch(data_pid, AdaptationField::default());
 
         // Count on the Ok path only — after all early-returns above.

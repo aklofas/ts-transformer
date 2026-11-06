@@ -13,6 +13,7 @@ pub(crate) mod pes;
 pub(crate) mod psi;
 pub(crate) mod ts;
 
+mod slot;
 mod state;
 mod scheduling;
 mod stats_accounting;
@@ -41,9 +42,7 @@ use crate::mpegts::common::{StreamType, StreamTypeCode};
 use alloc::collections::{BTreeMap, VecDeque};
 
 use self::pes::MAX_PES_HEADER_SIZE;
-use self::state::{
-    AudioStreamState, DataStreamState, KlvStreamState, SubtitleStreamState, VideoStreamState,
-};
+use self::slot::ProgramSlot;
 use self::ts::ContinuityCounters;
 
 /// MuxSender-side MPEG-TS muxer.
@@ -71,51 +70,20 @@ use self::ts::ContinuityCounters;
 /// | Python | Drain via `pull()` at end-of-stream; let GC reclaim |
 /// | C | `tst_muxer_close(muxer)` — releases the muxer; caller is responsible for prior drain |
 pub struct Muxer {
+    /// Read only for the global fields (`pcr_interval_ms`, `psi_interval_ms`,
+    /// `buffer_packets`, `av1_carriage`); `slots` is the source of truth for
+    /// the program list, so nothing reads `config.programs`.
     config: MuxerConfig,
 
-    /// Per-program pre-composed PMT descriptor bytes.
-    /// `pmt_descriptor_caches[prog_idx][stream_idx]` = concatenated TLVs for
-    /// that stream (KLVA auto-emit + caller-supplied). Indexed parallel to
-    /// `config.programs[prog_idx].streams`. Borrowed at PMT emission time;
-    /// never reallocated after construction.
-    pmt_descriptor_caches: Vec<Vec<Vec<u8>>>,
-
-    /// Per-program video stream state. `video_streams[prog_idx]` is the
-    /// list of video streams for program `prog_idx`, in declaration order.
-    /// `VideoStreamHandle::unpack()` → `(prog_idx, within_idx)` indexes here.
-    video_streams: Vec<Vec<VideoStreamState>>,
-
-    /// Per-program KLV stream state. Same indexing as `video_streams`.
-    klv_streams: Vec<Vec<KlvStreamState>>,
-
-    /// Per-program audio stream state. Same indexing as `video_streams`.
-    /// `AudioStreamHandle::unpack()` → `(prog_idx, within_idx)` indexes here.
-    audio_streams: Vec<Vec<AudioStreamState>>,
-
-    /// Per-program subtitle stream state. Same indexing as `video_streams`.
-    /// `SubtitleStreamHandle::unpack()` → `(prog_idx, within_idx)` indexes here.
-    subtitle_streams: Vec<Vec<SubtitleStreamState>>,
-
-    /// Per-program data stream state. Same indexing as `video_streams`.
-    /// `DataStreamHandle::unpack()` → `(prog_idx, within_idx)` indexes here.
-    data_streams: Vec<Vec<DataStreamState>>,
-
-    /// Per-program resolved PCR PID. Indexed parallel to `config.programs`.
-    pcr_pids: Vec<u16>,
+    /// Per-program state. `program_index` of a stream handle is the slot
+    /// index; a tombstoned slot keeps its index so later handles stay valid.
+    slots: Vec<ProgramSlot>,
 
     pcr_interval_27mhz: u64,
     psi_interval_90khz: i64,
 
     queue: VecDeque<[u8; 188]>,
     counters: ContinuityCounters,
-
-    /// Per-program last PSI emission PTS, masked to 33 bits. None until first.
-    /// Indexed parallel to `config.programs`.
-    psi_last: Vec<Option<u64>>,
-
-    /// Per-program last PCR emission value at 27 MHz. None until first.
-    /// Indexed parallel to `config.programs`.
-    pcr_last: Vec<Option<u64>>,
 
     // ── Stats counters ────────────────────────────────────────────────────
     ts_packets_emitted: u64,
@@ -143,63 +111,37 @@ impl Muxer {
     pub fn new(config: MuxerConfig) -> Result<Self, MuxError> {
         config.validate()?;
 
-        let n_programs = config.programs.len();
         let pcr_interval_27mhz = (config.pcr_interval_ms as u64) * 27_000;
         let psi_interval_90khz = (config.psi_interval_ms as i64) * 90;
 
-        // Per-program state vectors built in a single pass over programs.
-        // The heavy lifting (stream-state collection, PCR PID resolution,
-        // descriptor cache assembly, per-stream stats initialization) lives
-        // in `state.rs` as `pub(super)` helpers so this constructor stays a
-        // thin coordinator.
-        let mut video_streams: Vec<Vec<VideoStreamState>> = Vec::with_capacity(n_programs);
-        let mut klv_streams: Vec<Vec<KlvStreamState>> = Vec::with_capacity(n_programs);
-        let mut audio_streams: Vec<Vec<AudioStreamState>> = Vec::with_capacity(n_programs);
-        let mut subtitle_streams: Vec<Vec<SubtitleStreamState>> = Vec::with_capacity(n_programs);
-        let mut data_streams: Vec<Vec<DataStreamState>> = Vec::with_capacity(n_programs);
-        let mut pcr_pids: Vec<u16> = Vec::with_capacity(n_programs);
-        let mut pmt_descriptor_caches: Vec<Vec<Vec<u8>>> = Vec::with_capacity(n_programs);
+        // One slot per program, in declaration order. The heavy lifting
+        // (stream-state collection, PCR PID resolution, descriptor cache
+        // assembly, per-stream stats initialization) lives in `slot.rs` and
+        // `state.rs` so this constructor stays a thin coordinator.
+        let mut slots: Vec<ProgramSlot> = Vec::with_capacity(config.programs.len());
         let mut per_stream: BTreeMap<u16, crate::mpegts::stats::StreamStats> = BTreeMap::new();
 
         for prog in &config.programs {
-            state::warn_on_descriptor_conflicts(prog);
-            let (video, klv, audio, subtitle, data) = state::collect_stream_states(prog);
-            let pcr_pid = state::resolve_pcr_pid(prog);
-            let cache = state::build_pmt_descriptor_cache(prog);
+            let slot = ProgramSlot::from_program(prog);
             state::initialize_stats(
                 prog,
-                &video,
-                &klv,
-                &audio,
-                &subtitle,
-                &data,
+                &slot.video,
+                &slot.klv,
+                &slot.audio,
+                &slot.subtitle,
+                &slot.data,
                 &mut per_stream,
             );
-
-            video_streams.push(video);
-            klv_streams.push(klv);
-            audio_streams.push(audio);
-            subtitle_streams.push(subtitle);
-            data_streams.push(data);
-            pcr_pids.push(pcr_pid);
-            pmt_descriptor_caches.push(cache);
+            slots.push(slot);
         }
 
         Ok(Self {
             config,
-            pmt_descriptor_caches,
-            video_streams,
-            klv_streams,
-            audio_streams,
-            subtitle_streams,
-            data_streams,
-            pcr_pids,
+            slots,
             pcr_interval_27mhz,
             psi_interval_90khz,
             queue: VecDeque::with_capacity(64),
             counters: ContinuityCounters::new(),
-            psi_last: vec![None; n_programs],
-            pcr_last: vec![None; n_programs],
             ts_packets_emitted: 0,
             ts_bytes_emitted: 0,
             per_stream,
@@ -260,8 +202,8 @@ impl Muxer {
     /// independently decodable (RFC 8216 §3: each Media Segment must be
     /// decodable without prior segments).
     pub fn request_psi(&mut self) {
-        for slot in &mut self.psi_last {
-            *slot = None;
+        for slot in &mut self.slots {
+            slot.psi_last = None;
         }
     }
 
@@ -269,7 +211,21 @@ impl Muxer {
     /// Returns `None` if `prog_idx` is out of range.
     #[cfg(test)]
     pub(crate) fn pcr_pid_for_program(&self, prog_idx: usize) -> Option<u16> {
-        self.pcr_pids.get(prog_idx).copied()
+        self.slots.get(prog_idx).map(|s| s.pcr_pid)
+    }
+
+    /// Live slots with their indices, in slot order.
+    fn live_slots(&self) -> impl Iterator<Item = (usize, &ProgramSlot)> {
+        self.slots.iter().enumerate().filter(|(_, s)| s.is_live())
+    }
+
+    /// `(program_number, pmt_pid)` of every live program, in slot order —
+    /// the PAT's program loop.
+    fn pat_entries(&self) -> Vec<(u16, u16)> {
+        self.live_slots()
+            .filter_map(|(_, s)| s.live.as_ref())
+            .map(|p| (p.program_number, p.pmt_pid))
+            .collect()
     }
 
     // ── Shared push-path helpers ─────────────────────────────────────────────
@@ -297,7 +253,7 @@ impl Muxer {
         // plus one PCR-only adaptation-field packet when the PCR PID has
         // fallen behind and this push isn't already landing on it.
         let psi_packets = if self.psi_due(prog_idx, pts.as_ticks()) {
-            1 + self.config.programs.len()
+            1 + self.live_slots().count()
         } else {
             0
         };
@@ -329,9 +285,9 @@ impl Muxer {
         pts: crate::mpegts::common::Pts90khz,
         pid: u16,
     ) -> self::ts::AdaptationField {
-        if self.pcr_pids[prog_idx] == pid && self.pcr_due(prog_idx, pts.as_ticks()) {
+        if self.slots[prog_idx].pcr_pid == pid && self.pcr_due(prog_idx, pts.as_ticks()) {
             let pcr = crate::mpegts::common::Pcr27mhz::from_pts(pts);
-            self.pcr_last[prog_idx] = Some(pcr.as_ticks());
+            self.slots[prog_idx].pcr_last = Some(pcr.as_ticks());
             self::ts::AdaptationField {
                 pcr: Some(pcr),
                 random_access: false,
@@ -377,77 +333,110 @@ impl Muxer {
 
 // ── Free helpers shared by push_*.rs submodules ───────────────────────────
 
-/// Collect all stream handles across every program, in `(program, within-program)`
-/// declaration order.
+/// Collect the handles of every live stream in every live program, in
+/// `(program, within-program)` declaration order.
 ///
-/// `streams` is the per-program, per-stream-kind field (e.g. `self.audio_streams`).
+/// `streams` selects the per-kind stream vector of a slot (e.g. `|s| &s.audio`).
 /// `pack` is the handle constructor (e.g. `AudioStreamHandle::pack`).
 ///
 /// All five `push_*.rs` files expose a `*_handles(&self)` method with an
-/// identical flat_map body; routing them here eliminates the duplication.
-fn all_handles<T, H>(streams: &[Vec<T>], pack: fn(usize, usize) -> H) -> Vec<H> {
-    streams
+/// identical body; routing them here eliminates the duplication.
+fn all_handles<T, H>(
+    slots: &[ProgramSlot],
+    streams: fn(&ProgramSlot) -> &[Option<T>],
+    pack: fn(usize, usize) -> H,
+) -> Vec<H> {
+    slots
         .iter()
         .enumerate()
-        .flat_map(|(p_idx, prog)| (0..prog.len()).map(move |s_idx| pack(p_idx, s_idx)))
+        .filter(|(_, slot)| slot.is_live())
+        .flat_map(|(p_idx, slot)| live_stream_handles(streams(slot), p_idx, pack))
         .collect()
 }
 
-/// Stream handles for the named program, in declaration order.
-///
-/// `programs` is `self.config.programs` (to resolve `program_number` to an
-/// index); `streams` and `pack` are as in [`all_handles`]. Shared body of
-/// the five `*_handles_for_program` methods in the `push_*.rs` submodules.
-///
-/// Returns `Err(MuxError::ProgramNotFound)` if no program with the given
-/// number exists.
-fn handles_for_program<T, H>(
-    programs: &[MuxerProgramConfig],
-    streams: &[Vec<T>],
-    program_number: u16,
+/// Handles of the live streams in one slot's per-kind stream vector.
+fn live_stream_handles<T, H>(
+    streams: &[Option<T>],
+    p_idx: usize,
     pack: fn(usize, usize) -> H,
-) -> Result<Vec<H>, crate::error::MuxError> {
-    let prog_idx = programs
-        .iter()
-        .position(|p| p.program_number == program_number)
-        .ok_or(crate::error::MuxError::ProgramNotFound { program_number })?;
-    Ok((0..streams[prog_idx].len())
-        .map(|s_idx| pack(prog_idx, s_idx))
-        .collect())
-}
-
-/// Handle for the i-th stream in `streams[0]` (the first program's
-/// declaration order), or `None` if `streams` has no programs or `index`
-/// is out of range. Shared body of `video_stream_handle` /
-/// `klv_stream_handle` / `data_stream_handle` — convenience lookups for
-/// single-program callers.
-fn first_program_handle<T, H>(
-    streams: &[Vec<T>],
-    index: usize,
-    pack: fn(usize, usize) -> H,
-) -> Option<H> {
-    if !streams.is_empty() && index < streams[0].len() {
-        Some(pack(0, index))
-    } else {
-        None
-    }
-}
-
-/// Return the program index of the sole non-empty stream list in `streams`.
-///
-/// Precondition: caller has verified that exactly one program has a non-empty
-/// list for this stream kind. The `expect` is safe under that invariant and
-/// will only fire if the caller's precondition check was wrong.
-///
-/// Replaces identical `.iter().enumerate().find(…).map(…).expect(…)` blocks
-/// in `single_video_handle` and [`resolve_lone`].
-fn locate_lone_program<T>(streams: &[Vec<T>]) -> usize {
+) -> impl Iterator<Item = H> {
     streams
         .iter()
         .enumerate()
-        .find(|(_, s)| !s.is_empty())
-        .map(|(p, _)| p)
-        .expect("caller verified exactly one non-empty program for this stream kind")
+        .filter(|(_, s)| s.is_some())
+        .map(move |(s_idx, _)| pack(p_idx, s_idx))
+}
+
+/// Live stream handles for the named live program, in declaration order.
+///
+/// `streams` and `pack` are as in [`all_handles`]. Shared body of the five
+/// `*_handles_for_program` methods in the `push_*.rs` submodules.
+///
+/// Returns `Err(MuxError::ProgramNotFound)` if no live program with the given
+/// number exists.
+fn handles_for_program<T, H>(
+    slots: &[ProgramSlot],
+    streams: fn(&ProgramSlot) -> &[Option<T>],
+    program_number: u16,
+    pack: fn(usize, usize) -> H,
+) -> Result<Vec<H>, crate::error::MuxError> {
+    let prog_idx = slots
+        .iter()
+        .position(|s| s.program_number() == Some(program_number))
+        .ok_or(crate::error::MuxError::ProgramNotFound { program_number })?;
+    Ok(live_stream_handles(streams(&slots[prog_idx]), prog_idx, pack).collect())
+}
+
+/// Handle for the i-th stream of the first live program (declaration
+/// order), or `None` if there is no live program or that stream does not
+/// exist. Shared body of `video_stream_handle` / `klv_stream_handle` /
+/// `data_stream_handle` — convenience lookups for single-program callers.
+fn first_program_handle<T, H>(
+    slots: &[ProgramSlot],
+    streams: fn(&ProgramSlot) -> &[Option<T>],
+    index: usize,
+    pack: fn(usize, usize) -> H,
+) -> Option<H> {
+    let (p_idx, slot) = slots.iter().enumerate().find(|(_, s)| s.is_live())?;
+    streams(slot)
+        .get(index)?
+        .as_ref()
+        .map(|_| pack(p_idx, index))
+}
+
+/// Number of live streams of one kind across all live programs.
+fn live_stream_count<T>(slots: &[ProgramSlot], streams: fn(&ProgramSlot) -> &[Option<T>]) -> usize {
+    slots
+        .iter()
+        .filter(|slot| slot.is_live())
+        .map(|slot| streams(slot).iter().filter(|s| s.is_some()).count())
+        .sum()
+}
+
+/// Return the `(program_index, within_index)` of the first live stream of
+/// one kind.
+///
+/// Precondition: caller has verified that exactly one live stream of this
+/// kind exists. The `expect` is safe under that invariant and will only
+/// fire if the caller's precondition check was wrong.
+///
+/// Replaces identical lookup blocks in `single_video_handle` and
+/// [`resolve_lone`].
+fn locate_lone_stream<T>(
+    slots: &[ProgramSlot],
+    streams: fn(&ProgramSlot) -> &[Option<T>],
+) -> (usize, usize) {
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(_, slot)| slot.is_live())
+        .find_map(|(p, slot)| {
+            streams(slot)
+                .iter()
+                .position(Option::is_some)
+                .map(|w| (p, w))
+        })
+        .expect("caller verified exactly one live stream of this kind")
 }
 
 /// Resolve the single-stream handle for a `push_*` shorthand entry point:
@@ -460,19 +449,21 @@ fn locate_lone_program<T>(streams: &[Vec<T>]) -> usize {
 /// and ambiguous-count cases to `AmbiguousTarget` (no `NoVideoStreamsConfigured`
 /// variant exists), which doesn't fit this shape.
 fn resolve_lone<T, H>(
-    streams: &[Vec<T>],
+    slots: &[ProgramSlot],
+    streams: fn(&ProgramSlot) -> &[Option<T>],
     none_configured: MuxError,
     kind: MuxStreamKind,
     pack: fn(usize, usize) -> H,
 ) -> Result<H, MuxError> {
-    let total: usize = streams.iter().map(|s| s.len()).sum();
+    let total = live_stream_count(slots, streams);
     if total == 0 {
         return Err(none_configured);
     }
     if total > 1 {
         return Err(MuxError::AmbiguousTarget { kind, count: total });
     }
-    Ok(pack(locate_lone_program(streams), 0))
+    let (p, w) = locate_lone_stream(slots, streams);
+    Ok(pack(p, w))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

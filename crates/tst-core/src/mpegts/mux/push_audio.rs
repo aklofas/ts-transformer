@@ -39,7 +39,8 @@ impl Muxer {
     ///   `MuxerConfig::buffer_packets`.
     pub fn push_audio(&mut self, frames: &[u8], pts: Pts90khz) -> Result<(), MuxError> {
         let handle = super::resolve_lone(
-            &self.audio_streams,
+            &self.slots,
+            |s| &s.audio,
             MuxError::NoAudioStreamsConfigured,
             MuxStreamKind::Audio,
             AudioStreamHandle::pack,
@@ -74,15 +75,19 @@ impl Muxer {
         frames: &[u8],
     ) -> Result<(), MuxError> {
         let (prog_idx, within_idx) = handle.unpack();
-        if prog_idx >= self.audio_streams.len() || within_idx >= self.audio_streams[prog_idx].len()
-        {
+        let Some(a) = self
+            .slots
+            .get(prog_idx)
+            .and_then(|s| s.audio.get(within_idx))
+            .and_then(Option::as_ref)
+        else {
             return Err(MuxError::InvalidStreamHandle {
                 kind: MuxStreamKind::Audio,
                 index: handle.0 as usize,
             });
-        }
-        let audio_pid = self.audio_streams[prog_idx][within_idx].pid;
-        let audio_codec = self.audio_streams[prog_idx][within_idx].codec;
+        };
+        let audio_pid = a.pid;
+        let audio_codec = a.codec;
 
         // Audio always uses PTS, so PES overhead is 3 (start code) + 5 (PTS) = 8 bytes.
         // The remaining space in the u16 PES_packet_length field is for flags, header_data_length,
@@ -156,7 +161,7 @@ impl Muxer {
     /// All `AudioStreamHandle`s for this muxer, in `(program, within-program)`
     /// declaration order. One handle per `StreamSpec::Audio` across all programs.
     pub fn audio_handles(&self) -> Vec<AudioStreamHandle> {
-        super::all_handles(&self.audio_streams, AudioStreamHandle::pack)
+        super::all_handles(&self.slots, |s| &s.audio, AudioStreamHandle::pack)
     }
 
     /// Audio stream handles for the named program, in declaration order.
@@ -168,8 +173,8 @@ impl Muxer {
         program_number: u16,
     ) -> Result<Vec<AudioStreamHandle>, MuxError> {
         super::handles_for_program(
-            &self.config.programs,
-            &self.audio_streams,
+            &self.slots,
+            |s| &s.audio,
             program_number,
             AudioStreamHandle::pack,
         )

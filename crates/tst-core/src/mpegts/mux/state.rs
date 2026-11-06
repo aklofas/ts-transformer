@@ -384,9 +384,8 @@ pub(super) fn ts_packets_for(payload_size: usize) -> usize {
 }
 
 /// Collect per-stream-class state vectors for one program. Single-pass over
-/// `prog.streams`. Matches the `filter_map` collections that previously lived
-/// in `Muxer::new`.
-// One Vec per stream class, consumed positionally by `Muxer::new` —
+/// `prog.streams`.
+// One Vec per stream class, consumed positionally by `ProgramSlot::from_program` —
 // a named struct would only be destructured straight back into fields.
 #[allow(clippy::type_complexity)]
 pub(super) fn collect_stream_states(
@@ -822,16 +821,17 @@ pub(super) fn audio_stream_type_byte(codec: AudioCodec) -> u8 {
 /// Initialize per-stream stats entries for one program. Mutates `into` rather
 /// than returning a fresh BTreeMap so the caller can accumulate across
 /// programs in one shared map without an extra allocation+merge pass.
+/// Tombstoned (`None`) streams get no entry.
 pub(super) fn initialize_stats(
     prog: &MuxerProgramConfig,
-    video: &[VideoStreamState],
-    klv: &[KlvStreamState],
-    audio: &[AudioStreamState],
-    subtitle: &[SubtitleStreamState],
-    data: &[DataStreamState],
+    video: &[Option<VideoStreamState>],
+    klv: &[Option<KlvStreamState>],
+    audio: &[Option<AudioStreamState>],
+    subtitle: &[Option<SubtitleStreamState>],
+    data: &[Option<DataStreamState>],
     into: &mut BTreeMap<u16, StreamStats>,
 ) {
-    for v in video {
+    for v in video.iter().flatten() {
         let stream_type_byte = video_stream_type_byte(v.codec);
         into.insert(
             v.pid,
@@ -843,7 +843,7 @@ pub(super) fn initialize_stats(
             },
         );
     }
-    for k in klv {
+    for k in klv.iter().flatten() {
         let stream_type_byte = klv_stream_type_byte(k.stream_type);
         into.insert(
             k.pid,
@@ -855,7 +855,7 @@ pub(super) fn initialize_stats(
             },
         );
     }
-    for a in audio {
+    for a in audio.iter().flatten() {
         let stream_type_byte = audio_stream_type_byte(a.codec);
         into.insert(
             a.pid,
@@ -867,7 +867,7 @@ pub(super) fn initialize_stats(
             },
         );
     }
-    for s in subtitle {
+    for s in subtitle.iter().flatten() {
         // All four subtitle codecs ride PMT stream_type 0x06
         // (PrivateData); the per-stream PMT descriptor
         // disambiguates between DVB-sub, teletext, CEA-708
@@ -884,7 +884,7 @@ pub(super) fn initialize_stats(
             },
         );
     }
-    for d in data {
+    for d in data.iter().flatten() {
         into.insert(
             d.pid,
             StreamStats {
