@@ -546,6 +546,15 @@ demuxer drops the partial buffer and emits
 `MultiCellAuReason` naming the failure mode. Tune the cap via
 `DemuxerConfigBuilder::au_cell_cap_per_pid(bytes)`.
 
+Sequence continuity is checked within each PES, across all services on its
+PID. The first cell of a new PES sets a fresh baseline, so a producer may
+restart numbering at zero per PES or continue across PES boundaries. A
+within-PES jump while any AU is in flight drops every buffered AU on that
+PID and reports `SequenceGap`, including when the arriving cell is `First`
+or `Complete`; that diagnostic takes precedence over `ConcurrentFirst`. The
+arriving `First` or `Complete` cell is then processed again from an empty
+state.
+
 #### Malformed `cell_fragment_indication` tolerance (default on)
 
 Real-world encoders pervasively mis-set the H.222.0 V9 §2.12.4.2
