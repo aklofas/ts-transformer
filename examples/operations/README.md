@@ -27,10 +27,10 @@ cargo run -p tst-examples --example managed_reconnect_background
 Sibling to §1 — same flaky-peer shape, same `SrtTransport`, same
 `ManagedTransport` machinery, but `policy.mode` is
 `ReconnectMode::Background` instead of the default `Blocking`. A
-dedicated worker thread owns the factory/backoff/drain loop, so
-`send_*` never waits on backoff or a factory call: it enqueues into
-the gap buffer and returns immediately, whether or not the link is
-currently up. Watch stderr — the send loop keeps producing at a steady
+dedicated worker owns reconnect backoff, factory calls and backlog drain.
+While that worker is active or the gap buffer is non-empty, sends enqueue
+and return without waiting for it; with no worker and no backlog, a send
+uses the connected transport directly and can block. Watch stderr — the send loop keeps producing at a steady
 cadence straight through the outage while a separate stats line shows
 the gap buffer filling, messages being evicted, and the worker
 recovering.
