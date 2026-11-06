@@ -26,10 +26,16 @@ A **host** librist 0.2.20 lacks all four corrections, so a build that links
 a system librist through pkg-config is exposed to all four defects until
 upstream fixes them.
 
-**Build prerequisites:** a C toolchain, meson, and ninja (for librist —
-Debian/Ubuntu: `apt install meson ninja-build`), plus libclang (for
-bindgen) — see the `bindgen` crate's requirements for platform-specific
-libclang setup.
+A host librist is used only at version 0.2.20 or newer, when
+`pkg-config --static` resolves it, and, with the `mbedtls` feature on (the
+default), when `mbedcrypto` is in its static link set; otherwise the
+vendored copy is built. `RIST_FORCE_VENDORED=1` or `RIST_NO_PKG_CONFIG=1`
+skips the host probe.
+
+**Build prerequisites:** a C toolchain, meson and ninja for librist, CMake
+for the default mbedTLS build, and libclang for bindgen. On Debian/Ubuntu:
+`apt install cmake meson ninja-build libclang-dev`. See the `bindgen` crate
+for platform-specific libclang setup.
 
 **LZ4:** librist >= 0.2.17 needs LZ4 for Advanced Profile payload
 compression. The vendored build enables librist's bundled LZ4

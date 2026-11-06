@@ -25,10 +25,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Build prerequisites:** a C toolchain, meson, and ninja (for the
-bundled librist build — Debian/Ubuntu: `apt install meson
-ninja-build`), plus libclang (for bindgen) — see `tstrans-rist-sys`'s
-README for detail.
+**Build prerequisites:** a C toolchain, meson and ninja for librist, CMake
+for the default mbedTLS build, and libclang for bindgen. On Debian/Ubuntu:
+`apt install cmake meson ninja-build libclang-dev`. See `tstrans-rist-sys`
+for detail.
 
 **Stability: Provisional** — profile coverage (Simple/Main) is still
 evolving. See the [API stability
