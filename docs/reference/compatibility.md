@@ -237,8 +237,8 @@ aren't yet wrapped are reachable via `tstrans-srt-sys`.
 | `SRTO_SNDTIMEO` / `SRTO_RCVTIMEO` | `send_timeout` / `recv_timeout` | ✅ Full |
 | `SRTO_REUSEADDR` (listener) | `reuse_addr: bool` | ✅ Full |
 | Backlog (`srt_listen` arg) | `backlog: u32` | ✅ Full |
-| `SRTO_PEERIDLETIMEO` | `peer_idle_timeout: Option<Duration>` | ✅ Full — refused above 2 147 483 ms (libsrt's millisecond field is an i32 after ×1000); URL key `peeridletimeo`; libsrt detects a silent peer no sooner than ≈ 5.1 s |
-| `SRTO_CONNTIMEO` | `connect_timeout: Option<Duration>` | ✅ Full |
+| `SRTO_PEERIDLETIMEO` | `peer_idle_timeout: Option<Duration>` | ✅ Full — refused below 1 ms and above 2 147 483 ms (libsrt's millisecond field is an i32 after ×1000); URL key `peeridletimeo`; libsrt detects a silent peer no sooner than ≈ 5.1 s |
+| `SRTO_CONNTIMEO` | `connect_timeout: Option<Duration>` | ✅ Full — the budget for the whole connect, shared across the resolved addresses and starting after resolution; libsrt checks the deadline about once a second |
 | `SRTO_LINGER` | `linger: Option<Duration>` | ✅ Full |
 | `SRTO_SENDER` | `role: Role` (`Receiver` / `Sender`) | ✅ Full — `Sender` sets `SRTO_SENDER=1` for HSv4-peer compatibility. |
 | Sender / receiver socket presets | `SrtSocketConfig::sender_defaults()` / `::receiver_defaults()` + `merge_sender_defaults()` / `merge_receiver_defaults()` + `SrtSocketBuilder::sender_defaults()` / `::receiver_defaults()` chain methods | ✅ Full — domain-tuned bundle (`connect_timeout=15s`, `linger=5s` sender / off receiver, `role=Sender` / `Receiver`). Merge-if-default semantics preserve explicit caller values. |
