@@ -223,6 +223,11 @@ impl WhepUrl {
     /// - [`UrlError::Rejected`] when the URL's structure does not parse or it
     ///   carries userinfo (`user:pass@`).
     pub fn parse(s: &str) -> Result<Self, UrlError> {
+        // A password holding a raw `?` puts its tail in the query.
+        Self::parse_unredacted(s).map_err(|e| e.withheld_for(s))
+    }
+
+    fn parse_unredacted(s: &str) -> Result<Self, UrlError> {
         let parsed =
             parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
         let tls = match parsed.scheme {

@@ -161,6 +161,28 @@ pub(crate) fn shown_value<'a>(key: &str, value: &'a str) -> &'a str {
     }
 }
 
+/// Whether the query of URL text `url` may hold part of a password: an `@`
+/// follows the first `?` after `://`. The first `?` is where `parse_url`
+/// starts the query (`split_path_query` in `common.rs`); keep the two in
+/// step. A password holding a raw `?` after a
+/// numeric prefix (`srt://u:12345?tail@h`) parses as a port followed by a
+/// query, so its tail reaches the query keys and values; [`redact_url`]
+/// reads the same input as userinfo. A query value holding an `@`
+/// (`?streamid=user@site`) also matches, so its parse errors are withheld
+/// too.
+///
+/// Every URL parser in the workspace checks this on a failed parse and, when
+/// it holds, replaces the key and value text in the error with
+/// `<redacted>` ([`UrlError::withhold_text`](super::UrlError::withhold_text)).
+#[must_use]
+pub fn query_may_hold_userinfo(url: &str) -> bool {
+    let rest = url.find("://").map_or(url, |i| &url[i + 3..]);
+    match (rest.find('?'), rest.rfind('@')) {
+        (Some(q), Some(at)) => at > q,
+        _ => false,
+    }
+}
+
 /// Free text outside any URL: scrubbed one separator-delimited token at a time.
 fn redact_tokens(text: &str, out: &mut String) {
     let mut start = 0;

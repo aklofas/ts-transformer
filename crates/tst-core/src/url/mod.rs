@@ -27,4 +27,4 @@ pub use common::{
     ParsedUrl, UrlError, is_multicast_v4, is_multicast_v6, parse_bool, parse_host_port, parse_int,
     parse_size, parse_url,
 };
-pub use redact::redact_url;
+pub use redact::{query_may_hold_userinfo, redact_url};

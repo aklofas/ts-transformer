@@ -163,6 +163,11 @@ impl UdpUrl {
     /// `?localaddr=` and IPv4 `?iface=` values stay literal-only
     /// (resolving a local NIC selector through DNS is meaningless).
     pub fn parse(s: &str) -> Result<Self, UrlError> {
+        // A password holding a raw `?` puts its tail in the query.
+        Self::parse_unredacted(s).map_err(|e| e.withheld_for(s))
+    }
+
+    fn parse_unredacted(s: &str) -> Result<Self, UrlError> {
         let parsed =
             parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
         if parsed.scheme != "udp" {
@@ -356,6 +361,16 @@ mod tests {
     }
 
     use super::*;
+
+    /// A raw `?` in a numeric-prefix password puts its tail in the query;
+    /// no parse error may echo it.
+    #[test]
+    fn errors_withhold_a_query_that_may_hold_a_password_tail() {
+        let e = UdpUrl::parse("udp://u:12345?ttl=secret-tail@host:9000").unwrap_err();
+        for text in [e.to_string(), format!("{e:?}")] {
+            assert!(!text.contains("secret-tail"), "{text}");
+        }
+    }
 
     #[test]
     fn unicast_send() {

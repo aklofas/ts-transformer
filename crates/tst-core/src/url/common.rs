@@ -155,6 +155,44 @@ impl<'a> core::fmt::Debug for ParsedUrl<'a> {
     }
 }
 
+impl UrlError {
+    /// This error with every key, value and free-text detail taken from the
+    /// URL replaced by `<redacted>`; the variant is unchanged. A parser calls
+    /// it on a failed parse when
+    /// [`query_may_hold_userinfo`](super::query_may_hold_userinfo) holds for
+    /// the input, since that text may then be the tail of a password.
+    #[must_use]
+    pub fn withhold_text(self) -> Self {
+        use super::redact::REDACTED;
+        match self {
+            Self::BadQueryValue { .. } => Self::BadQueryValue {
+                key: REDACTED.into(),
+                value: REDACTED.into(),
+                detail: REDACTED.into(),
+            },
+            Self::UnknownQueryKey { .. } => Self::UnknownQueryKey {
+                key: REDACTED.into(),
+            },
+            Self::Rejected(_) => Self::Rejected(REDACTED.into()),
+            // `parse_url` names no key in a percent-decoding error for such
+            // input; the offset it reports is not URL text.
+            other => other,
+        }
+    }
+
+    /// `self`, passed through [`withhold_text`](Self::withhold_text) when
+    /// [`query_may_hold_userinfo`](super::query_may_hold_userinfo) holds for
+    /// `url`, the text that failed to parse.
+    #[must_use]
+    pub fn withheld_for(self, url: &str) -> Self {
+        if super::redact::query_may_hold_userinfo(url) {
+            self.withhold_text()
+        } else {
+            self
+        }
+    }
+}
+
 /// Same shape as a derived `Debug`, except a secret query value is redacted.
 impl core::fmt::Debug for UrlError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -212,6 +250,9 @@ impl core::fmt::Debug for UrlError {
 /// Path and host are returned verbatim (callers parse host into IP address
 /// via [`parse_host_port`] when needed). Query values are percent-decoded;
 /// path and host strings are returned verbatim.
+///
+/// When [`query_may_hold_userinfo`](super::query_may_hold_userinfo) holds for
+/// `s`, an error names no query key.
 pub fn parse_url(s: &str) -> Result<ParsedUrl<'_>, UrlError> {
     // Split scheme from rest at first `://`.
     let sep = s.find("://").ok_or(UrlError::MissingSchemeSeparator)?;
@@ -244,7 +285,7 @@ pub fn parse_url(s: &str) -> Result<ParsedUrl<'_>, UrlError> {
     let (host, port) = split_host_port(host_port)?;
 
     let query = match query_raw {
-        Some(q) => parse_query(q)?,
+        Some(q) => parse_query(q, !super::redact::query_may_hold_userinfo(s))?,
         None => Vec::new(),
     };
 
@@ -321,7 +362,8 @@ type QueryPair<'a> = (Cow<'a, str>, Cow<'a, str>);
 
 /// Parse `key=value&key=value` into a vector of decoded pairs.
 /// Order is preserved (caller decides last-wins / first-wins semantics).
-fn parse_query(q: &str) -> Result<Vec<QueryPair<'_>>, UrlError> {
+/// A percent-decoding error names the key only when `name_keys` is set.
+fn parse_query(q: &str, name_keys: bool) -> Result<Vec<QueryPair<'_>>, UrlError> {
     let mut out = Vec::new();
     for pair in q.split('&') {
         if pair.is_empty() {
@@ -333,8 +375,13 @@ fn parse_query(q: &str) -> Result<Vec<QueryPair<'_>>, UrlError> {
         };
         // The value may be a passphrase, so the error names the key only.
         let k = percent_decode(k).map_err(|e| with_detail_suffix(e, " in a query key"))?;
-        let v = percent_decode(v)
-            .map_err(|e| with_detail_suffix(e, &format!(" in the value of query key '{k}'")))?;
+        let v = percent_decode(v).map_err(|e| {
+            if name_keys {
+                with_detail_suffix(e, &format!(" in the value of query key '{k}'"))
+            } else {
+                with_detail_suffix(e, " in the value of a query key")
+            }
+        })?;
         out.push((k, v));
     }
     Ok(out)
@@ -549,6 +596,59 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
+    use alloc::string::ToString;
+
+    /// A raw `?` in a numeric-prefix password puts the password's tail in
+    /// the query; the percent-decoding error must not name it as a key.
+    #[test]
+    fn percent_error_withholds_a_key_that_may_be_a_password_tail() {
+        for url in [
+            "srt://u:12345?secret-tail=x%zz@h:1",
+            "srt://u:12345?pa%zzss@h:1",
+        ] {
+            assert!(super::super::query_may_hold_userinfo(url));
+            let e = super::parse_url(url).unwrap_err();
+            assert!(matches!(e, super::UrlError::BadPercentEncoding { .. }));
+            for text in [e.to_string(), format!("{e:?}")] {
+                assert!(!text.contains("secret-tail"), "{text}");
+                assert!(!text.contains("pa"), "{text}");
+            }
+        }
+        // Without an `@` after the query the key is still named.
+        let e = super::parse_url("srt://h:1?latency=x%zz").unwrap_err();
+        assert!(e.to_string().contains("'latency'"), "{e}");
+    }
+
+    #[test]
+    fn withhold_text_redacts_query_text_and_keeps_the_variant() {
+        use super::UrlError;
+        let e = UrlError::BadQueryValue {
+            key: "secret-tail".into(),
+            value: "hunter2".into(),
+            detail: "hunter2 is bad".into(),
+        }
+        .withhold_text();
+        assert!(matches!(e, UrlError::BadQueryValue { .. }));
+        let e2 = UrlError::UnknownQueryKey {
+            key: "secret-tail".into(),
+        }
+        .withhold_text();
+        assert!(matches!(e2, UrlError::UnknownQueryKey { .. }));
+        let e3 = UrlError::Rejected("got hunter2".to_string()).withhold_text();
+        for text in [
+            e.to_string(),
+            format!("{e:?}"),
+            e2.to_string(),
+            format!("{e2:?}"),
+            e3.to_string(),
+            format!("{e3:?}"),
+        ] {
+            assert!(!text.contains("secret-tail"), "{text}");
+            assert!(!text.contains("hunter2"), "{text}");
+        }
+    }
+
     #[test]
     fn malformed_escapes_never_echo_the_value() {
         for url in [

@@ -205,6 +205,11 @@ pub(crate) fn listener_host_rejection() -> UrlError {
 
 impl TcpUrl {
     pub fn parse(s: &str) -> Result<Self, UrlError> {
+        // A password holding a raw `?` puts its tail in the query.
+        Self::parse_unredacted(s).map_err(|e| e.withheld_for(s))
+    }
+
+    fn parse_unredacted(s: &str) -> Result<Self, UrlError> {
         let parsed =
             parse_url(s).map_err(|e| UrlError::Rejected(format!("URL parse failed: {e}")))?;
         let tls = match parsed.scheme {
@@ -254,6 +259,16 @@ impl TcpUrl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A raw `?` in a numeric-prefix password puts its tail in the query;
+    /// no parse error may echo it.
+    #[test]
+    fn errors_withhold_a_query_that_may_hold_a_password_tail() {
+        let e = TcpUrl::parse("tcp://u:12345?rcvbuf=secret-tail@host:9000").unwrap_err();
+        for text in [e.to_string(), format!("{e:?}")] {
+            assert!(!text.contains("secret-tail"), "{text}");
+        }
+    }
 
     #[test]
     fn plain_caller() {

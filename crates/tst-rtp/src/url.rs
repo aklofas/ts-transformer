@@ -46,6 +46,7 @@ use tst_core::url::common::{
     percent_decode,
 };
 use tst_core::url::query::{QueryKey, lookup};
+use tst_core::url::query_may_hold_userinfo;
 
 /// Default UDP payload size: 7 MPEG-TS packets per RTP packet = 1316 B
 /// (RFC 2250 §2 mandates an integral multiple of 188; 7×188 matches
@@ -178,6 +179,35 @@ pub type UrlError = RtpUrlError;
 
 type Applied = Result<(), RtpUrlError>;
 
+impl RtpUrlError {
+    /// This error with the key and value text taken from the URL replaced
+    /// by `<redacted>`, for a URL whose query may hold the tail of a
+    /// password ([`query_may_hold_userinfo`]). The variant is unchanged.
+    fn withhold_text(self) -> Self {
+        const WITHHELD: &str = "<redacted>";
+        match self {
+            Self::Syntax(e) => Self::Syntax(e.withhold_text()),
+            Self::BadQuery { .. } => Self::BadQuery {
+                key: WITHHELD.into(),
+                value: WITHHELD.into(),
+            },
+            Self::UnknownQueryKey { .. } => Self::UnknownQueryKey {
+                key: WITHHELD.into(),
+            },
+            other => other,
+        }
+    }
+
+    /// `self`, withheld when `url`'s query may hold a password tail.
+    fn withheld_for(self, url: &str) -> Self {
+        if query_may_hold_userinfo(url) {
+            self.withhold_text()
+        } else {
+            self
+        }
+    }
+}
+
 /// `BadQuery` for `key` given as `value`; a non-empty `detail` is appended
 /// in parentheses.
 pub(crate) fn bad_query(key: &str, value: &str, detail: &str) -> RtpUrlError {
@@ -231,8 +261,14 @@ impl RtpUrl {
     ///
     /// Returns [`RtpUrlError`] when structural parsing fails, the scheme is
     /// not `rtp`, the port is missing, a query value is invalid, or a
-    /// query key is not one of the table above.
+    /// query key is not one of the table above. When an `@` follows the
+    /// `?` (a password holding a raw `?` puts its tail in the query), the
+    /// error's key and value text is `<redacted>`.
     pub fn parse(s: &str) -> Result<Self, RtpUrlError> {
+        Self::parse_unredacted(s).map_err(|e| e.withheld_for(s))
+    }
+
+    fn parse_unredacted(s: &str) -> Result<Self, RtpUrlError> {
         let ParsedUrl {
             scheme,
             host,
@@ -550,8 +586,14 @@ impl RtspUrl {
     ///
     /// Returns [`RtpUrlError`] when structural URL parsing fails, when the
     /// scheme is not `rtsp` / `rtsps`, when a query value is invalid, or
-    /// when an unknown query key is present.
+    /// when an unknown query key is present. When an `@` follows the `?`
+    /// (a password holding a raw `?` puts its tail in the query), the
+    /// error's key and value text is `<redacted>`.
     pub fn parse(s: &str) -> Result<Self, RtpUrlError> {
+        Self::parse_unredacted(s).map_err(|e| e.withheld_for(s))
+    }
+
+    fn parse_unredacted(s: &str) -> Result<Self, RtpUrlError> {
         let parsed = parse_url(s).map_err(RtpUrlError::Syntax)?;
         let scheme = match parsed.scheme {
             "rtsp" => RtspScheme::Rtsp,
@@ -834,6 +876,34 @@ mod tests {
     fn rejects_pkt_size_not_188_multiple() {
         let err = RtpUrl::parse("rtp://h:5004?pkt_size=1500").unwrap_err();
         assert!(matches!(err, RtpUrlError::BadQuery { ref key, .. } if key == "pkt_size"));
+    }
+
+    /// A raw `?` in a numeric-prefix password puts its tail in the query;
+    /// no parse error may echo it.
+    #[test]
+    fn errors_withhold_a_query_that_may_hold_a_password_tail() {
+        let rtsp = [
+            "rtsp://u:12345?secret-tail@cam/live",
+            "rtsp://u:12345?transport=hunter2@host",
+            "rtsp://u:12345?secret-tail=x%zz@cam/live",
+        ];
+        let rtp = [
+            "rtp://u:12345?secret-tail@host:5004",
+            "rtp://u:12345?ttl=hunter2@host:5004",
+        ];
+        let errs = rtsp
+            .iter()
+            .map(|u| RtspUrl::parse(u).unwrap_err())
+            .chain(rtp.iter().map(|u| RtpUrl::parse(u).unwrap_err()));
+        for e in errs {
+            for text in [e.to_string(), format!("{e:?}")] {
+                assert!(!text.contains("secret-tail"), "{text}");
+                assert!(!text.contains("hunter2"), "{text}");
+            }
+        }
+        // Without an `@` after the query the key is still named.
+        let e = RtspUrl::parse("rtsp://cam/live?transprt=tcp").unwrap_err();
+        assert!(e.to_string().contains("transprt"), "{e}");
     }
 
     #[test]
