@@ -13618,7 +13618,7 @@ contracts + Rust↔C ABI cross-references + three CI ratchets).
   doesn't satisfy `T: Transport`, making the dyn-erased aliases
   type-level landmines. Added mid-execution after the Phase 3 plan was
   found to miss this prerequisite.
-- [`docs/binding-authors.md`](./docs/binding-authors.md) — ~150-line
+- [`docs/reference/binding-authors.md`](/docs/reference/binding-authors.md) — ~150-line
   starter guide for `tst-jni` / `tst-uniffi` / `tst-pyo3` authors.
   Worked Kotlin/Swift/Python/C examples plus builder + cancel-handle +
   threading + versioning sections.
@@ -13686,7 +13686,7 @@ contracts + Rust↔C ABI cross-references + three CI ratchets).
   Rationale: closes audit theme H5; required for clean Kotlin
   `.apply { }`, Swift `var b`, Java chaining, Python step-wise, and C
   opaque-handle binding patterns. See
-  [`docs/binding-authors.md`](./docs/binding-authors.md).
+  [`docs/reference/binding-authors.md`](/docs/reference/binding-authors.md).
 
 ##### Changed (Phase 3 / sub-phase 3.5 — targeted API reshape)
 
@@ -13727,7 +13727,7 @@ contracts + Rust↔C ABI cross-references + three CI ratchets).
 - `tst_pipeline::CancelHandle` and `tst_srt::CancelHandle` re-exports —
   single import path for binding authors regardless of which crate they
   pull in.
-- [`docs/cancel-handle.md`](./docs/cancel-handle.md) — universal
+- [`docs/reference/srt-cancel-handle.md`](/docs/reference/srt-cancel-handle.md) — universal
   cross-thread shutdown pattern with per-language idiom table
   (Kotlin `Job.cancel()`, Swift `Task.cancel()`, Python
   `threading.Event`, C `tst_cancel_handle_cancel`).
