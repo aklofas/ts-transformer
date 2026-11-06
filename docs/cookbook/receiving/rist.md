@@ -25,7 +25,11 @@ let rx = RistRecvTransportBuilder::new("rist://@0.0.0.0:9000")?
     .listen()?;
 let mut receiver = DemuxReceiver::new(rx);
 for event in &mut receiver {
-    let event = event?;
+    let event = match event {
+        Ok(event) => event,
+        Err(e) if e.kind == tst_pipeline::ShellErrorKind::Backpressure => continue,
+        Err(e) => return Err(e.into()),
+    };
     // event is a DemuxEvent — ProgramMap, Sample (video/audio), Metadata (KLV), ...
 }
 ```
@@ -52,9 +56,10 @@ and the receiver sees no data (the librist log channel reports
 
 ## Backpressure on quiet links
 
-librist's poll API returns timeout every 100ms when no packets arrive,
-which `tst-rist` surfaces as `TransportError::Backpressure`. `DemuxReceiver`
-treats Backpressure as "retry"; bare `recv_bytes` callers must do the same:
+librist returns a timeout after a quiet 100 ms poll. `tst-rist` surfaces it
+as `TransportError::Backpressure`, and `DemuxReceiver` propagates it as a
+`ShellErrorKind::Backpressure` error. Retry it in either receive loop; a bare
+`recv_bytes` loop looks like this:
 
 ```rust
 use tst_core::transport::{RecvTransport, TransportError};
