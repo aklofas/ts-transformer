@@ -8,7 +8,11 @@ bindings/c/tests/receiving/exit_with_parked_call.rs	reserve_port	twin of crates/
 bindings/c/tests/common/mod.rs	ts_null_packet	cross-crate twin of the tst-udp null-packet helper; the C-binding test crate cannot depend on it
 bindings/jvm/src/test/java/org/tstrans/srt/SrtManagedCloseCancelsFirstTest.java	rescue	identical body to SrtPlainCloseCancelsFirstTest; parameter types differ (ManagedMuxSender vs MuxSender)
 bindings/jvm/src/test/java/org/tstrans/srt/SrtPlainCloseCancelsFirstTest.java	rescue	identical body to SrtManagedCloseCancelsFirstTest; parameter types differ (MuxSender vs ManagedMuxSender)
+crates/tst-core/src/mpegts/mux/tests/reconfigure.rs	visible	unit-test twin of the reconfigure integration fixtures; the in-crate test module cannot reach tests/common
+crates/tst-core/src/mpegts/mux/tests/reconfigure.rs	visible_thermal	unit-test twin of the reconfigure integration fixtures; the in-crate test module cannot reach tests/common
 crates/tst-core/tests/mpegts/demux_local.rs	fixtures_dir	cross-crate twin; the one copy belongs in tst-test-helpers
+crates/tst-core/tests/mpegts/mux_reconfigure.rs	visible	integration-test twin of the reconfigure unit-test fixtures; the in-crate test module cannot reach tests/common
+crates/tst-core/tests/mpegts/mux_reconfigure.rs	visible_thermal	integration-test twin of the reconfigure unit-test fixtures; the in-crate test module cannot reach tests/common
 crates/tst-hls/tests/net_hls_e2e.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
 crates/tst-hls/tests/net_klv_interop.rs	synthetic_h264_au	pipeline and transport tests: shared tests/common not yet written
 crates/tst-interop/tests/net_loopback.rs	join_with_timeout	shared test support not yet written for this crate
