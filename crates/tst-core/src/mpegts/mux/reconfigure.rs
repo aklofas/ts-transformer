@@ -234,6 +234,13 @@ impl Muxer {
     /// continuity counter restarts at 0, and so does the counter of every
     /// PID a new stream is placed on; PMT PID counters continue.
     ///
+    /// Removing a stream and re-adding it on the same PID with no successful
+    /// `push_*` between the two calls coalesces the two table changes into
+    /// one PMT update: receivers never see the stream retired, and observe a
+    /// single continuity-counter discontinuity on that PID, whose counter
+    /// restarted at 0. Push at least once between the two calls when
+    /// receivers must see the retirement.
+    ///
     /// # Stats
     ///
     /// Lifetime counters continue. A removed PID's
