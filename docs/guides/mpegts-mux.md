@@ -1018,7 +1018,9 @@ receiver has already seen.
 
 Handles to surviving streams stay valid. Take handles for a new program or
 a new stream from `video_handles_for_program(N)` and its siblings after the
-call. A handle to a removed stream fails every `push_*_to` with
+call: `*_handles_for_program(N)[i]` is the i-th stream of that kind in the
+program's declaration order, as is `*_stream_handle(i)` for the first live
+program. A handle to a removed stream fails every `push_*_to` with
 `MuxError::InvalidStreamHandle`, and `*_handles_for_program` on a removed
 program returns `MuxError::ProgramNotFound`. The removed slot is reused by a
 later reconfigure: re-adding the same program with the same PIDs revives

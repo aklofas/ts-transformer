@@ -334,6 +334,21 @@ fn refuses_pcr_pid_change_unless_old_pcr_removed() {
         reason.contains("0x1011") && reason.contains("0x1041") && reason.contains("program 1"),
         "{reason}"
     );
+    assert!(!reason.contains("default rule"), "{reason}");
+
+    // With no pcr_pid set, a video declared ahead of 0x1011 takes the PCR by
+    // the default rule; the reason names the fix.
+    let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p1.add_video(0x1012, VideoCodec::H264);
+    p1.add_video(0x1011, VideoCodec::H264);
+    p1.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+    let reason = refusal(&m, &config_of(vec![p1.build(), thermal().build()]));
+    assert!(
+        reason.starts_with("reconfigure:")
+            && reason.contains("default rule")
+            && reason.contains("pcr_pid to 0x1011"),
+        "{reason}"
+    );
 
     let mut p1 = MuxerProgramConfigBuilder::new(1, 0x1000);
     p1.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);

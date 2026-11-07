@@ -364,47 +364,53 @@ impl Muxer {
 /// Collect the handles of every live stream in every live program, in
 /// `(program, within-program)` declaration order.
 ///
-/// `streams` selects the per-kind stream vector of a slot (e.g. `|s| &s.audio`).
-/// `pack` is the handle constructor (e.g. `AudioStreamHandle::pack`).
+/// `kind` selects the stream kind. `pack` is the handle constructor (e.g.
+/// `AudioStreamHandle::pack`).
 ///
 /// All five `push_*.rs` files expose a `*_handles(&self)` method with an
 /// identical body; routing them here eliminates the duplication.
-fn all_handles<T, H>(
+fn all_handles<H>(
     slots: &[ProgramSlot],
-    streams: fn(&ProgramSlot) -> &[Option<T>],
+    kind: MuxStreamKind,
     pack: fn(usize, usize) -> H,
 ) -> Vec<H> {
     slots
         .iter()
         .enumerate()
-        .filter(|(_, slot)| slot.is_live())
-        .flat_map(|(p_idx, slot)| live_stream_handles(streams(slot), p_idx, pack))
+        .flat_map(|(p_idx, slot)| declared_within_indices(slot, kind).map(move |w| pack(p_idx, w)))
         .collect()
 }
 
-/// Handles of the live streams in one slot's per-kind stream vector.
-fn live_stream_handles<T, H>(
-    streams: &[Option<T>],
-    p_idx: usize,
-    pack: fn(usize, usize) -> H,
-) -> impl Iterator<Item = H> {
-    streams
+/// Within-indices of a live slot's `kind` streams in the program's
+/// declaration order; empty for a tombstoned slot.
+///
+/// After a reconfigure a stream's within-index need not follow declaration
+/// order (a new stream may take a lower tombstoned index), so the order
+/// comes from `live.streams` and each PID maps to its index through
+/// `placed_pids`.
+fn declared_within_indices(
+    slot: &ProgramSlot,
+    kind: MuxStreamKind,
+) -> impl Iterator<Item = usize> + '_ {
+    slot.live
         .iter()
-        .enumerate()
-        .filter(|(_, s)| s.is_some())
-        .map(move |(s_idx, _)| pack(p_idx, s_idx))
+        .flat_map(|prog| prog.streams.iter())
+        .filter_map(move |spec| match slot.placed_pids.get(&spec.pid()) {
+            Some(&(placed, within)) if placed == kind => Some(within),
+            _ => None,
+        })
 }
 
 /// Live stream handles for the named live program, in declaration order.
 ///
-/// `streams` and `pack` are as in [`all_handles`]. Shared body of the five
+/// `kind` and `pack` are as in [`all_handles`]. Shared body of the five
 /// `*_handles_for_program` methods in the `push_*.rs` submodules.
 ///
 /// Returns `Err(MuxError::ProgramNotFound)` if no live program with the given
 /// number exists.
-fn handles_for_program<T, H>(
+fn handles_for_program<H>(
     slots: &[ProgramSlot],
-    streams: fn(&ProgramSlot) -> &[Option<T>],
+    kind: MuxStreamKind,
     program_number: u16,
     pack: fn(usize, usize) -> H,
 ) -> Result<Vec<H>, crate::error::MuxError> {
@@ -412,24 +418,25 @@ fn handles_for_program<T, H>(
         .iter()
         .position(|s| s.program_number() == Some(program_number))
         .ok_or(crate::error::MuxError::ProgramNotFound { program_number })?;
-    Ok(live_stream_handles(streams(&slots[prog_idx]), prog_idx, pack).collect())
+    Ok(declared_within_indices(&slots[prog_idx], kind)
+        .map(|w| pack(prog_idx, w))
+        .collect())
 }
 
-/// Handle for the i-th stream of the first live program (declaration
-/// order), or `None` if there is no live program or that stream does not
-/// exist. Shared body of `video_stream_handle` / `klv_stream_handle` /
+/// Handle for the i-th declared stream of `kind` in the first live program,
+/// or `None` if there is no live program or that stream does not exist.
+/// Shared body of `video_stream_handle` / `klv_stream_handle` /
 /// `data_stream_handle` — convenience lookups for single-program callers.
-fn first_program_handle<T, H>(
+fn first_program_handle<H>(
     slots: &[ProgramSlot],
-    streams: fn(&ProgramSlot) -> &[Option<T>],
+    kind: MuxStreamKind,
     index: usize,
     pack: fn(usize, usize) -> H,
 ) -> Option<H> {
     let (p_idx, slot) = slots.iter().enumerate().find(|(_, s)| s.is_live())?;
-    streams(slot)
-        .get(index)?
-        .as_ref()
-        .map(|_| pack(p_idx, index))
+    declared_within_indices(slot, kind)
+        .nth(index)
+        .map(|w| pack(p_idx, w))
 }
 
 /// Number of live streams of one kind across all live programs.

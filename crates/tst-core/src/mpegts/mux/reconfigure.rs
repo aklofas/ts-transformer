@@ -240,8 +240,9 @@ impl Muxer {
     /// [`MuxerStats::per_stream`](super::MuxerStats::per_stream) entry stays
     /// frozen and resumes counting if the PID is placed again, with its
     /// `program_number`, `stream_type` and `label` rewritten; its codec
-    /// counters are dropped. New PIDs get entries at this call. `programs_configured` and
-    /// `subtitle_streams_configured` count live programs and streams.
+    /// counters are dropped. New PIDs get entries at this call.
+    /// `programs_configured` and `subtitle_streams_configured` count live
+    /// programs and streams.
     pub fn reconfigure(&mut self, config: MuxerConfig) -> Result<(), MuxError> {
         // The plan runs `config.validate()` first, then every refusal.
         let plan = self.plan_reconfigure(&config)?;
@@ -488,10 +489,19 @@ impl Muxer {
                     .filter(|pid| !new_pids.contains(pid))
                     .collect();
                 if pcr_pid != slot.pcr_pid && !removed_pids.contains(&slot.pcr_pid) {
+                    let default_rule = if prog.pcr_pid.is_none() {
+                        format!(
+                            "; with no pcr_pid set the PCR PID follows the default rule (the \
+                             first video stream), so setting pcr_pid to 0x{:04X} keeps it",
+                            slot.pcr_pid,
+                        )
+                    } else {
+                        alloc::string::String::new()
+                    };
                     return Err(refuse(format!(
                         "reconfigure: program {} changes its PCR PID from 0x{:04X} to \
                          0x{pcr_pid:04X} while 0x{:04X} stays in the program; keep the PCR \
-                         PID or remove its stream in the same call",
+                         PID or remove its stream in the same call{default_rule}",
                         prog.program_number, slot.pcr_pid, slot.pcr_pid,
                     )));
                 }

@@ -536,3 +536,70 @@ fn stats_lifetime_and_frozen_removed_pid() {
     assert_eq!(s3.per_stream[&0x1111], frozen);
     assert!(s3.per_stream[&0x1011].items > s1.per_stream[&0x1011].items);
 }
+
+/// Program 1 = H.264 0x1011 + KLV on each of `klv_pids` in that declaration
+/// order; 0x1031 is sync KLV, every other PID async.
+fn video_with_klv(klv_pids: &[u16]) -> MuxerConfig {
+    let mut p = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p.add_video(0x1011, VideoCodec::H264);
+    for &pid in klv_pids {
+        let stream_type = if pid == 0x1031 {
+            KlvStreamType::SynchronousMetadata
+        } else {
+            KlvStreamType::PrivateData
+        };
+        p.add_klv(pid, stream_type, true);
+    }
+    config_of(vec![p.build()])
+}
+
+/// The ES PIDs that carry payload in `ts`, excluding PSI and the video PID.
+fn klv_pids_in(ts: &[u8]) -> Vec<u16> {
+    let mut pids: Vec<u16> = ts
+        .chunks(188)
+        .filter(|p| has_payload(p))
+        .map(pid_of)
+        .filter(|&pid| pid != 0 && pid != 0x1000 && pid != 0x1011)
+        .collect();
+    pids.dedup();
+    pids
+}
+
+#[test]
+fn handles_follow_declaration_order_after_stream_reuse() {
+    let mut m = Muxer::new(video_with_klv(&[0x1031, 0x1032])).unwrap();
+    m.reconfigure(video_with_klv(&[0x1032, 0x1033])).unwrap();
+    // Flush the forced PSI so the next drains hold only the KLV payload.
+    let v = m.video_handles_for_program(1).unwrap()[0];
+    m.push_video_to(v, &h264_au(200, true), Pts90khz::new(0), true)
+        .unwrap();
+    drain_mux(&mut m);
+
+    let klv = m.klv_handles_for_program(1).unwrap();
+    assert_eq!(klv.len(), 2);
+    for (i, (&handle, expected)) in klv.iter().zip([0x1032, 0x1033]).enumerate() {
+        m.push_klv_to(handle, &synthetic_klv_ls(), Pts90khz::new(STEP), 0)
+            .unwrap();
+        assert_eq!(klv_pids_in(&drain_mux(&mut m)), [expected], "handle {i}");
+    }
+    assert_eq!(m.klv_handles(), klv);
+    assert_eq!(m.klv_stream_handle(0), Some(klv[0]));
+    assert_eq!(m.klv_stream_handle(1), Some(klv[1]));
+}
+
+#[test]
+fn first_program_handle_counts_live_streams_after_removal() {
+    let mut m = Muxer::new(video_with_klv(&[0x1031, 0x1032])).unwrap();
+    m.reconfigure(video_with_klv(&[0x1032])).unwrap();
+    assert_eq!(m.klv_handles().len(), 1);
+    let handle = m.klv_stream_handle(0).expect("one KLV stream is live");
+    assert_eq!(m.klv_stream_handle(1), None);
+
+    let v = m.video_stream_handle(0).unwrap();
+    m.push_video_to(v, &h264_au(200, true), Pts90khz::new(0), true)
+        .unwrap();
+    drain_mux(&mut m);
+    m.push_klv_to(handle, &synthetic_klv_ls(), Pts90khz::new(STEP), 0)
+        .unwrap();
+    assert_eq!(klv_pids_in(&drain_mux(&mut m)), [0x1032]);
+}

@@ -66,13 +66,18 @@ impl Muxer {
     /// All `KlvStreamHandle`s for this muxer, in `(program, within-program)`
     /// declaration order. One handle per `StreamSpec::Klv` across all programs.
     pub fn klv_handles(&self) -> Vec<KlvStreamHandle> {
-        super::all_handles(&self.slots, |s| &s.klv, KlvStreamHandle::pack)
+        super::all_handles(&self.slots, MuxStreamKind::Klv, KlvStreamHandle::pack)
     }
 
     /// Handle for the i-th KLV stream in the first live program, or `None` if out of
     /// range. Convenience for single-program callers.
     pub fn klv_stream_handle(&self, index: usize) -> Option<KlvStreamHandle> {
-        super::first_program_handle(&self.slots, |s| &s.klv, index, KlvStreamHandle::pack)
+        super::first_program_handle(
+            &self.slots,
+            MuxStreamKind::Klv,
+            index,
+            KlvStreamHandle::pack,
+        )
     }
 
     /// KLV stream handles for the named program, in declaration order.
@@ -85,7 +90,7 @@ impl Muxer {
     ) -> Result<Vec<KlvStreamHandle>, MuxError> {
         super::handles_for_program(
             &self.slots,
-            |s| &s.klv,
+            MuxStreamKind::Klv,
             program_number,
             KlvStreamHandle::pack,
         )

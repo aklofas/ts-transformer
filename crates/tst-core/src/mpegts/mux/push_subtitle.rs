@@ -191,7 +191,11 @@ impl Muxer {
     /// `(program, within-program)` declaration order. One handle per
     /// `StreamSpec::Subtitle` across all programs.
     pub fn subtitle_handles(&self) -> Vec<SubtitleStreamHandle> {
-        super::all_handles(&self.slots, |s| &s.subtitle, SubtitleStreamHandle::pack)
+        super::all_handles(
+            &self.slots,
+            MuxStreamKind::Subtitle,
+            SubtitleStreamHandle::pack,
+        )
     }
 
     /// Subtitle stream handles for the named program, in declaration order.
@@ -204,7 +208,7 @@ impl Muxer {
     ) -> Result<Vec<SubtitleStreamHandle>, MuxError> {
         super::handles_for_program(
             &self.slots,
-            |s| &s.subtitle,
+            MuxStreamKind::Subtitle,
             program_number,
             SubtitleStreamHandle::pack,
         )
