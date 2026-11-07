@@ -365,9 +365,13 @@ non-`StreamKindTag` entries in `drop`. Field values outside their wire range
 | `VideoCodec::H266` | `0x33` | Annex-B framing on `push_video`. |
 | `VideoCodec::Av1` | `0x06` | OBU-framed (`obu_has_size_field = 1`); auto-emitted AV01 `registration_descriptor` per AV1-in-MPEG-2-TS binding §2.1. |
 
-All four are first-class. Mid-stream codec change is out of scope — destroy
-the muxer and create a new one if you need to switch codecs in a single
-output file.
+All four are first-class. `reconfigure` refuses a codec change on a kept
+PID. To switch codecs mid-stream, declare the new codec on a fresh PID in
+one `reconfigure` call; removing the old stream in the same call is allowed,
+including when it was the PCR PID (see
+[Reconfiguring a running muxer](#reconfiguring-a-running-muxer)). To reuse
+the same PID, remove the stream in one call and declare it with the new
+codec in the next.
 
 The diff between [../examples/muxing/mux_to_file.rs](/examples/muxing/mux_to_file.rs)
 (H.264 + async KLV via `MuxerConfig::default()`) and
@@ -1013,6 +1017,13 @@ unchanged table keeps its version. PMT versions are kept per PMT PID for
 the muxer's lifetime, so a program withdrawn and announced again on the
 same PMT PID continues from the last version rather than repeating one a
 receiver has already seen.
+
+Removing a stream and re-adding it on the same PID with no successful
+`push_*` between the two calls coalesces the two table changes into one PMT
+update: receivers never see the stream retired, and observe a single
+continuity-counter discontinuity on that PID, whose counter restarted at 0.
+Push at least once between the two calls when receivers must see the
+retirement.
 
 ### Handles
 
