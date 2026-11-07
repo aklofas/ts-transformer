@@ -219,6 +219,68 @@ fn add_program_mid_stream_is_announced_then_decoded() {
             .iter()
             .any(|e| matches!(e, DemuxEvent::Metadata { stream, .. } if stream.pid == 0x1131))
     );
+    let mut both = pre.clone();
+    both.extend_from_slice(&post);
+    assert_cc_continuous(&both, 0x1011);
+    assert_cc_continuous(&both, 0x1031);
+}
+
+#[test]
+fn remove_stream_from_surviving_program_stops_its_pid() {
+    let mut m = Muxer::new(visible_thermal(false)).unwrap();
+    let p1 = handles(&m, 1);
+    push_steps(&mut m, &[(p1, 0)], 0, 3);
+    let pre = drain_mux(&mut m);
+    assert!(!packets_on(&pre, 0x1031).is_empty());
+
+    let mut video_only = MuxerProgramConfigBuilder::new(1, 0x1000);
+    video_only.add_video(0x1011, VideoCodec::H264);
+    m.reconfigure(config_of(vec![video_only.build()])).unwrap();
+    let pts = Pts90khz::new(3 * STEP);
+    assert!(matches!(
+        m.push_klv_to(p1.1, &synthetic_klv_ls(), pts, 0),
+        Err(MuxError::InvalidStreamHandle { .. })
+    ));
+    for i in 3..6 {
+        m.push_video_to(p1.0, &h264_au(200, false), Pts90khz::new(i * STEP), false)
+            .unwrap();
+    }
+    let post = drain_mux(&mut m);
+
+    assert!(packets_on(&post, 0x1031).is_empty());
+    let pmt = versions_on(&post, 0x1000);
+    assert!(!pmt.is_empty());
+    assert!(pmt.iter().all(|&v| v == 1), "{pmt:?}");
+    let mut both = pre.clone();
+    both.extend_from_slice(&post);
+    assert_cc_continuous(&both, 0x1011);
+}
+
+#[test]
+fn former_pmt_pid_reused_as_es_pid_starts_at_cc_0() {
+    let mut m = Muxer::new(visible_thermal(true)).unwrap();
+    let p1 = handles(&m, 1);
+    let p2 = handles(&m, 2);
+    push_steps(&mut m, &[(p1, 0), (p2, 1)], 0, 10);
+    let pre = drain_mux(&mut m);
+    let last_pmt_cc = cc_of(packets_on(&pre, 0x1100).last().unwrap());
+    assert_ne!(
+        last_pmt_cc, 0x0F,
+        "the PMT PID's counter must not be about to wrap to 0"
+    );
+
+    m.reconfigure(visible_thermal(false)).unwrap();
+    push_steps(&mut m, &[(p1, 0)], 10, 2);
+    drain_mux(&mut m);
+
+    let mut grown = visible();
+    grown.add_klv(0x1100, KlvStreamType::PrivateData, false);
+    m.reconfigure(config_of(vec![grown.build()])).unwrap();
+    let added = m.klv_handles_for_program(1).unwrap()[1];
+    m.push_klv_to(added, &synthetic_klv_ls(), Pts90khz::new(12 * STEP), 0)
+        .unwrap();
+    let post = drain_mux(&mut m);
+    assert_eq!(cc_of(packets_on(&post, 0x1100)[0]), 0);
 }
 
 #[test]

@@ -239,8 +239,8 @@ impl Muxer {
     /// Lifetime counters continue. A removed PID's
     /// [`MuxerStats::per_stream`](super::MuxerStats::per_stream) entry stays
     /// frozen and resumes counting if the PID is placed again, with its
-    /// `program_number` and `stream_type` rewritten; its codec counters are
-    /// dropped. New PIDs get entries at this call. `programs_configured` and
+    /// `program_number`, `stream_type` and `label` rewritten; its codec
+    /// counters are dropped. New PIDs get entries at this call. `programs_configured` and
     /// `subtitle_streams_configured` count live programs and streams.
     pub fn reconfigure(&mut self, config: MuxerConfig) -> Result<(), MuxError> {
         // The plan runs `config.validate()` first, then every refusal.
