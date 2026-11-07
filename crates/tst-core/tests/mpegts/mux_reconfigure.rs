@@ -209,16 +209,22 @@ fn add_program_mid_stream_is_announced_then_decoded() {
     d.feed(&post).unwrap();
     events.extend(collect_events(&mut d));
     assert_eq!(discontinuities_on(&events, &[0x1011, 0x1031]), 0);
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x1111))
-    );
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, DemuxEvent::Metadata { stream, .. } if stream.pid == 0x1131))
-    );
+    let first_pts = Pts90khz::new(5 * STEP);
+    let first_sample = events.iter().find_map(|e| match e {
+        DemuxEvent::Sample { stream, pts, .. } if stream.pid == 0x1111 => Some(*pts),
+        _ => None,
+    });
+    assert_eq!(first_sample, Some(first_pts));
+    let first_metadata = events.iter().find_map(|e| match e {
+        DemuxEvent::Metadata {
+            stream,
+            pts,
+            payload,
+            ..
+        } if stream.pid == 0x1131 => Some((*pts, payload.clone())),
+        _ => None,
+    });
+    assert_eq!(first_metadata, Some((first_pts, synthetic_klv_ls())));
     let mut both = pre.clone();
     both.extend_from_slice(&post);
     assert_cc_continuous(&both, 0x1011);
