@@ -74,8 +74,10 @@ impl Muxer {
         )
     }
 
-    /// Handle for the i-th KLV stream in the first live program, or `None` if out of
-    /// range. Convenience for single-program callers.
+    /// Handle for the i-th KLV stream in the first program of the current
+    /// configuration (the declaration order of the latest `new` or
+    /// `reconfigure` config), or `None` if out of range. Convenience for
+    /// single-program callers.
     pub fn klv_stream_handle(&self, index: usize) -> Option<KlvStreamHandle> {
         super::first_program_handle(
             &self.slots,
