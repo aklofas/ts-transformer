@@ -82,7 +82,12 @@ impl Muxer {
     /// All `VideoStreamHandle`s for this muxer, in `(program, within-program)`
     /// declaration order. One handle per `StreamSpec::Video` across all programs.
     pub fn video_handles(&self) -> Vec<VideoStreamHandle> {
-        super::all_handles(&self.slots, MuxStreamKind::Video, VideoStreamHandle::pack)
+        super::all_handles(
+            &self.slots,
+            &self.program_order,
+            MuxStreamKind::Video,
+            VideoStreamHandle::pack,
+        )
     }
 
     /// Handle for the i-th video stream in the first live program, or `None` if out of
@@ -90,6 +95,7 @@ impl Muxer {
     pub fn video_stream_handle(&self, index: usize) -> Option<VideoStreamHandle> {
         super::first_program_handle(
             &self.slots,
+            &self.program_order,
             MuxStreamKind::Video,
             index,
             VideoStreamHandle::pack,

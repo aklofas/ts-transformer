@@ -193,6 +193,7 @@ impl Muxer {
     pub fn subtitle_handles(&self) -> Vec<SubtitleStreamHandle> {
         super::all_handles(
             &self.slots,
+            &self.program_order,
             MuxStreamKind::Subtitle,
             SubtitleStreamHandle::pack,
         )

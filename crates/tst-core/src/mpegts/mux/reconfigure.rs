@@ -281,6 +281,7 @@ impl Muxer {
             self.stream_codec_counters.remove(&pid);
         }
 
+        self.program_order = plan.programs.iter().map(|p| p.slot).collect();
         for (planned, matched) in plan.programs.iter().zip(matched) {
             let prog = &config.programs[planned.config_index];
             state::warn_on_descriptor_conflicts(prog);

@@ -603,3 +603,73 @@ fn first_program_handle_counts_live_streams_after_removal() {
         .unwrap();
     assert_eq!(klv_pids_in(&drain_mux(&mut m)), [0x1032]);
 }
+
+/// Program 3 (PMT 0x1200) = H.264 0x1211 + sync KLV 0x1231 (service id 0).
+fn third() -> MuxerProgramConfigBuilder {
+    let mut p = MuxerProgramConfigBuilder::new(3, 0x1200);
+    p.add_video(0x1211, VideoCodec::H264);
+    p.add_klv(0x1231, KlvStreamType::SynchronousMetadata, true);
+    p
+}
+
+/// Pushes one KLV record through each `(handle, service id)` in turn and
+/// returns the KLV PIDs each push put on the wire.
+fn klv_destinations(m: &mut Muxer, targets: &[(KlvStreamHandle, u8)]) -> Vec<Vec<u16>> {
+    // Flush the forced PSI so the next drains hold only the KLV payload.
+    for v in m.video_handles() {
+        m.push_video_to(v, &h264_au(200, true), Pts90khz::new(0), true)
+            .unwrap();
+    }
+    drain_mux(m);
+    targets
+        .iter()
+        .map(|&(k, sid)| {
+            m.push_klv_to(k, &synthetic_klv_ls(), Pts90khz::new(STEP), sid)
+                .unwrap();
+            let ts = drain_mux(m);
+            let mut pids: Vec<u16> = ts
+                .chunks(188)
+                .filter(|p| has_payload(p))
+                .map(pid_of)
+                .filter(|pid| [0x1031, 0x1131, 0x1231].contains(pid))
+                .collect();
+            pids.dedup();
+            pids
+        })
+        .collect()
+}
+
+#[test]
+fn handles_follow_program_order_after_program_replacement() {
+    let mut m = Muxer::new(visible_thermal(true)).unwrap();
+    let p2 = handles(&m, 2);
+    m.reconfigure(config_of(vec![thermal().build(), third().build()]))
+        .unwrap();
+    let p3 = handles(&m, 3);
+    assert_eq!(handles(&m, 2), p2);
+
+    assert_eq!(m.video_handles(), [p2.0, p3.0]);
+    assert_eq!(m.klv_handles(), [p2.1, p3.1]);
+    assert_eq!(m.video_stream_handle(0), Some(p2.0));
+    assert_eq!(m.klv_stream_handle(0), Some(p2.1));
+
+    let klv = m.klv_handles();
+    let landed = klv_destinations(&mut m, &[(klv[0], 1), (klv[1], 0)]);
+    assert_eq!(landed, [vec![0x1131], vec![0x1231]]);
+}
+
+#[test]
+fn handles_follow_program_order_after_pure_reorder() {
+    let mut m = Muxer::new(visible_thermal(true)).unwrap();
+    let p1 = handles(&m, 1);
+    let p2 = handles(&m, 2);
+    m.reconfigure(config_of(vec![thermal().build(), visible().build()]))
+        .unwrap();
+    assert_eq!(handles(&m, 1), p1);
+    assert_eq!(handles(&m, 2), p2);
+
+    assert_eq!(m.video_handles(), [p2.0, p1.0]);
+    assert_eq!(m.klv_handles(), [p2.1, p1.1]);
+    assert_eq!(m.klv_stream_handle(0), Some(p2.1));
+    assert_eq!(m.video_stream_handle(0), Some(p2.0));
+}

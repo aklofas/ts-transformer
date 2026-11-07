@@ -57,7 +57,12 @@ impl Muxer {
     /// All `DataStreamHandle`s for this muxer, in `(program, within-program)`
     /// declaration order. One handle per `StreamSpec::Data` across all programs.
     pub fn data_handles(&self) -> Vec<DataStreamHandle> {
-        super::all_handles(&self.slots, MuxStreamKind::Data, DataStreamHandle::pack)
+        super::all_handles(
+            &self.slots,
+            &self.program_order,
+            MuxStreamKind::Data,
+            DataStreamHandle::pack,
+        )
     }
 
     /// Handle for the i-th data stream in the first live program, or `None` if out of
@@ -65,6 +70,7 @@ impl Muxer {
     pub fn data_stream_handle(&self, index: usize) -> Option<DataStreamHandle> {
         super::first_program_handle(
             &self.slots,
+            &self.program_order,
             MuxStreamKind::Data,
             index,
             DataStreamHandle::pack,
