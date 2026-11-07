@@ -1,8 +1,10 @@
 //! PSI section generation — PAT and PMT.
 //!
-//! Both are single-section, fit in one TS packet for the current scope
-//! (one program, one or two elementary streams). The CRC-32/MPEG-2 over
-//! the section is computed via `crate::mpegts::common::crc32::crc32_mpeg2`.
+//! Both are single-section and fit in one TS packet: `MuxerConfig::validate`
+//! refuses a program whose PMT section exceeds `MAX_PMT_SECTION_BYTES`
+//! (`MuxError::PmtTooLarge`), and its `MAX_PROGRAMS` cap keeps the PAT within
+//! one packet. The CRC-32/MPEG-2 over the section is computed via
+//! `crate::mpegts::common::crc32::crc32_mpeg2`.
 //!
 //! Padding convention: PSI packets fill unused payload bytes with `0xFF`
 //! *within* the TS packet payload (after the section), not via the
