@@ -916,6 +916,128 @@ one TS packet (the size budget is per-PMT, not per-multiplex).
 
 For a runnable end-to-end repacking example, see `examples/muxing/repack_two_programs.rs`.
 
+## Reconfiguring a running muxer
+
+A platform with a visible camera and a thermal camera may announce and
+withdraw the thermal sensor while the visible stream is running. Neither
+workaround is good. Rebuilding the muxer restarts the continuity counters
+and PCR state of the program that stayed, so every receiver sees a
+discontinuity on the visible stream. Declaring both programs from the
+start makes a receiver that creates tracks from the PMT alone mark the idle
+thermal program ready, and players offer a sensor that never shows a frame.
+
+`Muxer::reconfigure(config)` replaces the program list of a running muxer
+in place (`MuxSender::reconfigure` does the same under the sender's lock).
+Pass the whole new `MuxerConfig`; the muxer works out what was added,
+removed and kept:
+
+```rust
+fn visible() -> MuxerProgramConfig {
+    let mut p = MuxerProgramConfigBuilder::new(1, 0x1000);
+    p.add_video(0x1011, VideoCodec::H264);
+    p.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+    p.build()
+}
+
+fn thermal() -> Result<MuxerProgramConfig, MuxError> {
+    let mut p = MuxerProgramConfigBuilder::new(2, 0x1100);
+    p.add_video(0x1111, VideoCodec::H264);
+    // A second synchronous KLV stream needs its own metadata service id.
+    p.add_klv(0x1131, KlvStreamType::SynchronousMetadata, true);
+    p.stream_descriptors_for_klv(0, vec![descriptors::metadata_klva(1)])?;
+    Ok(p.build())
+}
+
+fn config(programs: Vec<MuxerProgramConfig>) -> Result<MuxerConfig, MuxError> {
+    let mut b = MuxerConfig::builder();
+    for p in programs {
+        b.add_program(p);
+    }
+    b.build()
+}
+
+let mut muxer = Muxer::new(config(vec![visible()])?)?;
+let visible_video = muxer.video_handles_for_program(1)?[0];
+
+// The thermal camera comes up: announce program 2.
+muxer.reconfigure(config(vec![visible(), thermal()?])?)?;
+let thermal_video = muxer.video_handles_for_program(2)?[0];
+let thermal_klv = muxer.klv_handles_for_program(2)?[0];
+muxer.push_video_to(thermal_video, &au, pts, true)?;
+muxer.push_klv_to(thermal_klv, &klv, pts, 1)?;
+
+// It goes away again: withdraw program 2. `visible_video` stays valid.
+muxer.reconfigure(config(vec![visible()])?)?;
+muxer.push_video_to(visible_video, &next_au, next_pts, false)?;
+```
+
+### What survives
+
+Programs match by `program_number`, and streams within a matched program
+match by PID. A stream present on both sides **survives** when its PMT
+`stream_type` and its codec (or KLV stream type) are unchanged; the rest of
+its spec and its descriptors may change. A surviving stream keeps its
+handle and its continuity counter, and its program keeps its PCR and PSI
+cadence, so a demuxer reading across the call sees no discontinuity on it.
+A removed stream's PID stops; a new stream starts at continuity counter 0.
+Streams can be added to or removed from a program that stays, not only
+whole programs. Packets already queued, including those of a removed
+program, still drain.
+
+### Refusals
+
+`reconfigure` runs `MuxerConfig::validate` exactly as `Muxer::new` does.
+On top of that it refuses, with `MuxError::ConfigInvalid` naming the
+program and PID:
+
+- a different stream wearing a kept PID: the PID moved to another program,
+  or changed its stream type or codec;
+- a kept program whose `pmt_pid` changed, or whose PCR PID changed while
+  the old PCR stream stays in the program;
+- a change to any field outside the program list (`pcr_interval_ms`,
+  `psi_interval_ms`, `buffer_packets`, `av1_carriage`).
+
+A refused call leaves the muxer exactly as it was, still running on the old
+config.
+
+### New tables go out first
+
+The call marks PSI due on every live program, so the next `push_*` emits
+the new PAT and every live PMT before its payload. A receiver therefore
+learns a new PID from a PMT before the first PES on it arrives. Calling
+`request_psi` right after `reconfigure` changes nothing.
+
+The PAT version increments (mod 32) when the list of programs and PMT PIDs
+changed, and a PMT's version increments when that PMT's content changed; an
+unchanged table keeps its version. PMT versions are kept per PMT PID for
+the muxer's lifetime, so a program withdrawn and announced again on the
+same PMT PID continues from the last version rather than repeating one a
+receiver has already seen.
+
+### Handles
+
+Handles to surviving streams stay valid. Take handles for a new program or
+a new stream from `video_handles_for_program(N)` and its siblings after the
+call. A handle to a removed stream fails every `push_*_to` with
+`MuxError::InvalidStreamHandle`, and `*_handles_for_program` on a removed
+program returns `MuxError::ProgramNotFound`. The removed slot is reused by a
+later reconfigure: re-adding the same program with the same PIDs revives
+the same handles, which suits an announce/withdraw toggle like the one
+above. Otherwise re-obtain handles after each call, since an old handle may
+then address a different stream.
+
+### Stats
+
+Lifetime counters in `Muxer::stats` continue across the call. A removed
+PID's `per_stream` entry stays, frozen, and resumes counting if the PID is
+placed again (with its program number, stream type and label rewritten);
+new PIDs get entries at the call. `programs_configured` and
+`subtitle_streams_configured` count what is live.
+
+The C, Python and JVM bindings do not expose `reconfigure` yet; it reaches
+them in a later binding parity batch. The full contract is the rustdoc on
+`Muxer::reconfigure`.
+
 ## Audio output
 
 `mpegts::mux` carries four audio codecs alongside video and KLV:

@@ -259,7 +259,7 @@ aren't yet wrapped are reachable via `tstrans-srt-sys`.
 
 | Spec / Feature | Status | Notes |
 | --- | --- | --- |
-| MPEG-TS muxer | ✅ Full | `mpegts::mux::Muxer` — multi-program (≤16 programs), multi-stream (≤16 video + ≤16 audio + ≤16 KLV + ≤16 subtitle PIDs per program), H.264/H.265/H.266/AV1 video + MP2/AAC/AC-3 audio + DVB/teletext/CEA-708/WebVTT subtitles + ST 0601 KLV (sync + async per ST 1402), VBR. |
+| MPEG-TS muxer | ✅ Full | `mpegts::mux::Muxer` — multi-program (≤16 programs), multi-stream (≤16 video + ≤16 audio + ≤16 KLV + ≤16 subtitle PIDs per program), H.264/H.265/H.266/AV1 video + MP2/AAC/AC-3 audio + DVB/teletext/CEA-708/WebVTT subtitles + ST 0601 KLV (sync + async per ST 1402), VBR; program list reconfigurable in place (`Muxer::reconfigure`). |
 | MPEG-TS demuxer | ✅ Full | `mpegts::demux::Demuxer` — multi-program, lenient by default, four-tier `StrictMode` ladder. Required TS/PSI syntax (scrambling, adaptation-field, zero-length PES, PSI syntax) is validated under the ladder; multi-section PAT is reassembled, multi-section PMT is unsupported. See `mpegts::demux` block below. |
 | Single PES/packet KLV embedding (ST 1402.2 Asynchronous) | ✅ Full | Default in `mpegts::mux::MuxerConfig` (`klv_stream_type = PrivateData`, `klv_carries_pts = false`). |
 | ST 1402.3 Synchronous metadata stream | ✅ Full | `KlvStreamType::SynchronousMetadata` + `klv_carries_pts = true` in `MuxerConfig`. PMT carries `metadata_descriptor` (0x26, service 0) + `metadata_STD_descriptor` (0x27: input 13 109 × 400 bit/s, buffer 65 KiB, output 0) unless the caller supplies them. |
