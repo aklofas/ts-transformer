@@ -30,7 +30,6 @@ pub(super) struct ProgramSlot {
     /// Version of the PMT last rendered for this program.
     pub(super) pmt_version: u8,
     /// `pmt_identity_key` as of that version, to detect a changed PMT.
-    #[allow(dead_code)] // read once the muxer reconfigures in place
     pub(super) pmt_identity: Vec<u8>,
     /// Last PSI emission PTS, masked to 33 bits. None until first.
     pub(super) psi_last: Option<u64>,
@@ -39,13 +38,11 @@ pub(super) struct ProgramSlot {
     /// Program number this slot last carried; kept when the slot is
     /// tombstoned so a reconfigure re-adding that program prefers this slot.
     /// The in-place reconfigure overwrites it when it reuses the slot.
-    #[allow(dead_code)] // read once the muxer reconfigures in place
     pub(super) last_program_number: u16,
     /// Every PID this slot has placed -> the kind and within-index of the
     /// stream slot it occupied. Entries are never removed, so a tombstoned
-    /// stream slot still names the PID it carried; the in-place reconfigure
-    /// adds an entry for each stream it places.
-    #[allow(dead_code)] // read once the muxer reconfigures in place
+    /// stream slot still names the PID it carried; they are overwritten on
+    /// re-placement.
     pub(super) placed_pids: BTreeMap<u16, (MuxStreamKind, usize)>,
 }
 
@@ -92,6 +89,27 @@ impl ProgramSlot {
         }
     }
 
+    /// A tombstoned slot with no streams, appended when a reconfigure needs
+    /// a new program slot.
+    pub(super) fn empty() -> Self {
+        Self {
+            live: None,
+            video: Vec::new(),
+            klv: Vec::new(),
+            audio: Vec::new(),
+            subtitle: Vec::new(),
+            data: Vec::new(),
+            pcr_pid: 0,
+            pmt_descriptor_cache: Vec::new(),
+            pmt_version: 0,
+            pmt_identity: Vec::new(),
+            psi_last: None,
+            pcr_last: None,
+            last_program_number: 0,
+            placed_pids: BTreeMap::new(),
+        }
+    }
+
     pub(super) fn is_live(&self) -> bool {
         self.live.is_some()
     }
@@ -115,6 +133,7 @@ pub(super) fn pmt_identity_key(
     let program_descriptors: Vec<u8> = prog.program_descriptors.iter().flatten().copied().collect();
     key.extend_from_slice(&(program_descriptors.len() as u32).to_be_bytes());
     key.extend_from_slice(&program_descriptors);
+    debug_assert_eq!(prog.streams.len(), cache.len());
     for (spec, descriptors) in prog.streams.iter().zip(cache) {
         key.push(state::pmt_stream_type_byte(spec));
         key.extend_from_slice(&spec.pid().to_be_bytes());

@@ -27,7 +27,10 @@ crate::binding_record! {
     /// `per_stream` is keyed by PID. Entries are created eagerly at
     /// [`Muxer::new`] for every configured video and KLV stream so callers
     /// can always index by a known PID without first checking for key
-    /// presence.
+    /// presence. [`Muxer::reconfigure`] adds entries for new PIDs and never
+    /// removes one: the entry of a removed PID stays frozen under its PID
+    /// and resumes counting if the PID is placed again. The two gauges count
+    /// live programs and streams.
     #[must_use]
     #[non_exhaustive]
     #[derive(Debug, Clone, Default, PartialEq, Eq)]

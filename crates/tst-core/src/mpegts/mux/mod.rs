@@ -22,7 +22,6 @@ mod push_data;
 mod push_klv;
 mod push_subtitle;
 mod push_video;
-#[allow(dead_code)] // called once the muxer reconfigures in place
 mod reconfigure;
 
 use crate::error::MuxError;
@@ -52,6 +51,8 @@ use self::ts::ContinuityCounters;
 /// Construct with `Muxer::new(config)`, push encoded frames via `push_video`
 /// and `push_klv`, then drain TS packets with `pull`. The muxer is
 /// deterministic — output is a function of inputs only, not wall-clock time.
+/// [`Self::reconfigure`] replaces the program list of a running muxer in
+/// place.
 ///
 /// # Closing
 ///
@@ -90,11 +91,9 @@ pub struct Muxer {
     /// Version of the PAT last rendered.
     pat_version: u8,
     /// `pat_entries()` as of the last PAT version, to detect a changed loop.
-    #[allow(dead_code)] // read once the muxer reconfigures in place
     pat_identity: Vec<(u16, u16)>,
     /// PMT PID -> last version used on it; survives a program's removal so
     /// a PID reused later continues the sequence.
-    #[allow(dead_code)] // read once the muxer reconfigures in place
     pmt_versions_by_pid: BTreeMap<u16, u8>,
 
     // ── Stats counters ────────────────────────────────────────────────────
@@ -102,8 +101,9 @@ pub struct Muxer {
     ts_bytes_emitted: u64,
     /// Keyed by PID. Populated eagerly at construction for every configured
     /// stream; only the `items` / `bytes` / `discontinuities` fields change
-    /// at runtime. `pid` and `stream_type` are set at construction and
-    /// never modified.
+    /// at runtime, except that `reconfigure` adds entries for new PIDs and
+    /// rewrites the identity fields of a PID placed again. Entries are never
+    /// removed.
     per_stream: BTreeMap<u16, crate::mpegts::stats::StreamStats>,
 
     /// Per-PID codec-specific counters. Allocated lazily on first push

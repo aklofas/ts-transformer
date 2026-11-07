@@ -92,6 +92,8 @@ mod mux_multi_program;
 mod mux_multi_stream;
 #[path = "mpegts/mux_proptest.rs"]
 mod mux_proptest;
+#[path = "mpegts/mux_reconfigure.rs"]
+mod mux_reconfigure;
 #[path = "mpegts/mux_shorthand_multi_program.rs"]
 mod mux_shorthand_multi_program;
 #[path = "mpegts/mux_subtitle.rs"]

@@ -43,6 +43,11 @@ impl ContinuityCounters {
         self.counters[idx] = (cc + 1) & 0x0F;
         cc
     }
+
+    /// Restart `pid` at continuity counter 0.
+    pub(crate) fn reset(&mut self, pid: u16) {
+        self.counters[(pid & 0x1FFF) as usize] = 0;
+    }
 }
 
 impl Default for ContinuityCounters {
