@@ -480,6 +480,12 @@ impl<T: Transport> MuxSender<T> {
     ///   is left unchanged.
     /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]
     ///   from the drain.
+    ///
+    /// When the drain of this call's output fails, the reconfigure has
+    /// already taken effect and the error's `input_consumed` is
+    /// `Some(true)`; a refusal, a closed sender or a failed drain of an
+    /// earlier call's pending output leaves the muxer unchanged with
+    /// `Some(false)`.
     pub fn reconfigure(&self, config: MuxerConfig) -> Result<(), MuxSenderError> {
         self.push("reconfigure", |m| m.reconfigure(config))
     }

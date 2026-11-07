@@ -72,6 +72,7 @@ fn refused_reconfigure_maps_to_mux_source() {
         "got {:?}",
         err.source
     );
+    assert_eq!(err.input_consumed, Some(false));
 }
 
 #[test]
