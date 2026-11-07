@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — tst-core, tst-pipeline
+
+- `Muxer::reconfigure` and `MuxSender::reconfigure` replace a running muxer's program list in place, so a program can be announced or withdrawn mid-stream without rebuilding the muxer. Programs match by `program_number` and streams by PID: a surviving stream keeps its handle, its continuity counter and its program's PCR and PSI cadence; a removed stream's PID stops and its handle fails with `MuxError::InvalidStreamHandle`; a new stream starts at continuity counter 0. The next push emits the new PAT and every live PMT before its payload. PAT and PMT versions now increment (mod 32) when their content changes, per H.222.0 §2.4.4; every release before this one held them at 0. Besides everything `MuxerConfig::validate` refuses, a reconfigure is refused with `MuxError::ConfigInvalid` when a PID kept across the call moves to another program or changes its stream type or codec, when a kept program changes its `pmt_pid` or (while the old PCR stream stays) its PCR PID, or when a non-program field (`pcr_interval_ms`, `psi_interval_ms`, `buffer_packets`, `av1_carriage`) differs; a refused call leaves the muxer unchanged. The C, Python and JVM bindings gain `reconfigure` in a later parity batch ([mux guide](docs/guides/mpegts-mux.md#reconfiguring-a-running-muxer)).
+
+### Changed — tst-core
+
+- The `MuxErrorKind::ConfigInvalid` contract now reads "the offered config was refused and the muxer is unchanged": `Muxer::new` built nothing and `Muxer::reconfigure` left the running config in place. It no longer tells callers to rebuild the muxer. Classification is unchanged.
+
 ### Changed — tst-pipeline, tst-jni, tst-py (BREAKING)
 
 - `DemuxReceiver::add_byte_sink`, `ManagedDemuxReceiver::add_byte_sink` and `ByteSink`, JVM `DemuxReceiver.addByteSink` and Python `DemuxReceiver.add_byte_sink` are removed: the sink ran user code on the library's pulling thread. To count bytes, read the new `ts_bytes_demuxed()` (`tsBytesDemuxed()` on the JVM; a `TsBytesDemuxedHandle` in Rust), which never waits on the receive slot and keeps its value after close. To record, relay or inspect packets, pull them from a `Receiver` and feed a `Demuxer` ([pipeline guide](docs/guides/pipeline.md)). `DemuxReceiver` is now `Sync` and `UnwindSafe` whenever its transport is (the removed boxed sink closure was its only non-`Sync` field).

@@ -6784,6 +6784,8 @@ pub fn tst_core::mpegts::mux::Muxer::video_handles(&self) -> alloc::vec::Vec<tst
 pub fn tst_core::mpegts::mux::Muxer::video_handles_for_program(&self, u16) -> core::result::Result<alloc::vec::Vec<tst_core::mpegts::mux::VideoStreamHandle>, tst_core::error::MuxError>
 pub fn tst_core::mpegts::mux::Muxer::video_stream_handle(&self, usize) -> core::option::Option<tst_core::mpegts::mux::VideoStreamHandle>
 impl tst_core::mpegts::mux::Muxer
+pub fn tst_core::mpegts::mux::Muxer::reconfigure(&mut self, tst_core::mpegts::mux::MuxerConfig) -> core::result::Result<(), tst_core::error::MuxError>
+impl tst_core::mpegts::mux::Muxer
 pub fn tst_core::mpegts::mux::Muxer::reset_stats(&mut self)
 pub fn tst_core::mpegts::mux::Muxer::stats(&self) -> tst_core::mpegts::mux::MuxerStats
 pub fn tst_core::mpegts::mux::Muxer::stream_codec_stats(&self, u16) -> core::option::Option<tst_core::mpegts::stats::StreamCodecStats>
