@@ -15,8 +15,10 @@ use alloc::vec::Vec;
 pub(super) struct ProgramSlot {
     /// The program's configuration; `None` = tombstoned program.
     pub(super) live: Option<MuxerProgramConfig>,
-    /// Video stream state in declaration order; `None` = tombstoned stream.
-    /// The four vectors below have the same shape.
+    /// Video stream state by stable within-index (a handle's low nibble);
+    /// `None` = tombstoned stream. The current declaration order is
+    /// `live.streams`; `placed_pids` maps a PID to its index. The four
+    /// vectors below have the same shape.
     pub(super) video: Vec<Option<VideoStreamState>>,
     pub(super) klv: Vec<Option<KlvStreamState>>,
     pub(super) audio: Vec<Option<AudioStreamState>>,
@@ -121,8 +123,9 @@ impl ProgramSlot {
 
 /// Deterministic serialisation of exactly what the PMT writer renders for
 /// `prog`: the PCR PID, the program descriptors, then each stream's
-/// `(stream_type, pid, descriptor bytes)` in order. Two programs with equal
-/// keys produce byte-identical PMT sections.
+/// `(stream_type, pid, descriptor bytes)` in order. The same program renders
+/// byte-identical PMT sections for equal keys; the key deliberately omits the
+/// program number and version, which the PMT header carries.
 pub(super) fn pmt_identity_key(
     prog: &MuxerProgramConfig,
     pcr_pid: u16,

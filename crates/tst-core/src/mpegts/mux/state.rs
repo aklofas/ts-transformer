@@ -16,7 +16,9 @@ use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-/// Per-video-stream cached state. Built once at `Muxer::new` time.
+/// Per-video-stream cached state. Derived from the stream spec at
+/// construction and again for every program a successful
+/// `Muxer::reconfigure` places.
 pub(super) struct VideoStreamState {
     pub(super) pid: u16,
     pub(super) codec: VideoCodec,
@@ -488,8 +490,10 @@ pub(super) fn resolve_pcr_pid(prog: &MuxerProgramConfig) -> u16 {
 
 /// Emit tracing warnings for caller-supplied descriptor conflicts on KLV, AV1,
 /// and AC-3 streams. Kept out of `build_pmt_descriptor_cache` so that
-/// function is pure (no side effects), and called once from `Muxer::new` —
-/// construction-time, after `validate()`, at most ≤16 programs × ≤16 streams.
+/// function is pure (no side effects). Called after `validate()` from
+/// `Muxer::new` and from `Muxer::reconfigure` for every planned program, so
+/// an identical reconfigure repeats the warnings; at most ≤16 programs × ≤16
+/// streams.
 pub(super) fn warn_on_descriptor_conflicts(prog: &MuxerProgramConfig) {
     for (i, spec) in prog.streams.iter().enumerate() {
         let caller_descs = &prog.stream_descriptors[i];
