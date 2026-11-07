@@ -82,6 +82,11 @@ pub struct Muxer {
     /// index; a tombstoned slot keeps its index so later handles stay valid.
     slots: Vec<ProgramSlot>,
 
+    /// Slot index of every live program in the current configuration's
+    /// declaration order. A slot index is a handle's program index; this is
+    /// the order the handle accessors report.
+    program_order: Vec<usize>,
+
     pcr_interval_27mhz: u64,
     psi_interval_90khz: i64,
 
@@ -159,9 +164,11 @@ impl Muxer {
             .map(|p| (p.program_number, p.pmt_pid))
             .collect();
 
+        let program_order = (0..config.programs.len()).collect();
         Ok(Self {
             config,
             slots,
+            program_order,
             pat_version: 0,
             pat_identity,
             pmt_versions_by_pid,
@@ -362,7 +369,9 @@ impl Muxer {
 // ── Free helpers shared by push_*.rs submodules ───────────────────────────
 
 /// Collect the handles of every live stream in every live program, in
-/// `(program, within-program)` declaration order.
+/// `(program, within-program)` declaration order. The program order comes
+/// from the current configuration (`program_order`), not the slot table: a
+/// reconfigure can leave a program on any slot.
 ///
 /// `kind` selects the stream kind. `pack` is the handle constructor (e.g.
 /// `AudioStreamHandle::pack`).
@@ -371,13 +380,15 @@ impl Muxer {
 /// identical body; routing them here eliminates the duplication.
 fn all_handles<H>(
     slots: &[ProgramSlot],
+    program_order: &[usize],
     kind: MuxStreamKind,
     pack: fn(usize, usize) -> H,
 ) -> Vec<H> {
-    slots
+    program_order
         .iter()
-        .enumerate()
-        .flat_map(|(p_idx, slot)| declared_within_indices(slot, kind).map(move |w| pack(p_idx, w)))
+        .flat_map(|&p_idx| {
+            declared_within_indices(&slots[p_idx], kind).map(move |w| pack(p_idx, w))
+        })
         .collect()
 }
 
@@ -423,18 +434,20 @@ fn handles_for_program<H>(
         .collect())
 }
 
-/// Handle for the i-th declared stream of `kind` in the first live program,
-/// or `None` if there is no live program or that stream does not exist.
+/// Handle for the i-th declared stream of `kind` in the first program of the
+/// current configuration, or `None` if there is no live program or that
+/// stream does not exist.
 /// Shared body of `video_stream_handle` / `klv_stream_handle` /
 /// `data_stream_handle` — convenience lookups for single-program callers.
 fn first_program_handle<H>(
     slots: &[ProgramSlot],
+    program_order: &[usize],
     kind: MuxStreamKind,
     index: usize,
     pack: fn(usize, usize) -> H,
 ) -> Option<H> {
-    let (p_idx, slot) = slots.iter().enumerate().find(|(_, s)| s.is_live())?;
-    declared_within_indices(slot, kind)
+    let p_idx = *program_order.first()?;
+    declared_within_indices(&slots[p_idx], kind)
         .nth(index)
         .map(|w| pack(p_idx, w))
 }

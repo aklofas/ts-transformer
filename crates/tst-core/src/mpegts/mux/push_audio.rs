@@ -161,7 +161,12 @@ impl Muxer {
     /// All `AudioStreamHandle`s for this muxer, in `(program, within-program)`
     /// declaration order. One handle per `StreamSpec::Audio` across all programs.
     pub fn audio_handles(&self) -> Vec<AudioStreamHandle> {
-        super::all_handles(&self.slots, MuxStreamKind::Audio, AudioStreamHandle::pack)
+        super::all_handles(
+            &self.slots,
+            &self.program_order,
+            MuxStreamKind::Audio,
+            AudioStreamHandle::pack,
+        )
     }
 
     /// Audio stream handles for the named program, in declaration order.
