@@ -63,7 +63,7 @@ impl Muxer {
     /// when [`Self::pcr_only_due`] is true. No-op otherwise. Used to keep
     /// the PCR cadence within H.222.0 Annex D's 100ms ceiling when the
     /// caller pushes only to non-PCR PIDs (e.g. KLV-only push on a video-
-    /// PCR config). Updates `pcr_last[prog_idx]` to the emitted PCR's
+    /// PCR config). Updates the slot's `pcr_last` to the emitted PCR's
     /// 27 MHz value.
     pub(super) fn maybe_emit_pcr_only(
         &mut self,
