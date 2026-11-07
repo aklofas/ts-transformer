@@ -1,9 +1,9 @@
-//! Planning an in-place reconfigure: the diff between the live slot table
-//! and a new `MuxerConfig`, and every refusal, computed without touching the
-//! muxer so a refused call leaves it unchanged.
+//! In-place reconfigure: the plan (the diff between the live slot table and
+//! a new `MuxerConfig`, and every refusal, computed without touching the
+//! muxer so a refused call leaves it unchanged) and its infallible apply.
 
-use super::slot::ProgramSlot;
-use super::state::{pmt_stream_type_byte, resolve_pcr_pid};
+use super::slot::{ProgramSlot, pmt_identity_key};
+use super::state::{self, pmt_stream_type_byte, resolve_pcr_pid};
 use super::{MuxStreamKind, Muxer, MuxerConfig, MuxerProgramConfig, StreamSpec};
 use crate::error::MuxError;
 use alloc::collections::BTreeMap;
@@ -148,7 +148,226 @@ fn refuse(reason: alloc::string::String) -> MuxError {
     MuxError::ConfigInvalid { reason }
 }
 
+/// Store `state` at `within`, growing `v` with tombstones as needed.
+fn place<T>(v: &mut Vec<Option<T>>, within: usize, state: T) {
+    if v.len() <= within {
+        v.resize_with(within + 1, || None);
+    }
+    v[within] = Some(state);
+}
+
+/// Tombstone every stream of `slot`.
+fn clear_streams(slot: &mut ProgramSlot) {
+    slot.video.iter_mut().for_each(|s| *s = None);
+    slot.klv.iter_mut().for_each(|s| *s = None);
+    slot.audio.iter_mut().for_each(|s| *s = None);
+    slot.subtitle.iter_mut().for_each(|s| *s = None);
+    slot.data.iter_mut().for_each(|s| *s = None);
+}
+
+/// Tombstone the stream slot `slot` placed `pid` on.
+fn clear_stream(slot: &mut ProgramSlot, pid: u16) {
+    let (kind, w) = slot.placed_pids[&pid];
+    match kind {
+        MuxStreamKind::Video => slot.video[w] = None,
+        MuxStreamKind::Klv => slot.klv[w] = None,
+        MuxStreamKind::Audio => slot.audio[w] = None,
+        MuxStreamKind::Subtitle => slot.subtitle[w] = None,
+        MuxStreamKind::Data => slot.data[w] = None,
+    }
+}
+
 impl Muxer {
+    /// Replace the program list of a running muxer in place.
+    ///
+    /// Programs match by `program_number`; within a matched program, streams
+    /// match by PID. A matched stream **survives** when its PMT
+    /// `stream_type` byte and its codec / KLV stream type are unchanged;
+    /// the rest of its spec and its descriptors may change (that program's
+    /// PMT then changes). A survivor keeps its handle, its continuity
+    /// counter and its program's PCR and PSI cadence timers. Packets already
+    /// queued, including those of a removed program, still drain.
+    ///
+    /// # Refusals
+    ///
+    /// `config` is first checked by [`MuxerConfig::validate`] exactly as in
+    /// [`Muxer::new`] (including distinct `metadata_service_id`s across
+    /// synchronous KLV streams). Then each of these is a
+    /// [`MuxError::ConfigInvalid`] naming the program and PID:
+    ///
+    /// 1. A PID present in both configs that does not survive: it moved to
+    ///    another program, or changed its stream type or codec.
+    /// 2. A matched program whose `pmt_pid` changed.
+    /// 3. A matched program whose resolved PCR PID changed while the old
+    ///    PCR PID's stream stays in the program.
+    /// 4. Any non-program field of `MuxerConfig` (`pcr_interval_ms`,
+    ///    `psi_interval_ms`, `buffer_packets`, `av1_carriage`) differs from
+    ///    the running value.
+    ///
+    /// A refused call leaves the muxer exactly as it was.
+    ///
+    /// # Handles
+    ///
+    /// Handles to surviving streams stay valid. Handles to the streams of a
+    /// new program come from the `*_handles_for_program` entry points after
+    /// the call. A removed stream or program keeps its slot as a tombstone:
+    /// its handle fails every `push_*_to` with
+    /// [`MuxError::InvalidStreamHandle`], and `*_handles_for_program` on a
+    /// removed program number returns [`MuxError::ProgramNotFound`]. A new
+    /// program takes the tombstoned slot that last carried its program
+    /// number, else any tombstoned slot, else a new slot; a new stream
+    /// likewise prefers the tombstone that carried its PID. So a handle to a
+    /// removed stream fails until a later reconfigure reuses its slot;
+    /// re-adding the same program with the same PIDs revives the same
+    /// handles; re-obtain handles after each call otherwise.
+    ///
+    /// # Wire
+    ///
+    /// Every live program is marked PSI-due, so the next `push_*` emits the
+    /// new PAT and every live PMT before its payload ([`Muxer::request_psi`]
+    /// after this call changes nothing). The PAT version increments (mod 32)
+    /// when the list of `(program_number, pmt_pid)` changed; an identical
+    /// list keeps it. A live program's PMT version increments (mod 32) when
+    /// its rendered PMT changed. PMT versions are kept per PMT PID for the
+    /// muxer's lifetime, so a program placed on a previously used PMT PID
+    /// continues from that PID's last version + 1. A removed ES PID's
+    /// continuity counter restarts at 0, and so does the counter of every
+    /// PID a new stream is placed on; PMT PID counters continue.
+    ///
+    /// # Stats
+    ///
+    /// Lifetime counters continue. A removed PID's
+    /// [`MuxerStats::per_stream`](super::MuxerStats::per_stream) entry stays
+    /// frozen and resumes counting if the PID is placed again, with its
+    /// `program_number` and `stream_type` rewritten; its codec counters are
+    /// dropped. New PIDs get entries at this call. `programs_configured` and
+    /// `subtitle_streams_configured` count live programs and streams.
+    pub fn reconfigure(&mut self, config: MuxerConfig) -> Result<(), MuxError> {
+        // The plan runs `config.validate()` first, then every refusal.
+        let plan = self.plan_reconfigure(&config)?;
+        self.apply_reconfigure(plan, config);
+        Ok(())
+    }
+
+    /// Apply a plan `plan_reconfigure` accepted for `config`. Infallible.
+    fn apply_reconfigure(&mut self, plan: ReconfigurePlan, config: MuxerConfig) {
+        // A planned program continues a live one when its slot carries the
+        // same program number now.
+        let matched: Vec<bool> = plan
+            .programs
+            .iter()
+            .map(|p| {
+                self.slots.get(p.slot).and_then(ProgramSlot::program_number)
+                    == Some(config.programs[p.config_index].program_number)
+            })
+            .collect();
+
+        let mut removed: Vec<u16> = Vec::new();
+        for &idx in &plan.removed_slots {
+            let slot = &mut self.slots[idx];
+            let prog = slot.live.take().expect("removed slot is live");
+            removed.extend(prog.streams.iter().map(StreamSpec::pid));
+            clear_streams(slot);
+        }
+        for planned in &plan.programs {
+            for &pid in &planned.removed_pids {
+                clear_stream(&mut self.slots[planned.slot], pid);
+            }
+            removed.extend_from_slice(&planned.removed_pids);
+        }
+        for pid in removed {
+            self.counters.reset(pid);
+            self.stream_codec_counters.remove(&pid);
+        }
+
+        for (planned, matched) in plan.programs.iter().zip(matched) {
+            let prog = &config.programs[planned.config_index];
+            state::warn_on_descriptor_conflicts(prog);
+            while self.slots.len() <= planned.slot {
+                self.slots.push(ProgramSlot::empty());
+            }
+            let slot = &mut self.slots[planned.slot];
+            if !matched {
+                clear_streams(slot);
+                slot.pcr_last = None;
+            }
+
+            // Per-kind states in declaration order, as the plan's streams.
+            let (video, klv, audio, subtitle, data) = state::collect_stream_states(prog);
+            let (mut video, mut klv, mut audio, mut subtitle, mut data) = (
+                video.into_iter(),
+                klv.into_iter(),
+                audio.into_iter(),
+                subtitle.into_iter(),
+                data.into_iter(),
+            );
+            const PLANNED: &str = "the plan lists every stream of the program";
+            for s in &planned.streams {
+                let w = s.within;
+                match s.kind {
+                    MuxStreamKind::Video => place(&mut slot.video, w, video.next().expect(PLANNED)),
+                    MuxStreamKind::Klv => place(&mut slot.klv, w, klv.next().expect(PLANNED)),
+                    MuxStreamKind::Audio => place(&mut slot.audio, w, audio.next().expect(PLANNED)),
+                    MuxStreamKind::Subtitle => {
+                        place(&mut slot.subtitle, w, subtitle.next().expect(PLANNED))
+                    }
+                    MuxStreamKind::Data => place(&mut slot.data, w, data.next().expect(PLANNED)),
+                }
+                let pid = prog.streams[s.spec_index].pid();
+                slot.placed_pids.insert(pid, (s.kind, w));
+                if !s.survivor {
+                    self.counters.reset(pid);
+                }
+            }
+
+            let mut fresh = BTreeMap::new();
+            state::initialize_stats(
+                prog,
+                &slot.video,
+                &slot.klv,
+                &slot.audio,
+                &slot.subtitle,
+                &slot.data,
+                &mut fresh,
+            );
+            for (pid, entry) in fresh {
+                match self.per_stream.get_mut(&pid) {
+                    Some(kept) => {
+                        kept.program_number = entry.program_number;
+                        kept.stream_type = entry.stream_type;
+                        kept.label = entry.label;
+                    }
+                    None => {
+                        self.per_stream.insert(pid, entry);
+                    }
+                }
+            }
+
+            slot.pcr_pid = planned.pcr_pid;
+            slot.pmt_descriptor_cache = state::build_pmt_descriptor_cache(prog);
+            let identity = pmt_identity_key(prog, slot.pcr_pid, &slot.pmt_descriptor_cache);
+            if !matched || identity != slot.pmt_identity {
+                let version = self
+                    .pmt_versions_by_pid
+                    .get(&prog.pmt_pid)
+                    .map_or(0, |v| (v + 1) & 0x1F);
+                self.pmt_versions_by_pid.insert(prog.pmt_pid, version);
+                slot.pmt_version = version;
+            }
+            slot.pmt_identity = identity;
+            slot.last_program_number = prog.program_number;
+            slot.live = Some(prog.clone());
+        }
+
+        let pat_entries = self.pat_entries();
+        if pat_entries != self.pat_identity {
+            self.pat_version = (self.pat_version + 1) & 0x1F;
+            self.pat_identity = pat_entries;
+        }
+        self.request_psi();
+        self.config = config;
+    }
+
     /// Diff the live slots against `new` and refuse what cannot change in
     /// place. Programs match by `program_number`, streams by PID within a
     /// matched program; a program whose number changed is therefore a

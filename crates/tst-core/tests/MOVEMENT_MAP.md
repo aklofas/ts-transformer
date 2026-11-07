@@ -96,6 +96,7 @@ so these corpus checks skip in CI exactly as they did under `tst-srt`.)
 | `mpegts_mux_multi_program.rs` | `mpegts/mux_multi_program.rs` |
 | `mpegts_mux_multi_stream.rs` | `mpegts/mux_multi_stream.rs` |
 | `mpegts_mux_proptest.rs` | `mpegts/mux_proptest.rs` |
+| — (new, in-place program-list reconfigure) | `mpegts/mux_reconfigure.rs` |
 | `mux_shorthand_multi_program.rs` | `mpegts/mux_shorthand_multi_program.rs` |
 | `mpegts_mux_subtitle.rs` | `mpegts/mux_subtitle.rs` |
 | `mpegts_psi_proptest.rs` | `mpegts/psi_proptest.rs` |
