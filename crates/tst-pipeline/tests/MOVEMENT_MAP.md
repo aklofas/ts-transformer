@@ -57,6 +57,7 @@ after the last `::`) of `cargo nextest list -p tst-pipeline` is identical.
 | `demux_receiver_terminal_flush.rs` | `shells/demux_receiver_terminal_flush.rs` |
 | `mux_sender_backpressure_tracing.rs` | `shells/mux_sender_backpressure_tracing.rs` |
 | `mux_sender_golden.rs` | `shells/mux_sender_golden.rs` |
+| (new) | `shells/mux_sender_reconfigure.rs` |
 | `pipeline_raw_sender.rs` | `shells/pipeline_raw_sender.rs` |
 | `pipeline_receiver.rs` | `shells/pipeline_receiver.rs` |
 | `pipeline_sender_unit.rs` | `shells/pipeline_sender_unit.rs` |

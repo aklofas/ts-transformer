@@ -21,6 +21,8 @@ mod demux_receiver_terminal_flush;
 mod mux_sender_backpressure_tracing;
 #[path = "shells/mux_sender_golden.rs"]
 mod mux_sender_golden;
+#[path = "shells/mux_sender_reconfigure.rs"]
+mod mux_sender_reconfigure;
 #[path = "shells/pipeline_raw_sender.rs"]
 mod pipeline_raw_sender;
 #[path = "shells/pipeline_receiver.rs"]

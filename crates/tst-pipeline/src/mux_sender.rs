@@ -467,6 +467,23 @@ impl<T: Transport> MuxSender<T> {
         self.push("send_klv", |m| m.push_klv(klv, pts, metadata_service_id))
     }
 
+    /// Replace the running muxer's program list in place.
+    ///
+    /// Runs under the sender's lock and drains any resulting muxer output
+    /// to the transport, like every `send_*`. The contract (what may
+    /// change, the refusal reasons, the PAT/PMT emitted by the next push)
+    /// is that of [`Muxer::reconfigure`].
+    ///
+    /// # Errors
+    /// - [`MuxSenderErrorSource::Mux`] wraps the [`MuxError`] from the
+    ///   muxer, [`MuxError::ConfigInvalid`] on a refused change; the muxer
+    ///   is left unchanged.
+    /// - [`MuxSenderErrorSource::Transport`] wraps a [`TransportError`]
+    ///   from the drain.
+    pub fn reconfigure(&self, config: MuxerConfig) -> Result<(), MuxSenderError> {
+        self.push("reconfigure", |m| m.reconfigure(config))
+    }
+
     /// Send one video access unit to a specific configured video stream.
     /// `handle` is obtained from [`Self::video_handles`]. Handles are
     /// positional: one from another sender or muxer with the same layout
