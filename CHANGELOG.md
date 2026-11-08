@@ -439,6 +439,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `audio_pts_step` fails an audio stream whose consecutive frames show no PTS step forward. The check judged the median positive step and was skipped when there was none, so a stream with the right frame count and one repeated PTS passed.
 - `release-vm-corpus.sh` ends the phase when Cargo's output directory is not the checkout's `target/`. It runs the binary at that fixed path, so under a redirected output directory a binary left there by an earlier commit would have been judged under the new commit's name.
 - The release checklist states that a soak row's `overall_pass` is the verdict the run's own judge printed: a pass from judging an old harvest again with a newer judge is a diagnostic and never qualifies a tree. It also gives the check that a reused VM builds into the path the corpus phase and the soak run.
+- `stress.sh` reserves every port of a sweep step before it starts the step's first process. Each reservation starts a process, and with one per receiver and per proxy inside the launch loop a 256-stream step took 12 to 15 s to reach its first sender, past the 15 s its first receivers wait: the step ended unjudgeable.
 - A soak publisher generation counts as a clean end after `Got EOS` only when `gst-launch-1.0` exits with its own error status 1; a signal death or any other status after EOS fails the generation, as a timeout kill already did.
 
 ### Changed — CI

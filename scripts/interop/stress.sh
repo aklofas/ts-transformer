@@ -1148,6 +1148,21 @@ run_step() {
   event "STEP-START step=$CURRENT_STEP streams=$streams au_scale=$scale agg_mbps=$agg seconds=$seconds"
   echo "stress: step $CURRENT_STEP — $streams stream(s) at --au-scale $scale (~$agg Mb/s), ${seconds}s..." >&2
 
+  # Every port of the step is reserved before the launch loop, so the loop
+  # only starts processes. An srt, rist or udp receiver waits 15 s for its
+  # sender (tst-interop recv's NO_DATA_TIMEOUT, SRT_ACCEPT_TIMEOUT; a tcp
+  # receiver waits its whole window) and stream 0's sender starts only
+  # after the whole listen loop and SETTLE: one port probe (a python3
+  # start) per receiver and per proxy inside that loop took it to 12-15 s
+  # at 256 streams, and the earliest receivers gave up before their senders
+  # started. Nothing launched in the loop binds a kernel-picked port (a
+  # proxy forwards from its listen socket; senders start after SETTLE), so
+  # reserving early cannot hand one of these ports to a stream's own
+  # sockets.
+  for ((i = 0; i < streams; i++)); do
+    stream_port "$transport" "$transport-$i"
+  done
+
   # The step clock starts before the first receiver launches. A receiver's
   # window starts at its first event and a sender's at its own launch, both
   # after this instant, so every worker is still alive at start + seconds
