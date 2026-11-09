@@ -773,6 +773,10 @@ Those two files feed three new verdicts in `soak-results.json`:
   same schedule, with no outage window. RIST has no `Managed*` wrapper
   here, so an outage would only be sustained loss; this leg's job is
   sustained loss / jitter / reorder over hours.
+  With no outage there is no last-media bound to hold the receiver to, so
+  `media_delivered_rist` fails when it decoded less than 99.5 % of the
+  video access units the sender pushed: a receiver that went silent near
+  the end clears every count floor here too.
 - **`rtsp-publish` leg:** GStreamer's `rtspclientsink` publishes (ANNOUNCE
   + RECORD, MP2T over TCP-interleaved RTP) into `tst-interop recv --url
   rtsp-publish://...`; no proxy, no tst-interop sender. See "Publish leg"
