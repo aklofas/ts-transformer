@@ -280,6 +280,7 @@ fn counters_json(
     server: &WhepServer,
     mount: &MountHandle,
     viewer_connected: bool,
+    video_frames_scheduled: u64,
 ) -> serde_json::Value {
     let m = mount.stats();
     let s = server.stats();
@@ -313,6 +314,9 @@ fn counters_json(
         "mount_kind": mount_kind,
         "seconds": opts.seconds,
         "viewer_connected_before_push": viewer_connected,
+        // This producer's own count of the video frames it pushed, beside
+        // the mount's count of the ones it accepted (`frames_pushed`).
+        "video_frames_scheduled": video_frames_scheduled,
         "mount": {
             "frames_pushed": m.frames_pushed,
             "keyframes_pushed": m.keyframes_pushed,
@@ -417,9 +421,11 @@ pub fn run(opts: &Options, json: Option<&str>) -> Result<(), String> {
     };
     let mut pull_buf = [0u8; 1316];
     let wall_start = Instant::now();
+    let mut video_frames_scheduled = 0u64;
     for (pts_ticks, push) in pushes {
         sleep_until(wall_start, start, pts_ticks);
         let pts = Pts90khz::new(pts_ticks);
+        video_frames_scheduled += u64::from(matches!(push, Push::Video { .. }));
         match (&mut muxer, push) {
             (Some(mux), Push::Video { frame_idx }) => {
                 let (au, keyframe) = &gop[frame_idx as usize % gop.len()];
@@ -471,7 +477,13 @@ pub fn run(opts: &Options, json: Option<&str>) -> Result<(), String> {
     if let Some(target) = json {
         cli::write_json(
             target,
-            &counters_json(opts, &server, &mount, viewer_connected),
+            &counters_json(
+                opts,
+                &server,
+                &mount,
+                viewer_connected,
+                video_frames_scheduled,
+            ),
         )?;
     }
     server.stop();
