@@ -143,6 +143,18 @@ checkout || rc=$?
 # the trees this repo ships, not of whatever the host might have.
 run build env SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release --manifest-path "$REPO_DIR/Cargo.toml" -p tst-interop || finish $?
 
+# The stages below run the binary at a fixed path. Under a redirected
+# Cargo output directory the build went elsewhere, and a binary an earlier
+# commit left at that path would be judged under this commit's name.
+built_in_repo_target() {
+  local dir
+  dir=$(cargo metadata --format-version 1 --no-deps --manifest-path "$REPO_DIR/Cargo.toml" |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])') || return 2
+  [[ "$dir" -ef "$REPO_DIR/target" ]] ||
+    { echo "release-vm-corpus.sh: cargo builds into $dir, not $REPO_DIR/target (CARGO_TARGET_DIR or build.target-dir is set)" >&2; return 1; }
+}
+run target-dir built_in_repo_target || finish $?
+
 # 3. The corpus. Captures are every .ts under the bucket's capture
 # prefixes; quarantine/ holds files the maintainer pulled from the run
 # (broken PCR, derived files) and is never synced. Annotations are the
