@@ -282,7 +282,10 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
      verdict stays `false`; the maintainer's review goes in
      `[archive.waiver]` (the verdicts it covers, the reason, the reviewer,
      the date and the release that fixes the cause). A release needs a raw
-     pass, so a harness defect is fixed and the soak rerun.
+     pass, so a harness defect is fixed and the soak rerun. The verdict is
+     the one the run's own judge printed when the run ended. Judging an old
+     harvest again with a newer `report soak` is a diagnostic: its pass is
+     never a row's `overall_pass`, and no tree is qualified on one.
 
    Then render the benchmarks page with the arm64 ceilings beside the x86
    ones: `benchmarks-page.sh <x86 archive> --arm <arm archive>`.
