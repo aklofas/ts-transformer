@@ -218,15 +218,28 @@ fn audio(inv: &Invariants, wire: &WireSummary, seconds: f64, explained: &Explain
     // The median of the positive consecutive PTS steps, over every step
     // on an offline capture and over a bounded uniform sample of them on
     // a live one (`rawts::Retention`) — either way the same statistic,
-    // against the same ±tolerance.
-    if let Some(median) = wire.pts.get(&pid).and_then(|s| s.positive_step_median()) {
-        let want = AAC_SAMPLES_PER_FRAME * 90_000.0 / expected_rate as f64;
-        if (median - want).abs() > want * AUDIO_PTS_STEP_TOLERANCE {
-            f.push(format!(
-                "audio_pts_step: median {median:.0} ticks, want {want:.0} ± {:.0}%",
-                AUDIO_PTS_STEP_TOLERANCE * 100.0
-            ));
+    // against the same ±tolerance. A stream with consecutive frames and
+    // no positive step between any of them is not advancing at all: the
+    // frame count alone would pass it.
+    let want = AAC_SAMPLES_PER_FRAME * 90_000.0 / expected_rate as f64;
+    match wire
+        .pts
+        .get(&pid)
+        .map(|s| (s.intervals(), s.positive_step_median()))
+    {
+        Some((_, Some(median))) => {
+            if (median - want).abs() > want * AUDIO_PTS_STEP_TOLERANCE {
+                f.push(format!(
+                    "audio_pts_step: median {median:.0} ticks, want {want:.0} ± {:.0}%",
+                    AUDIO_PTS_STEP_TOLERANCE * 100.0
+                ));
+            }
         }
+        Some((intervals, None)) if intervals > 0 => f.push(format!(
+            "audio_pts_step: no PTS step forward across {intervals} consecutive frame(s) on \
+             PID {pid}, want {want:.0} ticks"
+        )),
+        _ => {}
     }
     f
 }
@@ -828,6 +841,39 @@ mod tests {
         assert!(
             bad_step.iter().any(|f| f.starts_with("audio_pts_step")),
             "{bad_step:?}"
+        );
+    }
+
+    /// A full count of audio frames that all carry one PTS passes the
+    /// cadence check, and has no positive step for the median to judge: the
+    /// step check fails it. A single frame has no step at all and is left
+    /// to the cadence check.
+    #[test]
+    fn an_audio_pts_that_never_advances_fails_the_step_check() {
+        let inv = profiles::invariants(profiles::by_name("audio").unwrap());
+        let prefix = [0xFF, 0xF9, 0x0C, 0x00];
+        let stuck = audio(
+            &inv,
+            &audio_wire(prefix, vec![7; 141]),
+            3.0,
+            &Explained::default(),
+        );
+        assert_eq!(
+            stuck,
+            [
+                "audio_pts_step: no PTS step forward across 140 consecutive frame(s) on PID 4161, \
+              want 1920 ticks"
+            ]
+        );
+        let one_frame = audio(
+            &inv,
+            &audio_wire(prefix, vec![0]),
+            3.0,
+            &Explained::default(),
+        );
+        assert!(
+            !one_frame.iter().any(|f| f.starts_with("audio_pts_step")),
+            "{one_frame:?}"
         );
     }
 
