@@ -144,6 +144,14 @@ const EXCUSAL_PER_HOUR: u64 = 16;
 /// `outage_dur_s + 30` s before the sender stops.
 const MEDIA_TAIL_OUTAGES: u64 = 2;
 
+/// `media_delivered_<leg>` holds a leg with no outage schedule to this
+/// fraction of the video access units its sender pushed. Such a leg loses
+/// media only to what its transport could not repair, which every archived
+/// run measured at 0.02 % or less of the units sent, so the floor leaves
+/// that 25 times over and still fails a receiver that went silent for the
+/// last half per cent of a run (about 14 minutes of 48 hours).
+const MEDIA_DELIVERED_FLOOR: f64 = 0.995;
+
 /// The lossy excusal budget:
 /// `K x expected_outage_windows + EXCUSAL_BUDGET_BASE + ceil(EXCUSAL_PER_HOUR x hours)`.
 ///
@@ -772,6 +780,35 @@ fn media_until_end_verdict(leg_name: &str, outage_dur_s: u64, tail: Option<f64>)
         provisional: false,
         excused: false,
         detail,
+    }
+}
+
+/// `media_delivered_<leg>`: the receiver decoded at least
+/// [`MEDIA_DELIVERED_FLOOR`] of the video access units the sender pushed.
+fn media_delivered_verdict(leg_name: &str, sent: u64, received: u64) -> SoakVerdict {
+    let fraction = if sent == 0 {
+        0.0
+    } else {
+        received as f64 / sent as f64
+    };
+    let pass = fraction >= MEDIA_DELIVERED_FLOOR;
+    SoakVerdict {
+        name: format!("media_delivered_{leg_name}"),
+        pass,
+        provisional: false,
+        excused: false,
+        detail: format!(
+            "{leg_name}: received {received} of {sent} sent video access units ({:.3} %), {} \
+             the {:.1} % floor{}",
+            fraction * 100.0,
+            if pass { "at or above" } else { "below" },
+            MEDIA_DELIVERED_FLOOR * 100.0,
+            if pass {
+                ""
+            } else {
+                ": the receiver stopped receiving, or the sender stopped sending, during the run"
+            }
+        ),
     }
 }
 
@@ -1944,12 +1981,20 @@ pub fn build_soak_results(inputs: SoakInputs) -> Result<SoakResults, String> {
         // The count floors are aggregates over the run, so a receiver that
         // stopped recovering in the last hours still clears them; its last
         // media time does not. Only a leg with an outage schedule has a
-        // bound to judge it against.
+        // bound to judge it against; a leg without one records no last
+        // media time (its receiver is not managed), and is held to the
+        // share of the sender's access units it delivered instead.
         if artifacts.outage_period_s.is_some() && outage_dur_s > 0 {
             verdicts.push(media_until_end_verdict(
                 leg_name,
                 outage_dur_s,
                 artifacts.recv_report.media_tail_s,
+            ));
+        } else {
+            verdicts.push(media_delivered_verdict(
+                leg_name,
+                artifacts.send_metrics.video_aus,
+                artifacts.recv_report.metrics.video_aus,
             ));
         }
 
@@ -4276,6 +4321,59 @@ pub(crate) mod tests {
             r.verdicts
                 .iter()
                 .all(|v| !v.name.starts_with("media_until_end_")),
+            "{:?}",
+            r.verdicts
+        );
+    }
+
+    /// A leg with no outage schedule has no last-media bound, so a receiver
+    /// that goes silent late in a run clears every count floor there too;
+    /// `media_delivered_<leg>` holds it to the share of the sender's access
+    /// units it decoded. The two 48-hour archives delivered 5 183 376 and
+    /// 5 183 375 of 5 184 000.
+    #[test]
+    fn media_delivered_fails_a_receiver_silent_near_the_end_of_a_leg_with_no_outage() {
+        let judge = |received: u64| {
+            let mut i = healthy_inputs();
+            let leg = &mut i.legs[0].1;
+            leg.send_metrics.video_aus = 5_184_000;
+            leg.recv_report.metrics.video_aus = received;
+            build_soak_results(i).unwrap()
+        };
+        for received in [5_184_000, 5_183_375, 5_158_080] {
+            let r = judge(received);
+            let v = verdict(&r, "media_delivered_srt");
+            assert!(v.pass && !v.provisional, "{received}: {}", v.detail);
+        }
+        // Silent for the last hour of 48: 47/48 of the units arrive, which
+        // is above every aggregate count floor.
+        for received in [5_158_079, 5_076_000, 0] {
+            let r = judge(received);
+            let v = verdict(&r, "media_delivered_srt");
+            assert!(!v.pass && !v.provisional, "{received}: {}", v.detail);
+            assert!(!r.overall_pass);
+        }
+        assert!(
+            verdict(&judge(5_076_000), "media_delivered_srt")
+                .detail
+                .contains("received 5076000 of 5184000 sent video access units (97.917 %), below the 99.5 % floor"),
+        );
+    }
+
+    /// A leg with an outage schedule loses its outage windows by design and
+    /// is judged on its last media time instead.
+    #[test]
+    fn media_delivered_is_judged_only_on_a_leg_with_no_outage() {
+        let mut i = healthy_inputs();
+        let leg = &mut i.legs[0].1;
+        leg.outage_period_s = Some(3600);
+        leg.proxy_stats.config.outage_period_s = Some(3600);
+        leg.proxy_stats.config.outage_dur_s = 90;
+        let r = build_soak_results(i).unwrap();
+        assert!(
+            r.verdicts
+                .iter()
+                .all(|v| !v.name.starts_with("media_delivered_")),
             "{:?}",
             r.verdicts
         );
