@@ -72,9 +72,16 @@ const WHEP_KLV_EDGE_TAIL: u64 = 2;
 /// The fraction of the served rate a connection must reach over its
 /// samples after the first-frame window: records per carriage against
 /// `klv_records_pushed / seconds`, the last `FRAMES` sample against
-/// `frames_pushed / seconds`. A connection that only ticks, or that
+/// `video_frames_scheduled / seconds`. A connection that only ticks, or that
 /// saw a handful of records on both carriages, fails on volume.
 const WHEP_VOLUME_FLOOR: f64 = 0.9;
+
+/// Scheduled video frames an MP2T mount has not pushed when `serve-whep`
+/// writes its counters. The muxer writes a video PES of unbounded length,
+/// which the mount's demuxer closes only at the next PES start on that
+/// PID, so the last frame of a finite feed stays in its reassembler. An
+/// elementary mount takes each frame whole and retains none.
+const WHEP_MP2T_RETAINED_TAIL_FRAMES: u64 = 1;
 
 /// `soak.sh`'s `WHEP_RELAUNCH_GAP_S`: each browser is ended this many
 /// seconds before its slot ends, so a connection's window is the slot
@@ -1299,9 +1306,13 @@ pub struct WhepServeReport {
     pub profile: Option<String>,
     pub mount_kind: Option<String>,
     /// The window served (`serve-whep --seconds`): the served rates the
-    /// volume floors use are the mount's push counters over it.
+    /// volume floors use are the scheduled frames and the mount's record
+    /// counter over it.
     pub seconds: f64,
     pub viewer_connected_before_push: bool,
+    /// The video frames `serve-whep` pushed from its schedule, counted by
+    /// the producer: what the mount's `frames_pushed` is held to.
+    pub video_frames_scheduled: u64,
     pub mount: WhepMountCounters,
     pub server: WhepServerCounters,
     /// The `WHEP_REQUIRED_COUNTERS` the file did not carry, filled by
@@ -1314,8 +1325,9 @@ pub struct WhepServeReport {
 /// The serve-report counters a WHEP verdict reads, as dotted paths into
 /// `serve-whep --json`'s output. A report without one of them is not
 /// judged: its default of 0 is indistinguishable from a measured zero.
-const WHEP_REQUIRED_COUNTERS: [&str; 9] = [
+const WHEP_REQUIRED_COUNTERS: [&str; 10] = [
     "seconds",
+    "video_frames_scheduled",
     "mount.frames_pushed",
     "mount.klv_records_pushed",
     "mount.klv_records_dropped_unbound",
@@ -3170,9 +3182,11 @@ fn whep_volume_floor(rate: f64, samples: usize) -> f64 {
 /// than [`WHEP_MAX_STALL_SAMPLES`] samples without the decoded frame
 /// count rising — no gap over 2 s except at a reconnect — and decoded at
 /// least [`WHEP_VOLUME_FLOOR`] of the served frame rate over its
-/// remaining samples; and the server dropped no video packet for a
-/// full queue and demuxed nothing non-conformant. Returns the verdict
-/// and the frames decoded over the run.
+/// remaining samples; and the mount pushed every frame the server
+/// scheduled (less [`WHEP_MP2T_RETAINED_TAIL_FRAMES`] on an MP2T mount),
+/// dropped no video packet for a full queue and demuxed nothing
+/// non-conformant. Returns the verdict and the frames decoded over the
+/// run.
 fn whep_frames_verdict(
     leg_name: &str,
     viewer: &WhepViewerReport,
@@ -3188,7 +3202,23 @@ fn whep_frames_verdict(
     if serve.mount.frames_pushed == 0 {
         problems.push("the server pushed no frame".to_string());
     }
-    let frame_rate = whep_served_rate(serve, serve.mount.frames_pushed);
+    // The mount's own counter cannot be the denominator: a frame its
+    // demuxer lost never reaches it, and the floor would fall with it.
+    let retained = if serve.mount_kind.as_deref() == Some("mp2t") {
+        WHEP_MP2T_RETAINED_TAIL_FRAMES
+    } else {
+        0
+    };
+    let scheduled = serve.video_frames_scheduled;
+    if serve.mount.frames_pushed.saturating_add(retained) != scheduled {
+        problems.push(format!(
+            "the mount pushed {} frame(s) of the {scheduled} scheduled, not the {} expected \
+             ({retained} retained at the end of the feed)",
+            serve.mount.frames_pushed,
+            scheduled.saturating_sub(retained)
+        ));
+    }
+    let frame_rate = whep_served_rate(serve, scheduled);
     if frame_rate.is_none() {
         problems.push(format!(
             "the serve report names no window (seconds {}), so there is no served frame \
@@ -7474,8 +7504,9 @@ pub(crate) mod tests {
             mount_kind: Some("mp2t".to_string()),
             seconds: 3600.0,
             viewer_connected_before_push: true,
+            video_frames_scheduled: 108_000,
             mount: WhepMountCounters {
-                frames_pushed: 108_000,
+                frames_pushed: 107_999,
                 klv_records_pushed: 36_000,
                 ..Default::default()
             },
@@ -7598,6 +7629,41 @@ pub(crate) mod tests {
             "{}",
             v.detail
         );
+    }
+
+    /// The mount's demuxer losing a frame lowers its own `frames_pushed`,
+    /// so a floor measured against that counter falls with the loss. The
+    /// producer's scheduled count does not: the mount owes every scheduled
+    /// frame but the one an MP2T feed's end retains, and an elementary
+    /// mount owes them all.
+    #[test]
+    fn a_mount_that_pushed_fewer_frames_than_were_scheduled_fails_the_frames_verdict() {
+        let judge = |kind: &str, pushed: u64| {
+            let mut raw = healthy_serve_json();
+            raw["mount_kind"] = kind.into();
+            raw["mount"]["frames_pushed"] = pushed.into();
+            let r = results_with_serve_json(raw);
+            verdict(&r, "whep_frames_continuous_whep").clone()
+        };
+        for (kind, pushed) in [("mp2t", 107_999), ("elementary", 108_000)] {
+            let v = judge(kind, pushed);
+            assert!(v.pass, "{kind} {pushed}: {}", v.detail);
+        }
+        // 48 frames short: one lost per hour of a 48-hour run, which no
+        // rate floor sees.
+        for (kind, pushed) in [
+            ("mp2t", 107_998),
+            ("mp2t", 107_951),
+            ("mp2t", 108_000),
+            ("elementary", 107_999),
+        ] {
+            let v = judge(kind, pushed);
+            assert!(!v.pass && !v.provisional, "{kind} {pushed}: {}", v.detail);
+        }
+        assert!(judge("mp2t", 107_951).detail.contains(
+            "the mount pushed 107951 frame(s) of the 108000 scheduled, not the 107999 \
+                 expected (1 retained at the end of the feed)"
+        ),);
     }
 
     #[test]

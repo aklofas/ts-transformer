@@ -1316,9 +1316,11 @@ arrive at INFO; about 0.3 MB gzipped).
   samples without `FRAMES` rising — no gap over 2 s except at a
   reconnect — with at most 3 samples fewer than its planned seconds, and
   its last `FRAMES` sample is at least 0.9 × the served frame rate
-  (`frames_pushed / seconds` from the serve report) × (samples − 5), so a
-  decode that only ticks fails on volume (on the one-hour run the floor
-  is 15 957 frames against at least 17 857 decoded). The mount's
+  (`video_frames_scheduled / seconds` from the serve report) × (samples −
+  5), so a decode that only ticks fails on volume (on the one-hour run the
+  floor is 15 957 frames against at least 17 857 decoded). The mount's
+  `frames_pushed` must equal the scheduled count less the one frame an
+  MP2T feed's end leaves in the mount's demuxer, and its
   `viewer_packets_dropped_queue_full` and `demux_nonconformant` must be 0.
   **`whep_klv_sei_equals_dc_whep`**: in every connection the SEI record
   set equals the data-channel set, each carriage holds at least 0.9 × the

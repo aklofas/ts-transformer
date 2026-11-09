@@ -1152,10 +1152,11 @@ follows:
   error, to decode its first frame within 5 samples, never to go more than
   2 samples without the count rising (no gap over 2 s except at a
   reconnect), and to end with at least 0.9 of the served frame rate (the
-  server's `frames_pushed` over its window) times its samples after the
-  first-frame window, so a decode that only ticks fails. The server must
-  have dropped no packet for a full queue and demuxed nothing
-  non-conformant.
+  frames the server scheduled over its window) times its samples after the
+  first-frame window, so a decode that only ticks fails. The mount must
+  have pushed every scheduled frame but the one the end of an MP2T feed
+  leaves in its demuxer, dropped no packet for a full queue and demuxed
+  nothing non-conformant.
 - **Both KLV carriages agree, at the served rate, on the same frame.** With
   the player's de-duplication off, every record arrives from the SEI and
   from the data channel. The page prints one digest and the bound frame's
