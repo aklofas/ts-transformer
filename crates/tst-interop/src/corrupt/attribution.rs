@@ -391,6 +391,9 @@ struct InjState {
     /// the harness's raw reader. See
     /// [`AttributionReport::detected_by_reader_only`].
     detected_by_demux: bool,
+    /// An unparseable body flip's one resync has been attributed to it —
+    /// see [`Attribution::owns_resync`].
+    resync_claimed: bool,
 }
 
 /// Matches receiver events against a corruption log. Pure: no I/O, no
@@ -442,6 +445,12 @@ struct Tracked {
     /// the original flags carry the PCR flag, the PCR bytes (6..=11). A
     /// flip in the stuffing, OPCR, splice or private bytes did not.
     adaptation_control_hit: bool,
+    /// The logged corrupted packet is one the raw reader rejects (an
+    /// adaptation field that overruns the packet, or a PCR flag on a field
+    /// shorter than 7), so the reader skips it and records one resync at
+    /// its ordinal — see [`Attribution::owns_resync`]. `false` when the log
+    /// holds no whole corrupted packet.
+    unparseable: bool,
 }
 
 /// Whether `offsets` touch the adaptation-field bytes of the original
@@ -474,6 +483,8 @@ impl From<&Injection> for Tracked {
                 || (i.class == Class::Header && matches!(i.offsets.as_slice(), [1, 2] | [3])),
             adaptation_only: i.before.get(3).is_some_and(|b| b & 0x30 == 0x20),
             adaptation_control_hit: hits_adaptation_control(&i.before, &i.offsets),
+            unparseable: <&[u8; 188]>::try_from(i.after.as_slice())
+                .is_ok_and(|p| tst_test_helpers::rawts::classify_packet(p).is_err()),
         }
     }
 }
@@ -816,12 +827,15 @@ fn expects(inj: &Tracked, sig: Signal) -> bool {
         // `tests/corruption.rs`), and a flipped flag byte can raise a
         // discontinuity indicator. Only a flip of the length, flags or
         // PCR bytes counts; one confined to the stuffing cannot have
-        // caused either signal.
+        // caused either signal. A flipped length the reader cannot parse
+        // makes it skip the packet and record a resync at that ordinal;
+        // `Attribution::owns_resync` holds that resync to its position.
         Class::BodyFlip => {
             matches!(sig, Signal::MalformedPes | Signal::OtherNonConformant)
                 || (inj.adaptation_only
                     && inj.adaptation_control_hit
                     && matches!(sig, Signal::PcrAnomaly { .. } | Signal::OtherDiscontinuity))
+                || (inj.unparseable && sig == Signal::Resync)
         }
         // H.222.0 §2.4.3.3 allows one duplicate packet, and a receiver
         // discards it unread: it changes no byte a decoder reads, so
@@ -1417,9 +1431,33 @@ impl Attribution {
     /// [`Attribution::truncation_explains`].
     fn explainer(&mut self, at: u64, pid: Option<u16>, sig: Signal) -> Option<usize> {
         self.advance(at);
-        (self.lo..self.hi)
-            .rev()
-            .find(|&i| self.window_contains(i, at) && can_explain(self.tracked(i), pid, sig))
+        (self.lo..self.hi).rev().find(|&i| {
+            self.window_contains(i, at)
+                && can_explain(self.tracked(i), pid, sig)
+                && (sig != Signal::Resync
+                    || self.tracked(i).class != Class::BodyFlip
+                    || self.owns_resync(i, at))
+        })
+    }
+
+    /// Whether a resync at `at` is the one body flip `i` caused by leaving
+    /// its packet unparseable. The reader rejects that packet alone, before
+    /// it changes any state, and records the resync at the packet's own
+    /// ordinal: the flip explains ONE resync, at its resolved position.
+    /// The position is only as good as the resolution, so it keeps the
+    /// backward reach every window has (transport loss between the anchor
+    /// and the packet) and, when resolved approximately, the approximate
+    /// slack forward. A second resync, or one later in the window, is not
+    /// this flip's doing.
+    fn owns_resync(&self, i: usize, at: u64) -> bool {
+        let st = self.state(i);
+        let Some(r) = st.resolved_at else {
+            return false;
+        };
+        let forward = if st.approx { self.approx_slack } else { 0 };
+        !st.resync_claimed
+            && r.saturating_sub(self.backward_reach(i)) <= at
+            && at <= r.saturating_add(forward)
     }
 
     /// Whether injection `i` is resolved and its attribution window
@@ -1723,6 +1761,9 @@ impl Attribution {
                     Signal::Resync => {}
                 }
                 self.state_mut(i).detected = true;
+                if sig == Signal::Resync && self.tracked(i).class == Class::BodyFlip {
+                    self.state_mut(i).resync_claimed = true;
+                }
                 // A resync is the harness's own raw reader
                 // losing and regaining packet sync, not a `DemuxEvent`.
                 // Only the other signals are the receiver reporting.
@@ -3599,6 +3640,91 @@ mod tests {
                 r.attributed_events,
                 u64::from(explained),
                 "afc {afc:#04x}: {r:?}"
+            );
+        }
+    }
+
+    /// A body flip that rewrote a PCR-only packet's adaptation_field_length
+    /// to a value the reader cannot parse (the field overruns the packet, or
+    /// the PCR flag is set on a field shorter than 7) makes the reader skip
+    /// that packet and record a resync at its own ordinal: the flip explains
+    /// it. A flipped length that still parses causes no resync, so it
+    /// explains none.
+    #[test]
+    fn a_body_flip_that_leaves_the_packet_unparseable_explains_its_resync() {
+        for (af_len, explained) in [
+            (188u8, true),
+            (231, true),
+            (1, true),
+            (165, false),
+            (183, false),
+        ] {
+            let mut flip = inj(1000, 10, Class::BodyFlip, 0x1011, false);
+            flip.before = vec![0x47, 0x10, 0x11, 0x20, 183, 0x10];
+            flip.before.resize(188, 0xff);
+            flip.after = flip.before.clone();
+            flip.after[4] = af_len;
+            flip.offsets = vec![4];
+            let after: &[u8; 188] = flip.after.as_slice().try_into().unwrap();
+            assert_eq!(
+                tst_test_helpers::rawts::classify_packet(after).is_err(),
+                explained,
+                "the reader's verdict on length {af_len}"
+            );
+            let mut a = Attribution::strict(vec![flip], &hdr());
+            a.on_pcr(1000, 5000);
+            a.on_signal(5010, None, Signal::Resync);
+            a.on_media(5100, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(
+                r.attributed_events,
+                u64::from(explained),
+                "length {af_len}: {r:?}"
+            );
+            assert_eq!(
+                r.unexplained_resyncs,
+                u64::from(!explained),
+                "length {af_len}: {r:?}"
+            );
+        }
+    }
+
+    /// The reader skips an unparseable packet alone and records the resync
+    /// at that packet's ordinal, so the flip explains one resync at its own
+    /// resolved position (reaching back over what transport loss may have
+    /// removed since the anchor) and nothing else: not a resync later in its
+    /// window, and not a second one at the same ordinal.
+    #[test]
+    fn an_unparseable_body_flip_explains_one_resync_at_its_own_position() {
+        // The injection resolves at 5000 + 10 = 5010, with a backward reach
+        // of its 10 packets since the anchor.
+        for (resyncs, attributed) in [
+            (&[5010u64][..], 1u64),
+            (&[5000], 1),
+            (&[4999], 0),
+            (&[5011], 0),
+            (&[5060], 0),
+            (&[5010, 5010], 1),
+            (&[5005, 5010], 1),
+        ] {
+            let mut flip = inj(1000, 10, Class::BodyFlip, 0x1011, false);
+            flip.before = vec![0x47, 0x10, 0x11, 0x20, 183, 0x10];
+            flip.before.resize(188, 0xff);
+            flip.after = flip.before.clone();
+            flip.after[4] = 188;
+            flip.offsets = vec![4];
+            let mut a = Attribution::strict(vec![flip], &hdr());
+            a.on_pcr(1000, 5000);
+            for at in resyncs {
+                a.on_signal(*at, None, Signal::Resync);
+            }
+            a.on_media(5100, 0x1011);
+            let r = a.finish(10_000);
+            assert_eq!(r.attributed_events, attributed, "{resyncs:?}: {r:?}");
+            assert_eq!(
+                r.unexplained_resyncs,
+                resyncs.len() as u64 - attributed,
+                "{resyncs:?}: {r:?}"
             );
         }
     }

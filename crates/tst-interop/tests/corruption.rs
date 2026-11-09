@@ -830,3 +830,51 @@ fn a_stuffing_only_body_flip_on_a_pcr_only_packet_is_not_offered_as_a_pcr_explan
         a.unexplained_events
     );
 }
+
+/// A body flip that rewrites a PCR-only packet's adaptation_field_length to
+/// a value the raw reader cannot parse: the field overruns the packet (188,
+/// 231), or it is shorter than the PCR its flags announce (1). The reader
+/// skips that one packet and records a resync at its ordinal, and the flip
+/// explains it. A flipped length that still parses (165) causes no resync.
+///
+/// The tap picks the packet and writes the log; the flipped byte is then
+/// set to the length under test on the wire and in the log alike, because
+/// no seed draws these exact values.
+#[test]
+fn an_unparseable_body_flip_on_a_pcr_only_packet_explains_its_one_resync() {
+    let p = profiles::by_name("audio").expect("the audio profile exists");
+    let bytes = gen_bytes(p, "bf-unparseable");
+    for (af_len, resyncs) in [(188u8, 1u64), (231, 1), (1, 1), (165, 0)] {
+        let (mut wire, header, mut injections) = tap(
+            &bytes,
+            "rate=300,min_gap=1000,classes=body_flip",
+            BODY_FLIP_PCR_ONLY_SEED,
+        );
+        let inj = injections
+            .iter_mut()
+            .find(|i| i.before[3] & 0x30 == 0x20 && i.before[4] == 183 && i.before[5] == 0x10)
+            .expect("the seed flips a PCR-only packet");
+        // Body flips keep the wire packet-aligned with the input.
+        let at = usize::try_from(inj.ordinal).expect("ordinal") * 188;
+        assert_eq!(&wire[at..at + 188], inj.after.as_slice());
+        inj.after = inj.before.clone();
+        inj.after[4] = af_len;
+        inj.offsets = vec![4];
+        wire[at..at + 188].copy_from_slice(&inj.after);
+
+        let log = (header, injections);
+        let r = judge(&wire, p, Some(&log));
+        assert!(r.pass, "length {af_len}: {:?}", r.failures);
+        let strict = judge_in(VerifyMode::Strict, &wire, p, Some(&log));
+        let a = strict.metrics.corruption_attribution.expect("attribution");
+        assert_transport_loss_excusal_is_inert(&a, "an unparseable body flip");
+        assert_eq!(a.resyncs, resyncs, "length {af_len}: {a:?}");
+        assert!(
+            a.unexplained_events.is_empty(),
+            "length {af_len}: {:?}",
+            a.unexplained_events
+        );
+        assert_eq!(a.unexplained_resyncs, 0, "length {af_len}: {a:?}");
+        assert!(a.attributed_events >= resyncs, "length {af_len}: {a:?}");
+    }
+}

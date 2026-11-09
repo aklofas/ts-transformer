@@ -433,6 +433,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tst-interop recv`'s deadline covers a TCP accept and an idle TCP peer, and its message prints a fractional window.
 - An excusable placement excursion that the per-run cap refused is recorded apart from the excused ones (`rejected_excursion_details`) and rendered as a failing `klv_placement_excursion_<leg>` row; it was rendered as a passing, excused row.
 - A body flip whose logged original is shorter than six bytes explains no adaptation-field signal: offsets 4 and 5 counted as a hit without the bytes they name.
+- A body flip that leaves a PCR-only packet unparseable (its adaptation_field_length overruns the packet, or is below 7 with the PCR flag set) explains the one resync the reader records at that packet when it skips it, and no other resync in its window. Since a body flip stopped explaining every signal, the 48-hour release soak failed `corruption_attributed_srt` on three such resyncs.
 - A soak publisher generation counts as a clean end after `Got EOS` only when `gst-launch-1.0` exits with its own error status 1; a signal death or any other status after EOS fails the generation, as a timeout kill already did.
 
 ### Changed — CI
