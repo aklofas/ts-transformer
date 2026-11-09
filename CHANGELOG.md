@@ -437,6 +437,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `report soak` holds a leg with no outage schedule (the rist leg) to `media_delivered_<leg>`: its receiver decoded at least 99.5 % of the video access units its sender pushed. Such a leg had no end-of-run media check, so a receiver that went silent in the last tenth of a run passed every count floor.
 - `serve-whep --json` writes `video_frames_scheduled`, its own count of the video frames it pushed, and `whep_frames_continuous_<leg>` measures the viewer's rate floor against it and requires the mount's `frames_pushed` to equal it, less the one frame the end of an MP2T feed leaves in the mount's demuxer. The floor was measured against `frames_pushed` itself, so frames the mount lost lowered the floor with them.
 - `audio_pts_step` fails an audio stream whose consecutive frames show no PTS step forward. The check judged the median positive step and was skipped when there was none, so a stream with the right frame count and one repeated PTS passed.
+- `release-vm-corpus.sh` ends the phase when Cargo's output directory is not the checkout's `target/`. It runs the binary at that fixed path, so under a redirected output directory a binary left there by an earlier commit would have been judged under the new commit's name.
 - A soak publisher generation counts as a clean end after `Got EOS` only when `gst-launch-1.0` exits with its own error status 1; a signal death or any other status after EOS fails the generation, as a timeout kill already did.
 
 ### Changed — CI

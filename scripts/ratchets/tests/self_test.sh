@@ -928,6 +928,7 @@ expect "dependency-lattice: the committed table passes"              0 bash scri
 expect "abi-compat: the planted-library matrix" 0 bash scripts/check/c/tests/abi-compat-selftest.sh
 expect "release-vm-soak: the ci-green and launch handshake" 0 bash scripts/interop/tests/release-vm-soak-selftest.sh
 expect "release-vm-setup: the architecture stamps and the per-arch browser install" 0 bash scripts/interop/tests/release-vm-setup-selftest.sh
+expect "release-vm-corpus: a redirected cargo target directory ends the phase" 0 bash scripts/interop/tests/release-vm-corpus-selftest.sh
 
 # publish-guards: a callable workflow's publish-shaped job keeps `!inputs.dry_run` as a
 # top-level conjunct of its `if:`; any job with an environment is tag-only; every job

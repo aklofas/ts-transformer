@@ -255,7 +255,15 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
    - A commit that replaces the frozen one restarts the whole step on the
      same VM (and on the arm64 VMs): `release-vm-soak.sh stop` on the running soak, then setup's
      checkout stage (or `release-vm-corpus.sh` on the new sha, which checks
-     it out), then the chain above.
+     it out), then the chain above. A reused VM still holds the previous
+     commit's binary at `~/ts-transformer/target/release/tst-interop`, the
+     path the corpus phase and the soak run, so first confirm on each VM
+     that the new build lands there:
+     `cargo metadata --format-version 1 --no-deps | jq -r .target_directory`
+     in the checkout prints `~/ts-transformer/target`, and neither
+     `env | grep -E '^(CARGO|RUSTFLAGS|RUSTUP)'` nor `~/.cargo/config*`
+     redirects it. The corpus phase makes the first check itself; the soak
+     launch does not.
 7. **The archive-entry PR.** A docs-only PR adds the rows below to
    `tests/coverage/evidence-archives.toml`, each with the frozen commit as
    its `tree`:
