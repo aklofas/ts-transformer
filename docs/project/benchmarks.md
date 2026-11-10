@@ -1,13 +1,15 @@
 # Benchmarks + ceilings
 
-This page publishes the measured sweep of the stress run of 2026-10-23
-(tree `12c1ff1d`, one AWS `c7i.2xlarge`; its 24-hour hold
-did not run — a harness defect ended it at launch), the sweep and the
-completed 24-hour hold of the run of 2026-10-06 (tree `9bb728e1`), the
-sweep of the earlier 2026-10-03 run (tree `3a3f964f`, whose hold ended
-early), and the steady-state figures of the 72-hour 0.7.0
-release-candidate soak (tree `e86dd9ea`). The figures are from one host
-each; use measured results from your target system when choosing a
+This page publishes the sweep and the completed 24-hour hold of the
+stress run of 2026-11-07 (tree `d0a8e34ef`, the 0.9.1 library code), run on
+two hosts: an AWS `c7i.2xlarge` (x86_64) and a `c7g.2xlarge` (aarch64).
+Below it are the sweep of the run of 2026-10-23 (tree `12c1ff1d`, one
+`c7i.2xlarge`; its 24-hour hold did not run — a harness defect ended it at
+launch), the sweep and the completed 24-hour hold of the run of 2026-10-06
+(tree `9bb728e1`), the sweep of the earlier 2026-10-03 run (tree
+`3a3f964f`, whose hold ended early), and the steady-state figures of the
+72-hour 0.7.0 release-candidate soak (tree `e86dd9ea`). Each figure is from
+one host; use measured results from your target system when choosing a
 deployment size.
 
 This page answers a deployment-planning question the interop matrix and the
@@ -96,9 +98,9 @@ scripts/gen/benchmarks-page.sh <archive-dir>
 ```
 
 The arm64 reference machine is an AWS `c7g.2xlarge` (8 vCPU Graviton, 16 GiB)
-running the same recipe; the first arm run is recorded when it happens. Given
-its archive, the same command adds a ceilings-by-architecture table at the top
-of the block:
+running the same recipe; its first run is the 2026-11-07 one. Given its
+archive, the same command adds a ceilings-by-architecture table at the top of
+the block:
 
 ```bash
 scripts/gen/benchmarks-page.sh <archive-dir> --arm <arm-archive-dir>
@@ -110,24 +112,48 @@ and one subdirectory per sweep step with that step's raw logs and samples.
 
 ## Measured results
 
-The block below is generated from the 2026-10-23 run's sweep steps; that
-run has no hold, so its hold section says so. What the run found, and which
-of its ceilings are caveated, is under "Measured: stress run of 2026-10-23"
-below. The 2026-10-06 run's completed 24-hour hold — the only one so far —
-keeps its tables under "Measured: stress run of 2026-10-06", including why
-that hold's own verdict is a FAIL. The 2026-10-03 run's hold ended early
-and wrote no results file; what it did measure is under "Measured: stress
-run of 2026-10-03" below that.
+The block below is generated from the 2026-11-07 run: the ceilings of
+both hosts, then the x86_64 host's sweep steps and hold. What the run
+found, which of its ceilings are caveated, and the aarch64 host's hold, are
+under "Measured: stress run of 2026-11-07" below the block. Four of the
+block's streams ceilings (UDP on x86_64; SRT, RIST and UDP on aarch64) read
+128 because the 256 rung came out unjudgeable on a harness launch race; a
+re-run of those rungs after the harness fix passed, and that section
+publishes 256 for them. The older runs keep their own sections below that.
 
 <!-- bench:begin -->
+### Ceilings by architecture
+
+| Transport | Axis | x86_64 ceiling | aarch64 ceiling |
+|---|---|---|---|
+| srt | streams | 256 (memory_budget) | 128 (step_unjudgeable) |
+| srt | bitrate | 32 (transport_loss_excused, rss_slope_srt-0_send) | 8 (rss_slope_srt-0_send) |
+| rist | streams | 256 (memory_budget) | 128 (step_unjudgeable) |
+| rist | bitrate | 32 (transport_loss_excused) | 64 (top of ladder) |
+| udp | streams | 128 (step_unjudgeable) | 128 (step_unjudgeable) |
+| udp | bitrate | 32 (rss_slope_udp-0_send) | 32 (rss_slope_udp-0_send) |
+| tcp | streams | 256 (memory_budget) | 512 (memory_budget) |
+| tcp | bitrate | 16 (rss_slope_tcp-0_send) | 16 (rss_slope_tcp-0_send) |
+
 ### Reference machine
 
+- Architecture: x86_64
 - Kernel: Linux 7.0.0-1014-aws x86_64
 - vCPUs: 8
 - Memory: 15.3 GiB
 - Toolchain: rustc 1.93.1 (01f6ddf75 2026-02-11)
-- Source: `12c1ff1d484f` (v0.8.0-531-g12c1ff1d)
-- Recorded: 2026-10-23T21:25:56Z
+- Source: `d0a8e34ef942` (v0.9.0-946-gd0a8e34ef)
+- Recorded: 2026-11-07T17:51:59Z
+
+### Reference machine (aarch64)
+
+- Architecture: aarch64
+- Kernel: Linux 7.0.0-1014-aws aarch64
+- vCPUs: 8
+- Memory: 15.3 GiB
+- Toolchain: rustc 1.93.1 (01f6ddf75 2026-02-11)
+- Source: `d0a8e34ef942` (v0.9.0-946-gd0a8e34ef)
+- Recorded: 2026-11-07T17:52:00Z
 
 ### Stream scaling
 
@@ -135,15 +161,15 @@ run of 2026-10-03" below that.
 
 | N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
 |---|---|---|---|---|---|---|
-| 1 | 0.037 | 29.4 | 6 | 5 | 1.9 | pass |
-| 2 | 0.034 | 29.3 | 6 | 5 | 3.8 | pass |
-| 4 | 0.030 | 29.5 | 6 | 5 | 7.5 | pass |
-| 8 | 0.022 | 29.2 | 6 | 5 | 15.1 | pass |
-| 16 | 0.017 | 29.3 | 6 | 5 | 30.1 | pass |
-| 32 | 0.017 | 29.4 | 6 | 5 | 60.2 | pass |
-| 64 | 0.018 | 29.4 | 6 | 5 | 120.4 | pass |
-| 128 | 0.018 | 29.4 | 6 | 5 | 240.8 | pass |
-| 256 | 0.019 | 29.4 | 6 | 5 | 481.6 | pass |
+| 1 | 0.032 | 29.4 | 6 | 5 | 1.9 | pass |
+| 2 | 0.031 | 29.8 | 6 | 5 | 3.8 | pass |
+| 4 | 0.029 | 29.6 | 6 | 5 | 7.5 | pass |
+| 8 | 0.020 | 29.6 | 6 | 5 | 15.1 | pass |
+| 16 | 0.015 | 29.7 | 6 | 5 | 30.1 | pass |
+| 32 | 0.015 | 29.7 | 6 | 5 | 60.2 | pass |
+| 64 | 0.016 | 29.7 | 6 | 5 | 120.4 | pass |
+| 128 | 0.017 | 29.7 | 6 | 5 | 240.8 | pass |
+| 256 | 0.018 | 29.7 | 6 | 5 | 481.6 | pass |
 | 512 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
 
 Per-stream figures are averages over the step's streams.
@@ -154,15 +180,15 @@ Ceiling: 256 streams — ended by memory_budget
 
 | N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
 |---|---|---|---|---|---|---|
-| 1 | 0.028 | 29.0 | 3 | 5 | 1.9 | pass |
-| 2 | 0.024 | 29.1 | 3 | 5 | 3.8 | pass |
-| 4 | 0.022 | 29.0 | 3 | 5 | 7.5 | pass |
-| 8 | 0.019 | 28.9 | 3 | 5 | 15.1 | pass |
-| 16 | 0.016 | 28.7 | 3 | 5 | 30.2 | pass |
-| 32 | 0.014 | 28.7 | 3 | 5 | 60.3 | pass |
-| 64 | 0.014 | 28.8 | 3 | 5 | 120.6 | pass |
-| 128 | 0.015 | 28.8 | 3 | 5 | 241.2 | pass |
-| 256 | 0.016 | 28.8 | 3 | 5 | 482.4 | pass |
+| 1 | 0.024 | 28.8 | 3 | 5 | 1.9 | pass |
+| 2 | 0.021 | 29.0 | 3 | 5 | 3.8 | pass |
+| 4 | 0.018 | 28.9 | 3 | 5 | 7.5 | pass |
+| 8 | 0.017 | 28.8 | 3 | 5 | 15.1 | pass |
+| 16 | 0.014 | 28.9 | 3 | 5 | 30.2 | pass |
+| 32 | 0.011 | 28.9 | 3 | 5 | 60.3 | pass |
+| 64 | 0.012 | 29.0 | 3 | 5 | 120.6 | pass |
+| 128 | 0.013 | 28.9 | 3 | 5 | 241.2 | pass |
+| 256 | 0.015 | 28.9 | 3 | 5 | 482.4 | pass |
 | 512 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
 
 Per-stream figures are averages over the step's streams.
@@ -173,34 +199,33 @@ Ceiling: 256 streams — ended by memory_budget
 
 | N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
 |---|---|---|---|---|---|---|
-| 1 | 0.010 | 24.0 | 1 | 5 | 1.9 | pass |
-| 2 | 0.009 | 24.3 | 1 | 5 | 3.8 | pass |
-| 4 | 0.008 | 24.3 | 1 | 5 | 7.5 | pass |
-| 8 | 0.008 | 24.2 | 1 | 5 | 15.1 | pass |
-| 16 | 0.007 | 24.2 | 1 | 5 | 30.2 | pass |
-| 32 | 0.007 | 24.3 | 1 | 5 | 60.3 | pass |
-| 64 | 0.006 | 24.3 | 1 | 5 | 120.6 | pass |
-| 128 | 0.006 | 24.2 | 1 | 5 | 241.2 | pass |
-| 256 | 0.006 | 24.3 | 1 | 5 | 482.4 | pass |
-| 512 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
+| 1 | 0.007 | 24.4 | 1 | 5 | 1.9 | pass |
+| 2 | 0.006 | 24.2 | 1 | 5 | 3.8 | pass |
+| 4 | 0.006 | 24.2 | 1 | 5 | 7.5 | pass |
+| 8 | 0.006 | 24.3 | 1 | 5 | 15.1 | pass |
+| 16 | 0.006 | 24.5 | 1 | 5 | 30.2 | pass |
+| 32 | 0.007 | 24.5 | 1 | 5 | 60.3 | pass |
+| 64 | 0.007 | 24.5 | 1 | 5 | 120.6 | pass |
+| 128 | 0.006 | 24.4 | 1 | 5 | 241.2 | pass |
+| 256 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
 
 Per-stream figures are averages over the step's streams.
 
-Ceiling: 256 streams — ended by memory_budget
+Ceiling: 128 streams — ended by step_unjudgeable
 
 #### TCP
 
 | N | CPU/stream (cores) | RSS/stream p99 (MiB) | threads max | fds max | wire Mb/s | pass |
 |---|---|---|---|---|---|---|
-| 1 | 0.007 | 17.6 | 1 | 5 | 1.9 | pass |
-| 2 | 0.006 | 17.5 | 1 | 5 | 3.8 | pass |
-| 4 | 0.006 | 17.4 | 1 | 5 | 7.5 | pass |
-| 8 | 0.005 | 17.2 | 1 | 5 | 15.1 | pass |
-| 16 | 0.005 | 17.3 | 1 | 5 | 30.2 | pass |
-| 32 | 0.005 | 17.4 | 1 | 5 | 60.3 | pass |
-| 64 | 0.004 | 17.4 | 1 | 5 | 120.6 | pass |
-| 128 | 0.004 | 17.4 | 1 | 5 | 241.2 | pass |
-| 256 | 0.004 | 17.4 | 1 | 5 | 482.4 | pass |
+| 1 | 0.009 | 18.1 | 2 | 5 | 1.9 | pass |
+| 2 | 0.007 | 17.9 | 2 | 5 | 3.8 | pass |
+| 4 | 0.007 | 18.1 | 2 | 5 | 7.5 | pass |
+| 8 | 0.006 | 18.0 | 2 | 5 | 15.1 | pass |
+| 16 | 0.006 | 18.0 | 2 | 5 | 30.2 | pass |
+| 32 | 0.005 | 18.1 | 2 | 5 | 60.3 | pass |
+| 64 | 0.005 | 18.1 | 2 | 5 | 120.6 | pass |
+| 128 | 0.005 | 18.1 | 2 | 5 | 241.2 | pass |
+| 256 | 0.004 | 18.1 | 2 | 5 | 482.4 | pass |
 | 512 | 0.000 | 0.0 | 0 | 0 | 0.0 | fail |
 
 Per-stream figures are averages over the step's streams.
@@ -213,39 +238,41 @@ Ceiling: 256 streams — ended by memory_budget
 
 | scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
 |---|---|---|---|---|
-| 1 | 1.7 | 1.9 | 0.036 | pass |
-| 2 | 3.4 | 3.7 | 0.040 | pass |
-| 4 | 6.8 | 7.3 | 0.045 | pass |
-| 8 | 13.6 | 14.4 | 0.057 | pass |
-| 16 | 27.2 | 28.8 | 0.084 | pass |
-| 32 | 54.4 | 57.5 | 0.133 | fail |
+| 1 | 1.7 | 1.9 | 0.032 | pass |
+| 2 | 3.4 | 3.7 | 0.035 | pass |
+| 4 | 6.8 | 7.3 | 0.041 | pass |
+| 8 | 13.6 | 14.4 | 0.053 | pass |
+| 16 | 27.2 | 28.8 | 0.078 | pass |
+| 32 | 54.4 | 57.5 | 0.129 | pass |
+| 64 | 108.8 | 115.0 | 0.236 | fail |
 
-Ceiling: 16 scale — ended by rss_slope_srt-0_send
+Ceiling: 32 scale — ended by transport_loss_excused, rss_slope_srt-0_send
 
 #### RIST
 
 | scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
 |---|---|---|---|---|
-| 1 | 1.7 | 1.9 | 0.027 | pass |
-| 2 | 3.4 | 3.7 | 0.030 | pass |
-| 4 | 6.8 | 7.3 | 0.036 | pass |
-| 8 | 13.6 | 14.5 | 0.047 | pass |
-| 16 | 27.2 | 28.8 | 0.073 | pass |
-| 32 | 54.4 | 57.6 | 0.128 | fail |
+| 1 | 1.7 | 1.9 | 0.023 | pass |
+| 2 | 3.4 | 3.7 | 0.026 | pass |
+| 4 | 6.8 | 7.3 | 0.032 | pass |
+| 8 | 13.6 | 14.5 | 0.043 | pass |
+| 16 | 27.2 | 28.8 | 0.067 | pass |
+| 32 | 54.4 | 57.6 | 0.123 | pass |
+| 64 | 108.8 | 113.8 | 0.251 | fail |
 
-Ceiling: 16 scale — ended by rss_slope_rist-0_recv
+Ceiling: 32 scale — ended by transport_loss_excused
 
 #### UDP
 
 | scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
 |---|---|---|---|---|
-| 1 | 1.7 | 1.9 | 0.010 | pass |
-| 2 | 3.4 | 3.7 | 0.012 | pass |
-| 4 | 6.8 | 7.3 | 0.016 | pass |
-| 8 | 13.6 | 14.5 | 0.024 | pass |
-| 16 | 27.2 | 28.8 | 0.039 | pass |
-| 32 | 54.4 | 57.6 | 0.070 | pass |
-| 64 | 108.8 | 115.1 | 0.133 | fail |
+| 1 | 1.7 | 1.9 | 0.011 | pass |
+| 2 | 3.4 | 3.7 | 0.013 | pass |
+| 4 | 6.8 | 7.3 | 0.018 | pass |
+| 8 | 13.6 | 14.5 | 0.026 | pass |
+| 16 | 27.2 | 28.8 | 0.043 | pass |
+| 32 | 54.4 | 57.6 | 0.076 | pass |
+| 64 | 108.8 | 115.1 | 0.146 | fail |
 
 Ceiling: 32 scale — ended by rss_slope_udp-0_send
 
@@ -253,30 +280,214 @@ Ceiling: 32 scale — ended by rss_slope_udp-0_send
 
 | scale | declared Mb/s | observed Mb/s | CPU (cores) | pass |
 |---|---|---|---|---|
-| 1 | 1.7 | 1.9 | 0.007 | pass |
-| 2 | 3.4 | 3.7 | 0.009 | pass |
-| 4 | 6.8 | 7.3 | 0.011 | pass |
-| 8 | 13.6 | 14.5 | 0.016 | pass |
-| 16 | 27.2 | 28.8 | 0.026 | pass |
-| 32 | 54.4 | 57.6 | 0.045 | fail |
+| 1 | 1.7 | 1.9 | 0.009 | pass |
+| 2 | 3.4 | 3.7 | 0.010 | pass |
+| 4 | 6.8 | 7.3 | 0.013 | pass |
+| 8 | 13.6 | 14.5 | 0.019 | pass |
+| 16 | 27.2 | 28.8 | 0.029 | pass |
+| 32 | 54.4 | 57.6 | 0.050 | fail |
 
 Ceiling: 16 scale — ended by rss_slope_tcp-0_send
 
 ### The hold
 
-No hold in this run.
+| transport | N | aggregate Mb/s |
+|---|---|---|
+| srt | 49 | 89.0 |
+| rist | 49 | 92.1 |
+| udp | 24 | 45.1 |
+| tcp | 49 | 92.1 |
+
+| name | observed | threshold | pass |
+|---|---|---|---|
+| worker_exits | 43 | 0 | fail |
+| proxy_stats_final | 0 | 0 | pass |
+| recv_invariants | 43 | 0 | fail |
+| corruption_coverage | 0.964 | 0.9 | pass |
+| corruption_declared | 0 | 0 | pass |
+| transport_loss_excused | 6 | 392 | pass |
+| delivery_complete | 0.964 | 0.7 | pass |
+| cpu_headroom | 0.259 | 0.8 | pass |
+| sample_coverage | 0.995 | 0.9 | pass |
+| proc_sample_coverage | 0.995 | 0.9 | pass |
+| reconnect_count | 96 | 95 | pass |
+| peer_restart_recovery | 12 | 12 | pass |
+| queue_depth_p99 | 0 | 230.4 | pass |
+| gap_drains_after_outage | 4655 | 4655 | pass |
+| hold_sizing_declared | 0 | 0 | pass |
+
+| class | transport role | n | pass | fail | max observed | threshold |
+|---|---|---|---|---|---|---|
+| rss_slope | srt send | 49 | 49 | 0 | 18.53 | 1024 |
+| rss_slope | srt recv | 49 | 49 | 0 | 213.949 | 1024 |
+| rss_slope | srt proxy | 49 | 49 | 0 | 9.002 | 1024 |
+| rss_slope | rist send | 49 | 49 | 0 | 219.944 | 1024 |
+| rss_slope | rist recv | 49 | 49 | 0 | 12.897 | 1024 |
+| rss_slope | rist proxy | 49 | 49 | 0 | 3.449 | 1024 |
+| rss_slope | udp send | 24 | 24 | 0 | 2.8 | 1024 |
+| rss_slope | udp recv | 24 | 24 | 0 | 5.758 | 1024 |
+| rss_slope | udp proxy | 24 | 24 | 0 | 0.687 | 1024 |
+| rss_slope | tcp send | 49 | 49 | 0 | 0 | 1024 |
+| rss_slope | tcp recv | 49 | 49 | 0 | 3.678 | 1024 |
+| fd_count_flat | srt send | 49 | 49 | 0 | 0 | 2 |
+| fd_count_flat | srt recv | 49 | 49 | 0 | 0 | 2 |
+| fd_count_flat | srt proxy | 49 | 49 | 0 | 0 | 2 |
+| fd_count_flat | rist send | 49 | 49 | 0 | 0 | 2 |
+| fd_count_flat | rist recv | 49 | 49 | 0 | 0 | 2 |
+| fd_count_flat | rist proxy | 49 | 49 | 0 | 0 | 2 |
+| fd_count_flat | udp send | 24 | 24 | 0 | 0 | 2 |
+| fd_count_flat | udp recv | 24 | 24 | 0 | 0 | 2 |
+| fd_count_flat | udp proxy | 24 | 24 | 0 | 0 | 2 |
+| fd_count_flat | tcp send | 49 | 49 | 0 | 0 | 2 |
+| fd_count_flat | tcp recv | 49 | 49 | 0 | 0 | 2 |
+| thread_count_flat | srt send | 49 | 49 | 0 | 0 | 1 |
+| thread_count_flat | srt recv | 49 | 49 | 0 | 0 | 1 |
+| thread_count_flat | srt proxy | 49 | 49 | 0 | 0 | 1 |
+| thread_count_flat | rist send | 49 | 49 | 0 | 0 | 1 |
+| thread_count_flat | rist recv | 49 | 49 | 0 | 0 | 1 |
+| thread_count_flat | rist proxy | 49 | 49 | 0 | 0 | 1 |
+| thread_count_flat | udp send | 24 | 24 | 0 | 0 | 1 |
+| thread_count_flat | udp recv | 24 | 24 | 0 | 0 | 1 |
+| thread_count_flat | udp proxy | 24 | 24 | 0 | 0 | 1 |
+| thread_count_flat | tcp send | 49 | 49 | 0 | 0 | 1 |
+| thread_count_flat | tcp recv | 49 | 49 | 0 | 0 | 1 |
+
+Per-process rows are rolled up; the full list is `hold/step-results.json` in the archive.
 
 ### Limitations
 
-- rist/bitrate: rss_slope_rist-0_send over its allowance at step 1, step 2, step 4, step 8, step 16, step 32 — recorded, not gated (declared rss_slope_ungated; the hold gates it)
+- rist/bitrate: rss_slope_rist-0_send over its allowance at step 1, step 2, step 4, step 8, step 16, step 32, step 64 — recorded, not gated (declared rss_slope_ungated; the hold gates it)
 - rist/streams: ended by the memory budget at 512 — the box's memory, not a transport verdict; 256 is the last load that fit
 - rist/streams: rss_slope over its allowance for 256 processes matching `rist-*_send` (per-process list in stress-results.json) — recorded, not gated (declared rss_slope_ungated; the hold gates it)
 - srt/streams: ended by the memory budget at 512 — the box's memory, not a transport verdict; 256 is the last load that fit
 - tcp/streams: ended by the memory budget at 512 — the box's memory, not a transport verdict; 256 is the last load that fit
-- udp/streams: ended by the memory budget at 512 — the box's memory, not a transport verdict; 256 is the last load that fit
-- the hold was required (skip_hold: false) but there is no hold result — the run ended before the hold was judged
-- run aborted (stress-FAILED): hold worker srt-4-recv (pid 73226) died at hold elapsed 36s — partial salvage, not completed evidence
+- udp/streams: ended by step_unjudgeable at 256 — a harness condition, not a transport verdict; the ceiling is the last judgeable load, not a measured limit
+- hold scaled to 35% by memory: predicted 31286 MB vs budget 10990 MB (n_hold rist=49 srt=49 tcp=49 udp=24)
+- hold throughput for srt-0 is its last segment only: 6810 s of the 86460 s run (the receiver was restarted; earlier segments wrote no report)
 <!-- bench:end -->
+
+## Measured: stress run of 2026-11-07
+
+The run used tree `d0a8e34ef` (`v0.9.0-946-gd0a8e34ef`) on two hosts at
+once: the x86_64 reference machine (`c7i.2xlarge`) and the aarch64 one
+(`c7g.2xlarge`), both 8 vCPU and 15.3 GiB, with seed 11, all four
+transports, an RSS-slope threshold of 1024 KB/hour, and the RIST sender
+recorded, not gated, in sweep steps. The library code in this tree is the
+0.9.1 release's: the commits between it and the release change only the
+test harness and documentation. The sweep ran from 2026-11-07T17:53Z to
+2026-11-08T05:58Z on x86_64 (66 steps) and to 05:47Z on aarch64 (63
+steps); the traffic is seeded, so both hosts carried the same bytes,
+injections and discontinuities at every rung.
+
+**Stream count.** On x86_64, SRT, RIST and TCP stopped at a memory ceiling
+of 256 streams (the 512 rung skipped by the step memory guard); on
+aarch64, TCP reached 512 before its 1024 rung was skipped. RSS per stream
+was flat across every ladder: on x86_64 about 29.7 MiB for SRT, 28.9 for
+RIST, 24.4 for UDP and 18.1 for TCP; on aarch64 about 26.7, 26.5, 22.6
+and 16.3 — 2 to 3 MiB less per stream, which is what let aarch64's TCP
+fit one rung higher.
+
+Four 256 rungs ended `step_unjudgeable` in this sweep: UDP on x86_64, and
+SRT, RIST and UDP on aarch64. The cause is in the harness's launch order,
+not in a transport. A step starts every receiver, waits two seconds, then
+starts every sender, and each receiver waits 15 seconds for its sender's
+traffic. With 768 processes to start, these steps took 19–22 seconds to
+launch, so the earliest receivers gave up before their senders existed:
+the failures were a contiguous run of streams from stream 0, and every
+later receiver in the same steps passed. The harness now reserves all of a
+step's ports before its launch loop, which brings a 256-stream launch back
+to 7–9 seconds. A re-run of the six 256 rungs (SRT, RIST and UDP on both
+hosts) with that change passed all six, with no receiver timing out:
+
+| Host | Transport | Launch span | CPU/stream (cores) | RSS/stream p99 (MiB) | Wire Mb/s | Pass |
+|---|---|---|---|---|---|---|
+| x86_64 | SRT | 7 s | 0.018 | 29.8 | 481.6 | pass |
+| x86_64 | RIST | 7 s | 0.015 | 29.3 | 482.4 | pass |
+| x86_64 | UDP | 8 s | 0.005 | 24.8 | 482.4 | pass |
+| aarch64 | SRT | 9 s | 0.024 | 26.7 | 481.6 | pass |
+| aarch64 | RIST | 8 s | 0.020 | 26.6 | 482.4 | pass |
+| aarch64 | UDP | 9 s | 0.006 | 22.6 | 482.4 | pass |
+
+So the streams ceilings on this tree are 256 for SRT, RIST and UDP on both
+hosts, TCP 256 on x86_64 and 512 on aarch64. The re-run did not attempt
+512 for the four re-run rungs, so on those 256 is the highest load
+tested, not a measured limit.
+
+**Per-stream bitrate.** The last passing `--au-scale` rung on one stream:
+
+| Transport | x86_64 ceiling | aarch64 ceiling | Ended by |
+|---|---|---|---|
+| SRT | 32 (54.4 Mb/s) | 8 (13.6 Mb/s) | x86_64 at 64: `rss_slope_srt-0_send`, 10 150 KB/h against 6 827 allowed, and one transport-loss event on the clean link; aarch64 at 16: `rss_slope_srt-0_send`, 9 364 KB/h against 6 827 |
+| RIST | 32 (54.4 Mb/s) | top of the ladder (64) | x86_64 at 64: 6 771 transport-loss events, with librist logging lost packets; aarch64 passed every rung |
+| UDP | 32 (54.4 Mb/s) | 32 | 64 on both: `rss_slope_udp-0_send`, 9 432 KB/h against 6 827 |
+| TCP | 16 (27.2 Mb/s) | 16 | 32 on both: `rss_slope_tcp-0_send`, 9 165 KB/h against 6 827 |
+
+UDP and TCP ended at the same rungs, on the same verdict, by the same
+figures on both hosts: the warm-up plateau a 10-minute step cannot tell
+from growth, described under the 2026-10-06 run. RIST's x86_64 failure at
+108.8 Mb/s is real packet loss, the configuration ceiling described under
+the 2026-10-06 run (librist's default `recovery_maxbitrate` of 100 Mb/s);
+the aarch64 host carried the same rung without loss, so 64 is the top of
+its ladder, not a measured limit. The aarch64 SRT ceiling of 8 is the
+slope gate on the sender's early allocation: at the 16 rung its RSS rose
+while buffers filled and then settled near 14.8 MB, adding 16 KiB over the
+last 120 seconds, so the step's linear fit is dominated by the fill, not
+by growth. A longer constant-load window at that rung would bound it;
+until one does, 8 is the gated figure. The single transport-loss event on
+x86_64's SRT 64 rung was not examined further; the slope verdict alone
+ends that rung, so 32 stands either way.
+
+**The hold.** Both hosts sized their hold from the memory budget. x86_64
+ran 49 SRT + 49 RIST + 24 UDP + 49 TCP = 171 streams (464 processes) at a
+CPU scale of 0.79 and a memory scale of 0.35; aarch64 ran 31 SRT + 31 RIST
++ 31 UDP + 124 TCP = 217 streams (527 processes) at 0.94 and 0.37. Both
+ran their full 86 400 seconds under the impairment schedule described
+above, and 12 of 12 scheduled receiver restarts ran on each.
+
+Every resource and liveness verdict passed on both hosts. The largest RSS
+slope of any process was 220 KB/h on x86_64 and 232 KB/h on aarch64,
+against the 1024 KB/hour allowance; descriptor and thread counts stayed
+flat on every process; every SRT sender reconnected after each of the 96
+outages; every outage's gap drained (4 655 on x86_64, 2 945 on aarch64);
+and the queue-depth and restart-recovery verdicts passed. The lowest
+delivery ratio was 0.964 on both hosts, on the restarted receiver `srt-0`,
+whose report covers only its last segment (the final 6 810 seconds), so
+the ratio is judged against that segment. Aggregate wire throughput was
+318 Mb/s at 0.26 of the host's 8 vCPUs on x86_64 and 406 Mb/s at 0.29 on
+aarch64 (SRT 56.3, RIST 58.3, UDP 58.3, TCP 233.0 Mb/s). The x86_64 hold's
+tables are in the generated block above; the aarch64 hold's are in its
+archive's `stress-results.json`.
+
+The hold's `recv_invariants` and `worker_exits` verdicts FAILED on both
+hosts, the same way the 2026-10-06 hold's did. On x86_64, 43 of the 171
+receivers (38 SRT, 3 RIST, 1 UDP, 1 TCP) ended with corruption-attribution
+gaps; on aarch64, 29 of 217 (22 SRT, 2 RIST, 5 TCP). Each of those
+receivers exited 1 on its own verdict; none crashed. Across both hosts the
+attribution engine could not charge 120 events to a logged injection
+(65 on x86_64, 55 on aarch64), and 28 injections were expected to produce
+an event that it did not match; no injection went unrecovered.
+
+Every one of the 120 events fits a harness mechanism already described
+under the 2026-10-06 run. 96 sit at SRT outage seams, about 833–870
+seconds into the 900-second outage period, where the engine holds the
+post-reconnect PCR jump as an unconfirmed anchor. 23 come from the raw
+reader's sync-byte hunt locking inside a PCR packet; they group into nine
+incidents, several at exactly the packet positions they had in the
+2026-10-06 run and identical across the two hosts, as seeded traffic
+predicts. The last one falls one packet outside the attribution window's
+lower edge at a seam. Of the 28 unmatched injections, 17 have a recorded
+resync beside them, and 4 are RIST injections on packets sent before the
+receiver had stored its first packet. The remaining 7, all on SRT streams
+at outage seams, have no retained signal to pair with. The archive keeps
+no receive capture, so those 7 cannot be shown to be harness-only; they
+have the seam shape the 2026-10-06 analysis described. No event needs a
+library mechanism to explain it.
+
+As with the 2026-10-06 hold, the `recv_invariants` FAIL is cited here as
+that harness verdict defect, not as an overall 24-hour PASS and not as a
+product finding; a passing attribution verdict needs a re-run after the
+harness fix. The resource and liveness measurements above stand on their
+own.
 
 ## Measured: stress run of 2026-10-23
 
@@ -353,7 +564,7 @@ failed and exited, and the supervisor ended the hold, as it is meant to
 when any hold worker dies. The harness now reserves the proxies' ports
 the same way; this run predates that change. The run therefore carries no 24-hour hold
 verdict, and no figure on this page from this run is a 24-hour
-measurement; the 2026-10-06 hold below remains the latest one.
+measurement.
 
 ## Measured: stress run of 2026-10-06
 
@@ -598,7 +809,6 @@ These are out of scope for the current harness:
 
 - FFI overhead for the Python, JVM, and C bindings — the sweeps above
   exercise the Rust core directly.
-- ARM64 — the reference machine and every run so far are x86_64.
 - Latency percentiles — the harness judges throughput, memory, and
   resource accounting, not end-to-end latency.
 - In-process multi-stream topology — every stream in a sweep step runs as
