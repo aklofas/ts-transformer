@@ -93,6 +93,42 @@ date = "2026-10-28"
 fixed_in = "0.9.1"
 
 [[archive]]
+id = "soak-0.9.1-2026-11-09-x86_64"
+kind = "soak"
+tree = "d0a8e34ef9424acec20862c39623ce74c3f42f19"
+overall_pass = false
+note = "The first 0.9.1 release soak: 48 hours with all five legs, 93 of 96 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The three failures are one harness attribution defect on the srt leg: three body flips that left a PCR-only packet unparseable (its adaptation_field_length overran the packet, or was too short for the PCR) were not credited with the receiver's resync at the injection's own packet, so corruption_attributed_srt and recv_invariants_srt failed and the receiver's own FAIL exit failed worker_exits. No library code is involved; the harness fix and a fresh soak followed on the next tree. The run's own report is retained offline."
+date = "2026-11-09"
+expected_duration_s = 172800
+legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
+arch = "x86_64"
+
+[archive.waiver]
+verdicts = ["worker_exits", "recv_invariants_srt", "corruption_attributed_srt"]
+reason = "One harness attribution defect: a body flip that leaves a packet unparseable did not explain the resync it causes at its own packet."
+reviewer = "maintainer"
+date = "2026-11-09"
+fixed_in = "0.9.1"
+
+[[archive]]
+id = "soak-0.9.1-2026-11-09-aarch64"
+kind = "soak"
+tree = "d0a8e34ef9424acec20862c39623ce74c3f42f19"
+overall_pass = false
+note = "The aarch64 run beside the first 0.9.1 release soak, same tree and seeds: 48 hours with all five legs, 92 of 95 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The same three srt-leg failures as on x86_64, from the same three injections: a body flip that left a PCR-only packet unparseable was not credited with the resync at its own packet. No library code is involved."
+date = "2026-11-09"
+expected_duration_s = 172800
+legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
+arch = "aarch64"
+
+[archive.waiver]
+verdicts = ["worker_exits", "recv_invariants_srt", "corruption_attributed_srt"]
+reason = "One harness attribution defect: a body flip that leaves a packet unparseable did not explain the resync it causes at its own packet."
+reviewer = "maintainer"
+date = "2026-11-09"
+fixed_in = "0.9.1"
+
+[[archive]]
 id = "stress-2026-10-02"
 kind = "stress"
 tree = "a647024592990feb9a74e1cb26d72339e498b417"
@@ -125,6 +161,24 @@ note = "The sweep and the full 24 h hold ran; resource and liveness verdicts pas
 date = "2026-10-08"
 
 [[archive]]
+id = "stress-2026-11-07-x86_64"
+kind = "stress"
+tree = "d0a8e34ef9424acec20862c39623ce74c3f42f19"
+overall_pass = false
+note = "The sweep completed and the full 24 h hold ran with every resource, liveness, reconnect, restart and delivery verdict passing; the hold verdict is FAIL on worker_exits and recv_invariants from the receivers' corruption attribution, the known harness attribution defect also seen in the 2026-10-06 hold. Four streams/256 rungs on the two hosts were unjudgeable on a harness launch race; a re-run of those rungs on the fixed harness passed. No library defect was identified."
+date = "2026-11-09"
+arch = "x86_64"
+
+[[archive]]
+id = "stress-2026-11-07-aarch64"
+kind = "stress"
+tree = "d0a8e34ef9424acec20862c39623ce74c3f42f19"
+overall_pass = false
+note = "The first aarch64 stress run, beside the x86_64 one on the same tree: the sweep completed and the full 24 h hold ran with every resource, liveness, reconnect, restart and delivery verdict passing; the hold verdict is FAIL on worker_exits and recv_invariants from the receivers' corruption attribution, the known harness attribution defect also seen in the 2026-10-06 hold. No library defect was identified."
+date = "2026-11-09"
+arch = "aarch64"
+
+[[archive]]
 id = "2026-10-04-wp1-corpus-evidence"
 kind = "corpus"
 tree = "effc7f9c4d4d20bef0e9ad172b8ed80b60432318"
@@ -147,3 +201,20 @@ parse_failures = 0
 replay_files = 4
 replay_paths = 5
 replay_failed = 0
+
+[[archive]]
+id = "corpus-0.9.1-2026-11-09"
+kind = "corpus"
+tree = "75d2316f86b12bd92710fe63aa9d989e3ca46657"
+overall_pass = true
+note = "The 0.9.1 release corpus run, on the release freeze: 251 real captures swept against the 0.9.0 baseline with no parse or invariant failure; 67 identical and 184 changed, each explained by an accepted 0.9.1 change (153 a damaged PES now reported as MalformedPes, 31 an ST 0605 Precision Time Stamp Pack that now decodes); four captures replayed over all five paths with no failure; receiver RSS recorded, not gated."
+date = "2026-11-09"
+files = 251
+identical = 67
+changed_explained = 184
+invariant_failures = 0
+parse_failures = 0
+replay_files = 4
+replay_paths = 5
+replay_failed = 0
+baseline_manifest_sha256 = "e56aa6f57282b92271a56bdedc3b2eed7f555958eb2a3d6bca898949b4d8770b"

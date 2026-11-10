@@ -452,6 +452,8 @@ in its Note; the column set is the same.
 | `soak-rtsp-publish-2026-10-08` | 2026-10-09 | `b6545e6004ae` | 3 600 s | `overall_pass=false` | The first one-hour run with the `rtsp-publish` leg, which passed every verdict it owns; the three failures were harness defects on the SRT leg's receiver. |
 | `soak-whep-2026-10-21` | 2026-10-21 | `a5c0e9d7a6af` | 3 600 s | `overall_pass=true` | The first one-hour run with the `whep` leg (WebRTC playback to a reconnecting headless browser); every verdict on every leg passed. Described under "WebRTC playback" below. |
 | `soak-0.9.0-2026-10-27` | 2026-10-24 → 2026-10-27 | `9b8acb3b6fae` | 259 200 s | `overall_pass=false`, waived | The 0.9.0 release soak, with all five legs (`srt`, `rist`, `rtsp-publish`, `rtsp-publish-es` and `whep`). 89 of 93 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The harness reported `overall_pass=false` on four verdicts: `recv_invariants_rist` from the `rist` leg's AV1 carriage check (a harness oracle gap: it does not excuse corruption the impairment schedule attributes), `worker_exits` from one external-publisher teardown race in 432 generations on the `rtsp-publish` leg, and `recv_invariants_rtsp-publish-es` with `klv_placement_rtsp-publish-es` from a 2.3 ms KLV placement excursion over one sender-report interval on the ES leg. None is a library defect: harness FAIL on four verdicts, waived by the maintainer (harness defects, fixed in 0.9.1); the release was tagged on that waiver, which the release gate no longer admits. Run on the release VM after the corpus run on the same tree. |
+| `soak-0.9.1-2026-11-09-x86_64` | 2026-11-07 → 2026-11-09 | `d0a8e34ef942` | 172 800 s | `overall_pass=false`, waived | The first 0.9.1 release soak, with all five legs. 93 of 96 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The three failures (`worker_exits`, `recv_invariants_srt`, `corruption_attributed_srt`) are one harness attribution defect: three body flips that left a PCR-only packet unparseable were not credited with the resync the receiver reported at the injection's own packet. No library code is involved: harness FAIL on three verdicts, waived by the maintainer (harness defect, fixed in 0.9.1). The release gate admits no waived soak, so the harness fix was followed by a fresh soak on the release freeze. |
+| `soak-0.9.1-2026-11-09-aarch64` | 2026-11-07 → 2026-11-09 | `d0a8e34ef942` | 172 800 s | `overall_pass=false`, waived | On aarch64, beside the x86_64 run on the same tree and seeds: 92 of 95 verdicts passed, and the same three srt-leg failures came from the same three injections. Waived on the same ruling. |
 
 The release qualification reads the same runs from
 `tests/coverage/evidence-archives.toml`, except `soak-run2-2026-08-05`, which
@@ -1363,8 +1365,12 @@ ceiling for 24 hours under the soak's own impairment schedule. **A stress
 run is not a soak PASS, and a soak is not a ceiling** — the soak evidence
 above proves endurance at a size already chosen; a stress run is what
 chooses that size. See [`benchmarks.md`](/docs/project/benchmarks.md) for the verdict
-definitions, how to read a ceiling, and the measured results of the
-2026-10-03 stress run. Archives from each run — a results file, a provenance file,
+definitions, how to read a ceiling, and the measured results of each
+stress run, newest first. The newest, of 2026-11-07, ran on x86_64 and
+aarch64 at tree `d0a8e34ef`; the commits between that tree and the 0.9.1
+release freeze `75d2316f8` change only the test harness, scripts and
+documentation, not a library crate or binding, so it measures the 0.9.1
+library code. Archives from each run — a results file, a provenance file,
 and one subdirectory per sweep step holding that step's raw logs — are
 retained offline by the maintainer.
 
