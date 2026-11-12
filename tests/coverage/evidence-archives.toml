@@ -129,6 +129,28 @@ date = "2026-11-09"
 fixed_in = "0.9.1"
 
 [[archive]]
+id = "soak-0.9.1-2026-11-11-x86_64"
+kind = "soak"
+tree = "75d2316f86b12bd92710fe63aa9d989e3ca46657"
+overall_pass = true
+note = "The 0.9.1 release soak, on the release freeze after the harness fix: 48 hours with all five legs, the default profiles, corruption on and an RSS slope threshold of 200 KiB/hour; every one of 96 verdicts passed, including the two provisional ones, and the SRT receiver counted 12 transport rebuilds against 12 outage windows. Corruption attribution passed on every leg: no resync went unexplained. The run's own report is retained offline."
+date = "2026-11-11"
+expected_duration_s = 172800
+legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
+arch = "x86_64"
+
+[[archive]]
+id = "soak-0.9.1-2026-11-11-aarch64"
+kind = "soak"
+tree = "75d2316f86b12bd92710fe63aa9d989e3ca46657"
+overall_pass = true
+note = "The aarch64 run beside the 0.9.1 release soak, same tree, profiles and seed: 48 hours with all five legs; 95 of 96 verdicts passed. The one failure is the provisional, non-gating comparison of SRT receiver transport rebuilds with outage windows (11 rebuilds against 12 windows), which the judge records for comparison only. Corruption attribution passed on every leg: no resync went unexplained."
+date = "2026-11-11"
+expected_duration_s = 172800
+legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
+arch = "aarch64"
+
+[[archive]]
 id = "stress-2026-10-02"
 kind = "stress"
 tree = "a647024592990feb9a74e1cb26d72339e498b417"
