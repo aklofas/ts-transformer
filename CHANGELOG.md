@@ -12,7 +12,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ---
 
 ## [0.10.0] — 2026-11-12
-<!-- TODO(release): set the release date -->
 
 Post-v0.9.0: fixes and hardening across every crate and binding, security
 fixes, an API-shape pass and new features. The hardening tightens the
