@@ -361,9 +361,9 @@ step 3).
     release-length pass. The newest corpus row on an equivalent tree is the one
     judged, so a newer failed corpus run blocks and a newer passing one
     replaces an earlier failure. The record also names the newest
-    arm64 soak that stands for the tree as `release_vm.arm_soak`. In 0.9.1
-    it is recorded, not gating; it gates from 0.10, after one clean arm64
-    run. Without
+    arm64 soak that stands for the tree as `release_vm.arm_soak`. In 0.10.0
+    it is recorded, not gating; when it starts to gate is still to be
+    decided. Without
     the input the record is a mid-cycle one and states that the gate was not
     applied.
 
@@ -517,11 +517,13 @@ Release; the committed record stays the one step 10 collected.
    Release by hand. If the record is not a GO, no draft is created: read the
    reasons, then create the Release by hand.
 7. **Retire the enum-retype suppression.** After the tag whose baseline
-   carries the enum retype (v0.9.1), delete the enum-retype
+   carries the enum retype (v0.10.0), delete the enum-retype
    `[suppress_function]` block in `bindings/c/abi.suppr` and the self-test
    rows and fixtures that borrow its name (`retype*` under
    `scripts/check/c/tests/abi-fixtures/` and the `retype:` rows). The ABI
-   rail fails with "expired" once `--old-tag` is v0.9.1 or later.
+   rail fails with "expired" once `--old-tag` is v0.10.0 or later (the
+   rail spells its expiry as v0.9.1, the number this release was developed
+   under).
 
 ## crates.io publish (Rust crates)
 

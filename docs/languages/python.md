@@ -2136,7 +2136,7 @@ output directly when absolute byte offsets matter.
 
 ### Moving from 0.8
 
-Deprecated in 0.9.0, removed in 0.10.0. Each old spelling still works and
+Deprecated in 0.9.0, removed in 0.11.0 (the warning text in 0.10.0 still says 0.10.0). Each old spelling still works and
 emits a `DeprecationWarning`.
 
 | 0.8 | 0.9 |

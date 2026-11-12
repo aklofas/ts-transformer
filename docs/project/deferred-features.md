@@ -93,7 +93,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Why deferred:** The cut already lands at the right place; the
   missing part is carrying the reason from the shell to the playlist
   and counting discontinuities across the sliding window.
-- **Trigger to revisit:** Scheduled for 0.9.1, sooner if a player is
+- **Trigger to revisit:** Scheduled for a release after 0.10.0, sooner if a player is
   seen to stall or skip after a source restart.
 
 ## Raw TS observation on a receiver shell
@@ -2135,7 +2135,7 @@ is a deferral.
 
 ### Stream-ID filtering on `SrtListener`
 
-Shipped in 0.9.1 as listen rules — `SrtListener::rules()`; see the [SRT guide](/docs/guides/srt.md#listen-rules). Not in the C ABI; see [Mount rules and listen rules in the C ABI](#mount-rules-and-listen-rules-in-the-c-abi).
+Shipped in 0.10.0 as listen rules — `SrtListener::rules()`; see the [SRT guide](/docs/guides/srt.md#listen-rules). Not in the C ABI; see [Mount rules and listen rules in the C ABI](#mount-rules-and-listen-rules-in-the-c-abi).
 
 ### HLS publisher — SUPPORTED
 
