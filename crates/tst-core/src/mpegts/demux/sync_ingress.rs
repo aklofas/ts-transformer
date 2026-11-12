@@ -307,7 +307,9 @@ impl super::demuxer::Demuxer {
             // refreshed PCR is still tracked.) Only one duplicate is allowed
             // ("only-two" rule). A third identical packet with the same CC IS
             // a real discontinuity — treat it like a CC jump.
-            if self.is_identical_repeat(pkt) {
+            // The counter test comes first: it settles almost every packet
+            // without a second `pid_state` lookup or a byte compare.
+            if pkt.continuity_counter == prev_cc && self.is_identical_repeat(pkt) {
                 if prev_was_dup {
                     // Third (or later) identical packet with the same CC —
                     // beyond the spec's only-two allowance. Surface exactly
