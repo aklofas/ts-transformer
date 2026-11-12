@@ -9,6 +9,131 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [0.10.0] — 2026-11-12
+<!-- TODO(release): set the release date -->
+
+Post-v0.9.0: fixes and hardening across every crate and binding, security
+fixes, an API-shape pass and new features. The hardening tightens the
+demuxer's conformance checks and its KLV access-unit handling, makes a
+cancel terminal on every shell in every binding, keeps URL passwords and
+secret query values out of error text, reprs and `Debug` output, and
+refuses configurations that were accepted before and then misbehaved. The
+security fixes cover encrypted RIST receivers, SRT passphrase listeners,
+the JVM native loader and URL parse errors. The API-shape pass marks
+`DemuxEvent`, `ReconnectPolicy`, the stats records and other public types
+`#[non_exhaustive]` and removes `ByteSink`. The new features are SRT listen
+rules (`SrtListener::rules()`), RTSP mount rules
+(`RtspServer::mount_rules()`), per-mount publish settings and a publish
+idle timeout on the RTSP server, `Muxer::reconfigure`, SRT
+`peer_idle_timeout` and a whole-connect `connect_timeout` budget, a DTS
+push for HLS and RTSP mounts, and an HLS publisher that writes to disk
+without serving. The release gate now requires a 48-hour soak. This
+release was developed as 0.9.1; notes that say "Fixed in 0.9.1" refer to
+it. The BREAKING sections below (tst-core, tst-pipeline, tst-srt, tst-rtp,
+tst-tcp, tst-udp, tst-rist, tst-hls, tst-webrtc, tst-py, tst-jni and tst-c)
+make this 0.10.0: a `"0.9"` requirement will not auto-update into it.
+
+### Release highlights
+
+The integrator-facing changes at a glance (full detail in the sections below):
+
+- **Why this is 0.10.0 (breaks):** `DemuxEvent`, `ReconnectPolicy`,
+  `BackoffStrategy`, `OverflowPolicy`, `StreamStats`, the pipeline, muxer,
+  demuxer and pairer stats records, `MountRule`, `RtcpStats`, `HlsMode` and
+  `WhepUrl` are `#[non_exhaustive]`: build a `ReconnectPolicy` with
+  `ReconnectPolicy::default()` and the new `with_*` setters, a stats record
+  with `T::default()`, and add a wildcard arm to an enum `match`.
+  `add_byte_sink` and `ByteSink` are removed in Rust, Python and the JVM;
+  read `ts_bytes_demuxed()` instead. `ManagedTransport::new` and the
+  `ManagedRecvTransport` constructors return a `Result` and refuse a
+  zero-backoff policy with unlimited attempts. After a caller's cancel,
+  every receive, send, `flush` and `finish` on a C, Python or JVM shell
+  reports `CLOSED`, buffered data included, and
+  `RtspServer::cancel_handle().cancel()` is terminal for the publish side.
+  The muxer refuses two synchronous KLV streams with the same
+  `metadata_service_id`, numbers synchronous KLV cells within each PES, and
+  `from_program_map` writes no PTS on an asynchronous KLV stream;
+  `StrictMode::Full` fails `feed` on a damaged PES. Inputs that are now
+  refused: a handshake-v4 SRT caller on a passphrase listener, a NUL in an
+  SRT stream ID, stricter URL integer and percent-escape grammar, RTP
+  `pkt_size` above 65 424, TCP `pkt_size=0`, TLS keys on a `tcp://` URL,
+  non-canonical RTSP mount paths, credentials in `hls://` and `whep://`
+  bind URLs, an HLS `output_dir` another account can write, and RIST Simple
+  profile with an encryption key. SRT `connect_timeout` is now one budget
+  for the whole connect. Python and JVM `DigestAuth` never falls back to
+  Basic. The C binding's `_open_listener` always listens, its enum
+  parameters are spelled `int32_t`, and some error codes change. Read the
+  "Changed — … (BREAKING)" sections for each migration.
+- **Security:** an encrypted RIST Main-profile receiver delivered packets
+  it had not decrypted, could be made to refuse new senders, and derived a
+  new key for every fresh nonce before any authentication (`tst-rist` and
+  `tst-py`; the vendored librist build is fixed, a host librist is not, so
+  build with `RIST_FORCE_VENDORED=1`). An SRT listener with a passphrase
+  admitted a handshake-v4 caller that never sent key material, so that
+  caller connected unencrypted; it is now refused. A URL password holding
+  an unencoded `?` or `/` after a numeric prefix could appear in parse
+  errors; that text is now `<redacted>`. The JVM native loader extracted
+  `libtstjni` into a predictable shared temp directory; it now uses a
+  per-user owner-only directory and checks cached files by SHA-256. Each
+  entry under "Security — …" names the affected versions and a workaround.
+  No advisory is published (pre-1.0).
+- **Deprecated aliases:** the types and shell classes renamed in 0.9.0
+  keep their deprecated aliases in 0.10.0. The 0.9.0 notes and docs said
+  they would be removed in 0.10.0; they are now scheduled for removal in
+  0.11.0. The runtime deprecation warnings and the Javadoc in this release
+  still say "removed in 0.10.0"; that text is corrected in the next
+  release.
+- **SRT listen rules:** `SrtListener::rules()` returns a `ListenRules`
+  table of per-stream-ID rules (`Accept`, `AcceptWith { passphrase }`,
+  `Reject(RejectReason)`) applied during the handshake and editable from
+  any thread while `accept()` is parked. `AccessControl::parse` reads the
+  `#!::` stream-ID form. Python and the JVM bind both. A listener that never
+  touches its rules behaves as before.
+- **RTSP mount rules and publish mounts:** `RtspServer::mount_rules()`
+  sets separate publish and read policies per mount path
+  (`Inherit`, `Open`, `Require`, `Refuse`), editable while the server runs.
+  `PublishMountConfig` and `end_publish_mount_on_publisher_exit` end a
+  publish mount when its publisher leaves, and `publish_idle_timeout` ends
+  a recording session that sends no valid RTP packet for that long.
+  Python, the JVM and (for the two server-builder settings) C bind them.
+- **Muxer and SRT additions:** `Muxer::reconfigure` and
+  `MuxSender::reconfigure` replace a running muxer's program list in
+  place; PAT and PMT versions now increment when their content changes
+  (the bindings gain `reconfigure` later). `peer_idle_timeout`
+  (`peeridletimeo`) sets libsrt's peer idle time; values below about 5 s
+  do not detect a silent peer sooner. `push_video_with_dts` on
+  `MuxPublisher` and `MountHandle`, `HlsPublisherBuilder::no_server()` and
+  `RtspClientBuilder::auth_schemes` are new in Rust, with Python and JVM
+  twins for the first two.
+- **C ABI 0.25 → 0.29 (additive):** new non-conformance discriminators,
+  `tst_*_sender_flush` for UDP, TCP, RTP and RIST,
+  `tst_*_get_ts_bytes_demuxed` on the demux receivers, and the two RTSP
+  server builder settings above. The ABI section lists no removed symbol
+  and no struct layout change; the behaviour changes are under
+  "Changed — tst-c (BREAKING)".
+- **Fixes worth reading:** demux and KLV correctness (duplicate PMT
+  entries, signalled discontinuities, AU cells per service, LATM resync,
+  PSI and PES header checks, ST 0601 zero-length items); the muxer's AC-3
+  and `metadata_STD_descriptor` declarations; RTSP (`EINTR` retries, a
+  graceful `stop()` that delivers the publishers' final flush, the
+  `rtsps://` handshake CPU spin, Digest and `401` handling); WebRTC (an
+  audio-first offer connects, PATCH is no longer advertised, a str0m panic
+  refuses one offer instead of ending the media thread); TLS 1.2 on every
+  TLS surface; C (encrypted `rist://` URLs open, the RTSP client builder
+  keeps URL credentials and options, `tstrans.h` compiles as C++); JVM
+  `module-info` exports and concurrent native-library loads; Python shells
+  dropped without `close()` cancel first with the GIL released.
+- **Release tooling:** the release gate requires a 48-hour soak (it was 72
+  hours) and records the newest aarch64 soak beside the x86_64 one,
+  without gating on it in this release. A waiver never qualifies a
+  release, `release-eligible` checks the committed record before any
+  publish workflow uploads, the collector records tree equivalence between
+  the soaked and the qualified commit, and a corpus row must name its
+  baseline. The interop census is 162 cells, and a linux-aarch64 interop
+  job runs the arm64 subset.
+
 ### Added — tst-core, tst-pipeline
 
 - `Muxer::reconfigure` and `MuxSender::reconfigure` replace a running muxer's program list in place, so a program can be announced or withdrawn mid-stream without rebuilding the muxer. Programs match by `program_number` and streams by PID: a surviving stream keeps its handle, its continuity counter and its program's PCR and PSI cadence; a removed stream's PID stops and its handle fails with `MuxError::InvalidStreamHandle`; a new stream starts at continuity counter 0. The next push emits the new PAT and every live PMT before its payload. PAT and PMT versions now increment (mod 32) when their content changes, per H.222.0 §2.4.4; every release before this one held them at 0. Besides everything `MuxerConfig::validate` refuses, a reconfigure is refused with `MuxError::ConfigInvalid` when a PID kept across the call moves to another program or changes its stream type or codec, when a kept program changes its `pmt_pid` or (while the old PCR stream stays) its PCR PID, or when a non-program field (`pcr_interval_ms`, `psi_interval_ms`, `buffer_packets`, `av1_carriage`) differs; a refused call leaves the muxer unchanged. The C, Python and JVM bindings gain `reconfigure` in a later parity batch ([mux guide](docs/guides/mpegts-mux.md#reconfiguring-a-running-muxer)).
@@ -354,7 +479,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `release-qualify` records the commit its workflow definitions ran from (`source.workflow_sha`) and refuses to qualify a commit whose `.github/` or `scripts/gen/` differs from them; the collector repeats the refusal for every main or tag record.
 - The release gate judges a newer failed soak and the corpus archive by tree equivalence (nothing outside the release documents changed), not by an identical commit; equal dates are ordered by file position.
 - The version rail refuses a tag that is not `vMAJOR.MINOR.PATCH` (`vnext`, `v1.2.3-rc1`), so the three publish workflows stop before any registry write; a branch name is never read as a tag.
-- The C ABI rail pins the eight functions whose enum parameters were retyped to `int32_t`: their header prototypes may differ from the previous tag's only by that retype, any other change fails, and the suppression that admits the retype expires once the comparison baseline is v0.9.1 or later.
+- The C ABI rail pins the eight functions whose enum parameters were retyped to `int32_t`: their header prototypes may differ from the previous tag's only by that retype, any other change fails, and the suppression that admits the retype expires once the comparison baseline is v0.10.0 or later (the rail spells it v0.9.1, the number this release was developed under).
 - The macOS wheel job installs the wheel it built into the runner's Python and imports the native transports and WebRTC before uploading, like the Linux and Windows jobs.
 - `qualification.py release-eligible --sha <commit>` checks that the committed record is a release-mode GO of a main or tag commit, that the commit differs from the record's only in release documents, and that a build-provenance attestation by `release-qualify.yml` covers the committed file; the tag-push Release attach and the three publish workflows run it before any upload. `render --check` is unchanged.
 - The qualification collector refuses an evidence-archive corpus row that reports `overall_pass = true` while carrying a non-zero `parse_failures`, `invariant_failures` or `replay_failed`: `collect` exits 1 at load naming the row and the field, so a self-reported pass that its own counts contradict can no longer reach GO. The release-mode check repeats the refusal as a second line of defence.
@@ -383,8 +508,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The soak, corpus and ARM64 status cells of the 1.0 exit criteria are rendered from the qualification record; a waiver names the release it stood in for from the record's tag or the waived archive, never from the CHANGELOG.
 - The qualification record names the tag on a tag push and lists the release documents that changed since the soaked tree, and the bundle carries `TREE-EQUIVALENCE.txt`, which lists the collector's equivalence decision: every path that differs between the soaked and the qualified commit, the release documents among them, and the paths outside them.
 - The Python URL-corpus test takes its scheme families from the corpus header.
-- The release gate reads the required soak duration from `[soak] required_duration_s` in `tests/coverage/evidence-archives.toml` (172 800 s, 48 hours, from 0.9.1; it was a 72-hour constant) and accepts any soak row declaring at least that; the record names the required duration and the exit-criteria status reads 'The release soak today'.
-- Soak and stress archive rows may carry `arch`; the release gate records the newest arm64 soak that stands for the tree beside the x86 release soak (recorded, not gating in 0.9.1) and the benchmarks page can show arm64 ceilings beside x86.
+- The release gate reads the required soak duration from `[soak] required_duration_s` in `tests/coverage/evidence-archives.toml` (172 800 s, 48 hours, from 0.10.0; it was a 72-hour constant) and accepts any soak row declaring at least that; the record names the required duration and the exit-criteria status reads 'The release soak today'.
+- Soak and stress archive rows may carry `arch`; the release gate records the newest arm64 soak that stands for the tree beside the x86 release soak (recorded, not gating in 0.10.0) and the benchmarks page can show arm64 ceilings beside x86.
 - `qualification.py release-eligible` refuses a tag commit whose `tests/coverage/evidence-archives.toml` differs from the record's commit: the record judged the archive table at its own commit, so evidence added after it needs a new qualification run.
 - A soak or stress archive row dated 2026-11-04 or later must name its `arch`; the validator refuses one without it. An older row without `arch` is still read as x86_64.
 - In release mode the qualification collector refuses a corpus archive row without `baseline_manifest_sha256`: a sweep run with `--no-baseline` compared with nothing, so it cannot stand as the release corpus run.
@@ -529,7 +654,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Deprecated — tst-srt
 
-- `PassphraseError::InvalidCharset` and `StreamIdError::NonAscii` are no longer returned; they will be removed in 0.10.0.
+- `PassphraseError::InvalidCharset` and `StreamIdError::NonAscii` are no longer returned; they will be removed in 0.11.0 (their rustdoc in 0.10.0 says "the next breaking release").
 
 ### Changed — tst-c
 
