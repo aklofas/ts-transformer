@@ -388,6 +388,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qualification.py release-eligible` refuses a tag commit whose `tests/coverage/evidence-archives.toml` differs from the record's commit: the record judged the archive table at its own commit, so evidence added after it needs a new qualification run.
 - A soak or stress archive row dated 2026-11-04 or later must name its `arch`; the validator refuses one without it. An older row without `arch` is still read as x86_64.
 - In release mode the qualification collector refuses a corpus archive row without `baseline_manifest_sha256`: a sweep run with `--no-baseline` compared with nothing, so it cannot stand as the release corpus run.
+- A soak or corpus archive still stands for a later tree across changes under `scripts/gen/` (the record and page generators and the gate, which build no shipped artifact and run in no soak) and across a version sweep: the workspace version moved and every other changed file differs only in that version, line for line, and for TOML files and lockfiles also parsed, so a third-party package at the same version does not count. The record's `release_vm.soak.equivalence` gains `changed_generators` and `version_sweep` (the two versions and the swept files). `release-eligible` at tag time is unchanged.
 
 ### Changed — tst-interop
 

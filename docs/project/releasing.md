@@ -58,7 +58,12 @@ The steps run in this order. From step 3 until the tag, nothing that ships
 changes: the soak and the real-capture corpus run judge the release-prep
 merge commit, and the qualification run checks that nothing outside
 the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code under `docs/webrtc/`,
-`tests/coverage/evidence-archives.toml`) changed after it.
+`tests/coverage/evidence-archives.toml`) changed after it. Two other kinds of
+change leave the soaked commit standing: anything under `scripts/gen/` (the
+record and page generators and the gate itself, which build no shipped
+artifact and run in no soak), and a version sweep, where the workspace
+version moved and every other changed file differs only in that version (see
+step 3).
 
 1. **Version consistency (release preflight).** The rail checks six sources —
    workspace `Cargo.toml`, `bindings/python/pyproject.toml`, the tst-py
@@ -124,7 +129,14 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
    counts as a document. A fix that must land elsewhere restarts the
    checklist at step 2,
    because the qualification run refuses a soak whose tree differs from the
-   qualified one anywhere outside those three paths.
+   qualified one anywhere outside those three paths, `scripts/gen/` and a
+   version sweep. The sweep belongs in the release-prep PR; one that lands
+   after the soak instead is admitted only when the workspace version moved
+   and each changed file differs line for line only in the version string
+   (or a `TST_VERSION_*` component), and each TOML file or lockfile, parsed,
+   only in the version of a workspace package, of a path dependency or of
+   pyproject's `[project]`. A third-party package that happens to share the
+   version, a comment, or any other line counts as a change.
 4. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
    the frozen commit. Every rerun on that commit matches a row of
    the [CI flake ledger](/docs/project/ci-flakes.md), and the latest
@@ -293,7 +305,8 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
    Rows are judged by `date`, newest first; two rows with the same date are
    ordered by their position in the file, the later row being the newer. The
    gate reads a soak or corpus row for any commit whose tree matches the
-   qualified one outside the release documents.
+   qualified one outside the release documents, `scripts/gen/` and a version
+   sweep.
 
    The same PR adds the soaks to the runs table on the
    [validation evidence page](/docs/project/validation-evidence.md).
@@ -377,8 +390,13 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
     artefacts. `TREE-EQUIVALENCE.txt` lists the collector's decision: the
     soaked and qualified commits (and the tag on a tag push), every path that
     differs, the release documents among them, and the paths outside the
-    release documents (none for a GO). The record's
-    `release_vm.soak.equivalence` lists the release documents too.
+    release documents (the file's `git diff --stat` also lists `scripts/gen/`
+    and version-sweep files, which do not count against a GO). The record's
+    `release_vm.soak.equivalence` lists the release documents
+    (`changed_release_documents`), the generator paths
+    (`changed_generators`) and the version sweep (`version_sweep`: the two
+    workspace versions and the files it changed) that the soaked tree stands
+    across.
 11. **Commit the record.** In a docs-only PR, add the run's
     `qualification.json` as `docs/project/qualification.json` (CI's
     `check-qualification` step verifies the page matches it) and render the
@@ -440,7 +458,8 @@ the release documents (`CHANGELOG.md`, `docs/` except the WebRTC player code und
       its `TREE-EQUIVALENCE.txt`;
     - the heavy evidence, the soak and the corpus run, ran on the soaked
       tree both records name in `release_vm`, and the equivalence file shows
-      that tree differs from the qualified one in release documents only.
+      that tree differs from the qualified one only in release documents,
+      `scripts/gen/` and a version sweep.
 
     The tag-time qualification reads the newest `push` or `workflow_dispatch`
     `ci` run on the sha, which is the record PR's merge push. A red one is
