@@ -84,6 +84,12 @@ harness = false
 name    = "codec_parsers"
 harness = false
 
+# Fixed-iteration workloads for instruction counting; driven by
+# scripts/dev/bench-ir.sh, not by criterion.
+[[bench]]
+name    = "ir"
+harness = false
+
 # Maintainer fixture-generators. Build with `cargo run -p tst-core --bin <name>`.
 # Not part of the published library surface — they live under tests/tools/ and
 # regenerate the fixtures consumed by integration tests.
