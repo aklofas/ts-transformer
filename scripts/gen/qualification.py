@@ -23,7 +23,7 @@ Artefact directory read by `collect` (a missing file is a missing leg, never a p
                                        (workflow_sha: the commit the workflow definitions ran from;
                                        a main or tag record is refused when .github/ or scripts/gen/ differ)
   legs.json                            {leg: {conclusion, run_url}} for interop, jvm-jar,
-                                       python-wheels, c-abi, fuzz, semver-checks and
+                                       python-wheels, c-abi, bench-ir, fuzz, semver-checks and
                                        "sanitizers" (the workflow's own conclusion, a
                                        required leg beside its four jobs)
   ci.json                              {conclusion, run_url, event, run_id, run_attempt, head_sha}
@@ -34,6 +34,8 @@ Artefact directory read by `collect` (a missing file is a missing leg, never a p
                                        skipped, stale} of the linux-aarch64 subset job, if it ran
   sanitizer-<job>/sanitizer-<job>.json (or sanitizer-<job>.json) {job, conclusion}
   fuzz.json, abi.json, semver-checks.json
+  bench-ir.json                        scripts/dev/bench-ir.sh's judged record: {old, new,
+                                       threshold_percent, tool, verdict, workloads}
 
 A leg is GO only when its conclusion is exactly `success`. An unreadable artefact
 makes `collect` exit 2 and a wrongly shaped one fails the run; either way NO record is
@@ -95,7 +97,7 @@ RELEASE_CODE_UNDER_DOCS = ("docs/webrtc/",)
 GENERATOR_PATHS = ("scripts/gen/",)
 MAINTAINER_LOCAL = [
     "long fuzz runs (10 min per target)",
-    "bench regression",
+    "wall-clock bench comparison (a report, no threshold)",
     "one-hour synthetic soak",
 ]
 
@@ -769,6 +771,7 @@ def collect(art, root, release=False, tag=None):
                 "seconds_per_target": fuzz_in.get("seconds_per_target", 0),
                 "crashes": fuzz_in.get("crashes", 0)}
     abi_in = read_json(os.path.join(art, "abi.json"))
+    bench_in = read_json(os.path.join(art, "bench-ir.json"))
     ci_in = read_json(os.path.join(art, "ci.json"))
 
     legs = []
@@ -798,6 +801,14 @@ def collect(art, root, release=False, tag=None):
     elif abi_in.get("verdict") != "compatible":
         c = "failure"
     add("c-abi", c, u)
+    # The judged file decides, as for the ABI: a job that ended green without
+    # a passing comparison is not a pass.
+    c, u = entry("bench-ir")
+    if bench_in is None:
+        c = "missing"
+    elif bench_in.get("verdict") != "pass":
+        c = "failure"
+    add("bench-ir", c, u)
     add("ci (on this sha)", _ci_conclusion(ci_in, ctx.get("label", ""), ctx.get("source", {}).get("sha", "")),
         (ci_in or {}).get("run_url"))
     c, u = entry("semver-checks")
@@ -853,6 +864,7 @@ def collect(art, root, release=False, tag=None):
         "interop": interop,
         "fuzz": fuzz,
         "abi": abi_in,
+        "bench_ir": bench_in,
         "semver_checks": sc,
         "archives": archives,
         "release_vm": gate,
@@ -984,6 +996,10 @@ def render_block(rec):
             "C ABI %s.%s with %s exported symbols, compared with %s (%s): abidiff exit %s, %s." % (
                 a.get("major"), a.get("minor"), a.get("symbols"), a.get("previous_tag"),
                 a.get("previous_source"), a.get("abidiff_exit"), a.get("verdict")))
+    # A record written before the instruction-count leg existed has no key.
+    if "bench_ir" in rec:
+        out.append("")
+        out.append(_bench_ir_line(rec["bench_ir"]))
     if rec["semver_checks"]:
         out.append("")
         out.append("cargo-semver-checks, informational: " + "; ".join(
@@ -1003,6 +1019,25 @@ def render_block(rec):
     out += ["", "Checks that stay with the maintainer and are not part of this record:", ""]
     out.extend("- " + m for m in rec["maintainer_local"])
     return "\n".join(out) + "\n"
+
+
+def _bench_ir_line(b):
+    if b is None:
+        return "The instruction-count comparison is not recorded."
+    grew = [w for w in b.get("workloads", []) if "delta_percent" in w]
+    line = "Instruction counts of %d tst-core workloads against %s (a workload may grow by %g %%): %s" % (
+        len(b.get("workloads", [])), b.get("old", {}).get("ref"), b.get("threshold_percent"), b.get("verdict"))
+    if grew:
+        top = max(grew, key=lambda w: w["delta_percent"])
+        line += "; largest change %s %+.2f %%" % (top["name"], top["delta_percent"])
+    accepted = ["%s %+.2f %%" % (w["name"], w["delta_percent"]) for w in grew if w["status"] == "accepted"]
+    if accepted:
+        line += "; accepted growth: " + ", ".join(accepted)
+    failed = [w["name"] for w in b.get("workloads", [])
+              if w["status"] not in ("ok", "accepted", "not compared, accepted")]
+    if failed:
+        line += "; failing: " + ", ".join(failed)
+    return line + "."
 
 
 def _today(anchor, label, body):

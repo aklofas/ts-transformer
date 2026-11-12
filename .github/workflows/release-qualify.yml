@@ -398,6 +398,44 @@ jobs:
           path: ${{ runner.temp }}/c-package
           if-no-files-found: error
 
+  bench-ir:
+    name: instruction counts against the previous tag
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+          # The previous release tag's commit is built beside this one.
+          fetch-depth: 0
+
+      - name: Install valgrind
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y valgrind
+
+      - name: Rust toolchain
+        uses: ./.github/actions/rust-setup
+
+      - name: Compare tst-core's instruction counts with the previous release tag
+        # Both commits are built and run on this runner, so only the code
+        # differs. A workload that grew by more than 3 % fails unless
+        # tests/coverage/bench-accepted.toml accepts it.
+        run: |
+          git fetch --tags --force origin
+          prev="$(bash scripts/dev/prev-tag.sh)"
+          [ -n "$prev" ] || { echo "::error::no previous release tag to compare with"; exit 1; }
+          bash scripts/dev/bench-ir.sh "$prev" HEAD --out "$RUNNER_TEMP/bench-ir"
+
+      - name: Keep the comparison
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-ir
+          path: ${{ runner.temp }}/bench-ir/bench-ir.json
+          if-no-files-found: ignore
+
   ci-lookup:
     name: ci result on this commit
     needs: resolve
@@ -477,7 +515,7 @@ jobs:
 
   qualify:
     name: qualification record
-    needs: [resolve, interop, sanitizers, jvm-jar, python-wheels, fuzz, abi, ci-lookup, sbom]
+    needs: [resolve, interop, sanitizers, jvm-jar, python-wheels, fuzz, abi, bench-ir, ci-lookup, sbom]
     # Runs after every leg whatever its result: a failed leg is a line in the
     # record and a NO-GO, not a missing record.
     if: always() && needs.resolve.result == 'success'
@@ -535,7 +573,7 @@ jobs:
         # native libraries of the called workflows are not part of the record.
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          pattern: "{interop-evidence,interop-census-aarch64,sanitizer-*,fuzz-tst-*,abi-record,c-package,ci-record,sbom}"
+          pattern: "{interop-evidence,interop-census-aarch64,sanitizer-*,fuzz-tst-*,abi-record,bench-ir,c-package,ci-record,sbom}"
           path: ${{ runner.temp }}/downloaded
 
       - name: Lay the artefacts out for the collector
@@ -551,6 +589,7 @@ jobs:
           for d in "$D"/sanitizer-*; do [ -d "$d" ] && cp -r "$d" "$A/"; done
           [ -f "$D/ci-record/ci.json" ] && cp "$D/ci-record/ci.json" "$A/ci.json"
           for f in abi.json semver-checks.json; do [ -f "$D/abi-record/$f" ] && cp "$D/abi-record/$f" "$A/$f"; done
+          [ -f "$D/bench-ir/bench-ir.json" ] && cp "$D/bench-ir/bench-ir.json" "$A/bench-ir.json"
           # One fuzz.json from the per-crate parts. None at all = no file = a
           # missing leg, never a pass.
           parts=("$D"/fuzz-tst-*/fuzz-*.json)
@@ -577,17 +616,19 @@ jobs:
           R_WHEELS: ${{ needs.python-wheels.result }}
           R_FUZZ: ${{ needs.fuzz.result }}
           R_ABI: ${{ needs.abi.result }}
+          R_BENCH_IR: ${{ needs.bench-ir.result }}
           R_SEMVER: ${{ needs.abi.outputs.semver }}
         run: |
           jq -n --arg u "$RUN_URL" \
             --arg interop "$R_INTEROP" --arg san "$R_SANITIZERS" --arg jvm "$R_JVM" --arg wheels "$R_WHEELS" \
-            --arg fuzz "$R_FUZZ" --arg abi "$R_ABI" --arg semver "$R_SEMVER" \
+            --arg fuzz "$R_FUZZ" --arg abi "$R_ABI" --arg benchir "$R_BENCH_IR" --arg semver "$R_SEMVER" \
             '{interop:{conclusion:$interop, run_url:$u},
               sanitizers:{conclusion:$san, run_url:$u},
               "jvm-jar":{conclusion:$jvm, run_url:$u},
               "python-wheels":{conclusion:$wheels, run_url:$u},
               fuzz:{conclusion:$fuzz, run_url:$u},
               "c-abi":{conclusion:$abi, run_url:$u},
+              "bench-ir":{conclusion:$benchir, run_url:$u},
               "semver-checks":{conclusion:(if $semver == "" then "missing" else $semver end), run_url:$u}}' \
             > "$RUNNER_TEMP/artifacts/legs.json"
           cat "$RUNNER_TEMP/artifacts/legs.json"

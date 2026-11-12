@@ -339,7 +339,7 @@ step 3).
     `refs/heads/main` or a release tag): `resolve` and the collector refuse a commit whose
     `.github/` or `scripts/gen/` differs from the workflow definitions that
     ran. One run calls the wheels, JVM, interop,
-    sanitizer, fuzz, ABI and semver legs in rehearsal mode (nothing is
+    sanitizer, fuzz, ABI, instruction-count and semver legs in rehearsal mode (nothing is
     published) and writes a record. The run must end **GO**: every leg
     succeeded on that commit, the tree was clean, the `ci` result came from a
     push or dispatch run rather than a pull-request run, no workflow
@@ -397,6 +397,18 @@ step 3).
     (`changed_generators`) and the version sweep (`version_sweep`: the two
     workspace versions and the files it changed) that the soaked tree stands
     across.
+
+    The instruction-count leg (`scripts/dev/bench-ir.sh`) builds tst-core
+    at the previous release tag and at the candidate on one runner, runs
+    fixed workloads under callgrind and fails when a workload executes more
+    than 3 % more instructions per iteration, unless
+    `tests/coverage/bench-accepted.toml` carries a row for it that says what
+    the instructions buy. `ci` runs the same comparison on every push and
+    pull request, so add that row in the pull request that causes the
+    growth; a row added after the freeze is a change outside the release
+    documents. Instruction counts do not see cache, alignment or
+    branch-prediction effects, and a toolchain change moves every workload
+    at once.
 11. **Commit the record.** In a docs-only PR, add the run's
     `qualification.json` as `docs/project/qualification.json` (CI's
     `check-qualification` step verifies the page matches it) and render the
@@ -412,7 +424,10 @@ step 3).
     CI runner, so the record lists them as `maintainer_local` and they stay
     with you. Run each and note the result before tagging:
     - long fuzz runs, 10 minutes per target;
-    - the benchmark regression check;
+    - the wall-clock benchmark comparison against the baseline saved at
+      the previous tag. It is a report with no threshold: where the linker
+      places unchanged code moves a criterion number by up to a fifth, so
+      the instruction-count leg of step 10 is the gate;
     - the one-hour synthetic soak.
 
     The real-capture corpus check runs on the release VM in step 6.
@@ -516,6 +531,12 @@ Release; the committed record stays the one step 10 collected.
    from the CHANGELOG highlights block and publish it; do not create a second
    Release by hand. If the record is not a GO, no draft is created: read the
    reasons, then create the Release by hand.
+
+7. **Save the benchmark baseline.** On a quiet machine, run tst-core's
+   criterion benches on the tag's tree and keep the result outside
+   `target/` as the next release's wall-clock comparison base:
+   `CRITERION_HOME=<dir> cargo bench -p tst-core --bench '*' -- --save-baseline main`.
+   Note the commit, the toolchain and the machine beside it.
 
 ## crates.io publish (Rust crates)
 

@@ -33,7 +33,7 @@ CONTEXT = {
     "host": {"runner": "ubuntu-24.04", "arch": "x86_64", "kernel": "6.8.0"},
 }
 LEGS = {n: {"conclusion": "success", "run_url": "https://example.test/run/" + str(i)}
-        for i, n in enumerate(["interop", "jvm-jar", "python-wheels", "c-abi", "fuzz"])}
+        for i, n in enumerate(["interop", "jvm-jar", "python-wheels", "c-abi", "bench-ir", "fuzz"])}
 LEGS["sanitizers"] = {"conclusion": "success", "run_url": "https://example.test/run/san"}
 CI = {"conclusion": "success", "run_url": "https://example.test/run/ci", "event": "push",
       "run_id": 41, "run_attempt": 1, "head_sha": SHA}
@@ -46,6 +46,13 @@ INVENTORY = {"tools": {"ffmpeg": "7.1", "tsp": "3.40", "gst-launch-1.0": "1.24",
 FUZZ = {"targets_run": 37, "seconds_per_target": 60, "crashes": 0}
 ABI = {"major": 0, "minor": 25, "symbols": 505, "previous_tag": "v0.8.0",
        "previous_source": "built: no package for v0.8.0", "abidiff_exit": 4, "verdict": "compatible"}
+BENCH_IR = {"old": {"ref": "v0.8.0", "sha": "a" * 40}, "new": {"ref": "HEAD", "sha": SHA},
+            "threshold_percent": 3.0, "tool": "valgrind-3.22.0", "verdict": "pass",
+            "workloads": [
+                {"name": "st0601_decode", "iterations": 100, "old_instructions": 6130.0,
+                 "new_instructions": 7691.0, "delta_percent": 25.47, "status": "accepted", "reason": "second walk"},
+                {"name": "muxer_new", "iterations": 100, "old_instructions": 15587.0,
+                 "new_instructions": 15600.0, "delta_percent": 0.08, "status": "ok"}]}
 SEMVER = [{"crate": "tst-core", "exit": 0, "failed_checks": 0, "items": 0, "report": "r", "analysed": True}]
 SAN_JOBS = ["asan", "asan-native", "tsan", "tsan-native"]
 
@@ -100,6 +107,7 @@ def build(tmp, mutate=None, archives=ARCHIVES):
         "interop-evidence/inventory.json": dict(INVENTORY),
         "fuzz.json": dict(FUZZ),
         "abi.json": dict(ABI),
+        "bench-ir.json": json.loads(json.dumps(BENCH_IR)),
         "semver-checks.json": json.loads(json.dumps(SEMVER)),
     }
     for j in SAN_JOBS:
@@ -322,6 +330,34 @@ class RenderTests(unittest.TestCase):
             rec = collect(lambda f: f["abi.json"].update(previous_source=how))
             self.assertEqual(rec["abi"]["previous_source"], how)
             self.assertIn("compared with v0.8.0 (%s): abidiff exit 4" % how, q.render_block(rec))
+
+    def test_bench_ir_missing_or_failing_is_no_go(self):
+        rec = collect(lambda f: f.__setitem__("bench-ir.json", None))
+        self.assertEqual(leg(rec, "bench-ir")["conclusion"], "missing")
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("The instruction-count comparison is not recorded.", q.render_block(rec))
+
+        def fail(f):
+            f["bench-ir.json"]["verdict"] = "fail"
+            f["bench-ir.json"]["workloads"][1].update(delta_percent=4.5, status="over the threshold")
+        rec = collect(fail)
+        self.assertEqual(leg(rec, "bench-ir")["conclusion"], "failure")
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertIn("failing: muxer_new.", q.render_block(rec))
+
+    def test_bench_ir_line_names_the_base_and_the_accepted_growth(self):
+        rec = collect()
+        self.assertEqual(leg(rec, "bench-ir")["conclusion"], "success")
+        self.assertIn(
+            "Instruction counts of 2 tst-core workloads against v0.8.0 (a workload may grow by 3 %): pass; "
+            "largest change st0601_decode +25.47 %; accepted growth: st0601_decode +25.47 %.",
+            q.render_block(rec))
+
+    def test_a_record_without_the_bench_ir_key_renders_no_line_for_it(self):
+        rec = collect()
+        del rec["bench_ir"]
+        self.assertNotIn("Instruction count", q.render_block(rec))
+        self.assertNotIn("instruction-count", q.render_block(rec))
 
     def test_no_go_block_names_the_leg(self):
         def m(f):
