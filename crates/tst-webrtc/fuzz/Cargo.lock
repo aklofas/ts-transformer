@@ -1556,7 +1556,7 @@ dependencies = [
 
 [[package]]
 name = "tst-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "hashbrown",
  "libc",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "tst-pipeline"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "spin",
  "thiserror",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "tst-rtp"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64",
  "bytes",
@@ -1605,7 +1605,7 @@ dependencies = [
 
 [[package]]
 name = "tst-webrtc"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "getrandom 0.4.3",
  "rustls",
