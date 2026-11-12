@@ -434,11 +434,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/net-test-binaries.sh
 
-      - name: scripts/gen unit tests
-        # The generators' stdlib unittest suites and their committed fixtures;
-        # nothing else runs them. Stdlib only, no pip install.
+      - name: scripts/gen and bench-ir unit tests
+        # The generators' stdlib unittest suites and their committed fixtures,
+        # and the instruction-count judge's; nothing else runs them. Stdlib
+        # only, no pip install.
         if: matrix.name == 'linux-x86_64'
-        run: python3 -m unittest scripts/gen/test_*.py
+        run: python3 -m unittest scripts/gen/test_*.py scripts/dev/test_bench_ir.py
 
       - name: check-no-unreachable-expect-in-bindings
         # Binding production code never aborts on a #[non_exhaustive]
@@ -1817,6 +1818,46 @@ jobs:
         with:
           name: c-abi-report
           path: ${{ runner.temp }}/abi-report.txt
+          if-no-files-found: ignore
+
+  bench-ir:
+    name: instruction counts vs previous tag (linux-x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # tst-core's fixed workloads, built at the previous release tag and at
+    # this commit on one runner and counted under callgrind. It runs on every
+    # push and pull request so that growth is fixed, or accepted in
+    # tests/coverage/bench-accepted.toml, in the change that causes it:
+    # release-qualify runs the same comparison after the freeze, where a new
+    # accepted row would be a thaw.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          # The previous release tag's commit is built beside this one.
+          fetch-depth: 0
+
+      - name: Install valgrind
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y valgrind
+
+      - name: Rust toolchain
+        uses: ./.github/actions/rust-setup
+
+      - name: Compare tst-core's instruction counts with the previous release tag
+        run: |
+          git fetch --tags --force origin
+          prev="$(bash scripts/dev/prev-tag.sh)"
+          [ -n "$prev" ] || { echo "::error::no previous release tag to compare with"; exit 1; }
+          bash scripts/dev/bench-ir.sh "$prev" HEAD --out "$RUNNER_TEMP/bench-ir"
+
+      - name: Keep the comparison
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-ir
+          path: ${{ runner.temp }}/bench-ir/bench-ir.json
           if-no-files-found: ignore
 
   deny:
