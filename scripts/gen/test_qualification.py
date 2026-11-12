@@ -772,11 +772,13 @@ class ReleaseModeTests(unittest.TestCase):
 
     def test_release_mode_accepts_a_soaked_tree_with_only_doc_changes_since(self):
         with mock.patch.object(q, "changed_paths", return_value=[]) as cp, \
-                mock.patch.object(q, "changed_release_documents", return_value=["CHANGELOG.md"]) as cd:
+                mock.patch.object(q, "changed_release_documents", return_value=["CHANGELOG.md"]) as cd, \
+                mock.patch.object(q, "admitted_changes", return_value={"changed_generators": [], "version_sweep": None}) as ad:
             rec = collect(release=True, archives=SOAKED_EARLIER)
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         self.assertEqual(cp.call_args.args[1:], (OLD_TREE, SHA))
         self.assertEqual(cd.call_args.args[1:], (OLD_TREE, SHA))
+        self.assertEqual(ad.call_args.args[1:], (OLD_TREE, SHA))
         self.assertEqual(rec["release_vm"]["soak"]["changed_paths"], 0)
         self.assertEqual(rec["release_vm"]["soak"]["equivalence"]["changed_release_documents"], ["CHANGELOG.md"])
 
@@ -896,6 +898,93 @@ class ReleaseModeTests(unittest.TestCase):
             git(d, "update-index", "--add", "--cacheinfo", "160000,%s,vendor/sub" % a)
             git(d, "commit", "-q", "-m", "gitlink")
             self.assertEqual(q.changed_paths(d, a, git(d, "rev-parse", "HEAD")), ["vendor/sub"])
+
+    SWEEP_BASE = {
+        "Cargo.toml": '[workspace]\nmembers = ["a"]\n\n[workspace.package]\nversion      = "1.2.0"\n',
+        "a/Cargo.toml": ('[package]\nname = "a"\nversion.workspace = true\n\n[dependencies]\n'
+                         'b   = { path = "../b", version = "1.2.0" }\next = "1.2.0"\n'),
+        "Cargo.lock": ('version = 4\n\n[[package]]\nname = "a"\nversion = "1.2.0"\n\n[[package]]\nname = "ext"\n'
+                       'version = "1.2.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'),
+        "m/Cargo.toml": '[package]\nname = "m"\nversion = "1.2.0+3.6.7"\n',
+        "pyproject.toml": '[project]\nname = "p"\nversion = "1.2.0"\n',
+        "src/lib.rs": "pub const TST_VERSION_MINOR: c_int = 2;\npub const TST_VERSION_PATCH: c_int = 0;\n",
+        "include/x.h": "#define TST_VERSION_MINOR 2\n#define TST_VERSION_PATCH 0\n",
+        "tests/test_version.py": 'assert v == "1.2.0"\n',
+        "scripts/gen/g.py": "1\n",
+    }
+
+    def sweep_repo(self, d):
+        """A repo at workspace 1.2.0 and a function committing a variant of it on that base."""
+        git(d, "init", "-q", "-b", "main")
+        for f, text in self.SWEEP_BASE.items():
+            os.makedirs(os.path.dirname(os.path.join(d, f)) or d, exist_ok=True)
+            spit(os.path.join(d, f), text)
+        git(d, "add", ".")
+        git(d, "commit", "-q", "-m", "base")
+        base = git(d, "rev-parse", "HEAD")
+
+        def variant(edits):
+            git(d, "checkout", "-q", base)
+            for f, text in edits.items():
+                spit(os.path.join(d, f), text)
+            git(d, "commit", "-q", "-am", "variant")
+            return git(d, "rev-parse", "HEAD")
+        return base, variant
+
+    def swept(self, **extra):
+        """Every base file moved from 1.2.0 to 1.2.1 as the release sweep moves it, plus `extra`."""
+        b = self.SWEEP_BASE
+        out = {
+            "Cargo.toml": b["Cargo.toml"].replace("1.2.0", "1.2.1"),
+            "a/Cargo.toml": b["a/Cargo.toml"].replace('version = "1.2.0" }', 'version = "1.2.1" }'),
+            "Cargo.lock": b["Cargo.lock"].replace('name = "a"\nversion = "1.2.0"', 'name = "a"\nversion = "1.2.1"'),
+            "m/Cargo.toml": b["m/Cargo.toml"].replace("1.2.0", "1.2.1"),
+            "pyproject.toml": b["pyproject.toml"].replace("1.2.0", "1.2.1"),
+            "src/lib.rs": b["src/lib.rs"].replace("PATCH: c_int = 0", "PATCH: c_int = 1"),
+            "include/x.h": b["include/x.h"].replace("PATCH 0", "PATCH 1"),
+            "tests/test_version.py": b["tests/test_version.py"].replace("1.2.0", "1.2.1"),
+        }
+        out.update(extra)
+        return out
+
+    def test_a_version_sweep_and_generator_changes_leave_an_archive_standing(self):
+        with tempfile.TemporaryDirectory() as d:
+            base, variant = self.sweep_repo(d)
+            head = variant(self.swept(**{"scripts/gen/g.py": "2\n"}))
+            self.assertEqual(q.changed_paths(d, base, head), [])
+            self.assertEqual(q.admitted_changes(d, base, head), {
+                "changed_generators": ["scripts/gen/g.py"],
+                "version_sweep": {"from": "1.2.0", "to": "1.2.1", "paths": sorted(
+                    ["Cargo.toml", "a/Cargo.toml", "Cargo.lock", "m/Cargo.toml", "pyproject.toml",
+                     "src/lib.rs", "include/x.h", "tests/test_version.py"])}})
+
+    def test_a_version_sweep_admits_nothing_but_its_versions(self):
+        b = self.SWEEP_BASE
+        cases = {
+            # A third-party dependency at the workspace's version is not swept.
+            "a/Cargo.toml": self.swept()["a/Cargo.toml"].replace('ext = "1.2.0"', 'ext = "1.2.1"'),
+            "Cargo.lock": self.swept()["Cargo.lock"] + "",
+            "src/lib.rs": self.swept()["src/lib.rs"] + "pub fn x() {}\n",
+            "m/Cargo.toml": self.swept()["m/Cargo.toml"] + "# note\n",
+            "include/x.h": b["include/x.h"].replace("MINOR 2", "MINOR 3"),
+        }
+        lock = self.swept()["Cargo.lock"]
+        cases["Cargo.lock"] = lock[:lock.rindex('version = "1.2.0"')] + 'version = "1.2.1"' + lock[
+            lock.rindex('version = "1.2.0"') + len('version = "1.2.0"'):]
+        with tempfile.TemporaryDirectory() as d:
+            base, variant = self.sweep_repo(d)
+            for f, text in cases.items():
+                with self.subTest(path=f):
+                    head = variant(self.swept(**{f: text}))
+                    self.assertEqual(q.changed_paths(d, base, head), [f])
+
+    def test_without_a_workspace_version_move_nothing_is_a_sweep(self):
+        with tempfile.TemporaryDirectory() as d:
+            base, variant = self.sweep_repo(d)
+            head = variant({"tests/test_version.py": 'assert v == "1.2.1"\n', "scripts/gen/g.py": "2\n"})
+            self.assertEqual(q.changed_paths(d, base, head), ["tests/test_version.py"])
+            self.assertEqual(q.admitted_changes(d, base, head),
+                             {"changed_generators": ["scripts/gen/g.py"], "version_sweep": None})
 
     def test_changed_paths_counts_the_whep_player_as_code(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1118,7 +1207,8 @@ class ReleaseModeTests(unittest.TestCase):
                              archive_row("corpus-old", "corpus", older, counts=COUNTS))
         diffs = {newer: ["crates/tst-core/src/lib.rs"], older: []}
         with mock.patch.object(q, "changed_paths", side_effect=lambda root, tree, sha: diffs[tree]), \
-                mock.patch.object(q, "changed_release_documents", return_value=[]):
+                mock.patch.object(q, "changed_release_documents", return_value=[]), \
+                mock.patch.object(q, "admitted_changes", return_value={"changed_generators": [], "version_sweep": None}):
             rec = collect(release=True, archives=rows)
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-old")
@@ -1132,6 +1222,8 @@ class ReleaseModeTests(unittest.TestCase):
             rec = collect(release=True, archives=rows)
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIsNone(rec["release_vm"]["soak"]["equivalence"]["changed_release_documents"])
+        self.assertIsNone(rec["release_vm"]["soak"]["equivalence"]["changed_generators"])
+        self.assertIsNone(rec["release_vm"]["soak"]["equivalence"]["version_sweep"])
 
     def test_only_short_soaks_name_the_declared_duration(self):
         rows = archives_toml(archive_row("soak-1h", "soak", SHA, duration=3600),
@@ -1463,7 +1555,8 @@ class TagAndEquivalenceTests(unittest.TestCase):
         self.assertEqual(rec["label"], "tag v9.9.9")
         self.assertEqual(rec["release_vm"]["soak"]["equivalence"],
                          {"soaked": soaked, "qualified": qualified,
-                          "changed_release_documents": ["CHANGELOG.md", "docs/x.md"]})
+                          "changed_release_documents": ["CHANGELOG.md", "docs/x.md"],
+                          "changed_generators": [], "version_sweep": None})
 
     def test_without_a_tag_the_source_has_none_and_a_same_tree_soak_changed_nothing(self):
         with mock.patch.object(q, "changed_paths", side_effect=AssertionError("git called")):
@@ -1471,7 +1564,8 @@ class TagAndEquivalenceTests(unittest.TestCase):
         self.assertNotIn("tag", rec["source"])
         self.assertEqual(rec["label"], CONTEXT["label"])
         self.assertEqual(rec["release_vm"]["soak"]["equivalence"],
-                         {"soaked": SHA, "qualified": SHA, "changed_release_documents": []})
+                         {"soaked": SHA, "qualified": SHA, "changed_release_documents": [],
+                          "changed_generators": [], "version_sweep": None})
 
 
 class WorkflowBindingTests(unittest.TestCase):

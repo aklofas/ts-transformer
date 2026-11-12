@@ -89,6 +89,10 @@ RELEASE_DOCUMENT_PATHS = ("CHANGELOG.md", "docs/", ARCHIVE_TABLE)
 # The soak's browser leg executes the WebRTC reference player and its imports,
 # so under these prefixes only Markdown is a release document.
 RELEASE_CODE_UNDER_DOCS = ("docs/webrtc/",)
+# Nor does a change here supersede an archive: the record and page generators and
+# this gate build no shipped artifact and run in no soak, and release-qualify
+# already holds them to the commit its workflows ran from.
+GENERATOR_PATHS = ("scripts/gen/",)
 MAINTAINER_LOCAL = [
     "long fuzz runs (10 min per target)",
     "bench regression",
@@ -280,9 +284,121 @@ def _is_release_document(path):
     return any(path == d or (d.endswith("/") and path.startswith(d)) for d in RELEASE_DOCUMENT_PATHS)
 
 
-def changed_paths(root, tree, sha):
-    """The paths outside RELEASE_DOCUMENT_PATHS that differ between commits `tree` and `sha`."""
+def _is_generator(path):
+    return path.startswith(GENERATOR_PATHS)
+
+
+def _show(root, rev, path):
+    """The file `path` at commit `rev` as text, or None when it is absent or not text."""
+    try:
+        p = subprocess.run(["git", "-C", root, "show", "%s:%s" % (rev, path)], capture_output=True)
+    except OSError as e:
+        raise QualificationError(str(e))
+    if p.returncode != 0:
+        return None
+    try:
+        return p.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def workspace_version(root, rev):
+    """`[workspace.package] version` at commit `rev`, or None."""
+    text = _show(root, rev, "Cargo.toml")
+    if text is None:
+        return None
+    try:
+        return tomllib.loads(text)["workspace"]["package"]["version"]
+    except (TypeError, KeyError, tomllib.TOMLDecodeError):
+        return None
+
+
+_C_VERSION_LINE = re.compile(r"^(.*\bTST_VERSION_(MAJOR|MINOR|PATCH)\b\D*?)(\d+)(\D*)$", re.S)
+
+
+def _bump_line(line, old, new):
+    line = line.replace(old, new)
+    m = _C_VERSION_LINE.match(line)
+    if m:
+        i = ("MAJOR", "MINOR", "PATCH").index(m.group(2))
+        if m.group(3) == old.split(".")[i]:
+            line = m.group(1) + new.split(".")[i] + m.group(4)
+    return line
+
+
+def _bump_toml(node, old, new, key=None):
+    """`node` with every version a sweep moves set from `old` to `new`: the version
+    of a package table without a `source` (a workspace member, its Cargo.lock entry,
+    pyproject's [project]) and of a dependency given by `path`, keeping a `+build`
+    suffix. Every other value, a third-party package's above all, is left alone."""
+    if isinstance(node, list):
+        return [_bump_toml(v, old, new, key) for v in node]
+    if not isinstance(node, dict):
+        return node
+    own = (key in ("package", "project") and "source" not in node) or "path" in node
+    out = {}
+    for k, v in node.items():
+        if own and k == "version" and isinstance(v, str) and (v == old or v.startswith(old + "+")):
+            out[k] = new + v[len(old):]
+        else:
+            out[k] = _bump_toml(v, old, new, k)
+    return out
+
+
+def _version_only(root, tree, sha, path, old, new):
+    """True when `path` differs between `tree` and `sha` only by the workspace version
+    moving from `old` to `new`: line by line, each changed line differing only in the
+    version string or a TST_VERSION_* component, and for TOML files and lockfiles also
+    parsed, so only the versions _bump_toml moves may differ (a third-party package
+    at the same version stays put)."""
+    a, b = _show(root, tree, path), _show(root, sha, path)
+    if a is None or b is None:
+        return False
+    la, lb = a.splitlines(keepends=True), b.splitlines(keepends=True)
+    if len(la) != len(lb) or any(y != x and y != _bump_line(x, old, new) for x, y in zip(la, lb)):
+        return False
+    if path.endswith((".toml", "Cargo.lock")):
+        try:
+            return _bump_toml(tomllib.loads(a), old, new) == tomllib.loads(b)
+        except tomllib.TOMLDecodeError:
+            return False
+    return True
+
+
+def version_sweep(root, tree, sha, paths):
+    """The paths among `paths` that a version sweep from `tree` to `sha` changed only in
+    their version strings, with the two workspace versions; None when the workspace
+    version did not move."""
+    old, new = workspace_version(root, tree), workspace_version(root, sha)
+    if old is None or new is None or old == new:
+        return None
+    return {"from": old, "to": new,
+            "paths": sorted(p for p in paths if _version_only(root, tree, sha, p, old, new))}
+
+
+def _outside_documents(root, tree, sha):
     return [l for l in _diff_names(root, tree, sha) if not _is_release_document(l)]
+
+
+def changed_paths(root, tree, sha):
+    """The paths that keep an archive run on `tree` from standing for `sha`: every path
+    that differs between the two commits except the release documents, the generators
+    (GENERATOR_PATHS) and the files a version sweep changed only in their versions."""
+    rest = [l for l in _outside_documents(root, tree, sha) if not _is_generator(l)]
+    sweep = version_sweep(root, tree, sha, rest) if rest else None
+    swept = set(sweep["paths"]) if sweep else set()
+    return [l for l in rest if l not in swept]
+
+
+def admitted_changes(root, tree, sha):
+    """What an archive on `tree` stands for `sha` across besides the release documents:
+    the changed generator paths and the version sweep (None when there was none)."""
+    outside = _outside_documents(root, tree, sha)
+    rest = [l for l in outside if not _is_generator(l)]
+    sweep = version_sweep(root, tree, sha, rest) if rest else None
+    if sweep is not None and not sweep["paths"]:
+        sweep = None
+    return {"changed_generators": sorted(l for l in outside if _is_generator(l)), "version_sweep": sweep}
 
 
 WORKFLOW_DEFINITION_PATHS = (".github/", "scripts/gen/")
@@ -406,13 +522,18 @@ def release_vm(root, sha, archives, release, expected_files, required_s):
             reasons.append("soak: git could not resolve %s: %s" % (soak["tree"], soak["git_error"]))
         else:
             # The record states what changed between the soaked and the qualified
-            # tree, not only that nothing outside the release documents did. A
-            # superseded soak has no such list: None, never an empty one.
+            # tree, not only that nothing else did: the release documents, the
+            # generators and the version sweep. A superseded soak has no such
+            # lists: None, never an empty one.
             docs = None if soak["changed_paths"] else []
+            admitted = {"changed_generators": None, "version_sweep": None}
+            if not soak["changed_paths"]:
+                admitted["changed_generators"] = []
             if soak["tree"] != sha and not soak["changed_paths"]:
                 docs = changed_release_documents(root, soak["tree"], sha)
-            soak["equivalence"] = {"soaked": soak["tree"], "qualified": sha,
-                                   "changed_release_documents": docs}
+                admitted = admitted_changes(root, soak["tree"], sha)
+            soak["equivalence"] = dict({"soaked": soak["tree"], "qualified": sha,
+                                        "changed_release_documents": docs}, **admitted)
             if soak["changed_paths"]:
                 reasons.append("soak: archive %s is superseded by %d changed path(s) outside the release documents"
                                % (soak["id"], soak["changed_paths"]))
