@@ -282,75 +282,38 @@ fn decode_inner(
     }
     let body = &after_len[..declared_len];
 
-    let mut record = UasDatalinkLs {
+    let fresh_record = || UasDatalinkLs {
         universal_label: ul,
         declared_version: ul.st0601_version_byte(),
         ..UasDatalinkLs::default()
     };
-
+    let mut record = fresh_record();
     let mut declared_checksum: Option<(u16, usize)> = None; // (value, offset_into_buf_of_value)
 
-    // Wire-order item tags seen so far (Tag 102's "Refined Source List"
-    // positional capture needs to know which items immediately precede
-    // each occurrence — see `apply_multi_instance`). Tag 1
-    // (checksum) is excluded below since it is handled separately and
-    // never reaches `apply_tag`; Tag 102 itself is excluded inside
-    // `apply_tag` (it is not one of the "sources" a later
-    // occurrence could refine).
-    let mut tags_seen: Vec<u32> = Vec::new();
-
-    // Last-duplicate-wins: record the ordinal (1-based) of each single-use
-    // tag's last occurrence so earlier ones can be skipped in the main loop.
-    // A framing error ends the pre-pass; the main loop reports it with the
-    // same offsets as before.
-    let mut last_ordinal = [0u32; 256];
-    for (i, r) in Iter::local_set(body).enumerate() {
-        let Ok(f) = r else { break };
-        if let Ok(t) = u8::try_from(f.tag)
-            && !matches!(t, 1 | 102 | 115)
-            && lookup(t).is_some()
-        {
-            last_ordinal[usize::from(t)] = i as u32 + 1;
-        }
-    }
-
-    for (i, r) in Iter::local_set(body).enumerate() {
-        let f = r.map_err(|mut e| {
-            crate::klv::length::rebase_offset(&mut e, body_offset);
-            e
-        })?;
-        if let Ok(t) = u8::try_from(f.tag) {
-            let last = last_ordinal[usize::from(t)];
-            if last != 0 && last != i as u32 + 1 {
-                // Superseded by a later occurrence of the same tag; it
-                // still counts as encountered for Tag 102's capture.
-                tags_seen.push(f.tag);
-                continue;
-            }
-        }
-        if f.tag == 1 {
-            // Checksum: capture for later verification.
-            // Byte offset of f.value within buf — used both to report a
-            // buffer-absolute `Truncated.offset` below and to bound the
-            // checksum coverage span. `f.value` is always a subslice of
-            // `body`, itself a subslice of `buf`, so the subtraction is
-            // in-range even when the value is empty.
-            let value_offset_in_buf =
-                (f.value.as_ptr() as usize).wrapping_sub(buf.as_ptr() as usize);
-            if f.value.len() != 2 {
-                return Err(KlvDecodeError::Truncated {
-                    offset: value_offset_in_buf,
-                    needed: 2,
-                    have: f.value.len(),
-                });
-            }
-            let cksum = u16::from_be_bytes([f.value[0], f.value[1]]);
-            declared_checksum = Some((cksum, value_offset_in_buf));
-            continue;
-        }
-        if let Err(field_err) = apply_tag(&mut record, &f, &mut tags_seen) {
-            record.field_errors.push(field_err);
-        }
+    // Last-duplicate-wins: only the last occurrence of a single-use tag is
+    // applied. A packet almost never repeats one, so the first walk applies
+    // every item in order and only watches for a repeat. When one shows up
+    // the walk starts over on a fresh record with the ordinal of each tag's
+    // last occurrence, and skips the earlier ones.
+    if !walk_items(
+        buf,
+        body,
+        body_offset,
+        &mut record,
+        &mut declared_checksum,
+        None,
+    )? {
+        record = fresh_record();
+        declared_checksum = None;
+        let last_ordinal = last_ordinals(body);
+        walk_items(
+            buf,
+            body,
+            body_offset,
+            &mut record,
+            &mut declared_checksum,
+            Some(&last_ordinal),
+        )?;
     }
 
     if verify_checksum {
@@ -374,6 +337,111 @@ fn decode_inner(
     }
 
     Ok(record)
+}
+
+/// `true` for a tag the once-per-packet rule covers: a defined item other
+/// than the checksum (handled apart) and the two multi-instance tags.
+fn is_single_use(tag: u8) -> bool {
+    !matches!(tag, 1 | 102 | 115) && lookup(tag).is_some()
+}
+
+/// The ordinal (1-based) of each single-use tag's last occurrence in `body`,
+/// 0 for a tag that does not occur. A framing error ends the count; the walk
+/// reports it with its own offsets.
+pub(super) fn last_ordinals(body: &[u8]) -> [u32; 256] {
+    let mut last_ordinal = [0u32; 256];
+    for (i, r) in Iter::local_set(body).enumerate() {
+        let Ok(f) = r else { break };
+        if let Ok(t) = u8::try_from(f.tag)
+            && is_single_use(t)
+        {
+            last_ordinal[usize::from(t)] = i as u32 + 1;
+        }
+    }
+    last_ordinal
+}
+
+/// Walk the items of `body` into `record`, which the caller hands over
+/// fresh, and store the declared checksum when Tag 1 is present.
+///
+/// Without `last_ordinal` every item is applied in wire order and the walk
+/// returns `Ok(false)` at the first repeat of a single-use tag, leaving
+/// `record` half filled: the caller then walks again on a fresh record with
+/// the table from [`last_ordinals`]. With it, every occurrence of a
+/// single-use tag but the last is skipped and the walk returns `Ok(true)`.
+pub(super) fn walk_items(
+    buf: &[u8],
+    body: &[u8],
+    body_offset: usize,
+    record: &mut UasDatalinkLs,
+    declared_checksum: &mut Option<(u16, usize)>,
+    last_ordinal: Option<&[u32; 256]>,
+) -> Result<bool, KlvDecodeError> {
+    // Wire-order item tags seen so far (Tag 102's "Refined Source List"
+    // positional capture needs to know which items immediately precede
+    // each occurrence — see `apply_multi_instance`). Tag 1
+    // (checksum) is excluded below since it is handled separately and
+    // never reaches `apply_tag`; Tag 102 itself is excluded inside
+    // `apply_tag` (it is not one of the "sources" a later
+    // occurrence could refine).
+    let mut tags_seen: Vec<u32> = Vec::with_capacity((body.len() / 4).min(64));
+
+    // One bit per single-use tag already applied by a walk that has no
+    // ordinal table.
+    let mut applied = [0u64; 4];
+
+    for (i, r) in Iter::local_set(body).enumerate() {
+        let f = r.map_err(|mut e| {
+            crate::klv::length::rebase_offset(&mut e, body_offset);
+            e
+        })?;
+        if let Ok(t) = u8::try_from(f.tag) {
+            match last_ordinal {
+                Some(last_ordinal) => {
+                    let last = last_ordinal[usize::from(t)];
+                    if last != 0 && last != i as u32 + 1 {
+                        // Superseded by a later occurrence of the same tag; it
+                        // still counts as encountered for Tag 102's capture.
+                        tags_seen.push(f.tag);
+                        continue;
+                    }
+                }
+                None if is_single_use(t) => {
+                    let (word, bit) = (usize::from(t >> 6), 1u64 << (t & 63));
+                    if applied[word] & bit != 0 {
+                        return Ok(false);
+                    }
+                    applied[word] |= bit;
+                }
+                None => {}
+            }
+        }
+        if f.tag == 1 {
+            // Checksum: capture for later verification.
+            // Byte offset of f.value within buf — used both to report a
+            // buffer-absolute `Truncated.offset` below and to bound the
+            // checksum coverage span. `f.value` is always a subslice of
+            // `body`, itself a subslice of `buf`, so the subtraction is
+            // in-range even when the value is empty.
+            let value_offset_in_buf =
+                (f.value.as_ptr() as usize).wrapping_sub(buf.as_ptr() as usize);
+            if f.value.len() != 2 {
+                return Err(KlvDecodeError::Truncated {
+                    offset: value_offset_in_buf,
+                    needed: 2,
+                    have: f.value.len(),
+                });
+            }
+            let cksum = u16::from_be_bytes([f.value[0], f.value[1]]);
+            *declared_checksum = Some((cksum, value_offset_in_buf));
+            continue;
+        }
+        if let Err(field_err) = apply_tag(record, &f, &mut tags_seen) {
+            record.field_errors.push(field_err);
+        }
+    }
+
+    Ok(true)
 }
 
 /// Decode one raw field into `record` through its `TAGS` row. The pack

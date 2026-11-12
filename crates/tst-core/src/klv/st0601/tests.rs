@@ -3649,3 +3649,109 @@ fn duplicate_tag_sentinel_then_value_keeps_only_the_value() {
     assert!(rec.frame_center_lat_deg.is_some());
     assert!(!rec.sentinel_tags.contains(&23));
 }
+
+// ---------------------------------------------------------------------------
+// Last-duplicate-wins: the single walk against the two-pass walk
+// ---------------------------------------------------------------------------
+
+/// One Local Set item: BER-OID tag, short-form length, value.
+fn ls_item(tag: u32, value: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    match tag {
+        0..=0x7F => out.push(tag as u8),
+        0x80..=0x3FFF => out.extend([0x80 | (tag >> 7) as u8, (tag & 0x7F) as u8]),
+        _ => unreachable!("test tags fit two BER-OID bytes"),
+    }
+    out.push(value.len() as u8);
+    out.extend_from_slice(value);
+    out
+}
+
+/// Both walks over `body`, rendered for comparison (the record holds
+/// floats): the single walk (`None` when it stops at a repeat) and the
+/// two-pass walk.
+fn both_walks(body: &[u8]) -> (Option<String>, String) {
+    use super::decode::{last_ordinals, walk_items};
+    let walk = |last_ordinal: Option<&[u32; 256]>| {
+        let mut record = UasDatalinkLs::default();
+        let mut checksum = None;
+        let finished = walk_items(body, body, 0, &mut record, &mut checksum, last_ordinal);
+        (finished, format!("{record:?} {checksum:?}"))
+    };
+    let (finished, two_pass) = walk(Some(&last_ordinals(body)));
+    let two_pass = match finished {
+        Ok(true) => two_pass,
+        Ok(false) => panic!("the two-pass walk never stops at a repeat"),
+        Err(e) => format!("{e:?}"),
+    };
+    let single = match walk(None) {
+        (Ok(true), rendered) => Some(rendered),
+        (Ok(false), _) => None,
+        (Err(e), _) => Some(format!("{e:?}")),
+    };
+    (single, two_pass)
+}
+
+#[test]
+fn single_walk_finishes_a_packet_without_repeats() {
+    let body = [
+        ls_item(2, &[0u8; 8]),
+        ls_item(5, &[0x71, 0xC2]),
+        ls_item(102, &[1, 2]),
+        ls_item(102, &[3, 4]),
+        ls_item(150, &[9]),
+        ls_item(150, &[9]),
+        ls_item(1, &[0, 0]),
+        ls_item(1, &[0, 0]),
+    ]
+    .concat();
+    let (single, two_pass) = both_walks(&body);
+    assert_eq!(single.as_deref(), Some(two_pass.as_str()));
+}
+
+#[test]
+fn single_walk_stops_at_a_repeated_single_use_tag() {
+    // The first Item 5 has a bad length; only the two-pass walk may decide
+    // that it is superseded and report nothing for it.
+    let body = [
+        ls_item(2, &[0u8; 8]),
+        ls_item(5, &[0x71]),
+        ls_item(5, &[0x71, 0xC2]),
+    ]
+    .concat();
+    let (single, two_pass) = both_walks(&body);
+    assert_eq!(single, None);
+    assert!(!two_pass.contains("InvalidLength"), "{two_pass}");
+    let rec = decode_unchecked(&wrap_st0601(&body)).unwrap();
+    assert!(rec.field_errors.is_empty(), "{:?}", rec.field_errors);
+    assert!(rec.platform_heading_deg.is_some());
+}
+
+proptest::proptest! {
+    /// Whenever the single walk finishes (a record or an error) it agrees
+    /// with the two-pass walk; it may only decline, at a repeat.
+    #[test]
+    fn single_walk_matches_the_two_pass_walk(
+        items in proptest::collection::vec(
+            (
+                proptest::sample::select(vec![1u32, 2, 5, 13, 23, 48, 65, 72, 102, 115, 66, 150, 258]),
+                proptest::collection::vec(proptest::prelude::any::<u8>(), 0..10),
+            ),
+            0..12,
+        ),
+        chop in 0usize..4,
+    ) {
+        let mut body: Vec<u8> = items.iter().flat_map(|(t, v)| ls_item(*t, v)).collect();
+        body.truncate(body.len().saturating_sub(chop));
+        let (single, two_pass) = both_walks(&body);
+        if let Some(single) = single {
+            proptest::prop_assert_eq!(single, two_pass);
+        } else {
+            let mut tags: Vec<u32> = items.iter().map(|(t, _)| *t).filter(|t| !matches!(t, 1 | 66 | 102 | 115 | 150 | 258)).collect();
+            let n = tags.len();
+            tags.sort_unstable();
+            tags.dedup();
+            proptest::prop_assert!(tags.len() < n, "declined without a repeated single-use tag");
+        }
+    }
+}
