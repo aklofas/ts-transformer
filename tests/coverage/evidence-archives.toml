@@ -90,14 +90,14 @@ verdicts = ["recv_invariants_rist", "worker_exits", "recv_invariants_rtsp-publis
 reason = "Three harness findings: the AV1 carriage oracle does not excuse attributed corruption, an external publisher's send failure after end of stream counts as an exit, and one KLV placement excursion over a sender-report interval fails the placement tolerance."
 reviewer = "maintainer"
 date = "2026-10-28"
-fixed_in = "0.9.1"
+fixed_in = "0.10.0"
 
 [[archive]]
-id = "soak-0.9.1-2026-11-09-x86_64"
+id = "soak-0.10.0-2026-11-09-x86_64"
 kind = "soak"
 tree = "d0a8e34ef9424acec20862c39623ce74c3f42f19"
 overall_pass = false
-note = "The first 0.9.1 release soak: 48 hours with all five legs, 93 of 96 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The three failures are one harness attribution defect on the srt leg: three body flips that left a PCR-only packet unparseable (its adaptation_field_length overran the packet, or was too short for the PCR) were not credited with the receiver's resync at the injection's own packet, so corruption_attributed_srt and recv_invariants_srt failed and the receiver's own FAIL exit failed worker_exits. No library code is involved; the harness fix and a fresh soak followed on the next tree. The run's own report is retained offline."
+note = "The first 0.10.0 release soak: 48 hours with all five legs, 93 of 96 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The three failures are one harness attribution defect on the srt leg: three body flips that left a PCR-only packet unparseable (its adaptation_field_length overran the packet, or was too short for the PCR) were not credited with the receiver's resync at the injection's own packet, so corruption_attributed_srt and recv_invariants_srt failed and the receiver's own FAIL exit failed worker_exits. No library code is involved; the harness fix and a fresh soak followed on the next tree. The run's own report is retained offline."
 date = "2026-11-09"
 expected_duration_s = 172800
 legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
@@ -108,14 +108,14 @@ verdicts = ["worker_exits", "recv_invariants_srt", "corruption_attributed_srt"]
 reason = "One harness attribution defect: a body flip that leaves a packet unparseable did not explain the resync it causes at its own packet."
 reviewer = "maintainer"
 date = "2026-11-09"
-fixed_in = "0.9.1"
+fixed_in = "0.10.0"
 
 [[archive]]
-id = "soak-0.9.1-2026-11-09-aarch64"
+id = "soak-0.10.0-2026-11-09-aarch64"
 kind = "soak"
 tree = "d0a8e34ef9424acec20862c39623ce74c3f42f19"
 overall_pass = false
-note = "The aarch64 run beside the first 0.9.1 release soak, same tree and seeds: 48 hours with all five legs, 92 of 95 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The same three srt-leg failures as on x86_64, from the same three injections: a body flip that left a PCR-only packet unparseable was not credited with the resync at its own packet. No library code is involved."
+note = "The aarch64 run beside the first 0.10.0 release soak, same tree and seeds: 48 hours with all five legs, 92 of 95 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The same three srt-leg failures as on x86_64, from the same three injections: a body flip that left a PCR-only packet unparseable was not credited with the resync at its own packet. No library code is involved."
 date = "2026-11-09"
 expected_duration_s = 172800
 legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
@@ -126,25 +126,25 @@ verdicts = ["worker_exits", "recv_invariants_srt", "corruption_attributed_srt"]
 reason = "One harness attribution defect: a body flip that leaves a packet unparseable did not explain the resync it causes at its own packet."
 reviewer = "maintainer"
 date = "2026-11-09"
-fixed_in = "0.9.1"
+fixed_in = "0.10.0"
 
 [[archive]]
-id = "soak-0.9.1-2026-11-11-x86_64"
+id = "soak-0.10.0-2026-11-11-x86_64"
 kind = "soak"
 tree = "75d2316f86b12bd92710fe63aa9d989e3ca46657"
 overall_pass = true
-note = "The 0.9.1 release soak, on the release freeze after the harness fix: 48 hours with all five legs, the default profiles, corruption on and an RSS slope threshold of 200 KiB/hour; every one of 96 verdicts passed, including the two provisional ones, and the SRT receiver counted 12 transport rebuilds against 12 outage windows. Corruption attribution passed on every leg: no resync went unexplained. The run's own report is retained offline."
+note = "The 0.10.0 release soak, on the release freeze after the harness fix: 48 hours with all five legs, the default profiles, corruption on and an RSS slope threshold of 200 KiB/hour; every one of 96 verdicts passed, including the two provisional ones, and the SRT receiver counted 12 transport rebuilds against 12 outage windows. Corruption attribution passed on every leg: no resync went unexplained. The run's own report is retained offline."
 date = "2026-11-11"
 expected_duration_s = 172800
 legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
 arch = "x86_64"
 
 [[archive]]
-id = "soak-0.9.1-2026-11-11-aarch64"
+id = "soak-0.10.0-2026-11-11-aarch64"
 kind = "soak"
 tree = "75d2316f86b12bd92710fe63aa9d989e3ca46657"
 overall_pass = true
-note = "The aarch64 run beside the 0.9.1 release soak, same tree, profiles and seed: 48 hours with all five legs; 95 of 96 verdicts passed. The one failure is the provisional, non-gating comparison of SRT receiver transport rebuilds with outage windows (11 rebuilds against 12 windows), which the judge records for comparison only. Corruption attribution passed on every leg: no resync went unexplained."
+note = "The aarch64 run beside the 0.10.0 release soak, same tree, profiles and seed: 48 hours with all five legs; 95 of 96 verdicts passed. The one failure is the provisional, non-gating comparison of SRT receiver transport rebuilds with outage windows (11 rebuilds against 12 windows), which the judge records for comparison only. Corruption attribution passed on every leg: no resync went unexplained."
 date = "2026-11-11"
 expected_duration_s = 172800
 legs = ["rist", "rtsp-publish", "rtsp-publish-es", "srt", "whep"]
@@ -225,11 +225,11 @@ replay_paths = 5
 replay_failed = 0
 
 [[archive]]
-id = "corpus-0.9.1-2026-11-09"
+id = "corpus-0.10.0-2026-11-09"
 kind = "corpus"
 tree = "75d2316f86b12bd92710fe63aa9d989e3ca46657"
 overall_pass = true
-note = "The 0.9.1 release corpus run, on the release freeze: 251 real captures swept against the 0.9.0 baseline with no parse or invariant failure; 67 identical and 184 changed, each explained by an accepted 0.9.1 change (153 a damaged PES now reported as MalformedPes, 31 an ST 0605 Precision Time Stamp Pack that now decodes); four captures replayed over all five paths with no failure; receiver RSS recorded, not gated."
+note = "The 0.10.0 release corpus run, on the release freeze: 251 real captures swept against the 0.9.0 baseline with no parse or invariant failure; 67 identical and 184 changed, each explained by an accepted 0.10.0 change (153 a damaged PES now reported as MalformedPes, 31 an ST 0605 Precision Time Stamp Pack that now decodes); four captures replayed over all five paths with no failure; receiver RSS recorded, not gated."
 date = "2026-11-09"
 files = 251
 identical = 67

@@ -1,7 +1,7 @@
 # Benchmarks + ceilings
 
 This page publishes the sweep and the completed 24-hour hold of the
-stress run of 2026-11-07 (tree `d0a8e34ef`, the 0.9.1 library code), run on
+stress run of 2026-11-07 (tree `d0a8e34ef`, the 0.10.0 library code), run on
 two hosts: an AWS `c7i.2xlarge` (x86_64) and a `c7g.2xlarge` (aarch64).
 Below it are the sweep of the run of 2026-10-23 (tree `12c1ff1d`, one
 `c7i.2xlarge`; its 24-hour hold did not run — a harness defect ended it at
@@ -373,8 +373,8 @@ once: the x86_64 reference machine (`c7i.2xlarge`) and the aarch64 one
 (`c7g.2xlarge`), both 8 vCPU and 15.3 GiB, with seed 11, all four
 transports, an RSS-slope threshold of 1024 KB/hour, and the RIST sender
 recorded, not gated, in sweep steps. The library code in this tree is the
-0.9.1 release's: the commits between it and the release change only the
-test harness and documentation. The sweep ran from 2026-11-07T17:53Z to
+0.10.0 release's: the commits between it and the release change only the
+test harness, documentation and the version number. The sweep ran from 2026-11-07T17:53Z to
 2026-11-08T05:58Z on x86_64 (66 steps) and to 05:47Z on aarch64 (63
 steps); the traffic is seeded, so both hosts carried the same bytes,
 injections and discontinuities at every rung.
