@@ -454,10 +454,35 @@ in its Note; the column set is the same.
 | `soak-0.9.0-2026-10-27` | 2026-10-24 → 2026-10-27 | `9b8acb3b6fae` | 259 200 s | `overall_pass=false`, waived | The 0.9.0 release soak, with all five legs (`srt`, `rist`, `rtsp-publish`, `rtsp-publish-es` and `whep`). 89 of 93 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The harness reported `overall_pass=false` on four verdicts: `recv_invariants_rist` from the `rist` leg's AV1 carriage check (a harness oracle gap: it does not excuse corruption the impairment schedule attributes), `worker_exits` from one external-publisher teardown race in 432 generations on the `rtsp-publish` leg, and `recv_invariants_rtsp-publish-es` with `klv_placement_rtsp-publish-es` from a 2.3 ms KLV placement excursion over one sender-report interval on the ES leg. None is a library defect: harness FAIL on four verdicts, waived by the maintainer (harness defects, fixed in 0.9.1); the release was tagged on that waiver, which the release gate no longer admits. Run on the release VM after the corpus run on the same tree. |
 | `soak-0.9.1-2026-11-09-x86_64` | 2026-11-07 → 2026-11-09 | `d0a8e34ef942` | 172 800 s | `overall_pass=false`, waived | The first 0.9.1 release soak, with all five legs. 93 of 96 verdicts passed and the SRT receiver reconnected across all 12 outage windows. The three failures (`worker_exits`, `recv_invariants_srt`, `corruption_attributed_srt`) are one harness attribution defect: three body flips that left a PCR-only packet unparseable were not credited with the resync the receiver reported at the injection's own packet. No library code is involved: harness FAIL on three verdicts, waived by the maintainer (harness defect, fixed in 0.9.1). The release gate admits no waived soak, so the harness fix was followed by a fresh soak on the release freeze. |
 | `soak-0.9.1-2026-11-09-aarch64` | 2026-11-07 → 2026-11-09 | `d0a8e34ef942` | 172 800 s | `overall_pass=false`, waived | On aarch64, beside the x86_64 run on the same tree and seeds: 92 of 95 verdicts passed, and the same three srt-leg failures came from the same three injections. Waived on the same ruling. |
+| `soak-0.9.1-2026-11-11-x86_64` | 2026-11-09 → 2026-11-11 | `75d2316f86b1` | 172 800 s | `overall_pass=true` | The 0.9.1 release soak, on the release freeze after the harness fix, with all five legs, the default profiles, corruption on and an RSS slope threshold of 200 KiB/hour. Every one of 96 verdicts passed, including the two provisional ones; the SRT receiver counted 12 transport rebuilds against 12 outage windows, and corruption attribution passed on every leg. |
+| `soak-0.9.1-2026-11-11-aarch64` | 2026-11-09 → 2026-11-11 | `75d2316f86b1` | 172 800 s | `overall_pass=true` | On aarch64, beside the x86_64 run on the same tree, profiles and seed: 95 of 96 verdicts passed. The one failure is the provisional comparison of SRT receiver transport rebuilds with outage windows (11 against 12), recorded for comparison and not gating. |
 
 The release qualification reads the same runs from
 `tests/coverage/evidence-archives.toml`, except `soak-run2-2026-08-05`, which
 predates the archive list and has no row there.
+
+A 0.9.1 soak pass has five known limits in what its verdicts check, all
+accepted for 0.9.1 and scheduled for the 0.9.2 harness:
+
+- On the lossy `srt` and `rist` legs, each corruption the impairment
+  schedule explains credits every PID's received-count floor, so silent
+  demuxer loss up to about 1.1 % of KLV records (about 0.4 % of video and
+  0.2 % of audio access units) passes. The `srt` leg has no other
+  completeness check.
+- On the `srt` leg, rich KLV records near an injection are excused by their
+  distance from it, not by damage to their own bytes: about 3.5 % of
+  records go unjudged, and a backward timestamp step on an undamaged
+  neighbour is excused with them. The ADTS and AV1 prefix checks on the
+  `srt` and `rist` legs use the same rule.
+- On the lossy legs (`srt`, `rist`, `rtsp-publish-es`), the PCR cadence
+  check judges the median interval, so an isolated long interval passes.
+  The `rtsp-publish` leg judges every interval.
+- No leg bounds duplicates: demuxed output that repeats access units raises
+  every count floor instead of failing it.
+- The compact KLV on the `whep` and `rtsp-publish-es` legs has no content
+  check in the soak: the `whep` leg compares its copies with each other,
+  and the ES leg's KLV digest is held by the weekly interop cell described
+  below.
 
 ### The elementary publish leg (`rtsp-publish-es`)
 
