@@ -60,7 +60,8 @@ adapters run in these places:
   releases, one row per workload with the comparison base and what the
   instructions buy. Read by `scripts/dev/bench-ir.sh`, which fails CI when a
   tst-core workload grew by more than 3 % since the previous release tag
-  without a row; a row that names no workload of the run is an error.
+  without a row; a row for the current comparison base that names no
+  workload of the run is an error.
 - **`fuzz-targets.toml`** — generated inventory of every libFuzzer target;
   `scripts/gen/fuzz-targets.sh --check` fails CI if it drifts from the tree.
 - **`skip-ledger.toml`** — every intentional `#[ignore]`, with a class and (for
