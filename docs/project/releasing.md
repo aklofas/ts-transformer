@@ -516,14 +516,6 @@ Release; the committed record stays the one step 10 collected.
    from the CHANGELOG highlights block and publish it; do not create a second
    Release by hand. If the record is not a GO, no draft is created: read the
    reasons, then create the Release by hand.
-7. **Retire the enum-retype suppression.** After the tag whose baseline
-   carries the enum retype (v0.10.0), delete the enum-retype
-   `[suppress_function]` block in `bindings/c/abi.suppr` and the self-test
-   rows and fixtures that borrow its name (`retype*` under
-   `scripts/check/c/tests/abi-fixtures/` and the `retype:` rows). The ABI
-   rail fails with "expired" once `--old-tag` is v0.10.0 or later (the
-   rail spells its expiry as v0.9.1, the number this release was developed
-   under).
 
 ## crates.io publish (Rust crates)
 
