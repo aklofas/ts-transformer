@@ -72,7 +72,7 @@ Every release exposes two pairs of macros in `tstrans.h` plus matching runtime a
 
 ```c
 #define TST_VERSION_MAJOR        0   // package (Cargo.toml) version
-#define TST_VERSION_MINOR        9
+#define TST_VERSION_MINOR        10
 #define TST_VERSION_PATCH        0
 #define TST_ABI_VERSION_MAJOR    0   // C ABI contract version
 #define TST_ABI_VERSION_MINOR    29
@@ -93,7 +93,7 @@ if (tst_get_abi_version_minor() < TST_ABI_VERSION_MINOR) {
 
 See [`examples/getting-started/version_check.c`](../../bindings/c/examples/getting-started/version_check.c) for the canonical startup pattern.
 
-In 0.9.1 the enum parameters `klv_stream_type`, `ts_framing_mode`, `reconnect_mode` and `overflow_policy` were respelled as `int32_t`. That is source- and ABI-compatible for direct calls. A caller that stored one of those functions in a **function pointer typed with the old enum** must retype the pointer.
+In 0.10.0 the enum parameters `klv_stream_type`, `ts_framing_mode`, `reconnect_mode` and `overflow_policy` were respelled as `int32_t`. That is source- and ABI-compatible for direct calls. A caller that stored one of those functions in a **function pointer typed with the old enum** must retype the pointer.
 
 A program that loads `libtstrans` at run time (`dlopen` / `LoadLibrary`) cannot read the `TST_HAS_*` defines of the build it loaded, so it asks the library: `tst_has_feature("udp")` returns 1 when the library was built with that cargo feature (`srt`, `rtp`, `udp`, `tcp`, `hls`, `rist` or `tls`, lower case) and 0 otherwise, including for NULL or an unknown name. Call it before resolving that feature's symbols. A program compiled against `tstrans.h` keeps using the defines.
 

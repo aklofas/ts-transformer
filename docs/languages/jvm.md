@@ -46,7 +46,7 @@ The JVM binding is published to Maven Central as
 <dependency>
   <groupId>org.tstrans</groupId>
   <artifactId>tstrans-jvm</artifactId>
-  <version>0.9.0</version>
+  <version>0.10.0</version>
 </dependency>
 ```
 
@@ -100,7 +100,7 @@ works — print the version string:
 ```java
 import org.tstrans.Version;
 
-System.out.println(Version.versionString());  // e.g. "0.9.0"
+System.out.println(Version.versionString());  // e.g. "0.10.0"
 ```
 
 ## First send
@@ -2700,7 +2700,7 @@ Python binding's gaps.
 
 ### Moving from 0.8
 
-Deprecated in 0.9.0, removed in 0.10.0. Each old shell class is a
+Deprecated in 0.9.0, removed in 0.11.0 (the Javadoc in 0.10.0 still says 0.10.0). Each old shell class is a
 `@Deprecated(forRemoval = true)` subclass of its replacement and keeps its
 0.8 `fromUrl` factories, which still accept only their own scheme
 (`srt://` or `rtp://`; another scheme throws `CONFIG_INVALID`).

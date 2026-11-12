@@ -65,7 +65,7 @@ needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 
 | Package | Module | Tier | Why | Before Stable |
 |---|---|---|---|---|
-| tst-core | mpegts | Stable | core mux/demux engine; `mux::StreamKind` is now `MuxStreamKind` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-core | mpegts | Stable | core mux/demux engine; `mux::StreamKind` is now `MuxStreamKind` and stays as a deprecated alias, removed in 0.11.0 | — |
 | tst-core | mpegts::demux::low_level | Internal | extension surface, binding-canonical workflow | — |
 | tst-core | binding_schema | Internal | the crossing-record schema the binding generator reads; `binding_record!` and `BINDING_SCHEMA` exist for the generator, not for consumers | — |
 | tst-core | klv | Stable | KLV substrate (encode/decode machinery) | — |
@@ -105,10 +105,10 @@ needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 | tst-core | url | Stable | shared URL-parsing plumbing used by every transport crate; spec-silent, defaults to tst-core's tier | — |
 | tst-pipeline | mux_sender | Stable | canonical send shell | — |
 | tst-pipeline | sender | Stable | TS-bytes send shell | — |
-| tst-pipeline | raw_sender | Stable | TS-bytes send shell, raw variant; `RawSendStats` is now `RawSenderStats` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-pipeline | raw_sender | Stable | TS-bytes send shell, raw variant; `RawSendStats` is now `RawSenderStats` and stays as a deprecated alias, removed in 0.11.0 | — |
 | tst-pipeline | demux_receiver | Stable | canonical receive shell | — |
 | tst-pipeline | receiver | Stable | TS-bytes receive shell | — |
-| tst-pipeline | raw_receiver | Stable | TS-bytes receive shell, raw variant; `RawRecvStats` is now `RawReceiverStats` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-pipeline | raw_receiver | Stable | TS-bytes receive shell, raw variant; `RawRecvStats` is now `RawReceiverStats` and stays as a deprecated alias, removed in 0.11.0 | — |
 | tst-pipeline | managed_demux_receiver | Stable | `Managed*` reconnect wrapper | — |
 | tst-pipeline | managed_receive | Stable | `Managed*` reconnect wrapper | — |
 | tst-pipeline | reconnect | Stable | reconnect config | — |
@@ -116,13 +116,13 @@ needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 | tst-pipeline | mux_publisher | Provisional | HLS-adjacent, newer | the HLS publisher's segment contract unchanged for one minor |
 | tst-pipeline | ext | Provisional | extensions (pairing, file transport) — newer surface | pairing and the file transport unchanged for one minor, with the pairing C exposure either built or confirmed out of the surface |
 | tst-pipeline | binding | Provisional | binding-shared handle layer (`Owned`, `HandleState`, panic helpers, `BindingErrorKind`, `view`, `opened`, `ManagedHandles`); `no_std` + `alloc` except `ManagedHandles` (`std`); shape may still move before 1.0; kept a module of tst-pipeline, not a crate (see `architecture.md`) | the planned mobile bindings built on it without a shape change |
-| tst-srt | (crate) | Stable | primary transport of the project scope; the `Srt`-prefixed type names (`SrtSocket`, `SrtListener`, `SrtSocketBuilder`, `SrtListenerBuilder`, `SrtSocketConfig`, `SrtListenerConfig`, `SrtStats`, `SrtConnectError`, `SrtUrlError`) replace the unprefixed ones (`Socket`, `Listener`, `SocketBuilder`, `ListenerBuilder`, `SocketConfig`, `ListenerConfig`, `Stats`, `ConnectError`, `url::UrlError`), which stay as deprecated aliases, removed in 0.10.0 | — |
-| tst-srt | listen_rules | Provisional | per-stream-ID rules table, shipped in 0.9.1 | one minor with no signature change |
+| tst-srt | (crate) | Stable | primary transport of the project scope; the `Srt`-prefixed type names (`SrtSocket`, `SrtListener`, `SrtSocketBuilder`, `SrtListenerBuilder`, `SrtSocketConfig`, `SrtListenerConfig`, `SrtStats`, `SrtConnectError`, `SrtUrlError`) replace the unprefixed ones (`Socket`, `Listener`, `SocketBuilder`, `ListenerBuilder`, `SocketConfig`, `ListenerConfig`, `Stats`, `ConnectError`, `url::UrlError`), which stay as deprecated aliases, removed in 0.11.0 | — |
+| tst-srt | listen_rules | Provisional | per-stream-ID rules table, shipped in 0.10.0 | one minor with no signature change |
 | tst-srt | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
 | tst-srt | shells | Provisional | URL → managed-shell open path returning `tst_pipeline::binding::ManagedHandles`; new surface, may still move before 1.0 | the managed-shell open path unchanged while the planned mobile bindings adopt it |
-| tst-udp | (crate) | Stable | small, settled; `SocketConfig` is now `UdpConfig` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-udp | (crate) | Stable | small, settled; `SocketConfig` is now `UdpConfig` and stays as a deprecated alias, removed in 0.11.0 | — |
 | tst-udp | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
-| tst-tcp | (crate) | Stable | small, settled; `SocketConfig` is now `TcpConfig` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-tcp | (crate) | Stable | small, settled; `SocketConfig` is now `TcpConfig` and stays as a deprecated alias, removed in 0.11.0 | — |
 | tst-tcp | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
 | tst-rtp | cancel | Stable | RTP cancellation handle | — |
 | tst-rtp | depay | Stable | the access unit, configuration and counters the H.264 and H.265 depacketizers share (formerly `H264Au`/`H264DepayConfig`/`H264DepayStats`, still aliased under those names) | — |
@@ -133,10 +133,10 @@ needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 | tst-rtp | packet | Stable | RTP packet parse/build | — |
 | tst-rtp | rtcp | Stable | RTCP SR/RR/SDES packet codecs and `RtcpStats` | — |
 | tst-rtp | sdp | Stable | SDP parsing (`Sdp`, `SdpMedia`) | — |
-| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `ConnectError` is now `RtpConnectError` and stays as a deprecated alias, removed in 0.10.0; `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` | — |
-| tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing; `UrlError` is now `RtpUrlError` and stays as a deprecated alias, removed in 0.10.0 | — |
+| tst-rtp | transport | Stable | RTP transports (unicast/multicast, v4/v6); `ConnectError` is now `RtpConnectError` and stays as a deprecated alias, removed in 0.11.0; `RtpRecvTransport::{end_reason, end_reason_handle}` are Provisional — they return tst-core's `EndReason`/`EndReasonHandle` | — |
+| tst-rtp | url | Stable | `rtp(s)://`/`rtsp(s)://` URL parsing; `UrlError` is now `RtpUrlError` and stays as a deprecated alias, removed in 0.11.0 | — |
 | tst-rtp | rtsp | Provisional | server surface (`RtspServer`) still evolving; the client API (`RtspClient`) is stable in practice, but the module's tier is set by the server surface — the rail is module-granular, not sub-module. `RtspClientBuilder`, `RtspServerBuilder` and `RtspServerCancelHandle` (in `rtsp::client` and `rtsp::server`, formerly in `builder` and `cancel`) keep the Stable tier they had | the server builder, mount and publisher-role surface unchanged for one minor, with publisher resource budgets settled |
-| tst-rtp | rtsp::server::mount_rules | Experimental | per-path rules table merged after 0.9.0; key canonicalisation and the Inherit fallback changed in 0.9.1; may change again without notice until the first release that ships it | one release with no change to the key rule or the fallback |
+| tst-rtp | rtsp::server::mount_rules | Experimental | per-path rules table merged after 0.9.0; key canonicalisation and the Inherit fallback changed in 0.10.0; may change again without notice until the first release that ships it | one release with no change to the key rule or the fallback |
 | tst-hls | (crate) | Provisional | crate split out of `tst-tcp` in 0.3.0 | the segment and playlist contract unchanged for one minor, with low-latency HLS either added or confirmed out of the surface |
 | tst-rist | (crate) | Provisional | profile coverage still evolving | the supported profiles and URL keys fixed, and one minor with no signature change |
 | tst-rist | opener | Provisional | URL → type-erased transport for the language bindings' shells | the opener signature unchanged while a second binding family adopts it |
