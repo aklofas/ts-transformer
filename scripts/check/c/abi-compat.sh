@@ -16,8 +16,8 @@
 #   --old-header is the header the OLD side shipped with. Without it the rail
 #   cannot tell that a struct lost its body: under CI that is an error (exit
 #   2), locally a warning (the new header alone decides the suppressions).
-#   --old-tag is the tag the OLD side was built from; it judges when the
-#   enum-retype suppression in bindings/c/abi.suppr expires (below).
+#   --old-tag is the tag the OLD side was built from; it judges when a
+#   retype suppression in bindings/c/abi.suppr expires (below).
 #   --check-prototypes runs only the prototype pin and the expiry check on two
 #   headers (exit 0/1/2); it needs no library and no abidiff.
 #
@@ -41,15 +41,17 @@
 # repr(align) and repr(packed) structs without a body), which C code compiled
 # against the old header still sees as a layout change.
 #
-# The enum-retype suppression: abi.suppr hides the DWARF parameter-type change of
-# the functions whose enum parameter became int32_t, which would also hide any
-# later change to their signatures. So when BOTH --header and --old-header are
-# given, each exported function matching that block's name_regexp must have a
-# header prototype that equals the old one once the block's `# retype:` spellings
-# are replaced by their new spelling; any other difference FAILS. With --old-tag,
+# A retype suppression: a block in abi.suppr with `change_kind =
+# function-subtype-change` hides the DWARF parameter-type change of functions
+# whose enum parameter became int32_t, which would also hide any later change
+# to their signatures. So when BOTH --header and --old-header are given, each
+# exported function matching that block's name_regexp must have a header
+# prototype that equals the old one once the block's `# retype:` spellings are
+# replaced by their new spelling; any other difference FAILS. With --old-tag,
 # the block FAILS once the baseline tag is at or after its
 # `# expires-with-baseline:` version: delete the block then. The names,
 # spellings and version are read from the block; there is no second copy.
+# abi.suppr carries no such block at present.
 #
 # Argument-driven: with no arguments it prints this usage and exits 2, with or
 # without abidiff. tests/abi-compat-selftest.sh is the entry point for sweeps.
