@@ -407,8 +407,9 @@ step 3).
     pull request, so add that row in the pull request that causes the
     growth; a row added after the freeze is a change outside the release
     documents. Instruction counts do not see cache, alignment or
-    branch-prediction effects, and a toolchain change moves every workload
-    at once.
+    branch-prediction effects, and both commits are built with the
+    candidate's pinned toolchain, so a toolchain bump between the two does
+    not show up either.
 11. **Commit the record.** In a docs-only PR, add the run's
     `qualification.json` as `docs/project/qualification.json` (CI's
     `check-qualification` step verifies the page matches it) and render the

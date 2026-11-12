@@ -18,7 +18,8 @@ fails unless <toml> accepts it for this comparison base:
     reason = "one sentence"
 
 Rows with another `since` are history and are ignored. A row for this base that
-names no workload of the run is an error, so the file cannot rot.
+names no workload of the run, or a "*" row when the old side was counted, is an
+error, so the file cannot rot.
 
 Exit 0 pass, 1 fail, 2 bad input.
 """
@@ -61,9 +62,12 @@ def parse_results(text):
             raise InputError("result row needs 4 tab-separated columns: %r" % line)
         name, iters, old, new = cols
         try:
-            out.append((name, int(iters), int(old) if old else None, int(new)))
+            row = (name, int(iters), int(old) if old else None, int(new))
         except ValueError:
             raise InputError("result row has a non-numeric count: %r" % line) from None
+        if row[1] <= 0 or row[3] <= 0 or (row[2] is not None and row[2] <= 0):
+            raise InputError("result row has a count that is not above zero: %r" % line)
+        out.append(row)
     if not out:
         raise InputError("no result rows")
     return out
@@ -75,6 +79,8 @@ def judge(results, accepted, threshold=DEFAULT_THRESHOLD):
     stale = sorted(set(accepted) - names - {"*"})
     if stale:
         raise InputError("accepted rows name workloads this run does not have: " + ", ".join(stale))
+    if "*" in accepted and any(r[2] is not None for r in results):
+        raise InputError('the "*" accepted row is stale: the harness built against the old ref')
     workloads = []
     for name, iters, old, new in results:
         rec = {"name": name, "iterations": iters, "new_instructions": round(new / iters, 1)}
