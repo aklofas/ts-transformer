@@ -23,7 +23,11 @@
 #
 # Limits: instruction counts do not see cache, alignment or branch-prediction
 # effects. Because both sides use this checkout's compiler, a toolchain bump
-# between the two commits does not show up either.
+# between the two commits does not show up either. A workload that grows a
+# buffer by reallocation counts up to about 3 % differently from one
+# invocation to the next, because the heap layout follows the environment and
+# the argument lengths; both sides of one invocation share those, so compare
+# deltas within a run, never counts across runs.
 #
 # Exit 0 pass, 1 fail, 2 a missing tool, a bad argument or a workload that
 # did not run.
@@ -36,7 +40,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --out) out="$2"; shift 2 ;;
     --threshold) threshold="$2"; shift 2 ;;
-    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "bench-ir: unknown argument $1" >&2; exit 2 ;;
     *) if [ -z "$old_ref" ]; then old_ref="$1"; elif [ -z "$new_ref" ]; then new_ref="$1"; else
          echo "bench-ir: unexpected argument $1" >&2; exit 2; fi; shift ;;
