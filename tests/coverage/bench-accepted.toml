@@ -1,0 +1,37 @@
+# Instruction-count growth accepted between two releases.
+#
+# scripts/dev/bench-ir.sh compares tst-core's instructions per iteration with
+# the previous release tag and fails when a workload grew by more than 3 %
+# unless a row here accepts it. A row applies only while `since` is the
+# comparison base; rows for older bases stay as the record of what each
+# release paid and why.
+#
+#   workload            a name from `ir list`, or "*" when the harness does
+#                       not build against `since` and nothing can be compared
+#   since               the old ref the growth is measured from
+#   max_growth_percent  the growth this row accepts (not needed for "*")
+#   reason              what the instructions buy
+
+[[accepted]]
+workload = "st0601_decode"
+since = "v0.9.0"
+max_growth_percent = 26
+reason = "0.10.0 applies the last duplicate of a single-use tag and counted the occurrences in a second walk over every packet"
+
+[[accepted]]
+workload = "demux_feed_per_188"
+since = "v0.9.0"
+max_growth_percent = 13
+reason = "0.10.0's demux conformance checks: discontinuity handling, damaged-PES marking, duplicate-packet and AU-cell rules"
+
+[[accepted]]
+workload = "demux_feed_whole"
+since = "v0.9.0"
+max_growth_percent = 10
+reason = "0.10.0's demux conformance checks: discontinuity handling, damaged-PES marking, duplicate-packet and AU-cell rules"
+
+[[accepted]]
+workload = "muxer_new"
+since = "v0.9.0"
+max_growth_percent = 6
+reason = "0.10.0's Muxer::reconfigure keeps a slot table, PAT and PMT versions and a PMT identity per program"
