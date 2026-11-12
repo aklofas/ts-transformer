@@ -11,7 +11,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed — tst-core
 
-- `klv::st0601` decoding walks the Local Set once when no single-use tag repeats, which is the usual packet. 0.10.0 walked every packet twice and cleared a 1 KiB table to apply the last duplicate of a tag; that second walk now runs only for a packet that does repeat one. Decoding a typical packet executes about a quarter fewer instructions than in 0.10.0. The decoded record and every error are unchanged.
+- `klv::st0601` decoding walks the Local Set once when no single-use tag repeats, which is the usual packet. 0.10.0 walked every packet twice and cleared a 1 KiB table to apply the last duplicate of a tag; that second walk now runs only for a packet that does repeat one. Decoding a typical packet executes about a quarter fewer instructions than in 0.10.0; a packet that does repeat a single-use tag is decoded twice and costs up to about half more than it did. The decoded record and every error are unchanged.
 - The demuxer's duplicate-packet test compares the continuity counter before it looks up the stored copy of the previous packet, as it did before 0.10.0. That removes one map lookup and about 4 % of the instructions per payload packet. Events are unchanged.
 
 ---

@@ -3734,7 +3734,9 @@ proptest::proptest! {
     fn single_walk_matches_the_two_pass_walk(
         items in proptest::collection::vec(
             (
-                proptest::sample::select(vec![1u32, 2, 5, 13, 23, 48, 65, 72, 102, 115, 66, 150, 258]),
+                // 69 and 77 share their low six bits with 5 and 13: a
+                // repeat is one tag twice, never two tags 64 apart.
+                proptest::sample::select(vec![1u32, 2, 5, 13, 23, 48, 65, 69, 72, 77, 102, 115, 66, 150, 258]),
                 proptest::collection::vec(proptest::prelude::any::<u8>(), 0..10),
             ),
             0..12,

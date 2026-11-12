@@ -308,7 +308,7 @@ impl super::demuxer::Demuxer {
             // ("only-two" rule). A third identical packet with the same CC IS
             // a real discontinuity — treat it like a CC jump.
             // The counter test comes first: it settles almost every packet
-            // without a second `pid_state` lookup or a byte compare.
+            // without a second `pid_state` lookup.
             if pkt.continuity_counter == prev_cc && self.is_identical_repeat(pkt) {
                 if prev_was_dup {
                     // Third (or later) identical packet with the same CC —
