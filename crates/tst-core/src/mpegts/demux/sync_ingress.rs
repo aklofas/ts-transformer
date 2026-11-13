@@ -240,8 +240,9 @@ impl super::demuxer::Demuxer {
     /// enforced via `PidState::dup`).
     ///
     /// `kind` is what `Demuxer::stream_kind` answers for the PID of a
-    /// payload packet. The PID's state is looked up once here and the kind
-    /// read from it, so routing the packet needs no second lookup.
+    /// payload packet, and `None` for a packet without payload. The PID's
+    /// state is looked up once here and the kind read from it, so routing
+    /// the packet needs no second lookup.
     ///
     /// Side effect: clears `self.last_psi_cc_jump` at entry, sets it to
     /// `Some((expected, observed))` when a real jump fires. `handle_psi`
@@ -262,7 +263,11 @@ impl super::demuxer::Demuxer {
             return Continuity {
                 jumped: false,
                 duplicate: false,
-                kind: self.stream_kind(pkt.pid),
+                kind: if pkt.has_payload {
+                    self.stream_kind(pkt.pid)
+                } else {
+                    None
+                },
             };
         }
         // Adaptation-field-only packets (afc='10') do not carry a payload and
@@ -286,9 +291,10 @@ impl super::demuxer::Demuxer {
                 kind: None,
             };
         }
-        // Every payload packet leaves its counter and bytes in the PID's
-        // state, so the entry is created here if the PID is new. The events
-        // are queued once the borrow of the state has ended.
+        // A payload packet leaves its counter and bytes in the PID's state
+        // (all but a suppressed duplicate, whose PID has an entry already),
+        // so the entry is created here if the PID is new. The events are
+        // queued once the borrow of the state has ended.
         let state = self.pid_state.entry(pkt.pid).or_default();
         let kind = state.stream_kind;
         let mut jump = None;
@@ -325,6 +331,7 @@ impl super::demuxer::Demuxer {
                     // recording the same jump a second time. (the stored cc would
                     // be re-inserted with the identical value — skipping the
                     // tail is a no-op for it.)
+                    //
                     // Lost bytes leave the LOAS record position unknown;
                     // `latm_unsynced_bytes` stays, a gap is more evidence of trouble.
                     state.forget_latm_position();
@@ -414,7 +421,8 @@ pub(super) struct Continuity {
     pub(super) jumped: bool,
     /// The one allowed duplicate of the previous packet: route nothing.
     pub(super) duplicate: bool,
-    /// The PES dispatch kind a PMT declared for the PID of a payload packet.
+    /// The PES dispatch kind a PMT declared for the PID of a payload packet;
+    /// `None` for a packet without payload.
     pub(super) kind: Option<StreamKind>,
 }
 
