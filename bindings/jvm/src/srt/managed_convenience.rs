@@ -640,6 +640,7 @@ jni_native! {
                 pipe.packets_sent,
                 pipe.bytes_sent,
                 u64::from(pipe.programs_configured),
+                pipe.late_metadata_pushes,
             ),
         ) {
             Ok(o) => o,

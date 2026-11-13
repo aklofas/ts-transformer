@@ -113,6 +113,7 @@ impl Muxer {
 
         let audio_packets = ts_packets_for(self.pes_scratch.len());
         let plan = self.reserve_preamble(prog_idx, pts, audio_pid, audio_packets, false)?;
+        self.count_if_late(prog_idx, audio_pid, pts, &plan);
         self.drain_pes_scratch(audio_pid, plan.first_af(false));
 
         // Count on the Ok path only — after all early-returns above.

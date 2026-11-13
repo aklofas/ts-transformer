@@ -678,6 +678,65 @@ fn small_backward_step_is_clamped_not_flagged() {
     assert!(pcrs.iter().all(|p| p.1 & 0x80 == 0));
 }
 
+// ── Late metadata ───────────────────────────────────────────────────────────
+
+/// Metadata should reach a receiver before its PTS. A unit pushed after the
+/// PCR has passed its PTS is not dropped: it is muxed and counted.
+#[test]
+fn late_klv_is_sent_and_counted() {
+    let mut mux = Muxer::new(five_stream_config()).unwrap();
+    let k = mux.klv_handles()[0];
+    mux.push_video(&h264(true), Pts90khz::new(90_000), true)
+        .unwrap(); // PCR 81 000
+    let _ = drain_all(&mut mux);
+    mux.push_klv_to(k, &klv(), Pts90khz::new(36_000), 0)
+        .unwrap();
+    let ts = drain_all(&mut mux);
+    assert!(ts.chunks_exact(188).any(|p| pid(p) == 0x102), "still sent");
+    assert_eq!(mux.stats().late_metadata_pushes, 1);
+    mux.push_klv_to(k, &klv(), Pts90khz::new(81_000), 0)
+        .unwrap();
+    assert_eq!(
+        mux.stats().late_metadata_pushes,
+        1,
+        "a unit at the PCR is on time"
+    );
+}
+
+/// The default KLV stream's PES carries no PTS, so nothing is stamped for a
+/// time that could have passed.
+#[test]
+fn pts_less_klv_is_never_late() {
+    let mut mux = default_mux();
+    mux.push_video(&h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    mux.push_klv(&klv(), Pts90khz::new(36_000), 0).unwrap();
+    assert_eq!(mux.stats().late_metadata_pushes, 0);
+}
+
+#[test]
+fn late_audio_data_and_subtitle_are_counted_and_reset_clears_it() {
+    let mut mux = Muxer::new(five_stream_config()).unwrap();
+    let (a, d, s) = (
+        mux.audio_handles()[0],
+        mux.data_handles()[0],
+        mux.subtitle_handles()[0],
+    );
+    mux.push_video(&h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    let late = Pts90khz::new(80_999);
+    mux.push_audio_to(a, late, &[0xA5; 64]).unwrap();
+    mux.push_data_to(d, &[0xA5; 64], late).unwrap();
+    mux.push_subtitle_to(s, late, b"WEBVTT\n").unwrap();
+    assert_eq!(mux.stats().late_metadata_pushes, 3);
+    // The PCR PID's own pushes are never counted, however far back.
+    mux.push_video(&h264(false), Pts90khz::new(60_000), false)
+        .unwrap();
+    assert_eq!(mux.stats().late_metadata_pushes, 3);
+    mux.reset_stats();
+    assert_eq!(mux.stats().late_metadata_pushes, 0);
+}
+
 // ── A failed push ───────────────────────────────────────────────────────────
 
 /// `BufferFull` on any push kind leaves the clock where it was: the next

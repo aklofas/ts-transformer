@@ -530,6 +530,7 @@ impl PyMuxSender {
         mux_stats.ts_packets_emitted = pipe.packets_sent;
         mux_stats.ts_bytes_emitted = pipe.bytes_sent;
         mux_stats.programs_configured = pipe.programs_configured;
+        mux_stats.late_metadata_pushes = pipe.late_metadata_pushes;
         mux_stats.per_stream = pipe.per_stream;
         let sock_py = Py::new(py, SocketStats::from(&sock))?;
         let mux_py = Py::new(py, MuxerStats::from(&mux_stats))?;

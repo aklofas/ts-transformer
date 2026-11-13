@@ -166,7 +166,8 @@ impl Muxer {
         let subtitle_packets = ts_packets_for(self.pes_scratch.len());
         // validate() bans subtitle PIDs as PCR PIDs, so this push never
         // carries the PCR itself.
-        self.reserve_preamble(prog_idx, pts, subtitle_pid, subtitle_packets, false)?;
+        let plan = self.reserve_preamble(prog_idx, pts, subtitle_pid, subtitle_packets, false)?;
+        self.count_if_late(prog_idx, subtitle_pid, pts, &plan);
 
         // Subtitles do NOT extend the PCR fallback chain — they are sparse
         // and event-driven, and the validate path rejects them as PCR PIDs

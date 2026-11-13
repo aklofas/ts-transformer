@@ -10,15 +10,16 @@ pub(crate) fn build_muxer_stats<'l>(
     env: &mut Env<'l>,
     r: &tst_core::mpegts::mux::MuxerStats,
 ) -> jni::errors::Result<JObject<'l>> {
-    env.ensure_local_capacity(40)?;
+    env.ensure_local_capacity(42)?;
     let obj = env.new_object(
         crate::jutil::FindClass(jni_str!("org/tstrans/mpegts/MuxerStats")),
-        jni_sig!("(JJJJ)V"),
+        jni_sig!("(JJJJJ)V"),
         &[
             JValue::Long(r.ts_packets_emitted as i64),
             JValue::Long(r.ts_bytes_emitted as i64),
             JValue::Long(r.programs_configured as i64),
             JValue::Long(r.subtitle_streams_configured as i64),
+            JValue::Long(r.late_metadata_pushes as i64),
         ],
     )?;
     Ok(obj)

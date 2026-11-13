@@ -189,7 +189,10 @@ impl Muxer {
         let data_packets = ts_packets_for(self.pes_scratch.len());
         // Like KLV, a data push can be what keeps PSI and PCR-only packets
         // going when the PCR stream is silent.
-        self.reserve_preamble(prog_idx, pts, data_pid, data_packets, false)?;
+        let plan = self.reserve_preamble(prog_idx, pts, data_pid, data_packets, false)?;
+        if data_carries_pts {
+            self.count_if_late(prog_idx, data_pid, pts, &plan);
+        }
 
         // No PCR-on-first-packet branch here (unlike push_klv):
         // validate() rejects PCR pinned on a data PID and the

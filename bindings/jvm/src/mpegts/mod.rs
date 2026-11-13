@@ -1177,19 +1177,21 @@ fn av1_carriage_name(mode: Av1CarriageMode) -> &'static str {
     }
 }
 
-/// The muxer counters a shell reports: packets, bytes and programs. A shell
-/// does not track `subtitle_streams_configured` (only the inner muxer does), so
-/// it reads 0, as in tst-py. Shared by the srt and rtp `MuxSender` /
+/// The muxer counters a shell reports: packets, bytes, programs and late
+/// pushes. A shell does not track `subtitle_streams_configured` (only the
+/// inner muxer does), so it reads 0, as in tst-py. Shared by the srt and rtp `MuxSender` /
 /// `DemuxReceiver` / managed-convenience JNI surfaces, which hand it to the
 /// generated `MuxerStats` builder.
 pub(crate) fn shell_muxer_stats(
     ts_packets_emitted: u64,
     ts_bytes_emitted: u64,
     programs_configured: u64,
+    late_metadata_pushes: u64,
 ) -> tst_core::mpegts::mux::MuxerStats {
     let mut stats = tst_core::mpegts::mux::MuxerStats::default();
     stats.ts_packets_emitted = ts_packets_emitted;
     stats.ts_bytes_emitted = ts_bytes_emitted;
     stats.programs_configured = u32::try_from(programs_configured).unwrap_or(u32::MAX);
+    stats.late_metadata_pushes = late_metadata_pushes;
     stats
 }
