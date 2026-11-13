@@ -86,10 +86,19 @@ check "the tag pointing at HEAD still counts" 1 'v0.11.0 points at this commit'
 # Unreadable inputs fail.
 repo_at 0.10.0; g tag v0.10.0; commit_version 0.11.0-dev
 check "a version that is not MAJOR.MINOR.PATCH is refused" 2 'not MAJOR.MINOR.PATCH'
+repo_at 0.10.0; g tag v0.10.0; commit_version 0.011.0
+check "a version component with a leading zero is refused" 2 'not MAJOR.MINOR.PATCH'
 repo_at 0.10.0; g tag v0.10.0; rm "$repo/Cargo.toml"
 check "a checkout without Cargo.toml is refused" 2 'Cargo.toml'
 repo=$tmp/plain; mkdir -p "$repo"
 check "a directory that is not a checkout is refused" 2 'not a git checkout'
+# An unpacked archive under another repository has no tags of its own: the
+# repository around it must not answer for it.
+repo_at 0.10.0; g tag v0.10.0
+mkdir "$repo/unpacked"
+printf '[workspace.package]\nversion = "0.11.0"\n' > "$repo/unpacked/Cargo.toml"
+repo=$repo/unpacked
+check "a directory inside another repository is refused" 2 'not a git checkout' 'newest release tag'
 
 # The stated way out for a run that is not release evidence.
 repo_at 0.10.0; g tag v0.10.0
