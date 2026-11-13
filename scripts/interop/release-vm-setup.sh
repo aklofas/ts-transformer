@@ -146,9 +146,12 @@ stage checkout "$rc"
 # The commit must be the swept one: a workspace version above the newest
 # release tag. The check is the checkout's own, since this file reaches a
 # fresh host alone; a commit from before the check existed has none and is
-# refused the same way.
+# refused the same way. A host that is not for a release run skips the
+# stage here, so that such a commit can be set up for one.
 rc=0
-if [[ -f "$REPO_DIR/scripts/interop/release-version-check.sh" ]]; then
+if [[ "${TSTRANS_NOT_A_RELEASE:-}" == 1 ]]; then
+  echo "release-vm-setup.sh: version check skipped (TSTRANS_NOT_A_RELEASE=1): this host is not for a release run"
+elif [[ -f "$REPO_DIR/scripts/interop/release-version-check.sh" ]]; then
   bash "$REPO_DIR/scripts/interop/release-version-check.sh" "$REPO_DIR" || rc=$?
 else
   echo "release-vm-setup.sh: $SHA has no scripts/interop/release-version-check.sh, so its version cannot be checked" >&2
