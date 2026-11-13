@@ -16,3 +16,5 @@ mod shutdown;
 #[cfg(feature = "tls")]
 #[path = "net_whep/tls.rs"]
 mod tls;
+#[path = "net_whep/wildcard.rs"]
+mod wildcard;
