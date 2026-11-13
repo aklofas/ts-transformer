@@ -28,6 +28,11 @@ name: fuzz
 # after the shard's other targets ran; the reproducer and the target's last
 # output are uploaded as `fuzz-failed-shard-<n>-<crate>-<target>`.
 #
+# A target that fuzzed for its time, exited 0 and left artefact files passed:
+# libFuzzer writes `slow-unit-*` for an input that took over ten seconds and
+# goes on. The shard raises a warning and uploads the files and the target's
+# last output as `fuzz-kept-shard-<n>`.
+#
 # Nothing here publishes and no secret is used: there is no publish-shaped job
 # for scripts/check/repo/publish-guards.sh to hold behind a `dry_run` input.
 
@@ -163,6 +168,16 @@ jobs:
         with:
           name: fuzz-failed-shard-${{ matrix.shard }}-unfinished
           path: ${{ runner.temp }}/fuzz/failures
+          if-no-files-found: ignore
+
+      - name: Keep the artefact files of the targets that passed
+        # A slow input is no crash and does not fail the shard, so this does
+        # not depend on how the shard ended.
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fuzz-kept-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/fuzz/kept
           if-no-files-found: ignore
 
   result:

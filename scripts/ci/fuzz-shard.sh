@@ -6,21 +6,26 @@
 #   fuzz-shard.sh <shard> <shards> <seconds-per-target> <out-dir>
 #
 # Writes <out-dir>/fuzz-shard-<shard>.json, one row per target:
-#   ok     exit 0 after at least the given time
+#   ok     exit 0 after fuzzing for at least the given time. `artefacts` is
+#          above zero when the run left files all the same (libFuzzer writes
+#          `slow-unit-*` for an input that took over ten seconds and goes on):
+#          the target passed, and the files are kept and warned about
 #   crash  a non-zero exit that left artefact files: the target ran, and
 #          `artefacts` (the files in its artefact directory) counts the crashes
 #   error  a non-zero exit with no artefact (a build failure, a lockfile that
 #          would need re-resolving, artefacts left by an earlier run): did not run
-#   short  exit 0 before the time was up: did not run for what the record
-#          would claim
+#   short  exit 0 before the time was up, or having run no input: did not run
+#          for what the record would claim
 # A failed target does not stop the shard: the rest run, then the script exits
 # 1. For every target that did not end `ok`, <out-dir>/failures/<crate>/<target>/
 # holds the last lines of its output and, for a crash, its artefact files (the
-# reproducers).
+# reproducers). For a target that ended `ok` and left artefact files,
+# <out-dir>/kept/<crate>/<target>/ holds the same two things.
 # Exits non-zero without a result file when the shard has no target to run.
 #
 # In a workflow it also sets the step output `failed` (the first failed target,
-# for the artefact name) and adds a table to the step summary.
+# for the artefact name), raises a warning for each passing target that left
+# artefact files and adds a table to the step summary.
 set -euo pipefail
 
 [ $# -eq 4 ] || { echo "usage: $0 <shard> <shards> <seconds-per-target> <out-dir>" >&2; exit 2; }
@@ -39,6 +44,8 @@ checked=""; lock_ok=0; failed=0; first_failed=""
 {
   echo "### Fuzz shard $shard, $seconds s per target"
   echo
+  echo "Toolchain: \`$(rustc +nightly -V)\`, \`$(cargo +nightly fuzz --version)\`"
+  echo
   echo "| Target | Outcome | Artefact files | Seconds |"
   echo "|---|---|---|---|"
 } >> "$summary"
@@ -48,6 +55,7 @@ while read -r crate name <&3; do
   dir="$ROOT/crates/$crate/fuzz"
   log="$out/logs/$crate-$name.log"
   keep="$out/failures/$crate/$name"
+  kept="$out/kept/$crate/$name"
   if [ "$crate" != "$checked" ]; then
     checked="$crate"; lock_ok=1
     echo "::group::toolchain and lockfile of $crate"
@@ -77,8 +85,9 @@ while read -r crate name <&3; do
     [ -d "$dir/artifacts/$name" ] && found="$(find "$dir/artifacts/$name" -type f | wc -l | tr -d ' ')"
     # libFuzzer closes a run that reached its time with "Done N runs in S
     # second(s)". That line is what says the target fuzzed for its time: the
-    # wall clock also holds the build of the crate's fuzz workspace.
-    fuzzed="$(sed -n 's/^.*Done [0-9][0-9]* runs in \([0-9][0-9]*\) second(s).*$/\1/p' "$log" | tail -n 1)"
+    # wall clock also holds the build of the crate's fuzz workspace. A line
+    # that counts no run does not say it.
+    fuzzed="$(sed -n 's/^.*Done [1-9][0-9]* runs in \([0-9][0-9]*\) second(s).*$/\1/p' "$log" | tail -n 1)"
     if [ "$rc" -eq 0 ] && [ "${fuzzed:-0}" -ge "$seconds" ]; then
       outcome=ok
     elif [ "$rc" -eq 0 ]; then
@@ -95,6 +104,12 @@ while read -r crate name <&3; do
     [ "$outcome" = crash ] && cp -R "$dir/artifacts/$name/." "$keep/"
     tail -n 200 "$log" > "$keep/output-tail.txt"
     echo "::error::fuzz target $crate/$name: $outcome ($found artefact file(s))"
+  elif [ "$found" -gt 0 ]; then
+    # Not a crash, and still something to read: a slow input to a parser.
+    mkdir -p "$kept"
+    cp -R "$dir/artifacts/$name/." "$kept/"
+    tail -n 200 "$log" > "$kept/output-tail.txt"
+    echo "::warning::fuzz target $crate/$name passed and left $found artefact file(s), kept in the artefact fuzz-kept-shard-$shard"
   fi
   jq -n -c --arg crate "$crate" --arg name "$name" --arg outcome "$outcome" --argjson artefacts "$found" --argjson elapsed "$elapsed" \
     '{crate: $crate, name: $name, outcome: $outcome, artefacts: $artefacts, elapsed_s: $elapsed}' >> "$rows"

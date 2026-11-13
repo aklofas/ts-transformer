@@ -490,9 +490,18 @@ step 3).
     is a NO-GO when a declared target did not run, ended before its time or
     crashed. A crash fails its job after the job's other targets ran, and
     the run keeps the reproducer and the target's last output as the
-    artefact `fuzz-failed-shard-<n>-<crate>-<target>`; reproduce it with
-    `cargo +nightly fuzz run <target> <file>` in `crates/<crate>/fuzz`. The
-    record's fuzz line states the seconds per target. To run the leg alone
+    artefact `fuzz-failed-shard-<n>-<crate>-<target>` (with more than one
+    failed target in a job the name ends `-and-<k>-more`, and the artefact
+    holds them all); reproduce it with
+    `cargo +nightly fuzz run <target> <file>` in `crates/<crate>/fuzz`. A
+    target that fuzzed for its time and exited 0 passed even when it left
+    artefact files: libFuzzer writes `slow-unit-*` for an input that took
+    over ten seconds and goes on. The job raises a warning that names the
+    target and keeps the files and the target's last output as the artefact
+    `fuzz-kept-shard-<n>`, and the result job's summary counts them; read
+    them before the tag, because a slow input to a parser is a finding even
+    though it does not change the verdict. The record's fuzz line states
+    the seconds per target. To run the leg alone
     on a commit:
     ```bash
     gh workflow run fuzz.yml -f sha=<the full 40-hex commit sha> -f seconds_per_target=600

@@ -82,6 +82,12 @@ class LoadTests(unittest.TestCase):
             with self.subTest(row=row), self.assertRaisesRegex(fs.ShardError, "needs a crate and a name"):
                 fs.load_targets(make_root([], crates=["tst-core"], text="[[target]]\n" + row))
 
+    def test_a_target_key_that_is_not_an_array_of_tables_is_an_error(self):
+        for text in ('target = "tst-core"\n', "target = 3\n", 'target = ["a", "b"]\n',
+                     'target = { crate = "tst-core", name = "a" }\n'):
+            with self.subTest(text=text), self.assertRaisesRegex(fs.ShardError, "array of tables|needs a crate"):
+                fs.load_targets(make_root([], crates=["tst-core"], text=text))
+
     def test_a_name_that_is_not_a_plain_word_is_an_error(self):
         for crate, name in (("tst-core", "a b"), ("tst-core", "../x"), ("tst core", "a"), ("tst-core", "")):
             text = '[[target]]\ncrate = "%s"\nname = "%s"\n' % (crate, name)
@@ -207,7 +213,7 @@ class MergeTests(unittest.TestCase):
         merged, problems = self.merge()
         self.assertEqual(problems, [])
         self.assertEqual(merged, {"targets_run": len(MIXED), "seconds_per_target": 60, "crashes": 0,
-                                  "shards": 4, "crates": ["tst-core", "tst-rtp", "tst-srt", "tst-webrtc"]})
+                                  "artefacts_kept": 0, "shards": 4, "crates": ["tst-core", "tst-rtp", "tst-srt", "tst-webrtc"]})
 
     def test_no_result_file_at_all_writes_nothing_and_is_a_problem(self):
         for results in (self.results, os.path.join(self.results, "absent")):
@@ -234,12 +240,19 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(merged["crashes"], 2)
         self.assertEqual(problems, ["tst-core/t01 (shard 1 of 4): crash, 2 artefact file(s)"])
 
-    def test_artefact_files_of_a_target_that_ended_ok_are_not_crashes(self):
+    def test_artefact_files_of_a_target_that_ended_ok_are_counted_as_kept_not_as_crashes(self):
         # libFuzzer also writes artefacts that are not failures (a slow unit).
         for k in (1, 2, 3, 4):
-            self.write(k, **({"t01": ("ok", 3)} if k == 1 else {}))
+            self.write(k, **({"t01": ("ok", 3)} if k == 1 else {"r1": ("ok", 1)} if k == 3 else {}))
         merged, problems = self.merge()
         self.assertEqual((merged["targets_run"], merged["crashes"], problems), (len(MIXED), 0, []))
+        self.assertEqual(merged["artefacts_kept"], 4)
+
+    def test_a_crash_s_artefact_files_are_not_counted_as_kept(self):
+        for k in (1, 2, 3, 4):
+            self.write(k, **({"t01": ("crash", 2), "t02": ("ok", 1)} if k == 1 else {}))
+        merged, _ = self.merge()
+        self.assertEqual((merged["crashes"], merged["artefacts_kept"]), (2, 1))
 
     def test_a_target_that_errored_or_ended_early_did_not_run(self):
         for outcome in ("error", "short"):
@@ -392,6 +405,14 @@ class CliTests(unittest.TestCase):
         rc, out, err = self.run_cli(argv)
         self.assertEqual(rc, 0, err)
         self.assertIn("%d of %d declared targets ran for 60 s each with 0 crash(es)" % (len(MIXED), len(MIXED)), out)
+        self.assertNotIn("left by targets that passed", out)
+        doc = shard_result(4, 4, 60, dealt[3])
+        doc["targets"][0]["artefacts"] = 2
+        with open(os.path.join(results, "fuzz-shard-4.json"), "w") as f:
+            json.dump(doc, f)
+        rc, out, err = self.run_cli(argv)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("fuzz: 2 artefact file(s) left by targets that passed are kept (fuzz-kept-shard-<n>)", out)
 
     def test_merge_with_no_result_writes_no_file(self):
         root = make_root(MIXED)
