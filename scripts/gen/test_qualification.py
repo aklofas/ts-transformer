@@ -568,6 +568,7 @@ class SemverGateTests(unittest.TestCase):
                     f["ci.json"]["head_sha"] = sha
                     f["semver-checks.json"] = json.loads(json.dumps(BREAKS))
                     f["semver-baseline.json"] = {"previous_tag": "v0.9.0"}
+                    f["abi.json"] = dict(ABI, previous_tag="v0.9.0")
                 art, _ = build(os.path.join(d, "a"), mutate)
                 put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
                 put(os.path.join(root, "tests/coverage/evidence-archives.toml"), ARCHIVES)
@@ -2166,6 +2167,7 @@ class TagAndEquivalenceTests(unittest.TestCase):
             for f in ("CHANGELOG.md", "docs/x.md", "README"):
                 spit(os.path.join(root, f), "1\n")
             spit(os.path.join(root, "Cargo.toml"), CARGO_TOML)
+            crate_with_baseline(root, "crates/tst-core", "tst-core")
             git(root, "add", ".")
             git(root, "commit", "-q", "-m", "A")
             soaked = git(root, "rev-parse", "HEAD")
@@ -2523,6 +2525,7 @@ class WorkflowBindingTests(unittest.TestCase):
             os.makedirs(os.path.dirname(os.path.join(root, f)), exist_ok=True)
             spit(os.path.join(root, f), "1\n")
         spit(os.path.join(root, "Cargo.toml"), CARGO_TOML)
+        crate_with_baseline(root, "crates/tst-core", "tst-core")
         git(root, "add", ".")
         git(root, "commit", "-q", "-m", "A")
         a = git(root, "rev-parse", "HEAD")
