@@ -763,6 +763,41 @@ fn cc_fourth_same_cc_keeps_firing_discontinuities() {
     );
 }
 
+/// The one-duplicate allowance is per packet (H.222.0 §2.4.3.3): after a
+/// duplicated packet, the next packet of the PID may be duplicated too.
+#[test]
+fn cc_duplicate_allowance_renews_on_the_next_packet() {
+    let clean = build_clean_stream();
+    let mut d_clean = Demuxer::new();
+    d_clean.feed(&clean).unwrap();
+    d_clean.flush();
+    let expected_aus = collect_video_raw_bytes(&mut d_clean);
+
+    // One copy of the 2nd video packet, then one copy of the 3rd (the 4th
+    // video packet of the patched stream).
+    let patched = insert_video_packet_duplicates(&clean, 2, 1);
+    let patched = insert_video_packet_duplicates(&patched, 4, 1);
+    assert_eq!(patched.len(), clean.len() + 2 * 188);
+
+    let mut d = Demuxer::new();
+    d.feed(&patched).unwrap();
+    d.flush();
+    assert_eq!(
+        collect_video_raw_bytes(&mut d),
+        expected_aus,
+        "both duplicates must be suppressed"
+    );
+
+    let mut d = Demuxer::new();
+    d.feed(&patched).unwrap();
+    d.flush();
+    assert_eq!(
+        count_continuity_jumps(&mut d),
+        0,
+        "a duplicate of the packet after a duplicated one is not a third copy"
+    );
+}
+
 /// Find the Nth video TS packet (PID 0x100) in `stream` and insert one copy
 /// with the SAME header (incl. CC) but a corrupted final payload byte.
 /// Models the non-conformant same-CC-different-bytes case that must NOT be
