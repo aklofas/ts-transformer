@@ -25,7 +25,7 @@ commit one
 # cargo-semver-checks is not installed: `cargo +stable semver-checks --version` fails.
 printf '#!/usr/bin/env bash\nexit 1\n' > "$T/bin/cargo"
 chmod +x "$T/bin/cargo"
-run() { rm -rf "$T/out"; PATH="$T/bin:$PATH" bash "$R/scripts/dev/semver-checks.sh" "$T/out" > "$T/log" 2>&1; rc=$?; }
+run() { PATH="$T/bin:$PATH" bash "$R/scripts/dev/semver-checks.sh" "$T/out" > "$T/log" 2>&1; rc=$?; }
 tag_in() { python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["previous_tag"])' "$T/out/semver-baseline.json" 2>/dev/null; }
 
 run
@@ -38,6 +38,15 @@ run
 if [ "$rc" -eq 2 ] && [ "$(tag_in)" = v1.2.2 ] && [ ! -e "$T/out/semver-checks.json" ] && grep -q 'cargo-semver-checks' "$T/log"; then
   ok "the tool is missing: exit 2, yet the baseline file names v1.2.2 and there is no report"
 else no "the tool is missing: exit 2, yet the baseline file names v1.2.2 and there is no report (rc=$rc, tag=$(tag_in))"; fi
+
+# A failed run leaves neither file of an earlier one in the same directory.
+echo '[]' > "$T/out/semver-checks.json"
+g tag -d v1.2.2 > /dev/null
+run
+if [ "$rc" -eq 2 ] && [ ! -e "$T/out/semver-baseline.json" ] && [ ! -e "$T/out/semver-checks.json" ]; then
+  ok "a run without a release tag removes the files of the run before it"
+else no "a run without a release tag removes the files of the run before it (rc=$rc)"; fi
+g tag v1.2.2 HEAD~2
 
 # The tag on HEAD is the release being qualified, never its own baseline.
 g tag v1.2.3

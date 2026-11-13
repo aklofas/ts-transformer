@@ -33,7 +33,7 @@ CONTEXT = {
     "host": {"runner": "ubuntu-24.04", "arch": "x86_64", "kernel": "6.8.0"},
 }
 LEGS = {n: {"conclusion": "success", "run_url": "https://example.test/run/" + str(i)}
-        for i, n in enumerate(["interop", "jvm-jar", "python-wheels", "c-abi", "bench-ir", "fuzz"])}
+        for i, n in enumerate(["interop", "jvm-jar", "python-wheels", "c-abi", "bench-ir", "fuzz", "semver-checks"])}
 LEGS["sanitizers"] = {"conclusion": "success", "run_url": "https://example.test/run/san"}
 CI = {"conclusion": "success", "run_url": "https://example.test/run/ci", "event": "push",
       "run_id": 41, "run_attempt": 1, "head_sha": SHA}
