@@ -278,7 +278,7 @@ class SemverGateTests(unittest.TestCase):
         return [r for r in rec["verdict_reasons"] if r.startswith("semver-checks")]
 
     def test_breaks_under_a_new_minor_are_go_and_the_record_states_the_inputs(self):
-        # The 0.10.0 release: compared with v0.9.0, breaks reported, the version a new minor.
+        # Compared with v0.9.0, breaks reported, the version a new minor.
         for release in (True, False):
             with self.subTest(release=release):
                 rec = self.run_gate("v0.9.0", "0.10.0", release=release)
@@ -289,7 +289,7 @@ class SemverGateTests(unittest.TestCase):
                 self.assertTrue(leg(rec, "semver-checks")["required"])
 
     def test_breaks_under_a_patch_bump_are_no_go(self):
-        # The mistake: breaks landed while the tree was numbered 0.9.1.
+        # Breaks under a patch number: the tree says 0.9.1 after v0.9.0.
         for release in (True, False):
             with self.subTest(release=release):
                 rec = self.run_gate("v0.9.0", "0.9.1", release=release)

@@ -30,7 +30,7 @@ expected_files = 251
 
 # The release soak's required length in seconds. A soak row qualifies as a release soak
 # when its expected_duration_s is at least this; the gate judges the newest such row that
-# stands for the tree. 48 hours from 0.9.1: hours are a proxy for event counts,
+# stands for the tree. 48 hours from 0.10.0: hours are a proxy for event counts,
 # which the launcher's cadence knobs raise instead. The 0.9.0 rows keep 259200.
 [soak]
 required_duration_s = 172800

@@ -935,7 +935,7 @@ both senders 14.5 h in and idled unnoticed for 12 h, which is why this
 exists.
 
 The RSS-slope gate defaults to 200 KiB/hour for runs of 24 h or more (the
-release soak is 48 h from 0.9.1, with 300-s publisher generations and a 4-h
+release soak is 48 h from 0.10.0, with 300-s publisher generations and a 4-h
 outage period — 576 generations and 12 windows, more events than the 0.9.0
 run's 72 h gave; warm-up is `min(1800 s, 0.1667 × duration)` = 30 min, so the
 post-warm-up slope window is ≈47.5 h), pinned from the 2026-08-05 run: its
