@@ -6788,6 +6788,8 @@ impl tst_core::mpegts::mux::Muxer
 pub fn tst_core::mpegts::mux::Muxer::reset_stats(&mut self)
 pub fn tst_core::mpegts::mux::Muxer::stats(&self) -> tst_core::mpegts::mux::MuxerStats
 pub fn tst_core::mpegts::mux::Muxer::stream_codec_stats(&self, u16) -> core::option::Option<tst_core::mpegts::stats::StreamCodecStats>
+impl tst_core::mpegts::mux::Muxer
+pub fn tst_core::mpegts::mux::Muxer::tick(&mut self, u16, tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_core::error::MuxError>
 impl core::marker::Freeze for tst_core::mpegts::mux::Muxer
 impl core::marker::Send for tst_core::mpegts::mux::Muxer
 impl core::marker::Sync for tst_core::mpegts::mux::Muxer
@@ -6799,6 +6801,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::Muxer
 pub tst_core::mpegts::mux::MuxerConfig::av1_carriage: tst_core::mpegts::common::Av1CarriageMode
 pub tst_core::mpegts::mux::MuxerConfig::buffer_packets: usize
 pub tst_core::mpegts::mux::MuxerConfig::pcr_interval_ms: u32
+pub tst_core::mpegts::mux::MuxerConfig::pcr_lead_ms: u32
 pub tst_core::mpegts::mux::MuxerConfig::programs: alloc::vec::Vec<tst_core::mpegts::mux::MuxerProgramConfig>
 pub tst_core::mpegts::mux::MuxerConfig::psi_interval_ms: u32
 impl tst_core::mpegts::mux::MuxerConfig
@@ -6825,6 +6828,7 @@ pub fn tst_core::mpegts::mux::MuxerConfigBuilder::av1_carriage(&mut self, tst_co
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::buffer_packets(&mut self, usize) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::build(&self) -> core::result::Result<tst_core::mpegts::mux::MuxerConfig, tst_core::error::MuxError>
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::pcr_interval_ms(&mut self, u32) -> &mut Self
+pub fn tst_core::mpegts::mux::MuxerConfigBuilder::pcr_lead_ms(&mut self, u32) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::psi_interval_ms(&mut self, u32) -> &mut Self
 impl core::default::Default for tst_core::mpegts::mux::MuxerConfigBuilder
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::default() -> tst_core::mpegts::mux::MuxerConfigBuilder
@@ -6885,6 +6889,7 @@ impl core::marker::UnsafeUnpin for tst_core::mpegts::mux::MuxerProgramConfigBuil
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::MuxerProgramConfigBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::MuxerProgramConfigBuilder
 #[non_exhaustive] pub struct tst_core::mpegts::mux::MuxerStats
+pub tst_core::mpegts::mux::MuxerStats::late_metadata_pushes: u64
 pub tst_core::mpegts::mux::MuxerStats::per_stream: alloc::collections::btree::map::BTreeMap<u16, tst_core::mpegts::stats::StreamStats>
 pub tst_core::mpegts::mux::MuxerStats::programs_configured: u32
 pub tst_core::mpegts::mux::MuxerStats::subtitle_streams_configured: u32
