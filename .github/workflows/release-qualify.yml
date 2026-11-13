@@ -2,7 +2,8 @@ name: release-qualify
 
 # One run on one commit produces the qualification record of that commit:
 # every test leg (called from the existing workflows in dry-run mode), the
-# time-boxed fuzz run, the C ABI comparison with the previous tag, the CI
+# time-boxed fuzz run, the C ABI comparison with the previous tag, the
+# breaking-change report against that tag, the CI
 # result on the same SHA, the SBOMs, then `qualification.json`, its rendered
 # text, SHA256SUMS, build-provenance attestations and the C package.
 #
@@ -373,14 +374,27 @@ jobs:
             -czf "$RUNNER_TEMP/c-package/$name.tar.gz" -C "$RUNNER_TEMP" "$name"
           ls -l "$RUNNER_TEMP/c-package"
 
-      - name: cargo-semver-checks report (informational)
+      - name: cargo-semver-checks report (judged by the collector)
         id: semver
+        # continue-on-error because the collector alone decides: this step's
+        # outcome is the leg's conclusion, and a failure, a missing report or
+        # a crate the tool did not analyse is a NO-GO for a release candidate
+        # (release mode, or a workspace version off the previous tag's) and
+        # informational for a development tree before its version sweep.
         continue-on-error: true
         run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          cargo +stable install cargo-semver-checks --version 0.51.0 --locked --quiet
-          bash scripts/dev/semver-checks.sh "$RUNNER_TEMP/semver"
-          cp "$RUNNER_TEMP/semver/semver-checks.json" "$RUNNER_TEMP/abi-record/"
+          mkdir -p "$RUNNER_TEMP/abi-record"
+          rc=0
+          { rustup toolchain install stable --profile minimal --no-self-update &&
+            cargo +stable install cargo-semver-checks --version 0.51.0 --locked --quiet; } || rc=$?
+          # Run the script even when the install failed: it names the previous
+          # tag (semver-baseline.json) before it needs the tool, and without
+          # that tag the collector cannot tell which kind of tree this is.
+          bash scripts/dev/semver-checks.sh "$RUNNER_TEMP/semver" || rc=$?
+          for f in semver-baseline.json semver-checks.json; do
+            [ ! -f "$RUNNER_TEMP/semver/$f" ] || cp "$RUNNER_TEMP/semver/$f" "$RUNNER_TEMP/abi-record/"
+          done
+          [ "$rc" -eq 0 ] || exit "$rc"
           jq -n --arg v "$(cargo +stable semver-checks --version | sed 's/^cargo-semver-checks *//')" '{version:$v}' > "$RUNNER_TEMP/abi-record/semver-checks-tool.json"
 
       - name: Keep the ABI record
@@ -588,7 +602,7 @@ jobs:
             && cp "$D/interop-census-aarch64/interop-census-aarch64.json" "$A/"
           for d in "$D"/sanitizer-*; do [ -d "$d" ] && cp -r "$d" "$A/"; done
           [ -f "$D/ci-record/ci.json" ] && cp "$D/ci-record/ci.json" "$A/ci.json"
-          for f in abi.json semver-checks.json; do [ -f "$D/abi-record/$f" ] && cp "$D/abi-record/$f" "$A/$f"; done
+          for f in abi.json semver-checks.json semver-baseline.json; do [ -f "$D/abi-record/$f" ] && cp "$D/abi-record/$f" "$A/$f"; done
           [ -f "$D/bench-ir/bench-ir.json" ] && cp "$D/bench-ir/bench-ir.json" "$A/bench-ir.json"
           # One fuzz.json from the per-crate parts. None at all = no file = a
           # missing leg, never a pass.
