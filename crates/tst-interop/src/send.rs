@@ -258,6 +258,12 @@ pub fn send_over_transport(
             Event::Audio { frame_idx } => {
                 if let Some(handle) = audio_handle {
                     let frame = fixtures::aac_frame(frame_idx);
+                    // As in `gen`: the audio profile ticks the program
+                    // clock at every audio frame, which is what puts
+                    // PCR-only packets on its wire.
+                    sender
+                        .tick(mux_setup::PROG1_NUMBER, pts)
+                        .map_err(|e| format!("tick: {e}"))?;
                     sender
                         .send_audio_to(handle, &frame, pts)
                         .map_err(|e| format!("send_audio_to: {e}"))?;

@@ -25,6 +25,8 @@ use crate::profiles::{KlvMode, Profile, VideoCodec};
 /// Program 1's PIDs — the same conventional values `MuxerConfig::default()`
 /// and the mux examples use (`examples/muxing/mux_to_file.rs`,
 /// `mux_av1_with_klv.rs`).
+/// Program number of the first (often the only) program.
+pub(crate) const PROG1_NUMBER: u16 = 1;
 pub(crate) const PROG1_PMT_PID: u16 = 0x1000;
 pub(crate) const PROG1_VIDEO_PID: u16 = 0x1011;
 pub(crate) const PROG1_KLV_PID: u16 = 0x1031;
@@ -63,7 +65,7 @@ pub fn build_config(p: &Profile, au_sizes: AuSizeMode) -> MuxerConfig {
         KlvMode::Async | KlvMode::AsyncWithMisp => (KlvStreamType::PrivateData, false),
     };
 
-    let mut prog1 = MuxerProgramConfigBuilder::new(1, PROG1_PMT_PID);
+    let mut prog1 = MuxerProgramConfigBuilder::new(PROG1_NUMBER, PROG1_PMT_PID);
     prog1.add_video(PROG1_VIDEO_PID, codec);
     prog1.add_klv(PROG1_KLV_PID, klv_stream_type, carries_pts);
     if p.audio {
