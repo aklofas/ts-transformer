@@ -5,6 +5,8 @@
 # browser (Google Chrome, or Chromium on aarch64) for the whep leg, and a
 # clean checkout of the frozen commit with tst-interop built in release mode. Idempotent: a second run on the same
 # host re-fetches and re-checks out, and apt skips what is installed.
+# Before the build it refuses a commit whose version sweep has not happened
+# (the checkout's own scripts/interop/release-version-check.sh).
 #
 # Usage:
 #   bash release-vm-setup.sh <full 40-hex sha>
@@ -12,6 +14,9 @@
 # Environment:
 #   TSTRANS_REPO_URL   clone URL (default https://github.com/aklofas/ts-transformer.git)
 #   TSTRANS_REPO_DIR   checkout directory (default ~/ts-transformer)
+#   TSTRANS_NOT_A_RELEASE=1   the host is not for a release run (a stress
+#                      run or a drill between releases): the version stage
+#                      is skipped and says so
 #
 # Every stage echoes `<stage> rc=N` and the last line is `SETUP-DONE rc=N`;
 # a watcher anchors on those at line start. Run it detached and poll the
@@ -112,10 +117,12 @@ stage browser "$rc"
 [[ $rc -eq 0 ]] || { stage SETUP-DONE "$rc"; exit "$rc"; }
 
 # The tree: clone once, fetch after; the frozen commit, clean, with every
-# submodule at the recorded revision.
+# submodule at the recorded revision. --tags: the version stage below needs
+# every release tag, and a plain fetch brings only the tags on the branches
+# it updates (a clone brings them all).
 rc=0
 if [[ -d "$REPO_DIR/.git" ]]; then
-  (cd "$REPO_DIR" && retry 5 git fetch -q origin) || rc=$?
+  (cd "$REPO_DIR" && retry 5 git fetch -q --tags origin) || rc=$?
 else
   retry 5 git clone -q "$REPO_URL" "$REPO_DIR" || rc=$?
 fi
@@ -134,6 +141,20 @@ if [[ $rc -eq 0 ]]; then
 fi
 echo "HEAD=$(cd "$REPO_DIR" && git rev-parse HEAD 2>/dev/null)"
 stage checkout "$rc"
+[[ $rc -eq 0 ]] || { stage SETUP-DONE "$rc"; exit "$rc"; }
+
+# The commit must be the swept one: a workspace version above the newest
+# release tag. The check is the checkout's own, since this file reaches a
+# fresh host alone; a commit from before the check existed has none and is
+# refused the same way.
+rc=0
+if [[ -f "$REPO_DIR/scripts/interop/release-version-check.sh" ]]; then
+  bash "$REPO_DIR/scripts/interop/release-version-check.sh" "$REPO_DIR" || rc=$?
+else
+  echo "release-vm-setup.sh: $SHA has no scripts/interop/release-version-check.sh, so its version cannot be checked" >&2
+  rc=5
+fi
+stage version "$rc"
 [[ $rc -eq 0 ]] || { stage SETUP-DONE "$rc"; exit "$rc"; }
 
 # The release binary the corpus phase runs; soak.sh rebuilds the same tree

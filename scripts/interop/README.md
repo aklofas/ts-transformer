@@ -844,7 +844,11 @@ to a built checkout), `release-vm-corpus.sh` (the corpus phase) and
 `ci-green` handshake the launch waits on; the marker carries the sha the launch checks); each prints `<stage> rc=N` lines
 and a final marker, and `release-vm-soak.sh launch` reports success only
 once every role is alive. The release checklist (`docs/project/releasing.md`,
-step 6) names them in order.
+step 6) names them in order. The setup script and `launch` both run
+`release-version-check.sh`, which refuses a checkout whose workspace version
+is not above the newest `vMAJOR.MINOR.PATCH` tag (the release's version sweep
+has not happened) or in which no release tag is visible;
+`TSTRANS_NOT_A_RELEASE=1` skips it for a run that is not release evidence.
 `--hours 1` is the smoke: long enough for a real post-warm-up RSS window,
 too short for an outage, so it proves the managed receiver's steady state
 only. `--hours 0.05` runs launch, supervisor and report end to end in
