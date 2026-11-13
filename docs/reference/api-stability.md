@@ -25,6 +25,18 @@ once the workspace reaches 1.0:
 - **Internal** — public solely for the binding-canonical workflow or
   documented extension points (`demux::low_level`); no stability promise.
 
+**Deprecations.** A deprecated name gets a row in
+`tests/coverage/deprecations.toml` in the change that deprecates it: the
+release that deprecated it, its replacement and the earliest release that
+may remove it. That row is the promise. The docs repeat its version, and a
+runtime message (a Rust `note`, a Python `DeprecationWarning`, Javadoc) may
+name a removal version only if it is the row's. The `ci` rail
+`scripts/check/repo/deprecations.sh` holds the code, the docs and the
+CHANGELOG to the manifest and refuses a promised removal that is not later
+than the workspace version, so a release cannot ship a message that says
+the name is already gone. A removed name keeps its row, with the release
+that removed it.
+
 One workspace module is currently classified Experimental: tst-rtp's
 `rtsp::server::mount_rules` (the per-path rules table, an override row
 below). A new module can land in this tier before earning Provisional
