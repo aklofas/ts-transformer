@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{ErrorKind, Read, Write};
-use std::net::{SocketAddr, TcpStream, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::time::{Duration, Instant};
 
 use str0m::change::{SdpAnswer, SdpPendingOffer};
@@ -85,10 +85,21 @@ impl TestViewer {
         Self::with_config(Rtc::builder().clear_codecs().enable_h264(true))
     }
 
-    fn with_config(mut cfg: RtcConfig) -> Self {
+    /// A viewer with str0m's default codecs whose media socket is bound to
+    /// `ip`, a local address other than the loopback one the other
+    /// constructors use.
+    pub fn bound_to(ip: IpAddr) -> Self {
+        Self::with_config_on(Rtc::builder(), ip)
+    }
+
+    fn with_config(cfg: RtcConfig) -> Self {
+        Self::with_config_on(cfg, IpAddr::V4(Ipv4Addr::LOCALHOST))
+    }
+
+    fn with_config_on(mut cfg: RtcConfig, ip: IpAddr) -> Self {
         cfg.set_max_stun_rto(CLIENT_MAX_STUN_RTO);
         let mut rtc = cfg.build(Instant::now());
-        let sock = UdpSocket::bind("127.0.0.1:0").expect("bind the viewer socket");
+        let sock = UdpSocket::bind((ip, 0)).expect("bind the viewer socket");
         let addr = sock.local_addr().expect("viewer address");
         rtc.add_local_candidate(Candidate::host(addr, "udp").expect("host candidate"));
         Self {
