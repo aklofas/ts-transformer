@@ -20,6 +20,91 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The demuxer's continuity check and packet routing look up a PID's state once per payload packet instead of five times: the check takes the entry once and hands the PID's stream kind to the routing step. Counted as instructions per packet on a video and KLV stream, feeding costs 18 % less through `feed_aligned` and 15 % less through `feed` than before this change; against 0.10.0 that is 22 % and 19 % less, against 0.9.0 13 % and 12 % less. Events are unchanged.
 - `Muxer::push_video`, `push_video_to` and their DTS forms scan an Annex-B access unit once, not twice: the validation returns the NAL-unit count the codec counters need. The MISP pushes lose one of their scans the same way. The scan itself (`codec::annexb::start_codes`, which the demuxer's NAL splitter, the length-prefixed converter and the MISP SEI splice use too) rules out 32 bytes at a time when none of them is zero, instead of testing every byte. Counted as instructions, pushing a 3 kB access unit costs 47 % less with the single scan and 90 % less with both (77 304 to 7 756). The start codes found, the `MuxError` for a malformed unit and the NAL count are unchanged. A buffer shorter than 32 bytes, or one whose NAL units are shorter than about 8 bytes, scans up to 1.6 times slower than before (at most about 100 instructions more for the short buffer, about 40 more per start code); every other input measured, a buffer of zeros included, scans faster, and a whole video push is cheaper on every input measured.
 
+### Removed — tst-core (BREAKING)
+
+- The deprecated aliases 0.9.0 left behind are removed, as 0.10.0
+  announced. `cancel::SrtCancelHandle` (also re-exported as
+  `tst_core::SrtCancelHandle`) is gone: use `ResourceCancel`.
+  `mpegts::mux::StreamKind` is gone: use `mpegts::mux::MuxStreamKind`. The
+  demux event's `mpegts::demux::StreamKind` is a different type and stays.
+
+### Removed — tst-pipeline (BREAKING)
+
+- `RawSendStats` and `RawRecvStats`, at the crate root and as
+  `raw_sender::RawSendStats` and `raw_receiver::RawRecvStats`, are removed:
+  use `RawSenderStats` and `RawReceiverStats`. The `SrtCancelHandle`
+  re-export is removed: use `ResourceCancel`.
+
+### Removed — tst-srt (BREAKING)
+
+- The unprefixed type names are removed at the crate root and at their
+  module paths. Use the `Srt`-prefixed name of each: `Socket` →
+  `SrtSocket`, `Listener` → `SrtListener`, `SocketBuilder` →
+  `SrtSocketBuilder`, `ListenerBuilder` → `SrtListenerBuilder`,
+  `SocketConfig` → `SrtSocketConfig`, `ListenerConfig` →
+  `SrtListenerConfig`, `Stats` → `SrtStats`, `ConnectError` (and
+  `error::ConnectError`) → `SrtConnectError`, `UrlError` (and
+  `url::UrlError`) → `SrtUrlError`. The `SrtCancelHandle` re-export is
+  removed: use `ResourceCancel`.
+- `PassphraseError::InvalidCharset` and `StreamIdError::NonAscii` are
+  removed. Neither has been returned since 0.10.0, when `Passphrase::new`
+  and `StreamId::new` began to accept UTF-8; delete a `match` arm that names
+  one.
+
+### Removed — tst-rtp (BREAKING)
+
+- `ConnectError` (and `transport::ConnectError`) is removed: use
+  `RtpConnectError`. `url::UrlError` is removed: use `RtpUrlError`.
+
+### Removed — tst-udp (BREAKING)
+
+- `SocketConfig` (and `config::SocketConfig`) is removed: use `UdpConfig`.
+
+### Removed — tst-tcp (BREAKING)
+
+- `SocketConfig` (and `config::SocketConfig`) is removed: use `TcpConfig`.
+
+### Removed — tst-py (BREAKING)
+
+- The names `tstrans.srt` and `tstrans.rtp` kept for the shell classes are
+  removed; reading one raises `AttributeError` where 0.9 and 0.10 emitted a
+  `DeprecationWarning`. `tstrans.srt.Sender`, `Receiver`, `MuxSender`,
+  `DemuxReceiver`, `CancelHandle` and `SocketStats`, and
+  `tstrans.rtp.MuxSender`, `DemuxReceiver`, `CancelHandle` and
+  `SocketStats`: use the class of the same name in `tstrans.shells`.
+  `tstrans.srt.RecvEndReason` and `tstrans.rtp.StreamEndReason`: use
+  `tstrans.shells.EndReason`. `tstrans.rtp.Sender` and `tstrans.rtp.Receiver`:
+  use `tstrans.rtp.Transport` and `tstrans.rtp.RecvTransport`.
+- `from_url` is removed from `tstrans.shells.Sender`, `Receiver`,
+  `MuxSender` and `DemuxReceiver`: use `Class.open(url, ...)`.
+  `DemuxReceiver.from_url` took `demux_config` as a keyword only; `open`
+  takes it as its second parameter.
+- The `MuxSender(url, program_config, pkt_size=...)` and
+  `DemuxReceiver(url, demux_config=...)` constructors are removed; calling
+  either class raises `TypeError`. Use `MuxSender.open(url, program_config)`
+  and `DemuxReceiver.open(url, demux_config)`; the datagram size that
+  `pkt_size=` set is the `?pkt_size=` URL key.
+- The managed SRT classes (`ManagedSender`, `ManagedReceiver`,
+  `ManagedMuxSender`, `ManagedDemuxReceiver`) keep `from_url`, and
+  `tstrans.rtp.Transport` keeps its `pkt_size=` keyword.
+
+### Removed — tst-jni (BREAKING)
+
+- `org.tstrans.srt.Sender`, `Receiver`, `MuxSender` and `DemuxReceiver`, and
+  `org.tstrans.rtp.MuxSender` and `DemuxReceiver`, are removed with their
+  `fromUrl` factories: use the class of the same name in
+  `org.tstrans.shells` and its `open(url, ...)`. `open` accepts every
+  transport's scheme and declares `throws BindingException`, where the
+  removed `fromUrl` accepted one scheme and declared `SrtException` or
+  `RtpException`. The `pktSize` argument of
+  `org.tstrans.rtp.MuxSender.fromUrl` is the `?pkt_size=` URL key, and
+  `org.tstrans.rtp.MuxSender.DEFAULT_PKT_SIZE` is
+  `org.tstrans.rtp.Transport.DEFAULT_PKT_SIZE`.
+- `org.tstrans.rtp.Sender` and `org.tstrans.rtp.Receiver` are removed: use
+  `org.tstrans.rtp.Transport` and `org.tstrans.rtp.RecvTransport`, whose
+  `fromUrl` factories take the same arguments.
+- The managed SRT classes keep `fromUrl`.
+
 ---
 
 ## [0.10.0] — 2026-11-12

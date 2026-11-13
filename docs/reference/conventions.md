@@ -333,7 +333,7 @@ caller still has the config in hand to fix.
 | `<Thing>Config` / `<Thing>ConfigBuilder` | Plain-data configuration and its builder. | `MuxerConfig`, `DemuxerConfigBuilder` |
 | `<Thing>Stats` | A snapshot value returned by a getter. | `MuxSenderStats`, `RtpStats` |
 | `<Proto>Error` | The error type of a protocol crate. | `UdpError`, `RtspError`, `HlsError` |
-| `<Proto>CancelHandle` | That transport's cancel handle. Most are aliases of `tst_core::cancel::FlagCancel`; `SrtCancelHandle` aliases `ResourceCancel`. | `UdpCancelHandle`, `RtspServerCancelHandle` |
+| `<Proto>CancelHandle` | That transport's cancel handle. Most are aliases of `tst_core::cancel::FlagCancel`; the SRT transports use `tst_core::cancel::ResourceCancel` under its own name. | `UdpCancelHandle`, `RtspServerCancelHandle` |
 
 ## Builders
 
