@@ -321,6 +321,30 @@ def workspace_version(root, rev):
         return None
 
 
+def public_api_crates(root, rev):
+    """The crates whose public API is under a baseline at commit `rev`: the package
+    name of every crate directory that holds a `public-api.txt`. That is the list
+    `scripts/lib/roster.sh public-api` takes from cargo, which the semver report
+    covers, read here from git alone. None when the commit cannot be listed or a
+    baseline sits beside a manifest that names no package."""
+    try:
+        p = subprocess.run(["git", "-C", root, "ls-tree", "-r", "--name-only", rev], capture_output=True, text=True)
+    except OSError as e:
+        raise QualificationError(str(e))
+    if p.returncode != 0:
+        return None
+    names = []
+    for path in p.stdout.splitlines():
+        crate, _, name = path.rpartition("/")
+        if name != "public-api.txt" or not crate:
+            continue
+        try:
+            names.append(tomllib.loads(_show(root, rev, crate + "/Cargo.toml") or "")["package"]["name"])
+        except (TypeError, KeyError, tomllib.TOMLDecodeError):
+            return None
+    return sorted(names)
+
+
 _C_VERSION_LINE = re.compile(r"^(.*\bTST_VERSION_(MAJOR|MINOR|PATCH)\b\D*?)(\d+)(\D*)$", re.S)
 
 
@@ -765,25 +789,49 @@ def _line_name(v):
     return "%d.%d" % v[:2] if v[0] == 0 else "%d.x" % v[0]
 
 
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
 def semver_rows(report):
-    """The rows of semver-checks.json as the record keeps them."""
-    return [{"crate": r["crate"], "breaking": r.get("failed_checks", 0),
-             "exit": r["exit"], "analysed": r.get("analysed", False)} for r in report or []]
+    """The rows of semver-checks.json as the record keeps them. A crate counts as
+    analysed only when its row says so with `true` and the tool ended 0 (no break)
+    or 100 (breaks). A report that is not a list of rows, each with a crate name,
+    an integer exit status and, where it has one, a count of failed checks, is an
+    error."""
+    if not report:
+        return []
+    if not isinstance(report, list):
+        raise QualificationError("semver-checks.json is not a list of rows")
+    rows = []
+    for i, r in enumerate(report):
+        failed = r.get("failed_checks", 0) if isinstance(r, dict) else None
+        if not (isinstance(r, dict) and isinstance(r.get("crate"), str) and r["crate"] and _is_int(r.get("exit"))
+                and _is_int(failed) and failed >= 0):
+            raise QualificationError("semver-checks.json row %d is malformed (%s): a row names its crate, the "
+                                     "tool's integer exit status and a count of failed checks" % (i, json.dumps(r)))
+        rows.append({"crate": r["crate"], "breaking": failed, "exit": r["exit"],
+                     "analysed": r.get("analysed") is True and r["exit"] in (0, 100)})
+    return rows
 
 
-def semver_gate(release, version, previous_tag, rows, sha):
+def semver_gate(release, version, previous_tag, rows, sha, expected, abi_tag=None):
     """Whether the cargo-semver-checks report gates the record, and the reasons it
     fails it. `version` is the workspace version at the qualified commit `sha`,
-    `previous_tag` the tag the report compared with, `rows` are semver_rows.
+    `previous_tag` the tag the report compared with, `rows` are semver_rows,
+    `expected` the crates with a public-api baseline at `sha` (None when they could
+    not be listed) and `abi_tag` the tag the C ABI comparison used, where recorded.
 
     A candidate is a tree in release mode, or one whose workspace version differs
     from the previous tag's (its version sweep has happened). For a candidate the
-    report must exist with every crate analysed, and a break needs a new
-    compatibility line: a new minor before 1.0, a new major from 1.0. In release
-    mode the version must also be above the previous tag's. Any other tree is a
-    development tree between a release and its next sweep, where breaks are
-    expected and the report is informational. An input that is missing is a
-    reason, never a pass: without both versions the tree counts as a candidate."""
+    report must name each expected crate exactly once, analysed, and no other; a
+    crate is broken when the tool ended 100 or counted a failed check, the two must
+    agree, and a break needs a new compatibility line: a new minor before 1.0, a new
+    major from 1.0. The report and the ABI comparison must name the same previous
+    tag. In release mode the version must also be above the previous tag's. Any
+    other tree is a development tree between a release and its next sweep, where
+    breaks are expected and the report is informational. An input that is missing
+    is a reason, never a pass: without both versions the tree counts as a candidate."""
     prev = _version(previous_tag[1:]) if isinstance(previous_tag, str) and previous_tag[:1] == "v" else None
     ws = _version(version)
     reasons = []
@@ -799,18 +847,35 @@ def semver_gate(release, version, previous_tag, rows, sha):
     known = prev is not None and ws is not None
     candidate = bool(release) or not known or ws != prev
     same_line = _compat_line(ws) == _compat_line(prev) if known else None
-    broken = [r["crate"] for r in rows if r["breaking"]]
+    broken = [r["crate"] for r in rows if r["breaking"] or r["exit"] == 100]
     breaking = sum(r["breaking"] for r in rows)
     if candidate:
+        if abi_tag is not None and previous_tag is not None and abi_tag != previous_tag:
+            reasons.append("semver-checks: the report compares with %s but the C ABI comparison with %s; both "
+                           "compare with the previous release tag" % (previous_tag, abi_tag))
+        named = [r["crate"] for r in rows]
         if not rows:
             reasons.append("semver-checks: no report (semver-checks.json names no crate); a report that did "
                            "not run is not a report of no breaks")
+        elif expected is None:
+            reasons.append("semver-checks: the crates with a public-api baseline at %s could not be listed, so "
+                           "the report cannot be shown to name each of them" % sha[:12])
+        else:
+            reasons.extend("semver-checks: crate %s has %s in the report"
+                           % (c, "%d rows" % named.count(c) if c in named else "no row")
+                           for c in expected if named.count(c) != 1)
+            reasons.extend("semver-checks: the report names %s, which has no public-api baseline at %s"
+                           % (c, sha[:12]) for c in dict.fromkeys(named) if c not in expected)
         reasons.extend("semver-checks: crate %s was not analysed (exit %s)" % (r["crate"], r["exit"])
                        for r in rows if not r["analysed"])
-        if same_line and breaking:
-            reasons.append("semver-checks: %d breaking change(s) in %s but %s stays in the %s line of %s; "
-                           "a break needs a new %s" % (breaking, ", ".join(broken), version, _line_name(prev),
-                                                       previous_tag, "minor" if prev[0] == 0 else "major"))
+        reasons.extend("semver-checks: crate %s ended with exit %d but the report counts %d failed check(s); "
+                       "a break is exit 100 with at least one" % (r["crate"], r["exit"], r["breaking"])
+                       for r in rows if r["analysed"] and (r["exit"] == 100) != (r["breaking"] > 0))
+        if same_line and broken:
+            reasons.append("semver-checks: %s in %s but %s stays in the %s line of %s; a break needs a new %s"
+                           % ("%d breaking change(s)" % breaking if breaking else "a break (exit 100)",
+                              ", ".join(broken), version, _line_name(prev), previous_tag,
+                              "minor" if prev[0] == 0 else "major"))
         if release and known and ws == prev:
             reasons.append("semver-checks: the workspace version still says %s, the version of the previous "
                            "release tag %s; a release needs its version sweep" % (version, previous_tag))
@@ -819,7 +884,7 @@ def semver_gate(release, version, previous_tag, rows, sha):
                            % (version, previous_tag))
     return {"previous_tag": previous_tag, "previous_version": previous_tag[1:] if prev else None,
             "workspace_version": version, "candidate": candidate, "same_line": same_line,
-            "breaking": breaking, "reasons": reasons}
+            "breaking": breaking, "expected_crates": expected, "reasons": reasons}
 
 
 CI_FULL_EVENTS = ("push", "workflow_dispatch")
@@ -910,10 +975,11 @@ def collect(art, root, release=False, tag=None):
     # informational for a development tree (see semver_gate).
     sha = ctx["source"]["sha"]
     baseline = read_json(os.path.join(art, "semver-baseline.json"))
-    sc = semver_rows(read_json(os.path.join(art, "semver-checks.json")))
     try:
+        sc = semver_rows(read_json(os.path.join(art, "semver-checks.json")))
         semver = semver_gate(release, workspace_version(root, sha),
-                             baseline.get("previous_tag") if isinstance(baseline, dict) else None, sc, sha)
+                             baseline.get("previous_tag") if isinstance(baseline, dict) else None, sc, sha,
+                             public_api_crates(root, sha), (abi_in or {}).get("previous_tag"))
     except QualificationError as e:
         die(str(e))
     c, u = entry("semver-checks")

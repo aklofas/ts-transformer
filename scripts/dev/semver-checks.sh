@@ -3,8 +3,9 @@
 # using cargo-semver-checks. This script only reports and never fails on a
 # break. The qualification record judges the report (scripts/gen/qualification.py,
 # semver_gate): once the workspace version has moved off the previous tag's,
-# or in a release qualification, every crate must have been analysed and a
-# break needs a new compatibility line (a new minor before 1.0, a new major
+# or in a release qualification, every crate with a public-api baseline must
+# have one analysed row and a break (exit 100, or a failed check counted) needs
+# a new compatibility line (a new minor before 1.0, a new major
 # from 1.0); on a development tree before its version sweep the report is
 # informational, a cross-check that the CHANGELOG's BREAKING list is complete.
 #

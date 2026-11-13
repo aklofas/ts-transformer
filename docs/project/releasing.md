@@ -413,16 +413,24 @@ step 3).
     version differs from the previous tag's, which is every tree after the
     version sweep. For a candidate the report must exist, its step must have
     succeeded and every crate must have been analysed; a report that did not
-    run is a NO-GO, never "no breaks". A break is admitted only when the
+    run is a NO-GO, never "no breaks". The collector does not take the
+    report's word for "every": it lists the crates that hold a
+    `public-api.txt` at the qualified commit, and the report must name each
+    of them exactly once and no other crate. A crate is broken when the
+    tool ended with exit status 100 or counted a failed check; a row in
+    which the two disagree is a NO-GO, and a malformed row ends the
+    collection. A break is admitted only when the
     workspace version opens a new compatibility line against the previous
     tag: a new minor before 1.0, a new major from 1.0. A break under a patch
     bump is a NO-GO, so is a release whose workspace version still equals
-    the previous tag's or is below it, and so is a run that recorded no
-    previous tag. On a development tree before its version sweep the report
-    stays informational, because breaks land there before the release has
-    its number. The record's `semver_gate` holds the inputs: the previous
-    tag and its version, the workspace version, whether the tree was a
-    candidate, whether the two versions share a line, and the break count.
+    the previous tag's or is below it, so is a run that recorded no
+    previous tag, and so is a report whose previous tag is not the one the
+    ABI leg compared with. On a development tree before its version sweep
+    the report stays informational, because breaks land there before the
+    release has its number. The record's `semver_gate` holds the inputs: the
+    previous tag and its version, the workspace version, whether the tree
+    was a candidate, whether the two versions share a line, the break count
+    and the crates the report had to name.
 
     The ABI leg compares against the previous tag's C package from that
     tag's Release only when `SHA256SUMS` and the package's build-provenance
