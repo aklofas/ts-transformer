@@ -120,6 +120,23 @@ step 3).
    the CHANGELOG: the `[Unreleased]` section is retitled `[X.Y.Z]` with a
    date placeholder, and a fresh `[Unreleased]` stub opens above it. The
    "Release highlights" block is the seed for the GitHub Release notes.
+
+   The number `X.Y.Z` is settled before this PR, in the CHANGELOG itself.
+   Directly under the `## [Unreleased]` heading one paragraph may say
+   `Next release: X.Y.Z`, and `scripts/check/repo/changelog-breaking-version.sh`
+   (a `ci` rail) requires it as soon as the section holds a `(BREAKING)`
+   heading: the version it names must open a new compatibility line against
+   the release below, a new minor before 1.0 and a new major from 1.0. So
+   the pull request that adds the first breaking change of a cycle writes
+   the line, and a plan that promised a patch release is corrected there
+   and not at the tag. The line may also be written without a break, to
+   state a planned patch or minor number. The retitle removes it: the rail
+   refuses the line in any versioned section and one left in the stub above,
+   requires a retitled section with `(BREAKING)` headings to be a new minor
+   (or major) itself, and requires the workspace version to equal the
+   retitled section's, so the sweep and the retitle land together. While
+   `[Unreleased]` is the newest section, the workspace version is the
+   previous release's or the one the line names.
 3. **Freeze.** The release-prep merge commit is the soaked commit. Nothing
    outside `CHANGELOG.md`, `docs/` and
    `tests/coverage/evidence-archives.toml` changes after it until the tag,

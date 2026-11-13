@@ -475,6 +475,16 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/release-version-consistency.sh
 
+      - name: check-changelog-breaking-version (a BREAKING CHANGELOG section needs a version that can carry it)
+        # A `(BREAKING)` heading under [Unreleased] needs the `Next release:`
+        # line to name a new minor (a new major from 1.0); a release in
+        # preparation with breaks must be one; the workspace version is the
+        # previous release's or the named next one. It reads CHANGELOG.md and
+        # Cargo.toml only, so the change that adds the first break is where
+        # it fails. Gated to linux-x86_64: the sources are platform-independent.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/changelog-breaking-version.sh
+
       - name: check-msrv-consistency (one toolchain source, rust-toolchain.toml)
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/msrv-consistency.sh
