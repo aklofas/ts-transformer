@@ -30,7 +30,9 @@
 #      release-prep change removes it and a line left after a release fails.
 #   3. A section in preparation is above the previous release, and with a
 #      `(BREAKING)` heading it opens a new compatibility line against it. The
-#      workspace version equals its version.
+#      workspace version equals its version. The previous release is held to
+#      the release below it the same way, so a release retitled with its date
+#      at once, which never holds the marker, is judged too.
 #   4. With no section in preparation, the workspace version is the previous
 #      release's or the `Next release:` one.
 #   5. Only the first versioned section may be in preparation, and every
@@ -183,14 +185,22 @@ if unreleased:
                      % (broke[0], show(nxt), line_name(base[1]), base[0],
                         "minor" if base[1][0] == 0 else "major", first_breaking_number(base[1])))
 
-if prep is not None:
-    if prep[1] <= previous[1]:
-        fails.append("the section in preparation [%s] is not above the previous release %s" % (prep[0], previous[0]))
-    elif breaking(prep) and line_of(prep[1]) == line_of(previous[1]):
-        fails.append("the section in preparation [%s] has the breaking section `%s`, but %s stays in the %s line "
+
+def follows(what, section, below, below_is):
+    """Rule 3's two halves for a versioned section and the release under it."""
+    if section[1] <= below[1]:
+        fails.append("%s [%s] is not above %s %s" % (what, section[0], below_is, below[0]))
+    elif breaking(section) and line_of(section[1]) == line_of(below[1]):
+        fails.append("%s [%s] has the breaking section `%s`, but %s stays in the %s line "
                      "of %s; a break needs a new %s: this release is %s or above"
-                     % (prep[0], breaking(prep)[0], prep[0], line_name(previous[1]), previous[0],
-                        "minor" if previous[1][0] == 0 else "major", first_breaking_number(previous[1])))
+                     % (what, section[0], breaking(section)[0], section[0], line_name(below[1]), below[0],
+                        "minor" if below[1][0] == 0 else "major", first_breaking_number(below[1])))
+
+
+if len(released) > 1:
+    follows("the newest release", previous, released[1], "the release before it,")
+if prep is not None:
+    follows("the section in preparation", prep, previous, "the previous release")
     if workspace != prep[1]:
         fails.append("the workspace version is %s but the section in preparation is [%s]; the release-prep "
                      "change carries the version sweep" % (show(workspace), prep[0]))

@@ -133,8 +133,9 @@ step 3).
    state a planned patch or minor number. The retitle removes it: the rail
    refuses the line in any versioned section and one left in the stub above,
    requires a retitled section with `(BREAKING)` headings to be a new minor
-   (or major) itself, and requires the workspace version to equal the
-   retitled section's, so the sweep and the retitle land together. While
+   (or major) itself, with its date placeholder or already dated, and
+   requires the workspace version to equal the retitled section's, so the
+   sweep and the retitle land together. While
    `[Unreleased]` is the newest section, the workspace version is the
    previous release's or the one the line names.
 3. **Freeze.** The release-prep merge commit is the soaked commit. Nothing
