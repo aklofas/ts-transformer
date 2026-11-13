@@ -90,6 +90,8 @@ mod mux_misp_push;
 mod mux_multi_program;
 #[path = "mpegts/mux_multi_stream.rs"]
 mod mux_multi_stream;
+#[path = "mpegts/mux_pcr_clock.rs"]
+mod mux_pcr_clock;
 #[path = "mpegts/mux_proptest.rs"]
 mod mux_proptest;
 #[path = "mpegts/mux_reconfigure.rs"]
