@@ -62,6 +62,14 @@ adapters run in these places:
   tst-core workload grew by more than 3 % since the previous release tag
   without a row; a row for the current comparison base that names no
   workload of the run is an error.
+- **`deprecations.toml`** — every deprecated public name, live or removed:
+  the release that deprecated it, its replacement, the earliest release that
+  may remove it and, once it is gone, the release that removed it. Enforced
+  by `scripts/check/repo/deprecations.sh`: every deprecation in the code has
+  a live row and every live row a site in the code; a removal version
+  written in the code or the docs is the row's and is later than the
+  workspace version; a removed name is gone from the code and listed under
+  `### Removed` in the CHANGELOG. `--list` prints what it found.
 - **`fuzz-targets.toml`** — generated inventory of every libFuzzer target;
   `scripts/gen/fuzz-targets.sh --check` fails CI if it drifts from the tree.
 - **`skip-ledger.toml`** — every intentional `#[ignore]`, with a class and (for
