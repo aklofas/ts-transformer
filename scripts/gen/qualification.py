@@ -36,6 +36,9 @@ Artefact directory read by `collect` (a missing file is a missing leg, never a p
                                        skipped, stale} of the linux-aarch64 subset job, if it ran
   sanitizer-<job>/sanitizer-<job>.json (or sanitizer-<job>.json) {job, conclusion}
   fuzz.json, abi.json, semver-checks.json
+  semver-baseline.json                 {previous_tag}: the release tag scripts/dev/semver-checks.sh
+                                       compared with, written before the tool runs (missing = the
+                                       report cannot be judged, a NO-GO)
   bench-ir.json                        scripts/dev/bench-ir.sh's judged record: {old, new,
                                        threshold_percent, tool, verdict, workloads}
 
@@ -692,7 +695,7 @@ def _interop(art):
     return rec, dict(inv.get("tools", {}))
 
 
-def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None, source_reasons=()):
+def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None, source_reasons=(), semver=None):
     reasons = []
     if abi is not None and abi.get("verdict") != "compatible":
         reasons.append("c-abi: abi.json verdict is %r, not 'compatible'" % abi.get("verdict"))
@@ -724,9 +727,86 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None, source_
             reasons.append("fuzz: ran %d of %d declared targets"
                            % (fuzz["targets_run"], fuzz["targets_declared"]))
     reasons.extend(source_reasons)
+    if semver is not None:
+        reasons.extend(semver["reasons"])
     if release_vm is not None and release_vm["release_mode"]:
         reasons.extend(release_vm["reasons"])
     return ("GO" if not reasons else "NO-GO"), reasons
+
+
+# ---- the semver gate -------------------------------------------------------
+
+def _version(text):
+    """(major, minor, patch) of a MAJOR.MINOR.PATCH string, else None."""
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", text) if isinstance(text, str) else None
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def _compat_line(v):
+    """The part of a version a release keeps when it admits no break: major and
+    minor before 1.0, the major from 1.0."""
+    return v[:2] if v[0] == 0 else v[:1]
+
+
+def _line_name(v):
+    return "%d.%d" % v[:2] if v[0] == 0 else "%d.x" % v[0]
+
+
+def semver_rows(report):
+    """The rows of semver-checks.json as the record keeps them."""
+    return [{"crate": r["crate"], "breaking": r.get("failed_checks", 0),
+             "exit": r["exit"], "analysed": r.get("analysed", False)} for r in report or []]
+
+
+def semver_gate(release, version, previous_tag, rows, sha):
+    """Whether the cargo-semver-checks report gates the record, and the reasons it
+    fails it. `version` is the workspace version at the qualified commit `sha`,
+    `previous_tag` the tag the report compared with, `rows` are semver_rows.
+
+    A candidate is a tree in release mode, or one whose workspace version differs
+    from the previous tag's (its version sweep has happened). For a candidate the
+    report must exist with every crate analysed, and a break needs a new
+    compatibility line: a new minor before 1.0, a new major from 1.0. In release
+    mode the version must also be above the previous tag's. Any other tree is a
+    development tree between a release and its next sweep, where breaks are
+    expected and the report is informational. An input that is missing is a
+    reason, never a pass: without both versions the tree counts as a candidate."""
+    prev = _version(previous_tag[1:]) if isinstance(previous_tag, str) and previous_tag[:1] == "v" else None
+    ws = _version(version)
+    reasons = []
+    if previous_tag is None:
+        reasons.append("semver-checks: no previous release tag is recorded (semver-baseline.json), so the "
+                       "report cannot be judged against a version; fetch the tags (git fetch --tags) and "
+                       "run the semver step again")
+    elif prev is None:
+        reasons.append("semver-checks: the recorded previous tag %r is not vMAJOR.MINOR.PATCH" % (previous_tag,))
+    if ws is None:
+        reasons.append("semver-checks: the workspace version at %s is %r, not MAJOR.MINOR.PATCH "
+                       "([workspace.package] version in Cargo.toml)" % (sha[:12], version))
+    known = prev is not None and ws is not None
+    candidate = bool(release) or not known or ws != prev
+    same_line = _compat_line(ws) == _compat_line(prev) if known else None
+    broken = [r["crate"] for r in rows if r["breaking"]]
+    breaking = sum(r["breaking"] for r in rows)
+    if candidate:
+        if not rows:
+            reasons.append("semver-checks: no report (semver-checks.json names no crate); a report that did "
+                           "not run is not a report of no breaks")
+        reasons.extend("semver-checks: crate %s was not analysed (exit %s)" % (r["crate"], r["exit"])
+                       for r in rows if not r["analysed"])
+        if same_line and breaking:
+            reasons.append("semver-checks: %d breaking change(s) in %s but %s stays in the %s line of %s; "
+                           "a break needs a new %s" % (breaking, ", ".join(broken), version, _line_name(prev),
+                                                       previous_tag, "minor" if prev[0] == 0 else "major"))
+        if release and known and ws == prev:
+            reasons.append("semver-checks: the workspace version still says %s, the version of the previous "
+                           "release tag %s; a release needs its version sweep" % (version, previous_tag))
+        elif release and known and ws < prev:
+            reasons.append("semver-checks: the workspace version %s is lower than the previous release tag %s"
+                           % (version, previous_tag))
+    return {"previous_tag": previous_tag, "previous_version": previous_tag[1:] if prev else None,
+            "workspace_version": version, "candidate": candidate, "same_line": same_line,
+            "breaking": breaking, "reasons": reasons}
 
 
 CI_FULL_EVENTS = ("push", "workflow_dispatch")
@@ -813,8 +893,18 @@ def collect(art, root, release=False, tag=None):
     add("bench-ir", c, u)
     add("ci (on this sha)", _ci_conclusion(ci_in, ctx.get("label", ""), ctx.get("source", {}).get("sha", "")),
         (ci_in or {}).get("run_url"))
+    # The semver report is a required leg for a release candidate and stays
+    # informational for a development tree (see semver_gate).
+    sha = ctx["source"]["sha"]
+    baseline = read_json(os.path.join(art, "semver-baseline.json"))
+    sc = semver_rows(read_json(os.path.join(art, "semver-checks.json")))
+    try:
+        semver = semver_gate(release, workspace_version(root, sha),
+                             baseline.get("previous_tag") if isinstance(baseline, dict) else None, sc, sha)
+    except QualificationError as e:
+        die(str(e))
     c, u = entry("semver-checks")
-    add("semver-checks", c, u, required=False)
+    add("semver-checks", c, u, required=semver["candidate"])
 
     subs = ctx.get("source", {}).get("submodules", {})
 
@@ -824,17 +914,13 @@ def collect(art, root, release=False, tag=None):
     natives = {"libsrt": native("crates/srt-sys/vendor/srt", "v"),
                "librist": native("crates/rist-sys/vendor/librist", "v"),
                "mbedtls": native("crates/mbedtls-src/vendor/mbedtls", "mbedtls-", "v")}
-    sc = []
-    for r in read_json(os.path.join(art, "semver-checks.json")) or []:
-        sc.append({"crate": r["crate"], "breaking": r.get("failed_checks", 0),
-                   "exit": r["exit"], "analysed": r.get("analysed", False)})
     archives, expected_files, required_soak_s = load_archives(root)
     try:
         gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release, expected_files,
                           required_soak_s)
     except QualificationError as e:
         die(str(e))
-    sha, workflow_sha = ctx["source"]["sha"], ctx["source"]["workflow_sha"]
+    workflow_sha = ctx["source"]["workflow_sha"]
     source_reasons = []
     # A pull request run executes the merge commit's workflows, which are not in the
     # checkout, and the rehearsal exists to test the head's own definitions.
@@ -849,7 +935,7 @@ def collect(art, root, release=False, tag=None):
                     "source: workflow definitions at %s differ from the qualified commit "
                     "(%d path(s) under .github/ or scripts/gen/)" % (workflow_sha[:12], len(changed)))
     v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate,
-                         source_reasons)
+                         source_reasons, semver)
     source, label = dict(ctx.get("source", {})), ctx.get("label", "unlabelled")
     if tag:
         source["tag"], label = tag, "tag " + tag
@@ -868,6 +954,7 @@ def collect(art, root, release=False, tag=None):
         "abi": abi_in,
         "bench_ir": bench_in,
         "semver_checks": sc,
+        "semver_gate": semver,
         "archives": archives,
         "release_vm": gate,
         "maintainer_local": list(MAINTAINER_LOCAL),
@@ -1002,11 +1089,12 @@ def render_block(rec):
     if "bench_ir" in rec:
         out.append("")
         out.append(_bench_ir_line(rec["bench_ir"]))
-    if rec["semver_checks"]:
+    # A record written before the report could gate has no `semver_gate`.
+    if "semver_gate" in rec:
+        out += ["", _semver_line(rec["semver_gate"]) + ": " + (_semver_rows_text(rec["semver_checks"]) or "no report") + "."]
+    elif rec["semver_checks"]:
         out.append("")
-        out.append("cargo-semver-checks, informational: " + "; ".join(
-            "%s %s" % (s["crate"], ("%d breaking" % s["breaking"]) if s["analysed"] else "not analysed")
-            for s in rec["semver_checks"]) + ".")
+        out.append("cargo-semver-checks, informational: " + _semver_rows_text(rec["semver_checks"]) + ".")
     out += ["", "Cited soak, stress and corpus archives, with the verdicts they recorded:", ""]
     for r in rec["archives"]:
         declared = (", %d s declared" % r["expected_duration_s"]) if r.get("expected_duration_s") else ""
@@ -1021,6 +1109,28 @@ def render_block(rec):
     out += ["", "Checks that stay with the maintainer and are not part of this record:", ""]
     out.extend("- " + m for m in rec["maintainer_local"])
     return "\n".join(out) + "\n"
+
+
+def _semver_rows_text(rows):
+    return "; ".join("%s %s" % (s["crate"], ("%d breaking" % s["breaking"]) if s["analysed"] else "not analysed")
+                     for s in rows)
+
+
+def _semver_line(gate):
+    """What the semver report was compared with and whether it gated, without its rows."""
+    if gate["same_line"] is None:
+        return "cargo-semver-checks, gating (the previous release tag or the workspace version is not recorded)"
+    tag, version = gate["previous_tag"], gate["workspace_version"]
+    if not gate["candidate"]:
+        why = "informational (the workspace version is still %s: a development tree before its version sweep)" % version
+    elif gate["same_line"]:
+        why = "gating (the workspace version %s stays in the %s line, so no break is admitted)" % (
+            version, _line_name(_version(gate["previous_version"])))
+    elif _version(version) > _version(gate["previous_version"]):
+        why = "gating (the workspace version %s opens a new compatibility line, so breaks are admitted)" % version
+    else:
+        why = "gating (the workspace version %s is below the previous release tag)" % version
+    return "cargo-semver-checks against %s, %s" % (tag, why)
 
 
 def _bench_ir_line(b):

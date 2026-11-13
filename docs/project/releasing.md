@@ -377,11 +377,29 @@ step 3).
     applied.
 
     A **NO-GO** record lists its reasons (a failed or missing leg, a stale
-    `ci` result, a dirty tree, an unexpected interop failure, a missing,
+    `ci` result, a dirty tree, an unexpected interop failure, a break the
+    version number does not admit, a missing,
     failed, short, superseded or leg-short soak archive, a missing or
     failed corpus archive, a corpus run that swept a different file
     count). A real leg failure is a finding to fix, not a rerun; rerun
     only a failure that belongs to a ledgered flake class.
+
+    The semver leg (`scripts/dev/semver-checks.sh`, cargo-semver-checks per
+    public crate against the previous release tag) gates a release candidate.
+    A candidate is a release qualification, or any tree whose workspace
+    version differs from the previous tag's, which is every tree after the
+    version sweep. For a candidate the report must exist, its step must have
+    succeeded and every crate must have been analysed; a report that did not
+    run is a NO-GO, never "no breaks". A break is admitted only when the
+    workspace version opens a new compatibility line against the previous
+    tag: a new minor before 1.0, a new major from 1.0. A break under a patch
+    bump is a NO-GO, so is a release whose workspace version still equals
+    the previous tag's or is below it, and so is a run that recorded no
+    previous tag. On a development tree before its version sweep the report
+    stays informational, because breaks land there before the release has
+    its number. The record's `semver_gate` holds the inputs: the previous
+    tag and its version, the workspace version, whether the tree was a
+    candidate, whether the two versions share a line, and the break count.
 
     The ABI leg compares against the previous tag's C package from that
     tag's Release only when `SHA256SUMS` and the package's build-provenance

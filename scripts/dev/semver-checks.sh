@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
 # Report each public crate's breaking changes since the previous release tag,
-# using cargo-semver-checks. INFORMATIONAL: the project
-# is pre-1.0 and breaks are recorded in the CHANGELOG, so this never gates; it
-# is a cross-check that the CHANGELOG's BREAKING list is complete.
+# using cargo-semver-checks. This script only reports and never fails on a
+# break. The qualification record judges the report (scripts/gen/qualification.py,
+# semver_gate): once the workspace version has moved off the previous tag's,
+# or in a release qualification, every crate must have been analysed and a
+# break needs a new compatibility line (a new minor before 1.0, a new major
+# from 1.0); on a development tree before its version sweep the report is
+# informational, a cross-check that the CHANGELOG's BREAKING list is complete.
 #
 # usage: scripts/dev/semver-checks.sh [<out-dir>]      (default: target/semver-report)
-# writes <out-dir>/<crate>.txt per crate and <out-dir>/semver-checks.json:
-#   [{"crate","exit","failed_checks","items","report"}]
+# writes <out-dir>/semver-baseline.json first, before the tool is needed:
+#   {"previous_tag"}   the tag every report below compares with; the record
+#                      reads it to tell a candidate from a development tree,
+#                      so it must exist even when the rest of the run fails
+# then <out-dir>/<crate>.txt per crate and <out-dir>/semver-checks.json:
+#   [{"crate","exit","failed_checks","items","report","analysed"}]
 #   failed_checks = the "N fail" of the tool's "M checks: P pass, N fail" line
 #   items         = listed entries under every "Failed in:" block (raw lines, so
 #                   an item the tool prints twice counts twice)
+#   analysed      = the tool ended 0 (no break) or 100 (breaks); any other exit
+#                   means the crate was not compared
 #
 # Crates: the public-api roster (scripts/lib/roster.sh public-api), the one list
 #   the public-api baselines and CI use; fails if it is not 11.
@@ -19,7 +29,7 @@
 #   break since the tag.
 # +stable: cargo-semver-checks 0.51 needs rustdoc JSON newer than the pinned
 #   toolchain produces, so it runs under the stable toolchain (the tag's
-#   tree is compiled with it too). Fine for an informational report.
+#   tree is compiled with it too, so the two sides are documented alike).
 #
 # Baseline tree: a detached worktree of the tag under <out-dir>/baseline with the
 #   three vendored-source submodules (srt, mbedtls, librist) initialised, passed
@@ -27,23 +37,28 @@
 #   tst-rist and the sys crates cannot build there. Needs network or a local
 #   submodule cache for that init.
 #
-# Exit 0 always, except 2 when the tool or the stable toolchain is missing.
+# Exit 0 once every crate has a row, whatever the rows say; 2 when there is no
+# previous release tag, the tool or the stable toolchain is missing, or the
+# baseline tree cannot be prepared (no report is written then).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT" || exit 2
 OUT="${1:-target/semver-report}"
+# A file left by an earlier run must not stand in for this one's.
+rm -f "$OUT/semver-baseline.json" "$OUT/semver-checks.json"
 
+prev="$(bash scripts/dev/prev-tag.sh)"
+[ -n "$prev" ] || { echo "semver-checks: no previous release tag (git fetch --tags)" >&2; exit 2; }
+mkdir -p "$OUT"
+printf '{"previous_tag": "%s"}\n' "$prev" > "$OUT/semver-baseline.json"
 if ! cargo +stable semver-checks --version >/dev/null 2>&1; then
     echo "semver-checks: needs the stable toolchain and cargo-semver-checks:" >&2
     echo "  rustup toolchain install stable && cargo +stable install cargo-semver-checks --locked" >&2
     exit 2
 fi
-prev="$(bash scripts/dev/prev-tag.sh)"
-[ -n "$prev" ] || { echo "semver-checks: no previous release tag (git fetch --tags)" >&2; exit 2; }
 pairs="$(bash scripts/lib/roster.sh public-api)" || exit 2
 [ "$(printf '%s\n' "$pairs" | grep -c .)" -eq 11 ] || { echo "semver-checks: public-api roster is not 11 crates: $pairs" >&2; exit 2; }
 
-mkdir -p "$OUT"
 base="$OUT/baseline"
 rows="$(mktemp)"
 trap 'rm -f "$rows"; git worktree remove --force "$base" >/dev/null 2>&1' EXIT
