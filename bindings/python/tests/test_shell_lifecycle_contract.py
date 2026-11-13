@@ -61,7 +61,7 @@ from tstrans.mpegts import Pts90khz
 
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program
-from _builders.ports import free_tcp_port, free_udp_port
+from _builders.ports import free_udp_port
 from _builders.rist_ports import bind_even_port_or_skip
 
 SCHEMES = ("srt", "rtp", "udp", "tcp", "rist")
@@ -151,7 +151,7 @@ def _receiver_and_peer(
     close_peer: Callable[[], None] = _no_peer
     try:
         if scheme == "srt":
-            port = free_tcp_port()
+            port = free_udp_port()
             box: list[object] = []
             errs: list[BaseException] = []
 
@@ -212,7 +212,7 @@ def _sender_with_peer(shell: str, scheme: str) -> Iterator[tuple[object, Callabl
     cleanup: list[Callable[[], None]] = []
     try:
         if scheme == "srt":
-            port = free_tcp_port()
+            port = free_udp_port()
             box: list[object] = []
 
             def accept() -> None:
@@ -467,7 +467,7 @@ def test_managed_srt_demux_receiver_keeps_its_own_end_reason() -> None:
     until its own iteration records the end."""
     from test_srt_managed_convenience import _make_managed_pair
 
-    sender, receiver = _make_managed_pair(free_tcp_port())
+    sender, receiver = _make_managed_pair(free_udp_port())
     try:
         assert receiver.end_reason() is None
         # The managed receiver records the end when its iteration observes

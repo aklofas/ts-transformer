@@ -20,11 +20,11 @@ import tstrans.srt
 from tstrans.exceptions import SrtError, SrtErrorKind
 from tstrans.srt import ListenRule, RejectReason, user_defined
 
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 
 def _listen() -> tuple[tstrans.srt.Listener, int]:
-    port = _free_tcp_port()
+    port = _free_udp_port()
     lst = tstrans.srt.Builder(f"srt://0.0.0.0:{port}?mode=listener").listen()
     return lst, port
 

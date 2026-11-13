@@ -43,7 +43,7 @@ import tstrans.srt as srt
 from tstrans.mpegts import Pts90khz
 
 from _builders.mux_programs import video_only_program as _video_only_program
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 
 NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
@@ -68,7 +68,7 @@ def test_managed_demux_receiver_socket_stats_no_gil_block_with_iter() -> None:
     so the main thread stays schedulable. The test verifies each call returns
     within the watchdog deadline.
     """
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 

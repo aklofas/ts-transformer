@@ -20,7 +20,6 @@ import tstrans
 import tstrans.srt
 from tstrans.exceptions import SrtError, SrtErrorKind
 
-from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port
 
 
@@ -89,7 +88,7 @@ def test_sender_construct_and_close() -> None:
     """Sender to an unreachable port raises SrtError. libsrt's connect
     times out on a dead listener; conntimeo defaults to 3 s — we override
     via the URL key to keep the test responsive."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     # No listener on this port. With a short conntimeo, the SRT
     # handshake fails fast.
     with pytest.raises(SrtError) as exc_info:
@@ -116,7 +115,7 @@ def test_sender_unsupported_scheme_raises_value_error() -> None:
 def test_sender_wrong_mode_raises_config_invalid() -> None:
     """Sender.open requires mode=caller (default); explicit
     listener → SrtError(CONFIG_INVALID)."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     with pytest.raises(SrtError) as exc_info:
         shells.Sender.open(f"srt://127.0.0.1:{port}?mode=listener")
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
@@ -125,7 +124,7 @@ def test_sender_wrong_mode_raises_config_invalid() -> None:
 def test_receiver_wrong_mode_raises_config_invalid() -> None:
     """Receiver.open requires mode=listener; default caller →
     SrtError(CONFIG_INVALID)."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     with pytest.raises(SrtError) as exc_info:
         shells.Receiver.open(f"srt://127.0.0.1:{port}?mode=caller")
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
@@ -141,7 +140,7 @@ def test_loopback_round_trip_small() -> None:
     sender framing layer will push without further data — STRICT-mode
     sync verification needs 377+ bytes plus a full 1316-byte bundle to
     emit). Receive back one 188-byte packet at a time."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     try:
         # 1 bundle = 7 × 188 bytes.
@@ -164,7 +163,7 @@ def test_loopback_round_trip_large() -> None:
     """Send a 1316-byte payload (libsrt's default SRTO_PAYLOADSIZE) =
     7 × 188-byte TS packets. recv_bytes returns one packet per call,
     so we call it 7 times to receive the full payload."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     try:
         payload = (b"\x47" + b"\x00" * 187) * 7  # 1316 bytes, 7 TS packets
@@ -186,7 +185,7 @@ def test_bytes_like_inputs_accepted() -> None:
     """`.send_bytes()` two-path extraction: fast `&[u8]` for `bytes`,
     fallback coercion via `bytes()` builtin for `bytearray` /
     `memoryview`."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     try:
         # Three full TS bundles (one per shape) so each send actually
@@ -215,7 +214,7 @@ def test_bytes_like_inputs_accepted() -> None:
 def test_socket_stats_populated_after_transfer() -> None:
     """After sending a payload, `socket_stats().bytes_sent /
     packets_sent` advance on the sender side."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     try:
         payload = (b"\x47" + b"\x00" * 187) * 7  # 1316 bytes
@@ -240,7 +239,7 @@ def test_socket_stats_populated_after_transfer() -> None:
 def test_srt_stats_populated_after_transfer() -> None:
     """`srt_stats()` exposes the SRT-rich fields, including
     `mbps_estimated_bandwidth` as a float."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     try:
         payload = (b"\x47" + b"\x00" * 187) * 7
@@ -268,7 +267,7 @@ def test_stats_repr_does_not_leak_internals() -> None:
     """The `__repr__` of SocketStats / SrtStats should be a stable,
     grep-friendly summary — not a dump of pointer addresses or libsrt
     handle integers."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     try:
         ss = sender.socket_stats()
@@ -294,7 +293,7 @@ def test_stats_repr_does_not_leak_internals() -> None:
 
 def test_context_manager() -> None:
     """`with Sender(...) as s:` calls close() on exit."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     # Bound on the test thread, so the caller below cannot race the bind,
     # and accepted with a deadline: a caller that connects and closes before
     # the accept dequeues it can leave a plain accept parked forever (libsrt
@@ -328,7 +327,7 @@ def test_context_manager() -> None:
 
 def test_close_idempotent() -> None:
     """`.close()` can be called multiple times safely."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     sender.close()
     sender.close()  # second close is a no-op
@@ -350,7 +349,7 @@ def test_cancel_handle_cross_thread() -> None:
     ~2 s — the cancel closes the underlying libsrt socket and the
     transport reports the cancel, not the connection error it
     provoked."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     ch = receiver.cancel_handle()
     captured: list[BaseException] = []
@@ -388,7 +387,7 @@ def test_close_while_recv_parked_cancels_first() -> None:
     — the plain cancel handle closes the libsrt socket and `SrtTransport`
     reports the cancel it observed. The contract shared with the JVM plain
     `Receiver.close()` and the C ABI's receiver close."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     captured: list[BaseException] = []
 
@@ -445,7 +444,7 @@ def test_cancel_handle_state_is_shared_per_shell() -> None:
     per-wrapper flag. Every clone from `cancel_handle()` and the shell's
     own `close()` flip the same state (a watchdog holding one clone sees
     a cancel issued through another, or through `close()`)."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     sender, receiver = _make_loopback_pair(port)
     try:
         ch1 = sender.cancel_handle()
@@ -531,7 +530,7 @@ def test_listener_open_bind_fault_is_broken_with_a_bind_prefix(opener) -> None:
     before, and `CONFIG_INVALID` / `ACCEPT_FAILED` / `TIMEOUT` on the other
     faults. Pins the one open path's behaviour across all four shells so the
     change cannot drift back silently."""
-    port = _free_tcp_port()
+    port = free_udp_port()
     first = tstrans.srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
     try:
         with pytest.raises(SrtError) as ei:

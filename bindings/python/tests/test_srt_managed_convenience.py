@@ -44,7 +44,7 @@ from tstrans.srt import (
 
 from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.mux_programs import video_private_data_program as _video_data_program
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 
 # --------------------------------------------------------------------------- #
@@ -131,7 +131,7 @@ def test_managed_loopback_round_trip() -> None:
     """End-to-end: ManagedMuxSender(caller) <-> ManagedDemuxReceiver(listener).
     Push a burst of video NALs; verify the receiver observes at least one
     Video or ProgramMap event."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
 
     events: list[object] = []
@@ -181,7 +181,7 @@ def test_managed_mux_sender_accepts_policy_and_reports_attempts() -> None:
     """`ManagedMuxSender.from_url(policy=ReconnectPolicy(...))` accepts a
     custom policy; `reconnect_attempts()` returns 0 on the happy path
     (no reconnect has fired yet)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         # The initial connect is live; the factory has not been invoked
@@ -201,7 +201,7 @@ def test_managed_mux_sender_reconnect_stats_healthy_link() -> None:
     """On a healthy link (no break yet), `reconnect_stats()` must return
     the typed `ManagedTransportStats` object with all counters at zero
     and `reconnecting` False."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         stats = sender.reconnect_stats()
@@ -219,7 +219,7 @@ def test_managed_mux_sender_reconnect_stats_healthy_link() -> None:
 
 def test_managed_mux_sender_reconnect_stats_closed_raises() -> None:
     """`reconnect_stats()` on a closed sender raises `SrtError(CLOSED)`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     sender.close()
     receiver.close()
@@ -237,7 +237,7 @@ def test_managed_demux_receiver_accepts_demux_config() -> None:
     """`ManagedDemuxReceiver.from_url(demux_config=...)` accepts a
     DemuxerConfig dataclass and routes it through
     `crate::mpegts::build_demuxer_config`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
     cfg = DemuxerConfig(strict_mode=StrictMode.OFF)
@@ -278,7 +278,7 @@ def test_managed_context_manager_closes_cleanly() -> None:
     """`with ManagedMuxSender(...) as s: ...` and `with
     ManagedDemuxReceiver(...) as rx: ...` close the wrapped shell on
     exit; repeated close is a no-op."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         with sender as s:
@@ -307,7 +307,7 @@ def test_managed_context_manager_closes_cleanly() -> None:
 
 def test_managed_mux_sender_wrong_mode_raises_config_invalid() -> None:
     """ManagedMuxSender.from_url requires ?mode=caller."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     with pytest.raises(SrtError) as exc_info:
         ManagedMuxSender.from_url(
             f"srt://127.0.0.1:{port}?mode=listener", _video_only_program()
@@ -323,7 +323,7 @@ def test_managed_mux_sender_bad_url_raises_config_invalid() -> None:
 
 def test_managed_push_on_closed_sender_raises_closed() -> None:
     """Pushing on a closed ManagedMuxSender raises SrtError(CLOSED)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     sender.close()
     receiver.close()
@@ -338,7 +338,7 @@ def test_managed_push_on_closed_sender_raises_closed() -> None:
 
 
 def test_managed_demux_receiver_iter_returns_self() -> None:
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         assert iter(receiver) is receiver
@@ -356,7 +356,7 @@ def test_managed_demux_receiver_last_seen_micros_none_paths() -> None:
     `last_seen_micros` conversion covered on `tstrans.shells.DemuxReceiver`
     and `tstrans.shells.DemuxReceiver` — this class wires the identical
     conversion, just against `ManagedDemuxReceiver::stats().per_stream`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         assert receiver.last_seen_micros(0x101) is None
@@ -373,7 +373,7 @@ def test_managed_demux_receiver_last_seen_micros_none_paths() -> None:
 
 def test_data_handle_none_for_video_only_program() -> None:
     """data_handle() returns None when no data stream is configured."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         assert sender.data_handle() is None
@@ -385,7 +385,7 @@ def test_data_handle_none_for_video_only_program() -> None:
 def test_data_handle_returns_handle_for_data_program() -> None:
     """data_handle() returns a DataStreamHandle when a data stream is
     configured in the program."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
@@ -421,7 +421,7 @@ def test_data_handle_returns_handle_for_data_program() -> None:
 
 def test_push_data_on_closed_sender_raises_closed() -> None:
     """push_data on a closed ManagedMuxSender raises SrtError(CLOSED)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
@@ -460,7 +460,7 @@ def test_push_data_round_trips_payload_fidelity() -> None:
     run on the main thread after draining, so a genuine payload/pts
     mismatch surfaces as a real test failure instead of being swallowed
     into a background-thread exception list."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
@@ -615,7 +615,7 @@ def test_recv_end_reason_enum_mirrors_rust() -> None:
 
 def test_recv_end_reason_none_on_fresh_receiver() -> None:
     """(a) A live receiver that has not ended reports `None`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         assert receiver.end_reason() is None
@@ -627,7 +627,7 @@ def test_recv_end_reason_none_on_fresh_receiver() -> None:
 def test_recv_end_reason_cancelled_after_cancel_while_parked() -> None:
     """(b) `cancel()` on a receiver parked in `recv_event` ends iteration
     with `SrtError(CLOSED)` and records `CANCELLED`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
 
     outcome: dict[str, object] = {}
@@ -679,7 +679,7 @@ def test_recv_end_reason_cancelled_after_close_while_parked() -> None:
     first: the iteration ends with `SrtError(CLOSED)` and records
     `CANCELLED` — the contract shared with the JVM `ManagedDemuxReceiver`
     and the C ABI's `tst_managed_demux_receiver_close`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
 
     outcome: dict[str, object] = {}
@@ -737,7 +737,7 @@ def test_recv_end_reason_reconnect_exhausted_on_peer_close() -> None:
     RECONNECT_EXHAUSTED (NOT END_OF_STREAM — that variant is documented as
     unreachable on this path).
     """
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port, rx_policy=_zero_retry_policy())
 
     outcome: dict[str, object] = {}
@@ -801,7 +801,7 @@ def test_reconnect_attempts_counts_factory_invocations_from_the_core_counter() -
 
     from tstrans.srt import BackoffStrategy, ManagedDemuxReceiver, ReconnectPolicy
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     # A one-shot plain peer so the initial connect succeeds, then vanishes.
     peer_box: list = []
     peer_err: list[BaseException] = []

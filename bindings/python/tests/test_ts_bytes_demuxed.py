@@ -19,7 +19,6 @@ from tstrans.mpegts import DemuxEvent, Demuxer, Muxer, MuxerConfigBuilder, Pts90
 from tstrans.srt import ManagedDemuxReceiver
 
 from _builders.mux_programs import video_only_program as _video_only_program
-from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port as _free_udp_port
 from _builders.srt_pair import make_srt_pair as _make_srt_pair
 from test_srt_managed_convenience import NAL_IDR, _make_managed_pair
@@ -80,7 +79,7 @@ def _send_32_and_wait_first_video(sender, receiver) -> None:
 
 
 def test_srt_ts_bytes_demuxed_counts_the_stream() -> None:
-    sender, rx = _make_srt_pair(_free_tcp_port())
+    sender, rx = _make_srt_pair(_free_udp_port())
     try:
         _send_32_and_wait_first_video(sender, rx)
         n = rx.ts_bytes_demuxed()
@@ -94,7 +93,7 @@ def test_srt_ts_bytes_demuxed_counts_the_stream() -> None:
 @pytest.mark.parametrize("kind", ["srt", "rtp"])
 def test_ts_bytes_demuxed_after_close_returns_last_value(kind: str) -> None:
     if kind == "srt":
-        sender, rx = _make_srt_pair(_free_tcp_port())
+        sender, rx = _make_srt_pair(_free_udp_port())
         _send_32_and_wait_first_video(sender, rx)
     else:
         port = _free_udp_port()
@@ -243,7 +242,7 @@ def test_ts_bytes_demuxed_answers_while_iteration_is_parked() -> None:
 
 
 def test_managed_ts_bytes_demuxed_counts_and_survives_close() -> None:
-    sender, rx = _make_managed_pair(_free_tcp_port())
+    sender, rx = _make_managed_pair(_free_udp_port())
     assert isinstance(rx, ManagedDemuxReceiver)
     try:
         _send_32_and_wait_first_video(sender, rx)

@@ -39,7 +39,7 @@ from tstrans.exceptions import SrtError, SrtErrorKind
 from tstrans.mpegts import Pts90khz
 
 from _builders.mux_programs import video_only_program as _video_only_program
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
 # One 188-byte TS packet for the raw-bytes `ManagedReceiver` peer below.
@@ -68,7 +68,7 @@ def _connect_sender(open_sender: Callable[[], _Sender], budget_s: float) -> _Sen
 
 
 def test_cancel_wakes_managed_listener_parked_in_reaccept() -> None:
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
@@ -148,7 +148,7 @@ def test_managed_receiver_cancel_wakes_reaccept() -> None:
     `cancel()` while the factory is parked with no peer in sight does
     nothing until someone happens to connect.
     """
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 

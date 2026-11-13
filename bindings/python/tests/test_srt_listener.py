@@ -21,7 +21,7 @@ import tstrans
 import tstrans.srt
 from tstrans.exceptions import SrtError, SrtErrorKind
 
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 
 def _connect_caller(port: int) -> tstrans.srt.Socket:
@@ -83,7 +83,7 @@ def test_local_addr_returns_kernel_picked_port() -> None:
 def test_accept_returns_socket_on_peer_connect() -> None:
     """Pair a Listener.accept() with a caller-side connect; assert
     both Sockets are alive after the handshake."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_b = tstrans.srt.Builder(f"srt://0.0.0.0:{port}?mode=listener")
     lst = listener_b.listen()
 
@@ -167,7 +167,7 @@ def test_iterator_yields_sockets_until_cancel() -> None:
     """Iterator yields accepted Sockets until cancel triggers
     StopIteration. We connect one caller, observe one Socket, then
     cancel and confirm the for-loop terminates."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     b = tstrans.srt.Builder(f"srt://0.0.0.0:{port}?mode=listener")
     lst = b.listen()
     handle = lst.cancel_handle()
@@ -233,7 +233,7 @@ def test_context_manager_closes_on_exit() -> None:
 def test_socket_into_sender_consumes_handle() -> None:
     """`Socket.into_sender()` consumes the inner handle; subsequent
     `into_receiver()` raises SrtError(CLOSED)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_b = tstrans.srt.Builder(f"srt://0.0.0.0:{port}?mode=listener")
     lst = listener_b.listen()
 

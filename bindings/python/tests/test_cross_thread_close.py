@@ -26,7 +26,6 @@ import pytest
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.mux_programs import video_private_data_program as _video_data_program
-from _builders.ports import free_tcp_port as _free_tcp_port
 from _builders.ports import free_udp_port as _free_udp_port
 from _builders.rist_ports import bind_even_port_or_skip
 
@@ -106,7 +105,7 @@ def _srt_pair(port: int):
 def test_srt_sender_close_from_other_thread_during_send() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
 
-    sender, receiver = _srt_pair(_free_tcp_port())
+    sender, receiver = _srt_pair(_free_udp_port())
     stop = threading.Event()
 
     def worker() -> None:
@@ -179,7 +178,7 @@ def test_srt_mux_sender_close_from_other_thread_during_send_video() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
     from tstrans.mpegts import Pts90khz
 
-    tx, peer = _srt_mux_sender_with_silent_peer(_free_tcp_port())
+    tx, peer = _srt_mux_sender_with_silent_peer(_free_udp_port())
     stop = threading.Event()
     pts = [0]
 
@@ -223,7 +222,7 @@ def test_srt_mux_sender_cancel_handle_wakes_send_from_other_thread() -> None:
     from tstrans.mpegts import Pts90khz
     from tstrans.shells import CancelHandle
 
-    tx, peer = _srt_mux_sender_with_silent_peer(_free_tcp_port())
+    tx, peer = _srt_mux_sender_with_silent_peer(_free_udp_port())
     try:
         handle = tx.cancel_handle()
         assert isinstance(handle, CancelHandle)
@@ -258,7 +257,7 @@ def test_srt_mux_sender_cancel_handle_wakes_send_from_other_thread() -> None:
 def test_srt_close_from_other_thread_is_observable_on_a_prior_cancel_handle() -> None:
     """`close()` cancels first; a handle obtained BEFORE the close reports
     `is_cancelled()` afterwards (shared state — the watchdog pattern)."""
-    sender, receiver = _srt_pair(_free_tcp_port())
+    sender, receiver = _srt_pair(_free_udp_port())
     try:
         handle = sender.cancel_handle()
         assert not handle.is_cancelled()
@@ -346,7 +345,7 @@ def test_srt_managed_sender_close_from_other_thread_during_blocking_backoff() ->
     from tstrans.exceptions import SrtError, SrtErrorKind
     import tstrans.srt as srt
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     accept_t, box = _plain_srt_receiver_on_thread(port)
     tx = srt.ManagedSender.from_url(
         f"srt://127.0.0.1:{port}?mode=caller&conntimeo=500", policy=_outage_policy()
@@ -402,7 +401,7 @@ def test_srt_managed_receiver_close_from_other_thread_while_recv_parked() -> Non
     from tstrans.exceptions import SrtError, SrtErrorKind
     import tstrans.srt as srt
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     box: list[srt.ManagedReceiver] = []
     errs: list[BaseException] = []
 
@@ -502,7 +501,7 @@ def _park_send_video(tx) -> tuple[threading.Thread, threading.Event, dict[str, o
 def test_srt_managed_mux_sender_close_from_other_thread_during_blocking_backoff() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     tx = _managed_mux_sender_after_peer_drop(port)
     w, stop, outcome = _park_send_video(tx)
     try:
@@ -529,7 +528,7 @@ def test_srt_managed_mux_sender_cancel_handle_wakes_blocking_backoff() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
     from tstrans.shells import CancelHandle
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     tx = _managed_mux_sender_after_peer_drop(port)
     try:
         handle = tx.cancel_handle()
@@ -561,7 +560,7 @@ def test_srt_listener_close_from_other_thread_while_accept_parked() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
     import tstrans.srt as srt
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     lst = srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
     captured: list[BaseException] = []
 
@@ -601,7 +600,7 @@ def test_srt_socket_close_and_getters_from_other_thread_do_not_raise() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
     import tstrans.srt as srt
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     lst = srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
     box: list[srt.Socket] = []
 
@@ -1371,7 +1370,7 @@ def test_srt_managed_mux_sender_stream_handles_do_not_wait_behind_parked_send() 
     """The stream set is fixed by the program config the sender was built
     from, so the five `*_handle()` getters answer while a `send_video()` is
     parked in the Blocking reconnect loop."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     tx = _managed_mux_sender_after_peer_drop(port, _video_data_program())
     before = _stream_handles(tx)
     assert before[0] is not None and before[4] is not None
@@ -1403,7 +1402,7 @@ def test_srt_mux_sender_accessors_do_not_wait_behind_parked_send() -> None:
     from tstrans.mpegts import Pts90khz
 
     tx, peer = _srt_mux_sender_with_silent_peer(
-        _free_tcp_port(), _video_data_program(), peer_knobs="&tlpktdrop=0"
+        _free_udp_port(), _video_data_program(), peer_knobs="&tlpktdrop=0"
     )
     before = _stream_handles(tx)
     assert before[0] is not None and before[4] is not None

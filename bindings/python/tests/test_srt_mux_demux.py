@@ -35,7 +35,7 @@ from _builders.mux_programs import masquerade_program as _masquerade_program
 from _builders.mux_programs import video_data_program as _video_data_program
 from _builders.mux_programs import video_klv_program as _video_klv_program
 from _builders.mux_programs import video_only_program as _video_only_program
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 
 # --------------------------------------------------------------------------- #
@@ -115,7 +115,7 @@ def test_mux_demux_module_re_exports() -> None:
 def test_mux_sender_wrong_mode_raises_config_invalid() -> None:
     """`MuxSender.open` requires `?mode=caller`; explicit listener
     URL → SrtError(CONFIG_INVALID)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     with pytest.raises(SrtError) as exc_info:
         shells.MuxSender.open(
             f"srt://127.0.0.1:{port}?mode=listener", _video_only_program()
@@ -126,7 +126,7 @@ def test_mux_sender_wrong_mode_raises_config_invalid() -> None:
 def test_demux_receiver_wrong_mode_raises_config_invalid() -> None:
     """`DemuxReceiver.open` requires `?mode=listener`; explicit
     caller URL → SrtError(CONFIG_INVALID)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     with pytest.raises(SrtError) as exc_info:
         shells.DemuxReceiver.open(
             f"srt://127.0.0.1:{port}?mode=caller"
@@ -159,7 +159,7 @@ def test_from_url_round_trip_via_loopback() -> None:
     is fully fed by the time the receiver-side close+EOF arrives. A
     short sleep after the burst gives the kernel time to drain the
     send queue before close() races the in-flight bytes."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
 
     events: list[object] = []
@@ -217,7 +217,7 @@ def test_send_klv_via_loopback() -> None:
     """Send a KLV blob through a video+klv program; assert the KLV
     handle accessor returns something + the demux side sees the event
     (Metadata or ProgramMap before stopping)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port, program=_video_klv_program())
 
     events: list[object] = []
@@ -266,7 +266,7 @@ def test_send_data_via_loopback() -> None:
     assert the data handle accessor returns something + the demux side
     sees an event (UnknownSample or Video before stopping). Exercises
     both `send_data` (single-stream shorthand) and `send_data_to`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port, program=_video_data_program())
 
     events: list[object] = []
@@ -322,7 +322,7 @@ def test_handle_getters_and_send_to() -> None:
     MuxSender side. We don't need a live receiver for this — the
     listener thread accepts then the receiver sits idle while we
     exercise the sender API surface."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         # Single-video program: video_handle resolves, others are None.
@@ -360,7 +360,7 @@ def test_handle_getters_and_send_to() -> None:
 def test_mux_sender_stats_tuple_shape() -> None:
     """`MuxSender.stats()` returns a 2-tuple of (SocketStats,
     MuxerStats)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         stats = sender.stats()
@@ -382,7 +382,7 @@ def test_mux_sender_stats_tuple_shape() -> None:
 def test_demux_receiver_stats_tuple_shape() -> None:
     """`DemuxReceiver.stats()` returns a 2-tuple of (SocketStats,
     MuxerStats). Mirror of MuxSender for shape parity."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         stats = receiver.stats()
@@ -406,7 +406,7 @@ def test_last_seen_micros_via_loopback() -> None:
     Video event for pid 0x101 has been consumed, it reports an
     epoch-microsecond int; a PID that never carried traffic (0x1FFF)
     stays None even once the stream is flowing."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         assert receiver.last_seen_micros(0x101) is None
@@ -457,7 +457,7 @@ def test_socket_into_mux_sender_promotion() -> None:
     """`Builder.connect().into_mux_sender(program_config)` produces a
     fully-functional MuxSender (a real impl, not a NotImplementedError
     stub)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     # The listener side is only the peer; we drive the caller side manually
     # via Builder + into_mux_sender. Bound on the test thread (no bind race)
     # and accepted with a deadline: a caller that connects and closes before
@@ -498,7 +498,7 @@ def test_socket_into_mux_sender_promotion() -> None:
 def test_socket_into_demux_receiver_promotion() -> None:
     """`Listener.accept().into_demux_receiver()` produces a
     DemuxReceiver (a real impl, not a NotImplementedError stub)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     # Spawn the listener-side accept on a worker thread, then connect a
     # MuxSender from the main thread (so libsrt actually accepts the
     # peer and Listener.accept returns).
@@ -606,7 +606,7 @@ def test_rejected_demux_config_leaves_the_socket_usable() -> None:
 def test_mux_sender_context_manager_closes_cleanly() -> None:
     """`with MuxSender(...) as s: ...` closes the sender on exit;
     repeated close is a no-op. Mirror test for DemuxReceiver follows."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         with sender as s:
@@ -622,7 +622,7 @@ def test_mux_sender_context_manager_closes_cleanly() -> None:
 
 
 def test_demux_receiver_context_manager_closes_cleanly() -> None:
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         with receiver as rx:
@@ -641,7 +641,7 @@ def test_demux_receiver_close_while_next_parked_cancels_first() -> None:
     every shell, plain or managed, reports a cancel as CLOSED).
     The contract shared with the JVM plain `DemuxReceiver.close()` and the C
     ABI's `tst_demux_receiver_close`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     outcome: dict[str, object] = {}
 
@@ -685,7 +685,7 @@ def test_demux_receiver_close_while_next_parked_cancels_first() -> None:
 
 
 def test_demux_receiver_iter_returns_self() -> None:
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         assert iter(receiver) is receiver
@@ -701,7 +701,7 @@ def test_demux_receiver_iter_returns_self() -> None:
 
 def test_send_video_on_closed_sender_raises_closed() -> None:
     """Sending on a closed MuxSender raises `SrtError(CLOSED)`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     sender.close()
     receiver.close()
@@ -712,7 +712,7 @@ def test_send_video_on_closed_sender_raises_closed() -> None:
 
 def test_send_video_malformed_nal_raises_mux_error() -> None:
     """Raw bytes without an Annex-B start code → MuxError(INVALID_NAL)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
         with pytest.raises(MuxError) as exc_info:
@@ -734,7 +734,7 @@ def test_demux_receiver_accepts_demux_config() -> None:
     helper routes through `crate::mpegts::build_demuxer_config`."""
     from tstrans.mpegts import DemuxerConfig, StrictMode
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
     cfg = DemuxerConfig(strict_mode=StrictMode.OFF)
@@ -784,7 +784,7 @@ def test_demux_sourced_failure_raises_demux_error_not_srt_error() -> None:
     pat[19] ^= 0xFF
     corrupt_pat = bytes(pat)
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     cfg = DemuxerConfig(strict_mode=StrictMode.FULL)
     rx_box: list[tstrans.shells.DemuxReceiver] = []
     rx_err: list[BaseException] = []

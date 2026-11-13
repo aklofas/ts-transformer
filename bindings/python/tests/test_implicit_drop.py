@@ -28,7 +28,7 @@ import pytest
 
 import tstrans
 
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 from _builders.native_hooks import shells_hook as _hook
 
 PKG_PARENT = str(Path(tstrans.__file__).resolve().parent.parent)
@@ -86,7 +86,7 @@ def _srt_pair() -> Tuple[object, object, object]:
     inherits the listener's 5 s receive timeout."""
     import tstrans.srt
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     lst = tstrans.srt.Builder(
         f"srt://127.0.0.1:{port}?mode=listener", recv_timeout_ms=5000
     ).listen()
@@ -145,7 +145,7 @@ def test_gc_after_into_sender_closes_nothing():
 
 def test_exit_with_an_unclosed_socket_exits_cleanly():
     pytest.importorskip("tstrans.srt", exc_type=ImportError)
-    port = _free_tcp_port()
+    port = _free_udp_port()
     script = f"""
         import threading, time
         import tstrans.srt
