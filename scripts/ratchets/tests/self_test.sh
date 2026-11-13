@@ -734,6 +734,301 @@ expect "release version: a branch named v0.2.0-fix is not a tag" 0 rvc_ref branc
 expect "release version: unset ref type, v0.2.0-rc1 is refused" 1 rvc_ref - v0.2.0-rc1
 expect "release version: unset ref type, v0.2.0 matches" 0 rvc_ref - v0.2.0
 
+# ---- a (BREAKING) CHANGELOG section needs a version that can carry it ----
+# (scripts/check/repo/changelog-breaking-version.sh)
+R_CBV="$DIR/../check/repo/changelog-breaking-version.sh"
+mkdir -p "$tmp/cbv"
+# cbv_log <workspace version> : the CHANGELOG on stdin, with the rail's two inputs
+# written under $tmp/cbv. `@` at a line start stands for `#` (a heredoc line may
+# not start a comment here, but keeps the fixtures readable as Markdown).
+cbv_log() {
+    printf '[package]\nversion = "9.9.9"\n\n[workspace.package]\nversion      = "%s"\n' "$1" > "$tmp/cbv/Cargo.toml"
+    sed 's/^@@@ /### /; s/^@@ /## /' > "$tmp/cbv/CHANGELOG.md"
+}
+cbv() { CBV_CHANGELOG="$tmp/cbv/CHANGELOG.md" CBV_CARGO_TOML="$tmp/cbv/Cargo.toml" bash "$R_CBV"; }
+CBV_TAIL='
+---
+
+@@ [0.10.0] — 2026-11-12
+
+@@@ Changed — tst-core (BREAKING)
+
+- an old break
+
+@@ [0.9.0] — 2026-10-28
+'
+MARK='<!-- TODO(release): set the release date -->'
+
+# Between a release and the next sweep.
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+$CBV_TAIL
+EOF
+expect "changelog version: an empty Unreleased section passes" 0 cbv
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+@@@ Changed — tst-core
+
+- faster
+$CBV_TAIL
+EOF
+expect "changelog version: entries that break nothing need no number" 0 cbv
+
+# The mistake the rail exists for: a break with no number, or under a patch number.
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+@@@ Fixed — tst-core
+
+- a fix
+
+@@@ Removed — tst-srt, tst-py (BREAKING)
+
+- the aliases
+$CBV_TAIL
+EOF
+expect "changelog version: a BREAKING section without a Next release line fails" 1 cbv
+expect_out "changelog version: the failure names the heading" "Removed — tst-srt, tst-py (BREAKING)"
+expect_out "changelog version: the failure says what to write" "Next release: 0.11.0"
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+Next release: 0.10.1
+
+@@@ Removed — tst-srt (BREAKING)
+
+- the aliases
+$CBV_TAIL
+EOF
+expect "changelog version: a BREAKING section under a patch number fails" 1 cbv
+expect_out "changelog version: the failure names the line" "0.10.1 stays in the 0.10 line of 0.10.0"
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+Next release: 0.11.0
+
+@@@ Removed — tst-srt (BREAKING)
+
+- the aliases
+$CBV_TAIL
+EOF
+expect "changelog version: a BREAKING section under a new minor passes" 0 cbv
+expect_out "changelog version: the pass names the numbers" "previous release 0.10.0, next release 0.11.0, workspace 0.10.0"
+cbv_log 0.11.0 <<EOF
+@@ [Unreleased]
+
+Next release: 0.11.0
+
+@@@ Removed — tst-srt (BREAKING)
+
+- the aliases
+$CBV_TAIL
+EOF
+expect "changelog version: the workspace may already carry the next number" 0 cbv
+cbv_log 0.12.0 <<EOF
+@@ [Unreleased]
+
+Next release: 0.11.0
+$CBV_TAIL
+EOF
+expect "changelog version: a workspace version that is neither number fails" 1 cbv
+expect_out "changelog version: the failure names the workspace version" "workspace version is 0.12.0"
+cbv_log 0.9.0 <<EOF
+@@ [Unreleased]
+$CBV_TAIL
+EOF
+expect "changelog version: a workspace version behind the previous release fails" 1 cbv
+
+# The line itself.
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+Next release: 0.10.1
+
+@@@ Fixed — tst-core
+
+- a fix
+$CBV_TAIL
+EOF
+expect "changelog version: a patch number without breaks passes" 0 cbv
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+Next release: 0.10.0
+$CBV_TAIL
+EOF
+expect "changelog version: a line left at the released number fails" 1 cbv
+expect_out "changelog version: the stale line is named" "not above the previous release 0.10.0"
+for bad in 0.11 v0.11.0 0.11.0-rc1 soon; do
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+Next release: $bad
+$CBV_TAIL
+EOF
+expect "changelog version: 'Next release: $bad' is not a version" 1 cbv
+done
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+Next release: 0.11.0
+
+Next release: 0.12.0
+$CBV_TAIL
+EOF
+expect "changelog version: two Next release lines fail" 1 cbv
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+@@@ Fixed — tst-core
+
+- a fix
+
+Next release: 0.11.0
+$CBV_TAIL
+EOF
+expect "changelog version: the line belongs directly under the heading" 1 cbv
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+$(printf '%s' "$CBV_TAIL" | sed 's/^- an old break$/Next release: 0.11.0/')
+EOF
+expect "changelog version: a Next release line in a released section fails" 1 cbv
+
+# Release preparation: the retitled section still carries its date marker.
+cbv_prep() { # <workspace> <section version> <Unreleased body> <extra line in the section>
+    cbv_log "$1" <<EOF
+@@ [Unreleased]
+$3
+
+---
+
+@@ [$2] — 2026-12-01
+$MARK
+$4
+
+@@@ Removed — tst-srt (BREAKING)
+
+- the aliases
+$CBV_TAIL
+EOF
+}
+cbv_prep 0.11.0 0.11.0 "" ""
+expect "changelog version: a release in preparation under a new minor passes" 0 cbv
+cbv_prep 0.10.1 0.10.1 "" ""
+expect "changelog version: a release in preparation with breaks under a patch number fails" 1 cbv
+expect_out "changelog version: the failure names both versions" "0.10.1 stays in the 0.10 line of 0.10.0"
+cbv_prep 0.10.0 0.11.0 "" ""
+expect "changelog version: a retitled section without the version sweep fails" 1 cbv
+expect_out "changelog version: the sweep is named" "workspace version is 0.10.0"
+cbv_prep 0.11.0 0.11.0 "" "Next release: 0.11.0"
+expect "changelog version: a Next release line left in the retitled section fails" 1 cbv
+cbv_prep 0.11.0 0.11.0 "
+Next release: 0.11.0" ""
+expect "changelog version: a Next release line left above the retitled section fails" 1 cbv
+expect_out "changelog version: it is not above the section below" "not above the previous release 0.11.0"
+cbv_prep 0.11.0 0.11.0 "
+Next release: 0.11.1
+
+@@@ Changed — tst-core (BREAKING)
+
+- one more" ""
+expect "changelog version: a break after the freeze needs a minor above the one in preparation" 1 cbv
+cbv_prep 0.11.0 0.11.0 "
+Next release: 0.12.0
+
+@@@ Changed — tst-core (BREAKING)
+
+- one more" ""
+expect "changelog version: ... and passes with it" 0 cbv
+cbv_prep 0.9.5 0.9.5 "" ""
+expect "changelog version: a release in preparation below the previous release fails" 1 cbv
+cbv_log 0.11.0 <<EOF
+@@ [0.11.0] — 2026-12-01
+$MARK
+
+@@@ Removed — tst-srt (BREAKING)
+
+- the aliases
+$CBV_TAIL
+EOF
+expect "changelog version: a retitled top section without an Unreleased stub is judged the same" 0 cbv
+cbv_log 0.11.0 <<EOF
+@@ [Unreleased]
+
+---
+
+@@ [0.11.0] — 2026-12-01
+$MARK
+
+---
+
+@@ [0.10.0] — 2026-11-12
+$MARK
+
+@@ [0.9.0] — 2026-10-28
+EOF
+expect "changelog version: two sections in preparation fail" 1 cbv
+
+# From 1.0 a break needs a new major; 1.0 itself is a new line after 0.x.
+cbv_major() { # <workspace> <next> : previous release 1.2.0
+    cbv_log "$1" <<EOF
+@@ [Unreleased]
+
+Next release: $2
+
+@@@ Removed — tst-core (BREAKING)
+
+- gone
+
+@@ [1.2.0] — 2027-03-01
+EOF
+}
+cbv_major 1.2.0 1.3.0
+expect "changelog version: from 1.0 a break under a new minor fails" 1 cbv
+expect_out "changelog version: the failure asks for a major" "Next release: 2.0.0"
+cbv_major 1.2.0 2.0.0
+expect "changelog version: from 1.0 a break under a new major passes" 0 cbv
+cbv_log 0.12.0 <<EOF
+@@ [Unreleased]
+
+Next release: 1.0.0
+
+@@@ Removed — tst-core (BREAKING)
+
+- gone
+
+@@ [0.12.0] — 2027-01-01
+EOF
+expect "changelog version: 1.0.0 after 0.12.0 may carry breaks" 0 cbv
+
+# Inputs that cannot be read fail.
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+@@@ Changed — tst-core
+
+- first
+EOF
+expect "changelog version: a CHANGELOG without a released section fails" 1 cbv
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+
+@@ [0.10.0]
+
+@@ [0.9.0] — 2026-10-28
+EOF
+expect "changelog version: a version heading without its date fails" 1 cbv
+cbv_log 0.10.0 <<EOF
+@@ [Unreleased]
+$CBV_TAIL
+EOF
+printf '[workspace.package]\nedition = "2024"\n' > "$tmp/cbv/Cargo.toml"
+expect "changelog version: a Cargo.toml without the workspace version fails" 1 cbv
+rm "$tmp/cbv/CHANGELOG.md"
+expect "changelog version: a missing CHANGELOG fails" 1 cbv
+expect "changelog version: the committed CHANGELOG passes" 0 bash "$R_CBV"
+
 # ---- ci-run-select (scripts/ci/ci-run-select.jq) ----
 CIS="$DIR/../ci/ci-run-select.jq"
 mkdir -p "$tmp/ci"
