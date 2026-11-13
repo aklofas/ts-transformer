@@ -2,7 +2,7 @@
 //! viewer is offered the local address its signalling connection arrived
 //! on, so the server needs no knowledge of the host's addresses.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 
 use tst_core::mpegts::common::Pts90khz;
@@ -108,6 +108,31 @@ fn a_wildcard_bind_offers_each_viewer_the_address_it_reached() {
     play(&m, 0, &mut vs);
     let media = SocketAddr::new(lan, srv.media_addr().port());
     assert!(vs[0].sources.contains(&media), "{:?}", vs[0].sources);
+}
+
+/// `::` follows the same rule for an IPv6 viewer. An IPv4 viewer that
+/// reaches a dual-stack `::` socket arrives on an IPv4-mapped address,
+/// which the IPv6 media path does not serve: it is offered loopback only,
+/// as before.
+#[test]
+fn a_wildcard_ipv6_bind_offers_an_ipv6_viewer_the_address_it_reached() {
+    let v6 = IpAddr::V6(Ipv6Addr::LOCALHOST);
+    let srv = match WhepServer::bind("whep://[::]:0") {
+        Ok(srv) => srv,
+        Err(e) => return skip_unless_required("IPV6", format!("cannot bind [::]: {e}")),
+    };
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = [TestViewer::bound_to(v6)];
+    assert_eq!(join_on(&srv, v6, &mut v[0]), [v6]);
+    connect_all(&m, &mut v);
+    play(&m, 0, &mut v);
+
+    // Only where the OS makes `::` dual-stack does an IPv4 request arrive.
+    let v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), srv.local_addr().port());
+    if std::net::TcpStream::connect(v4).is_ok() {
+        let mut w = TestViewer::new();
+        assert_eq!(join_on(&srv, v4.ip(), &mut w), [v6]);
+    }
 }
 
 #[cfg(target_os = "linux")]

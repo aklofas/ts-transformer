@@ -9,7 +9,7 @@
 //! with `Connection: close`.
 
 use std::io::{self, ErrorKind, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -268,6 +268,8 @@ fn serve(stream: TcpStream, peer: SocketAddr, shared: &Arc<Shared>) {
     if let Err(e) = stream.set_write_timeout(Some(WRITE_TIMEOUT)) {
         debug!(%peer, error = %e, "WHEP connection: set_write_timeout failed");
     }
+    // An address of this host the viewer can reach: the one it reached.
+    let reached = stream.local_addr().ok().map(|a| a.ip());
     let mut stream = match Conn::new(stream, shared) {
         Ok(c) => c,
         Err(e) => {
@@ -276,7 +278,7 @@ fn serve(stream: TcpStream, peer: SocketAddr, shared: &Arc<Shared>) {
         }
     };
     let (response, unread) = match read_request(&mut stream, shared) {
-        Ok((request, body)) => (answer(&request, &body, peer, shared), false),
+        Ok((request, body)) => (answer(&request, &body, peer, reached, shared), false),
         Err(ReadFailure::Respond(r)) => (r, true),
         Err(ReadFailure::Closed) => return,
     };
@@ -386,7 +388,13 @@ fn read_some(
 }
 
 /// The response to a complete request.
-fn answer(request: &Request, body: &[u8], peer: SocketAddr, shared: &Shared) -> Response {
+fn answer(
+    request: &Request,
+    body: &[u8],
+    peer: SocketAddr,
+    reached: Option<IpAddr>,
+    shared: &Shared,
+) -> Response {
     match http::route(request) {
         Route::Preflight => resp(204, ""),
         Route::MethodNotAllowed { allow } => with_header(resp(405, ""), "Allow", allow),
@@ -395,7 +403,7 @@ fn answer(request: &Request, body: &[u8], peer: SocketAddr, shared: &Shared) -> 
             if let Some(refused) = check_bearer(request, shared) {
                 return refused;
             }
-            create_session(&mount, body, peer, shared)
+            create_session(&mount, body, peer, reached, shared)
         }
         Route::DeleteSession { mount, id } => {
             if let Some(refused) = check_bearer(request, shared) {
@@ -439,7 +447,13 @@ fn check_bearer(request: &Request, shared: &Shared) -> Option<Response> {
     ))
 }
 
-fn create_session(mount: &str, body: &[u8], peer: SocketAddr, shared: &Shared) -> Response {
+fn create_session(
+    mount: &str,
+    body: &[u8],
+    peer: SocketAddr,
+    reached: Option<IpAddr>,
+    shared: &Shared,
+) -> Response {
     let Some(state) = shared.mount_by_path(mount) else {
         return resp(404, "");
     };
@@ -458,6 +472,7 @@ fn create_session(mount: &str, body: &[u8], peer: SocketAddr, shared: &Shared) -
             mount: state.id,
             offer,
             remote_hint: Some(peer),
+            reached,
             reply,
         })
     });

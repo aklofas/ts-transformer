@@ -147,6 +147,9 @@ pub(crate) struct OfferRequest {
     pub(crate) offer: SdpOffer,
     /// The address the request came from, for the log.
     pub(crate) remote_hint: Option<SocketAddr>,
+    /// The local address the request's connection arrived on: an address
+    /// of this host that the viewer can reach.
+    pub(crate) reached: Option<IpAddr>,
     /// Where the outcome goes. The thread never blocks on it: the channel
     /// needs room for one message.
     pub(crate) reply: SyncSender<Result<CreatedSession, RejectReason>>,
@@ -208,10 +211,11 @@ pub(crate) enum ControlMsg {
 ///
 /// The local ICE candidates are `bind` itself when it names a specific
 /// address, plus `advertise` (on the bound port) when set. An unspecified
-/// `bind` (`0.0.0.0`, `::`) publishes `advertise` when set and the
-/// loopback address of its family, nothing else: without `advertise` such
-/// a server is reachable only from the same host, so any other deployment
-/// sets `advertise=`.
+/// `bind` (`0.0.0.0`, `::`) with `advertise` publishes that address and
+/// the loopback address of its family. An unspecified `bind` without
+/// `advertise` knows no address a viewer can reach until one reaches it:
+/// each session is offered the local address its signalling connection
+/// arrived on (see [`session_candidates`]).
 #[derive(Debug, Clone)]
 pub(crate) struct MediaConfig {
     /// The media socket's address (`media_port`).
@@ -439,11 +443,42 @@ fn candidate_addrs(local: SocketAddr, advertise: Option<IpAddr>) -> Vec<SocketAd
     out
 }
 
-/// The candidate a datagram from `source` arrived on. std's `recv_from`
-/// does not report the destination address, and str0m's ICE only answers
-/// checks addressed to one of its candidates. A specific bind has one
-/// receiving address; on a wildcard bind loopback traffic arrived on the
-/// loopback candidate and anything else on the advertised one.
+/// The local ICE candidates of one session: the server's own (see
+/// [`MediaConfig`]), except on an unspecified bind without `advertise`,
+/// where the session's one candidate is `reached`, the local address its
+/// signalling connection arrived on. That address is one the viewer can
+/// route to, whichever interface it came in on and whatever addresses the
+/// host had when the server was bound.
+///
+/// Such a session falls back to the server's candidates (loopback) when
+/// `reached` is unknown or is not an address of the media socket's family
+/// (an IPv4 viewer on a dual-stack `::` socket arrives on an IPv4-mapped
+/// address, which the IPv6 media path does not serve).
+fn session_candidates(
+    server: &[SocketAddr],
+    local: SocketAddr,
+    advertise: Option<IpAddr>,
+    reached: Option<IpAddr>,
+) -> Vec<SocketAddr> {
+    if !local.ip().is_unspecified() || advertise.is_some() {
+        return server.to_vec();
+    }
+    let usable = |ip: &IpAddr| match ip {
+        IpAddr::V4(_) => local.is_ipv4(),
+        IpAddr::V6(v6) => local.is_ipv6() && v6.to_ipv4_mapped().is_none(),
+    };
+    match reached.filter(usable) {
+        Some(ip) => vec![SocketAddr::new(ip, local.port())],
+        None => server.to_vec(),
+    }
+}
+
+/// The candidate of a session a datagram from `source` arrived on. std's
+/// `recv_from` does not report the destination address, and str0m's ICE
+/// only answers checks addressed to one of its candidates. A specific bind
+/// has one receiving address. On a wildcard bind loopback traffic arrived
+/// on the session's loopback candidate and anything else on its other one;
+/// a session with a single candidate received everything on it.
 fn destination_for(candidates: &[SocketAddr], local: SocketAddr, source: SocketAddr) -> SocketAddr {
     if !local.ip().is_unspecified() {
         return local;
@@ -451,8 +486,9 @@ fn destination_for(candidates: &[SocketAddr], local: SocketAddr, source: SocketA
     let want_loopback = source.ip().is_loopback();
     candidates
         .iter()
-        .copied()
         .find(|c| c.ip().is_loopback() == want_loopback)
+        .or(candidates.first())
+        .copied()
         .unwrap_or(local)
 }
 
@@ -594,21 +630,29 @@ impl Media {
             return;
         }
         let now = self.clock.now();
-        let destination = destination_for(&self.candidates, self.local, source);
         let Ok(contents) = self.buf[..n].try_into() else {
             self.counters.datagrams_unrouted += 1;
             return;
         };
-        let input = Input::Receive(
+        let local = self.local;
+        let mut input = Input::Receive(
             now,
             Receive {
                 proto: Protocol::Udp,
                 source,
-                destination,
+                destination: local,
                 contents,
             },
         );
-        let Some(v) = self.viewers.iter_mut().find(|v| v.rtc.accepts(&input)) else {
+        // The destination is the session's own candidate, so each session
+        // is asked about the datagram as it would have received it.
+        let accepted = self.viewers.iter_mut().find(|v| {
+            if let Input::Receive(_, r) = &mut input {
+                r.destination = destination_for(&v.candidates, local, source);
+            }
+            v.rtc.accepts(&input)
+        });
+        let Some(v) = accepted else {
             self.counters.datagrams_unrouted += 1;
             return;
         };
@@ -668,7 +712,7 @@ impl Media {
     }
 
     fn handle_offer(&mut self, req: OfferRequest) {
-        let result = self.create_session(req.mount, req.offer);
+        let result = self.create_session(req.mount, req.offer, req.reached);
         match &result {
             Ok(created) => {
                 self.counters.sessions_total += 1;
@@ -685,6 +729,7 @@ impl Media {
         &mut self,
         mount: MountId,
         offer: SdpOffer,
+        reached: Option<IpAddr>,
     ) -> Result<CreatedSession, RejectReason> {
         if self.viewers.len() >= self.cfg.max_viewers {
             return Err(RejectReason::Cap);
@@ -698,7 +743,9 @@ impl Media {
             .ok_or(RejectReason::Internal)?;
         let now = self.clock.now();
         let mut rtc = server_rtc(now, state.cfg.audio);
-        for addr in &self.candidates {
+        let candidates =
+            session_candidates(&self.candidates, self.local, self.cfg.advertise, reached);
+        for addr in &candidates {
             match Candidate::host(*addr, "udp") {
                 Ok(c) => {
                     rtc.add_local_candidate(c);
@@ -753,6 +800,7 @@ impl Media {
             v.klv_channel = Some(klv_channel);
             v.audio = audio;
             v.audio_seq = random_seq();
+            v.candidates = candidates;
             drain_rtc(&mut v, &self.socket, now);
             // Test-only: an offer whose ICE ufrag carries the marker panics
             // here, the last step of the guarded span.
@@ -1727,6 +1775,69 @@ mod tests {
         assert_eq!(sections[0].1, 1, "{raw}");
         // Nothing to move or fill: the repair returns str0m's answer as it was.
         assert_eq!(repair_rejected_media(&raw), raw);
+    }
+
+    #[test]
+    fn a_wildcard_bind_without_advertise_offers_the_address_the_viewer_reached() {
+        let wildcard: SocketAddr = "0.0.0.0:40000".parse().unwrap();
+        let server = candidate_addrs(wildcard, None);
+        let lan: IpAddr = "192.0.2.10".parse().unwrap();
+        let on_lan = session_candidates(&server, wildcard, None, Some(lan));
+        assert_eq!(on_lan, [SocketAddr::new(lan, 40000)]);
+        let loopback: IpAddr = "127.0.0.1".parse().unwrap();
+        assert_eq!(
+            session_candidates(&server, wildcard, None, Some(loopback)),
+            server
+        );
+        // A session with one candidate received everything on it, whatever
+        // the source: a viewer on the host itself may send from loopback.
+        let remote: SocketAddr = "192.0.2.77:5000".parse().unwrap();
+        let local_peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        assert_eq!(destination_for(&on_lan, wildcard, remote), on_lan[0]);
+        assert_eq!(destination_for(&on_lan, wildcard, local_peer), on_lan[0]);
+
+        // No address, or one of the other family, falls back to loopback.
+        assert_eq!(session_candidates(&server, wildcard, None, None), server);
+        let v6: IpAddr = "2001:db8::1".parse().unwrap();
+        assert_eq!(
+            session_candidates(&server, wildcard, None, Some(v6)),
+            server
+        );
+        let wildcard6: SocketAddr = "[::]:40000".parse().unwrap();
+        let server6 = candidate_addrs(wildcard6, None);
+        assert_eq!(
+            session_candidates(&server6, wildcard6, None, Some(v6)),
+            [SocketAddr::new(v6, 40000)]
+        );
+        let mapped: IpAddr = "::ffff:192.0.2.10".parse().unwrap();
+        assert_eq!(
+            session_candidates(&server6, wildcard6, None, Some(mapped)),
+            server6
+        );
+        assert_eq!(
+            session_candidates(&server6, wildcard6, None, Some(lan)),
+            server6
+        );
+    }
+
+    #[test]
+    fn advertise_and_a_specific_bind_ignore_the_address_the_viewer_reached() {
+        let reached: IpAddr = "192.0.2.10".parse().unwrap();
+        let public: IpAddr = "198.51.100.7".parse().unwrap();
+        let wildcard: SocketAddr = "0.0.0.0:40000".parse().unwrap();
+        let advertised = candidate_addrs(wildcard, Some(public));
+        assert_eq!(
+            session_candidates(&advertised, wildcard, Some(public), Some(reached)),
+            advertised
+        );
+        let specific: SocketAddr = "192.0.2.1:40000".parse().unwrap();
+        for advertise in [None, Some(public)] {
+            let server = candidate_addrs(specific, advertise);
+            assert_eq!(
+                session_candidates(&server, specific, advertise, Some(reached)),
+                server
+            );
+        }
     }
 
     #[test]
