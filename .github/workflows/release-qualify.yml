@@ -376,6 +376,10 @@ jobs:
 
       - name: cargo-semver-checks report (judged by the collector)
         id: semver
+        # Not skipped when the ABI comparison above failed: the report needs
+        # nothing from it, and a candidate wants its break report most in
+        # that run.
+        if: ${{ !cancelled() }}
         # continue-on-error because the collector alone decides: this step's
         # outcome is the leg's conclusion, and a failure, a missing report or
         # a crate the tool did not analyse is a NO-GO for a release candidate
