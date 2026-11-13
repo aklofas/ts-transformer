@@ -74,8 +74,8 @@ public final class PublishMount extends NativeHandle {
      * silent. Once the mount is removed ({@link RtspServer#removeMount(String)}) or
      * the server stops ({@link RtspServer#stop()} / {@link RtspServer#close()}),
      * {@link org.tstrans.shells.DemuxReceiver#recvEvent()} returns {@code null} (end of stream; what
-     * was already queued is delivered first). After {@link #cancel()} or {@link
-     * DemuxReceiver#close()} a parked read throws
+     * was already queued is delivered first). After {@link #cancel()} or
+     * {@link org.tstrans.shells.DemuxReceiver#close()} a parked read throws
      * {@link org.tstrans.RtpException} of kind {@code CLOSED}.
      *
      * @param demuxConfig demuxer configuration (must not be null; use {@link
