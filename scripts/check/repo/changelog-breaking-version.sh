@@ -38,7 +38,8 @@
 #   5. Only the first versioned section may be in preparation, and every
 #      `## [...]` heading is `[Unreleased]` or `[X.Y.Z] — YYYY-MM-DD`.
 # No `(BREAKING)` heading and no line passes: a change between a release and
-# the next version sweep needs neither.
+# the next version sweep needs neither. `(BREAKING` is read in any case, in a
+# `###` or deeper heading only, and nothing inside a fenced code block is read.
 #
 # Run it:   bash scripts/check/repo/changelog-breaking-version.sh
 # Overridable (scripts/ratchets/tests/self_test.sh points these at fixtures):
@@ -109,8 +110,15 @@ if workspace is None and not fails:
 
 # The sections: (name, version or None for Unreleased, body lines).
 sections = []
+fence = None
 for l in lines:
-    if l.startswith("## ["):
+    opened = re.match(r"\s*(`{3,}|~{3,})", l)
+    if fence is None and opened:
+        fence = opened.group(1)
+    elif fence is not None:
+        if re.fullmatch(r"\s*%s{%d,}\s*" % (re.escape(fence[0]), len(fence)), l):
+            fence = None
+    elif l.startswith("## ["):
         m = re.fullmatch(r"## \[(\d+\.\d+\.\d+)\] — \d{4}-\d\d-\d\d\s*", l)
         if l.strip() == "## [Unreleased]":
             sections.append(("Unreleased", None, []))
@@ -143,7 +151,7 @@ prep = preparing[0] if preparing else None
 
 
 def breaking(section):
-    return [l for l in section[2] if re.match(r"#{3,} .*\(BREAKING\b", l)]
+    return [l for l in section[2] if re.match(r"#{3,} .*\(BREAKING\b", l, re.IGNORECASE)]
 
 
 def next_lines(section):
