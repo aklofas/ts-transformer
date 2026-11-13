@@ -162,6 +162,15 @@ step 3).
      the AWS CLI, the UDP receive-buffer ceiling, a browser (Google Chrome
      on x86_64, Chromium on aarch64), and a clean checkout of the frozen
      commit with `tst-interop` built in release mode (`SETUP-DONE rc=0`).
+     Its `version` stage (`scripts/interop/release-version-check.sh`, which
+     `release-vm-soak.sh launch` runs again) refuses a commit whose
+     workspace version is not above the newest `vMAJOR.MINOR.PATCH` tag:
+     that is a tree without its version sweep, and two days of soak on it
+     would judge a commit that cannot be tagged. A checkout with no release
+     tag visible is refused too (`git fetch --tags origin`). A VM prepared
+     for a run that is not release evidence, such as a stress run between
+     releases, sets `TSTRANS_NOT_A_RELEASE=1`, and the stage says it was
+     skipped.
      The corpus phase below runs on the x86 VM only.
    - The 0.9.0 digests were never promoted under their tag's name, so before
      the first comparison against them copy them there once:
@@ -230,7 +239,7 @@ step 3).
      stress VM runs `stress.sh` as its own run; the soak VM never doubles
      as the stress VM.
    - On the VM, `release-vm-soak.sh launch <full sha> --outdir ~/soak-X.Y.Z
-     --wait-marker ~/ci-green` waits for that marker and refuses one written for another commit, so a
+     --wait-marker ~/ci-green` first repeats the version check, then waits for that marker and refuses one written for another commit, so a
      reused VM cannot launch on a stale marker, then runs the pre-flight
      (soak.sh's own memory gate and the rtsp-publish disk rule, which needs
      1.2 × the pre-generated stream's peak free — about 94 GiB for 48 hours),

@@ -30,7 +30,10 @@
 #            leg's regenerable media (source + segments) from the kept
 #            copy — logs, samples, reports and every other leg stay. Exit 0
 #            when nothing is left running.
-# launch     Requires the checkout at the sha and clean, DIR absent, and
+# launch     Requires the checkout at the sha and clean, its workspace
+#            version above the newest release tag (release-version-check.sh:
+#            a tree whose version sweep has not happened, or one without
+#            its tags, is refused before any waiting), DIR absent, and
 #            (with --wait-marker) the marker file present before anything
 #            starts and carrying SHA (ci-green writes it; a marker for
 #            another commit or an empty one is refused); runs preflight; launches soak.sh detached (nohup +
@@ -55,7 +58,8 @@
 #
 # Environment: SRT_RECONNECT_MODE (default background) and every soak.sh
 # knob pass through to preflight and launch. TSTRANS_REPO_DIR is the
-# checkout (default: this script's repository).
+# checkout (default: this script's repository). TSTRANS_NOT_A_RELEASE=1
+# lets `launch` start a run that is not release evidence on an unswept tree.
 #
 # Validated on Ubuntu 24.04 x86_64 (the release VM); see lib.sh for this
 # directory's portability stance.
@@ -252,6 +256,7 @@ cmd_launch() {
   [[ "$head" == "$sha" ]] || die "launch: $REPO_DIR is at $head, not $sha"
   dirty=$(cd "$REPO_DIR" && git status --short)
   [[ -z "$dirty" ]] || { echo "$dirty" >&2; die "launch: the checkout is not clean"; }
+  bash "$HERE/release-version-check.sh" "$REPO_DIR" || die "launch: refused by the version check above"
 
   if [[ -n "$marker" ]]; then
     echo "launch: waiting for $marker (CI green on $sha)..."
