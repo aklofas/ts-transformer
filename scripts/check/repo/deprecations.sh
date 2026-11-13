@@ -230,6 +230,9 @@ def files(top, suffixes):
                 yield os.path.relpath(os.path.join(d, n), root)
 
 
+STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
 def units(text, syntax):
     """(line, comment lines, code lines above, declaration lines) of every
     declaration or statement of a file. A code line runs on while a `(` or
@@ -247,7 +250,9 @@ def units(text, syntax):
         else:
             first, logical, depth = i, [], 0
             while True:
-                code = lines[i].split(TRAILING[syntax])[0]
+                # A string literal is emptied first: the `//` of a URL in one is
+                # not a comment, and a bracket in one opens nothing.
+                code = STRING.sub('""', lines[i]).split(TRAILING[syntax])[0]
                 depth += sum(code.count(c) for c in "([") - sum(code.count(c) for c in ")]")
                 logical.append(lines[i].strip())
                 if depth <= 0 or i + 1 == len(lines) or i - first == 39:
