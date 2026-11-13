@@ -40,7 +40,7 @@ public final class Socket extends NativeHandle {
     Socket(long h) { setHandle(h); }
 
     /**
-     * Consume this socket and produce a {@link Sender}.
+     * Consume this socket and produce a {@link org.tstrans.shells.Sender}.
      *
      * <p>The underlying {@code tst_srt::Socket} moves into the new Sender; subsequent
      * calls on {@code this} will throw {@code IllegalStateException("Socket is closed")}.
@@ -59,7 +59,7 @@ public final class Socket extends NativeHandle {
     }
 
     /**
-     * Consume this socket and produce a {@link Receiver}.
+     * Consume this socket and produce a {@link org.tstrans.shells.Receiver}.
      *
      * <p>Same consumption semantics as {@link #intoSender()}.
      *
@@ -74,7 +74,7 @@ public final class Socket extends NativeHandle {
     }
 
     /**
-     * Consume this socket and produce a {@link MuxSender} for the single-program
+     * Consume this socket and produce a {@link org.tstrans.shells.MuxSender} for the single-program
      * configuration {@code programConfig}.
      *
      * <p>Same consumption semantics as {@link #intoSender()}: the underlying
@@ -120,7 +120,7 @@ public final class Socket extends NativeHandle {
     }
 
     /**
-     * Consume this socket and produce a {@link DemuxReceiver} with default
+     * Consume this socket and produce a {@link org.tstrans.shells.DemuxReceiver} with default
      * demuxer options.
      *
      * <p>Same consumption semantics as {@link #intoSender()}: the underlying
@@ -140,7 +140,7 @@ public final class Socket extends NativeHandle {
     }
 
     /**
-     * Consume this socket and produce a {@link DemuxReceiver} with the given
+     * Consume this socket and produce a {@link org.tstrans.shells.DemuxReceiver} with the given
      * {@link org.tstrans.mpegts.DemuxerConfig}.
      *
      * <p>Same consumption semantics as {@link #intoDemuxReceiver()}. A demuxer

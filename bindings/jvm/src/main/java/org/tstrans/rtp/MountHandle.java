@@ -33,7 +33,7 @@ import org.tstrans.mpegts.VideoStreamHandle;
  *
  * <p><b>Push errors</b> surface as {@link RtspException} of kind {@code MOUNT}
  * (the failure originates in the mount push path) — this differs from
- * {@link MuxSender}, whose muxer errors are {@code MuxException}.
+ * {@link org.tstrans.shells.MuxSender}, whose muxer errors are {@code MuxException}.
  *
  * <p><b>Server failure isolation (rare):</b> {@code MountHandle} objects live in their
  * own registry, independent of their originating {@link RtspServer}. If the server is

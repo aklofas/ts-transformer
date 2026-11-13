@@ -2704,20 +2704,20 @@ Python binding's gaps.
 
 ### Moving from 0.8
 
-Deprecated in 0.9.0, removed in 0.11.0 (the Javadoc in 0.10.0 still says 0.10.0). Each old shell class is a
-`@Deprecated(forRemoval = true)` subclass of its replacement and keeps its
-0.8 `fromUrl` factories, which still accept only their own scheme
-(`srt://` or `rtp://`; another scheme throws `CONFIG_INVALID`).
+Deprecated in 0.9.0 and removed in 0.11.0. In 0.9 and 0.10 each old shell
+class was a `@Deprecated(forRemoval = true)` subclass of its replacement that
+kept its 0.8 `fromUrl` factories; from 0.11.0 the classes in the left column
+do not exist.
 
-The instance methods the subclasses inherit (`sendBytes`, `sendVideo`,
-`recvBytes`, `recvEvent`, ...) declare `throws BindingException` (plus
-`MuxException` on `MuxSender`, `DemuxException` on `recvEvent`), not
-`SrtException` / `RtpException`. A 0.8 call site that
-catches only `SrtException` or `RtpException` around them no longer
-compiles: catch `BindingException`, which every transport exception
-extends.
+The `org.tstrans.shells` classes accept every transport's scheme in `open`.
+`open` and the instance methods (`sendBytes`, `sendVideo`, `recvBytes`,
+`recvEvent`, ...) declare `throws BindingException` (plus `MuxException` on
+`MuxSender`, `DemuxException` on `recvEvent`), not `SrtException` /
+`RtpException`. A 0.8 call site that catches only `SrtException` or
+`RtpException` around them does not compile: catch `BindingException`, which
+every transport exception extends.
 
-| 0.8 | 0.9 |
+| 0.8 (removed in 0.11.0) | 0.9 and later |
 |---|---|
 | `org.tstrans.srt.{Sender, Receiver, MuxSender, DemuxReceiver}`, `org.tstrans.rtp.{MuxSender, DemuxReceiver}` | `org.tstrans.shells.*`, opened with `Class.open(url, ...)` |
 | `org.tstrans.rtp.Sender` / `Receiver` | `org.tstrans.rtp.Transport` / `RecvTransport` |
