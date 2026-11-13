@@ -680,45 +680,11 @@ jobs:
           done
           cp "$RUNNER_TEMP"/downloaded/c-package/*.tar.gz "$B/" || echo "::warning::no C package was produced"
           # The tree-equivalence proof: the soak ran on an earlier commit than the
-          # one qualified, so the bundle shows the collector's decision: the
-          # paths outside the release documents (none for a GO) and the release
-          # documents that changed.
-          read -r soaked qualified tag < <(python3 - "$B/qualification.json" <<'PY'
-          import json, sys
-          rec = json.load(open(sys.argv[1]))
-          eq = ((rec.get("release_vm") or {}).get("soak") or {}).get("equivalence") or {}
-          print(eq.get("soaked") or "-", eq.get("qualified") or "-", rec["source"].get("tag") or "-")
-          PY
-          )
-          {
-            echo "soaked $soaked"
-            echo "qualified $qualified"
-            echo "tag $tag"
-            echo
-            if [ "$soaked" = "-" ]; then
-              echo "(this record cites no soak archive whose tree resolved)"
-            else
-              echo "paths outside the release documents:"
-              stat="$(git diff --stat "$soaked..$qualified" -- . ':!CHANGELOG.md' ':!docs/' ':!tests/coverage/evidence-archives.toml')"
-              webrtc="$(git diff --name-only "$soaked..$qualified" -- docs/webrtc/ | grep -v '\.md$' || true)"
-              echo "${stat:-(none)}"
-              [ -z "$webrtc" ] || printf '%s\n' "$webrtc"
-              echo
-              echo "release documents that changed:"
-              python3 - "$B/qualification.json" <<'PY'
-          import json, sys
-          rec = json.load(open(sys.argv[1]))
-          soak = (rec.get("release_vm") or {}).get("soak") or {}
-          docs = (soak.get("equivalence") or {}).get("changed_release_documents")
-          print("\n".join(docs) if docs else "(none)")
-          print()
-          print("changed_paths (outside the release documents):", soak.get("changed_paths"))
-          PY
-              echo
-              echo "all paths that differ:"
-              git diff --name-only "$soaked..$qualified"
-            fi
-          } > "$B/TREE-EQUIVALENCE.txt"
+          # one qualified, so the bundle states the collector's decision in words:
+          # the paths that supersede the soak (none for a GO), what the gate
+          # admitted (generators, a version sweep), the release documents that
+          # changed, and every path that differs.
+          bash scripts/gen/qualification.sh tree-equivalence --json "$B/qualification.json" > "$B/TREE-EQUIVALENCE.txt"
           bash scripts/gen/qualification.sh checksums --dir "$B"
           ls -l "$B"
           cat "$B/qualification.md" >> "$GITHUB_STEP_SUMMARY"

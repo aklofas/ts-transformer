@@ -10,6 +10,8 @@
             docs/project/validation-evidence.md and docs/project/1.0-exit-criteria.md
   checksums --dir DIR                                  write DIR/SHA256SUMS
   archives  [--root DIR]                               validate tests/coverage/evidence-archives.toml
+  tree-equivalence [--json FILE] [--root DIR]          print the bundle's TREE-EQUIVALENCE.txt: what the
+            record decided about its soak archive standing for the qualified commit
   release-eligible --sha SHA [--json FILE] [--root DIR] [--repo OWNER/NAME] [--skip-attestation]
             exit 0 when the committed record may release the commit SHA (a tag's), 1 with
             one reason per failed rule, 2 when the record, SHA or `gh` is unusable. Rules:
@@ -1333,6 +1335,85 @@ def cmd_release_eligible(args):
     return 1 if why else 0
 
 
+def _listed(heading, paths):
+    """A heading with its count (`none` for an empty list), then one path per line."""
+    return ["%s: %s" % (heading, len(paths) or "none")] + list(paths)
+
+
+def tree_equivalence_text(rec, all_paths):
+    """The bundle's TREE-EQUIVALENCE.txt: the record's decision on whether its soak
+    archive stands for the qualified commit. The paths that supersede the archive come
+    first (none for a GO), then what the gate admits and why (the generators, a
+    version sweep), then the release documents, then `all_paths`, every path git
+    reports between the two commits. A list the record does not have is said to be
+    missing, never printed as empty."""
+    gate = rec.get("release_vm") or {}
+    soak = gate.get("soak")
+    eq = (soak or {}).get("equivalence")
+    src = rec.get("source", {})
+    out = ["soaked %s" % (soak["tree"] if soak else "-"),
+           "qualified %s" % src.get("sha", "-"),
+           "tag %s" % (src.get("tag") or "-"), ""]
+    if soak is None:
+        out.append("the release gate found no soak archive for this tree" if gate.get("release_mode")
+                   else "no soak archive is recorded for this tree")
+        return "\n".join(out) + "\n"
+    out.append("soak archive %s (%s), %s" % (
+        soak["id"], _raw_text(soak),
+        "judged by the release gate" if gate.get("release_mode")
+        else "recorded for information: this is not a release qualification"))
+    out.append("")
+    if soak.get("git_error") is not None:
+        out.append("git could not resolve the soaked tree (%s), so nothing was compared" % soak["git_error"])
+        return "\n".join(out) + "\n"
+    if eq is None:
+        out.append("the record does not say what changed between the two commits")
+        return "\n".join(out) + "\n"
+    superseded = bool(soak.get("changed_paths"))
+    out += ["paths that supersede the soak archive: %s" % (soak["changed_paths"] if superseded else "none")]
+    if superseded:
+        out.append("(the record keeps their count; they are the paths in the last list that are not a release "
+                   "document, not under scripts/gen/ and not changed by a version sweep alone)")
+
+    def section(heading, key, paths=lambda v: v):
+        out.append("")
+        if superseded:
+            out.append("%s: not listed, the soak archive is superseded" % heading)
+        elif key not in eq:
+            out.append("%s: not recorded in this record" % heading)
+        else:
+            out.extend(_listed(heading, paths(eq[key]) or []))
+
+    sweep = eq.get("version_sweep")
+    section("admitted: generators under scripts/gen/ (they build no shipped artifact and run in no soak)",
+            "changed_generators")
+    section("admitted: version sweep%s (each file differs only in the workspace version)"
+            % (" %s -> %s" % (sweep["from"], sweep["to"]) if sweep else ""),
+            "version_sweep", lambda v: (v or {}).get("paths"))
+    section("release documents that changed (CHANGELOG.md, docs/ and %s)" % ARCHIVE_TABLE,
+            "changed_release_documents")
+    out.append("")
+    out.extend(_listed("all paths that differ between the two commits", all_paths))
+    return "\n".join(out) + "\n"
+
+
+def cmd_tree_equivalence(args):
+    path = args.json or os.path.join(args.root, "docs/project/qualification.json")
+    rec = read_json(path)
+    if not isinstance(rec, dict):
+        die("%s holds no qualification record" % path)
+    soak = (rec.get("release_vm") or {}).get("soak") or {}
+    eq = soak.get("equivalence")
+    all_paths = None
+    if eq is not None and soak.get("git_error") is None:
+        try:
+            all_paths = _diff_names(args.root, eq["soaked"], eq["qualified"])
+        except QualificationError as e:
+            die("git could not list the paths between %s and %s: %s" % (eq["soaked"], eq["qualified"], e))
+    sys.stdout.write(tree_equivalence_text(rec, all_paths))
+    return 0
+
+
 def write_checksums(d):
     names = sorted(n for n in os.listdir(d)
                    if n != "SHA256SUMS" and os.path.isfile(os.path.join(d, n)))
@@ -1373,9 +1454,14 @@ def main(argv=None):
     e.add_argument("--root", default=".")
     e.add_argument("--repo")
     e.add_argument("--skip-attestation", action="store_true")
+    t = sub.add_parser("tree-equivalence")
+    t.add_argument("--json", help="the record (default: docs/project/qualification.json under --root)")
+    t.add_argument("--root", default=".")
     args = ap.parse_args(argv)
     if args.cmd == "release-eligible":
         return cmd_release_eligible(args)
+    if args.cmd == "tree-equivalence":
+        return cmd_tree_equivalence(args)
     if args.cmd == "collect":
         rec = collect(args.artifacts, args.root, release=args.release, tag=args.tag)
         with open(args.out, "w") as f:

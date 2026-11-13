@@ -387,11 +387,13 @@ step 3).
     The run's bundle holds `qualification.json`, the rendered
     `qualification.md`, `TREE-EQUIVALENCE.txt`, the SBOMs, `SHA256SUMS`, the
     build attestations and the C package. Download it from the run's
-    artefacts. `TREE-EQUIVALENCE.txt` lists the collector's decision: the
-    soaked and qualified commits (and the tag on a tag push), every path that
-    differs, the release documents among them, and the paths outside the
-    release documents (the file's `git diff --stat` also lists `scripts/gen/`
-    and version-sweep files, which do not count against a GO). The record's
+    artefacts. `TREE-EQUIVALENCE.txt` states the collector's decision: the
+    soaked and qualified commits (and the tag on a tag push), the number of
+    paths that supersede the soak (none for a GO), then, each under its own
+    heading, the generator paths and the version-sweep files the gate
+    admitted, the release documents that changed, and every path that
+    differs. `bash scripts/gen/qualification.sh tree-equivalence` prints the
+    same text for the committed record. The record's
     `release_vm.soak.equivalence` lists the release documents
     (`changed_release_documents`), the generator paths
     (`changed_generators`) and the version sweep (`version_sweep`: the two
