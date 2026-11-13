@@ -478,6 +478,25 @@ step 3).
     branch-prediction effects, and both commits are built with the
     candidate's pinned toolchain, so a toolchain bump between the two does
     not show up either.
+
+    The fuzz leg (`fuzz.yml`, called by the run) fuzzes every target in
+    `tests/coverage/fuzz-targets.toml` on the qualified commit: for 60 s
+    each in a mid-cycle run, for 600 s each when `release=true` or a `v*`
+    tag push makes the run a release qualification. The targets are dealt
+    into eight parallel jobs, about an hour each at 600 s. In release mode
+    the collector refuses a fuzz leg that ran less than 600 s per target
+    (`fuzz: ran 60 s per target; a release needs at least 600`), so a
+    release cannot be qualified on the short run. In either mode the record
+    is a NO-GO when a declared target did not run, ended before its time or
+    crashed. A crash fails its job after the job's other targets ran, and
+    the run keeps the reproducer and the target's last output as the
+    artefact `fuzz-failed-shard-<n>-<crate>-<target>`; reproduce it with
+    `cargo +nightly fuzz run <target> <file>` in `crates/<crate>/fuzz`. The
+    record's fuzz line states the seconds per target. To run the leg alone
+    on a commit:
+    ```bash
+    gh workflow run fuzz.yml -f sha=<the full 40-hex commit sha> -f seconds_per_target=600
+    ```
 11. **Commit the record.** In a docs-only PR, add the run's
     `qualification.json` as `docs/project/qualification.json` (CI's
     `check-qualification` step verifies the page matches it) and render the
@@ -492,12 +511,20 @@ step 3).
 12. **Maintainer-local checks.** Some validation needs inputs that are not on a
     CI runner, so the record lists them as `maintainer_local` and they stay
     with you. Run each and note the result before tagging:
-    - long fuzz runs, 10 minutes per target;
     - the wall-clock benchmark comparison against the baseline saved at
       the previous tag. It is a report with no threshold: where the linker
       places unchanged code moves a criterion number by up to a fifth, so
       the instruction-count leg of step 10 is the gate;
-    - the one-hour synthetic soak.
+    - the mux-to-file run: the `mux_to_file` example muxes 3 600 s of
+      synthetic frames to a file as fast as it can, a few seconds of wall
+      clock. It shows that an hour of stream time muxes without an error
+      and nothing more; the endurance evidence is the release soak of
+      step 6.
+
+    The long fuzz runs, 10 minutes per target, are the fuzz leg of step 10
+    from 0.11.0. The 0.10.0 record lists them here, and names the
+    mux-to-file run a one-hour soak, because they were run by hand for that
+    release.
 
     The real-capture corpus check runs on the release VM in step 6.
 
