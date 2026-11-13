@@ -427,7 +427,11 @@ step 3).
     bump is a NO-GO, so is a release whose workspace version still equals
     the previous tag's or is below it, so is a run that recorded no
     previous tag, and so is a report whose previous tag is not the one the
-    ABI leg compared with. On a development tree before its version sweep
+    ABI leg compared with. Both this gate and the VM scripts' version check
+    compare with the newest release tag by version order, so a maintenance
+    release cut behind a newer tag (a 0.10.1 once v0.11.0 exists) is refused
+    by both, and there is no override today. On a development tree before
+    its version sweep
     the report stays informational, because breaks land there before the
     release has its number. The record's `semver_gate` holds the inputs: the
     previous tag and its version, the workspace version, whether the tree
@@ -595,7 +599,11 @@ Release; the committed record stays the one step 10 collected.
    the C package to a **draft** Release for the tag. Edit that draft's notes
    from the CHANGELOG highlights block and publish it; do not create a second
    Release by hand. If the record is not a GO, no draft is created: read the
-   reasons, then create the Release by hand.
+   reasons, then create the Release by hand. To qualify again after the tag,
+   re-run the tag's own run (`gh run rerun <id>`), not a dispatch on the
+   frozen sha: the tag sits on the record commit, so on the frozen commit
+   the previous release tag is the new tag itself and a release-mode run
+   there reports a missing version sweep.
 
 7. **Save the benchmark baseline.** On a quiet machine, run tst-core's
    criterion benches on the tag's tree and keep the result outside
