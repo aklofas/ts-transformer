@@ -45,6 +45,7 @@
 # arm64 pass is recorded on the evidence page when it runs.
 set -uo pipefail
 
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SHA=""
 BASELINE=""
 NO_BASELINE=0
@@ -145,7 +146,7 @@ checkout || rc=$?
 
 # The corpus run is release evidence of this commit, so the commit must be
 # the swept one, as for the soak (release-version-check.sh).
-run version bash "$(dirname "${BASH_SOURCE[0]}")/release-version-check.sh" "$REPO_DIR" || finish $?
+run version bash "$HERE/release-version-check.sh" "$REPO_DIR" || finish $?
 
 # 2. The release binary. Vendored libsrt/librist: the evidence is of
 # the trees this repo ships, not of whatever the host might have.
