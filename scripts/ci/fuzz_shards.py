@@ -22,7 +22,9 @@ without a fuzz workspace and a shard estimated over the limit are errors; a
 missing or unreadable result, a target that did not run, a crash and a total
 short of the manifest are problems, and `merge` exits 1 on each. It still
 writes FILE when at least one shard reported, so the record carries the counts
-of a failed leg; with no result at all it writes nothing. Stdlib only.
+of a failed leg; with no result at all it writes nothing. Artefact files left
+by a target that passed (a slow input) are no problem: FILE counts them as
+`artefacts_kept` and `merge` says so. Stdlib only.
 """
 import argparse
 import json
@@ -64,11 +66,13 @@ def load_targets(root):
             rows = tomllib.load(f).get("target", [])
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise ShardError("cannot read %s: %s" % (MANIFEST, e))
+    if not isinstance(rows, list):
+        raise ShardError("%s: `target` is not an array of tables" % MANIFEST)
     if not rows:
         raise ShardError("%s declares no fuzz target" % MANIFEST)
     targets = []
     for r in rows:
-        crate, name = r.get("crate"), r.get("name")
+        crate, name = (r.get("crate"), r.get("name")) if isinstance(r, dict) else (None, None)
         if not isinstance(crate, str) or not isinstance(name, str):
             raise ShardError("%s: a [[target]] row needs a crate and a name, got %r" % (MANIFEST, r))
         # Both become a path, a job label and part of an artefact name.
@@ -174,7 +178,7 @@ def merge(root, shards, seconds, results):
     dealt = _dealt(root, shards, seconds)
     of = len(dealt)
     declared = sum(len(s) for s in dealt)
-    problems, ran, crashes, secs, reported = [], [], 0, [], 0
+    problems, ran, crashes, kept, secs, reported = [], [], 0, 0, [], 0
     for i, shard in enumerate(dealt, 1):
         name = "fuzz-shard-%d.json" % i
         where = "shard %d of %d" % (i, of)
@@ -212,7 +216,9 @@ def merge(root, shards, seconds, results):
             if outcome == "crash":
                 crashes += artefacts
                 problems.append("%s/%s (%s): crash, %d artefact file(s)" % (t[0], t[1], where, artefacts))
-            elif outcome != "ok":
+            elif outcome == "ok":
+                kept += artefacts
+            else:
                 problems.append("%s/%s (%s): %s" % (t[0], t[1], where, outcome))
         if len(ran) == before:
             problems.append("%s ran none of its %d targets" % (where, len(shard)))
@@ -225,7 +231,7 @@ def merge(root, shards, seconds, results):
     if len(ran) != declared:
         problems.append("ran %d of %d declared targets" % (len(ran), declared))
     return {"targets_run": len(ran), "seconds_per_target": min(secs), "crashes": crashes,
-            "shards": of, "crates": crates_of(ran)}, problems
+            "artefacts_kept": kept, "shards": of, "crates": crates_of(ran)}, problems
 
 
 def main(argv=None):
@@ -269,6 +275,9 @@ def main(argv=None):
         declared = len(load_targets(args.root))
         print("fuzz: %d of %d declared targets ran for %d s each with %d crash(es)"
               % (merged["targets_run"], declared, merged["seconds_per_target"], merged["crashes"]))
+        if merged["artefacts_kept"]:
+            print("fuzz: %d artefact file(s) left by targets that passed are kept (fuzz-kept-shard-<n>)"
+                  % merged["artefacts_kept"])
     for p in problems:
         print("fuzz_shards: " + p, file=sys.stderr)
     return 1 if problems else 0

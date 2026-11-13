@@ -936,9 +936,14 @@ def collect(art, root, release=False, tag=None):
         declared = len(tomllib.loads(f.read()).get("target", []))
     fuzz = None
     if fuzz_in is not None:
-        fuzz = {"targets_declared": declared, "targets_run": fuzz_in.get("targets_run", 0),
-                "seconds_per_target": fuzz_in.get("seconds_per_target", 0),
-                "crashes": fuzz_in.get("crashes", 0)}
+        if not isinstance(fuzz_in, dict):
+            die("fuzz.json is not an object")
+        fuzz = {"targets_declared": declared}
+        for key in ("targets_run", "seconds_per_target", "crashes"):
+            n = fuzz_in.get(key, 0)
+            if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+                die("fuzz.json: %s is not a count (%r)" % (key, n))
+            fuzz[key] = n
     abi_in = read_json(os.path.join(art, "abi.json"))
     bench_in = read_json(os.path.join(art, "bench-ir.json"))
     ci_in = read_json(os.path.join(art, "ci.json"))

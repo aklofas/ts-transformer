@@ -305,6 +305,21 @@ class ReleaseFuzzTests(unittest.TestCase):
         rec = collect(m, release=True, archives=RELEASE_OK)
         self.assertEqual(rec["verdict_reasons"], ["fuzz: ran 0 s per target; a release needs at least 600"])
 
+    def test_a_fuzz_result_of_another_shape_is_refused_with_its_reason(self):
+        def field(name, value):
+            return lambda f: f["fuzz.json"].__setitem__(name, value)
+        cases = [(lambda f: f.__setitem__("fuzz.json", [dict(FUZZ)]), "not an object")]
+        cases += [(field(name, value), name) for name in ("targets_run", "seconds_per_target", "crashes")
+                  for value in (None, "600", 600.0, True, -1)]
+        for mutate, said in cases:
+            for release in (False, True):
+                with self.subTest(said=said, release=release), self.assertRaises(SystemExit) as e, \
+                        contextlib.redirect_stderr(io.StringIO()) as err:
+                    collect(mutate, release=release, archives=RELEASE_OK if release else ARCHIVES)
+                self.assertEqual(e.exception.code, 2)
+                self.assertIn("fuzz.json", err.getvalue())
+                self.assertIn(said, err.getvalue())
+
     def test_a_release_with_a_shard_missing_is_no_go_whatever_the_budget(self):
         rec = self.release(seconds_per_target=600, targets_run=32)
         self.assertEqual(rec["verdict"], "NO-GO")
