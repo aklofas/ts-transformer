@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Self-test for release-vm-soak.sh's ci-green and launch handshake: a fake `gh`
 # answers from fixture run pages and a stub soak.sh stands in for the real one.
+# The fixture checkout is a swept tree (workspace 0.2.0 above its tag v0.1.0)
+# until the last cases, which launch on an unswept one.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -24,8 +26,14 @@ chmod +x "$tmp/bin/gh"
 
 printf '#!/usr/bin/env bash\necho stub\nexit 7\n' > "$tmp/repo/scripts/interop/soak.sh"
 git -C "$tmp/repo" init -q
-git -C "$tmp/repo" add -A
-git -C "$tmp/repo" -c user.name=t -c user.email=t@example.com commit -q -m init
+commit_version() {
+  printf '[workspace.package]\nversion = "%s"\n' "$1" > "$tmp/repo/Cargo.toml"
+  git -C "$tmp/repo" add -A
+  git -C "$tmp/repo" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q -m "$1"
+}
+commit_version 0.1.0
+git -C "$tmp/repo" tag v0.1.0
+commit_version 0.2.0
 S=$(git -C "$tmp/repo" rev-parse HEAD)
 OTHER=$(printf '%040d' 1)
 
@@ -83,5 +91,21 @@ check "launch: an empty marker is refused" "$rc" 2 'carries no sha'
 printf '%s\n' "$S" > "$tmp/m"
 timeout 30 bash "$SCRIPT" launch "$S" --outdir "$tmp/out3" --wait-marker "$tmp/m" > "$tmp/out" 2>&1; rc=$?
 check "launch: a marker for this sha reaches the pre-flight" "$rc" 7 'stub'
+
+# 6-8: launch refuses a tree whose version sweep has not happened, before it
+# waits for the marker (a missing marker would otherwise hold it for the
+# whole timeout) and before the pre-flight.
+git -C "$tmp/repo" tag v0.2.0 "$S~1"
+rm -f "$tmp/m"
+timeout 30 bash "$SCRIPT" launch "$S" --outdir "$tmp/out4" --wait-marker "$tmp/m" > "$tmp/out" 2>&1; rc=$?
+check "launch: a tree at the newest release tag's version is refused" "$rc" 2 'newest release tag v0.2.0'
+grep -q stub "$tmp/out" && { echo "FAIL: the unswept launch reached the pre-flight"; fail=1; }
+
+TSTRANS_NOT_A_RELEASE=1 timeout 30 bash "$SCRIPT" launch "$S" --outdir "$tmp/out5" > "$tmp/out" 2>&1; rc=$?
+check "launch: TSTRANS_NOT_A_RELEASE=1 lets a run that is not release evidence start" "$rc" 7 'skipped (TSTRANS_NOT_A_RELEASE=1)'
+
+git -C "$tmp/repo" tag -d v0.2.0 > /dev/null; git -C "$tmp/repo" tag -d v0.1.0 > /dev/null
+timeout 30 bash "$SCRIPT" launch "$S" --outdir "$tmp/out6" > "$tmp/out" 2>&1; rc=$?
+check "launch: a checkout with no release tag is refused" "$rc" 2 'git fetch --tags'
 
 exit "$fail"
