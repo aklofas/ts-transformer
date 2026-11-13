@@ -436,10 +436,16 @@ fn last_before_pts_drops_the_old_clock_video_completing_after_new_clock_klv() {
     }
     let mut pkts = to_ts_packets(&drain_mux(&mut mux));
     let klv_start = nth_pusi_index(&pkts, KLV_PID, 1);
+    let new_clock_video = nth_pusi_index(&pkts, VIDEO_PID, 2);
     assert!(
-        klv_start < nth_pusi_index(&pkts, VIDEO_PID, 2),
+        klv_start < new_clock_video,
         "the new-clock KLV must land before the next video PUSI"
     );
+    // The muxer signals the restart itself, on the first new-clock packet
+    // of the PCR (video) PID. This test is about a stream that signals it
+    // on the KLV PID only, so that flag moves.
+    assert_ne!(pkts[new_clock_video][5] & 0x80, 0);
+    pkts[new_clock_video][5] &= !0x80;
     set_discontinuity(&mut pkts[klv_start]);
     assert_eq!(
         pair_shape(&pkts),
