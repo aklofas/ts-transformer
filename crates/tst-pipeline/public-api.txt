@@ -1464,6 +1464,7 @@ pub fn tst_pipeline::mux_sender::MuxSender<T>::stats(&self) -> tst_pipeline::mux
 pub fn tst_pipeline::mux_sender::MuxSender<T>::stream_codec_stats(&self, u16) -> core::option::Option<tst_core::mpegts::stats::StreamCodecStats>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::subtitle_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::SubtitleStreamHandle>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::subtitle_handles_for_program(&self, u16) -> core::result::Result<alloc::vec::Vec<tst_core::mpegts::mux::types::SubtitleStreamHandle>, tst_core::error::MuxError>
+pub fn tst_pipeline::mux_sender::MuxSender<T>::tick(&self, u16, tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_pipeline::mux_sender::MuxSenderError>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::video_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::VideoStreamHandle>
 impl<T: tst_core::transport::Transport> core::fmt::Debug for tst_pipeline::mux_sender::MuxSender<T>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1507,6 +1508,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::mux_sender::MuxSe
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::mux_sender::MuxSenderError
 #[non_exhaustive] pub struct tst_pipeline::mux_sender::MuxSenderStats
 pub tst_pipeline::mux_sender::MuxSenderStats::bytes_sent: u64
+pub tst_pipeline::mux_sender::MuxSenderStats::late_metadata_pushes: u64
 pub tst_pipeline::mux_sender::MuxSenderStats::packets_sent: u64
 pub tst_pipeline::mux_sender::MuxSenderStats::pending_bytes_queued: u64
 pub tst_pipeline::mux_sender::MuxSenderStats::pending_chunks_queued: u64
@@ -2847,6 +2849,7 @@ pub fn tst_pipeline::mux_sender::MuxSender<T>::stats(&self) -> tst_pipeline::mux
 pub fn tst_pipeline::mux_sender::MuxSender<T>::stream_codec_stats(&self, u16) -> core::option::Option<tst_core::mpegts::stats::StreamCodecStats>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::subtitle_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::SubtitleStreamHandle>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::subtitle_handles_for_program(&self, u16) -> core::result::Result<alloc::vec::Vec<tst_core::mpegts::mux::types::SubtitleStreamHandle>, tst_core::error::MuxError>
+pub fn tst_pipeline::mux_sender::MuxSender<T>::tick(&self, u16, tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_pipeline::mux_sender::MuxSenderError>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::video_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::VideoStreamHandle>
 impl<T: tst_core::transport::Transport> core::fmt::Debug for tst_pipeline::mux_sender::MuxSender<T>
 pub fn tst_pipeline::mux_sender::MuxSender<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -2890,6 +2893,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::mux_sender::MuxSe
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::mux_sender::MuxSenderError
 #[non_exhaustive] pub struct tst_pipeline::MuxSenderStats
 pub tst_pipeline::MuxSenderStats::bytes_sent: u64
+pub tst_pipeline::MuxSenderStats::late_metadata_pushes: u64
 pub tst_pipeline::MuxSenderStats::packets_sent: u64
 pub tst_pipeline::MuxSenderStats::pending_bytes_queued: u64
 pub tst_pipeline::MuxSenderStats::pending_chunks_queued: u64
