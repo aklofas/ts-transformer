@@ -970,6 +970,33 @@ $MARK
 EOF
 expect "changelog version: two sections in preparation fail" 1 cbv
 
+# A release retitled with its date at once never holds the marker: the newest
+# released section is held to the one below it all the same.
+cbv_dated() { # <version, also the workspace's> <heading suffix>
+    cbv_log "$1" <<EOF
+## [Unreleased]
+
+---
+
+## [$1] — 2026-12-01
+
+### Removed — tst-srt$2
+
+- the aliases
+$CBV_TAIL
+EOF
+}
+cbv_dated 0.10.1 " (BREAKING)"
+expect "changelog version: a dated release with breaks under a patch number fails" 1 cbv
+expect_out "changelog version: the failure names the dated section" "the newest release [0.10.1]"
+expect_out "changelog version: the failure names both versions" "0.10.1 stays in the 0.10 line of 0.10.0"
+cbv_dated 0.11.0 " (BREAKING)"
+expect "changelog version: a dated release with breaks under a new minor passes" 0 cbv
+cbv_dated 0.10.1 ""
+expect "changelog version: a dated patch release without breaks passes" 0 cbv
+cbv_dated 0.9.5 ""
+expect "changelog version: a dated release below the one before it fails" 1 cbv
+
 # From 1.0 a break needs a new major; 1.0 itself is a new line after 0.x.
 cbv_major() { # <workspace> <next> : previous release 1.2.0
     cbv_log "$1" <<EOF
