@@ -139,9 +139,6 @@ class Sender:
 
     @classmethod
     def open(cls, url: str) -> Sender: ...
-    @staticmethod
-    def from_url(url: str) -> Sender:
-        """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
     def send_bytes(self, data: _BytesLike) -> None:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def flush(self) -> None:
@@ -179,9 +176,6 @@ class Receiver:
 
     @classmethod
     def open(cls, url: str) -> Receiver: ...
-    @staticmethod
-    def from_url(url: str) -> Receiver:
-        """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
     def recv_bytes(self, max_len: int = ...) -> bytes:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def cancel_handle(self) -> CancelHandle: ...
@@ -218,18 +212,6 @@ class MuxSender:
 
     @classmethod
     def open(cls, url: str, program_config: MuxerProgramConfig) -> MuxSender: ...
-    @staticmethod
-    def from_url(url: str, program_config: MuxerProgramConfig) -> MuxSender:
-        """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
-    def __new__(
-        cls,
-        url: str,
-        program_config: MuxerProgramConfig,
-        *,
-        pkt_size: Optional[int] = ...,
-    ) -> MuxSender:
-        """Deprecated: use `MuxSender.open`, with `pkt_size` as the `?pkt_size=`
-        URL key. Emits DeprecationWarning; removed in 0.10.0."""
 
     # Send surface — single stream.
     def send_video(
@@ -344,21 +326,6 @@ class DemuxReceiver:
         url: str,
         demux_config: Optional[DemuxerConfig] = ...,
     ) -> DemuxReceiver: ...
-    @staticmethod
-    def from_url(
-        url: str,
-        *,
-        demux_config: Optional[DemuxerConfig] = ...,
-    ) -> DemuxReceiver:
-        """Deprecated: use `open`. Emits DeprecationWarning; removed in 0.10.0."""
-    def __new__(
-        cls,
-        url: str,
-        *,
-        demux_config: Optional[DemuxerConfig] = ...,
-    ) -> DemuxReceiver:
-        """Deprecated: use `DemuxReceiver.open`. Emits DeprecationWarning;
-        removed in 0.10.0."""
     def __iter__(self) -> Iterator[DemuxEvent]: ...
     def __next__(self) -> DemuxEvent:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""

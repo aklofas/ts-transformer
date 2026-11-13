@@ -204,32 +204,6 @@ impl PyDemuxReceiver {
         Self::open_with(py, url, demux_config)
     }
 
-    /// Deprecated: use `open`.
-    #[staticmethod]
-    #[pyo3(signature = (url, *, demux_config = None))]
-    fn from_url(
-        py: Python<'_>,
-        url: &str,
-        demux_config: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Self> {
-        crate::util::deprecated(
-            py,
-            "`DemuxReceiver.from_url` is deprecated; use `DemuxReceiver.open(url, demux_config)`",
-        )?;
-        Self::open_with(py, url, demux_config)
-    }
-
-    /// Deprecated: use `DemuxReceiver.open(url, demux_config)`.
-    #[new]
-    #[pyo3(signature = (url, *, demux_config = None))]
-    fn new(py: Python<'_>, url: &str, demux_config: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
-        crate::util::deprecated(
-            py,
-            "constructing `DemuxReceiver(url, ...)` is deprecated; use `DemuxReceiver.open(url, demux_config)`",
-        )?;
-        Self::open_with(py, url, demux_config)
-    }
-
     /// Iterator protocol: `iter(rx)` returns `self`.
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf

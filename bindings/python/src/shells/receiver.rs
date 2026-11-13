@@ -89,16 +89,6 @@ impl PyReceiver {
         Self::from_opened(py, crate::shells::open::open_recv(py, url)?)
     }
 
-    /// Deprecated: use `open`.
-    #[staticmethod]
-    fn from_url(py: Python<'_>, url: &str) -> PyResult<Self> {
-        crate::util::deprecated(
-            py,
-            "`Receiver.from_url` is deprecated; use `Receiver.open(url)`",
-        )?;
-        Self::from_opened(py, crate::shells::open::open_recv(py, url)?)
-    }
-
     /// One 188-byte TS packet per call; `max_len` is accepted for API
     /// symmetry and floored at 188. Releases the GIL while parked;
     /// `close()` on another thread cancels first.

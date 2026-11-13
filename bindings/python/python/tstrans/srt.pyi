@@ -10,8 +10,7 @@ ManagedMuxSender, ManagedDemuxReceiver, SrtStats) live in
 `_native.srt` (Rust source under `bindings/python/src/srt/`). The
 `SrtError` + `SrtErrorKind` re-exports come from `tstrans.exceptions`.
 The shell classes, `CancelHandle`, `SocketStats` and the end-reason enum
-are `tstrans.shells` classes, re-exported here under their old names as
-deprecated aliases (removed in 0.10.0).
+are `tstrans.shells` classes.
 """
 
 from __future__ import annotations
@@ -31,14 +30,14 @@ from typing import (
 # Cross-module types are imported from the `tstrans.mpegts` stub, which
 # now ships a sibling `.pyi` declaring these as real classes.
 from tstrans.shells import (
-    CancelHandle as CancelHandle,
-    DemuxReceiver as DemuxReceiver,
-    MuxSender as MuxSender,
-    Receiver as Receiver,
-    Sender as Sender,
-    SocketStats as SocketStats,
+    CancelHandle,
+    DemuxReceiver,
+    EndReason,
+    MuxSender,
+    Receiver,
+    Sender,
+    SocketStats,
 )
-from tstrans.shells import EndReason as RecvEndReason
 from tstrans.mpegts import (
     AudioStreamHandle,
     DataStreamHandle,
@@ -251,7 +250,7 @@ class Socket:
 @final
 class Listener:
     """Bound SRT listener. Returned by `Builder.listen()` (or
-    constructed indirectly via `Receiver.from_url`).
+    constructed indirectly via `Receiver.open`).
 
     Iterate to consume accepted `Socket` instances, or call
     `accept(timeout_ms=...)` for explicit per-accept control. The
@@ -730,7 +729,7 @@ class ManagedDemuxReceiver:
     the caller's thread anyway (behaves as `ReconnectMode.BLOCKING`).
 
     `end_reason()` reports why the receive session ended
-    (`RecvEndReason`), or `None` while it is still live. It reads a
+    (`EndReason`), or `None` while it is still live. It reads a
     lock-free cell captured at construction, so it stays answerable
     after `close()` and is safe to poll from a watchdog thread while
     another thread iterates.
@@ -759,7 +758,7 @@ class ManagedDemuxReceiver:
         """Aligned TS bytes the demuxer was fed; the last value after `close()`."""
     def reconnect_attempts(self) -> int: ...
     def last_seen_micros(self, pid: int) -> Optional[int]: ...
-    def end_reason(self) -> Optional[RecvEndReason]: ...
+    def end_reason(self) -> Optional[EndReason]: ...
     def close(self) -> None: ...
     def is_alive(self) -> bool: ...
     def __enter__(self) -> ManagedDemuxReceiver: ...
