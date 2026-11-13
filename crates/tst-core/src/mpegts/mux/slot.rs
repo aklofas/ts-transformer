@@ -36,8 +36,9 @@ pub(super) struct ProgramSlot {
     /// Program clock at the last PSI emission, 33-bit 90 kHz. None until
     /// first, and after `request_psi`.
     pub(super) psi_last: Option<u64>,
-    /// Last PCR emission value at 27 MHz: the program clock. None until first.
-    pub(super) pcr_last: Option<u64>,
+    /// The program clock: the base of the last PCR sent, 33-bit 90 kHz.
+    /// None until first.
+    pub(super) clock: Option<u64>,
     /// Decode time of the last push on the PCR PID (or tick), 33-bit 90 kHz.
     /// None until first, and after the PCR PID changes.
     pub(super) pcr_stream_last: Option<u64>,
@@ -91,7 +92,7 @@ impl ProgramSlot {
             pcr_pid,
             pmt_descriptor_cache,
             psi_last: None,
-            pcr_last: None,
+            clock: None,
             pcr_stream_last: None,
             pcrs_on_time_base: 0,
             last_program_number: prog.program_number,
@@ -114,7 +115,7 @@ impl ProgramSlot {
             pmt_version: 0,
             pmt_identity: Vec::new(),
             psi_last: None,
-            pcr_last: None,
+            clock: None,
             pcr_stream_last: None,
             pcrs_on_time_base: 0,
             last_program_number: 0,
