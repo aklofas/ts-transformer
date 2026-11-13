@@ -63,6 +63,10 @@
 #   SOAK_MEM_HEADROOM=1.5      summed expected RSS of its roles x headroom
 #                              must fit it, else exit 2 before any launch
 #   RUST_LOG=info              passed to every tst-interop process
+#   TSTRANS_NOT_A_RELEASE=1    the run is not release evidence (the release
+#                              VM scripts skip their version check under
+#                              it); soak-config.json records it as
+#                              `not_a_release`
 #
 # Prerequisites: Linux; a Rust toolchain via rustup; jq, python3,
 # build-essential, cmake, meson, ninja-build, clang, libclang-dev; for the
@@ -868,6 +872,7 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson corruption "$CORRUPTION_DECL" \
   --argjson corruption_spec "$CORRUPTION_SPEC_DECL" \
   --arg arch "$(uname -m)" \
+  --argjson not_a_release "$([[ "${TSTRANS_NOT_A_RELEASE:-}" == 1 ]] && echo true || echo false)" \
   --arg srt_profile "$SRT_PROFILE" --arg rist_profile "$RIST_PROFILE" \
   --argjson schedule "$SCHEDULE_DECL" \
   --arg klv_set "$KLV_SET" --argjson klv_seed "$SEED" \
@@ -876,7 +881,8 @@ jq -n --argjson dur "$TOTAL_SECONDS" --argjson cad "$RSS_CADENCE_S" \
   --argjson publish_es_leg "$PUBLISH_ES_LEG_DECL" \
   --argjson whep_leg "$WHEP_LEG_DECL" \
   --argjson memory_gate "$MEMORY_GATE_DECL" \
-  '{expected_duration_s: $dur, arch: $arch, memory_gate: $memory_gate, rss_cadence_s: $cad, warmup_fraction: 0.1667,
+  '{expected_duration_s: $dur, arch: $arch, not_a_release: $not_a_release,
+    memory_gate: $memory_gate, rss_cadence_s: $cad, warmup_fraction: 0.1667,
     sampler_end_slack_s: $slack, expected_worker_exits: {},
     corruption: $corruption, corruption_spec: $corruption_spec,
     legs: ({srt: {profile: $srt_profile, schedule: $schedule,

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # The release VM's corpus phase on one frozen commit: check it out clean,
+# refuse it when its version sweep has not happened (release-version-check.sh),
 # build tst-interop in release mode, sync the private corpus and its
 # annotations from the bucket, then inventory -> sweep -> replay -> report
 # and push the run's digests as the commit's unreleased baseline. The
@@ -31,6 +32,8 @@
 #                           `quarantine/` never synced
 #   TSTRANS_CORPUS_DIR      local corpus root (default ~/corpus; captures
 #                           in captures/, annotations in annotations/)
+#   TSTRANS_NOT_A_RELEASE=1 the run is not release evidence: the version
+#                           stage is skipped and says so
 #
 # Exit status: the first failing stage's, after `CORPUS-DONE rc=N` (0 =
 # every stage passed and the digests were pushed). The soak is not
@@ -118,11 +121,12 @@ retry() {
 # 1. The tree, clean, at the sha.
 checkout() {
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "checkout: (cd $REPO_DIR && git fetch origin && git checkout $SHA && git submodule update --init --recursive && git status --short)"
+    echo "checkout: (cd $REPO_DIR && git fetch --tags origin && git checkout $SHA && git submodule update --init --recursive && git status --short)"
     return 0
   fi
   cd "$REPO_DIR" || return 2
-  retry 5 git fetch -q origin || return $?
+  # --tags: the version stage below compares with the newest release tag.
+  retry 5 git fetch -q --tags origin || return $?
   git checkout -q "$SHA" || return $?
   retry 5 git submodule update --init --recursive || return $?
   local dirty
@@ -138,6 +142,10 @@ rc=0
 checkout || rc=$?
 [[ "$DRY_RUN" -eq 1 ]] || echo "checkout rc=$rc"
 [[ $rc -eq 0 ]] || finish "$rc"
+
+# The corpus run is release evidence of this commit, so the commit must be
+# the swept one, as for the soak (release-version-check.sh).
+run version bash "$(dirname "${BASH_SOURCE[0]}")/release-version-check.sh" "$REPO_DIR" || finish $?
 
 # 2. The release binary. Vendored libsrt/librist: the evidence is of
 # the trees this repo ships, not of whatever the host might have.
