@@ -6,14 +6,13 @@ member files from `tests/<domain>/`, plus `tests/conformance.rs`, the
 transport conformance kit over mock transports, which stays a binary of its
 own like the kit binary in every transport crate.
 
-This history predates the binaries added later (for example
-`deprecated_aliases`), so the counts above describe the consolidation as it
-happened; the "Current binaries" list is the authority.
+This history predates the binaries added later, so the counts above describe
+the consolidation as it happened; the "Current binaries" list is the
+authority.
 
 ## Current binaries
 
 - `conformance`
-- `deprecated_aliases`
 - `errors`
 - `managed`
 - `pairing`

@@ -230,10 +230,6 @@ impl core::fmt::Debug for ResourceCancel {
     }
 }
 
-/// The old name of [`ResourceCancel`].
-#[deprecated(since = "0.9.0", note = "renamed to `ResourceCancel`")]
-pub type SrtCancelHandle = ResourceCancel;
-
 /// A latched, replaceable cancel target.
 ///
 /// **Stability: Provisional** — see the

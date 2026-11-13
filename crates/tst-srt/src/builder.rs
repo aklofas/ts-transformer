@@ -439,14 +439,6 @@ impl SrtListenerBuilder {
     }
 }
 
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtSocketBuilder`")]
-pub type SocketBuilder = SrtSocketBuilder;
-
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtListenerBuilder`")]
-pub type ListenerBuilder = SrtListenerBuilder;
-
 #[cfg(test)]
 mod tests {
     use super::*;

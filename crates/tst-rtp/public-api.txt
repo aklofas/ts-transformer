@@ -1311,7 +1311,6 @@ impl core::marker::Unpin for tst_rtp::RtpTransport
 impl core::marker::UnsafeUnpin for tst_rtp::RtpTransport
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::RtpTransport
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::RtpTransport
-pub type tst_rtp::transport::ConnectError = tst_rtp::transport::RtpConnectError
 pub mod tst_rtp::url
 #[non_exhaustive] pub enum tst_rtp::url::RtpUrlError
 pub tst_rtp::url::RtpUrlError::BadHost
@@ -1474,7 +1473,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::url::RtspUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::url::RtspUrl
 pub const tst_rtp::url::DEFAULT_PKT_SIZE: usize
 pub const tst_rtp::url::MAX_PKT_SIZE: usize
-pub type tst_rtp::url::UrlError = tst_rtp::url::RtpUrlError
 #[non_exhaustive] pub enum tst_rtp::AuthScheme
 pub tst_rtp::AuthScheme::Basic
 pub tst_rtp::AuthScheme::DigestMd5
@@ -2758,7 +2756,6 @@ impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
 pub const tst_rtp::DEFAULT_PKT_SIZE: usize
 pub const tst_rtp::MAX_PKT_SIZE: usize
 pub const tst_rtp::RTP_HEADER_LEN: usize
-pub type tst_rtp::ConnectError = tst_rtp::transport::RtpConnectError
 pub type tst_rtp::H264Au = tst_rtp::depay::AccessUnit
 pub type tst_rtp::H264DepayConfig = tst_rtp::depay::DepayConfig
 pub type tst_rtp::H264DepayStats = tst_rtp::depay::DepayStats

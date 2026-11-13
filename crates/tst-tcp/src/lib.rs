@@ -38,8 +38,6 @@ mod binding_kind;
 mod recv_knobs;
 
 pub use builder::{TcpListenerBuilder, TcpTransportBuilder};
-#[allow(deprecated)]
-pub use config::SocketConfig;
 pub use config::TcpConfig;
 pub use listener::TcpListener;
 pub use stats::TcpStats;

@@ -18,7 +18,6 @@ what each binary covers.
 | `net_tls_cancel` | `tls` | `tcps://` receive path: a cancel reaches a recv parked inside a TLS read, whole plaintext is still delivered one socket read at a time, and `close_notify` is a clean EOF. Also the accepted-side send: a cancel reaches a send parked in the lazy TLS server handshake; a silent peer is Backpressure, a peer EOF mid-handshake is Broken. |
 | `net_connect_timeout` | `tls`, Linux | A `tcps://` connect that runs out `connect_timeout` reports `ConnectTimeout`, like `tcp://`, against a listener with a full accept queue. |
 | `net_conformance` | (default) | The tst-core transport conformance kit over plain `tcp://` loopback pairs, including the cancel rows and the peer-EOF-is-not-a-cancel row. |
-| `deprecated_aliases` | (default) | The old names the crate still accepts compile and name the new types. |
 
 ## Equivalence note
 

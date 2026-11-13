@@ -137,13 +137,9 @@ pub use mux_sender::{MuxSender, MuxSenderError, MuxSenderErrorSource, MuxSenderS
 // under `ext::pairing` to signal its opt-in, extension-module nature.
 // Callers write `use tst_pipeline::ext::pairing::Pairer` explicitly.
 // See `crate::ext` for rationale.
-#[allow(deprecated)]
-pub use raw_receiver::RawRecvStats;
 pub use raw_receiver::{
     RawReceiver, RawReceiverConfig, RawReceiverError, RawReceiverErrorSource, RawReceiverStats,
 };
-#[allow(deprecated)]
-pub use raw_sender::RawSendStats;
 pub use raw_sender::{
     RawSender, RawSenderConfig, RawSenderError, RawSenderErrorSource, RawSenderStats,
 };
@@ -166,8 +162,6 @@ pub use tst_core::transport::{
 // Re-exported so binding authors have one import path; defined in tst-core
 // for layering.
 pub use tst_core::ResourceCancel;
-#[allow(deprecated)]
-pub use tst_core::SrtCancelHandle;
 
 // The crate README is rendered by crates.io and GitHub, which do not
 // compile it; this doctest-only item compiles and runs its examples with

@@ -71,10 +71,6 @@ pub enum RtpConnectError {
     IfaceUnsupported { iface: String, detail: String },
 }
 
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `RtpConnectError`")]
-pub type ConnectError = RtpConnectError;
-
 /// Helper: 4 random bytes from `getrandom`.
 pub(super) fn random_u32() -> u32 {
     u32_from(getrandom::fill)

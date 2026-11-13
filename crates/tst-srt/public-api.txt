@@ -1,6 +1,5 @@
 pub mod tst_srt
 pub use tst_srt::ResourceCancel
-pub use tst_srt::SrtCancelHandle
 pub mod tst_srt::access_control
 #[non_exhaustive] pub enum tst_srt::access_control::AccessControlError
 pub tst_srt::access_control::AccessControlError::DuplicateKey(alloc::string::String)
@@ -176,8 +175,6 @@ impl core::marker::Unpin for tst_srt::builder::SrtSocketBuilder
 impl core::marker::UnsafeUnpin for tst_srt::builder::SrtSocketBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::builder::SrtSocketBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::builder::SrtSocketBuilder
-pub type tst_srt::builder::ListenerBuilder = tst_srt::builder::SrtListenerBuilder
-pub type tst_srt::builder::SocketBuilder = tst_srt::builder::SrtSocketBuilder
 pub mod tst_srt::config
 #[non_exhaustive] pub struct tst_srt::config::SrtListenerConfig
 pub tst_srt::config::SrtListenerConfig::backlog: u32
@@ -242,8 +239,6 @@ impl core::marker::Unpin for tst_srt::config::SrtSocketConfig
 impl core::marker::UnsafeUnpin for tst_srt::config::SrtSocketConfig
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::config::SrtSocketConfig
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::config::SrtSocketConfig
-pub type tst_srt::config::ListenerConfig = tst_srt::config::SrtListenerConfig
-pub type tst_srt::config::SocketConfig = tst_srt::config::SrtSocketConfig
 pub mod tst_srt::error
 #[non_exhaustive] pub enum tst_srt::error::AcceptError
 pub tst_srt::error::AcceptError::ListenerClosed
@@ -408,7 +403,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::PacketFilterErr
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::error::PacketFilterError
 #[non_exhaustive] pub enum tst_srt::error::PassphraseError
 pub tst_srt::error::PassphraseError::EnvUnset(alloc::string::String)
-pub tst_srt::error::PassphraseError::InvalidCharset
 pub tst_srt::error::PassphraseError::InvalidLength(usize)
 pub tst_srt::error::PassphraseError::Io(core::io::error::Error)
 impl core::convert::From<core::io::error::Error> for tst_srt::error::PassphraseError
@@ -670,7 +664,6 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::SrtError
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::error::SrtError
 #[non_exhaustive] pub enum tst_srt::error::StreamIdError
 pub tst_srt::error::StreamIdError::InteriorNul
-pub tst_srt::error::StreamIdError::NonAscii
 pub tst_srt::error::StreamIdError::TooLong(usize)
 impl core::convert::From<tst_srt::error::StreamIdError> for tst_srt::error::OptionError
 pub fn tst_srt::error::OptionError::from(tst_srt::error::StreamIdError) -> Self
@@ -686,7 +679,6 @@ impl core::marker::Unpin for tst_srt::error::StreamIdError
 impl core::marker::UnsafeUnpin for tst_srt::error::StreamIdError
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::error::StreamIdError
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::error::StreamIdError
-pub type tst_srt::error::ConnectError = tst_srt::error::SrtConnectError
 pub mod tst_srt::init
 pub mod tst_srt::listen_rules
 #[non_exhaustive] pub enum tst_srt::listen_rules::ListenRule
@@ -764,7 +756,6 @@ impl core::marker::Unpin for tst_srt::listener::SrtListener
 impl core::marker::UnsafeUnpin for tst_srt::listener::SrtListener
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_srt::listener::SrtListener
 impl !core::panic::unwind_safe::UnwindSafe for tst_srt::listener::SrtListener
-pub type tst_srt::listener::Listener = tst_srt::listener::SrtListener
 pub mod tst_srt::opener
 pub fn tst_srt::opener::open_recv(&str, &alloc::sync::Arc<tst_core::cancel::CancelSlot>) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
 pub fn tst_srt::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
@@ -977,8 +968,6 @@ impl core::marker::Unpin for tst_srt::socket::SrtStats
 impl core::marker::UnsafeUnpin for tst_srt::socket::SrtStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::socket::SrtStats
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::socket::SrtStats
-pub type tst_srt::socket::Socket = tst_srt::socket::SrtSocket
-pub type tst_srt::socket::Stats = tst_srt::socket::SrtStats
 pub mod tst_srt::transport
 pub struct tst_srt::transport::SrtTransport
 impl tst_srt::transport::SrtTransport
@@ -1098,7 +1087,6 @@ impl core::marker::Unpin for tst_srt::url::SrtUrl
 impl core::marker::UnsafeUnpin for tst_srt::url::SrtUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::url::SrtUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::url::SrtUrl
-pub type tst_srt::url::UrlError = tst_srt::url::SrtUrlError
 #[non_exhaustive] pub enum tst_srt::AcceptError
 pub tst_srt::AcceptError::ListenerClosed
 pub tst_srt::AcceptError::Other
@@ -1912,12 +1900,3 @@ impl core::marker::Unpin for tst_srt::options::StreamId
 impl core::marker::UnsafeUnpin for tst_srt::options::StreamId
 impl core::panic::unwind_safe::RefUnwindSafe for tst_srt::options::StreamId
 impl core::panic::unwind_safe::UnwindSafe for tst_srt::options::StreamId
-pub type tst_srt::ConnectError = tst_srt::error::SrtConnectError
-pub type tst_srt::Listener = tst_srt::listener::SrtListener
-pub type tst_srt::ListenerBuilder = tst_srt::builder::SrtListenerBuilder
-pub type tst_srt::ListenerConfig = tst_srt::config::SrtListenerConfig
-pub type tst_srt::Socket = tst_srt::socket::SrtSocket
-pub type tst_srt::SocketBuilder = tst_srt::builder::SrtSocketBuilder
-pub type tst_srt::SocketConfig = tst_srt::config::SrtSocketConfig
-pub type tst_srt::Stats = tst_srt::socket::SrtStats
-pub type tst_srt::UrlError = tst_srt::url::SrtUrlError

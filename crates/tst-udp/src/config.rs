@@ -36,10 +36,6 @@ impl UdpConfig {
     }
 }
 
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `UdpConfig`")]
-pub type SocketConfig = UdpConfig;
-
 #[cfg(test)]
 mod tests {
     use super::*;

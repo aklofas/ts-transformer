@@ -1121,14 +1121,6 @@ pub(crate) fn make_cancel_handle(handle: srt_sys::SRTSOCKET) -> tst_core::Resour
     crate::exit_guard::tracked_cancel_handle(handle)
 }
 
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtSocket`")]
-pub type Socket = SrtSocket;
-
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtStats`")]
-pub type Stats = SrtStats;
-
 #[cfg(test)]
 mod tests {
     fn get_i64(handle: srt_sys::SRTSOCKET, opt: srt_sys::SRT_SOCKOPT) -> i64 {
