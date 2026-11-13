@@ -238,14 +238,11 @@ impl Muxer {
         self.pes_scratch.extend_from_slice(effective_klv);
 
         let klv_packets = ts_packets_for(self.pes_scratch.len());
-        // See push_video for the rationale. KLV is the
-        // most-likely-affected push path because KLV streams are frequently
-        // configured on a non-PCR PID with low push cadence relative to
-        // the PCR PID's own (zero, here) push cadence.
-        self.reserve_preamble(prog_idx, pts, klv_pid, klv_packets)?;
-
-        let first_af = self.pcr_first_af(prog_idx, pts, klv_pid);
-        self.drain_pes_scratch(klv_pid, first_af);
+        // `pts` drives the program clock even on a stream whose PES carries
+        // no PTS: when the PCR stream is silent, KLV pushes are what keep
+        // PCR-only packets and PSI going.
+        let plan = self.reserve_preamble(prog_idx, pts, klv_pid, klv_packets, false)?;
+        self.drain_pes_scratch(klv_pid, plan.first_af(false));
 
         // Count on the Ok path only — after all early-returns above. Stats
         // count caller's payload bytes, not auto-wrapped bytes.

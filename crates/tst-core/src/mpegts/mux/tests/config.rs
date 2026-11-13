@@ -152,16 +152,16 @@ fn pcr_lead_defaults_to_100ms() {
 /// an access unit.
 #[test]
 fn rejects_pcr_lead_over_one_second() {
-    let mut cfg = MuxerConfig::default();
-    cfg.pcr_lead_ms = 1001;
+    let with_lead = |pcr_lead_ms| MuxerConfig {
+        pcr_lead_ms,
+        ..Default::default()
+    };
     assert!(matches!(
-        cfg.validate(),
+        with_lead(1001).validate(),
         Err(MuxError::InvalidConfig("pcr_lead_ms must be in 0..=1000"))
     ));
-    cfg.pcr_lead_ms = 1000;
-    assert!(cfg.validate().is_ok());
-    cfg.pcr_lead_ms = 0;
-    assert!(cfg.validate().is_ok());
+    assert!(with_lead(1000).validate().is_ok());
+    assert!(with_lead(0).validate().is_ok());
 }
 
 #[test]

@@ -73,8 +73,8 @@ use self::ts::ContinuityCounters;
 /// | Python | Drain via `pull()` at end-of-stream; let GC reclaim |
 /// | C | `tst_muxer_close(muxer)` — releases the muxer; caller is responsible for prior drain |
 pub struct Muxer {
-    /// Read only for the global fields (`pcr_interval_ms`, `psi_interval_ms`,
-    /// `buffer_packets`, `av1_carriage`); `slots` is the source of truth for
+    /// Read only for the global fields (`pcr_interval_ms`, `pcr_lead_ms`,
+    /// `psi_interval_ms`, `buffer_packets`, `av1_carriage`); `slots` is the source of truth for
     /// the program list, so nothing reads `config.programs`.
     config: MuxerConfig,
 
@@ -87,7 +87,8 @@ pub struct Muxer {
     /// the order the handle accessors report.
     program_order: Vec<usize>,
 
-    pcr_interval_27mhz: u64,
+    pcr_interval_90khz: i64,
+    pcr_lead_90khz: u64,
     psi_interval_90khz: i64,
 
     queue: VecDeque<[u8; 188]>,
@@ -128,7 +129,8 @@ impl Muxer {
     pub fn new(config: MuxerConfig) -> Result<Self, MuxError> {
         config.validate()?;
 
-        let pcr_interval_27mhz = (config.pcr_interval_ms as u64) * 27_000;
+        let pcr_interval_90khz = (config.pcr_interval_ms as i64) * 90;
+        let pcr_lead_90khz = (config.pcr_lead_ms as u64) * 90;
         let psi_interval_90khz = (config.psi_interval_ms as i64) * 90;
 
         // One slot per program, in declaration order. The heavy lifting
@@ -172,7 +174,8 @@ impl Muxer {
             pat_version: 0,
             pat_identity,
             pmt_versions_by_pid,
-            pcr_interval_27mhz,
+            pcr_interval_90khz,
+            pcr_lead_90khz,
             psi_interval_90khz,
             queue: VecDeque::with_capacity(64),
             counters: ContinuityCounters::new(),
@@ -264,73 +267,6 @@ impl Muxer {
     }
 
     // ── Shared push-path helpers ─────────────────────────────────────────────
-
-    /// Check buffer headroom, then emit any pending PSI and PCR-only packets.
-    ///
-    /// All five `push_*` paths repeat the same three-step preamble:
-    /// 1. Count packets needed for this push (PSI + PCR-only + payload).
-    /// 2. Reject early with `BufferFull` if they don't fit.
-    /// 3. Emit the PSI and PCR-only packets that are due.
-    ///
-    /// `pid` is the elementary-stream PID being pushed; `payload_pkts` is
-    /// the TS-packet count for the PES payload (from `ts_packets_for`).
-    pub(super) fn reserve_preamble(
-        &mut self,
-        prog_idx: usize,
-        pts: crate::mpegts::common::Pts90khz,
-        pid: u16,
-        payload_pkts: usize,
-    ) -> Result<(), MuxError> {
-        // Packet counts mirror what maybe_emit_psi / maybe_emit_pcr_only
-        // below actually emit: 1 PAT + N PMTs when the PSI tick is due
-        // (the historical hardcoded `2` under-reserved with N >= 2
-        // programs and let queue overflows slip past the check below),
-        // plus one PCR-only adaptation-field packet when the PCR PID has
-        // fallen behind and this push isn't already landing on it.
-        let psi_packets = if self.psi_due(prog_idx, pts.as_ticks()) {
-            1 + self.live_slots().count()
-        } else {
-            0
-        };
-        let pcr_only_packets = usize::from(self.pcr_only_due(prog_idx, pts.as_ticks(), pid));
-        if self.queue.len() + psi_packets + pcr_only_packets + payload_pkts
-            > self.config.buffer_packets
-        {
-            return Err(MuxError::BufferFull {
-                capacity_packets: self.config.buffer_packets as u64,
-            });
-        }
-        self.maybe_emit_psi(prog_idx, pts.as_ticks());
-        self.maybe_emit_pcr_only(prog_idx, pts.as_ticks(), pid);
-        Ok(())
-    }
-
-    /// Compute the `AdaptationField` for the first TS packet of a push:
-    /// carries PCR (and updates the slot's `pcr_last`) when `pid` is the
-    /// program's PCR PID and a PCR tick is due; a default (no-PCR) field
-    /// otherwise. Shared by `push_audio_to` / `push_klv_to`.
-    ///
-    /// `push_video_to` keeps its own copy — it also sets `random_access`
-    /// from `key_frame` and force-emits PCR on a coincident key frame
-    /// even when `pcr_due` would otherwise say no, a different rule than
-    /// the plain due-check here.
-    pub(super) fn pcr_first_af(
-        &mut self,
-        prog_idx: usize,
-        pts: crate::mpegts::common::Pts90khz,
-        pid: u16,
-    ) -> self::ts::AdaptationField {
-        if self.slots[prog_idx].pcr_pid == pid && self.pcr_due(prog_idx, pts.as_ticks()) {
-            let pcr = crate::mpegts::common::Pcr27mhz::from_pts(pts);
-            self.slots[prog_idx].pcr_last = Some(pcr.as_ticks());
-            self::ts::AdaptationField {
-                pcr: Some(pcr),
-                ..Default::default()
-            }
-        } else {
-            self::ts::AdaptationField::default()
-        }
-    }
 
     /// Packetize `self.pes_scratch` into 188-byte TS packets on `pid`.
     ///

@@ -226,6 +226,38 @@ fn pcr_wraps_below_zero_at_stream_start() {
     );
 }
 
+/// `0` is PCR = decode time.
+#[test]
+fn pcr_lead_zero_is_pcr_equals_dts() {
+    let mut cfg = MuxerConfig::default();
+    cfg.pcr_lead_ms = 0;
+    let mut mux = Muxer::new(cfg).unwrap();
+    let h = mux.video_stream_handle(0).unwrap();
+    mux.push_video_to_with_dts(
+        h,
+        &h264(true),
+        Pts90khz::new(96_000),
+        Pts90khz::new(90_000),
+        true,
+    )
+    .unwrap();
+    assert_eq!(pcr_bases(&drain_all(&mut mux)), vec![90_000]);
+}
+
+#[test]
+fn a_lead_of_250ms() {
+    let mut cfg = MuxerConfig::default();
+    cfg.pcr_lead_ms = 250;
+    let mut mux = Muxer::new(cfg).unwrap();
+    for i in 0..30i64 {
+        mux.push_video(&h264(i == 0), Pts90khz::new(90_000 + i * 3_000), i == 0)
+            .unwrap();
+    }
+    let ts = drain_all(&mut mux);
+    assert_eq!(pcr_bases(&ts)[0], 67_500);
+    assert!(leads(&ts, 0x1011).iter().all(|(_, l)| *l >= 22_500));
+}
+
 #[test]
 fn two_key_frames_10ms_apart_each_carry_their_own_pcr() {
     let mut mux = default_mux();
