@@ -73,6 +73,7 @@ jni_native! {
         pmt_pid: jint,
         pcr_pid: jint,
         pcr_interval_ms: jint,
+        pcr_lead_ms: jint,
         psi_interval_ms: jint,
         buffer_packets: jint,
         av1_carriage: jint,
@@ -92,6 +93,7 @@ jni_native! {
             pmt_pid,
             pcr_pid,
             pcr_interval_ms,
+            pcr_lead_ms,
             psi_interval_ms,
             buffer_packets,
             av1_carriage,
@@ -142,6 +144,7 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
     pmt_pid: jint,
     pcr_pid: jint,
     pcr_interval_ms: jint,
+    pcr_lead_ms: jint,
     psi_interval_ms: jint,
     buffer_packets: jint,
     av1_carriage: jint,
@@ -305,6 +308,7 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
     let mut b = MuxerConfig::builder();
     b.add_program(prog.build());
     b.pcr_interval_ms(pcr_interval_ms as u32);
+    b.pcr_lead_ms(pcr_lead_ms as u32);
     b.psi_interval_ms(psi_interval_ms as u32);
     b.buffer_packets(buffer_packets as usize);
     let Some(carriage) = av1_mode(env, av1_carriage) else {

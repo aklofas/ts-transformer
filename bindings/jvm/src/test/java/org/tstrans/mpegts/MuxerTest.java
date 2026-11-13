@@ -57,6 +57,55 @@ class MuxerTest {
         assertEquals(MuxException.Kind.CONFIG_INVALID, ex.kind());
     }
 
+    /** PCR base (90 kHz) of the first packet in {@code ts} that carries a PCR. */
+    private static long firstPcrBase(byte[] ts) {
+        for (int off = 0; off + 188 <= ts.length; off += 188) {
+            if ((ts[off + 3] & 0x20) != 0 && ts[off + 4] != 0 && (ts[off + 5] & 0x10) != 0) {
+                return ((long) (ts[off + 6] & 0xFF) << 25)
+                    | ((long) (ts[off + 7] & 0xFF) << 17)
+                    | ((long) (ts[off + 8] & 0xFF) << 9)
+                    | ((long) (ts[off + 9] & 0xFF) << 1)
+                    | ((ts[off + 10] & 0xFF) >>> 7);
+            }
+        }
+        throw new AssertionError("no PCR in " + ts.length + " bytes");
+    }
+
+    @Test
+    void pcrLeadDefaultsTo100AndIsSettable() throws Exception {
+        MuxerConfig byDefault = MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264).build();
+        assertEquals(100, byDefault.pcrLeadMs());
+        try (Muxer m = new Muxer(byDefault)) {
+            m.pushVideo(syntheticH264Idr(), /*pts=*/ 90_000L, /*keyFrame=*/ true);
+            assertEquals(81_000L, firstPcrBase(org.tstrans.TestSupport.drain(m)),
+                "the PCR runs 100 ms (9000 ticks) behind the decode time by default");
+        }
+
+        MuxerConfig noLead = MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+            .pcrLeadMs(0).build();
+        assertEquals(0, noLead.pcrLeadMs());
+        try (Muxer m = new Muxer(noLead)) {
+            m.pushVideo(syntheticH264Idr(), /*pts=*/ 90_000L, /*keyFrame=*/ true);
+            assertEquals(90_000L, firstPcrBase(org.tstrans.TestSupport.drain(m)),
+                "pcrLeadMs(0) writes PCR = decode time");
+        }
+    }
+
+    @Test
+    void pcrLeadOver1000IsRejected() {
+        // Range validation runs Rust-side in Muxer::new, like the PID collision above.
+        MuxerConfig cfg = MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+            .pcrLeadMs(1001).build();
+        MuxException ex = assertThrows(MuxException.class, () -> new Muxer(cfg));
+        assertEquals(MuxException.Kind.CONFIG_INVALID, ex.kind());
+        assertTrue(ex.getMessage().contains("pcr_lead_ms"), ex.getMessage());
+
+        MuxerConfig negative = MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+            .pcrLeadMs(-1).build();
+        MuxException neg = assertThrows(MuxException.class, () -> new Muxer(negative));
+        assertEquals(MuxException.Kind.CONFIG_INVALID, neg.kind());
+    }
+
     private static MuxerConfig klvConfig() throws Exception {
         return MuxerConfig.builder().programNumber(1).pmtPid(0x100)
             .addVideo(0x101, VideoCodec.H264)

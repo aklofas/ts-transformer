@@ -97,7 +97,8 @@ public final class ManagedMuxSender extends NativeHandle {
         long h = nFromUrl(
             url,
             programConfig.programNumber(), programConfig.pmtPid(), programConfig.pcrPid(),
-            programConfig.pcrIntervalMs(), programConfig.psiIntervalMs(),
+            programConfig.pcrIntervalMs(), programConfig.pcrLeadMs(),
+            programConfig.psiIntervalMs(),
             programConfig.bufferPackets(), programConfig.av1Carriage().ordinal(),
             programConfig.streamPids(), programConfig.streamKinds(),
             programConfig.streamCodecs(), programConfig.streamTypeCodes(),
@@ -502,7 +503,7 @@ public final class ManagedMuxSender extends NativeHandle {
     // --- Natives ---
 
     private static native long nFromUrl(String url, int programNumber, int pmtPid, int pcrPid,
-        int pcrIntervalMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
+        int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
         int[] streamPids, int[] streamKinds, int[] streamCodecs, int[] streamTypeCodes,
         boolean[] streamCarriesPts,
         byte[] dataDescBytes, int[] dataDescLens,

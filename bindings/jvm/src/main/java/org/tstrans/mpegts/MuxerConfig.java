@@ -40,6 +40,7 @@ public final class MuxerConfig {
     private final int pmtPid;
     private final int pcrPid;            // -1 = auto-resolve (Rust None)
     private final int pcrIntervalMs;
+    private final int pcrLeadMs;
     private final int psiIntervalMs;
     private final int bufferPackets;
     private final Av1CarriageMode av1Carriage;
@@ -60,6 +61,7 @@ public final class MuxerConfig {
         this.pmtPid = b.pmtPid;
         this.pcrPid = b.pcrPid;
         this.pcrIntervalMs = b.pcrIntervalMs;
+        this.pcrLeadMs = b.pcrLeadMs;
         this.psiIntervalMs = b.psiIntervalMs;
         this.bufferPackets = b.bufferPackets;
         this.av1Carriage = b.av1Carriage;
@@ -113,6 +115,13 @@ public final class MuxerConfig {
     public int pmtPid() { return pmtPid; }
     public int pcrPid() { return pcrPid; }
     public int pcrIntervalMs() { return pcrIntervalMs; }
+    /**
+     * How far the PCR runs behind each access unit's decode time, in
+     * milliseconds (default 100, valid 0..1000). The PCR is the decode time (the
+     * DTS when the push supplies one, else the PTS) minus this lead and never
+     * decreases within a program. 0 writes PCR = decode time.
+     */
+    public int pcrLeadMs() { return pcrLeadMs; }
     public int psiIntervalMs() { return psiIntervalMs; }
     public int bufferPackets() { return bufferPackets; }
     public Av1CarriageMode av1Carriage() { return av1Carriage; }
@@ -129,7 +138,7 @@ public final class MuxerConfig {
     /**
      * Fluent builder for {@link MuxerConfig}. Defaults mirror
      * {@code tst_core::mpegts::mux::MuxerConfig::default()} scalars
-     * (pcrIntervalMs=40, psiIntervalMs=100, bufferPackets=10000,
+     * (pcrIntervalMs=40, pcrLeadMs=100, psiIntervalMs=100, bufferPackets=10000,
      * av1Carriage=MPEG2_TS_BINDING). {@code programNumber}/{@code pmtPid} are
      * single-valued (one program).
      */
@@ -138,6 +147,7 @@ public final class MuxerConfig {
         private int pmtPid = 0x1000;
         private int pcrPid = -1; // auto-resolve
         private int pcrIntervalMs = 40;
+        private int pcrLeadMs = 100;
         private int psiIntervalMs = 100;
         private int bufferPackets = 10_000;
         private Av1CarriageMode av1Carriage = Av1CarriageMode.MPEG2_TS_BINDING;
@@ -186,6 +196,14 @@ public final class MuxerConfig {
             }
         }
         public Builder pcrIntervalMs(int v) { this.pcrIntervalMs = v; return this; }
+        /**
+         * How far the PCR runs behind each access unit's decode time, in
+         * milliseconds (default 100, valid 0..1000). The PCR is the decode time
+         * (the DTS when the push supplies one, else the PTS) minus this lead and
+         * never decreases within a program. 0 writes PCR = decode time. The range
+         * is checked at {@code new Muxer(...)} ({@code CONFIG_INVALID}).
+         */
+        public Builder pcrLeadMs(int v) { this.pcrLeadMs = v; return this; }
         public Builder psiIntervalMs(int v) { this.psiIntervalMs = v; return this; }
         public Builder bufferPackets(int v) { this.bufferPackets = v; return this; }
         public Builder av1Carriage(Av1CarriageMode v) {

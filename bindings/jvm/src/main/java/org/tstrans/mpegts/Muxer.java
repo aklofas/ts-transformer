@@ -46,7 +46,7 @@ public final class Muxer extends NativeHandle {
     public Muxer(MuxerConfig cfg) throws MuxException {
         setHandle(nOpen(
             cfg.programNumber(), cfg.pmtPid(), cfg.pcrPid(),
-            cfg.pcrIntervalMs(), cfg.psiIntervalMs(), cfg.bufferPackets(),
+            cfg.pcrIntervalMs(), cfg.pcrLeadMs(), cfg.psiIntervalMs(), cfg.bufferPackets(),
             cfg.av1Carriage().ordinal(),
             cfg.streamPids(), cfg.streamKinds(), cfg.streamCodecs(),
             cfg.streamTypeCodes(), cfg.streamCarriesPts(),
@@ -508,7 +508,8 @@ public final class Muxer extends NativeHandle {
     protected void nativeClose(long h) { nClose(h); }
 
     private static native long nOpen(int programNumber, int pmtPid, int pcrPid,
-            int pcrIntervalMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
+            int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
+            int av1Carriage,
             int[] streamPids, int[] streamKinds, int[] streamCodecs,
             int[] streamTypeCodes, boolean[] streamCarriesPts,
             byte[] dataDescBytes, int[] dataDescLens) throws MuxException;
