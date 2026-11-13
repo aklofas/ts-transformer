@@ -215,7 +215,7 @@ pub(crate) enum ControlMsg {
 /// the loopback address of its family. An unspecified `bind` without
 /// `advertise` knows no address a viewer can reach until one reaches it:
 /// each session is offered the local address its signalling connection
-/// arrived on (see [`session_candidates`]).
+/// arrived on, and loopback (see [`session_candidates`]).
 #[derive(Debug, Clone)]
 pub(crate) struct MediaConfig {
     /// The media socket's address (`media_port`).
@@ -444,41 +444,49 @@ fn candidate_addrs(local: SocketAddr, advertise: Option<IpAddr>) -> Vec<SocketAd
 }
 
 /// The local ICE candidates of one session: the server's own (see
-/// [`MediaConfig`]), except on an unspecified bind without `advertise`,
-/// where the session's one candidate is `reached`, the local address its
-/// signalling connection arrived on. That address is one the viewer can
-/// route to, whichever interface it came in on and whatever addresses the
-/// host had when the server was bound.
+/// [`MediaConfig`]), preceded on an unspecified bind without `advertise` by
+/// `reached`, the local address the session's signalling connection
+/// arrived on. That address is one the viewer can route to, whichever
+/// interface it came in on and whatever addresses the host had when the
+/// server was bound. Loopback stays in the list: a viewer on the host
+/// itself connects over it whatever address its request named.
 ///
-/// Such a session falls back to the server's candidates (loopback) when
-/// `reached` is unknown or is not an address of the media socket's family
-/// (an IPv4 viewer on a dual-stack `::` socket arrives on an IPv4-mapped
-/// address, which the IPv6 media path does not serve).
+/// `reached` adds nothing when it is unknown, is itself a loopback address
+/// (replies to any of them leave from the family's one loopback address,
+/// the candidate already listed), or is not an address of the media
+/// socket's family (an IPv4 viewer on a dual-stack `::` socket arrives on
+/// an IPv4-mapped address, which the IPv6 media path does not serve).
 fn session_candidates(
     server: &[SocketAddr],
     local: SocketAddr,
     advertise: Option<IpAddr>,
     reached: Option<IpAddr>,
 ) -> Vec<SocketAddr> {
-    if !local.ip().is_unspecified() || advertise.is_some() {
-        return server.to_vec();
+    let mut out = Vec::with_capacity(server.len() + 1);
+    if local.ip().is_unspecified() && advertise.is_none() {
+        let usable = |ip: &IpAddr| {
+            !ip.is_loopback()
+                && match ip {
+                    IpAddr::V4(_) => local.is_ipv4(),
+                    IpAddr::V6(v6) => local.is_ipv6() && v6.to_ipv4_mapped().is_none(),
+                }
+        };
+        out.extend(
+            reached
+                .filter(usable)
+                .map(|ip| SocketAddr::new(ip, local.port())),
+        );
     }
-    let usable = |ip: &IpAddr| match ip {
-        IpAddr::V4(_) => local.is_ipv4(),
-        IpAddr::V6(v6) => local.is_ipv6() && v6.to_ipv4_mapped().is_none(),
-    };
-    match reached.filter(usable) {
-        Some(ip) => vec![SocketAddr::new(ip, local.port())],
-        None => server.to_vec(),
-    }
+    out.extend_from_slice(server);
+    out
 }
 
-/// The candidate of a session a datagram from `source` arrived on. std's
-/// `recv_from` does not report the destination address, and str0m's ICE
-/// only answers checks addressed to one of its candidates. A specific bind
-/// has one receiving address. On a wildcard bind loopback traffic arrived
-/// on the session's loopback candidate and anything else on its other one;
-/// a session with a single candidate received everything on it.
+/// The candidate a datagram from `source` arrived on. std's `recv_from`
+/// does not report the destination address, and str0m's ICE only answers
+/// checks addressed to one of its candidates. A specific bind has one
+/// receiving address; on a wildcard bind loopback traffic arrived on the
+/// loopback candidate and anything else on the session's other one (the
+/// advertised address, or the one the viewer reached).
 fn destination_for(candidates: &[SocketAddr], local: SocketAddr, source: SocketAddr) -> SocketAddr {
     if !local.ip().is_unspecified() {
         return local;
@@ -486,9 +494,8 @@ fn destination_for(candidates: &[SocketAddr], local: SocketAddr, source: SocketA
     let want_loopback = source.ip().is_loopback();
     candidates
         .iter()
-        .find(|c| c.ip().is_loopback() == want_loopback)
-        .or(candidates.first())
         .copied()
+        .find(|c| c.ip().is_loopback() == want_loopback)
         .unwrap_or(local)
 }
 
@@ -1781,43 +1788,44 @@ mod tests {
     fn a_wildcard_bind_without_advertise_offers_the_address_the_viewer_reached() {
         let wildcard: SocketAddr = "0.0.0.0:40000".parse().unwrap();
         let server = candidate_addrs(wildcard, None);
+        let loopback = server[0];
+        assert!(loopback.ip().is_loopback());
         let lan: IpAddr = "192.0.2.10".parse().unwrap();
         let on_lan = session_candidates(&server, wildcard, None, Some(lan));
-        assert_eq!(on_lan, [SocketAddr::new(lan, 40000)]);
-        let loopback: IpAddr = "127.0.0.1".parse().unwrap();
-        assert_eq!(
-            session_candidates(&server, wildcard, None, Some(loopback)),
-            server
-        );
-        // A session with one candidate received everything on it, whatever
-        // the source: a viewer on the host itself may send from loopback.
+        assert_eq!(on_lan, [SocketAddr::new(lan, 40000), loopback]);
+        // A remote viewer's datagrams arrived on the address it reached; a
+        // viewer on the host itself may send from loopback, to loopback.
         let remote: SocketAddr = "192.0.2.77:5000".parse().unwrap();
         let local_peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         assert_eq!(destination_for(&on_lan, wildcard, remote), on_lan[0]);
-        assert_eq!(destination_for(&on_lan, wildcard, local_peer), on_lan[0]);
+        assert_eq!(destination_for(&on_lan, wildcard, local_peer), loopback);
 
-        // No address, or one of the other family, falls back to loopback.
+        // Nothing is added for a loopback address (any of 127.0.0.0/8: the
+        // host's own name is 127.0.1.1 on Debian), an unknown address, or
+        // one of the other family.
+        for reached in ["127.0.0.1", "127.0.1.1", "2001:db8::1"] {
+            let reached: IpAddr = reached.parse().unwrap();
+            assert_eq!(
+                session_candidates(&server, wildcard, None, Some(reached)),
+                server
+            );
+        }
         assert_eq!(session_candidates(&server, wildcard, None, None), server);
-        let v6: IpAddr = "2001:db8::1".parse().unwrap();
-        assert_eq!(
-            session_candidates(&server, wildcard, None, Some(v6)),
-            server
-        );
+
         let wildcard6: SocketAddr = "[::]:40000".parse().unwrap();
         let server6 = candidate_addrs(wildcard6, None);
+        let v6: IpAddr = "2001:db8::1".parse().unwrap();
         assert_eq!(
             session_candidates(&server6, wildcard6, None, Some(v6)),
-            [SocketAddr::new(v6, 40000)]
+            [SocketAddr::new(v6, 40000), server6[0]]
         );
-        let mapped: IpAddr = "::ffff:192.0.2.10".parse().unwrap();
-        assert_eq!(
-            session_candidates(&server6, wildcard6, None, Some(mapped)),
-            server6
-        );
-        assert_eq!(
-            session_candidates(&server6, wildcard6, None, Some(lan)),
-            server6
-        );
+        for reached in ["::1", "::ffff:192.0.2.10", "192.0.2.10"] {
+            let reached: IpAddr = reached.parse().unwrap();
+            assert_eq!(
+                session_candidates(&server6, wildcard6, None, Some(reached)),
+                server6
+            );
+        }
     }
 
     #[test]

@@ -2002,7 +2002,7 @@ and the two below.
 - **Status:** Deferred. The server runs ICE-lite and offers host
   candidates only: the bind address plus `advertise=`, or on a wildcard
   bind `advertise=` and loopback, or with no `advertise=` the local address
-  the viewer's request arrived on. It neither discovers its public address
+  the viewer's request arrived on and loopback. It neither discovers its public address
   through STUN nor
   relays through TURN, and offers no ICE over TCP.
 - **Why deferred:** A server with a reachable UDP port and a known public
@@ -2035,7 +2035,8 @@ and the two below.
   with that route's source address. A viewer that reached another address
   of the host (a second address of the same subnet on one interface, or a
   LAN address reached through a VPN that ends on the host) gets replies
-  from an address it did not send to, and does not connect.
+  from an address it did not send to, and does not connect. A viewer on the
+  host itself connects over loopback and is not affected.
 - **Why deferred:** Replying from the address a datagram arrived on needs
   that address for every datagram (`IP_PKTINFO` and its macOS and Windows
   counterparts), which the standard library's sockets do not report: it
@@ -2050,7 +2051,7 @@ and the two below.
 - **Status:** Deferred. A `::` bind serves IPv6 viewers. Where the OS makes
   the socket dual-stack, an IPv4 viewer's request and media arrive on
   IPv4-mapped IPv6 addresses, which the media path does not translate: the
-  viewer is offered IPv6 loopback only and does not connect.
+  viewer is offered IPv6 loopback only, so a remote one does not connect.
 - **Why deferred:** The request that shaped the wildcard bind needed IPv4,
   which a `0.0.0.0` bind serves; mapping addresses in both directions is a
   separate change with its own tests on each OS.

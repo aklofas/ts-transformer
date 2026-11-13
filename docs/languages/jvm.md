@@ -2226,7 +2226,7 @@ try (WhepServer server = WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.
 - **`advertise=` behind NAT.** Viewers send media to the addresses the
   answer offers: the bind address, plus `advertise` when set. A bind on
   `0.0.0.0` or `::` with no `advertise` offers each viewer the local address
-  its request arrived on, so a server on a LAN needs no address in its URL
+  its request arrived on (and loopback), so a server on a LAN needs no address in its URL
   and follows an address change without a rebind. Behind NAT, or behind a
   reverse proxy on the same host, set `advertise=` to the address viewers
   reach (see [Network](/docs/guides/webrtc.md#network-ice-ports-tls)). One

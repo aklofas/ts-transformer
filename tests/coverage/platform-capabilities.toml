@@ -46,6 +46,18 @@ resolved = "2026-07-26"
 note = "Same librist teardown hang as loopback.rs; fixed in librist 0.2.18."
 
 [[platform_skip]]
+file = "crates/tst-webrtc/tests/net_whep/wildcard.rs"
+platform = "macos-arm64,windows-msvc"
+capability = "whep_wildcard_linux_addresses"
+class = "portability"
+note = """
+Two tests are `#[cfg(target_os = "linux")]`: `address_change` re-runs itself in
+a Linux network namespace (`unshare`, `ip`), and the 127.0.1.1 test needs every
+address of 127.0.0.0/8 to be local. The other wildcard tests run on every
+platform.
+"""
+
+[[platform_skip]]
 file = "crates/tst-udp/tests/net_loopback_multicast.rs"
 platform = "windows-msvc"
 capability = "ipv6_multicast"
