@@ -121,6 +121,18 @@ pub struct MuxerConfig {
     /// Applied per-program (each program's PCR PID re-emits independently).
     pub pcr_interval_ms: u32,
 
+    /// How far the PCR runs behind each access unit's decode time, in
+    /// milliseconds: the time a decoder has between receiving an access unit
+    /// and having to decode it. Default 100. Validation 0..=1000.
+    ///
+    /// The PCR is the decode time (the DTS when the push supplies one, else
+    /// the PTS) minus this lead, and never decreases within a program. A
+    /// stream whose first decode time is below the lead therefore starts
+    /// with a PCR just below 2^33 that wraps to zero when the decode time
+    /// reaches the lead. `0` writes PCR = decode time; it does not restore
+    /// the PCR = PTS output of 0.10.0 and earlier.
+    pub pcr_lead_ms: u32,
+
     /// PAT/PMT re-emission interval, in milliseconds. Default 100. Validation >= 10.
     /// One PAT + N PMTs emitted per tick.
     pub psi_interval_ms: u32,
@@ -166,6 +178,7 @@ impl Default for MuxerConfig {
                 stream_descriptors: vec![Vec::new(), Vec::new()],
             }],
             pcr_interval_ms: 40,
+            pcr_lead_ms: 100,
             psi_interval_ms: 100,
             buffer_packets: 10_000,
             av1_carriage: Av1CarriageMode::Mpeg2TsBinding,
@@ -798,6 +811,11 @@ impl MuxerConfig {
                 "pcr_interval_ms must be in 1..=100",
             ));
         }
+        // H.222.0's system target decoder holds an access unit for at most
+        // one second, so a longer lead could not be honoured by a receiver.
+        if self.pcr_lead_ms > 1000 {
+            return Err(MuxError::InvalidConfig("pcr_lead_ms must be in 0..=1000"));
+        }
         if self.psi_interval_ms < 10 {
             return Err(MuxError::InvalidConfig("psi_interval_ms must be >= 10"));
         }
@@ -851,6 +869,7 @@ impl MuxerConfig {
 pub struct MuxerConfigBuilder {
     programs: Vec<MuxerProgramConfig>,
     pcr_interval_ms: Option<u32>,
+    pcr_lead_ms: Option<u32>,
     psi_interval_ms: Option<u32>,
     buffer_packets: Option<usize>,
     av1_carriage: Option<Av1CarriageMode>,
@@ -869,6 +888,13 @@ impl MuxerConfigBuilder {
 
     pub fn pcr_interval_ms(&mut self, ms: u32) -> &mut Self {
         self.pcr_interval_ms = Some(ms);
+        self
+    }
+
+    /// Set [`MuxerConfig::pcr_lead_ms`]: how far the PCR runs behind each
+    /// access unit's decode time. Default 100; `0..=1000`.
+    pub fn pcr_lead_ms(&mut self, ms: u32) -> &mut Self {
+        self.pcr_lead_ms = Some(ms);
         self
     }
 
@@ -905,6 +931,7 @@ impl MuxerConfigBuilder {
         let cfg = MuxerConfig {
             programs: self.programs.clone(),
             pcr_interval_ms: self.pcr_interval_ms.unwrap_or(40),
+            pcr_lead_ms: self.pcr_lead_ms.unwrap_or(100),
             psi_interval_ms: self.psi_interval_ms.unwrap_or(100),
             buffer_packets: self.buffer_packets.unwrap_or(10_000),
             av1_carriage: self.av1_carriage.unwrap_or_default(),

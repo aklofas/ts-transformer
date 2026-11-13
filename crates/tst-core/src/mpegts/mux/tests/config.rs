@@ -137,6 +137,34 @@ fn rejects_pcr_interval_over_100() {
 }
 
 #[test]
+fn pcr_lead_defaults_to_100ms() {
+    assert_eq!(MuxerConfig::default().pcr_lead_ms, 100);
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x100, VideoCodec::H264);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    assert_eq!(b.build().unwrap().pcr_lead_ms, 100);
+    b.pcr_lead_ms(250);
+    assert_eq!(b.build().unwrap().pcr_lead_ms, 250);
+}
+
+/// The lead may not exceed the one second an H.222.0 decoder buffer holds
+/// an access unit.
+#[test]
+fn rejects_pcr_lead_over_one_second() {
+    let mut cfg = MuxerConfig::default();
+    cfg.pcr_lead_ms = 1001;
+    assert!(matches!(
+        cfg.validate(),
+        Err(MuxError::InvalidConfig("pcr_lead_ms must be in 0..=1000"))
+    ));
+    cfg.pcr_lead_ms = 1000;
+    assert!(cfg.validate().is_ok());
+    cfg.pcr_lead_ms = 0;
+    assert!(cfg.validate().is_ok());
+}
+
+#[test]
 fn rejects_psi_interval_too_small() {
     let cfg = MuxerConfig {
         psi_interval_ms: 0,
