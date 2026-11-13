@@ -10,6 +10,7 @@ SCRIPT=$HERE/../release-vm-soak.sh
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fail=0
+unset TSTRANS_NOT_A_RELEASE
 
 mkdir -p "$tmp/bin" "$tmp/fix" "$tmp/repo/scripts/interop"
 cat > "$tmp/bin/gh" <<'GH'
