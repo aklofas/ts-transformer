@@ -105,6 +105,7 @@ pub struct Muxer {
     // ── Stats counters ────────────────────────────────────────────────────
     ts_packets_emitted: u64,
     ts_bytes_emitted: u64,
+    late_metadata_pushes: u64,
     /// Keyed by PID. Populated eagerly at construction for every configured
     /// stream; only the `items` / `bytes` / `discontinuities` fields change
     /// at runtime, except that `reconfigure` adds entries for new PIDs and
@@ -181,6 +182,7 @@ impl Muxer {
             counters: ContinuityCounters::new(),
             ts_packets_emitted: 0,
             ts_bytes_emitted: 0,
+            late_metadata_pushes: 0,
             per_stream,
             stream_codec_counters: BTreeMap::new(),
             // 8 KiB heuristic: covers a typical small AU without reallocation;

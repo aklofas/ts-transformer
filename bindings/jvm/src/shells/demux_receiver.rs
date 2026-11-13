@@ -422,6 +422,7 @@ jni_native! {
                 combined.packets_received,
                 combined.bytes_received,
                 combined.program_maps_seen,
+                0,
             ),
         ) {
             Ok(o) => o,

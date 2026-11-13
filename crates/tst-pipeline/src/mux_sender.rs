@@ -87,6 +87,9 @@ pub struct MuxSenderStats {
     /// Number of programs (PAT entries) in the muxer configuration.
     /// Delegated from the inner `MuxerStats`.
     pub programs_configured: u32,
+    /// Pushes on a PID other than the program's PCR PID whose PTS was
+    /// already behind the PCR. Delegated from the inner `MuxerStats`.
+    pub late_metadata_pushes: u64,
     /// Per-stream push counters, keyed by PID. Delegated from the wrapped
     /// `Muxer`; not double-booked here.
     pub per_stream: BTreeMap<u16, tst_core::mpegts::stats::StreamStats>,
@@ -949,6 +952,7 @@ impl<T: Transport> MuxSender<T> {
             pending_bytes_queued,
             pending_chunks_queued,
             programs_configured: mux_stats.programs_configured,
+            late_metadata_pushes: mux_stats.late_metadata_pushes,
             per_stream: mux_stats.per_stream,
         }
     }
@@ -1717,6 +1721,25 @@ mod multi_stream_tests {
         assert_eq!(st.per_stream[&0x100].bytes, nal.len() as u64);
         assert!(st.bytes_sent > 0);
         assert!(st.packets_sent > 0);
+    }
+
+    #[test]
+    fn stats_report_the_muxers_late_metadata_pushes() {
+        let cfg = {
+            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+            prog.add_video(0x100, VideoCodec::H264);
+            prog.add_klv(0x101, KlvStreamType::SynchronousMetadata, true);
+            let mut b = MuxerConfig::builder();
+            b.add_program(prog.build());
+            b.build().unwrap()
+        };
+        let s = MuxSender::new(MemTransport::new(), cfg).unwrap();
+        let nal: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x67, 0xBB];
+        s.send_video(nal, Pts90khz::new(90_000), true).unwrap();
+        // The PCR is at 81 000 now; a KLV unit stamped before it is late.
+        s.send_klv(&[0x06, 0x0E, 0x2B, 0x34], Pts90khz::new(36_000), 0)
+            .unwrap();
+        assert_eq!(s.stats().late_metadata_pushes, 1);
     }
 
     #[test]

@@ -33,6 +33,8 @@ pub(super) struct ClockPlan {
     pub(super) pcr: Option<Pcr27mhz>,
     /// The first packet opens a new time base.
     pub(super) discontinuity: bool,
+    /// The program clock after this push: 33-bit, 90 kHz.
+    clock: u64,
 }
 
 impl ClockPlan {
@@ -191,6 +193,23 @@ impl Muxer {
         ClockPlan {
             pcr: step.first_pcr.then_some(pcr),
             discontinuity: step.restart && step.first_pcr,
+            clock: step.clock,
+        }
+    }
+
+    /// Count a push whose PES carries `pts` on a PID other than the PCR PID
+    /// when the program clock has already passed that PTS: the unit reaches
+    /// a receiver after the time it was meant for. It is muxed all the same.
+    pub(super) fn count_if_late(
+        &mut self,
+        prog_idx: usize,
+        pid: u16,
+        pts: Pts90khz,
+        plan: &ClockPlan,
+    ) {
+        if self.slots[prog_idx].pcr_pid != pid && pts_diff_33bit(pts.masked_33bit(), plan.clock) < 0
+        {
+            self.late_metadata_pushes += 1;
         }
     }
 

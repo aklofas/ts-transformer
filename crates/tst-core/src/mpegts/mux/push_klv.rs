@@ -242,6 +242,9 @@ impl Muxer {
         // no PTS: when the PCR stream is silent, KLV pushes are what keep
         // PCR-only packets and PSI going.
         let plan = self.reserve_preamble(prog_idx, pts, klv_pid, klv_packets, false)?;
+        if !matches!(pts_field, PesPtsField::None) {
+            self.count_if_late(prog_idx, klv_pid, pts, &plan);
+        }
         self.drain_pes_scratch(klv_pid, plan.first_af(false));
 
         // Count on the Ok path only — after all early-returns above. Stats

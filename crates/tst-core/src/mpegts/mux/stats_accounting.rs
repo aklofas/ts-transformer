@@ -45,6 +45,12 @@ crate::binding_record! {
         /// muxer. Counts the subtitle entries of the muxer
         /// configuration's programs.
         pub subtitle_streams_configured: u32,
+        /// Pushes on a PID other than the program's PCR PID (KLV, audio,
+        /// data, subtitle) whose PTS was already behind the PCR. Such a unit
+        /// is still muxed, but it arrives after the time it is stamped
+        /// for, and a receiver may drop it. A stream whose PES carries no
+        /// PTS is never counted.
+        pub late_metadata_pushes: u64,
         /// Per-stream counters, keyed by PID. One entry per configured
         /// video or KLV stream. `StreamStats::items` = push_video_to /
         /// push_klv_to call count; `StreamStats::bytes` = raw ES bytes pushed
@@ -68,6 +74,7 @@ impl Muxer {
                 .live_slots()
                 .map(|(_, s)| s.subtitle.iter().filter(|st| st.is_some()).count() as u32)
                 .sum(),
+            late_metadata_pushes: self.late_metadata_pushes,
             per_stream: self.per_stream.clone(),
         }
     }
@@ -108,6 +115,7 @@ impl Muxer {
     pub fn reset_stats(&mut self) {
         self.ts_packets_emitted = 0;
         self.ts_bytes_emitted = 0;
+        self.late_metadata_pushes = 0;
         for s in self.per_stream.values_mut() {
             s.items = 0;
             s.bytes = 0;
