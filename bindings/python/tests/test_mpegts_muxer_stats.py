@@ -13,10 +13,14 @@ import pytest
 from tstrans.mpegts import (
     AudioStreamCodecStats,
     KlvStreamCodecStats,
+    KlvStreamType,
     Muxer,
+    MuxerConfigBuilder,
+    MuxerProgramConfigBuilder,
     MuxerStats,
     Pts90khz,
     StreamCodecStats,
+    VideoCodec,
     VideoStreamCodecStats,
 )
 
@@ -39,6 +43,23 @@ def test_stats_initial_state():
     assert s.ts_bytes_emitted == 0
     assert s.programs_configured == 1
     assert s.subtitle_streams_configured == 0
+    assert s.late_metadata_pushes == 0
+
+
+def test_stats_counts_a_klv_push_behind_the_pcr():
+    prog = (
+        MuxerProgramConfigBuilder(1, 0x100)
+        .add_video(0x101, VideoCodec.H264)
+        .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+        .build()
+    )
+    m = Muxer(MuxerConfigBuilder().add_program(prog).build())
+    m.push_video(_nal_aud(), pts=Pts90khz.from_raw(90_000), key_frame=True)
+    # The PCR stands at 81 000; a unit stamped 36 000 is already late.
+    m.push_klv(_klv_ls(), pts=Pts90khz.from_raw(36_000))
+    assert m.stats().late_metadata_pushes == 1
+    m.push_klv(_klv_ls(), pts=Pts90khz.from_raw(95_000))
+    assert m.stats().late_metadata_pushes == 1
 
 
 def test_stats_increments_after_push_pull():

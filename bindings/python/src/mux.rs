@@ -1031,6 +1031,13 @@ impl PyMuxerConfig {
         self.inner.pcr_interval_ms
     }
 
+    /// How far the PCR runs behind each access unit's decode time, in
+    /// milliseconds.
+    #[getter]
+    pub fn pcr_lead_ms(&self) -> u32 {
+        self.inner.pcr_lead_ms
+    }
+
     /// PAT/PMT re-emission interval in milliseconds.
     #[getter]
     pub fn psi_interval_ms(&self) -> u32 {
@@ -1091,6 +1098,16 @@ impl PyMuxerConfigBuilder {
 
     pub fn pcr_interval_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyResult<PyRefMut<'_, Self>> {
         slf.get_mut()?.pcr_interval_ms(ms);
+        Ok(slf)
+    }
+
+    /// Set how far the PCR runs behind each access unit's decode time, in
+    /// milliseconds (default 100, valid 0..=1000). The PCR is the decode
+    /// time (the DTS when the push supplies one, else the PTS) minus this
+    /// lead and never decreases within a program; 0 writes PCR = decode
+    /// time.
+    pub fn pcr_lead_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyResult<PyRefMut<'_, Self>> {
+        slf.get_mut()?.pcr_lead_ms(ms);
         Ok(slf)
     }
 

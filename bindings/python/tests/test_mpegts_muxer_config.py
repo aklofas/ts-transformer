@@ -257,6 +257,46 @@ def test_muxer_config_builder_pcr_interval_override():
     assert cfg.pcr_interval_ms == 20
 
 
+def _first_pcr_base(ts: bytes) -> int:
+    """33-bit PCR base of the first packet whose adaptation field carries a
+    PCR (H.222.0 2.4.3.4)."""
+    for i in range(0, len(ts), 188):
+        p = ts[i : i + 188]
+        if p[3] & 0x20 and p[4] > 0 and p[5] & 0x10:
+            return (p[6] << 25) | (p[7] << 17) | (p[8] << 9) | (p[9] << 1) | (p[10] >> 7)
+    raise AssertionError("no PCR on the wire")
+
+
+def _first_pcr_for(cfg: MuxerConfig) -> int:
+    from tstrans.mpegts import Muxer, Pts90khz
+
+    m = Muxer(cfg)
+    m.push_video(b"\x00\x00\x00\x01\x65\x88\x84\x00", pts=Pts90khz.from_raw(90_000), key_frame=True)
+    buf = bytearray(int(m.pending_packets()) * 188)
+    n = m.pull(buf)
+    return _first_pcr_base(bytes(buf[:n]))
+
+
+def test_muxer_config_pcr_lead_defaults_to_100_and_is_settable():
+    prog = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
+    default = MuxerConfigBuilder().add_program(prog).build()
+    assert default.pcr_lead_ms == 100
+    assert _first_pcr_for(default) == 81_000
+
+    off = MuxerConfigBuilder().add_program(prog).pcr_lead_ms(0).build()
+    assert off.pcr_lead_ms == 0
+    assert _first_pcr_for(off) == 90_000
+
+
+def test_muxer_config_pcr_lead_over_1000_rejected():
+    prog = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
+    assert MuxerConfigBuilder().add_program(prog).pcr_lead_ms(1000).build().pcr_lead_ms == 1000
+    with pytest.raises(MuxError) as ei:
+        MuxerConfigBuilder().add_program(prog).pcr_lead_ms(1001).build()
+    assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
+    assert "pcr_lead_ms" in str(ei.value)
+
+
 def test_muxer_config_is_frozen():
     prog = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
     cfg = MuxerConfigBuilder().add_program(prog).build()
