@@ -1531,9 +1531,13 @@ mean **Deferred**. An entry whose feature has shipped must never read
   are presentation times sent in decode order, so a B-frame arrives with
   a PTS below a frame already muxed; the server counts each one in
   `PublishMountStats::aus_reordered` and still muxes it. With no DTS, the
-  muxer's implied DTS (= PTS) runs backwards and its PCR, paced from the
-  PTS, can run ahead of the B-frames that follow, so a player slaved to
-  the PCR may show them late.
+  muxer clocks each access unit from its PTS. Its PCR never steps back,
+  so a reordered frame keeps the PCR of the later-presented frame muxed
+  before it: its lead is the muxer's `pcr_lead_ms` (100 ms) minus its
+  reorder distance. At 30 fps with two B-frames between references that
+  is 33 ms for the first B-frame, where a DTS push would give the full
+  100 ms; a frame reordered by more than the lead is muxed after the PCR
+  has passed its PTS, and a player slaved to the PCR may show it late.
 - **Why deferred:** Deriving DTS needs a reorder window: detect the
   reorder depth from PTS going backwards, then delay each AU by that
   depth and stamp it with the sorted PTS sequence
@@ -1544,6 +1548,46 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A consumer whose player stalls or shows late
   frames on a B-frame push (for example ffmpeg with libx264's default
   presets, or `-c copy` of a B-frame source).
+
+## PCR inside a single large access unit
+
+- **Status:** Deferred. The muxer writes a PCR on the first TS packet of
+  an access unit (and in PCR-only packets between pushes of other PIDs
+  or on `tick`), never part-way through one. An access unit that takes
+  longer than 100 ms to transmit at the link rate therefore spans a PCR
+  gap above H.222.0's limit.
+- **Why deferred:** Placing a PCR inside an access unit needs the time at
+  which each packet leaves, and the muxer has no bitrate model: its
+  output is a function of the pushes alone.
+- **Trigger to revisit:** A consumer muxing access units of several
+  megabits onto a link slow enough that one unit takes over 100 ms, with
+  a receiver that enforces the PCR interval.
+
+## `tick` in the bindings, on RTSP-server mounts and on `MuxPublisher`
+
+- **Status:** Deferred. `Muxer::tick` and `MuxSender::tick` keep the PCR
+  interval for a PCR stream below ten access units a second. The C,
+  Python and JVM bindings do not expose them, and neither do the
+  RTSP-server mounts or `MuxPublisher`, which own their muxer.
+- **Why deferred:** Each binding needs three entry points (muxer, sender,
+  managed sender), and the mounts and the HLS publisher need a decision
+  on who supplies the time. No consumer has a source that sparse.
+- **Trigger to revisit:** A binding user, an RTSP mount or an HLS
+  publisher carrying video below 10 fps (or another sparse PCR stream)
+  whose receiver enforces the 100 ms PCR interval.
+
+## Per-program PSI cadence
+
+- **Status:** Deferred. A PSI tick sends the PAT and the PMT of every
+  live program, and stamps every program with the clock of the program
+  whose push triggered it. Programs on unrelated timelines therefore
+  share one PSI cadence, driven by whichever pushes.
+- **Why deferred:** Sending the PAT with one program's PMT changes the
+  multi-program byte shape, and `Muxer::reconfigure` documents and tests
+  "the new PAT and every live PMT" on the push after the call.
+- **Trigger to revisit:** A multi-program consumer whose programs run on
+  timelines far enough apart that one program's PSI interval is visibly
+  wrong.
 
 ## RTCP receiver reports to RTSP publishers
 

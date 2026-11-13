@@ -148,6 +148,9 @@ Other send-side examples worth knowing:
 - [`examples/sending/sender_from_url.rs`](/examples/sending/sender_from_url.rs) — config via `srt://host:port?key=value`.
 - [`examples/sending/custom_transport.rs`](/examples/sending/custom_transport.rs) — bring your own `Transport` impl (UDP, file, etc.).
 
+The muxer's PCR runs `MuxerConfig::pcr_lead_ms` (100 ms by default) behind
+each access unit's decode time; a PCR stream below ten access units a second
+calls `Muxer::tick` / `MuxSender::tick` between pushes.
 See [`/docs/guides/mpegts-mux.md`](/docs/guides/mpegts-mux.md) for the full
 `MuxerConfig` surface, and [`/docs/guides/pipeline.md`](/docs/guides/pipeline.md)
 for picking among `MuxSender` / `Sender` / `RawSender`.

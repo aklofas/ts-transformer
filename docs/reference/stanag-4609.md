@@ -61,14 +61,23 @@ Class 1 Motion Imagery in an MPEG-2 Transport Stream (MISP-2015.1-50).
   `stream_descriptors_for_klv`; duplicate declared ids fail with
   `ConfigInvalid`, across programs too. The muxer does not cross-check each
   pushed payload's service id against its descriptor, so keep those equal.
-- **A regular push cadence.** PAT/PMT and PCR are written only as part of a
-  push, so a source that pushes less often than every 100 ms cannot meet the
-  H.222.0 PCR interval.
+- **A regular push cadence, or `tick`.** PAT/PMT and PCR are written only as
+  part of a push, so a source whose PCR stream pushes less often than every
+  100 ms cannot meet the H.222.0 PCR interval from pushes alone. In Rust,
+  `Muxer::tick` / `MuxSender::tick` between pushes fills the gaps; the C,
+  Python and JVM bindings do not expose it yet.
+- **Metadata pushed before the PCR passes its PTS.** The PCR runs
+  `pcr_lead_ms` (100 ms by default) behind each access unit's decode time, so
+  video and the metadata pushed with it reach a receiver ahead of their
+  timestamps, as ST 1402 asks. A KLV unit pushed after the PCR has passed its
+  PTS is still sent; `MuxerStats::late_metadata_pushes` counts those, and a
+  receiver may drop them.
 
 ### Limits of the claim
 
-- The PCR is derived from the PTS being pushed, so a decoder gets no lead
-  between a PCR and the presentation time that follows it.
+- Video pushed without a DTS is clocked from its PTS. For a stream with
+  reordered (B) frames that shortens a reordered frame's lead by its reorder
+  distance; push such streams with the `*_with_dts` calls.
 - The H.265 MISP SEI is written with `nuh_temporal_id_plus1 = 1` (TemporalId
   0) on every frame, which an encoder using temporal sub-layers above 0 does
   not match.
