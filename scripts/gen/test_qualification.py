@@ -59,6 +59,8 @@ SEMVER = [{"crate": "tst-core", "exit": 0, "failed_checks": 0, "items": 0, "repo
 # not git repositories, so `collect` below supplies the version git would give.
 VERSION = "0.9.0"
 SEMVER_BASELINE = {"previous_tag": "v0.8.0"}
+# The crates with a public-api baseline in the fixture tree: the one SEMVER reports on.
+ROSTER = ["tst-core"]
 CARGO_TOML = '[workspace.package]\nversion = "%s"\n' % VERSION
 SAN_JOBS = ["asan", "asan-native", "tsan", "tsan-native"]
 
@@ -131,12 +133,16 @@ def build(tmp, mutate=None, archives=ARCHIVES):
     return art, root
 
 
-def at_version(version=VERSION):
-    """The workspace version `collect` reads, for a fixture root that is not a git repository."""
-    return mock.patch.object(q, "workspace_version", return_value=version)
+@contextlib.contextmanager
+def at_version(version=VERSION, roster=ROSTER):
+    """What `collect` reads from the qualified commit, for a fixture root that is not a
+    git repository: the workspace version and the crates with a public-api baseline."""
+    with mock.patch.object(q, "workspace_version", return_value=version), \
+            mock.patch.object(q, "public_api_crates", return_value=roster):
+        yield
 
 
-def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION, arm=True):
+def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION, arm=True, roster=ROSTER):
     """One collected record. A release needs a soak on both architectures, so a release
     fixture that names no aarch64 row gets a passing one on the qualified commit (ARM_OK)
     and a test about the x86_64 soak or the corpus stays about that; `arm=False` leaves
@@ -145,7 +151,7 @@ def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION, arm=
         archives += ARM_OK
     tmp = tempfile.mkdtemp()
     art, root = build(tmp, mutate, archives)
-    with at_version(version):
+    with at_version(version, roster):
         return q.collect(art, root, release=release)
 
 
@@ -265,14 +271,27 @@ class SemverGateTests(unittest.TestCase):
     workspace version has moved off the previous release tag's. A break needs a new
     compatibility line: a new minor before 1.0, a new major from 1.0."""
 
-    def run_gate(self, previous, version, rows=BREAKS, release=False, conclusion="success", archives=None):
+    FROM_ROWS = object()
+
+    def run_gate(self, previous, version, rows=BREAKS, release=False, conclusion="success", archives=None,
+                 roster=FROM_ROWS, abi_tag=FROM_ROWS):
+        """One record. Unless a test says otherwise the tree's public-api roster is the
+        crates its rows name and the ABI comparison used the same previous tag, so a
+        test about versions stays about versions."""
+        if roster is self.FROM_ROWS:
+            roster = sorted({r["crate"] for r in rows or [] if isinstance(r, dict) and "crate" in r})
+
         def m(f):
             f["semver-checks.json"] = None if rows is None else json.loads(json.dumps(rows))
             f["semver-baseline.json"] = None if previous is None else {"previous_tag": previous}
             f["legs.json"]["semver-checks"] = {"conclusion": conclusion, "run_url": ""}
+            if abi_tag is not self.FROM_ROWS:
+                f["abi.json"] = dict(ABI, previous_tag=abi_tag)
+            elif previous is not None:
+                f["abi.json"] = dict(ABI, previous_tag=previous)
         if archives is None:
             archives = RELEASE_OK if release else ARCHIVES
-        return collect(m, release=release, archives=archives, version=version)
+        return collect(m, release=release, archives=archives, version=version, roster=roster)
 
     def semver_reasons(self, rec):
         return [r for r in rec["verdict_reasons"] if r.startswith("semver-checks")]
@@ -285,7 +304,8 @@ class SemverGateTests(unittest.TestCase):
                 self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
                 self.assertEqual(rec["semver_gate"], {
                     "previous_tag": "v0.9.0", "previous_version": "0.9.0", "workspace_version": "0.10.0",
-                    "candidate": True, "same_line": False, "breaking": 3, "reasons": []})
+                    "candidate": True, "same_line": False, "breaking": 3,
+                    "expected_crates": ["tst-core", "tst-hls", "tst-udp"], "reasons": []})
                 self.assertTrue(leg(rec, "semver-checks")["required"])
 
     def test_breaks_under_a_patch_bump_are_no_go(self):
@@ -315,10 +335,16 @@ class SemverGateTests(unittest.TestCase):
         self.assertEqual(rec["semver_gate"]["breaking"], 3)
         self.assertEqual(leg(rec, "semver-checks"),
                          {"name": "semver-checks", "required": False, "conclusion": "success", "run_url": ""})
-        # Neither a missing report nor an unanalysed crate decides for it.
-        for rows in (None, [sem("tst-core", analysed=False)]):
-            rec = self.run_gate("v0.9.0", "0.9.0", rows=rows, conclusion="failure")
+        # Neither a missing report nor an unanalysed crate decides for it, nor does a
+        # report that misses a crate, names one twice, names an unknown one or
+        # contradicts itself, a roster that cannot be listed or another ABI baseline.
+        three = ["tst-core", "tst-hls", "tst-udp"]
+        for rows, roster in ((None, three), ([sem("tst-core", analysed=False)], three), ([sem("tst-core")], three),
+                             ([sem("tst-core")] * 2, three), (BREAKS + [sem("tst-extra")], three),
+                             ([self.raw("tst-core", 100, 0)], three), (BREAKS, None)):
+            rec = self.run_gate("v0.9.0", "0.9.0", rows=rows, conclusion="failure", roster=roster, abi_tag="v0.8.0")
             self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+            self.assertEqual(rec["semver_gate"]["reasons"], [])
 
     def test_a_release_on_an_unswept_version_is_no_go(self):
         rec = self.run_gate("v0.9.0", "0.9.0", rows=[sem("tst-core")], release=True)
@@ -364,6 +390,121 @@ class SemverGateTests(unittest.TestCase):
         self.assertEqual(self.semver_reasons(rec), [
             "semver-checks: crate tst-srt was not analysed (exit 1)",
             "semver-checks: crate tst-rist was not analysed (exit 1)"])
+
+    THREE = ["tst-core", "tst-hls", "tst-udp"]
+
+    @staticmethod
+    def raw(crate, exit, failed=None, analysed=True):
+        """A row whose fields need not agree, as a broken or foreign report could hold."""
+        row = {"crate": crate, "exit": exit, "analysed": analysed}
+        if failed is not None:
+            row["failed_checks"] = failed
+        return row
+
+    def test_a_candidate_report_names_every_crate_with_a_baseline_exactly_once(self):
+        for release in (True, False):
+            with self.subTest(release=release):
+                rec = self.run_gate("v0.9.0", "0.10.0", rows=[sem("tst-core", 2)], roster=self.THREE,
+                                    release=release)
+                self.assertEqual(rec["verdict"], "NO-GO")
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: crate tst-hls has no row in the report",
+                    "semver-checks: crate tst-udp has no row in the report"])
+                self.assertEqual(rec["semver_gate"]["expected_crates"], self.THREE)
+                # One crate named as often as there are crates is not a report on each.
+                rec = self.run_gate("v0.9.0", "0.10.0", rows=[sem("tst-core")] * 3, roster=self.THREE,
+                                    release=release)
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: crate tst-core has 3 rows in the report",
+                    "semver-checks: crate tst-hls has no row in the report",
+                    "semver-checks: crate tst-udp has no row in the report"])
+                rec = self.run_gate("v0.9.0", "0.10.0", rows=BREAKS + [sem("tst-extra"), sem("tst-extra")],
+                                    roster=self.THREE, release=release)
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: the report names tst-extra, which has no public-api baseline at %s" % SHA[:12]])
+                self.assertEqual(self.run_gate("v0.9.0", "0.10.0", roster=self.THREE, release=release)["verdict"],
+                                 "GO")
+
+    def test_a_candidate_whose_crates_cannot_be_listed_is_no_go(self):
+        rec = self.run_gate("v0.9.0", "0.10.0", roster=None)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(self.semver_reasons(rec), [
+            "semver-checks: the crates with a public-api baseline at %s could not be listed, so the report "
+            "cannot be shown to name each of them" % SHA[:12]])
+        self.assertIsNone(rec["semver_gate"]["expected_crates"])
+
+    def test_an_exit_status_of_100_is_a_break_whatever_the_count_says(self):
+        for failed in (0, None):
+            with self.subTest(failed=failed):
+                rows = [sem("tst-core"), self.raw("tst-udp", 100, failed)]
+                rec = self.run_gate("v0.10.0", "0.10.1", rows=rows)
+                self.assertEqual(rec["verdict"], "NO-GO")
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: crate tst-udp ended with exit 100 but the report counts 0 failed check(s); "
+                    "a break is exit 100 with at least one",
+                    "semver-checks: a break (exit 100) in tst-udp but 0.10.1 stays in the 0.10 line of v0.10.0; "
+                    "a break needs a new minor"])
+                # A report that contradicts itself is not evidence under a new minor either.
+                rec = self.run_gate("v0.10.0", "0.11.0", rows=rows)
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: crate tst-udp ended with exit 100 but the report counts 0 failed check(s); "
+                    "a break is exit 100 with at least one"])
+        # The other way round: a count without the exit status.
+        rec = self.run_gate("v0.10.0", "0.10.1", rows=[sem("tst-core"), self.raw("tst-udp", 0, 2)])
+        self.assertEqual(self.semver_reasons(rec), [
+            "semver-checks: crate tst-udp ended with exit 0 but the report counts 2 failed check(s); "
+            "a break is exit 100 with at least one",
+            "semver-checks: 2 breaking change(s) in tst-udp but 0.10.1 stays in the 0.10 line of v0.10.0; "
+            "a break needs a new minor"])
+
+    def test_a_crate_is_analysed_only_when_the_row_says_true_and_the_tool_ended_0_or_100(self):
+        for analysed in ("false", "true", 1, None):
+            with self.subTest(analysed=analysed):
+                rec = self.run_gate("v0.9.0", "0.10.0", rows=[self.raw("tst-core", 0, 0, analysed)])
+                self.assertEqual(self.semver_reasons(rec), ["semver-checks: crate tst-core was not analysed (exit 0)"])
+                self.assertIs(rec["semver_checks"][0]["analysed"], False)
+        row = {"crate": "tst-core", "exit": 0, "failed_checks": 0}
+        self.assertEqual(self.semver_reasons(self.run_gate("v0.9.0", "0.10.0", rows=[row])),
+                         ["semver-checks: crate tst-core was not analysed (exit 0)"])
+        rec = self.run_gate("v0.9.0", "0.10.0", rows=[self.raw("tst-core", 101, 0)])
+        self.assertEqual(self.semver_reasons(rec), ["semver-checks: crate tst-core was not analysed (exit 101)"])
+
+    def test_a_malformed_report_ends_the_run_with_its_reason(self):
+        good = sem("tst-core")
+        bad = {"no exit": {"crate": "a", "failed_checks": 0, "analysed": True},
+               "no crate": {"exit": 0, "failed_checks": 0, "analysed": True},
+               "crate not a name": dict(good, crate=7),
+               "exit a string": dict(good, exit="0"),
+               "exit a boolean": dict(good, exit=True),
+               "count a string": dict(good, failed_checks="2"),
+               "count null": dict(good, failed_checks=None),
+               "count negative": dict(good, failed_checks=-1),
+               "not an object": "tst-core"}
+        for version in ("0.10.0", "0.9.0"):
+            for name, row in bad.items():
+                with self.subTest(version=version, row=name):
+                    with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()) as err:
+                        self.run_gate("v0.9.0", version, rows=[good, row], roster=["tst-core"])
+                    self.assertEqual(e.exception.code, 2)
+                    self.assertIn("semver-checks.json row 1 is malformed", err.getvalue())
+            with self.subTest(version=version, report="an object"):
+                with self.assertRaises(SystemExit) as e, contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.run_gate("v0.9.0", version, rows={"crate": "tst-core"}, roster=["tst-core"])
+                self.assertEqual(e.exception.code, 2)
+                self.assertIn("semver-checks.json is not a list of rows", err.getvalue())
+
+    def test_the_report_and_the_abi_comparison_name_the_same_previous_tag(self):
+        for release in (True, False):
+            with self.subTest(release=release):
+                rec = self.run_gate("v0.9.0", "0.10.0", abi_tag="v0.8.0", release=release)
+                self.assertEqual(rec["verdict"], "NO-GO")
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: the report compares with v0.9.0 but the C ABI comparison with v0.8.0; "
+                    "both compare with the previous release tag"])
+        # A record whose ABI file names no tag has nothing to compare.
+        def m(f):
+            del f["abi.json"]["previous_tag"]
+        self.assertEqual(self.semver_reasons(collect(m)), [])
 
     def test_from_1_0_a_break_needs_a_new_major(self):
         rec = self.run_gate("v1.2.0", "1.3.0")
@@ -414,6 +555,8 @@ class SemverGateTests(unittest.TestCase):
                 git(root, "init", "-q", "-b", "main")
                 spit(os.path.join(root, "Cargo.toml"),
                      '[workspace]\nmembers = []\n\n[workspace.package]\nversion      = "%s"\n' % version)
+                for row in BREAKS:
+                    crate_with_baseline(root, "crates/" + row["crate"], row["crate"])
                 git(root, "add", ".")
                 git(root, "commit", "-q", "-m", "A")
                 sha = git(root, "rev-parse", "HEAD")
@@ -431,6 +574,32 @@ class SemverGateTests(unittest.TestCase):
                 rec = q.collect(art, root)
                 self.assertEqual(rec["verdict"], verdict, rec["verdict_reasons"])
                 self.assertEqual(rec["semver_gate"]["workspace_version"], version)
+                self.assertEqual(rec["semver_gate"]["expected_crates"], ["tst-core", "tst-hls", "tst-udp"])
+
+    def test_the_crates_are_those_with_a_public_api_baseline_at_the_commit(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "root")
+            os.makedirs(root)
+            self.assertIsNone(q.public_api_crates(root, "HEAD"))
+            git(root, "init", "-q", "-b", "main")
+            # The package name is the manifest's, not the directory's.
+            crate_with_baseline(root, "crates/rist-sys", "tstrans-rist-sys")
+            crate_with_baseline(root, "bindings/c/core", "tst-c-core")
+            crate_with_baseline(root, "crates/tst-core", "tst-core")
+            put(os.path.join(root, "crates/tst-examples/Cargo.toml"), '[package]\nname = "tst-examples"\n')
+            git(root, "add", ".")
+            git(root, "commit", "-q", "-m", "A")
+            sha = git(root, "rev-parse", "HEAD")
+            # The commit decides, not the working tree.
+            crate_with_baseline(root, "crates/tst-new", "tst-new")
+            os.remove(os.path.join(root, "crates/tst-core/public-api.txt"))
+            self.assertEqual(q.public_api_crates(root, sha), ["tst-c-core", "tst-core", "tstrans-rist-sys"])
+            self.assertIsNone(q.public_api_crates(root, "f" * 40))
+            # A baseline beside a manifest that names no package cannot be mapped to a crate.
+            put(os.path.join(root, "crates/tst-new/Cargo.toml"), "[workspace]\n")
+            git(root, "add", ".")
+            git(root, "commit", "-q", "-m", "B")
+            self.assertIsNone(q.public_api_crates(root, "HEAD"))
 
     def line(self, rec):
         return [l for l in q.render_block(rec).splitlines() if l.startswith("cargo-semver-checks")]
@@ -467,10 +636,10 @@ class SemverGateTests(unittest.TestCase):
         rec["semver_checks"] = []
         self.assertEqual(self.line(rec), [])
 
-    def test_the_gate_is_a_function_of_its_five_inputs(self):
-        gate = q.semver_gate(True, "0.10.0", "v0.9.0", q.semver_rows(BREAKS), SHA)
+    def test_the_gate_is_a_function_of_its_inputs(self):
+        gate = q.semver_gate(True, "0.10.0", "v0.9.0", q.semver_rows(BREAKS), SHA, self.THREE, "v0.9.0")
         self.assertEqual(gate["reasons"], [])
-        gate = q.semver_gate(False, "0.9.0", "v0.9.0", [], SHA)
+        gate = q.semver_gate(False, "0.9.0", "v0.9.0", [], SHA, None)
         self.assertEqual((gate["candidate"], gate["reasons"]), (False, []))
 
 
@@ -796,6 +965,12 @@ RELEASE_OK = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
 OLD_TREE = "e" * 40
 SOAKED_EARLIER = archives_toml(archive_row("soak-rel", "soak", OLD_TREE, legs=FIVE),
                                archive_row("corpus-rel", "corpus", OLD_TREE, counts=COUNTS))
+
+
+def crate_with_baseline(root, rel, package):
+    """A crate directory under `root` with a manifest naming `package` and a public-api baseline."""
+    put(os.path.join(root, rel, "Cargo.toml"), '[package]\nname = "%s"\n' % package)
+    put(os.path.join(root, rel, "public-api.txt"), "pub mod x\n")
 
 
 def git(cwd, *args):
