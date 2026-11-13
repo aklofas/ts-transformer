@@ -8,7 +8,7 @@
 //! source-file organization.
 
 use crate::error::MuxError;
-use crate::mpegts::common::{Pcr27mhz, Pts90khz};
+use crate::mpegts::common::Pts90khz;
 use alloc::vec::Vec;
 
 use super::Muxer;
@@ -17,7 +17,6 @@ use super::pes::{
     write_pes_header,
 };
 use super::state::{ts_packets_for, validate_annex_b, wrap_av1_obus_binding};
-use super::ts::AdaptationField;
 use super::types::{Av1CarriageMode, MuxStreamKind, VideoCodec, VideoStreamHandle};
 
 /// Whether the caller-supplied bytes are elementary (need binding
@@ -161,7 +160,6 @@ impl Muxer {
             handle,
             nal,
             PesPtsField::PtsOnly(pts),
-            pts,
             key_frame,
             VideoInputForm::Elementary,
         )
@@ -180,9 +178,8 @@ impl Muxer {
     /// composition order). The muxer does not enforce this — receivers
     /// will reject inverted timestamps.
     ///
-    /// **Internal cadence:** PCR pacing, PSI emission cadence, and buffer
-    /// reservation all key off `pts`. DTS does not influence the
-    /// wall-clock or scheduling state.
+    /// **Internal cadence:** the PCR and the PSI cadence key off `dts`, the
+    /// decode time: the PCR runs `pcr_lead_ms` behind it.
     ///
     /// AV1 streams expect OBU bitstream input (AV1 spec §5) and skip
     /// the Annex-B start-code check; H.264 / H.265 / H.266 require
@@ -212,12 +209,10 @@ impl Muxer {
         dts: Pts90khz,
         key_frame: bool,
     ) -> Result<(), MuxError> {
-        // Pacing keys off PTS — see method-level rustdoc.
         self.push_video_to_internal(
             handle,
             nal,
             PesPtsField::PtsAndDts { pts, dts },
-            pts,
             key_frame,
             VideoInputForm::Elementary,
         )
@@ -258,7 +253,6 @@ impl Muxer {
             handle,
             &spliced,
             PesPtsField::PtsOnly(pts),
-            pts,
             key_frame,
             VideoInputForm::Elementary,
         )
@@ -286,7 +280,6 @@ impl Muxer {
             handle,
             &spliced,
             PesPtsField::PtsAndDts { pts, dts },
-            pts,
             key_frame,
             VideoInputForm::Elementary,
         )
@@ -357,7 +350,6 @@ impl Muxer {
             handle,
             wire,
             PesPtsField::PtsOnly(pts),
-            pts,
             key_frame,
             VideoInputForm::Wire,
         )
@@ -390,7 +382,6 @@ impl Muxer {
             handle,
             wire,
             PesPtsField::PtsAndDts { pts, dts },
-            pts,
             key_frame,
             VideoInputForm::Wire,
         )
@@ -399,9 +390,9 @@ impl Muxer {
     /// Shared body for `push_video_to`, `push_video_to_with_dts`,
     /// `push_video_wire_to`, and `push_video_wire_to_with_dts`.
     ///
-    /// `pts_field` controls the PES header shape (PTS-only vs PTS+DTS);
-    /// `pacing_pts` is the timestamp used for PCR / PSI cadence and stats
-    /// (always the presentation time — DTS doesn't drive scheduling).
+    /// `pts_field` controls the PES header shape (PTS-only vs PTS+DTS) and
+    /// supplies the decode time that drives the program clock: the DTS when
+    /// there is one, else the PTS.
     /// `form` selects whether `nal` is an elementary AU that may need
     /// binding-mode framing (`Elementary`) or is already in on-wire form
     /// and must be emitted verbatim (`Wire`).
@@ -410,7 +401,6 @@ impl Muxer {
         handle: VideoStreamHandle,
         nal: &[u8],
         pts_field: PesPtsField,
-        pacing_pts: Pts90khz,
         key_frame: bool,
         form: VideoInputForm,
     ) -> Result<(), MuxError> {
@@ -468,7 +458,11 @@ impl Muxer {
         };
         let mut header = [0u8; MAX_PES_HEADER_SIZE];
         let header_len = write_pes_header(&mut header, stream_id, pts_field, None, pes_flags);
-        let pts = pacing_pts;
+        let decode_ts = match pts_field {
+            PesPtsField::PtsAndDts { dts, .. } => dts,
+            PesPtsField::PtsOnly(pts) => pts,
+            PesPtsField::None => unreachable!("every video push carries a PTS"),
+        };
 
         // Bytes that will land in the PES payload (after the PES header).
         // In `Mpeg2TsBinding` mode for AV1 elementary input, the raw OBUs
@@ -502,33 +496,12 @@ impl Muxer {
         self.pes_scratch.extend_from_slice(payload_bytes);
 
         let video_packets = ts_packets_for(self.pes_scratch.len());
-        // When the PCR PID hasn't received payload within
-        // `pcr_interval_ms`, the muxer injects a standalone PCR-only
-        // adaptation-only packet on it. Reserve one packet for that.
-        // Returns 0 when the current push lands on the PCR PID (the
-        // in-band PCR-on-push path below handles emission instead).
-        self.reserve_preamble(prog_idx, pts, video_pid, video_packets)?;
-
-        let first_af = {
-            let mut af = AdaptationField::default();
-            if key_frame {
-                af.random_access = true;
-            }
-            if self.slots[prog_idx].pcr_pid == video_pid {
-                // Per H.222.0 V9 §2.4.3.5: random_access_indicator may
-                // only be set on PCR_PID packets that also carry the PCR
-                // fields. Force PCR emission when key-frame coincides
-                // with this PID even if pcr_due() would otherwise return
-                // false — matches TSDuck / ffmpeg behavior. Random-access
-                // point + PCR coincide; downstream seekers benefit.
-                if self.pcr_due(prog_idx, pts.as_ticks()) || key_frame {
-                    let pcr = Pcr27mhz::from_pts(pts);
-                    af.pcr = Some(pcr);
-                    self.slots[prog_idx].pcr_last = Some(pcr.as_ticks());
-                }
-            }
-            af
-        };
+        // Per H.222.0 §2.4.3.5 a random access point on the PCR PID carries
+        // the PCR fields, so a key frame asks for a PCR even when none is due
+        // (as TSDuck and ffmpeg do): tune-in point and clock sample coincide.
+        let plan =
+            self.reserve_preamble(prog_idx, decode_ts, video_pid, video_packets, key_frame)?;
+        let first_af = plan.first_af(key_frame);
         self.drain_pes_scratch(video_pid, first_af);
 
         // Count on the Ok path only — after all early-returns above.

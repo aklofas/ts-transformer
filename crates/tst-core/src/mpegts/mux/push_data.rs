@@ -187,11 +187,9 @@ impl Muxer {
         self.pes_scratch.extend_from_slice(data);
 
         let data_packets = ts_packets_for(self.pes_scratch.len());
-        // See push_video for the rationale. Like KLV, data
-        // streams typically ride a non-PCR PID with an independent (often
-        // low) push cadence, so PSI/PCR-only emissions frequently piggyback
-        // on data pushes and must be budgeted in the BufferFull pre-check.
-        self.reserve_preamble(prog_idx, pts, data_pid, data_packets)?;
+        // Like KLV, a data push can be what keeps PSI and PCR-only packets
+        // going when the PCR stream is silent.
+        self.reserve_preamble(prog_idx, pts, data_pid, data_packets, false)?;
 
         // No PCR-on-first-packet branch here (unlike push_klv):
         // validate() rejects PCR pinned on a data PID and the

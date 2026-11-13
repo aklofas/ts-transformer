@@ -315,11 +315,13 @@ fn pcr_injected_as_adaptation_only_packet_when_pcr_pid_has_no_payload() {
 
     // Push KLV-only pushes spread over 300ms. At 40ms PCR interval, the
     // muxer should inject ~7+ PCR-only packets on video_pid even though
-    // no video is ever pushed. 90 kHz × 50 ms = 4500 ticks per step.
+    // no video is ever pushed. 90 kHz × 50 ms = 4500 ticks per step. The
+    // pushes start one second in, past the PCR lead, so the PCRs below do
+    // not wrap and plain subtraction measures their spacing.
     for i in 0..6u64 {
         mux.push_klv(
             &synthetic_nal::klv_blob(64),
-            Pts90khz::new((i * 4500) as i64),
+            Pts90khz::new((90_000 + i * 4500) as i64),
             0x00,
         )
         .unwrap();
@@ -352,7 +354,7 @@ fn pcr_injected_as_adaptation_only_packet_when_pcr_pid_has_no_payload() {
     );
 
     // PCR deltas must stay ≤ 100ms (Annex D). The library writes PCRs whose
-    // base is the push PTS (90 kHz units); convert and check spacing.
+    // base is the push time minus the lead; the spacing is the pushes'.
     // 100 ms in 27 MHz units = 2_700_000 ticks.
     let max_delta_27mhz = 100u64 * 27_000;
     for w in pcrs_on_video.windows(2) {

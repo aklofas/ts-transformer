@@ -112,13 +112,8 @@ impl Muxer {
         );
 
         let audio_packets = ts_packets_for(self.pes_scratch.len());
-        // See push_video for the rationale. Audio is
-        // typically high-cadence, but a low-frame-rate stream (sparse
-        // language tracks, sign-language audio) could still drift.
-        self.reserve_preamble(prog_idx, pts, audio_pid, audio_packets)?;
-
-        let first_af = self.pcr_first_af(prog_idx, pts, audio_pid);
-        self.drain_pes_scratch(audio_pid, first_af);
+        let plan = self.reserve_preamble(prog_idx, pts, audio_pid, audio_packets, false)?;
+        self.drain_pes_scratch(audio_pid, plan.first_af(false));
 
         // Count on the Ok path only — after all early-returns above.
         if let Some(s) = self.per_stream.get_mut(&audio_pid) {

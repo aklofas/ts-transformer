@@ -33,10 +33,16 @@ pub(super) struct ProgramSlot {
     pub(super) pmt_version: u8,
     /// `pmt_identity_key` as of that version, to detect a changed PMT.
     pub(super) pmt_identity: Vec<u8>,
-    /// Last PSI emission PTS, masked to 33 bits. None until first.
+    /// Program clock at the last PSI emission, 33-bit 90 kHz. None until
+    /// first, and after `request_psi`.
     pub(super) psi_last: Option<u64>,
-    /// Last PCR emission value at 27 MHz. None until first.
+    /// Last PCR emission value at 27 MHz: the program clock. None until first.
     pub(super) pcr_last: Option<u64>,
+    /// Decode time of the last push on the PCR PID (or tick), 33-bit 90 kHz.
+    /// None until first, and after the PCR PID changes.
+    pub(super) pcr_stream_last: Option<u64>,
+    /// PCRs sent on the current time base, saturating.
+    pub(super) pcrs_on_time_base: u8,
     /// Program number this slot last carried; kept when the slot is
     /// tombstoned so a reconfigure re-adding that program prefers this slot.
     /// The in-place reconfigure overwrites it when it reuses the slot.
@@ -86,6 +92,8 @@ impl ProgramSlot {
             pmt_descriptor_cache,
             psi_last: None,
             pcr_last: None,
+            pcr_stream_last: None,
+            pcrs_on_time_base: 0,
             last_program_number: prog.program_number,
             placed_pids,
         }
@@ -107,6 +115,8 @@ impl ProgramSlot {
             pmt_identity: Vec::new(),
             psi_last: None,
             pcr_last: None,
+            pcr_stream_last: None,
+            pcrs_on_time_base: 0,
             last_program_number: 0,
             placed_pids: BTreeMap::new(),
         }

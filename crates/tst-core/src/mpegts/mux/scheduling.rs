@@ -1,91 +1,202 @@
-//! PSI + PCR cadence scheduling for `Muxer`.
+//! PSI + PCR scheduling for `Muxer`: one delivery clock per program.
 //!
-//! Reads and updates each program slot's `psi_last` / `pcr_last` state
-//! through the `psi_due` / `pcr_due` predicates that gate PSI/PCR emission per
-//! the configured intervals.
+//! A program's clock is the value of its last PCR. Every push moves it to
+//! the push's decode time minus `pcr_lead_ms`, never backward, so the PCR a
+//! receiver reads is always behind the decode time of the access unit that
+//! follows it. `Muxer::plan_clock` works out what one push does to the
+//! clock without touching state; `reserve_preamble` checks the result against
+//! the buffer and only then commits it, so a refused push changes nothing.
 //!
-//! `maybe_emit_psi` is the centerpiece — it emits one PAT + one PMT per
-//! live program when the per-program PSI tick is due, tracks the last-emission
-//! PTS, and updates every slot's `psi_last` so the next call's `psi_due`
-//! returns false until the next interval boundary.
+//! PSI rides the same clock: one PAT + one PMT per live program whenever the
+//! clock has advanced `psi_interval_ms` since the last set.
 
 use super::Muxer;
 use super::psi::{PmtStreamEntry, write_pat_packet, write_pmt_packet};
 use super::state::pmt_stream_type_byte;
-use super::ts::write_pcr_only_packet;
-use crate::mpegts::common::{Pcr27mhz, Pts90khz};
+use super::ts::{AdaptationField, write_pcr_only_packet};
+use crate::error::MuxError;
+use crate::mpegts::common::{Pcr27mhz, Pts90khz, pts_diff_33bit};
 use alloc::vec::Vec;
 
+/// One second, the longest an H.222.0 decoder buffer holds an access unit.
+/// A push on the PCR PID more than this far behind the previous one cannot
+/// be reordering, so it starts a new time base; a push on another PID more
+/// than this far ahead of the PCR stream means that stream has gone silent.
+pub(super) const TIMELINE_RESTART_90KHZ: i64 = 90_000;
+
+const MASK_33: u64 = (1 << 33) - 1;
+
+/// What the program clock decided for the push that was just reserved.
+pub(super) struct ClockPlan {
+    /// PCR for the push's first TS packet; `None` when that packet carries
+    /// none.
+    pub(super) pcr: Option<Pcr27mhz>,
+    /// The first packet opens a new time base.
+    pub(super) discontinuity: bool,
+}
+
+impl ClockPlan {
+    /// Adaptation field for the push's first TS packet.
+    pub(super) fn first_af(&self, random_access: bool) -> AdaptationField {
+        AdaptationField {
+            random_access,
+            pcr: self.pcr,
+            discontinuity: self.discontinuity,
+        }
+    }
+}
+
+/// The effect of one push (or tick) on a program's clock, not yet applied.
+struct ClockStep {
+    /// The program clock after the push.
+    clock: u64,
+    /// The push's decode time, masked to 33 bits.
+    decode: u64,
+    psi: bool,
+    /// A PCR-only packet goes out on the PCR PID before the payload.
+    pcr_only: bool,
+    /// The push's first packet carries the PCR.
+    first_pcr: bool,
+    /// The PCR of this push opens a new time base.
+    restart: bool,
+    /// `decode` becomes the PCR stream's latest timestamp.
+    on_pcr_stream: bool,
+}
+
 impl Muxer {
-    pub(super) fn psi_due(&self, prog_idx: usize, pts_90khz: i64) -> bool {
-        match self.slots[prog_idx].psi_last {
-            None => true,
-            Some(last_masked) => {
-                let now_masked = Pts90khz::new(pts_90khz).masked_33bit();
-                let delta = crate::mpegts::common::pts_diff_33bit(now_masked, last_masked);
-                delta >= self.psi_interval_90khz
-            }
+    /// Work out what a push with decode time `decode_ts` on `pid` does to
+    /// program `prog_idx`'s clock. `pid` is `None` for a tick,
+    /// which stands in for a push on the PCR PID. `force_pcr` asks for a PCR
+    /// on the first packet even when none is due (a key frame).
+    fn plan_clock(
+        &self,
+        prog_idx: usize,
+        decode_ts: Pts90khz,
+        pid: Option<u16>,
+        force_pcr: bool,
+    ) -> ClockStep {
+        let slot = &self.slots[prog_idx];
+        let tick = pid.is_none();
+        let on_pcr = pid.is_none_or(|p| p == slot.pcr_pid);
+        let decode = decode_ts.masked_33bit();
+        let candidate = (decode + (1 << 33) - self.pcr_lead_90khz) & MASK_33;
+        let clock = slot.pcr_last.map(|pcr| (pcr / 300) & MASK_33);
+        let since_pcr_stream = slot.pcr_stream_last.map(|v| pts_diff_33bit(decode, v));
+
+        // A new time base needs two PCRs on the current one first
+        // (H.222.0 §2.7.2). Until then the step back is held like a
+        // reorder, but with a PCR, so the next push finds the two it needs.
+        let behind = on_pcr && since_pcr_stream.is_some_and(|d| d < -TIMELINE_RESTART_90KHZ);
+        let restart = behind && slot.pcrs_on_time_base >= 2;
+        let refused = behind && !restart;
+        // While the PCR stream is pushing, another PID's timestamps do not
+        // move the clock: metadata stamped at capture can run ahead of
+        // encoder-delayed video, and a PCR taken from it would pass the
+        // video's decode time.
+        let live = !on_pcr && since_pcr_stream.is_some_and(|d| d <= TIMELINE_RESTART_90KHZ);
+
+        let new_clock = match clock {
+            Some(c) if !restart && (live || pts_diff_33bit(candidate, c) < 0) => c,
+            _ => candidate,
+        };
+        let psi = restart
+            || slot
+                .psi_last
+                .is_none_or(|last| pts_diff_33bit(new_clock, last) >= self.psi_interval_90khz);
+        let pcr_due = restart
+            || refused
+            || clock.is_none_or(|c| pts_diff_33bit(new_clock, c) >= self.pcr_interval_90khz);
+        ClockStep {
+            clock: new_clock,
+            decode,
+            psi,
+            pcr_only: pcr_due && (tick || (!on_pcr && !live)),
+            first_pcr: on_pcr && !tick && (pcr_due || force_pcr),
+            restart,
+            on_pcr_stream: on_pcr && !refused,
         }
     }
 
-    pub(super) fn pcr_due(&self, prog_idx: usize, pts_90khz: i64) -> bool {
-        match self.slots[prog_idx].pcr_last {
-            None => true,
-            Some(last) => {
-                // PCR is at 27 MHz; the 33-bit base wraps at 2^33 base ticks.
-                // Convert both to 33-bit base and use the same modular helper,
-                // then compare in 90 kHz units.
-                let now_base_masked = Pts90khz::new(pts_90khz).masked_33bit();
-                let last_base_masked = (last / 300) & ((1u64 << 33) - 1);
-                let delta_90khz =
-                    crate::mpegts::common::pts_diff_33bit(now_base_masked, last_base_masked);
-                let threshold_90khz = (self.pcr_interval_27mhz / 300) as i64;
-                delta_90khz >= threshold_90khz
-            }
+    /// `BufferFull` unless the PSI and PCR-only packets of `step` plus
+    /// `payload_pkts` fit in the queue.
+    fn reserve(&self, step: &ClockStep, payload_pkts: usize) -> Result<(), MuxError> {
+        // 1 PAT + one PMT per live program, as `emit_psi` writes.
+        let psi_packets = if step.psi {
+            1 + self.live_slots().count()
+        } else {
+            0
+        };
+        if self.queue.len() + psi_packets + usize::from(step.pcr_only) + payload_pkts
+            > self.config.buffer_packets
+        {
+            return Err(MuxError::BufferFull {
+                capacity_packets: self.config.buffer_packets as u64,
+            });
         }
+        Ok(())
     }
 
-    /// Returns true when the configured PCR PID has fallen behind the
-    /// `pcr_interval_ms` ceiling AND the current push is landing on a
-    /// non-PCR PID (so the in-band PCR-on-push path won't run). Mirrors
-    /// the role of `psi_due` for the PCR-only adaptation-only-packet
-    /// injection.
+    /// Advance the program clock for one push: check buffer headroom, then
+    /// queue the PSI and PCR-only packets that are due.
     ///
-    /// `current_pid` is the elementary PID the push path is about to
-    /// write its payload onto. When it equals the PCR PID, the regular
-    /// PCR-on-push path already handles emission and this predicate
-    /// returns false to avoid duplicate PCR samples.
-    pub(super) fn pcr_only_due(&self, prog_idx: usize, pts_90khz: i64, current_pid: u16) -> bool {
-        self.slots[prog_idx].pcr_pid != current_pid && self.pcr_due(prog_idx, pts_90khz)
-    }
-
-    /// Emit one adaptation-field-only PCR packet on the program's PCR PID
-    /// when [`Self::pcr_only_due`] is true. No-op otherwise. Used to keep
-    /// the PCR cadence within H.222.0 Annex D's 100ms ceiling when the
-    /// caller pushes only to non-PCR PIDs (e.g. KLV-only push on a video-
-    /// PCR config). Updates the slot's `pcr_last` to the emitted PCR's
-    /// 27 MHz value.
-    pub(super) fn maybe_emit_pcr_only(
+    /// `decode_ts` is the push's decode time (DTS when the push has one,
+    /// else PTS), `pid` the elementary-stream PID being pushed,
+    /// `payload_pkts` the TS-packet count of the PES (from `ts_packets_for`),
+    /// and `force_pcr` asks for a PCR on the first packet even when none is
+    /// due. Returns what that first packet must carry. On `BufferFull`
+    /// nothing has changed.
+    pub(super) fn reserve_preamble(
         &mut self,
         prog_idx: usize,
-        pts_90khz: i64,
-        current_pid: u16,
-    ) {
-        if !self.pcr_only_due(prog_idx, pts_90khz, current_pid) {
-            return;
-        }
-        let pcr_pid = self.slots[prog_idx].pcr_pid;
-        let pcr = Pcr27mhz::from_pts(Pts90khz::new(pts_90khz));
-        let mut pkt = [0u8; 188];
-        write_pcr_only_packet(&mut pkt, pcr_pid, pcr, false, &self.counters);
-        self.queue.push_back(pkt);
-        self.slots[prog_idx].pcr_last = Some(pcr.as_ticks());
+        decode_ts: Pts90khz,
+        pid: u16,
+        payload_pkts: usize,
+        force_pcr: bool,
+    ) -> Result<ClockPlan, MuxError> {
+        let step = self.plan_clock(prog_idx, decode_ts, Some(pid), force_pcr);
+        self.reserve(&step, payload_pkts)?;
+        Ok(self.commit_clock(prog_idx, &step))
     }
 
-    pub(super) fn maybe_emit_psi(&mut self, prog_idx: usize, pts_90khz: i64) {
-        if !self.psi_due(prog_idx, pts_90khz) {
-            return;
+    /// Apply `step`: queue its PSI and PCR-only packets and move the clock.
+    fn commit_clock(&mut self, prog_idx: usize, step: &ClockStep) -> ClockPlan {
+        if step.psi {
+            self.emit_psi(step.clock);
         }
+        let pcr = Pcr27mhz::new(step.clock * 300);
+        if step.pcr_only {
+            // Keeps the PCR PID within `pcr_interval_ms` when its own stream
+            // is not pushing (KLV-only traffic on a video-PCR program).
+            let mut pkt = [0u8; 188];
+            write_pcr_only_packet(
+                &mut pkt,
+                self.slots[prog_idx].pcr_pid,
+                pcr,
+                step.restart,
+                &self.counters,
+            );
+            self.queue.push_back(pkt);
+        }
+        let slot = &mut self.slots[prog_idx];
+        if step.restart {
+            slot.pcrs_on_time_base = 0;
+        }
+        if step.pcr_only || step.first_pcr {
+            slot.pcr_last = Some(pcr.as_ticks());
+            slot.pcrs_on_time_base = slot.pcrs_on_time_base.saturating_add(1);
+        }
+        if step.on_pcr_stream {
+            slot.pcr_stream_last = Some(step.decode);
+        }
+        ClockPlan {
+            pcr: step.first_pcr.then_some(pcr),
+            discontinuity: step.restart && step.first_pcr,
+        }
+    }
+
+    /// Queue one PAT and one PMT per live program, and record `clock` as the
+    /// time of every program's last PSI.
+    fn emit_psi(&mut self, clock: u64) {
         // Emit one PAT that lists all live programs, then one PMT per live
         // program.
         // The PAT is emitted on every PSI tick regardless of which program
@@ -125,15 +236,11 @@ impl Muxer {
             self.queue.push_back(pmt);
         }
 
-        // Update psi_last for ALL slots to the same masked timestamp.
-        // maybe_emit_psi emits one PAT + one PMT per program on a single
-        // tick, so every program's state is now fresh; updating only the
-        // triggering index left other programs' psi_last == None, which
-        // psi_due reads as "always due" and would re-fire the entire
-        // PAT+PMTs set on the next push for a different program.
-        let masked = Pts90khz::new(pts_90khz).masked_33bit();
+        // Every program's PMT just went out, so every slot is stamped: a
+        // slot left at `None` would read as due on its next push and re-send
+        // the whole set.
         for slot in self.slots.iter_mut() {
-            slot.psi_last = Some(masked);
+            slot.psi_last = Some(clock);
         }
     }
 }
