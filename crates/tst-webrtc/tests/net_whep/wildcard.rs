@@ -1,7 +1,9 @@
 //! A server bound to the wildcard address with no `advertise=`: each
 //! viewer is offered the local address its signalling connection arrived
-//! on, so the server needs no knowledge of the host's addresses.
+//! on, and loopback, so the server needs no knowledge of the host's
+//! addresses.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 
@@ -63,7 +65,10 @@ fn lan_ipv4() -> Result<Ipv4Addr, String> {
         .connect((Ipv4Addr::new(192, 0, 2, 1), 9))
         .map_err(|e| format!("no IPv4 route: {e}"))?;
     match probe.local_addr().map_err(|e| e.to_string())?.ip() {
-        IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_unspecified() => Ok(ip),
+        // An ICE candidate cannot be a link-local address.
+        IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_unspecified() && !ip.is_link_local() => {
+            Ok(ip)
+        }
         other => Err(format!("the route's source address is {other}")),
     }
 }
@@ -89,9 +94,10 @@ fn a_wildcard_bind_with_advertise_offers_the_advertised_and_loopback_addresses()
     assert_eq!(join_on(&srv, loopback, &mut v), [advertised, loopback]);
 }
 
-/// The request's scenario: the embedder binds the wildcard address and
-/// names no address; a viewer that reached the host on its LAN address is
-/// offered that address and plays, at the same time as a loopback viewer.
+/// The embedder binds the wildcard address and names no address. A viewer
+/// that reached the host on its LAN address is offered that address and
+/// plays, at the same time as a loopback viewer. A viewer on the host
+/// itself whose page named the LAN address still connects over loopback.
 #[test]
 fn a_wildcard_bind_offers_each_viewer_the_address_it_reached() {
     let lan = match lan_ipv4() {
@@ -101,26 +107,57 @@ fn a_wildcard_bind_offers_each_viewer_the_address_it_reached() {
     let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let srv = WhepServer::bind("whep://0.0.0.0:0").unwrap();
     let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
-    let mut vs = [TestViewer::bound_to(lan), TestViewer::new()];
-    assert_eq!(join_on(&srv, lan, &mut vs[0]), [lan]);
+    let mut vs = [
+        TestViewer::bound_to(lan),
+        TestViewer::new(),
+        TestViewer::new(),
+    ];
+    assert_eq!(join_on(&srv, lan, &mut vs[0]), [lan, loopback]);
     assert_eq!(join_on(&srv, loopback, &mut vs[1]), [loopback]);
+    assert_eq!(join_on(&srv, lan, &mut vs[2]), [lan, loopback]);
     connect_all(&m, &mut vs);
     play(&m, 0, &mut vs);
-    let media = SocketAddr::new(lan, srv.media_addr().port());
-    assert!(vs[0].sources.contains(&media), "{:?}", vs[0].sources);
+    let port = srv.media_addr().port();
+    assert_eq!(
+        vs[0].sources,
+        HashSet::from([SocketAddr::new(lan, port)]),
+        "the LAN viewer's media came from another address"
+    );
+    assert_eq!(
+        vs[2].sources,
+        HashSet::from([SocketAddr::new(loopback, port)]),
+        "the same-host viewer was not served over loopback"
+    );
 }
 
-/// `::` follows the same rule for an IPv6 viewer. An IPv4 viewer that
-/// reaches a dual-stack `::` socket arrives on an IPv4-mapped address,
-/// which the IPv6 media path does not serve: it is offered loopback only,
-/// as before.
+/// Every address of 127.0.0.0/8 is local on Linux, and Debian maps the
+/// host's own name to 127.0.1.1. Replies to any of them leave from
+/// 127.0.0.1, so that is the address such a viewer is offered.
+#[cfg(target_os = "linux")]
 #[test]
-fn a_wildcard_ipv6_bind_offers_an_ipv6_viewer_the_address_it_reached() {
+fn a_viewer_that_reached_another_loopback_address_is_offered_the_loopback_candidate() {
+    let srv = WhepServer::bind("whep://0.0.0.0:0").unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    let mut v = [TestViewer::new()];
+    let named: IpAddr = "127.0.1.1".parse().unwrap();
+    assert_eq!(
+        join_on(&srv, named, &mut v[0]),
+        [IpAddr::V4(Ipv4Addr::LOCALHOST)]
+    );
+    connect_all(&m, &mut v);
+    play(&m, 0, &mut v);
+}
+
+/// `::` serves IPv6 viewers. An IPv4 viewer that reaches a dual-stack `::`
+/// socket arrives on an IPv4-mapped address, which the IPv6 media path does
+/// not serve: it is offered IPv6 loopback only, as before.
+#[test]
+fn a_wildcard_ipv6_bind_serves_an_ipv6_viewer_and_offers_an_ipv4_one_nothing_new() {
     let v6 = IpAddr::V6(Ipv6Addr::LOCALHOST);
-    let srv = match WhepServer::bind("whep://[::]:0") {
-        Ok(srv) => srv,
-        Err(e) => return skip_unless_required("IPV6", format!("cannot bind [::]: {e}")),
-    };
+    if let Err(e) = UdpSocket::bind((v6, 0)) {
+        return skip_unless_required("IPV6", format!("no IPv6 loopback: {e}"));
+    }
+    let srv = WhepServer::bind("whep://[::]:0").unwrap();
     let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
     let mut v = [TestViewer::bound_to(v6)];
     assert_eq!(join_on(&srv, v6, &mut v[0]), [v6]);
@@ -154,29 +191,32 @@ mod address_change {
         );
     }
 
-    /// The scenario, in a namespace whose only interface is loopback: the
+    /// The scenario, in a namespace whose only address is loopback: the
     /// server binds before the host has an address, serves a viewer on the
     /// address that appears, and after that address is replaced serves a
     /// new viewer on the new one. Nothing is called on the server between.
+    /// The addresses go on the loopback interface, which needs no kernel
+    /// module; to the sockets they are ordinary local addresses.
     fn scenario() {
+        let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
         ip(&["link", "set", "lo", "up"]);
         let srv = WhepServer::bind("whep://0.0.0.0:0").unwrap();
         let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
 
-        ip(&["link", "add", "tst0", "type", "dummy"]);
-        ip(&["addr", "add", "192.0.2.10/24", "dev", "tst0"]);
-        ip(&["link", "set", "tst0", "up"]);
+        ip(&["addr", "add", "192.0.2.10/24", "dev", "lo"]);
         let first: IpAddr = "192.0.2.10".parse().unwrap();
         let mut a = [TestViewer::bound_to(first)];
-        assert_eq!(join_on(&srv, first, &mut a[0]), [first]);
+        assert_eq!(join_on(&srv, first, &mut a[0]), [first, loopback]);
         connect_all(&m, &mut a);
         play(&m, 0, &mut a);
+        let media = SocketAddr::new(first, srv.media_addr().port());
+        assert_eq!(a[0].sources, HashSet::from([media]));
 
-        ip(&["addr", "del", "192.0.2.10/24", "dev", "tst0"]);
-        ip(&["addr", "add", "198.51.100.7/24", "dev", "tst0"]);
+        ip(&["addr", "del", "192.0.2.10/24", "dev", "lo"]);
+        ip(&["addr", "add", "198.51.100.7/24", "dev", "lo"]);
         let second: IpAddr = "198.51.100.7".parse().unwrap();
         let mut b = [TestViewer::bound_to(second)];
-        assert_eq!(join_on(&srv, second, &mut b[0]), [second]);
+        assert_eq!(join_on(&srv, second, &mut b[0]), [second, loopback]);
         // The first session is still open on the address that is gone, so
         // the mount has two; only the new one has to connect.
         let connected = pump_all(&mut b, |vs| vs[0].connected, Duration::from_secs(5));

@@ -406,9 +406,10 @@ accepts NACK and PLI, and accepts the offer's data-channel section; the
   `advertise=` offers that address and loopback; behind NAT `advertise=` is
   the public IP. `advertise=` takes one literal IP address.
 - **A wildcard bind with no `advertise=`** offers each viewer the local
-  address its signalling request arrived on, on `media_port`. That is an
-  address the viewer can route to, and the server never looks up or
-  remembers the host's addresses:
+  address its signalling request arrived on, on `media_port`, and loopback
+  beside it. The first is an address the viewer can route to; the second
+  serves a viewer on the host itself, whatever address its page named. The
+  server never looks up or remembers the host's addresses:
   - `bind` succeeds on a host that has no address but loopback yet (DHCP
     still pending, the cable not in), and nothing has to be called when an
     address appears.
@@ -424,18 +425,23 @@ accepts NACK and PLI, and accepts the offer's data-channel section; the
     Set `advertise=`, or let viewers POST to the WHEP port directly. The
     server reads no `Forwarded` or `X-Forwarded-*` header.
   - **Port forwarding, or a container's published port,** puts the request
-    on a private address the viewer cannot reach. That is NAT: set
-    `advertise=`.
+    on a private address the viewer cannot reach, and the answer names that
+    address. That is NAT: set `advertise=`.
+  - **An IPv4 link-local address** (`169.254.0.0/16`, what a host gives
+    itself while it has no DHCP lease) cannot be an ICE candidate and is not
+    offered. A viewer that reached the host on one is offered loopback only.
   - **Replies leave by the kernel's route to the viewer.** The media socket
     is one wildcard UDP socket, so a viewer is served when the address it
     reached is the source address of the route back to it: the usual case,
     one address per subnet on each interface. A host with two addresses of
     one subnet on an interface, or a LAN address reached through a VPN that
     ends on this host, is not served on the second address; bind that
-    address or name it in `advertise=`.
+    address or name it in `advertise=`. A viewer on the host itself is not
+    affected: it connects over loopback.
   - **On `::`** an IPv6 viewer is offered the IPv6 address it reached. An
     IPv4 viewer that reaches a dual-stack `::` socket is offered IPv6
-    loopback only and does not connect: bind `0.0.0.0` for IPv4 viewers.
+    loopback only, so a remote one does not connect: bind `0.0.0.0` for
+    IPv4 viewers.
 - **No TURN, no STUN, no ICE over TCP.** The viewer must reach the
   offered address on `media_port` over UDP.
 - **No userinfo.** A bind URL with `user:pass@` is refused; the bearer secret

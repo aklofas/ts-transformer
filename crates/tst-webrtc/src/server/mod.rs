@@ -149,12 +149,12 @@ struct Threads {
 /// one address offers it, plus `advertise=` (the public address of a host
 /// behind NAT) when set. A bind on the wildcard address (`0.0.0.0`, `::`)
 /// with no `advertise=` offers each viewer the local address its request
-/// arrived on, so the embedder never has to know the host's addresses: the
-/// bind succeeds before the host has one, and an address change needs no
-/// rebind. The media socket then replies by the kernel's route to the
-/// viewer, so the address the viewer reached has to be the source address
-/// of that route; a reverse proxy on the same host puts every request on
-/// loopback and needs `advertise=`.
+/// arrived on, and loopback, so the embedder never has to know the host's
+/// addresses: the bind succeeds before the host has one, and an address
+/// change needs no rebind. The media socket then replies by the kernel's
+/// route to the viewer, so the address a remote viewer reached has to be
+/// the source address of that route; a reverse proxy on the same host puts
+/// every request on loopback and needs `advertise=`.
 ///
 /// A `wheps://` URL serves the signalling over HTTPS with the certificate
 /// and key named by `cert=` and `key=` (feature `tls`, on by default);
