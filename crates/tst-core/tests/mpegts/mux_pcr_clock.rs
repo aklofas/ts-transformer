@@ -789,6 +789,85 @@ fn tick_buffer_full_changes_nothing() {
     assert_eq!(drain_all(&mut a), drain_all(&mut b));
 }
 
+// ── reconfigure ─────────────────────────────────────────────────────────────
+
+fn one_video_program(number: u16, pmt_pid: u16, video_pids: &[u16]) -> MuxerConfig {
+    let mut prog = MuxerProgramConfigBuilder::new(number, pmt_pid);
+    for &pid in video_pids {
+        prog.add_video(pid, VideoCodec::H264);
+    }
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    b.build().unwrap()
+}
+
+/// A program placed on a slot another program left starts its own clock:
+/// its first PCR is its own time minus the lead, and nothing is signalled,
+/// however far that is from where the old program's clock stood.
+#[test]
+fn reused_slot_starts_a_fresh_clock() {
+    let mut mux = Muxer::new(one_video_program(1, 0x1000, &[0x100])).unwrap();
+    for i in 0..3i64 {
+        mux.push_video(&h264(true), Pts90khz::new(5_400_000 + i * 3_600), true)
+            .unwrap();
+    }
+    let _ = drain_all(&mut mux);
+    mux.reconfigure(one_video_program(2, 0x1100, &[0x200]))
+        .unwrap();
+    let h = mux.video_handles()[0];
+    mux.push_video_to(h, &h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    mux.push_video_to(h, &h264(false), Pts90khz::new(93_600), false)
+        .unwrap();
+    assert_eq!(
+        pcr_packets(&drain_all(&mut mux)),
+        vec![(0x200, 0x40 | 0x10, 81_000), (0x200, 0x10, 84_600)]
+    );
+}
+
+/// The PCR moves to another stream of the same program when its stream is
+/// removed. The program's time base did not change, so the clock carries
+/// on and no discontinuity is signalled, even if the new PCR stream's
+/// first timestamp is far from the old stream's last.
+#[test]
+fn pcr_pid_change_in_a_matched_program_keeps_the_clock() {
+    for (first_on_new_pid, expected) in [(907_200i64, 898_200u64), (450_000, 894_600)] {
+        let mut mux = Muxer::new(one_video_program(1, 0x1000, &[0x100, 0x101])).unwrap();
+        let a = mux.video_handles()[0];
+        for pts in [900_000, 903_600] {
+            mux.push_video_to(a, &h264(true), Pts90khz::new(pts), true)
+                .unwrap();
+        }
+        assert_eq!(pcr_bases(&drain_all(&mut mux)), vec![891_000, 894_600]);
+
+        mux.reconfigure(one_video_program(1, 0x1000, &[0x101]))
+            .unwrap();
+        let b = mux.video_handles()[0];
+        mux.push_video_to(b, &h264(true), Pts90khz::new(first_on_new_pid), true)
+            .unwrap();
+        let ts = drain_all(&mut mux);
+        assert_eq!(pid(&ts[..188]), 0x0000, "the new PMT goes out first");
+        assert_eq!(pcr_packets(&ts), vec![(0x101, 0x40 | 0x10, expected)]);
+    }
+}
+
+#[test]
+fn reconfigure_refuses_a_lead_change() {
+    let mut mux = default_mux();
+    let mut cfg = MuxerConfig::default();
+    cfg.pcr_lead_ms = 0;
+    match mux.reconfigure(cfg) {
+        Err(MuxError::ConfigInvalid { reason }) => {
+            assert!(reason.contains("pcr_lead_ms"), "{reason}")
+        }
+        other => panic!("{other:?}"),
+    }
+    // Refused: the running lead still applies.
+    mux.push_video(&h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    assert_eq!(pcr_bases(&drain_all(&mut mux)), vec![81_000]);
+}
+
 // ── Late metadata ───────────────────────────────────────────────────────────
 
 /// Metadata should reach a receiver before its PTS. A unit pushed after the

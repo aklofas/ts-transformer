@@ -201,8 +201,8 @@ impl Muxer {
     /// 3. A matched program whose resolved PCR PID changed while the old
     ///    PCR PID's stream stays in the program.
     /// 4. Any non-program field of `MuxerConfig` (`pcr_interval_ms`,
-    ///    `psi_interval_ms`, `buffer_packets`, `av1_carriage`) differs from
-    ///    the running value.
+    ///    `pcr_lead_ms`, `psi_interval_ms`, `buffer_packets`,
+    ///    `av1_carriage`) differs from the running value.
     ///
     /// A refused call leaves the muxer exactly as it was.
     ///
@@ -233,6 +233,12 @@ impl Muxer {
     /// continues from that PID's last version + 1. A removed ES PID's
     /// continuity counter restarts at 0, and so does the counter of every
     /// PID a new stream is placed on; PMT PID counters continue.
+    ///
+    /// A program that stays keeps its clock: its PCR carries on from where
+    /// it was, also when the PCR moves to another of its streams because the
+    /// stream that carried it was removed, and no discontinuity is
+    /// signalled. A program that is new in this call starts its own clock
+    /// with its first push.
     ///
     /// Removing a stream and re-adding it on the same PID with no successful
     /// `push_*` between the two calls coalesces the two table changes into
@@ -297,8 +303,11 @@ impl Muxer {
             }
             let slot = &mut self.slots[planned.slot];
             if !matched {
+                // Another program's clock says nothing about this one.
                 clear_streams(slot);
                 slot.pcr_last = None;
+                slot.pcr_stream_last = None;
+                slot.pcrs_on_time_base = 0;
             }
 
             // Per-kind states in declaration order, as the plan's streams.
@@ -352,6 +361,11 @@ impl Muxer {
                 }
             }
 
+            if slot.pcr_pid != planned.pcr_pid {
+                // The time base carries on, but the timestamps of the
+                // removed PCR stream are no measure of the new one's.
+                slot.pcr_stream_last = None;
+            }
             slot.pcr_pid = planned.pcr_pid;
             slot.pmt_descriptor_cache = state::build_pmt_descriptor_cache(prog);
             let identity = pmt_identity_key(prog, slot.pcr_pid, &slot.pmt_descriptor_cache);
@@ -536,6 +550,11 @@ impl Muxer {
             Some((
                 "pcr_interval_ms",
                 format!("{} to {}", old.pcr_interval_ms, new.pcr_interval_ms),
+            ))
+        } else if old.pcr_lead_ms != new.pcr_lead_ms {
+            Some((
+                "pcr_lead_ms",
+                format!("{} to {}", old.pcr_lead_ms, new.pcr_lead_ms),
             ))
         } else if old.psi_interval_ms != new.psi_interval_ms {
             Some((

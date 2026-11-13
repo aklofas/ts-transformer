@@ -371,6 +371,18 @@ fn refuses_non_program_field_change() {
 }
 
 #[test]
+fn refuses_a_pcr_lead_change() {
+    let m = Muxer::new(visible_thermal(true)).unwrap();
+    let mut new = visible_thermal(true);
+    new.pcr_lead_ms = 0;
+    let reason = refusal(&m, &new);
+    assert!(
+        reason.contains("pcr_lead_ms changes from 100 to 0"),
+        "{reason}"
+    );
+}
+
+#[test]
 fn refuses_duplicate_metadata_service_id() {
     let m = Muxer::new(visible_thermal(true)).unwrap();
     let mut p1 = visible();
