@@ -5,8 +5,9 @@
             read a release-qualify run's artefacts; --release also requires the
             release soak on x86_64 and on aarch64 and the corpus archive for the
             qualified tree, each with a raw pass (a waived archive is recorded,
-            never admitted), and judges the semver report as a release's; --tag
-            names the tag a tag push qualified
+            never admitted), requires the fuzz leg to have run at least
+            RELEASE_FUZZ_SECONDS per target, and judges the semver report as a
+            release's; --tag names the tag a tag push qualified
   render    --json FILE (--write | --check) [--root DIR]   the generated blocks in
             docs/project/validation-evidence.md and docs/project/1.0-exit-criteria.md
   checksums --dir DIR                                  write DIR/SHA256SUMS
@@ -36,7 +37,10 @@ Artefact directory read by `collect` (a missing file is a missing leg, never a p
   interop-census-aarch64.json          {arch, shape, total, pass, fail, expected_unsupported,
                                        skipped, stale} of the linux-aarch64 subset job, if it ran
   sanitizer-<job>/sanitizer-<job>.json (or sanitizer-<job>.json) {job, conclusion}
-  fuzz.json, abi.json, semver-checks.json
+  fuzz.json                            {targets_run, seconds_per_target, crashes} as fuzz.yml's result
+                                       job merged them from its shards (seconds_per_target is the
+                                       least any shard ran)
+  abi.json, semver-checks.json
   semver-baseline.json                 {previous_tag}: the release tag scripts/dev/semver-checks.sh
                                        compared with, written before the tool runs (missing = the
                                        report cannot be judged, a NO-GO)
@@ -101,10 +105,12 @@ RELEASE_CODE_UNDER_DOCS = ("docs/webrtc/",)
 # this gate build no shipped artifact and run in no soak, and release-qualify
 # already holds them to the commit its workflows ran from.
 GENERATOR_PATHS = ("scripts/gen/",)
+# What a release's fuzz leg must have given every declared target. Any other
+# qualification records the seconds its run had and is not judged on them.
+RELEASE_FUZZ_SECONDS = 600
 MAINTAINER_LOCAL = [
-    "long fuzz runs (10 min per target)",
     "wall-clock bench comparison (a report, no threshold)",
-    "one-hour synthetic soak",
+    "mux 3 600 s of synthetic frames to a file (unpaced)",
 ]
 
 
@@ -763,6 +769,9 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None, source_
         if fuzz["targets_run"] != fuzz["targets_declared"]:
             reasons.append("fuzz: ran %d of %d declared targets"
                            % (fuzz["targets_run"], fuzz["targets_declared"]))
+        if release_vm is not None and release_vm["release_mode"] and fuzz["seconds_per_target"] < RELEASE_FUZZ_SECONDS:
+            reasons.append("fuzz: ran %d s per target; a release needs at least %d"
+                           % (fuzz["seconds_per_target"], RELEASE_FUZZ_SECONDS))
     reasons.extend(source_reasons)
     if semver is not None:
         reasons.extend(semver["reasons"])
