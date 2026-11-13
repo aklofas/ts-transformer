@@ -48,7 +48,8 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::{MountConfig, WhepServer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // advertise= is the address viewers send media to (see "Network").
+    // Behind NAT, advertise= is the address viewers send media to; on a
+    // LAN a wildcard bind needs none (see "Network").
     let server = WhepServer::bind("whep://0.0.0.0:8889?advertise=192.0.2.10")?;
     let cam = server.add_mount("/cam1", MountConfig::default())?;
 
@@ -401,11 +402,42 @@ accepts NACK and PLI, and accepts the offer's data-channel section; the
   Before the handshake completes, a session admits datagrams from at most 16
   distinct source addresses.
 - **Candidates.** A bind on a specific address offers that address, plus
-  `advertise=` when it differs. A bind on `0.0.0.0` or `::` offers only
-  loopback unless `advertise=` names the address viewers reach, which
-  behind NAT is the public IP. `advertise=` takes one literal IP address.
+  `advertise=` when it differs. A bind on `0.0.0.0` or `::` with
+  `advertise=` offers that address and loopback; behind NAT `advertise=` is
+  the public IP. `advertise=` takes one literal IP address.
+- **A wildcard bind with no `advertise=`** offers each viewer the local
+  address its signalling request arrived on, on `media_port`. That is an
+  address the viewer can route to, and the server never looks up or
+  remembers the host's addresses:
+  - `bind` succeeds on a host that has no address but loopback yet (DHCP
+    still pending, the cable not in), and nothing has to be called when an
+    address appears.
+  - A viewer on the LAN, one on a VPN interface and one on loopback are
+    each offered the address they reached, at the same time.
+  - After the host's address changes, a POST to the new address is served
+    without a rebind. A session on the old address ends at the disconnect
+    timeout, like any viewer that went away.
+
+  What it does not cover:
+  - **A reverse proxy on the same host** in front of the signalling port
+    puts every request on loopback, so every viewer is offered loopback.
+    Set `advertise=`, or let viewers POST to the WHEP port directly. The
+    server reads no `Forwarded` or `X-Forwarded-*` header.
+  - **Port forwarding, or a container's published port,** puts the request
+    on a private address the viewer cannot reach. That is NAT: set
+    `advertise=`.
+  - **Replies leave by the kernel's route to the viewer.** The media socket
+    is one wildcard UDP socket, so a viewer is served when the address it
+    reached is the source address of the route back to it: the usual case,
+    one address per subnet on each interface. A host with two addresses of
+    one subnet on an interface, or a LAN address reached through a VPN that
+    ends on this host, is not served on the second address; bind that
+    address or name it in `advertise=`.
+  - **On `::`** an IPv6 viewer is offered the IPv6 address it reached. An
+    IPv4 viewer that reaches a dual-stack `::` socket is offered IPv6
+    loopback only and does not connect: bind `0.0.0.0` for IPv4 viewers.
 - **No TURN, no STUN, no ICE over TCP.** The viewer must reach the
-  advertised address on `media_port` over UDP.
+  offered address on `media_port` over UDP.
 - **No userinfo.** A bind URL with `user:pass@` is refused; the bearer secret
   goes in the `token` query key.
 - **TLS.** `wheps://0.0.0.0:8443?cert=server.crt&key=server.key` serves the
@@ -452,9 +484,10 @@ Two things to know when testing against other browsers:
 - **Firefox needs a non-loopback candidate.** An answer whose only
   candidate is `127.0.0.1` never reaches `connected` in Firefox (its ICE
   agent does not pair loopback addresses, even with
-  `media.peerconnection.ice.loopback` set), so bind or `advertise=` a LAN
-  address when a Firefox viewer is on the same machine. Chrome and Safari
-  connect over loopback.
+  `media.peerconnection.ice.loopback` set). For a Firefox viewer on the
+  same machine, have the page POST to a LAN address of the machine (a
+  wildcard bind then offers that address), or bind or `advertise=` one.
+  Chrome and Safari connect over loopback.
 - **`getVideoPlaybackQuality().totalVideoFrames` stays 0** for a WebRTC
   `srcObject` in Firefox and Safari while the picture plays; read
   `framesDecoded` from the `inbound-rtp` entry of `pc.getStats()` instead.
@@ -472,8 +505,14 @@ headless Chromium and checks that every record arrives by both carriages.
 - The C binding does not expose WebRTC in this release; the JVM and Python
   bindings do.
 - A viewer's PLI is counted, not forwarded; the source decides the GOP.
-- `advertise=` takes one address; a dual-homed deployment needs one server
-  per address.
+- `advertise=` takes one address. A dual-homed host whose viewers reach it
+  directly binds the wildcard address with no `advertise=`, which offers
+  each viewer the address it reached (see [Network](#network-ice-ports-tls));
+  one that needs a different `advertise=` on each side needs one server per
+  address.
+- On a wildcard bind media replies leave by the kernel's route, and an IPv4
+  viewer is not served through a dual-stack `::` socket (see
+  [Network](#network-ice-ports-tls)).
 - Trickle ICE and ICE restart are not supported. The server does not list
   `PATCH` in `Access-Control-Allow-Methods`, so clients that enable
   trickle from the method list should send a complete offer. mediamtx's

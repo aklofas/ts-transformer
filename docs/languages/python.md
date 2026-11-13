@@ -1623,9 +1623,12 @@ with WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.10") as server:
   port is bound.
 - **`advertise=` behind NAT.** Viewers send media to the addresses the
   answer offers: the bind address, plus `advertise` when set. A bind on
-  `0.0.0.0` or `::` offers only loopback unless `advertise=` names the
-  address viewers reach, which behind NAT is the public IP. One UDP port
-  (`media_port`, default the signalling port) carries every viewer.
+  `0.0.0.0` or `::` with no `advertise` offers each viewer the local address
+  its request arrived on, so a server on a LAN needs no address in its URL
+  and follows an address change without a rebind. Behind NAT, or behind a
+  reverse proxy on the same host, set `advertise=` to the address viewers
+  reach (see [Network](/docs/guides/webrtc.md#network-ice-ports-tls)). One
+  UDP port (`media_port`, default the signalling port) carries every viewer.
 - **Mounts.** `add_mount(path)` (or `add_mount(path, MountConfig())`) is an
   elementary H.264 mount with audio dropped and KLV in both carriages; set
   `MountConfig` fields to choose `MountKind.MP2T` (feed MPEG-TS with

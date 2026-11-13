@@ -57,6 +57,12 @@ jobs:
       # Loopback multicast works on both Linux runners, so a multicast test
       # that skips there fails instead (tst_test_helpers::capability).
       TST_REQUIRE_MULTICAST: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      # Both Linux runners have a non-loopback IPv4 address and password-less
+      # sudo for a network namespace, so the WHEP wildcard-bind tests that
+      # skip for want of either fail there instead.
+      TST_REQUIRE_LAN_ADDR: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      TST_REQUIRE_NETNS: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      TST_NETNS_SUDO: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -830,6 +836,12 @@ jobs:
       # Loopback multicast works on both Linux runners, so a multicast test
       # that skips there fails instead (tst_test_helpers::capability).
       TST_REQUIRE_MULTICAST: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      # Both Linux runners have a non-loopback IPv4 address and password-less
+      # sudo for a network namespace, so the WHEP wildcard-bind tests that
+      # skip for want of either fail there instead.
+      TST_REQUIRE_LAN_ADDR: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      TST_REQUIRE_NETNS: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      TST_NETNS_SUDO: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -932,6 +944,12 @@ jobs:
       # Loopback multicast works on both Linux runners, so a multicast test
       # that skips there fails instead (tst_test_helpers::capability).
       TST_REQUIRE_MULTICAST: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      # Both Linux runners have a non-loopback IPv4 address and password-less
+      # sudo for a network namespace, so the WHEP wildcard-bind tests that
+      # skip for want of either fail there instead.
+      TST_REQUIRE_LAN_ADDR: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      TST_REQUIRE_NETNS: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      TST_NETNS_SUDO: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -1027,6 +1045,12 @@ jobs:
       # Loopback multicast works on both Linux runners, so a multicast test
       # that skips there fails instead (tst_test_helpers::capability).
       TST_REQUIRE_MULTICAST: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      # Both Linux runners have a non-loopback IPv4 address and password-less
+      # sudo for a network namespace, so the WHEP wildcard-bind tests that
+      # skip for want of either fail there instead.
+      TST_REQUIRE_LAN_ADDR: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      TST_REQUIRE_NETNS: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
+      TST_NETNS_SUDO: ${{ startsWith(matrix.name, 'linux-') && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:

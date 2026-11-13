@@ -9,6 +9,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — tst-webrtc, tst-py, tst-jni
+
+- A `WhepServer` bound to the wildcard address (`whep://0.0.0.0:…` or `[::]`) with no `advertise=` now offers each viewer the local address its signalling request arrived on, instead of loopback only. The embedder no longer has to know, look up or track the host's addresses: the bind succeeds on a host that has no address but loopback yet, a viewer on the LAN, on a VPN interface and on loopback are each offered the address they reached (at the same time), and after an address change a POST to the new address is served with no rebind. A specific bind, and any bind with `advertise=`, offer what they offered in 0.10.0; `advertise=` remains the answer behind NAT, behind port forwarding and behind a reverse proxy on the same host (every request then arrives on loopback, and no `Forwarded` header is read). Nothing that connected in 0.10.0 stops connecting: a viewer that reached such a server on loopback is still offered loopback. Limits, stated in the WebRTC guide's Network section: the media socket replies by the kernel's route, so the address a viewer reached has to be the source address of the route back to it (one address per subnet on each interface); on `::` an IPv6 viewer is offered the address it reached and an IPv4 viewer on a dual-stack socket is still not served. No API change in Rust, Python or the JVM.
+
 ### Changed — tst-core
 
 - `klv::st0601` decoding walks the Local Set once when no single-use tag repeats, which is the usual packet. 0.10.0 walked every packet twice and cleared a 1 KiB table to apply the last duplicate of a tag; that second walk now runs only for a packet that does repeat one. Decoding a typical packet executes about a quarter fewer instructions than in 0.10.0; a packet that does repeat a single-use tag is decoded twice and costs up to about half more than it did. The decoded record and every error are unchanged.

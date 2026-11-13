@@ -37,7 +37,9 @@ pub struct WhepUrl {
     pub media_port: u16,
     /// The address offered to viewers as the media candidate, when it differs
     /// from the bind address (a host behind NAT). `None` offers the bind
-    /// address.
+    /// address; when that is the wildcard address (`0.0.0.0`, `::`), each
+    /// viewer is offered the local address its signalling request arrived
+    /// on.
     pub advertise: Option<IpAddr>,
     /// The most viewers connected at once (1 to 64, default 10).
     pub max_viewers: u64,

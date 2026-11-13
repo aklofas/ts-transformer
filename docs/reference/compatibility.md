@@ -805,7 +805,7 @@ and the C binding does not expose it in this release.
 | B-frames | ❌ | Counted in `MountStats::frames_pts_reordered`; sources must deliver decode order = presentation order. |
 | Trickle ICE | ❌ | Not supported (ICE-lite answers carry every candidate); PATCH is not advertised and answers `405`; no ICE restart. |
 | mediamtx as a WHEP client | ⚠️ | Expected to work: `PATCH` is no longer advertised, so its client sends a complete offer; not yet in the interop matrix. |
-| TURN / STUN / ICE over TCP | ❌ | Viewers must reach `advertise=` on `media_port` over UDP. |
+| TURN / STUN / ICE over TCP | ❌ | Viewers must reach an offered address on `media_port` over UDP. |
 | WHIP ingest | ❌ | Deferred (see [deferred features](/docs/project/deferred-features.md)). |
 | Simulcast | ❌ | Out of scope. |
 
