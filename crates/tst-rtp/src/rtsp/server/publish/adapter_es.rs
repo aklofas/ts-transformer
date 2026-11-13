@@ -13,8 +13,10 @@
 //!   until the two tracks' clocks are related (RTCP sender reports, or a
 //!   two-second first-packet-coincidence fallback), places each on the
 //!   video line, and returns it once a video AU at or past its PTS has
-//!   been muxed (KLV muxed ahead of the video would drag the PCR ahead of
-//!   the video frames still to come). A unit placed before the video
+//!   been muxed, so a KLV PES never precedes its frame in the multiplex
+//!   (and a unit stamped more than a second ahead of the video, which the
+//!   muxer would take for a silent video stream and follow with its PCR,
+//!   never reaches the muxer early). A unit placed before the video
 //!   origin (negative PTS) is dropped: a TS PTS cannot be negative.
 //! - Both are pushed into one [`Muxer`] (program 1, PMT PID 0x1000,
 //!   video PID 0x100, KLV PID 0x101 as `PrivateData` with a PTS). After
@@ -32,10 +34,12 @@
 //! B-frame publishers: RTP timestamps are presentation times sent in
 //! decode order, so a B-frame arrives with a PTS below an AU already
 //! muxed. Each such AU is counted in `aus_reordered` and still muxed, with
-//! its PTS only: the muxer derives no DTS and paces its PCR from the PTS,
-//! so the re-muxed TS is not conformant for B-frame streams and a
-//! PCR-slaved player may show those frames late. A reorder window that
-//! derives DTS is deferred.
+//! its PTS only: the muxer derives no DTS, and its PCR, which never steps
+//! back, stays where the later-presented AU before it put it. A reordered
+//! AU therefore gets the muxer's PCR lead minus its reorder distance, and
+//! one reordered by more than the lead (100 ms by default) is muxed after
+//! the PCR has passed its PTS, so a PCR-slaved player may show it late. A
+//! reorder window that derives DTS is deferred.
 //!
 //! Nothing here fails outward. A packet that does not parse, carries the
 //! wrong payload type, or names an unknown track counts as
@@ -1206,10 +1210,13 @@ mod tests {
                 );
             }
             if let Some(pcr) = pcr {
+                // The video starts at PTS 0, so the first PCRs sit just
+                // below 2^33: compare on the 33-bit circle.
                 let v = max_video.expect("a PCR before any video");
+                let behind = tst_core::mpegts::common::pts_diff_33bit(v as u64, pcr as u64);
                 assert!(
-                    pcr <= v + 3_600,
-                    "PCR {pcr} more than one 40 ms PCR interval past the video ({v})"
+                    behind >= 9_000,
+                    "PCR {pcr} less than the 100 ms lead behind the video ({v})"
                 );
             }
         }

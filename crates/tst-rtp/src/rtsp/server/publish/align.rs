@@ -62,10 +62,12 @@
 //!
 //! A placed unit is not released at once: it waits until the video pushed
 //! into the muxer has reached its PTS ([`Aligner::on_video_muxed`]). KLV
-//! stamped at capture leads the encoder's output by the encoder latency,
-//! and a KLV PES muxed ahead of the video drags the muxer's PCR (written
-//! from the PTS of whatever is pushed) ahead of every video frame still to
-//! come, so a PCR-slaved player shows those frames late. Placed units
+//! stamped at capture leads the encoder's output by the encoder latency.
+//! Muxed at once, its PES would sit in the multiplex ahead of the frame it
+//! describes; and a unit more than a second ahead of the video reads to
+//! the muxer as a video stream gone silent, so the muxer would move its
+//! PCR to that unit, ahead of every video frame still to come, and a
+//! PCR-slaved player would show those frames late. Placed units
 //! leave in arrival order, so emission into the muxer stays in order.
 //! The KLV PID's PTS can therefore step backwards (after a KLV restart
 //! while units are waiting, or a backward report step), but it never
@@ -698,14 +700,14 @@ impl Aligner {
     /// video has reached it. A placed unit waits at most
     /// [`PLACED_WAIT_MAX`] for the video to reach it, so one further ahead
     /// than that at flush time could never have been reached in its
-    /// lifetime: releasing it would only move the muxer's clock (the PCR
-    /// follows the PTS of what is pushed), never align anything. It is
-    /// dropped and counted in [`Self::dropped`] instead. Before any video
-    /// has been muxed there is no video line to jump away from, so every
-    /// placed unit is released at its placed PTS. While the video origin
-    /// is unknown there is no line to place anything on: every held unit
-    /// is abandoned and counted in [`Self::dropped`] (units already
-    /// placed are still released under the same bound).
+    /// lifetime: releasing it would only move the muxer's clock (with the
+    /// video stopped, the PCR follows what is pushed), never align
+    /// anything. It is dropped and counted in [`Self::dropped`] instead.
+    /// Before any video has been muxed there is no video line to jump away
+    /// from, so every placed unit is released at its placed PTS. While the
+    /// video origin is unknown there is no line to place anything on: every
+    /// held unit is abandoned and counted in [`Self::dropped`] (units
+    /// already placed are still released under the same bound).
     pub(crate) fn drain(&mut self, now: Instant) -> Vec<(KlvUnit, i64)> {
         if self.video_origin.is_none() {
             self.discard_held();
