@@ -90,7 +90,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::reconfigure"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_reconfigure.rs"]
-bindings = ["c:deferred(0.9.2 c-surface parity batch)", "python:deferred(0.9.2 binding-surface parity batch)", "java:deferred(0.9.2 binding-surface parity batch)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:deferred(0.11.0 binding-surface parity batch)", "java:deferred(0.11.0 binding-surface parity batch)", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -2458,7 +2458,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_sender::MuxSender::reconfigure"
 owning_tests = ["crates/tst-pipeline/tests/shells/mux_sender_reconfigure.rs"]
-bindings = ["c:deferred(0.9.2 c-surface parity batch)", "python:deferred(0.9.2 binding-surface parity batch)", "java:deferred(0.9.2 binding-surface parity batch)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:deferred(0.11.0 binding-surface parity batch)", "java:deferred(0.11.0 binding-surface parity batch)", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 # background-reconnect arc, 2026-08-19 — ManagedStatsHandle mirrors cancel_handle()'s
