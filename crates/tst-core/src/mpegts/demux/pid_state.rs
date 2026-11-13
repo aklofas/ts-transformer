@@ -9,7 +9,7 @@
 //! PSI topology changes are reported as a [`TopologyDiff`]; the coordinator
 //! applies it in one place (`Demuxer::apply_topology_diff`).
 
-use crate::mpegts::demux::event::StreamKind;
+use crate::mpegts::demux::event::{StreamId, StreamKind};
 use crate::mpegts::demux::timestamp::UnwrapState;
 use crate::mpegts::stats::{CodecKind, StreamCodecCounters, StreamStats};
 use alloc::vec::Vec;
@@ -85,6 +85,16 @@ pub(super) struct PidState {
 }
 
 impl PidState {
+    /// The identity events on `pid` carry, once a PMT has declared the PID;
+    /// `program_number` is 0 when no program owns it.
+    pub(super) fn stream_id(&self, pid: u16) -> Option<StreamId> {
+        self.stream_kind.map(|kind| StreamId {
+            pid,
+            kind,
+            program_number: self.program.unwrap_or(0),
+        })
+    }
+
     /// Forget the continuity baseline: counter, duplicate flag, raw bytes.
     pub(super) fn clear_continuity(&mut self) {
         self.cc = None;

@@ -24,6 +24,7 @@ use crate::mpegts::demux::pid_state::{PidState, TopologyDiff};
 use crate::mpegts::demux::psi::PatEntry;
 use crate::mpegts::demux::psi_assembler::PsiSectionAssembler;
 use crate::mpegts::demux::strict::StrictMode;
+use crate::mpegts::demux::sync_ingress::Continuity;
 #[cfg(test)]
 use crate::mpegts::demux::timestamp::UnwrapState;
 use crate::mpegts::demux::timestamp::{PcrHistory, TimestampUnwrapper};
@@ -654,7 +655,11 @@ impl Demuxer {
                 NonConformantIssue::AdaptationFieldMalformed { pid: pkt.pid, kind },
             );
         }
-        let (cc_jumped, is_duplicate) = self.check_continuity(&pkt);
+        let Continuity {
+            jumped: cc_jumped,
+            duplicate: is_duplicate,
+            kind,
+        } = self.check_continuity(&pkt);
         // H.222.0 §2.4.3.3: a spec-legal duplicate (same CC, identical
         // bytes) carries no new payload data. Suppress all
         // routing to avoid replaying bytes into PSI or PES reassemblers.
@@ -677,7 +682,9 @@ impl Demuxer {
                 false,
                 cc_jumped,
             )?;
-        } else if pkt.has_payload && self.stream_kind(pkt.pid).is_some() {
+        } else if pkt.has_payload
+            && let Some(kind) = kind
+        {
             // H.222.0 §2.4.3.3: a continuity_counter gap means packets of
             // this PID were lost, so the PES in flight is missing bytes.
             // A multi-cell AU may span PES, so an AU in progress on the PID
@@ -695,20 +702,13 @@ impl Demuxer {
                     self.discard_au_in_progress(pkt.pid);
                 }
             }
-            self.handle_pes_packet(&pkt)?;
+            self.handle_pes_packet(&pkt, kind)?;
         }
         Ok(())
     }
 
     pub(super) fn lookup_stream(&self, pid: u16) -> Option<StreamId> {
-        self.stream_kind(pid).map(|kind| {
-            let program_number = self.program_number_for_pid(pid);
-            StreamId {
-                pid,
-                kind,
-                program_number,
-            }
-        })
+        self.pid_state.get(&pid).and_then(|s| s.stream_id(pid))
     }
 
     /// The PES dispatch kind a PMT declared for `pid`, if any.

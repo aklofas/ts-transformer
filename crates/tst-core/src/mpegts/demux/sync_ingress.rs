@@ -13,7 +13,8 @@
 //! `mpegts/demux/mod.rs`).
 
 use crate::mpegts::common::{pcr_diff_27mhz, pid};
-use crate::mpegts::demux::event::{DiscontinuityKind, NonConformantIssue, StreamId};
+use crate::mpegts::demux::event::{DiscontinuityKind, NonConformantIssue, StreamId, StreamKind};
+use crate::mpegts::demux::pid_state::PidState;
 use crate::mpegts::sync::TsSync;
 
 /// Maximum bytes the demuxer scans during sync recovery before declaring
@@ -211,33 +212,24 @@ impl super::demuxer::Demuxer {
         }
     }
 
-    /// `true` when `pkt` repeats the last payload packet of its PID: same CC
-    /// and identical bytes apart from the PCR (H.222.0 §2.4.3.3).
-    fn is_identical_repeat(&self, pkt: &crate::mpegts::demux::ts::TsPacket<'_>) -> bool {
-        self.pid_state.get(&pkt.pid).is_some_and(|s| {
-            s.cc == Some(pkt.continuity_counter)
-                && s.last_pkt_raw
-                    .as_ref()
-                    .is_some_and(|prev| pcr_masked_identical(prev, pkt.raw))
-        })
-    }
-
     /// `true` when `check_continuity` will suppress `pkt` as the one allowed
     /// duplicate of the previous packet.
     fn is_spec_duplicate(&self, pkt: &crate::mpegts::demux::ts::TsPacket<'_>) -> bool {
         pkt.pid != pid::NULL
             && pkt.has_payload
-            && self.is_identical_repeat(pkt)
-            && !self.pid_state.get(&pkt.pid).is_some_and(|s| s.dup)
+            && self
+                .pid_state
+                .get(&pkt.pid)
+                .is_some_and(|s| is_identical_repeat(s, pkt) && !s.dup)
     }
 
-    /// Returns `(cc_jumped, is_duplicate)`.
+    /// The continuity verdict for `pkt`, and the PES dispatch kind of its PID.
     ///
-    /// `cc_jumped` is `true` when a CC gap was observed AND not suppressed by
+    /// `jumped` is `true` when a CC gap was observed AND not suppressed by
     /// `discontinuity_indicator`. The caller (`process_packet`) uses this
     /// signal to gate strict-mode PSI reassembly drops in `handle_psi`.
     ///
-    /// `is_duplicate` is `true` when the packet is a spec-legal duplicate per
+    /// `duplicate` is `true` when the packet is a spec-legal duplicate per
     /// H.222.0 §2.4.3.3 (same CC as the preceding payload packet, byte-
     /// identical apart from the PCR). A duplicate in the discontinuity state
     /// counts too: §2.4.3.5 lets its second copy be discarded, and identical
@@ -247,13 +239,17 @@ impl super::demuxer::Demuxer {
     /// the same CC on the same PID IS a discontinuity (the "only-two" rule is
     /// enforced via `PidState::dup`).
     ///
+    /// `kind` is what `Demuxer::stream_kind` answers for the PID of a
+    /// payload packet. The PID's state is looked up once here and the kind
+    /// read from it, so routing the packet needs no second lookup.
+    ///
     /// Side effect: clears `self.last_psi_cc_jump` at entry, sets it to
     /// `Some((expected, observed))` when a real jump fires. `handle_psi`
     /// drains it via `.take()` when emitting `PsiCcDiscontinuity`.
     pub(super) fn check_continuity(
         &mut self,
         pkt: &crate::mpegts::demux::ts::TsPacket<'_>,
-    ) -> (bool, bool) {
+    ) -> Continuity {
         self.last_psi_cc_jump = None;
         // Per ITU-T H.222.0 §2.4.3.3, the continuity_counter field on null PID
         // (0x1FFF) packets is undefined and MUST NOT be validated. Null packets
@@ -263,7 +259,11 @@ impl super::demuxer::Demuxer {
         // skipped — PCR may legitimately ride null packets per §2.4.3.5 — that
         // path lives in `check_pcr` and is keyed on `pcr_27mhz.is_some()`.
         if pkt.pid == pid::NULL {
-            return (false, false);
+            return Continuity {
+                jumped: false,
+                duplicate: false,
+                kind: self.stream_kind(pkt.pid),
+            };
         }
         // Adaptation-field-only packets (afc='10') do not carry a payload and
         // do not increment the continuity_counter (H.222.0 §2.4.3.3), so their
@@ -276,18 +276,23 @@ impl super::demuxer::Demuxer {
                 state.clear_continuity();
                 state.source_reset_after_pes = true;
                 state.source_reset_in_pes = true;
-                if let Some(stream) = self.lookup_stream(pkt.pid) {
+                if let Some(stream) = state.stream_id(pkt.pid) {
                     self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
                 }
             }
-            return (false, false);
+            return Continuity {
+                jumped: false,
+                duplicate: false,
+                kind: None,
+            };
         }
-        let mut real_jump = false;
-        let (prev_cc, prev_was_dup) = self
-            .pid_state
-            .get(&pkt.pid)
-            .map_or((None, false), |s| (s.cc, s.dup));
-        if let Some(prev_cc) = prev_cc {
+        // Every payload packet leaves its counter and bytes in the PID's
+        // state, so the entry is created here if the PID is new. The events
+        // are queued once the borrow of the state has ended.
+        let state = self.pid_state.entry(pkt.pid).or_default();
+        let kind = state.stream_kind;
+        let mut jump = None;
+        if let Some(prev_cc) = state.cc {
             let expected = (prev_cc + 1) & 0x0F;
 
             // Spec-legal duplicate: same CC AND byte-identical content (so the
@@ -307,10 +312,8 @@ impl super::demuxer::Demuxer {
             // refreshed PCR is still tracked.) Only one duplicate is allowed
             // ("only-two" rule). A third identical packet with the same CC IS
             // a real discontinuity — treat it like a CC jump.
-            // The counter test comes first: it settles almost every packet
-            // without a second `pid_state` lookup.
-            if pkt.continuity_counter == prev_cc && self.is_identical_repeat(pkt) {
-                if prev_was_dup {
+            if is_identical_repeat(state, pkt) {
+                if state.dup {
                     // Third (or later) identical packet with the same CC —
                     // beyond the spec's only-two allowance. Surface exactly
                     // ONE discontinuity for this packet and route its payload
@@ -322,33 +325,33 @@ impl super::demuxer::Demuxer {
                     // recording the same jump a second time. (the stored cc would
                     // be re-inserted with the identical value — skipping the
                     // tail is a no-op for it.)
-                    self.last_psi_cc_jump = Some((expected, pkt.continuity_counter));
                     // Lost bytes leave the LOAS record position unknown;
                     // `latm_unsynced_bytes` stays, a gap is more evidence of trouble.
-                    self.pid_state_mut(pkt.pid).forget_latm_position();
-                    if let Some(stream) = self.lookup_stream(pkt.pid) {
-                        self.record_discontinuity(
-                            stream,
-                            DiscontinuityKind::ContinuityJump {
-                                expected,
-                                observed: pkt.continuity_counter,
-                            },
-                        );
-                    }
-                    return (true, false);
+                    state.forget_latm_position();
+                    let stream = state.stream_id(pkt.pid);
+                    self.record_continuity_jump(stream, expected, pkt.continuity_counter);
+                    return Continuity {
+                        jumped: true,
+                        duplicate: false,
+                        kind,
+                    };
                 }
                 // First duplicate — suppress and mark.
-                self.pid_state_mut(pkt.pid).dup = true;
+                state.dup = true;
                 // Do NOT update the stored cc / raw bytes — the next
                 // non-duplicate packet on this PID must still expect
                 // prev_cc + 1, and a second duplicate must compare against
                 // the ORIGINAL packet's bytes.
-                return (false, true);
+                return Continuity {
+                    jumped: false,
+                    duplicate: true,
+                    kind,
+                };
             }
             // Normal advance, discontinuity_indicator, or a same-CC packet
             // with differing bytes (routed as an ordinary CC jump below) —
             // clear any pending duplicate state for this PID.
-            self.pid_state_mut(pkt.pid).dup = false;
+            state.dup = false;
 
             // Per ISO/IEC 13818-1 §2.4.3.5, when discontinuity_indicator=1
             // the CC is explicitly permitted to be discontinuous on this
@@ -357,20 +360,10 @@ impl super::demuxer::Demuxer {
             // event below already surfaces the discontinuity hint to
             // consumers, so emitting both would double-count.
             if expected != pkt.continuity_counter && !pkt.discontinuity_indicator {
-                real_jump = true;
-                self.last_psi_cc_jump = Some((expected, pkt.continuity_counter));
+                jump = Some(expected);
                 // Lost bytes leave the LOAS record position unknown;
                 // `latm_unsynced_bytes` stays, a gap is more evidence of trouble.
-                self.pid_state_mut(pkt.pid).forget_latm_position();
-                if let Some(stream) = self.lookup_stream(pkt.pid) {
-                    self.record_discontinuity(
-                        stream,
-                        DiscontinuityKind::ContinuityJump {
-                            expected,
-                            observed: pkt.continuity_counter,
-                        },
-                    );
-                }
+                state.forget_latm_position();
             }
         } else {
             // First packet ever seen on this PID — no prev state, no duplicate
@@ -378,18 +371,63 @@ impl super::demuxer::Demuxer {
             // (they clear together), so there is nothing to clear.
         }
         if pkt.discontinuity_indicator {
-            let state = self.pid_state_mut(pkt.pid);
             state.source_reset_after_pes = true;
             state.source_reset_in_pes |= !pkt.payload_unit_start;
-            if let Some(stream) = self.lookup_stream(pkt.pid) {
+        }
+        state.cc = Some(pkt.continuity_counter);
+        state.last_pkt_raw = Some(*pkt.raw);
+        // Only a packet that queues an event needs the stream's identity.
+        if jump.is_some() || pkt.discontinuity_indicator {
+            let stream = state.stream_id(pkt.pid);
+            if let Some(expected) = jump {
+                self.record_continuity_jump(stream, expected, pkt.continuity_counter);
+            }
+            if pkt.discontinuity_indicator
+                && let Some(stream) = stream
+            {
                 self.record_discontinuity(stream, DiscontinuityKind::AdaptationFieldFlag);
             }
         }
-        let state = self.pid_state_mut(pkt.pid);
-        state.cc = Some(pkt.continuity_counter);
-        state.last_pkt_raw = Some(*pkt.raw);
-        (real_jump, false)
+        Continuity {
+            jumped: jump.is_some(),
+            duplicate: false,
+            kind,
+        }
     }
+
+    /// A real continuity jump on the packet being routed: remembered for
+    /// `handle_psi`, and reported on a PID a PMT declared.
+    fn record_continuity_jump(&mut self, stream: Option<StreamId>, expected: u8, observed: u8) {
+        self.last_psi_cc_jump = Some((expected, observed));
+        if let Some(stream) = stream {
+            self.record_discontinuity(
+                stream,
+                DiscontinuityKind::ContinuityJump { expected, observed },
+            );
+        }
+    }
+}
+
+/// What `Demuxer::check_continuity` found for one packet.
+pub(super) struct Continuity {
+    /// A continuity gap that `discontinuity_indicator` did not announce.
+    pub(super) jumped: bool,
+    /// The one allowed duplicate of the previous packet: route nothing.
+    pub(super) duplicate: bool,
+    /// The PES dispatch kind a PMT declared for the PID of a payload packet.
+    pub(super) kind: Option<StreamKind>,
+}
+
+/// `true` when `pkt` repeats the last payload packet of its PID, whose state
+/// is `state`: same CC and identical bytes apart from the PCR (H.222.0
+/// §2.4.3.3). The counter test comes first: it settles almost every packet
+/// without the byte compare.
+fn is_identical_repeat(state: &PidState, pkt: &crate::mpegts::demux::ts::TsPacket<'_>) -> bool {
+    state.cc == Some(pkt.continuity_counter)
+        && state
+            .last_pkt_raw
+            .as_ref()
+            .is_some_and(|prev| pcr_masked_identical(prev, pkt.raw))
 }
 
 /// Byte-compare two 188-byte TS packets for the H.222.0 §2.4.3.3 duplicate
