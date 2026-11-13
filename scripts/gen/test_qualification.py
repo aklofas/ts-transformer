@@ -54,6 +54,12 @@ BENCH_IR = {"old": {"ref": "v0.8.0", "sha": "a" * 40}, "new": {"ref": "HEAD", "s
                 {"name": "muxer_new", "iterations": 100, "old_instructions": 15587.0,
                  "new_instructions": 15600.0, "delta_percent": 0.08, "status": "ok"}]}
 SEMVER = [{"crate": "tst-core", "exit": 0, "failed_checks": 0, "items": 0, "report": "r", "analysed": True}]
+# The fixture tree: workspace 0.9.0, compared with the tag v0.8.0, so the version
+# sweep has happened and the semver report gates. The fixture roots are mostly
+# not git repositories, so `collect` below supplies the version git would give.
+VERSION = "0.9.0"
+SEMVER_BASELINE = {"previous_tag": "v0.8.0"}
+CARGO_TOML = '[workspace.package]\nversion = "%s"\n' % VERSION
 SAN_JOBS = ["asan", "asan-native", "tsan", "tsan-native"]
 
 FUZZ_TOML = "schema_version = 0\n" + "".join(
@@ -109,6 +115,7 @@ def build(tmp, mutate=None, archives=ARCHIVES):
         "abi.json": dict(ABI),
         "bench-ir.json": json.loads(json.dumps(BENCH_IR)),
         "semver-checks.json": json.loads(json.dumps(SEMVER)),
+        "semver-baseline.json": dict(SEMVER_BASELINE),
     }
     for j in SAN_JOBS:
         files["sanitizer-%s/sanitizer-%s.json" % (j, j)] = {"job": j, "conclusion": "success"}
@@ -124,10 +131,16 @@ def build(tmp, mutate=None, archives=ARCHIVES):
     return art, root
 
 
-def collect(mutate=None, release=False, archives=ARCHIVES):
+def at_version(version=VERSION):
+    """The workspace version `collect` reads, for a fixture root that is not a git repository."""
+    return mock.patch.object(q, "workspace_version", return_value=version)
+
+
+def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION):
     tmp = tempfile.mkdtemp()
     art, root = build(tmp, mutate, archives)
-    return q.collect(art, root, release=release)
+    with at_version(version):
+        return q.collect(art, root, release=release)
 
 
 def leg(rec, name):
@@ -201,14 +214,17 @@ class VerdictTests(unittest.TestCase):
         for m in cases:
             self.assertEqual(collect(m)["verdict"], "NO-GO")
 
-    def test_semver_checks_failure_never_flips_the_verdict(self):
+    def test_semver_checks_failure_never_flips_the_verdict_of_a_development_tree(self):
         def m(f):
             f["legs.json"]["semver-checks"] = {"conclusion": "failure", "run_url": ""}
             f["semver-checks.json"][0].update(exit=1, failed_checks=3, analysed=False)
-        rec = collect(m)
+        # The workspace still says the previous tag's version: no sweep yet, not a candidate.
+        rec = collect(m, version="0.8.0")
         self.assertEqual(rec["verdict"], "GO")
         self.assertFalse(leg(rec, "semver-checks")["required"])
         self.assertEqual(rec["semver_checks"][0]["breaking"], 3)
+        # Once the version has moved, the same failure decides.
+        self.assertEqual(collect(m)["verdict"], "NO-GO")
 
     def test_fuzz_crash_or_short_run_is_no_go(self):
         self.assertEqual(collect(lambda f: f["fuzz.json"].update(crashes=1))["verdict"], "NO-GO")
@@ -227,6 +243,229 @@ class VerdictTests(unittest.TestCase):
         rec = collect(m)
         self.assertEqual(leg(rec, "fuzz")["conclusion"], "missing")
         self.assertEqual(rec["verdict"], "NO-GO")
+
+
+def sem(crate, breaking=0, analysed=True):
+    """One row of semver-checks.json as scripts/dev/semver-checks.sh writes it."""
+    return {"crate": crate, "exit": (100 if breaking else 0) if analysed else 1, "failed_checks": breaking,
+            "items": breaking, "report": "r", "analysed": analysed}
+
+
+BREAKS = [sem("tst-core", 2), sem("tst-hls", 1), sem("tst-udp")]
+
+
+class SemverGateTests(unittest.TestCase):
+    """The semver report gates a release candidate: a tree in release mode, or one whose
+    workspace version has moved off the previous release tag's. A break needs a new
+    compatibility line: a new minor before 1.0, a new major from 1.0."""
+
+    def run_gate(self, previous, version, rows=BREAKS, release=False, conclusion="success", archives=None):
+        def m(f):
+            f["semver-checks.json"] = None if rows is None else json.loads(json.dumps(rows))
+            f["semver-baseline.json"] = None if previous is None else {"previous_tag": previous}
+            f["legs.json"]["semver-checks"] = {"conclusion": conclusion, "run_url": ""}
+        if archives is None:
+            archives = RELEASE_OK if release else ARCHIVES
+        return collect(m, release=release, archives=archives, version=version)
+
+    def semver_reasons(self, rec):
+        return [r for r in rec["verdict_reasons"] if r.startswith("semver-checks")]
+
+    def test_breaks_under_a_new_minor_are_go_and_the_record_states_the_inputs(self):
+        # The 0.10.0 release: compared with v0.9.0, breaks reported, the version a new minor.
+        for release in (True, False):
+            with self.subTest(release=release):
+                rec = self.run_gate("v0.9.0", "0.10.0", release=release)
+                self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+                self.assertEqual(rec["semver_gate"], {
+                    "previous_tag": "v0.9.0", "previous_version": "0.9.0", "workspace_version": "0.10.0",
+                    "candidate": True, "same_line": False, "breaking": 3, "reasons": []})
+                self.assertTrue(leg(rec, "semver-checks")["required"])
+
+    def test_breaks_under_a_patch_bump_are_no_go(self):
+        # The mistake: breaks landed while the tree was numbered 0.9.1.
+        for release in (True, False):
+            with self.subTest(release=release):
+                rec = self.run_gate("v0.9.0", "0.9.1", release=release)
+                self.assertEqual(rec["verdict"], "NO-GO")
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: 3 breaking change(s) in tst-core, tst-hls but 0.9.1 stays in the 0.9 line "
+                    "of v0.9.0; a break needs a new minor"])
+                self.assertIs(rec["semver_gate"]["same_line"], True)
+                self.assertEqual(rec["semver_gate"]["reasons"], self.semver_reasons(rec))
+
+    def test_a_patch_bump_without_breaks_is_go(self):
+        for release in (True, False):
+            with self.subTest(release=release):
+                rec = self.run_gate("v0.9.0", "0.9.1", rows=[sem("tst-core"), sem("tst-hls")], release=release)
+                self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+                self.assertEqual(rec["semver_gate"]["breaking"], 0)
+
+    def test_a_development_tree_before_its_sweep_is_informational(self):
+        rec = self.run_gate("v0.9.0", "0.9.0")
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertIs(rec["semver_gate"]["candidate"], False)
+        self.assertEqual(rec["semver_gate"]["reasons"], [])
+        self.assertEqual(rec["semver_gate"]["breaking"], 3)
+        self.assertEqual(leg(rec, "semver-checks"),
+                         {"name": "semver-checks", "required": False, "conclusion": "success", "run_url": ""})
+        # Neither a missing report nor an unanalysed crate decides for it.
+        for rows in (None, [sem("tst-core", analysed=False)]):
+            rec = self.run_gate("v0.9.0", "0.9.0", rows=rows, conclusion="failure")
+            self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+
+    def test_a_release_on_an_unswept_version_is_no_go(self):
+        rec = self.run_gate("v0.9.0", "0.9.0", rows=[sem("tst-core")], release=True)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(self.semver_reasons(rec), [
+            "semver-checks: the workspace version still says 0.9.0, the version of the previous release tag "
+            "v0.9.0; a release needs its version sweep"])
+        self.assertIs(rec["semver_gate"]["candidate"], True)
+
+    def test_a_release_numbered_below_the_previous_tag_is_no_go(self):
+        rec = self.run_gate("v0.10.0", "0.9.1", rows=[sem("tst-core")], release=True)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(self.semver_reasons(rec), [
+            "semver-checks: the workspace version 0.9.1 is lower than the previous release tag v0.10.0"])
+        # Outside release mode the same tree is an old commit under qualification, not a release.
+        self.assertEqual(self.run_gate("v0.10.0", "0.9.1", rows=[sem("tst-core")])["verdict"], "GO")
+
+    def test_a_candidate_without_a_report_is_no_go(self):
+        for rows in (None, []):
+            with self.subTest(rows=rows):
+                rec = self.run_gate("v0.9.0", "0.10.0", rows=rows, conclusion="failure")
+                self.assertEqual(rec["verdict"], "NO-GO")
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: failure",
+                    "semver-checks: no report (semver-checks.json names no crate); a report that did not run "
+                    "is not a report of no breaks"])
+
+    def test_a_candidate_whose_leg_did_not_succeed_is_no_go_even_with_a_clean_report(self):
+        for conclusion in ("failure", "skipped", "cancelled"):
+            with self.subTest(conclusion=conclusion):
+                rec = self.run_gate("v0.9.0", "0.10.0", rows=[sem("tst-core")], conclusion=conclusion)
+                self.assertEqual(rec["verdict"], "NO-GO")
+                self.assertEqual(self.semver_reasons(rec), ["semver-checks: " + conclusion])
+        def m(f):
+            del f["legs.json"]["semver-checks"]
+        rec = collect(m)
+        self.assertEqual(self.semver_reasons(rec), ["semver-checks: missing"])
+
+    def test_a_candidate_with_an_unanalysed_crate_is_no_go(self):
+        rows = [sem("tst-core"), sem("tst-srt", analysed=False), sem("tst-rist", analysed=False)]
+        rec = self.run_gate("v0.9.0", "0.10.0", rows=rows)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(self.semver_reasons(rec), [
+            "semver-checks: crate tst-srt was not analysed (exit 1)",
+            "semver-checks: crate tst-rist was not analysed (exit 1)"])
+
+    def test_from_1_0_a_break_needs_a_new_major(self):
+        rec = self.run_gate("v1.2.0", "1.3.0")
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(self.semver_reasons(rec), [
+            "semver-checks: 3 breaking change(s) in tst-core, tst-hls but 1.3.0 stays in the 1.x line "
+            "of v1.2.0; a break needs a new major"])
+        self.assertEqual(self.run_gate("v1.2.0", "2.0.0")["verdict"], "GO")
+        self.assertEqual(self.run_gate("v1.2.0", "1.3.0", rows=[sem("tst-core")])["verdict"], "GO")
+        # 1.0 itself opens a line: the last 0.x release does not share it.
+        rec = self.run_gate("v0.12.0", "1.0.0")
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertIs(rec["semver_gate"]["same_line"], False)
+
+    def test_without_a_previous_tag_the_report_cannot_be_judged(self):
+        for release in (True, False):
+            with self.subTest(release=release):
+                rec = self.run_gate(None, "0.10.0", rows=[sem("tst-core")], release=release)
+                self.assertEqual(rec["verdict"], "NO-GO")
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: no previous release tag is recorded (semver-baseline.json), so the report "
+                    "cannot be judged against a version; fetch the tags (git fetch --tags) and run the "
+                    "semver step again"])
+                self.assertIsNone(rec["semver_gate"]["previous_tag"])
+                self.assertIsNone(rec["semver_gate"]["same_line"])
+                self.assertIs(rec["semver_gate"]["candidate"], True)
+        for bad in ("v0.9", "v0.9.0-rc1", "0.9.0", 9):
+            with self.subTest(bad=bad):
+                rec = self.run_gate(bad, "0.10.0", rows=[sem("tst-core")])
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: the recorded previous tag %r is not vMAJOR.MINOR.PATCH" % (bad,)])
+
+    def test_an_unreadable_workspace_version_cannot_be_judged(self):
+        for bad in (None, "0.10", "0.10.0-dev"):
+            with self.subTest(bad=bad):
+                rec = self.run_gate("v0.9.0", bad, rows=[sem("tst-core")])
+                self.assertEqual(rec["verdict"], "NO-GO")
+                self.assertEqual(self.semver_reasons(rec), [
+                    "semver-checks: the workspace version at %s is %r, not MAJOR.MINOR.PATCH "
+                    "([workspace.package] version in Cargo.toml)" % (SHA[:12], bad)])
+
+    def test_the_version_is_read_from_the_qualified_commit(self):
+        # No stand-in for git here: the repository's own Cargo.toml at the commit decides.
+        for version, verdict in (("0.10.0", "GO"), ("0.9.1", "NO-GO")):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as d:
+                root = os.path.join(d, "root")
+                os.makedirs(root)
+                git(root, "init", "-q", "-b", "main")
+                spit(os.path.join(root, "Cargo.toml"),
+                     '[workspace]\nmembers = []\n\n[workspace.package]\nversion      = "%s"\n' % version)
+                git(root, "add", ".")
+                git(root, "commit", "-q", "-m", "A")
+                sha = git(root, "rev-parse", "HEAD")
+                # A later, uncommitted edit of the file is not the qualified version.
+                spit(os.path.join(root, "Cargo.toml"), '[workspace.package]\nversion = "7.7.7"\n')
+
+                def mutate(f):
+                    f["context.json"].update(source=dict(CONTEXT["source"], sha=sha, workflow_sha=sha))
+                    f["ci.json"]["head_sha"] = sha
+                    f["semver-checks.json"] = json.loads(json.dumps(BREAKS))
+                    f["semver-baseline.json"] = {"previous_tag": "v0.9.0"}
+                art, _ = build(os.path.join(d, "a"), mutate)
+                put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
+                put(os.path.join(root, "tests/coverage/evidence-archives.toml"), ARCHIVES)
+                rec = q.collect(art, root)
+                self.assertEqual(rec["verdict"], verdict, rec["verdict_reasons"])
+                self.assertEqual(rec["semver_gate"]["workspace_version"], version)
+
+    def line(self, rec):
+        return [l for l in q.render_block(rec).splitlines() if l.startswith("cargo-semver-checks")]
+
+    def test_the_rendered_line_says_whether_the_report_gated_and_with_which_versions(self):
+        rows = "tst-core 2 breaking; tst-hls 1 breaking; tst-udp 0 breaking."
+        self.assertEqual(self.line(self.run_gate("v0.9.0", "0.10.0")), [
+            "cargo-semver-checks against v0.9.0, gating (the workspace version 0.10.0 opens a new compatibility "
+            "line, so breaks are admitted): " + rows])
+        self.assertEqual(self.line(self.run_gate("v0.9.0", "0.9.1")), [
+            "cargo-semver-checks against v0.9.0, gating (the workspace version 0.9.1 stays in the 0.9 line, "
+            "so no break is admitted): " + rows])
+        self.assertEqual(self.line(self.run_gate("v0.9.0", "0.9.0")), [
+            "cargo-semver-checks against v0.9.0, informational (the workspace version is still 0.9.0: a "
+            "development tree before its version sweep): " + rows])
+        self.assertEqual(self.line(self.run_gate("v0.9.0", "0.10.0", rows=None, conclusion="failure")), [
+            "cargo-semver-checks against v0.9.0, gating (the workspace version 0.10.0 opens a new compatibility "
+            "line, so breaks are admitted): no report."])
+        self.assertEqual(self.line(self.run_gate(None, "0.10.0")), [
+            "cargo-semver-checks, gating (the previous release tag or the workspace version is not recorded): "
+            + rows])
+
+    def test_the_leg_line_says_informational_only_when_the_report_did_not_gate(self):
+        def leg_line(rec):
+            return [l for l in q.render_block(rec).splitlines() if l.startswith("- `semver-checks`")]
+        self.assertEqual(leg_line(self.run_gate("v0.9.0", "0.10.0")), ["- `semver-checks`: success."])
+        self.assertEqual(leg_line(self.run_gate("v0.9.0", "0.9.0")), ["- `semver-checks`: success, informational."])
+
+    def test_a_record_written_before_the_gate_renders_as_it_did(self):
+        rec = self.run_gate("v0.9.0", "0.9.0")
+        del rec["semver_gate"]
+        self.assertEqual(self.line(rec), [
+            "cargo-semver-checks, informational: tst-core 2 breaking; tst-hls 1 breaking; tst-udp 0 breaking."])
+        rec["semver_checks"] = []
+        self.assertEqual(self.line(rec), [])
+
+    def test_the_gate_is_a_function_of_its_five_inputs(self):
+        gate = q.semver_gate(True, "0.10.0", "v0.9.0", q.semver_rows(BREAKS), SHA)
+        self.assertEqual(gate["reasons"], [])
+        gate = q.semver_gate(False, "0.9.0", "v0.9.0", [], SHA)
+        self.assertEqual((gate["candidate"], gate["reasons"]), (False, []))
 
 
 class CiRunTests(unittest.TestCase):
@@ -1412,13 +1651,15 @@ class WaiverTests(unittest.TestCase):
                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         tmp = tempfile.mkdtemp()
         art, root = build(tmp, archives=rows)
-        rec = q.collect(art, root, release=True)
+        with at_version():
+            rec = q.collect(art, root, release=True)
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIn("soak: archive soak-rel is waived (2 verdicts), and a release needs a raw pass",
                       rec["verdict_reasons"])
         self.assertEqual(rec["archives"][0]["waiver"], WAIVER)
         self.assertEqual(rec["release_vm"]["disposition"], "waived")
-        rec = q.collect(art, root, release=False)
+        with at_version():
+            rec = q.collect(art, root, release=False)
         self.assertEqual(rec["release_vm"]["reasons"], [])
         self.assertEqual(rec["release_vm"]["disposition"], "waived")
         self.assertEqual(rec["archives"][0]["waiver"], WAIVER)
@@ -1492,7 +1733,8 @@ class ExitCriteriaTests(unittest.TestCase):
         corpus = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)
         art, root = build(tempfile.mkdtemp(),
                           archives=archives_toml(archive_row(soak_id, "soak", SHA, legs=FIVE), corpus))
-        rec = q.collect(art, root, release=True, tag=tag)
+        with at_version():
+            rec = q.collect(art, root, release=True, tag=tag)
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         put(os.path.join(root, "tests/coverage/evidence-archives.toml"),
             archives_toml(archive_row(soak_id, "soak", SHA, overall_pass=False, legs=FIVE)
@@ -1569,6 +1811,7 @@ class TagAndEquivalenceTests(unittest.TestCase):
             git(root, "init", "-q", "-b", "main")
             for f in ("CHANGELOG.md", "docs/x.md", "README"):
                 spit(os.path.join(root, f), "1\n")
+            spit(os.path.join(root, "Cargo.toml"), CARGO_TOML)
             git(root, "add", ".")
             git(root, "commit", "-q", "-m", "A")
             soaked = git(root, "rev-parse", "HEAD")
@@ -1787,6 +2030,7 @@ class WorkflowBindingTests(unittest.TestCase):
         for f in (".github/workflows/x.yml", ".github/dependabot.yml", "scripts/gen/q.py", "README"):
             os.makedirs(os.path.dirname(os.path.join(root, f)), exist_ok=True)
             spit(os.path.join(root, f), "1\n")
+        spit(os.path.join(root, "Cargo.toml"), CARGO_TOML)
         git(root, "add", ".")
         git(root, "commit", "-q", "-m", "A")
         a = git(root, "rev-parse", "HEAD")
