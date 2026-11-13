@@ -1111,7 +1111,9 @@ def render_block(rec):
         out.append(_bench_ir_line(rec["bench_ir"]))
     # A record written before the report could gate has no `semver_gate`.
     if "semver_gate" in rec:
-        out += ["", _semver_line(rec["semver_gate"]) + ": " + (_semver_rows_text(rec["semver_checks"]) or "no report") + "."]
+        out.append("")
+        out.append("%s: %s." % (_semver_line(rec["semver_gate"]),
+                                _semver_rows_text(rec["semver_checks"]) or "no report"))
     elif rec["semver_checks"]:
         out.append("")
         out.append("cargo-semver-checks, informational: " + _semver_rows_text(rec["semver_checks"]) + ".")
