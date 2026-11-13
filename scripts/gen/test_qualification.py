@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -43,7 +44,9 @@ RESULTS = {"summary": {"total": 159, "pass": 94, "fail": 0, "expected_unsupporte
                          "allowed_skips": []},
            "meta": {"au_sizes": "realistic"}}
 INVENTORY = {"tools": {"ffmpeg": "7.1", "tsp": "3.40", "gst-launch-1.0": "1.24", "vlc": "3.0", "mpv": "0.37"}}
-FUZZ = {"targets_run": 37, "seconds_per_target": 60, "crashes": 0}
+# The release budget, so that a release fixture passes the fuzz rule; the tests of
+# the rule (ReleaseFuzzTests) set their own seconds.
+FUZZ = {"targets_run": 37, "seconds_per_target": q.RELEASE_FUZZ_SECONDS, "crashes": 0}
 ABI = {"major": 0, "minor": 25, "symbols": 505, "previous_tag": "v0.8.0",
        "previous_source": "built: no package for v0.8.0", "abidiff_exit": 4, "verdict": "compatible"}
 BENCH_IR = {"old": {"ref": "v0.8.0", "sha": "a" * 40}, "new": {"ref": "HEAD", "sha": SHA},
@@ -271,6 +274,13 @@ class ReleaseFuzzTests(unittest.TestCase):
 
     def test_the_release_budget_is_ten_minutes_per_target(self):
         self.assertEqual(q.RELEASE_FUZZ_SECONDS, 600)
+
+    def test_the_qualification_workflow_gives_a_release_the_release_budget(self):
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        text = slurp(os.path.join(repo, ".github/workflows/release-qualify.yml"))
+        release, other = re.search(r"^      seconds_per_target: \$\{\{ .* && (\d+) \|\| (\d+) \}\}$", text, re.M).groups()
+        self.assertEqual(int(release), q.RELEASE_FUZZ_SECONDS)
+        self.assertLess(int(other), q.RELEASE_FUZZ_SECONDS)
 
     def test_a_release_fuzzed_at_the_short_budget_is_no_go_and_the_reason_names_the_seconds(self):
         rec = self.release(seconds_per_target=60)
