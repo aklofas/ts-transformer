@@ -38,12 +38,15 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$WORK/home/ts-transformer/target/releas
 chmod +x "$WORK/home/.cargo/bin/"* "$WORK/home/ts-transformer/target/release/tst-interop"
 
 # corpus <cargo's target directory> [<workspace version> [<env assignment>]]
-#   -> the phase's output, its status in $rc
+#   -> the phase's output, its status in $rc. The script is named by a
+#   relative path, as on the VM: it changes directory to the checkout and
+#   must still find the files beside it.
 corpus() {
   rc=0
   printf '[workspace.package]\nversion = "%s"\n' "${2:-0.2.0}" >"$WORK/home/ts-transformer/Cargo.toml"
-  out=$(env -u TSTRANS_REPO_DIR -u TSTRANS_CORPUS_DIR -u TSTRANS_CORPUS_BUCKET -u TSTRANS_NOT_A_RELEASE \
-    HOME="$WORK/home" STUB_TARGET_DIR="$1" ${3:+"$3"} bash "$SCRIPT" "$SHA" --no-baseline 2>&1) || rc=$?
+  out=$(cd "$HERE/.." && env -u TSTRANS_REPO_DIR -u TSTRANS_CORPUS_DIR -u TSTRANS_CORPUS_BUCKET \
+    -u TSTRANS_NOT_A_RELEASE HOME="$WORK/home" STUB_TARGET_DIR="$1" ${3:+"$3"} \
+    bash ./release-vm-corpus.sh "$SHA" --no-baseline 2>&1) || rc=$?
 }
 
 corpus "$WORK/home/ts-transformer/target"
