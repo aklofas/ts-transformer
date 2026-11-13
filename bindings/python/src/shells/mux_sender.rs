@@ -160,42 +160,6 @@ impl PyMuxSender {
         Self::from_opened(py, opened, &program_config)
     }
 
-    /// Deprecated: use `open`.
-    #[staticmethod]
-    fn from_url(
-        py: Python<'_>,
-        url: &str,
-        program_config: PyRef<'_, PyMuxerProgramConfig>,
-    ) -> PyResult<Self> {
-        crate::util::deprecated(
-            py,
-            "`MuxSender.from_url` is deprecated; use `MuxSender.open(url, program_config)`",
-        )?;
-        let opened = crate::shells::open::open_send(py, url)?;
-        Self::from_opened(py, opened, &program_config)
-    }
-
-    /// Deprecated: use `MuxSender.open(url, program_config)`. `pkt_size`
-    /// becomes the `?pkt_size=` URL key when given.
-    #[new]
-    #[pyo3(signature = (url, program_config, *, pkt_size = None))]
-    fn new(
-        py: Python<'_>,
-        url: &str,
-        program_config: PyRef<'_, PyMuxerProgramConfig>,
-        pkt_size: Option<usize>,
-    ) -> PyResult<Self> {
-        crate::util::deprecated(
-            py,
-            "constructing `MuxSender(url, ...)` is deprecated; use `MuxSender.open(url, ...)`, with `pkt_size` as the `?pkt_size=` URL key",
-        )?;
-        let url = match pkt_size {
-            Some(n) => crate::util::with_query(url, "pkt_size", n),
-            None => url.to_owned(),
-        };
-        let opened = crate::shells::open::open_send(py, &url)?;
-        Self::from_opened(py, opened, &program_config)
-    }
     // ── Push family — single-stream variants ──────────────────────────────
     //
     // Mirror `bindings/python/src/shells/mux_sender.rs` 1:1 for surface

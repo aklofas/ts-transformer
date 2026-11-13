@@ -16,18 +16,12 @@ Submodule contents are populated by `tstrans._native.srt`:
 
 The shell classes (`Sender`, `Receiver`, `MuxSender`, `DemuxReceiver`),
 `CancelHandle`, `SocketStats` and the end-reason enum live in
-`tstrans.shells`. The old `tstrans.srt` names (`Sender`, `Receiver`,
-`MuxSender`, `DemuxReceiver`, `CancelHandle`, `SocketStats`,
-`RecvEndReason`) remain as deprecated aliases that emit
-`DeprecationWarning` and are removed in 0.10.0.
+`tstrans.shells`.
 """
 
 from __future__ import annotations
 
 import enum as _enum
-import warnings as _warnings
-
-from . import shells as _shells
 
 try:
     from . import _native
@@ -38,31 +32,6 @@ except (ImportError, AttributeError) as exc:  # pragma: no cover
         "SRT by default; if you built tstrans from source, ensure the "
         "`srt` cargo feature is enabled (it is on by default)."
     ) from exc
-
-
-_DEPRECATED = {
-    "Sender": "tstrans.shells.Sender",
-    "Receiver": "tstrans.shells.Receiver",
-    "MuxSender": "tstrans.shells.MuxSender",
-    "DemuxReceiver": "tstrans.shells.DemuxReceiver",
-    "CancelHandle": "tstrans.shells.CancelHandle",
-    "SocketStats": "tstrans.shells.SocketStats",
-    "RecvEndReason": "tstrans.shells.EndReason",
-}
-
-
-def __getattr__(name: str) -> object:
-    """Deprecated aliases (removed in 0.10.0): the shell classes moved to
-    `tstrans.shells`; `RecvEndReason` is `tstrans.shells.EndReason`."""
-    target = _DEPRECATED.get(name)
-    if target is None:
-        raise AttributeError(f"module 'tstrans.srt' has no attribute {name!r}")
-    _warnings.warn(
-        f"tstrans.srt.{name} is deprecated; use {target} (removed in 0.10.0)",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return getattr(_shells, target.rsplit(".", 1)[1])
 
 
 # SRT-specific statistics.

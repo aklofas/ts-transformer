@@ -418,27 +418,6 @@ pub(crate) fn register_accept_slot(slot: &Arc<tst_core::cancel::CancelSlot>) -> 
     me
 }
 
-/// Emit one `DeprecationWarning` attributed to the caller's line (stacklevel 1:
-/// a native method has no Python frame of its own, so level 1 is its caller).
-// the shells module is cfg'd on a transport feature; dead only in a
-// transport-less `--no-default-features` build.
-#[allow(dead_code)]
-pub(crate) fn deprecated(py: Python<'_>, msg: &str) -> PyResult<()> {
-    PyErr::warn(
-        py,
-        &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-        &std::ffi::CString::new(msg)?,
-        1,
-    )
-}
-
-/// Append `key=value` to `url`'s query.
-#[allow(dead_code)] // same as `deprecated`
-pub(crate) fn with_query(url: &str, key: &str, value: impl core::fmt::Display) -> String {
-    let sep = if url.contains('?') { '&' } else { '?' };
-    format!("{url}{sep}{key}={value}")
-}
-
 /// Bytes a generated native class holds. A getter on the class hands out a
 /// Python `bytes`. Under PyO3 0.23 and later a plain `Vec<u8>` field would
 /// convert to `bytes` too; the newtype stays because the binding

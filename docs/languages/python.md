@@ -2139,22 +2139,23 @@ output directly when absolute byte offsets matter.
 
 ### Moving from 0.8
 
-Deprecated in 0.9.0, removed in 0.11.0 (the warning text in 0.10.0 still says 0.10.0). Each old spelling still works and
-emits a `DeprecationWarning`.
+Deprecated in 0.9.0 and removed in 0.11.0. In 0.9 and 0.10 each old spelling
+worked and emitted a `DeprecationWarning`; from 0.11.0 a module name in the
+left column raises `AttributeError`, the shell classes have no `from_url`,
+and calling `MuxSender(...)` or `DemuxReceiver(...)` raises `TypeError`.
 
-| 0.8 | 0.9 |
+| 0.8 (removed in 0.11.0) | 0.9 and later |
 |---|---|
 | `tstrans.srt.{Sender, Receiver, MuxSender, DemuxReceiver}`, `tstrans.rtp.{MuxSender, DemuxReceiver}` | `tstrans.shells.*` |
 | `tstrans.srt.{CancelHandle, SocketStats}`, `tstrans.rtp.{CancelHandle, SocketStats}` | `tstrans.shells.{CancelHandle, SocketStats}` |
 | `tstrans.srt.RecvEndReason`, `tstrans.rtp.StreamEndReason` | `tstrans.shells.EndReason` |
 | `tstrans.rtp.Sender` / `Receiver` | `tstrans.rtp.Transport` / `RecvTransport` |
 | `Class.from_url(url, ...)`, `MuxSender(url, ...)`, `DemuxReceiver(url, ...)` on a shell | `Class.open(url, ...)` |
-| the rtp `pkt_size=` keyword | the `?pkt_size=` URL key |
+| the `pkt_size=` keyword of `MuxSender(url, ...)` over rtp | the `?pkt_size=` URL key (`rtp.Transport` still takes `pkt_size=`) |
 
-A star import no longer brings the old shell names in: they left the
-modules' `__all__`, so after `from tstrans.srt import *` (or
-`from tstrans.rtp import *`) a bare `Sender` is a `NameError`, not a
-`DeprecationWarning`. Import them from `tstrans.shells`.
+A star import does not bring the shell names in: after
+`from tstrans.srt import *` (or `from tstrans.rtp import *`) a bare `Sender`
+is a `NameError`. Import them from `tstrans.shells`.
 
 `ManagedSender` / `ManagedReceiver` / `ManagedMuxSender` /
 `ManagedDemuxReceiver` keep `from_url`: they are SRT-specific.

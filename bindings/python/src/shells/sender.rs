@@ -90,16 +90,6 @@ impl PySender {
         Self::from_opened(py, crate::shells::open::open_send(py, url)?)
     }
 
-    /// Deprecated: use `open`.
-    #[staticmethod]
-    fn from_url(py: Python<'_>, url: &str) -> PyResult<Self> {
-        crate::util::deprecated(
-            py,
-            "`Sender.from_url` is deprecated; use `Sender.open(url)`",
-        )?;
-        Self::from_opened(py, crate::shells::open::open_send(py, url)?)
-    }
-
     /// Send one pre-muxed TS chunk (any bytes-like). Releases the GIL
     /// while the send blocks; a concurrent `close()` cancels first, so the
     /// call ends with the transport's `CLOSED` kind.

@@ -17,17 +17,13 @@ Submodule contents are populated by `tstrans._native.rtp`:
 - `PublishMount`, `PublishMountStats`, `PublisherInfo`, `PublishShape`,
   `ClockAlignment` (the RTSP publisher role)
 
-`MuxSender`, `DemuxReceiver`, `CancelHandle`, `SocketStats` and
-`StreamEndReason` moved to `tstrans.shells` (`StreamEndReason` is
-`tstrans.shells.EndReason`), and the raw `Sender` / `Receiver` are now
-`Transport` / `RecvTransport`. The old names remain as deprecated aliases
-that emit `DeprecationWarning` and are removed in 0.10.0.
+`MuxSender`, `DemuxReceiver`, `CancelHandle`, `SocketStats` and the
+end-reason enum (`EndReason`) live in `tstrans.shells`.
 """
 
 from __future__ import annotations
 
 import enum
-import warnings as _warnings
 from dataclasses import dataclass, fields as _dataclass_fields
 from typing import Optional, Union
 
@@ -40,34 +36,6 @@ except (ImportError, AttributeError) as exc:  # pragma: no cover
         "RTP by default; if you built tstrans from source, ensure the "
         "`rtp` cargo feature is enabled (it is on by default)."
     ) from exc
-
-from . import shells as _shells
-
-_DEPRECATED = {
-    "MuxSender": "tstrans.shells.MuxSender",
-    "DemuxReceiver": "tstrans.shells.DemuxReceiver",
-    "CancelHandle": "tstrans.shells.CancelHandle",
-    "SocketStats": "tstrans.shells.SocketStats",
-    "StreamEndReason": "tstrans.shells.EndReason",
-    "Sender": "tstrans.rtp.Transport",
-    "Receiver": "tstrans.rtp.RecvTransport",
-}
-
-
-def __getattr__(name: str) -> object:
-    """Deprecated aliases (removed in 0.10.0): the shell classes moved to
-    `tstrans.shells`, `StreamEndReason` is `tstrans.shells.EndReason`, and
-    the raw `Sender` / `Receiver` are `Transport` / `RecvTransport`."""
-    target = _DEPRECATED.get(name)
-    if target is None:
-        raise AttributeError(f"module 'tstrans.rtp' has no attribute {name!r}")
-    _warnings.warn(
-        f"tstrans.rtp.{name} is deprecated; use {target} (removed in 0.10.0)",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    owner = _rtp if target.startswith("tstrans.rtp.") else _shells
-    return getattr(owner, target.rsplit(".", 1)[1])
 
 
 class PublishShape(enum.IntEnum):
