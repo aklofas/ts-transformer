@@ -1634,5 +1634,247 @@ expect "release-vm-corpus: --no-baseline passes no --baseline to the sweep" 1 gr
 expect "release-vm-corpus: --baseline DIR reaches the sweep" 0 bash "$RVC" "$rvc_sha" --dry-run --baseline "$tmp/base"
 expect_out "release-vm-corpus: the sweep line" "--baseline $tmp/base"
 
+# ---- deprecation manifest (scripts/check/repo/deprecations.sh) ----
+# A fixture tree with one deprecation per marker the rail defines (a Rust
+# attribute, a Java annotation with its Javadoc tag, a Python alias comment,
+# a Python warning call, a warning raised from the extension's Rust source)
+# and one removed name. The Java class's row covers its deprecated member.
+# Each case plants one defect in a fresh copy.
+R_DEP="$DIR/../check/repo/deprecations.sh"
+dep_tree() {
+    local t="$tmp/dep"
+    rm -rf "$t"
+    mkdir -p "$t/tests/coverage" "$t/crates/tst-demo/src" "$t/bindings/jvm/src/main/java/org/demo" \
+        "$t/bindings/python/python/tstrans" "$t/bindings/python/src" "$t/bindings/c/include" \
+        "$t/docs/reference" "$t/docs/languages" "$t/docs/guides"
+    printf '[workspace.package]\nversion = "0.10.0"\n' > "$t/Cargo.toml"
+    printf '[package]\nname = "tst-demo"\n' > "$t/crates/tst-demo/Cargo.toml"
+    printf '[package]\nname = "tst-py"\n[lib]\nname = "_native"\n' > "$t/bindings/python/Cargo.toml"
+    # The allow, the doc-comment mention and the string are not sites.
+    cat > "$t/crates/tst-demo/src/lib.rs" <<'EOF'
+#![allow(deprecated)]
+pub struct New;
+
+/// The old name of [`New`]; it carried `#[deprecated]` from 0.10.0.
+/// It will be removed in 0.12.0.
+#[deprecated(since = "0.10.0", note = "renamed to `New`")]
+pub type Old = New;
+
+#[allow(deprecated)]
+pub fn uses_old(_: Old) {}
+EOF
+    printf 'pub struct tst_demo::New\npub type tst_demo::Old = tst_demo::New\npub fn tst_demo::uses_old(_: tst_demo::Old)\n' \
+        > "$t/crates/tst-demo/public-api.txt"
+    cat > "$t/bindings/jvm/src/main/java/org/demo/Old.java" <<'EOF'
+package org.demo;
+
+/**
+ * The 0.9 name of {@link New}.
+ *
+ * @deprecated use {@link New}; removed in 0.12.0.
+ */
+@Deprecated(since = "0.10.0", forRemoval = true)
+public final class Old extends New {
+    /** @deprecated use {@link New#open}. */
+    @Deprecated
+    public static Old fromUrl(String url) { return new Old(); }
+
+    @Override
+    public String toString() { return "Old"; }
+}
+EOF
+    cat > "$t/bindings/python/python/tstrans/shapes.py" <<'EOF'
+"""Shapes. Earlier releases had deprecated aliases that are gone."""
+import warnings
+
+
+class New:
+    pass
+
+
+Old = New  # deprecated alias, remove at 0.12
+
+
+def old_fn():
+    warnings.warn(
+        "old_fn() is deprecated and will be removed in 0.12.0; use new_fn()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+EOF
+    cat > "$t/bindings/python/src/lib.rs" <<'EOF'
+use pyo3::exceptions::PyDeprecationWarning;
+
+fn from_url(py: Python<'_>) -> PyResult<()> {
+    // Thing.from_url warns here; removal in 0.12.0.
+    PyErr::warn(py, &py.get_type::<PyDeprecationWarning>(), c"use Thing.open", 1)
+}
+EOF
+    printf '/* A header that deprecates nothing. */\nint tst_demo(void);\n' > "$t/bindings/c/include/tstrans.h"
+    cat > "$t/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Removed — tst-demo (BREAKING)
+
+- `Gone` is removed: use `New`.
+
+## [0.10.0] — 2026-01-01
+
+### Removed — tst-demo (BREAKING)
+
+- `Older` is removed.
+EOF
+    cat > "$t/docs/reference/api-stability.md" <<'EOF'
+| Package | Module | Why |
+|---|---|---|
+| tst-demo | (crate) | `Old` was renamed `New` in 0.10.0 and will be removed in 0.12.0; `Gone` was removed in 0.11.0 |
+| tst-other | (crate) | its own `Old` was removed in 0.7.0 |
+EOF
+    cat > "$t/docs/languages/python.md" <<'EOF'
+`tstrans.shapes.Old` is a deprecated alias of `New`, to be
+removed at 0.12.
+EOF
+    cat > "$t/tests/coverage/deprecations.toml" <<'EOF'
+[[deprecation]]
+lang = "rust"
+symbol = "tst_demo::Old"
+since = "0.10.0"
+replacement = "tst_demo::New"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.demo.Old"
+since = "0.10.0"
+replacement = "org.demo.New"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shapes.Old"
+since = "0.10.0"
+replacement = "tstrans.shapes.New"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shapes.old_fn"
+since = "0.10.0"
+replacement = "tstrans.shapes.new_fn"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shapes.Thing.from_url"
+since = "0.10.0"
+replacement = "tstrans.shapes.Thing.open"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_demo::Gone"
+since = "0.9.0"
+replacement = "tst_demo::New"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+EOF
+}
+dep() { DEPRECATIONS_ROOT="$tmp/dep" bash "$R_DEP"; }
+dep_tree
+expect "deprecations: a tree whose code, manifest, CHANGELOG and docs agree" 0 dep
+expect_out "deprecations: the summary counts what was read" "6 deprecation sites (rust 1, java 2, python 3); 5 live rows, 1 removed rows"
+expect_out "deprecations: since is compared" '`since` compared at 2 sites'
+expect_out "deprecations: the site strings are compared" "5 removal versions written at sites"
+expect_out "deprecations: the docs are compared" "(e) 3 symbol and removal-version passages"
+printf '\n#[deprecated(since = "0.10.0", note = "use `New`")]\npub type Unlisted = New;\n' >> "$tmp/dep/crates/tst-demo/src/lib.rs"
+expect "deprecations: a #[deprecated] item with no row fails" 1 dep
+expect_out "deprecations: the unlisted item" 'crates/tst-demo/src/lib.rs:13: #[deprecated] on `Unlisted` has no live row'
+expect_out "deprecations: the row to add" 'lang = "rust", symbol = its full name (it starts with `tst_demo` and ends with `Unlisted`)'
+dep_tree
+printf '\n[[deprecation]]\nlang = "rust"\nsymbol = "tst_demo::Phantom"\nsince = "0.10.0"\nreplacement = "tst_demo::New"\nearliest_removal = "0.12.0"\n' \
+    >> "$tmp/dep/tests/coverage/deprecations.toml"
+expect "deprecations: a live row with no site fails" 1 dep
+expect_out "deprecations: the row without a site" "live row tst_demo::Phantom (rust) covers no deprecation site"
+dep_tree
+plant "$tmp/dep/crates/tst-demo/src/lib.rs" 'since = "0.10.0"' 'since = "0.9.0"'
+expect "deprecations: an attribute whose since differs from the row fails" 1 dep
+expect_out "deprecations: the since mismatch" 'on `Old` says since = "0.9.0", the row of tst_demo::Old says "0.10.0"'
+dep_tree
+plant "$tmp/dep/bindings/python/python/tstrans/shapes.py" 'removed in 0.12.0' 'removed in 0.10.0'
+expect "deprecations: a warning that promises removal in the workspace version fails" 1 dep
+expect_out "deprecations: the broken promise" "bindings/python/python/tstrans/shapes.py:13: DeprecationWarning on \`warnings.warn(\` promises removal in 0.10.0, and the workspace is already 0.10.0"
+dep_tree
+plant "$tmp/dep/bindings/jvm/src/main/java/org/demo/Old.java" 'removed in 0.12.0' 'removed in 0.13.0'
+expect "deprecations: a Javadoc that promises another release than the row fails" 1 dep
+expect_out "deprecations: the disagreeing promise" 'on `Old` promises removal in 0.13.0, the row of org.demo.Old says earliest_removal = "0.12.0"'
+dep_tree
+plant "$tmp/dep/Cargo.toml" '0.10.0' '0.12.0'
+expect "deprecations: an earliest_removal equal to the workspace version fails" 1 dep
+expect_out "deprecations: the lapsed row" 'tst_demo::Old has earliest_removal = "0.12.0", and the workspace is already 0.12.0'
+expect_out "deprecations: a removal behind the workspace needs its release section" "removed row tst_demo::Gone: CHANGELOG.md has no [0.11.0] section, and the workspace is past it (0.12.0)"
+dep_tree
+printf '\n#[deprecated(since = "0.9.0", note = "use `New`")]\npub type Gone = New;\n' >> "$tmp/dep/crates/tst-demo/src/lib.rs"
+expect "deprecations: a removed row whose name is still deprecated in the code fails" 1 dep
+expect_out "deprecations: the name that is not gone" 'on `Gone` is still in the code, and its row says removed_in = "0.11.0"'
+dep_tree
+printf 'pub type tst_demo::Gone = tst_demo::New\n' >> "$tmp/dep/crates/tst-demo/public-api.txt"
+expect "deprecations: a removed Rust row still in a public-api baseline fails" 1 dep
+expect_out "deprecations: the baseline" "removed row tst_demo::Gone is still a public path in crates/tst-demo/public-api.txt"
+dep_tree
+plant "$tmp/dep/CHANGELOG.md" '`Gone` is removed' '`Other` is removed'
+expect "deprecations: a removed row the CHANGELOG does not list fails" 1 dep
+expect_out "deprecations: the missing note" 'CHANGELOG.md [Unreleased] has no `### Removed` heading naming tst-demo whose entry names `Gone`'
+# Once the release has its section, the removal is read there and nowhere else.
+dep_tree
+plant "$tmp/dep/CHANGELOG.md" '^## \[0.10.0\].*' '## [0.11.0] — 2026-02-01'
+expect "deprecations: a removal listed under [Unreleased] after its release was cut fails" 1 dep
+expect_out "deprecations: the release section" 'CHANGELOG.md [0.11.0] has no `### Removed` heading naming tst-demo whose entry names `Gone`'
+dep_tree
+plant "$tmp/dep/docs/reference/api-stability.md" 'will be removed in 0.12.0' 'will be removed in 0.13.0'
+expect "deprecations: a docs row that promises another release than the manifest fails" 1 dep
+expect_out "deprecations: the docs row" 'docs/reference/api-stability.md:3: names tst_demo::Old with removal in 0.13.0, 0.11.0, its row says earliest_removal = "0.12.0"'
+dep_tree
+plant "$tmp/dep/docs/languages/python.md" 'removed at 0.12' 'removed at 1.0'
+expect "deprecations: a docs paragraph wrapped over two lines is read as one" 1 dep
+expect_out "deprecations: the docs paragraph" "docs/languages/python.md:1: names tstrans.shapes.Old with removal in 1.0.0"
+dep_tree
+printf '__attribute__((deprecated)) int tst_old(void);\n' >> "$tmp/dep/bindings/c/include/tstrans.h"
+expect "deprecations: a C deprecation marker fails until the rail has a rule" 1 dep
+expect_out "deprecations: the C marker" "bindings/c/include/tstrans.h:3: a C deprecation marker"
+dep_tree
+plant "$tmp/dep/bindings/python/src/lib.rs" 'Thing.from_url warns here' 'This warns'
+expect "deprecations: a warning that names no row fails" 1 dep
+expect_out "deprecations: the unnamed warning" "bindings/python/src/lib.rs:5: PyDeprecationWarning on \`PyErr::warn("
+expect_out "deprecations: how to name it" "the site must name its last component, in the message or in a comment directly above"
+dep_tree
+rm "$tmp/dep/tests/coverage/deprecations.toml"
+expect "deprecations: a missing manifest fails" 1 dep
+expect_out "deprecations: the missing manifest" "FAIL: tests/coverage/deprecations.toml: No such file or directory"
+dep_tree
+printf '[[deprecation]\n' > "$tmp/dep/tests/coverage/deprecations.toml"
+expect "deprecations: a manifest that does not parse fails" 1 dep
+expect_out "deprecations: the parse error" "FAIL: tests/coverage/deprecations.toml: "
+cp "$tmp/out" "$tmp/dep-out"; expect "deprecations: a parse error prints no traceback" 1 grep -q Traceback "$tmp/dep-out"
+dep_tree
+plant "$tmp/dep/tests/coverage/deprecations.toml" 'earliest_removal = "0.12.0"' 'earliest_removal = "next"'
+expect "deprecations: a row whose version is not X.Y.Z fails" 1 dep
+expect_out "deprecations: the malformed row" "row 1 (tst_demo::Old): since, earliest_removal and removed_in are versions X.Y.Z"
+# No live row is a pass only when the code deprecates nothing, and the
+# summary says so; a language whose sources were not found was not checked.
+dep_tree
+rm "$tmp/dep/bindings/python/src/lib.rs"
+printf 'package org.demo;\n\npublic class Old {}\n' > "$tmp/dep/bindings/jvm/src/main/java/org/demo/Old.java"
+printf 'pub struct New;\n' > "$tmp/dep/crates/tst-demo/src/lib.rs"
+printf 'class New:\n    pass\n' > "$tmp/dep/bindings/python/python/tstrans/shapes.py"
+printf '[[deprecation]]\nlang = "rust"\nsymbol = "tst_demo::Gone"\nsince = "0.9.0"\nreplacement = "tst_demo::New"\nearliest_removal = "0.11.0"\nremoved_in = "0.11.0"\n' \
+    > "$tmp/dep/tests/coverage/deprecations.toml"
+expect "deprecations: no site and no live row passes" 0 dep
+expect_out "deprecations: the empty live set is stated" "nothing is deprecated: no site in the code and no live row"
+rm -r "$tmp/dep/bindings/jvm"
+expect "deprecations: a tree whose Java sources were not found fails" 1 dep
+expect_out "deprecations: what was not read" "no java source file was read under bindings/jvm/src/main: its deprecations were not checked"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

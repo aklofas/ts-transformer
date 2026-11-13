@@ -1,0 +1,430 @@
+# Deprecation manifest: every deprecated public name, live or already removed.
+#
+# A deprecation promises a removal no earlier than some release. The promise
+# is written here, and scripts/check/repo/deprecations.sh keeps the code, the
+# CHANGELOG and the docs saying the same thing:
+#
+#   * every deprecation in the code (a Rust `#[deprecated]`, a Java
+#     `@Deprecated` / Javadoc `@deprecated`, a Python DeprecationWarning,
+#     `@deprecated` decorator or "deprecated alias" comment; the rail's header
+#     defines the markers) has a live row, and every live row has such a site
+#     whose `since`, where the language states one, equals the row's;
+#   * a live row's `earliest_removal` is later than the workspace version, and
+#     a removal version written at the site ("removed in X.Y.Z", "remove at
+#     X.Y") or beside the name in the docs is exactly `earliest_removal`;
+#   * a removed row's name is gone from the code, and the CHANGELOG lists it
+#     under a `### Removed` heading of the release `removed_in` names (under
+#     `[Unreleased]` until that release is cut).
+#
+#   lang              rust | python | java | c
+#   symbol            the name as a user of that language writes it, fully
+#                     qualified: `tst_srt::socket::Socket`,
+#                     `tstrans.mpegts.DemuxEvent.Klv`, `org.tstrans.srt.Sender`.
+#                     A trailing `()` names a constructor.
+#   since             the release that deprecated it
+#   replacement       what to use instead
+#   earliest_removal  the first release that may remove it (X.Y.Z)
+#   removed_in        the release that removed it; absent while the name lives
+#
+# A removed row stays as the record. A Rust name has one row, at the module
+# path that declared it; its re-exports (the crate root, another crate) went
+# with it and have no row of their own. A removed class's row covers its
+# members.
+
+# ─── live ────────────────────────────────────────────────────────────────────
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.mpegts.DemuxEvent.Klv"
+since = "0.3.0"
+replacement = "tstrans.mpegts.DemuxEvent.Metadata"
+earliest_removal = "1.0.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.mpegts._KlvEvent"
+since = "0.3.0"
+replacement = "tstrans.mpegts._MetadataEvent"
+earliest_removal = "1.0.0"
+
+# ─── removed in 0.11.0: Rust aliases of the 0.9.0 renames, two tst-srt variants ─
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_core::cancel::SrtCancelHandle"
+since = "0.9.0"
+replacement = "tst_core::cancel::ResourceCancel"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_core::mpegts::mux::StreamKind"
+since = "0.9.0"
+replacement = "tst_core::mpegts::mux::MuxStreamKind"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_pipeline::raw_sender::RawSendStats"
+since = "0.9.0"
+replacement = "tst_pipeline::raw_sender::RawSenderStats"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_pipeline::raw_receiver::RawRecvStats"
+since = "0.9.0"
+replacement = "tst_pipeline::raw_receiver::RawReceiverStats"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::socket::Socket"
+since = "0.9.0"
+replacement = "tst_srt::socket::SrtSocket"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::socket::Stats"
+since = "0.9.0"
+replacement = "tst_srt::socket::SrtStats"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::listener::Listener"
+since = "0.9.0"
+replacement = "tst_srt::listener::SrtListener"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::builder::SocketBuilder"
+since = "0.9.0"
+replacement = "tst_srt::builder::SrtSocketBuilder"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::builder::ListenerBuilder"
+since = "0.9.0"
+replacement = "tst_srt::builder::SrtListenerBuilder"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::config::SocketConfig"
+since = "0.9.0"
+replacement = "tst_srt::config::SrtSocketConfig"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::config::ListenerConfig"
+since = "0.9.0"
+replacement = "tst_srt::config::SrtListenerConfig"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::error::ConnectError"
+since = "0.9.0"
+replacement = "tst_srt::error::SrtConnectError"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::url::UrlError"
+since = "0.9.0"
+replacement = "tst_srt::url::SrtUrlError"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::error::PassphraseError::InvalidCharset"
+since = "0.10.0"
+replacement = "none: not returned since 0.10.0, delete the match arm"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_srt::error::StreamIdError::NonAscii"
+since = "0.10.0"
+replacement = "none: not returned since 0.10.0, delete the match arm"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_rtp::transport::ConnectError"
+since = "0.9.0"
+replacement = "tst_rtp::transport::RtpConnectError"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_rtp::url::UrlError"
+since = "0.9.0"
+replacement = "tst_rtp::url::RtpUrlError"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_udp::config::SocketConfig"
+since = "0.9.0"
+replacement = "tst_udp::config::UdpConfig"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "rust"
+symbol = "tst_tcp::config::SocketConfig"
+since = "0.9.0"
+replacement = "tst_tcp::config::TcpConfig"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+# ─── removed in 0.11.0: Python names of the shell classes ────────────────────
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.Sender"
+since = "0.9.0"
+replacement = "tstrans.shells.Sender"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.Receiver"
+since = "0.9.0"
+replacement = "tstrans.shells.Receiver"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.MuxSender"
+since = "0.9.0"
+replacement = "tstrans.shells.MuxSender"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.DemuxReceiver"
+since = "0.9.0"
+replacement = "tstrans.shells.DemuxReceiver"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.CancelHandle"
+since = "0.9.0"
+replacement = "tstrans.shells.CancelHandle"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.SocketStats"
+since = "0.9.0"
+replacement = "tstrans.shells.SocketStats"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.RecvEndReason"
+since = "0.9.0"
+replacement = "tstrans.shells.EndReason"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.rtp.Sender"
+since = "0.9.0"
+replacement = "tstrans.rtp.Transport"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.rtp.Receiver"
+since = "0.9.0"
+replacement = "tstrans.rtp.RecvTransport"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.rtp.MuxSender"
+since = "0.9.0"
+replacement = "tstrans.shells.MuxSender"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.rtp.DemuxReceiver"
+since = "0.9.0"
+replacement = "tstrans.shells.DemuxReceiver"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.rtp.CancelHandle"
+since = "0.9.0"
+replacement = "tstrans.shells.CancelHandle"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.rtp.SocketStats"
+since = "0.9.0"
+replacement = "tstrans.shells.SocketStats"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.rtp.StreamEndReason"
+since = "0.9.0"
+replacement = "tstrans.shells.EndReason"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shells.Sender.from_url"
+since = "0.9.0"
+replacement = "tstrans.shells.Sender.open"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shells.Receiver.from_url"
+since = "0.9.0"
+replacement = "tstrans.shells.Receiver.open"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shells.MuxSender.from_url"
+since = "0.9.0"
+replacement = "tstrans.shells.MuxSender.open"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shells.DemuxReceiver.from_url"
+since = "0.9.0"
+replacement = "tstrans.shells.DemuxReceiver.open"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shells.MuxSender()"
+since = "0.9.0"
+replacement = "tstrans.shells.MuxSender.open; pkt_size is the ?pkt_size= URL key"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shells.DemuxReceiver()"
+since = "0.9.0"
+replacement = "tstrans.shells.DemuxReceiver.open"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+# ─── removed in 0.11.0: JVM shell classes of org.tstrans.srt and .rtp ────────
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.srt.Sender"
+since = "0.9.0"
+replacement = "org.tstrans.shells.Sender"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.srt.Receiver"
+since = "0.9.0"
+replacement = "org.tstrans.shells.Receiver"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.srt.MuxSender"
+since = "0.9.0"
+replacement = "org.tstrans.shells.MuxSender"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.srt.DemuxReceiver"
+since = "0.9.0"
+replacement = "org.tstrans.shells.DemuxReceiver"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.rtp.Sender"
+since = "0.9.0"
+replacement = "org.tstrans.rtp.Transport"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.rtp.Receiver"
+since = "0.9.0"
+replacement = "org.tstrans.rtp.RecvTransport"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.rtp.MuxSender"
+since = "0.9.0"
+replacement = "org.tstrans.shells.MuxSender"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.rtp.DemuxReceiver"
+since = "0.9.0"
+replacement = "org.tstrans.shells.DemuxReceiver"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
