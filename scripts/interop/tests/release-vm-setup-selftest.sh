@@ -24,6 +24,8 @@ check "setup: x86_64 keeps the Chrome .deb" release-vm-setup.sh 'google-chrome-s
 check "setup: stage is named browser" release-vm-setup.sh 'stage browser'
 check "soak-config stamps the arch"  soak.sh '--arg arch "$(uname -m)"'
 check "soak-config carries the key"  soak.sh 'arch: $arch'
+check "soak-config stamps a skipped version check" soak.sh '--argjson not_a_release "$([[ "${TSTRANS_NOT_A_RELEASE:-}" == 1 ]] && echo true || echo false)"'
+check "soak-config carries that key" soak.sh 'not_a_release: $not_a_release'
 check "provenance stamps host arch"  lib.sh '--arg arch "$(uname -m)"'
 check "provenance carries host.arch" lib.sh 'arch: $arch'
 check "setup: fetches the release tags" release-vm-setup.sh 'git fetch -q --tags origin'

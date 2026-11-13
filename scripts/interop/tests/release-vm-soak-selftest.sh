@@ -25,7 +25,8 @@ esac
 GH
 chmod +x "$tmp/bin/gh"
 
-printf '#!/usr/bin/env bash\necho stub\nexit 7\n' > "$tmp/repo/scripts/interop/soak.sh"
+# The stub says what it was given, so a case can see the variable reach it.
+printf '#!/usr/bin/env bash\necho "stub not_a_release=${TSTRANS_NOT_A_RELEASE:-}"\nexit 7\n' > "$tmp/repo/scripts/interop/soak.sh"
 git -C "$tmp/repo" init -q
 commit_version() {
   printf '[workspace.package]\nversion = "%s"\n' "$1" > "$tmp/repo/Cargo.toml"
@@ -104,6 +105,8 @@ grep -q stub "$tmp/out" && { echo "FAIL: the unswept launch reached the pre-flig
 
 TSTRANS_NOT_A_RELEASE=1 timeout 30 bash "$SCRIPT" launch "$S" --outdir "$tmp/out5" > "$tmp/out" 2>&1; rc=$?
 check "launch: TSTRANS_NOT_A_RELEASE=1 lets a run that is not release evidence start" "$rc" 7 'skipped (TSTRANS_NOT_A_RELEASE=1)'
+grep -qx 'stub not_a_release=1' "$tmp/out" ||
+  { echo "FAIL: launch: soak.sh did not see TSTRANS_NOT_A_RELEASE=1, so its config cannot record the skip"; fail=1; }
 
 git -C "$tmp/repo" tag -d v0.2.0 > /dev/null; git -C "$tmp/repo" tag -d v0.1.0 > /dev/null
 timeout 30 bash "$SCRIPT" launch "$S" --outdir "$tmp/out6" > "$tmp/out" 2>&1; rc=$?
