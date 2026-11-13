@@ -77,7 +77,7 @@ impl Muxer {
         let pcr_pid = self.slots[prog_idx].pcr_pid;
         let pcr = Pcr27mhz::from_pts(Pts90khz::new(pts_90khz));
         let mut pkt = [0u8; 188];
-        write_pcr_only_packet(&mut pkt, pcr_pid, pcr, &self.counters);
+        write_pcr_only_packet(&mut pkt, pcr_pid, pcr, false, &self.counters);
         self.queue.push_back(pkt);
         self.slots[prog_idx].pcr_last = Some(pcr.as_ticks());
     }

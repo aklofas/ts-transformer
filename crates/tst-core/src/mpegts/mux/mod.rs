@@ -325,7 +325,7 @@ impl Muxer {
             self.slots[prog_idx].pcr_last = Some(pcr.as_ticks());
             self::ts::AdaptationField {
                 pcr: Some(pcr),
-                random_access: false,
+                ..Default::default()
             }
         } else {
             self::ts::AdaptationField::default()
