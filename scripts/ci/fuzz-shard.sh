@@ -75,11 +75,15 @@ while read -r crate name <&3; do
     (cd "$dir" && cargo +nightly fuzz run "$name" ${corpus[@]+"${corpus[@]}"} -- "-max_total_time=$seconds") < /dev/null 2>&1 | tee "$log" || rc="${PIPESTATUS[0]}"
     elapsed=$(($(date +%s) - start))
     [ -d "$dir/artifacts/$name" ] && found="$(find "$dir/artifacts/$name" -type f | wc -l | tr -d ' ')"
-    if [ "$rc" -eq 0 ] && [ "$elapsed" -ge "$seconds" ]; then
+    # libFuzzer closes a run that reached its time with "Done N runs in S
+    # second(s)". That line is what says the target fuzzed for its time: the
+    # wall clock also holds the build of the crate's fuzz workspace.
+    fuzzed="$(sed -n 's/^.*Done [0-9][0-9]* runs in \([0-9][0-9]*\) second(s).*$/\1/p' "$log" | tail -n 1)"
+    if [ "$rc" -eq 0 ] && [ "${fuzzed:-0}" -ge "$seconds" ]; then
       outcome=ok
     elif [ "$rc" -eq 0 ]; then
       outcome=short
-      echo "$crate/$name exited 0 after $elapsed s, before its $seconds s were up" | tee -a "$log"
+      echo "$crate/$name exited 0 having fuzzed ${fuzzed:-0} s of its $seconds s" | tee -a "$log"
     elif [ "$found" -gt 0 ]; then
       outcome=crash
     fi
