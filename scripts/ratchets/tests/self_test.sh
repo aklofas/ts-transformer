@@ -1793,6 +1793,12 @@ expect "deprecations: a #[deprecated] item with no row fails" 1 dep
 expect_out "deprecations: the unlisted item" 'crates/tst-demo/src/lib.rs:13: #[deprecated] on `Unlisted` has no live row'
 expect_out "deprecations: the row to add" 'lang = "rust", symbol = its full name (it starts with `tst_demo` and ends with `Unlisted`)'
 dep_tree
+# A `//` inside a string literal is not a comment: the statement holding it
+# ends where its parentheses close, and the item below keeps its own name.
+printf '\npub fn url() -> String {\n    String::from("udp://239.0.0.1:5004")\n}\n\n#[deprecated(since = "0.10.0", note = "use `New`")]\npub type Later = New;\n' >> "$tmp/dep/crates/tst-demo/src/lib.rs"
+expect "deprecations: an item below a string that holds // fails by its own name" 1 dep
+expect_out "deprecations: the item below the string" '#[deprecated] on `Later` has no live row'
+dep_tree
 printf '\n[[deprecation]]\nlang = "rust"\nsymbol = "tst_demo::Phantom"\nsince = "0.10.0"\nreplacement = "tst_demo::New"\nearliest_removal = "0.12.0"\n' \
     >> "$tmp/dep/tests/coverage/deprecations.toml"
 expect "deprecations: a live row with no site fails" 1 dep
