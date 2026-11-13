@@ -21,10 +21,6 @@ use tst_core::mpegts::mux::MuxStreamKind;
 pub enum PassphraseError {
     #[error("passphrase length must be 10-80 bytes (got {0})")]
     InvalidLength(usize),
-    /// No longer returned: any UTF-8 passphrase of valid length is accepted.
-    /// Will be removed in the next breaking release.
-    #[error("passphrase contains non-printable ASCII")]
-    InvalidCharset,
     #[error("environment variable '{0}' is unset or empty")]
     EnvUnset(String),
     #[error("error reading passphrase file: {0}")]
@@ -36,10 +32,6 @@ pub enum PassphraseError {
 pub enum StreamIdError {
     #[error("stream ID exceeds 512 bytes (got {0})")]
     TooLong(usize),
-    /// No longer returned: stream IDs are UTF-8. Will be removed in the
-    /// next breaking release.
-    #[error("stream ID contains non-ASCII characters")]
-    NonAscii,
     /// libsrt hands a listener's hook the stream ID as a C string, so an ID
     /// holding a NUL byte could never be matched as the socket reports it.
     #[error("stream ID contains a NUL byte")]
@@ -792,10 +784,6 @@ impl From<RawError> for IoError {
         }
     }
 }
-
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtConnectError`")]
-pub type ConnectError = SrtConnectError;
 
 #[cfg(test)]
 // bindgen emits `SRT_REJECT_REASON_*` and `SRT_REJX_*` constants as

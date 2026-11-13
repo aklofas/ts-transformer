@@ -63,7 +63,6 @@ impl core::marker::Unpin for tst_udp::config::UdpConfig
 impl core::marker::UnsafeUnpin for tst_udp::config::UdpConfig
 impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::config::UdpConfig
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::config::UdpConfig
-pub type tst_udp::config::SocketConfig = tst_udp::config::UdpConfig
 pub mod tst_udp::error
 #[non_exhaustive] pub enum tst_udp::error::UdpError
 pub tst_udp::error::UdpError::InvalidConfig(alloc::string::String)
@@ -355,5 +354,4 @@ impl core::marker::Unpin for tst_udp::url::UdpUrl
 impl core::marker::UnsafeUnpin for tst_udp::url::UdpUrl
 impl core::panic::unwind_safe::RefUnwindSafe for tst_udp::url::UdpUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_udp::url::UdpUrl
-pub type tst_udp::SocketConfig = tst_udp::config::UdpConfig
 pub type tst_udp::UdpCancelHandle = tst_core::cancel::FlagCancel

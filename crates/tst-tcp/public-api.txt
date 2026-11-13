@@ -68,7 +68,6 @@ impl core::marker::Unpin for tst_tcp::config::TcpConfig
 impl core::marker::UnsafeUnpin for tst_tcp::config::TcpConfig
 impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::config::TcpConfig
 impl core::panic::unwind_safe::UnwindSafe for tst_tcp::config::TcpConfig
-pub type tst_tcp::config::SocketConfig = tst_tcp::config::TcpConfig
 pub mod tst_tcp::error
 #[non_exhaustive] pub enum tst_tcp::error::TcpError
 pub tst_tcp::error::TcpError::Closed
@@ -379,4 +378,3 @@ impl core::marker::Unpin for tst_tcp::builder::TcpTransportBuilder
 impl core::marker::UnsafeUnpin for tst_tcp::builder::TcpTransportBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_tcp::builder::TcpTransportBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_tcp::builder::TcpTransportBuilder
-pub type tst_tcp::SocketConfig = tst_tcp::config::TcpConfig

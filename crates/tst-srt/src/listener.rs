@@ -682,9 +682,6 @@ impl Drop for SrtListener {
         self.cancel.close_without_cancel();
     }
 }
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtListener`")]
-pub type Listener = SrtListener;
 
 #[cfg(test)]
 type ListenerHook = std::cell::Cell<Option<fn(srt_sys::SRTSOCKET)>>;

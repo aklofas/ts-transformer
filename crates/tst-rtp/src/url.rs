@@ -173,10 +173,6 @@ pub enum RtpUrlError {
     UnknownQueryKey { key: String },
 }
 
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `RtpUrlError`")]
-pub type UrlError = RtpUrlError;
-
 type Applied = Result<(), RtpUrlError>;
 
 impl RtpUrlError {

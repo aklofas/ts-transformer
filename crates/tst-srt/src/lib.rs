@@ -56,23 +56,7 @@ pub use transport::SrtTransport;
 // libsrt's `SRTSOCKET` integer handle); re-exported here so
 // `tst_srt::ResourceCancel` works without an explicit `tst_core` import.
 pub use tst_core::ResourceCancel;
-#[allow(deprecated)]
-pub use tst_core::SrtCancelHandle;
 pub use url::{SrtUrl, SrtUrlError};
-
-// The names these types had before the `Srt` prefix; removed in 0.10.0.
-#[allow(deprecated)]
-pub use builder::{ListenerBuilder, SocketBuilder};
-#[allow(deprecated)]
-pub use config::{ListenerConfig, SocketConfig};
-#[allow(deprecated)]
-pub use error::ConnectError;
-#[allow(deprecated)]
-pub use listener::Listener;
-#[allow(deprecated)]
-pub use socket::{Socket, Stats};
-#[allow(deprecated)]
-pub use url::UrlError;
 
 /// Number of `tst-srt` operations that have entered and not yet returned.
 /// **Unstable; exists so the exit tests can observe a parked thread.**

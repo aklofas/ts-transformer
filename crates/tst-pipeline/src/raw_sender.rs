@@ -95,10 +95,6 @@ pub struct RawSenderStats {
     pub packets_sent: u64,
 }
 
-/// The previous name of [`RawSenderStats`], kept for one release.
-#[deprecated(since = "0.9.0", note = "renamed to `RawSenderStats`")]
-pub type RawSendStats = RawSenderStats;
-
 /// One-shot byte-blind sender. See module docs for the no-buffering /
 /// no-framing contract.
 ///

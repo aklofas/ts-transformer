@@ -2,7 +2,6 @@ pub mod tst_pipeline
 pub use tst_pipeline::BrokenCause
 pub use tst_pipeline::RecvTransport
 pub use tst_pipeline::ResourceCancel
-pub use tst_pipeline::SrtCancelHandle
 pub use tst_pipeline::Transport
 pub use tst_pipeline::TransportCancel
 pub use tst_pipeline::TransportError
@@ -1630,7 +1629,6 @@ impl core::marker::Unpin for tst_pipeline::raw_receiver::RawReceiverStats
 impl core::marker::UnsafeUnpin for tst_pipeline::raw_receiver::RawReceiverStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::raw_receiver::RawReceiverStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::raw_receiver::RawReceiverStats
-pub type tst_pipeline::raw_receiver::RawRecvStats = tst_pipeline::raw_receiver::RawReceiverStats
 pub mod tst_pipeline::raw_sender
 #[non_exhaustive] pub enum tst_pipeline::raw_sender::RawSenderErrorSource
 pub tst_pipeline::raw_sender::RawSenderErrorSource::Transport(tst_core::transport::TransportError)
@@ -1731,7 +1729,6 @@ impl core::marker::Unpin for tst_pipeline::raw_sender::RawSenderStats
 impl core::marker::UnsafeUnpin for tst_pipeline::raw_sender::RawSenderStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::raw_sender::RawSenderStats
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::raw_sender::RawSenderStats
-pub type tst_pipeline::raw_sender::RawSendStats = tst_pipeline::raw_sender::RawSenderStats
 pub mod tst_pipeline::receiver
 pub mod tst_pipeline::receiver::sync
 pub enum tst_pipeline::receiver::sync::SyncState
@@ -3318,5 +3315,3 @@ impl tst_pipeline::shell_error::ShellError for tst_pipeline::sender::SenderError
 pub fn tst_pipeline::sender::SenderError::errno_code(&self) -> core::option::Option<i32>
 pub fn tst_pipeline::sender::SenderError::kind(&self) -> tst_pipeline::shell_error::ShellErrorKind
 pub type tst_pipeline::FactoryCancel = tst_core::cancel::CancelSlot
-pub type tst_pipeline::RawRecvStats = tst_pipeline::raw_receiver::RawReceiverStats
-pub type tst_pipeline::RawSendStats = tst_pipeline::raw_sender::RawSenderStats

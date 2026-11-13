@@ -942,10 +942,6 @@ fn unrecognized_key(key: &str) -> SrtUrlError {
     }
 }
 
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtUrlError`")]
-pub type UrlError = SrtUrlError;
-
 #[cfg(test)]
 mod tests {
     use super::*;

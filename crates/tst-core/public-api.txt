@@ -125,7 +125,6 @@ impl !core::panic::unwind_safe::RefUnwindSafe for tst_core::cancel::ResourceCanc
 impl !core::panic::unwind_safe::UnwindSafe for tst_core::cancel::ResourceCancel
 pub const tst_core::cancel::ACCEPT_POLL_INTERVAL: core::time::Duration
 pub const tst_core::cancel::CANCEL_POLL_INTERVAL: core::time::Duration
-pub type tst_core::cancel::SrtCancelHandle = tst_core::cancel::ResourceCancel
 pub mod tst_core::codec
 pub mod tst_core::codec::aac
 pub mod tst_core::codec::aac::latm
@@ -6948,7 +6947,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::mpegts::mux::VideoStr
 impl core::panic::unwind_safe::UnwindSafe for tst_core::mpegts::mux::VideoStreamHandle
 pub const tst_core::mpegts::mux::MAX_PROGRAMS: usize
 pub const tst_core::mpegts::mux::MAX_SUBTITLE_STREAMS_PER_PROGRAM: usize
-pub type tst_core::mpegts::mux::StreamKind = tst_core::mpegts::mux::MuxStreamKind
 pub mod tst_core::mpegts::stats
 #[non_exhaustive] pub enum tst_core::mpegts::stats::StreamCodecStats
 #[non_exhaustive] pub tst_core::mpegts::stats::StreamCodecStats::Audio
@@ -8337,4 +8335,3 @@ pub fn tst_core::cancel::FlagCancel::is_cancelled(&self) -> bool
 impl tst_core::transport::TransportCancel for tst_core::cancel::ResourceCancel
 pub fn tst_core::cancel::ResourceCancel::cancel(&self)
 pub fn tst_core::cancel::ResourceCancel::is_cancelled(&self) -> bool
-pub type tst_core::SrtCancelHandle = tst_core::cancel::ResourceCancel

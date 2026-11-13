@@ -32,10 +32,6 @@ pub struct RawReceiverStats {
     pub packets_received: u64,
 }
 
-/// The previous name of [`RawReceiverStats`], kept for one release.
-#[deprecated(since = "0.9.0", note = "renamed to `RawReceiverStats`")]
-pub type RawRecvStats = RawReceiverStats;
-
 /// Receive shell that emits one raw byte vec per transport message.
 ///
 /// `R` is any [`RecvTransport`] — typically `SrtTransport` for live

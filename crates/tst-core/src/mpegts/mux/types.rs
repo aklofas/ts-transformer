@@ -119,11 +119,6 @@ impl core::fmt::Display for MuxStreamKind {
     }
 }
 
-/// The previous name of [`MuxStreamKind`], kept for one release. The demux event's
-/// [`StreamKind`](crate::mpegts::demux::StreamKind) is a different type and keeps its name.
-#[deprecated(since = "0.9.0", note = "renamed to `MuxStreamKind`")]
-pub type StreamKind = MuxStreamKind;
-
 /// Field-name discriminator inside a teletext-stream configuration block;
 /// used by [`MuxError::InvalidTeletextField`](crate::error::MuxError::InvalidTeletextField) in place of `&'static str`
 /// tagging.

@@ -317,14 +317,6 @@ impl Default for SrtListenerConfig {
     }
 }
 
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtSocketConfig`")]
-pub type SocketConfig = SrtSocketConfig;
-
-/// The name this type had before it was renamed.
-#[deprecated(since = "0.9.0", note = "renamed to `SrtListenerConfig`")]
-pub type ListenerConfig = SrtListenerConfig;
-
 #[cfg(test)]
 mod tests {
     use super::*;
