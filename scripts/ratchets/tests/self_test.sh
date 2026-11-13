@@ -839,6 +839,40 @@ cbv_log 0.9.0 <<EOF
 $CBV_TAIL
 EOF
 expect "changelog version: a workspace version behind the previous release fails" 1 cbv
+for word in breaking Breaking "breaking, pre-1.0"; do
+cbv_log 0.10.0 <<EOF
+## [Unreleased]
+
+### Removed — tst-srt ($word)
+
+- the aliases
+$CBV_TAIL
+EOF
+expect "changelog version: a '($word)' heading is a breaking section too" 1 cbv
+done
+# A heading quoted in a fenced code block is an example, not a section.
+cbv_log 0.10.0 <<EOF
+## [Unreleased]
+
+### Changed — release tooling
+
+- The rail reads headings like these:
+
+  \`\`\`markdown
+  ## [1.2.3]
+  Next release: 0.10.0
+  ### Removed — tst-srt (BREAKING)
+  \`\`\`
+
+~~~~
+## [Unreleased]
+\`\`\`
+~~~
+### Removed — tst-core (BREAKING)
+~~~~
+$CBV_TAIL
+EOF
+expect "changelog version: headings inside a fenced code block are not read" 0 cbv
 
 # The line itself.
 cbv_log 0.10.0 <<EOF
