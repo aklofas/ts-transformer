@@ -30,7 +30,7 @@ import tstrans.srt
 from tstrans.exceptions import SrtError, SrtErrorKind
 from tstrans.srt import ManagedTransportStats
 
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 from test_exit_with_parked_shell import _run
 
 
@@ -90,7 +90,7 @@ def test_managed_sender_round_trip_via_loopback() -> None:
     """A `ManagedSender` to a live listener should send bytes that the
     paired `ManagedReceiver` reads back. Verifies the wrap doesn't add
     behavioral drift over the plain `Sender`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         # 1316 bytes = SRT_TS_BUNDLE_BYTES, a multiple of 188.
@@ -119,7 +119,7 @@ def test_managed_receiver_round_trip_via_loopback() -> None:
     """Symmetric of the above — same loopback pair, but driving from the
     receiver side: verify `recv_bytes` returns what the paired sender
     pushed."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         payload = b"\x47" + b"\xff" * 187  # 188 bytes, distinctive content
@@ -145,7 +145,7 @@ def test_managed_sender_accepts_reconnect_policy() -> None:
     accept the ReconnectPolicy PyClass directly. The initial connect doesn't trigger
     any reconnect, so the underlying counter isn't exposed on the
     sender (drift documented in module rustdoc)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     policy = tstrans.srt.ReconnectPolicy(max_attempts=3)
     assert policy.max_attempts == 3
 
@@ -182,7 +182,7 @@ def test_managed_sender_accepts_reconnect_policy() -> None:
 def test_managed_sender_default_policy() -> None:
     """Omitting `policy=` falls back to `ReconnectPolicy()` (the
     defaults). Verifies the kwarg is optional, not required."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
     receiver_box: list[tstrans.srt.ManagedReceiver] = []
@@ -218,7 +218,7 @@ def test_is_alive_flips_after_close() -> None:
     `is_alive() == True` while the inner transport is held, and
     `False` after `close()`. Verifies the close path also latches
     cancel on the recv side."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         assert sender.is_alive() is True
@@ -243,7 +243,7 @@ def test_managed_sender_rejects_listener_url() -> None:
     raises `SrtError(CONFIG_INVALID)` BEFORE any socket operation.
     This is checked up-front so the same misconfiguration doesn't
     quietly route into a reconnect loop."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     with pytest.raises(SrtError) as exc_info:
         tstrans.srt.ManagedSender.from_url(f"srt://127.0.0.1:{port}?mode=listener")
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
@@ -252,7 +252,7 @@ def test_managed_sender_rejects_listener_url() -> None:
 def test_managed_receiver_rejects_caller_url() -> None:
     """Symmetric: `ManagedReceiver.from_url` with `mode=caller` raises
     `SrtError(CONFIG_INVALID)`."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     with pytest.raises(SrtError) as exc_info:
         tstrans.srt.ManagedReceiver.from_url(f"srt://127.0.0.1:{port}?mode=caller")
     assert exc_info.value.kind == SrtErrorKind.CONFIG_INVALID
@@ -265,7 +265,7 @@ def test_managed_receiver_rejects_caller_url() -> None:
 
 def test_context_manager_closes() -> None:
     """`with ManagedSender.from_url(...) as s:` should close on exit."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
     receiver_box: list[tstrans.srt.ManagedReceiver] = []
@@ -300,7 +300,7 @@ def test_managed_sender_reconnect_stats_healthy_link() -> None:
     the typed `ManagedTransportStats` object with all counters at zero
     and `reconnecting` False — the deterministic minimum this test can
     assert without forcing an actual outage."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
         stats = sender.reconnect_stats()
@@ -319,7 +319,7 @@ def test_managed_sender_reconnect_stats_healthy_link() -> None:
 def test_managed_sender_reconnect_stats_closed_raises() -> None:
     """`reconnect_stats()` on a closed sender raises `SrtError(CLOSED)`,
     matching `socket_stats()` / `srt_stats()` symmetry."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     sender.close()
     receiver.close()
@@ -418,7 +418,7 @@ def test_reconnect_attempts_counts_an_attempt_that_has_not_succeeded() -> None:
     """`reconnect_attempts()` counts reconnect attempts, failed and pending
     ones included. After the peer leaves, the parked re-accept is attempt
     1 while no rebuild has succeeded, so a counter of successes reads 0."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     rescue = receiver.cancel_handle()
     first = threading.Event()

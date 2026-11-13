@@ -61,7 +61,7 @@ from tstrans.mpegts import (
 
 from _builders.mux_programs import video_klv_program as _video_klv_program
 from _builders.mux_programs import video_only_program as _video_only_program
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 
 # --------------------------------------------------------------------------- #
@@ -91,7 +91,7 @@ def test_full_pipeline_via_builder_socket_promotion() -> None:
     Push 5 IDR NALs + 3 KLV records; iterate the DemuxReceiver on a
     worker thread; assert at least one Sample / Metadata / ProgramMap
     event arrives before close races the drain."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
 
     # Listener side — bind first so the caller doesn't connection-refuse.
     listener = (
@@ -211,7 +211,7 @@ def test_from_url_shortcut_equivalent_to_builder_path() -> None:
     libsrt's framing layer can shuffle TS packets across the
     handshake — but does require that the receiver observes at least
     one of the same event categories on both paths."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
@@ -297,7 +297,7 @@ def test_encrypted_loopback_round_trip() -> None:
     # 24 bytes, well within libsrt's 10 to 80 byte range.
     passphrase = "hunter-too-long-thanks!!"
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
 
     listener = (
         tstrans.srt.Builder(f"srt://0.0.0.0:{port}?mode=listener")
@@ -363,7 +363,7 @@ def test_encrypted_handshake_fails_on_passphrase_mismatch() -> None:
     rejects with REJ_BADSECRET. Caller side surfaces this as
     `SrtError(CONNECT_FAILED)` (typed mapping from `tst_srt::AcceptError`
     /`ConnectError`)."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener = (
         tstrans.srt.Builder(f"srt://0.0.0.0:{port}?mode=listener")
         .passphrase("listener-side-passphrase-abc")
@@ -417,7 +417,7 @@ def test_managed_sender_receiver_with_reconnect_policy() -> None:
     3. A small `send_bytes` / `recv_bytes` round-trip succeeds through
        the managed wrappers — i.e. the managed layer doesn't add
        behavioral drift on the happy path."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     policy = tstrans.srt.ReconnectPolicy(max_attempts=3)
     assert policy.max_attempts == 3
 

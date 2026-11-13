@@ -22,7 +22,7 @@ import tstrans
 import tstrans.srt
 from tstrans.exceptions import SrtError, SrtErrorKind
 
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 
 # --------------------------------------------------------------------------- #
@@ -208,7 +208,7 @@ def test_listen_succeeds_on_kernel_picked_port() -> None:
 def test_connect_succeeds_against_live_listener() -> None:
     """Spin up a Listener on a free port via Builder; connect a second
     Builder caller-side; assert both side hold live Socket objects."""
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_b = tstrans.srt.Builder(f"srt://0.0.0.0:{port}?mode=listener")
     lst = listener_b.listen()
 

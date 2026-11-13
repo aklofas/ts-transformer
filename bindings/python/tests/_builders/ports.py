@@ -2,7 +2,8 @@
 
 Ask the OS for a free port, then release it immediately. Use the
 allocator matching the protocol under test — `free_tcp_port()` for a
-TCP listener/connect, `free_udp_port()` for a UDP bind. A port free
+TCP listener/connect, `free_udp_port()` for a UDP bind (SRT, RTP and
+RIST all bind UDP). A port free
 for one protocol is not guaranteed free for the other (the kernel
 tracks UDP/TCP ports in separate namespaces, so cross-protocol reuse
 is best-effort, not guaranteed). The tiny TOCTOU window between

@@ -27,7 +27,7 @@ import time
 import pytest
 
 from _builders.mux_programs import video_only_program as _video_only_program
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
 
@@ -61,7 +61,7 @@ def test_srt_mux_sender_finish_closes_and_is_idempotent() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
     from tstrans.mpegts import Pts90khz
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     box, errs, t = _srt_listener_peer(port)
     tx = shells.MuxSender.open(
         f"srt://127.0.0.1:{port}?mode=caller", _video_only_program()
@@ -93,7 +93,7 @@ def test_srt_mux_sender_finish_after_close_is_quiet() -> None:
     """
     import tstrans.srt as srt
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     box, errs, t = _srt_listener_peer(port)
     tx = shells.MuxSender.open(
         f"srt://127.0.0.1:{port}?mode=caller", _video_only_program()
@@ -115,7 +115,7 @@ def test_srt_managed_mux_sender_finish_closes() -> None:
     from tstrans.exceptions import SrtError, SrtErrorKind
     from tstrans.mpegts import Pts90khz
 
-    port = _free_tcp_port()
+    port = _free_udp_port()
     box, errs, t = _srt_listener_peer(port)
     tx = srt.ManagedMuxSender.from_url(
         f"srt://127.0.0.1:{port}?mode=caller", _video_only_program()

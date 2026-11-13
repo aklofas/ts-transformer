@@ -29,7 +29,7 @@ import tstrans.srt
 from tstrans.mpegts import DemuxEvent, Pts90khz
 
 from _builders.mux_programs import video_only_program as _video_only_program
-from _builders.ports import free_tcp_port as _free_tcp_port
+from _builders.ports import free_udp_port as _free_udp_port
 
 
 NAL_IDR = b"\x00\x00\x00\x01\x65\xBB"
@@ -56,7 +56,7 @@ def test_srt_demux_receiver_stats_no_deadlock_while_iterating() -> None:
     a daemon thread, main thread hammers the getters with a wall-clock
     deadline per call.
     """
-    port = _free_tcp_port()
+    port = _free_udp_port()
     listener_url = f"srt://:{port}?mode=listener"
     caller_url = f"srt://127.0.0.1:{port}?mode=caller"
 
