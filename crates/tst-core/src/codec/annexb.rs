@@ -58,28 +58,59 @@ impl Iterator for StartCodes<'_> {
 
     fn next(&mut self) -> Option<StartCode> {
         let buf = self.buf;
-        while self.pos + 3 <= buf.len() {
-            let i = self.pos;
-            if buf[i] == 0 && buf[i + 1] == 0 {
-                if buf[i + 2] == 1 {
-                    self.pos = i + 3;
-                    return Some(StartCode {
-                        prefix_start: i,
-                        data_start: i + 3,
-                    });
-                }
-                if i + 4 <= buf.len() && buf[i + 2] == 0 && buf[i + 3] == 1 {
-                    self.pos = i + 4;
-                    return Some(StartCode {
-                        prefix_start: i,
-                        data_start: i + 4,
-                    });
+        let Some(three) = find_three_byte_code(buf, self.pos) else {
+            self.pos = buf.len();
+            return None;
+        };
+        // A zero directly before `00 00 01` makes it the 4-byte form. That
+        // zero is never part of the previous code, which ends in `01`.
+        let prefix_start = if three > self.pos && buf[three - 1] == 0 {
+            three - 1
+        } else {
+            three
+        };
+        self.pos = three + 3;
+        Some(StartCode {
+            prefix_start,
+            data_start: three + 3,
+        })
+    }
+}
+
+/// Offset of the first `00 00 01` in `buf` that starts at or after `from`.
+///
+/// A start code starts at a zero byte, so a stretch with no zero byte holds
+/// no start. 32 bytes are ruled out with one test, and of a block that
+/// fails it only the eight-byte words that hold a zero are walked byte by
+/// byte. Coded video has few zero bytes, so most of an access unit is
+/// skipped; a buffer dense in zeros is walked byte by byte.
+fn find_three_byte_code(buf: &[u8], from: usize) -> Option<usize> {
+    const BLOCK: usize = 32;
+    const WORD: usize = 8;
+    /// Non-zero exactly when one of the eight bytes of `w` is zero.
+    fn zero_byte(w: u64) -> u64 {
+        w.wrapping_sub(0x0101_0101_0101_0101) & !w & 0x8080_8080_8080_8080
+    }
+
+    let starts_code = |at: usize| buf.get(at..at + 3) == Some(&[0, 0, 1][..]);
+    let mut pos = from;
+    while let Some(block) = buf.get(pos..pos + BLOCK) {
+        let zeros: [u64; BLOCK / WORD] = core::array::from_fn(|k| {
+            let word = &block[WORD * k..WORD * (k + 1)];
+            zero_byte(u64::from_le_bytes(word.try_into().expect("eight bytes")))
+        });
+        if zeros.iter().fold(0, |any, z| any | z) != 0 {
+            for (k, _) in zeros.iter().enumerate().filter(|(_, z)| **z != 0) {
+                let first = pos + WORD * k;
+                if let Some(at) = (first..first + WORD).find(|&at| starts_code(at)) {
+                    return Some(at);
                 }
             }
-            self.pos = i + 1;
         }
-        None
+        pos += BLOCK;
     }
+    // Less than a block is left.
+    (pos..buf.len()).find(|&at| starts_code(at))
 }
 
 /// Iterate the NAL units of an Annex-B buffer: each item is one NAL unit
