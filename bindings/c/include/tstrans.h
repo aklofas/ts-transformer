@@ -64,13 +64,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 29` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 30` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 29
+#define TST_ABI_VERSION_MINOR 30
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -5372,6 +5372,21 @@ tst_video_stream_handle_t tst_mux_config_add_video_stream(struct tst_mux_config_
  * programs). Default is 40 ms. Must be in range 1..=100.
  */
  int tst_mux_config_set_pcr_interval_ms(struct tst_mux_config_t *p, uint32_t ms);
+
+/**
+ * Set how far the PCR runs behind each access unit's decode time, in
+ * milliseconds (applies to all programs). Default is 100. Must be in range
+ * 0..=1000; an out-of-range value is reported when the muxer or sender is
+ * opened. The PCR is the decode time (the DTS when the push supplies one,
+ * else the PTS) minus this lead, and never decreases within a program. `0`
+ * writes PCR = decode time. Mirrors `MuxerConfig::pcr_lead_ms`.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a live pointer from `tst_mux_config_new` that no
+ * other thread is using. NULL returns `TST_E_INVALID_CONFIG`.
+ */
+ int tst_mux_config_set_pcr_lead_ms(struct tst_mux_config_t *p, uint32_t ms);
 
 /**
  * Pin the PCR PID for the specified program. By default the muxer uses the

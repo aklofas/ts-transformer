@@ -29,6 +29,8 @@ mod multi_program;
 mod multi_program_event_identity;
 #[path = "muxing/multi_stream.rs"]
 mod multi_stream;
+#[path = "muxing/pcr_lead.rs"]
+mod pcr_lead;
 #[path = "muxing/stats.rs"]
 mod stats;
 #[path = "muxing/demuxer_offline.rs"]
