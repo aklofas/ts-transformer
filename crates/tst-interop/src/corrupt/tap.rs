@@ -1692,11 +1692,11 @@ pub(super) mod tests {
     /// or a lost PCR-only catch-up packet, neither of which a receiver is
     /// required — or in tst-core's case even able — to report.
     ///
-    /// Driven over the `audio` profile because its third stream is what
-    /// makes the muxer emit adaptation-field-only catch-up packets on a
-    /// media PID (`mux/scheduling.rs`'s `pcr_only_due`); the assertion
-    /// below that all three shapes occurred is what keeps this from
-    /// passing vacuously.
+    /// Driven over the `audio` profile because its generator ticks the
+    /// program clock at every audio frame, which is what makes the muxer
+    /// emit adaptation-field-only PCR packets on a media PID; the
+    /// assertion below that all three shapes occurred is what keeps this
+    /// from passing vacuously.
     #[test]
     fn drop_is_detectable_only_on_a_payload_carrying_media_packet() {
         let p = crate::profiles::by_name("audio").unwrap();

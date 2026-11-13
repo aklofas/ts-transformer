@@ -262,13 +262,12 @@ fn adts_sample_rate(index: u8) -> Option<u32> {
 ///
 /// The lower bound checks the median, not the raw minimum: tst-core's
 /// muxer legitimately emits standalone PCR-only adaptation-field
-/// packets when a push to some OTHER (non-PCR) PID finds PCR overdue
-/// (`crates/tst-core/src/mpegts/mux/scheduling.rs`'s `pcr_only_due` /
-/// `maybe_emit_pcr_only`) — a real mechanism, not a bug, that keeps PCR
-/// within its H.222.0 Annex D ceiling when the caller pushes mostly to
-/// non-PCR PIDs. This can make individual intervals shorter than
-/// configured (the `audio` profile's ~46.9 Hz cadence exceeds the PCR
-/// PID's own natural push rate and triggers it repeatedly) — a
+/// packets, on a `Muxer::tick` and when a push on another PID finds the
+/// PCR stream silent
+/// (`crates/tst-core/src/mpegts/mux/scheduling.rs`). The `audio`
+/// profile's generator ticks the program clock at every audio frame
+/// (~46.9 Hz), so a tick between two video frames can find a PCR due
+/// and make an individual interval shorter than configured: a
 /// legitimate minority of short intervals, never the majority, so the
 /// median stays a reliable signal even when the raw minimum isn't. `min`
 /// is still reported in the failure detail for a human reader, purely

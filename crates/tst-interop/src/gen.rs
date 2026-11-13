@@ -101,6 +101,13 @@ pub fn run(
             Event::Audio { frame_idx } => {
                 if let Some(handle) = audio_handle {
                     let frame = fixtures::aac_frame(frame_idx);
+                    // The audio profile's source ticks the program clock at
+                    // every audio frame. Video at 30 fps needs no tick to
+                    // keep the PCR interval; the ticks are what put
+                    // PCR-only packets on this profile's wire, so the
+                    // harness and every peer tool keep reading them.
+                    mux.tick(mux_setup::PROG1_NUMBER, pts)
+                        .map_err(io::Error::other)?;
                     mux.push_audio_to(handle, pts, &frame)
                         .map_err(io::Error::other)?;
                 }

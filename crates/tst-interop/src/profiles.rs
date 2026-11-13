@@ -38,7 +38,10 @@ pub struct Profile {
     /// `Some` only when `video == VideoCodec::Av1`.
     pub av1_mode: Option<Av1CarriageMode>,
     pub klv: KlvMode,
-    /// AAC-ADTS second stream.
+    /// AAC-ADTS second stream. `gen` and `send` also tick the program clock
+    /// (`Muxer::tick`) at every audio frame of such a profile, which puts
+    /// PCR-only packets on its wire; the RTSP and HLS serving paths own
+    /// their muxer and do not.
     pub audio: bool,
     /// 1 or 2.
     pub programs: u8,

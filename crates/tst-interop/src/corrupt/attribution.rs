@@ -1253,8 +1253,8 @@ impl Attribution {
     ///
     /// The bound is not "one PCR interval": `since_pcr` counts packets
     /// since the last packet that CARRIED a PCR, and the muxer's PCR
-    /// cadence is not perfectly regular (`pcr_only_due` catch-up packets,
-    /// and the PCR PID's own push rate). Measured on the same smoke, it
+    /// cadence is not perfectly regular (PCR-only packets on a tick, and
+    /// the PCR PID's own push rate). Measured on the same smoke, it
     /// reached 302 packets on a 40 ms-PCR profile and 393 on a 100 ms
     /// one — roughly 2.3 nominal intervals — against the ~130 a
     /// one-interval model predicts. At the default `min_gap` of 1000 the
