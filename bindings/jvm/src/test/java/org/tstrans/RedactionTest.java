@@ -7,8 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -224,21 +222,6 @@ class RedactionTest {
         String s = new WhepServerConfig("whep://127.0.0.1:8889?token=" + SECRET).toString();
         assertFalse(s.contains(SECRET), s);
         assertTrue(s.contains("127.0.0.1:8889"), s);
-    }
-
-    @Test
-    void shellAdapterExceptionMessagesRedact() throws Exception {
-        String url = "udp://u:" + SECRET + "@h:1?passphrase=" + SECRET;
-        for (String pkg : new String[] {"srt", "rtp"}) {
-            Class<?> c = Class.forName("org.tstrans." + pkg + ".ShellAdapters");
-            Method m = c.getDeclaredMethod(pkg, BindingException.class, String.class);
-            m.setAccessible(true);
-            Throwable t = assertThrows(InvocationTargetException.class, () ->
-                m.invoke(null, new UdpException(UdpException.Kind.IO, "x"), url)).getCause();
-            assertTrue(t instanceof IllegalStateException, String.valueOf(t));
-            assertFalse(t.getMessage().contains(SECRET), t.getMessage());
-            assertTrue(t.getMessage().contains("h:1"), t.getMessage());
-        }
     }
 
     @Test

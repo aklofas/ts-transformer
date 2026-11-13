@@ -18,7 +18,7 @@ import org.tstrans.shells.SocketStats;
  * <p>{@link #listen(String)} / {@link #listen(String, H264DepayConfig)} — bind a
  * UDP socket to an {@code rtp://host:port?pt=N} URL and return a ready receiver.
  * The {@code ?pt=} query parameter is required (range 1..=127; value 33 is
- * rejected — use {@link DemuxReceiver} for MPEG-TS streams).
+ * rejected — use {@link org.tstrans.shells.DemuxReceiver} for MPEG-TS streams).
  *
  * <h3>Receiving</h3>
  *
@@ -81,7 +81,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * Bind to {@code url} with default {@link H264DepayConfig}.
      *
      * @param url {@code rtp://host:port?pt=N} where {@code N} is the dynamic
-     *     payload type (1..=127; 33 is rejected — use {@link DemuxReceiver} for MPEG-TS)
+     *     payload type (1..=127; 33 is rejected — use {@link org.tstrans.shells.DemuxReceiver} for MPEG-TS)
      * @return a bound {@code H264Receiver}
      * @throws RtpException one member per open-path cause:
      *     {@code MISSING_PAYLOAD_TYPE_PARAM} if {@code ?pt=} is absent,
@@ -243,7 +243,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      *
      * <p><b>Asymmetry note:</b> this method returns {@link SocketStats} directly,
      * matching {@code tst_rtp::H264Receiver::socket_stats()} and tst-py's
-     * {@code H264Receiver.socket_stats()}. The {@link DemuxReceiver} wrapper
+     * {@code H264Receiver.socket_stats()}. The {@link org.tstrans.shells.DemuxReceiver} wrapper
      * returns {@link TransportStats} (a combined view). The difference reflects
      * the Rust API shape, not a binding inconsistency.
      *

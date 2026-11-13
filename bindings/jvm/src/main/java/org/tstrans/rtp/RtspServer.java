@@ -239,7 +239,7 @@ public final class RtspServer extends NativeHandle {
     /**
      * Remove the mount at {@code path}, of any kind, and free the path. A publish
      * mount's publisher is sent the RTSP Notice 5402 and disconnected, and its
-     * {@link DemuxReceiver} reads end of stream ({@code recvEvent()} returns {@code
+     * {@link org.tstrans.shells.DemuxReceiver} reads end of stream ({@code recvEvent()} returns {@code
      * null}); the {@link PublishMount} stays usable for {@code stats()}. A local
      * mount's {@link MountHandle} keeps accepting pushes that reach nobody. This is
      * also how idle on-demand mounts are removed: they stay registered after their
