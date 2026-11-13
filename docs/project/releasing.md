@@ -438,11 +438,13 @@ step 3).
     `qualification.md`, `TREE-EQUIVALENCE.txt`, the SBOMs, `SHA256SUMS`, the
     build attestations and the C package. Download it from the run's
     artefacts. `TREE-EQUIVALENCE.txt` states the collector's decision: the
-    soaked and qualified commits (and the tag on a tag push), the number of
-    paths that supersede the soak (none for a GO), then, each under its own
-    heading, the generator paths and the version-sweep files the gate
-    admitted, the release documents that changed, and every path that
-    differs. `bash scripts/gen/qualification.sh tree-equivalence` prints the
+    qualified commit (and the tag on a tag push), then one block for the
+    x86_64 soak and one for the aarch64 soak, each with the commit that soak
+    ran on, the number of paths that supersede it (none for a GO), then,
+    each under its own heading, the generator paths and the version-sweep
+    files the gate admitted, the release documents that changed, and every
+    path that differs between that soak's commit and the qualified one.
+    `bash scripts/gen/qualification.sh tree-equivalence` prints the
     same text for the committed record. The record's
     `release_vm.soak.equivalence` lists the release documents
     (`changed_release_documents`), the generator paths
