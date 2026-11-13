@@ -366,6 +366,17 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/skip-ledger-sync.sh
 
+      - name: check-deprecations (every deprecation has a manifest row and a removal promise it can keep)
+        # Every #[deprecated], @Deprecated and Python deprecation marker has a
+        # live row in tests/coverage/deprecations.toml and vice versa; a
+        # removal version written in the code or the docs is the row's and is
+        # later than the workspace version; a removed row's name is gone and
+        # listed under a Removed heading of the CHANGELOG. Gated to
+        # linux-x86_64: a platform-independent source scan that parses the
+        # TOML with python3 >= 3.11.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/deprecations.sh
+
       - name: check-fixture-hashes (per-file SHA-256 closure)
         # Per-file SHA-256 closure over committed fixtures. Gated to linux-x86_64:
         # the hashes are platform-independent and sha256sum is GNU-only (absent on
