@@ -572,6 +572,32 @@ pub unsafe extern "C" fn tst_mux_config_set_pcr_interval_ms(
     })
 }
 
+/// Set how far the PCR runs behind each access unit's decode time, in
+/// milliseconds (applies to all programs). Default is 100. Must be in range
+/// 0..=1000; an out-of-range value is reported when the muxer or sender is
+/// opened. The PCR is the decode time (the DTS when the push supplies one,
+/// else the PTS) minus this lead, and never decreases within a program. `0`
+/// writes PCR = decode time. Mirrors `MuxerConfig::pcr_lead_ms`.
+///
+/// # Safety
+///
+/// `p` must be NULL or a live pointer from `tst_mux_config_new` that no
+/// other thread is using. NULL returns `TST_E_INVALID_CONFIG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_mux_config_set_pcr_lead_ms(
+    p: *mut TstMuxConfig,
+    ms: u32,
+) -> crate::c_types::c_int {
+    ffi_catch(TstError::Internal as i32, || {
+        let Some(cfg) = (unsafe { p.as_mut() }) else {
+            set_last_error(TstError::InvalidConfig, "null config pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        cfg.pcr_lead_ms = Some(ms);
+        0
+    })
+}
+
 /// Set the PAT/PMT re-emission interval for this mux config. Default 100 ms.
 /// Must be >= 10.
 #[unsafe(no_mangle)]

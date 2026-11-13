@@ -51,7 +51,7 @@ pub use streams::{
     tst_mux_config_add_subtitle_stream_dvb_teletext, tst_mux_config_add_subtitle_stream_webvtt,
     tst_mux_config_add_video_stream, tst_mux_config_set_av1_carriage,
     tst_mux_config_set_buffer_packets, tst_mux_config_set_pcr_interval_ms,
-    tst_mux_config_set_pcr_pid, tst_mux_config_set_psi_interval_ms,
+    tst_mux_config_set_pcr_lead_ms, tst_mux_config_set_pcr_pid, tst_mux_config_set_psi_interval_ms,
 };
 
 use crate::panic::ffi_catch;
@@ -98,6 +98,7 @@ pub struct TstMuxConfig {
     pub(crate) programs: Vec<MuxerProgramConfig>,
     /// Per-call interval overrides forwarded to `MuxerConfig` at build time.
     pub(crate) pcr_interval_ms: Option<u32>,
+    pub(crate) pcr_lead_ms: Option<u32>,
     pub(crate) psi_interval_ms: Option<u32>,
     pub(crate) buffer_packets: Option<usize>,
     /// AV1 PES carriage mode. `None` = use `MuxerConfig` default
@@ -116,6 +117,9 @@ impl TstMuxConfig {
         let mut cfg = MuxerConfig::default();
         cfg.programs = self.programs.clone();
         cfg.pcr_interval_ms = self.pcr_interval_ms.unwrap_or(40);
+        if let Some(ms) = self.pcr_lead_ms {
+            cfg.pcr_lead_ms = ms;
+        }
         cfg.psi_interval_ms = self.psi_interval_ms.unwrap_or(100);
         cfg.buffer_packets = self.buffer_packets.unwrap_or(10_000);
         if let Some(mode) = self.av1_carriage {
@@ -137,6 +141,7 @@ pub unsafe extern "C" fn tst_mux_config_new() -> *mut TstMuxConfig {
         Box::into_raw(Box::new(TstMuxConfig {
             programs: Vec::new(),
             pcr_interval_ms: None,
+            pcr_lead_ms: None,
             psi_interval_ms: None,
             buffer_packets: None,
             av1_carriage: None,

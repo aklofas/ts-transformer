@@ -1462,7 +1462,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Status:** Deferred. No C-ABI `H264Receiver` / `H264DepayConfig` /
   `H264Au` family exists; the H.264 ingest path is only available from
   Rust, Python, and JVM.
-- **Why deferred:** The C ABI grows additively (currently minor 29);
+- **Why deferred:** The C ABI grows additively (currently minor 30);
   adding an H.264-specific receive family would bump it further and
   requires cbindgen-friendly struct definitions (no opaque Rust types
   passed by value). The existing Python + JVM mirrors cover all current
