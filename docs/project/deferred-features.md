@@ -2000,8 +2000,10 @@ and the two below.
 ## TURN / STUN discovery for WebRTC
 
 - **Status:** Deferred. The server runs ICE-lite and offers host
-  candidates only: the bind address, or loopback on a wildcard bind, plus
-  `advertise=`. It neither discovers its public address through STUN nor
+  candidates only: the bind address plus `advertise=`, or on a wildcard
+  bind `advertise=` and loopback, or with no `advertise=` the local address
+  the viewer's request arrived on. It neither discovers its public address
+  through STUN nor
   relays through TURN, and offers no ICE over TCP.
 - **Why deferred:** A server with a reachable UDP port and a known public
   address needs neither; discovery and relay add a client to the media
@@ -2013,14 +2015,47 @@ and the two below.
 ## WebRTC `advertise=` as a list of IPs or names
 
 - **Status:** Deferred. `advertise=` takes one literal IP address. A server
-  reachable on two addresses (dual-homed, or a split-horizon deployment
+  that names an address and is reachable on two (a split-horizon deployment
   with an inside and an outside address) offers only one of them, and a
-  host name is refused at parse time.
+  host name is refused at parse time. A dual-homed host whose viewers reach
+  it directly needs no list: a wildcard bind with no `advertise=` offers
+  each viewer the address it reached.
 - **Why deferred:** One address serves the common NAT case, and every
   candidate the answer carries is checked by every viewer; names would add
   resolution to the bind path.
-- **Trigger to revisit:** A dual-homed or split-horizon deployment whose
-  viewers reach the server on different addresses.
+- **Trigger to revisit:** A split-horizon deployment whose viewers reach
+  the server on different addresses that the server cannot see (NAT on both
+  sides).
+
+## WebRTC exact media addressing on a wildcard bind
+
+- **Status:** Deferred. A wildcard bind with no `advertise=` offers each
+  viewer the address its request arrived on, but the media socket is one
+  wildcard UDP socket: a reply leaves by the kernel's route to the viewer,
+  with that route's source address. A viewer that reached another address
+  of the host (a second address of the same subnet on one interface, or a
+  LAN address reached through a VPN that ends on the host) gets replies
+  from an address it did not send to, and does not connect.
+- **Why deferred:** Replying from the address a datagram arrived on needs
+  that address for every datagram (`IP_PKTINFO` and its macOS and Windows
+  counterparts), which the standard library's sockets do not report: it
+  means per-platform socket code or a new dependency in the media loop.
+  One address per subnet on each interface, the usual host, needs none.
+- **Trigger to revisit:** A deployment whose viewers reach a wildcard-bound
+  server on an address that is not the source address of the route back to
+  them, and that cannot bind or `advertise=` that address.
+
+## WebRTC IPv4 viewers on a dual-stack `::` bind
+
+- **Status:** Deferred. A `::` bind serves IPv6 viewers. Where the OS makes
+  the socket dual-stack, an IPv4 viewer's request and media arrive on
+  IPv4-mapped IPv6 addresses, which the media path does not translate: the
+  viewer is offered IPv6 loopback only and does not connect.
+- **Why deferred:** The request that shaped the wildcard bind needed IPv4,
+  which a `0.0.0.0` bind serves; mapping addresses in both directions is a
+  separate change with its own tests on each OS.
+- **Trigger to revisit:** A deployment that has to serve IPv4 and IPv6
+  viewers from one server.
 
 ## WebRTC Opus RTP timestamps derived from the packet's TOC byte
 

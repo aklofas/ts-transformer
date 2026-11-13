@@ -23,9 +23,9 @@
 //!
 //! `--advertise <ip>` is the address viewers send their media to: the one
 //! they can reach, which behind NAT is the public address. With a wildcard
-//! bind (the default `0.0.0.0`) and no `--advertise`, viewers are offered
-//! only the loopback address, so the stream plays on this host alone. A
-//! `--whep` URL that binds one specific address offers that address.
+//! bind (the default `0.0.0.0`) and no `--advertise`, each viewer is offered
+//! the address of this host its request arrived on, which is enough on a
+//! LAN. A `--whep` URL that binds one specific address offers that address.
 //!
 //! # Feed it
 //!
@@ -89,8 +89,9 @@ fn usage() -> &'static str {
      \x20                  for the encoder (default srt://:9000?mode=listener)\n\
      --whep <url>       whep:// or wheps:// bind URL (default whep://0.0.0.0:8889)\n\
      --advertise <ip>   the address viewers send media to, added to the WHEP URL\n\
-     \x20                  as ?advertise=<ip>; with the default wildcard bind and\n\
-     \x20                  no --advertise, only this host can play\n\
+     \x20                  as ?advertise=<ip> (needed behind NAT); without it the\n\
+     \x20                  default wildcard bind offers each viewer the address\n\
+     \x20                  its request arrived on\n\
      --h265             the stream's video is H.265 (default H.264)\n\
      \n\
      Viewers POST their WHEP offer to http://<host>:8889/live. Press Enter to stop."

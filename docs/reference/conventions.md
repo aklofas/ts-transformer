@@ -429,7 +429,7 @@ rejected by `srt`, `tcps`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `udpsndbuf` (also `send_buffer_size`) | Kernel UDP send buffer | bytes | `srt` |
 | `x-recvtimeout` | Receive timeout | milliseconds | `srt` |
 | `x-sendtimeout` | Send timeout | milliseconds | `srt` |
-| `advertise` | Address offered to viewers as the media candidate | literal IP address; default the bind address | `whep(s)` |
+| `advertise` | Address offered to viewers as the media candidate | literal IP address; default the bind address, or on a wildcard bind the local address each viewer's request arrived on | `whep(s)` |
 | `cert` | Server certificate | PEM file path; a `wheps` server | `whep(s)` |
 | `cors_origin` | `Access-Control-Allow-Origin` value | origin or `*`; default `*` | `whep(s)` |
 | `key` | Server private key | PEM file path; a `wheps` server | `whep(s)` |

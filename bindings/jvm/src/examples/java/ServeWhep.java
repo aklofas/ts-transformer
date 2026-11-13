@@ -56,9 +56,10 @@ public final class ServeWhep {
         }
         Path input = Path.of(args[0]);
         // The URL carries every server setting. 127.0.0.1 keeps the example on
-        // this machine. To serve other machines, bind 0.0.0.0 and add
-        // advertise=<the address viewers reach>, or the answer offers them only
-        // loopback. A page on another origin also needs cors_origin=<origin>.
+        // this machine. To serve other machines, bind 0.0.0.0: each viewer is
+        // offered the address its request arrived on. Behind NAT, add
+        // advertise=<the public address>. A page on another origin also needs
+        // cors_origin=<origin>.
         String url = args.length == 2 ? args[1] : "whep://127.0.0.1:8080";
 
         // Ctrl-C runs shutdown hooks, not finally blocks: the hook asks the main

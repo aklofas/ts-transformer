@@ -25,7 +25,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mut socket, _peer) = listener.accept()?;
 
     // advertise= is the address viewers send media to: behind NAT, the public IP.
-    // The media port defaults to the signalling port, on UDP.
+    // On a LAN leave it out: a wildcard bind offers each viewer the address
+    // its request arrived on. The media port defaults to the signalling port, on UDP.
     let server = WhepServer::bind("whep://0.0.0.0:8889?advertise=203.0.113.5")?;
     let mut cfg = MountConfig::default(); // H.264, audio dropped, KLV in SEI + data channel
     cfg.kind = MountKind::Mp2t;
@@ -103,7 +104,7 @@ the data channel is emitted once, the SEI copy preferred; pass
   `wheps://0.0.0.0:8443?cert=server.crt&key=server.key&advertise=203.0.113.5`.
   Media stays on UDP under DTLS-SRTP either way.
 - **Open the UDP port.** Viewers reach `media_port` (default: the
-  signalling port number) over UDP at the advertised address. There is no
+  signalling port number) over UDP at the offered address. There is no
   TURN or STUN: a viewer that cannot reach that port cannot play.
 - **Token.** `token=s3cret` on the URL makes every request carry
   `Authorization: Bearer s3cret`; pass the same `token` to `playWhep`.

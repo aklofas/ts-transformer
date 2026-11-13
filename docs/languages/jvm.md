@@ -2225,9 +2225,12 @@ try (WhepServer server = WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.
   port is bound.
 - **`advertise=` behind NAT.** Viewers send media to the addresses the
   answer offers: the bind address, plus `advertise` when set. A bind on
-  `0.0.0.0` or `::` offers only loopback unless `advertise=` names the
-  address viewers reach, which behind NAT is the public IP. One UDP port
-  (`media_port`, default the signalling port) carries every viewer.
+  `0.0.0.0` or `::` with no `advertise` offers each viewer the local address
+  its request arrived on, so a server on a LAN needs no address in its URL
+  and follows an address change without a rebind. Behind NAT, or behind a
+  reverse proxy on the same host, set `advertise=` to the address viewers
+  reach (see [Network](/docs/guides/webrtc.md#network-ice-ports-tls)). One
+  UDP port (`media_port`, default the signalling port) carries every viewer.
 - **Mounts.** `MountConfig.defaults()` is an elementary H.264 mount with
   audio dropped and KLV in both carriages; build a `MountConfig` record to
   choose `MountKind.MP2T` (feed MPEG-TS with `pushTs`), H.265,
@@ -2325,9 +2328,10 @@ public final class ServeWhep {
         }
         Path input = Path.of(args[0]);
         // The URL carries every server setting. 127.0.0.1 keeps the example on
-        // this machine. To serve other machines, bind 0.0.0.0 and add
-        // advertise=<the address viewers reach>, or the answer offers them only
-        // loopback. A page on another origin also needs cors_origin=<origin>.
+        // this machine. To serve other machines, bind 0.0.0.0: each viewer is
+        // offered the address its request arrived on. Behind NAT, add
+        // advertise=<the public address>. A page on another origin also needs
+        // cors_origin=<origin>.
         String url = args.length == 2 ? args[1] : "whep://127.0.0.1:8080";
 
         // Ctrl-C runs shutdown hooks, not finally blocks: the hook asks the main
