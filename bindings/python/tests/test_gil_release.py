@@ -221,10 +221,12 @@ def _muxer_config_video_only() -> MuxerConfig:
 
 
 def _huge_h264_nal(mb: int = 30) -> bytes:
-    """`mb` MB Annex-B NAL — a 30 MB push_video call takes ~50ms.
+    """`mb` MB Annex-B NAL with no zero byte after its start code.
 
-    Bigger gives the probe a longer window: 5 MB took ~13ms; 30 MB
-    lands at ~50ms on fast hardware; 50 MB at ~75ms; 100 MB at ~150ms.
+    The muxer's start-code scan skips such a body 32 bytes at a time, so a
+    push is mostly the copy into the PES: about 4 ms for 30 MB and 13 ms
+    for 100 MB on a dev box once the muxer's buffers have grown. Bigger, or
+    more calls, gives the probe a longer window.
     """
     return b"\x00\x00\x00\x01\x09" + b"\xA0" * (mb * 1024 * 1024)
 
@@ -268,17 +270,17 @@ def _build_ts_stream(target_mb: int = 50) -> bytes:
 
 @pytest.mark.timeout(20)
 def test_push_video_releases_gil() -> None:
-    """One push_video of a 100 MB NAL must let other Python threads run."""
+    """push_video of a 100 MB NAL must let other Python threads run."""
     m = Muxer(_muxer_config_video_only())
-    # One 100 MB call clocks ~125 ms on a dev box and ~150 ms elsewhere;
-    # three calls (the muxer queue drained between them, outside the probed
-    # window) put the combined window at ~3x the 100ms _MIN_WORKLOAD_MS
-    # cushion, so a fast runner cannot finish under it.
+    # One 100 MB call clocks ~13 ms on a dev box after the first two, which
+    # grow the muxer's buffers; twenty calls (the muxer queue drained between
+    # them, outside the probed window) put the combined window at ~3x the
+    # 100ms _MIN_WORKLOAD_MS cushion, so a fast runner cannot finish under it.
     nal = _huge_h264_nal(100)
     drain = bytearray(188 * 100_000)
 
     with _GilProbe() as probe:
-        for i in range(3):
+        for i in range(20):
             pts = Pts90khz.from_raw(900_000 + i * 90_000)
             probe.call(m.push_video, nal, pts=pts)
             while m.pull(drain) > 0:
@@ -366,13 +368,13 @@ def test_push_video_to_with_dts_releases_gil() -> None:
     handle = handles[0]
     nal = _huge_h264_nal()
 
-    # A single push_video_to_with_dts call clocked at ~26ms on a Ryzen 9
-    # 7950X3D; fourteen calls (queue drained between them, outside the probed
+    # A single push_video_to_with_dts call clocks ~4 ms on a dev box;
+    # seventy-five calls (queue drained between them, outside the probed
     # window, so the packet buffer never overflows) put the combined window
     # at ~3x the 100ms _MIN_WORKLOAD_MS cushion.
     drain = bytearray(188 * 100_000)
     with _GilProbe() as probe:
-        for i in range(14):
+        for i in range(75):
             ts = Pts90khz.from_raw(900_000 + i * 90_000)
             probe.call(m.push_video_to_with_dts, handle, nal, pts=ts, dts=ts)
             while m.pull(drain) > 0:
