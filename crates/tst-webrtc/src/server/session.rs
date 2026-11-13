@@ -139,6 +139,8 @@ pub(crate) struct Viewer {
     /// at most [`MAX_PRECONNECT_SOURCES`]; a datagram from a further
     /// source is dropped.
     pub(crate) sources: Vec<SocketAddr>,
+    /// The session's local ICE candidates: where its datagrams arrive.
+    pub(crate) candidates: Vec<SocketAddr>,
     /// The source of the datagram str0m was last handed; the pin is taken
     /// from it when str0m reports the session connected.
     pub(crate) last_source: Option<SocketAddr>,
@@ -187,6 +189,7 @@ impl Viewer {
             stats: SessionCounters::default(),
             remote: None,
             sources: Vec::new(),
+            candidates: Vec::new(),
             last_source: None,
             dtls_source: None,
             pinned: None,
