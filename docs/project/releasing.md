@@ -248,11 +248,10 @@ step 3).
      browser starts, and the drill gets three of each). A browser failure shows as a failed
      `whep_counters_present_whep` or `whep_frames_continuous_whep` verdict in the
      drill's `report soak` output, and the `whep-viewer` log under
-     `~/soak-drill/logs/` says why. If the browser fails on aarch64, the
-     48-hour arm64 run launches with
-     `release-vm-soak.sh launch <full sha> --outdir ~/soak-X.Y.Z --wait-marker ~/ci-green -- --no-whep`
-     and its row's `legs` say so. The
-     five-leg rule below applies to the x86 release soak only. The arm64
+     `~/soak-drill/logs/` says why. A browser that fails on aarch64 is a
+     finding to settle before the 48-hour run: from 0.11.0 the arm64 soak
+     gates the release under the five-leg rule below, as the x86 one does,
+     so a run launched with `--no-whep` does not pass the gate. The arm64
      stress VM runs `stress.sh` as its own run; the soak VM never doubles
      as the stress VM.
    - On the VM, `release-vm-soak.sh launch <full sha> --outdir ~/soak-X.Y.Z
@@ -281,15 +280,16 @@ step 3).
      directory, plus the arm64 soak and arm64 stress directories and the x86 stress
      directory when one ran. Write a checksum list for each on the VM and check the
      copies against it.
-   - The `tst-interop report soak` that closes the x86 run must print
-     `overall_pass=true`, and the script exits 0. Any other verdict is a
-     finding, not a rerun. The gate does not enforce this: it judges the
+   - The `tst-interop report soak` that closes each run, x86 and arm64,
+     must print `overall_pass=true`, and the script exits 0. Any other
+     verdict is a finding, not a rerun. The gate does not enforce this: on
+     each architecture it judges the
      newest release-length soak that stands for the qualified tree and holds
      only a newer failure against it, so a passing rerun on the same tree
      would supersede an older failure. A rerun without a fix is a runbook
      breach the gate cannot see; the failed run keeps its archive row either
-     way. An arm64 failure is recorded in its row as a
-     finding and does not block the release.
+     way. From 0.11.0 an arm64 failure blocks the release as an x86 one
+     does; in 0.10.0 it was recorded in its row as a finding only.
    - A commit that replaces the frozen one restarts the whole step on the
      same VM (and on the arm64 VMs): `release-vm-soak.sh stop` on the running soak, then setup's
      checkout stage (or `release-vm-corpus.sh` on the new sha, which checks
@@ -315,7 +315,8 @@ step 3).
      arm64 stress run, with `arch = "aarch64"`. A soak or stress row dated
      2026-11-04 or later must carry `arch`; the validator refuses one without it, and an older row
      without it is an x86_64 row. The arm64 soak row needs `expected_duration_s` like the x86
-     one (the validator refuses a soak row without it);
+     one (the validator refuses a soak row without it), and from 0.11.0 the
+     gate holds it to the same duration and the same five legs;
    - `overall_pass` exactly as the harness printed it. A failed harness
      verdict stays `false`; the maintainer's review goes in
      `[archive.waiver]` (the verdicts it covers, the reason, the reviewer,
@@ -371,7 +372,7 @@ step 3).
     push or dispatch run rather than a pull-request run, no workflow
     definition under `.github/` or `scripts/gen/` differs from the qualified
     commit, and the interop census matches `expectations.toml`. `release=true` adds the release gate: GO
-    also needs a passing soak archive that declares at least the required
+    also needs, on x86_64 and from 0.11.0 on aarch64 too, a passing soak archive that declares at least the required
     duration (`[soak] required_duration_s`, 172 800 s) and all
     five legs (srt, rist, rtsp-publish, rtsp-publish-es, whep), and a
     newest corpus archive on a tree equivalent to the qualified commit, which passed, swept the declared
@@ -380,23 +381,27 @@ step 3).
     `docs/` and `tests/coverage/evidence-archives.toml` between the soaked
     tree and this commit. The JavaScript under `docs/webrtc/` is not a
     document, because the soak's browser leg runs it. A `v*` tag push
-    applies the same gate. The gate
-    judges the newest x86_64 release soak that stands for the commit. A newer failed
+    applies the same gate. On each architecture the gate
+    judges the newest release soak that stands for the commit, from that
+    architecture's rows only. A newer failed
     soak of any declared duration on the same or an equivalent tree is a
     reason for NO-GO, while a newer passing short run never replaces the
     release-length pass. The newest corpus row on an equivalent tree is the one
     judged, so a newer failed corpus run blocks and a newer passing one
-    replaces an earlier failure. The record also names the newest
-    arm64 soak that stands for the tree as `release_vm.arm_soak`. In 0.10.0
-    it is recorded, not gating; when it starts to gate is still to be
-    decided. Without
+    replaces an earlier failure. The arm64 soak gates from 0.11.0: the
+    record names the aarch64 archive it judged as `release_vm.arm_soak`,
+    says so with `release_vm.arm_soak_gates`, and prefixes its reasons
+    `soak (aarch64)`; a release with no aarch64 soak archive for the tree,
+    or one that is failed, waived, short, leg-short or superseded, is a
+    NO-GO. The 0.10.0 record has no `arm_soak_gates`: its arm64 soak was
+    recorded beside the x86 one and did not gate. Without
     the input the record is a mid-cycle one and states that the gate was not
     applied.
 
     A **NO-GO** record lists its reasons (a failed or missing leg, a stale
     `ci` result, a dirty tree, an unexpected interop failure, a break the
     version number does not admit, a missing,
-    failed, short, superseded or leg-short soak archive, a missing or
+    failed, short, superseded or leg-short soak archive on either architecture, a missing or
     failed corpus archive, a corpus run that swept a different file
     count). A real leg failure is a finding to fix, not a rerun; rerun
     only a failure that belongs to a ledgered flake class.

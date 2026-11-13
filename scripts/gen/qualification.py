@@ -3,9 +3,10 @@
 
   collect   --artifacts DIR --out FILE [--root DIR] [--release] [--tag NAME]
             read a release-qualify run's artefacts; --release also requires the
-            release soak and the corpus archives for the qualified tree, each with
-            a raw pass (a waived archive is recorded, never admitted); --tag names
-            the tag a tag push qualified
+            release soak on x86_64 and on aarch64 and the corpus archive for the
+            qualified tree, each with a raw pass (a waived archive is recorded,
+            never admitted), and judges the semver report as a release's; --tag
+            names the tag a tag push qualified
   render    --json FILE (--write | --check) [--root DIR]   the generated blocks in
             docs/project/validation-evidence.md and docs/project/1.0-exit-criteria.md
   checksums --dir DIR                                  write DIR/SHA256SUMS
@@ -505,134 +506,146 @@ def _raw_verdict_reason(kind, entry):
     return None
 
 
-def release_vm(root, sha, archives, release, expected_files, required_s):
-    """The release gate: the chosen soak archive (see _pick_soak) must stand for
-    `sha`, have passed and declared at least the required duration, and a passing corpus archive must
-    exist for the qualified tree. "Stands for" means the archive's tree is `sha` or
-    differs from it only in release documents; negative evidence follows the same
-    rule for both kinds: a newer failed soak, or a newer failed corpus row, on an
-    equivalent tree counts against the archive (rows are ordered by date, then by
-    file position, the later row being the newer). A waived archive never passes:
-    a release needs the harness's own pass. Outside release mode the same entries, and their
-    dispositions, are recorded for information and `reasons` stays empty."""
+def _judge_soak(root, sha, soaks, memo, required_s, kind):
+    """One architecture's release soak: the archive among `soaks` the gate judges (see
+    _pick_soak; None when there is none) and the reasons it does not pass, each
+    beginning with `kind`. The archive must stand for `sha`, have passed, declare at
+    least the required duration and have run the release legs; a newer failed run on
+    an equivalent tree counts against it."""
+    if not soaks:
+        return None, ["%s: no release soak archive for this tree (%s)" % (kind, str(sha)[:12])]
+    soak = _pick_soak(root, sha, soaks, memo, required_s)
+    if soak["git_error"] is not None:
+        return soak, ["%s: git could not resolve %s: %s" % (kind, soak["tree"], soak["git_error"])]
     reasons = []
+    # The record states what changed between the soaked and the qualified
+    # tree, not only that nothing else did: the release documents, the
+    # generators and the version sweep. A superseded soak has no such
+    # lists: None, never an empty one.
+    docs = None if soak["changed_paths"] else []
+    admitted = {"changed_generators": None, "version_sweep": None}
+    if not soak["changed_paths"]:
+        admitted["changed_generators"] = []
+    if soak["tree"] != sha and not soak["changed_paths"]:
+        docs = changed_release_documents(root, soak["tree"], sha)
+        admitted = admitted_changes(root, soak["tree"], sha)
+    soak["equivalence"] = dict({"soaked": soak["tree"], "qualified": sha,
+                                "changed_release_documents": docs}, **admitted)
+    if soak["changed_paths"]:
+        reasons.append("%s: archive %s is superseded by %d changed path(s) outside the release documents"
+                       % (kind, soak["id"], soak["changed_paths"]))
+    r = _raw_verdict_reason(kind, soak)
+    if r:
+        reasons.append(r)
+    # A failed run on the same tree after the chosen one, of any declared
+    # duration, is evidence against it; a newer pass never replaces it.
+    order = {id(a): i for i, a in enumerate(soaks)}
+    chosen = next(a for a in soaks if a["id"] == soak["id"])
+    key = lambda a: (a["date"], order[id(a)])
+    for a in _by_date(soaks):
+        if disposition(a) == "pass" or key(a) <= key(chosen):
+            continue
+        eq = _stands_for(root, sha, a["tree"], memo)
+        if eq is None:
+            reasons.append("%s: git could not resolve %s: %s" % (kind, a["tree"], memo[a["tree"]][1]))
+        elif eq:
+            reasons.append("%s: archive %s, a newer run on an equivalent tree, recorded overall_pass=false"
+                           % (kind, a["id"]))
+    if soak["expected_duration_s"] < required_s:
+        reasons.append("%s: archive %s declares %s s, below the required %d"
+                       % (kind, soak["id"], soak["expected_duration_s"], required_s))
+    elif set(soak.get("legs") or ()) != set(RELEASE_SOAK_LEGS):
+        reasons.append("%s: archive %s ran legs %s; the release soak needs %s"
+                       % (kind, soak["id"], ", ".join(soak.get("legs") or ()) or "none (undeclared)",
+                          ", ".join(RELEASE_SOAK_LEGS)))
+    return soak, reasons
+
+
+def release_vm(root, sha, archives, release, expected_files, required_s):
+    """The release gate: on each architecture the chosen soak archive (see _judge_soak)
+    must stand for `sha`, have passed and declared at least the required duration, and a
+    passing corpus archive must exist for the qualified tree. "Stands for" means the
+    archive's tree is `sha` or differs from it only in release documents; negative
+    evidence follows the same rule for both kinds: a newer failed soak, or a newer
+    failed corpus row, on an equivalent tree counts against the archive (rows are
+    ordered by date, then by file position, the later row being the newer). A waived
+    archive never passes: a release needs the harness's own pass. The aarch64 soak is
+    judged by the rules of the x86_64 one and its reasons say `soak (aarch64)`.
+    Outside release mode the x86_64 soak and the corpus entry, and their dispositions,
+    are recorded for information, `reasons` stays empty and no aarch64 soak is read."""
     memo = {}
-    soak, corpus = None, None
+    corpus = None
     soaks = [a for a in archives if a["kind"] == "soak" and a.get("arch") in (None, "x86_64")]
     arm_soaks = [a for a in archives if a["kind"] == "soak" and a.get("arch") == "aarch64"]
     _check_sha(sha)
-    if not soaks:
-        reasons.append("soak: no release soak archive for this tree (%s)" % str(sha)[:12])
-    else:
-        soak = _pick_soak(root, sha, soaks, memo, required_s)
-        if soak["git_error"] is not None:
-            reasons.append("soak: git could not resolve %s: %s" % (soak["tree"], soak["git_error"]))
+    soak, reasons = _judge_soak(root, sha, soaks, memo, required_s, "soak")
+    if soak is not None and soak["git_error"] is None:
+        candidates, unresolved = [], []
+        for a in archives:
+            if a["kind"] != "corpus":
+                continue
+            eq = _stands_for(root, sha, a["tree"], memo)
+            if eq is None:
+                unresolved.append(a)
+            elif eq:
+                candidates.append(a)
+        c = _newest(candidates)
+        # An unresolvable tree matters only where the row could be the newest
+        # equivalent one and would fail: a pass, or a row older than the
+        # chosen candidate, cannot change the verdict.
+        cpos = {id(a): i for i, a in enumerate(archives)}
+        for a in unresolved:
+            if disposition(a) != "pass" and (c is None or (a["date"], cpos[id(a)]) > (c["date"], cpos[id(c)])):
+                reasons.append("corpus: git could not resolve %s: %s" % (a["tree"], memo[a["tree"]][1]))
+        if c is None:
+            reasons.append("corpus: no corpus archive on a tree equivalent to the qualified commit %s" % soak["tree"][:12])
         else:
-            # The record states what changed between the soaked and the qualified
-            # tree, not only that nothing else did: the release documents, the
-            # generators and the version sweep. A superseded soak has no such
-            # lists: None, never an empty one.
-            docs = None if soak["changed_paths"] else []
-            admitted = {"changed_generators": None, "version_sweep": None}
-            if not soak["changed_paths"]:
-                admitted["changed_generators"] = []
-            if soak["tree"] != sha and not soak["changed_paths"]:
-                docs = changed_release_documents(root, soak["tree"], sha)
-                admitted = admitted_changes(root, soak["tree"], sha)
-            soak["equivalence"] = dict({"soaked": soak["tree"], "qualified": sha,
-                                        "changed_release_documents": docs}, **admitted)
-            if soak["changed_paths"]:
-                reasons.append("soak: archive %s is superseded by %d changed path(s) outside the release documents"
-                               % (soak["id"], soak["changed_paths"]))
-            r = _raw_verdict_reason("soak", soak)
+            corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"],
+                      "note": c["note"], "waiver": c.get("waiver"), "disposition": disposition(c)}
+            corpus.update({k: c[k] for k in CORPUS_COUNTS if k in c})
+            corpus[BASELINE_KEY] = c.get(BASELINE_KEY)
+            # A sweep with no baseline compares nothing: a release corpus
+            # run is judged against the previous release's digests.
+            if not c.get(BASELINE_KEY):
+                reasons.append("corpus: archive %s names no baseline (%s): a release corpus run "
+                               "compares with the previous release's baseline" % (c["id"], BASELINE_KEY))
+            # The release cites the counts; a row without them is hand-typed.
+            if any(k not in c for k in CORPUS_COUNTS):
+                reasons.append("corpus: archive %s records no counts; the release gate needs the "
+                               "eight the corpus tool's archive row carries" % c["id"])
+            r = _raw_verdict_reason("corpus", corpus)
             if r:
                 reasons.append(r)
-            # A failed run on the same tree after the chosen one, of any declared
-            # duration, is evidence against it; a newer pass never replaces it.
-            order = {id(a): i for i, a in enumerate(soaks)}
-            chosen = next(a for a in soaks if a["id"] == soak["id"])
-            key = lambda a: (a["date"], order[id(a)])
-            for a in _by_date(soaks):
-                if disposition(a) == "pass" or key(a) <= key(chosen):
-                    continue
-                eq = _stands_for(root, sha, a["tree"], memo)
-                if eq is None:
-                    reasons.append("soak: git could not resolve %s: %s" % (a["tree"], memo[a["tree"]][1]))
-                elif eq:
-                    reasons.append("soak: archive %s, a newer run on an equivalent tree, recorded overall_pass=false"
-                                   % a["id"])
-            if soak["expected_duration_s"] < required_s:
-                reasons.append("soak: archive %s declares %s s, below the required %d"
-                               % (soak["id"], soak["expected_duration_s"], required_s))
-            elif set(soak.get("legs") or ()) != set(RELEASE_SOAK_LEGS):
-                reasons.append("soak: archive %s ran legs %s; the release soak needs %s"
-                               % (soak["id"], ", ".join(soak.get("legs") or ()) or "none (undeclared)",
-                                  ", ".join(RELEASE_SOAK_LEGS)))
-            candidates, unresolved = [], []
-            for a in archives:
-                if a["kind"] != "corpus":
-                    continue
-                eq = _stands_for(root, sha, a["tree"], memo)
-                if eq is None:
-                    unresolved.append(a)
-                elif eq:
-                    candidates.append(a)
-            c = _newest(candidates)
-            # An unresolvable tree matters only where the row could be the newest
-            # equivalent one and would fail: a pass, or a row older than the
-            # chosen candidate, cannot change the verdict.
-            cpos = {id(a): i for i, a in enumerate(archives)}
-            for a in unresolved:
-                if disposition(a) != "pass" and (c is None or (a["date"], cpos[id(a)]) > (c["date"], cpos[id(c)])):
-                    reasons.append("corpus: git could not resolve %s: %s" % (a["tree"], memo[a["tree"]][1]))
-            if c is None:
-                reasons.append("corpus: no corpus archive on a tree equivalent to the qualified commit %s" % soak["tree"][:12])
-            else:
-                corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"],
-                          "note": c["note"], "waiver": c.get("waiver"), "disposition": disposition(c)}
-                corpus.update({k: c[k] for k in CORPUS_COUNTS if k in c})
-                corpus[BASELINE_KEY] = c.get(BASELINE_KEY)
-                # A sweep with no baseline compares nothing: a release corpus
-                # run is judged against the previous release's digests.
-                if not c.get(BASELINE_KEY):
-                    reasons.append("corpus: archive %s names no baseline (%s): a release corpus run "
-                                   "compares with the previous release's baseline" % (c["id"], BASELINE_KEY))
-                # The release cites the counts; a row without them is hand-typed.
-                if any(k not in c for k in CORPUS_COUNTS):
-                    reasons.append("corpus: archive %s records no counts; the release gate needs the "
-                                   "eight the corpus tool's archive row carries" % c["id"])
-                r = _raw_verdict_reason("corpus", corpus)
-                if r:
-                    reasons.append(r)
-                if all(k in c for k in CORPUS_COUNTS):
-                    if c["replay_paths"] != 5:
-                        reasons.append("corpus: archive %s replayed %s path(s), not 5"
-                                       % (c["id"], c["replay_paths"]))
-                    if c["files"] != expected_files:
-                        reasons.append("corpus: archive %s swept %d files; the release corpus has %d"
-                                       % (c["id"], c["files"], expected_files))
-                    if not c["replay_files"] > 0:
-                        reasons.append("corpus: archive %s replayed no files" % c["id"])
-                    for k in ("parse_failures", "invariant_failures"):
-                        if c[k] != 0:
-                            reasons.append("corpus: archive %s has %s = %s" % (c["id"], k, c[k]))
-                    if c["replay_failed"] != 0:
-                        reasons.append("corpus: archive %s has %s failed replay(s)"
-                                       % (c["id"], c["replay_failed"]))
-    # The worse of the two; an entry the gate could not choose counts as a failure.
-    worst = max(((e or {}).get("disposition", "fail") for e in (soak, corpus)), key=DISPOSITION_ORDER.index)
+            if all(k in c for k in CORPUS_COUNTS):
+                if c["replay_paths"] != 5:
+                    reasons.append("corpus: archive %s replayed %s path(s), not 5"
+                                   % (c["id"], c["replay_paths"]))
+                if c["files"] != expected_files:
+                    reasons.append("corpus: archive %s swept %d files; the release corpus has %d"
+                                   % (c["id"], c["files"], expected_files))
+                if not c["replay_files"] > 0:
+                    reasons.append("corpus: archive %s replayed no files" % c["id"])
+                for k in ("parse_failures", "invariant_failures"):
+                    if c[k] != 0:
+                        reasons.append("corpus: archive %s has %s = %s" % (c["id"], k, c[k]))
+                if c["replay_failed"] != 0:
+                    reasons.append("corpus: archive %s has %s failed replay(s)"
+                                   % (c["id"], c["replay_failed"]))
+    judged = [soak, corpus]
+    if release:
+        arm, arm_reasons = _judge_soak(root, sha, arm_soaks, memo, required_s, "soak (aarch64)")
+        judged.append(arm)
+        reasons += arm_reasons
+    # The worst of them; an entry the gate could not choose counts as a failure.
+    worst = max(((e or {}).get("disposition", "fail") for e in judged), key=DISPOSITION_ORDER.index)
     gate = {"release_mode": bool(release), "soak": soak, "corpus": corpus, "disposition": worst,
             "reasons": reasons if release else []}
     if release:
         gate["required_duration_s"] = required_s
-        # An arm64 soak is recorded beside the release soak and never gates: whatever
-        # its verdict, it adds no reason.
-        arm = None
-        for a in _by_date(arm_soaks):
-            if _stands_for(root, sha, a["tree"], memo):
-                arm = _soak_entry(root, sha, a, memo)
-                break
         gate["arm_soak"] = arm
+        # A record without this key was written while the arm64 soak was recorded
+        # beside the release soak and never gated.
+        gate["arm_soak_gates"] = True
     return gate
 
 
@@ -982,27 +995,34 @@ def _verdict_word(e):
     return "FAIL, waived" if e.get("waiver") else "FAIL"
 
 
+def _gate_soak_text(s):
+    """A soak entry as the release-gate line names it."""
+    if s is None:
+        return "none"
+    if s.get("git_error") is not None:
+        return "%s (tree %s unresolved)" % (s["id"], s["tree"][:12])
+    if s.get("changed_paths"):
+        return "%s (superseded by %d code changes)" % (s["id"], s["changed_paths"])
+    legs = (", legs " + ", ".join(s["legs"])) if s.get("legs") else ""
+    return "%s (tree %s, %s s%s, %s)" % (s["id"], s["tree"][:12], s.get("expected_duration_s"), legs,
+                                        _verdict_word(s))
+
+
 def _release_line(gate):
     """One line naming what the release gate saw. A record written before release
-    mode existed has no `release_vm` and reads as not applied."""
-    s = (gate or {}).get("soak")
-    if s is None:
-        soak = "none"
-    elif s.get("git_error") is not None:
-        soak = "%s (tree %s unresolved)" % (s["id"], s["tree"][:12])
-    elif s.get("changed_paths"):
-        soak = "%s (superseded by %d code changes)" % (s["id"], s["changed_paths"])
-    else:
-        legs = (", legs " + ", ".join(s["legs"])) if s.get("legs") else ""
-        soak = "%s (tree %s, %s s%s, %s)" % (s["id"], s["tree"][:12], s.get("expected_duration_s"), legs,
-                                            _verdict_word(s))
+    mode existed has no `release_vm` and reads as not applied; one written before
+    the arm64 soak gated has no `arm_soak_gates` and names that soak as recorded."""
+    soak = _gate_soak_text((gate or {}).get("soak"))
     if not (gate or {}).get("release_mode"):
         return "Release gate: not applied (not a release qualification); newest soak archive for this tree: %s." % soak
     c = gate.get("corpus")
     corpus = "none" if c is None else "%s (%s)" % (c["id"], _verdict_word(c))
     arm = gate.get("arm_soak")
-    arm_text = "" if arm is None else "; arm64 soak %s, %s (recorded, not gating)" % (_soak_desc(arm), _verdict_word(arm))
-    return "Release gate: soak %s, corpus %s%s." % ("none" if s is None else soak, corpus, arm_text)
+    if gate.get("arm_soak_gates"):
+        arm_text = "; arm64 soak %s (gating, as the x86_64 soak)" % _gate_soak_text(arm)
+    else:
+        arm_text = "" if arm is None else "; arm64 soak %s, %s (recorded, not gating)" % (_soak_desc(arm), _verdict_word(arm))
+    return "Release gate: soak %s, corpus %s%s." % (soak, corpus, arm_text)
 
 
 def _release_only(gate):
@@ -1244,8 +1264,12 @@ def render_exit_criteria(rec, archives, census, required_s):
                                    needs + " " if kind == "soak" and needs else "", status)
             out.append(_today(anchor, label, body))
     arm_soak = gate.get("arm_soak")
-    arm_note = ("An arm64 soak is recorded: %s, %s. " % (_soak_desc(arm_soak), _raw_text(arm_soak))
-                if arm_soak else "No arm64 soak is recorded for this tree. ")
+    if arm_soak and gate.get("arm_soak_gates"):
+        arm_note = "The arm64 release soak, a gate beside the x86_64 one: %s, %s. " % (
+            _soak_desc(arm_soak), _raw_text(arm_soak))
+    else:
+        arm_note = ("An arm64 soak is recorded: %s, %s. " % (_soak_desc(arm_soak), _raw_text(arm_soak))
+                    if arm_soak else "No arm64 soak is recorded for this tree. ")
     arm = next((c for c in census if c.get("arch") == "linux-aarch64"), None)
     if arm is None:
         body = "Status: open: the committed qualification record carries no linux-aarch64 census."
@@ -1450,12 +1474,33 @@ def _listed(heading, paths):
     return ["%s: %s" % (heading, len(paths) or "none")] + list(paths)
 
 
+def _arm_soak_lines(gate):
+    """The aarch64 soak of a release record, for the tree-equivalence text: nothing
+    for a record that read none."""
+    if "arm_soak" not in gate:
+        return []
+    arm, gates = gate["arm_soak"], gate.get("arm_soak_gates")
+    if arm is None:
+        return ["the release gate found no aarch64 soak archive for this tree" if gates
+                else "no aarch64 soak archive is recorded for this tree"]
+    if not gates:
+        verdict = "recorded beside the x86_64 soak, not gating"
+    elif arm.get("git_error") is not None:
+        verdict = "judged by the release gate: git could not resolve its tree (%s)" % arm["git_error"]
+    elif arm.get("changed_paths"):
+        verdict = "judged by the release gate: %d path(s) supersede it" % arm["changed_paths"]
+    else:
+        verdict = "judged by the release gate: no path supersedes it"
+    return ["aarch64 soak archive %s (%s) on tree %s, %s" % (arm["id"], _raw_text(arm), arm["tree"], verdict)]
+
+
 def tree_equivalence_text(rec, all_paths):
     """The bundle's TREE-EQUIVALENCE.txt: the record's decision on whether its soak
     archive stands for the qualified commit. The paths that supersede the archive come
     first (none for a GO), then what the gate admits and why (the generators, a
     version sweep), then the release documents, then `all_paths`, every path git
-    reports between the two commits. A list the record does not have is said to be
+    reports between the two commits. The lists are those of the x86_64 soak; the
+    aarch64 soak has one line. A list the record does not have is said to be
     missing, never printed as empty."""
     gate = rec.get("release_vm") or {}
     soak = gate.get("soak")
@@ -1467,11 +1512,14 @@ def tree_equivalence_text(rec, all_paths):
     if soak is None:
         out.append("the release gate found no soak archive for this tree" if gate.get("release_mode")
                    else "no soak archive is recorded for this tree")
+    else:
+        out.append("soak archive %s (%s), %s" % (
+            soak["id"], _raw_text(soak),
+            "judged by the release gate" if gate.get("release_mode")
+            else "recorded for information: this is not a release qualification"))
+    out.extend(_arm_soak_lines(gate))
+    if soak is None:
         return "\n".join(out) + "\n"
-    out.append("soak archive %s (%s), %s" % (
-        soak["id"], _raw_text(soak),
-        "judged by the release gate" if gate.get("release_mode")
-        else "recorded for information: this is not a release qualification"))
     out.append("")
     if soak.get("git_error") is not None:
         out.append("git could not resolve the soaked tree (%s), so nothing was compared" % soak["git_error"])

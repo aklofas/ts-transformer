@@ -443,7 +443,10 @@ run was built from. A release soak declares at least `[soak]
 required_duration_s` (172 800 s, 48 hours, from 0.10.0; the 0.9.0 rows declare
 259 200 s);
 the release qualification accepts no shorter run. A run on aarch64 is marked
-in its Note; the column set is the same.
+in its Note; the column set is the same. From 0.11.0 the release
+qualification requires a passing soak on each architecture, judged by the
+same rules; the 0.10.0 aarch64 run was recorded beside the x86_64 one and
+did not gate.
 
 | Id | Dates (UTC) | Tree | Declared duration | Verdict | Note |
 | --- | --- | --- | --- | --- | --- |
