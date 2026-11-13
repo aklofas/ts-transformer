@@ -878,8 +878,9 @@ generation ends, so follow a live generation in that file.
 Two stamps record the host: `soak-config.json` carries `arch` and
 `provenance.json` carries `host.arch`, both the output of `uname -m`
 (`x86_64`, `aarch64`). The maintainer copies `arch` from the stamp into an archive row by hand; a soak or stress row dated 2026-11-04 or later must carry it, x86_64 included. An
-aarch64 soak or stress row is recorded beside the x86_64 one and never
-gates the 0.9.1 release.
+aarch64 stress row is recorded beside the x86_64 one and never gates. An
+aarch64 soak row gates a release from 0.11.0, by the rules of the x86_64
+one; in 0.10.0 it was recorded only.
 
 `release-vm-setup.sh` installs Google Chrome on x86_64 and Chromium (snap)
 on aarch64. Before an aarch64 run, drill the browser first with the

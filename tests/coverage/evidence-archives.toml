@@ -16,8 +16,9 @@
 # whep. The judge validates only the declared legs, so the release gate requires the
 # chosen release soak to name all five. Soak rows only.
 # A soak or stress row may carry `arch`, `x86_64` or `aarch64` (`uname -m`); a row dated
-# 2026-11-04 or later must, and an older row without it is x86_64. The release gate's GO
-# reads x86_64 soak rows only; an aarch64 soak row is recorded beside it.
+# 2026-11-04 or later must, and an older row without it is x86_64. The release gate judges
+# each architecture's soak rows on their own; from 0.11.0 a release needs a passing
+# release soak on both (in 0.10.0 the aarch64 soak row was recorded beside the x86_64 one).
 # Rendered into the qualification block by scripts/gen/qualification.sh.
 schema_version = 0
 

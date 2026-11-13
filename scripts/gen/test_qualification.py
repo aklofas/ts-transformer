@@ -1841,7 +1841,7 @@ class WaiverTests(unittest.TestCase):
         rows = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False, legs=FIVE)
                              + '[archive.waiver]\nverdicts = ["a", "b"]\nreason = "harness"\n'
                                'reviewer = "maintainer"\ndate = "2026-10-28"\nfixed_in = "0.9.1"\n',
-                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS), ARM_OK)
         tmp = tempfile.mkdtemp()
         art, root = build(tmp, archives=rows)
         with at_version():
