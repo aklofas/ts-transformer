@@ -64,11 +64,14 @@ pub(crate) struct AdaptationField {
     pub random_access: bool,
     /// PCR to embed. None = no PCR field.
     pub pcr: Option<Pcr27mhz>,
+    /// Set the `discontinuity_indicator` flag: this packet carries the first
+    /// PCR of a new system time base (H.222.0 §2.4.3.5).
+    pub discontinuity: bool,
 }
 
 impl AdaptationField {
     pub fn is_empty(&self) -> bool {
-        !self.random_access && self.pcr.is_none()
+        !self.random_access && self.pcr.is_none() && !self.discontinuity
     }
 
     /// Number of bytes the adaptation field occupies excluding stuffing,
@@ -164,10 +167,11 @@ pub(crate) fn write_packet(
         cursor += 1;
 
         if af_min > 0 {
-            // Flags byte: discontinuity=0, random_access, ES_priority=0,
+            // Flags byte: discontinuity, random_access, ES_priority=0,
             // PCR_flag, OPCR=0, splicing=0, transport_private=0, AF_extension=0
-            let flags: u8 =
-                ((adaptation.random_access as u8) << 6) | ((adaptation.pcr.is_some() as u8) << 4);
+            let flags: u8 = ((adaptation.discontinuity as u8) << 7)
+                | ((adaptation.random_access as u8) << 6)
+                | ((adaptation.pcr.is_some() as u8) << 4);
             out[cursor] = flags;
             cursor += 1;
 
@@ -215,6 +219,7 @@ pub(crate) fn write_pcr_only_packet(
     out: &mut [u8; 188],
     pid: u16,
     pcr: Pcr27mhz,
+    discontinuity: bool,
     counters: &ContinuityCounters,
 ) {
     debug_assert!(pid <= 0x1FFF, "PID out of range");
@@ -240,9 +245,9 @@ pub(crate) fn write_pcr_only_packet(
 
     // adaptation_field_length: 188 - 4 (header) - 1 (length byte itself) = 183.
     out[4] = 183;
-    // Flags byte: discontinuity=0, random_access=0, ES_priority=0,
+    // Flags byte: discontinuity, random_access=0, ES_priority=0,
     // PCR_flag=1, OPCR=0, splicing=0, transport_private=0, AF_extension=0.
-    out[5] = 0x10;
+    out[5] = 0x10 | ((discontinuity as u8) << 7);
     write_pcr(&mut out[6..12], pcr);
     // Stuffing (0xFF) fills the remainder per ITU-T H.222.0 §2.4.3.4.
     for byte in &mut out[12..188] {
@@ -267,6 +272,7 @@ fn write_pcr(out: &mut [u8], pcr: Pcr27mhz) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mpegts::common::Pts90khz;
 
     #[test]
     fn header_layout_basic() {
@@ -355,7 +361,7 @@ mod tests {
         let mut buf = [0u8; 188];
         let af = AdaptationField {
             random_access: true,
-            pcr: None,
+            ..Default::default()
         };
         write_packet(&mut buf, 0x1011, true, af, &payload, &mut cc);
         // afc = 11
@@ -373,8 +379,8 @@ mod tests {
         let mut buf = [0u8; 188];
         let pcr = Pcr27mhz::new(0); // base=0, ext=0
         let af = AdaptationField {
-            random_access: false,
             pcr: Some(pcr),
+            ..Default::default()
         };
         write_packet(&mut buf, 0x1011, false, af, &payload, &mut cc);
         // afc = 11
@@ -504,7 +510,7 @@ mod tests {
 
         // A PCR-only heartbeat on the same PID must repeat CC = 2.
         let mut hb = [0u8; 188];
-        write_pcr_only_packet(&mut hb, 0x200, pcr, &cc);
+        write_pcr_only_packet(&mut hb, 0x200, pcr, false, &cc);
         // afc = 0b10 (adaptation-only, no payload)
         assert_eq!(hb[3] >> 4, 0b10, "afc must be adaptation-only (0b10)");
         assert_eq!(
@@ -515,11 +521,53 @@ mod tests {
 
         // A second consecutive heartbeat must also repeat CC = 2 (non-mutating).
         let mut hb2 = [0u8; 188];
-        write_pcr_only_packet(&mut hb2, 0x200, pcr, &cc);
+        write_pcr_only_packet(&mut hb2, 0x200, pcr, false, &cc);
         assert_eq!(
             hb2[3] & 0x0F,
             2,
             "consecutive heartbeats must all repeat same CC"
         );
+    }
+
+    /// H.222.0 §2.4.3.4/§2.4.3.5: discontinuity_indicator is bit 7 of the
+    /// adaptation-field flags byte.
+    #[test]
+    fn adaptation_flags_carry_discontinuity() {
+        let mut c = ContinuityCounters::new();
+        let mut pkt = [0u8; 188];
+        let af = AdaptationField {
+            random_access: true,
+            pcr: Some(Pcr27mhz::from_pts(Pts90khz::new(91_000))),
+            discontinuity: true,
+        };
+        write_packet(&mut pkt, 0x100, true, af, &[0xAA; 10], &mut c);
+        assert_eq!(pkt[3] & 0x30, 0x30);
+        assert_eq!(pkt[5], 0x80 | 0x40 | 0x10);
+        assert_eq!(&pkt[6..12], &[0x00, 0x00, 0xB1, 0xBC, 0x7E, 0x00]); // base 91 000, ext 0
+    }
+
+    #[test]
+    fn discontinuity_alone_makes_a_non_empty_adaptation_field() {
+        let mut c = ContinuityCounters::new();
+        let mut pkt = [0u8; 188];
+        let af = AdaptationField {
+            discontinuity: true,
+            ..Default::default()
+        };
+        let r = write_packet(&mut pkt, 0x100, true, af, &[0xAA; 184], &mut c);
+        assert_eq!(r.payload_consumed, 182); // 184 - length byte - flags byte
+        assert_eq!(pkt[4], 1); // adaptation_field_length: the flags byte only
+        assert_eq!(pkt[5], 0x80);
+    }
+
+    #[test]
+    fn pcr_only_packet_sets_discontinuity_when_asked() {
+        let c = ContinuityCounters::new();
+        let mut pkt = [0u8; 188];
+        let pcr = Pcr27mhz::from_pts(Pts90khz::new(91_000));
+        write_pcr_only_packet(&mut pkt, 0x100, pcr, true, &c);
+        assert_eq!(pkt[5], 0x90);
+        write_pcr_only_packet(&mut pkt, 0x100, pcr, false, &c);
+        assert_eq!(pkt[5], 0x10);
     }
 }
