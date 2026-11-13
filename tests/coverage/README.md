@@ -28,9 +28,10 @@ Every test (or test job) maps to one of these tiers:
 
 Notes:
 - The Rust integration tests under `crates/*/tests/<domain>/` and the unit
-  tests are **Tier A**. The fuzz compile-check is Tier A; long fuzz runs are
-  Tier B (see `fuzz-targets.toml`; maintainer-local before tagging).
-- ffmpeg/tsduck round-trip tests and the 1-hour soak are **Tier B**.
+  tests are **Tier A**. The fuzz compile-check is Tier A; the fuzz runs are
+  Tier B (every target in `fuzz-targets.toml`, 60 s each in a qualification
+  run and 600 s each in a release qualification).
+- ffmpeg/tsduck round-trip tests and the release soak are **Tier B**.
 - Tests marked `#[ignore]` for an external decoder, a real encoder, or a
   diagnostic dump are **Tier C** (catalogued in `skip-ledger.toml`).
 
