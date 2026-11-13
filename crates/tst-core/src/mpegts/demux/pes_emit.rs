@@ -2701,6 +2701,63 @@ mod tests {
         assert_eq!(sample_count(&ev, 0x104), 2, "{ev:?}");
     }
 
+    /// The continuity counter of PID 0x1FFF is never checked, but a PMT that
+    /// names 0x1FFF as an elementary PID still gets its payload routed.
+    #[test]
+    fn a_declared_null_pid_is_routed_without_a_continuity_check() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x104,
+            &[(0x80, 0x1FFF, &[])],
+        );
+        let mut pkts = pes_to_packets(
+            0x1FFF,
+            0,
+            &pes_bytes(0xBD, Some(90_000), None, false, &[0x55; 20], true),
+        );
+        // A counter that skips: a gap on any other PID.
+        pkts.extend(pes_to_packets(
+            0x1FFF,
+            7,
+            &pes_bytes(0xBD, Some(93_000), None, false, &[0x66; 20], true),
+        ));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(sample_count(&ev, 0x1FFF), 2, "{ev:?}");
+        assert!(
+            !ev.iter()
+                .any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            "{ev:?}"
+        );
+    }
+
+    /// H.222.0 §2.4.3.3 allows one duplicate of a packet. A third identical
+    /// packet is a discontinuity like any gap and its payload is routed, so
+    /// the record position is unknown when its PES is walked.
+    #[test]
+    fn latm_carry_is_forgotten_at_a_third_identical_packet() {
+        let mut d = latm_demuxer();
+        // One whole record, then 20 of the next record's 43 bytes: the carry
+        // owes 23 bytes after this PES.
+        let mut es = loas_record(10);
+        es.extend_from_slice(&loas_record(40)[..20]);
+        let pkts = pes_to_packets(
+            0x104,
+            0,
+            &pes_bytes(0xC0, Some(90_000), None, false, &es, true),
+        );
+        assert_eq!(pkts.len(), 1);
+        // The original, its one legal duplicate, and a third copy.
+        feed_packets(&mut d, &[pkts[0], pkts[0], pkts[0]]).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        // A carry kept across the jump would look for a syncword 23 bytes
+        // into the replayed PES, inside a record body.
+        assert_eq!(latm_framing_count(&ev), 0, "{ev:?}");
+        assert_eq!(sample_count(&ev, 0x104), 2, "{ev:?}");
+    }
+
     /// A syncword candidate scanned after a gap is trusted only when a whole
     /// record follows it inside the PES: a false `56 E0` pair in a record's
     /// tail, whose bogus length runs past the PES, must not become the carry.
