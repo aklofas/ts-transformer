@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Self-test of scripts/ci/fuzz-shard.sh against stub `cargo` and `rustc`: no
+# fuzzer is built. The stub's `fuzz run` behaves by the target's name:
+#   ok_*     runs for its -max_total_time, exits 0
+#   crash_*  writes artifacts/<name>/crash-1, exits 77
+#   error_*  exits 101 and writes no artefact (a build failure)
+#   short_*  exits 0 at once
+# Asserts each outcome in the result file, that the shard goes on after a
+# failure, that a crashing target's artefact files and each failed target's
+# output are kept, that a target whose artefact directory holds files from an
+# earlier run is refused and not run, that a crate whose lockfile check fails
+# runs no target, and that a shard with nothing to run writes no result. Each
+# result is then merged with scripts/ci/fuzz_shards.py.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+fail() { echo "FAIL: $*"; exit 1; }
+
+mkdir "$TMP/bin"
+cat > "$TMP/bin/cargo" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = "+nightly" ] || { echo "stub cargo: expected +nightly, got $1" >&2; exit 2; }
+shift
+case "$1 ${2:-}" in
+  "metadata --locked")
+    case "$PWD" in */crates/"${STUB_LOCK_FAIL:-none}"/fuzz) echo "error: the lock file needs to be updated" >&2; exit 101 ;; esac
+    echo '{}' ;;
+  "fuzz --version") echo "cargo-fuzz 0.0.0-stub" ;;
+  "fuzz run")
+    name="$3"; shift 3
+    echo "$PWD run $name $*" >> "$TMP/cargo.log"
+    secs="$(printf '%s\n' "$@" | sed -n 's/^-max_total_time=//p')"
+    case "$name" in
+      ok_*) sleep "$secs" ;;
+      crash_*) mkdir -p "artifacts/$name"; echo boom > "artifacts/$name/crash-1"
+               echo "thread panicked at fuzz_targets/$name.rs" >&2; exit 77 ;;
+      error_*) echo "error: could not compile $name" >&2; exit 101 ;;
+      short_*) : ;;
+      *) echo "stub cargo: unknown target $name" >&2; exit 2 ;;
+    esac ;;
+  *) echo "stub cargo: unexpected call: $*" >&2; exit 2 ;;
+esac
+STUB
+printf '#!/usr/bin/env bash\necho "rustc 0.0.0-stub"\n' > "$TMP/bin/rustc"
+chmod +x "$TMP/bin/cargo" "$TMP/bin/rustc"
+export TMP PATH="$TMP/bin:$PATH"
+
+# make_tree <dir> <crate/target>... : a tree with the two scripts, a manifest
+# naming the targets and a fuzz workspace per crate.
+make_tree() {
+  local tree="$1"; shift
+  mkdir -p "$tree/scripts/ci" "$tree/tests/coverage"
+  cp "$ROOT/scripts/ci/fuzz-shard.sh" "$ROOT/scripts/ci/fuzz_shards.py" "$tree/scripts/ci/"
+  echo "schema_version = 0" > "$tree/tests/coverage/fuzz-targets.toml"
+  local t
+  for t in "$@"; do
+    printf '\n[[target]]\ncrate = "%s"\nname = "%s"\n' "${t%%/*}" "${t##*/}" >> "$tree/tests/coverage/fuzz-targets.toml"
+    mkdir -p "$tree/crates/${t%%/*}/fuzz"
+    : > "$tree/crates/${t%%/*}/fuzz/Cargo.toml"
+  done
+}
+# shard <tree> <shard> <shards> <out> : runs the tree's copy, prints its exit code.
+shard() {
+  local rc=0
+  GITHUB_OUTPUT="$4.output" GITHUB_STEP_SUMMARY="$4.summary" \
+    bash "$1/scripts/ci/fuzz-shard.sh" "$2" "$3" 2 "$4" > "$4.log" 2>&1 || rc=$?
+  echo "$rc"
+}
+outcomes() { jq -r '[.targets[] | "\(.crate)/\(.name)=\(.outcome):\(.artefacts)"] | join(" ")' "$1"; }
+merged() { # <tree> <shards> <results-dir> : prints "<rc> <targets_run> <crashes>"
+  local rc=0
+  mkdir -p "$3"
+  python3 "$1/scripts/ci/fuzz_shards.py" merge --root "$1" --shards "$2" --seconds 2 --results "$3" \
+    --out "$3/fuzz.json" > "$3/merge.log" 2>&1 || rc=$?
+  echo "$rc $(jq -r '"\(.targets_run) \(.crashes)"' "$3/fuzz.json" 2>/dev/null || echo "- -")"
+}
+
+# Case 1: one shard holding every outcome, one target of it with an artefact
+# directory left by an earlier run.
+T="$TMP/mixed"; O="$TMP/mixed-out"
+make_tree "$T" alpha/ok_a alpha/crash_b alpha/error_c beta/ok_d beta/ok_stale beta/short_e
+mkdir -p "$T/crates/beta/fuzz/artifacts/ok_stale" "$T/crates/beta/fuzz/seeds/ok_d"
+echo old > "$T/crates/beta/fuzz/artifacts/ok_stale/crash-old"
+: > "$TMP/cargo.log"
+[ "$(shard "$T" 1 1 "$O")" = 1 ] || { cat "$O.log"; fail "a shard with a crash, a build failure and a short run must exit 1"; }
+R="$O/fuzz-shard-1.json"
+[ -f "$R" ] || { cat "$O.log"; fail "no result file was written"; }
+want="alpha/crash_b=crash:1 alpha/error_c=error:0 alpha/ok_a=ok:0 beta/ok_d=ok:0 beta/ok_stale=error:0 beta/short_e=short:0"
+[ "$(outcomes "$R")" = "$want" ] || fail "outcomes are [$(outcomes "$R")], want [$want]"
+[ "$(jq -c '[.shard, .shards, .seconds_per_target]' "$R")" = "[1,1,2]" ] || fail "the result does not name its shard and seconds"
+[ "$(jq '[.targets[] | select(.outcome == "ok") | .elapsed_s >= 2] | all' "$R")" = true ] || fail "an ok target's elapsed_s is below its budget"
+[ "$(grep -c ' run ' "$TMP/cargo.log")" = 5 ] || { cat "$TMP/cargo.log"; fail "the shard did not run five of its six targets"; }
+if grep -q " run ok_stale " "$TMP/cargo.log"; then fail "a target with artefacts from an earlier run was run"; fi
+grep -q "/crates/beta/fuzz run ok_d seeds/ok_d -- -max_total_time=2$" "$TMP/cargo.log" || { cat "$TMP/cargo.log"; fail "ok_d was not run on its seed corpus"; }
+grep -q "/crates/alpha/fuzz run ok_a -- -max_total_time=2$" "$TMP/cargo.log" || { cat "$TMP/cargo.log"; fail "ok_a was not run with the budget alone"; }
+[ "$(cat "$O/failures/alpha/crash_b/crash-1")" = boom ] || fail "the reproducer of crash_b was not kept"
+grep -q "thread panicked at fuzz_targets/crash_b.rs" "$O/failures/alpha/crash_b/stderr-tail.txt" || fail "the output of crash_b was not kept"
+grep -q "could not compile error_c" "$O/failures/alpha/error_c/stderr-tail.txt" || fail "the output of error_c was not kept"
+grep -q "already holds files from an earlier run" "$O/failures/beta/ok_stale/stderr-tail.txt" || fail "the refusal of ok_stale was not kept"
+[ ! -e "$O/failures/beta/ok_stale/crash-old" ] || fail "an artefact left by an earlier run was kept as a reproducer"
+grep -q "exited 0 after" "$O/failures/beta/short_e/stderr-tail.txt" || fail "the short run's reason was not kept"
+[ ! -e "$O/failures/alpha/ok_a" ] || fail "a passing target has a failures directory"
+grep -qx "failed=alpha-crash_b-and-3-more" "$O.output" || { cat "$O.output"; fail "the step output does not name the first failed target"; }
+grep -q '^| `alpha/crash_b` | crash | 1 |' "$O.summary" || { cat "$O.summary"; fail "the step summary has no row for crash_b"; }
+[ "$(merged "$T" 1 "$O")" = "1 3 1" ] || { cat "$O/merge.log"; fail "the merge of the mixed shard is [$(merged "$T" 1 "$O")], want [1 3 1]"; }
+
+# Case 2: two clean shards.
+T="$TMP/clean"; O="$TMP/clean-out"
+make_tree "$T" alpha/ok_a beta/ok_d
+: > "$TMP/cargo.log"
+[ "$(shard "$T" 1 2 "$O")" = 0 ] || { cat "$O.log"; fail "a clean shard must exit 0"; }
+[ "$(shard "$T" 2 2 "$O")" = 0 ] || { cat "$O.log"; fail "a clean shard must exit 0"; }
+[ "$(outcomes "$O/fuzz-shard-1.json")" = "alpha/ok_a=ok:0" ] || fail "shard 1 of 2 ran [$(outcomes "$O/fuzz-shard-1.json")]"
+[ "$(outcomes "$O/fuzz-shard-2.json")" = "beta/ok_d=ok:0" ] || fail "shard 2 of 2 ran [$(outcomes "$O/fuzz-shard-2.json")]"
+[ ! -e "$O/failures" ] || fail "a clean shard has a failures directory"
+if grep -q '^failed=' "$O.output"; then fail "a clean shard set the failed output"; fi
+[ "$(merged "$T" 2 "$O")" = "0 2 0" ] || { cat "$O/merge.log"; fail "the merge of two clean shards is [$(merged "$T" 2 "$O")], want [0 2 0]"; }
+# With one of the two results gone the merge fails and counts one target.
+rm "$O/fuzz-shard-2.json"
+[ "$(merged "$T" 2 "$O")" = "1 1 0" ] || { cat "$O/merge.log"; fail "the merge without shard 2 is [$(merged "$T" 2 "$O")], want [1 1 0]"; }
+
+# Case 3: a crate whose lockfile would need re-resolving runs no target; the
+# shard's other crate still runs.
+T="$TMP/lock"; O="$TMP/lock-out"
+make_tree "$T" alpha/ok_a alpha/ok_b beta/ok_d
+: > "$TMP/cargo.log"
+[ "$(STUB_LOCK_FAIL=alpha shard "$T" 1 1 "$O")" = 1 ] || { cat "$O.log"; fail "a failed lockfile check must exit 1"; }
+[ "$(outcomes "$O/fuzz-shard-1.json")" = "alpha/ok_a=error:0 alpha/ok_b=error:0 beta/ok_d=ok:0" ] || fail "lockfile case ran [$(outcomes "$O/fuzz-shard-1.json")]"
+if grep -q "/crates/alpha/fuzz run" "$TMP/cargo.log"; then fail "a target of the crate with the stale lockfile was run"; fi
+grep -q "lock file needs to be updated" "$O/failures/alpha/ok_a/stderr-tail.txt" || fail "cargo's lockfile message was not kept"
+
+# Case 4: a shard outside the plan, and an empty manifest, run nothing and
+# write no result.
+T="$TMP/clean"; O="$TMP/none-out"
+[ "$(shard "$T" 3 2 "$O")" != 0 ] || fail "a shard outside the plan exited 0"
+[ ! -e "$O/fuzz-shard-3.json" ] || fail "a shard outside the plan wrote a result"
+T="$TMP/empty"; O="$TMP/empty-out"
+make_tree "$T"
+[ "$(shard "$T" 1 1 "$O")" != 0 ] || fail "an empty manifest exited 0"
+[ ! -e "$O/fuzz-shard-1.json" ] || fail "an empty manifest wrote a result"
+[ "$(merged "$T" 1 "$TMP/empty-out")" = "1 - -" ] || fail "the merge of an empty manifest did not fail without a file"
+
+echo "fuzz-shard self-test: OK"

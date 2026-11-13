@@ -257,6 +257,93 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(rec["verdict"], "NO-GO")
 
 
+def fuzz_ran(**fields):
+    """A mutation that sets fields of the fixture's fuzz.json."""
+    return lambda f: f["fuzz.json"].update(fields)
+
+
+class ReleaseFuzzTests(unittest.TestCase):
+    """A release needs every declared target fuzzed for RELEASE_FUZZ_SECONDS each; any
+    other record keeps whatever budget its run had."""
+
+    def release(self, **fields):
+        return collect(fuzz_ran(**fields), release=True, archives=RELEASE_OK)
+
+    def test_the_release_budget_is_ten_minutes_per_target(self):
+        self.assertEqual(q.RELEASE_FUZZ_SECONDS, 600)
+
+    def test_a_release_fuzzed_at_the_short_budget_is_no_go_and_the_reason_names_the_seconds(self):
+        rec = self.release(seconds_per_target=60)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(rec["verdict_reasons"], ["fuzz: ran 60 s per target; a release needs at least 600"])
+        self.assertEqual(rec["fuzz"]["seconds_per_target"], 60)
+
+    def test_one_second_short_is_short(self):
+        rec = self.release(seconds_per_target=599)
+        self.assertEqual(rec["verdict_reasons"], ["fuzz: ran 599 s per target; a release needs at least 600"])
+
+    def test_a_release_fuzzed_at_the_release_budget_or_longer_passes_the_rule(self):
+        for seconds in (600, 3600):
+            with self.subTest(seconds=seconds):
+                rec = self.release(seconds_per_target=seconds)
+                self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+                self.assertEqual(rec["fuzz"]["seconds_per_target"], seconds)
+
+    def test_a_release_whose_fuzz_result_names_no_seconds_is_no_go(self):
+        def m(f):
+            del f["fuzz.json"]["seconds_per_target"]
+        rec = collect(m, release=True, archives=RELEASE_OK)
+        self.assertEqual(rec["verdict_reasons"], ["fuzz: ran 0 s per target; a release needs at least 600"])
+
+    def test_a_release_with_a_shard_missing_is_no_go_whatever_the_budget(self):
+        rec = self.release(seconds_per_target=600, targets_run=32)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(rec["verdict_reasons"], ["fuzz: ran 32 of 37 declared targets"])
+
+    def test_a_release_with_no_target_run_is_no_go(self):
+        rec = self.release(seconds_per_target=600, targets_run=0)
+        self.assertEqual(rec["verdict_reasons"], ["fuzz: ran 0 of 37 declared targets"])
+
+    def test_a_release_without_a_fuzz_result_is_no_go(self):
+        rec = collect(lambda f: f.__setitem__("fuzz.json", None), release=True, archives=RELEASE_OK)
+        self.assertEqual(rec["verdict_reasons"], ["fuzz: no result recorded"])
+
+    def test_outside_release_mode_the_short_budget_changes_nothing(self):
+        rec = collect(fuzz_ran(seconds_per_target=60))
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["fuzz"], {"targets_declared": 37, "targets_run": 37, "seconds_per_target": 60,
+                                       "crashes": 0})
+
+    def test_the_block_states_the_seconds_per_target(self):
+        for seconds in (60, 600):
+            with self.subTest(seconds=seconds):
+                self.assertIn("\nFuzz: 37 of 37 declared targets ran for %d s each with 0 crash(es).\n" % seconds,
+                              q.render_block(collect(fuzz_ran(seconds_per_target=seconds))))
+
+    def test_a_new_record_lists_no_fuzz_run_and_no_soak_as_maintainer_local(self):
+        rec = collect()
+        self.assertEqual(rec["maintainer_local"], [
+            "wall-clock bench comparison (a report, no threshold)",
+            "mux 3 600 s of synthetic frames to a file (unpaced)",
+        ])
+        self.assertTrue(q.render_block(rec).endswith(
+            "\nChecks that stay with the maintainer and are not part of this record:\n\n"
+            "- wall-clock bench comparison (a report, no threshold)\n"
+            "- mux 3 600 s of synthetic frames to a file (unpaced)\n"))
+
+    def test_an_older_record_keeps_its_own_list_and_its_own_seconds(self):
+        # A release record written while the long fuzz runs were the maintainer's:
+        # the list and the 60 s are data in the record, and render as they did.
+        rec = self.release(seconds_per_target=600)
+        rec["fuzz"]["seconds_per_target"] = 60
+        rec["maintainer_local"] = ["long fuzz runs (10 min per target)", "bench regression",
+                                   "one-hour synthetic soak"]
+        text = q.render_block(rec)
+        self.assertIn("\nFuzz: 37 of 37 declared targets ran for 60 s each with 0 crash(es).\n", text)
+        self.assertTrue(text.endswith("\n- long fuzz runs (10 min per target)\n- bench regression\n"
+                                      "- one-hour synthetic soak\n"))
+
+
 def sem(crate, breaking=0, analysed=True):
     """One row of semver-checks.json as scripts/dev/semver-checks.sh writes it."""
     return {"crate": crate, "exit": (100 if breaking else 0) if analysed else 1, "failed_checks": breaking,
