@@ -273,14 +273,15 @@ def test_push_video_releases_gil() -> None:
     """push_video of a 100 MB NAL must let other Python threads run."""
     m = Muxer(_muxer_config_video_only())
     # One 100 MB call clocks ~13 ms on a dev box after the first two, which
-    # grow the muxer's buffers; twenty calls (the muxer queue drained between
-    # them, outside the probed window) put the combined window at ~3x the
-    # 100ms _MIN_WORKLOAD_MS cushion, so a fast runner cannot finish under it.
+    # grow the muxer's buffers; twenty-four calls (the muxer queue drained
+    # between them, outside the probed window) put the combined window over
+    # 3x the 100ms _MIN_WORKLOAD_MS cushion, so a fast runner cannot finish
+    # under it.
     nal = _huge_h264_nal(100)
     drain = bytearray(188 * 100_000)
 
     with _GilProbe() as probe:
-        for i in range(20):
+        for i in range(24):
             pts = Pts90khz.from_raw(900_000 + i * 90_000)
             probe.call(m.push_video, nal, pts=pts)
             while m.pull(drain) > 0:
@@ -369,12 +370,12 @@ def test_push_video_to_with_dts_releases_gil() -> None:
     nal = _huge_h264_nal()
 
     # A single push_video_to_with_dts call clocks ~4 ms on a dev box;
-    # seventy-five calls (queue drained between them, outside the probed
+    # ninety calls (queue drained between them, outside the probed
     # window, so the packet buffer never overflows) put the combined window
-    # at ~3x the 100ms _MIN_WORKLOAD_MS cushion.
+    # over 3x the 100ms _MIN_WORKLOAD_MS cushion.
     drain = bytearray(188 * 100_000)
     with _GilProbe() as probe:
-        for i in range(75):
+        for i in range(90):
             ts = Pts90khz.from_raw(900_000 + i * 90_000)
             probe.call(m.push_video_to_with_dts, handle, nal, pts=ts, dts=ts)
             while m.pull(drain) > 0:

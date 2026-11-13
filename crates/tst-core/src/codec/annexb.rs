@@ -99,6 +99,8 @@ fn find_three_byte_code(buf: &[u8], from: usize) -> Option<usize> {
             let word = &block[WORD * k..WORD * (k + 1)];
             zero_byte(u64::from_le_bytes(word.try_into().expect("eight bytes")))
         });
+        // One test for the whole block; the words are looked at only when
+        // it fails.
         if zeros.iter().fold(0, |any, z| any | z) != 0 {
             for (k, _) in zeros.iter().enumerate().filter(|(_, z)| **z != 0) {
                 let first = pos + WORD * k;
@@ -259,8 +261,8 @@ mod tests {
     }
 
     /// Every buffer of up to ten bytes over `00`, `01` and one other value,
-    /// behind zero to eight filler bytes so a code meets every position of
-    /// an eight-byte word and of the bytes left after the last whole word.
+    /// behind zero to eight filler bytes. All are shorter than a block, so
+    /// this is the byte-by-byte walk of what is left after the last block.
     #[test]
     fn scan_matches_the_bytewise_walk_on_every_short_buffer() {
         const ALPHABET: [u8; 3] = [0x00, 0x01, 0x65];
@@ -285,28 +287,30 @@ mod tests {
     }
 
     /// The same, for the part of a buffer the scan takes 32 bytes at a
-    /// time: every buffer of up to eight such bytes at every offset of a
-    /// block's last word and across the block's end, with a second block
-    /// after it.
+    /// time: every buffer of up to seven such bytes at every offset of a
+    /// block and across its end, once with a second block after it and once
+    /// with only the byte-by-byte remainder.
     #[test]
     fn scan_matches_the_bytewise_walk_at_every_block_position() {
         const ALPHABET: [u8; 3] = [0x00, 0x01, 0x65];
-        for len in 0..=8u32 {
+        for len in 0..=7u32 {
             for mut n in 0..3usize.pow(len) {
                 let mut middle = Vec::with_capacity(len as usize);
                 for _ in 0..len {
                     middle.push(ALPHABET[n % 3]);
                     n /= 3;
                 }
-                for lead in 20..=34 {
-                    let mut buf = vec![0xFF; lead];
-                    buf.extend_from_slice(&middle);
-                    buf.resize(72, 0xFF);
-                    assert_eq!(
-                        start_code_vec(&buf),
-                        bytewise_start_codes(&buf),
-                        "{buf:02X?}"
-                    );
+                for lead in 0..=34 {
+                    for total in [42, 72] {
+                        let mut buf = vec![0xFF; lead];
+                        buf.extend_from_slice(&middle);
+                        buf.resize(total, 0xFF);
+                        assert_eq!(
+                            start_code_vec(&buf),
+                            bytewise_start_codes(&buf),
+                            "{buf:02X?}"
+                        );
+                    }
                 }
             }
         }
