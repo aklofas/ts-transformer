@@ -64,6 +64,7 @@ make_tree() {
 # shard <tree> <shard> <shards> <out> : runs the tree's copy, prints its exit code.
 shard() {
   local rc=0
+  : > "$4.output"
   GITHUB_OUTPUT="$4.output" GITHUB_STEP_SUMMARY="$4.summary" \
     bash "$1/scripts/ci/fuzz-shard.sh" "$2" "$3" 2 "$4" > "$4.log" 2>&1 || rc=$?
   echo "$rc"
@@ -96,14 +97,14 @@ if grep -q " run ok_stale " "$TMP/cargo.log"; then fail "a target with artefacts
 grep -q "/crates/beta/fuzz run ok_d seeds/ok_d -- -max_total_time=2$" "$TMP/cargo.log" || { cat "$TMP/cargo.log"; fail "ok_d was not run on its seed corpus"; }
 grep -q "/crates/alpha/fuzz run ok_a -- -max_total_time=2$" "$TMP/cargo.log" || { cat "$TMP/cargo.log"; fail "ok_a was not run with the budget alone"; }
 [ "$(cat "$O/failures/alpha/crash_b/crash-1")" = boom ] || fail "the reproducer of crash_b was not kept"
-grep -q "thread panicked at fuzz_targets/crash_b.rs" "$O/failures/alpha/crash_b/stderr-tail.txt" || fail "the output of crash_b was not kept"
-grep -q "could not compile error_c" "$O/failures/alpha/error_c/stderr-tail.txt" || fail "the output of error_c was not kept"
-grep -q "already holds files from an earlier run" "$O/failures/beta/ok_stale/stderr-tail.txt" || fail "the refusal of ok_stale was not kept"
+grep -q "thread panicked at fuzz_targets/crash_b.rs" "$O/failures/alpha/crash_b/output-tail.txt" || fail "the output of crash_b was not kept"
+grep -q "could not compile error_c" "$O/failures/alpha/error_c/output-tail.txt" || fail "the output of error_c was not kept"
+grep -q "already holds files from an earlier run" "$O/failures/beta/ok_stale/output-tail.txt" || fail "the refusal of ok_stale was not kept"
 [ ! -e "$O/failures/beta/ok_stale/crash-old" ] || fail "an artefact left by an earlier run was kept as a reproducer"
-grep -q "exited 0 after" "$O/failures/beta/short_e/stderr-tail.txt" || fail "the short run's reason was not kept"
+grep -q "exited 0 after" "$O/failures/beta/short_e/output-tail.txt" || fail "the short run's reason was not kept"
 [ ! -e "$O/failures/alpha/ok_a" ] || fail "a passing target has a failures directory"
 grep -qx "failed=alpha-crash_b-and-3-more" "$O.output" || { cat "$O.output"; fail "the step output does not name the first failed target"; }
-grep -q '^| `alpha/crash_b` | crash | 1 |' "$O.summary" || { cat "$O.summary"; fail "the step summary has no row for crash_b"; }
+grep -q 'alpha/crash_b. | crash | 1 |' "$O.summary" || { cat "$O.summary"; fail "the step summary has no row for crash_b"; }
 [ "$(merged "$T" 1 "$O")" = "1 3 1" ] || { cat "$O/merge.log"; fail "the merge of the mixed shard is [$(merged "$T" 1 "$O")], want [1 3 1]"; }
 
 # Case 2: two clean shards.
@@ -129,11 +130,16 @@ make_tree "$T" alpha/ok_a alpha/ok_b beta/ok_d
 [ "$(STUB_LOCK_FAIL=alpha shard "$T" 1 1 "$O")" = 1 ] || { cat "$O.log"; fail "a failed lockfile check must exit 1"; }
 [ "$(outcomes "$O/fuzz-shard-1.json")" = "alpha/ok_a=error:0 alpha/ok_b=error:0 beta/ok_d=ok:0" ] || fail "lockfile case ran [$(outcomes "$O/fuzz-shard-1.json")]"
 if grep -q "/crates/alpha/fuzz run" "$TMP/cargo.log"; then fail "a target of the crate with the stale lockfile was run"; fi
-grep -q "lock file needs to be updated" "$O/failures/alpha/ok_a/stderr-tail.txt" || fail "cargo's lockfile message was not kept"
+grep -q "lock file needs to be updated" "$O/failures/alpha/ok_a/output-tail.txt" || fail "cargo's lockfile message was not kept"
 
-# Case 4: a shard outside the plan, and an empty manifest, run nothing and
-# write no result.
+# Case 4: a shard outside the plan, a time that is no number and an empty
+# manifest run nothing and write no result.
 T="$TMP/clean"; O="$TMP/none-out"
+: > "$TMP/cargo.log"
+rc=0; bash "$T/scripts/ci/fuzz-shard.sh" 1 2 0 "$O" > "$O.log" 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail "a budget of 0 s exited 0"
+[ ! -s "$TMP/cargo.log" ] || fail "a budget of 0 s ran a target"
+[ ! -e "$O/fuzz-shard-1.json" ] || fail "a budget of 0 s wrote a result"
 [ "$(shard "$T" 3 2 "$O")" != 0 ] || fail "a shard outside the plan exited 0"
 [ ! -e "$O/fuzz-shard-3.json" ] || fail "a shard outside the plan wrote a result"
 T="$TMP/empty"; O="$TMP/empty-out"

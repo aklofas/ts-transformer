@@ -327,6 +327,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/ci/tests/nightly-issue-selftest.sh
 
+      - name: fuzz-shard self-test (one shard of the fuzz leg against a stub cargo)
+        # Runs scripts/ci/fuzz-shard.sh with stub `cargo` and `rustc`, then
+        # merges its results. Gated to linux-x86_64: the fuzz leg runs there only.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/fuzz-shard-selftest.sh
+
       - name: No duplicate test helpers
         # A Rust fn / Python def / Java private static body identical in two
         # or more test files fails unless listed, with a reason, in
@@ -451,12 +457,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/net-test-binaries.sh
 
-      - name: scripts/gen and bench-ir unit tests
+      - name: scripts/gen, bench-ir and fuzz-shard unit tests
         # The generators' stdlib unittest suites and their committed fixtures,
-        # and the instruction-count judge's; nothing else runs them. Stdlib
-        # only, no pip install.
+        # the instruction-count judge's and the fuzz leg's shard layout and
+        # merge; nothing else runs them. Stdlib only, no pip install.
         if: matrix.name == 'linux-x86_64'
-        run: python3 -m unittest scripts/gen/test_*.py scripts/dev/test_bench_ir.py
+        run: python3 -m unittest scripts/gen/test_*.py scripts/dev/test_bench_ir.py scripts/ci/tests/test_fuzz_shards.py
 
       - name: check-no-unreachable-expect-in-bindings
         # Binding production code never aborts on a #[non_exhaustive]
