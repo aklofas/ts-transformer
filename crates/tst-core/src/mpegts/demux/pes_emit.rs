@@ -156,8 +156,8 @@ impl super::demuxer::Demuxer {
         // decision on the PMT-declared stream type, not the PES stream_id — the
         // PID's kind is always known here (process_packet only routes to
         // handle_pes_packet when a stream kind is declared for pkt.pid, and
-        // passes it as `kind`). A PID
-        // tst-core recognizes as video is `StreamKind::Video(_)`; a video
+        // passes it as `kind`). A PID tst-core recognizes as video is
+        // `StreamKind::Video(_)`; a video
         // codec it does NOT parse (MPEG-1/2/4) is `StreamKind::Unknown(t)` with
         // a video `stream_type` `t` — both are video elementary streams per
         // H.222.0 §2.4.3.7 and may carry an unbounded PES, so neither is
@@ -1652,6 +1652,56 @@ mod tests {
         let ev = drain_all_events(&mut d);
         assert!(
             issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
+            "{ev:?}"
+        );
+    }
+
+    /// Only the one allowed duplicate repeats the signal without the reset.
+    /// A third copy of the packet carrying the new time base is a
+    /// discontinuity of its own and resets again: a stream of the program
+    /// that took a PTS between the copies starts a new baseline.
+    #[test]
+    fn third_copy_of_a_timebase_reset_packet_resets_again() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x100,
+            &[(0x1B, 0x100, &[]), (0x80, 0x101, &[])],
+        );
+        let video = pes_bytes(0xE0, Some(270_000), None, true, &[0xAA; 40], false);
+        let data = |pts| pes_bytes(0xBD, Some(pts), None, false, &[0x55; 20], true);
+        let reset = ts_packet(&PktSpec {
+            pid: 0x100,
+            cc: 0,
+            pusi: true,
+            discontinuity: true,
+            pcr: Some(2_700_000_000),
+            payload: &video,
+            ..Default::default()
+        });
+        let mut pkts = vec![
+            ts_packet(&PktSpec {
+                pid: 0x100,
+                pcr: Some(0),
+                ..Default::default()
+            }),
+            reset,
+            reset,
+        ];
+        // Two PES on the other stream after the reset: its baseline is the
+        // first one's PTS, and the second is in flight.
+        pkts.extend(pes_to_packets(0x101, 0, &data(500_000)));
+        pkts.extend(pes_to_packets(0x101, 1, &data(503_000)));
+        pkts.push(reset);
+        // More than a second behind the baseline the third copy dropped.
+        pkts.extend(pes_to_packets(0x101, 2, &data(100_000)));
+        feed_packets(&mut d, &pkts).unwrap();
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(sample_count(&ev, 0x101), 3, "{ev:?}");
+        assert!(
+            !issues(&ev)
                 .iter()
                 .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
             "{ev:?}"
