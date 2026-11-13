@@ -111,6 +111,9 @@ with m.write_file("out.ts") as proxy:
 by the `with` statement so that each push writes its output to the file.
 Leaving the block flushes and finalizes the file automatically.
 
+The muxer's PCR runs 100 ms behind each access unit's decode time;
+`MuxerConfigBuilder.pcr_lead_ms(ms)` sets another lead (`0..=1000`).
+
 When you need the TS bytes in memory rather than writing to a file, use
 `Muxer.pull()` directly. `pull` fills a preallocated `bytearray` and
 returns the number of bytes written; drain it in a loop until `pull`

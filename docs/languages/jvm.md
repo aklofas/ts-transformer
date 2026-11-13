@@ -186,7 +186,9 @@ via `streamDescriptorsForData(dataIndex, byte[][])` (the muxer never auto-emits
 a descriptor on a data stream). Deep config validation (PID collisions,
 PMT-size budget, sync-KLV-without-PTS, a data `streamType` that would classify
 as a typed kind, …) runs in the native `Muxer` constructor and surfaces as
-`MuxException(CONFIG_INVALID)`.
+`MuxException(CONFIG_INVALID)`. The muxer's PCR runs 100 ms behind each access
+unit's decode time; `MuxerConfig.Builder.pcrLeadMs(ms)` sets another lead
+(0 to 1000).
 
 > **Scope.** This binding's `MuxerConfig` is single-program; multi-program
 > configs are deferred. DVB-subtitle codec configuration is deferred;

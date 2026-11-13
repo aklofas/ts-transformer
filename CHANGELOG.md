@@ -11,6 +11,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Next release: 0.11.0
 
+### Changed — tst-core (BREAKING)
+
+- **The muxer's PCR leads the decode time.** The PCR was the PTS of the access unit it rode on, so a receiver's clock already read a unit's presentation time when the unit began to arrive, with no time left to buffer and decode it. A KLV, audio or data push could also put a PCR on the wire at its own PTS, and the key frame after it stepped the PCR back. Each program now has one clock: every push moves it to the push's decode time (the DTS when the push supplies one, else the PTS) minus `MuxerConfig::pcr_lead_ms` (new; default 100, valid `0..=1000`), and never backward. With the default configuration a receiver sees these differences:
+  - every PCR is 100 ms lower against the stream's timestamps, and an access unit pushed with a DTS has its PCR 100 ms below the DTS where it used to equal the PTS;
+  - a stream whose first timestamp is below the lead (a file that starts at 0) opens with a PCR base just below 2^33 and wraps to zero 100 ms in. Timestamps are not shifted;
+  - a push on a PID other than the PCR PID writes no PCR-only packet while the PCR stream is pushing. It still does when the PCR stream has not pushed yet or its last push is more than a second behind, and only then does such a push move the clock;
+  - a push on the PCR PID more than one second behind the previous one starts a new time base: `discontinuity_indicator` on the packet with its first PCR, and the PAT and PMTs before it. Such a restart used to write a backward PCR with nothing signalled. A second restart inside two PCRs is held for one push, as H.222.0 §2.7.2 asks. A step back of a second or less holds the PCR and signals nothing;
+  - PAT/PMT repetition follows the program clock where it followed the push's PTS, which can move a PAT/PMT pair to a neighbouring push.
+
+  PES headers, PTS and DTS values, payload bytes and the contents of the PAT and PMT are unchanged. The streams the RTSP server's mounts, the RTSP publisher re-mux and the HLS publisher write change the same way, since they use this muxer.
+
+  **Migration.** A caller who wants a conformant stream changes nothing. A receiver or a test that expected PCR = PTS now sees PCR = decode time − 100 ms. `pcr_lead_ms = 0` writes PCR = decode time; it does not reproduce the bytes of 0.10.0, because the clock still follows the DTS, still never steps back, and still ignores the other PIDs while the PCR stream is pushing. Push the first video access unit before the first KLV unit: the first push sets the clock, and video that starts behind a KLV unit has a short lead until it catches up. Push reordered (B-frame) video with the `*_with_dts` calls: pushed with a PTS only, a reordered frame gets the lead minus its reorder distance. `Muxer::reconfigure` refuses a change of `pcr_lead_ms`, as it does for the other fields outside the program list; a program that stays keeps its clock across the call. This closes the limitation the 0.9.0 and 0.10.0 notes list as "the muxer writes a PCR equal to the PTS".
+
+### Added — tst-core, tst-pipeline
+
+- `Muxer::tick(program_number, now)` and `MuxSender::tick`: advance a program's clock between pushes and send the PCR-only packet and the PSI that are due. A PCR is written only as part of a push, so a PCR stream below ten access units a second (5 fps video, a slideshow) could not meet H.222.0's 100 ms PCR interval; such a source now calls `tick` at least every `pcr_interval_ms` of stream time. Rust only: the C, Python and JVM bindings, the RTSP-server mounts and `MuxPublisher` do not expose it yet.
+- `MuxerStats::late_metadata_pushes` and `MuxSenderStats::late_metadata_pushes`: pushes on a PID other than the PCR PID (KLV, audio, data, subtitle) whose PTS the PCR had already passed. Such a unit is still muxed, but it reaches a receiver after the time it is stamped for. A stream whose PES carries no PTS is never counted.
+
+### Added — tst-c
+
+- `tst_mux_config_set_pcr_lead_ms` sets `MuxerConfig::pcr_lead_ms` (C ABI 0.30). An out-of-range value is reported when the muxer or sender is opened, as for the other intervals.
+
+### Added — tst-py, tst-jni
+
+- Python: `MuxerConfig.pcr_lead_ms` and `MuxerConfigBuilder.pcr_lead_ms(ms)`; `MuxerStats.late_metadata_pushes`, also on the stats of `shells.MuxSender` and `srt.ManagedMuxSender`.
+- JVM: `MuxerConfig.pcrLeadMs()` and `MuxerConfig.Builder.pcrLeadMs(int)`; `MuxerStats.lateMetadataPushes()`, also on the stats of the `MuxSender` classes. `MuxerStats` is a record with a new component, so code that calls its canonical constructor passes a fifth argument.
+
 ### Changed — tst-webrtc, tst-py, tst-jni
 
 - A `WhepServer` bound to the wildcard address (`whep://0.0.0.0:…` or `[::]`) with no `advertise=` now offers each viewer the local address its signalling request arrived on, beside the loopback address it offered before. The embedder no longer has to know, look up or track the host's addresses: the bind succeeds on a host that has no address but loopback yet, a viewer on the LAN, on a VPN interface and on loopback are each offered the address they reached (at the same time), and after an address change a POST to the new address is served with no rebind. A specific bind, and any bind with `advertise=`, offer what they offered in 0.10.0; `advertise=` remains the answer behind NAT, behind port forwarding and behind a reverse proxy on the same host (every request then arrives on loopback, and no `Forwarded` header is read). Nothing that connected in 0.10.0 stops connecting: loopback is still offered to every viewer of such a server. Limits, stated in the WebRTC guide's Network section: the media socket replies by the kernel's route, so the address a remote viewer reached has to be the source address of the route back to it (one address per subnet on each interface); an IPv4 link-local address is not offered; on `::` an IPv6 viewer is offered the address it reached and a remote IPv4 viewer on a dual-stack socket is still not served. No API change in Rust, Python or the JVM.

@@ -76,6 +76,7 @@ per-feature support matrix.
 pub struct MuxerConfig {
     pub programs: Vec<MuxerProgramConfig>,
     pub pcr_interval_ms: u32,
+    pub pcr_lead_ms: u32,
     pub psi_interval_ms: u32,
     pub buffer_packets: usize,
     pub av1_carriage: Av1CarriageMode,
@@ -140,6 +141,7 @@ FFI-binding semantics. Methods (all in `tst_core::mpegts::mux`):
 
 - `add_program(&mut self, program: MuxerProgramConfig) -> &mut Self`
 - `pcr_interval_ms(&mut self, ms: u32) -> &mut Self`
+- `pcr_lead_ms(&mut self, ms: u32) -> &mut Self`
 - `psi_interval_ms(&mut self, ms: u32) -> &mut Self`
 - `buffer_packets(&mut self, n: usize) -> &mut Self`
 - `av1_carriage(&mut self, mode: Av1CarriageMode) -> &mut Self`
@@ -446,25 +448,78 @@ enforces this). A 40 ms interval
 gives 25 PCR samples per second, well inside the typical receiver
 expectation of "one PCR every 100 ms or better".
 
-The cadence is push-driven, not wall-clock. The muxer compares the
-PTS handed to any `push_*` call against the PTS at the
-last PCR emission and emits a fresh PCR when the configured interval
-has elapsed in stream time. This is what makes the muxer
-deterministic — the same input PTS sequence produces the same output
-byte sequence — and means real-time scheduling is the caller's
-responsibility, not the muxer's. Drive `push_video` at the encoder's
-output cadence and PCR cadence falls out automatically.
+The cadence is push-driven, not wall-clock. A PCR is written on the
+first TS packet of a push on the PCR PID when the program's clock has
+advanced `pcr_interval_ms` since the last PCR, and on every key frame.
+This is what makes the muxer deterministic (the same pushes produce the
+same bytes) and means real-time scheduling is the caller's
+responsibility, not the muxer's. A PCR stream of ten or more access
+units a second meets H.222.0's 100 ms PCR interval from its pushes
+alone. A sparser one does not: see [`tick`](#sparse-sources-tick).
 
-The PCR value is the PTS of the push that triggers it, with no decode
-lead: a PCR carried on a video AU equals that AU's PTS, so the AU
-arrives when the clock already reads its presentation time instead of
-ahead of its decode time as H.222.0's buffer model expects. Because a
-KLV, audio or data push can also trigger a PCR-only packet at its own
-PTS, a later PCR on the PCR PID (always emitted on a key frame) can
-step backwards from it. Every decoder in the interop matrix plays
-these streams, but strict analyzers (TSDuck, stream validators) may
-flag the PCR/DTS relationship or the backward step. A fix is planned
-for a release after 0.10.0.
+A PCR is written at the start of an access unit only. One very large
+access unit is not interrupted to carry a second PCR.
+
+### The PCR value: `pcr_lead_ms`
+
+Each program has one clock, and the PCR is its value. Every push moves
+the clock to the push's decode time (the DTS when the push supplies one,
+else the PTS) minus `pcr_lead_ms`, and never backward. `pcr_lead_ms`
+defaults to `100` and is validated `0..=1000`. A receiver therefore has
+every access unit at least `pcr_lead_ms` before its clock reads the
+unit's decode time: the time a decoder needs to buffer and decode it,
+which H.222.0's buffer model assumes and ST 1402 asks for metadata.
+
+- **A stream that starts near zero.** Caller timestamps are never
+  shifted. A stream whose first decode time is below the lead (a file
+  that starts at PTS 0) opens with a PCR just below 2^33 that wraps to
+  zero when the decode time reaches the lead. This is the same wrap
+  every stream goes through after 26.5 hours.
+- **Reordered video.** Push B-frame streams with
+  `push_video_to_with_dts`, so the clock follows the decode order.
+  Pushed PTS-only, a reordered frame steps the timestamp back; the
+  clock holds, and that frame gets the lead minus its reorder distance.
+- **Other PIDs do not move the clock while the PCR stream is pushing.**
+  KLV stamped at capture runs ahead of encoder-delayed video, and a PCR
+  taken from it would pass the video's decode time. A push on another
+  PID moves the clock only when the PCR stream has not pushed yet, or
+  when its timestamp is more than one second past the PCR stream's last
+  push (the PCR stream has gone silent). That push then puts a PCR-only
+  packet on the PCR PID. Push the first video access unit before the
+  first KLV unit: a KLV unit pushed first sets the clock, and video that
+  starts behind it has a short lead until it catches up.
+- **Late metadata.** A KLV, audio, data or subtitle unit pushed after
+  the clock has passed its PTS is muxed all the same.
+  `MuxerStats::late_metadata_pushes` counts them. A stream whose PES
+  carries no PTS is never counted.
+- **`pcr_lead_ms = 0`** writes PCR = decode time. It does not give the
+  output of 0.10.0 and earlier, which wrote PCR = PTS and let a key
+  frame step the PCR back.
+
+### Timeline restarts
+
+A push on the PCR PID more than one second behind the previous one is
+not reordering: the producer restarted its timeline. The muxer opens a
+new time base. The packet with the first PCR of the new timeline has
+`discontinuity_indicator` set, and the PAT and PMTs are sent before it.
+H.222.0 requires two PCRs between such discontinuities, so a second
+restart that arrives before the new time base has its two PCRs is held
+for one push (that push repeats the PCR) and takes effect on the next.
+A step back of one second or less is treated as reordering: the PCR
+holds its value and nothing is signalled.
+
+### Sparse sources: `tick`
+
+A PCR stream below ten access units a second (5 fps video, a slideshow,
+audio with long frames) leaves gaps over 100 ms between PCRs.
+`Muxer::tick(program_number, now)` and `MuxSender::tick` fill them:
+call it between pushes, at least every `pcr_interval_ms` of stream
+time. `now` is the decode time an access unit pushed at that moment
+would have; the PCR written is `now - pcr_lead_ms`, in a packet that
+carries nothing else. A tick also sends PSI when it is due, counts as
+activity on the PCR stream (other PIDs do not move the clock while
+ticks arrive), and queues nothing when nothing is due. `tick` is in the
+Rust API only; the C, Python and JVM bindings do not expose it yet.
 
 ## PSI cadence
 
@@ -474,10 +529,12 @@ not separately configurable. The 100 ms default matches measured
 baselines from real-world STANAG 4609 captures, where five of six
 sample files in the test corpus emit PSI at roughly that cadence.
 
-PSI is detected as due using a 33-bit modular comparison against the
-last PSI emission PTS, so PTS rollover (every ~26.5 hours at 90 kHz)
-does not cause PSI to suppress incorrectly. Backward PTS — common
-with B-frames in display order — does not retrigger PSI either.
+PSI rides the program clock described under
+[The PCR value](#the-pcr-value-pcr_lead_ms): it is due when the clock
+has advanced `psi_interval_ms` since the last PAT and PMT, compared
+modulo 2^33, so the rollover every 26.5 hours does not suppress it. The
+clock never moves backward, so a backward PTS (B-frames pushed in decode
+order) does not retrigger PSI. A timeline restart sends PSI at once.
 
 ## Bitrate budgeting
 
@@ -527,10 +584,10 @@ Required:
   packet of the resulting PES.
 - `push_klv`'s `pts_90khz` is written to the PES header only when the
   KLV stream was configured with `carries_pts: true`. Either way it
-  still drives PSI and PCR pacing (it can trigger a PAT/PMT or a
-  PCR-only packet at that time), so pass the stream time of the
-  record even when the stream carries no PTS. `push_data` behaves the
-  same way.
+  is the push's time for the program clock: while the PCR stream is
+  silent it can trigger a PAT/PMT or a PCR-only packet. So pass the
+  stream time of the record even when the stream carries no PTS.
+  `push_data` behaves the same way.
 - `push_klv`'s `metadata_service_id` lands in the AU cell header per
   H.222.0 § 2.12.4.2 / ST 1402.2 App. B Table 2 ONLY when the
   configured `KlvStreamType` is `SynchronousMetadata` (stream_type
@@ -999,7 +1056,7 @@ program and PID:
 - a kept program whose `pmt_pid` changed, or whose PCR PID changed while
   the old PCR stream stays in the program;
 - a change to any field outside the program list (`pcr_interval_ms`,
-  `psi_interval_ms`, `buffer_packets`, `av1_carriage`).
+  `pcr_lead_ms`, `psi_interval_ms`, `buffer_packets`, `av1_carriage`).
 
 A refused call leaves the muxer exactly as it was, still running on the old
 config.
@@ -1047,6 +1104,11 @@ PID's `per_stream` entry stays, frozen, and resumes counting if the PID is
 placed again (with its program number, stream type and label rewritten);
 new PIDs get entries at the call. `programs_configured` and
 `subtitle_streams_configured` count what is live.
+
+A program that stays keeps its clock across the call, also when its PCR
+moves to another of its streams because the stream that carried it was
+removed, and no discontinuity is signalled. A program that is new in the
+call starts its own clock with its first push.
 
 The C, Python and JVM bindings do not expose `reconfigure` yet; it reaches
 them in a later binding parity batch. The full contract is the rustdoc on
