@@ -435,9 +435,14 @@ impl Muxer {
         // check that H.264 / H.265 / H.266 require. Wire-form pushes also
         // skip validation — the bytes are already on-wire payloads, not
         // elementary bitstream.
-        if matches!(form, VideoInputForm::Elementary) && !matches!(codec, VideoCodec::Av1) {
-            validate_annex_b(nal)?;
-        }
+        // The validation scans every start code, so it counts the NAL units
+        // for the codec counters below as well.
+        let validated_nal_units =
+            if matches!(form, VideoInputForm::Elementary) && !matches!(codec, VideoCodec::Av1) {
+                Some(validate_annex_b(nal)?)
+            } else {
+                None
+            };
 
         // AV1-in-MPEG-2-TS binding (`av1-mpeg2-ts-binding.html`) carriage:
         // - §3.4 `data_alignment_indicator=1` — REQUIRED for AV1, set below.
@@ -537,9 +542,11 @@ impl Muxer {
 
         // Codec-counter bump. Codec already bound above; key_frame is a
         // clean caller-supplied signal for random-access (no NAL inspection
-        // required). NAL-unit count walks the caller-supplied AU bytes
-        // regardless of carriage mode.
-        let nals_count = crate::codec::util::count_nal_units(nal, codec);
+        // required). The NAL-unit count is of the caller-supplied AU bytes
+        // regardless of carriage mode; an AU that was not validated above
+        // (AV1, wire form) is walked here.
+        let nals_count =
+            validated_nal_units.unwrap_or_else(|| crate::codec::util::count_nal_units(nal, codec));
         let ra_count = u64::from(key_frame);
         crate::mpegts::stats::bump_video_counters(
             &mut self.stream_codec_counters,

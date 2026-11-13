@@ -74,7 +74,10 @@ pub(super) struct DataStreamState {
 /// header is the minimum compatible check; we don't enforce the
 /// codec-specific header size here (codec-specific parsers in
 /// `crate::codec` do that downstream).
-pub(super) fn validate_annex_b(nal: &[u8]) -> Result<(), MuxError> {
+///
+/// Returns the number of NAL units in the access unit: the same figure
+/// `codec::util::count_nal_units` gives for it, from the one scan.
+pub(super) fn validate_annex_b(nal: &[u8]) -> Result<u64, MuxError> {
     // Must start with a recognised Annex-B start code at offset 0.
     let mut codes = crate::codec::annexb::start_codes(nal);
     let first = codes
@@ -83,6 +86,7 @@ pub(super) fn validate_annex_b(nal: &[u8]) -> Result<(), MuxError> {
         .ok_or(MuxError::InvalidNal)?;
     // Start of the current NAL unit's body.
     let mut nal_body_start = first.data_start;
+    let mut nal_units: u64 = 1;
     for code in codes {
         // Zero-length NAL between two adjacent start codes (no body
         // bytes), e.g. `00 00 01 00 00 01`. Forbidden.
@@ -90,6 +94,7 @@ pub(super) fn validate_annex_b(nal: &[u8]) -> Result<(), MuxError> {
             return Err(MuxError::InvalidNal);
         }
         nal_body_start = code.data_start;
+        nal_units += 1;
     }
     // Reject buffers that end mid-start-code (trailing `00` or `00 00`
     // with no terminating `01` byte). The Annex-B framing makes such a
@@ -120,7 +125,7 @@ pub(super) fn validate_annex_b(nal: &[u8]) -> Result<(), MuxError> {
         return Err(MuxError::InvalidNal);
     }
 
-    Ok(())
+    Ok(nal_units)
 }
 
 /// `metadata_STD_descriptor` buffer size for synchronous KLV, in units of
@@ -1005,6 +1010,18 @@ mod tests {
         #[test]
         fn validate_matches_the_old_walk(buf in proptest::collection::vec(proptest::sample::select(vec![0u8, 0, 0, 1, 0x65, 0x03]), 0..48)) {
             proptest::prop_assert_eq!(validate_annex_b(&buf).is_ok(), old_validate_annex_b(&buf).is_ok());
+        }
+
+        // The count the validation returns stands in for `count_nal_units`
+        // on the push path.
+        #[test]
+        fn validate_counts_what_count_nal_units_counts(buf in proptest::collection::vec(proptest::sample::select(vec![0u8, 0, 0, 1, 0x65, 0x03]), 0..48)) {
+            if let Ok(nal_units) = validate_annex_b(&buf) {
+                proptest::prop_assert_eq!(
+                    nal_units,
+                    crate::codec::util::count_nal_units(&buf, crate::codec::VideoCodec::H264)
+                );
+            }
         }
     }
     use crate::mpegts::demux::payload::{Av1BindingUnwrap, split_obus, unwrap_av1_binding};
