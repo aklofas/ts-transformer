@@ -160,6 +160,42 @@ impl Muxer {
         Ok(self.commit_clock(prog_idx, &step))
     }
 
+    /// Advance program `program_number`'s clock to `now` without pushing
+    /// anything: queue the PSI and the PCR-only packet that are due.
+    ///
+    /// A PCR is only ever written as part of a push, so a program whose PCR
+    /// PID carries fewer than ten access units a second cannot meet the
+    /// 100 ms PCR interval of H.222.0 §2.7.2 from pushes alone. Such a
+    /// source calls `tick` between pushes, at least every
+    /// [`MuxerConfig::pcr_interval_ms`] of stream time. It also keeps PSI
+    /// repeating while nothing is pushed.
+    ///
+    /// `now` is a time on the PCR stream's decode timeline: the decode time
+    /// an access unit pushed at this moment would have. The PCR written is
+    /// `now` minus [`MuxerConfig::pcr_lead_ms`]. A tick counts as activity
+    /// on the PCR stream: while ticks arrive, pushes on the program's other
+    /// PIDs do not move the clock, and a `now` more than a second behind the
+    /// previous tick or PCR-PID push starts a new time base, as such a push
+    /// would. A tick that finds nothing due queues nothing.
+    ///
+    /// # Errors
+    /// - [`MuxError::ProgramNotFound`] if no live program has that number.
+    /// - [`MuxError::BufferFull`] if the packets do not fit; nothing changed.
+    ///
+    /// [`MuxerConfig::pcr_interval_ms`]: super::MuxerConfig::pcr_interval_ms
+    /// [`MuxerConfig::pcr_lead_ms`]: super::MuxerConfig::pcr_lead_ms
+    pub fn tick(&mut self, program_number: u16, now: Pts90khz) -> Result<(), MuxError> {
+        let prog_idx = self
+            .slots
+            .iter()
+            .position(|s| s.program_number() == Some(program_number))
+            .ok_or(MuxError::ProgramNotFound { program_number })?;
+        let step = self.plan_clock(prog_idx, now, None, false);
+        self.reserve(&step, 0)?;
+        self.commit_clock(prog_idx, &step);
+        Ok(())
+    }
+
     /// Apply `step`: queue its PSI and PCR-only packets and move the clock.
     fn commit_clock(&mut self, prog_idx: usize, step: &ClockStep) -> ClockPlan {
         if step.psi {

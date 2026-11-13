@@ -493,6 +493,18 @@ impl<T: Transport> MuxSender<T> {
         self.push("reconfigure", |m| m.reconfigure(config))
     }
 
+    /// Advance a program's clock to `now` and send the PSI and the PCR-only
+    /// packet that are due: [`Muxer::tick`] followed by a drain. A source
+    /// whose PCR stream carries fewer than ten access units a second calls
+    /// this between sends to keep the PCR interval within 100 ms.
+    ///
+    /// # Errors
+    /// As [`Self::send_video`]; [`MuxError::ProgramNotFound`] for a program
+    /// number the muxer does not carry.
+    pub fn tick(&self, program_number: u16, now: Pts90khz) -> Result<(), MuxSenderError> {
+        self.push("tick", |m| m.tick(program_number, now))
+    }
+
     /// Send one video access unit to a specific configured video stream.
     /// `handle` is obtained from [`Self::video_handles`]. Handles are
     /// positional: one from another sender or muxer with the same layout
@@ -2197,6 +2209,24 @@ mod input_consumed_tests {
     }
 
     const NAL: [u8; 6] = [0x00, 0x00, 0x00, 0x01, 0x67, 0xBB];
+
+    #[test]
+    fn tick_drains_pcr_only_packet_to_transport() {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let s = mk_sender(Arc::new(AtomicBool::new(false)), sink.clone());
+        s.tick(1, Pts90khz::new(90_000)).unwrap();
+        let sent = sink.lock().unwrap().clone();
+        assert_eq!(sent.len(), 3 * 188, "PAT, PMT, PCR-only");
+        let pcr_only = &sent[2 * 188..];
+        assert_eq!(pcr_only[3] & 0x30, 0x20);
+        assert_eq!(pcr_only[5], 0x10);
+        let err = s.tick(7, Pts90khz::new(90_000)).unwrap_err();
+        assert!(matches!(
+            err.source,
+            MuxSenderErrorSource::Mux(MuxError::ProgramNotFound { program_number: 7 })
+        ));
+        assert_eq!(err.input_consumed, Some(false));
+    }
 
     /// Phase-2 failure: input muxed, then its bytes fail to send →
     /// `Some(true)`. After healing, the NEXT call drains it exactly once.
