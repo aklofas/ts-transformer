@@ -59,7 +59,8 @@
 # Environment: SRT_RECONNECT_MODE (default background) and every soak.sh
 # knob pass through to preflight and launch. TSTRANS_REPO_DIR is the
 # checkout (default: this script's repository). TSTRANS_NOT_A_RELEASE=1
-# lets `launch` start a run that is not release evidence on an unswept tree.
+# lets `launch` start a run that is not release evidence on an unswept tree;
+# the run's soak-config.json then says `not_a_release: true`.
 #
 # Validated on Ubuntu 24.04 x86_64 (the release VM); see lib.sh for this
 # directory's portability stance.

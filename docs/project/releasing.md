@@ -181,14 +181,16 @@ step 3).
      on x86_64, Chromium on aarch64), and a clean checkout of the frozen
      commit with `tst-interop` built in release mode (`SETUP-DONE rc=0`).
      Its `version` stage (`scripts/interop/release-version-check.sh`, which
-     `release-vm-soak.sh launch` runs again) refuses a commit whose
+     `release-vm-corpus.sh` and `release-vm-soak.sh launch` run again)
+     refuses a commit whose
      workspace version is not above the newest `vMAJOR.MINOR.PATCH` tag:
      that is a tree without its version sweep, and two days of soak on it
      would judge a commit that cannot be tagged. A checkout with no release
      tag visible is refused too (`git fetch --tags origin`). A VM prepared
      for a run that is not release evidence, such as a stress run between
      releases, sets `TSTRANS_NOT_A_RELEASE=1`, and the stage says it was
-     skipped.
+     skipped; a soak started under the variable records it in
+     `soak-config.json` as `not_a_release: true`.
      The corpus phase below runs on the x86 VM only.
    - The 0.9.0 digests were never promoted under their tag's name, so before
      the first comparison against them copy them there once:
