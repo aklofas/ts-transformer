@@ -1735,24 +1735,6 @@ class ArmSoakGateTests(unittest.TestCase):
         rec["release_vm"]["arm_soak"] = None
         self.assertNotIn("arm64 soak", q.render_block(rec))
 
-    def test_the_tree_equivalence_text_names_the_arm_soak(self):
-        rec = collect(release=True, archives=self.rows(self.arm()), arm=False)
-        text = q.tree_equivalence_text(rec, [])
-        self.assertIn("aarch64 soak archive soak-arm (harness verdict PASS) on tree %s, judged by the release "
-                      "gate: no path supersedes it" % SHA, text)
-        with mock.patch.object(q, "changed_paths", return_value=["crates/x.rs", "crates/y.rs"]):
-            rec = collect(release=True, archives=self.rows(self.arm(tree=OLD_TREE)), arm=False)
-        self.assertIn("aarch64 soak archive soak-arm (harness verdict PASS) on tree %s, judged by the release "
-                      "gate: 2 path(s) supersede it" % OLD_TREE, q.tree_equivalence_text(rec, []))
-        rec = collect(release=True, archives=self.rows(), arm=False)
-        self.assertIn("the release gate found no aarch64 soak archive for this tree",
-                      q.tree_equivalence_text(rec, []))
-        # A record from before the arm64 soak gated says it was recorded only.
-        rec = collect(release=True, archives=self.rows(self.arm()), arm=False)
-        del rec["release_vm"]["arm_soak_gates"]
-        self.assertIn("aarch64 soak archive soak-arm (harness verdict PASS) on tree %s, recorded beside the "
-                      "x86_64 soak, not gating" % SHA, q.tree_equivalence_text(rec, []))
-
     def test_the_committed_record_stays_release_eligible(self):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../docs/project/qualification.json")
         if not os.path.isfile(path):
@@ -2071,13 +2053,37 @@ class TreeEquivalenceTextTests(unittest.TestCase):
             body.append(l)
         return lines[at], body
 
+    def block(self, text, arch):
+        """The lines of one soak's block: from its `<arch> soak` title to the next soak's title."""
+        lines = text.splitlines()
+        at = lines.index("%s soak" % arch)
+        end = lines.index("aarch64 soak") if arch == "x86_64" and "aarch64 soak" in lines else len(lines)
+        return "\n".join(lines[at:end])
+
+    X86 = archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01", arch="x86_64")
+    CORPUS = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)
+
+    def arm_earlier(self, **mocks):
+        """A release record whose x86_64 soak ran on the qualified commit and whose aarch64
+        soak ran on an earlier tree; `mocks` replace what git would say about that tree."""
+        archives = archives_toml(self.X86, self.CORPUS,
+                                 archive_row("soak-arm", "soak", OLD_TREE, legs=FIVE, arch="aarch64"))
+        mocks.setdefault("changed_paths", mock.Mock(return_value=[]))
+        mocks.setdefault("changed_release_documents", mock.Mock(return_value=self.DOCS))
+        mocks.setdefault("admitted_changes", mock.Mock(return_value={"changed_generators": self.GENERATORS,
+                                                                    "version_sweep": self.SWEEP}))
+        with contextlib.ExitStack() as stack:
+            for name, m in mocks.items():
+                stack.enter_context(mock.patch.object(q, name, m))
+            return collect(release=True, archives=archives, arm=False)
+
     def test_a_standing_soak_lists_what_was_admitted_under_its_own_heading(self):
         every = sorted(self.DOCS + self.GENERATORS + self.SWEEP["paths"])
         text = q.tree_equivalence_text(self.standing(), every)
-        self.assertEqual(text.splitlines()[:3], ["soaked " + OLD_TREE, "qualified " + SHA, "tag -"])
+        self.assertEqual(text.splitlines()[:5], ["qualified " + SHA, "tag -", "", "x86_64 soak", "soaked " + OLD_TREE])
         self.assertIn("soak archive soak-rel (harness verdict PASS), judged by the release gate", text)
-        self.assertEqual(self.section(text, "paths that supersede the soak archive"),
-                         ("paths that supersede the soak archive: none", []))
+        self.assertEqual(self.section(text, "paths that supersede the x86_64 soak archive"),
+                         ("paths that supersede the x86_64 soak archive: none", []))
         head, body = self.section(text, "admitted: generators")
         self.assertIn("scripts/gen/", head)
         self.assertTrue(head.endswith(": 1"), head)
@@ -2098,12 +2104,12 @@ class TreeEquivalenceTextTests(unittest.TestCase):
     def test_the_tag_is_named_on_a_tag_record(self):
         rec = self.standing()
         rec["source"]["tag"] = "v1.3.0"
-        self.assertEqual(q.tree_equivalence_text(rec, []).splitlines()[2], "tag v1.3.0")
+        self.assertEqual(q.tree_equivalence_text(rec, []).splitlines()[1], "tag v1.3.0")
 
     def test_a_soak_on_the_qualified_commit_changed_nothing(self):
         text = q.tree_equivalence_text(collect(release=True, archives=RELEASE_OK), [])
-        self.assertEqual(text.splitlines()[:2], ["soaked " + SHA, "qualified " + SHA])
-        self.assertIn("paths that supersede the soak archive: none", text)
+        self.assertEqual(text.splitlines()[:5], ["qualified " + SHA, "tag -", "", "x86_64 soak", "soaked " + SHA])
+        self.assertIn("paths that supersede the x86_64 soak archive: none", text)
         self.assertIn("admitted: generators under scripts/gen/", text)
         for heading in ("admitted: generators", "admitted: version sweep", "release documents that changed",
                         "all paths that differ"):
@@ -2116,7 +2122,7 @@ class TreeEquivalenceTextTests(unittest.TestCase):
         with mock.patch.object(q, "changed_paths", return_value=code):
             rec = collect(release=True, archives=SOAKED_EARLIER)
         text = q.tree_equivalence_text(rec, code + ["CHANGELOG.md"])
-        self.assertIn("paths that supersede the soak archive: 2", text)
+        self.assertIn("paths that supersede the x86_64 soak archive: 2", text)
         for heading in ("admitted: generators", "admitted: version sweep", "release documents that changed"):
             head, _ = self.section(text, heading)
             self.assertIn("not listed", head)
@@ -2129,9 +2135,9 @@ class TreeEquivalenceTextTests(unittest.TestCase):
         for release, why in ((True, "the release gate found no soak archive for this tree"),
                              (False, "no soak archive is recorded for this tree")):
             with self.subTest(release=release):
-                text = q.tree_equivalence_text(collect(release=release, archives=NO_SOAK), None)
-                self.assertEqual(text.splitlines()[:3], ["soaked -", "qualified " + SHA, "tag -"])
-                self.assertIn(why, text)
+                text = q.tree_equivalence_text(collect(release=release, archives=NO_SOAK, arm=False), None)
+                self.assertEqual(text.splitlines()[:5], ["qualified " + SHA, "tag -", "", "x86_64 soak", why])
+                self.assertNotIn("soaked", text)
                 self.assertNotIn("none", text)
                 self.assertNotIn("all paths that differ", text)
         old = collect(archives=NO_SOAK)
@@ -2141,8 +2147,8 @@ class TreeEquivalenceTextTests(unittest.TestCase):
     def test_an_unresolved_soaked_tree_says_nothing_was_compared(self):
         with mock.patch.object(q, "changed_paths", side_effect=q.QualificationError("fatal: bad object")):
             rec = collect(release=True, archives=SOAKED_EARLIER)
-        text = q.tree_equivalence_text(rec, None)
-        self.assertEqual(text.splitlines()[0], "soaked " + OLD_TREE)
+        text = self.block(q.tree_equivalence_text(rec, None), "x86_64")
+        self.assertEqual(text.splitlines()[1], "soaked " + OLD_TREE)
         self.assertIn("git could not resolve the soaked tree (fatal: bad object), so nothing was compared", text)
         self.assertNotIn("none", text)
 
@@ -2160,7 +2166,102 @@ class TreeEquivalenceTextTests(unittest.TestCase):
             self.assertIn("not recorded", self.section(text, heading)[0])
         del rec["release_vm"]["soak"]["equivalence"]
         self.assertIn("the record does not say what changed between the two commits",
+                      self.block(q.tree_equivalence_text(rec, []), "x86_64"))
+
+    def test_a_null_list_under_a_standing_soak_is_missing_not_empty(self):
+        rec = self.standing()
+        eq = rec["release_vm"]["soak"]["equivalence"]
+        eq.update(changed_generators=None, changed_release_documents=None,
+                  version_sweep=dict(self.SWEEP, paths=None))
+        text = q.tree_equivalence_text(rec, [])
+        for heading in ("admitted: generators", "admitted: version sweep", "release documents that changed"):
+            head, body = self.section(text, heading)
+            self.assertIn("not recorded", head)
+            self.assertNotIn("none", head)
+            self.assertEqual(body, [])
+        # No sweep at all is a decision the record made: none was admitted.
+        eq["version_sweep"] = None
+        head, _ = self.section(q.tree_equivalence_text(rec, []), "admitted: version sweep")
+        self.assertTrue(head.endswith(": none"), head)
+        # A count the record does not hold is not a count of zero.
+        rec["release_vm"]["soak"]["changed_paths"] = None
+        self.assertIn("paths that supersede the x86_64 soak archive: not recorded",
                       q.tree_equivalence_text(rec, []))
+
+    def test_each_gating_soak_has_its_own_block(self):
+        every = sorted(self.DOCS + self.GENERATORS + self.SWEEP["paths"])
+        text = q.tree_equivalence_text(self.arm_earlier(), [], every)
+        x86, arm = self.block(text, "x86_64"), self.block(text, "aarch64")
+        self.assertEqual(x86.splitlines()[:3], [
+            "x86_64 soak", "soaked " + SHA,
+            "soak archive soak-x86 (harness verdict PASS), judged by the release gate"])
+        self.assertIn("paths that supersede the x86_64 soak archive: none", x86)
+        for heading in ("admitted: generators", "admitted: version sweep", "release documents that changed",
+                        "all paths that differ"):
+            self.assertTrue(self.section(x86, heading)[0].endswith(": none"), x86)
+        self.assertEqual(arm.splitlines()[:3], [
+            "aarch64 soak", "soaked " + OLD_TREE,
+            "soak archive soak-arm (harness verdict PASS), judged by the release gate"])
+        self.assertEqual(self.section(arm, "paths that supersede the aarch64 soak archive"),
+                         ("paths that supersede the aarch64 soak archive: none", []))
+        head, body = self.section(arm, "admitted: generators")
+        self.assertTrue(head.endswith(": 1"), head)
+        self.assertEqual(body, self.GENERATORS)
+        head, body = self.section(arm, "admitted: version sweep")
+        self.assertIn("1.2.0 -> 1.3.0", head)
+        self.assertEqual(body, self.SWEEP["paths"])
+        head, body = self.section(arm, "release documents that changed")
+        self.assertTrue(head.endswith(": 2"), head)
+        self.assertEqual(body, self.DOCS)
+        head, body = self.section(arm, "all paths that differ")
+        self.assertTrue(head.endswith(": 5"), head)
+        self.assertEqual(body, every)
+
+    def test_a_superseded_arm_soak_says_so_in_its_own_block(self):
+        code = ["crates/x.rs", "crates/y.rs"]
+        text = q.tree_equivalence_text(self.arm_earlier(changed_paths=mock.Mock(return_value=code)), [], code)
+        self.assertIn("paths that supersede the x86_64 soak archive: none", self.block(text, "x86_64"))
+        arm = self.block(text, "aarch64")
+        self.assertIn("paths that supersede the aarch64 soak archive: 2", arm)
+        for heading in ("admitted: generators", "admitted: version sweep", "release documents that changed"):
+            head, _ = self.section(arm, heading)
+            self.assertIn("not listed", head)
+            self.assertNotIn("none", head)
+        self.assertEqual(self.section(arm, "all paths that differ")[1], code)
+
+    def test_an_unresolved_arm_tree_says_nothing_was_compared(self):
+        bad = mock.Mock(side_effect=q.QualificationError("fatal: bad object"))
+        arm = self.block(q.tree_equivalence_text(self.arm_earlier(changed_paths=bad), [], None), "aarch64")
+        self.assertEqual(arm.splitlines()[1], "soaked " + OLD_TREE)
+        self.assertIn("git could not resolve the soaked tree (fatal: bad object), so nothing was compared", arm)
+        self.assertNotIn("none", arm)
+
+    def test_a_release_record_without_an_arm_soak_says_so(self):
+        rec = collect(release=True, archives=archives_toml(self.X86, self.CORPUS), arm=False)
+        arm = self.block(q.tree_equivalence_text(rec, []), "aarch64")
+        self.assertEqual(arm.splitlines(), ["aarch64 soak",
+                                            "the release gate found no aarch64 soak archive for this tree"])
+        # A record from before the arm64 soak gated found none to record.
+        del rec["release_vm"]["arm_soak_gates"]
+        arm = self.block(q.tree_equivalence_text(rec, []), "aarch64")
+        self.assertEqual(arm.splitlines(), ["aarch64 soak", "no aarch64 soak archive is recorded for this tree"])
+
+    def test_an_arm_soak_that_did_not_gate_is_named_as_recorded_and_lists_nothing(self):
+        rec = self.arm_earlier()
+        del rec["release_vm"]["arm_soak_gates"], rec["release_vm"]["arm_soak"]["equivalence"]
+        arm = self.block(q.tree_equivalence_text(rec, [], None), "aarch64")
+        self.assertEqual(arm.splitlines(), [
+            "aarch64 soak", "soaked " + OLD_TREE,
+            "soak archive soak-arm (harness verdict PASS), recorded beside the x86_64 soak, not gating",
+            "", "the record does not say what changed between the two commits"])
+
+    def test_a_record_that_read_no_arm_soak_has_no_arm_block(self):
+        self.assertNotIn("aarch64", q.tree_equivalence_text(self.standing(release=False), []))
+
+    def test_paths_the_caller_did_not_list_are_said_to_be_missing(self):
+        arm = self.block(q.tree_equivalence_text(self.arm_earlier(), []), "aarch64")
+        self.assertEqual(self.section(arm, "all paths that differ"),
+                         ("all paths that differ between the two commits: not listed", []))
 
     def test_the_committed_record_prints_its_admitted_changes(self):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../docs/project/qualification.json")
@@ -2168,13 +2269,25 @@ class TreeEquivalenceTextTests(unittest.TestCase):
             self.skipTest("no qualification record is committed")
         with open(path) as f:
             rec = json.load(f)
-        eq = rec["release_vm"]["soak"]["equivalence"]
-        text = q.tree_equivalence_text(rec, [])
-        self.assertEqual(text.splitlines()[:2], ["soaked " + eq["soaked"], "qualified " + eq["qualified"]])
-        self.assertIn("paths that supersede the soak archive: none", text)
-        self.assertEqual(self.section(text, "admitted: generators")[1], eq["changed_generators"])
-        self.assertEqual(self.section(text, "admitted: version sweep")[1], (eq["version_sweep"] or {}).get("paths", []))
-        self.assertEqual(self.section(text, "release documents that changed")[1], eq["changed_release_documents"])
+        text = q.tree_equivalence_text(rec, [], [])
+        self.assertEqual(text.splitlines()[0], "qualified " + rec["source"]["sha"])
+        for arch, key in (("x86_64", "soak"), ("aarch64", "arm_soak")):
+            soak = rec["release_vm"][key]
+            block = self.block(text, arch)
+            self.assertEqual(block.splitlines()[1], "soaked " + soak["tree"])
+            eq = soak.get("equivalence")
+            if eq is None:
+                # The 0.10.0 record: the arm64 soak was recorded, not judged, with no lists.
+                self.assertTrue(block.endswith("the record does not say what changed between the two commits"),
+                                block)
+                self.assertNotIn("none", block)
+                continue
+            self.assertIn("paths that supersede the %s soak archive: none" % arch, block)
+            self.assertEqual(self.section(block, "admitted: generators")[1], eq["changed_generators"])
+            self.assertEqual(self.section(block, "admitted: version sweep")[1],
+                             (eq["version_sweep"] or {}).get("paths", []))
+            self.assertEqual(self.section(block, "release documents that changed")[1],
+                             eq["changed_release_documents"])
 
     def run_cli(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -2194,27 +2307,33 @@ class TreeEquivalenceTextTests(unittest.TestCase):
                 spit(os.path.join(root, f), "1\n")
             git(root, "add", ".")
             git(root, "commit", "-q", "-m", "A")
-            soaked = git(root, "rev-parse", "HEAD")
-            for f in ("CHANGELOG.md", "docs/x.md"):
-                spit(os.path.join(root, f), "2\n")
+            arm_soaked = git(root, "rev-parse", "HEAD")
+            spit(os.path.join(root, "docs/x.md"), "2\n")
             git(root, "commit", "-q", "-am", "B")
+            soaked = git(root, "rev-parse", "HEAD")
+            spit(os.path.join(root, "CHANGELOG.md"), "2\n")
+            git(root, "commit", "-q", "-am", "C")
             qualified = git(root, "rev-parse", "HEAD")
             rec = self.standing()
             rec["release_vm"]["soak"]["equivalence"].update(soaked=soaked, qualified=qualified)
+            rec["release_vm"]["arm_soak"]["equivalence"].update(soaked=arm_soaked, qualified=qualified)
             jf = os.path.join(d, "q.json")
             put(jf, rec)
             rc, out, err = self.run_cli("--json", jf, "--root", root)
             self.assertEqual(rc, 0, err)
-            self.assertEqual(self.section(out, "all paths that differ"),
+            self.assertEqual(self.section(self.block(out, "x86_64"), "all paths that differ"),
+                             ("all paths that differ between the two commits: 1", ["CHANGELOG.md"]))
+            self.assertEqual(self.section(self.block(out, "aarch64"), "all paths that differ"),
                              ("all paths that differ between the two commits: 2", ["CHANGELOG.md", "docs/x.md"]))
-            self.assertEqual(out, q.tree_equivalence_text(rec, ["CHANGELOG.md", "docs/x.md"]))
+            self.assertEqual(out, q.tree_equivalence_text(rec, ["CHANGELOG.md"], ["CHANGELOG.md", "docs/x.md"]))
             # A commit git cannot resolve is an error, never an empty list.
-            rec["release_vm"]["soak"]["equivalence"]["soaked"] = "f" * 40
-            put(jf, rec)
-            rc, out, err = self.run_cli("--json", jf, "--root", root)
-            self.assertEqual(rc, 2)
-            self.assertEqual(out, "")
-            self.assertIn("bad object", err)
+            for key in ("arm_soak", "soak"):
+                rec["release_vm"][key]["equivalence"]["soaked"] = "f" * 40
+                put(jf, rec)
+                rc, out, err = self.run_cli("--json", jf, "--root", root)
+                self.assertEqual(rc, 2)
+                self.assertEqual(out, "")
+                self.assertIn("bad object", err)
             # No record at all is an error too.
             rc, _, err = self.run_cli("--json", os.path.join(d, "none.json"), "--root", root)
             self.assertEqual(rc, 2)
