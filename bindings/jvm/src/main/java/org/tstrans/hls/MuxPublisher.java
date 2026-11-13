@@ -49,7 +49,8 @@ public final class MuxPublisher extends NativeHandle {
         long ph = publisher.liveHandleForShell();
         long h = nWithConfigHls(ph,
             programConfig.programNumber(), programConfig.pmtPid(), programConfig.pcrPid(),
-            programConfig.pcrIntervalMs(), programConfig.psiIntervalMs(),
+            programConfig.pcrIntervalMs(), programConfig.pcrLeadMs(),
+            programConfig.psiIntervalMs(),
             programConfig.bufferPackets(), programConfig.av1Carriage().ordinal(),
             programConfig.streamPids(), programConfig.streamKinds(),
             programConfig.streamCodecs(), programConfig.streamTypeCodes(),
@@ -146,7 +147,8 @@ public final class MuxPublisher extends NativeHandle {
     }
 
     private static native long nWithConfigHls(long publisherHandle, int programNumber, int pmtPid,
-        int pcrPid, int pcrIntervalMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
+        int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
+        int av1Carriage,
         int[] streamPids, int[] streamKinds, int[] streamCodecs, int[] streamTypeCodes,
         boolean[] streamCarriesPts, byte[] dataDescBytes, int[] dataDescLens)
         throws MuxException, HlsException;

@@ -97,6 +97,7 @@ public final class Socket extends NativeHandle {
         int pmtPid = programConfig.pmtPid();
         int pcrPid = programConfig.pcrPid();
         int pcrIntervalMs = programConfig.pcrIntervalMs();
+        int pcrLeadMs = programConfig.pcrLeadMs();
         int psiIntervalMs = programConfig.psiIntervalMs();
         int bufferPackets = programConfig.bufferPackets();
         int av1Carriage = programConfig.av1Carriage().ordinal();
@@ -113,8 +114,8 @@ public final class Socket extends NativeHandle {
         // exactly one caller and never reuses a key, so a racing close() or a
         // second conversion either wins the socket or sees it closed.
         long h = nIntoMuxSender(peekHandle(), programNumber, pmtPid, pcrPid, pcrIntervalMs,
-            psiIntervalMs, bufferPackets, av1Carriage, streamPids, streamKinds, streamCodecs,
-            streamTypeCodes, streamCarriesPts, dataDescBytes, dataDescLens);
+            pcrLeadMs, psiIntervalMs, bufferPackets, av1Carriage, streamPids, streamKinds,
+            streamCodecs, streamTypeCodes, streamCarriesPts, dataDescBytes, dataDescLens);
         consumeHandle();
         return ShellAdapters.muxSender(h);
     }
@@ -237,7 +238,8 @@ public final class Socket extends NativeHandle {
      * after the native has taken it.
      */
     private static native long nIntoMuxSender(long handle, int programNumber, int pmtPid,
-        int pcrPid, int pcrIntervalMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
+        int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
+        int av1Carriage,
         int[] streamPids, int[] streamKinds, int[] streamCodecs, int[] streamTypeCodes,
         boolean[] streamCarriesPts,
         byte[] dataDescBytes, int[] dataDescLens) throws SrtException, MuxException;

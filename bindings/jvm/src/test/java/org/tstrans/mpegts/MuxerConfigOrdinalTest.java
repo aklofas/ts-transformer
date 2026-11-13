@@ -33,7 +33,7 @@ class MuxerConfigOrdinalTest {
         try {
             N_OPEN = Muxer.class.getDeclaredMethod("nOpen",
                     int.class, int.class, int.class,
-                    int.class, int.class, int.class, int.class,
+                    int.class, int.class, int.class, int.class, int.class,
                     int[].class, int[].class, int[].class, int[].class,
                     boolean[].class, byte[].class, int[].class);
             N_OPEN.setAccessible(true);
@@ -58,6 +58,7 @@ class MuxerConfigOrdinalTest {
                     /* pmtPid         */ 0x1000,
                     /* pcrPid         */ -1,
                     /* pcrIntervalMs  */ 40,
+                    /* pcrLeadMs      */ 100,
                     /* psiIntervalMs  */ 100,
                     /* bufferPackets  */ 10_000,
                     /* av1Carriage    */ av1Carriage,
