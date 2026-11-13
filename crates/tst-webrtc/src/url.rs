@@ -147,7 +147,7 @@ pub const URL_KEYS: &[QueryKey<WhepUrl>] = &[
         "advertise",
         &[],
         "Address offered to viewers as the media candidate",
-        "literal IP address; default the bind address",
+        "literal IP address; default the bind address, or on a wildcard bind the local address each viewer's request arrived on",
         set_advertise,
     ),
     QueryKey::new(
