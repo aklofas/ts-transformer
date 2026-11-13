@@ -21,7 +21,9 @@
 #      is below it
 #   2  the check could not be made: no release tag is visible (a shallow
 #      clone, or tags never fetched: `git fetch --tags origin`), the version
-#      is missing or not MAJOR.MINOR.PATCH, or the directory is no checkout
+#      is missing or not MAJOR.MINOR.PATCH (no leading zeros), or the
+#      directory is not the top of a checkout (an unpacked archive inside
+#      another repository would be judged by that repository's tags)
 #
 # Environment:
 #   TSTRANS_NOT_A_RELEASE=1   skip the check, for a run that is not release
@@ -41,8 +43,8 @@ if [[ "${TSTRANS_NOT_A_RELEASE:-}" == 1 ]]; then
   exit 0
 fi
 
-git -C "$DIR" rev-parse --git-dir >/dev/null 2>&1 ||
-  { echo "$me: $DIR is not a git checkout" >&2; exit 2; }
+top=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null) && [[ "$top" -ef "$DIR" ]] ||
+  { echo "$me: $DIR is not a git checkout${top:+ (it is inside $top)}" >&2; exit 2; }
 [[ -f "$DIR/Cargo.toml" ]] ||
   { echo "$me: $DIR has no Cargo.toml to read the workspace version from" >&2; exit 2; }
 
@@ -51,7 +53,7 @@ version=$(awk '
   table == "[workspace.package]" && /^version[[:space:]]*=/ {
     sub(/^[^"]*"/, ""); sub(/".*$/, ""); print; exit
   }' "$DIR/Cargo.toml")
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
   { echo "$me: the workspace version in $DIR/Cargo.toml is '${version}', not MAJOR.MINOR.PATCH" >&2; exit 2; }
 
 tag=$(git -C "$DIR" tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
