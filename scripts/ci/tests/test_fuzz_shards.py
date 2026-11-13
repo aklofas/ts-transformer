@@ -210,10 +210,12 @@ class MergeTests(unittest.TestCase):
                                   "shards": 4, "crates": ["tst-core", "tst-rtp", "tst-srt", "tst-webrtc"]})
 
     def test_no_result_file_at_all_writes_nothing_and_is_a_problem(self):
-        merged, problems = self.merge()
-        self.assertIsNone(merged)
-        self.assertEqual(len(problems), 4)
-        self.assertIn("shard 1 of 4 left no result", problems[0])
+        for results in (self.results, os.path.join(self.results, "absent")):
+            with self.subTest(results=results):
+                merged, problems = fs.merge(self.root, 4, 60, results)
+                self.assertIsNone(merged)
+                self.assertEqual(len(problems), 4)
+                self.assertIn("shard 1 of 4 left no result", problems[0])
 
     def test_a_missing_shard_is_a_problem_and_its_targets_are_not_counted(self):
         for k in (1, 2, 4):
@@ -231,6 +233,13 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(merged["targets_run"], len(MIXED))
         self.assertEqual(merged["crashes"], 2)
         self.assertEqual(problems, ["tst-core/t01 (shard 1 of 4): crash, 2 artefact file(s)"])
+
+    def test_artefact_files_of_a_target_that_ended_ok_are_not_crashes(self):
+        # libFuzzer also writes artefacts that are not failures (a slow unit).
+        for k in (1, 2, 3, 4):
+            self.write(k, **({"t01": ("ok", 3)} if k == 1 else {}))
+        merged, problems = self.merge()
+        self.assertEqual((merged["targets_run"], merged["crashes"], problems), (len(MIXED), 0, []))
 
     def test_a_target_that_errored_or_ended_early_did_not_run(self):
         for outcome in ("error", "short"):
@@ -305,7 +314,10 @@ class MergeTests(unittest.TestCase):
         for k in (1, 2, 3, 4):
             self.write(k)
         for bad in ("{", "[]", json.dumps({"shard": 2, "shards": 4, "seconds_per_target": 60}),
-                    json.dumps({"shard": 2, "shards": 4, "seconds_per_target": "60", "targets": []})):
+                    json.dumps({"shard": 2, "shards": 4, "seconds_per_target": "60", "targets": []}),
+                    json.dumps({"shard": 2, "shards": 4, "seconds_per_target": 60,
+                                "targets": [{"crate": "tst-core"}]}),
+                    json.dumps({"shard": 2, "shards": 4, "seconds_per_target": 60, "targets": ["t05"]})):
             with self.subTest(bad=bad):
                 self.put(2, bad)
                 merged, problems = self.merge()

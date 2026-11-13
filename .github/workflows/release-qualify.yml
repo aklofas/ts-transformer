@@ -2,15 +2,17 @@ name: release-qualify
 
 # One run on one commit produces the qualification record of that commit:
 # every test leg (called from the existing workflows in dry-run mode), the
-# time-boxed fuzz run, the C ABI comparison with the previous tag, the
+# fuzz leg (fuzz.yml: every declared target for 60 s, for 600 s when the run
+# qualifies a release), the C ABI comparison with the previous tag, the
 # breaking-change report against that tag, the CI
 # result on the same SHA, the SBOMs, then `qualification.json`, its rendered
 # text, SHA256SUMS, build-provenance attestations and the C package.
 #
-# Nothing here publishes to a registry. Every called workflow gets
-# `dry_run: true`; its publish jobs are skipped by that input (the callee
-# rail scripts/check/repo/publish-guards.sh keeps it so). The only write is
-# the Release attach job, on a pushed `v*` tag whose verdict is GO.
+# Nothing here publishes to a registry. Every called workflow that has a
+# publish job gets `dry_run: true`; its publish jobs are skipped by that input
+# (the callee rail scripts/check/repo/publish-guards.sh keeps it so). fuzz.yml
+# has none. The only write is the Release attach job, on a pushed `v*` tag
+# whose verdict is GO.
 #
 # No secrets are passed down: a called workflow gets none from this one.
 
@@ -33,6 +35,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/release-qualify.yml"
+      - ".github/workflows/fuzz.yml"
+      - "scripts/ci/fuzz*"
       - "scripts/gen/qualification*"
 
 permissions:
@@ -162,98 +166,14 @@ jobs:
       dry_run: true
 
   fuzz:
-    name: fuzz 60 s per target (${{ matrix.crate }})
     needs: resolve
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        crate: [tst-core, tst-rtp, tst-srt, tst-webrtc]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.resolve.outputs.ref }}
-          submodules: recursive
-      - uses: ./.github/actions/free-disk
-
-      - name: Install build prerequisites
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
-
-      - name: Install nightly + cargo-fuzz
-        run: |
-          rustup toolchain install nightly --profile minimal --no-self-update
-          # No --locked, as in ci.yml's fuzz-smoke job: cargo-fuzz 0.13.1's
-          # bundled Cargo.lock does not build on current nightlies.
-          cargo +nightly install cargo-fuzz --quiet
-
-      - name: Manifest matches the fuzz directories
-        run: bash scripts/check/repo/fuzz-targets.sh
-
-      - name: Fuzz every declared target of ${{ matrix.crate }}
-        env:
-          CRATE: ${{ matrix.crate }}
-          SECONDS_PER_TARGET: "60"
-          SRT_FORCE_VENDORED: "1"
-          RIST_FORCE_VENDORED: "1"
-        run: |
-          python3 -c '
-          import sys, tomllib
-          t = tomllib.load(open("tests/coverage/fuzz-targets.toml", "rb"))["target"]
-          print("\n".join(x["name"] for x in t if x["crate"] == sys.argv[1]))
-          ' "$CRATE" > "$RUNNER_TEMP/targets.txt"
-          [ -s "$RUNNER_TEMP/targets.txt" ] || { echo "no targets declared for $CRATE" >&2; exit 1; }
-          cd "crates/$CRATE/fuzz"
-          # The committed lockfile is the resolution the record attests: fail
-          # here, with cargo's own message, if it would need re-resolving.
-          cargo +nightly metadata --locked --format-version 1 > /dev/null
-          {
-            echo "### Toolchain for ${CRATE}"
-            echo '```'
-            rustc +nightly -V
-            cargo +nightly fuzz --version
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-          run=0; crashes=0; failed=0
-          while IFS= read -r name; do
-            corpus=()
-            [ -d "seeds/$name" ] && corpus=("seeds/$name")
-            echo "::group::fuzz $name"
-            if cargo +nightly fuzz run "$name" ${corpus[@]+"${corpus[@]}"} -- "-max_total_time=$SECONDS_PER_TARGET"; then
-              run=$((run + 1))
-            else
-              found=0
-              [ -d "artifacts/$name" ] && found="$(find "artifacts/$name" -type f | wc -l | tr -d ' ')"
-              if [ "$found" -gt 0 ]; then
-                # A crash is a finding: the target ran, and the record says so.
-                run=$((run + 1)); crashes=$((crashes + found))
-              fi
-              failed=$((failed + 1))
-              echo "::error::fuzz target $name failed ($found artefact file(s))"
-            fi
-            echo "::endgroup::"
-          done < "$RUNNER_TEMP/targets.txt"
-          jq -n --arg crate "$CRATE" --argjson run "$run" --argjson secs "$SECONDS_PER_TARGET" --argjson crashes "$crashes" \
-            '{crate:$crate, targets_run:$run, seconds_per_target:$secs, crashes:$crashes}' > "$RUNNER_TEMP/fuzz-$CRATE.json"
-          [ "$failed" -eq 0 ]
-
-      - name: Keep the fuzz result
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: fuzz-${{ matrix.crate }}
-          path: ${{ runner.temp }}/fuzz-${{ matrix.crate }}.json
-          if-no-files-found: ignore
-
-      - name: Upload crash artefacts
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: fuzz-crashes-${{ matrix.crate }}
-          path: crates/${{ matrix.crate }}/fuzz/artifacts
-          if-no-files-found: ignore
+    uses: ./.github/workflows/fuzz.yml
+    with:
+      sha: ${{ needs.resolve.outputs.ref }}
+      # 600 s per target when the run qualifies a release (the condition that
+      # gives the collector --release below, which then refuses less), 60 s
+      # otherwise.
+      seconds_per_target: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.release == true) && 600 || 60 }}
 
   abi:
     name: C ABI, C package, semver report
@@ -591,7 +511,7 @@ jobs:
         # native libraries of the called workflows are not part of the record.
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          pattern: "{interop-evidence,interop-census-aarch64,sanitizer-*,fuzz-tst-*,abi-record,bench-ir,c-package,ci-record,sbom}"
+          pattern: "{interop-evidence,interop-census-aarch64,sanitizer-*,fuzz-result,abi-record,bench-ir,c-package,ci-record,sbom}"
           path: ${{ runner.temp }}/downloaded
 
       - name: Lay the artefacts out for the collector
@@ -608,13 +528,9 @@ jobs:
           [ -f "$D/ci-record/ci.json" ] && cp "$D/ci-record/ci.json" "$A/ci.json"
           for f in abi.json semver-checks.json semver-baseline.json; do [ -f "$D/abi-record/$f" ] && cp "$D/abi-record/$f" "$A/$f"; done
           [ -f "$D/bench-ir/bench-ir.json" ] && cp "$D/bench-ir/bench-ir.json" "$A/bench-ir.json"
-          # One fuzz.json from the per-crate parts. None at all = no file = a
-          # missing leg, never a pass.
-          parts=("$D"/fuzz-tst-*/fuzz-*.json)
-          if [ -e "${parts[0]}" ]; then
-            jq -s '{targets_run:(map(.targets_run)|add), seconds_per_target:(map(.seconds_per_target)|min),
-                    crashes:(map(.crashes)|add), crates:(map(.crate))}' "${parts[@]}" > "$A/fuzz.json"
-          fi
+          # fuzz.yml's result job merged the shards into one fuzz.json. None
+          # = no file = a missing leg, never a pass.
+          [ -f "$D/fuzz-result/fuzz.json" ] && cp "$D/fuzz-result/fuzz.json" "$A/fuzz.json"
           # The tool versions the record names.
           abidiff="$(jq -r '.abidiff_version // empty' "$A/abi.json" 2>/dev/null || true)"
           semver="$(jq -r '.version // empty' "$D/abi-record/semver-checks-tool.json" 2>/dev/null || true)"

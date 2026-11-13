@@ -1,0 +1,200 @@
+name: fuzz
+
+# The fuzz leg: every target declared in tests/coverage/fuzz-targets.toml runs
+# under `cargo +nightly fuzz run` for the same time on one commit, and the
+# outcomes add up to one fuzz.json. release-qualify.yml calls this with 60 s
+# per target, and with 600 s when it qualifies a release; a dispatch runs it
+# alone.
+#
+# The long run is this leg with a longer time, not ClusterFuzzLite's batch
+# run: that one spreads a single time budget over all targets, builds only the
+# default branch's tip in its own image, does not read the manifest and leaves
+# no per-target count. A qualification needs the commit it names, every
+# declared target for a stated time and a count for its record.
+#
+# One job cannot hold the long run: 40 targets at 600 s are 6 h 40 min of
+# fuzzing, over a job's six hours. scripts/ci/fuzz_shards.py deals the targets
+# into FUZZ_SHARDS jobs of equal size. With 8 shards a job fuzzes 5 targets,
+# 50 min at 600 s, after about 3 min of setup and 1 to 3 min for each fuzz
+# workspace it builds (three at most): about an hour, half the job timeout.
+# Those counts are today's manifest's. The plan job reads the manifest and
+# refuses a layout whose longest shard is estimated over
+# FUZZ_SHARD_MAX_MINUTES, so a manifest that outgrew the shard count fails
+# there, before any fuzzing, with the remedy in the message.
+#
+# Nothing passes by absence. No declared target, a shard that ran nothing, a
+# shard without a result, a target that ended before its time and a total
+# short of the manifest each fail the `result` job. A crash fails its shard
+# after the shard's other targets ran; the reproducer and the target's last
+# output are uploaded as `fuzz-failed-shard-<n>-<crate>-<target>`.
+#
+# Nothing here publishes and no secret is used: there is no publish-shaped job
+# for scripts/check/repo/publish-guards.sh to hold behind a `dry_run` input.
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: The full 40-hex commit to fuzz
+        type: string
+        required: true
+      seconds_per_target:
+        description: Seconds each target runs
+        type: number
+        required: true
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: The full 40-hex commit to fuzz
+        type: string
+        required: true
+      seconds_per_target:
+        description: Seconds each target runs (a release qualification uses 600)
+        type: number
+        default: 600
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_SHARDS: "8"
+  FUZZ_SHARD_MAX_MINUTES: "90"
+
+jobs:
+  plan:
+    name: plan the shards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: The sha is the full 40-hex commit, the time a whole number of seconds
+        # actions/checkout cannot resolve an abbreviated sha ("A branch or tag with
+        # the name '<short>' could not be found"); fail here with the reason instead.
+        env:
+          SHA: ${{ inputs.sha }}
+          SECONDS_PER_TARGET: ${{ inputs.seconds_per_target }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be the full 40-hex commit (got '$SHA'); use git rev-parse <ref>"; exit 2; }
+          [[ "$SECONDS_PER_TARGET" =~ ^[1-9][0-9]*$ ]] || { echo "::error::seconds_per_target must be a whole number of seconds, at least 1 (got '$SECONDS_PER_TARGET')"; exit 2; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Manifest matches the fuzz directories
+        run: bash scripts/check/repo/fuzz-targets.sh
+
+      - name: Deal the declared targets into shards
+        id: plan
+        env:
+          SECONDS_PER_TARGET: ${{ inputs.seconds_per_target }}
+        run: |
+          rc=0
+          matrix="$(python3 scripts/ci/fuzz_shards.py plan --shards "$FUZZ_SHARDS" --seconds "$SECONDS_PER_TARGET" \
+            --max-minutes "$FUZZ_SHARD_MAX_MINUTES" 2> "$RUNNER_TEMP/layout.txt")" || rc=$?
+          cat "$RUNNER_TEMP/layout.txt"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          { echo '```'; cat "$RUNNER_TEMP/layout.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  shard:
+    name: shard ${{ matrix.shard }}/${{ matrix.of }} (${{ matrix.crates }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120 # one shard
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          submodules: recursive
+      - uses: ./.github/actions/free-disk
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+
+      - name: Install nightly + cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal --no-self-update
+          # No --locked, as in ci.yml's fuzz-smoke job: cargo-fuzz 0.13.1's
+          # bundled Cargo.lock does not build on current nightlies.
+          cargo +nightly install cargo-fuzz --quiet
+
+      - name: Fuzz the shard's ${{ matrix.targets }} targets
+        id: fuzz
+        env:
+          SHARD: ${{ matrix.shard }}
+          SECONDS_PER_TARGET: ${{ inputs.seconds_per_target }}
+          SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
+        run: bash scripts/ci/fuzz-shard.sh "$SHARD" "$FUZZ_SHARDS" "$SECONDS_PER_TARGET" "$RUNNER_TEMP/fuzz"
+
+      - name: Keep the shard's result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fuzz-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/fuzz/fuzz-shard-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+
+      - name: Keep the reproducers and the last output of the targets that failed
+        if: failure() && steps.fuzz.outputs.failed != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fuzz-failed-shard-${{ matrix.shard }}-${{ steps.fuzz.outputs.failed }}
+          path: ${{ runner.temp }}/fuzz/failures
+          if-no-files-found: error
+
+  result:
+    name: fuzz result
+    needs: [plan, shard]
+    # Runs whatever the shards did: a failed or missing shard is a line in the
+    # result and a failure of this job, not a missing job.
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Download the shards' results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: fuzz-shard-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/shards
+
+      - name: One fuzz.json from the shards
+        # Written when at least one shard reported, so the record of a failed
+        # leg carries its counts; every hole is a failure of this step.
+        env:
+          SECONDS_PER_TARGET: ${{ inputs.seconds_per_target }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/shards" "$RUNNER_TEMP/fuzz-result"
+          ls -l "$RUNNER_TEMP/shards"
+          rc=0
+          python3 scripts/ci/fuzz_shards.py merge --shards "$FUZZ_SHARDS" --seconds "$SECONDS_PER_TARGET" \
+            --results "$RUNNER_TEMP/shards" --out "$RUNNER_TEMP/fuzz-result/fuzz.json" > "$RUNNER_TEMP/merge.txt" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/merge.txt"
+          { echo '### Fuzz result'; echo '```'; cat "$RUNNER_TEMP/merge.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ ! -f "$RUNNER_TEMP/fuzz-result/fuzz.json" ] || cat "$RUNNER_TEMP/fuzz-result/fuzz.json"
+          exit "$rc"
+
+      - name: Keep fuzz.json
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fuzz-result
+          path: ${{ runner.temp }}/fuzz-result/fuzz.json
+          if-no-files-found: ignore
