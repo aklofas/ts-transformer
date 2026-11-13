@@ -1476,61 +1476,25 @@ def _listed(heading, paths):
     return ["%s: %s" % (heading, len(paths) or "none")] + list(paths)
 
 
-def _arm_soak_lines(gate):
-    """The aarch64 soak of a release record, for the tree-equivalence text: nothing
-    for a record that read none."""
-    if "arm_soak" not in gate:
-        return []
-    arm, gates = gate["arm_soak"], gate.get("arm_soak_gates")
-    if arm is None:
-        return ["the release gate found no aarch64 soak archive for this tree" if gates
-                else "no aarch64 soak archive is recorded for this tree"]
-    if not gates:
-        verdict = "recorded beside the x86_64 soak, not gating"
-    elif arm.get("git_error") is not None:
-        verdict = "judged by the release gate: git could not resolve its tree (%s)" % arm["git_error"]
-    elif arm.get("changed_paths"):
-        verdict = "judged by the release gate: %d path(s) supersede it" % arm["changed_paths"]
-    else:
-        verdict = "judged by the release gate: no path supersedes it"
-    return ["aarch64 soak archive %s (%s) on tree %s, %s" % (arm["id"], _raw_text(arm), arm["tree"], verdict)]
-
-
-def tree_equivalence_text(rec, all_paths):
-    """The bundle's TREE-EQUIVALENCE.txt: the record's decision on whether its soak
-    archive stands for the qualified commit. The paths that supersede the archive come
-    first (none for a GO), then what the gate admits and why (the generators, a
-    version sweep), then the release documents, then `all_paths`, every path git
-    reports between the two commits. The lists are those of the x86_64 soak; the
-    aarch64 soak has one line. A list the record does not have is said to be
-    missing, never printed as empty."""
-    gate = rec.get("release_vm") or {}
-    soak = gate.get("soak")
-    eq = (soak or {}).get("equivalence")
-    src = rec.get("source", {})
-    out = ["soaked %s" % (soak["tree"] if soak else "-"),
-           "qualified %s" % src.get("sha", "-"),
-           "tag %s" % (src.get("tag") or "-"), ""]
+def _soak_block(arch, soak, standing, missing, all_paths):
+    """One soak's block of the tree-equivalence text. `standing` says how the record
+    treated the archive, `missing` what a record without one says, and `all_paths` is
+    every path git reports between the soaked and the qualified commit (None when the
+    caller did not list them)."""
+    out = ["%s soak" % arch]
     if soak is None:
-        out.append("the release gate found no soak archive for this tree" if gate.get("release_mode")
-                   else "no soak archive is recorded for this tree")
-    else:
-        out.append("soak archive %s (%s), %s" % (
-            soak["id"], _raw_text(soak),
-            "judged by the release gate" if gate.get("release_mode")
-            else "recorded for information: this is not a release qualification"))
-    out.extend(_arm_soak_lines(gate))
-    if soak is None:
-        return "\n".join(out) + "\n"
-    out.append("")
+        return out + [missing]
+    out += ["soaked %s" % soak["tree"],
+            "soak archive %s (%s), %s" % (soak["id"], _raw_text(soak), standing), ""]
     if soak.get("git_error") is not None:
-        out.append("git could not resolve the soaked tree (%s), so nothing was compared" % soak["git_error"])
-        return "\n".join(out) + "\n"
+        return out + ["git could not resolve the soaked tree (%s), so nothing was compared" % soak["git_error"]]
+    eq = soak.get("equivalence")
     if eq is None:
-        out.append("the record does not say what changed between the two commits")
-        return "\n".join(out) + "\n"
-    superseded = bool(soak.get("changed_paths"))
-    out += ["paths that supersede the soak archive: %s" % (soak["changed_paths"] if superseded else "none")]
+        return out + ["the record does not say what changed between the two commits"]
+    count = soak.get("changed_paths")
+    superseded = bool(count)
+    out.append("paths that supersede the %s soak archive: %s"
+               % (arch, "not recorded in this record" if count is None else count or "none"))
     if superseded:
         out.append("(the record keeps their count; they are the paths in the last list that are not a release "
                    "document, not under scripts/gen/ and not changed by a version sweep alone)")
@@ -1539,21 +1503,53 @@ def tree_equivalence_text(rec, all_paths):
         out.append("")
         if superseded:
             out.append("%s: not listed, the soak archive is superseded" % heading)
-        elif key not in eq:
+        elif key not in eq or paths(eq[key]) is None:
             out.append("%s: not recorded in this record" % heading)
         else:
-            out.extend(_listed(heading, paths(eq[key]) or []))
+            out.extend(_listed(heading, paths(eq[key])))
 
     sweep = eq.get("version_sweep")
     section("admitted: generators under scripts/gen/ (they build no shipped artifact and run in no soak)",
             "changed_generators")
+    # No sweep is a decision (none was admitted); a sweep without its files is a hole.
     section("admitted: version sweep%s (each file differs only in the workspace version)"
             % (" %s -> %s" % (sweep["from"], sweep["to"]) if sweep else ""),
-            "version_sweep", lambda v: (v or {}).get("paths"))
+            "version_sweep", lambda v: [] if v is None else v.get("paths"))
     section("release documents that changed (CHANGELOG.md, docs/ and %s)" % ARCHIVE_TABLE,
             "changed_release_documents")
     out.append("")
-    out.extend(_listed("all paths that differ between the two commits", all_paths))
+    if all_paths is None:
+        out.append("all paths that differ between the two commits: not listed")
+    else:
+        out.extend(_listed("all paths that differ between the two commits", all_paths))
+    return out
+
+
+def tree_equivalence_text(rec, all_paths, arm_paths=None):
+    """The bundle's TREE-EQUIVALENCE.txt: the record's decision on whether each soak
+    archive stands for the qualified commit, the x86_64 soak first, then the aarch64
+    soak of a record that read one. In a block the paths that supersede the archive
+    come first (none for a GO), then what the gate admits and why (the generators, a
+    version sweep), then the release documents, then every path git reports between
+    the two commits (`all_paths`, and `arm_paths` for the aarch64 soak). A list the
+    record does not have is said to be missing, never printed as empty."""
+    gate = rec.get("release_vm") or {}
+    src = rec.get("source", {})
+    out = ["qualified %s" % src.get("sha", "-"), "tag %s" % (src.get("tag") or "-"), ""]
+    release = gate.get("release_mode")
+    out += _soak_block(
+        "x86_64", gate.get("soak"),
+        "judged by the release gate" if release else "recorded for information: this is not a release qualification",
+        "the release gate found no soak archive for this tree" if release
+        else "no soak archive is recorded for this tree", all_paths)
+    if "arm_soak" in gate:
+        gates = gate.get("arm_soak_gates")
+        out.append("")
+        out += _soak_block(
+            "aarch64", gate["arm_soak"],
+            "judged by the release gate" if gates else "recorded beside the x86_64 soak, not gating",
+            "the release gate found no aarch64 soak archive for this tree" if gates
+            else "no aarch64 soak archive is recorded for this tree", arm_paths)
     return "\n".join(out) + "\n"
 
 
@@ -1562,15 +1558,19 @@ def cmd_tree_equivalence(args):
     rec = read_json(path)
     if not isinstance(rec, dict):
         die("%s holds no qualification record" % path)
-    soak = (rec.get("release_vm") or {}).get("soak") or {}
-    eq = soak.get("equivalence")
-    all_paths = None
-    if eq is not None and soak.get("git_error") is None:
+    gate = rec.get("release_vm") or {}
+
+    def all_paths(soak):
+        """Every path between a soak entry's two commits; None when the record compared nothing."""
+        eq = (soak or {}).get("equivalence")
+        if eq is None or soak.get("git_error") is not None:
+            return None
         try:
-            all_paths = _diff_names(args.root, eq["soaked"], eq["qualified"])
+            return _diff_names(args.root, eq["soaked"], eq["qualified"])
         except QualificationError as e:
             die("git could not list the paths between %s and %s: %s" % (eq["soaked"], eq["qualified"], e))
-    sys.stdout.write(tree_equivalence_text(rec, all_paths))
+
+    sys.stdout.write(tree_equivalence_text(rec, all_paths(gate.get("soak")), all_paths(gate.get("arm_soak"))))
     return 0
 
 

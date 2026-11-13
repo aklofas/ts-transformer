@@ -693,11 +693,11 @@ jobs:
               "$RUNNER_TEMP/downloaded/sbom/$f.cdx.json" > "$B/$f.cdx.json"
           done
           cp "$RUNNER_TEMP"/downloaded/c-package/*.tar.gz "$B/" || echo "::warning::no C package was produced"
-          # The tree-equivalence proof: the soak ran on an earlier commit than the
-          # one qualified, so the bundle states the collector's decision in words:
-          # the paths that supersede the soak (none for a GO), what the gate
-          # admitted (generators, a version sweep), the release documents that
-          # changed, and every path that differs.
+          # The tree-equivalence proof: the soaks ran on an earlier commit than the
+          # one qualified, so the bundle states the collector's decision in words,
+          # for the x86_64 soak and for the aarch64 soak: the paths that supersede
+          # it (none for a GO), what the gate admitted (generators, a version
+          # sweep), the release documents that changed, and every path that differs.
           bash scripts/gen/qualification.sh tree-equivalence --json "$B/qualification.json" > "$B/TREE-EQUIVALENCE.txt"
           bash scripts/gen/qualification.sh checksums --dir "$B"
           ls -l "$B"
