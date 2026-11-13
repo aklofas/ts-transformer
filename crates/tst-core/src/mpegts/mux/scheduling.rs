@@ -1,6 +1,6 @@
 //! PSI + PCR scheduling for `Muxer`: one delivery clock per program.
 //!
-//! A program's clock is the value of its last PCR. Every push moves it to
+//! A program's clock is the base of its last PCR. Every push moves it to
 //! the push's decode time minus `pcr_lead_ms`, never backward, so the PCR a
 //! receiver reads is always behind the decode time of the access unit that
 //! follows it. `Muxer::plan_clock` works out what one push does to the
@@ -70,6 +70,7 @@ impl Muxer {
     /// program `prog_idx`'s clock. `pid` is `None` for a tick,
     /// which stands in for a push on the PCR PID. `force_pcr` asks for a PCR
     /// on the first packet even when none is due (a key frame).
+    #[inline(always)]
     fn plan_clock(
         &self,
         prog_idx: usize,
@@ -81,8 +82,6 @@ impl Muxer {
         let tick = pid.is_none();
         let on_pcr = pid.is_none_or(|p| p == slot.pcr_pid);
         let decode = decode_ts.masked_33bit();
-        let candidate = (decode + (1 << 33) - self.pcr_lead_90khz) & MASK_33;
-        let clock = slot.pcr_last.map(|pcr| (pcr / 300) & MASK_33);
         let since_pcr_stream = slot.pcr_stream_last.map(|v| pts_diff_33bit(decode, v));
 
         // A new time base needs two PCRs on the current one first
@@ -97,17 +96,24 @@ impl Muxer {
         // video's decode time.
         let live = !on_pcr && since_pcr_stream.is_some_and(|d| d <= TIMELINE_RESTART_90KHZ);
 
-        let new_clock = match clock {
-            Some(c) if !restart && (live || pts_diff_33bit(candidate, c) < 0) => c,
-            _ => candidate,
+        let candidate = (decode + (1 << 33) - self.pcr_lead_90khz) & MASK_33;
+        let (new_clock, pcr_due) = match slot.clock {
+            Some(clock) if live => (clock, false),
+            Some(clock) if !restart => {
+                // Never backward: a candidate behind the clock holds it.
+                let advance = pts_diff_33bit(candidate, clock);
+                if advance < 0 {
+                    (clock, refused)
+                } else {
+                    (candidate, refused || advance >= self.pcr_interval_90khz)
+                }
+            }
+            _ => (candidate, true),
         };
         let psi = restart
             || slot
                 .psi_last
                 .is_none_or(|last| pts_diff_33bit(new_clock, last) >= self.psi_interval_90khz);
-        let pcr_due = restart
-            || refused
-            || clock.is_none_or(|c| pts_diff_33bit(new_clock, c) >= self.pcr_interval_90khz);
         ClockStep {
             clock: new_clock,
             decode,
@@ -163,8 +169,8 @@ impl Muxer {
     /// Advance program `program_number`'s clock to `now` without pushing
     /// anything: queue the PSI and the PCR-only packet that are due.
     ///
-    /// A PCR is only ever written as part of a push, so a program whose PCR
-    /// PID carries fewer than ten access units a second cannot meet the
+    /// A push writes a PCR only on its own first packet, so a program whose
+    /// PCR PID carries fewer than ten access units a second cannot meet the
     /// 100 ms PCR interval of H.222.0 §2.7.2 from pushes alone. Such a
     /// source calls `tick` between pushes, at least every
     /// [`MuxerConfig::pcr_interval_ms`] of stream time. It also keeps PSI
@@ -197,6 +203,7 @@ impl Muxer {
     }
 
     /// Apply `step`: queue its PSI and PCR-only packets and move the clock.
+    #[inline(always)]
     fn commit_clock(&mut self, prog_idx: usize, step: &ClockStep) -> ClockPlan {
         if step.psi {
             self.emit_psi(step.clock);
@@ -220,7 +227,7 @@ impl Muxer {
             slot.pcrs_on_time_base = 0;
         }
         if step.pcr_only || step.first_pcr {
-            slot.pcr_last = Some(pcr.as_ticks());
+            slot.clock = Some(step.clock);
             slot.pcrs_on_time_base = slot.pcrs_on_time_base.saturating_add(1);
         }
         if step.on_pcr_stream {

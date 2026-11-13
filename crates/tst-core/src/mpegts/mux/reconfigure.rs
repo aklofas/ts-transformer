@@ -305,7 +305,7 @@ impl Muxer {
             if !matched {
                 // Another program's clock says nothing about this one.
                 clear_streams(slot);
-                slot.pcr_last = None;
+                slot.clock = None;
                 slot.pcr_stream_last = None;
                 slot.pcrs_on_time_base = 0;
             }

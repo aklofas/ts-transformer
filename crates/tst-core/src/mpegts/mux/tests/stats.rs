@@ -128,7 +128,7 @@ fn random_access_indicator_only_on_packets_with_pcr() {
         0xff, // start_code + IDR header + filler
     ];
 
-    // First key-frame at PTS=0 — pcr_last is None, so PCR is due. This
+    // First key-frame at PTS=0 — the program has no clock yet, so a PCR is due. This
     // first packet should carry both PCR and RA.
     mux.push_video(nal, Pts90khz::new(0), true).unwrap();
     // Second key-frame at PTS=10ms (= 900 90kHz ticks) — well below the
@@ -148,7 +148,7 @@ fn random_access_indicator_only_on_packets_with_pcr() {
     }
 
     // Walk all PUSI packets on PID 0x1011. Skip the first (it's the
-    // first key-frame and has PCR by virtue of pcr_last=None).
+    // first key-frame and has PCR by virtue of being the first).
     let pusi_packets: Vec<&[u8]> = all
         .chunks_exact(188)
         .filter(|p| {
