@@ -136,7 +136,13 @@ def at_version(version=VERSION):
     return mock.patch.object(q, "workspace_version", return_value=version)
 
 
-def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION):
+def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION, arm=True):
+    """One collected record. A release needs a soak on both architectures, so a release
+    fixture that names no aarch64 row gets a passing one on the qualified commit (ARM_OK)
+    and a test about the x86_64 soak or the corpus stays about that; `arm=False` leaves
+    the fixture without one."""
+    if release and arm and 'arch = "aarch64"' not in archives:
+        archives += ARM_OK
     tmp = tempfile.mkdtemp()
     art, root = build(tmp, mutate, archives)
     with at_version(version):
@@ -774,6 +780,7 @@ def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=2
 
 
 FIVE = q.RELEASE_SOAK_LEGS
+ARM_OK = archive_row("soak-arm-ok", "soak", SHA, legs=FIVE, arch="aarch64")
 
 
 def archives_toml(*rows):
@@ -956,48 +963,53 @@ class ReleaseModeTests(unittest.TestCase):
         rows.append(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         return archives_toml(*rows)
 
-    def test_an_arm_row_is_never_the_release_soak_but_is_recorded(self):
+    def test_an_arm_row_is_never_the_x86_release_soak_and_is_judged_beside_it(self):
         rec = collect(release=True, archives=self.arm_rows())
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         self.assertEqual(rec["release_vm"]["soak"]["id"], "soak-x86")
         self.assertEqual(rec["release_vm"]["arm_soak"]["id"], "soak-arm")
+        self.assertIs(rec["release_vm"]["arm_soak_gates"], True)
 
-    def test_a_failed_arm_row_is_recorded_and_is_no_reason(self):
+    def test_a_failed_arm_row_is_recorded_and_is_a_reason(self):
         rec = collect(release=True, archives=self.arm_rows(arm_pass=False))
-        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["verdict"], "NO-GO")
         self.assertIs(rec["release_vm"]["arm_soak"]["overall_pass"], False)
-        self.assertFalse(any("arm" in r for r in rec["verdict_reasons"]))
+        self.assertEqual(rec["verdict_reasons"], ["soak (aarch64): archive soak-arm recorded overall_pass=false"])
 
     def test_gate_line_and_archive_list_carry_the_arm_verdict_and_arch(self):
         for passed, word in ((True, "PASS"), (False, "FAIL")):
             with self.subTest(passed=passed):
                 text = q.render_block(collect(release=True, archives=self.arm_rows(arm_pass=passed)))
-                self.assertIn(", aarch64), %s (recorded, not gating)." % word, text)
+                self.assertIn("; arm64 soak soak-arm (tree %s, 259200 s, legs srt, rist, rtsp-publish, "
+                              "rtsp-publish-es, whep, %s) (gating, as the x86_64 soak)." % (SHA[:12], word), text)
                 self.assertIn("- `soak-arm` (soak, aarch64, 2026-11-02, tree", text)
                 self.assertIn("`overall_pass=%s`" % str(passed).lower(), text)
 
-    def test_gate_line_has_no_arm_part_without_an_arm_row(self):
-        text = q.render_block(collect(release=True, archives=RELEASE_OK))
-        self.assertNotIn("arm64 soak", text)
+    def test_gate_line_says_none_without_an_arm_row(self):
+        rec = collect(release=True, archives=RELEASE_OK, arm=False)
+        self.assertIn("corpus corpus-rel (PASS); arm64 soak none (gating, as the x86_64 soak).", q.render_block(rec))
 
-    def test_the_newer_of_two_arm_rows_is_recorded_even_when_it_failed(self):
+    def test_the_newer_of_two_arm_rows_is_judged_even_when_it_failed(self):
         rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"),
                              archive_row("soak-arm-1", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-02"),
                              archive_row("soak-arm-2", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-03",
                                          overall_pass=False),
                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = collect(release=True, archives=rows)
-        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["verdict"], "NO-GO")
         self.assertEqual(rec["release_vm"]["arm_soak"]["id"], "soak-arm-2")
-        self.assertIs(rec["release_vm"]["arm_soak"]["overall_pass"], False)
+        self.assertEqual(rec["verdict_reasons"], ["soak (aarch64): archive soak-arm-2 recorded overall_pass=false"])
 
-    def test_an_arm_row_on_a_non_equivalent_tree_is_not_recorded(self):
+    def test_an_arm_row_on_a_non_equivalent_tree_is_superseded(self):
         rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01"),
                              archive_row("soak-arm", "soak", OLD_TREE, legs=FIVE, arch="aarch64", date="2026-11-02"),
                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         with mock.patch.object(q, "changed_paths", return_value=["crates/tst-core/src/lib.rs"]):
             rec = collect(release=True, archives=rows)
-        self.assertIsNone(rec["release_vm"]["arm_soak"])
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(rec["release_vm"]["arm_soak"]["changed_paths"], 1)
+        self.assertEqual(rec["verdict_reasons"], [
+            "soak (aarch64): archive soak-arm is superseded by 1 changed path(s) outside the release documents"])
 
     def test_outside_release_mode_there_is_no_arm_soak_key(self):
         self.assertNotIn("arm_soak", collect(archives=self.arm_rows())["release_vm"])
@@ -1560,7 +1572,7 @@ class ReleaseModeTests(unittest.TestCase):
             rel = q.render_block(collect(release=True, archives=RELEASE_OK))
             mid = q.render_block(collect(archives=NO_SOAK))
         self.assertIn("Release gate: soak soak-rel (tree %s, 259200 s, legs srt, rist, rtsp-publish, "
-                      "rtsp-publish-es, whep, PASS), corpus corpus-rel (PASS)."
+                      "rtsp-publish-es, whep, PASS), corpus corpus-rel (PASS); arm64 soak soak-arm-ok (tree "
                       % SHA[:12], rel)
         self.assertIn("Release gate: not applied (not a release qualification); "
                       "newest soak archive for this tree: none.", mid)
@@ -1573,12 +1585,192 @@ class ReleaseModeTests(unittest.TestCase):
                       "newest soak archive for this tree: none.", q.render_block(old))
 
 
+class ArmSoakGateTests(unittest.TestCase):
+    """A release needs an aarch64 soak that stands for the qualified tree under the rules
+    the x86_64 release soak obeys; its reasons name the architecture."""
+
+    X86 = archive_row("soak-x86", "soak", SHA, legs=FIVE, date="2026-11-01", arch="x86_64")
+    CORPUS = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)
+
+    def rows(self, *arm_rows):
+        return archives_toml(self.X86, self.CORPUS, *arm_rows)
+
+    def arm(self, id="soak-arm", tree=SHA, date="2026-11-02", **kw):
+        kw.setdefault("legs", FIVE)
+        return archive_row(id, "soak", tree, arch="aarch64", date=date, **kw)
+
+    def no_go(self, archives, *reasons, **patches):
+        rec = collect(release=True, archives=archives, arm=False)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(rec["verdict_reasons"], list(reasons))
+        self.assertEqual(rec["release_vm"]["reasons"], list(reasons))
+        return rec
+
+    def test_both_architectures_passing_is_go_and_the_record_says_the_arm_soak_gated(self):
+        rec = collect(release=True, archives=self.rows(self.arm()), arm=False)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        gate = rec["release_vm"]
+        self.assertIs(gate["arm_soak_gates"], True)
+        self.assertEqual(gate["arm_soak"]["id"], "soak-arm")
+        self.assertEqual(gate["disposition"], "pass")
+        self.assertEqual(gate["arm_soak"]["equivalence"],
+                         {"soaked": SHA, "qualified": SHA, "changed_release_documents": [],
+                          "changed_generators": [], "version_sweep": None})
+
+    def test_the_x86_entry_keeps_its_fields(self):
+        rec = collect(release=True, archives=self.rows(self.arm()), arm=False)
+        self.assertEqual(sorted(rec["release_vm"]["soak"]), sorted([
+            "id", "tree", "date", "overall_pass", "expected_duration_s", "legs", "arch", "waiver",
+            "disposition", "changed_paths", "git_error", "equivalence"]))
+        self.assertEqual(sorted(rec["release_vm"]), sorted([
+            "release_mode", "soak", "corpus", "disposition", "reasons", "required_duration_s",
+            "arm_soak", "arm_soak_gates"]))
+
+    def test_a_release_without_an_arm_soak_is_no_go(self):
+        rec = self.no_go(self.rows(), "soak (aarch64): no release soak archive for this tree (%s)" % SHA[:12])
+        self.assertIsNone(rec["release_vm"]["arm_soak"])
+        self.assertEqual(rec["release_vm"]["disposition"], "fail")
+
+    def test_a_failed_arm_soak_is_no_go(self):
+        self.no_go(self.rows(self.arm(overall_pass=False)),
+                   "soak (aarch64): archive soak-arm recorded overall_pass=false")
+
+    def test_a_waived_arm_soak_is_no_go(self):
+        waived = self.arm(overall_pass=False) + (
+            '[archive.waiver]\nverdicts = ["a", "b"]\nreason = "harness"\n'
+            'reviewer = "maintainer"\ndate = "2026-11-03"\nfixed_in = "9.9.1"\n')
+        rec = self.no_go(self.rows(waived),
+                         "soak (aarch64): archive soak-arm is waived (2 verdicts), and a release needs a raw pass")
+        self.assertEqual(rec["release_vm"]["disposition"], "waived")
+
+    def test_a_short_arm_soak_is_no_go(self):
+        self.no_go(self.rows(self.arm(duration=3600)),
+                   "soak (aarch64): archive soak-arm declares 3600 s, below the required 172800")
+
+    def test_an_arm_soak_without_the_release_legs_is_no_go(self):
+        no_whep = [l for l in FIVE if l != "whep"]
+        self.no_go(self.rows(self.arm(legs=no_whep)),
+                   "soak (aarch64): archive soak-arm ran legs %s; the release soak needs %s"
+                   % (", ".join(no_whep), ", ".join(FIVE)))
+
+    def test_an_arm_soak_on_a_superseded_tree_is_no_go(self):
+        with mock.patch.object(q, "changed_paths", return_value=["crates/tst-core/src/lib.rs"]):
+            rec = self.no_go(self.rows(self.arm(tree=OLD_TREE)),
+                             "soak (aarch64): archive soak-arm is superseded by 1 changed path(s) outside "
+                             "the release documents")
+        self.assertIsNone(rec["release_vm"]["arm_soak"]["equivalence"]["changed_release_documents"])
+
+    def test_an_arm_soak_on_an_earlier_tree_stands_across_release_documents(self):
+        with mock.patch.object(q, "changed_paths", return_value=[]), \
+                mock.patch.object(q, "changed_release_documents", return_value=["CHANGELOG.md"]), \
+                mock.patch.object(q, "admitted_changes", return_value={"changed_generators": [],
+                                                                        "version_sweep": None}):
+            rec = collect(release=True, archives=self.rows(self.arm(tree=OLD_TREE)), arm=False)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["arm_soak"]["equivalence"]["changed_release_documents"], ["CHANGELOG.md"])
+
+    def test_a_newer_failed_arm_run_on_an_equivalent_tree_is_no_go(self):
+        D = "d" * 40
+        rows = self.rows(self.arm(), self.arm("soak-arm-bad", tree=D, date="2026-11-03", duration=3600,
+                                              overall_pass=False))
+        with mock.patch.object(q, "changed_paths", return_value=[]):
+            rec = self.no_go(rows, "soak (aarch64): archive soak-arm-bad, a newer run on an equivalent tree, "
+                                   "recorded overall_pass=false")
+        self.assertEqual(rec["release_vm"]["arm_soak"]["id"], "soak-arm")
+        # On a tree that is not equivalent it is no evidence about this one.
+        with mock.patch.object(q, "changed_paths", return_value=["crates/x.rs"]):
+            rec = collect(release=True, archives=rows, arm=False)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+
+    def test_an_unresolvable_arm_tree_is_no_go(self):
+        with mock.patch.object(q, "changed_paths", side_effect=q.QualificationError("fatal: bad object")):
+            self.no_go(self.rows(self.arm(tree=OLD_TREE)),
+                       "soak (aarch64): git could not resolve %s: fatal: bad object" % OLD_TREE)
+
+    def test_each_architecture_is_judged_on_its_own_rows(self):
+        # A newer failed x86_64 run counts against the x86_64 soak only, and the other way round.
+        x86_bad = archive_row("soak-x86-bad", "soak", SHA, date="2026-11-05", duration=3600, overall_pass=False,
+                              arch="x86_64")
+        rec = collect(release=True, archives=self.rows(self.arm(), x86_bad), arm=False)
+        self.assertEqual(rec["verdict_reasons"], [
+            "soak: archive soak-x86-bad, a newer run on an equivalent tree, recorded overall_pass=false"])
+        arm_bad = self.arm("soak-arm-bad", date="2026-11-05", duration=3600, overall_pass=False)
+        rec = collect(release=True, archives=self.rows(self.arm(), arm_bad), arm=False)
+        self.assertEqual(rec["verdict_reasons"], [
+            "soak (aarch64): archive soak-arm-bad, a newer run on an equivalent tree, recorded overall_pass=false"])
+        # A release-length arm64 row is preferred over a newer short pass, as for x86_64.
+        short = self.arm("soak-arm-1h", date="2026-11-05", duration=3600)
+        rec = collect(release=True, archives=self.rows(self.arm(), short), arm=False)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+        self.assertEqual(rec["release_vm"]["arm_soak"]["id"], "soak-arm")
+
+    def test_arm_reasons_follow_the_x86_and_corpus_ones(self):
+        rows = archives_toml(archive_row("soak-x86", "soak", SHA, legs=FIVE, overall_pass=False, arch="x86_64"),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, overall_pass=False),
+                             self.arm(overall_pass=False))
+        self.no_go(rows, "soak: archive soak-x86 recorded overall_pass=false",
+                   "corpus: archive corpus-rel recorded overall_pass=false",
+                   "soak (aarch64): archive soak-arm recorded overall_pass=false")
+
+    def test_outside_release_mode_nothing_about_the_arm_soak_gates(self):
+        for arm_rows in ((), (self.arm(overall_pass=False),), (self.arm(duration=3600),)):
+            rec = collect(archives=self.rows(*arm_rows))
+            self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+            self.assertEqual(rec["release_vm"]["reasons"], [])
+            self.assertNotIn("arm_soak", rec["release_vm"])
+            self.assertNotIn("arm_soak_gates", rec["release_vm"])
+            self.assertEqual(rec["release_vm"]["disposition"], "pass")
+
+    def test_a_record_written_while_the_arm_soak_was_recorded_only_renders_as_it_did(self):
+        rec = collect(release=True, archives=self.rows(self.arm()), arm=False)
+        new = [l for l in q.render_block(rec).splitlines() if l.startswith("Release gate:")][0]
+        self.assertTrue(new.endswith(
+            "corpus corpus-rel (PASS); arm64 soak soak-arm (tree %s, 259200 s, legs srt, rist, rtsp-publish, "
+            "rtsp-publish-es, whep, PASS) (gating, as the x86_64 soak)." % SHA[:12]), new)
+        del rec["release_vm"]["arm_soak_gates"]
+        old = [l for l in q.render_block(rec).splitlines() if l.startswith("Release gate:")][0]
+        self.assertTrue(old.endswith(
+            "corpus corpus-rel (PASS); arm64 soak `soak-arm` (tree `%s`, 259200 s, legs srt, rist, rtsp-publish, "
+            "rtsp-publish-es, whep, aarch64), PASS (recorded, not gating)." % SHA[:12]), old)
+        rec["release_vm"]["arm_soak"] = None
+        self.assertNotIn("arm64 soak", q.render_block(rec))
+
+    def test_the_tree_equivalence_text_names_the_arm_soak(self):
+        rec = collect(release=True, archives=self.rows(self.arm()), arm=False)
+        text = q.tree_equivalence_text(rec, [])
+        self.assertIn("aarch64 soak archive soak-arm (harness verdict PASS) on tree %s, judged by the release "
+                      "gate: no path supersedes it" % SHA, text)
+        with mock.patch.object(q, "changed_paths", return_value=["crates/x.rs", "crates/y.rs"]):
+            rec = collect(release=True, archives=self.rows(self.arm(tree=OLD_TREE)), arm=False)
+        self.assertIn("aarch64 soak archive soak-arm (harness verdict PASS) on tree %s, judged by the release "
+                      "gate: 2 path(s) supersede it" % OLD_TREE, q.tree_equivalence_text(rec, []))
+        rec = collect(release=True, archives=self.rows(), arm=False)
+        self.assertIn("the release gate found no aarch64 soak archive for this tree",
+                      q.tree_equivalence_text(rec, []))
+        # A record from before the arm64 soak gated says it was recorded only.
+        rec = collect(release=True, archives=self.rows(self.arm()), arm=False)
+        del rec["release_vm"]["arm_soak_gates"]
+        self.assertIn("aarch64 soak archive soak-arm (harness verdict PASS) on tree %s, recorded beside the "
+                      "x86_64 soak, not gating" % SHA, q.tree_equivalence_text(rec, []))
+
+    def test_the_committed_record_stays_release_eligible(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../docs/project/qualification.json")
+        if not os.path.isfile(path):
+            self.skipTest("no qualification record is committed")
+        with open(path) as f:
+            rec = json.load(f)
+        # git is stood in for: the rules the record itself decides are what is under test.
+        with mock.patch.object(q, "_diff_names", return_value=[]):
+            self.assertEqual(q.release_eligible(rec, ".", rec["source"]["sha"], "0" * 64, None), [])
+
+
 WAIVER = {"verdicts": ["a", "b"], "reason": "harness", "reviewer": "maintainer", "date": "2026-10-28",
           "fixed_in": "0.9.1"}
 # Parsed archive rows, as load_archives returns them.
 ROW = {"id": "soak-x", "kind": "soak", "tree": SHA, "overall_pass": True, "note": "n",
        "date": "2026-10-27", "expected_duration_s": 3600}
 SOAK72 = dict(ROW, id="soak-rel", expected_duration_s=259200, legs=list(FIVE))
+ARM72 = dict(SOAK72, id="soak-arm-rel", arch="aarch64")
 CORPUS = dict(ROW, id="corpus-rel", kind="corpus", expected_duration_s=None,
               baseline_manifest_sha256=BASELINE, **dict(COUNTS, files=251))
 
@@ -1630,7 +1822,7 @@ class WaiverTests(unittest.TestCase):
         self.assertIn("unrecognized arguments: --allow-waiver", err)
 
     def test_a_waived_corpus_row_needs_a_raw_pass_too(self):
-        rows = [SOAK72, dict(CORPUS, overall_pass=False, waiver=WAIVER)]
+        rows = [SOAK72, ARM72, dict(CORPUS, overall_pass=False, waiver=WAIVER)]
         gate = q.release_vm(self.root, self.sha, rows, True, 251, 172800)
         self.assertEqual(gate["corpus"]["disposition"], "waived")
         self.assertEqual(gate["reasons"],
@@ -1642,7 +1834,8 @@ class WaiverTests(unittest.TestCase):
         gate = q.release_vm(self.root, self.sha, rows, True, 251, 172800)
         self.assertEqual(gate["corpus"]["disposition"], "fail")
         self.assertEqual(gate["disposition"], "fail")
-        self.assertEqual(q.release_vm(self.root, self.sha, [SOAK72, CORPUS], True, 251, 172800)["disposition"], "pass")
+        both = [SOAK72, ARM72, CORPUS]
+        self.assertEqual(q.release_vm(self.root, self.sha, both, True, 251, 172800)["disposition"], "pass")
 
     def test_collect_records_the_waiver_in_both_modes(self):
         rows = archives_toml(archive_row("soak-rel", "soak", SHA, overall_pass=False, legs=FIVE)
@@ -1684,6 +1877,10 @@ class ExitCriteriaTests(unittest.TestCase):
                              archive_row("soak-arm", "soak", SHA, legs=FIVE, arch="aarch64", date="2026-11-02"),
                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
         rec = collect(release=True, archives=rows)
+        self.assertIn("The arm64 release soak, a gate beside the x86_64 one: `soak-arm`",
+                      q.render_exit_criteria(rec, rec["archives"], [], 172800))
+        # A record written while the arm64 soak was recorded only reads as it did.
+        del rec["release_vm"]["arm_soak_gates"]
         self.assertIn("An arm64 soak is recorded: `soak-arm`",
                       q.render_exit_criteria(rec, rec["archives"], [], 172800))
         del rec["release_vm"]["arm_soak"]
@@ -1730,7 +1927,7 @@ class ExitCriteriaTests(unittest.TestCase):
     def waived_record(self, soak_id="soak-9.9.0-2026-10-27", tag=None):
         """A release record collected on a raw pass whose soak the maintainer waived
         afterwards; the record's archive list is the table as it stands now."""
-        corpus = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)
+        corpus = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS) + ARM_OK
         art, root = build(tempfile.mkdtemp(),
                           archives=archives_toml(archive_row(soak_id, "soak", SHA, legs=FIVE), corpus))
         with at_version():
@@ -1788,7 +1985,7 @@ class ExitCriteriaTests(unittest.TestCase):
         self.assertIn("no release qualification is recorded on this tree", none)
 
     def test_the_arm64_subset_is_met_only_by_a_clean_aarch64_census(self):
-        rec = self.release_record(RELEASE_OK)
+        rec = collect(release=True, archives=RELEASE_OK, arm=False)
         self.assertIn("**The ARM64 subset today.** No arm64 soak is recorded for this tree. Status: open: the committed qualification record carries no "
                       "linux-aarch64 census.",
                       q.render_exit_criteria(rec, rec["archives"], [], 172800))
@@ -1827,6 +2024,7 @@ class TagAndEquivalenceTests(unittest.TestCase):
             put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
             put(os.path.join(root, "tests/coverage/evidence-archives.toml"), archives_toml(
                 archive_row("soak-rel", "soak", soaked, legs=FIVE),
+                archive_row("soak-arm-rel", "soak", soaked, legs=FIVE, arch="aarch64"),
                 archive_row("corpus-rel", "corpus", soaked, counts=COUNTS)))
             rec = q.collect(art, root, release=True, tag="v9.9.9")
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
