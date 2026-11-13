@@ -678,6 +678,117 @@ fn small_backward_step_is_clamped_not_flagged() {
     assert!(pcrs.iter().all(|p| p.1 & 0x80 == 0));
 }
 
+// ── tick ────────────────────────────────────────────────────────────────────
+
+/// H.222.0 §2.7.2: PCRs on the PCR PID at most 0.1 s apart. A 5 fps source
+/// alone leaves 200 ms gaps; a tick every 40 ms closes them.
+#[test]
+fn tick_keeps_pcr_within_100ms_for_5fps_video() {
+    let mut mux = default_mux();
+    for ms in (0..=1_000i64).step_by(40) {
+        let now = Pts90khz::new(90_000 + ms * 90);
+        if ms % 200 == 0 {
+            mux.push_video(&h264(ms == 0), now, ms == 0).unwrap();
+        } else {
+            mux.tick(1, now).unwrap();
+        }
+    }
+    let bases = pcr_bases(&drain_all(&mut mux));
+    assert_eq!(bases.len(), 26, "one PCR per 40 ms step, none doubled");
+    for w in bases.windows(2) {
+        assert_eq!(diff33(w[1], w[0]), 3_600);
+    }
+}
+
+/// What the caller is asked to prevent: without ticks the PCR interval is
+/// the frame interval.
+#[test]
+fn without_tick_5fps_video_exceeds_the_ceiling() {
+    let mut mux = default_mux();
+    for i in 0..3i64 {
+        mux.push_video(&h264(i == 0), Pts90khz::new(90_000 + i * 18_000), i == 0)
+            .unwrap();
+    }
+    let bases = pcr_bases(&drain_all(&mut mux));
+    assert_eq!(diff33(bases[1], bases[0]), 18_000);
+}
+
+#[test]
+fn tick_emits_psi_when_due_and_rejects_unknown_program() {
+    let mut mux = default_mux();
+    mux.tick(1, Pts90khz::new(90_000)).unwrap();
+    let ts = drain_all(&mut mux);
+    assert_eq!(
+        ts.chunks_exact(188).map(pid).collect::<Vec<_>>(),
+        vec![0x0000, 0x1000, 0x1011]
+    );
+    assert_eq!(ts[188 * 2 + 3] & 0x30, 0x20, "adaptation field only");
+    assert_eq!(pcr_packets(&ts), vec![(0x1011, 0x10, 81_000)]);
+    assert!(matches!(
+        mux.tick(9, Pts90khz::new(90_000)),
+        Err(MuxError::ProgramNotFound { program_number: 9 })
+    ));
+    // A tick that finds nothing due writes nothing.
+    mux.tick(1, Pts90khz::new(90_900)).unwrap();
+    assert!(drain_all(&mut mux).is_empty());
+}
+
+/// A tick stands in for the PCR stream, so the stream is not silent and a
+/// KLV push does not move the clock or add a PCR of its own.
+#[test]
+fn ticks_keep_the_pcr_stream_live_for_other_pids() {
+    let mut mux = default_mux();
+    mux.tick(1, Pts90khz::new(90_000)).unwrap();
+    mux.push_klv(&klv(), Pts90khz::new(99_000), 0).unwrap();
+    mux.tick(1, Pts90khz::new(93_600)).unwrap();
+    assert_eq!(pcr_bases(&drain_all(&mut mux)), vec![81_000, 84_600]);
+}
+
+#[test]
+fn tick_on_a_restart_carries_the_discontinuity_bit() {
+    let mut mux = default_mux();
+    mux.push_video(&h264(true), Pts90khz::new(900_000), true)
+        .unwrap();
+    mux.push_video(&h264(true), Pts90khz::new(903_600), true)
+        .unwrap();
+    let _ = drain_all(&mut mux);
+    mux.tick(1, Pts90khz::new(720_000)).unwrap();
+    let ts = drain_all(&mut mux);
+    assert_eq!(
+        ts.chunks_exact(188).map(pid).collect::<Vec<_>>(),
+        vec![0x0000, 0x1000, 0x1011]
+    );
+    assert_eq!(pcr_packets(&ts), vec![(0x1011, 0x90, 711_000)]);
+}
+
+#[test]
+fn tick_buffer_full_changes_nothing() {
+    let twin = || {
+        let mut cfg = MuxerConfig::default();
+        cfg.buffer_packets = 10;
+        let mut mux = Muxer::new(cfg).unwrap();
+        // PAT + PMT + seven one-packet access units: one packet of room
+        // left, and the tick below needs three (PAT, PMT, PCR-only).
+        for i in 0..7i64 {
+            mux.push_video(&h264(false)[..40], Pts90khz::new(90_000 + i * 300), false)
+                .unwrap();
+        }
+        assert_eq!(mux.pending_packets(), 9);
+        mux
+    };
+    let (mut a, mut b) = (twin(), twin());
+    assert!(matches!(
+        a.tick(1, Pts90khz::new(135_000)),
+        Err(MuxError::BufferFull { .. })
+    ));
+    for mux in [&mut a, &mut b] {
+        let _ = drain_all(mux);
+        mux.push_video(&h264(true), Pts90khz::new(93_600), true)
+            .unwrap();
+    }
+    assert_eq!(drain_all(&mut a), drain_all(&mut b));
+}
+
 // ── Late metadata ───────────────────────────────────────────────────────────
 
 /// Metadata should reach a receiver before its PTS. A unit pushed after the
