@@ -197,6 +197,147 @@ mod tests {
         assert_eq!(scan(&[0x01, 0x02, 0x03, 0x04]), []);
     }
 
+    /// The byte-at-a-time walk that defines the scan, kept as the oracle for
+    /// the search `StartCodes` runs.
+    fn bytewise_start_codes(buf: &[u8]) -> Vec<StartCode> {
+        let mut out = Vec::new();
+        let mut pos = 0;
+        while pos + 3 <= buf.len() {
+            let i = pos;
+            if buf[i] == 0 && buf[i + 1] == 0 {
+                if buf[i + 2] == 1 {
+                    pos = i + 3;
+                    out.push(StartCode {
+                        prefix_start: i,
+                        data_start: i + 3,
+                    });
+                    continue;
+                }
+                if i + 4 <= buf.len() && buf[i + 2] == 0 && buf[i + 3] == 1 {
+                    pos = i + 4;
+                    out.push(StartCode {
+                        prefix_start: i,
+                        data_start: i + 4,
+                    });
+                    continue;
+                }
+            }
+            pos = i + 1;
+        }
+        out
+    }
+
+    /// Every buffer of up to ten bytes over `00`, `01` and one other value,
+    /// behind zero to eight filler bytes so a code meets every position of
+    /// an eight-byte word and of the bytes left after the last whole word.
+    #[test]
+    fn scan_matches_the_bytewise_walk_on_every_short_buffer() {
+        const ALPHABET: [u8; 3] = [0x00, 0x01, 0x65];
+        for len in 0..=10u32 {
+            for mut n in 0..3usize.pow(len) {
+                let mut tail = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    tail.push(ALPHABET[n % 3]);
+                    n /= 3;
+                }
+                for lead in 0..=8 {
+                    let mut buf = vec![0xFF; lead];
+                    buf.extend_from_slice(&tail);
+                    assert_eq!(
+                        start_code_vec(&buf),
+                        bytewise_start_codes(&buf),
+                        "{buf:02X?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The same, for the part of a buffer the scan takes 32 bytes at a
+    /// time: every buffer of up to eight such bytes at every offset of a
+    /// block's last word and across the block's end, with a second block
+    /// after it.
+    #[test]
+    fn scan_matches_the_bytewise_walk_at_every_block_position() {
+        const ALPHABET: [u8; 3] = [0x00, 0x01, 0x65];
+        for len in 0..=8u32 {
+            for mut n in 0..3usize.pow(len) {
+                let mut middle = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    middle.push(ALPHABET[n % 3]);
+                    n /= 3;
+                }
+                for lead in 20..=34 {
+                    let mut buf = vec![0xFF; lead];
+                    buf.extend_from_slice(&middle);
+                    buf.resize(72, 0xFF);
+                    assert_eq!(
+                        start_code_vec(&buf),
+                        bytewise_start_codes(&buf),
+                        "{buf:02X?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// One piece of a generated buffer: a start code of either length, a
+    /// run of zeros, or bytes that hold no code.
+    fn piece() -> impl proptest::strategy::Strategy<Value = Vec<u8>> {
+        use proptest::prelude::*;
+        prop_oneof![
+            Just(vec![0x00, 0x00, 0x01]),
+            Just(vec![0x00, 0x00, 0x00, 0x01]),
+            (1usize..20).prop_map(|n| vec![0x00; n]),
+            proptest::collection::vec(
+                proptest::sample::select(vec![0x00u8, 0x01, 0x02, 0x03, 0x65, 0xFF]),
+                1..24
+            ),
+            proptest::collection::vec(1u8..=255, 1..40),
+        ]
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn scan_matches_the_bytewise_walk(pieces in proptest::collection::vec(piece(), 0..24)) {
+            let buf = pieces.concat();
+            proptest::prop_assert_eq!(start_code_vec(&buf), bytewise_start_codes(&buf));
+        }
+
+        // The buffer ends in a start code, whole or cut short.
+        #[test]
+        fn scan_matches_the_bytewise_walk_with_a_code_at_the_end(
+            pieces in proptest::collection::vec(piece(), 0..12),
+            code in proptest::sample::select(vec![
+                vec![0x00u8, 0x00, 0x01],
+                vec![0x00, 0x00, 0x00, 0x01],
+                vec![0x00, 0x00, 0x00, 0x00, 0x01],
+                vec![0x00, 0x00],
+                vec![0x00, 0x00, 0x00],
+            ]),
+        ) {
+            let mut buf = pieces.concat();
+            buf.extend_from_slice(&code);
+            proptest::prop_assert_eq!(start_code_vec(&buf), bytewise_start_codes(&buf));
+        }
+
+        // The scan resumes after each code: a caller that stops early and
+        // one that walks on see the same codes.
+        #[test]
+        fn nals_match_the_bytewise_walk(pieces in proptest::collection::vec(piece(), 0..24)) {
+            let buf = pieces.concat();
+            let codes = bytewise_start_codes(&buf);
+            let mut expected: Vec<&[u8]> = codes
+                .windows(2)
+                .map(|w| &buf[w[0].data_start..w[1].prefix_start])
+                .collect();
+            if let Some(last) = codes.last() {
+                expected.push(&buf[last.data_start..]);
+            }
+            proptest::prop_assert_eq!(nal_bodies(&buf), expected);
+        }
+    }
+
     /// `nals` must slice exactly what pairing consecutive `start_codes`
     /// entries would: body runs from `data_start` to the NEXT match's
     /// `prefix_start`, so no inter-NAL prefix bytes bleed into a body.
