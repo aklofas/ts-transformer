@@ -79,6 +79,17 @@ class MuxPublisherTest {
     }
 
     @Test
+    void withConfigHlsPassesThePcrLead(@TempDir Path dir) throws Exception {
+        MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE),
+            org.tstrans.TestSupport.pcrLead250Config());
+        mp.pushVideo(syntheticH264Idr(), 90_000L, true);
+        mp.cutSegment();
+        mp.finishIntoPublisher().finish();
+        assertEquals(org.tstrans.TestSupport.PCR_LEAD_250_FIRST_PCR,
+            org.tstrans.TestSupport.firstPcrBase(Files.readAllBytes(firstSegment(dir))));
+    }
+
+    @Test
     void pushVideoWithDtsNeedsExactlyOneVideoStream(@TempDir Path dir) throws Exception {
         MuxerConfig two = MuxerConfig.builder().programNumber(1).pmtPid(0x100)
             .addVideo(0x101, VideoCodec.H264).addVideo(0x102, VideoCodec.H264).build();

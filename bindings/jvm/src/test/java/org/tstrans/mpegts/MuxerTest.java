@@ -1,6 +1,7 @@
 package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.firstPcrBase;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import org.junit.jupiter.api.Test;
@@ -55,20 +56,6 @@ class MuxerTest {
             .build();
         MuxException ex = assertThrows(MuxException.class, () -> new Muxer(cfg));
         assertEquals(MuxException.Kind.CONFIG_INVALID, ex.kind());
-    }
-
-    /** PCR base (90 kHz) of the first packet in {@code ts} that carries a PCR. */
-    private static long firstPcrBase(byte[] ts) {
-        for (int off = 0; off + 188 <= ts.length; off += 188) {
-            if ((ts[off + 3] & 0x20) != 0 && ts[off + 4] != 0 && (ts[off + 5] & 0x10) != 0) {
-                return ((long) (ts[off + 6] & 0xFF) << 25)
-                    | ((long) (ts[off + 7] & 0xFF) << 17)
-                    | ((long) (ts[off + 8] & 0xFF) << 9)
-                    | ((long) (ts[off + 9] & 0xFF) << 1)
-                    | ((ts[off + 10] & 0xFF) >>> 7);
-            }
-        }
-        throw new AssertionError("no PCR in " + ts.length + " bytes");
     }
 
     @Test

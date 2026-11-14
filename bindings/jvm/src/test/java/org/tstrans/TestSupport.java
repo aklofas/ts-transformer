@@ -163,6 +163,40 @@ public final class TestSupport {
     }
 
     /**
+     * {@link #roundtripConfig()} with a 250&nbsp;ms PCR lead, a value no other
+     * scalar of the config holds: the first PCR after a video push at PTS
+     * 90&nbsp;000 is {@link #PCR_LEAD_250_FIRST_PCR} only if the lead itself
+     * reached the muxer.
+     */
+    public static MuxerConfig pcrLead250Config() {
+        return MuxerConfig.builder()
+            .programNumber(1).pmtPid(0x1000)
+            .addVideo(0x1011, VideoCodec.H264)
+            .pcrLeadMs(250)
+            .build();
+    }
+
+    /** 90&nbsp;000 minus 250&nbsp;ms (22&nbsp;500 ticks at 90&nbsp;kHz). */
+    public static final long PCR_LEAD_250_FIRST_PCR = 67_500L;
+
+    /**
+     * PCR base (90&nbsp;kHz) of the first 188-byte packet in {@code ts} that
+     * carries a PCR, or -1 when none does.
+     */
+    public static long firstPcrBase(byte[] ts) {
+        for (int off = 0; off + 188 <= ts.length; off += 188) {
+            if ((ts[off + 3] & 0x20) != 0 && ts[off + 4] != 0 && (ts[off + 5] & 0x10) != 0) {
+                return ((long) (ts[off + 6] & 0xFF) << 25)
+                    | ((long) (ts[off + 7] & 0xFF) << 17)
+                    | ((long) (ts[off + 8] & 0xFF) << 9)
+                    | ((long) (ts[off + 9] & 0xFF) << 1)
+                    | ((ts[off + 10] & 0xFF) >>> 7);
+            }
+        }
+        return -1;
+    }
+
+    /**
      * {@link #roundtripConfig()} plus one private-data stream (user-private
      * {@code stream_type} 0xF0, PID 0x0100) — the shape the SRT/RTP managed
      * and mux/demux loopback fixtures need.
