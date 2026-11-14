@@ -4062,6 +4062,14 @@ mod tests {
         let ex = t.explained(VerifyMode::Lossy, None);
         assert_eq!(ex.prefix_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
         assert_eq!(ex.lead_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
+
+        // And the other way round: the lead event is the late one.
+        let mut t = Tally::new();
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, log(), &hdr));
+        t.note_pes_findings(&[(VIDEO_PID, 10)], &[lead_event(VIDEO_PID, 5_010)]);
+        let ex = t.explained(VerifyMode::Lossy, None);
+        assert_eq!(ex.prefix_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
+        assert_eq!(ex.lead_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
     }
 
     // ---- Negative controls for the transport-loss excusals ----
