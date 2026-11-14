@@ -213,11 +213,14 @@ impl Muxer {
     /// Advance program `program_number`'s clock to `now` without pushing
     /// anything: queue the PSI and the PCR-only packet that are due.
     ///
-    /// A push writes a PCR only on its own first packet, so a program whose
-    /// PCR PID carries fewer than ten access units a second cannot meet the
-    /// 100 ms PCR interval of H.222.0 §2.7.2 from pushes alone. Such a
-    /// source calls `tick` between pushes, at least every
-    /// [`MuxerConfig::pcr_interval_ms`] of stream time. It also keeps PSI
+    /// A push writes a PCR only on its own first packet, so the gap between
+    /// two PCRs is the first whole number of push intervals that reaches
+    /// [`MuxerConfig::pcr_interval_ms`]. A program whose PCR PID carries
+    /// fewer than ten access units a second cannot meet the 100 ms PCR
+    /// interval of H.222.0 §2.7.2 that way, and neither can a faster one
+    /// with `pcr_interval_ms` above 50 at an unlucky frame rate (100 at
+    /// 24 fps gives 125 ms). Such a source calls `tick` between pushes, at
+    /// least every `pcr_interval_ms` of stream time. It also keeps PSI
     /// repeating while nothing is pushed.
     ///
     /// `now` is a time on the PCR stream's decode timeline: the decode time
