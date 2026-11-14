@@ -111,9 +111,11 @@ also contribute. The boundary allowance covers units before the demuxer
 acquires PAT/PMT and units left incomplete at the end of the capture.
 
 The remaining checks cover the video codec, KLV carriage kind, program
-count, and monotonic PTS with rollover handling. Depending on the profile,
-the raw-byte parser also checks PCR cadence, AV1 carriage mode, media
-counts per program, and an observed PTS wrap. See "What each profile's
+count, and monotonic PTS with rollover handling. The raw-byte parser also
+checks, on every profile, the PCR cadence and that every access unit on a
+program's PCR PID arrives at least 90 ms ahead of the clock; depending on
+the profile, AV1 carriage mode, media counts per program, and an observed
+PTS wrap. See "What each profile's
 oracle proves" below for the individual checks.
 
 **Current census: 161 cells — 96 PASS, 0 FAIL, 65 EXPECTED-UNSUPPORTED, 0
@@ -319,6 +321,7 @@ property and asserts the named failure (`crates/tst-interop/tests/mutations.rs`)
 | Profile | Independently verified on the wire | Oracle names |
 | --- | --- | --- |
 | all | PMT stream_type per PID, KLVA/AV01 registration, PCR median interval ≥ configured; in Strict cells (offline `verify`, `recv --strict`) additionally every interval ≤ configured + one frame period (the muxer's PCR-only catch-up packets are a legitimate minority) — Lossy live cells judge the median only; demuxer event count per media PID ≥ the raw reader's PES-start count (minus the events the capture explains on that PID plus multiplex-wide resyncs, and the per-PID boundary allowance); no unexpected 33-bit PTS wrap, `NonConformant` fatal, `Discontinuity` fatal offline / counted live | `pmt_stream_type_*`, `pmt_descriptor_*`, `pcr_interval`, `wire_vs_demux_*`, `pts_wrap_unexpected`, `nonconformant_event`, `discontinuity_event` |
+| all | on each program's PCR PID, every PES start's decode time (DTS, else PTS) at least 90 ms above the last PCR before it, as a minimum over the capture, with at least one lead measured; on a capture in the generator's own layout, every other PID of the PMT at least 0 ms. The muxer's default lead is 100 ms and every profile's capture reads exactly that (`every_profile_reads_exactly_the_default_lead`); a stream muxed with a lead of 0 or 50 ms fails (`muxed_with_too_little_pcr_lead_fails_pcr_lead`) | `pcr_lead`, `pcr_lead_other_pids` |
 | two-program | video + KLV counts per program_number, packets on both programs' media PIDs | `program_{1,2}_{video,klv}_floor`, `program_{1,2}_wire_media` |
 | audio | ADTS syncword + 48 kHz index in the raw PES payload, `sample_rate/1024` frames/s ±10 %, 1920-tick PTS step ±5 % | `audio_codec_adts`, `audio_cadence`, `audio_pts_step` |
 | av1-klv-a / av1-klv-b | PES stream_id 0xE0 + raw OBU header vs 0xBD + `00 00 01` `ts_open_bitstream_unit` framing (the PMT is identical in both modes) | `av1_carriage_wire` |
@@ -487,6 +490,19 @@ accepted for 0.10.0 and scheduled for the next release's harness:
   and the ES leg's KLV digest is held by the weekly interop cell described
   below.
 
+From 0.11.0 every MPEG-TS leg (`srt`, `rist`, `rtsp-publish`,
+`rtsp-publish-es`) is also held to the PCR lead floor: a `pcr_lead` line in
+a leg's receive report fails that leg's `recv_invariants` verdict. The check
+has two limits of its own:
+
+- On the `srt` and `rist` legs a PES below the floor is excused by its
+  position (inside the window of an injection on its PID, on the PCR PID,
+  or of a framing class), not by proof that the injection moved the clock,
+  so a real short lead that falls inside such a window passes.
+- The `rtsp-publish-es` leg judges the PCR PID only. Its KLV is re-muxed
+  by the publish mount after the video that reached its timestamp, and a
+  unit the publisher delivers late is sent late.
+
 ### The elementary publish leg (`rtsp-publish-es`)
 
 GStreamer's `rtspclientsink` publishes H.264 and KLV as two separate RTP
@@ -615,7 +631,12 @@ removal, and a PCR anomaly on such a program's former PCR PID would still be
 judged as one on a declared PID. The AV1 carriage oracle and the ADTS audio oracle excuse a later PES whose
 opening bytes the tap damaged (its start lies inside an attributed
 corruption window), and the attribution report counts each
-(`av1_prefix_excused`, `adts_prefix_excused`). The
+(`av1_prefix_excused`, `adts_prefix_excused`). The PCR lead oracle
+excuses a PES start that reads below its level inside the attribution
+window of an injection on its own PID, on its program's PCR PID, or of a
+class that breaks packet framing, and the report counts each
+(`pcr_lead_excused`); a PES below the level anywhere else fails the leg.
+The
 rich-KLV oracles
 skip a record an injection demonstrably damaged, counting it separately so
 every failure string reports how many records went unexamined. Offline
@@ -898,7 +919,8 @@ own PIDs (PMT 0x1000, video 0x100, KLV 0x101 as `PrivateData`), so the
 oracles keyed on the generator's layout fail by construction. `--remuxed`
 skips only those: per-PID wire media, PMT stream types and descriptors,
 per-PID wire-versus-demux counts, the PTS-wrap check, audio and AV1
-carriage, and the KLV carriage kind. The recv report lists them under
+carriage, the KLV carriage kind, and the decode lead of the PIDs that are
+not the PCR PID (the PCR PID's own 90 ms floor still runs). The recv report lists them under
 `skipped_oracles`, and the cell log reads `expect klv-sync, --remuxed`.
 The cell record carries the list and the judged profile, and the results
 table prints both on the row. Every content oracle still runs:
