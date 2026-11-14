@@ -33,7 +33,9 @@ pub struct MuxerStats {
     /// subtitle) whose PTS was already behind the PCR. Such a unit is still
     /// muxed, but it arrives after the time it is stamped for, and a
     /// receiver may drop it. A stream whose PES carries no PTS is never
-    /// counted.
+    /// counted. With `pcr_lead_ms = 0` the PCR is the PCR stream's own
+    /// decode time, so every unit stamped earlier than the access unit
+    /// pushed before it counts.
     pub late_metadata_pushes: u64,
 }
 

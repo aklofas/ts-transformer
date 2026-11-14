@@ -64,10 +64,9 @@
 //! into the muxer has reached its PTS ([`Aligner::on_video_muxed`]). KLV
 //! stamped at capture leads the encoder's output by the encoder latency.
 //! Muxed at once, its PES would sit in the multiplex ahead of the frame it
-//! describes; and a unit more than a second ahead of the video reads to
-//! the muxer as a video stream gone silent, so the muxer would move its
-//! PCR to that unit, ahead of every video frame still to come, and a
-//! PCR-slaved player would show those frames late. Placed units
+//! describes, and if the video then stalled for a second the muxer would
+//! take the clock from the waiting metadata and leave the PCR ahead of
+//! the video's next frames. Placed units
 //! leave in arrival order, so emission into the muxer stays in order.
 //! The KLV PID's PTS can therefore step backwards (after a KLV restart
 //! while units are waiting, or a backward report step), but it never

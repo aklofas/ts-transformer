@@ -118,8 +118,9 @@ public final class MuxerConfig {
     /**
      * How far the PCR runs behind each access unit's decode time, in
      * milliseconds (default 100, valid 0..1000). The PCR is the decode time (the
-     * DTS when the push supplies one, else the PTS) minus this lead and never
-     * decreases within a program. 0 writes PCR = decode time.
+     * DTS when the push supplies one, else the PTS) minus this lead and steps
+     * back only at a signalled restart of the timeline. 0 writes PCR = decode
+     * time.
      */
     public int pcrLeadMs() { return pcrLeadMs; }
     public int psiIntervalMs() { return psiIntervalMs; }
@@ -200,8 +201,9 @@ public final class MuxerConfig {
          * How far the PCR runs behind each access unit's decode time, in
          * milliseconds (default 100, valid 0..1000). The PCR is the decode time
          * (the DTS when the push supplies one, else the PTS) minus this lead and
-         * never decreases within a program. 0 writes PCR = decode time. The range
-         * is checked at {@code new Muxer(...)} ({@code CONFIG_INVALID}).
+         * steps back only at a signalled restart of the timeline. 0 writes PCR =
+         * decode time. The range is checked at {@code new Muxer(...)}
+         * ({@code CONFIG_INVALID}).
          */
         public Builder pcrLeadMs(int v) { this.pcrLeadMs = v; return this; }
         public Builder psiIntervalMs(int v) { this.psiIntervalMs = v; return this; }
