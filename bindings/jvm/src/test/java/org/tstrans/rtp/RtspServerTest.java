@@ -5,6 +5,7 @@ import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.tstrans.MuxException;
 import org.tstrans.RtspException;
 import org.tstrans.mpegts.DataStreamHandle;
 import org.tstrans.mpegts.MuxerConfig;
@@ -171,6 +172,29 @@ class RtspServerTest {
             try (MountHandle m = s.addMulticastMount("/mc", "239.0.0.1", 5004, cfg)) {
                 assertEquals("multicast", m.mountKind());
             }
+        }
+    }
+
+    /**
+     * No client in this suite reads a mount's raw TS, so the lead is probed through
+     * the muxer's range check instead of the wire. 1001 is out of range for the lead
+     * only; had another scalar of the config taken its place, the lead would be valid
+     * and the refusal would be missing or name a different field.
+     */
+    @Test @Timeout(15)
+    void mountsPassThePcrLeadToTheMuxer() throws Exception {
+        try (RtspServer s = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
+            MuxerConfig cfg = MuxerConfig.builder()
+                .programNumber(1).pmtPid(0x1000).addVideo(0x1011, VideoCodec.H264)
+                .pcrLeadMs(1001).bufferPackets(500).build();
+            MuxException unicast = assertThrows(MuxException.class,
+                () -> s.addUnicastMount("/live", cfg));
+            assertEquals(MuxException.Kind.CONFIG_INVALID, unicast.kind());
+            assertTrue(unicast.getMessage().contains("pcr_lead_ms"), unicast.getMessage());
+            MuxException multicast = assertThrows(MuxException.class,
+                () -> s.addMulticastMount("/mc", "239.0.0.1", 5004, cfg));
+            assertEquals(MuxException.Kind.CONFIG_INVALID, multicast.kind());
+            assertTrue(multicast.getMessage().contains("pcr_lead_ms"), multicast.getMessage());
         }
     }
 
