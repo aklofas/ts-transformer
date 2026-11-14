@@ -240,7 +240,8 @@ impl Muxer {
     /// signalled. The streams of a program share one timeline; if the
     /// stream the PCR moves to is stamped behind the clock, the PCR holds
     /// until its timestamps pass it, and if it is more than a second
-    /// behind, its first push opens a new time base, signalled as one. A
+    /// behind, it opens a new time base, signalled as one (with its second
+    /// push when the old time base has fewer than two PCRs). A
     /// program that is new in this call starts its own clock with its
     /// first push.
     ///
@@ -311,6 +312,7 @@ impl Muxer {
                 clear_streams(slot);
                 slot.clock = None;
                 slot.pcr_stream = PcrStream::Silent;
+                slot.since_pcr_push.clear();
                 slot.pcrs_on_time_base = 0;
             }
 
@@ -369,6 +371,7 @@ impl Muxer {
                 // The time base carries on; the new PCR stream has not
                 // pushed yet.
                 slot.pcr_stream = PcrStream::Silent;
+                slot.since_pcr_push.clear();
             }
             slot.pcr_pid = planned.pcr_pid;
             slot.pmt_descriptor_cache = state::build_pmt_descriptor_cache(prog);

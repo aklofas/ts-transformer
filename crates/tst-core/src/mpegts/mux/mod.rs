@@ -57,7 +57,8 @@ use self::ts::ContinuityCounters;
 /// # Clock
 ///
 /// Each program's PCR runs [`MuxerConfig::pcr_lead_ms`] behind the decode
-/// time of the access units pushed on its PCR PID and never steps back. A
+/// time of the access units pushed on its PCR PID, and steps back only at
+/// a signalled restart of the timeline. A
 /// PCR is written when a push finds one due, so a PCR stream below ten
 /// access units a second (or a faster one with `pcr_interval_ms` above 50)
 /// needs [`Self::tick`] between pushes to keep the 100 ms PCR interval.

@@ -62,8 +62,21 @@ struct ClockStep {
     first_pcr: bool,
     /// The PCR of this push opens a new time base.
     restart: bool,
-    /// What is known about the PCR stream after the push.
-    pcr_stream: PcrStream,
+    /// What the push tells about the PCR stream.
+    pcr_stream: PcrStreamStep,
+}
+
+/// What one push changes in what is known about the PCR stream.
+#[derive(Clone, Copy)]
+enum PcrStreamStep {
+    Unchanged,
+    /// A push on the PCR PID (or a tick): it is pushing.
+    Pushed,
+    /// A push on another PID whose decode time becomes that PID's entry in
+    /// `ProgramSlot::since_pcr_push`.
+    Mark(u16, u64),
+    /// Another PID ran a second past its entry: the PCR stream has stopped.
+    Stopped,
 }
 
 impl Muxer {
@@ -90,44 +103,27 @@ impl Muxer {
         // video's decode time. One timestamp cannot show that the PCR
         // stream has stopped (it may be a stray, or a steady offset), so
         // the evidence is a PID's own progress: more than a second of it
-        // since its first push after the last one on the PCR PID.
+        // since the last push on the PCR PID.
         let (live, pcr_stream) = match (pid, slot.pcr_stream) {
-            (Some(pid), PcrStream::Pushed { other: None }) if !on_pcr => (
-                true,
-                PcrStream::Pushed {
-                    other: Some((pid, decode)),
-                },
-            ),
-            (
-                Some(pid),
-                PcrStream::Pushed {
-                    other: Some((first_pid, first)),
-                },
-            ) if !on_pcr => {
-                let ahead = pts_diff_33bit(decode, first) > TIMELINE_RESTART_90KHZ;
-                if first_pid == pid {
-                    if ahead {
-                        // The PCR stream has stopped: from here every PID
-                        // may move the clock, until it pushes again.
-                        (false, PcrStream::Silent)
-                    } else {
-                        (true, slot.pcr_stream)
+            (Some(pid), PcrStream::Pushed) if !on_pcr => {
+                match slot.since_pcr_push.iter().find(|(p, _)| *p == pid) {
+                    None => (true, PcrStreamStep::Mark(pid, decode)),
+                    Some(&(_, lowest)) => {
+                        let progress = pts_diff_33bit(decode, lowest);
+                        if progress > TIMELINE_RESTART_90KHZ {
+                            // From here every PID may move the clock, until
+                            // the PCR stream pushes again.
+                            (false, PcrStreamStep::Stopped)
+                        } else if progress < 0 {
+                            (true, PcrStreamStep::Mark(pid, decode))
+                        } else {
+                            (true, PcrStreamStep::Unchanged)
+                        }
                     }
-                } else if ahead {
-                    // A second PID far from the first says nothing about
-                    // the PCR stream; measure this PID from here instead.
-                    (
-                        true,
-                        PcrStream::Pushed {
-                            other: Some((pid, decode)),
-                        },
-                    )
-                } else {
-                    (true, slot.pcr_stream)
                 }
             }
-            _ if on_pcr => (false, PcrStream::Pushed { other: None }),
-            _ => (false, slot.pcr_stream),
+            _ if on_pcr => (false, PcrStreamStep::Pushed),
+            _ => (false, PcrStreamStep::Unchanged),
         };
 
         let candidate = (decode + (1 << 33) - self.pcr_lead_90khz) & MASK_33;
@@ -227,8 +223,8 @@ impl Muxer {
     /// an access unit pushed at this moment would have. The PCR written is
     /// `now` minus [`MuxerConfig::pcr_lead_ms`]. A tick counts as activity
     /// on the PCR stream: while ticks arrive, pushes on the program's other
-    /// PIDs do not move the clock, and a `now` more than a second behind the
-    /// previous tick or PCR-PID push starts a new time base, as such a push
+    /// PIDs do not move the clock, and a `now` whose PCR would fall more than
+    /// a second behind the clock starts a new time base, as such a push
     /// would. A tick that finds nothing due queues nothing.
     ///
     /// # Errors
@@ -277,7 +273,23 @@ impl Muxer {
             slot.clock = Some(step.clock);
             slot.pcrs_on_time_base = slot.pcrs_on_time_base.saturating_add(1);
         }
-        slot.pcr_stream = step.pcr_stream;
+        match step.pcr_stream {
+            PcrStreamStep::Unchanged => {}
+            PcrStreamStep::Pushed => {
+                slot.pcr_stream = PcrStream::Pushed;
+                slot.since_pcr_push.clear();
+            }
+            PcrStreamStep::Mark(pid, decode) => {
+                match slot.since_pcr_push.iter_mut().find(|(p, _)| *p == pid) {
+                    Some(entry) => entry.1 = decode,
+                    None => slot.since_pcr_push.push((pid, decode)),
+                }
+            }
+            PcrStreamStep::Stopped => {
+                slot.pcr_stream = PcrStream::Silent;
+                slot.since_pcr_push.clear();
+            }
+        }
         ClockPlan {
             pcr: step.first_pcr.then_some(pcr),
             discontinuity: step.restart && step.first_pcr,
