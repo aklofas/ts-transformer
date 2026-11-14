@@ -18,6 +18,7 @@ use tst_pipeline::{
 
 use crate::cli::write_json;
 use crate::corrupt;
+use crate::oracles;
 use crate::profiles::{self, Profile};
 use crate::report_types::VerifyReport;
 use crate::transport::{self, Teeing};
@@ -219,9 +220,10 @@ fn poll_corruption_log(
 /// coordinate to stamp the event that is about to be fed.
 ///
 /// PCR bases first (they are what resolve a logged coordinate to a
-/// receiver position at all), then any new sync recoveries, then PES
-/// prefix mismatches (judged against the windows those two positioned).
-/// All three are DRAINED, so each event reaches the attribution exactly once and the
+/// receiver position at all), then any new sync recoveries, then the two
+/// per-PES findings, prefix mismatches and leads below their level
+/// (judged against the windows those two positioned).
+/// All four are DRAINED, so each event reaches the attribution exactly once and the
 /// reader never accumulates a history; `std::mem::take` on an empty
 /// `Vec` does not allocate, so polling per event is as cheap as the
 /// count poll this replaced.
@@ -229,8 +231,20 @@ fn drain_wire_evidence(tally: &mut Tally, tap: &Arc<Mutex<transport::TeeState>>)
     let coord = transport::tee_coord(tap);
     tally.note_pcrs(&transport::tee_drain_pcrs(tap));
     tally.note_resyncs(&transport::tee_take_resyncs(tap));
-    tally.note_prefix_mismatches(&transport::tee_take_prefix_mismatches(tap));
+    tally.note_pes_findings(
+        &transport::tee_take_prefix_mismatches(tap),
+        &transport::tee_take_lead_events(tap),
+    );
     coord.packets
+}
+
+/// Set the `pcr_lead` oracle's levels for `expect` on the tap's raw reader
+/// before the first byte reaches it, so the reader reports every PES start
+/// below one with its position (see `oracles::lead_watch`).
+fn watch_leads(tap: &Arc<Mutex<transport::TeeState>>, expect: &Profile, layout: WireLayout) {
+    if let Some(watch) = oracles::lead_watch(&profiles::invariants(expect), layout) {
+        transport::tee_watch_leads(tap, watch);
+    }
 }
 
 /// Final sweep of the same evidence once the receive loop has ended,
@@ -476,6 +490,7 @@ pub fn recv_over_transport_with_layout(
     placement: Option<KlvPlacementExpect>,
 ) -> Result<VerifyReport, String> {
     let (teeing, tap) = Teeing::new(transport);
+    watch_leads(&tap, expect, layout);
     // Built per-profile, not `DemuxReceiver::new` — see
     // `profiles::demuxer_config`'s doc comment for why a default-config
     // demuxer silently mis-tallies `av1-klv-a`.
@@ -679,6 +694,9 @@ pub fn run_managed(
     let policy = ReconnectPolicy::default().with_max_attempts(None);
     let (managed, tap) =
         managed_teed_transport(initial_raw, move || transport::make_recv(&dial_url), policy)?;
+    // A managed capture is always judged in the generator's layout (the
+    // `Tally` default): `--remuxed` has no managed form.
+    watch_leads(&tap, expect, WireLayout::Generator);
     // Built per-profile, not `ManagedDemuxReceiver::new` — see
     // `profiles::demuxer_config`'s doc comment.
     let mut rx = ManagedDemuxReceiver::with_demux_options(

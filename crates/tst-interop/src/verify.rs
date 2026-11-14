@@ -791,6 +791,9 @@ pub struct Tally {
     /// Later-PES payload prefix mismatches per PID that an attributed
     /// corruption window explains (`Tally::note_prefix_mismatches`).
     prefix_excused_by_pid: BTreeMap<u16, u64>,
+    /// PES starts per PID below their `pcr_lead` level that an attributed
+    /// corruption window explains (`Tally::note_pes_findings`).
+    lead_excused_by_pid: BTreeMap<u16, u64>,
     /// `Debug`-formatted `DiscontinuityKind` of the first `Discontinuity`
     /// event fed, if any.
     first_discontinuity: Option<String>,
@@ -887,6 +890,7 @@ impl Tally {
             cc_gap_open: BTreeSet::new(),
             damaged_pes: 0,
             prefix_excused_by_pid: BTreeMap::new(),
+            lead_excused_by_pid: BTreeMap::new(),
             first_discontinuity: None,
             first_nonconformant: None,
             attribution: None,
@@ -1329,14 +1333,51 @@ impl Tally {
     /// tap's deliberate damage and is excused per PID (see
     /// `Attribution::explains_damage`); the rest stay charged by the
     /// prefix oracles. Call once per batch, after the same chunk's PCRs
-    /// and resyncs.
+    /// and resyncs. A caller that also holds the chunk's lead events hands
+    /// both to [`Tally::note_pes_findings`] instead.
     pub fn note_prefix_mismatches(&mut self, batch: &[(u16, u64)]) {
+        self.note_pes_findings(batch, &[]);
+    }
+
+    /// Hand one DRAINED batch of the raw reader's two per-PES findings to
+    /// the attribution: the prefix mismatches
+    /// (`rawts::Reader::take_prefix_mismatches`, judged as
+    /// [`Tally::note_prefix_mismatches`] describes) and the PES starts
+    /// whose lead over the PCR read below its level
+    /// (`rawts::Reader::take_lead_events`). A lead event inside an
+    /// attributed corruption window that could have damaged the clock it
+    /// was measured against, or the PES itself, is the tap's doing and is
+    /// excused per PID (see `Attribution::explains_lead`); the rest stay
+    /// charged by the `pcr_lead` oracle. Without an attribution nothing is
+    /// excused.
+    ///
+    /// Both lists are in packet order and are fed MERGED in that order:
+    /// the attribution's cursors only move forward, so asking about a
+    /// late prefix mismatch first could retire the injection that
+    /// explains an earlier lead event in the same batch.
+    pub fn note_pes_findings(&mut self, prefix: &[(u16, u64)], leads: &[rawts::LeadEvent]) {
         let Some(a) = self.attribution.as_mut() else {
             return;
         };
-        for &(pid, at) in batch {
-            if a.explains_damage(at, pid) {
-                *self.prefix_excused_by_pid.entry(pid).or_insert(0) += 1;
+        let (mut i, mut j) = (0, 0);
+        while i < prefix.len() || j < leads.len() {
+            let prefix_next = match (prefix.get(i), leads.get(j)) {
+                (Some(&(_, at)), Some(lead)) => at <= lead.at,
+                (Some(_), None) => true,
+                (None, _) => false,
+            };
+            if prefix_next {
+                let (pid, at) = prefix[i];
+                i += 1;
+                if a.explains_damage(at, pid) {
+                    *self.prefix_excused_by_pid.entry(pid).or_insert(0) += 1;
+                }
+            } else {
+                let lead = leads[j];
+                j += 1;
+                if a.explains_lead(lead.at, lead.pid, lead.pcr_pid) {
+                    *self.lead_excused_by_pid.entry(lead.pid).or_insert(0) += 1;
+                }
             }
         }
     }
@@ -1546,7 +1587,7 @@ impl Tally {
             by_pid,
             multiplex_wide: attribution.map_or(0, |rep| rep.attributed_events_unpinned),
             prefix_excused: self.prefix_excused_by_pid.clone(),
-            lead_excused: BTreeMap::new(),
+            lead_excused: self.lead_excused_by_pid.clone(),
         }
     }
 
@@ -1636,6 +1677,11 @@ impl Tally {
                 if inv.av1_mode.is_some() {
                     rep.av1_prefix_excused = excused(inv.programs[0].video_pid);
                 }
+                rep.pcr_lead_excused = self
+                    .lead_excused_by_pid
+                    .iter()
+                    .map(|(pid, &n)| n.min(wire.pcr_lead_below.get(pid).copied().unwrap_or(0)))
+                    .sum();
                 rep
             })
             .inspect(|rep| {
@@ -1935,6 +1981,14 @@ impl Tally {
             discontinuities: self.discontinuities,
             nonconformant: self.nonconformant,
             damaged_pes: self.damaged_pes,
+            // The raw minimum, excused PES starts included: what the
+            // `pcr_lead` oracle started from.
+            pcr_lead_min_ms: wire
+                .programs
+                .values()
+                .filter_map(|prog| wire.pcr_lead_min_ticks.get(&prog.pcr_pid))
+                .min()
+                .map(|&ticks| ticks as f64 / 90.0),
             // A verifier never runs the tap; it only judges its log.
             corruption: None,
             corruption_attribution: attribution,
@@ -2081,6 +2135,9 @@ pub fn verify_bytes_placed(
     // demuxer — see `rawts`'s module doc for why it shares no code with
     // `Demuxer`.
     let mut wire_reader = rawts::Reader::new();
+    if let Some(watch) = oracles::lead_watch(&profiles::invariants(p), layout) {
+        wire_reader.watch_leads(watch);
+    }
     if let Some((hdr, injections)) = log {
         // Built for the tier this capture is judged in — the excusal is
         // applied per event, not at `finish` (see `Attribution::lossy`).
@@ -2105,7 +2162,10 @@ pub fn verify_bytes_placed(
         // the time it surfaced rather than the position at end-of-file.
         tally.note_pcrs(&wire_reader.take_pcr_events());
         tally.note_resyncs(&wire_reader.take_resyncs());
-        tally.note_prefix_mismatches(&wire_reader.take_prefix_mismatches());
+        tally.note_pes_findings(
+            &wire_reader.take_prefix_mismatches(),
+            &wire_reader.take_lead_events(),
+        );
         while let Some(ev) = demux.next_event() {
             tally.feed_at(&ev, wire_reader.packets());
         }
@@ -3912,6 +3972,96 @@ mod tests {
                 .prefix_excused
                 .is_empty()
         );
+    }
+
+    fn lead_event(pid: u16, at: u64) -> rawts::LeadEvent {
+        rawts::LeadEvent {
+            pid,
+            pcr_pid: VIDEO_PID,
+            at,
+            lead_ticks: 0,
+        }
+    }
+
+    /// A PES start below its lead level is excused per PID only inside an
+    /// attributed corruption window that could have damaged its clock or
+    /// itself; one outside any window stays charged, and no attribution
+    /// excuses nothing.
+    #[test]
+    fn a_lead_below_the_floor_is_excused_only_inside_an_attributed_window() {
+        use crate::corrupt::Class;
+        let hdr = corruption_header();
+        // A body flip on the video PID, which is the PCR PID.
+        let inj = injection_at(Class::BodyFlip, VIDEO_PID, 3);
+
+        let mut t = Tally::new();
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
+        t.note_pes_findings(
+            &[],
+            &[
+                // Inside the window, on the damaged PID: excused.
+                lead_event(VIDEO_PID, 10),
+                // Inside the window, on a PID measured against the damaged
+                // PCR PID: excused.
+                lead_event(KLV_PID, 11),
+                // Far outside any window: not excused.
+                lead_event(VIDEO_PID, 9_000),
+            ],
+        );
+        let rep = t.attribution.take().expect("attached above").finish(10_000);
+        let ex = t.explained(VerifyMode::Lossy, Some(&rep));
+        assert_eq!(ex.lead_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
+        assert_eq!(ex.lead_excused.get(&KLV_PID), Some(&1), "{ex:?}");
+
+        // An injection confined to the KLV PID does not excuse the video.
+        let mut t = Tally::new();
+        let inj = injection_at(Class::BodyFlip, KLV_PID, 3);
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
+        t.note_pes_findings(&[], &[lead_event(VIDEO_PID, 10)]);
+        assert!(
+            t.explained(VerifyMode::Lossy, None).lead_excused.is_empty(),
+            "a KLV-PID flip excused a video lead"
+        );
+
+        let mut bare = Tally::new();
+        bare.note_pes_findings(&[], &[lead_event(VIDEO_PID, 10)]);
+        assert!(
+            bare.explained(VerifyMode::Lossy, None)
+                .lead_excused
+                .is_empty()
+        );
+    }
+
+    /// One drained batch can hold a prefix mismatch that lies AFTER a lead
+    /// event. The attribution's cursors only move forward, so the two
+    /// lists are fed merged in packet order: asked about the late prefix
+    /// mismatch first, it would have retired the injection that explains
+    /// the earlier lead event.
+    #[test]
+    fn prefix_and_lead_events_of_one_batch_are_judged_in_packet_order() {
+        use crate::corrupt::Class;
+        let hdr = corruption_header();
+        let log = || {
+            vec![
+                injection_at(Class::BodyFlip, VIDEO_PID, 3),
+                injection_at(Class::BodyFlip, VIDEO_PID, 5_000),
+            ]
+        };
+        let prefix = [(VIDEO_PID, 5_010)];
+        let leads = [lead_event(VIDEO_PID, 10)];
+
+        // The hazard, shown on the attribution itself: late first, then
+        // early, and the early one is no longer explained.
+        let mut a = attribution_for(VerifyMode::Lossy, log(), &hdr);
+        assert!(a.explains_damage(5_010, VIDEO_PID));
+        assert!(!a.explains_lead(10, VIDEO_PID, VIDEO_PID));
+
+        let mut t = Tally::new();
+        t.attach_attribution(attribution_for(VerifyMode::Lossy, log(), &hdr));
+        t.note_pes_findings(&prefix, &leads);
+        let ex = t.explained(VerifyMode::Lossy, None);
+        assert_eq!(ex.prefix_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
+        assert_eq!(ex.lead_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
     }
 
     // ---- Negative controls for the transport-loss excusals ----

@@ -597,6 +597,7 @@ fn healthy_cell_metrics(video_aus: u64) -> CellMetrics {
         discontinuities: 0,
         nonconformant: 0,
         damaged_pes: 0,
+        pcr_lead_min_ms: None,
         corruption: None,
         corruption_attribution: None,
         klv_rich: None,
