@@ -76,7 +76,9 @@ pub enum WireLayout {
 /// generator-layout report for it: `pmt_stream_type_` and
 /// `pmt_descriptor_` (the video, KLV and audio PMT entries), `wire_vs_demux_`
 /// and `pts_wrap_` (each followed by a PID or `observed`/`unexpected`),
-/// `av1_carriage_wire`, the three audio verdicts, and `KLV carriage`. The
+/// `av1_carriage_wire`, the three audio verdicts, `KLV carriage`, and
+/// `pcr_lead_other_pids` (the lead of the PIDs that are not a PCR PID; the
+/// PCR PID's own floor, `pcr_lead`, still runs). The
 /// exception is `program_<n>_wire_media`, a verdict name: its failures
 /// begin `program_1_wire_media`, `program_2_wire_media` and so on, one per
 /// program.
@@ -91,6 +93,7 @@ pub const REMUXED_SKIPPED_ORACLES: &[&str] = &[
     "audio_cadence",
     "audio_pts_step",
     "KLV carriage",
+    "pcr_lead_other_pids",
 ];
 
 /// Which KLV record set the capture under judgement was generated with,
@@ -1543,6 +1546,7 @@ impl Tally {
             by_pid,
             multiplex_wide: attribution.map_or(0, |rep| rep.attributed_events_unpinned),
             prefix_excused: self.prefix_excused_by_pid.clone(),
+            lead_excused: BTreeMap::new(),
         }
     }
 
