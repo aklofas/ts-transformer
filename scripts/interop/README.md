@@ -142,10 +142,11 @@ an arm-only gap neither excuses nor goes stale on the x86_64 census.
     70% slack, correct codec/carriage, monotonic PTS, etc.) **plus the
     demuxer-independent wire oracles** (`crates/tst-interop/src/oracles.rs`,
     read straight off the bytes by the naive raw-TS parser in
-    `rawts.rs`: PMT stream types/descriptors, PCR cadence, AV1
-    carriage-mode discrimination, per-program media accounting, an
-    actually-observed PTS wrap for `pts-rollover`, and the audio
-    codec/cadence checks) — the mode depends on which side captured the
+    `rawts.rs`: PMT stream types/descriptors, PCR cadence, the PCR's
+    lead ahead of each access unit's decode time (see "The PCR lead
+    floor" below), AV1 carriage-mode discrimination, per-program media
+    accounting, an actually-observed PTS wrap for `pts-rollover`, and the
+    audio codec/cadence checks) — the mode depends on which side captured the
     bytes: an offline `tst-interop verify --file` cell (`send` direction,
     e.g. `us-to-ffmpeg`) always runs `VerifyMode::Strict` — a peer-written
     file is lossless by construction, so a `Discontinuity` found in it is
@@ -166,12 +167,13 @@ an arm-only gap neither excuses nor goes stale on the x86_64 census.
     `PrivateData`) runs `recv --remuxed`, which skips only the oracles
     keyed on the generator's layout (per-PID wire media, PMT stream types
     and descriptors, KLV carriage kind, per-PID wire-vs-demux, PTS wrap
-    on the video PID, audio and AV1 carriage) and lists them in the recv
-    report's `skipped_oracles`. The cell record carries that list and the
+    on the video PID, audio and AV1 carriage, and the lead of the PIDs
+    that are not a PCR PID) and lists them in the recv report's
+    `skipped_oracles`. The cell record carries that list and the
     profile the capture was judged against, and `results.md` prints both
     on the row. Every content oracle still runs: AU, keyframe and KLV
     counts, codec, programs and PMTs seen, PTS monotonicity, PCR cadence,
-    non-conformant events. The cell also computes the source file's KLV
+    the PCR lead on each program's PCR PID, non-conformant events. The cell also computes the source file's KLV
     set digest with `verify` and fails on `KLV set digest mismatch` unless
     the received one equals it, so a lost or altered KLV record fails the
     cell even where the count floor would let it pass.
@@ -190,6 +192,45 @@ an arm-only gap neither excuses nor goes stale on the x86_64 census.
     TSDuck counts when a clock wraps at 2^33 inside the capture (the
     `pts-rollover` profile) is excused; see
     `tsanalyze_ts_line_counters_zero` in `lib.sh`.
+
+### The PCR lead floor
+
+A decoder starts on an access unit when its clock, driven by the PCR,
+reaches the unit's decode time, so a unit has to arrive with the PCR still
+below that time. The muxer writes its PCR `pcr_lead_ms` (100 by default)
+below the decode time of what it sends; `verify` and `recv` hold every
+capture to that:
+
+- **`pcr_lead`.** On each program's PCR PID, every PES start's decode time
+  (its DTS, else its PTS) is at least 90 ms above the last PCR before it
+  (`PCR_LEAD_FLOOR_MS` in `profiles.rs`, the same on all twelve profiles).
+  It is a minimum over the whole capture, in `Strict` and `Lossy` alike:
+  losing packets can only make the PCR a PES is measured against older,
+  which makes the lead larger. A PCR PID on which no lead was measured
+  fails (`pcr_lead: no PES lead measured ...`). The PCR PID is read from
+  the captured PMT, so this runs under `--remuxed` and on a capture a
+  third-party tool re-muxed: such a capture is judged on that tool's PCR,
+  and a cell that fails for it has an `expectations.toml` row naming the
+  run that showed it.
+- **`pcr_lead_other_pids`.** Every other PID the PMT lists is held to 0 ms:
+  KLV and audio may sit closer to the clock than the video, never behind
+  it. The generator pushes in timestamp order, video first, so this holds
+  on its captures; a re-muxer that is handed a metadata unit late still
+  has to send it, so `--remuxed` skips this half and says so in
+  `skipped_oracles`.
+
+The reader measures against the most recent PCR on the program's PCR PID,
+across the 2^33 wrap, and forgets that PCR at a packet on the PID with
+`discontinuity_indicator` set: a PES between the flag and the next PCR is
+not measured. A PES before the first PMT or the first PCR is not measured
+either. The report's `metrics.pcr_lead_min_ms` is the least lead measured
+on any PCR PID (100.0 on a clean capture of any profile), so a pass shows
+the number it passed on.
+
+Under the corruption tap a flipped PCR field or a mis-framed packet hands
+the reader a clock that was never sent, so a PES below its level is excused
+when it lies inside the attribution window of an injection that could have
+caused it: see "Verdicts" under the corruption tap.
 
 ### Inventory and shape
 
@@ -1926,6 +1967,19 @@ jump is NOT one of the signals its class had to produce — for a `drop` or a
 capped sample list beside it, and its detail names the excused events so the
 number it quotes always reconciles with the list it shows. Offline `verify` is
 always `Strict` and sees none of this.
+
+The PCR lead floor ("The PCR lead floor" above) has its own excusal, the
+same in both tiers. The raw reader reports every PES start below its level
+with its packet ordinal, and one is excused when that ordinal lies inside
+the attribution window of an injection, of any class but `dup`, that is on
+the PES's own PID, on its program's PCR PID (the PCR it was measured
+against may be the damaged one: a body flip on a PCR-only packet lands in
+the adaptation field), or that breaks packet framing for the whole
+multiplex (`truncate`, `garbage`, a `header` injection that kills the sync
+byte). `corruption_attribution.pcr_lead_excused` counts them. `pcr_lead`
+fails unless every PES below the level on a PID was excused, and its
+failure line then says how many were; a PES outside every window fails the
+leg as it does on a clean capture.
 
 The rich-KLV oracles separately skip a record an injection damaged
 (`explains_damage`), counting it in `KlvRichMetrics.damaged_by_injection`;
