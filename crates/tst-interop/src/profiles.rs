@@ -47,6 +47,11 @@ pub struct Profile {
     pub programs: u8,
     pub pcr_interval_ms: u32,
     pub psi_interval_ms: u32,
+    /// The muxer's `pcr_lead_ms`: how far the PCR runs behind each access
+    /// unit's decode time. The library default (100) on every profile; the
+    /// PCR lead oracle's floor ([`PCR_LEAD_FLOOR_MS`]) does not follow it,
+    /// so a stream muxed with less fails.
+    pub pcr_lead_ms: u32,
     /// 90 kHz ticks; `pts-rollover` starts near 2^33.
     pub start_pts_ticks: u64,
     /// 30.
@@ -96,7 +101,8 @@ pub struct Invariants {
     pub programs: Vec<ExpectedProgram>,
     /// Least lead, in ms, of a PES's decode time over the preceding PCR on
     /// its program's PCR PID — see [`crate::oracles`]'s PCR lead rule.
-    /// `None` leaves the rule off.
+    /// `None` leaves the rule off; [`invariants`] sets
+    /// [`PCR_LEAD_FLOOR_MS`] for every profile.
     pub pcr_lead_min_ms: Option<u32>,
 }
 
@@ -116,6 +122,16 @@ const BASELINE_PSI_MS: u32 = 100;
 const PCR_TIGHT_MS: u32 = 1;
 const PCR_SPARSE_MS: u32 = 100;
 
+/// `MuxerConfig::pcr_lead_ms`'s default, which every profile muxes with.
+const PCR_LEAD_MS: u32 = 100;
+
+/// The least lead, in ms, every profile's capture must show on each
+/// program's PCR PID: the default lead minus a 10 ms slack. A PES on the
+/// PCR PID of this harness's generator leads its PCR by the configured lead
+/// exactly, so the slack is not there for the generator; it leaves room for
+/// a publisher whose frames reach a serving muxer a little out of step.
+pub const PCR_LEAD_FLOOR_MS: u32 = 90;
+
 /// `pts-rollover`'s start point: 5 s (450_000 ticks at 90 kHz) below the
 /// 33-bit PTS wraparound boundary (2^33, ITU-T H.222.0 §2.4.3.6).
 const PTS_ROLLOVER_START: u64 = (1u64 << 33) - 450_000;
@@ -130,6 +146,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -143,6 +160,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -156,6 +174,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -169,6 +188,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -182,6 +202,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -195,6 +216,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -208,6 +230,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -221,6 +244,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -234,6 +258,7 @@ const PROFILES: &[Profile] = &[
         programs: 2,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -247,6 +272,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: PCR_TIGHT_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -260,6 +286,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: PCR_SPARSE_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: 0,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -273,6 +300,7 @@ const PROFILES: &[Profile] = &[
         programs: 1,
         pcr_interval_ms: BASELINE_PCR_MS,
         psi_interval_ms: BASELINE_PSI_MS,
+        pcr_lead_ms: PCR_LEAD_MS,
         start_pts_ticks: PTS_ROLLOVER_START,
         fps: FPS,
         klv_hz: KLV_HZ,
@@ -423,10 +451,9 @@ pub fn invariants(p: &Profile) -> Invariants {
         av1_mode: p.av1_mode,
         audio_sample_rate_hz: p.audio.then_some(schedule::AUDIO_SAMPLE_RATE_HZ),
         programs,
-        // No profile sets a floor: the muxer's PCR equals the decode time
-        // of the PES it precedes (a lead of zero on every profile today),
-        // so any floor would fail every capture.
-        pcr_lead_min_ms: None,
+        // Every profile, whatever lead it was muxed with: see
+        // `PCR_LEAD_FLOOR_MS`.
+        pcr_lead_min_ms: Some(PCR_LEAD_FLOOR_MS),
     }
 }
 
@@ -470,6 +497,23 @@ mod tests {
         let a_mode = a.av1_mode.expect("av1-klv-a must set av1_mode");
         let b_mode = b.av1_mode.expect("av1-klv-b must set av1_mode");
         assert_ne!(a_mode, b_mode);
+    }
+
+    /// Every profile holds its PCR PID to the decode-lead floor, and muxes
+    /// with a lead above it. A profile added without a floor, or the floor
+    /// switched off, fails here: the 1.0 exit criteria name this test.
+    #[test]
+    fn every_profile_sets_the_pcr_lead_floor() {
+        assert_eq!(PCR_LEAD_FLOOR_MS, 90);
+        for p in all() {
+            assert_eq!(
+                invariants(p).pcr_lead_min_ms,
+                Some(PCR_LEAD_FLOOR_MS),
+                "{}",
+                p.name
+            );
+            assert!(p.pcr_lead_ms > PCR_LEAD_FLOOR_MS, "{}", p.name);
+        }
     }
 
     #[test]
