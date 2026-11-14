@@ -931,43 +931,59 @@ fn late_audio_data_and_subtitle_are_counted_and_reset_clears_it() {
 
 /// `BufferFull` on any push kind leaves the clock where it was: the next
 /// pushes produce the bytes of a muxer that never saw the failed one.
+///
+/// The refused push is stamped two seconds on, where a push on any PID
+/// takes the clock (the PCR stream reads as silent). A third muxer with
+/// room for it shows that the step, had it been applied, is visible in the
+/// same follow-up bytes.
 #[test]
 fn failed_push_leaves_the_clock_unchanged() {
     for kind in 0..5 {
-        let twin = || {
+        let muxer_with = |buffer_packets| {
             let mut cfg = five_stream_config();
-            cfg.buffer_packets = 10;
+            cfg.buffer_packets = buffer_packets;
             let mut mux = Muxer::new(cfg).unwrap();
             mux.push_video(&h264(true), Pts90khz::new(90_000), true)
                 .unwrap();
-            let head = drain_all(&mut mux);
-            (mux, head)
+            let _ = drain_all(&mut mux);
+            mux
         };
-        let (mut a, head_a) = twin();
-        let (mut b, head_b) = twin();
-        assert_eq!(head_a, head_b);
-
-        let late = Pts90khz::new(135_000);
-        let big = vec![0xA5u8; 4_000];
-        let err = match kind {
-            0 => a.push_video(&synthetic_nal::h264_au(4_000, true), late, true),
-            1 => a.push_audio_to(a.audio_handles()[0], late, &big),
-            2 => a.push_klv_to(a.klv_handles()[0], &big, late, 0),
-            3 => a.push_data_to(a.data_handles()[0], &big, late),
-            _ => a.push_subtitle_to(a.subtitle_handles()[0], late, &big),
+        let push = |mux: &mut Muxer| {
+            let ahead = Pts90khz::new(270_000);
+            let big = vec![0xA5u8; 4_000];
+            match kind {
+                0 => mux.push_video(&synthetic_nal::h264_au(4_000, true), ahead, true),
+                1 => mux.push_audio_to(mux.audio_handles()[0], ahead, &big),
+                2 => mux.push_klv_to(mux.klv_handles()[0], &big, ahead, 0),
+                3 => mux.push_data_to(mux.data_handles()[0], &big, ahead),
+                _ => mux.push_subtitle_to(mux.subtitle_handles()[0], ahead, &big),
+            }
         };
-        assert!(
-            matches!(err, Err(MuxError::BufferFull { .. })),
-            "kind {kind}: {err:?}"
-        );
-
-        for mux in [&mut a, &mut b] {
+        let follow_up = |mux: &mut Muxer| {
             mux.push_video(&h264(false), Pts90khz::new(93_600), false)
                 .unwrap();
             mux.push_klv_to(mux.klv_handles()[0], &klv(), Pts90khz::new(93_600), 0)
                 .unwrap();
-        }
-        assert_eq!(drain_all(&mut a), drain_all(&mut b), "kind {kind}");
+            drain_all(mux)
+        };
+
+        let (mut refused, mut never_pushed, mut accepted) =
+            (muxer_with(10), muxer_with(10), muxer_with(1_000));
+        let err = push(&mut refused);
+        assert!(
+            matches!(err, Err(MuxError::BufferFull { .. })),
+            "kind {kind}: {err:?}"
+        );
+        push(&mut accepted).unwrap();
+        let _ = drain_all(&mut accepted);
+
+        let expected = follow_up(&mut never_pushed);
+        assert_eq!(follow_up(&mut refused), expected, "kind {kind}");
+        assert_ne!(
+            follow_up(&mut accepted),
+            expected,
+            "kind {kind}: the accepted push must show in the follow-up, or the check above proves nothing"
+        );
     }
 }
 
