@@ -1104,8 +1104,8 @@ impl PyMuxerConfigBuilder {
     /// Set how far the PCR runs behind each access unit's decode time, in
     /// milliseconds (default 100, valid 0..=1000). The PCR is the decode
     /// time (the DTS when the push supplies one, else the PTS) minus this
-    /// lead and never decreases within a program; 0 writes PCR = decode
-    /// time.
+    /// lead and steps back only at a signalled restart of the timeline; 0
+    /// writes PCR = decode time.
     pub fn pcr_lead_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyResult<PyRefMut<'_, Self>> {
         slf.get_mut()?.pcr_lead_ms(ms);
         Ok(slf)

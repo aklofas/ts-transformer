@@ -462,13 +462,16 @@ access unit is not interrupted to carry a second PCR.
 
 ### The PCR value: `pcr_lead_ms`
 
-Each program has one clock, and the PCR is its value. Every push moves
-the clock to the push's decode time (the DTS when the push supplies one,
-else the PTS) minus `pcr_lead_ms`, and never backward. `pcr_lead_ms`
+Each program has one clock, and the PCR is its value. A push on the
+program's PCR PID moves the clock to the push's decode time (the DTS
+when the push supplies one, else the PTS) minus `pcr_lead_ms`, and never
+backward except at a signalled restart of the timeline. `pcr_lead_ms`
 defaults to `100` and is validated `0..=1000`. A receiver therefore has
-every access unit at least `pcr_lead_ms` before its clock reads the
-unit's decode time: the time a decoder needs to buffer and decode it,
-which H.222.0's buffer model assumes and ST 1402 asks for metadata.
+every access unit of the PCR stream, pushed in decode order, at least
+`pcr_lead_ms` before its clock reads the unit's decode time: the time a
+decoder needs to buffer and decode it, which H.222.0's buffer model
+assumes and ST 1402 asks for metadata. The cases below are where a unit
+gets less.
 
 - **A stream that starts near zero.** Caller timestamps are never
   shifted. A stream whose first decode time is below the lead (a file
@@ -480,14 +483,24 @@ which H.222.0's buffer model assumes and ST 1402 asks for metadata.
   Pushed PTS-only, a reordered frame steps the timestamp back; the
   clock holds, and that frame gets the lead minus its reorder distance.
 - **Other PIDs do not move the clock while the PCR stream is pushing.**
-  KLV stamped at capture runs ahead of encoder-delayed video, and a PCR
-  taken from it would pass the video's decode time. A push on another
-  PID moves the clock only when the PCR stream has not pushed yet, or
-  when its timestamp is more than one second past the PCR stream's last
-  push (the PCR stream has gone silent). That push then puts a PCR-only
-  packet on the PCR PID. Push the first video access unit before the
-  first KLV unit: a KLV unit pushed first sets the clock, and video that
-  starts behind it has a short lead until it catches up.
+  KLV stamped at capture runs ahead of encoder-delayed video, by more
+  than a second with a slow encoder, and a PCR taken from it would pass
+  the video's decode time. So a push on another PID leaves the clock
+  alone, however far ahead it is stamped.
+- **When the PCR stream stops, the other PIDs keep the clock going.**
+  The muxer has no wall clock; it takes the PCR stream to have stopped
+  when another PID has run on for more than one second of its own time
+  with no push on the PCR PID. From then on, and before the PCR stream's
+  first push, a push on any PID moves the clock and puts a PCR-only
+  packet on the PCR PID when one is due. The clock then follows whichever
+  stream is furthest ahead, and units of a stream stamped behind it count
+  as late.
+- **When the PCR stream comes back** less than a second behind the clock
+  the other PIDs left, the PCR holds until it catches up (its frames get
+  a short lead meanwhile, and PAT/PMT wait with the clock). More than a
+  second behind, it restarts the time base (below). Push the first video
+  access unit before the first KLV unit for the same reason: a KLV unit
+  pushed first sets the clock.
 - **Late metadata.** A KLV, audio, data or subtitle unit pushed after
   the clock has passed its PTS is muxed all the same.
   `MuxerStats::late_metadata_pushes` counts them. A stream whose PES
@@ -498,15 +511,21 @@ which H.222.0's buffer model assumes and ST 1402 asks for metadata.
 
 ### Timeline restarts
 
-A push on the PCR PID more than one second behind the previous one is
-not reordering: the producer restarted its timeline. The muxer opens a
-new time base. The packet with the first PCR of the new timeline has
-`discontinuity_indicator` set, and the PAT and PMTs are sent before it.
-H.222.0 requires two PCRs between such discontinuities, so a second
+A push on the PCR PID stamped more than one second behind the clock is
+not reordering: the producer restarted its timeline (or the clock was
+left ahead by another PID while the PCR stream was stopped). The muxer
+opens a new time base. The packet with the first PCR of the new timeline
+has `discontinuity_indicator` set, and the PAT and PMTs are sent before
+it. H.222.0 requires two PCRs between such discontinuities, so a second
 restart that arrives before the new time base has its two PCRs is held
 for one push (that push repeats the PCR) and takes effect on the next.
+
 A step back of one second or less is treated as reordering: the PCR
-holds its value and nothing is signalled.
+holds its value, nothing is signalled, and PAT/PMT wait with the clock
+until the timestamps pass the point they stepped back from. A source
+that loops a clip shorter than a second without advancing its timestamps
+therefore holds the PCR for as long as it loops; give each pass its own
+timestamps.
 
 ### Sparse sources: `tick`
 
@@ -532,9 +551,13 @@ sample files in the test corpus emit PSI at roughly that cadence.
 PSI rides the program clock described under
 [The PCR value](#the-pcr-value-pcr_lead_ms): it is due when the clock
 has advanced `psi_interval_ms` since the last PAT and PMT, compared
-modulo 2^33, so the rollover every 26.5 hours does not suppress it. The
-clock never moves backward, so a backward PTS (B-frames pushed in decode
-order) does not retrigger PSI. A timeline restart sends PSI at once.
+modulo 2^33, so the rollover every 26.5 hours does not suppress it. A
+backward PTS (B-frames pushed in decode order) holds the clock and does
+not retrigger PSI. A timeline restart sends PSI at once. In a
+multi-program muxer one PAT/PMT set serves every program and is stamped
+with the clock of the program whose push sent it, so programs on
+timelines far apart share the cadence of the one that is ahead; if that
+one stops, call `request_psi` or the others wait for its stamp.
 
 ## Bitrate budgeting
 

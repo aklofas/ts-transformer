@@ -13,11 +13,9 @@
 //!   until the two tracks' clocks are related (RTCP sender reports, or a
 //!   two-second first-packet-coincidence fallback), places each on the
 //!   video line, and returns it once a video AU at or past its PTS has
-//!   been muxed, so a KLV PES never precedes its frame in the multiplex
-//!   (and a unit stamped more than a second ahead of the video, which the
-//!   muxer would take for a silent video stream and follow with its PCR,
-//!   never reaches the muxer early). A unit placed before the video
-//!   origin (negative PTS) is dropped: a TS PTS cannot be negative.
+//!   been muxed, so a KLV PES never precedes its frame in the multiplex.
+//!   A unit placed before the video origin (negative PTS) is dropped: a
+//!   TS PTS cannot be negative.
 //! - Both are pushed into one [`Muxer`] (program 1, PMT PID 0x1000,
 //!   video PID 0x100, KLV PID 0x101 as `PrivateData` with a PTS). After
 //!   each push the muxer is drained in bundles of at most

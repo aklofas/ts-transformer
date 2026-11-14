@@ -576,8 +576,9 @@ pub unsafe extern "C" fn tst_mux_config_set_pcr_interval_ms(
 /// milliseconds (applies to all programs). Default is 100. Must be in range
 /// 0..=1000; an out-of-range value is reported when the muxer or sender is
 /// opened. The PCR is the decode time (the DTS when the push supplies one,
-/// else the PTS) minus this lead, and never decreases within a program. `0`
-/// writes PCR = decode time. Mirrors `MuxerConfig::pcr_lead_ms`.
+/// else the PTS) minus this lead, and steps back only at a signalled restart
+/// of the timeline. `0` writes PCR = decode time. Mirrors
+/// `MuxerConfig::pcr_lead_ms`.
 ///
 /// # Safety
 ///
