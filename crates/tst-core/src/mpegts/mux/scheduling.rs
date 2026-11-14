@@ -1,9 +1,10 @@
 //! PSI + PCR scheduling for `Muxer`: one delivery clock per program.
 //!
-//! A program's clock is the base of its last PCR. Every push moves it to
-//! the push's decode time minus `pcr_lead_ms`, never backward, so the PCR a
-//! receiver reads is always behind the decode time of the access unit that
-//! follows it. `Muxer::plan_clock` works out what one push does to the
+//! A program's clock is the base of its last PCR. A push on the PCR PID
+//! moves it to the push's decode time minus `pcr_lead_ms`, and backward only
+//! as a signalled new time base, so the PCR a receiver reads is behind the
+//! decode time of the access unit that follows it. Pushes on the other PIDs
+//! move it only when the PCR stream is not pushing. `Muxer::plan_clock` works out what one push does to the
 //! clock without touching state; `reserve_preamble` checks the result against
 //! the buffer and only then commits it, so a refused push changes nothing.
 //!
@@ -12,16 +13,18 @@
 
 use super::Muxer;
 use super::psi::{PmtStreamEntry, write_pat_packet, write_pmt_packet};
+use super::slot::PcrStream;
 use super::state::pmt_stream_type_byte;
 use super::ts::{AdaptationField, write_pcr_only_packet};
 use crate::error::MuxError;
 use crate::mpegts::common::{Pcr27mhz, Pts90khz, pts_diff_33bit};
 use alloc::vec::Vec;
 
-/// One second, the longest an H.222.0 decoder buffer holds an access unit.
-/// A push on the PCR PID more than this far behind the previous one cannot
-/// be reordering, so it starts a new time base; a push on another PID more
-/// than this far ahead of the PCR stream means that stream has gone silent.
+/// One second, the longest an H.222.0 decoder buffer holds an access unit,
+/// so the longest two timestamps of one timeline can be apart for reasons
+/// of reordering or buffering. A push on the PCR PID further behind the
+/// clock than this starts a new time base; another PID that has run on for
+/// longer than this with no push on the PCR PID takes the clock.
 pub(super) const TIMELINE_RESTART_90KHZ: i64 = 90_000;
 
 const MASK_33: u64 = (1 << 33) - 1;
@@ -52,8 +55,6 @@ impl ClockPlan {
 struct ClockStep {
     /// The program clock after the push.
     clock: u64,
-    /// The push's decode time, masked to 33 bits.
-    decode: u64,
     psi: bool,
     /// A PCR-only packet goes out on the PCR PID before the payload.
     pcr_only: bool,
@@ -61,8 +62,8 @@ struct ClockStep {
     first_pcr: bool,
     /// The PCR of this push opens a new time base.
     restart: bool,
-    /// `decode` becomes the PCR stream's latest timestamp.
-    on_pcr_stream: bool,
+    /// What is known about the PCR stream after the push.
+    pcr_stream: PcrStream,
 }
 
 impl Muxer {
@@ -82,33 +83,77 @@ impl Muxer {
         let tick = pid.is_none();
         let on_pcr = pid.is_none_or(|p| p == slot.pcr_pid);
         let decode = decode_ts.masked_33bit();
-        let since_pcr_stream = slot.pcr_stream_last.map(|v| pts_diff_33bit(decode, v));
 
-        // A new time base needs two PCRs on the current one first
-        // (H.222.0 §2.7.2). Until then the step back is held like a
-        // reorder, but with a PCR, so the next push finds the two it needs.
-        let behind = on_pcr && since_pcr_stream.is_some_and(|d| d < -TIMELINE_RESTART_90KHZ);
-        let restart = behind && slot.pcrs_on_time_base >= 2;
-        let refused = behind && !restart;
         // While the PCR stream is pushing, another PID's timestamps do not
         // move the clock: metadata stamped at capture can run ahead of
         // encoder-delayed video, and a PCR taken from it would pass the
-        // video's decode time.
-        let live = !on_pcr && since_pcr_stream.is_some_and(|d| d <= TIMELINE_RESTART_90KHZ);
-
-        let candidate = (decode + (1 << 33) - self.pcr_lead_90khz) & MASK_33;
-        let (new_clock, pcr_due) = match slot.clock {
-            Some(clock) if live => (clock, false),
-            Some(clock) if !restart => {
-                // Never backward: a candidate behind the clock holds it.
-                let advance = pts_diff_33bit(candidate, clock);
-                if advance < 0 {
-                    (clock, refused)
+        // video's decode time. One timestamp cannot show that the PCR
+        // stream has stopped (it may be a stray, or a steady offset), so
+        // the evidence is a PID's own progress: more than a second of it
+        // since its first push after the last one on the PCR PID.
+        let (live, pcr_stream) = match (pid, slot.pcr_stream) {
+            (Some(pid), PcrStream::Pushed { other: None }) if !on_pcr => (
+                true,
+                PcrStream::Pushed {
+                    other: Some((pid, decode)),
+                },
+            ),
+            (
+                Some(pid),
+                PcrStream::Pushed {
+                    other: Some((first_pid, first)),
+                },
+            ) if !on_pcr => {
+                let ahead = pts_diff_33bit(decode, first) > TIMELINE_RESTART_90KHZ;
+                if first_pid == pid {
+                    if ahead {
+                        // The PCR stream has stopped: from here every PID
+                        // may move the clock, until it pushes again.
+                        (false, PcrStream::Silent)
+                    } else {
+                        (true, slot.pcr_stream)
+                    }
+                } else if ahead {
+                    // A second PID far from the first says nothing about
+                    // the PCR stream; measure this PID from here instead.
+                    (
+                        true,
+                        PcrStream::Pushed {
+                            other: Some((pid, decode)),
+                        },
+                    )
                 } else {
-                    (candidate, refused || advance >= self.pcr_interval_90khz)
+                    (true, slot.pcr_stream)
                 }
             }
-            _ => (candidate, true),
+            _ if on_pcr => (false, PcrStream::Pushed { other: None }),
+            _ => (false, slot.pcr_stream),
+        };
+
+        let candidate = (decode + (1 << 33) - self.pcr_lead_90khz) & MASK_33;
+        let (new_clock, pcr_due, restart) = match slot.clock {
+            Some(clock) if live => (clock, false, false),
+            Some(clock) => {
+                let advance = pts_diff_33bit(candidate, clock);
+                if advance >= 0 {
+                    (candidate, advance >= self.pcr_interval_90khz, false)
+                } else if on_pcr && advance < -TIMELINE_RESTART_90KHZ {
+                    // Too far behind to be reordering: the PCR stream is on
+                    // a new timeline. A new time base needs two PCRs on the
+                    // current one first (H.222.0 §2.7.2); until then this
+                    // push repeats the clock in a PCR, so that the next one
+                    // finds the two it needs.
+                    if slot.pcrs_on_time_base >= 2 {
+                        (candidate, true, true)
+                    } else {
+                        (clock, true, false)
+                    }
+                } else {
+                    // Never backward: a candidate behind the clock holds it.
+                    (clock, false, false)
+                }
+            }
+            None => (candidate, true, false),
         };
         let psi = restart
             || slot
@@ -116,12 +161,11 @@ impl Muxer {
                 .is_none_or(|last| pts_diff_33bit(new_clock, last) >= self.psi_interval_90khz);
         ClockStep {
             clock: new_clock,
-            decode,
             psi,
             pcr_only: pcr_due && (tick || (!on_pcr && !live)),
             first_pcr: on_pcr && !tick && (pcr_due || force_pcr),
             restart,
-            on_pcr_stream: on_pcr && !refused,
+            pcr_stream,
         }
     }
 
@@ -230,9 +274,7 @@ impl Muxer {
             slot.clock = Some(step.clock);
             slot.pcrs_on_time_base = slot.pcrs_on_time_base.saturating_add(1);
         }
-        if step.on_pcr_stream {
-            slot.pcr_stream_last = Some(step.decode);
-        }
+        slot.pcr_stream = step.pcr_stream;
         ClockPlan {
             pcr: step.first_pcr.then_some(pcr),
             discontinuity: step.restart && step.first_pcr,

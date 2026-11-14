@@ -126,9 +126,10 @@ pub struct MuxerConfig {
     /// and having to decode it. Default 100. Validation 0..=1000.
     ///
     /// The PCR is the decode time (the DTS when the push supplies one, else
-    /// the PTS) minus this lead, and never decreases within a program. A
-    /// stream whose first decode time is below the lead therefore starts
-    /// with a PCR just below 2^33 that wraps to zero when the decode time
+    /// the PTS) of the pushes on the program's PCR PID minus this lead, and
+    /// steps back only at a signalled restart of the timeline. A stream
+    /// whose first decode time is below the lead therefore starts with a
+    /// PCR just below 2^33 that wraps to zero when the decode time
     /// reaches the lead. `0` writes PCR = decode time; it does not restore
     /// the PCR = PTS output of 0.10.0 and earlier.
     pub pcr_lead_ms: u32,

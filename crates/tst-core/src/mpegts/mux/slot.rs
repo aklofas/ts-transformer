@@ -39,9 +39,9 @@ pub(super) struct ProgramSlot {
     /// The program clock: the base of the last PCR sent, 33-bit 90 kHz.
     /// None until first.
     pub(super) clock: Option<u64>,
-    /// Decode time of the last push on the PCR PID (or tick), 33-bit 90 kHz.
-    /// None until first, and after the PCR PID changes.
-    pub(super) pcr_stream_last: Option<u64>,
+    /// Whether the PCR stream is pushing, as far as the pushes on the
+    /// program's other PIDs can tell.
+    pub(super) pcr_stream: PcrStream,
     /// PCRs sent on the current time base, saturating.
     pub(super) pcrs_on_time_base: u8,
     /// Program number this slot last carried; kept when the slot is
@@ -53,6 +53,21 @@ pub(super) struct ProgramSlot {
     /// stream slot still names the PID it carried; they are overwritten on
     /// re-placement.
     pub(super) placed_pids: BTreeMap<u16, (MuxStreamKind, usize)>,
+}
+
+/// What the muxer knows about a program's PCR stream. It has no wall clock,
+/// so a stream that stopped looks, at first, like one that has not pushed
+/// yet: the only evidence is another stream running on without it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PcrStream {
+    /// The PCR PID is not being pushed: it has not been since the program
+    /// got it, or it stopped. A push on any other PID moves the clock.
+    Silent,
+    /// The PCR PID was pushed (or ticked). `other` is the first push on
+    /// another PID since then, as (PID, decode time, 33-bit 90 kHz). Once
+    /// that PID has run more than a second past it with still no push on
+    /// the PCR PID, the PCR stream has stopped.
+    Pushed { other: Option<(u16, u64)> },
 }
 
 impl ProgramSlot {
@@ -93,7 +108,7 @@ impl ProgramSlot {
             pmt_descriptor_cache,
             psi_last: None,
             clock: None,
-            pcr_stream_last: None,
+            pcr_stream: PcrStream::Silent,
             pcrs_on_time_base: 0,
             last_program_number: prog.program_number,
             placed_pids,
@@ -116,7 +131,7 @@ impl ProgramSlot {
             pmt_identity: Vec::new(),
             psi_last: None,
             clock: None,
-            pcr_stream_last: None,
+            pcr_stream: PcrStream::Silent,
             pcrs_on_time_base: 0,
             last_program_number: 0,
             placed_pids: BTreeMap::new(),
