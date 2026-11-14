@@ -568,6 +568,64 @@ fn other_streams_on_one_timeline_share_the_clock_after_the_pcr_stream_stops() {
     assert!(bases.windows(2).all(|w| diff33(w[1], w[0]) == 3_600));
 }
 
+/// The video stops; metadata at 10 Hz carries on, and a sparse stream
+/// stamped three seconds ahead pushes now and then. Each stream is measured
+/// against its own first push, so the sparse one cannot keep the muxer from
+/// seeing that the video has stopped.
+#[test]
+fn a_sparse_stream_ahead_does_not_hide_that_the_pcr_stream_stopped() {
+    let mut mux = Muxer::new(five_stream_config()).unwrap();
+    let (v, k, sub) = (
+        mux.video_handles()[0],
+        mux.klv_handles()[0],
+        mux.subtitle_handles()[0],
+    );
+    mux.push_video_to(v, &h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    let _ = drain_all(&mut mux);
+    for i in 1..=120i64 {
+        let t = 90_000 + i * 9_000; // twelve seconds of metadata
+        if i % 45 == 1 {
+            // every 4.5 s, the first right after the video's last frame
+            mux.push_subtitle_to(sub, Pts90khz::new(t + 270_000), b"WEBVTT\n")
+                .unwrap();
+        }
+        mux.push_klv_to(k, &klv(), Pts90khz::new(t), 0).unwrap();
+    }
+    let ts = drain_all(&mut mux);
+    let pcrs = pcr_packets(&ts);
+    // Seen at the metadata unit one second past its first: the PCR resumes
+    // there. (After that the clock follows whichever stream is furthest
+    // ahead, so each sparse unit, three seconds on, holds it for a while.)
+    assert_eq!(pcrs.first().map(|p| p.2), Some(90_000 + 12 * 9_000 - 9_000));
+    assert!(pcrs.len() >= 40, "{} PCRs in 12 s", pcrs.len());
+    assert_monotonic(&pcrs.iter().map(|p| p.2).collect::<Vec<_>>());
+    assert!(psi_count(&ts) >= 40, "{} PAT packets", psi_count(&ts));
+}
+
+/// The first push after the video stops carries a stray stamp a minute
+/// ahead. The stream it belongs to is measured from its lowest stamp since
+/// the video's last push, so its ordinary units still show, a second on,
+/// that the video has stopped.
+#[test]
+fn a_stray_first_stamp_does_not_hide_that_the_pcr_stream_stopped() {
+    let mut mux = default_mux();
+    mux.push_video(&h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    let _ = drain_all(&mut mux);
+    mux.push_klv(&klv(), Pts90khz::new(5_490_000), 0).unwrap();
+    for i in 1..=30i64 {
+        mux.push_klv(&klv(), Pts90khz::new(90_000 + i * 9_000), 0)
+            .unwrap();
+    }
+    let bases = pcr_bases(&drain_all(&mut mux));
+    // Stopped is seen at the unit one second past the first ordinary one;
+    // from there every unit carries the clock on.
+    assert_eq!(bases.first(), Some(&(90_000 + 12 * 9_000 - 9_000)));
+    assert_eq!(bases.len(), 19);
+    assert_monotonic(&bases);
+}
+
 /// The video stops; audio and metadata that are a second and a half apart
 /// from each other carry on. PCRs resume within a few seconds and stay
 /// monotonic.
@@ -1197,10 +1255,12 @@ fn failed_push_leaves_the_clock_unchanged() {
 
         let expected = follow_up(&mut never_pushed);
         assert_eq!(follow_up(&mut refused), expected, "kind {kind}");
+        // Compared as PCRs: the accepted push also moved a continuity
+        // counter, which would make the bytes differ whatever the clock did.
         assert_ne!(
-            follow_up(&mut accepted),
-            expected,
-            "kind {kind}: the accepted push must show in the follow-up, or the check above proves nothing"
+            pcr_packets(&follow_up(&mut accepted)),
+            pcr_packets(&expected),
+            "kind {kind}: the accepted push must show in the follow-up's PCRs, or the check above proves nothing"
         );
     }
 }

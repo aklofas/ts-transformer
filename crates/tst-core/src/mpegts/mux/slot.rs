@@ -42,6 +42,14 @@ pub(super) struct ProgramSlot {
     /// Whether the PCR stream is pushing, as far as the pushes on the
     /// program's other PIDs can tell.
     pub(super) pcr_stream: PcrStream,
+    /// For each other PID pushed since the last push on the PCR PID, its
+    /// lowest decode time since then (PID, 33-bit 90 kHz). When one of them
+    /// has run more than a second past its own entry with still no push on
+    /// the PCR PID, the PCR stream has stopped. Each PID is measured
+    /// against itself: two streams a steady distance apart say nothing
+    /// about the PCR stream, and the lowest stamp is used so that one stray
+    /// high one cannot hide the progress of the rest.
+    pub(super) since_pcr_push: Vec<(u16, u64)>,
     /// PCRs sent on the current time base, saturating.
     pub(super) pcrs_on_time_base: u8,
     /// Program number this slot last carried; kept when the slot is
@@ -63,11 +71,9 @@ pub(super) enum PcrStream {
     /// The PCR PID is not being pushed: it has not been since the program
     /// got it, or it stopped. A push on any other PID moves the clock.
     Silent,
-    /// The PCR PID was pushed (or ticked). `other` is the first push on
-    /// another PID since then, as (PID, decode time, 33-bit 90 kHz). Once
-    /// that PID has run more than a second past it with still no push on
-    /// the PCR PID, the PCR stream has stopped.
-    Pushed { other: Option<(u16, u64)> },
+    /// The PCR PID was pushed (or ticked) and has not been seen to stop:
+    /// see [`ProgramSlot::since_pcr_push`].
+    Pushed,
 }
 
 impl ProgramSlot {
@@ -109,6 +115,7 @@ impl ProgramSlot {
             psi_last: None,
             clock: None,
             pcr_stream: PcrStream::Silent,
+            since_pcr_push: Vec::new(),
             pcrs_on_time_base: 0,
             last_program_number: prog.program_number,
             placed_pids,
@@ -132,6 +139,7 @@ impl ProgramSlot {
             psi_last: None,
             clock: None,
             pcr_stream: PcrStream::Silent,
+            since_pcr_push: Vec::new(),
             pcrs_on_time_base: 0,
             last_program_number: 0,
             placed_pids: BTreeMap::new(),
