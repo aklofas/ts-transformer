@@ -182,7 +182,7 @@ fn buffer_full_does_not_modify_state() {
     let slot = &mux.slots[0];
     assert_eq!(slot.psi_last, None);
     assert_eq!(slot.clock, None);
-    assert_eq!(slot.pcr_stream_last, None);
+    assert_eq!(slot.pcr_stream, super::slot::PcrStream::Silent);
     assert_eq!(slot.pcrs_on_time_base, 0);
 }
 

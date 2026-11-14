@@ -1,7 +1,7 @@
 //! The muxer's program clock, read off the wire.
 //!
-//! PCR = decode time − `pcr_lead_ms` (default 100 ms), never decreasing
-//! within a program. The reader below is written from H.222.0 §2.4.3.4
+//! PCR = decode time − `pcr_lead_ms` (default 100 ms), stepping back only
+//! at a signalled restart. The reader below is written from H.222.0 §2.4.3.4
 //! (adaptation field) and §2.4.3.6 (PES header), not from the crate's own
 //! demuxer, so a mistake shared by the muxer and the demuxer cannot hide.
 
@@ -361,36 +361,247 @@ fn klv_only_pushes_inject_leading_pcr_on_silent_video_pid() {
     );
 }
 
-/// A push on another PID moves the clock only when the PCR stream is silent:
-/// its timestamp is more than one second past the PCR stream's last one.
+/// Every PCR on the wire rides the first packet of a video access unit and
+/// is that unit's decode time minus the lead: no other PID has moved the
+/// clock and nothing held it.
+fn assert_every_pcr_is_its_own_video_frames(ts: &[u8], video_pid: u16) {
+    for p in parse(ts).iter().filter(|p| p.pcr.is_some()) {
+        assert_eq!(p.pid, video_pid);
+        assert!(
+            p.has_payload,
+            "a PCR-only packet at base {}",
+            p.pcr.unwrap().1
+        );
+        assert_eq!(diff33(p.decode_ts.unwrap(), p.pcr.unwrap().1), LEAD);
+    }
+}
+
+/// One wrong timestamp on another PID must not cost the stream its clock:
+/// the muxer cannot tell a stream that stopped from a unit stamped far
+/// ahead by looking at one timestamp, so one is never enough.
 #[test]
-fn m2_boundary_exactly_one_second_and_just_past() {
+fn a_stray_stamp_on_another_pid_does_not_take_the_clock() {
+    let mut mux = default_mux();
+    for i in 0..30i64 {
+        let v = 90_000 + i * 3_000;
+        mux.push_video(&h264(i == 0), Pts90khz::new(v), i == 0)
+            .unwrap();
+        let stray = if i == 5 { 900_000 } else { 0 }; // ten seconds ahead, once
+        mux.push_klv(&klv(), Pts90khz::new(v + stray), 0).unwrap();
+    }
+    let ts = drain_all(&mut mux);
+    assert_every_pcr_is_its_own_video_frames(&ts, 0x1011);
+    assert_eq!(pcr_bases(&ts).len(), 15);
+    assert_eq!(psi_count(&ts), 10, "PSI keeps its 100 ms cadence");
+}
+
+/// A producer restarts its timeline and one metadata unit stamped on the
+/// old timeline arrives late. The clock stays with the video.
+#[test]
+fn a_stale_unit_after_a_restart_does_not_take_the_clock() {
+    let mut mux = default_mux();
+    for i in 0..4i64 {
+        mux.push_video(&h264(true), Pts90khz::new(3_240_000 + i * 3_600), true)
+            .unwrap();
+    }
+    let _ = drain_all(&mut mux);
+    mux.push_video(&h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    mux.push_video(&h264(false), Pts90khz::new(93_000), false)
+        .unwrap();
+    mux.push_klv(&klv(), Pts90khz::new(3_513_000), 0).unwrap();
+    for i in 2..30i64 {
+        mux.push_video(&h264(false), Pts90khz::new(90_000 + i * 3_000), false)
+            .unwrap();
+    }
+    let ts = drain_all(&mut mux);
+    let pcrs = pcr_packets(&ts);
+    assert_eq!(pcrs[0], (0x1011, 0x80 | 0x40 | 0x10, 81_000));
+    assert!(pcrs[1..].iter().all(|p| p.1 & 0x80 == 0));
+    assert_every_pcr_is_its_own_video_frames(&ts, 0x1011);
+    assert_eq!(pcrs.len(), 15);
+}
+
+/// Metadata stamped at capture can lead video by more than a second when
+/// the encoder is slow. While the video keeps arriving, it keeps the clock,
+/// and every frame keeps its full lead.
+#[test]
+fn metadata_more_than_a_second_ahead_never_takes_the_clock_from_live_video() {
+    let mut mux = default_mux();
+    for i in 0..60i64 {
+        let v = 90_000 + i * 3_000;
+        mux.push_video(&h264(i % 30 == 0), Pts90khz::new(v), i % 30 == 0)
+            .unwrap();
+        if i % 3 == 0 {
+            mux.push_klv(&klv(), Pts90khz::new(v + 135_000), 0).unwrap();
+        }
+    }
+    let ts = drain_all(&mut mux);
+    assert_every_pcr_is_its_own_video_frames(&ts, 0x1011);
+    assert!(leads(&ts, 0x1011).iter().all(|(_, l)| *l >= LEAD));
+}
+
+/// The same with two other streams that are a second and a half apart from
+/// each other: comparing one with the other must not read as silence.
+#[test]
+fn two_other_streams_apart_from_each_other_do_not_take_the_clock() {
+    let mut mux = Muxer::new(five_stream_config()).unwrap();
+    let (v, a, k) = (
+        mux.video_handles()[0],
+        mux.audio_handles()[0],
+        mux.klv_handles()[0],
+    );
+    for i in 0..60i64 {
+        let t = 90_000 + i * 3_000;
+        mux.push_video_to(v, &h264(i % 30 == 0), Pts90khz::new(t), i % 30 == 0)
+            .unwrap();
+        mux.push_audio_to(a, Pts90khz::new(t), &[0xA5; 200])
+            .unwrap();
+        mux.push_klv_to(k, &klv(), Pts90khz::new(t + 135_000), 0)
+            .unwrap();
+    }
+    let ts = drain_all(&mut mux);
+    assert_every_pcr_is_its_own_video_frames(&ts, 0x100);
+}
+
+/// A push on another PID takes the clock only when that PID has run on for
+/// more than a second of its own time with no push on the PCR PID: then
+/// the PCR stream has stopped, and something has to keep PCR and PSI going.
+#[test]
+fn another_pid_takes_the_clock_after_a_second_of_its_own_time() {
     let mut mux = default_mux();
     mux.push_video(&h264(true), Pts90khz::new(90_000), true)
         .unwrap();
-    mux.push_klv(&klv(), Pts90khz::new(180_000), 0).unwrap();
-    assert_eq!(
-        pcr_bases(&drain_all(&mut mux)),
-        vec![81_000],
-        "exactly 1 s ahead"
-    );
+    mux.push_klv(&klv(), Pts90khz::new(99_000), 0).unwrap(); // the first since the video
+    mux.push_klv(&klv(), Pts90khz::new(189_000), 0).unwrap(); // exactly one second on
+    assert_eq!(pcr_bases(&drain_all(&mut mux)), vec![81_000]);
 
-    mux.push_klv(&klv(), Pts90khz::new(180_001), 0).unwrap();
+    mux.push_klv(&klv(), Pts90khz::new(189_001), 0).unwrap(); // one tick more
+    mux.push_klv(&klv(), Pts90khz::new(192_601), 0).unwrap();
     let ts = drain_all(&mut mux);
-    let pcrs: Vec<_> = parse(&ts).into_iter().filter(|p| p.pcr.is_some()).collect();
-    assert_eq!(pcrs.len(), 1, "one tick past 1 s");
-    assert_eq!(pcrs[0].pid, 0x1011);
-    assert!(!pcrs[0].has_payload);
-    assert_eq!(pcrs[0].pcr.unwrap().1, 171_001);
+    assert_eq!(pcr_bases(&ts), vec![180_001, 183_601]);
+    assert!(
+        parse(&ts)
+            .iter()
+            .filter(|p| p.pcr.is_some())
+            .all(|p| p.pid == 0x1011 && !p.has_payload && p.pcr.unwrap().0 == 0x10)
+    );
+}
 
-    // The video that follows is behind the clock now: its key frame repeats
-    // the clock value and signals nothing.
+/// The video comes back more than a second behind a clock another PID
+/// took: that is not reordering, so it takes the clock back as a new time
+/// base, signalled, and is live again from that push.
+#[test]
+fn the_pcr_stream_takes_a_taken_clock_back_as_a_new_time_base() {
+    let mut mux = default_mux();
+    mux.push_video(&h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    for klv_pts in [99_000, 189_001, 192_601] {
+        mux.push_klv(&klv(), Pts90khz::new(klv_pts), 0).unwrap();
+    }
+    let _ = drain_all(&mut mux); // the clock stands at 183 601
     mux.push_video(&h264(true), Pts90khz::new(93_000), true)
         .unwrap();
+    let ts = drain_all(&mut mux);
+    assert_eq!(pid(&ts[..188]), 0x0000, "PSI first");
+    assert_eq!(pcr_packets(&ts), vec![(0x1011, 0x80 | 0x40 | 0x10, 84_000)]);
+
+    mux.push_klv(&klv(), Pts90khz::new(196_201), 0).unwrap();
+    mux.push_video(&h264(false), Pts90khz::new(96_600), false)
+        .unwrap();
+    assert_eq!(
+        pcr_packets(&drain_all(&mut mux)),
+        vec![(0x1011, 0x10, 87_600)]
+    );
+}
+
+/// The video comes back less than a second behind a taken clock: the PCR
+/// holds, unsignalled, and moves again when the video passes it.
+#[test]
+fn a_pcr_stream_within_a_second_of_a_taken_clock_holds_then_resumes() {
+    let mut mux = default_mux();
+    mux.push_video(&h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    for klv_pts in [99_000, 189_001] {
+        mux.push_klv(&klv(), Pts90khz::new(klv_pts), 0).unwrap();
+    }
+    let _ = drain_all(&mut mux); // the clock stands at 180 001
+    for i in 0..16i64 {
+        mux.push_video(&h264(i == 0), Pts90khz::new(150_000 + i * 3_000), i == 0)
+            .unwrap();
+    }
     let pcrs = pcr_packets(&drain_all(&mut mux));
-    assert_eq!(pcrs.len(), 1);
-    assert_eq!(pcrs[0].2, 171_001);
-    assert_eq!(pcrs[0].1 & 0x80, 0);
+    // The key frame repeats the clock; the frame at 195 000 is the first
+    // whose own time minus the lead is a PCR interval past it.
+    assert_eq!(
+        pcrs,
+        vec![(0x1011, 0x40 | 0x10, 180_001), (0x1011, 0x10, 186_000)]
+    );
+}
+
+/// The video stops; audio and metadata on its timeline carry on. After a
+/// second of their time the PCR resumes, in PCR-only packets, at the PCR
+/// interval, from whichever of them pushes.
+#[test]
+fn other_streams_on_one_timeline_share_the_clock_after_the_pcr_stream_stops() {
+    let mut mux = Muxer::new(five_stream_config()).unwrap();
+    let (v, a, k) = (
+        mux.video_handles()[0],
+        mux.audio_handles()[0],
+        mux.klv_handles()[0],
+    );
+    mux.push_video_to(v, &h264(true), Pts90khz::new(90_000), true)
+        .unwrap();
+    let _ = drain_all(&mut mux);
+    for i in 1..=100i64 {
+        let t = 90_000 + i * 1_800; // two seconds, a push every 20 ms
+        if i % 5 == 0 {
+            mux.push_klv_to(k, &klv(), Pts90khz::new(t), 0).unwrap();
+        } else {
+            mux.push_audio_to(a, Pts90khz::new(t), &[0xA5; 200])
+                .unwrap();
+        }
+    }
+    let bases = pcr_bases(&drain_all(&mut mux));
+    // Silent from one second on: a PCR every second push (3 600 ticks).
+    assert!(bases.len() >= 24, "{}", bases.len());
+    assert!(bases.windows(2).all(|w| diff33(w[1], w[0]) == 3_600));
+}
+
+/// The video stops; audio and metadata that are a second and a half apart
+/// from each other carry on. PCRs resume within a few seconds and stay
+/// monotonic.
+#[test]
+fn other_streams_keep_the_pcr_going_after_the_pcr_stream_stops() {
+    let mut mux = Muxer::new(five_stream_config()).unwrap();
+    let (v, a, k) = (
+        mux.video_handles()[0],
+        mux.audio_handles()[0],
+        mux.klv_handles()[0],
+    );
+    for i in 0..10i64 {
+        mux.push_video_to(v, &h264(i == 0), Pts90khz::new(90_000 + i * 3_000), i == 0)
+            .unwrap();
+    }
+    let _ = drain_all(&mut mux);
+    for i in 0..150i64 {
+        let t = 120_000 + i * 3_000; // five seconds
+        mux.push_audio_to(a, Pts90khz::new(t), &[0xA5; 200])
+            .unwrap();
+        if i % 3 == 0 {
+            mux.push_klv_to(k, &klv(), Pts90khz::new(t + 135_000), 0)
+                .unwrap();
+        }
+    }
+    let ts = drain_all(&mut mux);
+    let pcrs = pcr_packets(&ts);
+    // The metadata is the stream that is ahead, so once the video is known
+    // to have stopped (the metadata ran a second past its first unit) the
+    // PCR follows it: one PCR-only packet per unit, ten a second.
+    assert!(pcrs.len() >= 35, "{} PCR-only packets in 5 s", pcrs.len());
+    assert!(pcrs.iter().all(|p| p.0 == 0x100 && p.1 == 0x10));
+    assert_monotonic(&pcrs.iter().map(|p| p.2).collect::<Vec<_>>());
+    assert!(psi_count(&ts) >= 35, "PSI resumed too: {}", psi_count(&ts));
 }
 
 #[test]
@@ -827,11 +1038,16 @@ fn reused_slot_starts_a_fresh_clock() {
 
 /// The PCR moves to another stream of the same program when its stream is
 /// removed. The program's time base did not change, so the clock carries
-/// on and no discontinuity is signalled, even if the new PCR stream's
-/// first timestamp is far from the old stream's last.
+/// on and no discontinuity is signalled. Only a new PCR stream stamped more
+/// than a second behind the clock is a different timeline, and that is
+/// signalled as the new time base it is.
 #[test]
 fn pcr_pid_change_in_a_matched_program_keeps_the_clock() {
-    for (first_on_new_pid, expected) in [(907_200i64, 898_200u64), (450_000, 894_600)] {
+    for (first_on_new_pid, flags, base) in [
+        (907_200i64, 0x40 | 0x10, 898_200u64),
+        (870_000, 0x40 | 0x10, 894_600),
+        (450_000, 0x80 | 0x40 | 0x10, 441_000),
+    ] {
         let mut mux = Muxer::new(one_video_program(1, 0x1000, &[0x100, 0x101])).unwrap();
         let a = mux.video_handles()[0];
         for pts in [900_000, 903_600] {
@@ -847,7 +1063,7 @@ fn pcr_pid_change_in_a_matched_program_keeps_the_clock() {
             .unwrap();
         let ts = drain_all(&mut mux);
         assert_eq!(pid(&ts[..188]), 0x0000, "the new PMT goes out first");
-        assert_eq!(pcr_packets(&ts), vec![(0x101, 0x40 | 0x10, expected)]);
+        assert_eq!(pcr_packets(&ts), vec![(0x101, flags, base)]);
     }
 }
 
@@ -932,10 +1148,11 @@ fn late_audio_data_and_subtitle_are_counted_and_reset_clears_it() {
 /// `BufferFull` on any push kind leaves the clock where it was: the next
 /// pushes produce the bytes of a muxer that never saw the failed one.
 ///
-/// The refused push is stamped two seconds on, where a push on any PID
-/// takes the clock (the PCR stream reads as silent). A third muxer with
-/// room for it shows that the step, had it been applied, is visible in the
-/// same follow-up bytes.
+/// Each refused push is one that changes clock state when it is accepted,
+/// and a third muxer with room for it shows that in the same follow-up: a
+/// video push two seconds on moves the clock; a push on another PID becomes
+/// the mark from which the PCR stream's silence is measured, so the next
+/// push on that PID a second later takes the clock.
 #[test]
 fn failed_push_leaves_the_clock_unchanged() {
     for kind in 0..5 {
@@ -948,33 +1165,34 @@ fn failed_push_leaves_the_clock_unchanged() {
             let _ = drain_all(&mut mux);
             mux
         };
-        let push = |mux: &mut Muxer| {
-            let ahead = Pts90khz::new(270_000);
-            let big = vec![0xA5u8; 4_000];
+        let push = |mux: &mut Muxer, pts: i64, len: usize| {
+            let (pts, body) = (Pts90khz::new(pts), vec![0xA5u8; len]);
             match kind {
-                0 => mux.push_video(&synthetic_nal::h264_au(4_000, true), ahead, true),
-                1 => mux.push_audio_to(mux.audio_handles()[0], ahead, &big),
-                2 => mux.push_klv_to(mux.klv_handles()[0], &big, ahead, 0),
-                3 => mux.push_data_to(mux.data_handles()[0], &big, ahead),
-                _ => mux.push_subtitle_to(mux.subtitle_handles()[0], ahead, &big),
+                0 => mux.push_video(&synthetic_nal::h264_au(len, false), pts, false),
+                1 => mux.push_audio_to(mux.audio_handles()[0], pts, &body),
+                2 => mux.push_klv_to(mux.klv_handles()[0], &body, pts, 0),
+                3 => mux.push_data_to(mux.data_handles()[0], &body, pts),
+                _ => mux.push_subtitle_to(mux.subtitle_handles()[0], pts, &body),
             }
         };
+        let (refused_at, follow_up_at) = if kind == 0 {
+            (270_000, 93_600)
+        } else {
+            (99_000, 189_001)
+        };
         let follow_up = |mux: &mut Muxer| {
-            mux.push_video(&h264(false), Pts90khz::new(93_600), false)
-                .unwrap();
-            mux.push_klv_to(mux.klv_handles()[0], &klv(), Pts90khz::new(93_600), 0)
-                .unwrap();
+            push(mux, follow_up_at, 64).unwrap();
             drain_all(mux)
         };
 
         let (mut refused, mut never_pushed, mut accepted) =
             (muxer_with(10), muxer_with(10), muxer_with(1_000));
-        let err = push(&mut refused);
+        let err = push(&mut refused, refused_at, 4_000);
         assert!(
             matches!(err, Err(MuxError::BufferFull { .. })),
             "kind {kind}: {err:?}"
         );
-        push(&mut accepted).unwrap();
+        push(&mut accepted, refused_at, 4_000).unwrap();
         let _ = drain_all(&mut accepted);
 
         let expected = follow_up(&mut never_pushed);
@@ -1035,7 +1253,7 @@ proptest! {
 
     /// Whatever order the streams push in and however their timelines drift
     /// (each stream stepping forward, now and then back by under a second),
-    /// each program's PCR never decreases and no discontinuity is signalled.
+    /// each program's PCR never steps back without a discontinuity flag.
     #[test]
     fn pcr_is_monotonic_for_interleaved_pushes(
         steps in proptest::collection::vec(step_strategy(), 1..200)
@@ -1062,12 +1280,15 @@ proptest! {
         }
         let pcrs = pcr_packets(&drain_all(&mut mux));
         for pcr_pid in [0x100u16, 0x200] {
-            let bases: Vec<u64> = pcrs.iter().filter(|p| p.0 == pcr_pid).map(|p| p.2).collect();
-            for w in bases.windows(2) {
-                prop_assert!(diff33(w[1], w[0]) >= 0, "PID {pcr_pid:#x}: {bases:?}");
+            let on_pid: Vec<_> = pcrs.iter().filter(|p| p.0 == pcr_pid).collect();
+            for w in on_pid.windows(2) {
+                // A step back is legal only on a packet that says so.
+                prop_assert!(
+                    diff33(w[1].2, w[0].2) >= 0 || w[1].1 & 0x80 != 0,
+                    "PID {pcr_pid:#x}: {} -> {} unsignalled", w[0].2, w[1].2
+                );
             }
         }
-        prop_assert!(pcrs.iter().all(|p| p.1 & 0x80 == 0));
         prop_assert!(pcrs.iter().all(|p| p.0 == 0x100 || p.0 == 0x200));
     }
 }

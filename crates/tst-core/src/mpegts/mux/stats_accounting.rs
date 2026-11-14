@@ -49,7 +49,9 @@ crate::binding_record! {
         /// data, subtitle) whose PTS was already behind the PCR. Such a unit
         /// is still muxed, but it arrives after the time it is stamped
         /// for, and a receiver may drop it. A stream whose PES carries no
-        /// PTS is never counted.
+        /// PTS is never counted. With `pcr_lead_ms = 0` the PCR is the PCR
+        /// stream's own decode time, so every unit stamped earlier than the
+        /// access unit pushed before it counts.
         pub late_metadata_pushes: u64,
         /// Per-stream counters, keyed by PID. One entry per configured
         /// video or KLV stream. `StreamStats::items` = push_video_to /

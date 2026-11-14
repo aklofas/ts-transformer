@@ -2,7 +2,7 @@
 //! a new `MuxerConfig`, and every refusal, computed without touching the
 //! muxer so a refused call leaves it unchanged) and its infallible apply.
 
-use super::slot::{ProgramSlot, pmt_identity_key};
+use super::slot::{PcrStream, ProgramSlot, pmt_identity_key};
 use super::state::{self, pmt_stream_type_byte, resolve_pcr_pid};
 use super::{MuxStreamKind, Muxer, MuxerConfig, MuxerProgramConfig, StreamSpec};
 use crate::error::MuxError;
@@ -239,8 +239,10 @@ impl Muxer {
     /// stream that carried it was removed, and no discontinuity is
     /// signalled. The streams of a program share one timeline; if the
     /// stream the PCR moves to is stamped behind the clock, the PCR holds
-    /// until its timestamps pass it. A program that is new in this call
-    /// starts its own clock with its first push.
+    /// until its timestamps pass it, and if it is more than a second
+    /// behind, its first push opens a new time base, signalled as one. A
+    /// program that is new in this call starts its own clock with its
+    /// first push.
     ///
     /// Removing a stream and re-adding it on the same PID with no successful
     /// `push_*` between the two calls coalesces the two table changes into
@@ -308,7 +310,7 @@ impl Muxer {
                 // Another program's clock says nothing about this one.
                 clear_streams(slot);
                 slot.clock = None;
-                slot.pcr_stream_last = None;
+                slot.pcr_stream = PcrStream::Silent;
                 slot.pcrs_on_time_base = 0;
             }
 
@@ -364,9 +366,9 @@ impl Muxer {
             }
 
             if slot.pcr_pid != planned.pcr_pid {
-                // The time base carries on, but the timestamps of the
-                // removed PCR stream are no measure of the new one's.
-                slot.pcr_stream_last = None;
+                // The time base carries on; the new PCR stream has not
+                // pushed yet.
+                slot.pcr_stream = PcrStream::Silent;
             }
             slot.pcr_pid = planned.pcr_pid;
             slot.pmt_descriptor_cache = state::build_pmt_descriptor_cache(prog);
