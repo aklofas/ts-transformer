@@ -1574,7 +1574,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
   on who supplies the time. No consumer has a source that sparse.
 - **Trigger to revisit:** A binding user, an RTSP mount or an HLS
   publisher carrying video below 10 fps (or another sparse PCR stream)
-  whose receiver enforces the 100 ms PCR interval.
+  whose receiver enforces the 100 ms PCR interval; or one carrying a PCR
+  stream slower than one access unit a second, which the muxer takes for
+  stopped between its pushes and which then needs `tick` to keep its
+  clock.
 
 ## Per-program PSI cadence
 
