@@ -969,19 +969,11 @@ fn timestamp_field(prefix: u8, ts: u64) -> [u8; 5] {
     ]
 }
 
-/// PAT, PMT (program 1, PCR on `pcr_pid`, listing `pcr_pid` and
-/// `pes_pid`), an adaptation-field-only packet carrying PCR base
-/// `pcr_base` on `pcr_pid` (Table 2-6), then a PES start on `pes_pid`
-/// with `pts`, and `dts` when given (Table 2-21).
-pub(crate) fn pcr_then_pes_on(
-    pcr_pid: u16,
-    pes_pid: u16,
-    pcr_base: u64,
-    dts: Option<u64>,
-    pts: u64,
-) -> Vec<u8> {
+/// PAT and PMT: program 1, PCR on `pcr_pid`, listing `pcr_pid` (H.264) and,
+/// when it differs, `pes_pid` (private data).
+pub(crate) fn psi_head(pcr_pid: u16, pes_pid: u16) -> Vec<u8> {
     const PMT_PID: u16 = 0x1000;
-    let mut out = Vec::with_capacity(4 * PKT);
+    let mut out = Vec::with_capacity(2 * PKT);
 
     let pat = psi_section(0x00, 1, &[0, 1, 0xE0 | (PMT_PID >> 8) as u8, PMT_PID as u8]);
     out.extend(payload_packet(0, true, &[&[0u8][..], &pat].concat()));
@@ -996,19 +988,31 @@ pub(crate) fn pcr_then_pes_on(
     }
     let pmt = psi_section(0x02, 1, &pmt_body);
     out.extend(payload_packet(PMT_PID, true, &[&[0u8][..], &pmt].concat()));
+    out
+}
 
-    let mut pcr = vec![SYNC, (pcr_pid >> 8) as u8, pcr_pid as u8, 0x20, 183, 0x10];
-    pcr.extend([
-        (pcr_base >> 25) as u8,
-        (pcr_base >> 17) as u8,
-        (pcr_base >> 9) as u8,
-        (pcr_base >> 1) as u8,
-        ((pcr_base & 1) as u8) << 7 | 0x7E,
-        0,
-    ]);
-    pcr.resize(PKT, 0xFF);
-    out.extend(pcr);
+/// An adaptation-field-only packet on `pid` (Table 2-6) with `flags` in
+/// its flags byte, and PCR base `pcr` (which sets the PCR flag) when given.
+pub(crate) fn af_packet(pid: u16, flags: u8, pcr: Option<u64>) -> Vec<u8> {
+    let mut p = vec![SYNC, (pid >> 8) as u8, pid as u8, 0x20, 183];
+    match pcr {
+        Some(base) => p.extend([
+            flags | 0x10,
+            (base >> 25) as u8,
+            (base >> 17) as u8,
+            (base >> 9) as u8,
+            (base >> 1) as u8,
+            ((base & 1) as u8) << 7 | 0x7E,
+            0,
+        ]),
+        None => p.push(flags),
+    }
+    p.resize(PKT, 0xFF);
+    p
+}
 
+/// A PES start on `pid` with `pts`, and `dts` when given (Table 2-21).
+pub(crate) fn pes_packet(pid: u16, dts: Option<u64>, pts: u64) -> Vec<u8> {
     let mut pes = vec![0, 0, 1, 0xE0, 0, 0, 0x80];
     match dts {
         Some(dts) => {
@@ -1021,8 +1025,25 @@ pub(crate) fn pcr_then_pes_on(
             pes.extend(timestamp_field(0b0010, pts));
         }
     }
-    out.extend(payload_packet(pes_pid, true, &pes));
-    out
+    payload_packet(pid, true, &pes)
+}
+
+/// [`psi_head`], an adaptation-field-only packet carrying PCR base
+/// `pcr_base` on `pcr_pid`, then a PES start on `pes_pid` with `pts`, and
+/// `dts` when given.
+pub(crate) fn pcr_then_pes_on(
+    pcr_pid: u16,
+    pes_pid: u16,
+    pcr_base: u64,
+    dts: Option<u64>,
+    pts: u64,
+) -> Vec<u8> {
+    [
+        psi_head(pcr_pid, pes_pid),
+        af_packet(pcr_pid, 0, Some(pcr_base)),
+        pes_packet(pes_pid, dts, pts),
+    ]
+    .concat()
 }
 
 pub(crate) fn pcr_then_pes(pid: u16, pcr_base: u64, dts: Option<u64>, pts: u64) -> Vec<u8> {
@@ -1071,4 +1092,163 @@ fn a_pes_start_ending_inside_its_dts_reads_without_a_lead() {
     let w = summarize(&[&b[..3 * PKT], &short[..]].concat());
     assert_eq!(w.pts[&0x100].count(), 1, "{w:?}");
     assert!(!w.pcr_lead_min_ticks.contains_key(&0x100), "{w:?}");
+}
+
+/// H.222.0 §2.4.3.5: `discontinuity_indicator` on a PCR PID says the next
+/// PCR starts a new system time base, and it may be set on packets before
+/// the one that carries that PCR. A PES between the flag and the new PCR
+/// belongs to the new base and has no clock to be measured against yet.
+#[test]
+fn a_discontinuity_flag_forgets_the_last_pcr() {
+    let w = summarize(
+        &[
+            psi_head(0x100, 0x100),
+            af_packet(0x100, 0, Some(900_000)),
+            af_packet(0x100, 0x80, None),
+            pes_packet(0x100, None, 90_000), // not measured: no PCR on the new base yet
+            af_packet(0x100, 0, Some(81_000)),
+            pes_packet(0x100, None, 93_000),
+        ]
+        .concat(),
+    );
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 12_000, "{w:?}");
+}
+
+/// The muxer's own shape: the flag rides on the packet that carries the
+/// first PCR of the new base.
+#[test]
+fn a_discontinuity_flag_with_its_own_pcr_starts_the_new_base() {
+    let w = summarize(
+        &[
+            psi_head(0x100, 0x100),
+            af_packet(0x100, 0, Some(900_000)),
+            af_packet(0x100, 0x80, Some(81_000)),
+            pes_packet(0x100, None, 90_000),
+        ]
+        .concat(),
+    );
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 9_000, "{w:?}");
+}
+
+/// The flag is per PID: one on another PID says nothing about the clock.
+#[test]
+fn a_flag_on_another_pid_does_not_forget_the_pcr() {
+    let w = summarize(
+        &[
+            psi_head(0x100, 0x101),
+            af_packet(0x100, 0, Some(81_000)),
+            af_packet(0x101, 0x80, None),
+            pes_packet(0x100, None, 90_000),
+        ]
+        .concat(),
+    );
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 9_000, "{w:?}");
+}
+
+/// A PCR-only packet (the muxer writes one on a `tick`, and when another
+/// PID finds the PCR stream stopped) is the latest PCR for the PES after it.
+#[test]
+fn a_pcr_only_packet_is_the_latest_pcr() {
+    let w = summarize(
+        &[
+            psi_head(0x100, 0x100),
+            af_packet(0x100, 0, Some(81_000)),
+            af_packet(0x100, 0, Some(84_000)),
+            pes_packet(0x100, Some(93_000), 96_000),
+        ]
+        .concat(),
+    );
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 9_000, "{w:?}");
+}
+
+/// A stream whose first decode time is 0 opens with a PCR 100 ms below
+/// 2^33; the lead is the same on both sides of that wrap.
+#[test]
+fn the_lead_at_a_stream_that_starts_at_zero() {
+    let w = summarize(
+        &[
+            psi_head(0x100, 0x100),
+            af_packet(0x100, 0, Some(TS_MODULUS - 9_000)),
+            pes_packet(0x100, None, 0),
+            af_packet(0x100, 0, Some(TS_MODULUS - 6_000)),
+            pes_packet(0x100, None, 3_000),
+            af_packet(0x100, 0, Some(0)),
+            pes_packet(0x100, None, 9_000),
+        ]
+        .concat(),
+    );
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 9_000, "{w:?}");
+    assert_eq!(w.pcr[&0x100].forward_max(), Some(6_000), "{w:?}");
+}
+
+/// PCR 90 000 on 0x100, then four PES starts: 0x100 at lead 0, 0x101 at
+/// −90 and +180 ticks, 0x100 at +9 000.
+fn four_leads() -> Vec<u8> {
+    [
+        psi_head(0x100, 0x101),
+        af_packet(0x100, 0, Some(90_000)),
+        pes_packet(0x100, None, 90_000),
+        pes_packet(0x101, None, 89_910),
+        pes_packet(0x101, None, 90_180),
+        pes_packet(0x100, None, 99_000),
+    ]
+    .concat()
+}
+
+#[test]
+fn a_watch_reports_each_pes_below_its_level() {
+    let mut r = Reader::new();
+    r.watch_leads(LeadWatch {
+        pcr_pid_below: 8_100,
+        other_below: Some(0),
+    });
+    r.feed(&four_leads()).unwrap();
+    assert_eq!(
+        r.take_lead_events(),
+        [
+            LeadEvent {
+                pid: 0x100,
+                pcr_pid: 0x100,
+                at: 3,
+                lead_ticks: 0
+            },
+            LeadEvent {
+                pid: 0x101,
+                pcr_pid: 0x100,
+                at: 4,
+                lead_ticks: -90
+            },
+        ]
+    );
+    assert!(r.take_lead_events().is_empty(), "drained");
+    let w = r.finish().unwrap();
+    assert_eq!(w.pcr_lead_below, BTreeMap::from([(0x100, 1), (0x101, 1)]));
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 0);
+    assert_eq!(w.pcr_lead_min_ticks[&0x101], -90);
+}
+
+#[test]
+fn no_watch_no_events() {
+    let mut r = Reader::new();
+    r.feed(&four_leads()).unwrap();
+    assert!(r.take_lead_events().is_empty());
+    let w = r.finish().unwrap();
+    assert!(w.pcr_lead_below.is_empty(), "{w:?}");
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 0);
+}
+
+#[test]
+fn other_pids_are_not_watched_under_none() {
+    let mut r = Reader::new();
+    r.watch_leads(LeadWatch {
+        pcr_pid_below: 8_100,
+        other_below: None,
+    });
+    r.feed(&four_leads()).unwrap();
+    let pids: Vec<u16> = r.take_lead_events().iter().map(|e| e.pid).collect();
+    assert_eq!(pids, [0x100]);
+    assert_eq!(
+        r.finish().unwrap().pcr_lead_below,
+        BTreeMap::from([(0x100, 1)])
+    );
 }

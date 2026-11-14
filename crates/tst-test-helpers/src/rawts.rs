@@ -93,6 +93,10 @@ pub struct PacketInfo {
     /// Byte offset of the first payload byte (188 when there is none).
     pub payload_off: usize,
     pub pcr_base: Option<u64>,
+    /// `discontinuity_indicator` (§2.4.3.5): set in the adaptation field's
+    /// flags byte. False without an adaptation field, and with one of
+    /// length 0, which has no flags byte.
+    pub discontinuity: bool,
     pub cc: u8,
 }
 
@@ -110,6 +114,7 @@ pub fn classify_packet(p: &[u8; PKT]) -> Result<PacketInfo, String> {
     let cc = p[3] & 0x0F;
     let mut af_len = 0;
     let mut pcr_base = None;
+    let mut discontinuity = false;
     let mut off = 4;
     if afc & 0x2 != 0 {
         af_len = usize::from(p[4]);
@@ -118,6 +123,7 @@ pub fn classify_packet(p: &[u8; PKT]) -> Result<PacketInfo, String> {
                 "adaptation field length {af_len} does not fit in a {PKT}-byte packet"
             ));
         }
+        discontinuity = af_len > 0 && p[5] & 0x80 != 0;
         if af_len > 0 && p[5] & 0x10 != 0 {
             // The PCR flag claims 6 bytes (program_clock_reference_
             // base + _extension, §2.4.3.5) follow the flags byte, so
@@ -152,6 +158,7 @@ pub fn classify_packet(p: &[u8; PKT]) -> Result<PacketInfo, String> {
         af_len,
         payload_off: if has_payload { off } else { PKT },
         pcr_base,
+        discontinuity,
         cc,
     })
 }
@@ -436,8 +443,40 @@ pub struct WireSummary {
     /// PCR_PID, in 90 kHz ticks. Both are 33-bit counters (§2.4.3.5,
     /// §2.4.3.7), so the difference is taken mod 2^33 as a signed
     /// distance; a negative lead is an AU the decoder was already late
-    /// for. A PES before the PMT or before the first PCR is not measured.
+    /// for. A PES before the PMT or before the first PCR is not measured,
+    /// and neither is one between a `discontinuity_indicator` on the PCR
+    /// PID and the first PCR after it (see `Reader::last_pcr_base`).
     pub pcr_lead_min_ticks: BTreeMap<u16, i64>,
+    /// PES starts per PID whose lead was below the level a
+    /// [`Reader::watch_leads`] caller set for that PID: the count beside
+    /// the events [`Reader::take_lead_events`] hands out, so a caller that
+    /// excuses some of them can tell whether it excused all. Empty without
+    /// a watch.
+    pub pcr_lead_below: BTreeMap<u16, u64>,
+}
+
+/// The lead below which [`Reader`] reports a PES start, in 90 kHz ticks:
+/// see [`Reader::watch_leads`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeadWatch {
+    /// For a PES on its program's PCR PID.
+    pub pcr_pid_below: i64,
+    /// For a PES on any other PID a program lists; `None` leaves those
+    /// PIDs unwatched.
+    pub other_below: Option<i64>,
+}
+
+/// One PES start whose lead was below its watched level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeadEvent {
+    pub pid: u16,
+    /// The PCR PID of the program that lists `pid`: the clock the lead was
+    /// measured against.
+    pub pcr_pid: u16,
+    /// 0-based ordinal of the packet that started the PES.
+    pub at: u64,
+    /// The lead, as in [`WireSummary::pcr_lead_min_ticks`].
+    pub lead_ticks: i64,
 }
 
 pub struct Reader {
@@ -473,12 +512,17 @@ pub struct Reader {
     /// [`pcr_masked_identical`].
     last_pkt: BTreeMap<u16, [u8; PKT]>,
     /// Most recent PCR base per PID, for
-    /// [`WireSummary::pcr_lead_min_ticks`]. It survives a
-    /// `discontinuity_indicator`: the first PCR after one replaces it, so a
-    /// PES between the two is measured against the old timeline. Nothing
-    /// sets a floor on that lead by default; a caller that does must reset
-    /// this entry on a discontinuity.
+    /// [`WireSummary::pcr_lead_min_ticks`]. A packet on the PID with
+    /// `discontinuity_indicator` set removes the entry: the flag says the
+    /// next PCR starts a new time base (§2.4.3.5) and may come before the
+    /// packet that carries it, so a PES between the two has no clock to be
+    /// measured against.
     last_pcr_base: BTreeMap<u16, u64>,
+    /// See [`Reader::watch_leads`].
+    lead_watch: Option<LeadWatch>,
+    /// Every PES start below its watched level since the last
+    /// [`Reader::take_lead_events`].
+    lead_events: Vec<LeadEvent>,
 }
 
 impl Default for Reader {
@@ -511,6 +555,8 @@ impl Reader {
             prefix_events: Vec::new(),
             last_pkt: BTreeMap::new(),
             last_pcr_base: BTreeMap::new(),
+            lead_watch: None,
+            lead_events: Vec::new(),
         }
     }
 
@@ -551,6 +597,25 @@ impl Reader {
     /// entry subtracts it from that total.
     pub fn take_prefix_mismatches(&mut self) -> Vec<(u16, u64)> {
         std::mem::take(&mut self.prefix_events)
+    }
+
+    /// From here on, report every PES start whose lead over the clock (see
+    /// [`WireSummary::pcr_lead_min_ticks`]) is below `watch`'s level for
+    /// its PID: one [`LeadEvent`] each, and one count in
+    /// [`WireSummary::pcr_lead_below`]. The minimum itself is kept with or
+    /// without a watch. A caller that holds the lead to a floor sets the
+    /// floor here, so it learns WHERE each violation was and can check
+    /// that position against a corruption log.
+    pub fn watch_leads(&mut self, watch: LeadWatch) {
+        self.lead_watch = Some(watch);
+    }
+
+    /// Take every [`LeadEvent`] since the previous call, in packet order.
+    /// Recorded in either sync mode, but only under
+    /// [`Reader::watch_leads`]; a caller that sets a watch must drain this
+    /// as it feeds, or the list grows with the capture.
+    pub fn take_lead_events(&mut self) -> Vec<LeadEvent> {
+        std::mem::take(&mut self.lead_events)
     }
 
     /// Whether `pid` is a PMT PID — learned from the PAT.
@@ -794,6 +859,11 @@ impl Reader {
         let info = classify_packet(p)?;
         self.summary.packets += 1;
         *self.summary.packets_per_pid.entry(info.pid).or_insert(0) += 1;
+        if info.discontinuity {
+            // Before this packet's own PCR is recorded: a PCR on the
+            // flagged packet is the first of the new base.
+            self.last_pcr_base.remove(&info.pid);
+        }
         if let Some(base) = info.pcr_base {
             let retention = self.retention;
             self.summary
@@ -1051,13 +1121,16 @@ impl Reader {
                 .then(|| payload.get(14..19).map(timestamp))
                 .flatten();
             let dts_missing = pts_dts == 0x3 && dts.is_none();
-            let pcr_base = self
+            let clock = self
                 .summary
                 .programs
                 .values()
                 .find(|prog| prog.streams.iter().any(|st| st.pid == pid))
-                .and_then(|prog| self.last_pcr_base.get(&prog.pcr_pid));
-            if let Some(&base) = pcr_base.filter(|_| !dts_missing) {
+                .and_then(|prog| {
+                    let base = self.last_pcr_base.get(&prog.pcr_pid)?;
+                    Some((prog.pcr_pid, *base))
+                });
+            if let Some((pcr_pid, base)) = clock.filter(|_| !dts_missing) {
                 let ahead = dts.unwrap_or(pts).wrapping_sub(base) % TS_MODULUS;
                 let lead = if ahead >= TS_MODULUS / 2 {
                     ahead as i64 - TS_MODULUS as i64
@@ -1069,6 +1142,22 @@ impl Reader {
                     .entry(pid)
                     .and_modify(|m| *m = (*m).min(lead))
                     .or_insert(lead);
+                let level = self.lead_watch.and_then(|w| {
+                    if pid == pcr_pid {
+                        Some(w.pcr_pid_below)
+                    } else {
+                        w.other_below
+                    }
+                });
+                if level.is_some_and(|level| lead < level) {
+                    *self.summary.pcr_lead_below.entry(pid).or_insert(0) += 1;
+                    self.lead_events.push(LeadEvent {
+                        pid,
+                        pcr_pid,
+                        at,
+                        lead_ticks: lead,
+                    });
+                }
             }
         }
         if let Some(d) = payload.get(9 + hdr_len..9 + hdr_len + 4) {
