@@ -1119,12 +1119,16 @@ mod tests {
         inv.pcr_lead_min_ms = Some(90);
         let late_klv = summarize(&with_a_video_pes(0x101, 89_910));
         assert_eq!(
-            pcr_lead(&inv, &late_klv, &Explained::default(), WireLayout::Generator).len(),
+            pcr_lead(
+                &inv,
+                &late_klv,
+                &Explained::default(),
+                WireLayout::Generator
+            )
+            .len(),
             1
         );
-        assert!(
-            pcr_lead(&inv, &late_klv, &Explained::default(), WireLayout::Remuxed).is_empty()
-        );
+        assert!(pcr_lead(&inv, &late_klv, &Explained::default(), WireLayout::Remuxed).is_empty());
         // The PCR PID's floor holds under both.
         let zero = summarize(&pcr_then_pes(0x100, 90_000, None, 90_000));
         for layout in [WireLayout::Generator, WireLayout::Remuxed] {
