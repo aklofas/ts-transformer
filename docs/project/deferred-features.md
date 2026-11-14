@@ -1584,8 +1584,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   share one PSI cadence, driven by whichever pushes. If the program
   whose timeline is ahead stops pushing, the others send no PAT or PMT
   until their own clocks pass the last stamp, or until `request_psi` is
-  called. Programs on one timeline (the usual case, and every program
-  the bindings can build) are not affected.
+  called. Programs on one timeline, the usual case, are not affected.
 - **Why deferred:** Sending the PAT with one program's PMT changes the
   multi-program byte shape, and `Muxer::reconfigure` documents and tests
   "the new PAT and every live PMT" on the push after the call.
