@@ -497,11 +497,20 @@ gets less.
 - **When the PCR stream stops, the other PIDs keep the clock going.**
   The muxer has no wall clock; it takes the PCR stream to have stopped
   when another PID has run on for more than one second of its own time
-  with no push on the PCR PID. From then on, and before the PCR stream's
-  first push, a push on any PID moves the clock and puts a PCR-only
-  packet on the PCR PID when one is due. The clock then follows whichever
-  stream is furthest ahead, and units of a stream stamped behind it count
-  as late.
+  with no push on the PCR PID (each PID is measured against its own
+  first unit since then). From that point, and before the PCR stream's
+  first push, a push on any PID stamped ahead of the clock moves it and
+  puts a PCR-only packet on the PCR PID when one is due. The clock then
+  follows whichever stream is furthest ahead: units of a stream stamped
+  behind it count as late, and if the only streams left are stamped
+  behind the clock (the one that led has stopped too, or restarted its
+  timeline), the PCR and PAT/PMT wait until one of them passes it.
+- **A PCR stream slower than one push a second looks stopped between
+  its pushes.** Another stream then takes the clock for the rest of the
+  gap, and if that stream is stamped more than a second ahead, each
+  access unit of the PCR stream comes back as a new time base, flagged.
+  Pushing a second of metadata ahead of the video it belongs to has the
+  same effect. `tick` between pushes prevents it; push in timestamp order.
 - **When the PCR stream comes back** less than a second behind the clock
   the other PIDs left, the PCR holds until it catches up (its frames get
   a short lead meanwhile, and PAT/PMT wait with the clock). More than a
@@ -518,8 +527,9 @@ gets less.
 
 ### Timeline restarts
 
-A push on the PCR PID stamped more than one second behind the clock is
-not reordering: the producer restarted its timeline (or the clock was
+A push on the PCR PID whose own PCR (its decode time minus the lead)
+would fall more than one second behind the last PCR written is not
+reordering: the producer restarted its timeline (or the clock was
 left ahead by another PID while the PCR stream was stopped). The muxer
 opens a new time base. The packet with the first PCR of the new timeline
 has `discontinuity_indicator` set, and the PAT and PMTs are sent before
@@ -537,7 +547,9 @@ timestamps.
 ### Sparse sources: `tick`
 
 A PCR stream below ten access units a second (5 fps video, a slideshow,
-audio with long frames) leaves gaps over 100 ms between PCRs.
+audio with long frames) leaves gaps over 100 ms between PCRs, and one
+below one access unit a second is taken to have stopped between its
+pushes (above).
 `Muxer::tick(program_number, now)` and `MuxSender::tick` fill them:
 call it between pushes, at least every `pcr_interval_ms` of stream
 time. `now` is the decode time an access unit pushed at that moment
