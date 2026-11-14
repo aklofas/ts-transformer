@@ -403,11 +403,17 @@ fn every_class_on_every_profile_is_attributed() {
 /// The per-class controls above each pin ONE seed. This sweeps the whole
 /// class set across many, so a verdict that only holds for a lucky draw
 /// cannot pass: every seed's report must come out clean.
+///
+/// The sweep is also where the PCR lead oracle meets the tap: damage that
+/// hands the raw reader a wrong clock (a truncation it re-locks after) must
+/// come out excused, so at least one run has to have excused a lead, or
+/// the sweep never exercised that path.
 #[test]
 fn every_class_is_attributed_across_a_seed_sweep() {
     let p = baseline();
     let bytes = gen_bytes(p, "sweep");
     let mut runs = 0;
+    let mut leads_excused = 0;
     for class in Class::ALL {
         for seed in 1..=24u64 {
             let (wire, header, injections) = tap(&bytes, &forced(class), seed);
@@ -419,10 +425,102 @@ fn every_class_is_attributed_across_a_seed_sweep() {
                 r.failures,
                 shape(&injections)
             );
+            leads_excused += r
+                .metrics
+                .corruption_attribution
+                .expect("attribution")
+                .pcr_lead_excused;
             runs += 1;
         }
     }
     assert_eq!(runs, Class::ALL.len() * 24);
+    assert!(leads_excused >= 1, "no run of the sweep excused a lead");
+}
+
+/// Seeds per (profile, class) in the sweep below.
+const LEAD_SWEEP_SEEDS: u64 = 8;
+
+/// The soak runs the tap for two days on profiles drawn from the whole
+/// registry, so the PCR lead floor has to hold under every class on every
+/// profile, not on `baseline` alone: whatever the tap does to a PCR, a PES
+/// header or the packet framing, no `pcr_lead` line may survive the
+/// excusal. Other verdicts are the other tests' subject and are not read
+/// here (some profiles' oracles have their own limits under a forced class).
+#[test]
+fn the_pcr_lead_floor_survives_every_class_on_every_profile() {
+    let mut excused = 0;
+    for p in profiles::all() {
+        let bytes = gen_bytes(p, &format!("lead-sweep-{}", p.name));
+        for class in Class::ALL {
+            for seed in 1..=LEAD_SWEEP_SEEDS {
+                let (wire, header, injections) = tap(&bytes, &forced(class), seed);
+                let r = judge(&wire, p, Some(&(header, injections.clone())));
+                let lead: Vec<&String> = r
+                    .failures
+                    .iter()
+                    .filter(|f| f.starts_with("pcr_lead"))
+                    .collect();
+                assert!(
+                    lead.is_empty(),
+                    "{} {class:?} seed {seed}: {lead:?} for {:?}",
+                    p.name,
+                    shape(&injections)
+                );
+                excused += r
+                    .metrics
+                    .corruption_attribution
+                    .expect("attribution")
+                    .pcr_lead_excused;
+            }
+        }
+    }
+    assert!(excused >= 1, "no run of the sweep excused a lead");
+}
+
+/// The excusal is by position. A PCR rewritten by hand between the two
+/// injections' windows, where the log explains nothing, fails `pcr_lead`:
+/// the access unit that carries it reads a lead ten seconds below zero,
+/// and nothing is counted as excused.
+#[test]
+fn a_bad_lead_outside_every_injection_window_is_not_excused() {
+    let p = baseline();
+    let bytes = gen_bytes(p, "lead-outside");
+    let (mut wire, header, injections) = tap(&bytes, &forced(Class::BodyFlip), SEED);
+    assert_eq!(wire.len(), bytes.len(), "a body flip keeps every packet");
+    let log = (header, injections);
+    assert!(judge(&wire, p, Some(&log)).pass, "the control passes");
+
+    // The injections sit at packets 0 and about 1000 (see the module doc);
+    // each window ends 500 packets on. Packet 700 onward is outside both.
+    let at = (700..900)
+        .find(|&n| {
+            let pkt = &wire[n * 188..(n + 1) * 188];
+            let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
+            pid == 0x1011 && pkt[3] & 0x30 == 0x30 && pkt[4] >= 7 && pkt[5] & 0x10 != 0
+        })
+        .expect("a video packet with a PCR and a payload between the windows");
+    assert!(
+        log.1.iter().all(|i| i.ordinal.abs_diff(at as u64) > 150),
+        "packet {at} must be clear of every injection: {:?}",
+        shape(&log.1)
+    );
+    let pcr = &mut wire[at * 188 + 6..at * 188 + 11];
+    let base = (u64::from(pcr[0]) << 25)
+        | (u64::from(pcr[1]) << 17)
+        | (u64::from(pcr[2]) << 9)
+        | (u64::from(pcr[3]) << 1)
+        | u64::from(pcr[4] >> 7);
+    let moved = base + 10 * 90_000;
+    pcr[0] = (moved >> 25) as u8;
+    pcr[1] = (moved >> 17) as u8;
+    pcr[2] = (moved >> 9) as u8;
+    pcr[3] = (moved >> 1) as u8;
+    pcr[4] = (pcr[4] & 0x7F) | ((moved & 1) as u8) << 7;
+
+    let r = judge(&wire, p, Some(&log));
+    assert_failure_starting_with(&r, "pcr_lead: PID 4113 min lead -9900.0 ms");
+    let a = r.metrics.corruption_attribution.expect("attribution");
+    assert_eq!(a.pcr_lead_excused, 0, "{a:?}");
 }
 
 /// The `header` class draws one of four sub-kinds on a media PID (kill
@@ -772,6 +870,21 @@ fn a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps() {
     let log = (header, injections);
     let r = judge(&wire, p, Some(&log));
     assert!(r.pass, "{:?}", r.failures);
+    // Until the next sound PCR, every PES of the program is measured
+    // against the flipped one and reads a lead far below zero. Those are
+    // the flip's doing: counted as excused, not as a `pcr_lead` failure.
+    assert!(
+        r.metrics.pcr_lead_min_ms.is_some_and(|ms| ms < 0.0),
+        "{:?}",
+        r.metrics.pcr_lead_min_ms
+    );
+    let excused = r
+        .metrics
+        .corruption_attribution
+        .as_ref()
+        .expect("attribution")
+        .pcr_lead_excused;
+    assert!(excused >= 1, "{excused}");
     // Strict attribution explains both events too. (Strict mode's
     // `pcr_interval` oracle still fails here: it holds every interval,
     // and the flipped PCR is one bogus interval it does not excuse.)

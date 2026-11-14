@@ -84,6 +84,7 @@ pub fn build_config(p: &Profile, au_sizes: AuSizeMode) -> MuxerConfig {
 
     builder.pcr_interval_ms(p.pcr_interval_ms);
     builder.psi_interval_ms(p.psi_interval_ms);
+    builder.pcr_lead_ms(p.pcr_lead_ms);
     if let Some(mode) = p.av1_mode {
         builder.av1_carriage(mode);
     }

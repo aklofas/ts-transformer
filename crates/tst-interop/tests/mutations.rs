@@ -328,6 +328,113 @@ fn pcr_sparse_muxed_at_the_baseline_interval_fails_pcr_interval() {
     assert_fails_with(&r, "pcr_interval");
 }
 
+/// The PCR lead oracle's mutation: a stream muxed with a lead below the
+/// floor fails `pcr_lead` on every program's PCR PID, and nothing else in
+/// the judgement notices (the PCR's distance from the decode time is this
+/// oracle's alone). `audio` is the profile with PCR-only packets on its
+/// wire, `two-program` the one with two PCR PIDs.
+#[test]
+fn muxed_with_too_little_pcr_lead_fails_pcr_lead() {
+    for (name, lead_ms, pcr_pids) in [
+        ("baseline", 0, vec![PROG1_VIDEO]),
+        ("baseline", 50, vec![PROG1_VIDEO]),
+        ("audio", 0, vec![PROG1_VIDEO]),
+        ("two-program", 0, vec![PROG1_VIDEO, PROG2_VIDEO]),
+    ] {
+        let p = profiles::by_name(name).unwrap();
+        let mutated = Profile {
+            pcr_lead_ms: lead_ms,
+            ..*p
+        };
+        let path = gen_to_temp(&mutated, SECONDS, &format!("lead-{lead_ms}-{name}"));
+        let r = verify::verify_file(&path, p, SECONDS).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let want: Vec<String> = pcr_pids
+            .iter()
+            .map(|pid| format!("pcr_lead: PID {pid} min lead {lead_ms}.0 ms, want >= 90 ms"))
+            .collect();
+        assert_eq!(r.failures, want, "{name} at {lead_ms} ms");
+        assert_eq!(
+            r.metrics.pcr_lead_min_ms,
+            Some(f64::from(lead_ms)),
+            "{name}"
+        );
+    }
+}
+
+/// PCR base of the first packet on `pid` that carries a PCR (H.222.0
+/// §2.4.3.5), read here and not through `rawts`.
+fn first_pcr_base(bytes: &[u8], pid: u16) -> u64 {
+    packets(bytes)
+        .find(|p| pid_of(p) == pid && p[3] & 0x20 != 0 && p[4] >= 7 && p[5] & 0x10 != 0)
+        .map(|p| {
+            (u64::from(p[6]) << 25)
+                | (u64::from(p[7]) << 17)
+                | (u64::from(p[8]) << 9)
+                | (u64::from(p[9]) << 1)
+                | u64::from(p[10] >> 7)
+        })
+        .expect("a PCR on the PID")
+}
+
+/// The positive control beside the mutation above, with the number: every
+/// profile's capture passes and its PCR PIDs read the default lead exactly
+/// (100 ms, the floor being 90). Eleven profiles start at PTS 0, so their
+/// first PCR is 100 ms below 2^33 and the clock wraps inside the capture;
+/// `pts-rollover` wraps its PTS mid-capture instead. The lead is the same
+/// through both.
+#[test]
+fn every_profile_reads_exactly_the_default_lead() {
+    const WRAP: u64 = 1 << 33;
+    let mut starting_at_zero = 0;
+    for p in profiles::all() {
+        let seconds = if p.name == "pts-rollover" {
+            ROLLOVER_SECONDS
+        } else {
+            SECONDS
+        };
+        let path = gen_to_temp(p, seconds, &format!("default-lead-{}", p.name));
+        let bytes = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let r = verify_bytes(&bytes, p, seconds, &format!("default-lead-{}", p.name));
+        assert!(r.pass, "{}: {:?}", p.name, r.failures);
+        assert_eq!(r.metrics.pcr_lead_min_ms, Some(100.0), "{}", p.name);
+        let first = first_pcr_base(&bytes, PROG1_VIDEO);
+        assert_eq!(
+            first,
+            (p.start_pts_ticks + WRAP - 9_000) % WRAP,
+            "{}",
+            p.name
+        );
+        if p.start_pts_ticks == 0 {
+            assert_eq!(first, WRAP - 9_000, "{}", p.name);
+            starting_at_zero += 1;
+        }
+    }
+    assert_eq!(starting_at_zero, 11);
+}
+
+/// A sender that restarts (a new process, or a publisher replaying its
+/// file) starts its timeline again without flagging anything. The new
+/// stream opens with a PCR of its own before its first PES, so its leads
+/// are measured against that and not against the old stream's last PCR,
+/// some seconds ahead: no PES reads a negative lead. `klv-sync` is the
+/// profile whose KLV PES carries a PTS, so both PIDs are measured.
+#[test]
+fn a_restarted_stream_is_measured_against_its_own_first_pcr() {
+    let p = profiles::by_name("klv-sync").unwrap();
+    let path = gen_to_temp(p, 4.0, "restart");
+    let once = std::fs::read(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let r = verify_bytes(&[&once[..], &once[..]].concat(), p, 8.0, "restart");
+    assert!(
+        !r.failures.iter().any(|f| f.starts_with("pcr_lead")),
+        "{:?}",
+        r.failures
+    );
+    assert_eq!(r.metrics.pcr_lead_min_ms, Some(100.0));
+}
+
 #[test]
 fn swapped_av1_carriage_fails_av1_carriage_wire_in_both_directions() {
     for (name, other) in [
