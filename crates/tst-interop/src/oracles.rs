@@ -12,7 +12,7 @@ use tst_core::mpegts::mux::Av1CarriageMode;
 
 use crate::profiles::{Invariants, KlvMode, Profile};
 use crate::verify::{self, ProgramCounts, VerifyMode, WireLayout};
-use tst_test_helpers::rawts::WireSummary;
+use tst_test_helpers::rawts::{LeadWatch, WireSummary};
 
 const PTS_WRAP: u64 = 1 << 33;
 const PCR_LOWER_SLACK_MS: f64 = 0.5;
@@ -47,6 +47,12 @@ pub struct Explained {
     /// producer's (`verify::Tally::note_prefix_mismatches`). Only the
     /// ADTS prefix check reads it.
     pub prefix_excused: BTreeMap<u16, u64>,
+    /// PES starts per PID whose lead over the PCR was below the level
+    /// `pcr_lead` holds that PID to, and which lay inside an attributed
+    /// corruption window (`verify::Tally::note_pes_findings`). Only
+    /// `pcr_lead` reads it, against the reader's own count of such PES
+    /// starts.
+    pub lead_excused: BTreeMap<u16, u64>,
 }
 
 impl Explained {
@@ -65,10 +71,12 @@ impl Explained {
 /// Run all eight wire-level oracles and concatenate their failures.
 ///
 /// Under [`WireLayout::Remuxed`] only the layout-independent parts run:
-/// the per-program AU / KLV floors, PCR cadence, PCR lead and "a PMT was
-/// seen for every program". Everything keyed on the generator's PIDs (wire media
-/// per PID, PMT stream types and descriptors, audio and AV1 carriage,
-/// PTS wrap on the video PID, wire-vs-demux per PID) is skipped — see
+/// the per-program AU / KLV floors, PCR cadence, the PCR lead on each
+/// program's PCR PID and "a PMT was seen for every program". Everything
+/// keyed on the generator's PIDs or on how the generator orders its pushes
+/// (wire media per PID, PMT stream types and descriptors, audio and AV1
+/// carriage, PTS wrap on the video PID, wire-vs-demux per PID, the lead of
+/// the other PIDs) is skipped — see
 /// [`crate::verify::REMUXED_SKIPPED_ORACLES`].
 /// `explained` is what a corruption log and the capture's own
 /// discontinuity/non-conformance tallies account for, per PID — see
@@ -98,7 +106,7 @@ pub fn check(
         layout,
     ));
     f.extend(pcr_interval(inv, wire, mode));
-    f.extend(pcr_lead(inv, wire));
+    f.extend(pcr_lead(inv, wire, explained, layout));
     f.extend(pmt_streams(p, inv, wire, layout));
     if layout == WireLayout::Generator {
         f.extend(audio(inv, wire, seconds, explained));
@@ -347,16 +355,52 @@ fn pcr_interval(inv: &Invariants, wire: &WireSummary, mode: VerifyMode) -> Vec<S
     f
 }
 
+/// The levels `pcr_lead` holds a capture to, as the raw reader's
+/// [`LeadWatch`]: `None` when the profile sets no floor. Whoever builds the
+/// reader for a judgement sets this on it
+/// (`rawts::Reader::watch_leads`), so the reader reports the position of
+/// every PES start below a level and the corruption attribution can be
+/// asked about each. The oracle reads its levels from here too, so the two
+/// cannot disagree.
+pub fn lead_watch(inv: &Invariants, layout: WireLayout) -> Option<LeadWatch> {
+    let floor = inv.pcr_lead_min_ms?;
+    Some(LeadWatch {
+        pcr_pid_below: i64::from(floor) * 90,
+        other_below: (layout == WireLayout::Generator).then_some(0),
+    })
+}
+
 /// Oracle 8: PCR lead (H.222.0 §2.4.2) — a decoder starts an AU once the
 /// STC reaches its DTS, so the PCR before a PES must sit below the PES's
 /// decode time. Judged only once a profile sets
-/// [`Invariants::pcr_lead_min_ms`]: each program's PCR PID is held to that
-/// floor, every other PID the PMT lists to 0 ms, since a KLV or audio PES
-/// may legitimately sit closer to the clock than the video it rides with.
-/// The PIDs come from the captured PMT, so this runs on a remuxed capture
-/// too.
-fn pcr_lead(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
-    let Some(floor) = inv.pcr_lead_min_ms else {
+/// [`Invariants::pcr_lead_min_ms`].
+///
+/// - Each program's PCR PID is held to that floor, as a minimum over every
+///   PES start of the capture, and a PCR PID on which no lead was measured
+///   fails: a floor that judged nothing is not a pass. The PIDs come from
+///   the captured PMT, so this half runs on a remuxed capture too.
+/// - Every other PID the PMT lists is held to 0 ms (`pcr_lead_other_pids`),
+///   since a KLV or audio PES may legitimately sit closer to the clock than
+///   the video it rides with. This half is the generator's own property
+///   (it pushes in timestamp order, video first) and is skipped under
+///   [`WireLayout::Remuxed`]: a re-muxer that is handed a metadata unit
+///   late still has to send it.
+///
+/// The sender-side corruption tap can hand the reader a wrong clock (a
+/// flipped PCR field, a packet read out of a misaligned stream), so a PES
+/// below its level that lies inside an attributed corruption window is
+/// excused: `explained.lead_excused` counts those per PID, and a PID
+/// passes below its level only when that count covers every PES the
+/// reader reported there ([`WireSummary::pcr_lead_below`]). The verdict
+/// starts from the reader's raw minimum, so a caller that set no watch, or
+/// never handed the events to the attribution, cannot pass a violation.
+fn pcr_lead(
+    inv: &Invariants,
+    wire: &WireSummary,
+    explained: &Explained,
+    layout: WireLayout,
+) -> Vec<String> {
+    let Some(watch) = lead_watch(inv, layout) else {
         return Vec::new();
     };
     let mut f = Vec::new();
@@ -365,23 +409,44 @@ fn pcr_lead(inv: &Invariants, wire: &WireSummary) -> Vec<String> {
         let Some(prog) = wire.programs.get(&ep.program_number) else {
             continue;
         };
-        let others = prog
-            .streams
-            .iter()
-            .map(|st| st.pid)
-            .filter(|&pid| pid != prog.pcr_pid);
-        for (pid, want_ms, note) in std::iter::once((prog.pcr_pid, floor, ""))
-            .chain(others.map(|pid| (pid, 0, " (non-PCR PID)")))
+        if !wire.pcr_lead_min_ticks.contains_key(&prog.pcr_pid) {
+            f.push(format!(
+                "pcr_lead: no PES lead measured on program {}'s PCR PID {}",
+                ep.program_number, prog.pcr_pid
+            ));
+        }
+        let others = watch.other_below.into_iter().flat_map(|level| {
+            prog.streams
+                .iter()
+                .map(|st| st.pid)
+                .filter(|&pid| pid != prog.pcr_pid)
+                .map(move |pid| (pid, level, "pcr_lead_other_pids"))
+        });
+        for (pid, level, verdict) in
+            std::iter::once((prog.pcr_pid, watch.pcr_pid_below, "pcr_lead")).chain(others)
         {
             let Some(&ticks) = wire.pcr_lead_min_ticks.get(&pid) else {
                 continue;
             };
-            let lead_ms = ticks as f64 / 90.0;
-            if lead_ms < f64::from(want_ms) {
-                f.push(format!(
-                    "pcr_lead: PID {pid} min lead {lead_ms:.1} ms, want >= {want_ms} ms{note}"
+            if ticks >= level {
+                continue;
+            }
+            let below = wire.pcr_lead_below.get(&pid).copied().unwrap_or(0);
+            let excused = explained.lead_excused.get(&pid).copied().unwrap_or(0);
+            if below > 0 && excused >= below {
+                continue;
+            }
+            let mut line = format!(
+                "{verdict}: PID {pid} min lead {:.1} ms, want >= {} ms",
+                ticks as f64 / 90.0,
+                level / 90
+            );
+            if excused > 0 {
+                line.push_str(&format!(
+                    " ({below} PES start(s) below, {excused} excused by the corruption log)"
                 ));
             }
+            f.push(line);
         }
     }
     f
@@ -662,7 +727,7 @@ mod tests {
 
     use super::*;
     use crate::profiles;
-    use crate::rawts_tests::{pcr_then_pes, pcr_then_pes_on, summarize};
+    use crate::rawts_tests::{af_packet, pcr_then_pes, pes_packet, psi_head, summarize};
     use tst_test_helpers::rawts::{self, PesShape, Program, Stream};
 
     fn stream(
@@ -963,14 +1028,20 @@ mod tests {
         );
     }
 
+    /// `pcr_lead` on a generator-layout capture with nothing excused.
+    fn lead(inv: &Invariants, w: &WireSummary) -> Vec<String> {
+        pcr_lead(inv, w, &Explained::default(), WireLayout::Generator)
+    }
+
     #[test]
     fn the_oracle_judges_only_when_the_profile_sets_a_floor() {
         let w = summarize(&pcr_then_pes(0x100, 90_000, None, 90_000)); // PCR == PTS: zero lead
         let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
-        assert!(pcr_lead(&inv, &w).is_empty());
+        inv.pcr_lead_min_ms = None;
+        assert!(lead(&inv, &w).is_empty());
         inv.pcr_lead_min_ms = Some(90);
         assert_eq!(
-            pcr_lead(&inv, &w),
+            lead(&inv, &w),
             ["pcr_lead: PID 256 min lead 0.0 ms, want >= 90 ms"]
         );
     }
@@ -981,14 +1052,15 @@ mod tests {
     fn a_non_pcr_pid_is_held_to_zero_lead_not_the_floor() {
         let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
         inv.pcr_lead_min_ms = Some(90);
-        // PCR PID 0x100; a KLV PES on 0x101 with PTS 2 ms above the PCR passes.
-        let w = summarize(&pcr_then_pes_on(0x100, 0x101, 90_000, None, 90_180));
-        assert!(pcr_lead(&inv, &w).is_empty());
+        // PCR PID 0x100 with its own PES at 100 ms; a KLV PES on 0x101 with
+        // PTS 2 ms above the PCR passes.
+        let w = summarize(&with_a_video_pes(0x101, 90_180));
+        assert!(lead(&inv, &w).is_empty());
         // The same PES with its PTS 1 ms below the PCR fails.
-        let w = summarize(&pcr_then_pes_on(0x100, 0x101, 90_000, None, 89_910));
+        let w = summarize(&with_a_video_pes(0x101, 89_910));
         assert_eq!(
-            pcr_lead(&inv, &w),
-            ["pcr_lead: PID 257 min lead -1.0 ms, want >= 0 ms (non-PCR PID)"]
+            lead(&inv, &w),
+            ["pcr_lead_other_pids: PID 257 min lead -1.0 ms, want >= 0 ms"]
         );
     }
 
@@ -998,8 +1070,133 @@ mod tests {
     fn an_audio_pid_at_ten_ms_lead_passes_under_a_ninety_ms_floor() {
         let mut inv = profiles::invariants(profiles::by_name("audio").unwrap());
         inv.pcr_lead_min_ms = Some(90);
-        let w = summarize(&pcr_then_pes_on(0x100, 0x102, 90_000, None, 90_900)); // +10 ms
-        assert!(pcr_lead(&inv, &w).is_empty());
+        let w = summarize(&with_a_video_pes(0x102, 90_900)); // +10 ms
+        assert!(lead(&inv, &w).is_empty());
+    }
+
+    /// PCR 90 000 on 0x100, a PES on 0x100 at PTS 99 000 (a 100 ms lead, so
+    /// the PCR PID itself passes), then a PES on `pid` at `pts`.
+    fn with_a_video_pes(pid: u16, pts: u64) -> Vec<u8> {
+        [
+            psi_head(0x100, pid),
+            af_packet(0x100, 0, Some(90_000)),
+            pes_packet(0x100, None, 99_000),
+            pes_packet(pid, None, pts),
+        ]
+        .concat()
+    }
+
+    /// A floor that measured nothing on the PCR PID has not passed: a
+    /// capture whose PCR PID carries a PCR and no timestamped PES fails.
+    #[test]
+    fn nothing_measured_on_the_pcr_pid_fails() {
+        let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+        inv.pcr_lead_min_ms = Some(90);
+        let w = summarize(
+            &[
+                psi_head(0x100, 0x101),
+                af_packet(0x100, 0, Some(90_000)),
+                pes_packet(0x101, None, 99_000),
+            ]
+            .concat(),
+        );
+        assert_eq!(
+            lead(&inv, &w),
+            ["pcr_lead: no PES lead measured on program 1's PCR PID 256"]
+        );
+        // The same on a remuxed capture.
+        assert_eq!(
+            pcr_lead(&inv, &w, &Explained::default(), WireLayout::Remuxed),
+            ["pcr_lead: no PES lead measured on program 1's PCR PID 256"]
+        );
+    }
+
+    /// The other PIDs' rule is the generator's own property (it pushes in
+    /// timestamp order); a re-muxer handed a late unit still sends it.
+    #[test]
+    fn the_non_pcr_rule_is_off_for_a_remuxed_capture() {
+        let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+        inv.pcr_lead_min_ms = Some(90);
+        let late_klv = summarize(&with_a_video_pes(0x101, 89_910));
+        assert_eq!(
+            pcr_lead(&inv, &late_klv, &Explained::default(), WireLayout::Generator).len(),
+            1
+        );
+        assert!(
+            pcr_lead(&inv, &late_klv, &Explained::default(), WireLayout::Remuxed).is_empty()
+        );
+        // The PCR PID's floor holds under both.
+        let zero = summarize(&pcr_then_pes(0x100, 90_000, None, 90_000));
+        for layout in [WireLayout::Generator, WireLayout::Remuxed] {
+            assert_eq!(
+                pcr_lead(&inv, &zero, &Explained::default(), layout),
+                ["pcr_lead: PID 256 min lead 0.0 ms, want >= 90 ms"],
+                "{layout:?}"
+            );
+        }
+    }
+
+    fn excused(pid: u16, n: u64) -> Explained {
+        Explained {
+            lead_excused: BTreeMap::from([(pid, n)]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_violation_is_excused_only_when_every_pes_below_was() {
+        let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+        inv.pcr_lead_min_ms = Some(90);
+        let mut w = summarize(&pcr_then_pes(0x100, 90_000, None, 90_000));
+        w.pcr_lead_below = BTreeMap::from([(0x100, 2)]);
+        assert!(pcr_lead(&inv, &w, &excused(0x100, 2), WireLayout::Generator).is_empty());
+        assert_eq!(
+            pcr_lead(&inv, &w, &excused(0x100, 1), WireLayout::Generator),
+            ["pcr_lead: PID 256 min lead 0.0 ms, want >= 90 ms \
+              (2 PES start(s) below, 1 excused by the corruption log)"]
+        );
+        // An excusal on another PID excuses nothing here.
+        assert_eq!(
+            pcr_lead(&inv, &w, &excused(0x101, 2), WireLayout::Generator).len(),
+            1
+        );
+    }
+
+    /// The verdict starts from the reader's raw minimum: with no watch set
+    /// on the reader (so no count of PES starts below the floor), no
+    /// number of excusals passes a violation.
+    #[test]
+    fn a_violation_fails_when_no_event_was_counted() {
+        let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+        inv.pcr_lead_min_ms = Some(90);
+        let w = summarize(&pcr_then_pes(0x100, 90_000, None, 90_000));
+        assert!(w.pcr_lead_below.is_empty());
+        assert_eq!(
+            pcr_lead(&inv, &w, &excused(0x100, 5), WireLayout::Generator).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn lead_watch_follows_the_floor_and_the_layout() {
+        let mut inv = profiles::invariants(profiles::by_name("baseline").unwrap());
+        inv.pcr_lead_min_ms = None;
+        assert_eq!(lead_watch(&inv, WireLayout::Generator), None);
+        inv.pcr_lead_min_ms = Some(90);
+        assert_eq!(
+            lead_watch(&inv, WireLayout::Generator),
+            Some(LeadWatch {
+                pcr_pid_below: 8_100,
+                other_below: Some(0)
+            })
+        );
+        assert_eq!(
+            lead_watch(&inv, WireLayout::Remuxed),
+            Some(LeadWatch {
+                pcr_pid_below: 8_100,
+                other_below: None
+            })
+        );
     }
 
     fn wire_with_pcr(pid: u16, ticks: &[u64]) -> WireSummary {
