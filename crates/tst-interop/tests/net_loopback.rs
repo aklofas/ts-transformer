@@ -526,6 +526,81 @@ fn udp_recv_with_the_corruption_log_passes_and_explains_the_damage() {
     );
 }
 
+/// The PCR lead floor's excusal on the LIVE path, where the raw reader sits
+/// in the receive tee and not in `verify`: `recv` has to set the oracle's
+/// levels on that reader and hand its lead events to the attribution, or
+/// the tap's own damage fails the leg (a soak would fail on its first
+/// flipped PCR).
+///
+/// The `audio` profile has PCR-only packets, and at this seed the tap's
+/// one injection inside the capture is a single flipped byte, offset 7, the
+/// second byte of the PCR base, on the PCR-only packet at ordinal 76, about
+/// 0.6 s in (found by sweeping seeds over the offline tap for a body flip
+/// on a PCR-only packet of the video PID that an offline judgement
+/// excuses). The flip moves that PCR about 13 s ahead, so every PES of the
+/// program until the next sound PCR reads a lead about 13 s below zero.
+/// With the log, those are excused and counted.
+#[test]
+fn udp_recv_excuses_the_leads_a_flipped_pcr_damaged() {
+    use tst_interop::corrupt::parse_corrupt;
+
+    let profile = profiles::by_name("audio").expect("audio profile must exist");
+    let url = format!("udp://127.0.0.1:{}", free_port());
+    let log_path = corruption_log_path("lead");
+
+    let recv_transport = transport::make_recv(&url).expect("bind udp recv");
+    let recv_handle = {
+        let seconds = SECONDS;
+        let log_path = log_path.clone();
+        thread::spawn(move || {
+            recv::recv_over_transport(
+                recv_transport,
+                profile,
+                seconds,
+                false,
+                false,
+                KlvExpect::compact(),
+                Some(&log_path),
+            )
+        })
+    };
+
+    let cfg = parse_corrupt("rate=300,min_gap=1000,classes=body_flip", 8576, 1)
+        .expect("the corruption spec must parse");
+    send::run(
+        profile,
+        &url,
+        SECONDS,
+        None,
+        false,
+        AuSizeMode::Compact,
+        KlvSet::Compact,
+        0,
+        Some((cfg, log_path.clone())),
+    )
+    .expect("udp send must succeed");
+
+    let report = join_with_timeout(recv_handle, Duration::from_secs(20))
+        .expect("recv_over_transport must return");
+    let _ = std::fs::remove_file(&log_path);
+
+    assert!(
+        report.metrics.pcr_lead_min_ms.is_some_and(|ms| ms < 0.0),
+        "the flip must have moved a PCR past a PES: {:?}",
+        report.metrics.pcr_lead_min_ms
+    );
+    let a = report
+        .metrics
+        .corruption_attribution
+        .expect("a judged capture carries its attribution");
+    assert!(a.pcr_lead_excused >= 1, "{a:?}");
+    assert!(
+        report.pass,
+        "a lead the tap damaged must not fail the capture: {:?}",
+        report.failures
+    );
+}
+
 /// The receiver must keep reading the log for the WHOLE capture, not
 /// snapshot it at startup: the sender appends to that same file as it
 /// runs, and injections it records after the receiver started are the
