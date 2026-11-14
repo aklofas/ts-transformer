@@ -60,6 +60,14 @@ pub struct CellMetrics {
     /// `nonconformant`.
     #[serde(default)]
     pub damaged_pes: u64,
+    /// The least lead, in ms, of a PES's decode time over the PCR before
+    /// it, among the PES starts on every program's PCR PID: what the
+    /// `pcr_lead` oracle holds to the profile's floor. Raw: a PES the
+    /// corruption log excused is included (`corruption_attribution`'s
+    /// `pcr_lead_excused` counts those). `None` when no lead was measured,
+    /// and in a report written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pcr_lead_min_ms: Option<f64>,
     /// Sender-side corruption tap counters (`send --corrupt`), `None`
     /// when the tap was off. The SENT side of the same run the receiver
     /// judges via `corruption_attribution` below: this says what was

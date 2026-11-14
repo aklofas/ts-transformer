@@ -1128,6 +1128,31 @@ pub(crate) fn tee_take_resyncs(tap: &Arc<Mutex<TeeState>>) -> Vec<tst_test_helpe
         .take_resyncs()
 }
 
+/// The tap reader's PES starts below their watched lead since the last
+/// call — see [`tst_test_helpers::rawts::Reader::take_lead_events`].
+/// Drained, like [`tee_drain_pcrs`]; empty until [`tee_watch_leads`].
+pub(crate) fn tee_take_lead_events(
+    tap: &Arc<Mutex<TeeState>>,
+) -> Vec<tst_test_helpers::rawts::LeadEvent> {
+    tap.lock()
+        .expect("tee mutex poisoned")
+        .reader
+        .take_lead_events()
+}
+
+/// Set the lead levels the tap's raw reader reports PES starts below
+/// ([`tst_test_helpers::rawts::Reader::watch_leads`]). `recv.rs` sets the
+/// `pcr_lead` oracle's own levels before the first byte arrives.
+pub(crate) fn tee_watch_leads(
+    tap: &Arc<Mutex<TeeState>>,
+    watch: tst_test_helpers::rawts::LeadWatch,
+) {
+    tap.lock()
+        .expect("tee mutex poisoned")
+        .reader
+        .watch_leads(watch);
+}
+
 /// The tap reader's PES prefix mismatches since the last call, each with
 /// the packet ordinal of its PES start — see
 /// [`tst_test_helpers::rawts::Reader::take_prefix_mismatches`]. Drained,

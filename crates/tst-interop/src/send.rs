@@ -313,6 +313,7 @@ pub fn send_over_transport(
         discontinuities: 0,
         nonconformant: 0,
         damaged_pes: 0,
+        pcr_lead_min_ms: None,
         // Attribution is a RECEIVER-side judgement of the corruption log
         // this side writes; the sender has no events to judge.
         corruption_attribution: None,

@@ -304,6 +304,13 @@ pub struct AttributionReport {
     /// AV1 carriage oracle holds to the first one's opening bytes.
     #[serde(default)]
     pub av1_prefix_excused: u64,
+    /// PES starts whose lead over the PCR read below the level the
+    /// `pcr_lead` oracle holds their PID to, excused because they lay
+    /// inside an attributed corruption window
+    /// (`Tally::note_pes_findings`, [`Attribution::explains_lead`]). Set
+    /// by the verifier; zero without corruption.
+    #[serde(default)]
+    pub pcr_lead_excused: u64,
 }
 
 impl AttributionReport {
@@ -1521,6 +1528,45 @@ impl Attribution {
         })
     }
 
+    /// Whether a logged injection explains a PES start at receiver ordinal
+    /// `at` on `pid` whose decode time read too close to, or behind, the
+    /// last PCR on `pcr_pid` (the `pcr_lead` oracle), WITHOUT recording it
+    /// as an event.
+    ///
+    /// The lead is a difference of two fields the tap can damage, so three
+    /// kinds of injection explain a bad one, each only inside its own
+    /// attribution window:
+    ///
+    /// - one on `pcr_pid`: the PCR the PES was measured against may be the
+    ///   damaged one. A body flip on a PCR-only packet lands in the
+    ///   adaptation field, where the PCR is; measured, such a flip reads
+    ///   as a lead of minus several minutes on every PID of the program
+    ///   until the next sound PCR;
+    /// - one on `pid` itself: the PES start, or the packet framing around
+    ///   it, may be the damaged one;
+    /// - one that breaks packet framing for the whole multiplex
+    ///   (`Tracked::framing_wide`: a truncation, a garbage run, a killed
+    ///   sync byte): the reader re-locks by hunting, and what it reads
+    ///   until it does was never a packet. Measured: a truncation on the
+    ///   PCR PID's neighbour read as a lead of −14.6 ms.
+    ///
+    /// A duplicate explains nothing (it repeats a sound packet, PCR
+    /// included), and neither does an injection confined to some other
+    /// PID. A PES outside every window stays the producer's.
+    ///
+    /// Like [`Attribution::explains_damage`] it advances the cursors
+    /// itself and expects non-decreasing `at`.
+    #[must_use]
+    pub fn explains_lead(&mut self, at: u64, pid: u16, pcr_pid: u16) -> bool {
+        self.advance(at);
+        (self.lo..self.hi).rev().any(|i| {
+            let inj = self.tracked(i);
+            inj.class != Class::Dup
+                && self.window_contains(i, at)
+                && (inj.pid == pid || inj.pid == pcr_pid || inj.framing_wide)
+        })
+    }
+
     /// Whether a TRUNCATION explains an anomaly observed at receiver
     /// ordinal `at`, WITHOUT recording it as an event.
     ///
@@ -2048,6 +2094,7 @@ impl Attribution {
             anchors_rejected: self.anchors_rejected,
             adts_prefix_excused: 0,
             av1_prefix_excused: 0,
+            pcr_lead_excused: 0,
         }
     }
 }
@@ -3805,6 +3852,57 @@ mod tests {
 
         // It recorded nothing: no events, no detection, no recovery.
         let r = a.finish(10_000);
+        assert_eq!(r.events, 0);
+        assert_eq!(r.attributed_events, 0);
+    }
+
+    /// `explains_lead` answers for the `pcr_lead` oracle and records
+    /// nothing. It covers the PES's own PID, its program's PCR PID, and the
+    /// classes that break framing for the whole multiplex; never a
+    /// duplicate, never another PID's confined damage, never a position
+    /// past the window.
+    #[test]
+    fn explains_lead_covers_the_pid_its_pcr_pid_and_the_framing_classes() {
+        const VIDEO: u16 = 0x1011; // the PCR PID
+        const KLV: u16 = 0x1031;
+        const AUDIO: u16 = 0x1041;
+        let mut a = Attribution::strict(
+            vec![
+                inj(1000, 10, Class::BodyFlip, VIDEO, false),
+                inj(2000, 10, Class::BodyFlip, KLV, false),
+                inj(3000, 10, Class::Truncate, KLV, true),
+                inj(4000, 10, Class::Dup, VIDEO, false),
+                inj(5000, 10, Class::Garbage, AUDIO, true),
+            ],
+            &hdr(),
+        );
+        a.on_pcr(1000, 5_000); // resolves to 5 010
+        a.on_pcr(2000, 7_000); // 7 010
+        a.on_pcr(3000, 9_000); // 9 010
+        a.on_pcr(4000, 11_000); // 11 010
+        a.on_pcr(5000, 13_000); // 13 010
+
+        // A flip on the PCR PID explains a lead on every PID measured
+        // against that PCR, to the window's last packet and no further.
+        assert!(a.explains_lead(5_010, VIDEO, VIDEO));
+        assert!(a.explains_lead(5_010, KLV, VIDEO));
+        assert!(a.explains_lead(5_010 + ATTRIBUTION_WINDOW, AUDIO, VIDEO));
+        assert!(!a.explains_lead(5_011 + ATTRIBUTION_WINDOW, AUDIO, VIDEO));
+        // A flip confined to the KLV PID explains the KLV PES and nothing
+        // on the PIDs it never touched.
+        assert!(a.explains_lead(7_010, KLV, VIDEO));
+        assert!(!a.explains_lead(7_010, AUDIO, VIDEO));
+        assert!(!a.explains_lead(7_010, VIDEO, VIDEO));
+        // A truncation breaks framing for the whole multiplex.
+        assert!(a.explains_lead(9_010, VIDEO, VIDEO));
+        assert!(a.explains_lead(9_010, AUDIO, VIDEO));
+        // A duplicate explains nothing, on its own PID either.
+        assert!(!a.explains_lead(11_010, VIDEO, VIDEO));
+        // Garbage, the same as a truncation.
+        assert!(a.explains_lead(13_010, VIDEO, VIDEO));
+
+        // It recorded nothing: no events, no detection, no recovery.
+        let r = a.finish(20_000);
         assert_eq!(r.events, 0);
         assert_eq!(r.attributed_events, 0);
     }
