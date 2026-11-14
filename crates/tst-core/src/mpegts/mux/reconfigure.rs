@@ -237,8 +237,10 @@ impl Muxer {
     /// A program that stays keeps its clock: its PCR carries on from where
     /// it was, also when the PCR moves to another of its streams because the
     /// stream that carried it was removed, and no discontinuity is
-    /// signalled. A program that is new in this call starts its own clock
-    /// with its first push.
+    /// signalled. The streams of a program share one timeline; if the
+    /// stream the PCR moves to is stamped behind the clock, the PCR holds
+    /// until its timestamps pass it. A program that is new in this call
+    /// starts its own clock with its first push.
     ///
     /// Removing a stream and re-adding it on the same PID with no successful
     /// `push_*` between the two calls coalesces the two table changes into
