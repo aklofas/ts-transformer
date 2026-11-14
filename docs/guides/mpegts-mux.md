@@ -453,9 +453,16 @@ first TS packet of a push on the PCR PID when the program's clock has
 advanced `pcr_interval_ms` since the last PCR, and on every key frame.
 This is what makes the muxer deterministic (the same pushes produce the
 same bytes) and means real-time scheduling is the caller's
-responsibility, not the muxer's. A PCR stream of ten or more access
-units a second meets H.222.0's 100 ms PCR interval from its pushes
-alone. A sparser one does not: see [`tick`](#sparse-sources-tick).
+responsibility, not the muxer's.
+
+The gap between two PCRs is therefore the first whole number of push
+intervals that reaches `pcr_interval_ms`. With the default 40 ms, and
+with any setting up to 50, a PCR stream of ten or more access units a
+second stays within H.222.0's 100 ms PCR interval from its pushes alone.
+A larger setting can exceed it between two pushes (`pcr_interval_ms =
+100` at 24 fps waits three frames, 125 ms), and a stream below ten
+access units a second exceeds it at any setting: see
+[`tick`](#sparse-sources-tick).
 
 A PCR is written at the start of an access unit only. One very large
 access unit is not interrupted to carry a second PCR.
