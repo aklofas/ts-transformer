@@ -142,10 +142,9 @@ class SocketStatsBySchemeTest {
             // Retransmissions are a sender's count, and nothing is dropped on the send side.
             assertEquals(0, r.packetsRetransmitted(), r.toString());
             assertEquals(0, r.packetsDroppedSend(), r.toString());
-            // Not asserted: both gauges may read 0 on a healthy loopback link (librist's round
-            // trip is whole milliseconds, and its bandwidth estimate can stay 0).
-            System.out.println("rist gauges: rttUs=" + r.rttUs() + " linkBandwidthBps="
-                + r.linkBandwidthBps() + " (sender rttUs=" + tx.socketStats().rttUs() + ")");
+            // rttUs and linkBandwidthBps are not asserted: both may read 0 on a healthy loopback
+            // link (librist's round trip is whole milliseconds, and its bandwidth estimate can
+            // stay 0).
             SocketStats s = tx.socketStats();
             assertEquals(handed.get(), s.bytesSent());
             assertTrue(s.packetsSent() > 0);
