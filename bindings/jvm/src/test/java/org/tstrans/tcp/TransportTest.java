@@ -347,7 +347,12 @@ class TransportTest {
                     Throwable end = p.awaitEnd(scaledMs(3000));
                     long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
                     assertTrue(ms < scaledMs(3000), "byClose=" + byClose + ": ended after " + ms + " ms");
-                    assertKind(TcpException.Kind.CLOSED, end);
+                    // A close that lands before the receive enters the native call makes it
+                    // throw IllegalStateException; after a cancel the shell is still open, so a
+                    // late entry reads the latched cancel and throws CLOSED too.
+                    if (!(byClose && end instanceof IllegalStateException)) {
+                        assertKind(TcpException.Kind.CLOSED, end);
+                    }
                 }
             }
         }
