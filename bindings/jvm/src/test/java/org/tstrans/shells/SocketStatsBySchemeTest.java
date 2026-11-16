@@ -1,6 +1,7 @@
 package org.tstrans.shells;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.tstrans.TestSupport.scaledMs;
@@ -109,34 +110,37 @@ class SocketStatsBySchemeTest {
             sender.setDaemon(true);
             sender.start();
             long got;
+            SocketStats lag;
             try {
                 got = receiveBytes(rx, WANT);
+                // librist reports these once a second, so they lag the counters; poll while
+                // traffic still flows, since the report needs a live link.
+                long deadline = System.nanoTime() + scaledMs(5_000) * 1_000_000L;
+                lag = tx.socketStats();
+                while (lag.linkBandwidthBps() == 0 && lag.rttUs() == 0
+                        && System.nanoTime() < deadline) {
+                    Thread.sleep(100);
+                    lag = tx.socketStats();
+                }
             } finally {
                 stop.set(true);
             }
             sender.join(scaledMs(5_000));
+            assertFalse(sender.isAlive(), "the sender thread is still running");
             tx.flush();
+            assertTrue(lag.linkBandwidthBps() > 0 || lag.rttUs() > 0, "no librist report: " + lag);
 
             SocketStats r = rx.socketStats();
             // The transport counts whole 1316-byte blocks as they arrive; the shell may still hold
-            // the tail of the last block, which recvBytes() has not returned yet.
-            assertTrue(r.bytesReceived() >= got && r.bytesReceived() < got + 1316, r.toString());
+            // the tail of the last block, which recvBytes() has not returned yet. More blocks can
+            // also have arrived while the poll ran, so only the lower bound is exact.
+            assertTrue(r.bytesReceived() >= got, r.toString());
             assertTrue(r.packetsReceived() > 0);
             SocketStats s = tx.socketStats();
             assertEquals(handed.get(), s.bytesSent());
             assertTrue(s.packetsSent() > 0);
             assertEquals(0, s.packetsDroppedSend());
             assertSrtStatsRefused(rx, tx);
-
-            // librist reports these once a second, so they lag the counters above.
-            long deadline = System.nanoTime() + scaledMs(5_000) * 1_000_000L;
-            SocketStats lag = tx.socketStats();
-            while (lag.linkBandwidthBps() == 0 && lag.rttUs() == 0 && System.nanoTime() < deadline) {
-                Thread.sleep(100);
-                lag = tx.socketStats();
-            }
-            assertTrue(lag.linkBandwidthBps() > 0 || lag.rttUs() > 0, "no librist report: " + lag);
-            assertTrue(lag.packetsRetransmitted() >= 0);
         }
     }
 }

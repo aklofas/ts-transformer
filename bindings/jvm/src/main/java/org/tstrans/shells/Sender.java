@@ -135,10 +135,18 @@ public class Sender extends NativeHandle {
      *     <td>{@code packetsRetransmitted}, {@code linkBandwidthBps} (librist's estimate),
      *     {@code rttUs}</td></tr>
      * </table>
-     * On {@code rist://} librist reports its part once a second, so the lost count,
-     * {@code packetsRetransmitted}, {@code linkBandwidthBps} and {@code rttUs} lag; the byte and
-     * packet counts the wrapper keeps itself are immediate. The call waits behind a receive or
-     * send parked on another thread.
+     * On a receiver the send-side counters read 0, and on a sender the receive-side ones do;
+     * {@code packetsDroppedSend} is always 0 on {@code rist://}.
+     *
+     * <p>On {@code rist://} librist reports its part once a second, so the lost count,
+     * {@code packetsRetransmitted}, {@code linkBandwidthBps} and {@code rttUs} lag, and
+     * {@code linkBandwidthBps} can read 0 for a long time (it stayed 0 on a loopback link), so 0
+     * does not mean there is no link. The byte and packet counts the wrapper keeps itself are
+     * not delayed, but a receiver's {@code bytesReceived} and {@code packetsReceived} count what
+     * the transport has read, a whole block at a time (a datagram or a read on {@code udp://} and
+     * {@code tcp://}, a block of up to 1316 bytes on {@code rist://}), so they can run ahead of
+     * what the receiving calls have returned so far. The call waits behind a receive or send
+     * parked on another thread.
      *
      * @return the wire-stats snapshot
      * @throws IllegalStateException if the sender is closed
