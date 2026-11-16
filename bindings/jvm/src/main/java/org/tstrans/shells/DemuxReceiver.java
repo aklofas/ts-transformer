@@ -252,12 +252,12 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * {@code packetsRetransmitted}, {@code linkBandwidthBps} and {@code rttUs} lag, and
      * {@code linkBandwidthBps} can read 0 for a long time (it stayed 0 on a loopback link), and
      * librist measures the round trip in whole milliseconds, so {@code rttUs} reads 0 for a round
-     * trip under 1&nbsp;ms; neither 0 means there is no link. The byte and packet counts the wrapper keeps itself are
-     * not delayed, but a receiver's {@code bytesReceived} and {@code packetsReceived} count what
-     * the transport has read, a whole block at a time (a datagram or a read on {@code udp://} and
-     * {@code tcp://}, a block, 1316 bytes from this library's senders, on {@code rist://}), so they can run ahead of
-     * what the receiving calls have returned so far. The call waits behind a receive or send
-     * parked on another thread.
+     * trip under 1&nbsp;ms; neither 0 means there is no link. The byte and packet counts the
+     * wrapper keeps itself are not delayed, but a receiver's {@code bytesReceived} and
+     * {@code packetsReceived} count what the transport has read, a whole block at a time (a
+     * datagram or a read on {@code udp://} and {@code tcp://}, a block, 1316 bytes from this
+     * library's senders, on {@code rist://}), so they can run ahead of what the receiving calls
+     * have returned so far. The call waits behind a receive or send parked on another thread.
      *
      * @return the wire-stats snapshot (never null in normal operation)
      * @throws IllegalStateException if the receiver is closed
