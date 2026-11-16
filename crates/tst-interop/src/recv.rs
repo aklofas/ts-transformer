@@ -715,7 +715,8 @@ pub fn run_managed(
         tally.disable_klv_digest_tracking();
     }
     // Before the first byte — and it survives every reconnect: the
-    // factory's `tee_resync` clears only the in-flight carry, never the
+    // factory's `tee_resync` clears the in-flight carry and the last PCR
+    // the lead is measured against, never the
     // reader's recovery mode, its recovery list or its packet count (see
     // `rawts::Reader::resync`), so coordinates stay continuous across an
     // outage. A reconnect itself is deliberately NOT recorded as a
