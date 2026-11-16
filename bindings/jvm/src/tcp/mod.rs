@@ -124,10 +124,14 @@ jni_native! {
 }
 
 jni_native! {
-    fn Java_org_tstrans_tcp_Listener_nCancelHandle(_env, _class, handle: jlong) -> jlong = 0 => {
-        REGISTRY_LISTENER
-            .cancel_view(handle as u64)
-            .map_or(0, crate::shells::cancel::cancel_view_handle)
+    fn Java_org_tstrans_tcp_Listener_nCancelHandle(env, _class, handle: jlong) -> jlong = 0 => {
+        match REGISTRY_LISTENER.cancel_view(handle as u64) {
+            Some(view) => crate::shells::cancel::cancel_view_handle(view),
+            None => {
+                throw_closed(env, "Listener");
+                0
+            }
+        }
     }
 }
 

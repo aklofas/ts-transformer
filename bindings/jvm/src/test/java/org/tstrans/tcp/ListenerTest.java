@@ -9,11 +9,14 @@ import static org.tstrans.TestSupport.scaledMs;
 import static org.tstrans.shells.ShellPeers.within;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.tstrans.NativeHandle;
 import org.tstrans.TcpException;
 import org.tstrans.TestSupport;
 import org.tstrans.shells.CancelHandle;
@@ -134,6 +137,25 @@ class ListenerTest {
         assertThrows(IllegalStateException.class, l::accept);
         assertThrows(IllegalStateException.class, l::localPort);
         assertThrows(IllegalStateException.class, l::cancelHandle);
+    }
+
+    /**
+     * A {@code close()} can land between {@code cancelHandle()}'s open check and its native
+     * lookup; the native is driven directly with the closed listener's key, which no other
+     * listener reuses, so that window is hit every time.
+     */
+    @Test
+    void cancelHandleOnAListenerClosedUnderneathThrows() throws Exception {
+        Listener l = Listener.open(LOOPBACK_V4);
+        Method peek = NativeHandle.class.getDeclaredMethod("peekHandle");
+        peek.setAccessible(true);
+        long key = (long) peek.invoke(l);
+        l.close();
+        Method native_ = Listener.class.getDeclaredMethod("nCancelHandle", long.class);
+        native_.setAccessible(true);
+        InvocationTargetException ite = assertThrows(InvocationTargetException.class,
+            () -> native_.invoke(null, key), "a missing listener must not yield a handle");
+        assertInstanceOf(IllegalStateException.class, ite.getCause());
     }
 
     @Test

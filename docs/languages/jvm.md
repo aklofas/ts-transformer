@@ -1681,14 +1681,23 @@ final class TcpIngest implements AutoCloseable {
         }
     }
 
-    @Override public void close() throws InterruptedException {
+    @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;
         stop.cancel();               // a parked accept() ends with CLOSED
         DemuxReceiver rx = serving.get();
         if (rx != null) rx.close();  // a parked recvEvent() ends: CLOSED
-        loop.join();
+        boolean interrupted = false;
+        while (true) {               // the loop ends: the cancel is latched
+            try {
+                loop.join();
+                break;
+            } catch (InterruptedException e) {
+                interrupted = true;  // finish the cleanup first
+            }
+        }
         stop.close();                // no thread can use it now
         listener.close();
+        if (interrupted) Thread.currentThread().interrupt();
     }
 }
 ```
@@ -1698,7 +1707,7 @@ TcpIngest ingest = new TcpIngest("tcp://0.0.0.0:0?listen=1");
 int port = ingest.port();          // hand it to the publisher
 ingest.start();
 // ... later, from any thread but the loop's own:
-ingest.close();
+ingest.close();                    // throws nothing; an interrupt stays set
 ```
 
 The `catch` around the shell keeps the server up when one publisher fails:
@@ -1707,14 +1716,19 @@ the listener. The `catch` around `accept()` returns only on `CLOSED`, the
 kind a cancel or `close()` gives; any other kind leaves the listener open,
 so the loop logs it and accepts again after a 100 ms pause. The pause adds
 nothing to shutdown beyond its own length: the cancel is latched, so the
-`accept()` after it throws `CLOSED` at once. The loop uses `recvEvent()`, which throws the checked exception,
-rather than the `Iterator`, which wraps it in an unchecked
-`RuntimeException`.
+`accept()` after it throws `CLOSED` at once. The loop uses `recvEvent()`,
+which throws the checked exception, rather than the `Iterator`, which wraps
+it in an unchecked `RuntimeException`.
 
 The listener's cancel handle is taken once because every `cancelHandle()`
 call creates a native handle that stays allocated until its own `close()`,
 and a closed handle's `cancel()` throws `IllegalStateException`. `close()`
-closes it only after `join()`, so no thread can still be using it.
+closes it only after `join()`, so no thread can still be using it. An
+interrupt of the closing thread does not cut that short: `close()` keeps
+joining (the loop thread ends regardless, since the cancel is latched and the
+served shell is closed), closes both handles, and only then sets the thread's
+interrupt status again, so the listener is never left bound and the
+interrupt is not lost.
 
 `close()` ends the publisher being served by closing its shell, not through
 a cancel handle of that shell: `DemuxReceiver.close()` is documented as
@@ -1811,7 +1825,9 @@ counters read 0, and on a sender the receive-side ones do.
   `packetsRetransmitted`, `linkBandwidthBps` and `rttUs` lag behind the
   byte and packet counts, which the wrapper keeps itself.
   `linkBandwidthBps` can read 0 for a long time (it stayed 0 on a loopback
-  link in testing), so 0 does not mean there is no link.
+  link in testing), and librist measures the round trip in whole
+  milliseconds, so `rttUs` reads 0 for a round trip under 1 ms; neither 0
+  means there is no link.
 - **Receive counters count what the transport read.** A receiver's
   `bytesReceived` and `packetsReceived` count whole reads (a datagram on
   `udp://`, a read on `tcp://`, a block on `rist://`, 1316 bytes from this
