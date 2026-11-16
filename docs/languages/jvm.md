@@ -12,6 +12,7 @@
 > - How to decode / encode typed KLV sets (ST 0601 / 0102 / 0605 / 0903) under `org.tstrans.klv`, plus ST 0806 RVT, ST 1010 SDCC error covariance, and the ST 0805 KLV → CoT conversion layer
 > - How to use the file I/O helpers (`Io.parseFile`, `probe`, `extractKlv`, `Muxer.writeFile`)
 > - How to send and receive MPEG-TS over RTP and SRT (`org.tstrans.shells` / `org.tstrans.rtp` / `org.tstrans.srt`) — pre-muxed bytes or the `MuxSender`/`DemuxReceiver` shells — and how to drive RTSP (client + server)
+> - How to take UDP, TCP and RIST ingest on ports you reserve: `localPort()` on the receiving shells and the TCP listener in `org.tstrans.tcp`
 > - How to pair video with KLV metadata by PTS using `org.tstrans.pipeline.Pairer`
 > - The JVM-specific gotchas: heap-copied `ByteBuffer` payloads, nullable `Long` DTS
 > - How this binding differs from the Rust core
@@ -25,6 +26,7 @@ jump to:
 - [Send or receive over SRT](#srt-convenience-muxsender--demuxreceiver),
   [add reconnect](#srt-managed-reconnect-managed), or
   [use RTP](#rtp-transport-orgtstransrtp).
+- [Take UDP, TCP or RIST ingest on your own ports](#udp-tcp-and-rist-ingest-on-your-own-ports).
 - [Connect to an RTSP source](#rtsp-client-orgtstransrtp),
   [run an RTSP server](#rtsp-server-orgtstransrtp), or
   [accept RTSP publishers](#rtsp-publisher-ingest-orgtstransrtp).
@@ -33,9 +35,11 @@ jump to:
 
 The JVM binding exposes SRT, RTP/RTSP, and HLS publishing. UDP, TCP,
 and RIST are reached through the `org.tstrans.shells` classes
-(`MuxSender.open("udp://…")`); the raw datagram/stream transports have no
-JVM class. The JAR ships RIST. See
-[binding differences](#where-this-binding-differs-from-the-rust-core).
+(`MuxSender.open("udp://…")`, `Receiver.open("rist://@…")`); a `udp://` or
+`rist://@…` receiver reports the port it bound with `localPort()`, and
+`org.tstrans.tcp.Listener` accepts TCP connections and turns each into a
+shell. The raw datagram/stream transports have no JVM class. The JAR ships
+RIST. See [binding differences](#where-this-binding-differs-from-the-rust-core).
 
 ## Install
 
@@ -1113,6 +1117,8 @@ falls into two groups.
 | `close()`, `cancelHandle()`, `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
 | `isAlive()` | `true` — a parked call means the object is open | `false` |
 | `localAddr()` (`Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
+| `localPort()` (`Receiver`, `DemuxReceiver`, `tcp.Listener`) | the port captured at open (`tcp.Listener` answers while `accept()` is parked) | throws `IllegalStateException` |
+| `peerAddr()` (`tcp.Transport`) | the address captured at accept | throws `IllegalStateException`, also once the connection is converted into a shell |
 | `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
 | `endReason()` / `endDetail()` | the recorded reason, or `null`; `H264Receiver` answers `null` while a `recvAu()` is in flight | the reason recorded at close |
@@ -1223,7 +1229,7 @@ each a `BindingException`:
 | `srt://` | `SrtException` |
 | `rtp://` | `RtpException` |
 | `udp://` | `UdpException` |
-| `tcp://`, `tcps://` | `TcpException` |
+| `tcp://`, `tcps://` | `TcpException` (also `org.tstrans.tcp.Listener` and `Transport`) |
 | `rist://` | `RistException` |
 
 Every one carries a `Kind` enum; `CLOSED` is the kind a cancelled or closed
@@ -1530,6 +1536,180 @@ mode, since that mode's reconnect runs synchronously inside the call that
 observed the break rather than on a separate worker. `BACKGROUND` is
 send-side only: handing it to `ManagedReceiver` / `ManagedDemuxReceiver` logs
 a warning and those classes reconnect on the caller's thread anyway.
+
+## UDP, TCP and RIST ingest on your own ports
+
+A server that takes ingest on ports it reserves needs two answers the URL
+alone does not give: which port a receiver bound when it was opened on port
+0, and, on TCP, who connected. The receiving shells of `org.tstrans.shells`
+answer the first with `localPort()`; `org.tstrans.tcp.Listener` accepts TCP
+connections, reports each peer and turns the connection into a shell.
+
+### `localPort()` on UDP and RIST receivers
+
+```java
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.Receiver;
+
+try (Receiver udp = Receiver.open("udp://0.0.0.0:0");
+     DemuxReceiver rist = DemuxReceiver.open("rist://@0.0.0.0:0")) {
+    int udpPort = udp.localPort().getAsInt();
+    int ristPort = rist.localPort().getAsInt();
+    // hand udpPort and ristPort to the publishers
+}
+```
+
+`Receiver.localPort()` and `DemuxReceiver.localPort()` return an
+`OptionalInt`: the port a `udp://` or `rist://@host:port` receiver bound,
+the kernel's pick when the URL said port 0. Every other shell answers empty:
+a caller, a shell made from an accepted TCP connection, `rtp://` and
+`srt://`. The value is the one captured at open, so it answers while a
+receive is parked on another thread; after `close()` it throws
+`IllegalStateException`.
+
+`recvBytes()` returns aligned TS packets (one 188-byte packet per call),
+whatever datagram size the publisher sends. A `udp://` receive blocks until a
+datagram arrives or the shell is cancelled or closed. A `rist://` receive
+throws `RistException(BACKPRESSURE)` about every 100 ms while nothing
+arrives; the receiver stays open, so call it again:
+
+```java
+import org.tstrans.RistException;
+
+try (Receiver rx = Receiver.open("rist://@0.0.0.0:0")) {
+    while (true) {
+        byte[] ts;
+        try {
+            ts = rx.recvBytes();
+        } catch (RistException e) {
+            if (e.kind() == RistException.Kind.BACKPRESSURE) continue;  // nothing for ~100 ms
+            throw e;
+        }
+        recorder.write(ts);                         // your consumer
+    }
+}
+```
+
+`DemuxReceiver.recvEvent()` throws the same; use it rather than the
+`Iterator`, which wraps the exception in an unchecked `RuntimeException`.
+The publisher opens `rist://host:port`, without the `@`. Its first packets
+can be lost while the RIST session comes up.
+
+**RIST profiles and ports.** The Main profile, the default, carries its
+control traffic (RTCP) on the data port, so one port is all it needs: it
+binds port 0 and reports the port. The Simple profile (`?profile=simple`)
+sends RTCP on a second port, the data port + 1, and needs an even data
+port; name an even port whose odd neighbour is free too. A Simple-profile
+receiver on port 0 is refused at open with
+`RistException(INVALID_CONFIG)`, because librist misreads a port the
+kernel picked and would put RTCP on the wrong port. Encryption (`?secret=`) needs the Main
+profile.
+
+### TCP: a listener, one publisher at a time
+
+```java
+import org.tstrans.TcpException;
+import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.tcp.Listener;
+import org.tstrans.tcp.Transport;
+
+try (Listener listener = Listener.open("tcp://0.0.0.0:0?listen=1")) {
+    int port = listener.localPort();               // hand it to the publisher
+    CancelHandle stop = listener.cancelHandle();   // stop.cancel() from your shutdown path
+    while (true) {
+        Transport conn;
+        try {
+            conn = listener.accept();
+        } catch (TcpException e) {
+            if (e.kind() == TcpException.Kind.CLOSED) break;  // stop.cancel() ran
+            throw e;
+        }
+        String publisher = conn.peerAddr();  // read before the conversion consumes conn
+        try (DemuxReceiver rx = conn.intoDemuxReceiver()) {
+            for (DemuxEvent event : rx) {
+                // ... handle the event ...
+            }
+        }
+    }
+}
+```
+
+`Listener.open` takes `tcp://ip:port?listen=1`. The host must be an IP
+literal (`0.0.0.0`, `::`, `127.0.0.1`, ...); a host name, or a URL without
+`?listen=1`, is `TcpException(URL)`, and a port already in use is
+`TcpException(IO)`. `localPort()` reports the port bound, port 0 included,
+and answers while `accept()` is parked on another thread.
+
+Each `accept()` returns one connection as a `tcp.Transport`. A publisher
+that connects while another is being served waits in the kernel's queue
+until the next `accept()`; closing the listener drops whatever is still
+queued, and such a connection is never handed out. `peerAddr()` is the
+peer's `ip:port` (an IPv6 address in brackets, `[::1]:5000`), the TCP source
+address: behind a proxy, the proxy's.
+
+A `Transport` becomes a shell with `intoReceiver()`, `intoDemuxReceiver()`,
+`intoDemuxReceiver(DemuxerConfig)` or `intoSender()`. The conversion
+consumes it: afterwards every call on the `Transport` but `close()` throws
+`IllegalStateException`. `intoReceiver()`, `intoDemuxReceiver()` and
+`intoSender()` consume it even when they throw; a `DemuxerConfig` the native
+layer refuses leaves the `Transport` open, so a corrected retry can convert
+it. The shell throws `TcpException` and reports no `localPort()`. An
+accepted `Transport`, and a shell made from it, stay open after the listener
+closes.
+
+**A silent publisher.** A TCP receive has no deadline: a peer that connects
+and sends nothing parks the receive until the shell's cancel handle fires or
+the shell is closed. The cancel is the only bound, so a server that must
+not wait forever runs a watchdog that holds the shell's `cancelHandle()`
+and fires it when the stream stops progressing. `tsBytesDemuxed()` on the
+`DemuxReceiver` answers while a receive is parked and makes a progress
+counter for that watchdog.
+
+**Stopping the listener.** `cancelHandle().cancel()`, from any thread, ends a
+parked `accept()` with `TcpException(CLOSED)`, and every later `accept()`
+throws the same until `close()`; it does not free the listener.
+`close()` cancels first, then frees it; after `close()` every call throws
+`IllegalStateException`.
+
+**TLS.** `tcps://ip:port?listen=1&cert=<PEM file>&key=<PEM file>` serves
+TLS; without `cert` and `key` the open is `TcpException(INVALID_CONFIG)`.
+`accept()` runs no handshake: it runs on the shell's first receive or send,
+and that call throws its failure. A client that does not speak TLS fails the
+first receive with `TcpException(BROKEN)`. While a client has not answered
+the handshake, the two directions differ: a receive parks until the shell's
+cancel handle fires or the shell is closed, as above; a send throws
+`TcpException(BACKPRESSURE)` after about 100 ms, and the sender stays
+usable, so retry or close it.
+
+### `socketStats()` on these transports
+
+`socketStats()` returns the same `SocketStats` record on every shell. On
+these three schemes it carries:
+
+| Scheme | Bytes and packets | `packetsDroppedSend` / `packetsDroppedRecv` | Other fields |
+|---|---|---|---|
+| `udp://` | bytes; a packet is one datagram | socket send / receive errors | none |
+| `tcp://`, `tcps://` | bytes; a packet is one `send` / `recv` call | send / receive errors | none |
+| `rist://` | bytes and packets | `packetsDroppedRecv`: librist's lost-packet count plus oversize or malformed blocks the receiver dropped; `packetsDroppedSend` is 0 | `packetsRetransmitted`, `linkBandwidthBps` (librist's estimate), `rttUs` |
+
+Every field the table does not name reads 0. On a receiver the send-side
+counters read 0, and on a sender the receive-side ones do.
+
+- **librist reports once a second.** On `rist://` the lost count,
+  `packetsRetransmitted`, `linkBandwidthBps` and `rttUs` lag behind the
+  byte and packet counts, which the wrapper keeps itself. `linkBandwidthBps` can read 0 for a long time (it stays 0 on a
+  loopback link), so 0 does not mean there is no link.
+- **Receive counters count what the transport read.** A receiver's
+  `bytesReceived` and `packetsReceived` count whole reads (a datagram on
+  `udp://`, a read on `tcp://`, a block on `rist://`, 1316 bytes from this
+  library's senders), so they can run ahead of the packets `recvBytes()`
+  has returned so far.
+- **It waits behind a parked call.** `socketStats()` reads counters inside
+  the shell, so it returns only when a receive or send parked on another
+  thread does; see
+  [What answers while another thread is parked](#what-answers-while-another-thread-is-parked).
 
 ## RTP transport (`org.tstrans.rtp`)
 
@@ -2664,6 +2844,8 @@ Gotchas:
   `Managed*` reconnect family), the `org.tstrans.shells` pipeline shells
   (`Sender`/`Receiver`/`MuxSender`/`DemuxReceiver` over every transport URL +
   `CancelHandle`/`SocketStats`/`TransportStats`/`EndReason`), the
+  `org.tstrans.tcp` TCP listener (`Listener`/`Transport`, each accepted
+  connection converted into a shell), the
   `org.tstrans.rtp` RTP transport surface (`Transport`/`RecvTransport` +
   RTSP client/server), the `org.tstrans.hls`
   HLS publisher family (`HlsPublisher`/`HlsPublisherBuilder`/
@@ -2745,7 +2927,10 @@ Removed in 0.9.0 with no deprecated alias: the per-package `CancelHandle`,
 - **io** — file inspection helpers (`Io.parseFile`, `probe`, `extractKlv`, `Muxer.writeFile`).
 - **shells** — `Sender` / `Receiver` / `MuxSender` / `DemuxReceiver` over every
   transport URL, with `CancelHandle` / `SocketStats` / `TransportStats` /
-  `EndReason` and the `DemuxReceiver.tsBytesDemuxed` counter.
+  `EndReason`, the `DemuxReceiver.tsBytesDemuxed` counter and the
+  receivers' `localPort()`.
+- **tcp** — `Listener` + `Transport`: a `tcp://` / `tcps://` listener whose
+  accepted connections become `shells` classes.
 - **srt** — `Builder` / `Socket` / `Listener` / `SrtStats`; the
   `ReconnectPolicy` / `BackoffStrategy` / `OverflowPolicy` types; the
   `Managed*` reconnect wrappers.

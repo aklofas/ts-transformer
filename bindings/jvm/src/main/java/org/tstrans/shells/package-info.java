@@ -9,6 +9,9 @@
  * {@link org.tstrans.RtpException}, {@link org.tstrans.UdpException},
  * {@link org.tstrans.TcpException}, {@link org.tstrans.RistException}). Every shell
  * has a {@link org.tstrans.shells.CancelHandle}, and the receivers report why a
- * session ended through {@link org.tstrans.shells.EndReason}.
+ * session ended through {@link org.tstrans.shells.EndReason}. A {@code udp://} or
+ * {@code rist://@host:port} receiver reports the port it bound with
+ * {@code localPort()}, so it can be opened on port 0. A shell over a TCP connection
+ * a server accepted comes from {@link org.tstrans.tcp.Listener}.
  */
 package org.tstrans.shells;

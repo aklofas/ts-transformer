@@ -2571,8 +2571,8 @@ reason = "round-2 4th-pass RIST PSK Debug-redaction newtype (2026-06-08); gradua
 kind = "rust"
 crate = "tst-rist"
 item = "tst_rist::recv::RistRecvTransport::local_addr"
-owning_tests = ["crates/tst-rist/tests/net_local_addr.rs"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
+owning_tests = ["crates/tst-rist/tests/net_local_addr.rs", "bindings/jvm/src/test/java/org/tstrans/shells/LocalPortTest.java"]
+bindings = ["c:deferred(no C consumer yet)", "python:deferred(tstrans.rist.RecvTransport has no bound-address getter)", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2981,7 +2981,7 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::listener::TcpListener::cancel_handle"
 owning_tests = ["crates/tst-tcp/tests/net_loopback.rs"]
-bindings = ["c:unaudited", "python:tstrans.tcp.Listener.cancel_handle", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:tstrans.tcp.Listener.cancel_handle", "java:org.tstrans.tcp.Listener.cancelHandle", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2990,7 +2990,53 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::listener::TcpListener::close"
 owning_tests = ["crates/tst-tcp/tests/net_loopback.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:unaudited", "python:unaudited", "java:org.tstrans.tcp.Listener.close", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# capability: A TCP listener that accepts one connection per call and reports its bound port: Rust; C tst_tcp_listener_*; Python tstrans.tcp.Listener; JVM org.tstrans.tcp.Listener.
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::listener::TcpListener::bind"
+owning_tests = ["crates/tst-tcp/tests/net_conformance.rs"]
+bindings = ["c:tst_tcp_listener_bind", "python:tstrans.tcp.ListenerBuilder.bind", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::listener::TcpListener::from_url"
+owning_tests = ["crates/tst-tcp/tests/net_tls_version.rs", "bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
+bindings = ["c:tst_tcp_listener_from_url", "python:deferred(a Python listener is built from bind() and tls(), not from a URL)", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::listener::TcpListener::accept_blocking"
+owning_tests = ["crates/tst-tcp/tests/net_pipeline_round_trip.rs", "bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
+bindings = ["c:tst_tcp_listener_accept_receiver", "python:tstrans.tcp.Listener.accept_blocking", "java:org.tstrans.tcp.Listener.accept", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::listener::TcpListener::local_addr"
+owning_tests = ["crates/tst-tcp/tests/net_loopback.rs", "bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
+bindings = ["c:deferred(tst_tcp_listener_t has no bound-address getter)", "python:tstrans.tcp.Listener.local_port", "java:org.tstrans.tcp.Listener.localPort", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::transport::TcpTransport::peer"
+owning_tests = ["bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
+bindings = ["c:deferred(a shell accepted through tst_tcp_listener_t does not report its peer)", "python:tstrans.tcp.Transport.peer_addr", "java:org.tstrans.tcp.Transport.peerAddr", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3574,6 +3620,16 @@ crate = "tst-pipeline"
 item = "tst_pipeline::binding::shells::SendHalf"
 owning_tests = ["crates/tst-pipeline/src/binding/shells.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# capability: A receive opener reports the address it bound (Opened::local_addr, Opened::with_local_addr; the rail files a generic type's fields and methods under the type): Rust; JVM shells.Receiver.localPort and shells.DemuxReceiver.localPort.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::opened::Opened"
+owning_tests = ["crates/tst-udp/tests/net_loopback_unicast.rs", "crates/tst-rist/tests/net_local_addr.rs", "crates/tst-tcp/tests/net_loopback.rs", "bindings/jvm/src/test/java/org/tstrans/shells/LocalPortTest.java"]
+bindings = ["c:n/a(the C ABI opens its transports without the binding openers)", "python:deferred(the Python shells do not report the bound port)", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4378,6 +4434,15 @@ crate = "tst-udp"
 item = "tst_udp::recv::UdpRecvTransport::recv_buffer_size"
 owning_tests = ["crates/tst-udp/tests/net_loopback_unicast.rs"]
 bindings = ["c:deferred", "python:deferred", "java:deferred", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-udp"
+item = "tst_udp::recv::UdpRecvTransport::local_addr"
+owning_tests = ["crates/tst-udp/tests/net_loopback_unicast.rs", "bindings/jvm/src/test/java/org/tstrans/shells/LocalPortTest.java"]
+bindings = ["c:deferred(the C udp receivers have no bound-port getter)", "python:tstrans.udp.RecvTransport.local_addr_port", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

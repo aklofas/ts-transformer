@@ -257,6 +257,19 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A consumer that needs a per-IP decision before a
   session is admitted.
 
+## Publisher address on UDP and RIST receivers
+
+- **Status:** Deferred. A `udp://` receiver does not report the source
+  address of the datagrams it reads, and a plain `udp://` URL has no key
+  that accepts datagrams from one sender only (`rtp://` has `?source=`). A
+  RIST receiver exposes no sender address either. A TCP connection does
+  report its peer (`TcpTransport::peer`, `org.tstrans.tcp.Transport.peerAddr`).
+- **Why deferred:** neither receiver carries the sender's address out of
+  its read path, and no consumer has applied rules per sending address on
+  these transports.
+- **Trigger to revisit:** an embedder that must apply per-address rules to
+  UDP or RIST ingest. Planned for the next release.
+
 ## Nested `#!{…}` access-control form
 
 - **Status:** Deferred. `AccessControl::parse` reads the flat `#!::` form
@@ -1996,6 +2009,65 @@ and the two below.
   across a rollover who needs to know a re-anchor happened. Additive on every surface (one
   dict key, one record field, one C struct field behind a size bump).
 
+## JVM raw UDP / TCP / RIST transports
+
+- **Status:** Deferred for the raw transport classes only. The JVM reaches
+  UDP, TCP and RIST through the `org.tstrans.shells` classes
+  (`Receiver.open("udp://…")`, `DemuxReceiver.open("rist://@…")`,
+  `MuxSender.open("tcp://…")`, …). A `udp://` or `rist://@…` receiver
+  reports the port it bound with `localPort()`, so it can listen on port 0,
+  and `org.tstrans.tcp.Listener` accepts TCP connections and turns each into
+  a shell (`Transport.intoReceiver()`, `intoDemuxReceiver()`,
+  `intoSender()`). What the JVM does not have are the raw classes Python has
+  as `tstrans.udp.Transport` / `RecvTransport`, `tstrans.tcp.Transport.send` /
+  `recv` and `tstrans.rist.Transport` / `RecvTransport`: there is no
+  `org.tstrans.udp` or `org.tstrans.rist` package, and
+  `org.tstrans.tcp.Transport` has no `send` or `recv` of its own.
+- **Why deferred:** the shells carry MPEG-TS, which is what every JVM
+  consumer so far sends and receives; a raw class would only add a way to
+  move bytes that are not TS.
+- **Trigger to revisit:** a JVM consumer needs to send or receive bytes
+  that are not MPEG-TS over one of these transports.
+
+## JVM per-protocol stats records
+
+- **Status:** Deferred. A JVM shell over `udp://`, `tcp://` or `rist://`
+  reports its counters through the scheme-neutral `socketStats()` record;
+  the `socketStats()` Javadoc lists which fields each scheme fills. Python
+  also has the per-protocol records (`tstrans.udp.SocketStats`,
+  `tstrans.tcp.SocketStats`, `tstrans.rist.RistStats`) on its raw
+  transports.
+- **Why deferred:** the scheme-neutral record carries every counter these
+  transports keep; a per-protocol record would repeat them under the
+  protocol's own field names.
+- **Trigger to revisit:** a JVM consumer that needs a counter by the
+  protocol's own field name, or one the scheme-neutral record does not
+  carry.
+
+## Bound port on `rtp://` and `srt://` shells
+
+- **Status:** Deferred. `localPort()` on `org.tstrans.shells.Receiver` and
+  `DemuxReceiver` is empty for an `rtp://` or `srt://` receiver; it reports
+  the port only for `udp://` and `rist://@…`.
+- **Why deferred:** the raw RTP receiver has no local-address getter, so
+  its opener has no bound address to report. An `srt://` listener shell
+  accepts its one peer inside `open`, so a port picked by the kernel could
+  not be read before a sender has to reach it; `org.tstrans.srt.Listener`
+  reports its bound address with `localAddr()`.
+- **Trigger to revisit:** a consumer that binds an `rtp://` receiver on
+  port 0. Once the raw RTP receiver reports its address, the shell needs
+  one line in its opener.
+
+## `org.tstrans.tcp.Transport.intoMuxSender`
+
+- **Status:** Deferred. An accepted TCP connection becomes a `Receiver`, a
+  `DemuxReceiver` or a `Sender`; there is no conversion into a `MuxSender`.
+- **Why deferred:** nothing muxes onto an accepted connection yet; a server
+  that sends TS to a connecting client can mux with
+  `org.tstrans.mpegts.Muxer` and send the bytes through `intoSender()`.
+- **Trigger to revisit:** a JVM consumer that muxes onto an accepted TCP
+  connection.
+
 ## Opus in MPEG-TS (tst-core has no Opus stream mapping)
 
 - **Status:** Deferred. The WebRTC mount's `AudioPolicy::PassthroughOpus`
@@ -2362,17 +2434,6 @@ Shipped 0.8.0: `tst_srt::SrtSocket::close` and `SrtListener::close` are infallib
 ### `MaxBandwidth` variant naming vs libsrt sentinels
 
 Shipped 0.8.0: renamed `InputRelative` (0) and `Infinite` (−1); a stale use fails to compile.
-
-## JVM raw UDP / TCP / RIST transports
-
-- **Status:** Not exposed. The JVM reaches UDP, TCP and RIST through the
-  `org.tstrans.shells` classes (`MuxSender.open("udp://…")`, …); the raw
-  datagram/stream transports that Python has as `tstrans.udp.Transport`
-  etc. have no JVM class.
-- **Why deferred:** no JVM consumer has asked for raw (non-TS) transport
-  access; the shells cover the TS paths.
-- **Trigger to revisit:** a JVM consumer needs to send or receive bytes
-  that are not MPEG-TS over one of these transports.
 
 ## End reason on the managed byte receivers
 
