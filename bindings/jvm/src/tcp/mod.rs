@@ -229,11 +229,6 @@ jni_native! {
         sync_buf_cap: jlong,
         unwrap_timestamps: jboolean,
     ) -> jlong = 0 => {
-        // Taken first: Java has already zeroed its handle, so a refused config
-        // must drop the connection here rather than leave it in the registry.
-        let Some(conn) = take_conn(env, handle) else {
-            return 0;
-        };
         let Some(opts) = build_demux_config_from_args(
             env,
             strict,
@@ -246,6 +241,11 @@ jni_native! {
             sync_buf_cap,
             unwrap_timestamps,
         ) else {
+            // Refused before the take: the connection stays registered with its
+            // caller, which claims its handle only after a successful return.
+            return 0;
+        };
+        let Some(conn) = take_conn(env, handle) else {
             return 0;
         };
         shells::demux_receiver::register(opened_recv(conn), Some(opts))

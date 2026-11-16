@@ -17,8 +17,11 @@ import org.tstrans.shells.Sender;
  * later call on this {@code Transport} throws {@code IllegalStateException} except
  * {@link #close()}, which does nothing. The shell throws
  * {@link org.tstrans.TcpException}. On a {@code tcps://} listener the TLS handshake runs
- * on the shell's first receive or send; a peer that connects and sends nothing parks
- * that call until the shell's cancel handle fires or the shell is closed.
+ * on the shell's first receive or send. While a peer that connects has not answered the
+ * handshake, the two directions differ: a receive parks until the shell's cancel handle
+ * fires or the shell is closed; each send that reaches the socket throws
+ * {@code TcpException(BACKPRESSURE)} after about one 100&nbsp;ms poll tick, and the
+ * sender stays usable, so retry or close it.
  *
  * <pre>{@code
  * try (Listener listener = Listener.open("tcp://0.0.0.0:0?listen=1");
@@ -49,12 +52,13 @@ public final class Transport extends NativeHandle {
 
     /**
      * Consume the connection and return a {@link Receiver} over it: TS bytes in, packet
-     * aligned. The {@code Transport} is unusable afterwards.
+     * aligned. The {@code Transport} is unusable afterwards; it is consumed even if the
+     * call throws.
      *
      * <p>A {@code tcps://} handshake runs on the first {@code recvBytes()}, which throws
-     * its failure (a peer that is not speaking TLS: {@code TcpException(BROKEN)}). A
-     * silent peer parks that call until the receiver's cancel handle fires or the receiver
-     * is closed. The receiver reports no {@code localPort()}.
+     * its failure (a peer that is not speaking TLS: {@code TcpException(BROKEN)}). While
+     * the peer has not answered the handshake, that call parks until the receiver's cancel
+     * handle fires or the receiver is closed. The receiver reports no {@code localPort()}.
      *
      * @return a receiver owning the connection; it throws {@link org.tstrans.TcpException}
      * @throws IllegalStateException if the connection is closed or already consumed
@@ -67,9 +71,10 @@ public final class Transport extends NativeHandle {
 
     /**
      * Consume the connection and return a {@link DemuxReceiver} over it with default
-     * demuxer options. Same consumption, handshake and cancel rules as
-     * {@link #intoReceiver()}; a {@code tcps://} handshake runs on the first
-     * {@code recvEvent()}.
+     * demuxer options. Same rules as {@link #intoReceiver()}: consumed even if the call
+     * throws; a {@code tcps://} handshake runs on the first {@code recvEvent()}, which
+     * parks until the cancel handle fires or the receiver is closed while the peer has not
+     * answered it.
      *
      * @return a demux receiver owning the connection; it throws
      *     {@link org.tstrans.TcpException}
@@ -82,9 +87,10 @@ public final class Transport extends NativeHandle {
     }
 
     /**
-     * {@link #intoDemuxReceiver()} with explicit demuxer options. A {@code null} config
-     * is refused before the connection is consumed, so this {@code Transport} stays
-     * usable; past that check the connection is consumed even if the call throws.
+     * {@link #intoDemuxReceiver()} with explicit demuxer options. A {@code null} config,
+     * or a config the native layer refuses, leaves this {@code Transport} open and
+     * unconsumed, so a corrected retry can still convert it; the connection is claimed only
+     * once the demux receiver holds it.
      *
      * @param demuxConfig the demuxer configuration
      * @return a demux receiver owning the connection; it throws
@@ -104,16 +110,24 @@ public final class Transport extends NativeHandle {
         boolean lenientPsi = demuxConfig.lenientPsiReassembly();
         long syncBufCap = demuxConfig.syncBufCap();
         boolean unwrapTimestamps = demuxConfig.unwrapTimestamps();
-        long conn = consumeHandle(); // consumed: moved into the DemuxReceiver
-        return ShellAdapters.demuxReceiver(nIntoDemuxReceiverWithConfig(conn, strict,
-            pesCapPerPid, pesCapTotal, cfiTolerance, av1Carriage, auCellCapPerPid, lenientPsi,
-            syncBufCap, unwrapTimestamps));
+        // Claimed after the native takes the connection: the native builds the demuxer
+        // config first, so a refusal leaves the connection registered under this key.
+        long h = nIntoDemuxReceiverWithConfig(peekHandle(), strict, pesCapPerPid, pesCapTotal,
+            cfiTolerance, av1Carriage, auCellCapPerPid, lenientPsi, syncBufCap, unwrapTimestamps);
+        consumeHandle();
+        return ShellAdapters.demuxReceiver(h);
     }
 
     /**
      * Consume the connection and return a {@link Sender} over it: pre-muxed TS bytes
-     * out. Same consumption and cancel rules as {@link #intoReceiver()}; a
-     * {@code tcps://} handshake runs on the first send that reaches the socket.
+     * out. The {@code Transport} is unusable afterwards; it is consumed even if the call
+     * throws.
+     *
+     * <p>A {@code tcps://} handshake runs on the first send that reaches the socket. While
+     * the peer has not answered the handshake, each {@code sendBytes} or {@code flush} that
+     * reaches the socket throws {@code TcpException(BACKPRESSURE)} after about one
+     * 100&nbsp;ms poll tick instead of parking; the sender stays usable, so retry or close
+     * it.
      *
      * @return a sender owning the connection; it throws {@link org.tstrans.TcpException}
      * @throws IllegalStateException if the connection is closed or already consumed
