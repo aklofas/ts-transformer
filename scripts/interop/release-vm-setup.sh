@@ -38,9 +38,9 @@ export PATH=$HOME/.cargo/bin:/snap/bin:$PATH
 
 stage() { echo "$1 rc=$2"; }
 
-# retry <n> <cmd...> — the clone, fetch and submodule steps talk to GitHub
-# and to code.videolan.org, both of which have refused a connection or two
-# in a row before (the flake ledger's "Runner setup fetch failure" row).
+# retry <n> <cmd...> — the clone, fetch and submodule steps talk to GitHub,
+# which has refused a connection or two in a row before (the flake ledger's
+# "Runner setup fetch failure" row).
 retry() {
   local n=$1 i; shift
   for ((i = 1; i <= n; i++)); do

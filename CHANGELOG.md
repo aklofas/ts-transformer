@@ -150,6 +150,10 @@ Next release: 0.11.0
 - The long fuzz runs, ten minutes per target, are a leg of a release qualification; they were a step the maintainer ran by hand. `release-qualify` calls the new `fuzz.yml`, which fuzzes every target in `tests/coverage/fuzz-targets.toml` for 60 s each, and for 600 s each when the run qualifies a release (a `v*` tag push, or a dispatch with `release=true`), in eight parallel jobs. In release mode the collector refuses a fuzz leg that ran less than 600 s per target, and the reason names the seconds found. In either mode a declared target that did not run, ended before its time or crashed is a NO-GO, and a crash's reproducer is kept as a run artefact. A new record lists two maintainer-local checks: the wall-clock benchmark comparison, and the mux-to-file run, which the 0.10.0 record called a one-hour soak (it muxes 3 600 s of frames to a file in a few seconds). `fuzz.yml` can also be dispatched alone on a commit.
 - The fuzz leg keeps the artefact files of a target that passed. libFuzzer writes `slow-unit-*` for an input that took over ten seconds and still exits 0; such a target counted as passed and its files were discarded with the runner. It still passes, the job raises a warning that names it and uploads the files and the target's last output as `fuzz-kept-shard-<n>`, and the result job's summary and `fuzz.json` (`artefacts_kept`) count them. A target whose closing line counts no run no longer counts as run. The collector refuses a `fuzz.json` that is not an object or whose counts are not whole numbers with a message instead of a traceback, and so does the shard plan for a manifest whose `target` key is not an array of tables.
 
+### Changed — CI
+
+- The librist submodule is cloned from `https://github.com/aklofas/librist.git`, an unmodified copy of `https://code.videolan.org/rist/librist.git`; the pinned commit (v0.2.20) is unchanged. Outages of the upstream host have failed jobs at checkout on five days since August, on three of them in every job that clones submodules. A clone made before this change keeps the old address until `git submodule sync` is run in it.
+
 ---
 
 ## [0.10.0] — 2026-11-12
