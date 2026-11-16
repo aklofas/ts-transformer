@@ -1529,41 +1529,46 @@ impl Attribution {
     }
 
     /// Whether a logged injection explains a PES start at receiver ordinal
-    /// `at` on `pid` whose decode time read too close to, or behind, the
-    /// last PCR on `pcr_pid` (the `pcr_lead` oracle), WITHOUT recording it
-    /// as an event.
+    /// `at` whose decode time read too close to, or behind, the last PCR on
+    /// `pcr_pid` (the `pcr_lead` oracle), WITHOUT recording it as an event.
     ///
-    /// The lead is a difference of two fields the tap can damage, so three
-    /// kinds of injection explain a bad one, each only inside its own
-    /// attribution window:
+    /// The lead is a PES start's DTS (else PTS) minus the last PCR, and the
+    /// tap can lower it in two ways only, each excused inside the
+    /// injection's own attribution window:
     ///
-    /// - one on `pcr_pid`: the PCR the PES was measured against may be the
-    ///   damaged one. A body flip on a PCR-only packet lands in the
-    ///   adaptation field, where the PCR is; measured, such a flip reads
-    ///   as a lead of minus several minutes on every PID of the program
+    /// - a body flip on a payload-less packet of `pcr_pid` that changed the
+    ///   adaptation field's length, its flags or its PCR bytes
+    ///   (`Tracked::adaptation_control_hit`): the PCR the PES was measured
+    ///   against may be the damaged one. Measured, a flipped PCR byte reads
+    ///   as a lead of minus seconds to minutes on every PID of the program
     ///   until the next sound PCR;
-    /// - one on `pid` itself: the PES start, or the packet framing around
-    ///   it, may be the damaged one;
-    /// - one that breaks packet framing for the whole multiplex
+    /// - an injection that breaks packet framing for the whole multiplex
     ///   (`Tracked::framing_wide`: a truncation, a garbage run, a killed
     ///   sync byte): the reader re-locks by hunting, and what it reads
     ///   until it does was never a packet. Measured: a truncation on the
     ///   PCR PID's neighbour read as a lead of −14.6 ms.
     ///
-    /// A duplicate explains nothing (it repeats a sound packet, PCR
-    /// included), and neither does an injection confined to some other
-    /// PID. A PES outside every window stays the producer's.
+    /// Nothing else explains one. A body flip on a packet with payload
+    /// starts past the adaptation field and past a PES header (`tap.rs`,
+    /// `mutate`), so it reaches neither a PCR nor a DTS. A dropped packet, a
+    /// PID or counter rewrite and an overrunning adaptation length take a
+    /// packet away or change nothing the lead is read from, and a missing
+    /// PCR leaves the next PES measured against an older one, which makes
+    /// its lead larger. A duplicate repeats a sound packet, PCR included.
+    /// A PES outside every such window stays the producer's.
     ///
     /// Like [`Attribution::explains_damage`] it advances the cursors
     /// itself and expects non-decreasing `at`.
     #[must_use]
-    pub fn explains_lead(&mut self, at: u64, pid: u16, pcr_pid: u16) -> bool {
+    pub fn explains_lead(&mut self, at: u64, pcr_pid: u16) -> bool {
         self.advance(at);
         (self.lo..self.hi).rev().any(|i| {
             let inj = self.tracked(i);
-            inj.class != Class::Dup
+            (inj.framing_wide
+                || (inj.pid == pcr_pid
+                    && inj.class == Class::BodyFlip
+                    && inj.adaptation_control_hit))
                 && self.window_contains(i, at)
-                && (inj.pid == pid || inj.pid == pcr_pid || inj.framing_wide)
         })
     }
 
@@ -3857,52 +3862,93 @@ mod tests {
     }
 
     /// `explains_lead` answers for the `pcr_lead` oracle and records
-    /// nothing. It covers the PES's own PID, its program's PCR PID, and the
-    /// classes that break framing for the whole multiplex; never a
-    /// duplicate, never another PID's confined damage, never a position
-    /// past the window.
+    /// nothing. It covers a body flip that changed the length, flags or PCR
+    /// bytes of a payload-less packet on the PCR PID, and the classes that
+    /// break framing for the whole multiplex; never any other damage on the
+    /// PCR PID, never another PID's confined damage, never a duplicate,
+    /// never a position past the window.
     #[test]
-    fn explains_lead_covers_the_pid_its_pcr_pid_and_the_framing_classes() {
+    fn explains_lead_covers_a_damaged_pcr_and_the_framing_classes() {
         const VIDEO: u16 = 0x1011; // the PCR PID
         const KLV: u16 = 0x1031;
         const AUDIO: u16 = 0x1041;
+        // A body flip on a payload-less packet of `pid` with the PCR flag
+        // set, at byte `offset`.
+        let af_flip = |coord: u64, pid: u16, offset: usize| {
+            let mut flip = inj(coord, 10, Class::BodyFlip, pid, false);
+            flip.before = vec![0x47, (pid >> 8) as u8, pid as u8, 0x20, 183, 0x10];
+            flip.before.resize(188, 0xff);
+            flip.offsets = vec![offset];
+            flip
+        };
+        let header = |coord: u64, pid: u16, offsets: &[usize]| {
+            let mut h = inj(coord, 10, Class::Header, pid, true);
+            h.offsets = offsets.to_vec();
+            h
+        };
         let mut a = Attribution::strict(
             vec![
-                inj(1000, 10, Class::BodyFlip, VIDEO, false),
-                inj(2000, 10, Class::BodyFlip, KLV, false),
-                inj(3000, 10, Class::Truncate, KLV, true),
-                inj(4000, 10, Class::Dup, VIDEO, false),
-                inj(5000, 10, Class::Garbage, AUDIO, true),
+                af_flip(1000, VIDEO, 7),                      // a PCR byte
+                inj(2000, 10, Class::BodyFlip, VIDEO, false), // a payload flip
+                af_flip(3000, VIDEO, 100),                    // stuffing
+                af_flip(4000, KLV, 5),                        // not the PCR PID
+                inj(5000, 10, Class::Truncate, KLV, true),
+                inj(6000, 10, Class::Dup, VIDEO, false),
+                inj(7000, 10, Class::Garbage, AUDIO, true),
+                header(8000, AUDIO, &[0]), // the sync byte
+                inj(9000, 10, Class::Drop, VIDEO, true),
+                header(10_000, VIDEO, &[1, 2]), // the PID rewrite
+                af_flip(11_000, VIDEO, 5),      // the flags
+                {
+                    // An overrunning adaptation length, same packet shape.
+                    let mut h = af_flip(12_000, VIDEO, 4);
+                    h.class = Class::Header;
+                    h.detectable = true;
+                    h
+                },
             ],
             &hdr(),
         );
-        a.on_pcr(1000, 5_000); // resolves to 5 010
-        a.on_pcr(2000, 7_000); // 7 010
-        a.on_pcr(3000, 9_000); // 9 010
-        a.on_pcr(4000, 11_000); // 11 010
-        a.on_pcr(5000, 13_000); // 13 010
+        for k in 0..12u64 {
+            // Injection k resolves to 5 010 + 2 000 k.
+            a.on_pcr(1000 * (k + 1), 5_000 + 2_000 * k);
+        }
+        let at = |k: u64| 5_010 + 2_000 * k;
 
-        // A flip on the PCR PID explains a lead on every PID measured
-        // against that PCR, to the window's last packet and no further.
-        assert!(a.explains_lead(5_010, VIDEO, VIDEO));
-        assert!(a.explains_lead(5_010, KLV, VIDEO));
-        assert!(a.explains_lead(5_010 + ATTRIBUTION_WINDOW, AUDIO, VIDEO));
-        assert!(!a.explains_lead(5_011 + ATTRIBUTION_WINDOW, AUDIO, VIDEO));
-        // A flip confined to the KLV PID explains the KLV PES and nothing
-        // on the PIDs it never touched.
-        assert!(a.explains_lead(7_010, KLV, VIDEO));
-        assert!(!a.explains_lead(7_010, AUDIO, VIDEO));
-        assert!(!a.explains_lead(7_010, VIDEO, VIDEO));
+        // A flipped PCR byte explains a lead on every PID measured against
+        // that PCR, to the window's last packet and no further.
+        assert!(a.explains_lead(at(0), VIDEO));
+        assert!(a.explains_lead(at(0) + ATTRIBUTION_WINDOW, VIDEO));
+        assert!(!a.explains_lead(at(0) + ATTRIBUTION_WINDOW + 1, VIDEO));
+        // A flip in a payload of the PCR PID starts past the adaptation
+        // field and the PES header: it cannot move a PCR or a DTS.
+        assert!(!a.explains_lead(at(1), VIDEO));
+        // Nor can a flip in the stuffing of a payload-less packet.
+        assert!(!a.explains_lead(at(2), VIDEO));
+        // Flags flipped on another PID's packet: not the clock this
+        // program's PES starts are measured against.
+        assert!(!a.explains_lead(at(3), VIDEO));
         // A truncation breaks framing for the whole multiplex.
-        assert!(a.explains_lead(9_010, VIDEO, VIDEO));
-        assert!(a.explains_lead(9_010, AUDIO, VIDEO));
-        // A duplicate explains nothing, on its own PID either.
-        assert!(!a.explains_lead(11_010, VIDEO, VIDEO));
-        // Garbage, the same as a truncation.
-        assert!(a.explains_lead(13_010, VIDEO, VIDEO));
+        assert!(a.explains_lead(at(4), VIDEO));
+        // A duplicate repeats a sound packet.
+        assert!(!a.explains_lead(at(5), VIDEO));
+        // Garbage and a killed sync byte, the same as a truncation.
+        assert!(a.explains_lead(at(6), VIDEO));
+        assert!(a.explains_lead(at(7), VIDEO));
+        // A dropped or moved packet takes a PCR or a PES start away; the
+        // next lead is measured against an older PCR and is larger.
+        assert!(!a.explains_lead(at(8), VIDEO));
+        assert!(!a.explains_lead(at(9), VIDEO));
+        // The flags byte: a PCR flag set over stuffing reads as a PCR.
+        assert!(a.explains_lead(at(10), VIDEO));
+        // The same flip asked about for a program with another PCR PID.
+        assert!(!a.explains_lead(at(10) + 1, KLV));
+        // A `header` rewrite of the adaptation length makes the packet
+        // unreadable: its PCR is lost, not moved.
+        assert!(!a.explains_lead(at(11), VIDEO));
 
         // It recorded nothing: no events, no detection, no recovery.
-        let r = a.finish(20_000);
+        let r = a.finish(40_000);
         assert_eq!(r.events, 0);
         assert_eq!(r.attributed_events, 0);
     }

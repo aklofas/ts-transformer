@@ -1344,12 +1344,12 @@ impl Tally {
     /// (`rawts::Reader::take_prefix_mismatches`, judged as
     /// [`Tally::note_prefix_mismatches`] describes) and the PES starts
     /// whose lead over the PCR read below its level
-    /// (`rawts::Reader::take_lead_events`). A lead event inside an
-    /// attributed corruption window that could have damaged the clock it
-    /// was measured against, or the PES itself, is the tap's doing and is
-    /// excused per PID (see `Attribution::explains_lead`); the rest stay
-    /// charged by the `pcr_lead` oracle. Without an attribution nothing is
-    /// excused.
+    /// (`rawts::Reader::take_lead_events`). A lead event inside the
+    /// attributed window of an injection that could have damaged the clock
+    /// it was measured against, or the packet framing, is the tap's doing
+    /// and is excused per PID (see `Attribution::explains_lead`); the rest
+    /// stay charged by the `pcr_lead` oracle. Without an attribution
+    /// nothing is excused.
     ///
     /// Both lists are in packet order and are fed MERGED in that order:
     /// the attribution's cursors only move forward, so asking about a
@@ -1375,7 +1375,7 @@ impl Tally {
             } else {
                 let lead = leads[j];
                 j += 1;
-                if a.explains_lead(lead.at, lead.pid, lead.pcr_pid) {
+                if a.explains_lead(lead.at, lead.pcr_pid) {
                     *self.lead_excused_by_pid.entry(lead.pid).or_insert(0) += 1;
                 }
             }
@@ -3983,26 +3983,38 @@ mod tests {
         }
     }
 
-    /// A PES start below its lead level is excused per PID only inside an
-    /// attributed corruption window that could have damaged its clock or
-    /// itself; one outside any window stays charged, and no attribution
-    /// excuses nothing.
+    /// A body flip on a payload-less packet of `pid` that changed a PCR
+    /// byte (offset 7, under a set PCR flag): the one confined damage that
+    /// can move the clock a lead is measured against.
+    fn pcr_flip_at(pid: u16, since_pcr: u64) -> crate::corrupt::Injection {
+        let mut flip = injection_at(crate::corrupt::Class::BodyFlip, pid, since_pcr);
+        flip.before = vec![0x47, (pid >> 8) as u8, pid as u8, 0x20, 183, 0x10];
+        flip.before.resize(188, 0xff);
+        flip.offsets = vec![7];
+        flip
+    }
+
+    /// A PES start below its lead level is excused per PID only inside the
+    /// attributed window of an injection that could have damaged the clock
+    /// it was measured against; one outside any window stays charged, other
+    /// damage on the PCR PID or on another PID excuses nothing, and no
+    /// attribution excuses nothing.
     #[test]
     fn a_lead_below_the_floor_is_excused_only_inside_an_attributed_window() {
         use crate::corrupt::Class;
         let hdr = corruption_header();
-        // A body flip on the video PID, which is the PCR PID.
-        let inj = injection_at(Class::BodyFlip, VIDEO_PID, 3);
+        // A flipped PCR byte on the video PID, which is the PCR PID.
+        let inj = pcr_flip_at(VIDEO_PID, 3);
 
         let mut t = Tally::new();
         t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
         t.note_pes_findings(
             &[],
             &[
-                // Inside the window, on the damaged PID: excused.
+                // Inside the window, on the PCR PID: excused.
                 lead_event(VIDEO_PID, 10),
                 // Inside the window, on a PID measured against the damaged
-                // PCR PID: excused.
+                // PCR: excused.
                 lead_event(KLV_PID, 11),
                 // Far outside any window: not excused.
                 lead_event(VIDEO_PID, 9_000),
@@ -4013,15 +4025,28 @@ mod tests {
         assert_eq!(ex.lead_excused.get(&VIDEO_PID), Some(&1), "{ex:?}");
         assert_eq!(ex.lead_excused.get(&KLV_PID), Some(&1), "{ex:?}");
 
-        // An injection confined to the KLV PID does not excuse the video.
-        let mut t = Tally::new();
-        let inj = injection_at(Class::BodyFlip, KLV_PID, 3);
-        t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
-        t.note_pes_findings(&[], &[lead_event(VIDEO_PID, 10)]);
-        assert!(
-            t.explained(VerifyMode::Lossy, None).lead_excused.is_empty(),
-            "a KLV-PID flip excused a video lead"
-        );
+        // The same flip on the KLV PID touches no clock the video or the
+        // KLV is measured against; a payload flip and a dropped packet on
+        // the PCR PID cannot move a PCR forward or a DTS back.
+        for (what, inj) in [
+            ("a flip on the KLV PID", pcr_flip_at(KLV_PID, 3)),
+            (
+                "a payload flip on the PCR PID",
+                injection_at(Class::BodyFlip, VIDEO_PID, 3),
+            ),
+            (
+                "a drop on the PCR PID",
+                injection_at(Class::Drop, VIDEO_PID, 3),
+            ),
+        ] {
+            let mut t = Tally::new();
+            t.attach_attribution(attribution_for(VerifyMode::Lossy, vec![inj], &hdr));
+            t.note_pes_findings(&[], &[lead_event(VIDEO_PID, 10), lead_event(KLV_PID, 11)]);
+            assert!(
+                t.explained(VerifyMode::Lossy, None).lead_excused.is_empty(),
+                "{what} excused a lead"
+            );
+        }
 
         let mut bare = Tally::new();
         bare.note_pes_findings(&[], &[lead_event(VIDEO_PID, 10)]);
@@ -4041,12 +4066,7 @@ mod tests {
     fn prefix_and_lead_events_of_one_batch_are_judged_in_packet_order() {
         use crate::corrupt::Class;
         let hdr = corruption_header();
-        let log = || {
-            vec![
-                injection_at(Class::BodyFlip, VIDEO_PID, 3),
-                injection_at(Class::BodyFlip, VIDEO_PID, 5_000),
-            ]
-        };
+        let log = || vec![pcr_flip_at(VIDEO_PID, 3), pcr_flip_at(VIDEO_PID, 5_000)];
         let prefix = [(VIDEO_PID, 5_010)];
         let leads = [lead_event(VIDEO_PID, 10)];
 
@@ -4054,7 +4074,7 @@ mod tests {
         // early, and the early one is no longer explained.
         let mut a = attribution_for(VerifyMode::Lossy, log(), &hdr);
         assert!(a.explains_damage(5_010, VIDEO_PID));
-        assert!(!a.explains_lead(10, VIDEO_PID, VIDEO_PID));
+        assert!(!a.explains_lead(10, VIDEO_PID));
 
         let mut t = Tally::new();
         t.attach_attribution(attribution_for(VerifyMode::Lossy, log(), &hdr));
