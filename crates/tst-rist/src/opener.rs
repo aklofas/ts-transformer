@@ -30,5 +30,7 @@ pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError
 pub fn open_recv(url: &str) -> Result<Opened<Box<dyn RecvTransport>>, BindingError> {
     let t = RistRecvTransportBuilder::new(url)?.listen()?;
     let cancel = recv_cancel_of(&t);
-    Ok(Opened::new(Box::new(t), cancel, Domain::Rist))
+    let local = t.local_addr();
+    let transport: Box<dyn RecvTransport> = Box::new(t);
+    Ok(Opened::new(transport, cancel, Domain::Rist).with_local_addr(local))
 }

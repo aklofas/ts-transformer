@@ -310,9 +310,11 @@ pub mod tst_pipeline::binding::opened
 #[non_exhaustive] pub struct tst_pipeline::binding::opened::Opened<T>
 pub tst_pipeline::binding::opened::Opened::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
 pub tst_pipeline::binding::opened::Opened::domain: tst_pipeline::binding::kind::Domain
+pub tst_pipeline::binding::opened::Opened::local_addr: core::option::Option<core::net::socket_addr::SocketAddr>
 pub tst_pipeline::binding::opened::Opened::transport: T
 impl<T> tst_pipeline::binding::opened::Opened<T>
 pub fn tst_pipeline::binding::opened::Opened<T>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, tst_pipeline::binding::kind::Domain) -> Self
+pub fn tst_pipeline::binding::opened::Opened<T>::with_local_addr(self, core::net::socket_addr::SocketAddr) -> Self
 impl<T> core::marker::Freeze for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Freeze
 impl<T> core::marker::Send for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Send
 impl<T> core::marker::Sync for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Sync
@@ -849,9 +851,11 @@ impl !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::handles::M
 #[non_exhaustive] pub struct tst_pipeline::binding::Opened<T>
 pub tst_pipeline::binding::Opened::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
 pub tst_pipeline::binding::Opened::domain: tst_pipeline::binding::kind::Domain
+pub tst_pipeline::binding::Opened::local_addr: core::option::Option<core::net::socket_addr::SocketAddr>
 pub tst_pipeline::binding::Opened::transport: T
 impl<T> tst_pipeline::binding::opened::Opened<T>
 pub fn tst_pipeline::binding::opened::Opened<T>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>, tst_pipeline::binding::kind::Domain) -> Self
+pub fn tst_pipeline::binding::opened::Opened<T>::with_local_addr(self, core::net::socket_addr::SocketAddr) -> Self
 impl<T> core::marker::Freeze for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Freeze
 impl<T> core::marker::Send for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Send
 impl<T> core::marker::Sync for tst_pipeline::binding::opened::Opened<T> where T: core::marker::Sync

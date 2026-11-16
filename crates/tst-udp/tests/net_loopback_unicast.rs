@@ -164,3 +164,21 @@ fn the_receive_buffer_read_back_covers_the_rcvbuf_request() {
     let granted = rx.recv_buffer_size().unwrap();
     assert!(granted >= 65_536, "{granted}");
 }
+
+#[test]
+fn opener_reports_the_port_it_bound() {
+    let mut rx = tst_udp::opener::open_recv("udp://127.0.0.1:0").expect("open_recv");
+    let local = rx.local_addr.expect("a bound receiver reports its address");
+    assert_ne!(local.port(), 0);
+
+    let peer = UdpSocket::bind("127.0.0.1:0").expect("bind peer");
+    peer.send_to(&[0x47; 188], local).expect("send");
+    let mut buf = vec![0u8; rx.transport.max_payload()];
+    let c = rx.cancel.clone();
+    let watchdog = thread::spawn(move || {
+        thread::sleep(Duration::from_secs(10));
+        c.cancel();
+    });
+    assert_eq!(rx.transport.recv_bytes(&mut buf).expect("recv"), 188);
+    drop(watchdog);
+}

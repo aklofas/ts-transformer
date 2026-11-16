@@ -150,3 +150,11 @@ fn simple_profile_port_zero_is_refused_before_librist() {
         );
     }
 }
+
+#[test]
+fn opener_reports_the_port_it_bound() {
+    let rx = tst_rist::opener::open_recv("rist://@127.0.0.1:0").expect("open_recv");
+    let local = rx.local_addr.expect("a bound receiver reports its address");
+    assert_ne!(local.port(), 0);
+    assert!(local.ip().is_loopback());
+}

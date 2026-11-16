@@ -491,6 +491,8 @@ fn opener_round_trips_one_chunk_and_its_cancel_ends_a_parked_recv() {
     // Receiver: the opener's transport reads what the peer writes.
     let rx = tst_tcp::opener::open_recv(&url).expect("open_recv");
     assert_eq!(rx.domain, Domain::Tcp);
+    // A caller connects out; it binds nothing to report.
+    assert!(rx.local_addr.is_none());
     let (mut rx_peer, _) = peer.accept().expect("accept receiver");
     rx_peer.write_all(&[0x47; 188]).expect("peer write");
     let mut rx_t = rx.transport;

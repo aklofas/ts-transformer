@@ -45,6 +45,7 @@ Next release: 0.11.0
 ### Added — tst-rist, tst-pipeline
 
 - `RistRecvTransport::local_addr()`: the address the receiver bound, read from librist's socket. A Main-profile receiver bound on port 0 now reports the port the kernel picked, so a sender can reach it.
+- A receive opener reports the address it bound: `Opened::local_addr` and `Opened::with_local_addr` in `tst-pipeline`, filled by the `udp://` and `rist://@` receive openers.
 
 ### Changed — tst-interop
 

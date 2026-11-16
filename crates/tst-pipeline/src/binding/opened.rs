@@ -23,6 +23,9 @@ pub struct Opened<T> {
     /// The error domain of the transport: which host exception class a
     /// shell over it raises for a cross-domain kind (`Closed`, `Broken`, …).
     pub domain: Domain,
+    /// The local address the opener bound, when it binds one; `None` for a
+    /// transport that connects out or does not report it.
+    pub local_addr: Option<core::net::SocketAddr>,
 }
 
 impl<T> Opened<T> {
@@ -32,7 +35,15 @@ impl<T> Opened<T> {
             transport,
             cancel,
             domain,
+            local_addr: None,
         }
+    }
+
+    /// Record the local address the opener bound.
+    #[must_use]
+    pub fn with_local_addr(mut self, addr: core::net::SocketAddr) -> Self {
+        self.local_addr = Some(addr);
+        self
     }
 }
 
@@ -82,6 +93,15 @@ mod tests {
             true
         }
         fn close(&mut self) {}
+    }
+
+    #[test]
+    fn local_addr_is_absent_until_set() {
+        let cancel: Arc<dyn TransportCancel> = Arc::new(FlagCancel::new());
+        let o = Opened::new((), cancel, Domain::Udp);
+        assert!(o.local_addr.is_none());
+        let a: core::net::SocketAddr = "127.0.0.1:4242".parse().unwrap();
+        assert_eq!(o.with_local_addr(a).local_addr, Some(a));
     }
 
     #[test]
