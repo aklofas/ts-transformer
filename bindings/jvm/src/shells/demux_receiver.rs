@@ -78,6 +78,8 @@ struct RxSnap {
     /// cancel across: a mount cancel must beat events already queued, like
     /// the receiver's own cancel.
     mount_cancel: Option<Arc<dyn TransportCancel>>,
+    /// The address the transport bound at open, for the transports that report one.
+    local_addr: Option<std::net::SocketAddr>,
 }
 
 static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<RxSnap>>> =
@@ -159,6 +161,7 @@ fn register_with(
         transport,
         cancel,
         domain,
+        local_addr,
         ..
     } = opened;
     // Taken before the transport moves into the shell.
@@ -177,6 +180,7 @@ fn register_with(
             handles: RxSnap {
                 ts_bytes_demuxed,
                 mount_cancel,
+                local_addr,
             },
         },
     );
@@ -498,6 +502,21 @@ jni_native! {
         REGISTRY
             .snapshot(handle as u64, |s| s.handles.ts_bytes_demuxed.get())
             .map_or(-1, counter_to_jlong)
+    }
+}
+
+jni_native! {
+    /// `nLocalPort(handle)` — the port the transport bound at open, `-1` for a
+    /// shell that has none; an absent key throws `IllegalStateException`. Reads
+    /// the registry snapshot, never the slot.
+    fn Java_org_tstrans_shells_DemuxReceiver_nLocalPort(env, _class, handle: jlong) -> jint = -1 => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.local_addr) {
+            Some(addr) => addr.map_or(-1, |a| jint::from(a.port())),
+            None => {
+                crate::error::throw_closed(env, "DemuxReceiver");
+                -1
+            }
+        }
     }
 }
 

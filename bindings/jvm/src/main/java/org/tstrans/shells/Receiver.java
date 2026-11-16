@@ -1,5 +1,6 @@
 package org.tstrans.shells;
 
+import java.util.OptionalInt;
 import org.tstrans.BindingException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
@@ -185,6 +186,26 @@ public class Receiver extends NativeHandle {
     @Override public void close() { super.close(); }
 
     /**
+     * The local port the transport bound when this receiver was opened, for a
+     * {@code udp://} URL or a {@code rist://@host:port} listener, so a URL with
+     * port 0 reports the port the kernel picked. Empty for every other shell
+     * (a caller, an accepted connection, {@code rtp://}). The value is the one
+     * captured at open; it never waits behind a {@code recvBytes()} parked on
+     * another thread. A RIST receiver on port 0 needs the Main profile (the
+     * default); the Simple profile is refused at open with kind
+     * {@code INVALID_CONFIG}, because its second port cannot follow a
+     * kernel-picked one.
+     *
+     * @return the bound port, or empty when the transport reports none
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public OptionalInt localPort() {
+        ensureOpen("Receiver is closed");
+        int p = nLocalPort(peekHandle());
+        return p < 0 ? OptionalInt.empty() : OptionalInt.of(p);
+    }
+
+    /**
      * Return {@code true} while the receiver owns a live transport. A receive in
      * flight on another thread counts as live.
      *
@@ -211,5 +232,6 @@ public class Receiver extends NativeHandle {
     private static native int     nEndReason(long handle);
     private static native String  nEndDetail(long handle);
     private static native EndReason.Snapshot nClose(long handle);
+    private static native int nLocalPort(long handle);
     private static native boolean nIsAlive(long handle);
 }

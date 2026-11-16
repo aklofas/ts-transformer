@@ -2,6 +2,7 @@ package org.tstrans.shells;
 
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicLong;
 import org.tstrans.BindingException;
 import org.tstrans.DemuxException;
@@ -352,6 +353,26 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     /**
+     * The local port the transport bound when this receiver was opened, for a
+     * {@code udp://} URL or a {@code rist://@host:port} listener, so a URL with
+     * port 0 reports the port the kernel picked. Empty for every other shell
+     * (a caller, an accepted connection, {@code rtp://}). The value is the one
+     * captured at open; it never waits behind a {@code next()} parked on
+     * another thread. A RIST receiver on port 0 needs the Main profile (the
+     * default); the Simple profile is refused at open with kind
+     * {@code INVALID_CONFIG}, because its second port cannot follow a
+     * kernel-picked one.
+     *
+     * @return the bound port, or empty when the transport reports none
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public OptionalInt localPort() {
+        ensureOpen("DemuxReceiver is closed");
+        int p = nLocalPort(peekHandle());
+        return p < 0 ? OptionalInt.empty() : OptionalInt.of(p);
+    }
+
+    /**
      * Return {@code true} while the receiver owns a live transport.
      *
      * @return liveness state of the underlying transport
@@ -387,5 +408,6 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     private static native String nEndDetail(long handle);
     private static native EndReason.Snapshot nClose(long handle, long[] tsBytesOut);
     private static native long nTsBytesDemuxed(long handle);
+    private static native int nLocalPort(long handle);
     private static native boolean nIsAlive(long handle);
 }
