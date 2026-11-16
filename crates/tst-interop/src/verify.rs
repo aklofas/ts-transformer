@@ -4064,7 +4064,6 @@ mod tests {
     /// the earlier lead event.
     #[test]
     fn prefix_and_lead_events_of_one_batch_are_judged_in_packet_order() {
-        use crate::corrupt::Class;
         let hdr = corruption_header();
         let log = || vec![pcr_flip_at(VIDEO_PID, 3), pcr_flip_at(VIDEO_PID, 5_000)];
         let prefix = [(VIDEO_PID, 5_010)];
