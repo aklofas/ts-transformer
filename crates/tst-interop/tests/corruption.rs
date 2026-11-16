@@ -404,10 +404,16 @@ fn every_class_on_every_profile_is_attributed() {
 /// class set across many, so a verdict that only holds for a lucky draw
 /// cannot pass: every seed's report must come out clean.
 ///
-/// The sweep is also where the PCR lead oracle meets the tap: damage that
-/// hands the raw reader a wrong clock (a truncation it re-locks after) must
-/// come out excused, so at least one run has to have excused a lead, or
-/// the sweep never exercised that path.
+/// What a seed varies here is the damage, not its place. [`forced`] injects
+/// at the `min_gap` floor, so every seed hits the same packets: packet 0
+/// (the PAT), and packet 1000, a video PES start on the PCR PID. The seed
+/// draws the byte offsets, the header sub-kind and the truncation or
+/// garbage length.
+///
+/// The sweep is also where the PCR lead oracle meets the framing classes:
+/// damage that hands the raw reader a wrong clock (a truncation it re-locks
+/// after) must come out excused, so at least one run has to have excused a
+/// lead, or the sweep never exercised that path.
 #[test]
 fn every_class_is_attributed_across_a_seed_sweep() {
     let p = baseline();
@@ -440,12 +446,20 @@ fn every_class_is_attributed_across_a_seed_sweep() {
 /// Seeds per (profile, class) in the sweep below.
 const LEAD_SWEEP_SEEDS: u64 = 8;
 
-/// The soak runs the tap for two days on profiles drawn from the whole
-/// registry, so the PCR lead floor has to hold under every class on every
-/// profile, not on `baseline` alone: whatever the tap does to a PCR, a PES
-/// header or the packet framing, no `pcr_lead` line may survive the
-/// excusal. Other verdicts are the other tests' subject and are not read
-/// here (some profiles' oracles have their own limits under a forced class).
+/// The soak draws its profiles from the whole registry, so the PCR lead
+/// floor has to hold under every class on every profile, not on `baseline`
+/// alone: no `pcr_lead` line may survive the excusal. Other verdicts are
+/// the other tests' subject and are not read here (some profiles' oracles
+/// have their own limits under a forced class).
+///
+/// As in the sweep above, [`forced`] puts every seed's injections on the
+/// same packets: the PAT at packet 0, and a video PES start on the PCR PID
+/// at each multiple of 1000 (a deferred `psi_flip` lands on the next PAT).
+/// So this covers each class's damage to a PSI packet and to a PES start
+/// that carries the PCR, at compact sizes. It never hits a KLV or audio
+/// PID, a packet in the middle of a PES or a PCR-only packet: those are
+/// [`the_pcr_lead_floor_survives_a_mixed_tap_at_realistic_sizes`] and
+/// [`a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps`].
 #[test]
 fn the_pcr_lead_floor_survives_every_class_on_every_profile() {
     let mut excused = 0;
@@ -477,31 +491,149 @@ fn the_pcr_lead_floor_survives_every_class_on_every_profile() {
     assert!(excused >= 1, "no run of the sweep excused a lead");
 }
 
-/// The excusal is by position. A PCR rewritten by hand between the two
-/// injections' windows, where the log explains nothing, fails `pcr_lead`:
-/// the access unit that carries it reads a lead ten seconds below zero,
-/// and nothing is counted as excused.
+/// Seeds of the realistic sweep below. Chosen so that the runs between them
+/// land on a payload-less packet and on PIDs other than the PCR PID, which
+/// the test checks.
+const REALISTIC_SWEEP_SEEDS: [u64; 4] = [2, 6, 7, 8];
+
+/// Capture length of the realistic sweep: about 25 000 packets a profile.
+const REALISTIC_SWEEP_SECONDS: f64 = 20.0;
+
+/// The tap as a soak leg meets it: access units of realistic size, so a
+/// PES spans many packets and a 500-packet window is under half a second,
+/// and all classes mixed, so the injections fall where the stream's bytes
+/// are. Most land in the middle of a video PES, some on a KLV or audio
+/// PID, on PSI or on a payload-less packet. None of that can move a PCR
+/// forward or a decode time back, so no `pcr_lead` line may appear, on
+/// any profile.
+///
+/// This shows the floor does not misfire on damage that cannot lower a
+/// lead. It does not show the excusal: at this rate a flipped PCR byte or
+/// a re-lock that misreads a clock is rare (a run of this sweep over
+/// 186 467 injections excused 15 leads), and the tests that force one are
+/// [`a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps`] and the
+/// seed sweep above.
+#[test]
+fn the_pcr_lead_floor_survives_a_mixed_tap_at_realistic_sizes() {
+    let mut classes = std::collections::BTreeSet::new();
+    let (mut total, mut mid_pes, mut other_pids, mut no_payload) = (0, 0, 0, 0);
+    for p in profiles::all() {
+        let path = std::env::temp_dir().join(format!(
+            "tst-interop-corruption-realistic-{}-{}.ts",
+            p.name,
+            std::process::id()
+        ));
+        r#gen::run(
+            p,
+            REALISTIC_SWEEP_SECONDS,
+            &path,
+            KlvSet::Compact,
+            0,
+            AuSizeMode::Realistic { scale: 1 },
+        )
+        .expect("gen::run");
+        let bytes = std::fs::read(&path).expect("read the generated capture");
+        let _ = std::fs::remove_file(&path);
+        // The PIDs that carry a PCR in the clean capture.
+        let pcr_pids: std::collections::BTreeSet<u16> = bytes
+            .chunks_exact(188)
+            .filter(|pkt| pkt[3] & 0x20 != 0 && pkt[4] >= 7 && pkt[5] & 0x10 != 0)
+            .map(|pkt| (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]))
+            .collect();
+
+        for seed in REALISTIC_SWEEP_SEEDS {
+            let (wire, header, injections) = tap(&bytes, "rate=10000,min_gap=1000", seed);
+            for i in &injections {
+                classes.insert(i.class.name());
+                let afc = i.before.get(3).map_or(0, |b| b & 0x30);
+                total += 1;
+                mid_pes += usize::from(!i.psi && !i.pes_start && afc & 0x10 != 0);
+                other_pids += usize::from(!i.psi && !pcr_pids.contains(&i.pid));
+                no_payload += usize::from(afc == 0x20);
+            }
+            let r = verify_bytes_with_corruption(
+                &wire,
+                p,
+                REALISTIC_SWEEP_SECONDS,
+                VerifyMode::Lossy,
+                KlvExpect::compact(),
+                Some(&(header, injections.clone())),
+            );
+            let lead: Vec<&String> = r
+                .failures
+                .iter()
+                .filter(|f| f.starts_with("pcr_lead"))
+                .collect();
+            assert!(
+                lead.is_empty(),
+                "{} seed {seed}: {lead:?} for {:?}",
+                p.name,
+                shape(&injections)
+            );
+            assert_eq!(
+                r.metrics.pcr_lead_min_ms,
+                Some(100.0),
+                "{} seed {seed}: a lead moved (an excused one shows here too)",
+                p.name
+            );
+        }
+    }
+    // What the sweep reached, so the claim above stays true of it.
+    assert_eq!(classes.len(), Class::ALL.len(), "{classes:?}");
+    assert!(total >= 1_000, "{total} injections");
+    assert!(mid_pes >= total / 2, "{mid_pes} of {total} inside a PES");
+    assert!(
+        other_pids >= 3,
+        "{other_pids} on a PID other than a PCR PID"
+    );
+    assert!(no_payload >= 1, "{no_payload} on a payload-less packet");
+}
+
+/// The excusal is by position. The first injection of a forced `header`
+/// run is a killed sync byte on the PAT at packet 0: damage that breaks
+/// framing for the whole multiplex, so inside its window it excuses a lead
+/// on any PID. A PCR rewritten by hand after that window has closed, and
+/// before the next injection's opens, fails `pcr_lead`: the access unit
+/// that carries it reads a lead ten seconds below zero, and nothing is
+/// counted as excused.
+///
+/// The edit sits where the attribution still holds the first injection
+/// (it retires one only `RECOVERY_BOUND + APPROX_SLACK` packets past it),
+/// so an excusal that forgot to ask about the window would excuse it.
 #[test]
 fn a_bad_lead_outside_every_injection_window_is_not_excused() {
     let p = baseline();
     let bytes = gen_bytes(p, "lead-outside");
-    let (mut wire, header, injections) = tap(&bytes, &forced(Class::BodyFlip), SEED);
-    assert_eq!(wire.len(), bytes.len(), "a body flip keeps every packet");
+    let (mut wire, header, injections) = tap(&bytes, &forced(Class::Header), SEED);
+    assert_eq!(
+        wire.len(),
+        bytes.len(),
+        "a header rewrite keeps every packet"
+    );
     let log = (header, injections);
     assert!(judge(&wire, p, Some(&log)).pass, "the control passes");
+    let first = &log.1[0];
+    assert!(
+        first.ordinal == 0 && first.class == Class::Header && first.offsets == [0],
+        "the first injection must be a killed sync byte at packet 0: {:?}",
+        shape(&log.1)
+    );
 
-    // The injections sit at packets 0 and about 1000 (see the module doc);
-    // each window ends 500 packets on. Packet 700 onward is outside both.
-    let at = (700..900)
+    // Past the first window's last packet (the window, plus the slack of
+    // an approximate resolution), and still inside the span the
+    // attribution keeps that injection for.
+    let clear = (ATTRIBUTION_WINDOW + APPROX_SLACK) as usize + 10;
+    let held = (RECOVERY_BOUND + APPROX_SLACK) as usize - 10;
+    let at = (clear..held)
         .find(|&n| {
             let pkt = &wire[n * 188..(n + 1) * 188];
             let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
             pid == 0x1011 && pkt[3] & 0x30 == 0x30 && pkt[4] >= 7 && pkt[5] & 0x10 != 0
         })
-        .expect("a video packet with a PCR and a payload between the windows");
+        .expect("a video packet with a PCR and a payload after the first window");
     assert!(
-        log.1.iter().all(|i| i.ordinal.abs_diff(at as u64) > 150),
-        "packet {at} must be clear of every injection: {:?}",
+        log.1[1..].iter().all(|i| i.ordinal > at as u64 + 150),
+        "packet {at} must be clear of every later injection: {:?}",
         shape(&log.1)
     );
     let pcr = &mut wire[at * 188 + 6..at * 188 + 11];

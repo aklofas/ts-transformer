@@ -601,6 +601,97 @@ fn udp_recv_excuses_the_leads_a_flipped_pcr_damaged() {
     );
 }
 
+/// The same damage on the managed receive path (`recv --managed`), which
+/// the soak's `srt` leg and the stress harness's managed streams run: an
+/// SRT listener behind the reconnect wrapper. `run_managed` builds its own
+/// tee and has to set the oracle's levels on that reader itself; without
+/// them the reader reports no lead event, nothing is excused, and the leg
+/// fails on the tap's first flipped PCR.
+///
+/// Only the lead verdicts are read. The sender closes at the end of its
+/// stream and the receiver then waits out a reconnect that never comes, so
+/// the capture's last access unit can race the close, which is the other
+/// managed tests' subject.
+#[test]
+fn srt_managed_recv_excuses_the_leads_a_flipped_pcr_damaged() {
+    use tst_interop::corrupt::parse_corrupt;
+
+    let profile = profiles::by_name("audio").expect("audio profile must exist");
+    let port = free_port();
+    // conntimeo=2000: see `srt_managed_recv_returns_after_peer_never_reconnects`.
+    let recv_url = format!("srt://127.0.0.1:{port}?mode=listener&conntimeo=2000");
+    let send_url = format!("srt://127.0.0.1:{port}");
+    let log_path = corruption_log_path("lead-managed");
+
+    let recv_handle = {
+        let log_path = log_path.clone();
+        thread::spawn(move || {
+            recv::run_managed(
+                &recv_url,
+                profile,
+                SECONDS,
+                None,
+                false,
+                false,
+                KlvExpect::compact(),
+                Some(&log_path),
+                None,
+            )
+        })
+    };
+
+    // The seed and spec of `udp_recv_excuses_the_leads_a_flipped_pcr_damaged`:
+    // the tap sits before the transport, so it flips the same PCR byte of
+    // the same packet. A connect that loses the race with the listener's
+    // bind fails before the tap writes its log, so retrying is safe.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let cfg = parse_corrupt("rate=300,min_gap=1000,classes=body_flip", 8576, 1)
+            .expect("the corruption spec must parse");
+        match send::run(
+            profile,
+            &send_url,
+            SECONDS,
+            None,
+            false,
+            AuSizeMode::Compact,
+            KlvSet::Compact,
+            0,
+            Some((cfg, log_path.clone())),
+        ) {
+            Ok(_) => break,
+            Err(e) => {
+                assert!(Instant::now() < deadline, "send::run kept failing: {e}");
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
+
+    let report = join_with_timeout(recv_handle, Duration::from_secs(15))
+        .expect("run_managed must return Ok after the deadline cancel");
+    let _ = std::fs::remove_file(&log_path);
+
+    assert!(
+        report.metrics.pcr_lead_min_ms.is_some_and(|ms| ms < 0.0),
+        "the flip must have moved a PCR past a PES: {:?}",
+        report.metrics.pcr_lead_min_ms
+    );
+    let a = report
+        .metrics
+        .corruption_attribution
+        .expect("a judged capture carries its attribution");
+    assert!(a.pcr_lead_excused >= 1, "{a:?}");
+    let lead: Vec<&String> = report
+        .failures
+        .iter()
+        .filter(|f| f.starts_with("pcr_lead"))
+        .collect();
+    assert!(
+        lead.is_empty(),
+        "a lead the tap damaged must not fail the capture: {lead:?}"
+    );
+}
+
 /// The receiver must keep reading the log for the WHOLE capture, not
 /// snapshot it at startup: the sender appends to that same file as it
 /// runs, and injections it records after the receiver started are the
