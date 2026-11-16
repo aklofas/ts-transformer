@@ -11,7 +11,6 @@ import static org.tstrans.shells.ShellPeers.within;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -20,34 +19,12 @@ import org.tstrans.TestSupport;
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.ShellPeers.Cleanup;
 import org.tstrans.shells.ShellPeers.Parked;
+import org.tstrans.shells.ShellPeers.Watchdog;
 
 @Timeout(60)
 class ListenerTest {
 
     private static final String LOOPBACK_V4 = "tcp://127.0.0.1:0?listen=1";
-
-    /**
-     * Cancels the listener through a handle taken before the call under test, if that call is
-     * still running after {@code ms}: a hung accept on the main thread would wedge the runner.
-     */
-    private static final class Watchdog implements AutoCloseable {
-        private final CountDownLatch finished = new CountDownLatch(1);
-
-        Watchdog(Listener l, long ms) {
-            CancelHandle h = l.cancelHandle();
-            Thread t = new Thread(() -> {
-                try {
-                    if (!finished.await(ms, TimeUnit.MILLISECONDS)) h.cancel();
-                } catch (InterruptedException ignored) {
-                    // the test finished first
-                }
-            }, "tcp-listener-watchdog");
-            t.setDaemon(true);
-            t.start();
-        }
-
-        @Override public void close() { finished.countDown(); }
-    }
 
     /** {@code accept()} parked on a daemon thread; it must end by a cancel or a close. */
     private static Parked parkAccept(Listener l) throws InterruptedException {
@@ -70,7 +47,7 @@ class ListenerTest {
             assertTrue(port > 0, "port " + port);
             java.net.Socket client = c.add(new java.net.Socket(InetAddress.getByName("127.0.0.1"), port));
             Transport t;
-            try (Watchdog w = new Watchdog(l, scaledMs(10_000))) {
+            try (Watchdog w = new Watchdog(l.cancelHandle(), scaledMs(10_000))) {
                 t = c.add(l.accept());
             }
             assertEquals("127.0.0.1:" + client.getLocalPort(), t.peerAddr());
@@ -84,7 +61,7 @@ class ListenerTest {
             Listener l = c.add(Listener.open("tcp://[::1]:0?listen=1"));
             java.net.Socket client = c.add(new java.net.Socket(InetAddress.getByName("::1"), l.localPort()));
             Transport t;
-            try (Watchdog w = new Watchdog(l, scaledMs(10_000))) {
+            try (Watchdog w = new Watchdog(l.cancelHandle(), scaledMs(10_000))) {
                 t = c.add(l.accept());
             }
             assertEquals("[::1]:" + client.getLocalPort(), t.peerAddr());
@@ -136,7 +113,12 @@ class ListenerTest {
     void closeEndsAParkedAcceptAndIsIdempotent() throws Exception {
         Listener l = Listener.open(LOOPBACK_V4);
         try (Parked p = parkAccept(l)) {
+            // Bounded: a close that took the listener without cancelling first would wait on
+            // the parked accept until Parked's own watchdog cancelled it.
+            long t0 = System.nanoTime();
             l.close();
+            long closeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            assertTrue(closeMs < scaledMs(2000), "close() took " + closeMs + " ms");
             Throwable e = p.awaitEnd(scaledMs(2000));
             if (!(e instanceof IllegalStateException)) assertKind(TcpException.Kind.CLOSED, e);
         } finally {
@@ -190,11 +172,14 @@ class ListenerTest {
             Listener l = c.add(Listener.open(LOOPBACK_V4));
             java.net.Socket client = c.add(new java.net.Socket(InetAddress.getByName("127.0.0.1"), l.localPort()));
             Transport t;
-            try (Watchdog w = new Watchdog(l, scaledMs(10_000))) {
+            try (Watchdog w = new Watchdog(l.cancelHandle(), scaledMs(10_000))) {
                 t = c.add(l.accept());
             }
             l.close();
             assertEquals("127.0.0.1:" + client.getLocalPort(), t.peerAddr());
+            // Still connected: a read on the client waits for data instead of seeing EOF or a reset.
+            client.setSoTimeout((int) scaledMs(300));
+            assertThrows(SocketTimeoutException.class, () -> client.getInputStream().read());
             t.close();
             t.close();
             assertThrows(IllegalStateException.class, t::peerAddr);
