@@ -387,6 +387,28 @@ public final class ShellPeers {
     // Parked receives
     // ----------------------------------------------------------------------------------------
 
+    /**
+     * Cancels through a handle taken before the call under test if that call is still running
+     * after {@code ms}: a hung call on the main thread would wedge the runner.
+     */
+    public static final class Watchdog implements AutoCloseable {
+        private final CountDownLatch finished = new CountDownLatch(1);
+
+        public Watchdog(CancelHandle handle, long ms) {
+            Thread t = new Thread(() -> {
+                try {
+                    if (!finished.await(ms, TimeUnit.MILLISECONDS)) handle.cancel();
+                } catch (InterruptedException ignored) {
+                    // the test finished first
+                }
+            }, "shell-call-watchdog");
+            t.setDaemon(true);
+            t.start();
+        }
+
+        @Override public void close() { finished.countDown(); }
+    }
+
     /** A receive parked on a daemon thread, with a watchdog that cancels it if the test hangs. */
     public static final class Parked implements AutoCloseable {
         final CompletableFuture<Throwable> outcome = new CompletableFuture<>();
@@ -430,7 +452,7 @@ public final class ShellPeers {
                 } catch (Throwable e) {
                     outcome.complete(e);
                 }
-            }, "shell-parked-recv");
+            }, "shell-parked-call");
             t.setDaemon(true);
             t.start();
             Thread.sleep(300); // let the receive park

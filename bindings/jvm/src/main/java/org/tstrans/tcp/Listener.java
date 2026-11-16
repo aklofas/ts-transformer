@@ -50,9 +50,14 @@ public final class Listener extends NativeHandle {
      * sends nothing is bounded only by a cancel or a close of the shell made from its
      * connection. The peer address is the TCP source address: behind a proxy, the proxy's.
      *
+     * <p>On a {@code tcps://} listener no TLS handshake runs here: the connection's first
+     * read or write drives it, so a handshake failure is thrown by that call on the shell
+     * made from the returned {@link Transport}.
+     *
      * @throws TcpException {@code CLOSED} after a cancel, or when a cancel or a
      *     {@link #close()} lands while this call is parked; {@code IO} on an accept
-     *     failure; {@code TLS} when a {@code tcps://} handshake fails
+     *     failure; {@code TLS} when the server's TLS session for the connection cannot be
+     *     set up
      * @throws IllegalStateException if the listener is closed
      */
     public Transport accept() throws TcpException {
