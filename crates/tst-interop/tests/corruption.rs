@@ -455,8 +455,8 @@ const LEAD_SWEEP_SEEDS: u64 = 8;
 /// As in the sweep above, [`forced`] puts every seed's injections on the
 /// same packets: the PAT at packet 0, and a video PES start on the PCR PID
 /// at each multiple of 1000 (a deferred `psi_flip` lands on the next PAT).
-/// So this covers each class's damage to a PSI packet and to a PES start
-/// that carries the PCR, at compact sizes. It never hits a KLV or audio
+/// So this covers each class's damage to a PSI packet and to a video PES
+/// start on the PCR PID, at compact sizes. It never hits a KLV or audio
 /// PID, a packet in the middle of a PES or a PCR-only packet: those are
 /// [`the_pcr_lead_floor_survives_a_mixed_tap_at_realistic_sizes`] and
 /// [`a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps`].
@@ -492,8 +492,8 @@ fn the_pcr_lead_floor_survives_every_class_on_every_profile() {
 }
 
 /// Seeds of the realistic sweep below. Chosen so that the runs between them
-/// land on a payload-less packet and on PIDs other than the PCR PID, which
-/// the test checks.
+/// land on a payload-less packet and on PIDs other than the PCR PID, and so
+/// that none draws damage that moves a lead; the test checks both.
 const REALISTIC_SWEEP_SEEDS: [u64; 4] = [2, 6, 7, 8];
 
 /// Capture length of the realistic sweep: about 25 000 packets a profile.
@@ -503,14 +503,16 @@ const REALISTIC_SWEEP_SECONDS: f64 = 20.0;
 /// PES spans many packets and a 500-packet window is under half a second,
 /// and all classes mixed, so the injections fall where the stream's bytes
 /// are. Most land in the middle of a video PES, some on a KLV or audio
-/// PID, on PSI or on a payload-less packet. None of that can move a PCR
-/// forward or a decode time back, so no `pcr_lead` line may appear, on
-/// any profile.
+/// PID, on PSI or on a payload-less packet. No `pcr_lead` line may appear,
+/// on any profile.
 ///
-/// This shows the floor does not misfire on damage that cannot lower a
-/// lead. It does not show the excusal: at this rate a flipped PCR byte or
-/// a re-lock that misreads a clock is rare (a run of this sweep over
-/// 186 467 injections excused 15 leads), and the tests that force one are
+/// This shows the floor does not misfire on damage that leaves the clock
+/// alone. It does not show the excusal: a flipped PCR byte or a re-lock
+/// that misreads a clock is rare at these sizes (a longer run of the same
+/// kind, 186 467 injections over eight specs, excused 15 leads), and with
+/// these seeds none occurs, so every capture still reads exactly 100.0 ms.
+/// A seed that did draw one would be excused and would fail that last
+/// check, not the floor. The tests that force such damage are
 /// [`a_body_flip_on_a_pcr_only_packet_explains_its_pcr_jumps`] and the
 /// seed sweep above.
 #[test]
@@ -573,7 +575,7 @@ fn the_pcr_lead_floor_survives_a_mixed_tap_at_realistic_sizes() {
             assert_eq!(
                 r.metrics.pcr_lead_min_ms,
                 Some(100.0),
-                "{} seed {seed}: a lead moved (an excused one shows here too)",
+                "{} seed {seed}: a lead moved (an excused one shows here too; pick another seed)",
                 p.name
             );
         }
@@ -625,17 +627,62 @@ fn a_bad_lead_outside_every_injection_window_is_not_excused() {
     let clear = (ATTRIBUTION_WINDOW + APPROX_SLACK) as usize + 10;
     let held = (RECOVERY_BOUND + APPROX_SLACK) as usize - 10;
     let at = (clear..held)
-        .find(|&n| {
-            let pkt = &wire[n * 188..(n + 1) * 188];
-            let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
-            pid == 0x1011 && pkt[3] & 0x30 == 0x30 && pkt[4] >= 7 && pkt[5] & 0x10 != 0
-        })
+        .find(|&n| is_video_pcr_with_payload(&wire[n * 188..(n + 1) * 188]))
         .expect("a video packet with a PCR and a payload after the first window");
     assert!(
         log.1[1..].iter().all(|i| i.ordinal > at as u64 + 150),
         "packet {at} must be clear of every later injection: {:?}",
         shape(&log.1)
     );
+    move_pcr_ten_seconds_ahead(&mut wire, at);
+
+    let r = judge(&wire, p, Some(&log));
+    assert_failure_starting_with(&r, "pcr_lead: PID 4113 min lead -9900.0 ms");
+    let a = r.metrics.corruption_attribution.expect("attribution");
+    assert_eq!(a.pcr_lead_excused, 0, "{a:?}");
+}
+
+/// The excusal is by kind of damage too. A forced `drop` run removes the
+/// video PES start at packet 1000, on the PCR PID: damage that takes a
+/// packet away and cannot move a clock forward. A PCR rewritten by hand a
+/// few packets later, well inside that injection's window, still fails
+/// `pcr_lead` with nothing excused.
+#[test]
+fn a_bad_lead_beside_damage_that_cannot_lower_one_is_not_excused() {
+    let p = baseline();
+    let bytes = gen_bytes(p, "lead-beside-drop");
+    let (mut wire, header, injections) = tap(&bytes, &forced(Class::Drop), SEED);
+    let log = (header, injections);
+    assert!(judge(&wire, p, Some(&log)).pass, "the control passes");
+    let drop = log
+        .1
+        .iter()
+        .find(|i| i.class == Class::Drop && i.pid == 0x1011)
+        .unwrap_or_else(|| panic!("a drop on the video PID: {:?}", shape(&log.1)));
+    // The wire is short of every packet dropped before this point, so the
+    // packet after the dropped one sits at most at the injection's ordinal.
+    let from = drop.ordinal as usize;
+    let at = (from + 5..from + 100)
+        .find(|&n| is_video_pcr_with_payload(&wire[n * 188..(n + 1) * 188]))
+        .expect("a video packet with a PCR and a payload inside the drop's window");
+    move_pcr_ten_seconds_ahead(&mut wire, at);
+
+    let r = judge(&wire, p, Some(&log));
+    assert_failure_starting_with(&r, "pcr_lead: PID 4113 min lead -9900.0 ms");
+    let a = r.metrics.corruption_attribution.expect("attribution");
+    assert_eq!(a.pcr_lead_excused, 0, "{a:?}");
+}
+
+/// A packet of the baseline's video PID (0x1011) that has both a payload
+/// and an adaptation field with a PCR.
+fn is_video_pcr_with_payload(pkt: &[u8]) -> bool {
+    let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
+    pid == 0x1011 && pkt[3] & 0x30 == 0x30 && pkt[4] >= 7 && pkt[5] & 0x10 != 0
+}
+
+/// Rewrite the PCR base of packet `at` of `wire` ten seconds ahead, so the
+/// access unit in that packet reads a lead of 100 − 10 000 ms.
+fn move_pcr_ten_seconds_ahead(wire: &mut [u8], at: usize) {
     let pcr = &mut wire[at * 188 + 6..at * 188 + 11];
     let base = (u64::from(pcr[0]) << 25)
         | (u64::from(pcr[1]) << 17)
@@ -648,11 +695,6 @@ fn a_bad_lead_outside_every_injection_window_is_not_excused() {
     pcr[2] = (moved >> 9) as u8;
     pcr[3] = (moved >> 1) as u8;
     pcr[4] = (pcr[4] & 0x7F) | ((moved & 1) as u8) << 7;
-
-    let r = judge(&wire, p, Some(&log));
-    assert_failure_starting_with(&r, "pcr_lead: PID 4113 min lead -9900.0 ms");
-    let a = r.metrics.corruption_attribution.expect("attribution");
-    assert_eq!(a.pcr_lead_excused, 0, "{a:?}");
 }
 
 /// The `header` class draws one of four sub-kinds on a media PID (kill

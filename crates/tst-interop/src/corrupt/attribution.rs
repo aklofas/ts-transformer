@@ -1557,6 +1557,13 @@ impl Attribution {
     /// its lead larger. A duplicate repeats a sound packet, PCR included.
     /// A PES outside every such window stays the producer's.
     ///
+    /// "An older PCR makes the lead larger" holds while the PCR only rises.
+    /// A stream that restarts its time base behind a `discontinuity_indicator`
+    /// steps the PCR back, and a tap that removes the flagged packet leaves
+    /// the new base's PES starts measured against the old base, unexcused.
+    /// No profile restarts its time base, so no tapped capture holds one;
+    /// a profile that does needs that removal excused here.
+    ///
     /// Like [`Attribution::explains_damage`] it advances the cursors
     /// itself and expects non-decreasing `at`.
     #[must_use]

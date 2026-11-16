@@ -716,11 +716,11 @@ pub fn run_managed(
     }
     // Before the first byte — and it survives every reconnect: the
     // factory's `tee_resync` clears the in-flight carry and the last PCR
-    // the lead is measured against, never the
-    // reader's recovery mode, its recovery list or its packet count (see
-    // `rawts::Reader::resync`), so coordinates stay continuous across an
-    // outage. A reconnect itself is deliberately NOT recorded as a
-    // recovery: the sender's corruption is not what broke the link.
+    // the lead is measured against, never the reader's recovery mode, its
+    // recovery list or its packet count (see `rawts::Reader::resync`), so
+    // coordinates stay continuous across an outage. A reconnect itself is
+    // deliberately NOT recorded as a recovery: the sender's corruption is
+    // not what broke the link.
     let mut tail = match corruption_log {
         Some(path) => Some(attach_corruption_log(&mut tally, &tap, path, strict)?),
         None => None,
