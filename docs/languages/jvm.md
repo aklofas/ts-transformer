@@ -1611,7 +1611,11 @@ kernel picked and would put RTCP on the wrong port. A URL with `?secret=`
 
 ### TCP: a listener, one publisher at a time
 
+A small class serves one publisher at a time on its own thread until
+`close()`:
+
 ```java
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.tstrans.BindingException;
 import org.tstrans.TcpException;
@@ -1621,50 +1625,92 @@ import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.tcp.Listener;
 import org.tstrans.tcp.Transport;
 
-// The shell being served, for the shutdown path to cancel.
-AtomicReference<CancelHandle> serving = new AtomicReference<>();
+/** Serves one TCP publisher at a time until {@link #close()}. */
+final class TcpIngest implements AutoCloseable {
+    private final Listener listener;
+    private final CancelHandle stop;          // taken once, closed last
+    private final AtomicReference<DemuxReceiver> serving =
+        new AtomicReference<>();
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final Thread loop = new Thread(this::run, "tcp-ingest");
 
-try (Listener listener = Listener.open("tcp://0.0.0.0:0?listen=1")) {
-    int port = listener.localPort();             // hand it to the publisher
-    CancelHandle stop = listener.cancelHandle();
-    while (true) {
-        Transport conn;
-        try {
-            conn = listener.accept();
-        } catch (TcpException e) {
-            if (e.kind() == TcpException.Kind.CLOSED) break;  // shutdown
-            throw e;
-        }
-        String publisher = conn.peerAddr();      // read before the conversion
-        try (DemuxReceiver rx = conn.intoDemuxReceiver()) {
-            serving.set(rx.cancelHandle());
-            if (stop.isCancelled()) break;   // shutdown began during accept()
-            for (DemuxEvent ev; (ev = rx.recvEvent()) != null; ) {
-                // ... handle the event ...
+    TcpIngest(String url) throws TcpException {  // "tcp://0.0.0.0:0?listen=1"
+        listener = Listener.open(url);
+        stop = listener.cancelHandle();
+    }
+
+    int port() throws TcpException { return listener.localPort(); }
+
+    void start() { loop.start(); }
+
+    private void run() {
+        while (true) {
+            Transport conn;
+            try {
+                conn = listener.accept();
+            } catch (TcpException e) {
+                // CLOSED: close() ran. Another kind: the listener
+                // failed; report e.
+                return;
             }
-        } catch (BindingException e) {
-            // this publisher failed or was cancelled: log it, serve the next
-        } finally {
-            serving.set(null);
+            String publisher = conn.peerAddr();   // read before the conversion
+            try (DemuxReceiver rx = conn.intoDemuxReceiver()) {
+                serving.set(rx);
+                if (stop.isCancelled()) return;   // close() during accept()
+                for (DemuxEvent ev; (ev = rx.recvEvent()) != null; ) {
+                    // ... handle the event ...
+                }
+            } catch (BindingException | IllegalStateException e) {
+                // This publisher failed, or close() closed its shell:
+                // accept the next.
+            } finally {
+                serving.set(null);
+            }
         }
     }
-}
 
-// The shutdown path, on another thread that shares `stop` and `serving`:
-stop.cancel();                                   // ends a parked accept()
-CancelHandle current = serving.get();
-if (current != null) current.cancel();   // ends the publisher being served
+    @Override public void close() throws InterruptedException {
+        if (!closed.compareAndSet(false, true)) return;
+        stop.cancel();               // a parked accept() ends with CLOSED
+        DemuxReceiver rx = serving.get();
+        if (rx != null) rx.close();  // a parked recvEvent() ends: CLOSED
+        loop.join();
+        stop.close();                // no thread can use it now
+        listener.close();
+    }
+}
 ```
 
-The `catch (BindingException e)` keeps the server up when one publisher
-fails: a reset connection, a TLS failure or malformed TS ends that
-connection's loop, not the listener's. The loop uses `recvEvent()`, which
-throws the checked exception, rather than the `Iterator`, which wraps it in
-an unchecked `RuntimeException`. The shutdown path cancels the listener so
-a parked `accept()` returns `CLOSED` and the loop exits, and it cancels the
-shell being served because cancelling the listener does not end a
-connection it already handed out. The `isCancelled()` check covers a
-shutdown that lands between `accept()` returning and `serving` being set.
+```java
+TcpIngest ingest = new TcpIngest("tcp://0.0.0.0:0?listen=1");
+int port = ingest.port();          // hand it to the publisher
+ingest.start();
+// ... later, from any thread but the loop's own:
+ingest.close();
+```
+
+The `catch` keeps the server up when one publisher fails: a reset
+connection, a TLS failure or malformed TS ends that connection, not the
+listener. The loop uses `recvEvent()`, which throws the checked exception,
+rather than the `Iterator`, which wraps it in an unchecked
+`RuntimeException`.
+
+The listener's cancel handle is taken once because every `cancelHandle()`
+call creates a native handle that stays allocated until its own `close()`,
+and a closed handle's `cancel()` throws `IllegalStateException`. `close()`
+closes it only after `join()`, so no thread can still be using it.
+
+`close()` ends the publisher being served by closing its shell, not through
+a cancel handle of that shell: `DemuxReceiver.close()` is documented as
+memory-safe against any concurrent native call, and it cancels first, so a
+`recvEvent()` parked on the loop thread ends promptly with the transport's
+`CLOSED` (a call that enters just after the close throws
+`IllegalStateException`; the `catch` takes both). Closing the shell is
+idempotent, so the loop's own try-with-resources close is then a no-op, and
+there is no per-connection handle to leak. Cancelling the listener alone
+would not end a connection it has already handed out. The `isCancelled()`
+check covers a `close()` that lands between `accept()` returning and
+`serving` being set.
 
 `Listener.open` takes `tcp://ip:port?listen=1`. The host must be an IP
 literal (`0.0.0.0`, `::`, `127.0.0.1`, ...); a host name, or a URL without
@@ -1691,9 +1737,9 @@ closes.
 
 **A silent publisher.** A TCP receive has no deadline: a peer that connects
 and sends nothing parks the receive until the shell's cancel handle fires or
-the shell is closed. The cancel is the only bound, so a server that must
-not wait forever runs a watchdog that holds the shell's `cancelHandle()`
-and fires it when the stream stops progressing. `tsBytesDemuxed()` on the
+the shell is closed. That is the only bound, so a server that must not
+wait forever runs a watchdog that closes the shell (as `TcpIngest.close()`
+does) when the stream stops progressing. `tsBytesDemuxed()` on the
 `DemuxReceiver` answers while a receive is parked and makes a progress
 counter for that watchdog.
 
