@@ -24,7 +24,7 @@ import org.tstrans.mpegts.DemuxEvent;
  * daemon thread holding a pre-obtained {@link CancelHandle}: a hung JUnit test
  * would wedge a gating runner.
  */
-final class ShellPeers {
+public final class ShellPeers {
     private ShellPeers() {}
 
     static final long PEER_WAIT_MS = 10_000;
@@ -47,10 +47,10 @@ final class ShellPeers {
     }
 
     /** Closes what it was given, last in first out, ignoring failures. */
-    static final class Cleanup implements AutoCloseable {
+    public static final class Cleanup implements AutoCloseable {
         private final Deque<Runnable> undo = new ArrayDeque<>();
 
-        synchronized <T extends AutoCloseable> T add(T closeable) {
+        public synchronized <T extends AutoCloseable> T add(T closeable) {
             undo.push(() -> {
                 try {
                     closeable.close();
@@ -61,7 +61,7 @@ final class ShellPeers {
             return closeable;
         }
 
-        synchronized void add(Runnable r) { undo.push(r); }
+        public synchronized void add(Runnable r) { undo.push(r); }
 
         @Override public synchronized void close() {
             while (!undo.isEmpty()) {
@@ -161,7 +161,7 @@ final class ShellPeers {
     }
 
     /** Run {@code call} on a daemon thread and fail unless it returns within {@code ms}. */
-    static <T> T within(long ms, String what, Callable<T> call) throws Exception {
+    public static <T> T within(long ms, String what, Callable<T> call) throws Exception {
         CompletableFuture<T> f = new CompletableFuture<>();
         Thread t = new Thread(() -> {
             try {
@@ -388,12 +388,32 @@ final class ShellPeers {
     // ----------------------------------------------------------------------------------------
 
     /** A receive parked on a daemon thread, with a watchdog that cancels it if the test hangs. */
-    static final class Parked implements AutoCloseable {
+    public static final class Parked implements AutoCloseable {
         final CompletableFuture<Throwable> outcome = new CompletableFuture<>();
         private final CountDownLatch finished = new CountDownLatch(1);
 
         Parked(Rx rx) throws InterruptedException {
-            CancelHandle watchdogHandle = rx.cancelHandle();
+            this(rx.cancelHandle(), "a silent peer delivered data", () -> {
+                while (true) {
+                    try {
+                        rx.recvOnce();
+                    } catch (RistException e) {
+                        // librist's receive ticks BACKPRESSURE every 100 ms while no
+                        // packet arrives; the receive is still waiting.
+                        if (e.kind() != RistException.Kind.BACKPRESSURE) throw e;
+                        continue;
+                    }
+                    return null;
+                }
+            });
+        }
+
+        /**
+         * {@code call} parked on a daemon thread; {@code watchdogHandle} must cancel it. A
+         * normal return is recorded as a failure named {@code returned}.
+         */
+        public Parked(CancelHandle watchdogHandle, String returned, Callable<?> call)
+                throws InterruptedException {
             Thread watchdog = new Thread(() -> {
                 try {
                     if (!finished.await(30, TimeUnit.SECONDS)) watchdogHandle.cancel();
@@ -405,18 +425,8 @@ final class ShellPeers {
             watchdog.start();
             Thread t = new Thread(() -> {
                 try {
-                    while (true) {
-                        try {
-                            rx.recvOnce();
-                        } catch (RistException e) {
-                            // librist's receive ticks BACKPRESSURE every 100 ms while no
-                            // packet arrives; the receive is still waiting.
-                            if (e.kind() != RistException.Kind.BACKPRESSURE) throw e;
-                            continue;
-                        }
-                        outcome.complete(new AssertionError("a silent peer delivered data"));
-                        return;
-                    }
+                    call.call();
+                    outcome.complete(new AssertionError(returned));
                 } catch (Throwable e) {
                     outcome.complete(e);
                 }
@@ -427,7 +437,7 @@ final class ShellPeers {
         }
 
         /** The exception that ended the receive, within {@code ms}. */
-        Throwable awaitEnd(long ms) throws Exception {
+        public Throwable awaitEnd(long ms) throws Exception {
             try {
                 return outcome.get(ms, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {
