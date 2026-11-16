@@ -503,6 +503,11 @@ has two limits of its own:
   passes. At the soak's injection rate about one PES start in twenty on
   the PCR PID lies inside one; the tap sits after the muxer, so a lead
   that is short throughout cannot hide there.
+- An injection whose anchoring PCR was lost in transit is placed only when
+  the next sound PCR arrives, and a lead read before then is not excused.
+  A body flip that moves a PCR within one PCR interval after a transport
+  loss therefore fails the leg on the tap's own damage. The tap moves a
+  PCR about 0.4 times an hour, on the `audio` profile only.
 - The `rtsp-publish-es` leg judges the PCR PID only. Its KLV is re-muxed
   by the publish mount after the video that reached its timestamp, and a
   unit the publisher delivers late is sent late.
