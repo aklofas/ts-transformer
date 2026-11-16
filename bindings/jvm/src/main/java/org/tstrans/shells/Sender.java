@@ -132,7 +132,8 @@ public class Sender extends NativeHandle {
      * <tr><td>{@code rist://}</td><td>bytes and packets</td>
      *     <td>{@code packetsDroppedRecv}: librist's lost-packet count plus oversize or malformed
      *     blocks the receiver dropped</td>
-     *     <td>{@code packetsRetransmitted}, {@code linkBandwidthBps} (librist's estimate),
+     *     <td>{@code packetsRetransmitted} (a sender's count; a receiver reads 0),
+     *     {@code linkBandwidthBps} (librist's estimate),
      *     {@code rttUs}</td></tr>
      * </table>
      * On a receiver the send-side counters read 0, and on a sender the receive-side ones do;
