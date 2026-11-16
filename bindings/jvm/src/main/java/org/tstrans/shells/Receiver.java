@@ -125,6 +125,25 @@ public class Receiver extends NativeHandle {
     /**
      * Scheme-neutral 16-field wire stats snapshot, the same on every transport.
      *
+     * <p>What the fields mean per scheme (every other field reads 0 on these):
+     * <table>
+     * <caption>socketStats() fields by scheme</caption>
+     * <tr><th>scheme</th><th>bytes / packets</th><th>packetsDropped*</th><th>other</th></tr>
+     * <tr><td>{@code udp://}</td><td>bytes; a packet is one datagram</td>
+     *     <td>socket send / receive errors</td><td></td></tr>
+     * <tr><td>{@code tcp://}</td><td>bytes; a packet is one {@code send} / {@code recv} call</td>
+     *     <td>send / receive errors</td><td></td></tr>
+     * <tr><td>{@code rist://}</td><td>bytes and packets</td>
+     *     <td>{@code packetsDroppedRecv}: librist's lost-packet count plus oversize or malformed
+     *     blocks the receiver dropped</td>
+     *     <td>{@code packetsRetransmitted}, {@code linkBandwidthBps} (librist's estimate),
+     *     {@code rttUs}</td></tr>
+     * </table>
+     * On {@code rist://} librist reports its part once a second, so the lost count,
+     * {@code packetsRetransmitted}, {@code linkBandwidthBps} and {@code rttUs} lag; the byte and
+     * packet counts the wrapper keeps itself are immediate. The call waits behind a receive or
+     * send parked on another thread.
+     *
      * @return the wire-stats snapshot
      * @throws IllegalStateException if the receiver is closed
      */
