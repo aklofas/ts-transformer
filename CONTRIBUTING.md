@@ -13,7 +13,10 @@ the per-module stability tiers. Security reports go through
 up via rustup. The pin follows a rolling rule: stable minus six releases,
 re-pinned at each minor release. The native libraries build from vendored submodules
 (`git submodule update --init --recursive`): libsrt and mbedTLS via
-`cmake`, librist via `meson` + `ninja`. `SRT_FORCE_VENDORED=1
+`cmake`, librist via `meson` + `ninja`. The librist submodule is cloned from
+`github.com/aklofas/librist`, an unmodified copy of
+`code.videolan.org/rist/librist`; a clone made before the move needs
+`git submodule sync` once. `SRT_FORCE_VENDORED=1
 RIST_FORCE_VENDORED=1` skips the `pkg-config` probe so the build matches
 CI. A cold build takes 3–5 minutes; warm builds seconds.
 

@@ -4,9 +4,14 @@
 [submodule "vendor/mbedtls"]
 	path = crates/mbedtls-src/vendor/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
+# An unmodified copy of https://code.videolan.org/rist/librist.git, kept on
+# GitHub so a checkout does not depend on that host. Before moving the pin,
+# push the new upstream tag to the copy:
+#   git clone --mirror https://code.videolan.org/rist/librist.git && cd librist.git
+#   git push git@github.com:aklofas/librist.git 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
 [submodule "vendor/librist"]
 	path = crates/rist-sys/vendor/librist
-	url = https://code.videolan.org/rist/librist.git
+	url = https://github.com/aklofas/librist.git
 [submodule "vendor/freertos-kernel"]
 	path = embedded/vendor/freertos-kernel
 	url = https://github.com/FreeRTOS/FreeRTOS-Kernel.git
