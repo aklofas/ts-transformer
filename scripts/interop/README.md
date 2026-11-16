@@ -2007,7 +2007,10 @@ starts past the adaptation field and past a PES header, so it reaches
 neither a PCR nor a decode time; a dropped packet, a rewritten PID or
 counter and an overrunning adaptation length take a packet away, and a
 missing PCR leaves the next PES measured against an older one, which
-makes its lead larger; a `dup` repeats a sound packet. At the soak's
+makes its lead larger; a `dup` repeats a sound packet. (That rests on a
+PCR that only rises. No profile restarts its time base; one that did
+would need the removal of its flagged packet excused, since the new
+base's PES starts would then be read against the old base.) At the soak's
 injection rate about one PES start in twenty on the PCR PID lies inside
 an excusing window. `corruption_attribution.pcr_lead_excused` counts the
 excused ones. `pcr_lead` fails unless every PES below the level on a PID
