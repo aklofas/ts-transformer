@@ -19,7 +19,9 @@ import org.tstrans.shells.CancelHandle;
  * }
  * }</pre>
  *
- * <p>Mirrors {@code tstrans.tcp.Listener} in tst-py.
+ * <p>The JVM counterpart of Python's {@code tstrans.tcp.Listener}; the
+ * {@link Transport} it accepts has no {@code send} or {@code recv} of its own and is
+ * converted into a shell.
  */
 public final class Listener extends NativeHandle {
 
@@ -36,7 +38,10 @@ public final class Listener extends NativeHandle {
      * @throws TcpException {@code URL} for a malformed URL, one without {@code ?listen=1}
      *     or one whose host is not an IP literal; {@code IO} when the bind fails (the port
      *     is in use, for one); {@code INVALID_CONFIG} for {@code tcps://} without
-     *     {@code cert} and {@code key}
+     *     {@code cert} and {@code key}; {@code IO} when the {@code cert} or {@code key} file
+     *     cannot be read or holds a PEM block that does not decode; {@code TLS} when the
+     *     files hold no certificate or no private key, or the certificate and key are
+     *     refused as the server's identity
      */
     public static Listener open(String url) throws TcpException {
         return new Listener(nOpen(url));
@@ -54,10 +59,20 @@ public final class Listener extends NativeHandle {
      * read or write drives it, so a handshake failure is thrown by that call on the shell
      * made from the returned {@link Transport}.
      *
+     * <p>Only {@code TcpException(CLOSED)} and {@code IllegalStateException} end the
+     * listener for good. Any other kind is about one connection, or about this moment: the
+     * listener stays open, and the next {@code accept()} waits for the next peer. A peer
+     * that connects and resets at once can cause one: on some platforms the accept itself,
+     * or setting the socket options of the new connection, fails for a connection the
+     * peer has already reset. When the process has no file descriptor left, every call
+     * fails at once until one is freed, so a loop that retries pauses briefly first.
+     *
      * @throws TcpException {@code CLOSED} after a cancel, or when a cancel or a
-     *     {@link #close()} lands while this call is parked; {@code IO} on an accept
-     *     failure; {@code TLS} when the server's TLS session for the connection cannot be
-     *     set up
+     *     {@link #close()} lands while this call is parked; {@code IO} when this one
+     *     connection failed or the process could not take another connection now (the
+     *     listener stays open: call {@code accept()} again after a short pause);
+     *     {@code TLS} when the server's TLS session for the connection cannot be set up
+     *     (the listener stays open)
      * @throws IllegalStateException if the listener is closed
      */
     public Transport accept() throws TcpException {

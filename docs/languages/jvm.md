@@ -1649,9 +1649,18 @@ final class TcpIngest implements AutoCloseable {
             try {
                 conn = listener.accept();
             } catch (TcpException e) {
-                // CLOSED: close() ran. Another kind: the listener
-                // failed; report e.
-                return;
+                if (e.kind() == TcpException.Kind.CLOSED) return;  // close() ran
+                // One connection failed, or no descriptor is free: the
+                // listener stays open. Pause so a lasting failure does
+                // not spin, then accept again.
+                System.err.println("accept: " + e.getMessage());
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                continue;
             }
             String publisher = conn.peerAddr();   // read before the conversion
             try (DemuxReceiver rx = conn.intoDemuxReceiver()) {
@@ -1663,6 +1672,9 @@ final class TcpIngest implements AutoCloseable {
             } catch (BindingException | IllegalStateException e) {
                 // This publisher failed, or close() closed its shell:
                 // accept the next.
+                if (!stop.isCancelled()) {
+                    System.err.println(publisher + ": " + e.getMessage());
+                }
             } finally {
                 serving.set(null);
             }
@@ -1689,9 +1701,13 @@ ingest.start();
 ingest.close();
 ```
 
-The `catch` keeps the server up when one publisher fails: a reset
-connection, a TLS failure or malformed TS ends that connection, not the
-listener. The loop uses `recvEvent()`, which throws the checked exception,
+The `catch` around the shell keeps the server up when one publisher fails:
+a reset connection, a TLS failure or malformed TS ends that connection, not
+the listener. The `catch` around `accept()` returns only on `CLOSED`, the
+kind a cancel or `close()` gives; any other kind leaves the listener open,
+so the loop logs it and accepts again after a 100 ms pause. The pause adds
+nothing to shutdown beyond its own length: the cancel is latched, so the
+`accept()` after it throws `CLOSED` at once. The loop uses `recvEvent()`, which throws the checked exception,
 rather than the `Iterator`, which wraps it in an unchecked
 `RuntimeException`.
 
@@ -1723,7 +1739,12 @@ that connects while another is being served waits in the kernel's queue
 until the next `accept()`; closing the listener drops whatever is still
 queued, and such a connection is never handed out. `peerAddr()` is the
 peer's `ip:port` (an IPv6 address in brackets, `[::1]:5000`), the TCP source
-address: behind a proxy, the proxy's.
+address: behind a proxy, the proxy's. A listener bound to `::` that also
+accepts IPv4 clients (the default on Linux) reports an IPv4 peer in the
+IPv4-mapped IPv6 form, `[::ffff:203.0.113.5]:40000`; a rule that compares
+`peerAddr()` against plain IPv4 text (`203.0.113.5`) does not match it, so
+bind `0.0.0.0` for IPv4 publishers or compare parsed addresses. A listener
+bound to an IPv4 address reports the plain form.
 
 A `Transport` becomes a shell with `intoReceiver()`, `intoDemuxReceiver()`,
 `intoDemuxReceiver(DemuxerConfig)` or `intoSender()`. The conversion
@@ -1742,6 +1763,19 @@ wait forever runs a watchdog that closes the shell (as `TcpIngest.close()`
 does) when the stream stops progressing. `tsBytesDemuxed()` on the
 `DemuxReceiver` answers while a receive is parked and makes a progress
 counter for that watchdog.
+
+**A peer that resets at once.** A peer can connect and reset the connection
+before the listener takes it. On some platforms the accept itself, or setting
+the socket options of the new connection, then fails, and `accept()` throws
+`TcpException(IO)`; elsewhere `accept()` returns the connection and its
+first receive fails. Either way only that connection is lost: the listener
+stays open and the next `accept()` waits for the next peer, so a loop that
+ends on any kind but `CLOSED` lets one stranger stop the server.
+
+**Descriptors running out.** When the process has no file descriptor left,
+`accept()` throws `TcpException(IO)` at once on every call until one is
+freed. A loop that retries without a pause spins a core for that time; the
+100 ms pause in `TcpIngest` bounds it.
 
 **Stopping the listener.** `cancelHandle().cancel()`, from any thread, ends a
 parked `accept()` with `TcpException(CLOSED)`, and every later `accept()`
