@@ -874,7 +874,8 @@ pub(crate) struct TeeState {
     /// resync`] on this field (and clears `reader_error` below) right
     /// after building each fresh transport, before its first byte is
     /// fed — the accumulated `WireSummary` and PAT-learned PID map carry
-    /// forward untouched; only the in-flight carry is reset.
+    /// forward untouched; only the in-flight carry and the last PCR of
+    /// each PID are reset.
     reader: tst_test_helpers::rawts::Reader,
     /// First error `reader.feed` returned, if any — a captured stream
     /// that fell out of 188-byte packet alignment (sync loss) partway
@@ -1178,9 +1179,9 @@ pub(crate) fn tee_trailing_resync(
 
 /// Reset the tap's raw-TS reader for a fresh reconnect — see
 /// [`TeeState`]'s own doc comment on its `reader` field for exactly what
-/// this does (clears the in-flight `carry` and any sticky
-/// `reader_error`; keeps the accumulated `WireSummary` and PAT-learned
-/// PID map) and why.
+/// this does (clears the in-flight `carry`, the last PCR of each PID and
+/// any sticky `reader_error`; keeps the accumulated `WireSummary` and
+/// PAT-learned PID map) and why.
 /// `recv.rs`'s managed factory calls this once per reconnect, right
 /// after building the replacement transport and before its first byte
 /// is fed. Safe to call while the pipeline shell still owns its clone —

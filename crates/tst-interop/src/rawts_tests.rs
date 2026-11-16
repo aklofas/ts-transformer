@@ -1114,6 +1114,37 @@ fn a_discontinuity_flag_forgets_the_last_pcr() {
     assert_eq!(w.pcr_lead_min_ticks[&0x100], 12_000, "{w:?}");
 }
 
+/// A managed reconnect hands the reader a new connection, and the sender
+/// behind it may have restarted its timeline without a flag (a restarted
+/// process). With the head of the new stream lost, its first PES would be
+/// measured against the old stream's last PCR; `resync` forgets that PCR,
+/// so the PES waits for a PCR of its own connection.
+#[test]
+fn a_resync_forgets_the_last_pcr() {
+    let mut r = Reader::new();
+    r.feed(
+        &[
+            psi_head(0x100, 0x100),
+            af_packet(0x100, 0, Some(900_000)),
+            pes_packet(0x100, None, 909_000),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    r.resync();
+    r.feed(
+        &[
+            pes_packet(0x100, None, 90_000), // not measured: no PCR on this connection yet
+            af_packet(0x100, 0, Some(84_000)),
+            pes_packet(0x100, None, 93_000),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    let w = r.finish().unwrap();
+    assert_eq!(w.pcr_lead_min_ticks[&0x100], 9_000, "{w:?}");
+}
+
 /// The muxer's own shape: the flag rides on the packet that carries the
 /// first PCR of the new base.
 #[test]

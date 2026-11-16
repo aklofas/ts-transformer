@@ -445,7 +445,8 @@ pub struct WireSummary {
     /// distance; a negative lead is an AU the decoder was already late
     /// for. A PES before the PMT or before the first PCR is not measured,
     /// and neither is one between a `discontinuity_indicator` on the PCR
-    /// PID and the first PCR after it (see `Reader::last_pcr_base`).
+    /// PID, or a [`Reader::resync`], and the first PCR after it (see
+    /// `Reader::last_pcr_base`).
     pub pcr_lead_min_ticks: BTreeMap<u16, i64>,
     /// PES starts per PID whose lead was below the level a
     /// [`Reader::watch_leads`] caller set for that PID: the count beside
@@ -516,7 +517,7 @@ pub struct Reader {
     /// `discontinuity_indicator` set removes the entry: the flag says the
     /// next PCR starts a new time base (§2.4.3.5) and may come before the
     /// packet that carries it, so a PES between the two has no clock to be
-    /// measured against.
+    /// measured against. [`Reader::resync`] removes every entry.
     last_pcr_base: BTreeMap<u16, u64>,
     /// See [`Reader::watch_leads`].
     lead_watch: Option<LeadWatch>,
@@ -850,9 +851,15 @@ impl Reader {
     /// together would corrupt packet sync rather than merely delay it.
     /// Call this once per reconnect, before the replacement transport's
     /// first `feed`.
+    ///
+    /// The last PCR of every PID is forgotten too
+    /// ([`WireSummary::pcr_lead_min_ticks`]): the sender behind the new
+    /// connection may have restarted its timeline without a flag, and a
+    /// PES of the new stream is not measured against a PCR of the old one.
     pub fn resync(&mut self) {
         self.carry.clear();
         self.pending_skipped = 0;
+        self.last_pcr_base.clear();
     }
 
     fn packet(&mut self, p: &[u8; PKT]) -> Result<(), String> {
