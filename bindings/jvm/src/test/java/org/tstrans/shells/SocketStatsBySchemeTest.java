@@ -130,11 +130,25 @@ class SocketStatsBySchemeTest {
             tx.flush();
             assertTrue(lag.linkBandwidthBps() > 0 || lag.rttUs() > 0, "no librist report: " + lag);
 
+            // Drain what is still in flight, until nothing new came for several idle ticks.
+            long returned = got;
+            try (ShellPeers.Watchdog w = new ShellPeers.Watchdog(rx.cancelHandle(), scaledMs(20_000))) {
+                for (int idle = 0; idle < 5; ) {
+                    try {
+                        returned += rx.recvBytes().length;
+                        idle = 0;
+                    } catch (RistException e) {
+                        if (e.kind() != RistException.Kind.BACKPRESSURE) throw e;
+                        idle++;
+                    }
+                }
+            }
             SocketStats r = rx.socketStats();
-            // The transport counts whole 1316-byte blocks as they arrive; the shell may still hold
-            // the tail of the last block, which recvBytes() has not returned yet. More blocks can
-            // also have arrived while the poll ran, so only the lower bound is exact.
-            assertTrue(r.bytesReceived() >= got, r.toString());
+            // The transport counts whole blocks as it reads them: never more than was sent, and
+            // at most a block ahead of what recvBytes() has returned.
+            assertTrue(r.bytesReceived() <= handed.get(), r + " handed " + handed.get());
+            assertTrue(r.bytesReceived() >= returned && r.bytesReceived() < returned + 1316,
+                r + " returned " + returned);
             assertTrue(r.packetsReceived() > 0);
             SocketStats s = tx.socketStats();
             assertEquals(handed.get(), s.bytesSent());
