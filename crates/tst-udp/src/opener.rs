@@ -34,5 +34,7 @@ pub fn open_recv(url: &str) -> Result<Opened<Box<dyn RecvTransport>>, BindingErr
         .map_err(UdpError::Url)?
         .build()?;
     let cancel = recv_cancel_of(&t);
-    Ok(Opened::new(Box::new(t), cancel, Domain::Udp))
+    let local = t.local_addr();
+    let transport: Box<dyn RecvTransport> = Box::new(t);
+    Ok(Opened::new(transport, cancel, Domain::Udp).with_local_addr(local))
 }
