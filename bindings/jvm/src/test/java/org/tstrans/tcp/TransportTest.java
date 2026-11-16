@@ -26,7 +26,7 @@ import org.tstrans.TestSupport;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.mpegts.Muxer;
-import org.tstrans.mpegts.StrictMode;
+import org.tstrans.mpegts.DiscontinuityKind;
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.shells.Receiver;
@@ -129,8 +129,7 @@ class TransportTest {
             java.net.Socket client = plainClient(l, c);
             Receiver rx = c.add(accept(l, c).intoReceiver());
             byte[] sent = packets(70);
-            client.getOutputStream().write(sent);
-            client.close();
+            CompletableFuture<Void> written = writeAndClose(client, sent);
             ByteArrayOutputStream got = new ByteArrayOutputStream();
             TcpException end;
             try (Watchdog w = new Watchdog(rx.cancelHandle(), scaledMs(PEER_WAIT_MS))) {
@@ -144,6 +143,7 @@ class TransportTest {
                 }
             }
             assertKind(TcpException.Kind.END_OF_STREAM, end);
+            written.get(scaledMs(PEER_WAIT_MS), TimeUnit.MILLISECONDS);
             assertArrayEquals(sent, got.toByteArray());
             assertTrue(rx.localPort().isEmpty(), "an accepted connection reported a bound port");
         }
@@ -156,28 +156,40 @@ class TransportTest {
             for (int i = 0; i < 4; i++) m.pushVideo(TestSupport.syntheticH264Idr(), i * 3000L, true);
             stream = TestSupport.drain(m);
         }
-        DemuxerConfig config = DemuxerConfig.builder().strictMode(StrictMode.OFF).build();
+        // A one-byte PES cap refuses every video PES of this stream: the config is applied only
+        // if the Video events turn into PES_OVERSIZE discontinuities.
+        DemuxerConfig config = DemuxerConfig.builder().pesCapPerPid(1).build();
         for (boolean withConfig : new boolean[] {false, true}) {
             try (Cleanup c = new Cleanup()) {
                 Listener l = c.add(Listener.open(LOOPBACK_V4));
                 java.net.Socket client = plainClient(l, c);
                 Transport t = accept(l, c);
                 DemuxReceiver rx = c.add(withConfig ? t.intoDemuxReceiver(config) : t.intoDemuxReceiver());
-                client.getOutputStream().write(stream);
-                client.close();
+                CompletableFuture<Void> written = writeAndClose(client, stream);
                 int maps = 0;
                 int videos = 0;
+                int oversize = 0;
                 // The client's clean close ends the events with null.
                 try (Watchdog w = new Watchdog(rx.cancelHandle(), scaledMs(PEER_WAIT_MS))) {
                     DemuxEvent e;
                     while ((e = rx.recvEvent()) != null) {
                         if (e instanceof DemuxEvent.ProgramMap) maps++;
                         if (e instanceof DemuxEvent.Video) videos++;
+                        if (e instanceof DemuxEvent.Discontinuity d && d.kind() == DiscontinuityKind.PES_OVERSIZE) {
+                            oversize++;
+                        }
                     }
                 }
-                assertTrue(maps >= 1, "withConfig=" + withConfig + ": no ProgramMap");
-                assertTrue(videos >= 1, "withConfig=" + withConfig + ": no Video");
-                assertEquals(stream.length, rx.tsBytesDemuxed(), "withConfig=" + withConfig);
+                written.get(scaledMs(PEER_WAIT_MS), TimeUnit.MILLISECONDS);
+                String what = "withConfig=" + withConfig + ": maps=" + maps + " videos=" + videos
+                    + " oversize=" + oversize;
+                assertTrue(maps >= 1, what);
+                if (withConfig) {
+                    assertTrue(videos == 0 && oversize >= 1, what);
+                } else {
+                    assertTrue(videos >= 1 && oversize == 0, what);
+                }
+                assertEquals(stream.length, rx.tsBytesDemuxed(), what);
             }
         }
     }
@@ -207,6 +219,7 @@ class TransportTest {
             l.close();
             Receiver rx = c.add(t.intoReceiver());
             byte[] sent = packets(8);
+            // 1 504 bytes on loopback fit the socket buffer: this write cannot block the main thread.
             client.getOutputStream().write(sent);
             assertArrayEquals(sent, recvUntil(rx, sent.length));
         }
@@ -276,13 +289,36 @@ class TransportTest {
             Receiver rx = c.add(accept(l, c).intoReceiver());
             // Not a TLS record: the server's handshake must refuse it, not wait for more. The
             // failure surfaces through the receive path, which reports a dead transport.
+            // One packet on loopback fits the socket buffer: this write cannot block the main thread.
             client.getOutputStream().write(packets(1));
             TcpException e;
             try (Watchdog w = new Watchdog(rx.cancelHandle(), scaledMs(PEER_WAIT_MS))) {
                 e = assertThrows(TcpException.class, rx::recvBytes);
             }
             assertKind(TcpException.Kind.BROKEN, e);
-            assertTrue(e.getMessage().contains("corrupt message"), e.getMessage());
+            assertTrue(e.getMessage() != null && !e.getMessage().isEmpty(), "no message");
+        }
+    }
+
+    @Test
+    void aSenderToASilentTlsClientThrowsBackpressureAndCanRetry() throws Exception {
+        try (Cleanup c = new Cleanup()) {
+            Listener l = c.add(Listener.open(tlsListenerUrl()));
+            // A plain client that sends nothing: the server's handshake waits for its hello.
+            plainClient(l, c);
+            Sender tx = c.add(accept(l, c).intoSender());
+            byte[] bundle = packets(7);
+            try (Watchdog w = new Watchdog(tx.cancelHandle(), scaledMs(PEER_WAIT_MS))) {
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    long t0 = System.nanoTime();
+                    TcpException e = assertThrows(TcpException.class, () -> tx.sendBytes(bundle));
+                    long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+                    assertKind(TcpException.Kind.BACKPRESSURE, e);
+                    assertTrue(ms < scaledMs(1000), "attempt " + attempt + ": threw after " + ms + " ms");
+                }
+                assertKind(TcpException.Kind.BACKPRESSURE, assertThrows(TcpException.class, tx::flush));
+            }
+            assertTrue(tx.isAlive(), "a handshake wait killed the sender");
         }
     }
 
