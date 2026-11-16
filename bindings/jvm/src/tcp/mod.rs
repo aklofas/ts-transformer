@@ -8,22 +8,26 @@
 //!
 //! An accepted connection has no parked call of its own, so it sits in a plain
 //! [`HandleRegistry`] with no cancel hook: a native that turns it into a shell
-//! takes it out with `REGISTRY_TRANSPORT.close` without cancelling it.
+//! takes it out with `REGISTRY_TRANSPORT.close` without cancelling it, and the
+//! shell's cancel handle is the connection's own, read before it is boxed.
 
 use crate::panic::jni_native;
 use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
 
 use jni::objects::JString;
-use jni::sys::{jint, jlong, jstring};
-use tst_core::transport::TransportCancel;
+use jni::sys::{jboolean, jint, jlong, jstring};
+use tst_core::transport::{RecvTransport, Transport, TransportCancel};
+use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
 use tst_pipeline::binding::view::BlockingReason;
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Owned};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened, Owned};
 use tst_tcp::error::TcpError;
 use tst_tcp::{TcpListener, TcpListenerBuilder, TcpTransport};
 
 use crate::error::{throw_binding, throw_closed};
 use crate::handle::{HandleRegistry, OwnedRegistry};
+use crate::mpegts::build_demux_config_from_args;
+use crate::shells;
 use crate::shells::open::read_url;
 use crate::shells::throw_state;
 
@@ -39,8 +43,6 @@ static REGISTRY_LISTENER: LazyLock<OwnedRegistry<TcpListener, ListenerSnapshot>>
 /// An accepted connection and its peer. The peer sits beside the connection so
 /// `peerAddr()` answers from it alone.
 pub(crate) struct Accepted {
-    // Held for its socket; only a conversion into a shell reads it.
-    #[expect(dead_code, reason = "no native converts an accepted connection yet")]
     pub(crate) conn: TcpTransport,
     pub(crate) peer: SocketAddr,
 }
@@ -160,5 +162,92 @@ jni_native! {
     fn Java_org_tstrans_tcp_Transport_nClose(_env, _class, handle: jlong) = () => {
         // Dropping the connection closes its socket.
         drop(REGISTRY_TRANSPORT.close(handle as u64));
+    }
+}
+
+/// Take an accepted connection out of the registry; `None` (and an
+/// `IllegalStateException` pending) when it is closed or already consumed.
+fn take_conn(env: &mut jni::Env, handle: jlong) -> Option<TcpTransport> {
+    let taken = REGISTRY_TRANSPORT.close(handle as u64).map(|a| a.conn);
+    if taken.is_none() {
+        throw_closed(env, "Transport");
+    }
+    taken
+}
+
+/// The connection as an opened send transport, its cancel read before it is boxed.
+fn opened_send(conn: TcpTransport) -> Opened<Box<dyn Transport>> {
+    let cancel = cancel_of(&conn);
+    Opened::new(Box::new(conn), cancel, Domain::Tcp)
+}
+
+/// The connection as an opened receive transport; see [`opened_send`].
+fn opened_recv(conn: TcpTransport) -> Opened<Box<dyn RecvTransport>> {
+    let cancel = recv_cancel_of(&conn);
+    Opened::new(Box::new(conn), cancel, Domain::Tcp)
+}
+
+jni_native! {
+    fn Java_org_tstrans_tcp_Transport_nIntoSender(env, _class, handle: jlong) -> jlong = 0 => {
+        let Some(conn) = take_conn(env, handle) else {
+            return 0;
+        };
+        shells::sender::register(opened_send(conn))
+    }
+}
+
+jni_native! {
+    fn Java_org_tstrans_tcp_Transport_nIntoReceiver(env, _class, handle: jlong) -> jlong = 0 => {
+        let Some(conn) = take_conn(env, handle) else {
+            return 0;
+        };
+        shells::receiver::register(opened_recv(conn))
+    }
+}
+
+jni_native! {
+    fn Java_org_tstrans_tcp_Transport_nIntoDemuxReceiver(env, _class, handle: jlong) -> jlong = 0 => {
+        let Some(conn) = take_conn(env, handle) else {
+            return 0;
+        };
+        shells::demux_receiver::register(opened_recv(conn), None)
+    }
+}
+
+jni_native! {
+    fn Java_org_tstrans_tcp_Transport_nIntoDemuxReceiverWithConfig(
+        env,
+        _class,
+        handle: jlong,
+        strict: jint,
+        pes_cap_per_pid: jlong,
+        pes_cap_total: jlong,
+        cfi: jboolean,
+        av1: jint,
+        au_cell_cap: jlong,
+        lenient_psi: jboolean,
+        sync_buf_cap: jlong,
+        unwrap_timestamps: jboolean,
+    ) -> jlong = 0 => {
+        // Taken first: Java has already zeroed its handle, so a refused config
+        // must drop the connection here rather than leave it in the registry.
+        let Some(conn) = take_conn(env, handle) else {
+            return 0;
+        };
+        let Some(opts) = build_demux_config_from_args(
+            env,
+            strict,
+            pes_cap_per_pid,
+            pes_cap_total,
+            cfi,
+            av1,
+            au_cell_cap,
+            lenient_psi,
+            sync_buf_cap,
+            unwrap_timestamps,
+        ) else {
+            return 0;
+        };
+        shells::demux_receiver::register(opened_recv(conn), Some(opts))
     }
 }
