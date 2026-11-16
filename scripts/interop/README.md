@@ -2014,6 +2014,16 @@ excused ones. `pcr_lead` fails unless every PES below the level on a PID
 was excused, and its failure line then says how many were; a PES outside
 every such window fails the leg as it does on a clean capture.
 
+One case of the tap's own damage is not excused. An injection is placed on
+the receiver's side by the last PCR sent before it. When that PCR is lost
+in transit, the injection is placed only once the next sound PCR arrives,
+and a lead read before then is judged with no window to fall in. So a body
+flip that moves a PCR, sent within one PCR interval after a transport loss
+ends, fails the leg on `pcr_lead` (reproduced offline by removing the
+anchor packet from a tapped `audio` capture). At the soak's injection rate
+the tap moves a PCR on the `audio` profile about 0.4 times an hour, and on
+no other profile, since only `audio` has payload-less PCR packets.
+
 The rich-KLV oracles separately skip a record an injection damaged
 (`explains_damage`), counting it in `KlvRichMetrics.damaged_by_injection`;
 all three rich failure strings then say how many records were skipped. Both
