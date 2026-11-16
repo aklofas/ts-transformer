@@ -3,6 +3,8 @@
 //! that reclaims the stats reference handed to librist.
 
 use std::ffi::CString;
+use std::mem::ManuallyDrop;
+use std::net::{SocketAddr, UdpSocket};
 use std::os::raw::c_void;
 use std::sync::{Arc, Mutex};
 
@@ -32,6 +34,9 @@ pub(crate) struct RistCtx {
     stats_arg: *mut c_void,
     /// The native endpoint the peer was created from (for diagnostics).
     pub(crate) endpoint: String,
+    /// The address librist bound, read from its socket: `Some` for
+    /// [`Role::Receiver`], `None` for a sender.
+    pub(crate) local: Option<SocketAddr>,
 }
 
 impl RistCtx {
@@ -70,6 +75,14 @@ impl RistCtx {
                 "IPv6 bind is not supported in the Simple profile: librist rebuilds the RTCP \
                  peer's address without the IPv6 brackets, and librist 0.2.20 as shipped \
                  upstream dereferences that failed peer; use RistProfile::Main"
+                    .into(),
+            ));
+        }
+
+        if role == Role::Receiver && cfg.profile == RistProfile::Simple && url.port == 0 {
+            return Err(RistError::InvalidConfig(
+                "port 0 is not supported in the Simple profile: librist derives the RTCP port \
+                 from it before the port is known; name an even port, or use RistProfile::Main"
                     .into(),
             ));
         }
@@ -144,6 +157,15 @@ impl RistCtx {
             // ctx_guard drops here → rist_destroy(ctx)
         }
 
+        // A bind on port 0 is reachable only through the port the kernel
+        // picked, so a receiver always reads its address back. An error
+        // drops ctx_guard → rist_destroy(ctx).
+        let local = if bind {
+            Some(peer_local_addr(peer)?)
+        } else {
+            None
+        };
+
         // Register the librist stats callback BEFORE rist_start (interval,
         // leak-one-Arc-ref + reclaim-at-close contract live in
         // stats::register_stats_callback). The order is load-bearing: librist
@@ -173,6 +195,7 @@ impl RistCtx {
             stats,
             stats_arg,
             endpoint,
+            local,
         })
     }
 
@@ -211,4 +234,32 @@ impl Drop for RistCtx {
     fn drop(&mut self) {
         self.destroy();
     }
+}
+
+/// The local address of `peer`'s data socket. librist keeps owning the
+/// socket: the std wrapper is never dropped, so it never closes it.
+fn peer_local_addr(peer: *mut rist_sys::rist_peer) -> Result<SocketAddr, RistError> {
+    let ffi_err = |code| RistError::Ffi {
+        code,
+        function: "rist_peer_get_socket",
+    };
+    let mut sd: i32 = -1;
+    let rc = unsafe { rist_sys::rist_peer_get_socket(peer, &mut sd, std::ptr::null_mut()) };
+    if rc < 0 {
+        return Err(ffi_err(rc));
+    }
+    if sd < 0 {
+        return Err(ffi_err(-1));
+    }
+    // SAFETY: `sd` is the open UDP socket of a live peer; ManuallyDrop keeps
+    // the wrapper from closing it.
+    #[cfg(unix)]
+    let sock = ManuallyDrop::new(unsafe { <UdpSocket as std::os::fd::FromRawFd>::from_raw_fd(sd) });
+    #[cfg(windows)]
+    let sock = ManuallyDrop::new(unsafe {
+        <UdpSocket as std::os::windows::io::FromRawSocket>::from_raw_socket(
+            sd as std::os::windows::io::RawSocket,
+        )
+    });
+    sock.local_addr().map_err(|_| ffi_err(-1))
 }

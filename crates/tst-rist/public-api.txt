@@ -159,6 +159,7 @@ pub fn tst_rist::recv::RistRecvTransport::bind_url(&self) -> &str
 pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> tst_rist::transport::RistCancelHandle
 pub fn tst_rist::recv::RistRecvTransport::listen(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::listen_with_config(&tst_rist::url::RistUrl, &tst_rist::config::RistConfig) -> core::result::Result<Self, tst_rist::error::RistError>
+pub fn tst_rist::recv::RistRecvTransport::local_addr(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_rist::recv::RistRecvTransport::stats(&self) -> tst_rist::stats::RistStats
 impl core::marker::Send for tst_rist::recv::RistRecvTransport
 impl core::ops::drop::Drop for tst_rist::recv::RistRecvTransport
@@ -346,6 +347,7 @@ pub fn tst_rist::recv::RistRecvTransport::bind_url(&self) -> &str
 pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> tst_rist::transport::RistCancelHandle
 pub fn tst_rist::recv::RistRecvTransport::listen(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::listen_with_config(&tst_rist::url::RistUrl, &tst_rist::config::RistConfig) -> core::result::Result<Self, tst_rist::error::RistError>
+pub fn tst_rist::recv::RistRecvTransport::local_addr(&self) -> core::net::socket_addr::SocketAddr
 pub fn tst_rist::recv::RistRecvTransport::stats(&self) -> tst_rist::stats::RistStats
 impl core::marker::Send for tst_rist::recv::RistRecvTransport
 impl core::ops::drop::Drop for tst_rist::recv::RistRecvTransport
