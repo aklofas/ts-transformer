@@ -496,9 +496,13 @@ a leg's receive report fails that leg's `recv_invariants` verdict. The check
 has two limits of its own:
 
 - On the `srt` and `rist` legs a PES below the floor is excused by its
-  position (inside the window of an injection on its PID, on the PCR PID,
-  or of a framing class), not by proof that the injection moved the clock,
-  so a real short lead that falls inside such a window passes.
+  position, not by proof that the injection moved the clock: inside the
+  window of a body flip that changed the adaptation field or the PCR of a
+  payload-less packet on the PCR PID, or of an injection that breaks
+  packet framing. A real short lead that falls inside such a window
+  passes. At the soak's injection rate about one PES start in twenty on
+  the PCR PID lies inside one; the tap sits after the muxer, so a lead
+  that is short throughout cannot hide there.
 - The `rtsp-publish-es` leg judges the PCR PID only. Its KLV is re-muxed
   by the publish mount after the video that reached its timestamp, and a
   unit the publisher delivers late is sent late.
@@ -633,8 +637,9 @@ opening bytes the tap damaged (its start lies inside an attributed
 corruption window), and the attribution report counts each
 (`av1_prefix_excused`, `adts_prefix_excused`). The PCR lead oracle
 excuses a PES start that reads below its level inside the attribution
-window of an injection on its own PID, on its program's PCR PID, or of a
-class that breaks packet framing, and the report counts each
+window of a body flip that changed the adaptation field or the PCR of a
+payload-less packet on its program's PCR PID, or of an injection that
+breaks packet framing, and the report counts each
 (`pcr_lead_excused`); a PES below the level anywhere else fails the leg.
 The
 rich-KLV oracles

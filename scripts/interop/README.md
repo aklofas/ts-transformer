@@ -205,13 +205,17 @@ capture to that:
   (its DTS, else its PTS) is at least 90 ms above the last PCR before it
   (`PCR_LEAD_FLOOR_MS` in `profiles.rs`, the same on all twelve profiles).
   It is a minimum over the whole capture, in `Strict` and `Lossy` alike:
-  losing packets can only make the PCR a PES is measured against older,
-  which makes the lead larger. A PCR PID on which no lead was measured
-  fails (`pcr_lead: no PES lead measured ...`). The PCR PID is read from
-  the captured PMT, so this runs under `--remuxed` and on a capture a
-  third-party tool re-muxed: such a capture is judged on that tool's PCR,
-  and a cell that fails for it has an `expectations.toml` row naming the
-  run that showed it.
+  on a transport that delivers in order, losing packets can only make the
+  PCR a PES is measured against older, which makes the lead larger (the
+  two cases that break this are listed below). A PCR PID on which no lead
+  was measured fails (`pcr_lead: no PES lead measured ...`). The PCR PID
+  is read from the captured PMT, so this runs under `--remuxed` and on a
+  capture a third-party tool re-muxed: such a capture is judged on that
+  tool's PCR. No cell fails on it today (ffmpeg's `-c copy` re-mux reads
+  700 ms). One that did would get an `expectations.toml` row naming the
+  run that showed it, with `failure_contains = "pcr_lead:"`, colon
+  included: the match is by substring, and `pcr_lead` alone also matches
+  `pcr_lead_other_pids`.
 - **`pcr_lead_other_pids`.** Every other PID the PMT lists is held to 0 ms:
   KLV and audio may sit closer to the clock than the video, never behind
   it. The generator pushes in timestamp order, video first, so this holds
@@ -227,10 +231,27 @@ either. The report's `metrics.pcr_lead_min_ms` is the least lead measured
 on any PCR PID (100.0 on a clean capture of any profile), so a pass shows
 the number it passed on.
 
+Two things a lossy capture can hold lower a lead with no fault in the
+muxer. No leg produces either today (SRT and RIST restore order, the
+stress hold's raw UDP streams run on a clean link, and the one leg whose
+publisher restarts its timeline is on TCP), and a leg that did would fail
+on them:
+
+- Reordering, or a late duplicate, on a transport that does not restore
+  order. A PES that arrives after a PCR sent later than it is measured
+  against that PCR: one 1316-byte datagram delivered 16 datagrams late
+  reads 0.0 ms on a realistic `baseline` capture.
+- A sender that restarts its timeline without a `discontinuity_indicator`
+  when the head of the new stream, its first PCR included, is lost: the
+  new stream's first PES is measured against the old stream's last PCR
+  (about −5 800 ms on a 6 s capture sent twice). A managed receiver is
+  not exposed to this across a reconnect, where the reader forgets the
+  last PCR of every PID; inside one connection it is.
+
 Under the corruption tap a flipped PCR field or a mis-framed packet hands
 the reader a clock that was never sent, so a PES below its level is excused
 when it lies inside the attribution window of an injection that could have
-caused it: see "Verdicts" under the corruption tap.
+moved that clock: see "Verdicts" under the corruption tap.
 
 ### Inventory and shape
 
@@ -1971,15 +1992,27 @@ always `Strict` and sees none of this.
 The PCR lead floor ("The PCR lead floor" above) has its own excusal, the
 same in both tiers. The raw reader reports every PES start below its level
 with its packet ordinal, and one is excused when that ordinal lies inside
-the attribution window of an injection, of any class but `dup`, that is on
-the PES's own PID, on its program's PCR PID (the PCR it was measured
-against may be the damaged one: a body flip on a PCR-only packet lands in
-the adaptation field), or that breaks packet framing for the whole
-multiplex (`truncate`, `garbage`, a `header` injection that kills the sync
-byte). `corruption_attribution.pcr_lead_excused` counts them. `pcr_lead`
-fails unless every PES below the level on a PID was excused, and its
-failure line then says how many were; a PES outside every window fails the
-leg as it does on a clean capture.
+the attribution window of one of the two kinds of injection that can lower
+a lead:
+
+- a `body_flip` on a payload-less packet of the program's PCR PID that
+  changed the adaptation field's length, its flags or its PCR bytes: the
+  PCR the PES was measured against may be the damaged one;
+- an injection that breaks packet framing for the whole multiplex
+  (`truncate`, `garbage`, a `header` injection that kills the sync byte):
+  until the reader re-locks, what it reads was never a packet.
+
+No other injection excuses a lead. A body flip on a packet with payload
+starts past the adaptation field and past a PES header, so it reaches
+neither a PCR nor a decode time; a dropped packet, a rewritten PID or
+counter and an overrunning adaptation length take a packet away, and a
+missing PCR leaves the next PES measured against an older one, which
+makes its lead larger; a `dup` repeats a sound packet. At the soak's
+injection rate about one PES start in twenty on the PCR PID lies inside
+an excusing window. `corruption_attribution.pcr_lead_excused` counts the
+excused ones. `pcr_lead` fails unless every PES below the level on a PID
+was excused, and its failure line then says how many were; a PES outside
+every such window fails the leg as it does on a clean capture.
 
 The rich-KLV oracles separately skip a record an injection damaged
 (`explains_damage`), counting it in `KlvRichMetrics.damaged_by_injection`;
