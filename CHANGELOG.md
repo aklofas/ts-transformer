@@ -24,6 +24,10 @@ Next release: 0.11.0
 
   **Migration.** A caller who wants a conformant stream changes nothing. A receiver or a test that expected PCR = PTS now sees PCR = decode time − 100 ms. `pcr_lead_ms = 0` writes PCR = decode time; it does not reproduce the bytes of 0.10.0, because the clock still follows the DTS, still holds where the old PCR stepped back, and still ignores the other PIDs while the PCR stream is pushing. Push the first video access unit before the first KLV unit: the first push sets the clock. Video that starts up to a second behind a KLV unit has a short lead until it catches up; video that starts further behind restarts the time base with its second frame. Push in timestamp order within a second for the same reason, and call `tick` (Rust) for a PCR stream slower than one access unit a second: between two of its pushes it looks stopped, another stream takes the clock, and each of its access units then comes back as a flagged new time base when that stream is stamped more than a second ahead. Push reordered (B-frame) video with the `*_with_dts` calls: pushed with a PTS only, a reordered frame gets the lead minus its reorder distance. `Muxer::reconfigure` refuses a change of `pcr_lead_ms`, as it does for the other fields outside the program list; a program that stays keeps its clock across the call. This closes the limitation the 0.9.0 and 0.10.0 notes list as "the muxer writes a PCR equal to the PTS".
 
+### Changed — tst-rist (BREAKING)
+
+- **A Simple-profile receiver on port 0 is refused.** `RistRecvTransport::listen` and `listen_with_config` (and the builder's `listen`) return `RistError::InvalidConfig` for a Simple-profile bind on port 0, before librist is called. librist derives the RTCP port (port + 1) from the bind port before the kernel has picked one, so such a bind used to fail with `PeerCreateFailed` most of the time and, when it opened, put its RTCP socket on an unrelated port. **Migration.** Name an even port, or use the Main profile, which carries RTCP on the data port and binds port 0 correctly.
+
 ### Added — tst-core, tst-pipeline
 
 - `Muxer::tick(program_number, now)` and `MuxSender::tick`: advance a program's clock between pushes and send the PCR-only packet and the PSI that are due. A PCR is written only as part of a push, so a PCR stream below ten access units a second (5 fps video, a slideshow) could not meet H.222.0's 100 ms PCR interval; such a source now calls `tick` at least every `pcr_interval_ms` of stream time. Rust only: the C, Python and JVM bindings, the RTSP-server mounts and `MuxPublisher` do not expose it yet.
@@ -37,6 +41,10 @@ Next release: 0.11.0
 
 - Python: `MuxerConfig.pcr_lead_ms` and `MuxerConfigBuilder.pcr_lead_ms(ms)`; `MuxerStats.late_metadata_pushes`, also on the stats of `shells.MuxSender` and `srt.ManagedMuxSender`.
 - JVM: `MuxerConfig.pcrLeadMs()` and `MuxerConfig.Builder.pcrLeadMs(int)`; `MuxerStats.lateMetadataPushes()`, also on the stats of the `MuxSender` classes. `MuxerStats` is a record with a new component, so code that calls its canonical constructor passes a fifth argument.
+
+### Added — tst-rist, tst-pipeline
+
+- `RistRecvTransport::local_addr()`: the address the receiver bound, read from librist's socket. A Main-profile receiver bound on port 0 now reports the port the kernel picked, so a sender can reach it.
 
 ### Changed — tst-interop
 

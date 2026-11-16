@@ -1,5 +1,6 @@
 //! [`RistRecvTransport`] — RIST receiver impl [`RecvTransport`].
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -63,6 +64,8 @@ fn classify_block(payload_len: usize, payload_null: bool, buf_len: usize) -> Blo
 /// `rist_destroy`.
 pub struct RistRecvTransport {
     ctx: crate::ctx::RistCtx,
+    /// The address librist bound (a copy of the receiver context's).
+    local: SocketAddr,
     alive: Arc<AtomicBool>,
     /// Set by [`RistCancelHandle::cancel`]; read at entry and at the end of
     /// every poll tick before `alive`.
@@ -111,12 +114,26 @@ impl RistRecvTransport {
 
     /// Build a receiver from a parsed URL + config.
     pub fn listen_with_config(url: &RistUrl, cfg: &RistConfig) -> Result<Self, RistError> {
+        let ctx = crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Receiver)?;
+        let Some(local) = ctx.local else {
+            return Err(RistError::Ffi {
+                code: -1,
+                function: "rist_peer_get_socket",
+            });
+        };
         Ok(Self {
-            ctx: crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Receiver)?,
+            ctx,
+            local,
             alive: Arc::new(AtomicBool::new(true)),
             cancel: RistCancelHandle::new(),
             end_reason: EndReasonHandle::default(),
         })
+    }
+
+    /// The address librist bound, read from its socket: the kernel's port
+    /// when the URL named port 0 (Main profile only).
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local
     }
 
     /// Bind URL the receiver was built against (for diagnostics).
