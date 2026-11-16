@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.tstrans.TestSupport.scaledMs;
+import static org.tstrans.shells.ShellPeers.within;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -291,13 +292,22 @@ class TransportTest {
             try (Cleanup c = new Cleanup()) {
                 Listener l = c.add(Listener.open(tlsListenerUrl()));
                 // A plain client that sends nothing: the receive parks in the server's handshake.
-                plainClient(l, c);
+                java.net.Socket client = plainClient(l, c);
                 Receiver rx = c.add(accept(l, c).intoReceiver());
+                // Closed before the receiver: if the cancel woke nothing, the client's EOF still
+                // ends the handshake, so the test fails on its bound instead of hanging teardown.
+                c.add(client);
                 CancelHandle h = rx.cancelHandle();
                 try (Parked p = new Parked(h, "a silent client completed a TLS handshake", rx::recvBytes)) {
                     long t0 = System.nanoTime();
-                    if (byClose) rx.close();
-                    else h.cancel();
+                    if (byClose) {
+                        within(scaledMs(3000), "close()", () -> {
+                            rx.close();
+                            return null;
+                        });
+                    } else {
+                        h.cancel();
+                    }
                     Throwable end = p.awaitEnd(scaledMs(3000));
                     long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
                     assertTrue(ms < scaledMs(3000), "byClose=" + byClose + ": ended after " + ms + " ms");
