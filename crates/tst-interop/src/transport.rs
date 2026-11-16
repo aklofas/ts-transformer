@@ -262,11 +262,13 @@ impl BoundRecv {
 /// address a sender must use is known up front. Give `host:0` and read the
 /// port the kernel picked from [`BoundRecv::addr`]: that works for
 /// `udp://`, `tcp://...?listen=1`, `srt://...?mode=listener` and
-/// `rtsp-publish://`. `rist://@host:0` has no readable bound address, so
-/// its port is picked first (a free even UDP port is found, released and
-/// substituted into the URL: another process could in principle take it
-/// in between). The caller-mode forms of tcp and srt are refused; they
-/// have nothing to bind.
+/// `rtsp-publish://`. For `rist://@host:0` a free even UDP port is picked
+/// first, released and substituted into the URL (another process could in
+/// principle take it in between): a Main-profile receiver could report the
+/// port it bound through `RistRecvTransport::local_addr()`, but an even
+/// port named up front also suits a Simple-profile URL, which refuses
+/// port 0. The caller-mode forms of tcp and srt are refused; they have
+/// nothing to bind.
 pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
     match scheme_of(url)? {
         "udp" => {
