@@ -216,6 +216,17 @@ public final class TestSupport {
         }
     }
 
+    /** Skip the calling test unless a UDP socket can bind the IPv6 loopback. */
+    public static void assumeIpv6Loopback() {
+        boolean ok;
+        try (DatagramSocket s = new DatagramSocket(new InetSocketAddress("::1", 0))) {
+            ok = true;
+        } catch (IOException e) {
+            ok = false;
+        }
+        org.junit.jupiter.api.Assumptions.assumeTrue(ok, "no IPv6 loopback on this host");
+    }
+
     /**
      * 8-byte Annex-B IDR prefix (start code + IDR header + three slice
      * bytes) — the DTS/MISP muxer tests' fixture, distinct from the 20-byte

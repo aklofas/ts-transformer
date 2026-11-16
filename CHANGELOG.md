@@ -47,6 +47,10 @@ Next release: 0.11.0
 - `RistRecvTransport::local_addr()`: the address the receiver bound, read from librist's socket. A Main-profile receiver bound on port 0 now reports the port the kernel picked, so a sender can reach it.
 - A receive opener reports the address it bound: `Opened::local_addr` and `Opened::with_local_addr` in `tst-pipeline`, filled by the `udp://` and `rist://@` receive openers.
 
+### Added — tst-jni
+
+- `shells.Receiver.localPort()` and `shells.DemuxReceiver.localPort()` return the port a `udp://` or `rist://@host:port` receiver bound, so a URL with port 0 reports the port the kernel picked. Every other open reports empty. The value is read from what was captured at open and never waits behind a receive parked on another thread.
+
 ### Changed — tst-interop
 
 - The `pcr_lead` oracle is a failing verdict on every profile: on each program's PCR PID, every access unit's decode time must be at least 90 ms above the last PCR before it (the muxer's default lead is 100 ms). It was implemented and off, because the muxer wrote PCR = PTS. A capture with no lead measured on a PCR PID fails. The other PIDs of a program are held to 0 ms under their own name, `pcr_lead_other_pids`, on captures in the generator's layout only; `recv --remuxed` lists that name in `skipped_oracles`. The raw reader forgets the last PCR at a `discontinuity_indicator`, and a managed receiver's reader forgets it at a reconnect. Under the corruption tap, an access unit below its level is excused inside the attribution window of an injection that can move the clock it is measured against (a body flip that changed the adaptation field's length, its flags or its PCR bytes on a payload-less packet of the PCR PID, or an injection that breaks packet framing), and `corruption_attribution.pcr_lead_excused` counts them. Reports gain `metrics.pcr_lead_min_ms`, the least lead measured on a PCR PID. A capture re-muxed by a third-party tool is judged on that tool's PCR.

@@ -9,6 +9,7 @@
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
+use std::net::SocketAddr;
 use std::sync::LazyLock;
 
 use jni::jni_str;
@@ -30,7 +31,8 @@ use crate::handle::OwnedRegistry;
 
 type Shell = PlReceiver<Box<dyn RecvTransport>>;
 
-static REGISTRY: LazyLock<OwnedRegistry<Shell, Snapshot<()>>> = LazyLock::new(OwnedRegistry::new);
+static REGISTRY: LazyLock<OwnedRegistry<Shell, Snapshot<Option<SocketAddr>>>> =
+    LazyLock::new(OwnedRegistry::new);
 
 jni_native! {
     /// `Receiver.nOpen(url)` — for `srt://` the URL must carry `?mode=listener`;
@@ -55,6 +57,7 @@ pub(crate) fn register(opened: Opened<Box<dyn RecvTransport>>) -> jlong {
         transport,
         cancel,
         domain,
+        local_addr,
         ..
     } = opened;
     // Taken before the transport moves into the shell.
@@ -65,13 +68,28 @@ pub(crate) fn register(opened: Opened<Box<dyn RecvTransport>>) -> jlong {
         cancel,
         Snapshot {
             domain,
-            handles: (),
+            handles: local_addr,
         },
     );
     if let Some(h) = end_reason {
         owned = owned.with_end_reason(h);
     }
     REGISTRY.insert(owned) as jlong
+}
+
+jni_native! {
+    /// The port the transport bound at open (`udp://`, `rist://@`), `-1` for a
+    /// shell that has none. Reads the construction-time snapshot only, so it
+    /// answers while `recvBytes` is parked.
+    fn Java_org_tstrans_shells_Receiver_nLocalPort(env, _class, handle: jlong) -> jint = -1 => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles) {
+            Some(addr) => addr.map_or(-1, |a| jint::from(a.port())),
+            None => {
+                crate::error::throw_closed(env, "Receiver");
+                -1
+            }
+        }
+    }
 }
 
 jni_native! {

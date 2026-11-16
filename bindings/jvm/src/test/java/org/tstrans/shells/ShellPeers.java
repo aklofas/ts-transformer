@@ -199,6 +199,7 @@ final class ShellPeers {
         void recvOnce() throws Exception;
         CancelHandle cancelHandle();
         boolean isAlive();
+        java.util.OptionalInt localPort();
         SocketStats socketStats();
         EndReason endReason();
         @Override void close();
@@ -234,6 +235,7 @@ final class ShellPeers {
                 @Override public void recvOnce() throws Exception { r.recvBytes(); }
                 @Override public CancelHandle cancelHandle() { return r.cancelHandle(); }
                 @Override public boolean isAlive() { return r.isAlive(); }
+                @Override public java.util.OptionalInt localPort() { return r.localPort(); }
                 @Override public SocketStats socketStats() { return r.socketStats(); }
                 @Override public EndReason endReason() { return r.endReason(); }
                 @Override public void close() { r.close(); }
@@ -247,6 +249,7 @@ final class ShellPeers {
             }
             @Override public CancelHandle cancelHandle() { return d.cancelHandle(); }
             @Override public boolean isAlive() { return d.isAlive(); }
+            @Override public java.util.OptionalInt localPort() { return d.localPort(); }
             @Override public SocketStats socketStats() { return d.socketStats(); }
             @Override public EndReason endReason() { return d.endReason(); }
             @Override public void close() { d.close(); }
