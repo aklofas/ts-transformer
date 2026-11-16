@@ -23,6 +23,8 @@ public final class Main {
         org.tstrans.rtp.TransportPref.class,
         org.tstrans.shells.EndReason.class,
         org.tstrans.srt.ReconnectMode.class,
+        org.tstrans.tcp.Listener.class,
+        org.tstrans.tcp.Transport.class,
         org.tstrans.webrtc.MountKind.class,
     };
 

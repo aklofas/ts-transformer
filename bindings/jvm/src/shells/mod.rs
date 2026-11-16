@@ -18,7 +18,7 @@ pub(crate) mod cancel;
 pub(crate) mod demux_receiver;
 pub(crate) mod end_reason;
 pub(crate) mod mux_sender;
-mod open;
+pub(crate) mod open;
 pub(crate) mod receiver;
 pub(crate) mod sender;
 
@@ -55,7 +55,7 @@ fn domain_or_closed<T: Send + 'static, H: Send + Sync + 'static>(
 /// Only the operations that can park (send, receive, iterate, finish) use this;
 /// the stats and accessor natives throw `IllegalStateException` for a closed
 /// handle through `throw_handle_state`, the established JVM idiom.
-fn throw_state(env: &mut Env, domain: Domain, what: &str, state: &HandleState) {
+pub(crate) fn throw_state(env: &mut Env, domain: Domain, what: &str, state: &HandleState) {
     if matches!(state, HandleState::Closed | HandleState::Cancelled) {
         throw_binding(env, domain, &BindingError::from(state.clone()));
     } else {

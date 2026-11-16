@@ -50,6 +50,7 @@ Next release: 0.11.0
 ### Added — tst-jni
 
 - `shells.Receiver.localPort()` and `shells.DemuxReceiver.localPort()` return the port a `udp://` or `rist://@host:port` receiver bound, so a URL with port 0 reports the port the kernel picked. Every other open reports empty. The value is read from what was captured at open and never waits behind a receive parked on another thread.
+- A TCP listener, the new package `org.tstrans.tcp`: `Listener.open("tcp://ip:port?listen=1")` binds, `accept()` returns each connecting peer as a `Transport`, `localPort()` reports the port bound (also for port 0, and while an `accept()` is parked), and `cancelHandle()` ends a parked `accept()` with `TcpException(CLOSED)`; `Transport.peerAddr()` gives the peer's address. A URL without `?listen=1` or with a host that is not an IP literal is `TcpException(URL)`, a port in use is `IO`, and every call after `close()` throws `IllegalStateException`. An accepted `Transport` stays open after its listener closes.
 
 ### Changed — tst-interop
 

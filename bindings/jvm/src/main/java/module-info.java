@@ -1,5 +1,5 @@
 /**
- * tstrans JVM bindings — MPEG-TS + KLV + codec parsing and SRT/RTP/HLS/WebRTC transport.
+ * tstrans JVM bindings — MPEG-TS + KLV + codec parsing and SRT/RTP/TCP/HLS/WebRTC transport.
  *
  * <p>Package layout mirrors the Python binding ({@code tstrans.*}).
  */
@@ -15,5 +15,6 @@ module org.tstrans {
     exports org.tstrans.rtp;
     exports org.tstrans.shells;
     exports org.tstrans.srt;
+    exports org.tstrans.tcp;
     exports org.tstrans.webrtc;
 }

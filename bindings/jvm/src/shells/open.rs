@@ -19,7 +19,7 @@ fn domain_of(url: &str) -> Option<Domain> {
 }
 
 /// Read the Java `String`, throwing `RuntimeException` on a JNI failure.
-pub(super) fn read_url(env: &mut Env, url: &JString) -> Option<String> {
+pub(crate) fn read_url(env: &mut Env, url: &JString) -> Option<String> {
     match url.try_to_string(env) {
         Ok(s) => Some(s),
         Err(e) => {
