@@ -253,7 +253,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * does not mean there is no link. The byte and packet counts the wrapper keeps itself are
      * not delayed, but a receiver's {@code bytesReceived} and {@code packetsReceived} count what
      * the transport has read, a whole block at a time (a datagram or a read on {@code udp://} and
-     * {@code tcp://}, a block of up to 1316 bytes on {@code rist://}), so they can run ahead of
+     * {@code tcp://}, a block, 1316 bytes from this library's senders, on {@code rist://}), so they can run ahead of
      * what the receiving calls have returned so far. The call waits behind a receive or send
      * parked on another thread.
      *
