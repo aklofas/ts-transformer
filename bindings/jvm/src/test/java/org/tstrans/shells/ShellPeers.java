@@ -394,12 +394,19 @@ public final class ShellPeers {
     public static final class Watchdog implements AutoCloseable {
         private final CountDownLatch finished = new CountDownLatch(1);
 
+        /**
+         * Takes ownership of {@code handle}: the watchdog thread closes it once it can no
+         * longer cancel (after its wait, whether it cancelled or not), so pass a fresh handle
+         * and do not use it afterwards.
+         */
         public Watchdog(CancelHandle handle, long ms) {
             Thread t = new Thread(() -> {
                 try {
                     if (!finished.await(ms, TimeUnit.MILLISECONDS)) handle.cancel();
                 } catch (InterruptedException ignored) {
                     // the test finished first
+                } finally {
+                    handle.close();
                 }
             }, "shell-call-watchdog");
             t.setDaemon(true);
