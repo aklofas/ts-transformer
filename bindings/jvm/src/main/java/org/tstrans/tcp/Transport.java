@@ -30,7 +30,9 @@ import org.tstrans.shells.Sender;
  * }
  * }</pre>
  *
- * <p>Mirrors {@code tstrans.tcp.Transport} in tst-py.
+ * <p>The JVM counterpart of the {@code tstrans.tcp.Transport} that Python's
+ * {@code tstrans.tcp.Listener} accepts, without its {@code send} and {@code recv}: convert
+ * it into a shell to move bytes.
  */
 public final class Transport extends NativeHandle {
 
@@ -42,6 +44,12 @@ public final class Transport extends NativeHandle {
     /**
      * The peer's address as {@code ip:port}, an IPv6 address in brackets
      * ({@code [::1]:5000}). It is the TCP source address: behind a proxy, the proxy's.
+     *
+     * <p>A listener bound to {@code [::]} that also accepts IPv4 clients (the default on
+     * Linux) reports an IPv4 peer in the IPv4-mapped IPv6 form,
+     * {@code [::ffff:203.0.113.5]:40000}, so a rule written as plain IPv4 text
+     * ({@code 203.0.113.5}) does not match it as a string. A listener bound to an IPv4
+     * address reports the plain form.
      *
      * @throws IllegalStateException if the connection is closed
      */
