@@ -1,7 +1,8 @@
 //! `RistRecvTransport::local_addr`: the address librist bound, read from its
 //! socket, so a receiver bound on port 0 can be reached; and the Simple
-//! profile's refusal of port 0, where librist derives the RTCP port (port + 1)
-//! before the kernel has picked one.
+//! profile's refusal of port 0, where librist reads the kernel's port in
+//! network byte order and derives the even-port check and the RTCP port
+//! (port + 1) from that wrong value.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
@@ -25,8 +26,9 @@ fn seven_ts_packets() -> Vec<u8> {
     out
 }
 
-/// Send to `rx`'s reported port until one read returns the datagram.
-fn assert_reachable(rx: &mut RistRecvTransport, query: &str) {
+/// Send to `rx`'s reported port until one read returns the datagram, or
+/// `deadline` passes.
+fn assert_reachable(rx: &mut RistRecvTransport, query: &str, deadline: Instant) {
     let local = rx.local_addr();
     let host = if local.is_ipv6() {
         "[::1]"
@@ -38,7 +40,6 @@ fn assert_reachable(rx: &mut RistRecvTransport, query: &str) {
             .expect("connect");
     let payload = seven_ts_packets();
     let mut buf = vec![0u8; rx.max_payload()];
-    let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         tx.send_bytes(&payload).expect("send");
         match rx.recv_bytes(&mut buf) {
@@ -50,13 +51,13 @@ fn assert_reachable(rx: &mut RistRecvTransport, query: &str) {
             Err(e) => panic!("{local}: recv: {e:?}"),
         }
     }
-    panic!("{local}: nothing arrived in 10 s");
+    panic!("{local}: nothing arrived before the test's deadline");
 }
 
 /// An even port whose odd companion is free too (the Simple profile binds
 /// both). Another process can take it before librist binds it; callers retry.
 fn free_even_port() -> u16 {
-    loop {
+    for _ in 0..100 {
         let probe = UdpSocket::bind("127.0.0.1:0").expect("bind probe");
         let port = probe.local_addr().expect("probe addr").port() & !1;
         drop(probe);
@@ -71,10 +72,13 @@ fn free_even_port() -> u16 {
             return port;
         }
     }
+    panic!("no free even port with a free odd neighbour in 100 tries");
 }
 
 #[test]
 fn main_profile_port_zero_reports_the_port_a_sender_reaches() {
+    // One deadline for every bind, inside nextest's 20 s kill for network tests.
+    let deadline = Instant::now() + Duration::from_secs(15);
     for bind in [
         "rist://@127.0.0.1:0",
         "rist://@0.0.0.0:0",
@@ -92,7 +96,7 @@ fn main_profile_port_zero_reports_the_port_a_sender_reaches() {
         let mut rx = RistRecvTransport::listen(bind).unwrap_or_else(|e| panic!("{bind}: {e:?}"));
         assert_ne!(rx.local_addr().port(), 0, "{bind}");
         let query = bind.find('?').map_or("", |i| &bind[i..]);
-        assert_reachable(&mut rx, query);
+        assert_reachable(&mut rx, query, deadline);
     }
 }
 
@@ -132,7 +136,7 @@ fn simple_profile_port_zero_is_refused_before_librist() {
         Err(e) => panic!("{what}: {e:?}"),
         Ok(_) => panic!("{what}: opened, expected a refusal"),
     };
-    // librist fails the peer most of the time and opens it some of the time,
+    // librist fails the peer about half the time and opens it otherwise,
     // so one open proves nothing: every one of 20 must be refused.
     for _ in 0..20 {
         for bind in [

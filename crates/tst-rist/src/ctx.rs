@@ -81,8 +81,9 @@ impl RistCtx {
 
         if role == Role::Receiver && cfg.profile == RistProfile::Simple && url.port == 0 {
             return Err(RistError::InvalidConfig(
-                "port 0 is not supported in the Simple profile: librist derives the RTCP port \
-                 from it before the port is known; name an even port, or use RistProfile::Main"
+                "port 0 is not supported in the Simple profile: librist keeps the port the kernel \
+                 picked in network byte order and derives its even-port check and the RTCP port \
+                 (port + 1) from that wrong value; name an even port, or use RistProfile::Main"
                     .into(),
             ));
         }
