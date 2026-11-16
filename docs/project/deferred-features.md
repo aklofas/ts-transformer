@@ -265,10 +265,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
   RIST receiver exposes no sender address either. A TCP connection does
   report its peer (`TcpTransport::peer`, `org.tstrans.tcp.Transport.peerAddr`).
 - **Why deferred:** neither receiver carries the sender's address out of
-  its read path, and no consumer has applied rules per sending address on
-  these transports.
+  its read path, and adding it touches each transport's receive call and
+  the binding surfaces that would report it.
 - **Trigger to revisit:** an embedder that must apply per-address rules to
-  UDP or RIST ingest. Planned for the next release.
+  UDP or RIST ingest.
 
 ## Nested `#!{…}` access-control form
 

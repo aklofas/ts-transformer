@@ -334,7 +334,7 @@ What may precede or override the CLOSED outcome:
 | Concept | Python | JVM | Rule |
 |---|---|---|---|
 | open a shell from a URL | `MuxSender.open(url, program)` | `MuxSender.open(url, config)` | the one constructor of a URL-opened class; per-transport options are URL keys |
-| a raw transport | `tstrans.<t>.Transport` / `RecvTransport` | `org.tstrans.rtp.Transport` / `RecvTransport`; `org.tstrans.tcp.Listener` and the `Transport` it accepts, which converts into a shell | no `RawSender`/`RawReceiver` host class |
+| a raw transport | `tstrans.<t>.Transport` / `RecvTransport` | `org.tstrans.rtp.Transport` / `RecvTransport` (`org.tstrans.tcp` is a listener whose accepted connection becomes a shell, not a raw transport) | no `RawSender`/`RawReceiver` host class |
 | a TS-through shell | `tstrans.shells.Sender` / `Receiver` | `org.tstrans.shells.Sender` / `Receiver` | `Sender`/`Receiver` always mean TS bytes through a transport |
 | a builder | `udp` / `tcp` / `rist` `Transport.builder()…build()`, `srt.Builder` | `srt.Builder`, `HlsPublisher.builder()`; no raw-transport builders (`tcp.Listener.open(url)` takes URL keys) | only where the Rust side is a builder; `rtp.Transport` takes URL keys instead |
 | a failure | `<Domain>Error(kind=<Domain>ErrorKind.X)` | `<Domain>Exception(Kind.X)` | the domain is the transport's (or `Mux`, `Demux`, `Klv…`, `Codec`) |

@@ -3000,7 +3000,7 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::listener::TcpListener::bind"
 owning_tests = ["crates/tst-tcp/tests/net_conformance.rs"]
-bindings = ["c:tst_tcp_listener_bind", "python:tstrans.tcp.ListenerBuilder.bind", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_tcp_listener_bind", "python:tstrans.tcp.ListenerBuilder.build", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3008,8 +3008,26 @@ tier = "A"
 kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::listener::TcpListener::from_url"
-owning_tests = ["crates/tst-tcp/tests/net_tls_version.rs", "bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
-bindings = ["c:tst_tcp_listener_from_url", "python:deferred(a Python listener is built from bind() and tls(), not from a URL)", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
+owning_tests = ["crates/tst-tcp/tests/net_tls_version.rs"]
+bindings = ["c:tst_tcp_listener_from_url", "python:n/a(the Python listener opens through TcpListenerBuilder: ListenerBuilder.build)", "java:n/a(the JVM listener opens through TcpListenerBuilder: org.tstrans.tcp.Listener.open)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::builder::TcpListenerBuilder::from_url"
+owning_tests = ["crates/tst-tcp/src/builder.rs", "bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
+bindings = ["c:n/a(the C listener opens through TcpListener::from_url: tst_tcp_listener_from_url)", "python:tstrans.tcp.ListenerBuilder.build", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-tcp"
+item = "tst_tcp::builder::TcpListenerBuilder::build"
+owning_tests = ["crates/tst-tcp/src/builder.rs", "bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
+bindings = ["c:n/a(the C listener opens through TcpListener::from_url and TcpListener::bind)", "python:tstrans.tcp.ListenerBuilder.build", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3027,7 +3045,7 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::listener::TcpListener::local_addr"
 owning_tests = ["crates/tst-tcp/tests/net_loopback.rs", "bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
-bindings = ["c:deferred(tst_tcp_listener_t has no bound-address getter)", "python:tstrans.tcp.Listener.local_port", "java:org.tstrans.tcp.Listener.localPort", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(TstTcpListener has no bound-address getter)", "python:tstrans.tcp.Listener.local_port", "java:org.tstrans.tcp.Listener.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3036,7 +3054,7 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::transport::TcpTransport::peer"
 owning_tests = ["bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
-bindings = ["c:deferred(a shell accepted through tst_tcp_listener_t does not report its peer)", "python:tstrans.tcp.Transport.peer_addr", "java:org.tstrans.tcp.Transport.peerAddr", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(a shell accepted through TstTcpListener does not report its peer)", "python:tstrans.tcp.Transport.peer_addr", "java:org.tstrans.tcp.Transport.peerAddr", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

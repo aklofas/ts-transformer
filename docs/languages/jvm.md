@@ -1116,7 +1116,7 @@ falls into two groups.
 |---|---|---|
 | `close()`, `cancelHandle()`, `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
 | `isAlive()` | `true` — a parked call means the object is open | `false` |
-| `localAddr()` (`Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
+| `localAddr()` (`srt.Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
 | `localPort()` (`Receiver`, `DemuxReceiver`, `tcp.Listener`) | the port captured at open (`tcp.Listener` answers while `accept()` is parked) | throws `IllegalStateException` |
 | `peerAddr()` (`tcp.Transport`) | the address captured at accept | throws `IllegalStateException`, also once the connection is converted into a shell |
 | `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
@@ -1568,10 +1568,13 @@ receive is parked on another thread; after `close()` it throws
 `IllegalStateException`.
 
 `recvBytes()` returns aligned TS packets (one 188-byte packet per call),
-whatever datagram size the publisher sends. A `udp://` receive blocks until a
-datagram arrives or the shell is cancelled or closed. A `rist://` receive
-throws `RistException(BACKPRESSURE)` about every 100 ms while nothing
-arrives; the receiver stays open, so call it again:
+whatever datagram size the publisher sends. A receiving shell returns its
+first packet only once it has found four sync bytes 188 bytes apart (the
+starts of four aligned TS packets); a stream shorter than that yields
+nothing. A `udp://` receive blocks until a packet is ready or the
+shell is cancelled or closed. A `rist://` receive throws
+`RistException(BACKPRESSURE)` about every 100 ms while nothing arrives; the
+receiver stays open, so call it again:
 
 ```java
 import org.tstrans.RistException;
@@ -1582,7 +1585,8 @@ try (Receiver rx = Receiver.open("rist://@0.0.0.0:0")) {
         try {
             ts = rx.recvBytes();
         } catch (RistException e) {
-            if (e.kind() == RistException.Kind.BACKPRESSURE) continue;  // nothing for ~100 ms
+            // nothing arrived for ~100 ms
+            if (e.kind() == RistException.Kind.BACKPRESSURE) continue;
             throw e;
         }
         recorder.write(ts);                         // your consumer
@@ -1602,12 +1606,14 @@ sends RTCP on a second port, the data port + 1, and needs an even data
 port; name an even port whose odd neighbour is free too. A Simple-profile
 receiver on port 0 is refused at open with
 `RistException(INVALID_CONFIG)`, because librist misreads a port the
-kernel picked and would put RTCP on the wrong port. Encryption (`?secret=`) needs the Main
-profile.
+kernel picked and would put RTCP on the wrong port. A URL with `?secret=`
+(encryption) uses the Main profile, also when it says `?profile=simple`.
 
 ### TCP: a listener, one publisher at a time
 
 ```java
+import java.util.concurrent.atomic.AtomicReference;
+import org.tstrans.BindingException;
 import org.tstrans.TcpException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.shells.CancelHandle;
@@ -1615,26 +1621,50 @@ import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.tcp.Listener;
 import org.tstrans.tcp.Transport;
 
+// The shell being served, for the shutdown path to cancel.
+AtomicReference<CancelHandle> serving = new AtomicReference<>();
+
 try (Listener listener = Listener.open("tcp://0.0.0.0:0?listen=1")) {
-    int port = listener.localPort();               // hand it to the publisher
-    CancelHandle stop = listener.cancelHandle();   // stop.cancel() from your shutdown path
+    int port = listener.localPort();             // hand it to the publisher
+    CancelHandle stop = listener.cancelHandle();
     while (true) {
         Transport conn;
         try {
             conn = listener.accept();
         } catch (TcpException e) {
-            if (e.kind() == TcpException.Kind.CLOSED) break;  // stop.cancel() ran
+            if (e.kind() == TcpException.Kind.CLOSED) break;  // shutdown
             throw e;
         }
-        String publisher = conn.peerAddr();  // read before the conversion consumes conn
+        String publisher = conn.peerAddr();      // read before the conversion
         try (DemuxReceiver rx = conn.intoDemuxReceiver()) {
-            for (DemuxEvent event : rx) {
+            serving.set(rx.cancelHandle());
+            if (stop.isCancelled()) break;   // shutdown began during accept()
+            for (DemuxEvent ev; (ev = rx.recvEvent()) != null; ) {
                 // ... handle the event ...
             }
+        } catch (BindingException e) {
+            // this publisher failed or was cancelled: log it, serve the next
+        } finally {
+            serving.set(null);
         }
     }
 }
+
+// The shutdown path, on another thread that shares `stop` and `serving`:
+stop.cancel();                                   // ends a parked accept()
+CancelHandle current = serving.get();
+if (current != null) current.cancel();   // ends the publisher being served
 ```
+
+The `catch (BindingException e)` keeps the server up when one publisher
+fails: a reset connection, a TLS failure or malformed TS ends that
+connection's loop, not the listener's. The loop uses `recvEvent()`, which
+throws the checked exception, rather than the `Iterator`, which wraps it in
+an unchecked `RuntimeException`. The shutdown path cancels the listener so
+a parked `accept()` returns `CLOSED` and the loop exits, and it cancels the
+shell being served because cancelling the listener does not end a
+connection it already handed out. The `isCancelled()` check covers a
+shutdown that lands between `accept()` returning and `serving` being set.
 
 `Listener.open` takes `tcp://ip:port?listen=1`. The host must be an IP
 literal (`0.0.0.0`, `::`, `127.0.0.1`, ...); a host name, or a URL without
@@ -1692,15 +1722,16 @@ these three schemes it carries:
 |---|---|---|---|
 | `udp://` | bytes; a packet is one datagram | socket send / receive errors | none |
 | `tcp://`, `tcps://` | bytes; a packet is one `send` / `recv` call | send / receive errors | none |
-| `rist://` | bytes and packets | `packetsDroppedRecv`: librist's lost-packet count plus oversize or malformed blocks the receiver dropped; `packetsDroppedSend` is 0 | `packetsRetransmitted`, `linkBandwidthBps` (librist's estimate), `rttUs` |
+| `rist://` | bytes and packets | `packetsDroppedRecv`: librist's lost-packet count plus oversize or malformed blocks the receiver dropped; `packetsDroppedSend` is 0 | `packetsRetransmitted` (a sender's count; a receiver reads 0), `linkBandwidthBps` (librist's estimate), `rttUs` |
 
 Every field the table does not name reads 0. On a receiver the send-side
 counters read 0, and on a sender the receive-side ones do.
 
 - **librist reports once a second.** On `rist://` the lost count,
   `packetsRetransmitted`, `linkBandwidthBps` and `rttUs` lag behind the
-  byte and packet counts, which the wrapper keeps itself. `linkBandwidthBps` can read 0 for a long time (it stays 0 on a
-  loopback link), so 0 does not mean there is no link.
+  byte and packet counts, which the wrapper keeps itself.
+  `linkBandwidthBps` can read 0 for a long time (it stayed 0 on a loopback
+  link in testing), so 0 does not mean there is no link.
 - **Receive counters count what the transport read.** A receiver's
   `bytesReceived` and `packetsReceived` count whole reads (a datagram on
   `udp://`, a read on `tcp://`, a block on `rist://`, 1316 bytes from this
