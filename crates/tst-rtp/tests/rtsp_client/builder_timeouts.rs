@@ -1,6 +1,7 @@
-//! Verify that `RtspClientBuilder`'s `connect_timeout`, `read_timeout`,
-//! and `user_agent` fields are actually wired through to the socket and
-//! request headers — not silently ignored.
+//! Verify that `RtspClientBuilder`'s `connect_timeout`, `request_timeout`
+//! and `user_agent` reach the connect, the request wait and the request
+//! headers, and that a long `read_timeout` (which bounds only the reads of
+//! a TLS handshake) changes nothing after connect.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -201,14 +202,14 @@ fn request_timeout_duration_max_does_not_panic() {
 
 // --- `request_timeout` vs a longer `read_timeout` ---
 //
-// The request deadline and the cancel flag must be honored whatever the
-// per-read socket timeout is configured to. These are deadline tests, so
-// they assert on elapsed time. The wrong behavior takes at least the 30 s
-// read timeout, so the 15 s bound is half of it and needs no scaling: a slow
-// host cannot push the right behavior across it, and the wrong one cannot
-// land under it. None of them can hang: the socket read timeout ends the
-// client call even without the behavior under test, and each server thread
-// has its own cap.
+// `read_timeout` bounds only the reads of a TLS handshake: these pin that a
+// long one changes nothing after connect, where the request deadline and
+// the cancel end the call. They assert on elapsed time. A call stretched to
+// the 30 s read timeout would fail the 15 s bound, which is half of it and
+// needs no scaling: a slow host cannot push the right behavior across it.
+// No socket timeout applies after connect, so what ends a call a
+// regression leaves waiting is the server thread's own cap (40 s at most),
+// after which it closes the connection.
 
 const SHORT_REQUEST_TIMEOUT: Duration = Duration::from_millis(100);
 const LONG_READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -369,8 +370,9 @@ fn cancel_latency_does_not_depend_on_read_timeout() {
     server.join().unwrap();
 }
 
-/// `rtsps://`: the same bound holds when the blocking read sits beneath
-/// rustls. The peer completes the TLS handshake and then never answers.
+/// `rtsps://`: the request deadline holds over TLS too, with the same long
+/// `read_timeout`. The peer completes the TLS handshake and then never
+/// answers.
 #[cfg(feature = "tls")]
 #[test]
 fn request_timeout_is_not_stretched_by_a_longer_read_timeout_over_tls() {

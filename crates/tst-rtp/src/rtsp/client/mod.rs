@@ -434,7 +434,7 @@ impl RtspClient {
     /// Only the first call acts: a later one keeps the first cadence.
     //
     // Exposed `#[doc(hidden)] pub` so the integration test in
-    // `tests/rtsp_client_keepalive.rs` can drive it without going
+    // `tests/rtsp_client/keepalive.rs` can drive it without going
     // through `RtspClientBuilder`. The builder also calls this.
     ///
     /// # Errors
