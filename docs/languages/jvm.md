@@ -1270,8 +1270,10 @@ close.
 **Lossless shutdown.** `close()` cancels first and abandons pending bytes;
 `finish()` drains them, throws the first drain error as `SrtException`, then
 closes. `finish()` does not cancel a parked `send*` first, so it waits behind
-one; a second `finish()` (or a `finish()` after `close()`) is a no-op, and the
-handle still takes a `close()` afterwards. `ManagedMuxSender` has the same method.
+one; a second `finish()` is a no-op unless the sender has been cancelled
+(after a cancel every `finish()` throws `CLOSED`, a repeated one included),
+a `finish()` after `close()` is a no-op too, and the handle still takes a
+`close()` afterwards. `ManagedMuxSender` has the same method.
 
 `sendKlv`, `sendAudio`, `sendSubtitle`, and `sendData` (raw private-data
 bytes, passed through verbatim — same PTS / ceiling semantics as

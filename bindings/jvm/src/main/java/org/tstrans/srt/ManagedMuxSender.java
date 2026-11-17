@@ -469,7 +469,9 @@ public final class ManagedMuxSender extends NativeHandle {
      * Drain every byte the muxer still holds to the transport, report the first
      * drain error, then close the transport — the lossless counterpart to
      * {@link #close()}. The sender is closed either way; a second call is a
-     * no-op, and so is a call after {@link #close()}.
+     * no-op unless the sender has been cancelled (after a cancel every call
+     * throws {@code CLOSED}, a repeated one included). A call after
+     * {@link #close()} is a no-op too.
      *
      * <p>Unlike {@link #close()} this does NOT cancel first: a {@code send*}
      * parked on another thread — including one waiting out a reconnect backoff

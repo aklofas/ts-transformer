@@ -622,7 +622,9 @@ pub unsafe extern "C" fn tst_mux_sender_cancel(p: *mut TstMuxSender) -> libc::c_
 ///
 /// Returns 0 when everything reached the transport, or the negative
 /// `TST_E_*` code of the first drain failure (the remaining bytes are
-/// abandoned; the sender is closed either way). A second call returns 0.
+/// abandoned; the sender is closed either way). A second call returns 0,
+/// unless the sender has been cancelled: after `_cancel` every `_finish`
+/// returns `TST_E_CLOSED`, a repeated one included.
 /// Unlike `tst_mux_sender_close`, this does NOT cancel first: a `send_*`
 /// parked on another thread holds the sender and `_finish` waits behind
 /// it — call `tst_mux_sender_cancel` first if that is not wanted. The
@@ -1357,7 +1359,9 @@ pub unsafe extern "C" fn tst_managed_mux_sender_cancel(p: *mut TstManagedMuxSend
 ///
 /// Returns 0 when everything reached the transport, or the negative
 /// `TST_E_*` code of the first drain failure (the remaining bytes are
-/// abandoned; the sender is closed either way). A second call returns 0.
+/// abandoned; the sender is closed either way). A second call returns 0,
+/// unless the sender has been cancelled: after `_cancel` every `_finish`
+/// returns `TST_E_CLOSED`, a repeated one included.
 /// Unlike `tst_managed_mux_sender_close`, this does NOT cancel first: a
 /// `send_*` parked on another thread — including one waiting out a
 /// reconnect backoff — holds the sender and `_finish` waits behind it;
