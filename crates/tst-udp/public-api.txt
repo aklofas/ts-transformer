@@ -6,6 +6,7 @@ pub fn tst_udp::builder::UdpRecvTransportBuilder::build(&self) -> core::result::
 pub fn tst_udp::builder::UdpRecvTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_udp::builder::UdpRecvTransportBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_udp::builder::UdpRecvTransportBuilder::rcvbuf(&mut self, usize) -> &mut Self
+pub fn tst_udp::builder::UdpRecvTransportBuilder::source(&mut self, tst_core::transport::source::SourcePin) -> &mut Self
 impl core::clone::Clone for tst_udp::builder::UdpRecvTransportBuilder
 pub fn tst_udp::builder::UdpRecvTransportBuilder::clone(&self) -> tst_udp::builder::UdpRecvTransportBuilder
 impl core::fmt::Debug for tst_udp::builder::UdpRecvTransportBuilder
@@ -45,6 +46,7 @@ pub tst_udp::config::UdpConfig::localaddr: core::option::Option<core::net::ip_ad
 pub tst_udp::config::UdpConfig::pkt_size: core::option::Option<usize>
 pub tst_udp::config::UdpConfig::rcvbuf: core::option::Option<usize>
 pub tst_udp::config::UdpConfig::sndbuf: core::option::Option<usize>
+pub tst_udp::config::UdpConfig::source: core::option::Option<tst_core::transport::source::SourcePin>
 pub tst_udp::config::UdpConfig::tos: core::option::Option<u8>
 pub tst_udp::config::UdpConfig::ttl: core::option::Option<u8>
 impl tst_udp::config::UdpConfig
@@ -96,7 +98,9 @@ impl tst_udp::recv::UdpRecvTransport
 pub fn tst_udp::recv::UdpRecvTransport::cancel_handle(&self) -> tst_udp::transport::UdpCancelHandle
 pub fn tst_udp::recv::UdpRecvTransport::listen(&str) -> core::result::Result<Self, tst_udp::error::UdpError>
 pub fn tst_udp::recv::UdpRecvTransport::local_addr(&self) -> core::net::socket_addr::SocketAddr
+pub fn tst_udp::recv::UdpRecvTransport::peer_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_udp::recv::UdpRecvTransport::recv_buffer_size(&self) -> core::io::error::Result<usize>
+pub fn tst_udp::recv::UdpRecvTransport::recv_from_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<(usize, core::net::socket_addr::SocketAddr)>, tst_udp::error::UdpError>
 pub fn tst_udp::recv::UdpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_udp::error::UdpError>
 pub fn tst_udp::recv::UdpRecvTransport::stats(&self) -> tst_udp::stats::UdpStats
 pub fn tst_udp::recv::UdpRecvTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::UdpConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
@@ -108,6 +112,7 @@ pub fn tst_udp::recv::UdpRecvTransport::is_alive(&self) -> bool
 pub fn tst_udp::recv::UdpRecvTransport::max_payload(&self) -> usize
 pub fn tst_udp::recv::UdpRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_udp::recv::UdpRecvTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
+pub fn tst_udp::recv::UdpRecvTransport::source_handle(&self) -> core::option::Option<tst_core::transport::source::SourceHandle>
 impl core::marker::Freeze for tst_udp::recv::UdpRecvTransport
 impl core::marker::Send for tst_udp::recv::UdpRecvTransport
 impl core::marker::Sync for tst_udp::recv::UdpRecvTransport
@@ -123,6 +128,7 @@ pub tst_udp::stats::UdpStats::datagrams_received: u64
 pub tst_udp::stats::UdpStats::datagrams_sent: u64
 pub tst_udp::stats::UdpStats::recv_errors: u64
 pub tst_udp::stats::UdpStats::send_errors: u64
+pub tst_udp::stats::UdpStats::source_rejected: u64
 impl tst_udp::stats::UdpStats
 pub fn tst_udp::stats::UdpStats::to_socket_stats(&self) -> tst_core::transport::SocketStats
 impl core::clone::Clone for tst_udp::stats::UdpStats
@@ -211,6 +217,7 @@ pub tst_udp::UdpConfig::localaddr: core::option::Option<core::net::ip_addr::IpAd
 pub tst_udp::UdpConfig::pkt_size: core::option::Option<usize>
 pub tst_udp::UdpConfig::rcvbuf: core::option::Option<usize>
 pub tst_udp::UdpConfig::sndbuf: core::option::Option<usize>
+pub tst_udp::UdpConfig::source: core::option::Option<tst_core::transport::source::SourcePin>
 pub tst_udp::UdpConfig::tos: core::option::Option<u8>
 pub tst_udp::UdpConfig::ttl: core::option::Option<u8>
 impl tst_udp::config::UdpConfig
@@ -234,7 +241,9 @@ impl tst_udp::recv::UdpRecvTransport
 pub fn tst_udp::recv::UdpRecvTransport::cancel_handle(&self) -> tst_udp::transport::UdpCancelHandle
 pub fn tst_udp::recv::UdpRecvTransport::listen(&str) -> core::result::Result<Self, tst_udp::error::UdpError>
 pub fn tst_udp::recv::UdpRecvTransport::local_addr(&self) -> core::net::socket_addr::SocketAddr
+pub fn tst_udp::recv::UdpRecvTransport::peer_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_udp::recv::UdpRecvTransport::recv_buffer_size(&self) -> core::io::error::Result<usize>
+pub fn tst_udp::recv::UdpRecvTransport::recv_from_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<(usize, core::net::socket_addr::SocketAddr)>, tst_udp::error::UdpError>
 pub fn tst_udp::recv::UdpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_udp::error::UdpError>
 pub fn tst_udp::recv::UdpRecvTransport::stats(&self) -> tst_udp::stats::UdpStats
 pub fn tst_udp::recv::UdpRecvTransport::with_config(&tst_udp::url::UdpUrl, &tst_udp::config::UdpConfig) -> core::result::Result<Self, tst_udp::error::UdpError>
@@ -246,6 +255,7 @@ pub fn tst_udp::recv::UdpRecvTransport::is_alive(&self) -> bool
 pub fn tst_udp::recv::UdpRecvTransport::max_payload(&self) -> usize
 pub fn tst_udp::recv::UdpRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_udp::recv::UdpRecvTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
+pub fn tst_udp::recv::UdpRecvTransport::source_handle(&self) -> core::option::Option<tst_core::transport::source::SourceHandle>
 impl core::marker::Freeze for tst_udp::recv::UdpRecvTransport
 impl core::marker::Send for tst_udp::recv::UdpRecvTransport
 impl core::marker::Sync for tst_udp::recv::UdpRecvTransport
@@ -259,6 +269,7 @@ pub fn tst_udp::builder::UdpRecvTransportBuilder::build(&self) -> core::result::
 pub fn tst_udp::builder::UdpRecvTransportBuilder::from_url(&str) -> core::result::Result<Self, tst_core::url::common::UrlError>
 pub fn tst_udp::builder::UdpRecvTransportBuilder::iface(&mut self, impl core::convert::Into<alloc::string::String>) -> &mut Self
 pub fn tst_udp::builder::UdpRecvTransportBuilder::rcvbuf(&mut self, usize) -> &mut Self
+pub fn tst_udp::builder::UdpRecvTransportBuilder::source(&mut self, tst_core::transport::source::SourcePin) -> &mut Self
 impl core::clone::Clone for tst_udp::builder::UdpRecvTransportBuilder
 pub fn tst_udp::builder::UdpRecvTransportBuilder::clone(&self) -> tst_udp::builder::UdpRecvTransportBuilder
 impl core::fmt::Debug for tst_udp::builder::UdpRecvTransportBuilder
@@ -277,6 +288,7 @@ pub tst_udp::UdpStats::datagrams_received: u64
 pub tst_udp::UdpStats::datagrams_sent: u64
 pub tst_udp::UdpStats::recv_errors: u64
 pub tst_udp::UdpStats::send_errors: u64
+pub tst_udp::UdpStats::source_rejected: u64
 impl tst_udp::stats::UdpStats
 pub fn tst_udp::stats::UdpStats::to_socket_stats(&self) -> tst_core::transport::SocketStats
 impl core::clone::Clone for tst_udp::stats::UdpStats
