@@ -445,8 +445,9 @@ class MountHandle:
     concurrent Python threads can run while the muxer/fanout work
     proceeds. `pts` is keyword-only. A push raises `RtspError(MOUNT)` when
     the muxer refuses the frame, and `RtspError(CLOSED)` once the server has
-    ended (`stop()`, a `cancel()` on its `cancel_handle()`, or the server
-    being collected), whether or not the mount was removed first.
+    ended (`stop()`, from the moment it begins; a `cancel()` on its
+    `cancel_handle()`; or the server being collected), whether or not the
+    mount was removed first.
     """
 
     # Identity / introspection.

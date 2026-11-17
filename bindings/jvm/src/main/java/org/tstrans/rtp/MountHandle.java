@@ -34,8 +34,9 @@ import org.tstrans.mpegts.VideoStreamHandle;
  * <p><b>Push errors</b> surface as {@link RtspException}: of kind {@code MOUNT} when the
  * muxer rejects the push (the failure originates in the mount push path) — this differs
  * from {@link org.tstrans.shells.MuxSender}, whose muxer errors are {@code MuxException} —
- * and of kind {@code CLOSED} once the server has ended ({@link RtspServer#stop()}, its
- * hard cancel or {@link RtspServer#close()}), whether or not the mount was removed first.
+ * and of kind {@code CLOSED} once the server has ended ({@link RtspServer#stop()}, from the
+ * moment it begins; its hard cancel; or {@link RtspServer#close()}), whether or not the mount
+ * was removed first.
  *
  * <p><b>Server failure isolation (rare):</b> {@code MountHandle} objects live in their
  * own registry, independent of their originating {@link RtspServer}. If the server is

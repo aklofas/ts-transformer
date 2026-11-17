@@ -260,7 +260,7 @@ impl MountHandle {
     /// `push_*` method below.
     ///
     /// Returns [`crate::error::MountError::Closed`] once the server has
-    /// ended or when the mutex is poisoned, or propagates any
+    /// ended or its `stop()` has begun, or when the mutex is poisoned, or propagates any
     /// [`tst_core::error::MuxError`] returned by `f` as
     /// [`crate::error::MountError::Mux`].
     fn with_muxer<F>(&self, f: F) -> Result<(), crate::error::MountError>
@@ -288,7 +288,7 @@ impl MountHandle {
     // signatures — same argument order, same semantics. Internally each
     // push:
     //   0. Refuses with `MountError::Closed` once the server has ended
-    //      (`stop()`, its hard cancel, or Drop).
+    //      (`stop()` from its first line, its hard cancel, or Drop).
     //   1. Locks the inner Muxer (Mutex<Muxer>; mutex poisoning maps to
     //      `MountError::Closed`).
     //   2. Calls the matching Muxer::push_* method (any MuxError surfaces
@@ -316,7 +316,8 @@ impl MountHandle {
     ///   [`tst_core::error::MuxError`] from the muxer (invalid NAL,
     ///   `BufferFull`, ambiguous target, etc.).
     /// - [`crate::error::MountError::Closed`] once the server has ended
-    ///   ([`crate::RtspServer::stop`] on a started server; a hard cancel
+    ///   ([`crate::RtspServer::stop`] on a started server, from the moment
+    ///   it begins; a hard cancel
     ///   through [`crate::RtspServer::cancel_handle`] or the server being
     ///   dropped, started or not), whether or not the mount was removed
     ///   first; also if the inner mutex is poisoned (a push panicked while
