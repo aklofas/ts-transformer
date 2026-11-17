@@ -21,6 +21,7 @@ use tokio::sync::broadcast;
 
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
 
+use super::ServerEnded;
 use super::publish::mount::PublishMountState;
 
 /// Discriminant for mount type.
@@ -61,6 +62,8 @@ pub(crate) struct MountState {
     ///
     /// [`PeerDropCounter`]: crate::rtsp::server::fanout::PeerDropCounter
     pub(crate) frames_dropped: Arc<AtomicU64>,
+    /// The owning server's end signal: a push after it fires is refused.
+    pub(crate) server_ended: ServerEnded,
 }
 
 /// Internal stats accumulator. Public `MountStats` snapshot derived from this.
@@ -73,13 +76,15 @@ pub(crate) struct MountStatsInner {
 
 impl MountState {
     /// Construct a fresh MountState from a MuxerConfig + MountKind +
-    /// fanout capacity. Both `RtspServer::add_mount` (unicast) and
+    /// fanout capacity + the server's end signal. Both
+    /// `RtspServer::add_mount` (unicast) and
     /// `RtspServer::add_multicast_mount` construct through here.
     pub(crate) fn new(
         path: impl Into<String>,
         kind: MountKind,
         muxer_cfg: MuxerConfig,
         fanout_capacity: usize,
+        server_ended: ServerEnded,
     ) -> Result<Arc<Self>, crate::error::RtspServerError> {
         let muxer =
             Muxer::new(muxer_cfg).map_err(|e| crate::error::RtspServerError::InvalidConfig {
@@ -93,6 +98,7 @@ impl MountState {
             fanout: tx,
             stats: Mutex::new(MountStatsInner::default()),
             frames_dropped: Arc::new(AtomicU64::new(0)),
+            server_ended,
         }))
     }
 }
@@ -253,13 +259,19 @@ impl MountHandle {
     /// the resulting TS bytes. This is the shared skeleton used by every
     /// `push_*` method below.
     ///
-    /// Returns [`crate::error::MountError::Closed`] when the mutex is
-    /// poisoned, or propagates any [`tst_core::error::MuxError`] returned
-    /// by `f` as [`crate::error::MountError::Mux`].
+    /// Returns [`crate::error::MountError::Closed`] once the server has
+    /// ended or when the mutex is poisoned, or propagates any
+    /// [`tst_core::error::MuxError`] returned by `f` as
+    /// [`crate::error::MountError::Mux`].
     fn with_muxer<F>(&self, f: F) -> Result<(), crate::error::MountError>
     where
         F: FnOnce(&mut Muxer) -> Result<(), tst_core::error::MuxError>,
     {
+        // Before the lock, so a refused push leaves the muxer and the stats
+        // untouched; a push already holding the lock completes.
+        if self.state.server_ended.is_ended() {
+            return Err(crate::error::MountError::Closed);
+        }
         let mut muxer = self
             .state
             .muxer
@@ -275,6 +287,8 @@ impl MountHandle {
     // The push methods mirror `tst_pipeline::MuxSender`'s `send_*`
     // signatures — same argument order, same semantics. Internally each
     // push:
+    //   0. Refuses with `MountError::Closed` once the server has ended
+    //      (`stop()`, its hard cancel, or Drop).
     //   1. Locks the inner Muxer (Mutex<Muxer>; mutex poisoning maps to
     //      `MountError::Closed`).
     //   2. Calls the matching Muxer::push_* method (any MuxError surfaces
@@ -286,7 +300,9 @@ impl MountHandle {
     // `broadcast::Sender::send` returns `Err` only when there are no
     // subscribers — that's the pre-PLAY state, NOT an error. We silently
     // drop those bytes; the muxer still consumed them so producers
-    // remain free to push without first connecting a peer.
+    // remain free to push without first connecting a peer, and to keep
+    // pushing to a mount removed with `RtspServer::remove_mount` until
+    // the server ends.
 
     /// Push one video access unit. Mirror of
     /// `tst_pipeline::MuxSender::send_video`.
@@ -299,9 +315,14 @@ impl MountHandle {
     /// - [`crate::error::MountError::Mux`] wraps any
     ///   [`tst_core::error::MuxError`] from the muxer (invalid NAL,
     ///   `BufferFull`, ambiguous target, etc.).
-    /// - [`crate::error::MountError::Closed`] if the inner mutex is
-    ///   poisoned (the mount's owning task panicked while holding the
-    ///   lock).
+    /// - [`crate::error::MountError::Closed`] once the server has ended
+    ///   ([`crate::RtspServer::stop`], a hard cancel through
+    ///   [`crate::RtspServer::cancel_handle`], or the server being
+    ///   dropped), whether it was started or not and whether or not the
+    ///   mount was removed first; also if the inner mutex is poisoned (a
+    ///   push panicked while holding the lock). An ended server is
+    ///   reported ahead of an invalid frame, and the refused push leaves
+    ///   the muxer and [`Self::stats`] unchanged.
     ///
     /// The push itself always succeeds if the muxer accepts the frame; a
     /// lagging peer's dropped frames are tracked in
@@ -633,7 +654,14 @@ mod tests {
 
     fn mock_unicast_mount_state() -> Arc<MountState> {
         let cfg = crate::rtsp::server::test_muxer_cfg();
-        MountState::new("/test", MountKind::Unicast, cfg, 256).unwrap()
+        MountState::new(
+            "/test",
+            MountKind::Unicast,
+            cfg,
+            256,
+            ServerEnded::default(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -822,7 +850,14 @@ mod tests {
         prog.add_video(0x1012, VideoCodec::H264);
         let mut b = MuxerConfig::builder();
         b.add_program(prog.build());
-        let state = MountState::new("/test", MountKind::Unicast, b.build().unwrap(), 256).unwrap();
+        let state = MountState::new(
+            "/test",
+            MountKind::Unicast,
+            b.build().unwrap(),
+            256,
+            ServerEnded::default(),
+        )
+        .unwrap();
         let handle = MountHandle { state };
         let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
         let err = handle
@@ -856,7 +891,14 @@ mod tests {
         let mut b = MuxerConfig::builder();
         b.add_program(prog.build());
         let cfg = b.build().unwrap();
-        MountState::new("/test", MountKind::Unicast, cfg, 256).unwrap()
+        MountState::new(
+            "/test",
+            MountKind::Unicast,
+            cfg,
+            256,
+            ServerEnded::default(),
+        )
+        .unwrap()
     }
 
     #[test]

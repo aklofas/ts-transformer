@@ -1257,7 +1257,7 @@ mod session_tests {
                 publish_counters: Default::default(),
                 interleaved_writes: Default::default(),
                 started: std::sync::atomic::AtomicBool::new(true),
-                shutdown: std::sync::atomic::AtomicBool::new(false),
+                shutdown: Default::default(),
                 local_addr: std::sync::Mutex::new(None),
                 sessions: std::sync::Mutex::new(Vec::new()),
                 notice_cseq: std::sync::atomic::AtomicU64::new(1_000_000),
@@ -1330,7 +1330,7 @@ mod session_tests {
                 publish_counters: Default::default(),
                 interleaved_writes: Default::default(),
                 started: std::sync::atomic::AtomicBool::new(true),
-                shutdown: std::sync::atomic::AtomicBool::new(false),
+                shutdown: Default::default(),
                 local_addr: std::sync::Mutex::new(None),
                 sessions: std::sync::Mutex::new(Vec::new()),
                 notice_cseq: std::sync::atomic::AtomicU64::new(1_000_000),
@@ -1399,7 +1399,7 @@ mod session_tests {
             publish_counters: Default::default(),
             interleaved_writes: Default::default(),
             started: std::sync::atomic::AtomicBool::new(true),
-            shutdown: std::sync::atomic::AtomicBool::new(false),
+            shutdown: Default::default(),
             local_addr: std::sync::Mutex::new(None),
             sessions: std::sync::Mutex::new(Vec::new()),
             notice_cseq: std::sync::atomic::AtomicU64::new(1_000_000),
@@ -1557,7 +1557,8 @@ mod session_tests {
             // Register a real mount at /test so an auth-passing DESCRIBE
             // returns 200 (2xx), triggering the counter reset.
             let mux_cfg = crate::rtsp::server::test_muxer_cfg();
-            let mount = MountState::new("/test", MountKind::Unicast, mux_cfg, 16).unwrap();
+            let mount =
+                MountState::new("/test", MountKind::Unicast, mux_cfg, 16, state.ended()).unwrap();
             state
                 .mounts
                 .lock()
@@ -1686,7 +1687,9 @@ mod session_tests {
             *state.local_addr.lock().unwrap() = Some("127.0.0.1:8554".parse().unwrap());
             let mux_cfg = crate::rtsp::server::test_muxer_cfg();
             for p in ["/locked", "/open"] {
-                let mount = MountState::new(p, MountKind::Unicast, mux_cfg.clone(), 16).unwrap();
+                let mount =
+                    MountState::new(p, MountKind::Unicast, mux_cfg.clone(), 16, state.ended())
+                        .unwrap();
                 state
                     .mounts
                     .lock()
@@ -2988,8 +2991,14 @@ mod session_tests {
             let state = test_state();
             {
                 let mut mounts = state.mounts.lock().unwrap();
-                let live =
-                    MountState::new("/live", MountKind::Unicast, test_muxer_cfg(), 8).unwrap();
+                let live = MountState::new(
+                    "/live",
+                    MountKind::Unicast,
+                    test_muxer_cfg(),
+                    8,
+                    state.ended(),
+                )
+                .unwrap();
                 mounts.insert("/live".into(), MountEntry::Local(live));
                 let publish = PublishMountState::new("/pub", 8, Default::default());
                 mounts.insert("/pub".into(), MountEntry::Publish(publish));

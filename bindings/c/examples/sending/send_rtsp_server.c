@@ -481,7 +481,7 @@ int main(int argc, char **argv) {
          *
          * Returns:
          *   0             — success
-         *   TST_E_CLOSED  — mount was cancelled (signal handler or error)
+         *   TST_E_CLOSED  — the server ended (the signal handler's cancel)
          *   TST_E_RTSP_MOUNT — muxer or fanout error
          */
         int rc = tst_rtsp_mount_push_video(mount, nal, sizeof(nal), pts, keyframe);

@@ -5,7 +5,7 @@
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
 use tst_core::mpegts::common::Pts90khz;
-use tst_rtp::{RtspServer, RtspServerError};
+use tst_rtp::{MountError, RtspServer, RtspServerError};
 
 #[test]
 fn start_then_stop_clean_exit() {
@@ -128,9 +128,10 @@ fn hard_cancel_ends_a_session_parked_in_read() {
 }
 
 /// A session in streaming PLAY, media flowing and its control connection
-/// still open, ends under a hard cancel, and its RTP fanout stops with it.
-/// Before the listener fired the server token, a streaming session never
-/// ended under a hard cancel at all. Latch-and-poll, no duration assertion.
+/// still open, ends under a hard cancel, and its RTP fanout stops with it;
+/// the mount refuses every push after the cancel. Before the listener fired
+/// the server token, a streaming session never ended under a hard cancel at
+/// all. Latch-and-poll, no duration assertion.
 #[test]
 fn hard_cancel_ends_a_streaming_play_session_and_its_fanout() {
     use std::net::{TcpStream, UdpSocket};
@@ -181,10 +182,12 @@ fn hard_cancel_ends_a_streaming_play_session_and_its_fanout() {
     assert_eq!(server.stats().active_sessions, 1);
 
     // The control connection stays open; only the hard cancel ends the session.
+    // Every push from here on is refused.
     server.cancel_handle().cancel();
     let deadline = Instant::now() + scaled(Duration::from_secs(5));
     while server.stats().active_sessions != 0 || mount.peer_count() != 0 {
-        mount.push_video(&nal, Pts90khz::new(pts), true).unwrap();
+        let r = mount.push_video(&nal, Pts90khz::new(pts), true);
+        assert!(matches!(r, Err(MountError::Closed)), "{r:?}");
         pts += 3600;
         assert!(
             Instant::now() < deadline,
@@ -195,22 +198,102 @@ fn hard_cancel_ends_a_streaming_play_session_and_its_fanout() {
         std::thread::sleep(Duration::from_millis(20));
     }
 
-    // Drain what was in flight (bounded), then keep pushing: nothing new may arrive.
+    // Drain what was in flight (bounded); the drain ends on the socket's
+    // 500 ms read timeout, so nothing arrived for that long after it.
     let mut drained = 0usize;
     while rtp.recv(&mut buf).is_ok() {
         drained += 1;
-        assert!(drained < 64, "RTP still arriving after the fanout stopped");
+        assert!(drained < 64, "RTP still arriving after the hard cancel");
     }
-    for _ in 0..25 {
-        mount.push_video(&nal, Pts90khz::new(pts), true).unwrap();
-        pts += 3600;
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(
-        rtp.recv(&mut buf).is_err(),
-        "RTP kept flowing after the hard cancel"
-    );
     drop(tcp);
+}
+
+const IDR: [u8; 6] = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
+
+fn push_once(mount: &tst_rtp::MountHandle) -> Result<(), MountError> {
+    mount.push_video(&IDR, Pts90khz::new(0), true)
+}
+
+#[test]
+fn mount_push_after_stop_is_closed() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    server.stop().unwrap();
+    let r = push_once(&mount);
+    assert!(matches!(r, Err(MountError::Closed)), "{r:?}");
+}
+
+/// Refused at once: the push reads the cancel flag itself, not whatever
+/// the listener does about it later.
+#[test]
+fn mount_push_right_after_a_hard_cancel_is_closed() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    server.cancel_handle().cancel();
+    let r = push_once(&mount);
+    assert!(matches!(r, Err(MountError::Closed)), "{r:?}");
+}
+
+#[test]
+fn mount_push_after_a_hard_cancel_on_a_never_started_server_is_closed() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.cancel_handle().cancel();
+    let r = push_once(&mount);
+    assert!(matches!(r, Err(MountError::Closed)), "{r:?}");
+}
+
+#[test]
+fn mount_push_after_the_server_is_dropped_is_closed() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    drop(server);
+    let r = push_once(&mount);
+    assert!(matches!(r, Err(MountError::Closed)), "{r:?}");
+}
+
+/// A removed mount's handle keeps pushing to nobody while the server
+/// lives, and is refused like any other once the server ends.
+#[test]
+fn removed_mount_push_succeeds_until_the_server_ends() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    server.remove_mount("/live").unwrap();
+    push_once(&mount).expect("a removed mount's push reaches nobody, successfully");
+    server.stop().unwrap();
+    let r = push_once(&mount);
+    assert!(matches!(r, Err(MountError::Closed)), "{r:?}");
+}
+
+/// A push before the end is muxed and counted; the refused one after it
+/// leaves the mount's stats as they were.
+#[test]
+fn a_refused_mount_push_leaves_the_stats_unchanged() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    push_once(&mount).unwrap();
+    let before = mount.stats();
+    assert!(before.bytes_pushed > 0, "{before:?}");
+    server.stop().unwrap();
+    assert!(matches!(push_once(&mount), Err(MountError::Closed)));
+    assert_eq!(mount.stats(), before);
+}
+
+/// A started server with no PLAY reader yet accepts pushes: only the
+/// server's end refuses them.
+#[test]
+fn mount_push_on_a_started_server_before_any_play_succeeds() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    push_once(&mount).expect("a push with no reader yet succeeds");
+    assert!(mount.stats().bytes_pushed > 0);
+    server.stop().unwrap();
 }
 
 /// A hard cancel is terminal: the server cannot be started afterwards.

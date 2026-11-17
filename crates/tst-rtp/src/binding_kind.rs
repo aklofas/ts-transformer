@@ -98,7 +98,10 @@ impl From<crate::rtsp::server::mount_rules::MountRuleError> for BindingError {
 impl From<MountError> for BindingError {
     fn from(e: MountError) -> Self {
         let kind = match &e {
-            MountError::Mux(_) | MountError::Closed => K::RtspMount,
+            MountError::Mux(_) => K::RtspMount,
+            // The server ended (or the mount's lock is poisoned): the
+            // terminal outcome, as a WHEP push after the server stopped.
+            MountError::Closed => K::Closed,
         };
         BindingError::new(kind, e.to_string())
     }
@@ -251,7 +254,7 @@ mod tests {
             BindingError::from(RtspServerError::TransportTaken).kind,
             K::Closed
         );
-        assert_eq!(BindingError::from(MountError::Closed).kind, K::RtspMount);
+        assert_eq!(BindingError::from(MountError::Closed).kind, K::Closed);
         assert_eq!(
             BindingError::from(MountError::Mux(tst_core::error::MuxError::InvalidNal)).kind,
             K::RtspMount

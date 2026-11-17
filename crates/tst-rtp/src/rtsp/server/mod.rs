@@ -96,8 +96,9 @@ pub(crate) struct ServerState {
     /// second call.
     pub(crate) started: AtomicBool,
     /// `stop()` flips this. After this is true, public methods return
-    /// `RtspServerError::Shutdown`.
-    pub(crate) shutdown: AtomicBool,
+    /// `RtspServerError::Shutdown`. Shared with every local mount through
+    /// [`ServerEnded`].
+    pub(crate) shutdown: Arc<AtomicBool>,
     /// Bound address — set by the listener after kernel-assigns the port
     /// (when bind URL had `port = 0`). `start()` waits on a one-shot
     /// channel the listener signals after setting it.
@@ -137,11 +138,35 @@ pub(crate) struct ServerState {
         std::sync::Mutex<Option<std::sync::mpsc::SyncSender<PublishQueueItem>>>,
 }
 
+/// The server's end signal, held by every local mount so a push can tell
+/// the server ended without a reference to it: the handle outlives the
+/// server.
+#[derive(Clone, Default)]
+pub(crate) struct ServerEnded {
+    shutdown: Arc<AtomicBool>,
+    hard_cancel: RtspServerCancelHandle,
+}
+
+impl ServerEnded {
+    /// `stop()` ran, the server was dropped, or its hard cancel fired.
+    pub(crate) fn is_ended(&self) -> bool {
+        self.shutdown.load(Ordering::Acquire) || self.hard_cancel.is_cancelled()
+    }
+}
+
 impl ServerState {
     /// `stop()` ran, the server was dropped, or its hard cancel fired.
     /// Public methods read this wherever they refuse work after shutdown.
     pub(crate) fn is_shut_down(&self) -> bool {
-        self.shutdown.load(Ordering::Acquire) || self.hard_cancel.is_cancelled()
+        self.ended().is_ended()
+    }
+
+    /// A shareable copy of the signal [`Self::is_shut_down`] reads.
+    pub(crate) fn ended(&self) -> ServerEnded {
+        ServerEnded {
+            shutdown: Arc::clone(&self.shutdown),
+            hard_cancel: self.hard_cancel.clone(),
+        }
     }
 
     /// The publish-side shutdown every terminal path performs (`stop()`,
@@ -473,7 +498,7 @@ pub(crate) fn test_state() -> Arc<ServerState> {
         publish_counters: Arc::default(),
         interleaved_writes: Arc::default(),
         started: AtomicBool::new(true),
-        shutdown: AtomicBool::new(false),
+        shutdown: Arc::default(),
         local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
         sessions: std::sync::Mutex::new(Vec::new()),
         notice_cseq: AtomicU64::new(1_000_000),
@@ -573,7 +598,7 @@ impl RtspServer {
             publish_counters: Arc::default(),
             interleaved_writes: Arc::default(),
             started: AtomicBool::new(false),
-            shutdown: AtomicBool::new(false),
+            shutdown: Arc::default(),
             local_addr: std::sync::Mutex::new(None),
             sessions: std::sync::Mutex::new(Vec::new()),
             notice_cseq: AtomicU64::new(1_000_000),
@@ -666,6 +691,7 @@ impl RtspServer {
                 crate::rtsp::server::mount::MountKind::Unicast,
                 cfg,
                 self.state.builder.fanout_capacity,
+                self.state.ended(),
             )?;
             Ok((
                 crate::rtsp::server::mount::MountEntry::Local(state.clone()),
@@ -743,7 +769,8 @@ impl RtspServer {
     ///   `stats()` and `generation()`; no publisher reaches it again.
     /// - A local mount's [`crate::rtsp::server::mount::MountHandle`] keeps
     ///   accepting pushes, which reach nobody: no session can find the
-    ///   path any more. A mount added later at the same path is a new
+    ///   path any more. Once the server ends they return
+    ///   [`crate::error::MountError::Closed`]. A mount added later at the same path is a new
     ///   mount; the old handle does not feed it.
     ///
     /// This is also how an application removes idle on-demand mounts
@@ -949,6 +976,7 @@ impl RtspServer {
                 },
                 cfg,
                 self.state.builder.fanout_capacity,
+                self.state.ended(),
             )?;
             Ok((
                 crate::rtsp::server::mount::MountEntry::Local(mount_state.clone()),

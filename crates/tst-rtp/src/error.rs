@@ -229,10 +229,13 @@ pub enum MountError {
     #[error("muxer error: {0}")]
     Mux(#[from] tst_core::error::MuxError),
 
-    /// The mount's muxer lock is poisoned (an earlier push panicked while
-    /// holding it). Removing the mount with `RtspServer::remove_mount` does
-    /// not produce this: the handle of a removed mount keeps accepting
-    /// pushes, which reach nobody.
+    /// The server that owns the mount has ended (`RtspServer::stop`, a hard
+    /// cancel through `RtspServer::cancel_handle`, or the server being
+    /// dropped), or the mount's muxer lock is poisoned (an earlier push
+    /// panicked while holding it). The refused push is not muxed or
+    /// counted. Removing the mount with `RtspServer::remove_mount` does not
+    /// produce this: the handle of a removed mount keeps accepting pushes,
+    /// which reach nobody, until the server ends.
     #[error("mount closed")]
     Closed,
 }
