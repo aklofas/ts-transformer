@@ -82,7 +82,6 @@ fn udp_receiver_can_end_with(r: &EndReason) -> bool {
     matches!(r, EndReason::Cancelled | EndReason::TransportFailed { .. })
 }
 
-/// Record why a UDP receive stream ended (first writer wins).
 /// The error for a fatal `recv_from` failure: the cancel when one is latched,
 /// else a `Broken` carrying the OS error.
 fn fatal_recv_error(e: &std::io::Error, cancelled: bool) -> TransportError {
@@ -96,6 +95,7 @@ fn fatal_recv_error(e: &std::io::Error, cancelled: bool) -> TransportError {
     }
 }
 
+/// Record why a UDP receive stream ended (first writer wins).
 fn record_udp_end(h: &EndReasonHandle, r: EndReason) {
     debug_assert!(
         udp_receiver_can_end_with(&r),
@@ -382,10 +382,14 @@ impl UdpRecvTransport {
                     continue;
                 }
                 Err(e) => {
-                    self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
+                    let err = fatal_recv_error(&e, self.cancel.is_cancelled());
+                    // A call reported as the cancel is not a receive error.
+                    if matches!(err, TransportError::Broken { .. }) {
+                        self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
+                    }
                     // A Broken receive latches dead.
                     self.alive.store(false, Ordering::Release);
-                    return Err(fatal_recv_error(&e, self.cancel.is_cancelled()));
+                    return Err(err);
                 }
             }
         }
